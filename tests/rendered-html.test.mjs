@@ -49,6 +49,7 @@ test("keeps calculation and review controls in the client workspace", async () =
 
   assert.match(page, /^"use client";/);
   assert.match(page, /type="file" accept="image\/\*"/);
+  assert.match(page, /sellerpilot-thumbnail-1000\.png/);
   assert.match(page, /targetMargin/);
   assert.match(page, /channel\.fee/);
   assert.match(page, /등록 초안 만들기/);

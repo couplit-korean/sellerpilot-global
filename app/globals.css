@@ -188,8 +188,10 @@ a { color: inherit; text-decoration: none; }
 .upload-meta { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 7px 5px; }
 .upload-meta strong { display: block; margin-bottom: 4px; font-size: 13px; }
 .upload-meta span { display: block; overflow: hidden; max-width: 300px; color: #8b95a7; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.file-button { position: relative; flex: 0 0 auto; padding: 10px 14px; overflow: hidden; border: 1px solid #dce2ec; border-radius: 9px; color: #4f5a70; background: white; cursor: pointer; font-size: 11px; font-weight: 750; }
-.file-button:hover { border-color: #b8c2d8; }
+.upload-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+.file-button, .download-button { position: relative; flex: 0 0 auto; padding: 10px 12px; overflow: hidden; border: 1px solid #dce2ec; border-radius: 9px; color: #4f5a70; background: white; cursor: pointer; font-size: 10px; font-weight: 750; }
+.file-button:hover, .download-button:hover:not(:disabled) { border-color: #b8c2d8; }
+.download-button:disabled { color: #afb6c2; background: #f7f8fa; cursor: not-allowed; }
 .file-button input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 
 .analysis-card { display: flex; flex-direction: column; padding: 28px; }

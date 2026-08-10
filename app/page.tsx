@@ -105,6 +105,43 @@ export default function Home() {
     window.setTimeout(() => setAnalysisState("ready"), 1100);
   };
 
+  const downloadThumbnail = () => {
+    if (!imageUrl) return;
+
+    const source = new Image();
+    source.onload = () => {
+      const canvas = document.createElement("canvas");
+      const size = 1000;
+      const padding = 80;
+      canvas.width = size;
+      canvas.height = size;
+
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, size, size);
+
+      const scale = Math.min(
+        (size - padding * 2) / source.naturalWidth,
+        (size - padding * 2) / source.naturalHeight,
+      );
+      const width = source.naturalWidth * scale;
+      const height = source.naturalHeight * scale;
+      context.drawImage(source, (size - width) / 2, (size - height) / 2, width, height);
+
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const link = document.createElement("a");
+        const downloadUrl = URL.createObjectURL(blob);
+        link.href = downloadUrl;
+        link.download = "sellerpilot-thumbnail-1000.png";
+        link.click();
+        URL.revokeObjectURL(downloadUrl);
+      }, "image/png");
+    };
+    source.src = imageUrl;
+  };
+
   const toggleChannel = (id: string) => {
     setSelectedChannels((current) =>
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
@@ -176,10 +213,13 @@ export default function Home() {
                 <strong>{imageUrl ? "촬영 이미지 준비됨" : "샘플 상품으로 시작"}</strong>
                 <span>{fileName}</span>
               </div>
-              <label className="file-button">
-                사진 선택
-                <input type="file" accept="image/*" onChange={onFile} />
-              </label>
+              <div className="upload-actions">
+                <button className="download-button" type="button" onClick={downloadThumbnail} disabled={!imageUrl}>1000×1000 저장</button>
+                <label className="file-button">
+                  사진 선택
+                  <input type="file" accept="image/*" onChange={onFile} />
+                </label>
+              </div>
             </div>
           </div>
 
@@ -305,7 +345,7 @@ export default function Home() {
           <strong>{selectedChannels.length}개 마켓</strong>
           <p>Qoo10 Japan · Shopee SG · Lazada MY</p>
           <button type="button" onClick={() => setDraftCreated(true)} disabled={analysisState !== "ready" || selectedChannels.length === 0}>
-            {draftCreated ? "초안 3건 생성 완료 ✓" : "등록 초안 만들기"}
+            {draftCreated ? `초안 ${selectedChannels.length}건 생성 완료 ✓` : "등록 초안 만들기"}
           </button>
           <small>{analysisState === "ready" ? "실제 게시 없이 검수 대기열에 저장합니다." : "먼저 상품 사진 분석을 완료해 주세요."}</small>
         </div>
