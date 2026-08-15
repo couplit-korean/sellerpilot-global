@@ -199,7 +199,23 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .user-menu small { margin-top: 2px; color: #949baa; font-size: 7px; }
 .app-content { width: min(1440px, 100%); margin: 0 auto; padding: 22px 28px 40px; }
 .page-stack { display: grid; gap: 17px; }
-.overview-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.overview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.overview-date-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+.exchange-widget { display: flex; min-width: 0; min-height: 46px; flex: 0 1 590px; align-items: center; gap: 11px; padding: 6px 7px 6px 12px; border: 1px solid #dcdef4; border-radius: 10px; background: linear-gradient(100deg, #f9f9ff, white); box-shadow: var(--shadow-sm); }
+.exchange-title { min-width: 92px; }
+.exchange-title span { display: flex; align-items: center; gap: 6px; color: #4d53c6; font-size: 8px; font-weight: 850; }
+.exchange-title span i { width: 6px; height: 6px; border-radius: 50%; background: #20a779; box-shadow: 0 0 0 4px rgb(32 167 121 / 10%); }
+.exchange-title small { display: block; margin-top: 4px; color: #747e91; font-size: 7px; white-space: nowrap; }
+.exchange-rate-list { display: flex; min-width: 0; flex: 1; align-items: center; }
+.exchange-rate { min-width: 0; flex: 1; padding: 0 10px; border-left: 1px solid #e7e9f1; }
+.exchange-rate small, .exchange-rate strong, .exchange-rate em { display: block; white-space: nowrap; }
+.exchange-rate small { color: #798397; font-family: var(--font-geist-mono), monospace; font-size: 7px; font-weight: 800; }
+.exchange-rate strong { margin-top: 2px; color: #374155; font-family: var(--font-geist-mono), monospace; font-size: 9px; letter-spacing: -.025em; }
+.exchange-rate em { margin-top: 2px; font-family: var(--font-geist-mono), monospace; font-size: 6px; font-style: normal; font-weight: 800; }
+.exchange-rate em.up { color: #147d5a; }
+.exchange-rate em.down { color: #cf5360; }
+.exchange-refresh { display: grid; width: 31px; height: 31px; flex: 0 0 auto; place-items: center; border: 1px solid #e1e3ed; border-radius: 8px; color: #687286; background: white; }
+.exchange-refresh:hover { color: var(--primary); border-color: #cfd0f4; background: var(--primary-soft); }
 .period-control { display: flex; height: 34px; align-items: center; gap: 7px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; color: #8690a2; background: white; font-size: 9px; }
 .period-control button { padding: 0; color: #687286; background: transparent; font-size: 9px; }
 .segmented-control { display: flex; height: 34px; align-items: center; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: white; }
@@ -681,6 +697,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .app-content { padding: 15px 14px max(30px, env(safe-area-inset-bottom)); }
   .page-stack { gap: 12px; }
   .overview-toolbar { align-items: stretch; flex-direction: column; }
+  .exchange-widget { display: grid; width: 100%; min-height: 0; flex: none; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 10px; }
+  .exchange-title { min-width: 0; }
+  .exchange-rate-list { grid-column: 1 / -1; width: 100%; padding-top: 9px; border-top: 1px solid #e8e9f2; }
+  .exchange-rate { padding: 0 8px; }
+  .exchange-rate:first-child { padding-left: 0; border-left: 0; }
+  .exchange-rate:last-child { padding-right: 0; }
+  .exchange-refresh { grid-column: 2; grid-row: 1; }
+  .overview-date-actions { width: 100%; align-items: stretch; flex-direction: column; }
   .period-control, .segmented-control { width: 100%; }
   .period-control { justify-content: center; }
   .segmented-control button { flex: 1; }
@@ -789,6 +813,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .ranking-row { grid-template-columns: 22px 34px minmax(0, 1fr) auto; gap: 6px; padding-right: 8px; padding-left: 8px; }
   .ranking-sales { min-width: 55px; }
   .ranking-sales b { font-size: 8px; }
+  .exchange-rate { padding: 0 5px; }
+  .exchange-rate strong { font-size: 8px; }
+  .exchange-rate em { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

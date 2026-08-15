@@ -42,6 +42,9 @@ test("contains the complete multi-channel operating storyboard", async () => {
   assert.match(page, /^"use client";/);
   assert.match(page, /통합 대시보드/);
   assert.match(page, /이번 달 판매 TOP 10/);
+  assert.match(page, /LIVE 환율/);
+  assert.match(page, /환율 새로고침/);
+  assert.match(page, /60_000/);
   assert.match(page, /상품 관리/);
   assert.match(page, /상품 등록 센터/);
   assert.match(page, /주문 · 판매/);

@@ -64,7 +64,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { channels, DEMO_DATA_META, orders, productImages, products, tickets, type ChannelKey } from "./mock-data";
 
 type View =
@@ -158,6 +158,27 @@ const channelFactors: Record<ChannelKey, { sales: string; orders: string; produc
   smartstore: { sales: "₩14.9M", orders: "406", products: "304", cs: "97.1%", rate: 88 },
   ebay: { sales: "₩6.8M", orders: "144", products: "172", cs: "90.9%", rate: 58 },
 };
+
+const initialExchangeRates = [
+  { code: "USD", unit: 1, value: 1378.4, change: 0.24 },
+  { code: "JPY", unit: 100, value: 931.12, change: -0.18 },
+  { code: "SGD", unit: 1, value: 1072.65, change: 0.08 },
+  { code: "MYR", unit: 1, value: 325.84, change: -0.11 },
+];
+
+const rateTimeFormatter = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+
+function updateDemoExchangeRates(current: typeof initialExchangeRates) {
+  return current.map((rate, index) => {
+    const movementScale = rate.code === "JPY" ? 0.65 : rate.code === "MYR" ? 0.28 : 1.35;
+    const movement = (Math.random() - 0.48) * movementScale;
+    return {
+      ...rate,
+      value: Math.max(0, Number((rate.value + movement).toFixed(2))),
+      change: Number((rate.change + (index % 2 === 0 ? 0.01 : -0.01)).toFixed(2)),
+    };
+  });
+}
 
 function ChannelMark({ code, size = "md" }: { code: string; size?: "sm" | "md" | "lg" }) {
   const config = channelByCode.get(code) ?? channels.qoo10;
@@ -260,12 +281,32 @@ function MetricCard({ label, value, delta, detail, icon: Icon, tone, reverse }: 
 
 function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   const [period, setPeriod] = useState("30일");
+  const [exchangeRates, setExchangeRates] = useState(initialExchangeRates);
+  const [rateUpdatedAt, setRateUpdatedAt] = useState("방금 전");
   const chartPoints = period === "7일" ? "0,31 18,29 36,33 54,20 72,24 90,14 108,18 120,7" : period === "90일" ? "0,35 12,33 24,28 36,31 48,22 60,25 72,15 84,18 96,10 108,13 120,5" : "0,36 10,32 20,34 30,27 40,29 50,20 60,23 70,14 80,18 90,9 100,13 110,4 120,7";
+
+  const refreshExchangeRates = () => {
+    setExchangeRates(updateDemoExchangeRates);
+    setRateUpdatedAt(rateTimeFormatter.format(new Date()));
+  };
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setExchangeRates(updateDemoExchangeRates);
+      setRateUpdatedAt(rateTimeFormatter.format(new Date()));
+    }, 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
   return (
     <div className="page-stack">
       <section className="overview-toolbar">
-        <div className="period-control"><CalendarDays size={15} /><button>2026.07.17</button><span>—</span><button>2026.08.15</button></div>
-        <div className="segmented-control">{["7일", "30일", "90일"].map((item) => <button className={period === item ? "active" : ""} key={item} onClick={() => setPeriod(item)}>{item}</button>)}</div>
+        <article className="exchange-widget" aria-label="현재 환율">
+          <div className="exchange-title"><span><i />LIVE 환율</span><small>KRW 기준 · {rateUpdatedAt === "방금 전" ? "방금 갱신" : `${rateUpdatedAt} 갱신`}</small></div>
+          <div className="exchange-rate-list">{exchangeRates.map((rate) => <div className="exchange-rate" key={rate.code}><small>{rate.code} {rate.unit}</small><strong>₩{rate.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong><em className={rate.change >= 0 ? "up" : "down"}>{rate.change >= 0 ? "▲" : "▼"} {Math.abs(rate.change).toFixed(2)}%</em></div>)}</div>
+          <button type="button" className="exchange-refresh" aria-label="환율 새로고침" title="환율 새로고침" onClick={refreshExchangeRates}><RefreshCw size={14} /></button>
+        </article>
+        <div className="overview-date-actions"><div className="period-control"><CalendarDays size={15} /><button>2026.07.17</button><span>—</span><button>2026.08.15</button></div><div className="segmented-control">{["7일", "30일", "90일"].map((item) => <button className={period === item ? "active" : ""} key={item} onClick={() => setPeriod(item)}>{item}</button>)}</div></div>
       </section>
 
       <section className="metric-grid">
