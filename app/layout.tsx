@@ -1,21 +1,30 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import "@puckeditor/core/puck.css";
 import "./globals.css";
 
-const geistSans = Geist({
+const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : "http://localhost:3000";
+
+const plexSansKr = IBM_Plex_Sans_KR({
   variable: "--font-geist-sans",
+  weight: ["400", "500", "600", "700"],
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
+const plexMono = IBM_Plex_Mono({
   variable: "--font-geist-mono",
+  weight: ["400", "500", "600", "700"],
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: "SellerPilot | 멀티채널 커머스 운영센터",
-  description: "Qoo10, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay의 상품 등록, 매출, 주문, 재고와 CS를 한눈에 관리하는 AI 커머스 운영센터.",
+  description: "Qoo10, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay를 운영하고 Alibaba와 1688 연동을 준비하는 AI 커머스 운영센터.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
@@ -36,7 +45,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ko">
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body>
+      <body className={`${plexSansKr.variable} ${plexMono.variable}`}>{children}</body>
     </html>
   );
 }

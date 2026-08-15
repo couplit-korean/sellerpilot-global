@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import {
   Activity,
   AlertCircle,
@@ -84,6 +85,8 @@ type View =
   | "elevenst"
   | "smartstore"
   | "ebay"
+  | "alibaba"
+  | "one688"
   | "storyboard";
 
 const navGroups = [
@@ -108,6 +111,8 @@ const navGroups = [
       { id: "elevenst" as View, label: "11번가", channel: "11" },
       { id: "smartstore" as View, label: "네이버 스마트스토어", channel: "N" },
       { id: "ebay" as View, label: "eBay Global", channel: "E" },
+      { id: "alibaba" as View, label: "Alibaba.com", channel: "A", disabled: true },
+      { id: "one688" as View, label: "1688.com", channel: "1688", disabled: true },
     ],
   },
   {
@@ -130,6 +135,8 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   elevenst: { title: "11번가", description: "11번가 스토어의 상품, 매출, 주문, CS 성과입니다." },
   smartstore: { title: "네이버 스마트스토어", description: "스마트스토어의 상품, 매출, 주문, CS 성과입니다." },
   ebay: { title: "eBay Global", description: "글로벌 스토어의 상품, 매출, 주문, CS 성과입니다." },
+  alibaba: { title: "Alibaba.com", description: "글로벌 B2B 채널 연동을 준비하고 있습니다." },
+  one688: { title: "1688.com", description: "중국 내수 B2B 채널 연동을 준비하고 있습니다." },
   storyboard: { title: "서비스 스토리보드", description: "로그인부터 자동 등록, 판매, CS까지의 전체 사용자 흐름입니다." },
 };
 
@@ -228,11 +235,11 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       <section className="login-brand-panel">
         <div className="brand-lockup light"><span className="brand-symbol"><Zap size={18} fill="currentColor" /></span><strong>SellerPilot</strong></div>
         <div className="login-message">
-          <span className="eyebrow"><Sparkles size={14} /> AI COMMERCE OPERATING SYSTEM</span>
+          <span className="eyebrow"><Sparkles size={14} /> COMMERCE OPERATIONS · 2026</span>
           <h1>한 번의 등록,<br /><em>모든 마켓에.</em></h1>
           <p>상품 등록부터 판매, 주문, CS까지.<br />흩어진 글로벌 채널을 하나의 운영 화면으로 연결합니다.</p>
           <div className="login-proof-list">
-            <div><CheckCircle2 size={17} /><span><b>7개 국내외 판매 채널</b><small>Qoo10 · Shopee · Lazada · 쿠팡 · 11번가 · 스마트스토어 · eBay</small></span></div>
+            <div><CheckCircle2 size={17} /><span><b>7개 운영 · 2개 준비 채널</b><small>Qoo10 · Shopee · Lazada · 쿠팡 · 11번가 · 스마트스토어 · eBay · Alibaba · 1688</small></span></div>
             <div><CheckCircle2 size={17} /><span><b>사진 기반 AI 등록</b><small>OCR · 번역 · 가격 · 상세페이지 자동 생성</small></span></div>
             <div><CheckCircle2 size={17} /><span><b>24시간 운영 현황</b><small>매출 · 재고 · 등록 오류 · CS 즉시 확인</small></span></div>
           </div>
@@ -249,7 +256,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
           <div><small>연결된 채널</small><strong>모두 정상 운영 중</strong></div>
           <CheckCircle2 size={17} />
         </div>
-        <footer>© 2026 SellerPilot. Global commerce, under control.</footer>
+        <footer>SELLERPILOT / MULTI-CHANNEL OPERATIONS DESK</footer>
       </section>
 
       <section className="login-form-panel">
@@ -267,6 +274,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
           <label className="remember-row"><input type="checkbox" defaultChecked /><span><Check size={12} /></span>로그인 상태 유지</label>
           {error && <p className="login-error"><AlertCircle size={14} />{error}</p>}
           <button className="login-button" type="submit" disabled={loading}>{loading ? <><LoaderCircle className="spin" size={18} />접속 중...</> : <>대시보드 접속<ArrowRight size={18} /></>}</button>
+          <Link className="showcase-login-link" href="/showcase"><Sparkles size={16} />AI 상품 디자인 샘플 5종 보기<ArrowRight size={16} /></Link>
           <div className="demo-account"><ShieldCheck size={15} /><span>화면 확인용 계정이 입력되어 있습니다.<br /><b>로그인 버튼을 눌러 바로 둘러보세요.</b></span></div>
         </form>
         <div className="login-support"><HelpCircle size={15} />접속에 문제가 있나요? <button>운영 지원팀 문의</button></div>
@@ -545,7 +553,7 @@ function PublishingPage({ notify }: { notify: (message: string) => void }) {
           <div className="analysis-start-bar"><span><b>{totalPhotoCount}장</b>의 상품 사진 · 설명 {description.trim() ? "입력됨" : "미입력"} · 링크 {productUrl.trim() ? "입력됨" : "미입력"}</span><button type="button" onClick={startAutomation} disabled={running}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : <><WandSparkles size={17} />AI 상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">PUBLISH TO</span><h3>등록할 채널</h3></div><Settings size={16} /></div>
-          <div className="publish-channel-list">{Object.values(channels).map((channel) => <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} 스토어 · API 정상</small></span><input type="checkbox" defaultChecked /><i><Check size={12} /></i></label>)}</div>
+          <div className="publish-channel-list">{Object.values(channels).map((channel) => <label key={channel.letter} className={channel.enabled ? "" : "channel-disabled"}><ChannelMark code={channel.letter} /><span><b>{channel.name}{!channel.enabled && <em>준비중</em>}</b><small>{channel.enabled ? `${channel.market} 스토어 · API 정상` : `${channel.market} · 연동 준비 중`}</small></span><input type="checkbox" defaultChecked={channel.enabled} disabled={!channel.enabled} aria-label={`${channel.name} 등록 ${channel.enabled ? "선택" : "비활성화"}`} /><i><Check size={12} /></i></label>)}</div>
           <div className="auto-options"><h4>자동화 옵션</h4><label><span><b>AI 다국어 번역</b><small>한국어, 일본어, 영어, 말레이어</small></span><input type="checkbox" aria-label="AI 다국어 번역 사용" defaultChecked /><i /></label><label><span><b>마진 기반 가격 계산</b><small>목표 마진 28% 적용</small></span><input type="checkbox" aria-label="마진 기반 가격 계산 사용" defaultChecked /><i /></label><label><span><b>검증 통과 시 자동 등록</b><small>신뢰도 97% 이상</small></span><input type="checkbox" aria-label="검증 통과 시 자동 등록 사용" defaultChecked /><i /></label></div>
         </aside>
       </section>
@@ -673,7 +681,8 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
         <nav>{navGroups.map((group) => <div className="nav-group" key={group.label}><span className="nav-label">{group.label}</span>{group.items.map((item) => {
           const Icon = "icon" in item ? item.icon : null;
           const isActive = view === item.id;
-          return <button key={item.id} className={isActive ? "active" : ""} onClick={() => navigate(item.id)}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{"badge" in item && item.badge ? <em>{item.badge}</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
+          const isDisabled = "disabled" in item && item.disabled;
+          return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : "badge" in item && item.badge ? <em>{item.badge}</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
         <div className="sidebar-insight"><div><Sparkles size={15} /><span>AI 자동화</span><em>ON</em></div><p>오늘 <b>46건</b>의 반복 작업을<br />자동으로 처리했습니다.</p><span><i /></span><small>시스템 정상 운영 중</small></div>
         <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말 · 가이드</span></button><button><Settings size={17} /><span>설정</span></button><button onClick={onLogout}><LogOut size={17} /><span>로그아웃</span></button></div>

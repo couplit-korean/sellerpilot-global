@@ -38,5 +38,11 @@ yarn-error.log*
 /.wrangler/
 /.local/
 *.tsbuildinfo
-/outputs/
 /work/
+
+# Generated PDF documents are delivered separately and must not be committed.
+*.pdf
+
+# Python runtime cache
+__pycache__/
+*.py[cod]
