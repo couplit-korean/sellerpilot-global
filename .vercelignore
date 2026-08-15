@@ -1,0 +1,9 @@
+.git
+.next
+.openai
+.wrangler
+dist
+node_modules
+output
+prompts
+tmp
