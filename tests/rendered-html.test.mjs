@@ -30,9 +30,10 @@ test("server-renders the SellerPilot login experience", async () => {
 });
 
 test("contains the complete multi-channel operating storyboard", async () => {
-  const [page, layout, packageJson, storyboard, mockData] = await Promise.all([
+  const [page, layout, styles, packageJson, storyboard, mockData] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../docs/멀티채널_커머스_운영센터_스토리보드.md", import.meta.url), "utf8"),
     readFile(new URL("../app/mock-data.ts", import.meta.url), "utf8"),
@@ -72,6 +73,13 @@ test("contains the complete multi-channel operating storyboard", async () => {
   assert.match(mockData, /제주 비자림 클렌징 밤/);
   assert.equal((mockData.match(/sales:/g) ?? []).length, 10);
   assert.match(layout, /og-commerce\.png/);
+  assert.match(styles, /@media \(max-width: 1360px\)/);
+  assert.match(styles, /@media \(max-width: 1180px\)/);
+  assert.match(styles, /@media \(max-width: 900px\)/);
+  assert.match(styles, /@media \(max-width: 720px\)/);
+  assert.match(styles, /@media \(max-width: 480px\)/);
+  assert.match(styles, /\.ticket-list \{ display: block; max-height: 360px/);
+  assert.match(styles, /\.publish-channel-list \{ grid-template-columns: 1fr/);
   assert.match(storyboard, /핵심 사용자 여정/);
   assert.match(storyboard, /단계별 구축 범위/);
   assert.match(packageJson, /lucide-react/);
