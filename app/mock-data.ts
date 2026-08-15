@@ -31,10 +31,10 @@ export const DEMO_DATA_META = {
 };
 
 export const productImages = [
-  "/demo/setting-shots/premium-studio.png",
-  "/demo/setting-shots/morning-routine.png",
-  "/demo/setting-shots/ingredient-flatlay.png",
-  "/demo/setting-shots/daily-carry.png",
+  "https://raw.githubusercontent.com/Kimchanghee/sellerpilot-global/main/public/demo/setting-shots/premium-studio.png",
+  "https://raw.githubusercontent.com/Kimchanghee/sellerpilot-global/main/public/demo/setting-shots/morning-routine.png",
+  "https://raw.githubusercontent.com/Kimchanghee/sellerpilot-global/main/public/demo/setting-shots/ingredient-flatlay.png",
+  "https://raw.githubusercontent.com/Kimchanghee/sellerpilot-global/main/public/demo/setting-shots/daily-carry.png",
 ];
 
 export const channels: Record<AllChannelKey, ChannelConfig> = {
