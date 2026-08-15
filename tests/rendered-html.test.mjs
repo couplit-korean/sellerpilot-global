@@ -51,6 +51,14 @@ test("contains the complete multi-channel operating storyboard", async () => {
   assert.match(page, /서비스 스토리보드/);
   assert.match(page, /AI가 주문 정보와 정책을 반영한 답변 초안/);
   assert.match(page, /신뢰도 97% 이상/);
+  assert.match(page, /대표사진 1장이 반드시 필요/);
+  assert.match(page, /id: "front"/);
+  assert.match(page, /id: "barcode"/);
+  assert.match(page, /option-photo-\$\{slot\.id\}/);
+  assert.match(page, /id="extra-product-photos"[^>]*multiple/);
+  assert.match(page, /상품 간략 설명/);
+  assert.match(page, /참고 상품 링크/);
+  assert.match(page, /AI 상품 분석 시작/);
   assert.match(page, /DEMO_DATA_META\.label/);
   assert.match(mockData, /화면 검증용 임시 데이터/);
   assert.match(mockData, /레티놀 퍼밍 나이트 세럼/);

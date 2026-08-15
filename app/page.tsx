@@ -24,6 +24,7 @@ import {
   Command,
   Eye,
   EyeOff,
+  ExternalLink,
   FileText,
   Filter,
   Globe2,
@@ -34,6 +35,7 @@ import {
   Languages,
   LayoutDashboard,
   LifeBuoy,
+  Link2,
   ListFilter,
   LoaderCircle,
   LockKeyhole,
@@ -56,6 +58,7 @@ import {
   Store,
   Tags,
   TrendingUp,
+  Trash2,
   Truck,
   Upload,
   UserRound,
@@ -105,7 +108,7 @@ const navGroups = [
 const pageMeta: Record<View, { title: string; description: string }> = {
   overview: { title: "통합 대시보드", description: "모든 채널의 오늘을 한눈에 확인하세요." },
   products: { title: "상품 관리", description: "채널별 등록 상태, 재고와 판매 성과를 관리합니다." },
-  publishing: { title: "상품 등록 센터", description: "사진 한 장에서 다국어 상품 페이지와 채널 등록까지 자동화합니다." },
+  publishing: { title: "상품 등록 센터", description: "대표사진과 다양한 각도 사진, 설명과 링크를 함께 분석해 채널 등록을 자동화합니다." },
   orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
   cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
   qoo10: { title: "Qoo10 Japan", description: "일본 스토어의 상품, 매출, 주문, CS 성과입니다." },
@@ -312,26 +315,142 @@ function ProductsPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   );
 }
 
+type UploadedPhoto = { name: string; url: string };
+
+const optionalPhotoSlots = [
+  { id: "front", label: "정면", guide: "제품 전체 정면" },
+  { id: "back", label: "후면", guide: "뒷면 표시사항" },
+  { id: "left", label: "좌측면", guide: "왼쪽 측면" },
+  { id: "right", label: "우측면", guide: "오른쪽 측면" },
+  { id: "top", label: "상단", guide: "상단 패키지" },
+  { id: "bottom", label: "하단", guide: "하단 제조정보" },
+  { id: "label", label: "성분 · 라벨", guide: "글자가 선명하게" },
+  { id: "barcode", label: "바코드", guide: "숫자까지 보이게" },
+] as const;
+
 function PublishingPage({ notify }: { notify: (message: string) => void }) {
   const [running, setRunning] = useState(false);
+  const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
+  const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
+  const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
+  const [description, setDescription] = useState("국내 제조 이너뷰티 제품으로, 화이트토마토와 글루타치온을 간편하게 섭취할 수 있는 30정 패키지입니다. 일본·싱가포르·말레이시아 판매를 준비합니다.");
+  const [productUrl, setProductUrl] = useState("https://example.com/products/white-tomato-glutathione");
+  const [uploadError, setUploadError] = useState("");
+
+  const toPhoto = (file: File): UploadedPhoto => ({ name: file.name, url: URL.createObjectURL(file) });
+
+  const selectMainPhoto = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (mainPhoto) URL.revokeObjectURL(mainPhoto.url);
+    setMainPhoto(toPhoto(file));
+    setUploadError("");
+    event.target.value = "";
+  };
+
+  const selectSlotPhoto = (slotId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setSlotPhotos((current) => {
+      if (current[slotId]) URL.revokeObjectURL(current[slotId].url);
+      return { ...current, [slotId]: toPhoto(file) };
+    });
+    event.target.value = "";
+  };
+
+  const selectExtraPhotos = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    if (!files.length) return;
+    setExtraPhotos((current) => [...current, ...files.map(toPhoto)]);
+    event.target.value = "";
+  };
+
+  const removeSlotPhoto = (slotId: string) => {
+    setSlotPhotos((current) => {
+      const next = { ...current };
+      if (next[slotId]) URL.revokeObjectURL(next[slotId].url);
+      delete next[slotId];
+      return next;
+    });
+  };
+
+  const removeExtraPhoto = (index: number) => {
+    setExtraPhotos((current) => {
+      URL.revokeObjectURL(current[index].url);
+      return current.filter((_, photoIndex) => photoIndex !== index);
+    });
+  };
+
+  const openProductUrl = () => {
+    try {
+      const url = new URL(productUrl);
+      if (!url.protocol.startsWith("http")) throw new Error("invalid protocol");
+      window.open(url.toString(), "_blank", "noopener,noreferrer");
+    } catch {
+      notify("http:// 또는 https://로 시작하는 상품 링크를 입력해 주세요.");
+    }
+  };
+
   const startAutomation = () => {
+    if (!mainPhoto) {
+      setUploadError("AI 상품 분석을 시작하려면 대표사진 1장이 반드시 필요합니다.");
+      notify("대표사진 1장을 먼저 등록해 주세요.");
+      return;
+    }
+    const photoCount = 1 + Object.keys(slotPhotos).length + extraPhotos.length;
     setRunning(true);
-    notify("새 상품이 AI 분석 대기열에 추가되었습니다.");
+    setUploadError("");
+    const context = [description.trim() ? "상품 설명" : "", productUrl.trim() ? "참고 링크" : ""].filter(Boolean).join("과 ");
+    notify(`${photoCount}장의 사진${context ? `, ${context}` : ""}이 AI 분석 자료에 반영되었습니다.`);
     window.setTimeout(() => setRunning(false), 2600);
   };
+
+  const totalPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length;
+
   return (
     <div className="page-stack publishing-page">
       <section className="publishing-hero">
-        <div><span className="eyebrow dark"><Sparkles size={14} /> AI PRODUCT PUBLISHER</span><h2>사진 한 장이면,<br /><em>3개 마켓 등록 준비 완료.</em></h2><p>상품 사진을 올리면 AI가 OCR, 상품 식별, 다국어 번역, 가격 계산,<br />상세페이지 생성을 거쳐 각 채널 형식으로 자동 변환합니다.</p></div>
-        <div className="automation-flow-mini"><span><ImagePlus size={17} />사진</span><ArrowRight size={15} /><span><Bot size={17} />AI 분석</span><ArrowRight size={15} /><span><Languages size={17} />4개 언어</span><ArrowRight size={15} /><span><Globe2 size={17} />3개 채널</span></div>
+        <div><span className="eyebrow dark"><Sparkles size={14} /> AI PRODUCT PUBLISHER</span><h2>사진은 충분히,<br /><em>등록은 한 번에.</em></h2><p>대표사진과 여러 각도의 옵션 사진, 상품 설명과 참고 링크를 함께 분석해<br />더 정확한 상품 정보와 채널별 등록 초안을 생성합니다.</p></div>
+        <div className="automation-flow-mini"><span><ImagePlus size={17} />다각도 사진</span><ArrowRight size={15} /><span><Bot size={17} />통합 분석</span><ArrowRight size={15} /><span><Languages size={17} />4개 언어</span><ArrowRight size={15} /><span><Globe2 size={17} />3개 채널</span></div>
       </section>
       <section className="publishing-layout">
         <article className="panel upload-panel">
-          <div className="panel-heading"><div><span className="panel-kicker">NEW PRODUCT</span><h3>새 상품 등록</h3></div><span className="step-chip">STEP 1 / 3</span></div>
-          <button className={`drop-zone ${running ? "running" : ""}`} onClick={startAutomation}>
-            {running ? <><span className="upload-graphic active"><LoaderCircle className="spin" size={31} /></span><strong>상품 이미지를 읽고 있습니다</strong><p>OCR과 품질 검사를 진행 중입니다...</p><div className="upload-progress"><i /></div></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>상품 사진을 여기에 놓으세요</strong><p>또는 클릭하여 JPG, PNG 파일 선택 · 최대 20MB</p><em><ImagePlus size={15} />사진 선택하기</em></>}
-          </button>
-          <div className="capture-guide"><div><span>01</span><b>제품 정면</b><small>제품 전체가 보이게</small></div><ChevronRight size={14} /><div><span>02</span><b>성분 · 규격</b><small>라벨이 선명하게</small></div><ChevronRight size={14} /><div><span>03</span><b>바코드</b><small>숫자까지 보이게</small></div></div>
+          <div className="panel-heading"><div><span className="panel-kicker">NEW PRODUCT</span><h3>새 상품 분석 자료</h3></div><span className="step-chip">STEP 1 / 3</span></div>
+
+          <section className="main-photo-section">
+            <div className="upload-section-heading"><div><b>대표사진</b><span className="required-chip">필수</span><small>검색 결과와 채널 목록에서 가장 먼저 보이는 이미지입니다.</small></div><em>{mainPhoto ? "1장 등록됨" : "미등록"}</em></div>
+            <label className={`drop-zone main-drop-zone ${mainPhoto ? "has-photo" : ""} ${running ? "running" : ""}`} htmlFor="main-product-photo">
+              <input id="main-product-photo" className="visually-hidden" type="file" accept="image/*" onChange={selectMainPhoto} />
+              {mainPhoto ? <><span className="main-photo-preview"><Image src={mainPhoto.url} alt="등록한 대표 상품 사진" fill sizes="700px" unoptimized /></span><span className="photo-preview-overlay"><ImagePlus size={17} />대표사진 교체</span><strong className="photo-file-name">{mainPhoto.name}</strong></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>대표 상품 사진을 넣으세요</strong><p>클릭하여 JPG, PNG, WEBP 파일 선택 · 대표사진 1장 필수</p><em><ImagePlus size={15} />대표사진 선택</em></>}
+              {running && <span className="analysis-overlay"><LoaderCircle className="spin" size={29} /><b>사진·설명·링크 통합 분석 중</b><small>OCR과 상품 정보 교차검증을 진행하고 있습니다.</small><i><span /></i></span>}
+            </label>
+            {uploadError && <p className="upload-error"><AlertCircle size={14} />{uploadError}</p>}
+          </section>
+
+          <section className="option-photo-section">
+            <div className="upload-section-heading"><div><b>옵션 사진</b><span className="optional-chip">선택</span><small>각도와 표시사항이 많을수록 분석 정확도가 높아집니다.</small></div><em>{Object.keys(slotPhotos).length} / {optionalPhotoSlots.length}장</em></div>
+            <div className="option-photo-grid">
+              {optionalPhotoSlots.map((slot) => {
+                const photo = slotPhotos[slot.id];
+                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/*" onChange={(event) => selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>클릭하여 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
+              })}
+            </div>
+          </section>
+
+          <section className="extra-photo-section">
+            <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>상세컷, 구성품, 포장 상태 등 필요한 만큼 한 번에 선택할 수 있습니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
+            <label className="extra-photo-uploader" htmlFor="extra-product-photos"><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/*" multiple onChange={selectExtraPhotos} /><Plus size={17} /><span><b>추가 사진 더 넣기</b><small>여러 파일을 동시에 선택할 수 있습니다.</small></span></label>
+            {extraPhotos.length > 0 && <div className="extra-photo-list">{extraPhotos.map((photo, index) => <div key={`${photo.name}-${index}`}><span><Image src={photo.url} alt={`추가 상품 사진 ${index + 1}`} fill sizes="100px" unoptimized /></span><small>{index + 1}</small><button type="button" aria-label={`추가 사진 ${index + 1} 삭제`} onClick={() => removeExtraPhoto(index)}><X size={12} /></button></div>)}</div>}
+          </section>
+
+          <section className="product-context-section">
+            <div className="upload-section-heading"><div><b>상품 분석 참고 정보</b><span className="optional-chip">선택</span><small>입력한 텍스트와 공개 링크의 상품 정보를 이미지 분석 결과와 함께 반영합니다.</small></div></div>
+            <label className="context-field"><span>상품 간략 설명</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1000} placeholder="용도, 재질, 구성, 핵심 특징, 판매 국가 등 사진만으로 알기 어려운 정보를 입력하세요." /><small>{description.length} / 1,000자</small></label>
+            <label className="context-field"><span>참고 상품 링크</span><div className="product-link-input"><Link2 size={16} /><input type="url" value={productUrl} onChange={(event) => setProductUrl(event.target.value)} placeholder="https:// 제조사 또는 공급사 상품 페이지" /><button type="button" onClick={openProductUrl} disabled={!productUrl.trim()}><ExternalLink size={14} />링크 열기</button></div><small>로그인 없이 접근 가능한 제조사·공급사·공식 상품 링크를 권장합니다.</small></label>
+            <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>AI 분석 반영 방식</b><small>대표사진을 기준으로 옵션 사진의 OCR·바코드와 설명·링크 정보를 교차검증합니다. 충돌하는 정보는 자동 확정하지 않고 확인 필요로 표시합니다.</small></span></div>
+          </section>
+
+          <div className="analysis-start-bar"><span><b>{totalPhotoCount}장</b>의 상품 사진 · 설명 {description.trim() ? "입력됨" : "미입력"} · 링크 {productUrl.trim() ? "입력됨" : "미입력"}</span><button type="button" onClick={startAutomation} disabled={running}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : <><WandSparkles size={17} />AI 상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">PUBLISH TO</span><h3>등록할 채널</h3></div><Settings size={16} /></div>
           <div className="publish-channel-list">{Object.values(channels).map((channel) => <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} 스토어 · API 정상</small></span><input type="checkbox" defaultChecked /><i><Check size={12} /></i></label>)}</div>
