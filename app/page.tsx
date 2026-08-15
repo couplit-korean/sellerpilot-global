@@ -66,6 +66,7 @@ import {
   Zap,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { AiProductStudio } from "./ai-product-studio";
 import { MarginCalculatorPage } from "./margin-calculator";
 import { channels, DEMO_DATA_META, orders, productImages, products, tickets, type ChannelKey } from "./mock-data";
 
@@ -405,7 +406,7 @@ function ProductsPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   );
 }
 
-type UploadedPhoto = { name: string; url: string };
+type UploadedPhoto = { name: string; url: string; file: File };
 
 const optionalPhotoSlots = [
   { id: "front", label: "정면", guide: "제품 전체 정면" },
@@ -426,8 +427,9 @@ function PublishingPage({ notify }: { notify: (message: string) => void }) {
   const [description, setDescription] = useState("국내 제조 이너뷰티 제품으로, 화이트토마토와 글루타치온을 간편하게 섭취할 수 있는 30정 패키지입니다. 일본·싱가포르·말레이시아 판매를 준비합니다.");
   const [productUrl, setProductUrl] = useState("https://example.com/products/white-tomato-glutathione");
   const [uploadError, setUploadError] = useState("");
+  const [studioRequestId, setStudioRequestId] = useState(0);
 
-  const toPhoto = (file: File): UploadedPhoto => ({ name: file.name, url: URL.createObjectURL(file) });
+  const toPhoto = (file: File): UploadedPhoto => ({ name: file.name, url: URL.createObjectURL(file), file });
 
   const selectMainPhoto = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -492,7 +494,7 @@ function PublishingPage({ notify }: { notify: (message: string) => void }) {
     setUploadError("");
     const context = [description.trim() ? "상품 설명" : "", productUrl.trim() ? "참고 링크" : ""].filter(Boolean).join("과 ");
     notify(`${photoCount}장의 사진${context ? `, ${context}` : ""}이 AI 분석 자료에 반영되었습니다.`);
-    window.setTimeout(() => setRunning(false), 2600);
+    setStudioRequestId((current) => current + 1);
   };
 
   const totalPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length;
@@ -547,6 +549,16 @@ function PublishingPage({ notify }: { notify: (message: string) => void }) {
           <div className="auto-options"><h4>자동화 옵션</h4><label><span><b>AI 다국어 번역</b><small>한국어, 일본어, 영어, 말레이어</small></span><input type="checkbox" aria-label="AI 다국어 번역 사용" defaultChecked /><i /></label><label><span><b>마진 기반 가격 계산</b><small>목표 마진 28% 적용</small></span><input type="checkbox" aria-label="마진 기반 가격 계산 사용" defaultChecked /><i /></label><label><span><b>검증 통과 시 자동 등록</b><small>신뢰도 97% 이상</small></span><input type="checkbox" aria-label="검증 통과 시 자동 등록 사용" defaultChecked /><i /></label></div>
         </aside>
       </section>
+      <AiProductStudio
+        mainPhoto={mainPhoto}
+        photos={mainPhoto ? [mainPhoto, ...Object.values(slotPhotos), ...extraPhotos] : []}
+        description={description}
+        productUrl={productUrl}
+        requestId={studioRequestId}
+        onRunningChange={setRunning}
+        notify={notify}
+        sampleImage={productImages[0]}
+      />
       <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">TODAY&apos;S QUEUE</span><h3>오늘의 등록 작업</h3></div><button className="ghost-button">작업 이력<ChevronRight size={15} /></button></div>
         <div className="queue-table"><div className="queue-header"><span>상품</span><span>AI 분석</span><span>상세페이지</span><span>채널 등록</span><span>상태</span></div>{[
           { name: "화이트토마토 글루타치온 30정", image: 0, ai: "완료", detail: "다국어 완료", channel: "7 / 7", status: "등록 완료" },
@@ -608,7 +620,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
     { no: "01", title: "관리자 로그인", desc: "ID·PW를 입력해 운영 데이터에 안전하게 접근", view: "overview" as View, icon: LockKeyhole, outcome: "권한별 대시보드 진입" },
     { no: "02", title: "통합 현황 파악", desc: "매출, 주문, 등록, CS와 월간 베스트 상품을 한 화면에서 확인", view: "overview" as View, icon: LayoutDashboard, outcome: "30초 안에 오늘의 우선순위 결정" },
     { no: "03", title: "사진으로 상품 등록", desc: "정면·라벨·바코드 사진을 올려 상품 사실정보 추출", view: "publishing" as View, icon: ImagePlus, outcome: "반복 입력 제거" },
-    { no: "04", title: "AI 자동 가공", desc: "OCR, 상품 매칭, 상세페이지, 4개 언어, 가격·마진 자동 계산", view: "publishing" as View, icon: WandSparkles, outcome: "검증 가능한 등록 초안" },
+    { no: "04", title: "AI 상세·썸네일 제작", desc: "GPT 이미지 분석, gpt-image-2 연출컷, 3종 썸네일과 편집 가능한 상세페이지 생성", view: "publishing" as View, icon: WandSparkles, outcome: "Puck 블록으로 직접 수정 가능한 초안" },
     { no: "05", title: "채널별 마진 검증", desc: "원가·수수료·환율·광고비를 반영해 목표 마진 판매가를 결정", view: "margin" as View, icon: Calculator, outcome: "팔아도 남는 가격 확정" },
     { no: "06", title: "7개 채널 동시 등록", desc: "Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
     { no: "07", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
@@ -617,7 +629,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   ];
   return (
     <div className="page-stack storyboard-page">
-      <section className="storyboard-intro"><div><span className="eyebrow dark"><FileText size={14} /> PRODUCT STORYBOARD · V1.0</span><h2>운영자가 길을 잃지 않는<br /><em>8개의 핵심 장면</em></h2><p>‘오늘 무엇을 봐야 하는가’에서 시작해 등록, 판매, CS, 개선까지<br />하나의 루프로 연결한 멀티채널 커머스 운영 경험입니다.</p></div><div className="oss-card"><span>OPEN SOURCE FOUNDATION</span><strong>shadcn/ui</strong><em>121K+ GitHub Stars</em><p>접근 가능한 컴포넌트 구조와 데이터 대시보드 패턴</p><strong>Lucide</strong><em>24K+ GitHub Stars</em><p>일관된 오픈소스 아이콘 시스템</p></div></section>
+      <section className="storyboard-intro"><div><span className="eyebrow dark"><FileText size={14} /> PRODUCT STORYBOARD · V1.1</span><h2>운영자가 길을 잃지 않는<br /><em>9개의 핵심 장면</em></h2><p>‘오늘 무엇을 봐야 하는가’에서 시작해 등록, AI 제작, 판매, CS, 개선까지<br />하나의 루프로 연결한 멀티채널 커머스 운영 경험입니다.</p></div><div className="oss-card"><span>OPEN SOURCE FOUNDATION</span><strong>shadcn/ui</strong><em>117K+ GitHub Stars</em><p>접근 가능한 컴포넌트 구조와 데이터 대시보드 패턴</p><strong>Puck</strong><em>12.7K+ GitHub Stars</em><p>React·Next.js용 드래그앤드롭 상세페이지 편집기</p><strong>codex-image</strong><em>MIT WORKFLOW</em><p>gpt-image-2 제작 프롬프트와 로컬 OAuth 흐름</p></div></section>
       <section className="story-flow"><div className="flow-line" />{scenes.map((scene, index) => <article className="story-scene" key={scene.no}><div className="scene-number">{scene.no}</div><div className="scene-icon"><scene.icon size={22} /></div><div className="scene-copy"><span>{index < 2 ? "DISCOVER" : index < 5 ? "AUTOMATE" : index < 7 ? "OPERATE" : "GROW"}</span><h3>{scene.title}</h3><p>{scene.desc}</p><em><CheckCircle2 size={14} />{scene.outcome}</em></div><button onClick={() => onNavigate(scene.view)}>화면 열기<ArrowRight size={15} /></button></article>)}</section>
       <section className="panel information-architecture"><div className="panel-heading"><div><span className="panel-kicker">INFORMATION ARCHITECTURE</span><h3>화면 구성과 운영 목적</h3></div></div><div className="ia-grid"><div><span className="ia-icon"><LayoutDashboard size={19} /></span><b>총괄</b><small>핵심 KPI · 베스트 상품 · 채널 건강도 · 긴급 항목</small></div><div><span className="ia-icon"><Package size={19} /></span><b>상품</b><small>상품 원장 · 채널 상태 · 재고 · 판매 성과</small></div><div><span className="ia-icon"><CloudUpload size={19} /></span><b>등록</b><small>촬영 · AI 분석 · 번역 · 가격 · 게시 작업</small></div><div><span className="ia-icon"><Calculator size={19} /></span><b>마진</b><small>원가 · 채널 수수료 · 환율 · 목표 판매가</small></div><div><span className="ia-icon"><ShoppingCart size={19} /></span><b>주문</b><small>통합 주문 · 출고 · 배송 · 중앙 재고</small></div><div><span className="ia-icon"><Headphones size={19} /></span><b>CS</b><small>문의 통합 · 자동 번역 · AI 답변 · SLA</small></div><div><span className="ia-icon"><Store size={19} /></span><b>채널별</b><small>매출 · 주문 · 전환율 · 상품 · 운영 점수</small></div></div></section>
     </div>
