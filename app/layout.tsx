@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
+import { Noto_Sans_KR } from "next/font/google";
 import "@puckeditor/core/puck.css";
 import "./globals.css";
 import "./operations-system.css";
@@ -8,16 +8,9 @@ const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
   : "http://localhost:3000";
 
-const plexSansKr = IBM_Plex_Sans_KR({
+const notoSansKr = Noto_Sans_KR({
   variable: "--font-geist-sans",
-  weight: ["400", "500", "600", "700"],
-  subsets: ["latin"],
-  display: "swap",
-});
-
-const plexMono = IBM_Plex_Mono({
-  variable: "--font-geist-mono",
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700", "800"],
   subsets: ["latin"],
   display: "swap",
 });
@@ -46,7 +39,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ko">
-      <body className={`${plexSansKr.variable} ${plexMono.variable}`}>{children}</body>
+      <body className={notoSansKr.variable}>{children}</body>
     </html>
   );
 }

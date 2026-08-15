@@ -41,8 +41,9 @@ pnpm test
 
 ## 디자인 기반
 
-- IBM Carbon의 2× 그리드·IBM Plex·생산형 데이터 UI 원칙
-- GitHub Primer의 업무 도구형 탐색·상태·접근성 패턴
+- 스마트스토어 판매자센터의 정산·클레임 상태 중심 구성
+- Shopify Home의 오늘 할 일·최근 판매 중심 구성
+- Amazon Seller Central의 검색·필터·데이터 표 중심 구성
 - Lucide 오픈소스 아이콘
-- Geist Sans·Mono 인터페이스 타이포그래피
-- 단일 보라색 강조색과 상태 전용 초록·주황·빨강 체계
+- Noto Sans KR 기반의 익숙한 국내 커머스 타이포그래피
+- 운영 초록, 주문 주황, 정산 포인트와 상태 전용 색 체계

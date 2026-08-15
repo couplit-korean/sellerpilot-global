@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
 import {
   Activity,
   AlertCircle,
@@ -233,30 +232,21 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   return (
     <main className="login-shell">
       <section className="login-brand-panel">
-        <div className="brand-lockup light"><span className="brand-symbol"><Zap size={18} fill="currentColor" /></span><strong>SellerPilot</strong></div>
+        <div className="brand-lockup"><span className="brand-symbol"><Zap size={18} fill="currentColor" /></span><strong>SellerPilot</strong><small>SELLER OFFICE</small></div>
         <div className="login-message">
-          <span className="eyebrow"><Command size={14} /> COMMERCE CONTROL DESK · 2026</span>
-          <h1>한 번의 등록,<br /><em>모든 마켓에.</em></h1>
-          <p>상품 등록부터 판매, 주문, CS까지.<br />흩어진 글로벌 채널을 하나의 운영 화면으로 연결합니다.</p>
-          <div className="login-proof-list">
-            <div><CheckCircle2 size={17} /><span><b>7개 운영 · 2개 준비 채널</b><small>Qoo10 · Shopee · Lazada · 쿠팡 · 11번가 · 스마트스토어 · eBay · Alibaba · 1688</small></span></div>
-            <div><CheckCircle2 size={17} /><span><b>사진 기반 AI 등록</b><small>OCR · 번역 · 가격 · 상세페이지 자동 생성</small></span></div>
-            <div><CheckCircle2 size={17} /><span><b>24시간 운영 현황</b><small>매출 · 재고 · 등록 오류 · CS 즉시 확인</small></span></div>
+          <span className="login-section-label">멀티채널 통합 운영센터</span>
+          <h1>판매 업무를<br />한 화면에서 끝내세요.</h1>
+          <p>주문 확인부터 상품 등록, 재고, 정산, 고객 문의까지<br />각 마켓의 운영 흐름을 하나로 모았습니다.</p>
+          <div className="login-operations-preview">
+            <div className="preview-heading"><b>오늘의 운영 브리핑</b><span>2026.08.16 · 09:42</span></div>
+            <div className="preview-task urgent"><span>01</span><div><b>오늘 발송 마감</b><small>18건 · 오후 2시 이전 처리</small></div><strong>18</strong></div>
+            <div className="preview-task"><span>02</span><div><b>신규 주문 확인</b><small>7개 채널 통합</small></div><strong>46</strong></div>
+            <div className="preview-task"><span>03</span><div><b>답변 대기 문의</b><small>1시간 초과 2건 포함</small></div><strong>7</strong></div>
+            <div className="preview-settlement"><span>오늘 정산 예정</span><b>₩4,820,400</b><em>3개 채널</em></div>
           </div>
+          <div className="login-market-row"><span>연결 채널</span><div><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div><b><i />정상 운영</b></div>
         </div>
-        <div className="login-orbit orbit-a" />
-        <div className="login-orbit orbit-b" />
-        <div className="floating-insight insight-sales">
-          <span className="mini-icon"><TrendingUp size={15} /></span>
-          <div><small>이번 달 매출</small><strong>₩96.6M</strong></div>
-          <em>+17.2%</em>
-        </div>
-        <div className="floating-insight insight-channel">
-          <div className="mini-channels"><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div>
-          <div><small>연결된 채널</small><strong>모두 정상 운영 중</strong></div>
-          <CheckCircle2 size={17} />
-        </div>
-        <footer>SELLERPILOT / MULTI-CHANNEL OPERATIONS DESK</footer>
+        <footer><span>SellerPilot Commerce Operations</span><span>운영문의 02-1234-5678</span></footer>
       </section>
 
       <section className="login-form-panel">
@@ -274,7 +264,6 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
           <label className="remember-row"><input type="checkbox" defaultChecked /><span><Check size={12} /></span>로그인 상태 유지</label>
           {error && <p className="login-error"><AlertCircle size={14} />{error}</p>}
           <button className="login-button" type="submit" disabled={loading}>{loading ? <><LoaderCircle className="spin" size={18} />접속 중...</> : <>대시보드 접속<ArrowRight size={18} /></>}</button>
-          <Link className="showcase-login-link" href="/showcase"><ImagePlus size={16} />상품 디자인 샘플 5종 보기<ArrowRight size={16} /></Link>
           <div className="demo-account"><ShieldCheck size={15} /><span>화면 확인용 계정이 입력되어 있습니다.<br /><b>로그인 버튼을 눌러 바로 둘러보세요.</b></span></div>
         </form>
         <div className="login-support"><HelpCircle size={15} />접속에 문제가 있나요? <button>운영 지원팀 문의</button></div>
@@ -286,8 +275,8 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
 function MetricCard({ label, value, delta, detail, icon: Icon, tone, reverse }: { label: string; value: string; delta: string; detail: string; icon: React.ComponentType<{ size?: number }>; tone: string; reverse?: boolean }) {
   return (
     <article className="metric-card">
-      <div className={`metric-icon ${tone}`}><Icon size={19} /></div>
       <div className="metric-copy"><span>{label}</span><strong>{value}</strong></div>
+      <div className={`metric-icon ${tone}`}><Icon size={18} /></div>
       <div className="metric-foot"><span className={reverse ? "negative" : "positive"}>{reverse ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{delta}</span><small>{detail}</small></div>
     </article>
   );
@@ -314,6 +303,16 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
 
   return (
     <div className="page-stack">
+      <section className="daily-briefing">
+        <div className="briefing-copy"><span>8월 16일 일요일</span><h2>오늘 처리할 업무가 <b>31건</b> 있습니다.</h2><p>발송 마감과 고객 요청을 먼저 확인하세요.</p></div>
+        <div className="briefing-tasks">
+          <button onClick={() => onNavigate("orders")}><span className="task-tone order" /><small>신규 주문</small><b>46</b><em>7개 채널</em></button>
+          <button onClick={() => onNavigate("orders")}><span className="task-tone shipping" /><small>오늘 발송 마감</small><b>18</b><em>14:00 이전</em></button>
+          <button onClick={() => onNavigate("cs")}><span className="task-tone claim" /><small>취소·반품·교환</small><b>6</b><em>신규 3건</em></button>
+          <button onClick={() => onNavigate("publishing")}><span className="task-tone error" /><small>등록 오류</small><b>2</b><em>속성 확인</em></button>
+        </div>
+        <aside className="briefing-settlement"><span>오늘 정산 예정</span><strong>₩4,820,400</strong><small>스마트스토어 · 쿠팡 · 11번가</small><button>정산 내역 보기<ChevronRight size={14} /></button></aside>
+      </section>
       <section className="overview-toolbar">
         <article className="exchange-widget" aria-label="현재 환율">
           <div className="exchange-title"><span><i />LIVE 환율</span><small>KRW 기준 · {rateUpdatedAt === "방금 전" ? "방금 갱신" : `${rateUpdatedAt} 갱신`}</small></div>
@@ -332,7 +331,7 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
 
       <section className="dashboard-main-grid">
         <article className="panel revenue-panel">
-          <div className="panel-heading"><div><span className="panel-kicker">SALES OVERVIEW</span><h3>채널 통합 매출</h3></div><button className="ghost-button">리포트 보기<ChevronRight size={15} /></button></div>
+          <div className="panel-heading"><div><span className="panel-kicker">매출 분석</span><h3>채널 통합 매출</h3></div><button className="ghost-button">리포트 보기<ChevronRight size={15} /></button></div>
           <div className="chart-legend"><span><i className="legend-dot q" />Qoo10 <b>₩22.4M</b></span><span><i className="legend-dot s" />Shopee <b>₩16.8M</b></span><span><i className="legend-dot l" />Lazada <b>₩9.7M</b></span></div>
           <div className="revenue-chart">
             <div className="chart-y-labels"><span>2.0M</span><span>1.5M</span><span>1.0M</span><span>0.5M</span><span>0</span></div>
@@ -350,7 +349,7 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
         </article>
 
         <article className="panel top-ranking-card">
-          <div className="panel-heading"><div><span className="panel-kicker">BEST PRODUCTS · 30 DAYS</span><h3>이번 달 판매 TOP 10</h3></div><span className="rank-crown">1–10</span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">최근 30일 판매량 기준</span><h3>이번 달 판매 TOP 10</h3></div><span className="rank-crown">1–10</span></div>
           <div className="monthly-ranking-list">
             {monthlyTopProducts.map((product, index) => <button className={`ranking-row ${index < 3 ? "podium" : ""}`} key={product.id} onClick={() => onNavigate("products")}>
               <span className="ranking-number">{index + 1}</span>
@@ -366,14 +365,14 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
 
       <section className="dashboard-lower-grid">
         <article className="panel channel-performance">
-          <div className="panel-heading"><div><span className="panel-kicker">CHANNEL HEALTH</span><h3>채널별 운영 현황</h3></div><span className="live-label"><i />LIVE</span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">실시간 연동 상태</span><h3>채널별 운영 현황</h3></div><span className="live-label"><i />정상</span></div>
           <div className="channel-list">
             {channelPerformance.map((channel) => <button className="channel-row" key={channel.code} onClick={() => onNavigate(channel.view)}><ChannelMark code={channel.code} /><div className="channel-name"><strong>{channel.name}</strong><span><i />API 정상 · 최근 동기화 2분 전</span></div><div className="channel-metric"><small>매출</small><b>{channel.revenue}</b></div><div className="channel-metric"><small>주문</small><b>{channel.orders}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.rate}%` }} /></span><b>{channel.delta}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
         <article className="panel automation-status">
-          <div className="panel-heading"><div><span className="panel-kicker">AUTOMATION PIPELINE</span><h3>상품 등록 현황</h3></div><button className="ghost-button" onClick={() => onNavigate("publishing")}>전체 보기<ChevronRight size={15} /></button></div>
+          <div className="panel-heading"><div><span className="panel-kicker">오늘 자동 등록 작업</span><h3>상품 등록 현황</h3></div><button className="ghost-button" onClick={() => onNavigate("publishing")}>전체 보기<ChevronRight size={15} /></button></div>
           <div className="pipeline-summary"><div><strong>338</strong><span>이번 달 처리</span></div><i /><div><strong>96.4%</strong><span>자동 등록 성공률</span></div></div>
           <div className="pipeline-list">
             {[{ label: "AI 분석 중", value: 4, tone: "violet", icon: WandSparkles }, { label: "채널 등록 대기", value: 8, tone: "blue", icon: Upload }, { label: "등록 완료", value: 326, tone: "green", icon: CheckCircle2 }, { label: "확인 필요", value: 5, tone: "red", icon: AlertCircle }].map((item) => <div key={item.label}><span className={`pipeline-icon ${item.tone}`}><item.icon size={16} /></span><span>{item.label}</span><strong>{item.value}<small>건</small></strong></div>)}
@@ -383,7 +382,7 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
 
       <section className="dashboard-bottom-grid">
         <article className="panel alert-panel">
-          <div className="panel-heading"><div><span className="panel-kicker">NEEDS ATTENTION</span><h3>지금 확인할 항목</h3></div><span className="count-chip">7</span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">우선 처리 필요</span><h3>지금 확인할 항목</h3></div><span className="count-chip">7</span></div>
           <div className="alert-list">
             <button onClick={() => onNavigate("products")}><span className="alert-icon danger"><Box size={16} /></span><span><b>재고 10개 이하 상품 3건</b><small>품절 전 재입고가 필요합니다.</small></span><em>상품 보기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("publishing")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>채널 등록 실패 2건</b><small>카테고리 속성 누락을 확인하세요.</small></span><em>오류 보기<ChevronRight size={14} /></em></button>
@@ -391,7 +390,7 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
           </div>
         </article>
         <article className="panel quick-actions">
-          <div className="panel-heading"><div><span className="panel-kicker">QUICK START</span><h3>빠른 실행</h3></div></div>
+          <div className="panel-heading"><div><span className="panel-kicker">자주 쓰는 메뉴</span><h3>빠른 실행</h3></div></div>
           <div className="quick-action-grid"><button onClick={() => onNavigate("publishing")}><span><ImagePlus size={19} /></span><b>새 상품 등록</b><small>사진으로 시작</small></button><button onClick={() => onNavigate("orders")}><span><Truck size={19} /></span><b>출고 처리</b><small>대기 24건</small></button><button onClick={() => onNavigate("cs")}><span><Bot size={19} /></span><b>AI 답변</b><small>대기 7건</small></button></div>
         </article>
       </section>
