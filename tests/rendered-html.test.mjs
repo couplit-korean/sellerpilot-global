@@ -47,6 +47,7 @@ test("contains the complete multi-channel operating storyboard", async () => {
   assert.match(page, /60_000/);
   assert.match(page, /상품 관리/);
   assert.match(page, /상품 등록 센터/);
+  assert.match(page, /마진 계산/);
   assert.match(page, /주문 · 판매/);
   assert.match(page, /CS 통합함/);
   assert.match(page, /Qoo10 Japan/);
@@ -68,6 +69,15 @@ test("contains the complete multi-channel operating storyboard", async () => {
   assert.match(page, /참고 상품 링크/);
   assert.match(page, /AI 상품 분석 시작/);
   assert.match(page, /DEMO_DATA_META\.label/);
+  assert.match(page, /MarginCalculatorPage/);
+  assert.match(styles, /\.margin-workspace/);
+  const marginCalculator = await readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8");
+  assert.match(marginCalculator, /7 CHANNEL COMPARISON/);
+  assert.match(marginCalculator, /손익분기 판매가/);
+  assert.match(marginCalculator, /목표 마진 권장 판매가/);
+  assert.match(marginCalculator, /계산 결과 저장/);
+  assert.match(marginCalculator, /자동 등록 가능/);
+  assert.equal((marginCalculator.match(/key: "/g) ?? []).length, 7);
   assert.match(mockData, /화면 검증용 임시 데이터/);
   assert.match(mockData, /레티놀 퍼밍 나이트 세럼/);
   assert.match(mockData, /Rina Kobayashi/);

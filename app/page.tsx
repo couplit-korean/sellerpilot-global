@@ -13,6 +13,7 @@ import {
   Bot,
   Box,
   CalendarDays,
+  Calculator,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -65,12 +66,14 @@ import {
   Zap,
 } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { MarginCalculatorPage } from "./margin-calculator";
 import { channels, DEMO_DATA_META, orders, productImages, products, tickets, type ChannelKey } from "./mock-data";
 
 type View =
   | "overview"
   | "products"
   | "publishing"
+  | "margin"
   | "orders"
   | "cs"
   | "qoo10"
@@ -89,6 +92,7 @@ const navGroups = [
       { id: "overview" as View, label: "통합 대시보드", icon: LayoutDashboard },
       { id: "products" as View, label: "상품 관리", icon: Package },
       { id: "publishing" as View, label: "상품 등록", icon: CloudUpload, badge: "12" },
+      { id: "margin" as View, label: "마진 계산", icon: Calculator },
       { id: "orders" as View, label: "주문 · 판매", icon: ShoppingCart },
       { id: "cs" as View, label: "CS 통합함", icon: Headphones, badge: "7" },
     ],
@@ -115,6 +119,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   overview: { title: "통합 대시보드", description: "모든 채널의 오늘을 한눈에 확인하세요." },
   products: { title: "상품 관리", description: "채널별 등록 상태, 재고와 판매 성과를 관리합니다." },
   publishing: { title: "상품 등록 센터", description: "대표사진과 다양한 각도 사진, 설명과 링크를 함께 분석해 채널 등록을 자동화합니다." },
+  margin: { title: "마진 계산", description: "원가와 채널 비용을 반영해 순이익과 목표 마진 판매가를 계산합니다." },
   orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
   cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
   qoo10: { title: "Qoo10 Japan", description: "일본 스토어의 상품, 매출, 주문, CS 성과입니다." },
@@ -604,16 +609,17 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
     { no: "02", title: "통합 현황 파악", desc: "매출, 주문, 등록, CS와 월간 베스트 상품을 한 화면에서 확인", view: "overview" as View, icon: LayoutDashboard, outcome: "30초 안에 오늘의 우선순위 결정" },
     { no: "03", title: "사진으로 상품 등록", desc: "정면·라벨·바코드 사진을 올려 상품 사실정보 추출", view: "publishing" as View, icon: ImagePlus, outcome: "반복 입력 제거" },
     { no: "04", title: "AI 자동 가공", desc: "OCR, 상품 매칭, 상세페이지, 4개 언어, 가격·마진 자동 계산", view: "publishing" as View, icon: WandSparkles, outcome: "검증 가능한 등록 초안" },
-    { no: "05", title: "7개 채널 동시 등록", desc: "Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
-    { no: "06", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
-    { no: "07", title: "다국어 CS 응대", desc: "문의 자동번역과 주문정보 기반 AI 답변 초안", view: "cs" as View, icon: Bot, outcome: "응답시간 단축" },
-    { no: "08", title: "성과 개선", desc: "채널·상품별 매출, 전환율, CS와 오류 데이터를 비교", view: "qoo10" as View, icon: TrendingUp, outcome: "잘 팔리는 상품에 집중" },
+    { no: "05", title: "채널별 마진 검증", desc: "원가·수수료·환율·광고비를 반영해 목표 마진 판매가를 결정", view: "margin" as View, icon: Calculator, outcome: "팔아도 남는 가격 확정" },
+    { no: "06", title: "7개 채널 동시 등록", desc: "Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
+    { no: "07", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
+    { no: "08", title: "다국어 CS 응대", desc: "문의 자동번역과 주문정보 기반 AI 답변 초안", view: "cs" as View, icon: Bot, outcome: "응답시간 단축" },
+    { no: "09", title: "성과 개선", desc: "채널·상품별 매출, 전환율, CS와 오류 데이터를 비교", view: "qoo10" as View, icon: TrendingUp, outcome: "잘 팔리는 상품에 집중" },
   ];
   return (
     <div className="page-stack storyboard-page">
       <section className="storyboard-intro"><div><span className="eyebrow dark"><FileText size={14} /> PRODUCT STORYBOARD · V1.0</span><h2>운영자가 길을 잃지 않는<br /><em>8개의 핵심 장면</em></h2><p>‘오늘 무엇을 봐야 하는가’에서 시작해 등록, 판매, CS, 개선까지<br />하나의 루프로 연결한 멀티채널 커머스 운영 경험입니다.</p></div><div className="oss-card"><span>OPEN SOURCE FOUNDATION</span><strong>shadcn/ui</strong><em>121K+ GitHub Stars</em><p>접근 가능한 컴포넌트 구조와 데이터 대시보드 패턴</p><strong>Lucide</strong><em>24K+ GitHub Stars</em><p>일관된 오픈소스 아이콘 시스템</p></div></section>
       <section className="story-flow"><div className="flow-line" />{scenes.map((scene, index) => <article className="story-scene" key={scene.no}><div className="scene-number">{scene.no}</div><div className="scene-icon"><scene.icon size={22} /></div><div className="scene-copy"><span>{index < 2 ? "DISCOVER" : index < 5 ? "AUTOMATE" : index < 7 ? "OPERATE" : "GROW"}</span><h3>{scene.title}</h3><p>{scene.desc}</p><em><CheckCircle2 size={14} />{scene.outcome}</em></div><button onClick={() => onNavigate(scene.view)}>화면 열기<ArrowRight size={15} /></button></article>)}</section>
-      <section className="panel information-architecture"><div className="panel-heading"><div><span className="panel-kicker">INFORMATION ARCHITECTURE</span><h3>화면 구성과 운영 목적</h3></div></div><div className="ia-grid"><div><span className="ia-icon"><LayoutDashboard size={19} /></span><b>총괄</b><small>핵심 KPI · 베스트 상품 · 채널 건강도 · 긴급 항목</small></div><div><span className="ia-icon"><Package size={19} /></span><b>상품</b><small>상품 원장 · 채널 상태 · 재고 · 판매 성과</small></div><div><span className="ia-icon"><CloudUpload size={19} /></span><b>등록</b><small>촬영 · AI 분석 · 번역 · 가격 · 게시 작업</small></div><div><span className="ia-icon"><ShoppingCart size={19} /></span><b>주문</b><small>통합 주문 · 출고 · 배송 · 중앙 재고</small></div><div><span className="ia-icon"><Headphones size={19} /></span><b>CS</b><small>문의 통합 · 자동 번역 · AI 답변 · SLA</small></div><div><span className="ia-icon"><Store size={19} /></span><b>채널별</b><small>매출 · 주문 · 전환율 · 상품 · 운영 점수</small></div></div></section>
+      <section className="panel information-architecture"><div className="panel-heading"><div><span className="panel-kicker">INFORMATION ARCHITECTURE</span><h3>화면 구성과 운영 목적</h3></div></div><div className="ia-grid"><div><span className="ia-icon"><LayoutDashboard size={19} /></span><b>총괄</b><small>핵심 KPI · 베스트 상품 · 채널 건강도 · 긴급 항목</small></div><div><span className="ia-icon"><Package size={19} /></span><b>상품</b><small>상품 원장 · 채널 상태 · 재고 · 판매 성과</small></div><div><span className="ia-icon"><CloudUpload size={19} /></span><b>등록</b><small>촬영 · AI 분석 · 번역 · 가격 · 게시 작업</small></div><div><span className="ia-icon"><Calculator size={19} /></span><b>마진</b><small>원가 · 채널 수수료 · 환율 · 목표 판매가</small></div><div><span className="ia-icon"><ShoppingCart size={19} /></span><b>주문</b><small>통합 주문 · 출고 · 배송 · 중앙 재고</small></div><div><span className="ia-icon"><Headphones size={19} /></span><b>CS</b><small>문의 통합 · 자동 번역 · AI 답변 · SLA</small></div><div><span className="ia-icon"><Store size={19} /></span><b>채널별</b><small>매출 · 주문 · 전환율 · 상품 · 운영 점수</small></div></div></section>
     </div>
   );
 }
@@ -641,6 +647,7 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
     if (view === "overview") return <OverviewPage onNavigate={navigate} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} />;
     if (view === "publishing") return <PublishingPage notify={notify} />;
+    if (view === "margin") return <MarginCalculatorPage notify={notify} />;
     if (view === "orders") return <OrdersPage />;
     if (view === "cs") return <CsPage notify={notify} />;
     if (view === "storyboard") return <StoryboardPage onNavigate={navigate} />;
@@ -669,7 +676,7 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
         <div className="app-content">{content}</div>
       </section>
 
-      {searchOpen && <div className="command-overlay" role="button" tabIndex={0} aria-label="검색창 닫기" onClick={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape" || event.key === "Enter") setSearchOpen(false); }}><div className="command-dialog" role="dialog" aria-modal="true" aria-label="통합 검색"><div className="command-input"><Search size={18} /><input placeholder="상품명, 주문번호, 고객명 검색" /><button aria-label="검색창 닫기" onClick={() => setSearchOpen(false)}><X size={17} /></button></div><span className="command-label">빠른 이동</span>{navGroups[0].items.slice(0, 5).map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button>; })}</div></div>}
+      {searchOpen && <div className="command-overlay" role="button" tabIndex={0} aria-label="검색창 닫기" onClick={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape" || event.key === "Enter") setSearchOpen(false); }}><div className="command-dialog" role="dialog" aria-modal="true" aria-label="통합 검색"><div className="command-input"><Search size={18} /><input placeholder="상품명, 주문번호, 고객명 검색" /><button aria-label="검색창 닫기" onClick={() => setSearchOpen(false)}><X size={17} /></button></div><span className="command-label">빠른 이동</span>{navGroups[0].items.map((item) => { const Icon = "icon" in item ? item.icon : null; return Icon ? <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button> : null; })}</div></div>}
       {toast && <div className="toast"><CheckCircle2 size={18} /><span>{toast}</span><button onClick={() => setToast("")}><X size={14} /></button></div>}
     </main>
   );
