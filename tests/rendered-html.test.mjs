@@ -30,11 +30,12 @@ test("server-renders the SellerPilot login experience", async () => {
 });
 
 test("contains the complete multi-channel operating storyboard", async () => {
-  const [page, layout, packageJson, storyboard] = await Promise.all([
+  const [page, layout, packageJson, storyboard, mockData] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../docs/멀티채널_커머스_운영센터_스토리보드.md", import.meta.url), "utf8"),
+    readFile(new URL("../app/mock-data.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /^"use client";/);
@@ -50,6 +51,11 @@ test("contains the complete multi-channel operating storyboard", async () => {
   assert.match(page, /서비스 스토리보드/);
   assert.match(page, /AI가 주문 정보와 정책을 반영한 답변 초안/);
   assert.match(page, /신뢰도 97% 이상/);
+  assert.match(page, /DEMO_DATA_META\.label/);
+  assert.match(mockData, /화면 검증용 임시 데이터/);
+  assert.match(mockData, /레티놀 퍼밍 나이트 세럼/);
+  assert.match(mockData, /Rina Kobayashi/);
+  assert.match(mockData, /CS-2828/);
   assert.match(layout, /og-commerce\.png/);
   assert.match(storyboard, /핵심 사용자 여정/);
   assert.match(storyboard, /단계별 구축 범위/);

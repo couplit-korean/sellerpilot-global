@@ -169,6 +169,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .topbar-title p { margin: 4px 0 0; color: var(--muted); font-size: 9px; }
 .mobile-menu-button { display: none; width: 36px; height: 36px; place-items: center; border: 1px solid var(--line); border-radius: 8px; color: #677187; background: white; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; }
+.demo-data-badge { display: inline-flex; min-height: 31px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid #dcdef8; border-radius: 8px; color: var(--primary); background: #f5f5ff; white-space: nowrap; }
+.demo-data-badge b { font-size: 8px; }
+.demo-data-badge small { color: #858ca3; font-family: var(--font-geist-mono), monospace; font-size: 7px; }
 .global-search { display: flex; width: 228px; height: 36px; align-items: center; gap: 8px; padding: 0 9px; border: 1px solid var(--line); border-radius: 9px; color: #9aa2b1; background: #f8f9fb; text-align: left; font-size: 9px; }
 .global-search span { flex: 1; }
 .global-search kbd { display: inline-flex; align-items: center; gap: 2px; padding: 3px 5px; border: 1px solid #dfe2e9; border-radius: 5px; color: #777f91; background: white; font-family: var(--font-geist-mono), monospace; font-size: 7px; }
@@ -549,6 +552,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .mobile-menu-button { display: grid; }
   .global-search { width: 36px; justify-content: center; padding: 0; }
   .global-search span, .global-search kbd { display: none; }
+  .demo-data-badge small { display: none; }
   .summary-strip { flex-wrap: wrap; }
   .summary-strip > div { min-width: 25%; padding: 3px 10px; }
   .summary-strip .primary-button { width: 100%; margin-top: 12px; }
@@ -611,6 +615,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .mobile-brand { margin-bottom: 52px; }
   .login-card-heading h2 { font-size: 23px; }
   .topbar-actions { gap: 3px; }
+  .demo-data-badge { display: none; }
   .metric-grid, .order-summary-grid, .cs-summary { grid-template-columns: 1fr; }
   .overview-toolbar { flex-direction: column; }
   .revenue-panel { padding: 14px; }
