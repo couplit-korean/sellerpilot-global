@@ -13,22 +13,22 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "셀러파일럿 | 글로벌 상품 등록 자동화",
-  description: "상품 사진에서 동일상품 가격 비교, 마진 계산, 글로벌 마켓 등록 초안까지.",
+  title: "SellerPilot | 멀티채널 커머스 운영센터",
+  description: "Qoo10, Shopee, Lazada의 상품 등록, 매출, 주문, 재고와 CS를 한눈에 관리하는 AI 커머스 운영센터.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
   },
   openGraph: {
-    title: "셀러파일럿",
-    description: "사진 한 장에서 3개 마켓 등록 초안까지",
-    images: [{ url: "/og.png", width: 1200, height: 630, alt: "셀러파일럿 상품 등록 자동화" }],
+    title: "SellerPilot | 멀티채널 커머스 운영센터",
+    description: "한 번의 등록, 모든 마켓에. 상품 등록부터 판매와 CS까지 하나의 운영 화면으로.",
+    images: [{ url: "/og-commerce.png", width: 1200, height: 630, alt: "SellerPilot 멀티채널 커머스 운영센터" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "셀러파일럿",
-    description: "사진 한 장에서 3개 마켓 등록 초안까지",
-    images: ["/og.png"],
+    title: "SellerPilot | 멀티채널 커머스 운영센터",
+    description: "한 번의 등록, 모든 마켓에.",
+    images: ["/og-commerce.png"],
   },
 };
 
