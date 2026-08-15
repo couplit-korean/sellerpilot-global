@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, BadgeCheck, ImageIcon, Layers3, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, BadgeCheck, ImageIcon, Layers3 } from "lucide-react";
 import { showcaseProducts } from "../showcase-products";
 import { ShowcaseThumbnail } from "./showcase-thumbnail";
 
@@ -30,7 +30,7 @@ export default function ShowcasePage() {
 
       <section className="showcase-intro">
         <div>
-          <span><Sparkles size={15} /> AI PRODUCT DESIGN SHOWCASE</span>
+          <span><Layers3 size={15} /> PRODUCT DESIGN CATALOG</span>
           <h1>상품 사진에서 시작된<br /><em>5개의 판매 페이지</em></h1>
           <p>샘플 상품 정보를 바탕으로 자동 제작한 채널용 썸네일과 모바일 우선 상세페이지입니다. 각 카드를 눌러 독립된 상세페이지 링크를 확인할 수 있습니다.</p>
         </div>

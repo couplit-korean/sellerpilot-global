@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, BadgeCheck, ExternalLink, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, BadgeCheck, ExternalLink, Layers3 } from "lucide-react";
 import { notFound } from "next/navigation";
 import { ProductDetailRender } from "../../product-detail-puck";
 import { getShowcaseProduct, showcaseProducts } from "../../showcase-products";
@@ -48,7 +48,7 @@ export default async function ShowcaseDetailPage({ params }: { params: Promise<{
 
       <section className="showcase-detail-summary">
         <div>
-          <span><Sparkles size={14} /> AI GENERATED PRODUCT PAGE</span>
+          <span><Layers3 size={14} /> GENERATED PRODUCT PAGE</span>
           <small>{product.sku} · 샘플 데이터</small>
           <h1>{product.name}</h1>
           <p>{product.result.product.oneLine}</p>

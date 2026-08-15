@@ -41,7 +41,8 @@ pnpm test
 
 ## 디자인 기반
 
-- shadcn/ui의 접근 가능한 컴포넌트 구성과 데이터 대시보드 패턴
+- IBM Carbon의 2× 그리드·IBM Plex·생산형 데이터 UI 원칙
+- GitHub Primer의 업무 도구형 탐색·상태·접근성 패턴
 - Lucide 오픈소스 아이콘
 - Geist Sans·Mono 인터페이스 타이포그래피
 - 단일 보라색 강조색과 상태 전용 초록·주황·빨강 체계

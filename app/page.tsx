@@ -203,7 +203,7 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`status-badge ${tone}`}><i />{status}</span>;
 }
 
-function SparkLine({ points, color = "#5b5cf0", fill = false }: { points: string; color?: string; fill?: boolean }) {
+function SparkLine({ points, color = "#0f62fe", fill = false }: { points: string; color?: string; fill?: boolean }) {
   return (
     <svg className="sparkline" viewBox="0 0 120 42" aria-hidden="true" preserveAspectRatio="none">
       {fill && <polygon points={`0,42 ${points} 120,42`} fill={color} opacity=".08" />}
@@ -235,7 +235,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
       <section className="login-brand-panel">
         <div className="brand-lockup light"><span className="brand-symbol"><Zap size={18} fill="currentColor" /></span><strong>SellerPilot</strong></div>
         <div className="login-message">
-          <span className="eyebrow"><Sparkles size={14} /> COMMERCE OPERATIONS · 2026</span>
+          <span className="eyebrow"><Command size={14} /> COMMERCE CONTROL DESK · 2026</span>
           <h1>한 번의 등록,<br /><em>모든 마켓에.</em></h1>
           <p>상품 등록부터 판매, 주문, CS까지.<br />흩어진 글로벌 채널을 하나의 운영 화면으로 연결합니다.</p>
           <div className="login-proof-list">
@@ -274,7 +274,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
           <label className="remember-row"><input type="checkbox" defaultChecked /><span><Check size={12} /></span>로그인 상태 유지</label>
           {error && <p className="login-error"><AlertCircle size={14} />{error}</p>}
           <button className="login-button" type="submit" disabled={loading}>{loading ? <><LoaderCircle className="spin" size={18} />접속 중...</> : <>대시보드 접속<ArrowRight size={18} /></>}</button>
-          <Link className="showcase-login-link" href="/showcase"><Sparkles size={16} />AI 상품 디자인 샘플 5종 보기<ArrowRight size={16} /></Link>
+          <Link className="showcase-login-link" href="/showcase"><ImagePlus size={16} />상품 디자인 샘플 5종 보기<ArrowRight size={16} /></Link>
           <div className="demo-account"><ShieldCheck size={15} /><span>화면 확인용 계정이 입력되어 있습니다.<br /><b>로그인 버튼을 눌러 바로 둘러보세요.</b></span></div>
         </form>
         <div className="login-support"><HelpCircle size={15} />접속에 문제가 있나요? <button>운영 지원팀 문의</button></div>
@@ -339,10 +339,10 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
             <div className="chart-stage">
               <div className="chart-grid-lines"><i /><i /><i /><i /><i /></div>
               <svg viewBox="0 0 120 42" preserveAspectRatio="none" role="img" aria-label="최근 매출 추이">
-                <defs><linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#5b5cf0" stopOpacity=".22" /><stop offset="100%" stopColor="#5b5cf0" stopOpacity="0" /></linearGradient></defs>
+                <defs><linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0f62fe" stopOpacity=".18" /><stop offset="100%" stopColor="#0f62fe" stopOpacity="0" /></linearGradient></defs>
                 <polygon points={`0,42 ${chartPoints} 120,42`} fill="url(#areaGradient)" />
-                <polyline points={chartPoints} fill="none" stroke="#5b5cf0" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                <circle cx="110" cy={period === "7일" ? "4" : period === "90일" ? "13" : "4"} r="1.8" fill="#fff" stroke="#5b5cf0" strokeWidth="1.2" />
+                <polyline points={chartPoints} fill="none" stroke="#0f62fe" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx="110" cy={period === "7일" ? "4" : period === "90일" ? "13" : "4"} r="1.8" fill="#fff" stroke="#0f62fe" strokeWidth="1.2" />
               </svg>
               <div className="chart-x-labels"><span>7/17</span><span>7/24</span><span>7/31</span><span>8/7</span><span>8/15</span></div>
             </div>
@@ -637,7 +637,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   ];
   return (
     <div className="page-stack storyboard-page">
-      <section className="storyboard-intro"><div><span className="eyebrow dark"><FileText size={14} /> PRODUCT STORYBOARD · V1.1</span><h2>운영자가 길을 잃지 않는<br /><em>9개의 핵심 장면</em></h2><p>‘오늘 무엇을 봐야 하는가’에서 시작해 등록, AI 제작, 판매, CS, 개선까지<br />하나의 루프로 연결한 멀티채널 커머스 운영 경험입니다.</p></div><div className="oss-card"><span>OPEN SOURCE FOUNDATION</span><strong>shadcn/ui</strong><em>117K+ GitHub Stars</em><p>접근 가능한 컴포넌트 구조와 데이터 대시보드 패턴</p><strong>Puck</strong><em>12.7K+ GitHub Stars</em><p>React·Next.js용 드래그앤드롭 상세페이지 편집기</p><strong>codex-image</strong><em>MIT WORKFLOW</em><p>gpt-image-2 제작 프롬프트와 로컬 OAuth 흐름</p></div></section>
+      <section className="storyboard-intro"><div><span className="eyebrow dark"><FileText size={14} /> PRODUCT STORYBOARD · V1.2</span><h2>운영자가 길을 잃지 않는<br /><em>9개의 핵심 장면</em></h2><p>‘오늘 무엇을 봐야 하는가’에서 시작해 등록, AI 제작, 판매, CS, 개선까지<br />하나의 루프로 연결한 멀티채널 커머스 운영 경험입니다.</p></div><div className="oss-card"><span>OPEN SOURCE FOUNDATION</span><strong>IBM Carbon</strong><em>APACHE 2.0 · 2× GRID</em><p>IBM Plex 기반의 생산형 정보 구조, 키라인과 데이터 밀도</p><strong>GitHub Primer</strong><em>MIT · TOOL PATTERNS</em><p>업무 도구에 맞는 탐색, 상태, 표와 접근성 패턴</p><strong>Puck</strong><em>MIT · PAGE EDITOR</em><p>React·Next.js용 드래그앤드롭 상세페이지 편집기</p></div></section>
       <section className="story-flow"><div className="flow-line" />{scenes.map((scene, index) => <article className="story-scene" key={scene.no}><div className="scene-number">{scene.no}</div><div className="scene-icon"><scene.icon size={22} /></div><div className="scene-copy"><span>{index < 2 ? "DISCOVER" : index < 5 ? "AUTOMATE" : index < 7 ? "OPERATE" : "GROW"}</span><h3>{scene.title}</h3><p>{scene.desc}</p><em><CheckCircle2 size={14} />{scene.outcome}</em></div><button onClick={() => onNavigate(scene.view)}>화면 열기<ArrowRight size={15} /></button></article>)}</section>
       <section className="panel information-architecture"><div className="panel-heading"><div><span className="panel-kicker">INFORMATION ARCHITECTURE</span><h3>화면 구성과 운영 목적</h3></div></div><div className="ia-grid"><div><span className="ia-icon"><LayoutDashboard size={19} /></span><b>총괄</b><small>핵심 KPI · 베스트 상품 · 채널 건강도 · 긴급 항목</small></div><div><span className="ia-icon"><Package size={19} /></span><b>상품</b><small>상품 원장 · 채널 상태 · 재고 · 판매 성과</small></div><div><span className="ia-icon"><CloudUpload size={19} /></span><b>등록</b><small>촬영 · AI 분석 · 번역 · 가격 · 게시 작업</small></div><div><span className="ia-icon"><Calculator size={19} /></span><b>마진</b><small>원가 · 채널 수수료 · 환율 · 목표 판매가</small></div><div><span className="ia-icon"><ShoppingCart size={19} /></span><b>주문</b><small>통합 주문 · 출고 · 배송 · 중앙 재고</small></div><div><span className="ia-icon"><Headphones size={19} /></span><b>CS</b><small>문의 통합 · 자동 번역 · AI 답변 · SLA</small></div><div><span className="ia-icon"><Store size={19} /></span><b>채널별</b><small>매출 · 주문 · 전환율 · 상품 · 운영 점수</small></div></div></section>
     </div>
@@ -684,7 +684,7 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
           const isDisabled = "disabled" in item && item.disabled;
           return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : "badge" in item && item.badge ? <em>{item.badge}</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
-        <div className="sidebar-insight"><div><Sparkles size={15} /><span>AI 자동화</span><em>ON</em></div><p>오늘 <b>46건</b>의 반복 작업을<br />자동으로 처리했습니다.</p><span><i /></span><small>시스템 정상 운영 중</small></div>
+        <div className="sidebar-insight"><div><Activity size={15} /><span>자동화 처리량</span><em>ON</em></div><p>오늘 <b>46건</b>의 반복 작업을<br />자동으로 처리했습니다.</p><span><i /></span><small>시스템 정상 운영 중</small></div>
         <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말 · 가이드</span></button><button><Settings size={17} /><span>설정</span></button><button onClick={onLogout}><LogOut size={17} /><span>로그아웃</span></button></div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}

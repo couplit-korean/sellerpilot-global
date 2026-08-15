@@ -9,7 +9,6 @@ import {
   Percent,
   RefreshCw,
   Save,
-  Sparkles,
   Target,
   Trash2,
   TrendingUp,
@@ -221,7 +220,7 @@ export function MarginCalculatorPage({ notify }: { notify: (message: string) => 
     <div className="page-stack margin-page">
       <section className="margin-hero">
         <div className="margin-hero-copy">
-          <span className="eyebrow"><Sparkles size={14} /> PROFIT PRICING ENGINE</span>
+          <span className="eyebrow"><Calculator size={14} /> PROFIT PRICING ENGINE</span>
           <h2>원가를 입력하면 7개 채널의<br /><em>팔아도 남는 가격</em>을 찾습니다.</h2>
           <p>수수료·환율·광고비·반품 충당금을 한 번에 반영해 자동 등록 전 마진 하한을 검증합니다.</p>
         </div>
