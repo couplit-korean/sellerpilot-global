@@ -9,7 +9,6 @@ import {
   ArrowRight,
   ArrowUpRight,
   BadgeCheck,
-  BarChart3,
   Bell,
   Bot,
   Box,
@@ -56,7 +55,6 @@ import {
   ShoppingCart,
   Sparkles,
   Store,
-  Tags,
   TrendingUp,
   Trash2,
   Truck,
@@ -78,6 +76,10 @@ type View =
   | "qoo10"
   | "shopee"
   | "lazada"
+  | "coupang"
+  | "elevenst"
+  | "smartstore"
+  | "ebay"
   | "storyboard";
 
 const navGroups = [
@@ -97,6 +99,10 @@ const navGroups = [
       { id: "qoo10" as View, label: "Qoo10 Japan", channel: "Q" },
       { id: "shopee" as View, label: "Shopee SG", channel: "S" },
       { id: "lazada" as View, label: "Lazada MY", channel: "L" },
+      { id: "coupang" as View, label: "쿠팡", channel: "C" },
+      { id: "elevenst" as View, label: "11번가", channel: "11" },
+      { id: "smartstore" as View, label: "네이버 스마트스토어", channel: "N" },
+      { id: "ebay" as View, label: "eBay Global", channel: "E" },
     ],
   },
   {
@@ -114,12 +120,48 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   qoo10: { title: "Qoo10 Japan", description: "일본 스토어의 상품, 매출, 주문, CS 성과입니다." },
   shopee: { title: "Shopee Singapore", description: "싱가포르 스토어의 상품, 매출, 주문, CS 성과입니다." },
   lazada: { title: "Lazada Malaysia", description: "말레이시아 스토어의 상품, 매출, 주문, CS 성과입니다." },
+  coupang: { title: "쿠팡", description: "쿠팡 스토어의 상품, 매출, 주문, CS 성과입니다." },
+  elevenst: { title: "11번가", description: "11번가 스토어의 상품, 매출, 주문, CS 성과입니다." },
+  smartstore: { title: "네이버 스마트스토어", description: "스마트스토어의 상품, 매출, 주문, CS 성과입니다." },
+  ebay: { title: "eBay Global", description: "글로벌 스토어의 상품, 매출, 주문, CS 성과입니다." },
   storyboard: { title: "서비스 스토리보드", description: "로그인부터 자동 등록, 판매, CS까지의 전체 사용자 흐름입니다." },
 };
 
+const channelPerformance = [
+  { code: "Q", name: "Qoo10 Japan", revenue: "₩22.4M", orders: "584", rate: 92, delta: "+18.6%", view: "qoo10" as View },
+  { code: "S", name: "Shopee Singapore", revenue: "₩16.8M", orders: "438", rate: 71, delta: "+12.1%", view: "shopee" as View },
+  { code: "L", name: "Lazada Malaysia", revenue: "₩9.7M", orders: "262", rate: 46, delta: "+8.4%", view: "lazada" as View },
+  { code: "C", name: "쿠팡", revenue: "₩18.6M", orders: "512", rate: 78, delta: "+15.3%", view: "coupang" as View },
+  { code: "11", name: "11번가", revenue: "₩7.4M", orders: "198", rate: 39, delta: "+6.7%", view: "elevenst" as View },
+  { code: "N", name: "네이버 스마트스토어", revenue: "₩14.9M", orders: "406", rate: 65, delta: "+11.8%", view: "smartstore" as View },
+  { code: "E", name: "eBay Global", revenue: "₩6.8M", orders: "144", rate: 33, delta: "+5.9%", view: "ebay" as View },
+];
+
+const ticketChannelCodes: Record<string, string> = {
+  Qoo10: "Q",
+  Shopee: "S",
+  Lazada: "L",
+  쿠팡: "C",
+  "11번가": "11",
+  "네이버 스마트스토어": "N",
+  eBay: "E",
+};
+
+const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
+const monthlyTopProducts = [...products].sort((a, b) => b.sales - a.sales).slice(0, 10);
+const channelFactors: Record<ChannelKey, { sales: string; orders: string; products: string; cs: string; rate: number }> = {
+  qoo10: { sales: "₩22.4M", orders: "584", products: "326", cs: "96.2%", rate: 84 },
+  shopee: { sales: "₩16.8M", orders: "438", products: "284", cs: "93.8%", rate: 69 },
+  lazada: { sales: "₩9.7M", orders: "262", products: "219", cs: "92.6%", rate: 53 },
+  coupang: { sales: "₩18.6M", orders: "512", products: "318", cs: "95.4%", rate: 79 },
+  elevenst: { sales: "₩7.4M", orders: "198", products: "241", cs: "91.8%", rate: 61 },
+  smartstore: { sales: "₩14.9M", orders: "406", products: "304", cs: "97.1%", rate: 88 },
+  ebay: { sales: "₩6.8M", orders: "144", products: "172", cs: "90.9%", rate: 58 },
+};
+
 function ChannelMark({ code, size = "md" }: { code: string; size?: "sm" | "md" | "lg" }) {
-  const config = code === "Q" ? channels.qoo10 : code === "S" ? channels.shopee : channels.lazada;
-  return <span className={`channel-mark ${size}`} style={{ "--channel-color": config.color } as React.CSSProperties}>{code}</span>;
+  const config = channelByCode.get(code) ?? channels.qoo10;
+  return <span className={`channel-mark ${size} ${code.length > 1 ? "wide" : ""}`} style={{ "--channel-color": config.color } as React.CSSProperties}>{code}</span>;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -163,7 +205,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
           <h1>한 번의 등록,<br /><em>모든 마켓에.</em></h1>
           <p>상품 등록부터 판매, 주문, CS까지.<br />흩어진 글로벌 채널을 하나의 운영 화면으로 연결합니다.</p>
           <div className="login-proof-list">
-            <div><CheckCircle2 size={17} /><span><b>3개 글로벌 채널</b><small>Qoo10 · Shopee · Lazada 실시간 통합</small></span></div>
+            <div><CheckCircle2 size={17} /><span><b>7개 국내외 판매 채널</b><small>Qoo10 · Shopee · Lazada · 쿠팡 · 11번가 · 스마트스토어 · eBay</small></span></div>
             <div><CheckCircle2 size={17} /><span><b>사진 기반 AI 등록</b><small>OCR · 번역 · 가격 · 상세페이지 자동 생성</small></span></div>
             <div><CheckCircle2 size={17} /><span><b>24시간 운영 현황</b><small>매출 · 재고 · 등록 오류 · CS 즉시 확인</small></span></div>
           </div>
@@ -172,11 +214,11 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
         <div className="login-orbit orbit-b" />
         <div className="floating-insight insight-sales">
           <span className="mini-icon"><TrendingUp size={15} /></span>
-          <div><small>이번 달 매출</small><strong>₩48.9M</strong></div>
+          <div><small>이번 달 매출</small><strong>₩96.6M</strong></div>
           <em>+17.2%</em>
         </div>
         <div className="floating-insight insight-channel">
-          <div className="mini-channels"><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /></div>
+          <div className="mini-channels"><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div>
           <div><small>연결된 채널</small><strong>모두 정상 운영 중</strong></div>
           <CheckCircle2 size={17} />
         </div>
@@ -227,8 +269,8 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
       </section>
 
       <section className="metric-grid">
-        <MetricCard label="총 매출" value={period === "7일" ? "₩13.8M" : period === "90일" ? "₩126.4M" : "₩48.9M"} delta="17.2%" detail="이전 기간 대비" icon={CircleDollarSign} tone="violet" />
-        <MetricCard label="주문" value={period === "7일" ? "364" : period === "90일" ? "3,492" : "1,284"} delta="12.8%" detail="취소율 1.8%" icon={ShoppingBag} tone="blue" />
+        <MetricCard label="총 매출" value={period === "7일" ? "₩24.8M" : period === "90일" ? "₩258.4M" : "₩96.6M"} delta="17.2%" detail="이전 기간 대비" icon={CircleDollarSign} tone="violet" />
+        <MetricCard label="주문" value={period === "7일" ? "706" : period === "90일" ? "7,114" : "2,544"} delta="12.8%" detail="취소율 1.8%" icon={ShoppingBag} tone="blue" />
         <MetricCard label="등록 완료" value="326" delta="8.4%" detail="등록 대기 12건" icon={PackageCheck} tone="green" />
         <MetricCard label="CS 응답률" value="94.6%" delta="2.1%" detail="평균 18분" icon={MessageCircleMore} tone="orange" />
       </section>
@@ -252,12 +294,18 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
           </div>
         </article>
 
-        <article className="panel top-product-card">
-          <div className="panel-heading"><div><span className="panel-kicker">BEST PRODUCT · 30 DAYS</span><h3>이번 달 판매 1위</h3></div><span className="rank-crown">#1</span></div>
-          <div className="top-product-visual"><Image src={productImages[0]} alt="화이트토마토 글루타치온" fill sizes="320px" /></div>
-          <div className="top-product-copy"><div><span>이너뷰티 · 건강식품</span><h4>화이트토마토<br />글루타치온 30정</h4></div><div className="product-channel-row"><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><span>3개 채널 판매중</span></div></div>
-          <div className="top-product-stats"><div><small>판매량</small><strong>382<em>개</em></strong></div><div><small>매출</small><strong>₩12.8<em>M</em></strong></div><div><small>전월 대비</small><strong className="up">+26.4<em>%</em></strong></div></div>
-          <button className="full-ghost-button" onClick={() => onNavigate("products")}>상품 상세 보기<ArrowRight size={15} /></button>
+        <article className="panel top-ranking-card">
+          <div className="panel-heading"><div><span className="panel-kicker">BEST PRODUCTS · 30 DAYS</span><h3>이번 달 판매 TOP 10</h3></div><span className="rank-crown">1–10</span></div>
+          <div className="monthly-ranking-list">
+            {monthlyTopProducts.map((product, index) => <button className={`ranking-row ${index < 3 ? "podium" : ""}`} key={product.id} onClick={() => onNavigate("products")}>
+              <span className="ranking-number">{index + 1}</span>
+              <span className="ranking-thumb"><Image src={product.image} alt="" fill sizes="38px" /></span>
+              <span className="ranking-product"><b>{product.name}</b><small>{product.channels.length}개 채널 판매중</small></span>
+              <span className="ranking-channels">{product.channels.slice(0, 3).map((code) => <ChannelMark key={code} code={code} size="sm" />)}{product.channels.length > 3 && <em>+{product.channels.length - 3}</em>}</span>
+              <span className="ranking-sales"><b>{product.sales.toLocaleString()}개</b><small>{product.revenue}</small></span>
+            </button>)}
+          </div>
+          <button className="full-ghost-button" onClick={() => onNavigate("products")}>전체 상품 성과 보기<ArrowRight size={15} /></button>
         </article>
       </section>
 
@@ -265,11 +313,7 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
         <article className="panel channel-performance">
           <div className="panel-heading"><div><span className="panel-kicker">CHANNEL HEALTH</span><h3>채널별 운영 현황</h3></div><span className="live-label"><i />LIVE</span></div>
           <div className="channel-list">
-            {[
-              { code: "Q", name: "Qoo10 Japan", revenue: "₩22.4M", orders: "584", rate: 92, delta: "+18.6%", view: "qoo10" as View },
-              { code: "S", name: "Shopee Singapore", revenue: "₩16.8M", orders: "438", rate: 71, delta: "+12.1%", view: "shopee" as View },
-              { code: "L", name: "Lazada Malaysia", revenue: "₩9.7M", orders: "262", rate: 46, delta: "+8.4%", view: "lazada" as View },
-            ].map((channel) => <button className="channel-row" key={channel.code} onClick={() => onNavigate(channel.view)}><ChannelMark code={channel.code} /><div className="channel-name"><strong>{channel.name}</strong><span><i />API 정상 · 최근 동기화 2분 전</span></div><div className="channel-metric"><small>매출</small><b>{channel.revenue}</b></div><div className="channel-metric"><small>주문</small><b>{channel.orders}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.rate}%` }} /></span><b>{channel.delta}</b></div><ChevronRight size={16} /></button>)}
+            {channelPerformance.map((channel) => <button className="channel-row" key={channel.code} onClick={() => onNavigate(channel.view)}><ChannelMark code={channel.code} /><div className="channel-name"><strong>{channel.name}</strong><span><i />API 정상 · 최근 동기화 2분 전</span></div><div className="channel-metric"><small>매출</small><b>{channel.revenue}</b></div><div className="channel-metric"><small>주문</small><b>{channel.orders}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.rate}%` }} /></span><b>{channel.delta}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -411,7 +455,7 @@ function PublishingPage({ notify }: { notify: (message: string) => void }) {
     <div className="page-stack publishing-page">
       <section className="publishing-hero">
         <div><span className="eyebrow dark"><Sparkles size={14} /> AI PRODUCT PUBLISHER</span><h2>사진은 충분히,<br /><em>등록은 한 번에.</em></h2><p>대표사진과 여러 각도의 옵션 사진, 상품 설명과 참고 링크를 함께 분석해<br />더 정확한 상품 정보와 채널별 등록 초안을 생성합니다.</p></div>
-        <div className="automation-flow-mini"><span><ImagePlus size={17} />다각도 사진</span><ArrowRight size={15} /><span><Bot size={17} />통합 분석</span><ArrowRight size={15} /><span><Languages size={17} />4개 언어</span><ArrowRight size={15} /><span><Globe2 size={17} />3개 채널</span></div>
+        <div className="automation-flow-mini"><span><ImagePlus size={17} />다각도 사진</span><ArrowRight size={15} /><span><Bot size={17} />통합 분석</span><ArrowRight size={15} /><span><Languages size={17} />다국어</span><ArrowRight size={15} /><span><Globe2 size={17} />7개 채널</span></div>
       </section>
       <section className="publishing-layout">
         <article className="panel upload-panel">
@@ -454,14 +498,14 @@ function PublishingPage({ notify }: { notify: (message: string) => void }) {
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">PUBLISH TO</span><h3>등록할 채널</h3></div><Settings size={16} /></div>
           <div className="publish-channel-list">{Object.values(channels).map((channel) => <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} 스토어 · API 정상</small></span><input type="checkbox" defaultChecked /><i><Check size={12} /></i></label>)}</div>
-          <div className="auto-options"><h4>자동화 옵션</h4><label><span><b>AI 다국어 번역</b><small>한국어, 일본어, 영어, 말레이어</small></span><input type="checkbox" defaultChecked /><i /></label><label><span><b>마진 기반 가격 계산</b><small>목표 마진 28% 적용</small></span><input type="checkbox" defaultChecked /><i /></label><label><span><b>검증 통과 시 자동 등록</b><small>신뢰도 97% 이상</small></span><input type="checkbox" defaultChecked /><i /></label></div>
+          <div className="auto-options"><h4>자동화 옵션</h4><label><span><b>AI 다국어 번역</b><small>한국어, 일본어, 영어, 말레이어</small></span><input type="checkbox" aria-label="AI 다국어 번역 사용" defaultChecked /><i /></label><label><span><b>마진 기반 가격 계산</b><small>목표 마진 28% 적용</small></span><input type="checkbox" aria-label="마진 기반 가격 계산 사용" defaultChecked /><i /></label><label><span><b>검증 통과 시 자동 등록</b><small>신뢰도 97% 이상</small></span><input type="checkbox" aria-label="검증 통과 시 자동 등록 사용" defaultChecked /><i /></label></div>
         </aside>
       </section>
-      <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">TODAY'S QUEUE</span><h3>오늘의 등록 작업</h3></div><button className="ghost-button">작업 이력<ChevronRight size={15} /></button></div>
+      <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">TODAY&apos;S QUEUE</span><h3>오늘의 등록 작업</h3></div><button className="ghost-button">작업 이력<ChevronRight size={15} /></button></div>
         <div className="queue-table"><div className="queue-header"><span>상품</span><span>AI 분석</span><span>상세페이지</span><span>채널 등록</span><span>상태</span></div>{[
-          { name: "화이트토마토 글루타치온 30정", image: 0, ai: "완료", detail: "4개 언어 완료", channel: "3 / 3", status: "등록 완료" },
-          { name: "저분자 피쉬콜라겐 60포", image: 1, ai: "완료", detail: "4개 언어 완료", channel: "2 / 3", status: "등록 중" },
-          { name: "콜드브루 콜라겐 젤리", image: 2, ai: "검토 필요", detail: "대기", channel: "0 / 3", status: "확인 필요" },
+          { name: "화이트토마토 글루타치온 30정", image: 0, ai: "완료", detail: "다국어 완료", channel: "7 / 7", status: "등록 완료" },
+          { name: "저분자 피쉬콜라겐 60포", image: 1, ai: "완료", detail: "다국어 완료", channel: "4 / 7", status: "등록 중" },
+          { name: "콜드브루 콜라겐 젤리", image: 2, ai: "검토 필요", detail: "대기", channel: "0 / 7", status: "확인 필요" },
         ].map((item) => <div className="queue-row" key={item.name}><span className="queue-product"><span className="tiny-thumb"><Image src={productImages[item.image]} alt="" fill sizes="38px" /></span><b>{item.name}</b></span><span><StatusBadge status={item.ai} /></span><span>{item.detail}</span><span><b>{item.channel}</b></span><span><StatusBadge status={item.status} /></span></div>)}</div>
       </section>
     </div>
@@ -489,7 +533,7 @@ function CsPage({ notify }: { notify: (message: string) => void }) {
     <div className="page-stack cs-page">
       <section className="cs-summary"><div><span className="metric-icon violet"><Inbox size={18} /></span><span><small>답변 대기</small><strong>7</strong></span></div><div><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>평균 첫 응답</small><strong>18분</strong></span></div><div><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>24시간 해결률</small><strong>94.6%</strong></span></div><div><span className="metric-icon blue"><Bot size={18} /></span><span><small>AI 초안 사용률</small><strong>81%</strong></span></div></section>
       <section className="cs-workspace panel">
-        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input placeholder="문의 검색" /></div><button className="icon-only-button"><Filter size={16} /></button></div><div className="ticket-tabs"><button className="active">미답변 <span>7</span></button><button>처리 중</button><button>완료</button></div>{tickets.map((ticket) => <button key={ticket.id} className={`ticket-item ${selected.id === ticket.id ? "active" : ""}`} onClick={() => { setSelected(ticket); setReply(""); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticket.channel === "Qoo10" ? "Q" : ticket.channel === "Shopee" ? "S" : "L"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.status} /></div></button>)}</aside>
+        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input placeholder="문의 검색" /></div><button className="icon-only-button"><Filter size={16} /></button></div><div className="ticket-tabs"><button className="active">미답변 <span>7</span></button><button>처리 중</button><button>완료</button></div>{tickets.map((ticket) => <button key={ticket.id} className={`ticket-item ${selected.id === ticket.id ? "active" : ""}`} onClick={() => { setSelected(ticket); setReply(""); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.status} /></div></button>)}</aside>
         <article className="conversation"><header><div><button className="mobile-back"><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div><button className="filter-button">처리 중<ChevronDown size={14} /></button><button className="icon-only-button"><MoreHorizontal size={18} /></button></div></header>
           <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>{orders[0].product}</b></span><em>{orders[0].id}<ChevronRight size={14} /></em></div><div className="message-date"><span>오늘</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.subject === "복용 방법 문의" ? "Can I take two tablets at once after a meal? Please let me know the recommended daily intake." : selected.subject === "옵션 변경 요청" ? "I selected the wrong option. Could you change it before shipping?" : "주문한 지 3일이 지났는데 아직 송장 조회가 되지 않아요. 언제부터 확인할 수 있나요?"}</p><span>자동 번역됨 · 원문 보기</span></div></div></div>
           <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />AI가 주문 정보와 정책을 반영한 답변 초안을 만들었습니다.</span><button onClick={() => setReply("고객님의 주문과 배송 현황을 확인한 뒤 신속히 안내드리겠습니다.")}><RefreshCw size={13} />다시 생성</button></div><textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="답변을 입력하세요." /><div><span><button><Languages size={15} />일본어로 전송<ChevronDown size={13} /></button><button><FileText size={15} />템플릿</button></span><button className="send-button" disabled={!reply} onClick={sendReply}>답변 전송<Send size={15} /></button></div></footer>
@@ -502,7 +546,7 @@ function CsPage({ notify }: { notify: (message: string) => void }) {
 
 function ChannelPage({ channelKey }: { channelKey: ChannelKey }) {
   const channel = channels[channelKey];
-  const factors = channelKey === "qoo10" ? { sales: "₩22.4M", orders: "584", products: "326", cs: "96.2%", rate: 84 } : channelKey === "shopee" ? { sales: "₩16.8M", orders: "438", products: "284", cs: "93.8%", rate: 69 } : { sales: "₩9.7M", orders: "262", products: "219", cs: "92.6%", rate: 53 };
+  const factors = channelFactors[channelKey];
   return (
     <div className="page-stack">
       <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em><i />API 정상 · 2분 전 동기화</em></span></div><div><button className="filter-button"><RefreshCw size={15} />지금 동기화</button><button className="primary-button"><Store size={15} />스토어 보기</button></div></section>
@@ -519,7 +563,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
     { no: "02", title: "통합 현황 파악", desc: "매출, 주문, 등록, CS와 월간 베스트 상품을 한 화면에서 확인", view: "overview" as View, icon: LayoutDashboard, outcome: "30초 안에 오늘의 우선순위 결정" },
     { no: "03", title: "사진으로 상품 등록", desc: "정면·라벨·바코드 사진을 올려 상품 사실정보 추출", view: "publishing" as View, icon: ImagePlus, outcome: "반복 입력 제거" },
     { no: "04", title: "AI 자동 가공", desc: "OCR, 상품 매칭, 상세페이지, 4개 언어, 가격·마진 자동 계산", view: "publishing" as View, icon: WandSparkles, outcome: "검증 가능한 등록 초안" },
-    { no: "05", title: "채널 동시 등록", desc: "Qoo10, Shopee, Lazada 규격으로 변환해 자동 게시", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
+    { no: "05", title: "7개 채널 동시 등록", desc: "Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
     { no: "06", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
     { no: "07", title: "다국어 CS 응대", desc: "문의 자동번역과 주문정보 기반 AI 답변 초안", view: "cs" as View, icon: Bot, outcome: "응답시간 단축" },
     { no: "08", title: "성과 개선", desc: "채널·상품별 매출, 전환율, CS와 오류 데이터를 비교", view: "qoo10" as View, icon: TrendingUp, outcome: "잘 팔리는 상품에 집중" },
@@ -584,7 +628,7 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
         <div className="app-content">{content}</div>
       </section>
 
-      {searchOpen && <div className="command-overlay" onClick={() => setSearchOpen(false)}><div className="command-dialog" onClick={(event) => event.stopPropagation()}><div className="command-input"><Search size={18} /><input autoFocus placeholder="상품명, 주문번호, 고객명 검색" /><button onClick={() => setSearchOpen(false)}><X size={17} /></button></div><span className="command-label">빠른 이동</span>{navGroups[0].items.slice(0, 5).map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button>; })}</div></div>}
+      {searchOpen && <div className="command-overlay" role="button" tabIndex={0} aria-label="검색창 닫기" onClick={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape" || event.key === "Enter") setSearchOpen(false); }}><div className="command-dialog" role="dialog" aria-modal="true" aria-label="통합 검색"><div className="command-input"><Search size={18} /><input placeholder="상품명, 주문번호, 고객명 검색" /><button aria-label="검색창 닫기" onClick={() => setSearchOpen(false)}><X size={17} /></button></div><span className="command-label">빠른 이동</span>{navGroups[0].items.slice(0, 5).map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button>; })}</div></div>}
       {toast && <div className="toast"><CheckCircle2 size={18} /><span>{toast}</span><button onClick={() => setToast("")}><X size={14} /></button></div>}
     </main>
   );

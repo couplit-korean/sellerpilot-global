@@ -40,7 +40,7 @@ test("contains the complete multi-channel operating storyboard", async () => {
 
   assert.match(page, /^"use client";/);
   assert.match(page, /통합 대시보드/);
-  assert.match(page, /이번 달 판매 1위/);
+  assert.match(page, /이번 달 판매 TOP 10/);
   assert.match(page, /상품 관리/);
   assert.match(page, /상품 등록 센터/);
   assert.match(page, /주문 · 판매/);
@@ -48,6 +48,10 @@ test("contains the complete multi-channel operating storyboard", async () => {
   assert.match(page, /Qoo10 Japan/);
   assert.match(page, /Shopee Singapore/);
   assert.match(page, /Lazada Malaysia/);
+  assert.match(page, /쿠팡/);
+  assert.match(page, /11번가/);
+  assert.match(page, /네이버 스마트스토어/);
+  assert.match(page, /eBay Global/);
   assert.match(page, /서비스 스토리보드/);
   assert.match(page, /AI가 주문 정보와 정책을 반영한 답변 초안/);
   assert.match(page, /신뢰도 97% 이상/);
@@ -64,6 +68,9 @@ test("contains the complete multi-channel operating storyboard", async () => {
   assert.match(mockData, /레티놀 퍼밍 나이트 세럼/);
   assert.match(mockData, /Rina Kobayashi/);
   assert.match(mockData, /CS-2828/);
+  assert.match(mockData, /콜드브루 콜라겐 젤리 14포/);
+  assert.match(mockData, /제주 비자림 클렌징 밤/);
+  assert.equal((mockData.match(/sales:/g) ?? []).length, 10);
   assert.match(layout, /og-commerce\.png/);
   assert.match(storyboard, /핵심 사용자 여정/);
   assert.match(storyboard, /단계별 구축 범위/);

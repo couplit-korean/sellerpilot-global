@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "SellerPilot | 멀티채널 커머스 운영센터",
-  description: "Qoo10, Shopee, Lazada의 상품 등록, 매출, 주문, 재고와 CS를 한눈에 관리하는 AI 커머스 운영센터.",
+  description: "Qoo10, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay의 상품 등록, 매출, 주문, 재고와 CS를 한눈에 관리하는 AI 커머스 운영센터.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
