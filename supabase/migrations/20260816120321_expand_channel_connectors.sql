@@ -63,7 +63,7 @@ begin
     from sellerpilot_private.channel_credentials c
    where c.channel = p_channel and c.environment = p_environment;
 
-  v_fingerprint := upper(substr(encode(digest(p_secret_payload::text, 'sha256'), 'hex'), 1, 12));
+  v_fingerprint := upper(substr(encode(extensions.digest(p_secret_payload::text, 'sha256'), 'hex'), 1, 12));
   select vault.create_secret(
     p_secret_payload::text,
     format('sellerpilot_%s_%s_v%s_%s', p_channel, p_environment, v_version, v_id),
@@ -144,7 +144,7 @@ begin
     from sellerpilot_private.channel_credentials c
    where c.channel = 'ebay' and c.environment = v_environment;
 
-  v_fingerprint := upper(substr(encode(digest(p_secret_payload::text, 'sha256'), 'hex'), 1, 12));
+  v_fingerprint := upper(substr(encode(extensions.digest(p_secret_payload::text, 'sha256'), 'hex'), 1, 12));
   select vault.create_secret(
     p_secret_payload::text,
     format('sellerpilot_ebay_%s_v%s_%s', v_environment, v_version, v_id),

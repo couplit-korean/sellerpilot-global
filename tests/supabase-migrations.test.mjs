@@ -73,7 +73,8 @@ language sql
 immutable
 as $$ select string_to_array(path, '/') $$;
 
-create or replace function public.digest(value text, algorithm text)
+create schema if not exists extensions;
+create or replace function extensions.digest(value text, algorithm text)
 returns bytea
 language sql
 immutable
@@ -115,6 +116,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260816133601_add_shopee_connector.sql",
       "20260816145605_channel_category_catalog.sql",
       "20260817001500_live_operations_snapshot.sql",
+      "20260817003000_fix_pgcrypto_schema.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
