@@ -30,7 +30,7 @@ test("server-renders the SellerPilot login experience", async () => {
 });
 
 test("contains the complete multi-channel operating storyboard and 175-item acceptance baseline", async () => {
-  const [page, layout, styles, packageJson, storyboard, mockData, acceptanceData, acceptancePage, exchangeRoute] = await Promise.all([
+  const [page, layout, styles, packageJson, storyboard, mockData, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -40,6 +40,9 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
     readFile(new URL("../app/acceptance-checklist-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/acceptance-checklist.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchange-rates/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/channel-readiness-data.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/channel-readiness.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../docs/판매채널_실계정_UI_필드_매핑.md", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /^"use client";/);
@@ -65,6 +68,10 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /eBay Global/);
   assert.match(page, /서비스 스토리보드/);
   assert.match(page, /개발 · 실검수/);
+  assert.match(page, /채널 연동 준비/);
+  assert.match(page, /판매자 콘솔 확인 · QAPI 미검증/);
+  assert.match(page, /개발자 앱 Online · 라이브 푸시 OFF/);
+  assert.match(page, /개발자 앱 Online · 웹훅 미구성/);
   assert.match(page, /AI가 주문 정보와 정책을 반영한 답변 초안/);
   assert.match(page, /신뢰도 97% 이상/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
@@ -108,6 +115,18 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(acceptanceData, /10,000건 동시주문 시뮬레이션/);
   assert.match(acceptancePage, /PPT 31장 기반 · 175개 인수 항목/);
   assert.match(acceptancePage, /화면 완성과 실제 작동을/);
+  assert.match(readinessPage, /로그인됐다는 사실과/);
+  assert.match(readinessPage, /QSM 개별 상품등록 필드 맵/);
+  assert.match(readinessPage, /API E2E 통과/);
+  assert.match(readinessData, /Get Live Push OFF/);
+  assert.match(readinessData, /Access 30일 · Refresh 180일/);
+  assert.match(readinessData, /대표 1장, 추가 최대 50장, 동영상 최대 1개/);
+  assert.match(channelMapping, /Qoo10 QSM 실제 상품등록 필드/);
+  assert.match(channelMapping, /Shopee Open Platform 준비도/);
+  assert.match(channelMapping, /Lazada Open Platform 준비도/);
+  for (const protectedValue of ["137451", "137571", "k931103", "MY4NNISR2D", "SGYEZULX"]) {
+    assert.doesNotMatch(`${readinessData}\n${channelMapping}`, new RegExp(protectedValue, "i"));
+  }
   assert.match(packageJson, /lucide-react/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });

@@ -69,6 +69,7 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AiProductStudio } from "./ai-product-studio";
 import { AcceptanceChecklistPage } from "./acceptance-checklist";
+import { ChannelReadinessPage } from "./channel-readiness";
 import { MarginCalculatorPage } from "./margin-calculator";
 import { channels, DEMO_DATA_META, orders, productImages, products, tickets, type ChannelKey } from "./mock-data";
 
@@ -79,6 +80,7 @@ type View =
   | "margin"
   | "orders"
   | "cs"
+  | "readiness"
   | "qoo10"
   | "shopee"
   | "lazada"
@@ -101,6 +103,7 @@ const navGroups = [
       { id: "margin" as View, label: "마진 계산", icon: Calculator },
       { id: "orders" as View, label: "주문 · 판매", icon: ShoppingCart },
       { id: "cs" as View, label: "CS 통합함", icon: Headphones, badge: "7" },
+      { id: "readiness" as View, label: "채널 연동 준비", icon: ShieldCheck },
     ],
   },
   {
@@ -133,6 +136,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   margin: { title: "마진 계산", description: "원가와 채널 비용을 반영해 순이익과 목표 마진 판매가를 계산합니다." },
   orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
   cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
+  readiness: { title: "채널 연동 준비", description: "실제 판매자·개발자 콘솔 상태와 API 연결 차단 요인을 증거 기준으로 관리합니다." },
   qoo10: { title: "Qoo10 Japan", description: "일본 스토어의 상품, 매출, 주문, CS 성과입니다." },
   shopee: { title: "Shopee Singapore", description: "싱가포르 스토어의 상품, 매출, 주문, CS 성과입니다." },
   lazada: { title: "Lazada Malaysia", description: "말레이시아 스토어의 상품, 매출, 주문, CS 성과입니다." },
@@ -613,12 +617,17 @@ function CsPage({ notify }: { notify: (message: string) => void }) {
   );
 }
 
-function ChannelPage({ channelKey }: { channelKey: ChannelKey }) {
+function ChannelPage({ channelKey, onNavigate }: { channelKey: ChannelKey; onNavigate: (view: View) => void }) {
   const channel = channels[channelKey];
   const factors = channelFactors[channelKey];
+  const observedStatus: Partial<Record<ChannelKey, string>> = {
+    qoo10: "판매자 콘솔 확인 · QAPI 미검증",
+    shopee: "개발자 앱 Online · 라이브 푸시 OFF",
+    lazada: "개발자 앱 Online · 웹훅 미구성",
+  };
   return (
     <div className="page-stack">
-      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em><i />실계정 미연결 · 샘플 화면</em></span></div><div><button className="filter-button" disabled><RefreshCw size={15} />연동 후 동기화</button><button className="primary-button" disabled><Store size={15} />연동 후 스토어 보기</button></div></section>
+      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em><i />{observedStatus[channelKey] ?? "실계정 미연결 · 샘플 화면"}</em></span></div><div><button className="filter-button" onClick={() => onNavigate("readiness")}><ShieldCheck size={15} />연동 준비도</button><button className="primary-button" disabled><RefreshCw size={15} />API 연결 후 동기화</button></div></section>
       <section className="metric-grid channel-metrics"><MetricCard label="30일 매출" value={factors.sales} delta="18.6%" detail="이전 30일 대비" icon={CircleDollarSign} tone="violet" /><MetricCard label="주문" value={factors.orders} delta="12.8%" detail="취소 11건" icon={ShoppingBag} tone="blue" /><MetricCard label="판매 상품" value={factors.products} delta="14" detail="이번 달 신규" icon={Package} tone="green" /><MetricCard label="CS 응답률" value={factors.cs} delta="2.1%" detail="평균 16분" icon={Headphones} tone="orange" /></section>
       <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">PERFORMANCE</span><h3>매출 · 주문 추이</h3></div><button className="filter-button">최근 30일<ChevronDown size={14} /></button></div><div className="large-spark"><div><span><i style={{ background: channel.color }} />매출</span><span><i className="orders" />주문</span></div><SparkLine points="0,36 10,34 20,29 30,31 40,23 50,26 60,18 70,20 80,12 90,16 100,8 110,12 120,4" color={channel.color} fill /></div><div className="chart-stat-row"><div><small>평균 객단가</small><b>₩38,420</b></div><div><small>전환율</small><b>4.82%</b></div><div><small>광고 ROAS</small><b>468%</b></div><div><small>반품률</small><b>1.4%</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">STORE SCORE</span><h3>스토어 건강도</h3></div><span className="score-grade">A</span></div><div className="health-score"><strong>{factors.rate}<small>/100</small></strong><div><span><i style={{ width: `${factors.rate}%`, background: channel.color }} /></span><small>상위 12% 수준</small></div></div>{[{ label: "상품 정보 완성도", score: "98%" }, { label: "배송 SLA 준수", score: "94%" }, { label: "CS 응답 품질", score: "96%" }, { label: "재고 안정성", score: "82%" }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
       <section className="panel data-panel"><div className="panel-heading table-title"><div><span className="panel-kicker">TOP PRODUCTS</span><h3>채널 내 판매 상품</h3></div><button className="ghost-button">전체 상품<ChevronRight size={15} /></button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>순위</th><th>상품</th><th>판매량</th><th>매출</th><th>전환율</th><th>재고</th><th>상태</th></tr></thead><tbody>{products.slice(0, 4).map((product, index) => <tr key={product.id}><td><b className="rank-number">{String(index + 1).padStart(2, "0")}</b></td><td><div className="product-cell"><div className="product-thumb"><Image src={product.image} alt="" fill sizes="52px" /></div><span><b>{product.name}</b><small>{product.sku}</small></span></div></td><td><b>{product.sales}</b>개</td><td><b>{product.revenue}</b></td><td><b>{(5.8 - index * .6).toFixed(1)}%</b></td><td><b>{product.stock}</b>개</td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div></section>
@@ -673,9 +682,10 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
     if (view === "margin") return <MarginCalculatorPage notify={notify} />;
     if (view === "orders") return <OrdersPage />;
     if (view === "cs") return <CsPage notify={notify} />;
+    if (view === "readiness") return <ChannelReadinessPage />;
     if (view === "acceptance") return <AcceptanceChecklistPage />;
     if (view === "storyboard") return <StoryboardPage onNavigate={navigate} />;
-    return <ChannelPage channelKey={view as ChannelKey} />;
+    return <ChannelPage channelKey={view as ChannelKey} onNavigate={navigate} />;
   }, [view]);
 
   return (

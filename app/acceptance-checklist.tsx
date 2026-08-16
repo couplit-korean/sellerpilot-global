@@ -73,7 +73,7 @@ export function AcceptanceChecklistPage() {
         </div>
         <aside>
           <ShieldCheck size={21} />
-          <div><strong>현재 단계 · 운영 프로토타입</strong><span>실채널 인증·중앙 DB·백그라운드 작업 연결 전</span></div>
+          <div><strong>현재 단계 · 운영 프로토타입</strong><span>3개 실계정 콘솔 확인 · 서버 API·중앙 DB·백그라운드 작업 연결 전</span></div>
         </aside>
       </section>
 
@@ -86,9 +86,9 @@ export function AcceptanceChecklistPage() {
       </section>
 
       <section className="acceptance-gates">
-        <div><span>GATE 0</span><b>범위·계정·테스트상품</b><em>준비 중</em></div>
+        <div><span>GATE 0</span><b>범위·계정·테스트상품</b><em>계정 일부 확보</em></div>
         <i />
-        <div><span>GATE 1</span><b>3채널 API PoC</b><em>대기</em></div>
+        <div><span>GATE 1</span><b>3채널 API PoC</b><em>읽기·쓰기 미검증</em></div>
         <i />
         <div><span>PHASE 1–3</span><b>운영코어·콘텐츠·매칭</b><em>개발 예정</em></div>
         <i />
@@ -138,4 +138,3 @@ export function AcceptanceChecklistPage() {
     </div>
   );
 }
-

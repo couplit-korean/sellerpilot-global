@@ -81,6 +81,7 @@ const partialDevelopmentIds = new Set([
   "D-02", "D-05", "D-06", "D-08",
   "E-02", "E-03", "E-05",
   "F-01", "F-03", "F-04", "F-07", "F-08", "F-09", "F-10", "F-12",
+  "G-04", "G-12", "G-13", "G-14", "G-15", "G-16",
   "H-01", "H-02", "H-03", "H-04", "H-05", "H-06", "H-07", "H-08", "H-09", "H-10", "H-12",
   "I-01", "I-05", "I-07", "I-08", "I-09", "I-13",
   "J-01", "J-02", "J-03", "J-04", "J-05", "J-06",
@@ -93,7 +94,7 @@ const partialDevelopmentIds = new Set([
 // 사용자 결정, 판매자 계정, 공식 API 권한, 법무·규제 데이터 또는 외부 서비스
 // 승인이 없으면 실검수를 시작할 수 없는 항목입니다.
 const externalVerificationIds = new Set([
-  ...Array.from({ length: 10 }, (_, index) => `A-${String(index + 1).padStart(2, "0")}`),
+  "A-01", "A-02", "A-03", "A-04", "A-05", "A-08", "A-09", "A-10",
   "D-04", "D-12", "E-03", "E-04", "E-06",
   ...Array.from({ length: 16 }, (_, index) => `G-${String(index + 1).padStart(2, "0")}`),
   "H-01", "H-04", "H-05", "H-06", "H-12",
@@ -132,4 +133,3 @@ export const acceptanceSummary = {
     external: acceptanceItems.filter((item) => item.verification === "external").length,
   },
 };
-
