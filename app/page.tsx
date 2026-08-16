@@ -21,6 +21,7 @@ import {
   CircleDollarSign,
   Clock3,
   CloudUpload,
+  ClipboardCheck,
   Command,
   Eye,
   EyeOff,
@@ -65,8 +66,9 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AiProductStudio } from "./ai-product-studio";
+import { AcceptanceChecklistPage } from "./acceptance-checklist";
 import { MarginCalculatorPage } from "./margin-calculator";
 import { channels, DEMO_DATA_META, orders, productImages, products, tickets, type ChannelKey } from "./mock-data";
 
@@ -86,6 +88,7 @@ type View =
   | "ebay"
   | "alibaba"
   | "one688"
+  | "acceptance"
   | "storyboard";
 
 const navGroups = [
@@ -116,7 +119,10 @@ const navGroups = [
   },
   {
     label: "기획",
-    items: [{ id: "storyboard" as View, label: "서비스 스토리보드", icon: FileText }],
+    items: [
+      { id: "acceptance" as View, label: "개발 · 실검수", icon: ClipboardCheck },
+      { id: "storyboard" as View, label: "서비스 스토리보드", icon: FileText },
+    ],
   },
 ];
 
@@ -136,6 +142,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   ebay: { title: "eBay Global", description: "글로벌 스토어의 상품, 매출, 주문, CS 성과입니다." },
   alibaba: { title: "Alibaba.com", description: "글로벌 B2B 채널 연동을 준비하고 있습니다." },
   one688: { title: "1688.com", description: "중국 내수 B2B 채널 연동을 준비하고 있습니다." },
+  acceptance: { title: "개발 · 실검수", description: "PPT 기반 175개 요구사항의 개발 상태와 실제 작동 증거를 분리해 관리합니다." },
   storyboard: { title: "서비스 스토리보드", description: "로그인부터 자동 등록, 판매, CS까지의 전체 사용자 흐름입니다." },
 };
 
@@ -177,20 +184,6 @@ const initialExchangeRates = [
   { code: "SGD", unit: 1, value: 1072.65, change: 0.08 },
   { code: "MYR", unit: 1, value: 325.84, change: -0.11 },
 ];
-
-const rateTimeFormatter = new Intl.DateTimeFormat("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
-
-function updateDemoExchangeRates(current: typeof initialExchangeRates) {
-  return current.map((rate, index) => {
-    const movementScale = rate.code === "JPY" ? 0.65 : rate.code === "MYR" ? 0.28 : 1.35;
-    const movement = (Math.random() - 0.48) * movementScale;
-    return {
-      ...rate,
-      value: Math.max(0, Number((rate.value + movement).toFixed(2))),
-      change: Number((rate.change + (index % 2 === 0 ? 0.01 : -0.01)).toFixed(2)),
-    };
-  });
-}
 
 function ChannelMark({ code, size = "md" }: { code: string; size?: "sm" | "md" | "lg" }) {
   const config = channelByCode.get(code) ?? channels.qoo10;
@@ -244,7 +237,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
             <div className="preview-task"><span>03</span><div><b>답변 대기 문의</b><small>1시간 초과 2건 포함</small></div><strong>7</strong></div>
             <div className="preview-settlement"><span>오늘 정산 예정</span><b>₩4,820,400</b><em>3개 채널</em></div>
           </div>
-          <div className="login-market-row"><span>연결 채널</span><div><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div><b><i />정상 운영</b></div>
+          <div className="login-market-row"><span>지원 채널</span><div><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div><b><i />API 연결 준비</b></div>
         </div>
         <footer><span>SellerPilot Commerce Operations</span><span>운영문의 02-1234-5678</span></footer>
       </section>
@@ -285,21 +278,32 @@ function MetricCard({ label, value, delta, detail, icon: Icon, tone, reverse }: 
 function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   const [period, setPeriod] = useState("30일");
   const [exchangeRates, setExchangeRates] = useState(initialExchangeRates);
-  const [rateUpdatedAt, setRateUpdatedAt] = useState("방금 전");
+  const [rateUpdatedAt, setRateUpdatedAt] = useState("화면 기준값");
+  const [rateSource, setRateSource] = useState("실데이터 확인 중");
   const chartPoints = period === "7일" ? "0,31 18,29 36,33 54,20 72,24 90,14 108,18 120,7" : period === "90일" ? "0,35 12,33 24,28 36,31 48,22 60,25 72,15 84,18 96,10 108,13 120,5" : "0,36 10,32 20,34 30,27 40,29 50,20 60,23 70,14 80,18 90,9 100,13 110,4 120,7";
 
-  const refreshExchangeRates = () => {
-    setExchangeRates(updateDemoExchangeRates);
-    setRateUpdatedAt(rateTimeFormatter.format(new Date()));
-  };
+  const refreshExchangeRates = useCallback(async () => {
+    setRateSource("기준 환율 확인 중");
+    try {
+      const response = await fetch("/api/exchange-rates", { cache: "no-store" });
+      if (!response.ok) throw new Error("exchange-rate request failed");
+      const payload = await response.json() as { source: string; asOf: string; rates: typeof initialExchangeRates };
+      setExchangeRates(payload.rates);
+      setRateUpdatedAt(payload.asOf);
+      setRateSource(`${payload.source} · 일일 기준`);
+    } catch {
+      setRateSource("연결 실패 · 화면 기준값 유지");
+    }
+  }, []);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      setExchangeRates(updateDemoExchangeRates);
-      setRateUpdatedAt(rateTimeFormatter.format(new Date()));
-    }, 60_000);
-    return () => window.clearInterval(interval);
-  }, []);
+    const initialRefresh = window.setTimeout(() => void refreshExchangeRates(), 0);
+    const interval = window.setInterval(() => void refreshExchangeRates(), 3_600_000);
+    return () => {
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(interval);
+    };
+  }, [refreshExchangeRates]);
 
   return (
     <div className="page-stack">
@@ -315,7 +319,7 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
       </section>
       <section className="overview-toolbar">
         <article className="exchange-widget" aria-label="현재 환율">
-          <div className="exchange-title"><span><i />LIVE 환율</span><small>KRW 기준 · {rateUpdatedAt === "방금 전" ? "방금 갱신" : `${rateUpdatedAt} 갱신`}</small></div>
+          <div className="exchange-title"><span><i />기준 환율</span><small>KRW 기준 · {rateUpdatedAt}</small><small>{rateSource}</small></div>
           <div className="exchange-rate-list">{exchangeRates.map((rate) => <div className="exchange-rate" key={rate.code}><small>{rate.code} {rate.unit}</small><strong>₩{rate.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong><em className={rate.change >= 0 ? "up" : "down"}>{rate.change >= 0 ? "▲" : "▼"} {Math.abs(rate.change).toFixed(2)}%</em></div>)}</div>
           <button type="button" className="exchange-refresh" aria-label="환율 새로고침" title="환율 새로고침" onClick={refreshExchangeRates}><RefreshCw size={14} /></button>
         </article>
@@ -365,9 +369,9 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
 
       <section className="dashboard-lower-grid">
         <article className="panel channel-performance">
-          <div className="panel-heading"><div><span className="panel-kicker">실시간 연동 상태</span><h3>채널별 운영 현황</h3></div><span className="live-label"><i />정상</span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">연동 준비 상태</span><h3>채널별 운영 미리보기</h3></div><span className="live-label"><i />샘플</span></div>
           <div className="channel-list">
-            {channelPerformance.map((channel) => <button className="channel-row" key={channel.code} onClick={() => onNavigate(channel.view)}><ChannelMark code={channel.code} /><div className="channel-name"><strong>{channel.name}</strong><span><i />API 정상 · 최근 동기화 2분 전</span></div><div className="channel-metric"><small>매출</small><b>{channel.revenue}</b></div><div className="channel-metric"><small>주문</small><b>{channel.orders}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.rate}%` }} /></span><b>{channel.delta}</b></div><ChevronRight size={16} /></button>)}
+            {channelPerformance.map((channel) => <button className="channel-row" key={channel.code} onClick={() => onNavigate(channel.view)}><ChannelMark code={channel.code} /><div className="channel-name"><strong>{channel.name}</strong><span><i />실계정 미연결 · 화면 검증용 데이터</span></div><div className="channel-metric"><small>샘플 매출</small><b>{channel.revenue}</b></div><div className="channel-metric"><small>샘플 주문</small><b>{channel.orders}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.rate}%` }} /></span><b>{channel.delta}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -552,7 +556,7 @@ function PublishingPage({ notify }: { notify: (message: string) => void }) {
           <div className="analysis-start-bar"><span><b>{totalPhotoCount}장</b>의 상품 사진 · 설명 {description.trim() ? "입력됨" : "미입력"} · 링크 {productUrl.trim() ? "입력됨" : "미입력"}</span><button type="button" onClick={startAutomation} disabled={running}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : <><WandSparkles size={17} />AI 상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">PUBLISH TO</span><h3>등록할 채널</h3></div><Settings size={16} /></div>
-          <div className="publish-channel-list">{Object.values(channels).map((channel) => <label key={channel.letter} className={channel.enabled ? "" : "channel-disabled"}><ChannelMark code={channel.letter} /><span><b>{channel.name}{!channel.enabled && <em>준비중</em>}</b><small>{channel.enabled ? `${channel.market} 스토어 · API 정상` : `${channel.market} · 연동 준비 중`}</small></span><input type="checkbox" defaultChecked={channel.enabled} disabled={!channel.enabled} aria-label={`${channel.name} 등록 ${channel.enabled ? "선택" : "비활성화"}`} /><i><Check size={12} /></i></label>)}</div>
+          <div className="publish-channel-list">{Object.values(channels).map((channel) => <label key={channel.letter} className={channel.enabled ? "" : "channel-disabled"}><ChannelMark code={channel.letter} /><span><b>{channel.name}{!channel.enabled && <em>준비중</em>}</b><small>{channel.enabled ? `${channel.market} · API 연결 전` : `${channel.market} · 연동 준비 중`}</small></span><input type="checkbox" defaultChecked={channel.enabled} disabled={!channel.enabled} aria-label={`${channel.name} 등록 ${channel.enabled ? "선택" : "비활성화"}`} /><i><Check size={12} /></i></label>)}</div>
           <div className="auto-options"><h4>자동화 옵션</h4><label><span><b>AI 다국어 번역</b><small>한국어, 일본어, 영어, 말레이어</small></span><input type="checkbox" aria-label="AI 다국어 번역 사용" defaultChecked /><i /></label><label><span><b>마진 기반 가격 계산</b><small>목표 마진 28% 적용</small></span><input type="checkbox" aria-label="마진 기반 가격 계산 사용" defaultChecked /><i /></label><label><span><b>검증 통과 시 자동 등록</b><small>신뢰도 97% 이상</small></span><input type="checkbox" aria-label="검증 통과 시 자동 등록 사용" defaultChecked /><i /></label></div>
         </aside>
       </section>
@@ -614,7 +618,7 @@ function ChannelPage({ channelKey }: { channelKey: ChannelKey }) {
   const factors = channelFactors[channelKey];
   return (
     <div className="page-stack">
-      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em><i />API 정상 · 2분 전 동기화</em></span></div><div><button className="filter-button"><RefreshCw size={15} />지금 동기화</button><button className="primary-button"><Store size={15} />스토어 보기</button></div></section>
+      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em><i />실계정 미연결 · 샘플 화면</em></span></div><div><button className="filter-button" disabled><RefreshCw size={15} />연동 후 동기화</button><button className="primary-button" disabled><Store size={15} />연동 후 스토어 보기</button></div></section>
       <section className="metric-grid channel-metrics"><MetricCard label="30일 매출" value={factors.sales} delta="18.6%" detail="이전 30일 대비" icon={CircleDollarSign} tone="violet" /><MetricCard label="주문" value={factors.orders} delta="12.8%" detail="취소 11건" icon={ShoppingBag} tone="blue" /><MetricCard label="판매 상품" value={factors.products} delta="14" detail="이번 달 신규" icon={Package} tone="green" /><MetricCard label="CS 응답률" value={factors.cs} delta="2.1%" detail="평균 16분" icon={Headphones} tone="orange" /></section>
       <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">PERFORMANCE</span><h3>매출 · 주문 추이</h3></div><button className="filter-button">최근 30일<ChevronDown size={14} /></button></div><div className="large-spark"><div><span><i style={{ background: channel.color }} />매출</span><span><i className="orders" />주문</span></div><SparkLine points="0,36 10,34 20,29 30,31 40,23 50,26 60,18 70,20 80,12 90,16 100,8 110,12 120,4" color={channel.color} fill /></div><div className="chart-stat-row"><div><small>평균 객단가</small><b>₩38,420</b></div><div><small>전환율</small><b>4.82%</b></div><div><small>광고 ROAS</small><b>468%</b></div><div><small>반품률</small><b>1.4%</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">STORE SCORE</span><h3>스토어 건강도</h3></div><span className="score-grade">A</span></div><div className="health-score"><strong>{factors.rate}<small>/100</small></strong><div><span><i style={{ width: `${factors.rate}%`, background: channel.color }} /></span><small>상위 12% 수준</small></div></div>{[{ label: "상품 정보 완성도", score: "98%" }, { label: "배송 SLA 준수", score: "94%" }, { label: "CS 응답 품질", score: "96%" }, { label: "재고 안정성", score: "82%" }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
       <section className="panel data-panel"><div className="panel-heading table-title"><div><span className="panel-kicker">TOP PRODUCTS</span><h3>채널 내 판매 상품</h3></div><button className="ghost-button">전체 상품<ChevronRight size={15} /></button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>순위</th><th>상품</th><th>판매량</th><th>매출</th><th>전환율</th><th>재고</th><th>상태</th></tr></thead><tbody>{products.slice(0, 4).map((product, index) => <tr key={product.id}><td><b className="rank-number">{String(index + 1).padStart(2, "0")}</b></td><td><div className="product-cell"><div className="product-thumb"><Image src={product.image} alt="" fill sizes="52px" /></div><span><b>{product.name}</b><small>{product.sku}</small></span></div></td><td><b>{product.sales}</b>개</td><td><b>{product.revenue}</b></td><td><b>{(5.8 - index * .6).toFixed(1)}%</b></td><td><b>{product.stock}</b>개</td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div></section>
@@ -669,6 +673,7 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
     if (view === "margin") return <MarginCalculatorPage notify={notify} />;
     if (view === "orders") return <OrdersPage />;
     if (view === "cs") return <CsPage notify={notify} />;
+    if (view === "acceptance") return <AcceptanceChecklistPage />;
     if (view === "storyboard") return <StoryboardPage onNavigate={navigate} />;
     return <ChannelPage channelKey={view as ChannelKey} />;
   }, [view]);
@@ -683,7 +688,7 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
           const isDisabled = "disabled" in item && item.disabled;
           return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : "badge" in item && item.badge ? <em>{item.badge}</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
-        <div className="sidebar-insight"><div><Activity size={15} /><span>자동화 처리량</span><em>ON</em></div><p>오늘 <b>46건</b>의 반복 작업을<br />자동으로 처리했습니다.</p><span><i /></span><small>시스템 정상 운영 중</small></div>
+        <div className="sidebar-insight"><div><Activity size={15} /><span>자동화 준비도</span><em>DEMO</em></div><p><b>175개</b> 개발·실검수 항목을<br />단계별로 추적합니다.</p><span><i /></span><small>실채널 API 연결 전</small></div>
         <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말 · 가이드</span></button><button><Settings size={17} /><span>설정</span></button><button onClick={onLogout}><LogOut size={17} /><span>로그아웃</span></button></div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
