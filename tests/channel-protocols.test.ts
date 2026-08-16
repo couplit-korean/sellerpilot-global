@@ -63,6 +63,34 @@ test("Qoo10 uses current QAPI endpoint and qualified method name", () => {
   assert.equal(url.searchParams.get("v"), "1.2");
 });
 
+test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () => {
+  const originalFetch = globalThis.fetch;
+  let calledUrl = "";
+  globalThis.fetch = async (input) => {
+    calledUrl = String(input);
+    return new Response(JSON.stringify({ ResultCode: 0, ResultMsg: "SUCCESS", ResultObject: { GdNo: "1234567890" } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.create",
+      payload: { api_key: "test-key" },
+      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: "<p>Test</p>", RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
+      environment: "production",
+    });
+    const url = new URL(calledUrl);
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "1234567890");
+    assert.equal(url.searchParams.get("method"), "ItemsBasic.SetNewGoods");
+    assert.equal(url.searchParams.get("v"), "1.1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("eBay consent URL separates sandbox and production and includes CSRF state", () => {
   const url = buildEbayConsentUrl({
     environment: "sandbox",

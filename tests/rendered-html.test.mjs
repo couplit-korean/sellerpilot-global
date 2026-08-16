@@ -76,11 +76,11 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /commerce-service-rail/);
   assert.match(page, /통합 판매관리/);
   assert.match(page, /signInWithPassword/);
-  assert.match(page, /최신 QAPI 반영 · 판매자 인증키 대기/);
-  assert.match(page, /OAuth 승인 완료 · 고정 송신 IP 차단/);
+  assert.match(page, /Qoo10 Japan/);
+  assert.match(page, /Shopee Global/);
   assert.match(page, /7개 판매채널/);
-  assert.match(page, /AI가 주문 정보와 정책을 반영한 답변 초안/);
-  assert.match(page, /신뢰도 97% 이상/);
+  assert.match(page, /ChatGPT CLI 답변 생성은 채널 정책/);
+  assert.match(page, /공식 카테고리 확정/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
   assert.match(page, /id: "front"/);
   assert.match(page, /id: "barcode"/);

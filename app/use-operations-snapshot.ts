@@ -57,6 +57,15 @@ export type OperationTicket = {
   demo: boolean;
 };
 
+export type OperationMarginScenario = {
+  id: string;
+  name: string;
+  channelKey: string;
+  inputs: Record<string, unknown>;
+  result: Record<string, unknown>;
+  createdAt: string;
+};
+
 export type OperationsSnapshot = {
   generatedAt: string;
   channelMetrics: Array<{
@@ -81,6 +90,7 @@ export type OperationsSnapshot = {
   products: OperationProduct[];
   orders: OperationOrder[];
   tickets: OperationTicket[];
+  marginScenarios: OperationMarginScenario[];
   pipeline: {
     aiRunning: number;
     listingQueued: number;

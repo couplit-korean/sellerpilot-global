@@ -196,7 +196,7 @@ async function executeQoo10(input: ExecuteInput) {
     "categories.suggest": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
     "categories.attributes": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
     "categories.validate": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
-    "listing.create": { service: "ItemsBasic", method: "SetNewGoods" },
+    "listing.create": { service: "ItemsBasic", method: "SetNewGoods", version: "1.1" },
     "listing.update": { service: "ItemsBasic", method: "UpdateGoods" },
     "listing.stop": { service: "ItemsBasic", method: "EditGoodsStatus" },
     "price.update": { service: "ItemsOrder", method: "SetGoodsPriceQty" },
@@ -225,7 +225,15 @@ async function executeQoo10(input: ExecuteInput) {
   const definition = map[input.operation];
   if (!definition) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
   const remote = await qoo10Request({ payload: input.payload, ...definition, params });
-  const remoteId = typeof remote.data.ResultObject === "string" ? remote.data.ResultObject : undefined;
+  const resultObject = remote.data.ResultObject;
+  const remoteId = typeof resultObject === "string" || typeof resultObject === "number"
+    ? String(resultObject)
+    : resultObject && typeof resultObject === "object" && !Array.isArray(resultObject)
+      ? ["GdNo", "ItemCode", "itemCode"]
+        .map((key) => (resultObject as Record<string, unknown>)[key])
+        .find((value): value is string | number => typeof value === "string" || typeof value === "number")
+        ?.toString()
+      : undefined;
   return result(input, [step(definition.method, remote)], remoteId);
 }
 

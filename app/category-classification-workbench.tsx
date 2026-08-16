@@ -123,12 +123,14 @@ function categoryPathLabel(category: CategorySuggestion) {
   return category.path.length > 1 ? category.path.join(" › ") : category.name;
 }
 
-export function CategoryClassificationWorkbench({ productName, description, sourceRef, enabledChannels, notify }: {
+export function CategoryClassificationWorkbench({ productId, productName, description, sourceRef, enabledChannels, notify, onConfirmed }: {
+  productId: string | null;
   productName: string;
   description: string;
   sourceRef: string;
   enabledChannels?: string[];
   notify: (message: string) => void;
+  onConfirmed?: (channel: ActiveChannelKey) => void;
 }) {
   const [query, setQuery] = useState(productName);
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
@@ -213,6 +215,10 @@ export function CategoryClassificationWorkbench({ productName, description, sour
     const state = states[channel];
     const credential = activeCredential.get(channel);
     if (!state?.selected || !credential) return;
+    if (!productId) {
+      notify("ChatGPT CLI 분석과 상품 원장 저장을 먼저 완료해 주세요.");
+      return;
+    }
     const missing = state.attributes.filter((attribute) => attribute.required && !state.values[attribute.id]?.trim());
     if (!state.verifiedLeaf || missing.length) {
       notify(!state.verifiedLeaf ? "공식 API로 말단 카테고리 유효성을 먼저 확인해 주세요." : `필수 속성 ${missing.length}개를 모두 입력해 주세요.`);
@@ -220,7 +226,7 @@ export function CategoryClassificationWorkbench({ productName, description, sour
     }
     const requiredAttributes = state.attributes.map((attribute) => ({ id: attribute.id, name: attribute.name, required: attribute.required, values: attribute.values }));
     const { error } = await createClient().rpc("sellerpilot_save_product_category_assignment", {
-      p_product_id: null,
+      p_product_id: productId,
       p_source_ref: sourceRef,
       p_product_name: productName,
       p_channel: channel,
@@ -238,6 +244,7 @@ export function CategoryClassificationWorkbench({ productName, description, sour
     });
     if (error) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");
     setStates((current) => ({ ...current, [channel]: { ...state, phase: "confirmed" } }));
+    onConfirmed?.(channel);
     notify(`${channelCatalog[channel].name} 카테고리와 필수 속성을 확정했습니다.`);
   };
 
@@ -253,7 +260,7 @@ export function CategoryClassificationWorkbench({ productName, description, sour
       const completedRequired = required.filter((attribute) => state.values[attribute.id]?.trim()).length;
       return <article className={`category-channel-card ${state.phase}`} key={channel}>
         <header><span>{definition.code}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "실키 연결" : "키 필요"}</em></header>
-        {!state.suggestions.length && !state.selected && <div className="category-empty"><Tags size={21} /><b>{credential ? "공식 카테고리 추천 대기" : "API 키 연결 후 사용"}</b><small>{credential ? "상품명으로 채널 원본 분류를 조회합니다." : "API 키 관리에서 운영 키를 먼저 연결하세요."}</small><button type="button" disabled={!credential || busy || channel === "elevenst"} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{channel === "elevenst" ? "판매자 명세 확인 필요" : "공식 API 추천"}</button></div>}
+        {!state.suggestions.length && !state.selected && <div className="category-empty"><Tags size={21} /><b>{credential ? productId ? "공식 카테고리 추천 대기" : "상품 원장 연결 대기" : "API 키 연결 후 사용"}</b><small>{credential ? productId ? "상품명으로 채널 원본 분류를 조회합니다." : "AI 분석을 완료해 상품 UUID를 먼저 생성하세요." : "API 키 관리에서 운영 키를 먼저 연결하세요."}</small><button type="button" disabled={!credential || !productId || busy || channel === "elevenst"} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{channel === "elevenst" ? "판매자 명세 확인 필요" : "공식 API 추천"}</button></div>}
         {state.suggestions.length > 0 && !state.selected && <div className="category-suggestions">{state.suggestions.map((suggestion, index) => <button type="button" onClick={() => void inspect(channel, suggestion)} key={`${suggestion.id}-${suggestion.name}`}><span><b>{index + 1}. {suggestion.name}</b><small>{categoryPathLabel(suggestion)}</small></span><em>{Math.round(suggestion.confidence * 100)}%</em><ChevronRight size={14} /></button>)}</div>}
         {state.selected && <div className="category-inspection"><div className="selected-category"><BadgeCheck size={18} /><span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · ID {state.selected.id}</small></span><button type="button" onClick={() => setStates((current) => ({ ...current, [channel]: { ...initialState(), suggestions: state.suggestions } }))}>다시 선택</button></div>{state.phase === "inspecting" ? <p className="category-loading"><LoaderCircle className="spin" size={16} />공식 속성·유효성 동시 확인 중</p> : <><div className="category-proof"><span className={state.verifiedLeaf ? "passed" : "failed"}><ShieldCheck size={14} />{state.verifiedLeaf ? "말단 카테고리 확인" : "유효성 확인 필요"}</span><span className={completedRequired === required.length ? "passed" : "failed"}><Check size={14} />필수 속성 {completedRequired}/{required.length}</span></div>{required.length > 0 && <div className="category-attribute-list">{required.map((attribute) => <label key={attribute.id}><span>{attribute.name}<em>필수</em></span>{attribute.values.length ? <select value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [channel]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))}><option value="">값 선택</option>{attribute.values.map((value) => <option value={value} key={value}>{value}</option>)}</select> : <input value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [channel]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))} placeholder={`${attribute.name} 입력`} />}</label>)}</div>}<button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || completedRequired !== required.length || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리 저장됨</> : "카테고리·속성 저장"}</button></>}</div>}
         {state.error && <p className="category-error"><AlertTriangle size={14} />{state.error}</p>}

@@ -19,9 +19,13 @@ const mutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("margin_save"),
     name: z.string().trim().min(1).max(120),
-    channelKey: z.enum(["qoo10", "lazada", "coupang", "elevenst", "smartstore", "ebay"]),
+    channelKey: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"]),
     inputs: z.record(z.string(), z.unknown()),
     result: z.record(z.string(), z.unknown()),
+  }),
+  z.object({
+    action: z.literal("margin_delete"),
+    id: z.string().uuid(),
   }),
   z.object({
     action: z.literal("product_create"),
@@ -36,13 +40,17 @@ export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
 
-  const { data, error } = await admin.userClient.rpc("sellerpilot_get_operations_snapshot");
+  const [{ data, error }, { data: marginScenarios }] = await Promise.all([
+    admin.userClient.rpc("sellerpilot_get_operations_snapshot"),
+    admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: 5 }),
+  ]);
   if (error) {
     return NextResponse.json({ message: "운영 데이터를 불러오지 못했습니다." }, { status: 500 });
   }
   const payload = data && typeof data === "object" && !Array.isArray(data)
     ? { ...(data as Record<string, unknown>) }
     : {};
+  payload.marginScenarios = Array.isArray(marginScenarios) ? marginScenarios : [];
   if (Array.isArray(payload.products)) {
     const products = payload.products.filter((product): product is Record<string, unknown> => Boolean(product) && typeof product === "object" && !Array.isArray(product));
     const paths = products.map((product) => typeof product.aiHeroPath === "string" ? product.aiHeroPath : "").filter(Boolean);
@@ -96,6 +104,11 @@ export async function POST(request: Request) {
     });
     id = typeof data === "string" ? data : null;
     mutationError = error;
+  } else if (parsed.data.action === "margin_delete") {
+    const { data, error } = await admin.userClient.rpc("sellerpilot_delete_margin_scenario", {
+      p_id: parsed.data.id,
+    });
+    mutationError = error ?? (data === true ? null : { message: "scenario not found" });
   } else {
     const { data, error } = await admin.userClient.rpc("sellerpilot_create_product_from_ai", {
       p_job_id: parsed.data.jobId,

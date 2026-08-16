@@ -20,6 +20,9 @@ const requestSchema = z.object({
   operation: z.enum(channelOperationNames),
   idempotencyKey: z.string().trim().min(16).max(160),
   confirmWrite: z.boolean().default(false),
+  productId: z.string().uuid().optional(),
+  currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).optional(),
+  price: z.number().nonnegative().max(999_999_999).optional(),
   arguments: z.record(z.string(), z.unknown()).refine((value) => JSON.stringify(value).length <= 128_000, "payload too large"),
 });
 
@@ -91,8 +94,17 @@ export async function POST(request: NextRequest) {
 
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
   const requestFingerprint = createHash("sha256")
-    .update(canonicalJson({ channel, operation, environment, arguments: parsed.data.arguments }))
+    .update(canonicalJson({
+      channel,
+      operation,
+      environment,
+      productId: parsed.data.productId ?? null,
+      currency: parsed.data.currency ?? null,
+      price: parsed.data.price ?? null,
+      arguments: parsed.data.arguments,
+    }))
     .digest("hex");
+  const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: claimData, error: claimError } = await userClient.rpc("sellerpilot_claim_channel_operation", {
     p_credential_id: parsed.data.credentialId,
     p_channel: channel,
@@ -107,6 +119,44 @@ export async function POST(request: NextRequest) {
   const attemptId = typeof claim.attempt_id === "string" ? claim.attempt_id : "";
   if (!attemptId) return NextResponse.json({ message: "작업 추적 ID를 만들지 못했습니다." }, { status: 500 });
   if (claim.duplicate === true) {
+    const duplicateRemoteId = typeof claim.remote_id === "string" ? claim.remote_id : undefined;
+    const duplicateMessage = typeof claim.safe_message === "string" ? claim.safe_message : "같은 작업이 이미 완료됐습니다.";
+    if (claim.status === "succeeded") {
+      let duplicateListingId = "";
+      if (parsed.data.productId && ["listing.create", "listing.update", "listing.stop"].includes(operation)) {
+        const { data: preparedListingId, error: prepareError } = await userClient.rpc("sellerpilot_prepare_product_listing", {
+          p_product_id: parsed.data.productId,
+          p_channel: channel,
+          p_operation: operation,
+          p_currency: parsed.data.currency ?? "KRW",
+          p_price: parsed.data.price ?? 0,
+        });
+        if (prepareError || typeof preparedListingId !== "string") {
+          return NextResponse.json({ message: "완료된 원격 작업을 상품 원장과 다시 연결하지 못했습니다.", attemptId, remoteId: duplicateRemoteId }, { status: 409 });
+        }
+        duplicateListingId = preparedListingId;
+        const { data: reconciled, error: reconcileError } = await serviceClient.rpc("sellerpilot_service_complete_product_listing", {
+          p_listing_id: duplicateListingId,
+          p_attempt_id: attemptId,
+          p_operation: operation,
+          p_success: true,
+          p_remote_id: duplicateRemoteId ?? null,
+          p_safe_message: duplicateMessage,
+        });
+        if (reconcileError || reconciled !== true) {
+          return NextResponse.json({ message: "원격 성공 이력을 상품 원장과 조정하지 못했습니다.", attemptId, remoteId: duplicateRemoteId }, { status: 500 });
+        }
+      }
+      return NextResponse.json({
+        ok: true,
+        duplicate: true,
+        message: "이미 성공한 동일 작업을 다시 호출하지 않고 기존 결과를 반환했습니다.",
+        safeMessage: duplicateMessage,
+        remoteId: duplicateRemoteId,
+        attemptId,
+        listingId: duplicateListingId || undefined,
+      }, { headers: { "cache-control": "no-store, max-age=0" } });
+    }
     return NextResponse.json({
       message: "같은 작업이 이미 접수됐습니다. 외부 상품·주문 중복 처리를 막기 위해 다시 실행하지 않았습니다.",
       attemptId,
@@ -114,7 +164,44 @@ export async function POST(request: NextRequest) {
     }, { status: 409 });
   }
 
-  const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  let listingId = "";
+  if (parsed.data.productId && ["listing.create", "listing.update", "listing.stop"].includes(operation)) {
+    const { data: preparedListingId, error: prepareError } = await userClient.rpc("sellerpilot_prepare_product_listing", {
+      p_product_id: parsed.data.productId,
+      p_channel: channel,
+      p_operation: operation,
+      p_currency: parsed.data.currency ?? "KRW",
+      p_price: parsed.data.price ?? 0,
+    });
+    if (prepareError || typeof preparedListingId !== "string") {
+      await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
+        p_attempt_id: attemptId,
+        p_status: "failed",
+        p_http_status: 409,
+        p_remote_id: null,
+        p_safe_message: "상품·카테고리·채널 연결 사전조건을 충족하지 못했습니다.",
+      });
+      return NextResponse.json({
+        message: "상품 원장과 확정된 채널 카테고리, 활성 API 키를 먼저 확인해 주세요.",
+        attemptId,
+      }, { status: 409 });
+    }
+    listingId = preparedListingId;
+  }
+
+  const completeListing = async (input: { success: boolean; remoteId?: string; safeMessage: string }) => {
+    if (!listingId) return true;
+    const { data, error } = await serviceClient.rpc("sellerpilot_service_complete_product_listing", {
+      p_listing_id: listingId,
+      p_attempt_id: attemptId,
+      p_operation: operation,
+      p_success: input.success,
+      p_remote_id: input.remoteId ?? null,
+      p_safe_message: input.safeMessage,
+    });
+    return !error && data === true;
+  };
+
   const { data: secretPayload, error: secretError } = await serviceClient.rpc("sellerpilot_decrypt_credential", {
     p_credential_id: parsed.data.credentialId,
   });
@@ -126,6 +213,7 @@ export async function POST(request: NextRequest) {
       p_remote_id: null,
       p_safe_message: "활성 키를 안전하게 불러오지 못했습니다.",
     });
+    await completeListing({ success: false, safeMessage: "활성 키를 안전하게 불러오지 못했습니다." });
     return NextResponse.json({ message: "활성 키를 안전하게 불러오지 못했습니다.", attemptId }, { status: 404 });
   }
 
@@ -178,7 +266,16 @@ export async function POST(request: NextRequest) {
       p_remote_id: result.remoteId ?? null,
       p_safe_message: result.safeMessage,
     });
-    return NextResponse.json({ ...result, attemptId, credentialRefreshed }, {
+    const listingRecorded = await completeListing({ success: result.ok, remoteId: result.remoteId, safeMessage: result.safeMessage });
+    if (!listingRecorded) {
+      return NextResponse.json({
+        message: "원격 작업은 완료됐지만 상품 원장 조정이 필요합니다. 같은 멱등키로 다시 요청하면 원격 재호출 없이 복구합니다.",
+        attemptId,
+        remoteId: result.remoteId,
+        reconciliationRequired: true,
+      }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    return NextResponse.json({ ...result, attemptId, listingId: listingId || undefined, credentialRefreshed }, {
       status: result.ok ? 200 : 422,
       headers: { "cache-control": "no-store, max-age=0" },
     });
@@ -191,6 +288,7 @@ export async function POST(request: NextRequest) {
       p_remote_id: null,
       p_safe_message: message,
     });
+    await completeListing({ success: false, safeMessage: message });
     return NextResponse.json({ message, attemptId }, { status: 422 });
   }
 }

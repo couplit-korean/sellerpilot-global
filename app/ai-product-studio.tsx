@@ -107,7 +107,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
   requestId: number;
   onRunningChange: (running: boolean) => void;
   notify: (message: string) => void;
-  onResultReady?: (result: ProductStudioResult) => void;
+  onResultReady?: (result: ProductStudioResult, productId: string | null) => void;
 }) {
   const [result, setResult] = useState<ProductStudioResult | null>(null);
   const [thumbnails, setThumbnails] = useState<AutoThumbnail[]>([]);
@@ -165,7 +165,6 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
       const cliResult = await waitForCliJob(queued.jobId, accessToken);
       const { heroUrl, generatedImages, ...nextResult } = cliResult;
       setResult(nextResult);
-      onResultReady?.(nextResult);
       setAiHero(heroUrl ?? "");
       setThumbnails(thumbnailPresets.map((preset) => ({
         ...preset,
@@ -183,8 +182,11 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
           sourceUrl: productUrl.trim() || undefined,
         }),
       });
+      const productPayload = await productResponse.json().catch(() => ({})) as { id?: string | null };
+      const productId = productResponse.ok && typeof productPayload.id === "string" ? productPayload.id : null;
+      onResultReady?.(nextResult, productId);
       notify(productResponse.ok
-        ? "ChatGPT CLI 분석, codex-image 이미지 4종과 상품 초안 저장을 완료했습니다."
+        ? "ChatGPT CLI 분석, codex-image 이미지 4종과 상품 원장 연결을 완료했습니다."
         : "이미지 4종 제작은 완료됐지만 상품 원장 저장을 확인해 주세요.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";

@@ -117,6 +117,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260816145605_channel_category_catalog.sql",
       "20260817001500_live_operations_snapshot.sql",
       "20260817003000_fix_pgcrypto_schema.sql",
+      "20260817004500_product_publish_workflow.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -315,6 +316,42 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(categoryAssignments.rows.length, 1);
     assert.equal(categoryAssignments.rows[0].status, "confirmed");
     assert.deepEqual(categoryAssignments.rows[0].missing_required_attributes, []);
+    const publishContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [aiProductId]);
+    assert.equal(publishContext.product.id, aiProductId);
+    assert.equal(publishContext.assignments.length, 1);
+    const coupangCredentialId = await scalar(
+      db,
+      "select id from public.sellerpilot_list_credentials() where channel = 'coupang' and status = 'active' limit 1",
+    );
+    const preparedListingId = await scalar(
+      db,
+      "select public.sellerpilot_prepare_product_listing($1, 'coupang', 'listing.create', 'KRW', 25000)",
+      [aiProductId],
+    );
+    assert.match(preparedListingId, /^[0-9a-f-]{36}$/i);
+    const listingAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'coupang', 'listing.create', 'listing-ai-product-coupang-0001', $2)",
+      [coupangCredentialId, "c".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_channel_operation($1, 'succeeded', 200, 'remote-product-1', 'listing completed')",
+        [listingAttempt.attempt_id],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_product_listing($1, $2, 'listing.create', true, 'remote-product-1', 'listing completed')",
+        [preparedListingId, listingAttempt.attempt_id],
+      ),
+      true,
+    );
+    await setClaims(db);
     await assert.rejects(
       db.query("select public.sellerpilot_seed_demo_operations()"),
       /demo data is disabled/,
@@ -347,7 +384,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(snapshot.channelMetrics.find((channel) => channel.channelKey === "qoo10").credentialStatus, "active");
     const aiProduct = snapshot.products.find((product) => product.id === aiProductId);
     assert.equal(aiProduct.demo, false);
-    assert.equal(aiProduct.status, "draft");
+    assert.equal(aiProduct.status, "active");
+    assert.deepEqual(aiProduct.listingChannels, ["C"]);
     assert.equal(aiProduct.aiHeroPath, resultPayload.asset_storage_paths.hero);
 
     const firstOrderId = snapshot.orders[0].id;
@@ -360,13 +398,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(db, "select public.sellerpilot_update_ticket($1, 'resolved', '답변 저장 검증')", [firstTicketId]),
       true,
     );
-    assert.match(
-      await scalar(
+    const marginScenarioId = await scalar(
         db,
         "select public.sellerpilot_save_margin_scenario('마진 검증', 'qoo10', '{\"cost\":10000}'::jsonb, '{\"margin\":22.5}'::jsonb)",
-      ),
-      /^[0-9a-f-]{36}$/i,
     );
+    assert.match(marginScenarioId, /^[0-9a-f-]{36}$/i);
+    const marginScenarios = await scalar(db, "select public.sellerpilot_list_margin_scenarios(5)");
+    assert.equal(marginScenarios.length, 1);
+    assert.equal(marginScenarios[0].channelKey, "qoo10");
+    assert.equal(await scalar(db, "select public.sellerpilot_delete_margin_scenario($1)", [marginScenarioId]), true);
 
     await db.query(
       "select public.sellerpilot_create_ai_job($1, 'product_studio', $2::jsonb)",

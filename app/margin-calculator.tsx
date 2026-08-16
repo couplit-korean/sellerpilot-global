@@ -17,6 +17,7 @@ import {
 import { useMemo, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { channels, type ChannelKey } from "./channel-config";
+import type { OperationMarginScenario } from "./use-operations-snapshot";
 
 type MarginForm = {
   sellingPrice: number;
@@ -166,18 +167,45 @@ function calculateMargins(form: MarginForm, feeOverrides: Record<ChannelKey, num
   });
 }
 
-export function MarginCalculatorPage({ notify }: { notify: (message: string) => void }) {
+function numeric(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function savedScenarioFromOperation(scenario: OperationMarginScenario): SavedScenario {
+  return {
+    id: scenario.id,
+    product: scenario.name,
+    channelKey: scenario.channelKey as ChannelKey,
+    sellingPrice: numeric(scenario.inputs.sellingPrice),
+    profit: numeric(scenario.result.profit),
+    margin: numeric(scenario.result.margin),
+    savedAt: new Date(scenario.createdAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }),
+  };
+}
+
+export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
+  notify: (message: string) => void;
+  scenarios: OperationMarginScenario[];
+  onChanged?: () => void;
+}) {
   const [productName, setProductName] = useState("");
   const [form, setForm] = useState<MarginForm>(() => ({ ...defaultMarginForm }));
   const [feeOverrides, setFeeOverrides] = useState<Record<ChannelKey, number>>(() => ({ ...defaultFeeOverrides }));
   const [paymentFeeOverrides, setPaymentFeeOverrides] = useState<Record<ChannelKey, number>>(() => ({ ...defaultPaymentFeeOverrides }));
   const [selectedChannel, setSelectedChannel] = useState<ChannelKey>("qoo10");
-  const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([]);
+  const [localScenarios, setLocalScenarios] = useState<SavedScenario[]>([]);
+  const [deletedScenarioIds, setDeletedScenarioIds] = useState<Set<string>>(() => new Set());
   const [savingScenario, setSavingScenario] = useState(false);
   const results = useMemo(() => calculateMargins(form, feeOverrides, paymentFeeOverrides), [form, feeOverrides, paymentFeeOverrides]);
   const selectedResult = results.find((result) => result.key === selectedChannel) ?? results[0];
   const selectedChannelInfo = channels[selectedChannel];
   const targetProgress = Math.max(0, Math.min(100, (selectedResult.margin / Math.max(form.targetMargin, 1)) * 100));
+  const savedScenarios = useMemo(() => {
+    const merged = [...localScenarios, ...scenarios.filter((scenario) => scenario.channelKey in channels).map(savedScenarioFromOperation)];
+    return [...new Map(merged.map((scenario) => [scenario.id, scenario])).values()]
+      .filter((scenario) => !deletedScenarioIds.has(scenario.id))
+      .slice(0, 5);
+  }, [deletedScenarioIds, localScenarios, scenarios]);
 
   const changeFormValue = (key: keyof MarginForm, value: number) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -234,12 +262,33 @@ export function MarginCalculatorPage({ notify }: { notify: (message: string) => 
       });
       const payload = await response.json().catch(() => ({ message: "저장 응답을 읽지 못했습니다." })) as { id?: string; message?: string };
       if (!response.ok) throw new Error(payload.message ?? "마진 계산 결과를 저장하지 못했습니다.");
-      setSavedScenarios((current) => [{ ...saved, id: payload.id ?? saved.id }, ...current].slice(0, 5));
+      setLocalScenarios((current) => [{ ...saved, id: payload.id ?? saved.id }, ...current].slice(0, 5));
+      onChanged?.();
       notify(`${selectedChannelInfo.name} 마진 계산 결과를 운영 DB에 저장했습니다.`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "마진 계산 결과를 저장하지 못했습니다.");
     } finally {
       setSavingScenario(false);
+    }
+  };
+
+  const deleteScenario = async (scenario: SavedScenario) => {
+    try {
+      const { data } = await createClient().auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("마진 계산을 삭제하려면 다시 로그인해 주세요.");
+      const response = await fetch("/api/operations/snapshot", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ action: "margin_delete", id: scenario.id }),
+      });
+      if (!response.ok) throw new Error("저장된 마진 계산을 삭제하지 못했습니다.");
+      setLocalScenarios((current) => current.filter((item) => item.id !== scenario.id));
+      setDeletedScenarioIds((current) => new Set(current).add(scenario.id));
+      onChanged?.();
+      notify("저장된 마진 계산을 운영 DB에서 삭제했습니다.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "저장된 마진 계산을 삭제하지 못했습니다.");
     }
   };
 
@@ -333,7 +382,7 @@ export function MarginCalculatorPage({ notify }: { notify: (message: string) => 
 
       <section className="panel saved-margin-panel">
         <div className="panel-heading"><div><span className="panel-kicker">RECENT CALCULATIONS</span><h3>최근 저장한 계산</h3></div><small>운영 DB 저장 후 최근 5개를 화면에 표시합니다.</small></div>
-        <div className="saved-margin-list">{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.letter}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제`} onClick={() => setSavedScenarios((current) => current.filter((item) => item.id !== scenario.id))}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</div>
+        <div className="saved-margin-list">{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.letter}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제`} onClick={() => void deleteScenario(scenario)}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</div>
         <div className="margin-disclaimer"><AlertCircle size={15} /><span><b>입력값 기반 예상 계산입니다.</b> 채널 수수료는 카테고리·판매자 등급·프로모션 기간에 따라 달라질 수 있으므로 등록 직전 채널 API 메타정보와 대조해야 합니다.</span></div>
       </section>
     </div>

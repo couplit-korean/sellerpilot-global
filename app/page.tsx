@@ -76,6 +76,7 @@ import { AcceptanceChecklistPage } from "./acceptance-checklist";
 import { ApiCredentialCenter } from "./api-credential-center";
 import { ChannelReadinessPage } from "./channel-readiness";
 import { CategoryClassificationWorkbench } from "./category-classification-workbench";
+import { ProductPublishWorkbench } from "./product-publish-workbench";
 import { MarginCalculatorPage } from "./margin-calculator";
 import { channels, type ChannelKey } from "./channel-config";
 import { useOperationsSnapshot, type OperationsSnapshot } from "./use-operations-snapshot";
@@ -202,7 +203,7 @@ type DisplayTicket = {
   subject: string;
   preview: string;
   time: string;
-  status: "긴급" | "답변 대기" | "처리 중";
+  status: "긴급" | "답변 대기" | "처리 중" | "처리 완료";
 };
 
 const productStatusLabel = {
@@ -226,7 +227,7 @@ const ticketStatusLabel = {
   urgent: "긴급",
   waiting: "답변 대기",
   in_progress: "처리 중",
-  resolved: "처리 중",
+  resolved: "처리 완료",
 } as const;
 
 const channelNameByKey: Record<string, string> = {
@@ -532,7 +533,9 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
   const [uploadError, setUploadError] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
   const [analyzedProductName, setAnalyzedProductName] = useState("");
-  const [categorySourceRef] = useState(() => crypto.randomUUID());
+  const [analyzedProductId, setAnalyzedProductId] = useState<string | null>(null);
+  const [categoryDraftRef] = useState(() => crypto.randomUUID());
+  const [publishRefreshVersion, setPublishRefreshVersion] = useState(0);
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
   const connectedChannelKeys = useMemo(() => channelMetrics.filter((metric) => metric.credentialStatus === "active").map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
@@ -665,13 +668,25 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
         requestId={studioRequestId}
         onRunningChange={setRunning}
         notify={notify}
-        onResultReady={(studioResult) => setAnalyzedProductName(studioResult.product.name)}
+        onResultReady={(studioResult, productId) => {
+          setAnalyzedProductName(studioResult.product.name);
+          setAnalyzedProductId(productId);
+          setPublishRefreshVersion((current) => current + 1);
+        }}
       />
       <CategoryClassificationWorkbench
+        productId={analyzedProductId}
         productName={analyzedProductName || description.slice(0, 180)}
         description={description}
-        sourceRef={categorySourceRef}
+        sourceRef={analyzedProductId ?? categoryDraftRef}
         enabledChannels={selectedChannels}
+        notify={notify}
+        onConfirmed={() => setPublishRefreshVersion((current) => current + 1)}
+      />
+      <ProductPublishWorkbench
+        productId={analyzedProductId}
+        selectedChannels={selectedChannels}
+        refreshVersion={publishRefreshVersion}
         notify={notify}
       />
       <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE QUEUE</span><h3>실제 등록 작업 현황</h3></div><button className="ghost-button" onClick={() => notify("채널 작업 이력은 API 운영 콘솔에서 확인할 수 있습니다.")}>작업 이력<ChevronRight size={15} /></button></div>
@@ -691,7 +706,7 @@ function OrdersPage({ displayOrders, onAdvance }: { displayOrders: DisplayOrder[
     <div className="page-stack">
       <section className="order-summary-grid"><article><span className="metric-icon blue"><ShoppingCart size={19} /></span><div><small>통합 주문</small><strong>{displayOrders.length}</strong></div><em>운영 원장</em></article><article><span className="metric-icon orange"><Clock3 size={19} /></span><div><small>출고 대기</small><strong>{readyCount}</strong></div><em className="neutral">결제완료 {paidCount}건</em></article><article><span className="metric-icon violet"><Truck size={19} /></span><div><small>배송 중</small><strong>{shippingCount}</strong></div><em className="neutral">상태 변경 가능</em></article><article><span className="metric-icon green"><CircleDollarSign size={19} /></span><div><small>데이터 연결</small><strong>DB</strong></div><em>1분 자동 갱신</em></article></section>
       <section className="panel data-panel"><div className="tab-toolbar"><div>{["전체 주문", "결제완료", "출고대기", "배송중", "완료 · 취소"].map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}{tab === "출고대기" && <span>{readyCount}</span>}</button>)}</div><div className="search-field"><Search size={16} /><input placeholder="주문번호, 구매자 검색" /></div><button className="filter-button"><Filter size={15} />필터</button></div>
-        <div className="table-wrap"><table className="data-table order-table"><thead><tr><th>주문번호</th><th>채널</th><th>구매자</th><th>상품</th><th>결제금액</th><th>주문상태</th><th>주문시간</th><th /></tr></thead><tbody>{displayOrders.filter((order) => active === "전체 주문" || active === "완료 · 취소" || order.status === active).map((order) => <tr key={order.id}><td><b className="mono">{order.id}</b></td><td><ChannelMark code={order.channel} size="sm" /></td><td><b>{order.customer}</b></td><td><span className="truncate-product">{order.product}</span></td><td><b>{order.amount}</b></td><td><StatusBadge status={order.status} /></td><td><span className="muted-cell">{order.time}</span></td><td><button className="table-action" title="다음 주문 상태로 변경" aria-label={`${order.id} 다음 상태로 변경`} onClick={() => void onAdvance(order)}><ChevronRight size={16} /></button></td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table className="data-table order-table"><thead><tr><th>주문번호</th><th>채널</th><th>구매자</th><th>상품</th><th>결제금액</th><th>주문상태</th><th>주문시간</th><th /></tr></thead><tbody>{displayOrders.filter((order) => active === "전체 주문" || active === "완료 · 취소" && ["배송완료", "취소완료", "환불완료"].includes(order.status) || order.status === active).map((order) => <tr key={order.id}><td><b className="mono">{order.id}</b></td><td><ChannelMark code={order.channel} size="sm" /></td><td><b>{order.customer}</b></td><td><span className="truncate-product">{order.product}</span></td><td><b>{order.amount}</b></td><td><StatusBadge status={order.status} /></td><td><span className="muted-cell">{order.time}</span></td><td><button className="table-action" title="다음 주문 상태로 변경" aria-label={`${order.id} 다음 상태로 변경`} onClick={() => void onAdvance(order)}><ChevronRight size={16} /></button></td></tr>)}</tbody></table></div>
         {displayOrders.length === 0 && <div className="live-empty-state table-empty"><ShoppingCart size={28} /><b>동기화된 실제 주문이 없습니다.</b><small>채널 API 키 연결 후 주문 조회를 실행하면 표시됩니다.</small></div>}
         <div className="bulk-order-bar"><span><input type="checkbox" disabled />선택한 주문</span><button disabled><Truck size={15} />일괄 출고 처리</button><button disabled>송장 업로드</button><span className="toolbar-spacer" /><small>실제 주문 API 연결 후 활성화</small><button className="table-action" disabled><RefreshCw size={15} /></button></div>
       </section>
@@ -871,11 +886,11 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
-  const content = useMemo(() => {
+  const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} displayProducts={displayProducts} />;
     if (view === "publishing") return <PublishingPage notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} />;
-    if (view === "margin") return <MarginCalculatorPage notify={notify} />;
+    if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={operations.data?.marginScenarios ?? []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage displayOrders={displayOrders} onAdvance={advanceOrder} />;
     if (view === "cs") return <CsPage notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} />;
     if (view === "readiness") return <ChannelReadinessPage />;
@@ -884,7 +899,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     if (view === "storyboard") return <StoryboardPage onNavigate={navigate} />;
     const channelKey = view as ChannelKey;
     return <ChannelPage channelKey={channelKey} onNavigate={navigate} metric={channelMetrics.find((metric) => metric.channelKey === channelKey) ?? null} displayProducts={displayProducts} />;
-  }, [view, displayProducts, displayOrders, displayTickets, operationSummary, channelMetrics, pipeline, operations.state, advanceOrder, saveTicketReply, navigate, notify]);
+  })();
 
   return (
     <main className="app-shell">
