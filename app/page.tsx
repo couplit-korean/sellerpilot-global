@@ -206,7 +206,7 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`status-badge ${tone}`}><i />{status}</span>;
 }
 
-function SparkLine({ points, color = "#0f62fe", fill = false }: { points: string; color?: string; fill?: boolean }) {
+function SparkLine({ points, color = "#e85d04", fill = false }: { points: string; color?: string; fill?: boolean }) {
   return (
     <svg className="sparkline" viewBox="0 0 120 42" aria-hidden="true" preserveAspectRatio="none">
       {fill && <polygon points={`0,42 ${points} 120,42`} fill={color} opacity=".08" />}
@@ -250,11 +250,11 @@ function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, pa
   return (
     <main className="login-shell">
       <section className="login-brand-panel">
-        <div className="brand-lockup"><span className="brand-symbol"><Zap size={18} fill="currentColor" /></span><strong>SellerPilot</strong><small>SELLER OFFICE</small></div>
+        <div className="brand-lockup"><span className="brand-symbol"><Zap size={18} fill="currentColor" /></span><strong>SellerPilot</strong><small>SELLER CONTROL</small></div>
         <div className="login-message">
-          <span className="login-section-label">멀티채널 통합 운영센터</span>
-          <h1>판매 업무를<br />한 화면에서 끝내세요.</h1>
-          <p>주문 확인부터 상품 등록, 재고, 정산, 고객 문의까지<br />각 마켓의 운영 흐름을 하나로 모았습니다.</p>
+          <span className="login-section-label">글로벌 셀러 통합 업무 화면</span>
+          <h1>주문·상품·문의 업무를<br />하나의 작업대에서.</h1>
+          <p>판매 채널을 오가며 확인하던 주문, 상품 등록, 재고, 정산과 고객 문의를<br />업무 우선순위에 맞춰 한 화면에 정리했습니다.</p>
           <div className="login-operations-preview">
             <div className="preview-heading"><b>오늘의 운영 브리핑</b><span>2026.08.16 · 09:42</span></div>
             <div className="preview-task urgent"><span>01</span><div><b>오늘 발송 마감</b><small>18건 · 오후 2시 이전 처리</small></div><strong>18</strong></div>
@@ -262,9 +262,9 @@ function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, pa
             <div className="preview-task"><span>03</span><div><b>답변 대기 문의</b><small>1시간 초과 2건 포함</small></div><strong>7</strong></div>
             <div className="preview-settlement"><span>오늘 정산 예정</span><b>₩4,820,400</b><em>3개 채널</em></div>
           </div>
-          <div className="login-market-row"><span>지원 채널</span><div><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div><b><i />API 연결 준비</b></div>
+          <div className="login-market-row"><span>판매 채널</span><div><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div><b><i />연동 상태 통합 관리</b></div>
         </div>
-        <footer><span>SellerPilot Commerce Operations</span><span>운영문의 02-1234-5678</span></footer>
+        <footer><span>SellerPilot Commerce Control</span><span>상품 · 주문 · CS · 정산 통합 운영</span></footer>
       </section>
 
       <section className="login-form-panel">
@@ -367,10 +367,10 @@ function OverviewPage({ onNavigate }: { onNavigate: (view: View) => void }) {
             <div className="chart-stage">
               <div className="chart-grid-lines"><i /><i /><i /><i /><i /></div>
               <svg viewBox="0 0 120 42" preserveAspectRatio="none" role="img" aria-label="최근 매출 추이">
-                <defs><linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0f62fe" stopOpacity=".18" /><stop offset="100%" stopColor="#0f62fe" stopOpacity="0" /></linearGradient></defs>
+                <defs><linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#e85d04" stopOpacity=".18" /><stop offset="100%" stopColor="#e85d04" stopOpacity="0" /></linearGradient></defs>
                 <polygon points={`0,42 ${chartPoints} 120,42`} fill="url(#areaGradient)" />
-                <polyline points={chartPoints} fill="none" stroke="#0f62fe" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                <circle cx="110" cy={period === "7일" ? "4" : period === "90일" ? "13" : "4"} r="1.8" fill="#fff" stroke="#0f62fe" strokeWidth="1.2" />
+                <polyline points={chartPoints} fill="none" stroke="#e85d04" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+                <circle cx="110" cy={period === "7일" ? "4" : period === "90일" ? "13" : "4"} r="1.8" fill="#fff" stroke="#e85d04" strokeWidth="1.2" />
               </svg>
               <div className="chart-x-labels"><span>7/17</span><span>7/24</span><span>7/31</span><span>8/7</span><span>8/15</span></div>
             </div>
@@ -670,7 +670,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   ];
   return (
     <div className="page-stack storyboard-page">
-      <section className="storyboard-intro"><div><span className="eyebrow dark"><FileText size={14} /> PRODUCT STORYBOARD · V1.2</span><h2>운영자가 길을 잃지 않는<br /><em>9개의 핵심 장면</em></h2><p>‘오늘 무엇을 봐야 하는가’에서 시작해 등록, AI 제작, 판매, CS, 개선까지<br />하나의 루프로 연결한 멀티채널 커머스 운영 경험입니다.</p></div><div className="oss-card"><span>OPEN SOURCE FOUNDATION</span><strong>IBM Carbon</strong><em>APACHE 2.0 · 2× GRID</em><p>IBM Plex 기반의 생산형 정보 구조, 키라인과 데이터 밀도</p><strong>GitHub Primer</strong><em>MIT · TOOL PATTERNS</em><p>업무 도구에 맞는 탐색, 상태, 표와 접근성 패턴</p><strong>Puck</strong><em>MIT · PAGE EDITOR</em><p>React·Next.js용 드래그앤드롭 상세페이지 편집기</p></div></section>
+      <section className="storyboard-intro"><div><span className="eyebrow dark"><FileText size={14} /> PRODUCT STORYBOARD · V1.3</span><h2>운영자가 길을 잃지 않는<br /><em>9개의 핵심 장면</em></h2><p>‘오늘 무엇을 봐야 하는가’에서 시작해 등록, AI 제작, 판매, CS, 개선까지<br />하나의 루프로 연결한 멀티채널 커머스 운영 경험입니다.</p></div><div className="oss-card"><span>OPEN SOURCE FOUNDATION</span><strong>Ant Design</strong><em>MIT · ENTERPRISE PATTERNS</em><p>복잡한 판매 업무를 익숙하고 확실하게 처리하는 관리자 화면 원칙</p><strong>Radix UI</strong><em>MIT · ACCESSIBLE PRIMITIVES</em><p>키보드와 보조기기 사용까지 고려한 상호작용 기반</p><strong>TanStack Table</strong><em>MIT · DATA WORKFLOWS</em><p>상품·주문·CS 데이터의 정렬, 필터, 선택과 밀도 높은 표현</p><strong>Puck</strong><em>MIT · PAGE EDITOR</em><p>React·Next.js용 드래그앤드롭 상세페이지 편집기</p></div></section>
       <section className="story-flow"><div className="flow-line" />{scenes.map((scene, index) => <article className="story-scene" key={scene.no}><div className="scene-number">{scene.no}</div><div className="scene-icon"><scene.icon size={22} /></div><div className="scene-copy"><span>{index < 2 ? "DISCOVER" : index < 5 ? "AUTOMATE" : index < 7 ? "OPERATE" : "GROW"}</span><h3>{scene.title}</h3><p>{scene.desc}</p><em><CheckCircle2 size={14} />{scene.outcome}</em></div><button onClick={() => onNavigate(scene.view)}>화면 열기<ArrowRight size={15} /></button></article>)}</section>
       <section className="panel information-architecture"><div className="panel-heading"><div><span className="panel-kicker">INFORMATION ARCHITECTURE</span><h3>화면 구성과 운영 목적</h3></div></div><div className="ia-grid"><div><span className="ia-icon"><LayoutDashboard size={19} /></span><b>총괄</b><small>핵심 KPI · 베스트 상품 · 채널 건강도 · 긴급 항목</small></div><div><span className="ia-icon"><Package size={19} /></span><b>상품</b><small>상품 원장 · 채널 상태 · 재고 · 판매 성과</small></div><div><span className="ia-icon"><CloudUpload size={19} /></span><b>등록</b><small>촬영 · AI 분석 · 번역 · 가격 · 게시 작업</small></div><div><span className="ia-icon"><Calculator size={19} /></span><b>마진</b><small>원가 · 채널 수수료 · 환율 · 목표 판매가</small></div><div><span className="ia-icon"><ShoppingCart size={19} /></span><b>주문</b><small>통합 주문 · 출고 · 배송 · 중앙 재고</small></div><div><span className="ia-icon"><Headphones size={19} /></span><b>CS</b><small>문의 통합 · 자동 번역 · AI 답변 · SLA</small></div><div><span className="ia-icon"><Store size={19} /></span><b>채널별</b><small>매출 · 주문 · 전환율 · 상품 · 운영 점수</small></div></div></section>
     </div>
@@ -713,23 +713,32 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   return (
     <main className="app-shell">
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        <div className="sidebar-head"><div className="brand-lockup light"><span className="brand-symbol"><Zap size={17} fill="currentColor" /></span><strong>SellerPilot</strong></div><button aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={18} /></button></div>
+        <div className="sidebar-head"><div className="brand-lockup light"><span className="brand-symbol"><Zap size={17} fill="currentColor" /></span><span className="sidebar-brand-copy"><strong>SellerPilot</strong><small>SELLER CONTROL</small></span></div><button aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={18} /></button></div>
         <nav>{navGroups.map((group) => <div className="nav-group" key={group.label}><span className="nav-label">{group.label}</span>{group.items.map((item) => {
           const Icon = "icon" in item ? item.icon : null;
           const isActive = view === item.id;
           const isDisabled = "disabled" in item && item.disabled;
           return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : "badge" in item && item.badge ? <em>{item.badge}</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
-        <div className="sidebar-insight"><div><Activity size={15} /><span>자동화 준비도</span><em>DEMO</em></div><p><b>175개</b> 개발·실검수 항목을<br />단계별로 추적합니다.</p><span><i /></span><small>실채널 API 연결 전</small></div>
+        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>3개 채널</b> 개발자 인증을<br />보안 저장소와 연결 중입니다.</p><span><i /></span><small>키 만료일·갱신 주기 관리</small></div>
         <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말 · 가이드</span></button><button onClick={() => navigate("credentials")}><Settings size={17} /><span>API · 보안 설정</span></button><button onClick={() => void onLogout()}><LogOut size={17} /><span>로그아웃</span></button></div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
 
       <section className="app-main">
-        <header className="topbar">
+        <div className="app-header-stack">
+          <div className="commerce-service-rail" aria-label="채널 운영 상태">
+            <strong>통합 판매관리</strong>
+            <span><i className="rail-ok" />상품 원장 정상</span>
+            <span><i className="rail-pending" />채널 인증 점검 중</span>
+            <span><i className="rail-ok" />보안 저장소 연결</span>
+            <em>마지막 동기화 09:42</em>
+          </div>
+          <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
           <div className="topbar-actions"><span className="demo-data-badge"><Activity size={13} /><b>{DEMO_DATA_META.label}</b><small>{DEMO_DATA_META.기준일} 기준</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={() => setSearchOpen(true)}><Search size={16} /><span>상품, 주문, CS 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap"><button className="top-icon-button" aria-label="알림" onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} /><i /></button>{notificationsOpen && <div className="notification-popover"><div><h4>알림</h4><button onClick={() => setNotificationsOpen(false)}>모두 읽음</button></div><button><span className="alert-icon danger"><Box size={15} /></span><span><b>재고 부족 상품이 있습니다.</b><small>3개 상품 · 5분 전</small></span></button><button><span className="alert-icon warning"><AlertCircle size={15} /></span><span><b>등록 실패 2건을 확인하세요.</b><small>Qoo10 · 18분 전</small></span></button></div>}</div><button className="user-menu"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
-        </header>
+          </header>
+        </div>
         <div className="app-content">{content}</div>
       </section>
 

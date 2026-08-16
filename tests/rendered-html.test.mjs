@@ -22,8 +22,8 @@ test("server-renders the SellerPilot login experience", async () => {
   const html = await response.text();
   assert.match(html, /<html lang="ko">/i);
   assert.match(html, /<title>SellerPilot \| 멀티채널 커머스 운영센터<\/title>/i);
-  assert.match(html, /판매 업무를/);
-  assert.match(html, /한 화면에서 끝내세요/);
+  assert.match(html, /주문·상품·문의 업무를/);
+  assert.match(html, /하나의 작업대에서/);
   assert.match(html, /운영센터 로그인/);
   assert.match(html, /Supabase Auth/);
   assert.doesNotMatch(html, /demo@sellerpilot\.kr|seller2026/);
@@ -31,10 +31,11 @@ test("server-renders the SellerPilot login experience", async () => {
 });
 
 test("contains the complete multi-channel operating storyboard and 175-item acceptance baseline", async () => {
-  const [page, layout, styles, packageJson, storyboard, mockData, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping] = await Promise.all([
+  const [page, layout, styles, operationsStyles, packageJson, storyboard, mockData, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/operations-system.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../docs/멀티채널_커머스_운영센터_스토리보드.md", import.meta.url), "utf8"),
     readFile(new URL("../app/mock-data.ts", import.meta.url), "utf8"),
@@ -71,6 +72,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /개발 · 실검수/);
   assert.match(page, /채널 연동 준비/);
   assert.match(page, /API 키 · 인증/);
+  assert.match(page, /commerce-service-rail/);
+  assert.match(page, /통합 판매관리/);
   assert.match(page, /signInWithPassword/);
   assert.match(page, /판매자 콘솔 확인 · QAPI 미검증/);
   assert.match(page, /개발자 앱 Online · 라이브 푸시 OFF/);
@@ -108,6 +111,9 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(styles, /@media \(max-width: 900px\)/);
   assert.match(styles, /@media \(max-width: 720px\)/);
   assert.match(styles, /@media \(max-width: 480px\)/);
+  assert.match(operationsStyles, /SellerPilot Commerce Control · 2026-08-16/);
+  assert.match(operationsStyles, /--primary: #e85d04/);
+  assert.match(operationsStyles, /\.commerce-service-rail/);
   assert.match(styles, /\.ticket-list \{ display: block; max-height: 360px/);
   assert.match(styles, /\.publish-channel-list \{ grid-template-columns: 1fr/);
   assert.match(storyboard, /핵심 사용자 여정/);
