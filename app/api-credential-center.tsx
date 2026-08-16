@@ -86,10 +86,12 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
   if (operation === "categories.list") {
     if (channel === "smartstore") return { categoryId: "50000000" };
     if (channel === "ebay") return { categoryTreeId: "0" };
+    if (channel === "shopee") return { shopId: "", query: { language: "en" } };
     return channel === "qoo10" ? { params: {} } : { query: {} };
   }
   if (operation === "orders.list") {
     if (channel === "qoo10") return { params: {} };
+    if (channel === "shopee") return { shopId: "", query: { time_range_field: "create_time", time_from: "", time_to: "", page_size: 50 } };
     if (channel === "lazada") return { query: { created_after: "" } };
     if (channel === "coupang") return { query: { createdAtFrom: "", createdAtTo: "", status: "ACCEPT" } };
     if (channel === "smartstore") return { query: { lastChangedFrom: "" } };
@@ -97,6 +99,7 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
   }
   if (operation === "orders.get") {
     if (channel === "qoo10") return { params: { OrderNo: "" } };
+    if (channel === "shopee") return { shopId: "", orderSn: "" };
     if (channel === "lazada") return { orderId: "" };
     if (channel === "coupang") return { shipmentBoxId: "" };
     if (channel === "smartstore") return { productOrderId: "" };
@@ -105,18 +108,21 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
   if (operation === "listing.create") {
     if (channel === "qoo10") return { params: { SecondSubCat: "", ItemTitle: "", ItemPrice: "", ItemQty: "", ShippingNo: "", ItemDescription: "" } };
     if (channel === "lazada") return { request: { Product: { PrimaryCategory: "", Attributes: {}, Skus: { Sku: [] } } } };
+    if (channel === "shopee") return { shopId: "", body: {} };
     if (channel === "coupang" || channel === "smartstore") return { body: {} };
     return { sku: "", inventoryItem: {}, offer: {}, publish: false };
   }
   if (operation === "listing.update") {
     if (channel === "qoo10") return { params: { ItemCode: "" } };
     if (channel === "lazada") return { request: { Product: {} } };
+    if (channel === "shopee") return { shopId: "", body: {} };
     if (channel === "coupang") return { body: {} };
     if (channel === "smartstore") return { originProductNo: "", body: {} };
     return { offerId: "", body: {} };
   }
   if (operation === "listing.stop") {
     if (channel === "qoo10") return { params: { ItemCode: "", Status: "2" } };
+    if (channel === "shopee") return { shopId: "", body: { item_list: [] } };
     if (channel === "lazada") return { request: { Request: { Product: {} } } };
     if (channel === "coupang") return { vendorItemId: "" };
     if (channel === "smartstore") return { originProductNo: "", body: {} };
@@ -124,6 +130,7 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
   }
   if (operation === "price.update" || operation === "inventory.update") {
     if (channel === "qoo10") return { params: { ItemCode: "", ItemPrice: "", ItemQty: "" } };
+    if (channel === "shopee") return { shopId: "", body: { item_id: "", model: [] } };
     if (channel === "lazada") return { request: { Product: { Skus: { Sku: [] } } } };
     if (channel === "coupang") return operation === "price.update" ? { vendorItemId: "", price: 10000, forceSalePriceUpdate: false } : { vendorItemId: "", quantity: 0 };
     if (channel === "smartstore") return operation === "price.update" ? { body: {} } : { originProductNo: "", body: {} };
@@ -131,12 +138,14 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
   }
   if (operation === "shipment.acknowledge") {
     if (channel === "qoo10") return { params: { OrderNo: "" } };
+    if (channel === "shopee") return { shopId: "", query: { order_sn: "" } };
     if (channel === "lazada") return { query: {}, request: {} };
     if (channel === "coupang") return { shipmentBoxIds: [] };
     if (channel === "smartstore") return { body: { productOrderIds: [] } };
     return {};
   }
   if (channel === "qoo10") return { params: { OrderNo: "", ShippingCorp: "", TrackingNo: "" } };
+  if (channel === "shopee") return { shopId: "", body: { order_sn: "" } };
   if (channel === "lazada") return { query: {}, request: {} };
   if (channel === "coupang" || channel === "smartstore") return { body: {} };
   return { orderId: "", body: {} };
@@ -145,7 +154,7 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
 const channelDefinitions: ChannelDefinition[] = activeChannelKeys.map((key) => channelCatalog[key]);
 
 const actionLabels: Record<string, string> = {
-  created: "최초 등록", rotated: "키 교체", schedule_updated: "일정 변경", tested: "연결 검사", revoked: "폐기", restored: "복원",
+  created: "최초 등록", rotated: "키 교체", token_refreshed: "토큰 갱신", schedule_updated: "일정 변경", tested: "연결 검사", revoked: "폐기", restored: "복원",
 };
 
 function formatDate(value: string | null, includeTime = false) {
@@ -254,7 +263,7 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
           startOAuth: true,
         }),
       });
-      const payload = await response.json().catch(() => ({ message: "Lazada OAuth 응답을 읽지 못했습니다." })) as { message: string; authorizationUrl?: string };
+      const payload = await response.json().catch(() => ({ message: `${channelCatalog[credential.channel].name} OAuth 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
       if (!response.ok || !payload.authorizationUrl) throw new Error(payload.message);
       window.location.assign(payload.authorizationUrl);
     } catch (oauthError) {
@@ -396,7 +405,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
 }
 
 function CredentialEditor({ channel, current, onClose, onSaved }: { channel: ChannelDefinition; current?: Credential; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
-  const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : "";
+  const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : channel.key === "shopee" ? "2026-09-15" : "";
   const [form, setForm] = useState<Record<string, string>>({
     country: channel.key === "lazada" ? "my" : "",
     market: channel.key === "coupang" ? "KR" : "",
@@ -405,7 +414,7 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cha
   });
   const [environment, setEnvironment] = useState<"sandbox" | "production">(current?.environment ?? "production");
   const [expiresAt, setExpiresAt] = useState(defaultExpiry);
-  const [rotationDays, setRotationDays] = useState(String(current?.rotation_interval_days ?? (channel.key === "lazada" ? 30 : channel.key === "ebay" ? 180 : 90)));
+  const [rotationDays, setRotationDays] = useState(String(current?.rotation_interval_days ?? (channel.key === "shopee" || channel.key === "lazada" ? 30 : channel.key === "ebay" ? 180 : 90)));
   const [warningDays, setWarningDays] = useState(String(current?.warning_days ?? (channel.key === "lazada" ? 14 : 30)));
   const [graceDays, setGraceDays] = useState("7");
   const [saving, setSaving] = useState(false);

@@ -62,7 +62,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /주문 · 판매/);
   assert.match(page, /CS 통합함/);
   assert.match(page, /Qoo10 Japan/);
-  assert.doesNotMatch(page, /Shopee Singapore/);
+  assert.match(page, /Shopee Global/);
   assert.match(page, /Lazada Malaysia/);
   assert.match(page, /쿠팡/);
   assert.match(page, /11번가/);
@@ -77,7 +77,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /signInWithPassword/);
   assert.match(page, /최신 QAPI 반영 · 판매자 인증키 대기/);
   assert.match(page, /OAuth 승인 완료 · 고정 송신 IP 차단/);
-  assert.match(page, /6개 판매채널/);
+  assert.match(page, /7개 판매채널/);
   assert.match(page, /AI가 주문 정보와 정책을 반영한 답변 초안/);
   assert.match(page, /신뢰도 97% 이상/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
@@ -92,16 +92,17 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /MarginCalculatorPage/);
   assert.match(styles, /\.margin-workspace/);
   const marginCalculator = await readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8");
-  assert.match(marginCalculator, /6 CHANNEL COMPARISON/);
+  assert.match(marginCalculator, /7 CHANNEL COMPARISON/);
   assert.match(marginCalculator, /손익분기 판매가/);
   assert.match(marginCalculator, /목표 마진 권장 판매가/);
   assert.match(marginCalculator, /계산 결과 저장/);
   assert.match(marginCalculator, /자동 등록 가능/);
-  assert.equal((marginCalculator.match(/key: "/g) ?? []).length, 6);
+  assert.equal((marginCalculator.match(/key: "/g) ?? []).length, 7);
   assert.match(mockData, /화면 검증용 임시 데이터/);
   assert.match(mockData, /레티놀 퍼밍 나이트 세럼/);
   assert.match(mockData, /Rina Kobayashi/);
-  assert.doesNotMatch(mockData, /Shopee|CS-2828/);
+  assert.match(mockData, /Shopee Global/);
+  assert.match(mockData, /CS-2844/);
   assert.match(mockData, /콜드브루 콜라겐 젤리 14포/);
   assert.match(mockData, /제주 비자림 클렌징 밤/);
   assert.equal((mockData.match(/sales:/g) ?? []).length, 10);
@@ -127,12 +128,14 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(readinessPage, /로그인됐다는 사실과/);
   assert.match(readinessPage, /QSM 개별 상품등록 필드 맵/);
   assert.match(readinessPage, /API E2E 통과/);
-  assert.doesNotMatch(readinessData, /Shopee Open Platform/);
+  assert.match(readinessData, /Shopee Open Platform/);
+  assert.match(readinessData, /Access 4시간 · Refresh 30일/);
+  assert.match(readinessData, /Test·Live 모두 https:\/\/sellerpilot-global\.vercel\.app 반영/);
   assert.match(readinessData, /AppWhiteIpLimit/);
   assert.match(readinessData, /Access 30일 · Refresh 180일/);
   assert.match(readinessData, /대표 1장, 추가 최대 50장, 동영상 최대 1개/);
   assert.match(channelMapping, /Qoo10 QSM 실제 상품등록 필드/);
-  assert.doesNotMatch(channelMapping, /Shopee Open Platform 준비도/);
+  assert.match(channelMapping, /Shopee Open Platform 준비도/);
   assert.match(channelMapping, /Lazada Open Platform/);
   const credentialPage = await readFile(new URL("../app/api-credential-center.tsx", import.meta.url), "utf8");
   const cliRuntimeCard = await readFile(new URL("../app/ai-cli-runtime-card.tsx", import.meta.url), "utf8");
@@ -170,6 +173,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const maintenanceRoute = await readFile(new URL("../app/api/internal/maintenance/route.ts", import.meta.url), "utf8");
   const refreshMigration = await readFile(new URL("../supabase/migrations/20260816110000_lazada_token_refresh.sql", import.meta.url), "utf8");
   const connectorMigration = await readFile(new URL("../supabase/migrations/20260816120321_expand_channel_connectors.sql", import.meta.url), "utf8");
+  const shopeeMigration = await readFile(new URL("../supabase/migrations/20260816133601_add_shopee_connector.sql", import.meta.url), "utf8");
   const channelCatalog = await readFile(new URL("../lib/channels/catalog.ts", import.meta.url), "utf8");
   const channelProtocols = await readFile(new URL("../lib/channels/protocols.ts", import.meta.url), "utf8");
   const channelOperations = await readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8");
@@ -184,11 +188,15 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(refreshMigration, /token_refreshed/);
   assert.match(connectorMigration, /coupang.*elevenst.*smartstore.*ebay/);
   assert.match(connectorMigration, /sellerpilot_service_refresh_ebay/);
-  assert.equal((channelCatalog.match(/key: "(?:qoo10|lazada|coupang|elevenst|smartstore|ebay)"/g) ?? []).length, 6);
+  assert.match(shopeeMigration, /sellerpilot_service_refresh_shopee/);
+  assert.match(shopeeMigration, /'qoo10', 'shopee', 'lazada'/);
+  assert.equal((channelCatalog.match(/key: "(?:qoo10|shopee|lazada|coupang|elevenst|smartstore|ebay)"/g) ?? []).length, 7);
   assert.match(channelCatalog, /vendor_docs_required/);
   assert.match(channelProtocols, /CEA algorithm=HmacSHA256/);
   assert.match(channelProtocols, /client_secret_sign/);
   assert.match(channelProtocols, /ebayjapan\.qapi/);
+  assert.match(channelProtocols, /buildShopeeSignature/);
+  assert.match(channelProtocols, /ensureShopeeAccessToken/);
   assert.match(channelOperations, /executeChannelOperation/);
   assert.match(channelOperations, /\/product\/price_quantity\/update/);
   assert.match(channelOperations, /\/v2\/products\/origin-products/);
@@ -202,6 +210,9 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(connectorMigration, /sellerpilot_service_complete_channel_operation/);
   assert.match(channelOperationsContract, /`POST \/api\/admin\/channel-operations`/);
   assert.match(ebayAuthorizeRoute, /sellerpilot_ebay_oauth/);
+  const shopeeAuthorizeRoute = await readFile(new URL("../app/api/admin/channel-credentials/shopee/authorize/route.ts", import.meta.url), "utf8");
+  assert.match(shopeeAuthorizeRoute, /sellerpilot_shopee_oauth/);
+  assert.match(shopeeAuthorizeRoute, /timingSafeEqual/);
   for (const protectedPattern of [/authorization[_ ]?code\s*[:=]/i, /access[_ ]?token\s*[:=]/i, /app[_ ]?secret\s*[:=]/i, /partner[_ ]?key\s*[:=]/i]) {
     assert.doesNotMatch(`${readinessData}\n${channelMapping}`, protectedPattern);
   }

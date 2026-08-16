@@ -1,4 +1,4 @@
-export const activeChannelKeys = ["qoo10", "lazada", "coupang", "elevenst", "smartstore", "ebay"] as const;
+export const activeChannelKeys = ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"] as const;
 
 export type ActiveChannelKey = (typeof activeChannelKeys)[number];
 export type ChannelCapabilityKey =
@@ -81,6 +81,41 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       inquiries: polling("CSCenter.GetInquiryMessage / SetInquiryMessage"),
       settlements: polling("ShippingBasic 판매리포트 조회"),
       webhooks: unsupported("QAPI 공개 가이드에 범용 주문 웹훅이 없어 보정 주기조회 사용"),
+    },
+  },
+  shopee: {
+    key: "shopee",
+    code: "S",
+    name: "Shopee Open Platform",
+    market: "Global · Open Platform v2",
+    authType: "oauth-user",
+    credentialPolicy: "Access 4시간 · Refresh 30일 · 판매자 승인 최대 365일 · 자동 갱신",
+    oauth: true,
+    fields: [
+      { key: "partner_id", label: "Live Partner ID", placeholder: "Shopee 운영 Partner ID" },
+      { key: "partner_key", label: "Live Partner Key", secret: true, placeholder: "Shopee 운영 Partner Key" },
+      { key: "shop_id", label: "Shop ID", optional: true, placeholder: "OAuth 완료 시 자동 저장" },
+      { key: "main_account_id", label: "Main Account ID", optional: true, placeholder: "계정 단위 승인 시 자동 저장" },
+    ],
+    officialDocs: [
+      { label: "Authorization", url: "https://open.shopee.com/developer-guide/20" },
+      { label: "API Reference", url: "https://open.shopee.com/documents" },
+    ],
+    capabilities: {
+      connection: api("서명된 /api/v2/shop/get_shop_info 읽기 검사"),
+      categories: polling("/api/v2/product/get_category 정기 동기화"),
+      imageUpload: api("/api/v2/media_space/upload_image"),
+      listingCreate: api("/api/v2/product/add_item"),
+      listingUpdate: api("/api/v2/product/update_item"),
+      listingStop: api("/api/v2/product/unlist_item"),
+      price: api("/api/v2/product/update_price"),
+      inventory: api("/api/v2/product/update_stock"),
+      orders: polling("/api/v2/order/get_order_list + get_order_detail"),
+      shipment: api("get_shipping_parameter 확인 후 /api/v2/logistics/ship_order"),
+      claims: api("Return/Refund API 권한과 지역별 상태를 기준으로 처리"),
+      inquiries: polling("Chat API 권한이 활성화된 마켓의 대화·메시지 조회"),
+      settlements: polling("Payment/Escrow API 권한으로 수입·정산 상세 조회"),
+      webhooks: webhook("Push Mechanism 서명 검증 + 주문 폴링 보정"),
     },
   },
   lazada: {

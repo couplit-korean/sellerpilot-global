@@ -156,6 +156,240 @@ export async function naverRequest(input: {
   return readRemoteResponse(response);
 }
 
+export function shopeeEnvironment(environment: "sandbox" | "production") {
+  return environment === "sandbox"
+    ? "https://openplatform.sandbox.test-stable.shopee.sg"
+    : "https://partner.shopeemobile.com";
+}
+
+export function shopeeAuthorizationEnvironment(environment: "sandbox" | "production") {
+  return environment === "sandbox"
+    ? "https://open.sandbox.test-stable.shopee.com"
+    : "https://open.shopee.com";
+}
+
+function shopeeNumericId(value: string, name: string) {
+  if (!/^\d+$/.test(value)) throw new Error(`SHOPEE_CREDENTIALS_MISSING:${name}`);
+  const numeric = Number(value);
+  if (!Number.isSafeInteger(numeric) || numeric <= 0) throw new Error(`SHOPEE_CREDENTIALS_MISSING:${name}`);
+  return numeric;
+}
+
+export function buildShopeeSignature(input: {
+  partnerId: string;
+  partnerKey: string;
+  path: string;
+  timestamp: number;
+  accessToken?: string;
+  shopId?: string;
+}) {
+  const baseString = `${input.partnerId}${input.path}${input.timestamp}${input.accessToken ?? ""}${input.shopId ?? ""}`;
+  return createHmac("sha256", input.partnerKey).update(baseString).digest("hex");
+}
+
+export function buildShopeeAuthorizationUrl(input: {
+  environment: "sandbox" | "production";
+  partnerId: string;
+  redirectUri: string;
+  state: string;
+}) {
+  shopeeNumericId(input.partnerId, "partner_id");
+  const url = new URL(`${shopeeAuthorizationEnvironment(input.environment)}/auth`);
+  url.search = new URLSearchParams({
+    partner_id: input.partnerId,
+    auth_type: "seller",
+    redirect_uri: new URL(input.redirectUri).toString(),
+    response_type: "code",
+    state: input.state,
+  }).toString();
+  return url;
+}
+
+export async function exchangeShopeeOAuthToken(input: {
+  environment: "sandbox" | "production";
+  partnerId: string;
+  partnerKey: string;
+  code?: string;
+  refreshToken?: string;
+  shopId?: string;
+  merchantId?: string;
+  mainAccountId?: string;
+}) {
+  const path = input.code ? "/api/v2/auth/token/get" : "/api/v2/auth/access_token/get";
+  if (!input.code && !input.refreshToken) throw new Error("SHOPEE_OAUTH_GRANT_MISSING");
+  const timestamp = Math.floor(Date.now() / 1000);
+  const partnerId = shopeeNumericId(input.partnerId, "partner_id");
+  const targetEntries = [
+    input.shopId ? ["shop_id", shopeeNumericId(input.shopId, "shop_id")] as const : null,
+    input.merchantId ? ["merchant_id", shopeeNumericId(input.merchantId, "merchant_id")] as const : null,
+    input.mainAccountId ? ["main_account_id", shopeeNumericId(input.mainAccountId, "main_account_id")] as const : null,
+  ].filter((entry): entry is readonly ["shop_id" | "merchant_id" | "main_account_id", number] => entry !== null);
+  if (targetEntries.length !== 1) throw new Error("SHOPEE_OAUTH_TARGET_INVALID");
+  const [targetKey, targetId] = targetEntries[0];
+  const url = new URL(`${shopeeEnvironment(input.environment)}${path}`);
+  url.search = new URLSearchParams({
+    partner_id: input.partnerId,
+    timestamp: String(timestamp),
+    sign: buildShopeeSignature({
+      partnerId: input.partnerId,
+      partnerKey: input.partnerKey,
+      path,
+      timestamp,
+    }),
+  }).toString();
+  const body = input.code
+    ? { code: input.code, [targetKey]: targetId, partner_id: partnerId }
+    : { refresh_token: input.refreshToken, [targetKey]: targetId, partner_id: partnerId };
+  const response = await fetch(url, {
+    method: "POST",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "user-agent": "SellerPilot-Shopee-OAuth/1.0",
+    },
+    body: JSON.stringify(body),
+  });
+  return readRemoteResponse(response);
+}
+
+type ShopeeStoredTarget = {
+  type: "shop" | "merchant";
+  id: string;
+  access_token: string;
+  refresh_token: string;
+  access_token_expires_at: string;
+  refresh_token_expires_at: string;
+};
+
+function shopeeStoredTargets(payload: SecretPayload) {
+  const targets = payload.shopee_targets;
+  if (!Array.isArray(targets)) return [];
+  return targets.filter((item): item is ShopeeStoredTarget => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const target = item as Record<string, unknown>;
+    return (target.type === "shop" || target.type === "merchant")
+      && typeof target.id === "string"
+      && typeof target.access_token === "string"
+      && typeof target.refresh_token === "string"
+      && typeof target.access_token_expires_at === "string"
+      && typeof target.refresh_token_expires_at === "string";
+  });
+}
+
+function projectShopeeTarget(payload: SecretPayload, target: ShopeeStoredTarget) {
+  return {
+    ...payload,
+    ...(target.type === "shop" ? { shop_id: target.id } : { merchant_id: target.id }),
+    access_token: target.access_token,
+    refresh_token: target.refresh_token,
+    access_token_expires_at: target.access_token_expires_at,
+    refresh_token_expires_at: target.refresh_token_expires_at,
+  };
+}
+
+export async function ensureShopeeAccessToken(
+  payload: SecretPayload,
+  environment: "sandbox" | "production",
+  bufferMs = 10 * 60 * 1000,
+  requestedShopId = "",
+) {
+  const targets = shopeeStoredTargets(payload);
+  const selectedTarget = requestedShopId
+    ? targets.find((target) => target.type === "shop" && target.id === requestedShopId)
+    : targets.find((target) => target.type === "shop" && target.id === textValue(payload, "shop_id"));
+  if (requestedShopId && !selectedTarget) throw new Error("SHOPEE_SHOP_NOT_AUTHORIZED");
+  const selectedPayload = selectedTarget ? projectShopeeTarget(payload, selectedTarget) : payload;
+  const accessToken = textValue(selectedPayload, "access_token");
+  const accessExpiresAt = Date.parse(textValue(selectedPayload, "access_token_expires_at"));
+  if (accessToken && Number.isFinite(accessExpiresAt) && accessExpiresAt > Date.now() + bufferMs) {
+    return { payload: selectedPayload, refreshed: false as const, credentialExpiresAt: textValue(payload, "authorization_expires_at") || null };
+  }
+  const partnerId = textValue(selectedPayload, "partner_id");
+  const partnerKey = textValue(selectedPayload, "partner_key");
+  const shopId = textValue(selectedPayload, "shop_id");
+  const refreshToken = textValue(selectedPayload, "refresh_token");
+  const refreshExpiresAt = Date.parse(textValue(selectedPayload, "refresh_token_expires_at"));
+  const authorizationExpiresAt = Date.parse(textValue(payload, "authorization_expires_at"));
+  if (!partnerId || !partnerKey || !shopId || !refreshToken) throw new Error("SHOPEE_REFRESH_CREDENTIALS_MISSING");
+  if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) throw new Error("SHOPEE_REFRESH_TOKEN_EXPIRED");
+  if (Number.isFinite(authorizationExpiresAt) && authorizationExpiresAt <= Date.now()) throw new Error("SHOPEE_AUTHORIZATION_EXPIRED");
+
+  const remote = await exchangeShopeeOAuthToken({
+    environment,
+    partnerId,
+    partnerKey,
+    refreshToken,
+    shopId,
+  });
+  const nextAccessToken = textValue(remote.data, "access_token");
+  const nextRefreshToken = textValue(remote.data, "refresh_token");
+  const errorCode = textValue(remote.data, "error");
+  if (!remote.response.ok || errorCode || !nextAccessToken || !nextRefreshToken) throw new Error("SHOPEE_TOKEN_REFRESH_FAILED");
+  const nextAccessExpiry = new Date(Date.now() + Number(remote.data.expire_in ?? 14_400) * 1000).toISOString();
+  const nextRefreshExpiry = new Date(Date.now() + 30 * 86_400_000).toISOString();
+  const nextTarget: ShopeeStoredTarget | null = selectedTarget ? {
+    ...selectedTarget,
+    access_token: nextAccessToken,
+    refresh_token: nextRefreshToken,
+    access_token_expires_at: nextAccessExpiry,
+    refresh_token_expires_at: nextRefreshExpiry,
+  } : null;
+  const storedPayload = nextTarget ? {
+    ...payload,
+    shopee_targets: targets.map((target) => target.type === nextTarget.type && target.id === nextTarget.id ? nextTarget : target),
+  } : payload;
+  return {
+    payload: {
+      ...storedPayload,
+      shop_id: shopId,
+      access_token: nextAccessToken,
+      refresh_token: nextRefreshToken,
+      access_token_expires_at: nextAccessExpiry,
+      refresh_token_expires_at: nextRefreshExpiry,
+    },
+    refreshed: true as const,
+    credentialExpiresAt: Number.isFinite(authorizationExpiresAt) ? new Date(authorizationExpiresAt).toISOString() : null,
+  };
+}
+
+export async function shopeeRequest(input: {
+  payload: SecretPayload;
+  environment: "sandbox" | "production";
+  method: "GET" | "POST";
+  path: string;
+  query?: URLSearchParams;
+  body?: unknown;
+}) {
+  const partnerId = textValue(input.payload, "partner_id");
+  const partnerKey = textValue(input.payload, "partner_key");
+  const shopId = textValue(input.payload, "shop_id");
+  const accessToken = textValue(input.payload, "access_token");
+  if (!partnerId || !partnerKey || !shopId || !accessToken) throw new Error("SHOPEE_CREDENTIALS_MISSING");
+  shopeeNumericId(partnerId, "partner_id");
+  shopeeNumericId(shopId, "shop_id");
+  const timestamp = Math.floor(Date.now() / 1000);
+  const query = new URLSearchParams(input.query);
+  query.set("partner_id", partnerId);
+  query.set("timestamp", String(timestamp));
+  query.set("access_token", accessToken);
+  query.set("shop_id", shopId);
+  query.set("sign", buildShopeeSignature({ partnerId, partnerKey, path: input.path, timestamp, accessToken, shopId }));
+  const response = await fetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
+    method: input.method,
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "user-agent": "SellerPilot-Shopee-Connector/1.0",
+    },
+    body: input.method === "POST" ? JSON.stringify(input.body ?? {}) : undefined,
+  });
+  return readRemoteResponse(response);
+}
+
 export function signLazadaRequest(path: string, params: Record<string, string>, appSecret: string) {
   const signingInput = path + Object.keys(params).sort().map((key) => `${key}${params[key]}`).join("");
   return createHmac("sha256", appSecret).update(signingInput).digest("hex").toUpperCase();

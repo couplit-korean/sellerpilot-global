@@ -1647,6 +1647,7 @@ a:focus-visible,
 .credential-channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .credential-card { --channel-accent: #0b7c61; overflow: hidden; border: 1px solid var(--line); border-top: 4px solid var(--channel-accent); background: #fff; }
 .credential-card.qoo10 { --channel-accent: #d64245; }
+.credential-card.shopee { --channel-accent: #ee4d2d; }
 .credential-card.lazada { --channel-accent: #6a4ad5; }
 .credential-card.coupang { --channel-accent: #1774e7; }
 .credential-card.elevenst { --channel-accent: #ef4423; }

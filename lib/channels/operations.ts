@@ -5,6 +5,7 @@ import {
   lazadaRequest,
   naverRequest,
   qoo10Request,
+  shopeeRequest,
   textValue,
   type RemoteResponse,
   type SecretPayload,
@@ -134,9 +135,11 @@ function requestIdentifier(data: Record<string, unknown>) {
 function step(name: string, remote: RemoteResponse): ChannelOperationStep {
   const resultCode = remote.data.ResultCode ?? remote.data.ErrorCode;
   const commonCode = remote.data.code;
+  const shopeeError = remote.data.error;
   const providerAccepted =
     (resultCode === undefined || resultCode === null || String(resultCode) === "0") &&
-    (commonCode === undefined || commonCode === null || ["", "0", "SUCCESS", "SUCCES", "OK"].includes(String(commonCode).toUpperCase()));
+    (commonCode === undefined || commonCode === null || ["", "0", "SUCCESS", "SUCCES", "OK"].includes(String(commonCode).toUpperCase())) &&
+    (shopeeError === undefined || shopeeError === null || String(shopeeError) === "");
   return {
     name,
     ok: remote.response.ok && providerAccepted,
@@ -210,6 +213,76 @@ async function executeQoo10(input: ExecuteInput) {
   const remote = await qoo10Request({ payload: input.payload, ...definition, params });
   const remoteId = typeof remote.data.ResultObject === "string" ? remote.data.ResultObject : undefined;
   return result(input, [step(definition.method, remote)], remoteId);
+}
+
+function shopeeResponseId(data: Record<string, unknown>, key: string) {
+  const response = data.response;
+  if (!response || typeof response !== "object" || Array.isArray(response)) return undefined;
+  const value = (response as Record<string, unknown>)[key];
+  return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
+}
+
+async function executeShopee(input: ExecuteInput) {
+  if (input.operation === "categories.list") {
+    const remote = await shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/product/get_category",
+      query: queryParams(input.arguments),
+    });
+    return result(input, [step("categories", remote)]);
+  }
+  const writePaths: Partial<Record<ChannelOperationName, string>> = {
+    "listing.create": "/api/v2/product/add_item",
+    "listing.update": "/api/v2/product/update_item",
+    "listing.stop": "/api/v2/product/unlist_item",
+    "price.update": "/api/v2/product/update_price",
+    "inventory.update": "/api/v2/product/update_stock",
+    "shipment.confirm": "/api/v2/logistics/ship_order",
+  };
+  const writePath = writePaths[input.operation];
+  if (writePath) {
+    const remote = await shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "POST",
+      path: writePath,
+      body: objectValue(input.arguments, "body"),
+    });
+    const remoteId = shopeeResponseId(remote.data, input.operation === "listing.create" ? "item_id" : "request_id");
+    return result(input, [step(input.operation, remote)], remoteId);
+  }
+  if (input.operation === "orders.list") {
+    const remote = await shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/order/get_order_list",
+      query: queryParams(input.arguments),
+    });
+    return result(input, [step("orders", remote)]);
+  }
+  if (input.operation === "orders.get") {
+    const query = queryParams(input.arguments);
+    if (!query.has("order_sn_list")) query.set("order_sn_list", stringArgument(input.arguments, "orderSn"));
+    const remote = await shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/order/get_order_detail",
+      query,
+    });
+    return result(input, [step("order", remote)], stringArgument(input.arguments, "orderSn", false) || undefined);
+  }
+  const remote = await shopeeRequest({
+    payload: input.payload,
+    environment: input.environment,
+    method: "GET",
+    path: "/api/v2/logistics/get_shipping_parameter",
+    query: queryParams(input.arguments),
+  });
+  return result(input, [step("shipping-parameter", remote)]);
 }
 
 async function executeLazada(input: ExecuteInput) {
@@ -446,6 +519,7 @@ async function executeEbay(input: ExecuteInput) {
 export async function executeChannelOperation(input: ExecuteInput): Promise<ChannelOperationResult> {
   ensureProviderSupport(input.channel, input.operation);
   if (input.channel === "qoo10") return executeQoo10(input);
+  if (input.channel === "shopee") return executeShopee(input);
   if (input.channel === "lazada") return executeLazada(input);
   if (input.channel === "coupang") return executeCoupang(input);
   if (input.channel === "smartstore") return executeSmartstore(input);

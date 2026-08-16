@@ -7,8 +7,12 @@ import {
   buildCoupangAuthorization,
   buildEbayConsentUrl,
   buildQoo10Url,
+  buildShopeeAuthorizationUrl,
+  buildShopeeSignature,
   createNaverClientSecretSign,
   ensureEbayAccessToken,
+  ensureShopeeAccessToken,
+  exchangeShopeeOAuthToken,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
 
@@ -60,8 +64,27 @@ test("eBay consent URL separates sandbox and production and includes CSRF state"
   assert.match(url.searchParams.get("scope") ?? "", /sell\.inventory/);
 });
 
-test("all six active channels define every normalized capability", () => {
-  assert.deepEqual(activeChannelKeys, ["qoo10", "lazada", "coupang", "elevenst", "smartstore", "ebay"]);
+test("Shopee authorization URL uses the current auth endpoint and preserves SellerPilot CSRF state", () => {
+  const timestamp = 1_786_848_245;
+  const path = "/api/v2/shop/auth_partner";
+  const expected = createHmac("sha256", "partner-secret").update(`2031489${path}${timestamp}`).digest("hex");
+  assert.equal(buildShopeeSignature({ partnerId: "2031489", partnerKey: "partner-secret", path, timestamp }), expected);
+  const url = buildShopeeAuthorizationUrl({
+    environment: "production",
+    partnerId: "2031489",
+    redirectUri: "https://sellerpilot-global.vercel.app/",
+    state: "sellerpilot-shopee-test-state",
+  });
+  assert.equal(url.origin, "https://open.shopee.com");
+  assert.equal(url.pathname, "/auth");
+  assert.equal(url.searchParams.get("auth_type"), "seller");
+  assert.equal(url.searchParams.get("response_type"), "code");
+  assert.equal(url.searchParams.get("redirect_uri"), "https://sellerpilot-global.vercel.app/");
+  assert.equal(url.searchParams.get("state"), "sellerpilot-shopee-test-state");
+});
+
+test("all seven active channels define every normalized capability", () => {
+  assert.deepEqual(activeChannelKeys, ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"]);
   const expectedCapabilities = Object.keys(channelCatalog.qoo10.capabilities).sort();
   for (const channel of activeChannelKeys) {
     assert.deepEqual(Object.keys(channelCatalog[channel].capabilities).sort(), expectedCapabilities);
@@ -69,6 +92,83 @@ test("all six active channels define every normalized capability", () => {
   }
   assert.equal(channelCatalog.elevenst.capabilities.listingCreate.mode, "vendor_docs_required");
   assert.equal(channelCatalog.qoo10.capabilities.webhooks.mode, "unsupported");
+});
+
+test("Shopee operation routing signs the shop request and uses v2 order detail", async () => {
+  const originalFetch = globalThis.fetch;
+  let calledUrl = "";
+  globalThis.fetch = async (input) => {
+    calledUrl = String(input);
+    return new Response(JSON.stringify({ error: "", request_id: "request", response: { order_list: [] } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "shopee",
+      operation: "orders.get",
+      payload: { partner_id: "2031489", partner_key: "partner-secret", shop_id: "123456", access_token: "access-token" },
+      arguments: { orderSn: "260816ABC123" },
+      environment: "production",
+    });
+    const url = new URL(calledUrl);
+    assert.equal(result.ok, true);
+    assert.equal(url.pathname, "/api/v2/order/get_order_detail");
+    assert.equal(url.searchParams.get("order_sn_list"), "260816ABC123");
+    assert.equal(url.searchParams.get("shop_id"), "123456");
+    assert.match(url.searchParams.get("sign") ?? "", /^[0-9a-f]{64}$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Shopee main-account code exchange uses main_account_id and returns the authorized shop lists", async () => {
+  const originalFetch = globalThis.fetch;
+  let calledBody = "";
+  globalThis.fetch = async (_input, init) => {
+    calledBody = String(init?.body ?? "");
+    return new Response(JSON.stringify({
+      error: "",
+      access_token: "main-access",
+      refresh_token: "main-refresh",
+      shop_id_list: [1001, 1002],
+      merchant_id_list: [2001],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await exchangeShopeeOAuthToken({
+      environment: "production",
+      partnerId: "2031489",
+      partnerKey: "partner-secret",
+      code: "one-time-code",
+      mainAccountId: "3001",
+    });
+    assert.equal(result.response.ok, true);
+    assert.deepEqual(JSON.parse(calledBody), { code: "one-time-code", main_account_id: 3001, partner_id: 2031489 });
+    assert.deepEqual(result.data.shop_id_list, [1001, 1002]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Shopee operation token selection projects the requested authorized shop without exposing another shop token", async () => {
+  const payload = {
+    partner_id: "2031489",
+    partner_key: "partner-secret",
+    shop_id: "1001",
+    authorization_expires_at: "2099-01-01T00:00:00.000Z",
+    shopee_targets: [
+      { type: "shop", id: "1001", access_token: "shop-one-access", refresh_token: "shop-one-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+      { type: "shop", id: "1002", access_token: "shop-two-access", refresh_token: "shop-two-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+    ],
+  };
+  const selected = await ensureShopeeAccessToken(payload, "production", 10 * 60 * 1000, "1002");
+  assert.equal(selected.refreshed, false);
+  assert.equal(selected.payload.shop_id, "1002");
+  assert.equal(selected.payload.access_token, "shop-two-access");
+  assert.equal(selected.payload.refresh_token, "shop-two-refresh");
+  await assert.rejects(ensureShopeeAccessToken(payload, "production", 10 * 60 * 1000, "9999"), /SHOPEE_SHOP_NOT_AUTHORIZED/);
 });
 
 test("Coupang operation routing uses the documented item price endpoint", async () => {
@@ -217,6 +317,39 @@ test("eBay refreshes an expired two-hour access token before a live operation", 
     assert.equal(ensured.refreshed, true);
     assert.equal(ensured.payload.access_token, "fresh-access-token");
     assert.match(tokenBody, /grant_type=refresh_token/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Shopee refresh rotates both the four-hour access token and thirty-day refresh token", async () => {
+  const originalFetch = globalThis.fetch;
+  let calledUrl = "";
+  let calledBody = "";
+  globalThis.fetch = async (input, init) => {
+    calledUrl = String(input);
+    calledBody = String(init?.body ?? "");
+    return new Response(JSON.stringify({ access_token: "fresh-access", refresh_token: "fresh-refresh", expire_in: 14_400 }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const ensured = await ensureShopeeAccessToken({
+      partner_id: "2031489",
+      partner_key: "partner-secret",
+      shop_id: "123456",
+      access_token: "expired-access",
+      access_token_expires_at: "2000-01-01T00:00:00.000Z",
+      refresh_token: "refresh-token",
+      refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
+      authorization_expires_at: "2099-01-01T00:00:00.000Z",
+    }, "production");
+    assert.equal(ensured.refreshed, true);
+    assert.equal(ensured.payload.access_token, "fresh-access");
+    assert.equal(ensured.payload.refresh_token, "fresh-refresh");
+    assert.equal(new URL(calledUrl).pathname, "/api/v2/auth/access_token/get");
+    assert.deepEqual(JSON.parse(calledBody), { refresh_token: "refresh-token", shop_id: 123456, partner_id: 2031489 });
   } finally {
     globalThis.fetch = originalFetch;
   }

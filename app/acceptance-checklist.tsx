@@ -136,7 +136,7 @@ export function AcceptanceChecklistPage() {
         </div>
       </section>
 
-      <section className="acceptance-note"><AlertTriangle size={16} /><div><b>최종 완료 기준</b><p>사진 업로드 후 시스템이 자동 등록·자동 제외·재촬영 요청 중 하나를 결정하고, 등록된 상품의 주문·재고·가격·알림이 Qoo10 Japan과 Lazada에서 안정적으로 운영되는 증거가 있어야 합니다. Shopee는 사용자 요청으로 범위에서 제외합니다.</p></div></section>
+      <section className="acceptance-note"><AlertTriangle size={16} /><div><b>최종 완료 기준</b><p>사진 업로드 후 시스템이 자동 등록·자동 제외·재촬영 요청 중 하나를 결정하고, 등록된 상품의 주문·재고·가격·알림이 Qoo10 Japan, Shopee 8개 숍, Lazada에서 안정적으로 운영되는 증거가 있어야 합니다.</p></div></section>
     </div>
   );
 }

@@ -9,14 +9,14 @@ import {
   writeChannelOperations,
 } from "../../../../lib/channels/operations";
 import { channelCatalog } from "../../../../lib/channels/catalog";
-import { ensureEbayAccessToken } from "../../../../lib/channels/protocols";
+import { ensureEbayAccessToken, ensureShopeeAccessToken } from "../../../../lib/channels/protocols";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
-  channel: z.enum(["qoo10", "lazada", "coupang", "elevenst", "smartstore", "ebay"]),
+  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"]),
   operation: z.enum(channelOperationNames),
   idempotencyKey: z.string().trim().min(16).max(160),
   confirmWrite: z.boolean().default(false),
@@ -132,6 +132,24 @@ export async function POST(request: NextRequest) {
   try {
     let executionPayload = secretPayload as Record<string, unknown>;
     let credentialRefreshed = false;
+    if (channel === "shopee") {
+      const requestedShopId = typeof parsed.data.arguments.shopId === "string"
+        ? parsed.data.arguments.shopId.trim()
+        : typeof parsed.data.arguments.shop_id === "string"
+          ? parsed.data.arguments.shop_id.trim()
+          : "";
+      const ensured = await ensureShopeeAccessToken(executionPayload, environment, 10 * 60 * 1000, requestedShopId);
+      executionPayload = ensured.payload;
+      if (ensured.refreshed) {
+        const { error: refreshStoreError } = await serviceClient.rpc("sellerpilot_service_refresh_shopee", {
+          p_credential_id: parsed.data.credentialId,
+          p_secret_payload: ensured.payload,
+          p_expires_at: ensured.credentialExpiresAt,
+        });
+        if (refreshStoreError) throw new Error("SHOPEE_CREDENTIAL_REFRESH_STORE_FAILED");
+        credentialRefreshed = true;
+      }
+    }
     if (channel === "ebay") {
       const ensured = await ensureEbayAccessToken(executionPayload, environment);
       executionPayload = ensured.payload;

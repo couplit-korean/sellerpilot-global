@@ -34,7 +34,7 @@ type MarginForm = {
 
 type ChannelProfile = {
   key: ChannelKey;
-  currency: "JPY" | "MYR" | "KRW" | "USD";
+  currency: "JPY" | "SGD" | "MYR" | "KRW" | "USD";
   symbol: string;
   rateToKrw: number;
   platformFee: number;
@@ -65,6 +65,7 @@ type SavedScenario = {
 
 const marginChannelProfiles: ChannelProfile[] = [
   { key: "qoo10", currency: "JPY", symbol: "¥", rateToKrw: 9.3112, platformFee: 10, paymentFee: 2 },
+  { key: "shopee", currency: "SGD", symbol: "S$", rateToKrw: 1072.65, platformFee: 10, paymentFee: 2.18 },
   { key: "lazada", currency: "MYR", symbol: "RM", rateToKrw: 325.84, platformFee: 10, paymentFee: 3 },
   { key: "coupang", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: 10.8, paymentFee: 0 },
   { key: "elevenst", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: 13, paymentFee: 0 },
@@ -252,7 +253,7 @@ export function MarginCalculatorPage({ notify }: { notify: (message: string) => 
       <section className="margin-hero">
         <div className="margin-hero-copy">
           <span className="eyebrow"><Calculator size={14} /> PROFIT PRICING ENGINE</span>
-          <h2>원가를 입력하면 6개 채널의<br /><em>팔아도 남는 가격</em>을 찾습니다.</h2>
+          <h2>원가를 입력하면 7개 채널의<br /><em>팔아도 남는 가격</em>을 찾습니다.</h2>
           <p>수수료·환율·광고비·반품 충당금을 한 번에 반영해 자동 등록 전 마진 하한을 검증합니다.</p>
         </div>
         <div className="margin-formula-card">
@@ -331,7 +332,7 @@ export function MarginCalculatorPage({ notify }: { notify: (message: string) => 
       </section>
 
       <section className="panel margin-comparison-panel">
-        <div className="panel-heading table-title"><div><span className="panel-kicker">6 CHANNEL COMPARISON</span><h3>동일 상품 · 채널별 예상 마진 비교</h3></div><span className="margin-sample-note">수수료·환율 샘플 기준</span></div>
+        <div className="panel-heading table-title"><div><span className="panel-kicker">7 CHANNEL COMPARISON</span><h3>동일 상품 · 채널별 예상 마진 비교</h3></div><span className="margin-sample-note">수수료·환율 샘플 기준</span></div>
         <div className="table-wrap"><table className="data-table margin-table"><thead><tr><th>채널</th><th>계획 판매가</th><th>플랫폼 + 결제 수수료</th><th>총 변동비율</th><th>예상 순이익</th><th>예상 마진율</th><th>권장 판매가</th><th>자동 등록 판정</th><th /></tr></thead><tbody>{results.map((result) => { const channel = channels[result.key]; return <tr key={result.key} className={selectedChannel === result.key ? "selected" : ""}><td><button className="margin-channel-cell" onClick={() => setSelectedChannel(result.key)}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.letter}</span><b>{channel.name}</b><small>{result.currency}</small></button></td><td><b>{formatLocalPrice(form.sellingPrice, result)}</b><small>{formatWon(form.sellingPrice)}</small></td><td><b>{result.platformFee.toFixed(2)}% + {result.paymentFee.toFixed(2)}%</b></td><td><b>{result.variableRate.toFixed(2)}%</b></td><td><b className={result.profit >= 0 ? "profit-text" : "loss-text"}>{formatWon(result.profit)}</b></td><td><b className={result.margin >= form.targetMargin ? "profit-text" : "loss-text"}>{result.margin.toFixed(1)}%</b></td><td><b>{formatWon(result.recommendedPrice)}</b><small>{formatLocalPrice(result.recommendedPrice, result)}</small></td><td><StatusPill status={result.status} /></td><td><button type="button" className="table-action" aria-label={`${channel.name} 계산 결과 보기`} onClick={() => setSelectedChannel(result.key)}><ArrowRight size={15} /></button></td></tr>; })}</tbody></table></div>
       </section>
 

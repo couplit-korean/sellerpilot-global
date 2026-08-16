@@ -112,6 +112,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260816104732_operations_core.sql",
       "20260816110000_lazada_token_refresh.sql",
       "20260816120321_expand_channel_connectors.sql",
+      "20260816133601_add_shopee_connector.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");

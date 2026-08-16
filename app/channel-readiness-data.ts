@@ -7,7 +7,7 @@ export type ReadinessCheck = {
 };
 
 export type ChannelReadiness = {
-  key: "qoo10" | "lazada" | "coupang" | "elevenst" | "smartstore" | "ebay";
+  key: "qoo10" | "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "ebay";
   code: string;
   name: string;
   market: string;
@@ -47,6 +47,28 @@ export const channelReadiness: ChannelReadiness[] = [
     ],
     blockers: ["Seller Authorization Key를 Vault에 연결", "검사 상품번호 지정", "쓰기 테스트상품 범위 승인"],
     nextAction: "QAPI 연결 확인 → 카테고리 조회 → 이미지 업로드 → 테스트상품 1건 등록·조회·중지",
+  },
+  {
+    key: "shopee",
+    code: "S",
+    name: "Shopee Open Platform",
+    market: "Global",
+    console: "Shopee Open Platform",
+    appState: "Couplit 앱 Online · Redirect Domain 반영 · Main account 8개 숍 승인",
+    overall: "partial",
+    summary: "Seller In House System 운영 앱, 민감정보 접근 권한과 판매자 연결 상태를 확인했습니다. 4시간 Access Token·30일 Refresh Token 자동 갱신과 Open Platform v2 실행 경로를 구현합니다.",
+    checks: [
+      { label: "개발자 앱 상태", state: "verified", evidence: "Couplit · Online · Seller In House System" },
+      { label: "민감정보 권한", state: "verified", evidence: "Access to Sensitive Data · Can access" },
+      { label: "운영 판매자 승인", state: "verified", evidence: "Main account 본인확인 · SG/MY/PH/VN/TH/TW/BR/MX 8개 숍 Authorized" },
+      { label: "Partner Key 만료", state: "verified", evidence: "콘솔 표시 2026-09-15 · 30일 이내 교체 경고" },
+      { label: "운영 Redirect Domain", state: "verified", evidence: "Test·Live 모두 https://sellerpilot-global.vercel.app 반영" },
+      { label: "OAuth 서버 토큰", state: "not_configured", evidence: "SellerPilot Vault에 Partner Key·Shop Token 미저장" },
+      { label: "토큰 자동 갱신", state: "verified", evidence: "Access 4시간 · Refresh 30일 · 실행 전/정기 갱신 구현" },
+      { label: "Push Mechanism", state: "not_configured", evidence: "운영 Push 콜백과 이벤트 구독 실검증 필요" },
+    ],
+    blockers: ["Live Partner Key를 Vault에 1회 입력", "SellerPilot 보안 콜백에서 Main account OAuth code·숍별 토큰 저장", "Supabase Couplit 프로젝트 연결"],
+    nextAction: "Vault 키 입력 → SellerPilot 승인 링크 재실행 → 8개 숍 토큰 교환 → get_shop_info 읽기 → 상품·주문 제한 검수",
   },
   {
     key: "lazada",

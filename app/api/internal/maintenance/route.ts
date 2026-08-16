@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { ebayDefaultScopes, exchangeEbayOAuthToken } from "../../../../lib/channels/protocols";
+import { ebayDefaultScopes, ensureShopeeAccessToken, exchangeEbayOAuthToken } from "../../../../lib/channels/protocols";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -146,6 +146,38 @@ async function refreshEbayIfNeeded(projectUrl: string, secretKey: string) {
   return { status: "refreshed" as const };
 }
 
+async function refreshShopeeIfNeeded(projectUrl: string, secretKey: string) {
+  const serviceClient = createClient(projectUrl, secretKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await serviceClient.rpc("sellerpilot_get_active_credential_secret", {
+    p_channel: "shopee",
+    p_environment: "production",
+  });
+  if (error) throw new Error("credential_read_failed");
+  const active = data as ActiveCredential | null;
+  if (!active?.credential_id || typeof active.credential_id !== "string" || !active.secret_payload || typeof active.secret_payload !== "object" || Array.isArray(active.secret_payload)) {
+    return { status: "not_connected" as const };
+  }
+  try {
+    const ensured = await ensureShopeeAccessToken(active.secret_payload as Record<string, unknown>, "production", 60 * 60 * 1000);
+    if (!ensured.refreshed) return { status: "current" as const };
+    const { error: rotateError } = await serviceClient.rpc("sellerpilot_service_refresh_shopee", {
+      p_credential_id: active.credential_id,
+      p_secret_payload: ensured.payload,
+      p_expires_at: ensured.credentialExpiresAt,
+    });
+    if (rotateError) throw new Error("credential_rotate_failed");
+    return { status: "refreshed" as const };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("REFRESH_TOKEN_EXPIRED")) return { status: "refresh_expired" as const };
+    if (message.includes("AUTHORIZATION_EXPIRED")) return { status: "authorization_expired" as const };
+    if (message.includes("REFRESH_CREDENTIALS_MISSING")) return { status: "awaiting_oauth" as const };
+    throw error;
+  }
+}
+
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
   const authorization = request.headers.get("authorization") ?? "";
@@ -166,8 +198,10 @@ export async function GET(request: Request) {
   });
   let lazadaToken: Awaited<ReturnType<typeof refreshLazadaIfNeeded>>;
   let ebayToken: Awaited<ReturnType<typeof refreshEbayIfNeeded>>;
+  let shopeeToken: Awaited<ReturnType<typeof refreshShopeeIfNeeded>>;
   try {
-    [lazadaToken, ebayToken] = await Promise.all([
+    [shopeeToken, lazadaToken, ebayToken] = await Promise.all([
+      refreshShopeeIfNeeded(supabaseUrl, secretKey),
       refreshLazadaIfNeeded(supabaseUrl, secretKey),
       refreshEbayIfNeeded(supabaseUrl, secretKey),
     ]);
@@ -202,6 +236,7 @@ export async function GET(request: Request) {
     retentionDays,
     jobsPruned: rows.length,
     storageRemoved,
+    shopeeToken: shopeeToken.status,
     lazadaToken: lazadaToken.status,
     ebayToken: ebayToken.status,
     completedAt: new Date().toISOString(),

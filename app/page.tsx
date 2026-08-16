@@ -90,6 +90,7 @@ type View =
   | "readiness"
   | "credentials"
   | "qoo10"
+  | "shopee"
   | "lazada"
   | "coupang"
   | "elevenst"
@@ -118,6 +119,7 @@ const navGroups = [
     label: "판매 채널",
     items: [
       { id: "qoo10" as View, label: "Qoo10 Japan", channel: "Q" },
+      { id: "shopee" as View, label: "Shopee Global", channel: "S" },
       { id: "lazada" as View, label: "Lazada MY", channel: "L" },
       { id: "coupang" as View, label: "쿠팡", channel: "C" },
       { id: "elevenst" as View, label: "11번가", channel: "11" },
@@ -146,6 +148,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   readiness: { title: "채널 연동 준비", description: "실제 판매자·개발자 콘솔 상태와 API 연결 차단 요인을 증거 기준으로 관리합니다." },
   credentials: { title: "API 키 · 인증 관리", description: "채널 키의 보관, 만료, 교체, 연결 검사와 감사기록을 한곳에서 관리합니다." },
   qoo10: { title: "Qoo10 Japan", description: "일본 스토어의 상품, 매출, 주문, CS 성과입니다." },
+  shopee: { title: "Shopee Global", description: "8개 국가 Shopee 숍의 상품, 매출, 주문, CS 성과입니다." },
   lazada: { title: "Lazada Malaysia", description: "말레이시아 스토어의 상품, 매출, 주문, CS 성과입니다." },
   coupang: { title: "쿠팡", description: "쿠팡 스토어의 상품, 매출, 주문, CS 성과입니다." },
   elevenst: { title: "11번가", description: "11번가 스토어의 상품, 매출, 주문, CS 성과입니다." },
@@ -159,6 +162,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
 
 const channelPerformance = [
   { code: "Q", name: "Qoo10 Japan", revenue: "₩22.4M", orders: "584", rate: 92, delta: "+18.6%", view: "qoo10" as View },
+  { code: "S", name: "Shopee Global", revenue: "₩16.2M", orders: "438", rate: 71, delta: "+14.1%", view: "shopee" as View },
   { code: "L", name: "Lazada Malaysia", revenue: "₩9.7M", orders: "262", rate: 46, delta: "+8.4%", view: "lazada" as View },
   { code: "C", name: "쿠팡", revenue: "₩18.6M", orders: "512", rate: 78, delta: "+15.3%", view: "coupang" as View },
   { code: "11", name: "11번가", revenue: "₩7.4M", orders: "198", rate: 39, delta: "+6.7%", view: "elevenst" as View },
@@ -168,6 +172,7 @@ const channelPerformance = [
 
 const ticketChannelCodes: Record<string, string> = {
   Qoo10: "Q",
+  Shopee: "S",
   Lazada: "L",
   쿠팡: "C",
   "11번가": "11",
@@ -178,6 +183,7 @@ const ticketChannelCodes: Record<string, string> = {
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
 const channelFactors: Record<ChannelKey, { sales: string; orders: string; products: string; cs: string; rate: number }> = {
   qoo10: { sales: "₩22.4M", orders: "584", products: "326", cs: "96.2%", rate: 84 },
+  shopee: { sales: "₩16.2M", orders: "438", products: "287", cs: "94.8%", rate: 76 },
   lazada: { sales: "₩9.7M", orders: "262", products: "219", cs: "92.6%", rate: 53 },
   coupang: { sales: "₩18.6M", orders: "512", products: "318", cs: "95.4%", rate: 79 },
   elevenst: { sales: "₩7.4M", orders: "198", products: "241", cs: "91.8%", rate: 61 },
@@ -215,6 +221,7 @@ const ticketStatusLabel = {
 
 const channelNameByKey: Record<string, string> = {
   qoo10: "Qoo10",
+  shopee: "Shopee",
   lazada: "Lazada",
   coupang: "쿠팡",
   elevenst: "11번가",
@@ -299,7 +306,7 @@ function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, pa
           <div className="login-operations-preview">
             <div className="preview-heading"><b>오늘의 운영 브리핑</b><span>2026.08.16 · 09:42</span></div>
             <div className="preview-task urgent"><span>01</span><div><b>오늘 발송 마감</b><small>18건 · 오후 2시 이전 처리</small></div><strong>18</strong></div>
-            <div className="preview-task"><span>02</span><div><b>신규 주문 확인</b><small>6개 채널 통합</small></div><strong>46</strong></div>
+            <div className="preview-task"><span>02</span><div><b>신규 주문 확인</b><small>7개 채널 통합</small></div><strong>46</strong></div>
             <div className="preview-task"><span>03</span><div><b>답변 대기 문의</b><small>1시간 초과 2건 포함</small></div><strong>7</strong></div>
             <div className="preview-settlement"><span>오늘 정산 예정</span><b>₩4,820,400</b><em>3개 채널</em></div>
           </div>
@@ -584,7 +591,7 @@ function PublishingPage({ notify }: { notify: (message: string) => void }) {
     <div className="page-stack publishing-page">
       <section className="publishing-hero">
         <div><span className="eyebrow dark"><Sparkles size={14} /> AI PRODUCT PUBLISHER</span><h2>사진은 충분히,<br /><em>등록은 한 번에.</em></h2><p>대표사진과 여러 각도의 옵션 사진, 상품 설명과 참고 링크를 함께 분석해<br />더 정확한 상품 정보와 채널별 등록 초안을 생성합니다.</p></div>
-        <div className="automation-flow-mini"><span><ImagePlus size={17} />다각도 사진</span><ArrowRight size={15} /><span><Bot size={17} />통합 분석</span><ArrowRight size={15} /><span><Languages size={17} />다국어</span><ArrowRight size={15} /><span><Globe2 size={17} />6개 채널</span></div>
+        <div className="automation-flow-mini"><span><ImagePlus size={17} />다각도 사진</span><ArrowRight size={15} /><span><Bot size={17} />통합 분석</span><ArrowRight size={15} /><span><Languages size={17} />다국어</span><ArrowRight size={15} /><span><Globe2 size={17} />7개 채널</span></div>
       </section>
       <section className="publishing-layout">
         <article className="panel upload-panel">
@@ -696,6 +703,7 @@ function ChannelPage({ channelKey, onNavigate }: { channelKey: ChannelKey; onNav
   const factors = channelFactors[channelKey];
   const observedStatus: Partial<Record<ChannelKey, string>> = {
     qoo10: "최신 QAPI 반영 · 판매자 인증키 대기",
+    shopee: "Main account · 8개 글로벌 숍 Authorized",
     lazada: "OAuth 승인 완료 · 고정 송신 IP 차단",
     coupang: "HMAC 연동 준비 · API 키 대기",
     elevenst: "판매자 상세 명세 승인 필요",
@@ -719,7 +727,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
     { no: "03", title: "사진으로 상품 등록", desc: "정면·라벨·바코드 사진을 올려 상품 사실정보 추출", view: "publishing" as View, icon: ImagePlus, outcome: "반복 입력 제거" },
     { no: "04", title: "AI 상세·썸네일 제작", desc: "ChatGPT CLI 분석, codex-image 연출컷, 3종 썸네일과 편집 가능한 상세페이지 생성", view: "publishing" as View, icon: WandSparkles, outcome: "Puck 블록으로 직접 수정 가능한 초안" },
     { no: "05", title: "채널별 마진 검증", desc: "원가·수수료·환율·광고비를 반영해 목표 마진 판매가를 결정", view: "margin" as View, icon: Calculator, outcome: "팔아도 남는 가격 확정" },
-    { no: "06", title: "6개 채널 동시 등록", desc: "Qoo10·Lazada·쿠팡·11번가·스마트스토어·eBay 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
+    { no: "06", title: "7개 채널 동시 등록", desc: "Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
     { no: "07", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
     { no: "08", title: "다국어 CS 응대", desc: "문의 자동번역과 주문정보 기반 AI 답변 초안", view: "cs" as View, icon: Bot, outcome: "응답시간 단축" },
     { no: "09", title: "성과 개선", desc: "채널·상품별 매출, 전환율, CS와 오류 데이터를 비교", view: "qoo10" as View, icon: TrendingUp, outcome: "잘 팔리는 상품에 집중" },
@@ -857,7 +865,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
           const isDisabled = "disabled" in item && item.disabled;
           return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : "badge" in item && item.badge ? <em>{item.badge}</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
-        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>6개 판매채널</b> 인증과 기능 차이를<br />보안 저장소에서 관리합니다.</p><span><i /></span><small>키 만료일·OAuth·갱신 주기 관리</small></div>
+        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>7개 판매채널</b> 인증과 기능 차이를<br />보안 저장소에서 관리합니다.</p><span><i /></span><small>키 만료일·OAuth·갱신 주기 관리</small></div>
         <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말 · 가이드</span></button><button onClick={() => navigate("credentials")}><Settings size={17} /><span>API · 보안 설정</span></button><button onClick={() => void onLogout()}><LogOut size={17} /><span>로그아웃</span></button></div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
@@ -888,7 +896,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 export default function Home() {
   const [accessState, setAccessState] = useState<"checking" | "signed_out" | "admin" | "forbidden">(isSupabaseConfigured ? "checking" : "signed_out");
   const [userEmail, setUserEmail] = useState("");
-  const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "lazada" | "ebay"; code: string; state: string } | null>(null);
+  const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "shopee" | "lazada" | "ebay"; code: string; state: string; shopId?: string; mainAccountId?: string } | null>(null);
   const [oauthNotice, setOauthNotice] = useState("");
   const oauthHandled = useRef(false);
 
@@ -897,10 +905,16 @@ export default function Home() {
       const params = new URLSearchParams(window.location.search);
       const code = params.get("code") ?? "";
       const state = params.get("state") ?? "";
-      const channel = state.startsWith("sellerpilot-lazada-") ? "lazada" : state.startsWith("sellerpilot-ebay-") ? "ebay" : null;
+      const channel = state.startsWith("sellerpilot-shopee-") ? "shopee" : state.startsWith("sellerpilot-lazada-") ? "lazada" : state.startsWith("sellerpilot-ebay-") ? "ebay" : null;
       if (!code || !channel) return;
       window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.hash}`);
-      setPendingChannelOAuth({ channel, code, state });
+      setPendingChannelOAuth({
+        channel,
+        code,
+        state,
+        shopId: params.get("shop_id") ?? undefined,
+        mainAccountId: params.get("main_account_id") ?? undefined,
+      });
     }, 0);
     return () => window.clearTimeout(captureCallback);
   }, []);
@@ -936,7 +950,11 @@ export default function Home() {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
           body: JSON.stringify({
-            secretPayload: { authorization_code: pendingChannelOAuth.code },
+            secretPayload: {
+              authorization_code: pendingChannelOAuth.code,
+              ...(pendingChannelOAuth.shopId ? { shop_id: pendingChannelOAuth.shopId } : {}),
+              ...(pendingChannelOAuth.mainAccountId ? { main_account_id: pendingChannelOAuth.mainAccountId } : {}),
+            },
             oauthState: pendingChannelOAuth.state,
           }),
         });

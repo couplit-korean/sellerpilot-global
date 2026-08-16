@@ -5,6 +5,7 @@ import {
   lazadaRequest,
   naverRequest,
   qoo10Request,
+  shopeeRequest,
   textValue,
   type SecretPayload,
 } from "./channels/protocols";
@@ -32,6 +33,23 @@ async function testLazada(payload: SecretPayload): Promise<ChannelDiagnostic> {
     return { status: "passed", message: `Lazada ${country} 판매자 읽기 API가 정상 응답했습니다.`, remoteRequestId: remoteRequestId(remote.data) };
   }
   return { status: "failed", message: `Lazada 인증 검사 실패${code ? ` · ${code}` : ` · HTTP ${remote.response.status}`}`, remoteRequestId: remoteRequestId(remote.data) };
+}
+
+async function testShopee(payload: SecretPayload, environment: "sandbox" | "production"): Promise<ChannelDiagnostic> {
+  if (!textValue(payload, "partner_id") || !textValue(payload, "partner_key") || !textValue(payload, "shop_id") || !textValue(payload, "access_token")) {
+    return { status: "failed", message: "Partner ID·Partner Key·Shop ID·Access Token이 모두 필요합니다." };
+  }
+  const remote = await shopeeRequest({
+    payload,
+    environment,
+    method: "GET",
+    path: "/api/v2/shop/get_shop_info",
+  });
+  const errorCode = textValue(remote.data, "error");
+  if (remote.response.ok && !errorCode) {
+    return { status: "passed", message: "Shopee 판매점 정보 읽기 API가 정상 응답했습니다.", remoteRequestId: remoteRequestId(remote.data) };
+  }
+  return { status: "failed", message: `Shopee 인증 검사 실패${errorCode ? ` · ${errorCode}` : ` · HTTP ${remote.response.status}`}`, remoteRequestId: remoteRequestId(remote.data) };
 }
 
 async function testQoo10(payload: SecretPayload): Promise<ChannelDiagnostic> {
@@ -111,6 +129,7 @@ export async function runChannelDiagnostic(
 ): Promise<ChannelDiagnostic> {
   try {
     if (!isActiveChannelKey(channel)) return { status: "failed", message: "지원하지 않는 채널입니다." };
+    if (channel === "shopee") return await testShopee(payload, environment);
     if (channel === "lazada") return await testLazada(payload);
     if (channel === "qoo10") return await testQoo10(payload);
     if (channel === "coupang") return await testCoupang(payload);
