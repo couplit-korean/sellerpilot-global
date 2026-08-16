@@ -310,7 +310,7 @@ function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, pa
             <div className="preview-task"><span>03</span><div><b>답변 대기 문의</b><small>1시간 초과 2건 포함</small></div><strong>7</strong></div>
             <div className="preview-settlement"><span>오늘 정산 예정</span><b>₩4,820,400</b><em>3개 채널</em></div>
           </div>
-          <div className="login-market-row"><span>판매 채널</span><div><ChannelMark code="Q" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div><b><i />연동 상태 통합 관리</b></div>
+          <div className="login-market-row"><span>판매 채널</span><div><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div><b><i />연동 상태 통합 관리</b></div>
         </div>
         <footer><span>SellerPilot Commerce Control</span><span>상품 · 주문 · CS · 정산 통합 운영</span></footer>
       </section>
