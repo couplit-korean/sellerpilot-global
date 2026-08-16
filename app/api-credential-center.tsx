@@ -81,8 +81,7 @@ const channelDefinitions: ChannelDefinition[] = [
     fields: [
       { key: "app_key", label: "App Key", placeholder: "Lazada App Key" },
       { key: "app_secret", label: "App Secret", secret: true, placeholder: "새 App Secret" },
-      { key: "access_token", label: "Access Token", secret: true, placeholder: "판매자 Access Token" },
-      { key: "refresh_token", label: "Refresh Token", secret: true, placeholder: "판매자 Refresh Token" },
+      { key: "authorization_code", label: "OAuth Authorization Code", secret: true, placeholder: "리디렉션 URL의 code 값" },
       { key: "country", label: "국가 코드", placeholder: "my" },
     ],
   },
@@ -251,14 +250,14 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cha
     const secretPayload = Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
     const expiryIso = expiresAt ? new Date(`${expiresAt}T23:59:59+09:00`).toISOString() : null;
     let rotateError: { message: string } | null = null;
-    if (channel.key === "shopee") {
+    if (channel.key === "shopee" || channel.key === "lazada") {
       const { data: sessionData } = await createClient().auth.getSession();
-      const response = await fetch("/api/admin/channel-credentials/shopee/authorize", {
+      const response = await fetch(`/api/admin/channel-credentials/${channel.key}/authorize`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
         body: JSON.stringify({ credentialId: current?.id, environment, secretPayload, expiresAt: expiryIso, rotationDays: Number(rotationDays), warningDays: Number(warningDays), graceDays: current ? Number(graceDays) : 0 }),
       });
-      const payload = await response.json().catch(() => ({ message: "Shopee 인증 응답을 읽지 못했습니다." })) as { message: string };
+      const payload = await response.json().catch(() => ({ message: `${channel.name} 인증 응답을 읽지 못했습니다.` })) as { message: string };
       if (!response.ok) rotateError = { message: payload.message };
     } else {
       const result = await createClient().rpc("sellerpilot_rotate_credential", {
