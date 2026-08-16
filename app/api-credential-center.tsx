@@ -127,6 +127,12 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
     }
     setLoading(true);
     const supabase = createClient();
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) {
+      setError("로그인 세션을 확인하지 못했습니다. 다시 로그인해 주세요.");
+      setLoading(false);
+      return;
+    }
     const [{ data, error: listError }, { data: auditData, error: auditError }] = await Promise.all([
       supabase.rpc("sellerpilot_list_credentials"),
       supabase.rpc("sellerpilot_list_credential_audit", { p_limit: 80 }),
