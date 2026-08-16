@@ -113,6 +113,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260816110000_lazada_token_refresh.sql",
       "20260816120321_expand_channel_connectors.sql",
       "20260816133601_add_shopee_connector.sql",
+      "20260816145605_channel_category_catalog.sql",
+      "20260817001500_live_operations_snapshot.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -282,13 +284,65 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [JOB_ID],
     );
     assert.match(aiProductId, /^[0-9a-f-]{36}$/i);
-    assert.equal(await scalar(db, "select public.sellerpilot_seed_demo_operations()"), true);
-    assert.equal(await scalar(db, "select public.sellerpilot_seed_demo_operations()"), true);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_save_product_category_assignment(
+          $1, 'ai-job-category-test', 'AI 생성 테스트 상품', 'coupang', 'production', 'KR',
+          '63955', array['생활용품','세제','표백제','분말형'], true, 0.98,
+          'channel_recommendation',
+          '[{"id":"quantity","name":"수량","required":true}]'::jsonb,
+          '{}'::jsonb, '{"verifiedBy":"channel_api"}'::jsonb, true
+        )`,
+        [aiProductId],
+      ),
+      /category confirmation requires an active leaf and every required attribute/,
+    );
+    const categoryAssignmentId = await scalar(
+      db,
+      `select public.sellerpilot_save_product_category_assignment(
+        $1, 'ai-job-category-test', 'AI 생성 테스트 상품', 'coupang', 'production', 'KR',
+        '63955', array['생활용품','세제','표백제','분말형'], true, 0.98,
+        'channel_recommendation',
+        '[{"id":"quantity","name":"수량","required":true}]'::jsonb,
+        '{"quantity":"1개"}'::jsonb, '{"verifiedBy":"channel_api"}'::jsonb, true
+      )`,
+      [aiProductId],
+    );
+    assert.match(categoryAssignmentId, /^[0-9a-f-]{36}$/i);
+    const categoryAssignments = await db.query("select * from public.sellerpilot_list_product_category_assignments('ai-job-category-test')");
+    assert.equal(categoryAssignments.rows.length, 1);
+    assert.equal(categoryAssignments.rows[0].status, "confirmed");
+    assert.deepEqual(categoryAssignments.rows[0].missing_required_attributes, []);
+    await assert.rejects(
+      db.query("select public.sellerpilot_seed_demo_operations()"),
+      /demo data is disabled/,
+    );
+
+    await db.query(
+      `insert into sellerpilot_private.commerce_orders (
+        owner_id, external_order_id, channel_key, customer_name, product_id, product_name,
+        quantity, amount, currency, amount_krw, status, ordered_at, demo
+      ) values ($1, 'REAL-ORDER-1', 'qoo10', '실고객', $2, 'AI 생성 테스트 상품', 1, 32000, 'KRW', 32000, 'paid', now(), false)`,
+      [ADMIN_ID, aiProductId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.support_tickets (
+        owner_id, external_ticket_id, channel_key, customer_name, subject, message,
+        status, priority, received_at, demo
+      ) values ($1, 'REAL-TICKET-1', 'qoo10', '실고객', '실제 문의', '배송 상태 확인', 'waiting', 2, now(), false)`,
+      [ADMIN_ID],
+    );
 
     const snapshot = await scalar(db, "select public.sellerpilot_get_operations_snapshot()");
-    assert.equal(snapshot.products.length, 11);
-    assert.equal(snapshot.orders.length, 5);
-    assert.equal(snapshot.tickets.length, 4);
+    assert.equal(snapshot.products.length, 1);
+    assert.equal(snapshot.orders.length, 1);
+    assert.equal(snapshot.tickets.length, 1);
+    assert.equal(snapshot.products.every((product) => product.demo === false), true);
+    assert.equal(snapshot.orders.every((order) => order.demo === false), true);
+    assert.equal(snapshot.tickets.every((ticket) => ticket.demo === false), true);
+    assert.equal(snapshot.summary.orderCount, 1);
+    assert.equal(snapshot.summary.openTicketCount, 1);
+    assert.equal(snapshot.channelMetrics.find((channel) => channel.channelKey === "qoo10").credentialStatus, "active");
     const aiProduct = snapshot.products.find((product) => product.id === aiProductId);
     assert.equal(aiProduct.demo, false);
     assert.equal(aiProduct.status, "draft");

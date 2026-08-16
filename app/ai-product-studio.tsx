@@ -5,7 +5,6 @@ import dynamic from "next/dynamic";
 import { CheckCircle2, Download, ExternalLink, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
-import { createDemoStudioResult } from "./product-studio-fallback";
 import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
 import type { ProductDetailData } from "./product-detail-puck";
 import type { ProductStudioResult } from "./product-studio-types";
@@ -100,7 +99,7 @@ const thumbnailPresets = [
   { id: "wide", label: "프로모션 배너", ratio: "16:9 · 1200×675", width: 1200, height: 675 },
 ];
 
-export function AiProductStudio({ mainPhoto, photos, description, productUrl, requestId, onRunningChange, notify, sampleImage }: {
+export function AiProductStudio({ mainPhoto, photos, description, productUrl, requestId, onRunningChange, notify, onResultReady }: {
   mainPhoto: StudioPhoto | null;
   photos: StudioPhoto[];
   description: string;
@@ -108,9 +107,9 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
   requestId: number;
   onRunningChange: (running: boolean) => void;
   notify: (message: string) => void;
-  sampleImage: string;
+  onResultReady?: (result: ProductStudioResult) => void;
 }) {
-  const [result, setResult] = useState<ProductStudioResult>(() => createDemoStudioResult(description));
+  const [result, setResult] = useState<ProductStudioResult | null>(null);
   const [thumbnails, setThumbnails] = useState<AutoThumbnail[]>([]);
   const [aiHero, setAiHero] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -119,7 +118,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
   const [savedDetailData, setSavedDetailData] = useState<ProductDetailData | null>(null);
   const [lastError, setLastError] = useState("");
   const handledRequest = useRef(0);
-  const currentImageUrl = aiHero || mainPhoto?.url || sampleImage;
+  const currentImageUrl = aiHero || mainPhoto?.url || "";
 
   const waitForCliJob = useCallback(async (jobId: string, accessToken: string) => {
     const deadline = Date.now() + 30 * 60_000;
@@ -166,6 +165,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
       const cliResult = await waitForCliJob(queued.jobId, accessToken);
       const { heroUrl, generatedImages, ...nextResult } = cliResult;
       setResult(nextResult);
+      onResultReady?.(nextResult);
       setAiHero(heroUrl ?? "");
       setThumbnails(thumbnailPresets.map((preset) => ({
         ...preset,
@@ -195,7 +195,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
       setCliPhase("idle");
       onRunningChange(false);
     }
-  }, [description, generating, mainPhoto, notify, onRunningChange, photos, productUrl, waitForCliJob]);
+  }, [description, generating, mainPhoto, notify, onResultReady, onRunningChange, photos, productUrl, waitForCliJob]);
 
   useEffect(() => {
     if (!requestId || handledRequest.current === requestId) return;
@@ -214,7 +214,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
         <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>로컬 ChatGPT CLI가 사진과 설명을 분석하고, codex-image와 Puck 편집 흐름으로 결과를 만듭니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result.mode}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result.mode === "cli" ? "CLI 실데이터" : "실행 전 예시"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating}>{generating ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}다시 생성</button></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result ? "CLI 실데이터" : "실행 대기"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating}>{generating ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}다시 생성</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>
@@ -229,17 +229,17 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
           <div className="thumbnail-grid">
             {thumbnails.length ? thumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
-          <div className="creative-summary"><span>CREATIVE DIRECTION</span><b>{result.design.themeName}</b><p>{result.product.oneLine}</p><div>{Object.values(result.design.palette).map((color) => <i key={color} style={{ background: color }} title={color} />)}</div></div>
+          {result ? <div className="creative-summary"><span>CREATIVE DIRECTION</span><b>{result.design.themeName}</b><p>{result.product.oneLine}</p><div>{Object.values(result.design.palette).map((color) => <i key={color} style={{ background: color }} title={color} />)}</div></div> : <div className="creative-summary empty"><span>CLI RESULT</span><b>실제 분석 결과 대기</b><p>대표사진을 등록하고 분석을 시작하면 결과만 표시합니다.</p></div>}
         </aside>
 
         <article className="detail-preview-panel">
-          <div className="detail-preview-toolbar"><span><MonitorSmartphone size={16} /><b>상세페이지 라이브 미리보기</b><small>모바일 우선 · 블록형 구성</small></span><button type="button" onClick={() => setEditorOpen(true)}><PencilRuler size={15} />Puck으로 직접 편집</button></div>
-          <div className="detail-preview-scroll"><div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} data={savedDetailData} /></div></div>
+          <div className="detail-preview-toolbar"><span><MonitorSmartphone size={16} /><b>상세페이지 라이브 미리보기</b><small>모바일 우선 · 블록형 구성</small></span><button type="button" onClick={() => setEditorOpen(true)} disabled={!result}><PencilRuler size={15} />Puck으로 직접 편집</button></div>
+          <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>실제 상세페이지 결과가 아직 없습니다.</b><small>대표사진과 상품 정보를 분석한 뒤 ChatGPT CLI 결과를 표시합니다.</small></div>}</div>
         </article>
       </div>
       {lastError && <div className="studio-warning error"><b>실제 AI 작업 실패</b><p>{lastError}</p><small>예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 CLI 작업자 상태를 확인해 주세요.</small></div>}
-      {result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
-      {editorOpen && <ProductDetailEditor result={result} imageUrl={currentImageUrl} data={savedDetailData} onSave={(next) => { setSavedDetailData(next); notify("상세페이지 편집 내용을 현재 작업에 저장했습니다."); }} onClose={() => setEditorOpen(false)} />}
+      {result && result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+      {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} data={savedDetailData} onSave={(next) => { setSavedDetailData(next); notify("상세페이지 편집 내용을 현재 작업에 저장했습니다."); }} onClose={() => setEditorOpen(false)} />}
     </section>
   );
 }

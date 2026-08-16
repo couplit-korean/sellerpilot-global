@@ -5,7 +5,6 @@ import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin
 export const runtime = "nodejs";
 
 const mutationSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("seed_demo") }),
   z.object({
     action: z.literal("order_status"),
     id: z.string().uuid(),
@@ -75,10 +74,7 @@ export async function POST(request: Request) {
 
   let mutationError: { message: string } | null = null;
   let id: string | null = null;
-  if (parsed.data.action === "seed_demo") {
-    const { error } = await admin.userClient.rpc("sellerpilot_seed_demo_operations");
-    mutationError = error;
-  } else if (parsed.data.action === "order_status") {
+  if (parsed.data.action === "order_status") {
     const { data, error } = await admin.userClient.rpc("sellerpilot_update_order_status", {
       p_id: parsed.data.id,
       p_status: parsed.data.status,

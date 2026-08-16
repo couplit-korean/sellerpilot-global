@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { createClient } from "../lib/supabase/client";
-import { channels, type ChannelKey } from "./mock-data";
+import { channels, type ChannelKey } from "./channel-config";
 
 type MarginForm = {
   sellingPrice: number;
@@ -74,16 +74,16 @@ const marginChannelProfiles: ChannelProfile[] = [
 ];
 
 const defaultMarginForm: MarginForm = {
-  sellingPrice: 45900,
-  marketReferencePrice: 48900,
-  purchaseCost: 18500,
-  internationalShipping: 4200,
-  localShipping: 2500,
-  fulfillmentCost: 900,
-  fixedCost: 500,
-  taxRate: 3,
-  adRate: 4,
-  reserveRate: 2,
+  sellingPrice: 0,
+  marketReferencePrice: 0,
+  purchaseCost: 0,
+  internationalShipping: 0,
+  localShipping: 0,
+  fulfillmentCost: 0,
+  fixedCost: 0,
+  taxRate: 0,
+  adRate: 0,
+  reserveRate: 0,
   targetMargin: 25,
 };
 
@@ -166,18 +166,13 @@ function calculateMargins(form: MarginForm, feeOverrides: Record<ChannelKey, num
   });
 }
 
-const initialSavedScenarios: SavedScenario[] = [
-  { id: "sample-1", product: "화이트토마토 글루타치온 30정", channelKey: "qoo10", sellingPrice: 45900, profit: 9661, margin: 21, savedAt: "오늘 14:22" },
-  { id: "sample-2", product: "저분자 피쉬콜라겐 60포", channelKey: "smartstore", sellingPrice: 39800, profit: 9179, margin: 23.1, savedAt: "오늘 11:08" },
-];
-
 export function MarginCalculatorPage({ notify }: { notify: (message: string) => void }) {
-  const [productName, setProductName] = useState("화이트토마토 글루타치온 30정");
+  const [productName, setProductName] = useState("");
   const [form, setForm] = useState<MarginForm>(() => ({ ...defaultMarginForm }));
   const [feeOverrides, setFeeOverrides] = useState<Record<ChannelKey, number>>(() => ({ ...defaultFeeOverrides }));
   const [paymentFeeOverrides, setPaymentFeeOverrides] = useState<Record<ChannelKey, number>>(() => ({ ...defaultPaymentFeeOverrides }));
   const [selectedChannel, setSelectedChannel] = useState<ChannelKey>("qoo10");
-  const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>(initialSavedScenarios);
+  const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([]);
   const [savingScenario, setSavingScenario] = useState(false);
   const results = useMemo(() => calculateMargins(form, feeOverrides, paymentFeeOverrides), [form, feeOverrides, paymentFeeOverrides]);
   const selectedResult = results.find((result) => result.key === selectedChannel) ?? results[0];
@@ -188,13 +183,13 @@ export function MarginCalculatorPage({ notify }: { notify: (message: string) => 
     setForm((current) => ({ ...current, [key]: value }));
   };
 
-  const resetSample = () => {
-    setProductName("화이트토마토 글루타치온 30정");
+  const resetInputs = () => {
+    setProductName("");
     setForm({ ...defaultMarginForm });
     setFeeOverrides({ ...defaultFeeOverrides });
     setPaymentFeeOverrides({ ...defaultPaymentFeeOverrides });
     setSelectedChannel("qoo10");
-    notify("마진 계산 샘플값을 초기화했습니다.");
+    notify("마진 계산 입력값을 초기화했습니다.");
   };
 
   const applyRecommendedPrice = () => {
@@ -273,7 +268,7 @@ export function MarginCalculatorPage({ notify }: { notify: (message: string) => 
 
       <section className="margin-workspace">
         <article className="panel margin-input-panel">
-          <div className="panel-heading margin-panel-heading"><div><span className="panel-kicker">COST INPUT</span><h3>상품 원가 · 비용 입력</h3></div><button type="button" className="filter-button" onClick={resetSample}><RefreshCw size={14} />샘플값 초기화</button></div>
+          <div className="panel-heading margin-panel-heading"><div><span className="panel-kicker">COST INPUT</span><h3>상품 원가 · 비용 입력</h3></div><button type="button" className="filter-button" onClick={resetInputs}><RefreshCw size={14} />입력값 초기화</button></div>
 
           <label className="margin-product-field" htmlFor="margin-product-name"><span>계산 상품</span><input id="margin-product-name" value={productName} onChange={(event) => setProductName(event.target.value)} /></label>
 
@@ -332,14 +327,14 @@ export function MarginCalculatorPage({ notify }: { notify: (message: string) => 
       </section>
 
       <section className="panel margin-comparison-panel">
-        <div className="panel-heading table-title"><div><span className="panel-kicker">7 CHANNEL COMPARISON</span><h3>동일 상품 · 채널별 예상 마진 비교</h3></div><span className="margin-sample-note">수수료·환율 샘플 기준</span></div>
+        <div className="panel-heading table-title"><div><span className="panel-kicker">7 CHANNEL COMPARISON</span><h3>동일 상품 · 채널별 예상 마진 비교</h3></div><span className="margin-sample-note">직접 입력 비용 · 기준 환율 적용</span></div>
         <div className="table-wrap"><table className="data-table margin-table"><thead><tr><th>채널</th><th>계획 판매가</th><th>플랫폼 + 결제 수수료</th><th>총 변동비율</th><th>예상 순이익</th><th>예상 마진율</th><th>권장 판매가</th><th>자동 등록 판정</th><th /></tr></thead><tbody>{results.map((result) => { const channel = channels[result.key]; return <tr key={result.key} className={selectedChannel === result.key ? "selected" : ""}><td><button className="margin-channel-cell" onClick={() => setSelectedChannel(result.key)}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.letter}</span><b>{channel.name}</b><small>{result.currency}</small></button></td><td><b>{formatLocalPrice(form.sellingPrice, result)}</b><small>{formatWon(form.sellingPrice)}</small></td><td><b>{result.platformFee.toFixed(2)}% + {result.paymentFee.toFixed(2)}%</b></td><td><b>{result.variableRate.toFixed(2)}%</b></td><td><b className={result.profit >= 0 ? "profit-text" : "loss-text"}>{formatWon(result.profit)}</b></td><td><b className={result.margin >= form.targetMargin ? "profit-text" : "loss-text"}>{result.margin.toFixed(1)}%</b></td><td><b>{formatWon(result.recommendedPrice)}</b><small>{formatLocalPrice(result.recommendedPrice, result)}</small></td><td><StatusPill status={result.status} /></td><td><button type="button" className="table-action" aria-label={`${channel.name} 계산 결과 보기`} onClick={() => setSelectedChannel(result.key)}><ArrowRight size={15} /></button></td></tr>; })}</tbody></table></div>
       </section>
 
       <section className="panel saved-margin-panel">
         <div className="panel-heading"><div><span className="panel-kicker">RECENT CALCULATIONS</span><h3>최근 저장한 계산</h3></div><small>운영 DB 저장 후 최근 5개를 화면에 표시합니다.</small></div>
-        <div className="saved-margin-list">{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.letter}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제`} onClick={() => setSavedScenarios((current) => current.filter((item) => item.id !== scenario.id))}><Trash2 size={15} /></button></article>; })}</div>
-        <div className="margin-disclaimer"><AlertCircle size={15} /><span><b>화면 검증용 계산입니다.</b> 채널 수수료, 환율, 세금과 정산 규칙은 샘플값이며 실제 운영 전 카테고리·판매자 등급·적용 기간별 API 데이터로 교체해야 합니다.</span></div>
+        <div className="saved-margin-list">{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.letter}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제`} onClick={() => setSavedScenarios((current) => current.filter((item) => item.id !== scenario.id))}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</div>
+        <div className="margin-disclaimer"><AlertCircle size={15} /><span><b>입력값 기반 예상 계산입니다.</b> 채널 수수료는 카테고리·판매자 등급·프로모션 기간에 따라 달라질 수 있으므로 등록 직전 채널 API 메타정보와 대조해야 합니다.</span></div>
       </section>
     </div>
   );

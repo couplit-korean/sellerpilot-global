@@ -18,6 +18,9 @@ import {
 
 export const channelOperationNames = [
   "categories.list",
+  "categories.suggest",
+  "categories.attributes",
+  "categories.validate",
   "listing.create",
   "listing.update",
   "listing.stop",
@@ -33,6 +36,9 @@ export type ChannelOperationName = (typeof channelOperationNames)[number];
 
 export const channelOperationCapabilities: Record<ChannelOperationName, ChannelCapabilityKey> = {
   "categories.list": "categories",
+  "categories.suggest": "categories",
+  "categories.attributes": "categories",
+  "categories.validate": "categories",
   "listing.create": "listingCreate",
   "listing.update": "listingUpdate",
   "listing.stop": "listingStop",
@@ -136,9 +142,13 @@ function step(name: string, remote: RemoteResponse): ChannelOperationStep {
   const resultCode = remote.data.ResultCode ?? remote.data.ErrorCode;
   const commonCode = remote.data.code;
   const shopeeError = remote.data.error;
+  const normalizedCommonCode = commonCode === undefined || commonCode === null ? "" : String(commonCode).toUpperCase();
+  const commonCodeAccepted = !normalizedCommonCode
+    || ["0", "SUCCESS", "SUCCES", "OK"].includes(normalizedCommonCode)
+    || (/^2\d\d$/.test(normalizedCommonCode));
   const providerAccepted =
     (resultCode === undefined || resultCode === null || String(resultCode) === "0") &&
-    (commonCode === undefined || commonCode === null || ["", "0", "SUCCESS", "SUCCES", "OK"].includes(String(commonCode).toUpperCase())) &&
+    commonCodeAccepted &&
     (shopeeError === undefined || shopeeError === null || String(shopeeError) === "");
   return {
     name,
@@ -181,8 +191,11 @@ function ensureProviderSupport(channel: ActiveChannelKey, operation: ChannelOper
 
 async function executeQoo10(input: ExecuteInput) {
   const params = stringMap(input.arguments, "params");
-  const map: Record<Exclude<ChannelOperationName, "orders.get" | "shipment.acknowledge">, { service: string; method: string; version?: string }> = {
+  const map: Partial<Record<ChannelOperationName, { service: string; method: string; version?: string }>> = {
     "categories.list": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
+    "categories.suggest": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
+    "categories.attributes": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
+    "categories.validate": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
     "listing.create": { service: "ItemsBasic", method: "SetNewGoods" },
     "listing.update": { service: "ItemsBasic", method: "UpdateGoods" },
     "listing.stop": { service: "ItemsBasic", method: "EditGoodsStatus" },
@@ -210,6 +223,7 @@ async function executeQoo10(input: ExecuteInput) {
     return result(input, [step("seller-check", remote)]);
   }
   const definition = map[input.operation];
+  if (!definition) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
   const remote = await qoo10Request({ payload: input.payload, ...definition, params });
   const remoteId = typeof remote.data.ResultObject === "string" ? remote.data.ResultObject : undefined;
   return result(input, [step(definition.method, remote)], remoteId);
@@ -223,7 +237,7 @@ function shopeeResponseId(data: Record<string, unknown>, key: string) {
 }
 
 async function executeShopee(input: ExecuteInput) {
-  if (input.operation === "categories.list") {
+  if (input.operation === "categories.list" || input.operation === "categories.suggest") {
     const remote = await shopeeRequest({
       payload: input.payload,
       environment: input.environment,
@@ -232,6 +246,18 @@ async function executeShopee(input: ExecuteInput) {
       query: queryParams(input.arguments),
     });
     return result(input, [step("categories", remote)]);
+  }
+  if (input.operation === "categories.attributes" || input.operation === "categories.validate") {
+    const query = queryParams(input.arguments);
+    if (!query.has("category_id")) query.set("category_id", stringArgument(input.arguments, "categoryId"));
+    const remote = await shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/product/get_attributes",
+      query,
+    });
+    return result(input, [step("category-attributes", remote)], stringArgument(input.arguments, "categoryId"));
   }
   const writePaths: Partial<Record<ChannelOperationName, string>> = {
     "listing.create": "/api/v2/product/add_item",
@@ -287,7 +313,17 @@ async function executeShopee(input: ExecuteInput) {
 
 async function executeLazada(input: ExecuteInput) {
   const query = stringMap(input.arguments, "query");
-  const pathMap: Record<Exclude<ChannelOperationName, "orders.get" | "shipment.acknowledge">, string> = {
+  if (input.operation === "categories.suggest") {
+    const params = { ...query, product_name: stringArgument(input.arguments, "query") };
+    const remote = await lazadaRequest({ payload: input.payload, path: "/product/category/suggestion/get", params });
+    return result(input, [step("category-suggestion", remote)]);
+  }
+  if (input.operation === "categories.attributes" || input.operation === "categories.validate") {
+    const params = { ...query, primary_category_id: stringArgument(input.arguments, "categoryId") };
+    const remote = await lazadaRequest({ payload: input.payload, path: "/category/attributes/get", params });
+    return result(input, [step("category-attributes", remote)], params.primary_category_id);
+  }
+  const pathMap: Partial<Record<ChannelOperationName, string>> = {
     "categories.list": "/category/tree/get",
     "listing.create": "/product/create",
     "listing.update": "/product/update",
@@ -315,6 +351,7 @@ async function executeLazada(input: ExecuteInput) {
     return result(input, [step("pack", remote)]);
   }
   const path = pathMap[input.operation];
+  if (!path) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
   const write = writeChannelOperations.has(input.operation);
   const params = write ? { ...query, payload: lazadaPayload(input.arguments) } : query;
   const remote = await lazadaRequest({ payload: input.payload, path, method: write ? "POST" : "GET", params });
@@ -337,6 +374,35 @@ async function executeCoupang(input: ExecuteInput) {
       query: queryParams(input.arguments),
     });
     return result(input, [step("categories", remote)]);
+  }
+  if (input.operation === "categories.suggest") {
+    const body = objectValue(input.arguments, "body", false);
+    const productName = stringArgument(input.arguments, "query", false) || stringArgument(body, "productName");
+    const remote = await coupangRequest({
+      payload: input.payload,
+      method: "POST",
+      path: "/v2/providers/openapi/apis/api/v1/categorization/predict",
+      body: { ...body, productName },
+    });
+    return result(input, [step("category-suggestion", remote)]);
+  }
+  if (input.operation === "categories.attributes") {
+    const categoryId = pathSegment(stringArgument(input.arguments, "categoryId"));
+    const remote = await coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/${categoryId}`,
+    });
+    return result(input, [step("category-metadata", remote)], categoryId);
+  }
+  if (input.operation === "categories.validate") {
+    const categoryId = pathSegment(stringArgument(input.arguments, "categoryId"));
+    const remote = await coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/${categoryId}/status`,
+    });
+    return result(input, [step("category-status", remote)], categoryId);
   }
   if (input.operation === "listing.create" || input.operation === "listing.update") {
     const body = { ...objectValue(input.arguments, "body"), vendorId };
@@ -410,9 +476,33 @@ async function executeSmartstore(input: ExecuteInput) {
     return remote;
   };
   if (input.operation === "categories.list") {
+    const categoryId = stringArgument(input.arguments, "categoryId", false);
+    const query = new URLSearchParams();
+    if (booleanArgument(input.arguments, "leafOnly", true)) query.set("last", "true");
+    const remote = categoryId
+      ? await request({ method: "GET", path: `/v1/categories/${pathSegment(categoryId)}` })
+      : await request({ method: "GET", path: "/v1/categories", query });
+    return result(input, [step("category", remote)], categoryId || undefined);
+  }
+  if (input.operation === "categories.suggest") {
+    const remote = await request({ method: "GET", path: "/v1/categories", query: new URLSearchParams({ last: "true" }) });
+    return result(input, [step("category-tree", remote)]);
+  }
+  if (input.operation === "categories.attributes") {
+    const categoryId = stringArgument(input.arguments, "categoryId");
+    const query = new URLSearchParams({ categoryId });
+    const [category, attributes, values, options] = await Promise.all([
+      request({ method: "GET", path: `/v1/categories/${pathSegment(categoryId)}` }),
+      request({ method: "GET", path: "/v1/product-attributes/attributes", query }),
+      request({ method: "GET", path: "/v1/product-attributes/attribute-values", query }),
+      request({ method: "GET", path: "/v1/options/standard-options", query }),
+    ]);
+    return result(input, [step("category", category), step("attributes", attributes), step("attribute-values", values), step("standard-options", options)], categoryId);
+  }
+  if (input.operation === "categories.validate") {
     const categoryId = stringArgument(input.arguments, "categoryId");
     const remote = await request({ method: "GET", path: `/v1/categories/${pathSegment(categoryId)}` });
-    return result(input, [step("category", remote)], categoryId);
+    return result(input, [step("category-validation", remote)], categoryId);
   }
   if (input.operation === "listing.create") {
     const remote = await request({ method: "POST", path: "/v2/products", body: objectValue(input.arguments, "body") });
@@ -468,6 +558,27 @@ async function executeEbay(input: ExecuteInput) {
     const categoryTreeId = pathSegment(stringArgument(input.arguments, "categoryTreeId"));
     const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: `/commerce/taxonomy/v1/category_tree/${categoryTreeId}` });
     return result(input, [step("taxonomy", remote)], categoryTreeId);
+  }
+  if (input.operation === "categories.suggest") {
+    let categoryTreeId = stringArgument(input.arguments, "categoryTreeId", false);
+    const marketplaceId = stringArgument(input.arguments, "marketplaceId", false) || textValue(input.payload, "marketplace_id") || "EBAY_US";
+    const steps: ChannelOperationStep[] = [];
+    if (!categoryTreeId) {
+      const tree = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: "/commerce/taxonomy/v1/get_default_category_tree_id", query: new URLSearchParams({ marketplace_id: marketplaceId }) });
+      steps.push(step("default-category-tree", tree));
+      if (!tree.response.ok) return result(input, steps);
+      categoryTreeId = String(tree.data.categoryTreeId ?? "");
+    }
+    if (!categoryTreeId) throw new Error("CHANNEL_ARGUMENT_REQUIRED:categoryTreeId");
+    const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: `/commerce/taxonomy/v1/category_tree/${pathSegment(categoryTreeId)}/get_category_suggestions`, query: new URLSearchParams({ q: stringArgument(input.arguments, "query") }) });
+    steps.push(step("category-suggestions", remote));
+    return result(input, steps, categoryTreeId);
+  }
+  if (input.operation === "categories.attributes" || input.operation === "categories.validate") {
+    const categoryTreeId = pathSegment(stringArgument(input.arguments, "categoryTreeId"));
+    const categoryId = stringArgument(input.arguments, "categoryId");
+    const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: `/commerce/taxonomy/v1/category_tree/${categoryTreeId}/get_item_aspects_for_category`, query: new URLSearchParams({ category_id: categoryId }) });
+    return result(input, [step("category-aspects", remote)], categoryId);
   }
   if (input.operation === "listing.create") {
     const sku = pathSegment(stringArgument(input.arguments, "sku"));

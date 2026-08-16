@@ -1,4 +1,4 @@
-export type StudioMode = "cli" | "demo";
+export type StudioMode = "cli";
 
 export type DetailSection = {
   type: "benefit" | "story" | "howto" | "proof" | "spec" | "caution";

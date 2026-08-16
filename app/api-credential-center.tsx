@@ -55,6 +55,9 @@ type AuditRow = {
 
 type ChannelOperationName =
   | "categories.list"
+  | "categories.suggest"
+  | "categories.attributes"
+  | "categories.validate"
   | "listing.create"
   | "listing.update"
   | "listing.stop"
@@ -67,6 +70,9 @@ type ChannelOperationName =
 
 const channelOperationOptions: { value: ChannelOperationName; label: string }[] = [
   { value: "categories.list", label: "카테고리 조회" },
+  { value: "categories.suggest", label: "상품명 카테고리 추천" },
+  { value: "categories.attributes", label: "필수 속성 조회" },
+  { value: "categories.validate", label: "카테고리 유효성 검사" },
   { value: "listing.create", label: "상품 등록" },
   { value: "listing.update", label: "상품 수정" },
   { value: "listing.stop", label: "판매 중지" },
@@ -84,10 +90,27 @@ const writeOperations = new Set<ChannelOperationName>([
 
 function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperationName): Record<string, unknown> {
   if (operation === "categories.list") {
-    if (channel === "smartstore") return { categoryId: "50000000" };
+    if (channel === "smartstore") return { leafOnly: true };
     if (channel === "ebay") return { categoryTreeId: "0" };
     if (channel === "shopee") return { shopId: "", query: { language: "en" } };
     return channel === "qoo10" ? { params: {} } : { query: {} };
+  }
+  if (operation === "categories.suggest") {
+    if (channel === "qoo10") return { query: "상품명", params: {} };
+    if (channel === "shopee") return { shopId: "", queryText: "Product name", query: { language: "en" } };
+    if (channel === "lazada") return { query: "Product name", queryParams: {} };
+    if (channel === "coupang") return { query: "상품명", body: { productDescription: "", brand: "", attributes: {} } };
+    if (channel === "smartstore") return { query: "상품명" };
+    if (channel === "ebay") return { query: "Product name", marketplaceId: "EBAY_US", categoryTreeId: "" };
+    return {};
+  }
+  if (operation === "categories.attributes" || operation === "categories.validate") {
+    if (channel === "qoo10") return { categoryId: "", params: {} };
+    if (channel === "shopee") return { shopId: "", categoryId: "", query: { language: "en" } };
+    if (channel === "lazada") return { categoryId: "", query: {} };
+    if (channel === "coupang" || channel === "smartstore") return { categoryId: "" };
+    if (channel === "ebay") return { categoryTreeId: "0", categoryId: "" };
+    return {};
   }
   if (operation === "orders.list") {
     if (channel === "qoo10") return { params: {} };

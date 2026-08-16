@@ -26,19 +26,20 @@ test("server-renders the SellerPilot login experience", async () => {
   assert.match(html, /하나의 작업대에서/);
   assert.match(html, /운영센터 로그인/);
   assert.match(html, /Supabase Auth/);
-  assert.doesNotMatch(html, /demo@sellerpilot\.kr|seller2026/);
+  assert.match(html, /실데이터 전용/);
+  assert.doesNotMatch(html, /demo@sellerpilot\.kr|seller2026|admin@company\.com|₩4,820,400|오늘의 운영 브리핑/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
 test("contains the complete multi-channel operating storyboard and 175-item acceptance baseline", async () => {
-  const [page, layout, styles, operationsStyles, packageJson, storyboard, mockData, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping] = await Promise.all([
+  const [page, layout, styles, operationsStyles, packageJson, storyboard, channelConfig, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/operations-system.css", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../docs/멀티채널_커머스_운영센터_스토리보드.md", import.meta.url), "utf8"),
-    readFile(new URL("../app/mock-data.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/channel-config.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/acceptance-checklist-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/acceptance-checklist.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchange-rates/route.ts", import.meta.url), "utf8"),
@@ -88,7 +89,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /상품 간략 설명/);
   assert.match(page, /참고 상품 링크/);
   assert.match(page, /AI 상품 분석 시작/);
-  assert.match(page, /DEMO_DATA_META\.label/);
+  assert.doesNotMatch(page, /DEMO_DATA_META|createDemoStudioResult|seed_demo/);
   assert.match(page, /MarginCalculatorPage/);
   assert.match(styles, /\.margin-workspace/);
   const marginCalculator = await readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8");
@@ -98,14 +99,10 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(marginCalculator, /계산 결과 저장/);
   assert.match(marginCalculator, /자동 등록 가능/);
   assert.equal((marginCalculator.match(/key: "/g) ?? []).length, 7);
-  assert.match(mockData, /화면 검증용 임시 데이터/);
-  assert.match(mockData, /레티놀 퍼밍 나이트 세럼/);
-  assert.match(mockData, /Rina Kobayashi/);
-  assert.match(mockData, /Shopee Global/);
-  assert.match(mockData, /CS-2844/);
-  assert.match(mockData, /콜드브루 콜라겐 젤리 14포/);
-  assert.match(mockData, /제주 비자림 클렌징 밤/);
-  assert.equal((mockData.match(/sales:/g) ?? []).length, 10);
+  assert.match(channelConfig, /Shopee Global/);
+  assert.match(channelConfig, /Alibaba\.com/);
+  assert.match(channelConfig, /1688\.com/);
+  assert.doesNotMatch(channelConfig, /sales:|revenue:|customer:|샘플/);
   assert.match(layout, /og-commerce\.png/);
   assert.match(styles, /@media \(max-width: 1360px\)/);
   assert.match(styles, /@media \(max-width: 1180px\)/);

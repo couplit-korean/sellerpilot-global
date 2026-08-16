@@ -40,6 +40,7 @@ yarn-error.log*
 *.tsbuildinfo
 /work/
 /tmp/verification/
+/supabase/.temp/
 
 # Generated PDF documents are delivered separately and must not be committed.
 *.pdf

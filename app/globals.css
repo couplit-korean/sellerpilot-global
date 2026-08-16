@@ -132,7 +132,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .demo-account b { color: #4f586d; }
 .login-support { margin-top: 42px; color: #9098a8; font-size: 9px; }
 .login-support svg { margin-right: 5px; vertical-align: -3px; }
-.login-support button { padding: 0 0 0 4px; color: #626c80; background: transparent; font-size: 9px; font-weight: 750; text-decoration: underline; text-underline-offset: 3px; }
+.login-support a { padding: 0 0 0 4px; color: #626c80; background: transparent; font-size: 9px; font-weight: 750; text-decoration: underline; text-underline-offset: 3px; }
 
 /* Dashboard shell */
 .app-shell { min-height: 100svh; background: var(--background); }

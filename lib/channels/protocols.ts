@@ -28,7 +28,8 @@ export async function readRemoteResponse(response: Response): Promise<RemoteResp
   let data: Record<string, unknown> = {};
   try {
     const parsed = JSON.parse(text) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) data = parsed as Record<string, unknown>;
+    if (Array.isArray(parsed)) data = { items: parsed };
+    else if (parsed && typeof parsed === "object") data = parsed as Record<string, unknown>;
   } catch {
     data = {};
   }

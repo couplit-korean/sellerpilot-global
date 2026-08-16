@@ -209,6 +209,34 @@ test("Coupang operation routing uses the documented item price endpoint", async 
   }
 });
 
+test("Coupang category recommendation sends the official product context payload", async () => {
+  const originalFetch = globalThis.fetch;
+  let calledUrl = "";
+  let calledBody = "";
+  globalThis.fetch = async (input, init) => {
+    calledUrl = String(input);
+    calledBody = String(init?.body ?? "");
+    return new Response(JSON.stringify({ code: 200, data: { autoCategorizationPredictionResultType: "SUCCESS", predictedCategoryId: "63955", predictedCategoryName: "분말형" } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "coupang",
+      operation: "categories.suggest",
+      payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
+      arguments: { query: "유한젠 가루세제 1kg", body: { productDescription: "분말형 살균 표백제", brand: "유한양행" } },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(new URL(calledUrl).pathname, "/v2/providers/openapi/apis/api/v1/categorization/predict");
+    assert.deepEqual(JSON.parse(calledBody), { productDescription: "분말형 살균 표백제", brand: "유한양행", productName: "유한젠 가루세제 1kg" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Naver order detail routing exchanges a token and uses the official batch query", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -284,6 +312,34 @@ test("Naver seller request refreshes once after GW.AUTHN", async () => {
     assert.equal(result.ok, true);
     assert.equal(tokenCount, 2);
     assert.equal(calls.filter((item) => item.includes("/v1/categories/50000000")).length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Naver category preflight loads the category, attributes, values, and standard options", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "naver-token", expires_in: 10_800 }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("/v1/categories/50000805")) return new Response(JSON.stringify({ id: "50000805", name: "건강기능식품", last: true }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify([]), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "smartstore",
+      operation: "categories.attributes",
+      payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
+      arguments: { categoryId: "50000805" },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.steps.length, 4);
+    assert.equal(calls.some((url) => url.includes("/v1/product-attributes/attributes?categoryId=50000805")), true);
+    assert.equal(calls.some((url) => url.includes("/v1/product-attributes/attribute-values?categoryId=50000805")), true);
+    assert.equal(calls.some((url) => url.includes("/v1/options/standard-options?categoryId=50000805")), true);
   } finally {
     globalThis.fetch = originalFetch;
   }

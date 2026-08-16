@@ -59,19 +59,49 @@ export type OperationTicket = {
 
 export type OperationsSnapshot = {
   generatedAt: string;
+  channelMetrics: Array<{
+    channelKey: string;
+    channelCode: string;
+    name: string;
+    market: string;
+    color: string;
+    channelStatus: string;
+    credentialStatus: string;
+    credentialExpiresAt: string | null;
+    productCount: number;
+    publishedCount: number;
+    sold30d: number;
+    revenue30dKrw: number;
+    orderCount: number;
+    readyToShipCount: number;
+    openTicketCount: number;
+    failedAttemptCount: number;
+    lastOperationAt: string | null;
+  }>;
   products: OperationProduct[];
   orders: OperationOrder[];
   tickets: OperationTicket[];
+  pipeline: {
+    aiRunning: number;
+    listingQueued: number;
+    listingPublished: number;
+    listingFailed: number;
+  };
   summary: {
     revenue30dKrw: number;
     sold30d: number;
     orderCount: number;
+    paidOrderCount: number;
+    readyToShipCount: number;
     openTicketCount: number;
     lowStockCount: number;
+    productCount: number;
+    registrationErrorCount: number;
+    activeCredentialCount: number;
   };
 };
 
-type LoadState = "loading" | "database" | "fallback";
+type LoadState = "loading" | "database" | "unavailable";
 
 export function useOperationsSnapshot() {
   const [data, setData] = useState<OperationsSnapshot | null>(null);
@@ -95,26 +125,16 @@ export function useOperationsSnapshot() {
 
   const load = useCallback(async () => {
     try {
-      let response = await authenticatedFetch("/api/operations/snapshot");
-      let payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
+      const response = await authenticatedFetch("/api/operations/snapshot");
+      const payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "운영 데이터를 불러오지 못했습니다.");
-      if (!Array.isArray(payload.products) || payload.products.length === 0) {
-        const seedResponse = await authenticatedFetch("/api/operations/snapshot", {
-          method: "POST",
-          body: JSON.stringify({ action: "seed_demo" }),
-        });
-        if (!seedResponse.ok) throw new Error("화면 검증용 데이터를 준비하지 못했습니다.");
-        response = await authenticatedFetch("/api/operations/snapshot");
-        payload = await response.json() as OperationsSnapshot;
-        if (!response.ok) throw new Error("준비된 운영 데이터를 다시 불러오지 못했습니다.");
-      }
       setData(payload);
       setState("database");
-      setMessage("Supabase 운영 DB · 관리자 전용");
+      setMessage("Supabase 운영 DB · 실데이터만 표시");
     } catch (error) {
       setData(null);
-      setState("fallback");
-      setMessage(error instanceof Error ? error.message : "운영 DB 연결 전 샘플 데이터를 표시합니다.");
+      setState("unavailable");
+      setMessage(error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.");
     }
   }, [authenticatedFetch]);
 
