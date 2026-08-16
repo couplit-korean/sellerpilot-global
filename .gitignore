@@ -39,6 +39,7 @@ yarn-error.log*
 /.local/
 *.tsbuildinfo
 /work/
+/tmp/verification/
 
 # Generated PDF documents are delivered separately and must not be committed.
 *.pdf
