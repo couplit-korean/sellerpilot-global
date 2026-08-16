@@ -695,8 +695,12 @@ function ChannelPage({ channelKey, onNavigate }: { channelKey: ChannelKey; onNav
   const channel = channels[channelKey];
   const factors = channelFactors[channelKey];
   const observedStatus: Partial<Record<ChannelKey, string>> = {
-    qoo10: "판매자 콘솔 확인 · QAPI 미검증",
+    qoo10: "최신 QAPI 반영 · 판매자 인증키 대기",
     lazada: "OAuth 승인 완료 · 고정 송신 IP 차단",
+    coupang: "HMAC 연동 준비 · API 키 대기",
+    elevenst: "판매자 상세 명세 승인 필요",
+    smartstore: "Commerce API 연동 준비 · 키 대기",
+    ebay: "User OAuth 연동 준비 · 앱 키 대기",
   };
   return (
     <div className="page-stack">
@@ -853,7 +857,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
           const isDisabled = "disabled" in item && item.disabled;
           return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : "badge" in item && item.badge ? <em>{item.badge}</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
-        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>2개 채널</b> 개발자 인증을<br />보안 저장소와 연결 중입니다.</p><span><i /></span><small>키 만료일·갱신 주기 관리</small></div>
+        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>6개 판매채널</b> 인증과 기능 차이를<br />보안 저장소에서 관리합니다.</p><span><i /></span><small>키 만료일·OAuth·갱신 주기 관리</small></div>
         <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말 · 가이드</span></button><button onClick={() => navigate("credentials")}><Settings size={17} /><span>API · 보안 설정</span></button><button onClick={() => void onLogout()}><LogOut size={17} /><span>로그아웃</span></button></div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
@@ -884,7 +888,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 export default function Home() {
   const [accessState, setAccessState] = useState<"checking" | "signed_out" | "admin" | "forbidden">(isSupabaseConfigured ? "checking" : "signed_out");
   const [userEmail, setUserEmail] = useState("");
-  const [pendingLazadaOAuth, setPendingLazadaOAuth] = useState<{ code: string; state: string } | null>(null);
+  const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "lazada" | "ebay"; code: string; state: string } | null>(null);
   const [oauthNotice, setOauthNotice] = useState("");
   const oauthHandled = useRef(false);
 
@@ -893,9 +897,10 @@ export default function Home() {
       const params = new URLSearchParams(window.location.search);
       const code = params.get("code") ?? "";
       const state = params.get("state") ?? "";
-      if (!code || !state.startsWith("sellerpilot-lazada-")) return;
+      const channel = state.startsWith("sellerpilot-lazada-") ? "lazada" : state.startsWith("sellerpilot-ebay-") ? "ebay" : null;
+      if (!code || !channel) return;
       window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.hash}`);
-      setPendingLazadaOAuth({ code, state });
+      setPendingChannelOAuth({ channel, code, state });
     }, 0);
     return () => window.clearTimeout(captureCallback);
   }, []);
@@ -922,31 +927,31 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (accessState !== "admin" || !pendingLazadaOAuth || oauthHandled.current) return;
+    if (accessState !== "admin" || !pendingChannelOAuth || oauthHandled.current) return;
     oauthHandled.current = true;
-    const completeLazadaOAuth = async () => {
+    const completeChannelOAuth = async () => {
       try {
         const { data: sessionData } = await createSupabaseClient().auth.getSession();
-        const response = await fetch("/api/admin/channel-credentials/lazada/authorize", {
+        const response = await fetch(`/api/admin/channel-credentials/${pendingChannelOAuth.channel}/authorize`, {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
           body: JSON.stringify({
-            secretPayload: { authorization_code: pendingLazadaOAuth.code },
-            oauthState: pendingLazadaOAuth.state,
+            secretPayload: { authorization_code: pendingChannelOAuth.code },
+            oauthState: pendingChannelOAuth.state,
           }),
         });
-        const payload = await response.json().catch(() => ({ message: "Lazada OAuth 응답을 읽지 못했습니다." })) as { message: string };
+        const payload = await response.json().catch(() => ({ message: "채널 OAuth 응답을 읽지 못했습니다." })) as { message: string };
         if (!response.ok) throw new Error(payload.message);
         setOauthNotice(payload.message);
       } catch (oauthError) {
-        setOauthNotice(oauthError instanceof Error ? oauthError.message : "Lazada OAuth 연결을 완료하지 못했습니다.");
+        setOauthNotice(oauthError instanceof Error ? oauthError.message : "채널 OAuth 연결을 완료하지 못했습니다.");
       } finally {
-        setPendingLazadaOAuth(null);
+        setPendingChannelOAuth(null);
         window.setTimeout(() => setOauthNotice(""), 6_000);
       }
     };
-    void completeLazadaOAuth();
-  }, [accessState, pendingLazadaOAuth]);
+    void completeChannelOAuth();
+  }, [accessState, pendingChannelOAuth]);
 
   const login = async (email: string, password: string) => {
     if (!isSupabaseConfigured) return "운영 인증 서버가 아직 연결되지 않았습니다.";

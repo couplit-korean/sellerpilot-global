@@ -7,12 +7,20 @@ import {
   CircleDashed,
   ClipboardCheck,
   Clock3,
+  ExternalLink,
   KeyRound,
   LockKeyhole,
   Radio,
   ServerCog,
   ShieldCheck,
 } from "lucide-react";
+import {
+  activeChannelKeys,
+  capabilityLabels,
+  capabilityModeLabels,
+  channelCatalog,
+  type ChannelCapabilityKey,
+} from "../lib/channels/catalog";
 import {
   channelReadiness,
   channelReadinessObservedAt,
@@ -22,7 +30,7 @@ import {
 } from "./channel-readiness-data";
 
 const stateLabels: Record<ReadinessState, string> = {
-  verified: "화면 확인",
+  verified: "확인 완료",
   partial: "일부 준비",
   blocked: "차단 요인",
   not_configured: "미구성",
@@ -34,6 +42,7 @@ function ReadinessBadge({ state }: { state: ReadinessState }) {
 }
 
 export function ChannelReadinessPage() {
+  const capabilityKeys = Object.keys(capabilityLabels) as ChannelCapabilityKey[];
   const onlineApps = channelReadiness.filter((channel) => channel.appState.includes("Online")).length;
   const verifiedChecks = channelReadiness.flatMap((channel) => channel.checks).filter((check) => check.state === "verified").length;
   const blockerCount = channelReadiness.reduce((total, channel) => total + channel.blockers.length, 0);
@@ -44,7 +53,7 @@ export function ChannelReadinessPage() {
         <div>
           <span className="readiness-eyebrow"><Radio size={14} /> READ-ONLY ACCOUNT INSPECTION · {channelReadinessObservedAt}</span>
           <h2>로그인됐다는 사실과<br /><em>API가 작동한다는 증거를 분리합니다.</em></h2>
-          <p>실제 판매자·개발자 콘솔에서 확인한 상태와 승인된 설정 변경만 기록했습니다. Lazada 운영 콜백과 OAuth 승인까지 검증했으며, 자격증명 원문·일회성 코드는 저장하지 않고 테스트상품도 생성하지 않았습니다.</p>
+          <p>6개 활성 판매채널의 공식 문서 구현 상태와 실제 콘솔 확인 상태를 분리했습니다. 자격증명 원문·일회성 코드는 저장하지 않고, 키가 없는 채널은 실계정 통과로 표시하지 않습니다.</p>
         </div>
         <aside>
           <ShieldCheck size={20} />
@@ -53,11 +62,11 @@ export function ChannelReadinessPage() {
       </section>
 
       <section className="readiness-summary" aria-label="채널 연동 준비 상태 요약">
-        <article><span>콘솔 확인</span><strong>2 / 2</strong><small>Qoo10 · Lazada</small></article>
+        <article><span>실콘솔 확인</span><strong>2 / 6</strong><small>Qoo10 · Lazada</small></article>
         <article><span>대상 Online 앱</span><strong>{onlineApps} / 1</strong><small>Lazada 운영 앱</small></article>
-        <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>읽기 전용 화면 증거</small></article>
-        <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>QAPI 발급 · Lazada 고정 IP</small></article>
-        <article className="danger"><span>API E2E 통과</span><strong>0 / 2</strong><small>Qoo10/Lazada 실계정 기준</small></article>
+        <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>문서·코드·화면 증거</small></article>
+        <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>키·승인·고정 IP·11st 문서</small></article>
+        <article className="danger"><span>API E2E 통과</span><strong>0 / 6</strong><small>실계정 읽기 기준</small></article>
       </section>
 
       <section className="readiness-channel-grid">
@@ -70,6 +79,7 @@ export function ChannelReadinessPage() {
             </header>
             <div className="readiness-app-state"><i />{channel.appState}</div>
             <p className="readiness-channel-summary">{channel.summary}</p>
+            <div className="readiness-doc-links">{channelCatalog[channel.key].officialDocs.map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}<ExternalLink size={11} /></a>)}</div>
             <div className="readiness-checks">
               {channel.checks.map((check) => (
                 <div key={check.label}>
@@ -85,6 +95,23 @@ export function ChannelReadinessPage() {
             <footer><span>다음 검수 흐름</span><p>{channel.nextAction}</p></footer>
           </article>
         ))}
+      </section>
+
+      <section className="panel channel-capability-panel">
+        <div className="panel-heading">
+          <div><span className="panel-kicker">CHANNEL CAPABILITY ROUTING</span><h3>채널별 지원 방식 · 대체 흐름</h3></div>
+          <span className="field-map-proof"><ShieldCheck size={14} />공식 문서 기준</span>
+        </div>
+        <p className="capability-intro">같은 버튼을 무조건 호출하지 않습니다. API·주기조회·웹훅·미지원·문서승인 필요 상태를 먼저 판정하고, 미지원 동작은 해당 채널 콘솔로 안내합니다.</p>
+        <div className="table-wrap capability-table-wrap">
+          <table className="capability-table">
+            <thead><tr><th>기능</th>{activeChannelKeys.map((key) => <th key={key}>{channelCatalog[key].name}</th>)}</tr></thead>
+            <tbody>{capabilityKeys.map((capability) => <tr key={capability}><td><b>{capabilityLabels[capability]}</b></td>{activeChannelKeys.map((key) => {
+              const item = channelCatalog[key].capabilities[capability];
+              return <td key={key}><span className={`capability-mode ${item.mode}`}>{capabilityModeLabels[item.mode]}</span><small>{item.note}</small></td>;
+            })}</tr>)}</tbody>
+          </table>
+        </div>
       </section>
 
       <section className="panel qoo10-field-map">
@@ -109,7 +136,7 @@ export function ChannelReadinessPage() {
       <section className="panel integration-gate-panel">
         <div className="panel-heading">
           <div><span className="panel-kicker">PRODUCTION CONNECTION GATES</span><h3>채널별로 동일하게 통과해야 하는 5단계</h3></div>
-          <span className="gate-zero"><LockKeyhole size={14} />현재 Gate 01 전</span>
+          <span className="gate-zero"><LockKeyhole size={14} />채널별 Gate 01 대기</span>
         </div>
         <div className="integration-gate-list">
           {integrationGates.map((gate, index) => (
@@ -125,7 +152,7 @@ export function ChannelReadinessPage() {
 
       <section className="readiness-security-note">
         <KeyRound size={18} />
-        <div><b>실제 연결은 Vault 저장과 고정 송신 IP가 모두 준비된 뒤 완료로 판정합니다.</b><p>브라우저 로그인이나 OAuth 승인 코드 수신만으로 API 연결을 완료 처리하지 않습니다. QAPI 발급과 Lazada 단일 고정 공인 IP를 먼저 확정한 뒤 읽기 API부터 단계적으로 검수합니다.</p></div>
+        <div><b>실제 연결은 Vault 저장과 채널별 읽기 진단이 모두 통과한 뒤 완료로 판정합니다.</b><p>브라우저 로그인이나 OAuth 승인 코드 수신만으로 완료 처리하지 않습니다. HMAC·OAuth·판매자키 검사를 통과한 뒤 테스트상품 쓰기와 주문 동기화를 단계적으로 승인합니다.</p></div>
         <ServerCog size={22} />
       </section>
     </div>

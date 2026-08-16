@@ -2,13 +2,14 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { runChannelDiagnostic } from "../../../../../lib/channel-diagnostics";
+import { ensureEbayAccessToken } from "../../../../../lib/channels/protocols";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
-  channel: z.enum(["qoo10", "lazada"]),
+  channel: z.enum(["qoo10", "lazada", "coupang", "elevenst", "smartstore", "ebay"]),
 });
 
 export async function POST(request: NextRequest) {
@@ -52,9 +53,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "활성 키를 안전하게 불러오지 못했습니다." }, { status: 404 });
   }
 
-  const result = await runChannelDiagnostic(parsed.data.channel, secretPayload as Record<string, unknown>);
+  const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
+  let diagnosticPayload = secretPayload as Record<string, unknown>;
+  let diagnosticCredentialId = parsed.data.credentialId;
+  if (parsed.data.channel === "ebay") {
+    try {
+      const ensured = await ensureEbayAccessToken(diagnosticPayload, environment);
+      diagnosticPayload = ensured.payload;
+      if (ensured.refreshed) {
+        const { data: nextCredentialId, error: refreshError } = await serviceClient.rpc("sellerpilot_service_refresh_ebay", {
+          p_credential_id: parsed.data.credentialId,
+          p_secret_payload: ensured.payload,
+          p_expires_at: ensured.credentialExpiresAt,
+        });
+        if (refreshError || typeof nextCredentialId !== "string") throw new Error("refresh_store_failed");
+        diagnosticCredentialId = nextCredentialId;
+      }
+    } catch {
+      return NextResponse.json({ status: "failed", message: "eBay OAuth 토큰을 갱신하지 못했습니다. 판매자 동의를 다시 확인해 주세요." }, { status: 422 });
+    }
+  }
+  const result = await runChannelDiagnostic(parsed.data.channel, diagnosticPayload, environment);
   await serviceClient.rpc("sellerpilot_record_credential_test", {
-    p_credential_id: parsed.data.credentialId,
+    p_credential_id: diagnosticCredentialId,
     p_status: result.status,
     p_safe_message: result.message,
   });

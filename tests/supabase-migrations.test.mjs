@@ -111,6 +111,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260816103854_ai_operations_controls.sql",
       "20260816104732_operations_core.sql",
       "20260816110000_lazada_token_refresh.sql",
+      "20260816120321_expand_channel_connectors.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -173,6 +174,60 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "select public.sellerpilot_get_active_credential_secret('lazada', 'production')",
     );
     assert.equal(refreshedSecret.secret_payload.access_token, "new-access-token");
+
+    await setClaims(db);
+    for (const channel of ["coupang", "elevenst", "smartstore", "ebay"]) {
+      const id = await scalar(
+        db,
+        "select public.sellerpilot_rotate_credential($1, 'production', $2::jsonb, now() + interval '180 days', 90, 30, 0)",
+        [channel, JSON.stringify({ key: `${channel}-test-key`, access_token: "old-access-token", refresh_token: "old-refresh-token", client_id: "test-client", client_secret: "test-secret" })],
+      );
+      assert.match(id, /^[0-9a-f-]{36}$/i);
+    }
+    await setClaims(db, "service_role");
+    const ebayActive = await scalar(db, "select public.sellerpilot_get_active_credential_secret('ebay', 'production')");
+    const refreshedEbayId = await scalar(
+      db,
+      `select public.sellerpilot_service_refresh_ebay(
+        $1,
+        '{"client_id":"test-client","client_secret":"test-secret","access_token":"new-ebay-access-token","refresh_token":"old-refresh-token"}'::jsonb,
+        now() + interval '180 days'
+      )`,
+      [ebayActive.credential_id],
+    );
+    assert.notEqual(refreshedEbayId, ebayActive.credential_id);
+    const refreshedEbay = await scalar(db, "select public.sellerpilot_get_active_credential_secret('ebay', 'production')");
+    assert.equal(refreshedEbay.secret_payload.access_token, "new-ebay-access-token");
+
+    await setClaims(db);
+    const operationFingerprint = "b".repeat(64);
+    const claimedOperation = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'qoo10', 'orders.list', 'orders-20260816-page-0001', $2)",
+      [credentialId, operationFingerprint],
+    );
+    assert.equal(claimedOperation.duplicate, false);
+    assert.equal(claimedOperation.status, "running");
+    const duplicateOperation = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'qoo10', 'orders.list', 'orders-20260816-page-0001', $2)",
+      [credentialId, operationFingerprint],
+    );
+    assert.equal(duplicateOperation.duplicate, true);
+    assert.equal(duplicateOperation.attempt_id, claimedOperation.attempt_id);
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_channel_operation($1, 'succeeded', 200, 'remote-1', 'read completed')",
+        [claimedOperation.attempt_id],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select status from sellerpilot_private.channel_operation_attempts where id = $1", [claimedOperation.attempt_id]),
+      "succeeded",
+    );
 
     await setClaims(db);
     await db.query(

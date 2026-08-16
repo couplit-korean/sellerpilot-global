@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const primaryChannelSchema = z.enum(["qoo10", "lazada"]);
+export const primaryChannelSchema = z.enum(["qoo10", "lazada", "coupang", "elevenst", "smartstore", "ebay"]);
 export type PrimaryChannel = z.infer<typeof primaryChannelSchema>;
 
 export const channelContextSchema = z.object({
@@ -24,6 +24,8 @@ export const normalizedChannelErrorSchema = z.object({
     "CONFLICT",
     "REMOTE_UNAVAILABLE",
     "TIMEOUT",
+    "UNSUPPORTED_OPERATION",
+    "VENDOR_APPROVAL_REQUIRED",
     "UNKNOWN",
   ]),
   retryable: z.boolean(),
@@ -118,6 +120,7 @@ export type PullOrdersResult = {
  */
 export interface ChannelAdapter {
   readonly channel: PrimaryChannel;
+  supports(capability: import("../lib/channels/catalog").ChannelCapabilityKey): boolean;
   checkConnection(context: ChannelContext): Promise<AdapterResult<{ sellerId: string; expiresAt?: string }>>;
   refreshCredentials(context: ChannelContext): Promise<AdapterResult<{ expiresAt?: string }>>;
   syncCategories(context: ChannelContext, cursor?: string): Promise<AdapterResult<{ categories: z.infer<typeof channelCategorySchema>[]; nextCursor?: string }>>;
@@ -129,5 +132,5 @@ export interface ChannelAdapter {
   stopListing(context: ChannelContext, externalProductId: string, reason: string): Promise<AdapterResult<{ stopped: boolean }>>;
   pullOrders(context: ChannelContext, input: { cursor?: string; changedAfter?: string }): Promise<AdapterResult<PullOrdersResult>>;
   acknowledgeShipment(context: ChannelContext, input: { externalOrderId: string; carrierCode: string; trackingNumber: string; shippedAt: string }): Promise<AdapterResult<{ accepted: boolean }>>;
-  verifyWebhook(input: { rawBody: Uint8Array; headers: Headers; receivedAt: Date }): Promise<AdapterResult<{ externalEventId: string; eventType: string; occurredAt?: string }>>;
+  verifyWebhook?(input: { rawBody: Uint8Array; headers: Headers; receivedAt: Date }): Promise<AdapterResult<{ externalEventId: string; eventType: string; occurredAt?: string }>>;
 }

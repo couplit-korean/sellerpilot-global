@@ -19,7 +19,9 @@ Qoo10 Japan, Lazada Malaysia, 쿠팡, 11번가, 네이버 스마트스토어, eB
 - 통합 주문·출고·배송 화면
 - 다국어 CS 통합함과 AI 답변 초안
 - Qoo10, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay 채널별 운영 페이지
-- Supabase Vault 기반 Qoo10·Lazada 판매 채널 키 버전, 만료일, 교체주기, 사전경고, 롤백 유예, 연결검사, 감사기록 관리
+- Supabase Vault 기반 6개 판매채널 키 버전, 만료일, 교체주기, 사전경고, 롤백 유예, 연결검사, 감사기록 관리
+- Qoo10 QAPI, Lazada OAuth, 쿠팡 HMAC, 11번가 XML, 네이버 Commerce OAuth, eBay User OAuth 프로토콜과 채널별 기능 지원표
+- 5개 채널의 카테고리·상품·가격·재고·주문·배송 공식 경로를 실행하는 관리자 API·실행 검수 UI와 멱등키 기반 중복 방지 원장(11번가는 로그인 전용 명세 확정 전 차단)
 - ChatGPT OAuth 기반 로컬 Codex CLI 작업자와 `codex-image`를 이용한 상품 분석·상세페이지 기획·대표 연출컷과 3종 썸네일 생성
 
 ## ChatGPT CLI AI 작업자
@@ -45,6 +47,8 @@ Vercel은 비공개 Supabase 작업 큐와 서명된 이미지 URL만 처리합�
 
 - [멀티채널 커머스 운영센터 스토리보드](docs/멀티채널_커머스_운영센터_스토리보드.md)
 - [무인 상품등록 자동화 구축 검토 및 실행계획](docs/무인_상품등록_자동화_구축_계획.md)
+- [판매채널 API 기능차이 및 연결 보고](docs/판매채널_API_기능차이_및_연결보고.md)
+- [판매채널 실행 API 계약](docs/판매채널_실행_API_계약.md)
 
 ## 로컬 실행
 

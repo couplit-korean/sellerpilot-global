@@ -1,4 +1,14 @@
-import { createHmac } from "node:crypto";
+import {
+  coupangRequest,
+  ebayRequest,
+  fetchNaverAccessToken,
+  lazadaRequest,
+  naverRequest,
+  qoo10Request,
+  textValue,
+  type SecretPayload,
+} from "./channels/protocols";
+import { isActiveChannelKey } from "./channels/catalog";
 
 export type ChannelDiagnostic = {
   status: "passed" | "failed" | "manual";
@@ -6,92 +16,117 @@ export type ChannelDiagnostic = {
   remoteRequestId?: string;
 };
 
-type SecretPayload = Record<string, unknown>;
-
-function textValue(payload: SecretPayload, key: string) {
-  const value = payload[key];
-  return typeof value === "string" ? value.trim() : "";
+function remoteRequestId(data: Record<string, unknown>) {
+  for (const key of ["request_id", "requestId", "traceId", "rCode"]) {
+    const value = data[key];
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 160);
+  }
+  return undefined;
 }
-
-async function fetchJson(url: URL, headers: Record<string, string> = {}) {
-  const response = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-    signal: AbortSignal.timeout(12_000),
-    headers: { accept: "application/json", "user-agent": "SellerPilot-Connection-Diagnostic/1.0", ...headers },
-  });
-  const data = await response.json().catch(() => ({})) as Record<string, unknown>;
-  return { response, data };
-}
-
-const lazadaEndpoints: Record<string, string> = {
-  my: "https://api.lazada.com.my/rest",
-  sg: "https://api.lazada.sg/rest",
-  ph: "https://api.lazada.com.ph/rest",
-  th: "https://api.lazada.co.th/rest",
-  vn: "https://api.lazada.vn/rest",
-  id: "https://api.lazada.co.id/rest",
-};
 
 async function testLazada(payload: SecretPayload): Promise<ChannelDiagnostic> {
-  const appKey = textValue(payload, "app_key");
-  const appSecret = textValue(payload, "app_secret");
-  const accessToken = textValue(payload, "access_token");
-  const country = textValue(payload, "country").toLowerCase() || "my";
-  if (!appKey || !appSecret || !accessToken) {
-    return { status: "failed", message: "App Key·App Secret·Access Token이 모두 필요합니다." };
+  const remote = await lazadaRequest({ payload, path: "/seller/get" });
+  const code = String(remote.data.code ?? "");
+  const country = (textValue(payload, "country") || "my").toUpperCase();
+  if (remote.response.ok && (!code || code === "0")) {
+    return { status: "passed", message: `Lazada ${country} 판매자 읽기 API가 정상 응답했습니다.`, remoteRequestId: remoteRequestId(remote.data) };
   }
-  if (!lazadaEndpoints[country]) return { status: "failed", message: "지원 국가 코드는 MY·SG·PH·TH·VN·ID 중 하나여야 합니다." };
-
-  const path = "/seller/get";
-  const params: Record<string, string> = {
-    access_token: accessToken,
-    app_key: appKey,
-    sign_method: "sha256",
-    timestamp: Date.now().toString(),
-  };
-  const signingInput = path + Object.keys(params).sort().map((key) => `${key}${params[key]}`).join("");
-  params.sign = createHmac("sha256", appSecret).update(signingInput).digest("hex").toUpperCase();
-  const url = new URL(`${lazadaEndpoints[country]}${path}`);
-  url.search = new URLSearchParams(params).toString();
-  const { response, data } = await fetchJson(url);
-  const code = typeof data.code === "string" ? data.code : String(data.code ?? "");
-  const requestId = typeof data.request_id === "string" ? data.request_id : undefined;
-  if (response.ok && (code === "0" || !code)) return { status: "passed", message: `Lazada ${country.toUpperCase()} 판매자 읽기 API가 정상 응답했습니다.`, remoteRequestId: requestId };
-  return { status: "failed", message: `Lazada 인증 검사 실패${code ? ` · ${code}` : ""}`, remoteRequestId: requestId };
+  return { status: "failed", message: `Lazada 인증 검사 실패${code ? ` · ${code}` : ` · HTTP ${remote.response.status}`}`, remoteRequestId: remoteRequestId(remote.data) };
 }
 
 async function testQoo10(payload: SecretPayload): Promise<ChannelDiagnostic> {
-  const apiKey = textValue(payload, "api_key");
-  const sellerId = textValue(payload, "seller_id");
   const testItemCode = textValue(payload, "test_item_code");
-  if (!apiKey || !sellerId || !testItemCode) return { status: "failed", message: "Certification Key·Seller ID·승인된 테스트 상품번호가 모두 필요합니다." };
-  if (!/^\d{6,14}$/.test(testItemCode)) return { status: "failed", message: "Qoo10 테스트 상품번호 형식을 확인해 주세요." };
-
-  const url = new URL("https://api.qoo10.jp/GMKT.INC.Front.OpenApiService/GoodsBasicService.api/GetItemDetailInfo");
-  url.search = new URLSearchParams({ key: apiKey, ItemCode: testItemCode, SellerCode: "" }).toString();
-  const response = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-    signal: AbortSignal.timeout(12_000),
-    headers: { accept: "application/xml,text/xml", "user-agent": "SellerPilot-Connection-Diagnostic/1.0" },
-  });
-  const xml = (await response.text()).slice(0, 250_000);
-  const resultCode = xml.match(/<ResultCode>([^<]*)<\/ResultCode>/i)?.[1]?.trim() ?? "";
-  const itemNumber = xml.match(/<(?:ItemNo|ItemCode)>([^<]*)<\/(?:ItemNo|ItemCode)>/i)?.[1]?.trim() ?? "";
-  if (response.ok && resultCode === "0" && itemNumber) {
-    return { status: "passed", message: `Qoo10 상품 상세 읽기 API가 정상 응답했습니다 · 상품 ${itemNumber.slice(-6)}` };
+  if (!textValue(payload, "api_key") || !textValue(payload, "seller_id") || !testItemCode) {
+    return { status: "failed", message: "Seller Authorization Key·Seller ID·검사 상품번호가 모두 필요합니다." };
   }
-  return { status: "failed", message: `Qoo10 인증 검사 실패 · ${resultCode ? `결과코드 ${resultCode}` : `HTTP ${response.status}`}` };
+  const remote = await qoo10Request({
+    payload,
+    service: "ItemsLookup",
+    method: "GetItemDetailInfo",
+    version: "1.2",
+    params: { ItemCode: testItemCode, SellerCode: "" },
+  });
+  const resultCode = String(remote.data.ResultCode ?? remote.data.ErrorCode ?? "");
+  const resultObject = remote.data.ResultObject;
+  if (remote.response.ok && (resultCode === "0" || resultCode === "") && resultObject) {
+    return { status: "passed", message: `Qoo10 QAPI 상품 읽기가 정상 응답했습니다 · 상품 ${testItemCode.slice(-6)}` };
+  }
+  const errorMessage = typeof remote.data.ErrorMsg === "string" ? remote.data.ErrorMsg.slice(0, 100) : "";
+  return { status: "failed", message: `Qoo10 QAPI 인증 검사 실패 · ${resultCode ? `결과코드 ${resultCode}` : `HTTP ${remote.response.status}`}${errorMessage ? ` · ${errorMessage}` : ""}` };
 }
 
-export async function runChannelDiagnostic(channel: string, payload: SecretPayload): Promise<ChannelDiagnostic> {
+async function testCoupang(payload: SecretPayload): Promise<ChannelDiagnostic> {
+  const vendorId = textValue(payload, "vendor_id");
+  if (!vendorId || !textValue(payload, "access_key") || !textValue(payload, "secret_key")) {
+    return { status: "failed", message: "Vendor ID·Access Key·Secret Key가 모두 필요합니다." };
+  }
+  const query = new URLSearchParams({ vendorId, maxPerPage: "1" });
+  const remote = await coupangRequest({
+    payload,
+    method: "GET",
+    path: "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products",
+    query,
+  });
+  const code = String(remote.data.code ?? "");
+  if (remote.response.ok && !["ERROR", "FAIL"].includes(code.toUpperCase())) {
+    return { status: "passed", message: "쿠팡 서명 인증과 등록상품 목록 읽기가 정상 응답했습니다.", remoteRequestId: remoteRequestId(remote.data) };
+  }
+  return { status: "failed", message: `쿠팡 HMAC 연결 검사 실패${code ? ` · ${code}` : ` · HTTP ${remote.response.status}`}`, remoteRequestId: remoteRequestId(remote.data) };
+}
+
+async function testSmartstore(payload: SecretPayload): Promise<ChannelDiagnostic> {
+  const token = await fetchNaverAccessToken(payload);
+  const remote = await naverRequest({ accessToken: token.accessToken, method: "GET", path: "/v1/seller/account" });
+  if (remote.response.ok) {
+    return { status: "passed", message: `네이버 Commerce API 판매자 계정 읽기가 정상 응답했습니다 · 토큰 ${Math.round(token.expiresIn / 60)}분`, remoteRequestId: remoteRequestId(remote.data) };
+  }
+  return { status: "failed", message: `네이버 판매자 계정 검사 실패 · HTTP ${remote.response.status}`, remoteRequestId: remoteRequestId(remote.data) };
+}
+
+async function testEbay(payload: SecretPayload, environment: "sandbox" | "production"): Promise<ChannelDiagnostic> {
+  if (!textValue(payload, "access_token") || !textValue(payload, "refresh_token")) {
+    return { status: "failed", message: "eBay 판매자 OAuth 승인을 먼저 완료해 주세요." };
+  }
+  const remote = await ebayRequest({ payload, environment, method: "GET", path: "/sell/account/v1/privilege/" });
+  if (remote.response.ok && remote.data.sellerRegistrationCompleted === true) {
+    return { status: "passed", message: "eBay Seller 계정 권한과 판매한도 읽기가 정상 응답했습니다.", remoteRequestId: remoteRequestId(remote.data) };
+  }
+  return { status: "failed", message: `eBay 판매자 권한 검사 실패 · HTTP ${remote.response.status}`, remoteRequestId: remoteRequestId(remote.data) };
+}
+
+function testElevenStreet(payload: SecretPayload): ChannelDiagnostic {
+  if (!textValue(payload, "api_key") || !textValue(payload, "seller_id")) {
+    return { status: "failed", message: "11번가 Open API Key와 판매자 ID가 필요합니다." };
+  }
+  return {
+    status: "manual",
+    message: "키는 저장됐습니다. 11번가 로그인 전용 판매자 상세 명세에서 운영 Base URL·서비스 코드를 확정한 뒤 읽기 검사를 활성화해야 합니다.",
+  };
+}
+
+export async function runChannelDiagnostic(
+  channel: string,
+  payload: SecretPayload,
+  environment: "sandbox" | "production" = "production",
+): Promise<ChannelDiagnostic> {
   try {
+    if (!isActiveChannelKey(channel)) return { status: "failed", message: "지원하지 않는 채널입니다." };
     if (channel === "lazada") return await testLazada(payload);
     if (channel === "qoo10") return await testQoo10(payload);
-    return { status: "failed", message: "지원하지 않는 채널입니다." };
+    if (channel === "coupang") return await testCoupang(payload);
+    if (channel === "smartstore") return await testSmartstore(payload);
+    if (channel === "ebay") return await testEbay(payload, environment);
+    return testElevenStreet(payload);
   } catch (error) {
     const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
-    return { status: "failed", message: timeout ? "채널 응답 제한시간(12초)을 초과했습니다." : "채널 연결 중 안전하게 처리된 오류가 발생했습니다." };
+    const missing = error instanceof Error && /(?:CREDENTIALS_MISSING|TOKEN_EXCHANGE_FAILED|ACCESS_TOKEN_MISSING)/.test(error.message);
+    return {
+      status: "failed",
+      message: timeout
+        ? "채널 응답 제한시간(15초)을 초과했습니다."
+        : missing
+          ? "필수 인증값 또는 OAuth 토큰이 누락되었거나 만료됐습니다."
+          : "채널 연결 중 안전하게 처리된 오류가 발생했습니다.",
+    };
   }
 }

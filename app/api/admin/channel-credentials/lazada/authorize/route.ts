@@ -92,6 +92,7 @@ export async function POST(request: NextRequest) {
   }
 
   let previousSecret: Record<string, unknown> = {};
+  let credentialEnvironment = parsed.data.environment;
   const metadata = credentialId && Array.isArray(credentialRows)
     ? credentialRows.find((row) => row && typeof row === "object" && "id" in row && row.id === credentialId)
     : null;
@@ -100,6 +101,7 @@ export async function POST(request: NextRequest) {
     const { data, error } = await serviceClient.rpc("sellerpilot_decrypt_credential", { p_credential_id: credentialId });
     if (error || !data || typeof data !== "object") return NextResponse.json({ message: "기존 Lazada 키를 안전하게 불러오지 못했습니다." }, { status: 404 });
     previousSecret = data as Record<string, unknown>;
+    if ("environment" in metadata && metadata.environment === "sandbox") credentialEnvironment = "sandbox";
   }
 
   const incoming = parsed.data.secretPayload;
@@ -141,7 +143,7 @@ export async function POST(request: NextRequest) {
 
   const { data: nextCredentialId, error: rotateError } = await userClient.rpc("sellerpilot_rotate_credential", {
     p_channel: "lazada",
-    p_environment: parsed.data.environment,
+    p_environment: credentialEnvironment,
     p_secret_payload: nextSecret,
     p_expires_at: credentialExpiresAt,
     p_rotation_interval_days: parsed.data.rotationDays,

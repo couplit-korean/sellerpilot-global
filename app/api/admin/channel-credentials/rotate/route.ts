@@ -1,13 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { requiredCredentialKeys, type ActiveChannelKey } from "../../../../../lib/channels/catalog";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid().optional(),
-  channel: z.literal("qoo10"),
+  channel: z.enum(["qoo10", "coupang", "elevenst", "smartstore"]),
   environment: z.enum(["sandbox", "production"]),
   secretPayload: z.record(z.string(), z.string().trim().max(8_000)),
   expiresAt: z.string().datetime().nullable(),
@@ -66,8 +67,15 @@ export async function POST(request: NextRequest) {
   }
   nextSecret = { ...nextSecret, ...parsed.data.secretPayload };
 
-  const valid = hasText(nextSecret, "seller_id") && hasText(nextSecret, "api_key");
-  if (!valid) return NextResponse.json({ message: "필수 키 값이 누락됐습니다." }, { status: 400 });
+  const missing = requiredCredentialKeys(parsed.data.channel as ActiveChannelKey).filter((key) => !hasText(nextSecret, key));
+  if (missing.length) return NextResponse.json({ message: `필수 키 값이 누락됐습니다 · ${missing.join(", ")}` }, { status: 400 });
+  if (parsed.data.channel === "smartstore") {
+    const tokenType = typeof nextSecret.token_type === "string" ? nextSecret.token_type.trim().toUpperCase() : "SELF";
+    if (!["SELF", "SELLER"].includes(tokenType) || (tokenType === "SELLER" && !hasText(nextSecret, "account_id"))) {
+      return NextResponse.json({ message: "네이버 인증 유형은 SELF 또는 SELLER이며, SELLER는 판매자 계정 ID가 필요합니다." }, { status: 400 });
+    }
+    nextSecret.token_type = tokenType;
+  }
 
   const { error: rotateError } = await userClient.rpc("sellerpilot_rotate_credential", {
     p_channel: parsed.data.channel,

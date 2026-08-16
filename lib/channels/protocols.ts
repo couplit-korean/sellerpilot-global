@@ -1,0 +1,395 @@
+import { createHmac } from "node:crypto";
+import { hashSync as bcryptHashSync } from "bcryptjs";
+
+export type SecretPayload = Record<string, unknown>;
+
+export type RemoteResponse = {
+  response: Response;
+  data: Record<string, unknown>;
+  text: string;
+};
+
+export const lazadaApiEndpoints: Record<string, string> = {
+  my: "https://api.lazada.com.my/rest",
+  sg: "https://api.lazada.sg/rest",
+  ph: "https://api.lazada.com.ph/rest",
+  th: "https://api.lazada.co.th/rest",
+  vn: "https://api.lazada.vn/rest",
+  id: "https://api.lazada.co.id/rest",
+};
+
+export function textValue(payload: SecretPayload, key: string) {
+  const value = payload[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export async function readRemoteResponse(response: Response): Promise<RemoteResponse> {
+  const text = await response.text();
+  let data: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) data = parsed as Record<string, unknown>;
+  } catch {
+    data = {};
+  }
+  return { response, data, text };
+}
+
+export function buildCoupangAuthorization(input: {
+  method: string;
+  path: string;
+  query?: string;
+  accessKey: string;
+  secretKey: string;
+  now?: Date;
+}) {
+  const now = input.now ?? new Date();
+  const signedDate = now.toISOString()
+    .replace(/^\d{2}(\d{2})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2}).*$/, "$1$2$3T$4$5$6Z");
+  const method = input.method.toUpperCase();
+  const query = (input.query ?? "").replace(/^\?/, "");
+  const signature = createHmac("sha256", input.secretKey)
+    .update(`${signedDate}${method}${input.path}${query}`)
+    .digest("hex");
+  return `CEA algorithm=HmacSHA256, access-key=${input.accessKey}, signed-date=${signedDate}, signature=${signature}`;
+}
+
+export async function coupangRequest(input: {
+  payload: SecretPayload;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  query?: URLSearchParams;
+  body?: unknown;
+}) {
+  const accessKey = textValue(input.payload, "access_key");
+  const secretKey = textValue(input.payload, "secret_key");
+  const vendorId = textValue(input.payload, "vendor_id");
+  if (!accessKey || !secretKey || !vendorId) throw new Error("COUPANG_CREDENTIALS_MISSING");
+  const query = input.query?.toString() ?? "";
+  const url = new URL(`https://api-gateway.coupang.com${input.path}${query ? `?${query}` : ""}`);
+  const response = await fetch(url, {
+    method: input.method,
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json;charset=UTF-8",
+      authorization: buildCoupangAuthorization({
+        method: input.method,
+        path: input.path,
+        query,
+        accessKey,
+        secretKey,
+      }),
+      "x-requested-by": textValue(input.payload, "requested_by") || vendorId,
+      "x-market": (textValue(input.payload, "market") || "KR").toUpperCase(),
+      "user-agent": "SellerPilot-Coupang-Connector/1.0",
+    },
+    body: input.body === undefined ? undefined : JSON.stringify(input.body),
+  });
+  return readRemoteResponse(response);
+}
+
+export function createNaverClientSecretSign(clientId: string, clientSecret: string, timestamp: number) {
+  const hashed = bcryptHashSync(`${clientId}_${timestamp}`, clientSecret);
+  return Buffer.from(hashed, "utf8").toString("base64");
+}
+
+export async function fetchNaverAccessToken(payload: SecretPayload) {
+  const clientId = textValue(payload, "client_id");
+  const clientSecret = textValue(payload, "client_secret");
+  const type = (textValue(payload, "token_type") || "SELF").toUpperCase();
+  const accountId = textValue(payload, "account_id");
+  if (!clientId || !clientSecret || !["SELF", "SELLER"].includes(type) || (type === "SELLER" && !accountId)) {
+    throw new Error("NAVER_CREDENTIALS_MISSING");
+  }
+  const timestamp = Date.now();
+  const body = new URLSearchParams({
+    client_id: clientId,
+    timestamp: String(timestamp),
+    client_secret_sign: createNaverClientSecretSign(clientId, clientSecret, timestamp),
+    grant_type: "client_credentials",
+    type,
+  });
+  if (type === "SELLER") body.set("account_id", accountId);
+  const response = await fetch("https://api.commerce.naver.com/external/v1/oauth2/token", {
+    method: "POST",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded",
+      "user-agent": "SellerPilot-Naver-Commerce-Connector/1.0",
+    },
+    body,
+  });
+  const remote = await readRemoteResponse(response);
+  const accessToken = textValue(remote.data, "access_token");
+  if (!response.ok || !accessToken) throw new Error("NAVER_TOKEN_EXCHANGE_FAILED");
+  return {
+    accessToken,
+    expiresIn: Number(remote.data.expires_in ?? 10_800),
+    remote,
+  };
+}
+
+export async function naverRequest(input: {
+  accessToken: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  path: string;
+  query?: URLSearchParams;
+  body?: unknown;
+}) {
+  const query = input.query?.toString() ?? "";
+  const response = await fetch(`https://api.commerce.naver.com/external${input.path}${query ? `?${query}` : ""}`, {
+    method: input.method,
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      authorization: `Bearer ${input.accessToken}`,
+      "user-agent": "SellerPilot-Naver-Commerce-Connector/1.0",
+    },
+    body: input.body === undefined ? undefined : JSON.stringify(input.body),
+  });
+  return readRemoteResponse(response);
+}
+
+export function signLazadaRequest(path: string, params: Record<string, string>, appSecret: string) {
+  const signingInput = path + Object.keys(params).sort().map((key) => `${key}${params[key]}`).join("");
+  return createHmac("sha256", appSecret).update(signingInput).digest("hex").toUpperCase();
+}
+
+export async function lazadaRequest(input: {
+  payload: SecretPayload;
+  path: string;
+  method?: "GET" | "POST";
+  params?: Record<string, string>;
+}) {
+  const appKey = textValue(input.payload, "app_key");
+  const appSecret = textValue(input.payload, "app_secret");
+  const accessToken = textValue(input.payload, "access_token");
+  const country = (textValue(input.payload, "country") || "my").toLowerCase();
+  const endpoint = lazadaApiEndpoints[country];
+  if (!appKey || !appSecret || !accessToken || !endpoint) throw new Error("LAZADA_CREDENTIALS_MISSING");
+  const params: Record<string, string> = {
+    access_token: accessToken,
+    app_key: appKey,
+    sign_method: "sha256",
+    timestamp: Date.now().toString(),
+    ...(input.params ?? {}),
+  };
+  params.sign = signLazadaRequest(input.path, params, appSecret);
+  const method = input.method ?? "GET";
+  const response = await fetch(`${endpoint}${input.path}${method === "GET" ? `?${new URLSearchParams(params)}` : ""}`, {
+    method,
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+      "user-agent": "SellerPilot-Lazada-Connector/1.0",
+    },
+    body: method === "POST" ? new URLSearchParams(params) : undefined,
+  });
+  return readRemoteResponse(response);
+}
+
+export function buildQoo10Url(input: {
+  apiKey: string;
+  service: string;
+  method: string;
+  version?: string;
+  params?: Record<string, string>;
+}) {
+  const url = new URL("https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi");
+  url.search = new URLSearchParams({
+    key: input.apiKey,
+    v: input.version ?? "1.0",
+    returnType: "json",
+    method: `${input.service}.${input.method}`,
+    ...(input.params ?? {}),
+  }).toString();
+  return url;
+}
+
+export async function qoo10Request(input: {
+  payload: SecretPayload;
+  service: string;
+  method: string;
+  version?: string;
+  params?: Record<string, string>;
+}) {
+  const apiKey = textValue(input.payload, "api_key");
+  if (!apiKey) throw new Error("QOO10_CREDENTIALS_MISSING");
+  const response = await fetch(buildQoo10Url({ ...input, apiKey }), {
+    method: "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: { accept: "application/json", "user-agent": "SellerPilot-Qoo10-QAPI-Connector/1.0" },
+  });
+  return readRemoteResponse(response);
+}
+
+export const ebayDefaultScopes = [
+  "https://api.ebay.com/oauth/api_scope",
+  "https://api.ebay.com/oauth/api_scope/sell.account",
+  "https://api.ebay.com/oauth/api_scope/sell.inventory",
+  "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+] as const;
+
+export function ebayEnvironment(environment: "sandbox" | "production") {
+  return environment === "sandbox"
+    ? { auth: "https://auth.sandbox.ebay.com", api: "https://api.sandbox.ebay.com" }
+    : { auth: "https://auth.ebay.com", api: "https://api.ebay.com" };
+}
+
+export function buildEbayConsentUrl(input: {
+  environment: "sandbox" | "production";
+  clientId: string;
+  ruName: string;
+  state: string;
+  scopes?: readonly string[];
+}) {
+  const url = new URL(`${ebayEnvironment(input.environment).auth}/oauth2/authorize`);
+  url.search = new URLSearchParams({
+    client_id: input.clientId,
+    response_type: "code",
+    redirect_uri: input.ruName,
+    scope: (input.scopes ?? ebayDefaultScopes).join(" "),
+    state: input.state,
+  }).toString();
+  return url;
+}
+
+export async function exchangeEbayOAuthToken(input: {
+  environment: "sandbox" | "production";
+  clientId: string;
+  clientSecret: string;
+  ruName: string;
+  code?: string;
+  refreshToken?: string;
+  scopes?: readonly string[];
+}) {
+  const body = new URLSearchParams();
+  if (input.code) {
+    body.set("grant_type", "authorization_code");
+    body.set("code", input.code);
+    body.set("redirect_uri", input.ruName);
+  } else if (input.refreshToken) {
+    body.set("grant_type", "refresh_token");
+    body.set("refresh_token", input.refreshToken);
+    body.set("scope", (input.scopes ?? ebayDefaultScopes).join(" "));
+  } else {
+    throw new Error("EBAY_OAUTH_GRANT_MISSING");
+  }
+  const response = await fetch(`${ebayEnvironment(input.environment).api}/identity/v1/oauth2/token`, {
+    method: "POST",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Basic ${Buffer.from(`${input.clientId}:${input.clientSecret}`, "utf8").toString("base64")}`,
+      "user-agent": "SellerPilot-eBay-OAuth/1.0",
+    },
+    body,
+  });
+  return readRemoteResponse(response);
+}
+
+export async function ensureEbayAccessToken(
+  payload: SecretPayload,
+  environment: "sandbox" | "production",
+  bufferMs = 5 * 60 * 1000,
+) {
+  const accessToken = textValue(payload, "access_token");
+  const accessExpiresAt = Date.parse(textValue(payload, "access_token_expires_at"));
+  if (accessToken && (!Number.isFinite(accessExpiresAt) || accessExpiresAt > Date.now() + bufferMs)) {
+    return { payload, refreshed: false as const, credentialExpiresAt: textValue(payload, "refresh_token_expires_at") || null };
+  }
+
+  const clientId = textValue(payload, "client_id");
+  const clientSecret = textValue(payload, "client_secret");
+  const ruName = textValue(payload, "ru_name");
+  const refreshToken = textValue(payload, "refresh_token");
+  const refreshExpiresAt = Date.parse(textValue(payload, "refresh_token_expires_at"));
+  if (!clientId || !clientSecret || !ruName || !refreshToken) throw new Error("EBAY_REFRESH_CREDENTIALS_MISSING");
+  if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) throw new Error("EBAY_REFRESH_TOKEN_EXPIRED");
+
+  const remote = await exchangeEbayOAuthToken({
+    environment,
+    clientId,
+    clientSecret,
+    ruName,
+    refreshToken,
+    scopes: ebayDefaultScopes,
+  });
+  const nextAccessToken = textValue(remote.data, "access_token");
+  if (!remote.response.ok || !nextAccessToken) throw new Error("EBAY_TOKEN_REFRESH_FAILED");
+  const nextAccessExpiry = new Date(Date.now() + Number(remote.data.expires_in ?? 7_200) * 1000).toISOString();
+  const credentialExpiresAt = Number.isFinite(refreshExpiresAt)
+    ? new Date(refreshExpiresAt).toISOString()
+    : new Date(Date.now() + 47_304_000 * 1000).toISOString();
+  return {
+    payload: { ...payload, access_token: nextAccessToken, access_token_expires_at: nextAccessExpiry },
+    refreshed: true as const,
+    credentialExpiresAt,
+  };
+}
+
+export async function ebayRequest(input: {
+  payload: SecretPayload;
+  environment: "sandbox" | "production";
+  method: "GET" | "POST" | "PUT" | "DELETE";
+  path: string;
+  query?: URLSearchParams;
+  body?: unknown;
+}) {
+  const accessToken = textValue(input.payload, "access_token");
+  if (!accessToken) throw new Error("EBAY_ACCESS_TOKEN_MISSING");
+  const query = input.query?.toString() ?? "";
+  const response = await fetch(`${ebayEnvironment(input.environment).api}${input.path}${query ? `?${query}` : ""}`, {
+    method: input.method,
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      authorization: `Bearer ${accessToken}`,
+      "content-language": "en-US",
+      "x-ebay-c-marketplace-id": textValue(input.payload, "marketplace_id") || "EBAY_US",
+      "user-agent": "SellerPilot-eBay-Sell-Connector/1.0",
+    },
+    body: input.body === undefined ? undefined : JSON.stringify(input.body),
+  });
+  return readRemoteResponse(response);
+}
+
+export async function elevenStreetRequest(input: {
+  payload: SecretPayload;
+  path: string;
+  method?: "GET" | "POST" | "PUT";
+  query?: URLSearchParams;
+  body?: string;
+}) {
+  const apiKey = textValue(input.payload, "api_key");
+  const baseUrl = textValue(input.payload, "seller_api_base_url");
+  if (!apiKey || !baseUrl) throw new Error("ELEVENST_VENDOR_SPEC_REQUIRED");
+  const url = new URL(input.path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+  if (input.query) url.search = input.query.toString();
+  const response = await fetch(url, {
+    method: input.method ?? "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/xml,text/xml",
+      "content-type": "application/xml;charset=UTF-8",
+      openapikey: apiKey,
+      "user-agent": "SellerPilot-11st-Connector/1.0",
+    },
+    body: input.body,
+  });
+  return readRemoteResponse(response);
+}

@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { ebayDefaultScopes, exchangeEbayOAuthToken } from "../../../../lib/channels/protocols";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -90,6 +91,61 @@ async function refreshLazadaIfNeeded(projectUrl: string, secretKey: string) {
   return { status: "refreshed" as const };
 }
 
+async function refreshEbayIfNeeded(projectUrl: string, secretKey: string) {
+  const serviceClient = createClient(projectUrl, secretKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await serviceClient.rpc("sellerpilot_get_active_credential_secret", {
+    p_channel: "ebay",
+    p_environment: "production",
+  });
+  if (error) throw new Error("credential_read_failed");
+  const active = data as ActiveCredential | null;
+  if (!active?.credential_id || typeof active.credential_id !== "string" || !active.secret_payload || typeof active.secret_payload !== "object" || Array.isArray(active.secret_payload)) {
+    return { status: "not_connected" as const };
+  }
+
+  const secret = active.secret_payload as Record<string, unknown>;
+  const accessExpiresAt = Date.parse(textValue(secret, "access_token_expires_at"));
+  if (Number.isFinite(accessExpiresAt) && accessExpiresAt > Date.now() + 30 * 60 * 1000) {
+    return { status: "current" as const };
+  }
+  const clientId = textValue(secret, "client_id");
+  const clientSecret = textValue(secret, "client_secret");
+  const ruName = textValue(secret, "ru_name");
+  const refreshToken = textValue(secret, "refresh_token");
+  const refreshExpiresAt = Date.parse(textValue(secret, "refresh_token_expires_at"));
+  if (!clientId || !clientSecret || !ruName || !refreshToken) return { status: "awaiting_oauth" as const };
+  if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) return { status: "refresh_expired" as const };
+
+  const remote = await exchangeEbayOAuthToken({
+    environment: "production",
+    clientId,
+    clientSecret,
+    ruName,
+    refreshToken,
+    scopes: ebayDefaultScopes,
+  });
+  const accessToken = textValue(remote.data, "access_token");
+  if (!remote.response.ok || !accessToken) throw new Error("token_refresh_failed");
+  const nextAccessExpiry = new Date(Date.now() + Number(remote.data.expires_in ?? 7_200) * 1000).toISOString();
+  const nextRefreshExpiry = Number.isFinite(refreshExpiresAt)
+    ? new Date(refreshExpiresAt).toISOString()
+    : new Date(Date.now() + 47_304_000 * 1000).toISOString();
+  const nextSecret = {
+    ...secret,
+    access_token: accessToken,
+    access_token_expires_at: nextAccessExpiry,
+  };
+  const { error: rotateError } = await serviceClient.rpc("sellerpilot_service_refresh_ebay", {
+    p_credential_id: active.credential_id,
+    p_secret_payload: nextSecret,
+    p_expires_at: nextRefreshExpiry,
+  });
+  if (rotateError) throw new Error("credential_rotate_failed");
+  return { status: "refreshed" as const };
+}
+
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
   const authorization = request.headers.get("authorization") ?? "";
@@ -109,10 +165,14 @@ export async function GET(request: Request) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   let lazadaToken: Awaited<ReturnType<typeof refreshLazadaIfNeeded>>;
+  let ebayToken: Awaited<ReturnType<typeof refreshEbayIfNeeded>>;
   try {
-    lazadaToken = await refreshLazadaIfNeeded(supabaseUrl, secretKey);
+    [lazadaToken, ebayToken] = await Promise.all([
+      refreshLazadaIfNeeded(supabaseUrl, secretKey),
+      refreshEbayIfNeeded(supabaseUrl, secretKey),
+    ]);
   } catch {
-    return NextResponse.json({ message: "Lazada OAuth 토큰 자동 갱신을 완료하지 못했습니다." }, { status: 502 });
+    return NextResponse.json({ message: "채널 OAuth 토큰 자동 갱신을 완료하지 못했습니다." }, { status: 502 });
   }
   const retentionDays = 90;
   const completedBefore = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
@@ -143,6 +203,7 @@ export async function GET(request: Request) {
     jobsPruned: rows.length,
     storageRemoved,
     lazadaToken: lazadaToken.status,
+    ebayToken: ebayToken.status,
     completedAt: new Date().toISOString(),
   }, { headers: { "cache-control": "no-store, max-age=0" } });
 }
