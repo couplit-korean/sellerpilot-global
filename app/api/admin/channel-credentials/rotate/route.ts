@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid().optional(),
-  channel: z.enum(["qoo10", "openai"]),
+  channel: z.literal("qoo10"),
   environment: z.enum(["sandbox", "production"]),
   secretPayload: z.record(z.string(), z.string().trim().max(8_000)),
   expiresAt: z.string().datetime().nullable(),
@@ -66,16 +66,8 @@ export async function POST(request: NextRequest) {
   }
   nextSecret = { ...nextSecret, ...parsed.data.secretPayload };
 
-  const valid = parsed.data.channel === "qoo10"
-    ? hasText(nextSecret, "seller_id") && hasText(nextSecret, "api_key")
-    : hasText(nextSecret, "api_key");
+  const valid = hasText(nextSecret, "seller_id") && hasText(nextSecret, "api_key");
   if (!valid) return NextResponse.json({ message: "필수 키 값이 누락됐습니다." }, { status: 400 });
-  if (parsed.data.channel === "openai") {
-    const apiKey = String(nextSecret.api_key).trim();
-    const projectId = typeof nextSecret.project_id === "string" ? nextSecret.project_id.trim() : "";
-    if (!apiKey.startsWith("sk-")) return NextResponse.json({ message: "OpenAI Project API Key 형식을 확인해 주세요." }, { status: 400 });
-    if (projectId && !projectId.startsWith("proj_")) return NextResponse.json({ message: "OpenAI Project ID 형식을 확인해 주세요." }, { status: 400 });
-  }
 
   const { error: rotateError } = await userClient.rpc("sellerpilot_rotate_credential", {
     p_channel: parsed.data.channel,

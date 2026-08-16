@@ -4,16 +4,28 @@
 import dynamic from "next/dynamic";
 import { CheckCircle2, Download, ExternalLink, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createClient } from "../lib/supabase/client";
 import { createDemoStudioResult } from "./product-studio-fallback";
 import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
 import type { ProductDetailData } from "./product-detail-puck";
-import type { ProductStudioResult, StudioImagePayload } from "./product-studio-types";
+import type { ProductStudioResult } from "./product-studio-types";
 
 const ProductDetailRender = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailRender), { ssr: false, loading: () => <div className="studio-loading"><LoaderCircle className="spin" size={24} />상세페이지 불러오는 중</div> });
 const ProductDetailEditor = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailEditor), { ssr: false });
 
 type StudioPhoto = { name: string; url: string; file: File };
 type AutoThumbnail = { id: string; label: string; ratio: string; width: number; height: number; dataUrl: string };
+type OptimizedPhoto = { name: string; mediaType: "image/jpeg"; blob: Blob };
+type CliJobPayload = {
+  id: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  result?: (ProductStudioResult & { heroUrl?: string | null }) | null;
+  error?: string | null;
+};
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function blobToDataUrl(blob: Blob) {
   return new Promise<string>((resolve, reject) => {
@@ -33,22 +45,49 @@ function loadImage(source: string) {
   });
 }
 
-async function optimizePhoto(photo: StudioPhoto): Promise<StudioImagePayload> {
+async function optimizePhoto(photo: StudioPhoto, isMain: boolean): Promise<OptimizedPhoto> {
   try {
     const source = await blobToDataUrl(photo.file);
     const image = await loadImage(source);
-    const scale = Math.min(1, 1600 / Math.max(image.naturalWidth, image.naturalHeight));
+    const maxEdge = isMain ? 1600 : 1200;
+    const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
     canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", isMain ? 0.84 : 0.78));
     if (!blob) throw new Error("이미지 변환 실패");
-    const dataUrl = await blobToDataUrl(blob);
-    return { name: photo.name.replace(/\.[^.]+$/, ".jpg"), mediaType: "image/jpeg", base64: dataUrl.split(",")[1] };
+    return { name: photo.name.replace(/\.[^.]+$/, ".jpg"), mediaType: "image/jpeg", blob };
   } catch {
-    const dataUrl = await blobToDataUrl(photo.file);
-    return { name: photo.name, mediaType: photo.file.type || "image/jpeg", base64: dataUrl.split(",")[1] };
+    throw new Error(`${photo.name} 이미지를 JPEG로 변환하지 못했습니다.`);
+  }
+}
+
+async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string, jobId: string) {
+  const supabase = createClient();
+  const uploadedPaths: string[] = [];
+  try {
+    for (let start = 0; start < photos.length; start += 4) {
+      const batch = await Promise.all(photos.slice(start, start + 4).map((photo, offset) => optimizePhoto(photo, start + offset === 0)));
+      const results = await Promise.allSettled(batch.map(async (photo, offset) => {
+        const index = start + offset;
+        const path = `${userId}/${jobId}/input/${String(index + 1).padStart(3, "0")}.jpg`;
+        const { error } = await supabase.storage.from("sellerpilot-ai").upload(path, photo.blob, {
+          contentType: photo.mediaType,
+          cacheControl: "3600",
+          upsert: false,
+        });
+        if (error) throw new Error(`${photo.name} 비공개 업로드에 실패했습니다.`);
+        return path;
+      }));
+      for (const result of results) if (result.status === "fulfilled") uploadedPaths.push(result.value);
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failed) throw failed.reason;
+    }
+    return uploadedPaths;
+  } catch (error) {
+    if (uploadedPaths.length) await supabase.storage.from("sellerpilot-ai").remove(uploadedPaths);
+    throw error;
   }
 }
 
@@ -159,6 +198,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
   const [thumbnails, setThumbnails] = useState<AutoThumbnail[]>([]);
   const [aiHero, setAiHero] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [cliPhase, setCliPhase] = useState<"idle" | "queued" | "running">("idle");
   const [editorOpen, setEditorOpen] = useState(false);
   const [savedDetailData, setSavedDetailData] = useState<ProductDetailData | null>(null);
   const handledRequest = useRef(0);
@@ -170,10 +210,23 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
     setThumbnails(items);
   }, [mainPhoto]);
 
-  const makeAiHero = useCallback(async (image: StudioImagePayload, studio: ProductStudioResult) => {
-    const response = await fetch("/api/ai/product-thumbnail", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image, studio }) });
-    const payload = await response.json() as { mode?: string; dataUrl?: string };
-    if (payload.mode === "openai" && payload.dataUrl) setAiHero(payload.dataUrl);
+  const waitForCliJob = useCallback(async (jobId: string, accessToken: string) => {
+    const deadline = Date.now() + 12 * 60_000;
+    while (Date.now() < deadline) {
+      const response = await fetch(`/api/ai/jobs/${jobId}`, {
+        headers: { authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({ message: "CLI 작업 상태 응답을 읽지 못했습니다." })) as CliJobPayload & { message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "CLI 작업 상태를 확인하지 못했습니다.");
+      if (payload.status === "succeeded" && payload.result) return payload.result;
+      if (payload.status === "failed" || payload.status === "cancelled") {
+        throw new Error(payload.error || "ChatGPT CLI 작업이 완료되지 못했습니다.");
+      }
+      setCliPhase(payload.status === "running" ? "running" : "queued");
+      await delay(3_000);
+    }
+    throw new Error("ChatGPT CLI 작업 대기시간이 12분을 초과했습니다. 작업자 연결 상태를 확인해 주세요.");
   }, []);
 
   const generate = useCallback(async () => {
@@ -181,20 +234,29 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
     setGenerating(true);
     onRunningChange(true);
     setAiHero("");
+    setCliPhase("queued");
     try {
-      const optimized = await Promise.all(photos.slice(0, 9).map(optimizePhoto));
+      const { data: sessionData } = await createClient().auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      const userId = sessionData.session?.user.id;
+      if (!accessToken || !userId) throw new Error("AI 제작을 실행하려면 관리자 로그인이 필요합니다.");
+      if (photos.length > 100) throw new Error("한 작업에는 대표사진을 포함해 최대 100장까지 분석할 수 있습니다.");
+      const jobId = crypto.randomUUID();
+      const imagePaths = await optimizeAndUploadInBatches(photos, userId, jobId);
       const response = await fetch("/api/ai/product-studio", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description, productUrl, images: optimized }),
+        headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ jobId, description, productUrl, imagePaths }),
       });
-      if (!response.ok) throw new Error("상품 분석 요청을 처리하지 못했습니다.");
-      const nextResult = await response.json() as ProductStudioResult;
+      const queued = await response.json().catch(() => ({ message: "CLI 작업 등록 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
+      if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
+      const cliResult = await waitForCliJob(queued.jobId, accessToken);
+      const { heroUrl, ...nextResult } = cliResult;
       setResult(nextResult);
+      setAiHero(heroUrl ?? "");
       setSavedDetailData(null);
       await makeLocalThumbnails(nextResult, mainPhoto);
-      if (nextResult.mode === "openai" && optimized[0]) await makeAiHero(optimized[0], nextResult);
-      notify(nextResult.mode === "openai" ? "GPT 이미지 분석, 상세페이지 설계와 썸네일 자동 제작을 완료했습니다." : "임의 데이터 모드로 상세페이지와 자동 썸네일을 제작했습니다.");
+      notify("ChatGPT CLI 분석과 codex-image 상품 연출컷 제작을 완료했습니다.");
     } catch (error) {
       const fallback = createDemoStudioResult(description);
       setResult(fallback);
@@ -202,9 +264,10 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
       notify(error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.");
     } finally {
       setGenerating(false);
+      setCliPhase("idle");
       onRunningChange(false);
     }
-  }, [description, generating, mainPhoto, makeAiHero, makeLocalThumbnails, notify, onRunningChange, photos, productUrl]);
+  }, [description, generating, mainPhoto, makeLocalThumbnails, notify, onRunningChange, photos, productUrl, waitForCliJob]);
 
   useEffect(() => {
     if (!requestId || handledRequest.current === requestId) return;
@@ -222,8 +285,8 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
   return (
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
-        <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>업로드 사진과 설명을 GPT가 분석하고, Puck 오픈소스 편집기로 수정 가능한 상세페이지를 만듭니다.</p></div>
-        <div><span className={`studio-mode ${result.mode}`}><i />{result.mode === "openai" ? "GPT 실데이터" : "임의 데이터"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating}>{generating ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}다시 생성</button></div>
+        <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>로컬 ChatGPT CLI가 사진과 설명을 분석하고, codex-image와 Puck 편집 흐름으로 결과를 만듭니다.</p></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result.mode}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result.mode === "cli" ? "CLI 실데이터" : "임의 데이터"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating}>{generating ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}다시 생성</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>
@@ -234,7 +297,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
       <div className="studio-workspace">
         <aside className="creative-rail">
           <div className="creative-rail-head"><span><b>자동 제작 썸네일</b><small>채널에 맞춰 즉시 다운로드</small></span><em>{thumbnails.length || 3}종</em></div>
-          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="GPT가 제작한 상품 연출컷" /><span>GPT IMAGE</span></div><b>AI 상품 연출컷</b><small>gpt-image-2 · 원본 충실도 높음</small></article>}
+          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" /><span>CODEX IMAGE</span></div><b>CLI 상품 연출컷</b><small>ChatGPT OAuth · 원본 충실도 높음</small></article>}
           <div className="thumbnail-grid">
             {thumbnails.length ? thumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>

@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "product", "design", "thumbnail", "warnings"],
+  "properties": {
+    "mode": { "const": "cli" },
+    "product": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "category", "oneLine", "targetCustomer", "features", "cautions"],
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "oneLine": { "type": "string" },
+        "targetCustomer": { "type": "string" },
+        "features": { "type": "array", "minItems": 3, "maxItems": 5, "items": { "type": "string" } },
+        "cautions": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "string" } }
+      }
+    },
+    "design": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["themeName", "palette", "heroCopy", "heroSubcopy", "cta", "sections"],
+      "properties": {
+        "themeName": { "type": "string" },
+        "palette": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["primary", "accent", "surface", "text"],
+          "properties": {
+            "primary": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "surface": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "text": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+          }
+        },
+        "heroCopy": { "type": "string" },
+        "heroSubcopy": { "type": "string" },
+        "cta": { "type": "string" },
+        "sections": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 7,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "eyebrow", "title", "body", "points"],
+            "properties": {
+              "type": { "enum": ["benefit", "story", "howto", "proof", "spec", "caution"] },
+              "eyebrow": { "type": "string" },
+              "title": { "type": "string" },
+              "body": { "type": "string" },
+              "points": { "type": "array", "minItems": 2, "maxItems": 4, "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "thumbnail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["headline", "subline", "badge"],
+      "properties": {
+        "headline": { "type": "string" },
+        "subline": { "type": "string" },
+        "badge": { "type": "string" }
+      }
+    },
+    "warnings": { "type": "array", "maxItems": 5, "items": { "type": "string" } }
+  }
+}

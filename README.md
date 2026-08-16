@@ -19,7 +19,21 @@ Qoo10 Japan, Lazada Malaysia, 쿠팡, 11번가, 네이버 스마트스토어, eB
 - 통합 주문·출고·배송 화면
 - 다국어 CS 통합함과 AI 답변 초안
 - Qoo10, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay 채널별 운영 페이지
-- Supabase Vault 기반 Qoo10·Lazada·OpenAI 키 버전, 만료일, 교체주기, 사전경고, 롤백 유예, 연결검사, 감사기록 관리
+- Supabase Vault 기반 Qoo10·Lazada 판매 채널 키 버전, 만료일, 교체주기, 사전경고, 롤백 유예, 연결검사, 감사기록 관리
+- ChatGPT OAuth 기반 로컬 Codex CLI 작업자와 `codex-image`를 이용한 상품 분석·상세페이지 기획·연출컷 생성
+
+## ChatGPT CLI AI 작업자
+
+SellerPilot은 OpenAI API Key를 사용하지 않습니다. 관리자가 `API 관리` 화면에서 일회성 작업자 토큰을 발급한 뒤, ChatGPT에 로그인된 Mac에서 아래처럼 실행합니다.
+
+```bash
+codex login status
+SELLERPILOT_AI_WORKER_TOKEN="<웹에서 발급한 토큰>" npm run ai:worker
+```
+
+Vercel은 비공개 Supabase 작업 큐와 서명된 이미지 URL만 처리합니다. ChatGPT OAuth 자격은 Mac 밖으로 전송하거나 저장하지 않습니다. 이미지 생성은 설치된 [`wjb127/codex-image`](https://github.com/wjb127/codex-image) 스킬과 Codex 내장 `image_gen`을 사용합니다.
+
+기본 모델은 Codex CLI의 `gpt-5.6-sol`이며 필요할 때만 `SELLERPILOT_CODEX_MODEL` 환경변수로 바꿀 수 있습니다. 작업자는 시작할 때 `codex login status`가 `Logged in using ChatGPT`인지 확인하고, 셸에 남아 있는 `OPENAI_API_KEY`는 자식 프로세스에 전달하지 않습니다.
 - 서비스 전체 흐름을 설명하는 화면형 스토리보드
 - PPT 31장 기반 175개 항목의 개발 상태와 실계정 검수 상태를 분리한 인수 대시보드
 - Frankfurter v2의 중앙은행·기관 기준 데이터를 서버에서 조회하는 일일 기준 환율 위젯

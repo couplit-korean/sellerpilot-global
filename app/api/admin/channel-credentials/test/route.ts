@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
-  channel: z.enum(["qoo10", "shopee", "lazada", "openai"]),
+  channel: z.enum(["qoo10", "shopee", "lazada"]),
 });
 
 export async function POST(request: NextRequest) {

@@ -1,4 +1,4 @@
-export type StudioMode = "openai" | "demo";
+export type StudioMode = "cli" | "demo";
 
 export type DetailSection = {
   type: "benefit" | "story" | "howto" | "proof" | "spec" | "caution";
@@ -36,10 +36,4 @@ export type ProductStudioResult = {
     badge: string;
   };
   warnings: string[];
-};
-
-export type StudioImagePayload = {
-  name: string;
-  mediaType: string;
-  base64: string;
 };

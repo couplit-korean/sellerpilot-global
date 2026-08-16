@@ -30,6 +30,6 @@ export function createDemoStudioResult(description = ""): ProductStudioResult {
       ],
     },
     thumbnail: { headline: isBeauty ? "하루 한 정\n맑은 루틴" : "한눈에 이해되는\n신상품", subline: "30 DAY DAILY ROUTINE", badge: "NEW · AI PICK" },
-    warnings: ["현재 임의 데이터 미리보기입니다. OPENAI_API_KEY를 연결하면 업로드 이미지 기반 분석 결과로 자동 교체됩니다."],
+    warnings: ["현재 임의 데이터 미리보기입니다. API 관리에서 ChatGPT CLI 작업자를 연결하면 업로드 이미지 기반 분석 결과로 자동 교체됩니다."],
   };
 }

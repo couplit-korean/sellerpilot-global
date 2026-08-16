@@ -1,0 +1,41 @@
+import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
+import { supabasePublishableKey, supabaseUrl } from "./supabase/config";
+
+export type AdminApiContext = {
+  user: User;
+  userClient: SupabaseClient;
+  serviceClient: SupabaseClient;
+};
+
+export async function authenticateAdminRequest(request: Request): Promise<AdminApiContext | NextResponse> {
+  const authorization = request.headers.get("authorization") ?? "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
+
+  if (!token) return NextResponse.json({ message: "로그인이 필요합니다." }, { status: 401 });
+  if (!supabaseUrl || !supabasePublishableKey || !secretKey) {
+    return NextResponse.json({ message: "서버 보안 연결이 완료되지 않았습니다." }, { status: 503 });
+  }
+
+  const userClient = createClient(supabaseUrl, supabasePublishableKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const [{ data: userData, error: userError }, { data: isAdmin, error: adminError }] = await Promise.all([
+    userClient.auth.getUser(token),
+    userClient.rpc("sellerpilot_is_admin"),
+  ]);
+  if (userError || !userData.user || adminError || isAdmin !== true) {
+    return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
+  }
+
+  const serviceClient = createClient(supabaseUrl, secretKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  return { user: userData.user, userClient, serviceClient };
+}
+
+export function isAdminApiError(value: AdminApiContext | NextResponse): value is NextResponse {
+  return value instanceof NextResponse;
+}

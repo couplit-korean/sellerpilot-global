@@ -21,10 +21,11 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
+import { AiCliRuntimeCard } from "./ai-cli-runtime-card";
 
 type Credential = {
   id: string;
-  channel: "qoo10" | "shopee" | "lazada" | "openai";
+  channel: "qoo10" | "shopee" | "lazada";
   environment: "sandbox" | "production";
   version: number;
   fingerprint: string;
@@ -63,7 +64,7 @@ const channelDefinitions: ChannelDefinition[] = [
     key: "qoo10", code: "Q", name: "Qoo10 Japan", market: "Japan · QAPI", consolePolicy: "만료 표시 없음 · 내부 교체 주기 권장",
     fields: [
       { key: "seller_id", label: "Seller ID", placeholder: "판매자 ID" },
-      { key: "api_key", label: "QAPI Key", secret: true, placeholder: "새 QAPI 키" },
+      { key: "api_key", label: "Certification Key (QAPI)", secret: true, placeholder: "새 Certification Key" },
       { key: "test_item_code", label: "테스트 상품번호", placeholder: "승인된 읽기 검사 상품" },
     ],
   },
@@ -85,13 +86,6 @@ const channelDefinitions: ChannelDefinition[] = [
       { key: "country", label: "국가 코드", placeholder: "my" },
     ],
   },
-  {
-    key: "openai", code: "AI", name: "OpenAI API", market: "SellerPilot AI · Production", consolePolicy: "Project 전용 키 · 내부 90일 교체 권장",
-    fields: [
-      { key: "api_key", label: "Project API Key", secret: true, placeholder: "sk-proj-로 시작하는 새 키" },
-      { key: "project_id", label: "Project ID", optional: true, placeholder: "proj_로 시작 · 선택" },
-    ],
-  },
 ];
 
 const actionLabels: Record<string, string> = {
@@ -106,11 +100,6 @@ function formatDate(value: string | null, includeTime = false) {
 function remainingDays(value: string | null) {
   if (!value) return null;
   return Math.ceil((new Date(value).getTime() - Date.now()) / 86_400_000);
-}
-
-function futureDateInput(days: number) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" })
-    .format(new Date(Date.now() + days * 86_400_000));
 }
 
 function expiryTone(days: number | null, warningDays: number) {
@@ -192,9 +181,11 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
   return (
     <div className="page-stack credential-page">
       <section className="credential-hero">
-        <div><span><ShieldCheck size={14} /> SECURE CONNECTION CONTROL</span><h2>API 키는 숨기고,<br /><em>수명과 교체 흐름은 선명하게.</em></h2><p>판매 채널과 OpenAI 키 원문은 Supabase Vault에 암호화 저장됩니다. 운영 화면은 지문·버전·만료·검사 결과만 다루며 저장 후에는 원문을 다시 보여주지 않습니다.</p></div>
+        <div><span><ShieldCheck size={14} /> SECURE CONNECTION CONTROL</span><h2>API 키는 숨기고,<br /><em>수명과 교체 흐름은 선명하게.</em></h2><p>판매 채널 키 원문은 Supabase Vault에 암호화 저장됩니다. AI는 별도 API 키 없이 Mac의 ChatGPT CLI 인증으로 실행됩니다.</p></div>
         <aside><LockKeyhole size={21} /><b>브라우저 원문 재조회 차단</b><small>관리자 로그인 · 새 키 일회성 입력 · 서버 검사 · 감사기록</small></aside>
       </section>
+
+      <AiCliRuntimeCard notify={notify} />
 
       <section className="credential-system-strip">
         <article><DatabaseZap size={18} /><span><small>비밀 저장소</small><b>Supabase Vault</b><em className={isSupabaseConfigured ? "ok" : "bad"}>{isSupabaseConfigured ? "환경 연결" : "미연결"}</em></span></article>
@@ -240,12 +231,12 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
 }
 
 function CredentialEditor({ channel, current, onClose, onSaved }: { channel: ChannelDefinition; current?: Credential; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
-  const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : channel.key === "openai" ? futureDateInput(90) : "";
+  const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : "";
   const [form, setForm] = useState<Record<string, string>>({ country: channel.key === "lazada" ? "my" : "" });
   const [environment, setEnvironment] = useState<"sandbox" | "production">(current?.environment ?? "production");
   const [expiresAt, setExpiresAt] = useState(defaultExpiry);
   const [rotationDays, setRotationDays] = useState(String(current?.rotation_interval_days ?? (channel.key === "lazada" ? 30 : 90)));
-  const [warningDays, setWarningDays] = useState(String(current?.warning_days ?? (channel.key === "lazada" ? 14 : channel.key === "openai" ? 14 : 30)));
+  const [warningDays, setWarningDays] = useState(String(current?.warning_days ?? (channel.key === "lazada" ? 14 : 30)));
   const [graceDays, setGraceDays] = useState("7");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");

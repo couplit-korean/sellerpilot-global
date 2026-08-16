@@ -1611,6 +1611,34 @@ a:focus-visible,
 .credential-system-strip em.ok { color: var(--credential-green); }
 .credential-system-strip em.bad, .credential-system-strip .attention em { color: var(--credential-red); }
 
+.cli-runtime-card { overflow: hidden; border: 1px solid #b8cbc5; border-left: 4px solid #14745e; background: #fff; }
+.cli-runtime-card > header { display: flex; min-height: 86px; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 18px; color: #eff9f6; background: #183f38; }
+.cli-runtime-title { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.cli-runtime-title > span { display: grid; width: 39px; height: 39px; flex: 0 0 auto; place-items: center; border: 1px solid rgb(255 255 255 / 20%); background: rgb(255 255 255 / 9%); }
+.cli-runtime-title small, .cli-runtime-title h3, .cli-runtime-title p { display: block; margin: 0; }
+.cli-runtime-title small { color: #91d5c5; font-size: 8px; font-weight: 850; letter-spacing: .08em; }
+.cli-runtime-title h3 { margin-top: 3px; font-size: 14px; }
+.cli-runtime-title p { margin-top: 4px; color: #bcd0cb; font-size: 8px; line-height: 1.5; }
+.cli-runtime-state { display: inline-flex; min-height: 29px; flex: 0 0 auto; align-items: center; gap: 6px; padding: 0 10px; font-size: 8px; font-weight: 850; }
+.cli-runtime-state i { width: 7px; height: 7px; border-radius: 50%; }
+.cli-runtime-state.online { color: #d6fff4; background: rgb(67 203 160 / 18%); }.cli-runtime-state.online i { background: #4bd0a5; box-shadow: 0 0 0 4px rgb(75 208 165 / 14%); }
+.cli-runtime-state.offline { color: #f1d7b5; background: rgb(197 139 62 / 17%); }.cli-runtime-state.offline i { background: #d6a157; }
+.cli-runtime-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid #e3e9e7; }
+.cli-runtime-grid article { display: flex; min-height: 88px; align-items: center; gap: 10px; padding: 14px 16px; border-right: 1px solid #e3e9e7; }
+.cli-runtime-grid article:last-child { border-right: 0; }.cli-runtime-grid article > svg { flex: 0 0 auto; color: #357566; }
+.cli-runtime-grid span, .cli-runtime-grid small, .cli-runtime-grid b, .cli-runtime-grid em { display: block; min-width: 0; }
+.cli-runtime-grid small { color: var(--muted); font-size: 8px; }.cli-runtime-grid b { overflow: hidden; margin: 5px 0 4px; color: #203a34; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }.cli-runtime-grid em { overflow: hidden; color: #7f8d89; font-size: 8px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.cli-runtime-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 16px; background: #f7faf9; }
+.cli-runtime-actions > div { display: flex; align-items: flex-end; gap: 8px; }.cli-runtime-actions label > span { display: block; margin-bottom: 5px; color: #65756f; font-size: 8px; font-weight: 750; }.cli-runtime-actions select { width: 108px; height: 38px; padding: 0 9px; border: 1px solid #aeb9b6; color: #233a34; background: #fff; font-size: 9px; }
+.cli-runtime-actions aside { display: flex; align-items: center; gap: 8px; color: #315c51; }.cli-runtime-actions aside svg { flex: 0 0 auto; }.cli-runtime-actions aside b, .cli-runtime-actions aside small { display: block; }.cli-runtime-actions aside b { font-size: 8px; }.cli-runtime-actions aside small { margin-top: 3px; color: #7a8985; font-size: 7px; }
+.cli-token-reveal { display: grid; align-items: center; grid-template-columns: minmax(210px, .8fr) minmax(260px, 1fr) auto; gap: 10px; padding: 14px 16px; border-top: 1px solid #e6c98e; color: #6b4a1f; background: #fff8e8; }
+.cli-token-reveal > div { display: flex; align-items: flex-start; gap: 8px; }.cli-token-reveal > div svg { flex: 0 0 auto; }.cli-token-reveal b, .cli-token-reveal small { display: block; }.cli-token-reveal b { font-size: 8px; }.cli-token-reveal small { margin-top: 4px; font-size: 7px; line-height: 1.45; }
+.cli-token-reveal > code, .cli-token-reveal p code { overflow: hidden; padding: 9px 10px; border: 1px solid #dfc994; color: #4d4028; background: #fff; font: 8px var(--font-geist-mono), monospace; text-overflow: ellipsis; white-space: nowrap; }
+.cli-token-reveal button { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 5px; padding: 0 10px; border: 1px solid #a98243; color: #61451f; background: #fff; font-size: 8px; font-weight: 800; }
+.cli-token-reveal > p { display: grid; grid-column: 1 / -1; align-items: center; grid-template-columns: 110px minmax(0, 1fr) auto; gap: 10px; margin: 0; padding-top: 4px; }.cli-token-reveal > p > b { font-size: 8px; }
+.cli-runtime-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 10px 16px; border-top: 1px solid #efcfca; color: #913f39; background: #fff3f2; font-size: 8px; }
+.cli-runtime-loading { display: flex; min-height: 52px; align-items: center; justify-content: center; gap: 7px; color: #73817d; font-size: 8px; }
+
 .credential-alert { display: flex; min-height: 52px; align-items: center; gap: 10px; padding: 11px 15px; border: 1px solid #e0bfa4; color: #6d451a; background: #fff8ed; font-size: 10px; }
 .credential-alert > span { display: flex; min-width: 0; flex: 1; flex-direction: column; }
 .credential-alert b { margin-bottom: 2px; font-size: 10px; }
@@ -1621,7 +1649,6 @@ a:focus-visible,
 .credential-card.qoo10 { --channel-accent: #d64245; }
 .credential-card.shopee { --channel-accent: #ee4d2d; }
 .credential-card.lazada { --channel-accent: #6a4ad5; }
-.credential-card.openai { --channel-accent: #16725e; }
 .credential-card > header { display: grid; min-height: 74px; align-items: center; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; padding: 14px 16px; }
 .credential-channel-code { display: grid; width: 36px; height: 36px; place-items: center; color: #fff; background: var(--channel-accent); font-size: 13px; font-weight: 900; }
 .credential-card header small, .credential-card header h3 { display: block; overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
@@ -1708,6 +1735,9 @@ a:focus-visible,
   .credential-system-strip article:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
   .credential-channel-grid { grid-template-columns: 1fr; }
   .rotation-settings > div { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cli-runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cli-runtime-grid article:nth-child(2) { border-right: 0; }.cli-runtime-grid article:nth-child(-n+2) { border-bottom: 1px solid #e3e9e7; }
+  .cli-token-reveal { grid-template-columns: minmax(220px, .8fr) minmax(260px, 1fr); }.cli-token-reveal > button { grid-column: 2; width: max-content; }.cli-token-reveal > p { grid-template-columns: 100px minmax(0, 1fr) auto; }
 }
 
 @media (max-width: 720px) {
@@ -1723,6 +1753,10 @@ a:focus-visible,
   .rotation-settings > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .credential-modal-backdrop { padding: 0; }
   .credential-modal { min-height: 100svh; margin: 0; }
+  .cli-runtime-card > header, .cli-runtime-actions { align-items: flex-start; flex-direction: column; }
+  .cli-runtime-state { align-self: flex-start; }
+  .cli-runtime-actions > div { width: 100%; }.cli-runtime-actions .credential-primary { flex: 1; }
+  .cli-token-reveal { grid-template-columns: 1fr; }.cli-token-reveal > button, .cli-token-reveal > p { grid-column: auto; }.cli-token-reveal > p { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 480px) {
@@ -1733,6 +1767,8 @@ a:focus-visible,
   .rotation-settings > div { grid-template-columns: 1fr; }
   .credential-modal > footer { display: grid; grid-template-columns: 1fr 1fr; }
   .password-card { padding: 24px 20px; }
+  .cli-runtime-grid { grid-template-columns: 1fr; }.cli-runtime-grid article, .cli-runtime-grid article:nth-child(2) { border-right: 0; border-bottom: 1px solid #e3e9e7; }.cli-runtime-grid article:last-child { border-bottom: 0; }
+  .cli-runtime-actions > div { align-items: stretch; flex-direction: column; }.cli-runtime-actions select { width: 100%; }.cli-runtime-actions .credential-primary { width: 100%; }
 }
 
 /* Actual seller/developer console readiness, inspected read-only 2026-08-16 */

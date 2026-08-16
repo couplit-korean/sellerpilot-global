@@ -9,6 +9,7 @@
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
     "analyzer": "node scripts/local-analyzer-server.mjs",
     "demo": "node scripts/run-local-demo.mjs",
+    "ai:worker": "node scripts/ai-cli-worker.mjs",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "build:vercel": "next build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
@@ -17,11 +18,9 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^4.0.41",
     "@puckeditor/core": "^0.23.0",
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.57.4",
-    "ai": "^7.0.65",
     "drizzle-orm": "0.45.2",
     "lucide-react": "^0.468.0",
     "next": "16.3.1",

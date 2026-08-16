@@ -86,23 +86,8 @@ async function testLazada(payload: SecretPayload): Promise<ChannelDiagnostic> {
 function testQoo10(payload: SecretPayload): ChannelDiagnostic {
   const apiKey = textValue(payload, "api_key");
   const sellerId = textValue(payload, "seller_id");
-  if (!apiKey || !sellerId) return { status: "failed", message: "QAPI Key와 Seller ID가 모두 필요합니다." };
+  if (!apiKey || !sellerId) return { status: "failed", message: "Certification Key와 Seller ID가 모두 필요합니다." };
   return { status: "manual", message: "QAPI 자격 형식은 확인됐습니다. 승인된 테스트 상품번호 입력 후 읽기 API 검사를 실행해야 합니다." };
-}
-
-async function testOpenAI(payload: SecretPayload): Promise<ChannelDiagnostic> {
-  const apiKey = textValue(payload, "api_key");
-  if (!apiKey) return { status: "failed", message: "OpenAI Project API Key가 필요합니다." };
-
-  const { response } = await fetchJson(new URL("https://api.openai.com/v1/models/gpt-5.6"), {
-    authorization: `Bearer ${apiKey}`,
-  });
-  const requestId = response.headers.get("x-request-id") ?? undefined;
-  if (response.ok) return { status: "passed", message: "OpenAI 프로젝트 키와 GPT-5.6 모델 접근 권한이 정상입니다.", remoteRequestId: requestId };
-  if (response.status === 401) return { status: "failed", message: "OpenAI 키가 유효하지 않거나 폐기됐습니다.", remoteRequestId: requestId };
-  if (response.status === 403) return { status: "failed", message: "OpenAI 키에 Models 읽기 또는 프로젝트 접근 권한이 없습니다.", remoteRequestId: requestId };
-  if (response.status === 429) return { status: "failed", message: "OpenAI 사용 한도 또는 API 잔액을 확인해 주세요.", remoteRequestId: requestId };
-  return { status: "failed", message: `OpenAI 연결 검사 실패 · HTTP ${response.status}`, remoteRequestId: requestId };
 }
 
 export async function runChannelDiagnostic(channel: string, payload: SecretPayload): Promise<ChannelDiagnostic> {
@@ -110,7 +95,6 @@ export async function runChannelDiagnostic(channel: string, payload: SecretPaylo
     if (channel === "shopee") return await testShopee(payload);
     if (channel === "lazada") return await testLazada(payload);
     if (channel === "qoo10") return testQoo10(payload);
-    if (channel === "openai") return await testOpenAI(payload);
     return { status: "failed", message: "지원하지 않는 채널입니다." };
   } catch (error) {
     const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
