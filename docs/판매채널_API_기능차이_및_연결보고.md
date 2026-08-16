@@ -15,9 +15,9 @@
 - Qoo10: Seller Authorization Key와 읽기 검사 ItemCode
 - Shopee: 운영 Partner Key의 Vault 저장, SellerPilot 보안 콜백에서 Main account OAuth code를 8개 숍 토큰으로 교환
 - Lazada: App Key/Secret, 판매자 OAuth, 단일 고정 송신 IP 허용목록
-- 쿠팡: Vendor ID, Access Key, Secret Key
+- 쿠팡: WING 비밀번호 재확인 후 Access Key·Secret Key 확인/발급, Couplit Vault 저장
 - 11번가: Open API Key와 로그인 전용 판매자 상세 XML 명세
-- 네이버: Commerce API Application ID/Secret, SELF 또는 SELLER 유형
+- 네이버: Commerce API 개발업체 계정 가입, 내 스토어 애플리케이션 ID/Secret, SELLER 유형과 판매자 UID
 - eBay: Production Client ID/Cert ID/RuName과 판매자 1회 동의
 
 ## 코드 적용 범위
@@ -31,7 +31,7 @@
 | Lazada | SHA-256 서명, 판매자 OAuth, Access/Refresh Token, `/seller/get` 진단 |
 | 쿠팡 | CEA HmacSHA256 서명, Vendor ID 헤더, 상품 목록 1건 진단 |
 | 11번가 | XML/OpenApiKey 전송기와 명시적 `판매자 문서 승인 필요` 상태 |
-| 네이버 | bcrypt `client_secret_sign`, 3시간 토큰, `/v1/seller/account` 진단 |
+| 네이버 | bcrypt `client_secret_sign`, SELLER+account_id 3시간 토큰, `GW.AUTHN` 1회 재발급, `/v1/seller/account` 진단 |
 | eBay | RuName 동의, Authorization Code 교환, 실행 전 2시간 토큰 자동 갱신, privileges 진단 |
 | 운영 화면 | 7개 키 카드, 키 수명·교체일·경고일, 연결 검사, OAuth 재연결, 보호된 API 실행 검수 콘솔 |
 | 준비도 화면 | 채널별 근거·차단요인·공식 문서 링크·기능 지원 방식 표 |

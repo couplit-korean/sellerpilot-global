@@ -301,6 +301,7 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
           return <article className={`credential-card ${channel.key}`} key={channel.key}>
             <header><span className="credential-channel-code">{channel.code}</span><div><small>{channel.market}</small><h3>{channel.name}</h3></div><span className={`connection-state ${credential ? "connected" : "empty"}`}><i />{credential ? "키 등록됨" : "등록 필요"}</span></header>
             <div className="credential-policy"><Clock3 size={13} />{channel.credentialPolicy}</div>
+            <div className="credential-source-links">{channel.officialDocs.slice(0, 2).map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}</a>)}</div>
             <div className="credential-lifecycle">
               <div><small>활성 버전</small><b>{credential ? `v${credential.version}` : "—"}</b><em>{credential ? `지문 ${credential.fingerprint}` : "Vault 대기"}</em></div>
               <div><small>만료일</small><b>{credential ? formatDate(credential.expires_at) : "미설정"}</b><em className={tone}>{days === null ? "일정 입력 필요" : days < 0 ? `${Math.abs(days)}일 경과` : `${days}일 남음`}</em></div>
@@ -405,17 +406,17 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
 }
 
 function CredentialEditor({ channel, current, onClose, onSaved }: { channel: ChannelDefinition; current?: Credential; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
-  const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : channel.key === "shopee" ? "2026-09-15" : "";
+  const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : "";
   const [form, setForm] = useState<Record<string, string>>({
     country: channel.key === "lazada" ? "my" : "",
     market: channel.key === "coupang" ? "KR" : "",
-    token_type: channel.key === "smartstore" ? "SELF" : "",
+    token_type: channel.key === "smartstore" ? "SELLER" : "",
     marketplace_id: channel.key === "ebay" ? "EBAY_US" : "",
   });
   const [environment, setEnvironment] = useState<"sandbox" | "production">(current?.environment ?? "production");
   const [expiresAt, setExpiresAt] = useState(defaultExpiry);
-  const [rotationDays, setRotationDays] = useState(String(current?.rotation_interval_days ?? (channel.key === "shopee" || channel.key === "lazada" ? 30 : channel.key === "ebay" ? 180 : 90)));
-  const [warningDays, setWarningDays] = useState(String(current?.warning_days ?? (channel.key === "lazada" ? 14 : 30)));
+  const [rotationDays, setRotationDays] = useState(String(current?.rotation_interval_days ?? (channel.key === "shopee" || channel.key === "lazada" ? 30 : channel.key === "coupang" || channel.key === "ebay" ? 180 : 90)));
+  const [warningDays, setWarningDays] = useState(String(current?.warning_days ?? (channel.key === "lazada" || channel.key === "coupang" ? 14 : 30)));
   const [graceDays, setGraceDays] = useState("7");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -425,6 +426,10 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cha
     const requiredMissing = current ? [] : channel.fields.filter((field) => !field.optional && !form[field.key]?.trim());
     if (requiredMissing.length) {
       setError(`${requiredMissing.map((field) => field.label).join(" · ")} 입력이 필요합니다.`);
+      return;
+    }
+    if (channel.key === "smartstore" && ((form.token_type || "SELLER").trim().toUpperCase() !== "SELLER" || (!current && !form.account_id?.trim()))) {
+      setError("네이버 판매자 데이터 연결은 SELLER 인증 유형과 판매자 UID(account_id)가 필요합니다.");
       return;
     }
     setSaving(true);
@@ -455,7 +460,7 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cha
   return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal" role="dialog" aria-modal="true" aria-label={`${channel.name} 키 ${current ? "교체" : "등록"}`} onSubmit={submit}>
     <header><div><span>{channel.code}</span><div><small>ONE-TIME SECRET INPUT</small><h3>{channel.name} {current ? "키 교체" : "키 등록"}</h3></div></div><button type="button" onClick={onClose} aria-label="닫기"><X size={18} /></button></header>
     <div className="secret-warning"><EyeOff size={17} /><span><b>기존 키는 표시하거나 자동 입력하지 않습니다.</b><small>새 값을 저장하면 원문은 즉시 Vault로 이동하고 이 화면에서는 폐기됩니다.</small></span></div>
-    <div className="credential-form-grid">{channel.fields.map((field) => <label key={field.key}><span>{field.label}{!current && !field.optional && <em>필수</em>}</span><div className="credential-input"><input type={field.secret ? "password" : "text"} value={form[field.key] ?? ""} onChange={(event) => setForm((currentForm) => ({ ...currentForm, [field.key]: event.target.value }))} placeholder={current ? `${field.label} 유지 시 비워두기` : field.placeholder} autoComplete="off" />{field.secret && <LockKeyhole size={14} />}</div></label>)}</div>
+    <div className="credential-form-grid">{channel.fields.map((field) => <label key={field.key}><span>{field.label}{!current && !field.optional && <em>필수</em>}</span><div className="credential-input">{field.options ? <select value={form[field.key] ?? field.options[0]?.value ?? ""} onChange={(event) => setForm((currentForm) => ({ ...currentForm, [field.key]: event.target.value }))}>{field.options.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select> : <input type={field.secret ? "password" : "text"} value={form[field.key] ?? ""} onChange={(event) => setForm((currentForm) => ({ ...currentForm, [field.key]: event.target.value }))} placeholder={current ? `${field.label} 유지 시 비워두기` : field.placeholder} autoComplete="off" />}{field.secret && <LockKeyhole size={14} />}</div>{field.help && <small className="credential-field-help">{field.help}</small>}</label>)}</div>
     <section className="rotation-settings"><h4><CalendarClock size={15} />키 수명 · 교체 일정</h4><div><label><span>환경</span><select value={environment} onChange={(event) => setEnvironment(event.target.value as "sandbox" | "production")}><option value="production">운영 Production</option><option value="sandbox">샌드박스</option></select></label><label><span>만료일</span><input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label><label><span>교체 주기</span><select value={rotationDays} onChange={(event) => setRotationDays(event.target.value)}><option value="30">30일</option><option value="60">60일</option><option value="90">90일</option><option value="180">180일</option></select></label><label><span>만료 경고</span><select value={warningDays} onChange={(event) => setWarningDays(event.target.value)}><option value="7">7일 전</option><option value="14">14일 전</option><option value="30">30일 전</option><option value="60">60일 전</option></select></label>{current && <label><span>이전 키 유예</span><select value={graceDays} onChange={(event) => setGraceDays(event.target.value)}><option value="0">즉시 폐기</option><option value="3">3일</option><option value="7">7일</option><option value="14">14일</option></select></label>}</div></section>
     {error && <p className="credential-form-error"><AlertTriangle size={14} />{error}</p>}
     <footer><button type="button" className="credential-secondary" onClick={onClose}>취소</button><button type="submit" className="credential-primary" disabled={saving}>{saving ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />}Vault에 안전하게 저장</button></footer>

@@ -70,9 +70,9 @@ export async function POST(request: NextRequest) {
   const missing = requiredCredentialKeys(parsed.data.channel as ActiveChannelKey).filter((key) => !hasText(nextSecret, key));
   if (missing.length) return NextResponse.json({ message: `필수 키 값이 누락됐습니다 · ${missing.join(", ")}` }, { status: 400 });
   if (parsed.data.channel === "smartstore") {
-    const tokenType = typeof nextSecret.token_type === "string" ? nextSecret.token_type.trim().toUpperCase() : "SELF";
-    if (!["SELF", "SELLER"].includes(tokenType) || (tokenType === "SELLER" && !hasText(nextSecret, "account_id"))) {
-      return NextResponse.json({ message: "네이버 인증 유형은 SELF 또는 SELLER이며, SELLER는 판매자 계정 ID가 필요합니다." }, { status: 400 });
+    const tokenType = typeof nextSecret.token_type === "string" ? nextSecret.token_type.trim().toUpperCase() : "SELLER";
+    if (tokenType !== "SELLER" || !hasText(nextSecret, "account_id")) {
+      return NextResponse.json({ message: "네이버 판매자 데이터 연결은 SELLER 인증 유형과 판매자 UID(account_id)가 필요합니다." }, { status: 400 });
     }
     nextSecret.token_type = tokenType;
   }

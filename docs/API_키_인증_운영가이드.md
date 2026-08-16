@@ -29,6 +29,8 @@
 | Qoo10 Japan | Seller ID, QAPI Key, 승인된 테스트 상품번호 | 콘솔 만료 표시 없음, 내부 90일 교체 권장 | 자격 형식 확인 후 승인 상품 읽기 검수 |
 | Shopee | Live Partner ID·Partner Key, Main account OAuth | Access 4시간, Refresh 30일, 승인 최대 365일 | 8개 숍별 `/api/v2/shop/get_shop_info` |
 | Lazada | App Key, App Secret, Access Token, Refresh Token, 국가 | Access 30일, Refresh 180일 | `/seller/get` 읽기 API |
+| 쿠팡 | Vendor ID, Access Key, Secret Key | 180일, 만료 14일 전 재발급 | 등록상품 목록 `maxPerPage=1` |
+| 네이버 스마트스토어 | Application ID, Application Secret, SELLER, 판매자 UID | Access Token 180분, 서버 자동 재발급 | `/v1/seller/account` |
 | AI 작업자 | 웹에서 1회 표시되는 Worker Token | 30·90·180·365일 선택 | 15초 상태 갱신, 작업 claim/complete 왕복, Codex CLI 결과 검사 |
 
 ## 2026-08-16 실제 연동 상태
@@ -36,6 +38,8 @@
 - Qoo10: 실판매자 콘솔과 등록 필드 확인 완료. QAPI 키는 Qoo10 측 발급이 필요해 아직 Vault 미등록.
 - Shopee: Couplit 앱 Online, Test·Live Redirect Domain 반영, Main account OTP와 8개 글로벌 숍 Authorized를 확인했다. 최신 `/auth` 콜백과 숍별 토큰 교환·선택·갱신 코드를 구현했고 운영 Partner Key의 Vault 입력과 보안 콜백 토큰 교환이 남았다.
 - Lazada: 일회성 state 검증, code URL 제거, 토큰 교환, Vault 버전 저장, 72시간 전 Access Token 자동 갱신까지 코드로 구현했다. 실계정 토큰 교환은 고정 송신 IP 허용 후 검증한다.
+- 쿠팡: Couplit WING 실판매자 로그인과 업체코드 표시를 확인했다. 추가판매정보의 OpenAPI 키 화면은 비밀번호 재확인이 필요하며, 공식 정책은 발급 후 180일·만료 14일 전 재발급이다.
+- 네이버: Couplet Seoul 통합매니저 로그인과 Commerce API센터 접근을 확인했다. SellerPilot 개발업체 계정 양식은 준비됐고 이메일 인증·자동화 입력 방지·필수 약관 동의 후 애플리케이션을 등록해야 한다. 판매자 데이터 호출은 `SELF`가 아니라 `SELLER`와 판매자 UID를 사용한다.
 - ChatGPT CLI: OpenAI API 결제·Project Key와 분리했다. Mac의 `codex login` 인증은 로컬에만 남고 웹은 해시된 Worker Token으로 작업 큐만 전달한다.
 - Supabase: 비공개 `sellerpilot-ai` Storage와 CLI 작업 큐·토큰 지문·감사 기록을 운영 DB에 적용한다. 익명·일반 사용자는 원문 또는 작업자 함수를 실행할 수 없다.
 
@@ -68,7 +72,9 @@ Secret Key는 절대 `NEXT_PUBLIC_` 접두사를 사용하지 않는다. 새 키
 - [x] ChatGPT CLI 작업자 토큰 발급·교체·만료·상태·처리 건수 UI 구현
 - [x] 연결 검사 응답의 비밀·원문 로그 차단
 - [ ] Couplit Supabase 계정 전환 후 Security/Performance Advisor 재검증
-- [x] Vercel 새 Publishable/Secret 환경변수 연결
+- [ ] Couplit Supabase 프로젝트 생성 후 Vercel Publishable/Secret 환경변수 연결
+- [ ] 쿠팡 WING 비밀번호 재확인 후 180일 OpenAPI Key를 Vault에 저장하고 상품 목록 읽기 실검수
+- [ ] 네이버 Commerce API 계정·애플리케이션 생성 후 SELLER 토큰과 `/v1/seller/account` 실검수
 - [ ] Qoo10 승인 테스트 상품번호로 읽기 API 실검수
 - [ ] Shopee Partner Key를 Vault에 입력하고 Main account 콜백에서 8개 숍 토큰 교환·읽기 API 실검수
 - [ ] Lazada 고정 송신 IP 구성 후 운영 토큰을 Vault에 등록하고 실호출 통과

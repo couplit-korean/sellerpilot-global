@@ -30,6 +30,8 @@ export type CredentialField = {
   secret?: boolean;
   optional?: boolean;
   placeholder?: string;
+  help?: string;
+  options?: { value: string; label: string }[];
 };
 
 export type ChannelDefinition = {
@@ -158,17 +160,18 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
     name: "쿠팡 WING",
     market: "Korea · Open API",
     authType: "hmac",
-    credentialPolicy: "Access/Secret Key · 만료일 콘솔 기준 · 90일 교체 권장",
+    credentialPolicy: "Access/Secret Key 180일 · 만료 14일 전 재발급 · WING에서 관리",
     oauth: false,
     fields: [
-      { key: "vendor_id", label: "Vendor ID", placeholder: "A00012345" },
-      { key: "access_key", label: "Access Key", secret: true, placeholder: "Coupang Access Key" },
-      { key: "secret_key", label: "Secret Key", secret: true, placeholder: "Coupang Secret Key" },
+      { key: "vendor_id", label: "Vendor ID", placeholder: "A00012345", help: "WING 우측 상단 판매자명 메뉴의 업체코드" },
+      { key: "access_key", label: "Access Key", secret: true, placeholder: "Coupang Access Key", help: "WING → 추가판매정보 → OpenAPI Key" },
+      { key: "secret_key", label: "Secret Key", secret: true, placeholder: "Coupang Secret Key", help: "재발급하면 Secret Key가 변경됩니다." },
       { key: "requested_by", label: "요청자 ID", optional: true, placeholder: "미입력 시 Vendor ID" },
       { key: "market", label: "시장", optional: true, placeholder: "KR" },
     ],
     officialDocs: [
       { label: "개발자센터", url: "https://developers.coupang.com/ko" },
+      { label: "OpenAPI 키 발급", url: "https://developers.coupang.com/ko/getting-started/issue-open-api-keynew" },
       { label: "HMAC 테스트 가이드", url: "https://developers.coupangcorp.com/hc/ko/articles/360033988873-OPEN-API-Test-%EA%B0%80%EC%9D%B4%EB%93%9C" },
     ],
     capabilities: {
@@ -233,10 +236,11 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
     fields: [
       { key: "client_id", label: "Application ID", placeholder: "Commerce API Application ID" },
       { key: "client_secret", label: "Application Secret", secret: true, placeholder: "Commerce API Secret" },
-      { key: "token_type", label: "인증 유형", optional: true, placeholder: "SELF 또는 SELLER" },
-      { key: "account_id", label: "판매자 계정 ID", optional: true, placeholder: "SELLER 유형일 때 필수" },
+      { key: "token_type", label: "인증 유형", placeholder: "SELLER", help: "상품·주문 등 판매자 데이터는 SELLER 유형만 사용합니다.", options: [{ value: "SELLER", label: "SELLER · 판매자 데이터" }] },
+      { key: "account_id", label: "판매자 UID (account_id)", placeholder: "Commerce API 판매자 UID", help: "로그인 이메일이 아니라 애플리케이션에 연결된 판매자 UID입니다." },
     ],
     officialDocs: [
+      { label: "API센터 앱 관리", url: "https://apicenter.commerce.naver.com/ko/basic/main" },
       { label: "Commerce API", url: "https://apicenter.commerce.naver.com/docs/commerce-api/current" },
       { label: "판매자 인증", url: "https://apicenter.commerce.naver.com/docs/commerce-api/current/exchange-sellers-auth" },
     ],

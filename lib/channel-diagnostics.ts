@@ -93,6 +93,9 @@ async function testCoupang(payload: SecretPayload): Promise<ChannelDiagnostic> {
 }
 
 async function testSmartstore(payload: SecretPayload): Promise<ChannelDiagnostic> {
+  if ((textValue(payload, "token_type") || "SELLER").toUpperCase() !== "SELLER" || !textValue(payload, "account_id")) {
+    return { status: "failed", message: "판매자 상품·주문 연결은 SELLER 인증 유형과 판매자 UID(account_id)가 필요합니다." };
+  }
   const token = await fetchNaverAccessToken(payload);
   const remote = await naverRequest({ accessToken: token.accessToken, method: "GET", path: "/v1/seller/account" });
   if (remote.response.ok) {

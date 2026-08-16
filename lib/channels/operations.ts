@@ -400,26 +400,33 @@ async function executeCoupang(input: ExecuteInput) {
 }
 
 async function executeSmartstore(input: ExecuteInput) {
-  const token = await fetchNaverAccessToken(input.payload);
+  let token = await fetchNaverAccessToken(input.payload);
+  const request = async (requestInput: Omit<Parameters<typeof naverRequest>[0], "accessToken">) => {
+    let remote = await naverRequest({ ...requestInput, accessToken: token.accessToken });
+    if (remote.response.status === 401 && textValue(remote.data, "code") === "GW.AUTHN") {
+      token = await fetchNaverAccessToken(input.payload);
+      remote = await naverRequest({ ...requestInput, accessToken: token.accessToken });
+    }
+    return remote;
+  };
   if (input.operation === "categories.list") {
     const categoryId = stringArgument(input.arguments, "categoryId");
-    const remote = await naverRequest({ accessToken: token.accessToken, method: "GET", path: `/v1/categories/${pathSegment(categoryId)}` });
+    const remote = await request({ method: "GET", path: `/v1/categories/${pathSegment(categoryId)}` });
     return result(input, [step("category", remote)], categoryId);
   }
   if (input.operation === "listing.create") {
-    const remote = await naverRequest({ accessToken: token.accessToken, method: "POST", path: "/v2/products", body: objectValue(input.arguments, "body") });
+    const remote = await request({ method: "POST", path: "/v2/products", body: objectValue(input.arguments, "body") });
     const remoteId = remote.data.originProductNo === undefined ? undefined : String(remote.data.originProductNo);
     return result(input, [step("product-create", remote)], remoteId);
   }
   if (input.operation === "listing.update") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
-    const remote = await naverRequest({ accessToken: token.accessToken, method: "PUT", path: `/v2/products/origin-products/${originProductNo}`, body: objectValue(input.arguments, "body") });
+    const remote = await request({ method: "PUT", path: `/v2/products/origin-products/${originProductNo}`, body: objectValue(input.arguments, "body") });
     return result(input, [step("product-update", remote)], originProductNo);
   }
   if (input.operation === "listing.stop") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
-    const remote = await naverRequest({
-      accessToken: token.accessToken,
+    const remote = await request({
       method: "PUT",
       path: `/v1/products/origin-products/${originProductNo}/change-status`,
       body: { ...objectValue(input.arguments, "body", false), statusType: "SUSPENSION" },
@@ -427,22 +434,21 @@ async function executeSmartstore(input: ExecuteInput) {
     return result(input, [step("status-stop", remote)], originProductNo);
   }
   if (input.operation === "price.update") {
-    const remote = await naverRequest({ accessToken: token.accessToken, method: "PUT", path: "/v1/products/origin-products/bulk-update", body: objectValue(input.arguments, "body") });
+    const remote = await request({ method: "PUT", path: "/v1/products/origin-products/bulk-update", body: objectValue(input.arguments, "body") });
     return result(input, [step("bulk-price", remote)]);
   }
   if (input.operation === "inventory.update") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
-    const remote = await naverRequest({ accessToken: token.accessToken, method: "PUT", path: `/v1/products/origin-products/${originProductNo}/option-stock`, body: objectValue(input.arguments, "body") });
+    const remote = await request({ method: "PUT", path: `/v1/products/origin-products/${originProductNo}/option-stock`, body: objectValue(input.arguments, "body") });
     return result(input, [step("option-stock", remote)], originProductNo);
   }
   if (input.operation === "orders.list") {
-    const remote = await naverRequest({ accessToken: token.accessToken, method: "GET", path: "/v1/pay-order/seller/product-orders/last-changed-statuses", query: queryParams(input.arguments) });
+    const remote = await request({ method: "GET", path: "/v1/pay-order/seller/product-orders/last-changed-statuses", query: queryParams(input.arguments) });
     return result(input, [step("orders", remote)]);
   }
   if (input.operation === "orders.get") {
     const productOrderId = stringArgument(input.arguments, "productOrderId");
-    const remote = await naverRequest({
-      accessToken: token.accessToken,
+    const remote = await request({
       method: "POST",
       path: "/v1/pay-order/seller/product-orders/query",
       body: { productOrderIds: [productOrderId], quantityClaimCompatibility: true },
@@ -450,10 +456,10 @@ async function executeSmartstore(input: ExecuteInput) {
     return result(input, [step("order", remote)], productOrderId);
   }
   if (input.operation === "shipment.acknowledge") {
-    const remote = await naverRequest({ accessToken: token.accessToken, method: "POST", path: "/v1/pay-order/seller/product-orders/confirm", body: objectValue(input.arguments, "body") });
+    const remote = await request({ method: "POST", path: "/v1/pay-order/seller/product-orders/confirm", body: objectValue(input.arguments, "body") });
     return result(input, [step("confirm", remote)]);
   }
-  const remote = await naverRequest({ accessToken: token.accessToken, method: "POST", path: "/v1/pay-order/seller/product-orders/dispatch", body: objectValue(input.arguments, "body") });
+  const remote = await request({ method: "POST", path: "/v1/pay-order/seller/product-orders/dispatch", body: objectValue(input.arguments, "body") });
   return result(input, [step("dispatch", remote)]);
 }
 

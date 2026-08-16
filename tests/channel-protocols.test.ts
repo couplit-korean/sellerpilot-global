@@ -13,6 +13,7 @@ import {
   ensureEbayAccessToken,
   ensureShopeeAccessToken,
   exchangeShopeeOAuthToken,
+  fetchNaverAccessToken,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
 
@@ -36,6 +37,17 @@ test("Naver client secret signature is a bcrypt hash wrapped in Base64", () => {
   const encoded = createNaverClientSecretSign(clientId, bcryptSalt, timestamp);
   const decoded = Buffer.from(encoded, "base64").toString("utf8");
   assert.equal(bcryptCompareSync(`${clientId}_${timestamp}`, decoded), true);
+});
+
+test("Naver seller data token requires SELLER type and account_id", async () => {
+  await assert.rejects(
+    fetchNaverAccessToken({
+      client_id: "client",
+      client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze",
+      token_type: "SELF",
+    }),
+    /NAVER_CREDENTIALS_MISSING/,
+  );
 });
 
 test("Qoo10 uses current QAPI endpoint and qualified method name", () => {
@@ -217,17 +229,61 @@ test("Naver order detail routing exchanges a token and uses the official batch q
     const result = await executeChannelOperation({
       channel: "smartstore",
       operation: "orders.get",
-      payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELF" },
+      payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
       arguments: { productOrderId: "2022040521691281" },
       environment: "production",
     });
     assert.equal(result.ok, true);
+    const tokenBody = new URLSearchParams(String(calls[0].init?.body));
+    assert.equal(tokenBody.get("type"), "SELLER");
+    assert.equal(tokenBody.get("account_id"), "seller-uid");
     assert.equal(calls[1].url, "https://api.commerce.naver.com/external/v1/pay-order/seller/product-orders/query");
     assert.equal(calls[1].init?.method, "POST");
     assert.deepEqual(JSON.parse(String(calls[1].init?.body)), {
       productOrderIds: ["2022040521691281"],
       quantityClaimCompatibility: true,
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Naver seller request refreshes once after GW.AUTHN", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  let tokenCount = 0;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith("/v1/oauth2/token")) {
+      tokenCount += 1;
+      return new Response(JSON.stringify({ access_token: `naver-token-${tokenCount}`, expires_in: 10_800 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (calls.filter((item) => item.includes("/v1/categories/")).length === 1) {
+      return new Response(JSON.stringify({ code: "GW.AUTHN", message: "expired" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ id: "50000000", name: "패션의류" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "smartstore",
+      operation: "categories.list",
+      payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
+      arguments: { categoryId: "50000000" },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(tokenCount, 2);
+    assert.equal(calls.filter((item) => item.includes("/v1/categories/50000000")).length, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }
