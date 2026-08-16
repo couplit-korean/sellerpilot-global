@@ -3,6 +3,7 @@ import { generateText, Output, type UserModelMessage } from "ai";
 import { z } from "zod";
 import { createDemoStudioResult } from "../../../product-studio-fallback";
 import type { StudioImagePayload } from "../../../product-studio-types";
+import { getOpenAICredential } from "../../../../lib/openai-credential";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const studioSchema = z.object({
@@ -43,9 +44,9 @@ export async function POST(request: Request) {
   const description = body.description?.trim().slice(0, 4000) ?? "";
   const productUrl = body.productUrl?.trim().slice(0, 1000) ?? "";
   const images = (body.images ?? []).filter((image) => image.base64 && image.mediaType.startsWith("image/")).slice(0, 9);
-  const apiKey = process.env.OPENAI_API_KEY;
+  const credential = await getOpenAICredential();
 
-  if (!apiKey) {
+  if (!credential) {
     return Response.json(createDemoStudioResult(description));
   }
 
@@ -54,7 +55,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const openai = createOpenAI({ apiKey });
+    const openai = createOpenAI({ apiKey: credential.apiKey, project: credential.project });
     const content: UserModelMessage["content"] = [
       {
         type: "text",

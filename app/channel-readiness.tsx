@@ -44,7 +44,7 @@ export function ChannelReadinessPage() {
         <div>
           <span className="readiness-eyebrow"><Radio size={14} /> READ-ONLY ACCOUNT INSPECTION · {channelReadinessObservedAt}</span>
           <h2>로그인됐다는 사실과<br /><em>API가 작동한다는 증거를 분리합니다.</em></h2>
-          <p>실제 판매자·개발자 콘솔에서 확인한 상태만 기록했습니다. 자격증명 원문과 판매자 식별자는 저장하지 않았으며, 테스트상품 생성이나 설정 변경도 수행하지 않았습니다.</p>
+          <p>실제 판매자·개발자 콘솔에서 확인한 상태와 승인된 설정 변경만 기록했습니다. Lazada 운영 콜백과 OAuth 승인까지 검증했으며, 자격증명 원문·일회성 코드는 저장하지 않고 테스트상품도 생성하지 않았습니다.</p>
         </div>
         <aside>
           <ShieldCheck size={20} />
@@ -54,10 +54,10 @@ export function ChannelReadinessPage() {
 
       <section className="readiness-summary" aria-label="채널 연동 준비 상태 요약">
         <article><span>콘솔 확인</span><strong>3 / 3</strong><small>Qoo10 · Shopee · Lazada</small></article>
-        <article><span>Online 개발자 앱</span><strong>{onlineApps} / 2</strong><small>Shopee · Lazada</small></article>
+        <article><span>대상 Online 앱</span><strong>{onlineApps} / 1</strong><small>Lazada · Shopee 제외</small></article>
         <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>읽기 전용 화면 증거</small></article>
-        <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>콜백 · 키 · 서버 · QAPI</small></article>
-        <article className="danger"><span>API E2E 통과</span><strong>0 / 3</strong><small>생성·조회·수정·중지 기준</small></article>
+        <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>QAPI 발급 · Lazada 고정 IP</small></article>
+        <article className="danger"><span>API E2E 통과</span><strong>0 / 2</strong><small>Shopee 제외 · Qoo10/Lazada 기준</small></article>
       </section>
 
       <section className="readiness-channel-grid">
@@ -125,7 +125,7 @@ export function ChannelReadinessPage() {
 
       <section className="readiness-security-note">
         <KeyRound size={18} />
-        <div><b>실제 연결 작업은 서버 환경변수와 비밀 저장소가 준비된 뒤 시작합니다.</b><p>브라우저 로그인 세션을 API 인증으로 간주하지 않습니다. 승인된 테스트상품 범위, 콜백 도메인, 고정 작업서버 IP를 먼저 확정한 뒤 읽기 API부터 단계적으로 검수합니다.</p></div>
+        <div><b>실제 연결은 Vault 저장과 고정 송신 IP가 모두 준비된 뒤 완료로 판정합니다.</b><p>브라우저 로그인이나 OAuth 승인 코드 수신만으로 API 연결을 완료 처리하지 않습니다. QAPI 발급과 Lazada 단일 고정 공인 IP를 먼저 확정한 뒤 읽기 API부터 단계적으로 검수합니다.</p></div>
         <ServerCog size={22} />
       </section>
     </div>

@@ -21,9 +21,9 @@ export type ChannelReadiness = {
 };
 
 /**
- * 2026-08-16에 사용자가 열어 준 실제 판매자/개발자 콘솔을 읽기 전용으로
- * 확인한 결과입니다. 앱 키, 시크릿, 파트너 ID, 허용 IP, 판매자 식별자는
- * 소스와 화면에 저장하지 않습니다.
+ * 2026-08-16에 사용자가 열어 준 실제 판매자/개발자 콘솔을 확인하고 승인된
+ * Lazada 콜백·OAuth 작업 결과를 반영했습니다. 앱 키, 시크릿, 파트너 ID,
+ * 허용 IP, 판매자 식별자와 일회성 코드는 소스와 화면에 저장하지 않습니다.
  */
 export const channelReadinessObservedAt = "2026.08.16";
 
@@ -54,20 +54,20 @@ export const channelReadiness: ChannelReadiness[] = [
     name: "Shopee Open Platform",
     market: "글로벌 / SG 우선",
     console: "Shopee 개발자 콘솔",
-    appState: "앱 Online · 푸시 OFF",
-    overall: "partial",
-    summary: "라이브 앱과 민감정보 접근 권한은 있으나 리다이렉트와 콜백이 운영 주소가 아니며 라이브 푸시가 꺼져 있습니다.",
+    appState: "사용자 요청으로 이번 연동 범위 제외",
+    overall: "not_configured",
+    summary: "개발자 앱 상태는 읽기 전용으로 확인했지만, 사용자 지시에 따라 Shopee 인증·토큰·콜백 작업은 진행하지 않습니다.",
     checks: [
       { label: "개발자 앱 상태", state: "verified", evidence: "Seller In House System 앱 Online" },
       { label: "민감정보 접근", state: "verified", evidence: "콘솔에서 접근 가능 상태 확인" },
       { label: "Sandbox v2", state: "verified", evidence: "계정 유형·Shop Area 기반 테스트계정 생성 도구 확인" },
-      { label: "운영 리다이렉트", state: "blocked", evidence: "현재 임시 도메인으로 설정되어 SellerPilot OAuth 완료 불가" },
-      { label: "라이브 푸시", state: "not_configured", evidence: "Get Live Push OFF · 최근 6시간 수신 증거 없음" },
-      { label: "테스트 콜백", state: "not_configured", evidence: "Test Call Back URL 비어 있음" },
-      { label: "파트너 키 수명", state: "blocked", evidence: "2026-09-15 만료 예정 · 교체 절차 필요" },
+      { label: "운영 OAuth", state: "not_configured", evidence: "이번 작업 범위에서 제외 · 설정 변경 없음" },
+      { label: "라이브 푸시", state: "not_configured", evidence: "이번 작업 범위에서 제외 · 설정 변경 없음" },
+      { label: "테스트 콜백", state: "not_configured", evidence: "이번 작업 범위에서 제외 · 설정 변경 없음" },
+      { label: "파트너 키 수명", state: "not_configured", evidence: "재개 지시가 있기 전에는 키를 생성·교체하지 않음" },
     ],
-    blockers: ["SellerPilot OAuth 리다이렉트 URL 확정", "콜백 배포 지역 확인과 HTTPS 엔드포인트 검증", "만료 전 파트너 키 교체·롤백 계획"],
-    nextAction: "운영 리다이렉트 등록 → 샌드박스 계정 연결 → 상품/주문 API PoC → 라이브 푸시 검증",
+    blockers: [],
+    nextAction: "사용자가 Shopee 연동 재개를 명시하기 전까지 인증·토큰·설정 변경 금지",
   },
   {
     key: "lazada",
@@ -75,20 +75,22 @@ export const channelReadiness: ChannelReadiness[] = [
     name: "Lazada Open Platform",
     market: "MY · PH · SG · TH · VN",
     console: "Lazada Service Provider Center",
-    appState: "앱 Online · 웹훅 미구성",
+    appState: "앱 Online · OAuth 고정 IP 차단",
     overall: "partial",
-    summary: "Seller In-house 앱과 주요 API 권한은 활성화됐지만 OAuth 콜백이 임시 주소이고 IP 허용목록과 Push Mechanism이 비어 있습니다.",
+    summary: "운영 콜백과 MY 판매자 허용목록을 확인하고 OAuth 승인 코드까지 받았지만, Vercel Hobby에 고정 송신 IP가 없어 토큰 교환이 AppWhiteIpLimit로 차단됐습니다.",
     checks: [
       { label: "개발자 앱 상태", state: "verified", evidence: "Couplit Commerce · Seller In-house APP · Online" },
       { label: "API 권한 그룹", state: "verified", evidence: "상품·가격재고·주문·물류·카탈로그·재무 등 Active" },
-      { label: "판매자 허용 범위", state: "verified", evidence: "5개 국가 판매자 계정이 허용목록에 등록됨" },
-      { label: "OAuth 콜백", state: "blocked", evidence: "현재 임시 도메인으로 설정되어 SellerPilot 인증 완료 불가" },
-      { label: "IP 허용목록", state: "not_configured", evidence: "호출 서버 IP가 지정되지 않아 기능 비활성" },
+      { label: "판매자 허용 범위", state: "verified", evidence: "MY 판매자 Short Code와 개발자 콘솔 허용목록 일치" },
+      { label: "OAuth 콜백", state: "verified", evidence: "https://sellerpilot-global.vercel.app/ 로 운영 콜백 변경" },
+      { label: "OAuth 판매자 승인", state: "verified", evidence: "MY 실판매자 승인 후 일회성 Authorization Code 수신" },
+      { label: "토큰 교환", state: "blocked", evidence: "Lazada 응답 AppWhiteIpLimit · 토큰과 자격증명은 저장하지 않음" },
+      { label: "IP 허용목록", state: "blocked", evidence: "Lazada 정책상 단일 고정 공인 IP 필요 · Vercel Hobby 송신 IP는 유동" },
       { label: "Push Mechanism", state: "not_configured", evidence: "콜백 URL 비어 있음 · 6개 이벤트 그룹 미선택" },
       { label: "토큰 정책", state: "verified", evidence: "Access 30일 · Refresh 180일 정책 확인" },
     ],
-    blockers: ["SellerPilot OAuth 콜백 URL로 교체", "고정 작업서버 IP 확정 후 허용목록 등록", "주문·상품·Fulfillment 웹훅 검증"],
-    nextAction: "OAuth 콜백 연결 → 토큰 저장·갱신 → 상품/가격재고 API PoC → Push 서명·재전송 검증",
+    blockers: ["단일 고정 공인 IP를 제공하는 서버/프록시 확정", "해당 IP를 Lazada White IP에 등록", "동일 출구 IP에서 OAuth 토큰 교환 재실행"],
+    nextAction: "고정 송신 IP 확정 → White IP 등록 → OAuth 재승인·토큰 교환 → /seller/get 읽기 실검수",
   },
 ];
 

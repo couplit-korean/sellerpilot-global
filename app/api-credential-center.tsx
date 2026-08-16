@@ -24,7 +24,7 @@ import { isSupabaseConfigured } from "../lib/supabase/config";
 
 type Credential = {
   id: string;
-  channel: "qoo10" | "shopee" | "lazada";
+  channel: "qoo10" | "shopee" | "lazada" | "openai";
   environment: "sandbox" | "production";
   version: number;
   fingerprint: string;
@@ -85,6 +85,13 @@ const channelDefinitions: ChannelDefinition[] = [
       { key: "country", label: "국가 코드", placeholder: "my" },
     ],
   },
+  {
+    key: "openai", code: "AI", name: "OpenAI API", market: "SellerPilot AI · Production", consolePolicy: "Project 전용 키 · 내부 90일 교체 권장",
+    fields: [
+      { key: "api_key", label: "Project API Key", secret: true, placeholder: "sk-proj-로 시작하는 새 키" },
+      { key: "project_id", label: "Project ID", optional: true, placeholder: "proj_로 시작 · 선택" },
+    ],
+  },
 ];
 
 const actionLabels: Record<string, string> = {
@@ -99,6 +106,11 @@ function formatDate(value: string | null, includeTime = false) {
 function remainingDays(value: string | null) {
   if (!value) return null;
   return Math.ceil((new Date(value).getTime() - Date.now()) / 86_400_000);
+}
+
+function futureDateInput(days: number) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit" })
+    .format(new Date(Date.now() + days * 86_400_000));
 }
 
 function expiryTone(days: number | null, warningDays: number) {
@@ -180,14 +192,14 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
   return (
     <div className="page-stack credential-page">
       <section className="credential-hero">
-        <div><span><ShieldCheck size={14} /> SECURE CONNECTION CONTROL</span><h2>API 키는 숨기고,<br /><em>수명과 교체 흐름은 선명하게.</em></h2><p>키 원문은 Supabase Vault에 암호화 저장됩니다. 운영 화면은 지문·버전·만료·검사 결과만 다루며 저장 후에는 원문을 다시 보여주지 않습니다.</p></div>
+        <div><span><ShieldCheck size={14} /> SECURE CONNECTION CONTROL</span><h2>API 키는 숨기고,<br /><em>수명과 교체 흐름은 선명하게.</em></h2><p>판매 채널과 OpenAI 키 원문은 Supabase Vault에 암호화 저장됩니다. 운영 화면은 지문·버전·만료·검사 결과만 다루며 저장 후에는 원문을 다시 보여주지 않습니다.</p></div>
         <aside><LockKeyhole size={21} /><b>브라우저 원문 재조회 차단</b><small>관리자 로그인 · 새 키 일회성 입력 · 서버 검사 · 감사기록</small></aside>
       </section>
 
       <section className="credential-system-strip">
         <article><DatabaseZap size={18} /><span><small>비밀 저장소</small><b>Supabase Vault</b><em className={isSupabaseConfigured ? "ok" : "bad"}>{isSupabaseConfigured ? "환경 연결" : "미연결"}</em></span></article>
         <article><ServerCog size={18} /><span><small>운영 배포</small><b>sellerpilot-global</b><em className="ok">Vercel Production</em></span></article>
-        <article><KeyRound size={18} /><span><small>활성 채널 키</small><b>{activeByChannel.size} / 3</b><em>{loading ? "확인 중" : "Vault 메타데이터"}</em></span></article>
+        <article><KeyRound size={18} /><span><small>활성 API 키</small><b>{activeByChannel.size} / {channelDefinitions.length}</b><em>{loading ? "확인 중" : "Vault 메타데이터"}</em></span></article>
         <article className={expiringCount ? "attention" : ""}><CalendarClock size={18} /><span><small>교체 경고</small><b>{expiringCount}건</b><em>{expiringCount ? "일정 확인 필요" : "현재 없음"}</em></span></article>
       </section>
 
@@ -228,12 +240,12 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
 }
 
 function CredentialEditor({ channel, current, onClose, onSaved }: { channel: ChannelDefinition; current?: Credential; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
-  const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : "";
+  const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : channel.key === "openai" ? futureDateInput(90) : "";
   const [form, setForm] = useState<Record<string, string>>({ country: channel.key === "lazada" ? "my" : "" });
   const [environment, setEnvironment] = useState<"sandbox" | "production">(current?.environment ?? "production");
   const [expiresAt, setExpiresAt] = useState(defaultExpiry);
   const [rotationDays, setRotationDays] = useState(String(current?.rotation_interval_days ?? (channel.key === "lazada" ? 30 : 90)));
-  const [warningDays, setWarningDays] = useState(String(current?.warning_days ?? (channel.key === "lazada" ? 14 : 30)));
+  const [warningDays, setWarningDays] = useState(String(current?.warning_days ?? (channel.key === "lazada" ? 14 : channel.key === "openai" ? 14 : 30)));
   const [graceDays, setGraceDays] = useState("7");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -250,27 +262,17 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cha
     const secretPayload = Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
     const expiryIso = expiresAt ? new Date(`${expiresAt}T23:59:59+09:00`).toISOString() : null;
     let rotateError: { message: string } | null = null;
-    if (channel.key === "shopee" || channel.key === "lazada") {
-      const { data: sessionData } = await createClient().auth.getSession();
-      const response = await fetch(`/api/admin/channel-credentials/${channel.key}/authorize`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
-        body: JSON.stringify({ credentialId: current?.id, environment, secretPayload, expiresAt: expiryIso, rotationDays: Number(rotationDays), warningDays: Number(warningDays), graceDays: current ? Number(graceDays) : 0 }),
-      });
-      const payload = await response.json().catch(() => ({ message: `${channel.name} 인증 응답을 읽지 못했습니다.` })) as { message: string };
-      if (!response.ok) rotateError = { message: payload.message };
-    } else {
-      const result = await createClient().rpc("sellerpilot_rotate_credential", {
-        p_channel: channel.key,
-        p_environment: environment,
-        p_secret_payload: secretPayload,
-        p_expires_at: expiryIso,
-        p_rotation_interval_days: Number(rotationDays),
-        p_warning_days: Number(warningDays),
-        p_grace_days: current ? Number(graceDays) : 0,
-      });
-      rotateError = result.error;
-    }
+    const { data: sessionData } = await createClient().auth.getSession();
+    const endpoint = channel.key === "shopee" || channel.key === "lazada"
+      ? `/api/admin/channel-credentials/${channel.key}/authorize`
+      : "/api/admin/channel-credentials/rotate";
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
+      body: JSON.stringify({ credentialId: current?.id, channel: channel.key, environment, secretPayload, expiresAt: expiryIso, rotationDays: Number(rotationDays), warningDays: Number(warningDays), graceDays: current ? Number(graceDays) : 0 }),
+    });
+    const payload = await response.json().catch(() => ({ message: `${channel.name} 인증 응답을 읽지 못했습니다.` })) as { message: string };
+    if (!response.ok) rotateError = { message: payload.message };
     setSaving(false);
     if (rotateError) {
       setError(rotateError.message.includes("administrator") ? "관리자 권한이 필요합니다." : "키를 저장하지 못했습니다. 입력값과 Vault 연결을 확인해 주세요.");

@@ -76,8 +76,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /통합 판매관리/);
   assert.match(page, /signInWithPassword/);
   assert.match(page, /판매자 콘솔 확인 · QAPI 미검증/);
-  assert.match(page, /개발자 앱 Online · 라이브 푸시 OFF/);
-  assert.match(page, /개발자 앱 Online · 웹훅 미구성/);
+  assert.match(page, /이번 API 연동 범위 제외/);
+  assert.match(page, /OAuth 승인 완료 · 고정 송신 IP 차단/);
   assert.match(page, /AI가 주문 정보와 정책을 반영한 답변 초안/);
   assert.match(page, /신뢰도 97% 이상/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
@@ -127,7 +127,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(readinessPage, /로그인됐다는 사실과/);
   assert.match(readinessPage, /QSM 개별 상품등록 필드 맵/);
   assert.match(readinessPage, /API E2E 통과/);
-  assert.match(readinessData, /Get Live Push OFF/);
+  assert.match(readinessData, /이번 연동 범위 제외/);
+  assert.match(readinessData, /AppWhiteIpLimit/);
   assert.match(readinessData, /Access 30일 · Refresh 180일/);
   assert.match(readinessData, /대표 1장, 추가 최대 50장, 동영상 최대 1개/);
   assert.match(channelMapping, /Qoo10 QSM 실제 상품등록 필드/);
@@ -136,13 +137,16 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const credentialPage = await readFile(new URL("../app/api-credential-center.tsx", import.meta.url), "utf8");
   const credentialMigration = await readFile(new URL("../db/supabase/0001_channel_credentials.sql", import.meta.url), "utf8");
   assert.match(credentialPage, /Supabase Vault/);
+  assert.match(credentialPage, /OpenAI API/);
+  assert.match(credentialPage, /Project API Key/);
   assert.match(credentialPage, /키 수명 · 교체 일정/);
   assert.match(credentialPage, /연결 검사/);
   assert.match(credentialMigration, /sellerpilot_rotate_credential/);
   assert.match(credentialMigration, /vault\.create_secret/);
   assert.match(credentialMigration, /sellerpilot_list_credential_audit/);
-  for (const protectedValue of ["137451", "137571", "k931103", "MY4NNISR2D", "SGYEZULX"]) {
-    assert.doesNotMatch(`${readinessData}\n${channelMapping}`, new RegExp(protectedValue, "i"));
+  assert.match(credentialMigration, /sellerpilot_get_active_credential_secret/);
+  for (const protectedPattern of [/authorization[_ ]?code\s*[:=]/i, /access[_ ]?token\s*[:=]/i, /app[_ ]?secret\s*[:=]/i, /partner[_ ]?key\s*[:=]/i]) {
+    assert.doesNotMatch(`${readinessData}\n${channelMapping}`, protectedPattern);
   }
   assert.match(packageJson, /lucide-react/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);

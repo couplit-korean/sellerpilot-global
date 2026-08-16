@@ -1616,11 +1616,12 @@ a:focus-visible,
 .credential-alert b { margin-bottom: 2px; font-size: 10px; }
 .credential-alert button { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid #c99d73; background: #fff; color: #6d451a; font-size: 9px; }
 
-.credential-channel-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
+.credential-channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .credential-card { --channel-accent: #0b7c61; overflow: hidden; border: 1px solid var(--line); border-top: 4px solid var(--channel-accent); background: #fff; }
 .credential-card.qoo10 { --channel-accent: #d64245; }
 .credential-card.shopee { --channel-accent: #ee4d2d; }
 .credential-card.lazada { --channel-accent: #6a4ad5; }
+.credential-card.openai { --channel-accent: #16725e; }
 .credential-card > header { display: grid; min-height: 74px; align-items: center; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; padding: 14px 16px; }
 .credential-channel-code { display: grid; width: 36px; height: 36px; place-items: center; color: #fff; background: var(--channel-accent); font-size: 13px; font-weight: 900; }
 .credential-card header small, .credential-card header h3 { display: block; overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }

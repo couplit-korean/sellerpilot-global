@@ -15,7 +15,7 @@ create table if not exists sellerpilot_private.admin_users (
 
 create table if not exists sellerpilot_private.channel_credentials (
   id uuid primary key default gen_random_uuid(),
-  channel text not null check (channel in ('qoo10', 'shopee', 'lazada')),
+  channel text not null check (channel in ('qoo10', 'shopee', 'lazada', 'openai')),
   environment text not null default 'production' check (environment in ('sandbox', 'production')),
   version integer not null check (version > 0),
   vault_secret_id uuid not null,
@@ -129,7 +129,7 @@ begin
   if not public.sellerpilot_is_admin() then
     raise exception 'administrator access required' using errcode = '42501';
   end if;
-  if p_channel not in ('qoo10', 'shopee', 'lazada') then
+  if p_channel not in ('qoo10', 'shopee', 'lazada', 'openai') then
     raise exception 'unsupported channel';
   end if;
   if p_environment not in ('sandbox', 'production') then
@@ -285,7 +285,7 @@ as $$
 declare
   v_secret text;
 begin
-  if coalesce(auth.role(), '') <> 'service_role' then
+  if coalesce(current_setting('request.jwt.claim.role', true), '') <> 'service_role' then
     raise exception 'service role required' using errcode = '42501';
   end if;
   select d.decrypted_secret into v_secret
@@ -311,7 +311,7 @@ declare
   v_channel text;
   v_environment text;
 begin
-  if coalesce(auth.role(), '') <> 'service_role' then
+  if coalesce(current_setting('request.jwt.claim.role', true), '') <> 'service_role' then
     raise exception 'service role required' using errcode = '42501';
   end if;
   if p_status not in ('passed', 'failed', 'manual') then raise exception 'invalid test status'; end if;
@@ -325,6 +325,43 @@ begin
 end;
 $$;
 
+create or replace function public.sellerpilot_get_active_credential_secret(
+  p_channel text,
+  p_environment text default 'production'
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public, sellerpilot_private, vault
+as $$
+declare
+  v_result jsonb;
+begin
+  if coalesce(current_setting('request.jwt.claim.role', true), '') <> 'service_role' then
+    raise exception 'service role required' using errcode = '42501';
+  end if;
+  if p_channel not in ('qoo10', 'shopee', 'lazada', 'openai') or p_environment not in ('sandbox', 'production') then
+    raise exception 'unsupported credential selector';
+  end if;
+
+  select jsonb_build_object(
+    'credential_id', c.id,
+    'expires_at', c.expires_at,
+    'secret_payload', d.decrypted_secret::jsonb
+  ) into v_result
+    from sellerpilot_private.channel_credentials c
+    join vault.decrypted_secrets d on d.id = c.vault_secret_id
+   where c.channel = p_channel
+     and c.environment = p_environment
+     and c.status = 'active'
+     and (c.expires_at is null or c.expires_at > now())
+   limit 1;
+
+  return v_result;
+end;
+$$;
+
 revoke all on all tables in schema sellerpilot_private from public, anon, authenticated;
 revoke all on function public.sellerpilot_is_admin() from public, anon;
 revoke all on function public.sellerpilot_list_credentials() from public, anon;
@@ -334,6 +371,7 @@ revoke all on function public.sellerpilot_revoke_credential(uuid, text) from pub
 revoke all on function public.sellerpilot_list_credential_audit(integer) from public, anon;
 revoke all on function public.sellerpilot_decrypt_credential(uuid) from public, anon, authenticated;
 revoke all on function public.sellerpilot_record_credential_test(uuid, text, text) from public, anon, authenticated;
+revoke all on function public.sellerpilot_get_active_credential_secret(text, text) from public, anon, authenticated;
 grant execute on function public.sellerpilot_is_admin() to authenticated;
 grant execute on function public.sellerpilot_list_credentials() to authenticated;
 grant execute on function public.sellerpilot_rotate_credential(text, text, jsonb, timestamptz, integer, integer, integer) to authenticated;
@@ -342,3 +380,4 @@ grant execute on function public.sellerpilot_revoke_credential(uuid, text) to au
 grant execute on function public.sellerpilot_list_credential_audit(integer) to authenticated;
 grant execute on function public.sellerpilot_decrypt_credential(uuid) to service_role;
 grant execute on function public.sellerpilot_record_credential_test(uuid, text, text) to service_role;
+grant execute on function public.sellerpilot_get_active_credential_secret(text, text) to service_role;

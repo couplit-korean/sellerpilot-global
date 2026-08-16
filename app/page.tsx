@@ -643,8 +643,8 @@ function ChannelPage({ channelKey, onNavigate }: { channelKey: ChannelKey; onNav
   const factors = channelFactors[channelKey];
   const observedStatus: Partial<Record<ChannelKey, string>> = {
     qoo10: "판매자 콘솔 확인 · QAPI 미검증",
-    shopee: "개발자 앱 Online · 라이브 푸시 OFF",
-    lazada: "개발자 앱 Online · 웹훅 미구성",
+    shopee: "사용자 요청 · 이번 API 연동 범위 제외",
+    lazada: "OAuth 승인 완료 · 고정 송신 IP 차단",
   };
   return (
     <div className="page-stack">
