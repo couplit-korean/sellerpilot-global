@@ -40,6 +40,7 @@ import {
   ListFilter,
   LoaderCircle,
   LockKeyhole,
+  KeyRound,
   LogOut,
   Menu,
   MessageCircleMore,
@@ -69,9 +70,12 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AiProductStudio } from "./ai-product-studio";
 import { AcceptanceChecklistPage } from "./acceptance-checklist";
+import { ApiCredentialCenter } from "./api-credential-center";
 import { ChannelReadinessPage } from "./channel-readiness";
 import { MarginCalculatorPage } from "./margin-calculator";
 import { channels, DEMO_DATA_META, orders, productImages, products, tickets, type ChannelKey } from "./mock-data";
+import { createClient as createSupabaseClient } from "../lib/supabase/client";
+import { isSupabaseConfigured } from "../lib/supabase/config";
 
 type View =
   | "overview"
@@ -81,6 +85,7 @@ type View =
   | "orders"
   | "cs"
   | "readiness"
+  | "credentials"
   | "qoo10"
   | "shopee"
   | "lazada"
@@ -104,6 +109,7 @@ const navGroups = [
       { id: "orders" as View, label: "주문 · 판매", icon: ShoppingCart },
       { id: "cs" as View, label: "CS 통합함", icon: Headphones, badge: "7" },
       { id: "readiness" as View, label: "채널 연동 준비", icon: ShieldCheck },
+      { id: "credentials" as View, label: "API 키 · 인증", icon: KeyRound },
     ],
   },
   {
@@ -137,6 +143,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
   cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
   readiness: { title: "채널 연동 준비", description: "실제 판매자·개발자 콘솔 상태와 API 연결 차단 요인을 증거 기준으로 관리합니다." },
+  credentials: { title: "API 키 · 인증 관리", description: "채널 키의 보관, 만료, 교체, 연결 검사와 감사기록을 한곳에서 관리합니다." },
   qoo10: { title: "Qoo10 Japan", description: "일본 스토어의 상품, 매출, 주문, CS 성과입니다." },
   shopee: { title: "Shopee Singapore", description: "싱가포르 스토어의 상품, 매출, 주문, CS 성과입니다." },
   lazada: { title: "Lazada Malaysia", description: "말레이시아 스토어의 상품, 매출, 주문, CS 성과입니다." },
@@ -208,14 +215,14 @@ function SparkLine({ points, color = "#0f62fe", fill = false }: { points: string
   );
 }
 
-function LoginScreen({ onLogin }: { onLogin: () => void }) {
+function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, password: string) => Promise<string | null>; onPasswordReset: (email: string) => Promise<string | null> }) {
   const [showPassword, setShowPassword] = useState(false);
-  const [email, setEmail] = useState("demo@sellerpilot.kr");
-  const [password, setPassword] = useState("seller2026");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!email.trim() || !password.trim()) {
       setError("아이디와 비밀번호를 모두 입력해 주세요.");
@@ -223,7 +230,21 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
     }
     setLoading(true);
     setError("");
-    window.setTimeout(onLogin, 650);
+    const loginError = await onLogin(email.trim(), password);
+    setLoading(false);
+    if (loginError) setError(loginError);
+  };
+
+  const requestPasswordReset = async () => {
+    if (!email.trim()) {
+      setError("비밀번호를 재설정할 관리자 이메일을 먼저 입력해 주세요.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    const resetError = await onPasswordReset(email.trim());
+    setLoading(false);
+    setError(resetError ?? "비밀번호 재설정 링크를 이메일로 보냈습니다.");
   };
 
   return (
@@ -256,12 +277,12 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
           </div>
           <label className="field-label" htmlFor="email">아이디</label>
           <div className="input-wrap"><UserRound size={17} /><input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" placeholder="admin@company.com" /></div>
-          <div className="field-row"><label className="field-label" htmlFor="password">비밀번호</label><button type="button" className="text-button">비밀번호 찾기</button></div>
+          <div className="field-row"><label className="field-label" htmlFor="password">비밀번호</label><button type="button" className="text-button" onClick={() => void requestPasswordReset()}>비밀번호 찾기</button></div>
           <div className="input-wrap"><LockKeyhole size={17} /><input id="password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" /><button type="button" className="password-toggle" aria-label={showPassword ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowPassword((current) => !current)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
           <label className="remember-row"><input type="checkbox" defaultChecked /><span><Check size={12} /></span>로그인 상태 유지</label>
           {error && <p className="login-error"><AlertCircle size={14} />{error}</p>}
           <button className="login-button" type="submit" disabled={loading}>{loading ? <><LoaderCircle className="spin" size={18} />접속 중...</> : <>대시보드 접속<ArrowRight size={18} /></>}</button>
-          <div className="demo-account"><ShieldCheck size={15} /><span>화면 확인용 계정이 입력되어 있습니다.<br /><b>로그인 버튼을 눌러 바로 둘러보세요.</b></span></div>
+          <div className="demo-account"><ShieldCheck size={15} /><span>Supabase Auth로 인증하며 채널 키 원문은 로그인 후에도 표시하지 않습니다.<br /><b>관리자 초대 메일에서 비밀번호를 설정해 주세요.</b></span></div>
         </form>
         <div className="login-support"><HelpCircle size={15} />접속에 문제가 있나요? <button>운영 지원팀 문의</button></div>
       </section>
@@ -656,7 +677,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   );
 }
 
-function DashboardShell({ onLogout }: { onLogout: () => void }) {
+function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>; userEmail: string }) {
   const [view, setView] = useState<View>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -683,6 +704,7 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
     if (view === "orders") return <OrdersPage />;
     if (view === "cs") return <CsPage notify={notify} />;
     if (view === "readiness") return <ChannelReadinessPage />;
+    if (view === "credentials") return <ApiCredentialCenter notify={notify} />;
     if (view === "acceptance") return <AcceptanceChecklistPage />;
     if (view === "storyboard") return <StoryboardPage onNavigate={navigate} />;
     return <ChannelPage channelKey={view as ChannelKey} onNavigate={navigate} />;
@@ -699,14 +721,14 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
           return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : "badge" in item && item.badge ? <em>{item.badge}</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
         <div className="sidebar-insight"><div><Activity size={15} /><span>자동화 준비도</span><em>DEMO</em></div><p><b>175개</b> 개발·실검수 항목을<br />단계별로 추적합니다.</p><span><i /></span><small>실채널 API 연결 전</small></div>
-        <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말 · 가이드</span></button><button><Settings size={17} /><span>설정</span></button><button onClick={onLogout}><LogOut size={17} /><span>로그아웃</span></button></div>
+        <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말 · 가이드</span></button><button onClick={() => navigate("credentials")}><Settings size={17} /><span>API · 보안 설정</span></button><button onClick={() => void onLogout()}><LogOut size={17} /><span>로그아웃</span></button></div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
 
       <section className="app-main">
         <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
-          <div className="topbar-actions"><span className="demo-data-badge"><Activity size={13} /><b>{DEMO_DATA_META.label}</b><small>{DEMO_DATA_META.기준일} 기준</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={() => setSearchOpen(true)}><Search size={16} /><span>상품, 주문, CS 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap"><button className="top-icon-button" aria-label="알림" onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} /><i /></button>{notificationsOpen && <div className="notification-popover"><div><h4>알림</h4><button onClick={() => setNotificationsOpen(false)}>모두 읽음</button></div><button><span className="alert-icon danger"><Box size={15} /></span><span><b>재고 부족 상품이 있습니다.</b><small>3개 상품 · 5분 전</small></span></button><button><span className="alert-icon warning"><AlertCircle size={15} /></span><span><b>등록 실패 2건을 확인하세요.</b><small>Qoo10 · 18분 전</small></span></button></div>}</div><button className="user-menu"><span className="user-avatar">김</span><span><b>김창희</b><small>최고 관리자</small></span><ChevronDown size={14} /></button></div>
+          <div className="topbar-actions"><span className="demo-data-badge"><Activity size={13} /><b>{DEMO_DATA_META.label}</b><small>{DEMO_DATA_META.기준일} 기준</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={() => setSearchOpen(true)}><Search size={16} /><span>상품, 주문, CS 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap"><button className="top-icon-button" aria-label="알림" onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} /><i /></button>{notificationsOpen && <div className="notification-popover"><div><h4>알림</h4><button onClick={() => setNotificationsOpen(false)}>모두 읽음</button></div><button><span className="alert-icon danger"><Box size={15} /></span><span><b>재고 부족 상품이 있습니다.</b><small>3개 상품 · 5분 전</small></span></button><button><span className="alert-icon warning"><AlertCircle size={15} /></span><span><b>등록 실패 2건을 확인하세요.</b><small>Qoo10 · 18분 전</small></span></button></div>}</div><button className="user-menu"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
         </header>
         <div className="app-content">{content}</div>
       </section>
@@ -719,5 +741,43 @@ function DashboardShell({ onLogout }: { onLogout: () => void }) {
 
 export default function Home() {
   const [authenticated, setAuthenticated] = useState(false);
-  return authenticated ? <DashboardShell onLogout={() => setAuthenticated(false)} /> : <LoginScreen onLogin={() => setAuthenticated(true)} />;
+  const [userEmail, setUserEmail] = useState("");
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    const supabase = createSupabaseClient();
+    void supabase.auth.getSession().then(({ data }) => {
+      setAuthenticated(Boolean(data.session));
+      setUserEmail(data.session?.user.email ?? "");
+    });
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthenticated(Boolean(session));
+      setUserEmail(session?.user.email ?? "");
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  const login = async (email: string, password: string) => {
+    if (!isSupabaseConfigured) return "운영 인증 서버가 아직 연결되지 않았습니다.";
+    const { error } = await createSupabaseClient().auth.signInWithPassword({ email, password });
+    if (error) return "아이디 또는 비밀번호를 확인해 주세요.";
+    return null;
+  };
+
+  const resetPassword = async (email: string) => {
+    if (!isSupabaseConfigured) return "운영 인증 서버가 아직 연결되지 않았습니다.";
+    const redirectTo = `${window.location.origin}/auth/callback?next=/update-password`;
+    const { error } = await createSupabaseClient().auth.resetPasswordForEmail(email, { redirectTo });
+    return error ? "재설정 메일을 보내지 못했습니다. 관리자에게 문의해 주세요." : null;
+  };
+
+  const logout = async () => {
+    if (isSupabaseConfigured) await createSupabaseClient().auth.signOut();
+    setAuthenticated(false);
+    setUserEmail("");
+  };
+
+  return authenticated
+    ? <DashboardShell onLogout={logout} userEmail={userEmail} />
+    : <LoginScreen onLogin={login} onPasswordReset={resetPassword} />;
 }

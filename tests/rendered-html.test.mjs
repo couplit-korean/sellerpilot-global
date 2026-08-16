@@ -25,7 +25,8 @@ test("server-renders the SellerPilot login experience", async () => {
   assert.match(html, /판매 업무를/);
   assert.match(html, /한 화면에서 끝내세요/);
   assert.match(html, /운영센터 로그인/);
-  assert.match(html, /demo@sellerpilot\.kr/);
+  assert.match(html, /Supabase Auth/);
+  assert.doesNotMatch(html, /demo@sellerpilot\.kr|seller2026/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
@@ -69,6 +70,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /서비스 스토리보드/);
   assert.match(page, /개발 · 실검수/);
   assert.match(page, /채널 연동 준비/);
+  assert.match(page, /API 키 · 인증/);
+  assert.match(page, /signInWithPassword/);
   assert.match(page, /판매자 콘솔 확인 · QAPI 미검증/);
   assert.match(page, /개발자 앱 Online · 라이브 푸시 OFF/);
   assert.match(page, /개발자 앱 Online · 웹훅 미구성/);
@@ -124,6 +127,14 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(channelMapping, /Qoo10 QSM 실제 상품등록 필드/);
   assert.match(channelMapping, /Shopee Open Platform 준비도/);
   assert.match(channelMapping, /Lazada Open Platform 준비도/);
+  const credentialPage = await readFile(new URL("../app/api-credential-center.tsx", import.meta.url), "utf8");
+  const credentialMigration = await readFile(new URL("../db/supabase/0001_channel_credentials.sql", import.meta.url), "utf8");
+  assert.match(credentialPage, /Supabase Vault/);
+  assert.match(credentialPage, /키 수명 · 교체 일정/);
+  assert.match(credentialPage, /연결 검사/);
+  assert.match(credentialMigration, /sellerpilot_rotate_credential/);
+  assert.match(credentialMigration, /vault\.create_secret/);
+  assert.match(credentialMigration, /sellerpilot_list_credential_audit/);
   for (const protectedValue of ["137451", "137571", "k931103", "MY4NNISR2D", "SGYEZULX"]) {
     assert.doesNotMatch(`${readinessData}\n${channelMapping}`, new RegExp(protectedValue, "i"));
   }
