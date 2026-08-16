@@ -5,7 +5,7 @@ Qoo10 Japan, Lazada Malaysia, 쿠팡, 11번가, 네이버 스마트스토어, eB
 - 운영 URL: `https://sellerpilot-global.vercel.app`
 - 인증·DB·비밀 저장소: Supabase Auth · Postgres · Vault
 - 배포: Vercel Production
-- 운영 데이터: 실제 API 연결 전까지 화면에 명시된 임의 데이터
+- 운영 데이터: 관리자별 Supabase 운영 원장 · 첫 접속 시 화면 검증용 데이터 1회 생성
 
 ## 현재 구현된 화면
 
@@ -15,23 +15,24 @@ Qoo10 Japan, Lazada Malaysia, 쿠팡, 11번가, 네이버 스마트스토어, eB
 - 상품 원장, 재고, 판매량, 채널 등록 상태
 - 대표사진 필수, 정면·후면·좌우·상하·라벨·바코드 및 다중 추가 사진을 지원하는 AI 상품 등록 센터
 - 상품 간략 설명과 공개 참고 링크를 이미지 분석에 함께 반영하는 입력 흐름
-- 원가·물류비·수수료·환율·광고비를 반영해 7개 채널의 순이익, 손익분기점과 목표 마진 판매가를 비교하는 마진 계산
+- 원가·물류비·수수료·환율·광고비를 반영해 6개 채널의 순이익, 손익분기점과 목표 마진 판매가를 비교하고 운영 DB에 저장하는 마진 계산
 - 통합 주문·출고·배송 화면
 - 다국어 CS 통합함과 AI 답변 초안
-- Qoo10, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay 채널별 운영 페이지
+- Qoo10, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay 채널별 운영 페이지
 - Supabase Vault 기반 Qoo10·Lazada 판매 채널 키 버전, 만료일, 교체주기, 사전경고, 롤백 유예, 연결검사, 감사기록 관리
-- ChatGPT OAuth 기반 로컬 Codex CLI 작업자와 `codex-image`를 이용한 상품 분석·상세페이지 기획·연출컷 생성
+- ChatGPT OAuth 기반 로컬 Codex CLI 작업자와 `codex-image`를 이용한 상품 분석·상세페이지 기획·대표 연출컷과 3종 썸네일 생성
 
 ## ChatGPT CLI AI 작업자
 
-SellerPilot은 OpenAI API Key를 사용하지 않습니다. 관리자가 `API 관리` 화면에서 일회성 작업자 토큰을 발급한 뒤, ChatGPT에 로그인된 Mac에서 아래처럼 실행합니다.
+SellerPilot은 OpenAI API Key를 사용하지 않습니다. 관리자가 `API 관리` 화면에서 일회성 작업자 토큰을 발급한 뒤, ChatGPT에 로그인된 Mac에서 자동실행 작업자를 설치합니다. 설치기는 토큰을 macOS 키체인에만 저장합니다.
 
 ```bash
 codex login status
-SELLERPILOT_AI_WORKER_TOKEN="<웹에서 발급한 토큰>" npm run ai:worker
+npm run ai:worker:install
+npm run ai:worker:status
 ```
 
-Vercel은 비공개 Supabase 작업 큐와 서명된 이미지 URL만 처리합니다. ChatGPT OAuth 자격은 Mac 밖으로 전송하거나 저장하지 않습니다. 이미지 생성은 설치된 [`wjb127/codex-image`](https://github.com/wjb127/codex-image) 스킬과 Codex 내장 `image_gen`을 사용합니다.
+Vercel은 비공개 Supabase 작업 큐와 서명된 이미지 URL만 처리합니다. ChatGPT OAuth 자격은 Mac 밖으로 전송하거나 저장하지 않습니다. 이미지 생성은 설치된 [`wjb127/codex-image`](https://github.com/wjb127/codex-image) 스킬과 Codex 내장 `image_gen`만 사용합니다. 실패한 작업을 예시 결과로 바꾸지 않으며 운영 화면에서 재시도·취소할 수 있습니다.
 
 기본 모델은 Codex CLI의 `gpt-5.6-sol`이며 필요할 때만 `SELLERPILOT_CODEX_MODEL` 환경변수로 바꿀 수 있습니다. 작업자는 시작할 때 `codex login status`가 `Logged in using ChatGPT`인지 확인하고, 셸에 남아 있는 `OPENAI_API_KEY`는 자식 프로세스에 전달하지 않습니다.
 - 서비스 전체 흐름을 설명하는 화면형 스토리보드
@@ -60,6 +61,8 @@ pnpm dev
 pnpm build
 pnpm test
 ```
+
+Supabase·Vercel·채널 계정 적용 순서는 [운영 배포·인증 체크리스트](docs/운영_배포_인증_체크리스트.md)를 따릅니다.
 
 ## 디자인 기반
 

@@ -24,28 +24,6 @@ async function fetchJson(url: URL, headers: Record<string, string> = {}) {
   return { response, data };
 }
 
-async function testShopee(payload: SecretPayload): Promise<ChannelDiagnostic> {
-  const partnerId = textValue(payload, "partner_id");
-  const partnerKey = textValue(payload, "partner_key");
-  const shopId = textValue(payload, "shop_id");
-  const accessToken = textValue(payload, "access_token");
-  if (!partnerId || !partnerKey || !shopId || !accessToken) {
-    return { status: "failed", message: "Partner ID·Partner Key·Shop ID·Access Token이 모두 필요합니다." };
-  }
-
-  const path = "/api/v2/shop/get_shop_info";
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const baseString = `${partnerId}${path}${timestamp}${accessToken}${shopId}`;
-  const sign = createHmac("sha256", partnerKey).update(baseString).digest("hex");
-  const url = new URL(`https://partner.shopeemobile.com${path}`);
-  url.search = new URLSearchParams({ partner_id: partnerId, timestamp, access_token: accessToken, shop_id: shopId, sign }).toString();
-  const { response, data } = await fetchJson(url);
-  const errorCode = typeof data.error === "string" ? data.error : "";
-  const requestId = typeof data.request_id === "string" ? data.request_id : undefined;
-  if (response.ok && !errorCode) return { status: "passed", message: "Shopee 판매점 정보 읽기 API가 정상 응답했습니다.", remoteRequestId: requestId };
-  return { status: "failed", message: `Shopee 인증 검사 실패${errorCode ? ` · ${errorCode}` : ""}`, remoteRequestId: requestId };
-}
-
 const lazadaEndpoints: Record<string, string> = {
   my: "https://api.lazada.com.my/rest",
   sg: "https://api.lazada.sg/rest",
@@ -83,18 +61,34 @@ async function testLazada(payload: SecretPayload): Promise<ChannelDiagnostic> {
   return { status: "failed", message: `Lazada 인증 검사 실패${code ? ` · ${code}` : ""}`, remoteRequestId: requestId };
 }
 
-function testQoo10(payload: SecretPayload): ChannelDiagnostic {
+async function testQoo10(payload: SecretPayload): Promise<ChannelDiagnostic> {
   const apiKey = textValue(payload, "api_key");
   const sellerId = textValue(payload, "seller_id");
-  if (!apiKey || !sellerId) return { status: "failed", message: "Certification Key와 Seller ID가 모두 필요합니다." };
-  return { status: "manual", message: "QAPI 자격 형식은 확인됐습니다. 승인된 테스트 상품번호 입력 후 읽기 API 검사를 실행해야 합니다." };
+  const testItemCode = textValue(payload, "test_item_code");
+  if (!apiKey || !sellerId || !testItemCode) return { status: "failed", message: "Certification Key·Seller ID·승인된 테스트 상품번호가 모두 필요합니다." };
+  if (!/^\d{6,14}$/.test(testItemCode)) return { status: "failed", message: "Qoo10 테스트 상품번호 형식을 확인해 주세요." };
+
+  const url = new URL("https://api.qoo10.jp/GMKT.INC.Front.OpenApiService/GoodsBasicService.api/GetItemDetailInfo");
+  url.search = new URLSearchParams({ key: apiKey, ItemCode: testItemCode, SellerCode: "" }).toString();
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(12_000),
+    headers: { accept: "application/xml,text/xml", "user-agent": "SellerPilot-Connection-Diagnostic/1.0" },
+  });
+  const xml = (await response.text()).slice(0, 250_000);
+  const resultCode = xml.match(/<ResultCode>([^<]*)<\/ResultCode>/i)?.[1]?.trim() ?? "";
+  const itemNumber = xml.match(/<(?:ItemNo|ItemCode)>([^<]*)<\/(?:ItemNo|ItemCode)>/i)?.[1]?.trim() ?? "";
+  if (response.ok && resultCode === "0" && itemNumber) {
+    return { status: "passed", message: `Qoo10 상품 상세 읽기 API가 정상 응답했습니다 · 상품 ${itemNumber.slice(-6)}` };
+  }
+  return { status: "failed", message: `Qoo10 인증 검사 실패 · ${resultCode ? `결과코드 ${resultCode}` : `HTTP ${response.status}`}` };
 }
 
 export async function runChannelDiagnostic(channel: string, payload: SecretPayload): Promise<ChannelDiagnostic> {
   try {
-    if (channel === "shopee") return await testShopee(payload);
     if (channel === "lazada") return await testLazada(payload);
-    if (channel === "qoo10") return testQoo10(payload);
+    if (channel === "qoo10") return await testQoo10(payload);
     return { status: "failed", message: "지원하지 않는 채널입니다." };
   } catch (error) {
     const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");

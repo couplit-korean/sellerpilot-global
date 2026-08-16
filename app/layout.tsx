@@ -18,7 +18,7 @@ const notoSansKr = Noto_Sans_KR({
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: "SellerPilot | 멀티채널 커머스 운영센터",
-  description: "Qoo10, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay를 운영하고 Alibaba와 1688 연동을 준비하는 AI 커머스 운영센터.",
+  description: "Qoo10, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay를 운영하고 Alibaba와 1688 연동을 준비하는 AI 커머스 운영센터.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

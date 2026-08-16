@@ -25,7 +25,7 @@ import { AiCliRuntimeCard } from "./ai-cli-runtime-card";
 
 type Credential = {
   id: string;
-  channel: "qoo10" | "shopee" | "lazada";
+  channel: "qoo10" | "lazada";
   environment: "sandbox" | "production";
   version: number;
   fingerprint: string;
@@ -69,20 +69,10 @@ const channelDefinitions: ChannelDefinition[] = [
     ],
   },
   {
-    key: "shopee", code: "S", name: "Shopee Open Platform", market: "Singapore · Production", consolePolicy: "현재 콘솔 키 만료 관찰일 2026.09.15",
-    fields: [
-      { key: "partner_id", label: "Partner ID", placeholder: "숫자 Partner ID" },
-      { key: "partner_key", label: "Partner Key", secret: true, placeholder: "새 Partner Key" },
-      { key: "shop_id", label: "Shop ID", placeholder: "숫자 Shop ID" },
-      { key: "authorization_code", label: "OAuth Authorization Code", secret: true, placeholder: "리디렉션 URL의 code 값" },
-    ],
-  },
-  {
     key: "lazada", code: "L", name: "Lazada Open Platform", market: "Malaysia · Production", consolePolicy: "Access 30일 · Refresh 180일",
     fields: [
       { key: "app_key", label: "App Key", placeholder: "Lazada App Key" },
       { key: "app_secret", label: "App Secret", secret: true, placeholder: "새 App Secret" },
-      { key: "authorization_code", label: "OAuth Authorization Code", secret: true, placeholder: "리디렉션 URL의 code 값" },
       { key: "country", label: "국가 코드", placeholder: "my" },
     ],
   },
@@ -117,6 +107,7 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
   const [editing, setEditing] = useState<ChannelDefinition | null>(null);
   const [showAudit, setShowAudit] = useState(false);
   const [testingId, setTestingId] = useState("");
+  const [oauthStartingId, setOauthStartingId] = useState("");
 
   const load = useCallback(async () => {
     if (!isSupabaseConfigured) {
@@ -178,6 +169,33 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
     await load();
   };
 
+  const startLazadaOAuth = async (credential: Credential) => {
+    setOauthStartingId(credential.id);
+    try {
+      const { data: sessionData } = await createClient().auth.getSession();
+      const response = await fetch("/api/admin/channel-credentials/lazada/authorize", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
+        body: JSON.stringify({
+          credentialId: credential.id,
+          environment: credential.environment,
+          secretPayload: {},
+          expiresAt: credential.expires_at,
+          rotationDays: credential.rotation_interval_days,
+          warningDays: credential.warning_days,
+          graceDays: 0,
+          startOAuth: true,
+        }),
+      });
+      const payload = await response.json().catch(() => ({ message: "Lazada OAuth 응답을 읽지 못했습니다." })) as { message: string; authorizationUrl?: string };
+      if (!response.ok || !payload.authorizationUrl) throw new Error(payload.message);
+      window.location.assign(payload.authorizationUrl);
+    } catch (oauthError) {
+      notify(oauthError instanceof Error ? oauthError.message : "Lazada OAuth를 시작하지 못했습니다.");
+      setOauthStartingId("");
+    }
+  };
+
   return (
     <div className="page-stack credential-page">
       <section className="credential-hero">
@@ -215,7 +233,7 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
             </div>
             {credential?.last_check_message && <p className={`last-check ${credential.last_check_status}`}>{credential.last_check_status === "passed" ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}{credential.last_check_message}</p>}
             {graceCredential && <p className="credential-grace"><RotateCcw size={13} /><span><b>이전 v{graceCredential.version} 롤백 유예</b>{formatDate(graceCredential.grace_ends_at, true)}까지 Vault 보관</span></p>}
-            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
+            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.key === "lazada" && credential && <button className="credential-secondary" onClick={() => void startLazadaOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}OAuth 재연결</button>}<button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
           </article>;
         })}
       </section>
@@ -254,22 +272,23 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cha
     const expiryIso = expiresAt ? new Date(`${expiresAt}T23:59:59+09:00`).toISOString() : null;
     let rotateError: { message: string } | null = null;
     const { data: sessionData } = await createClient().auth.getSession();
-    const endpoint = channel.key === "shopee" || channel.key === "lazada"
+    const endpoint = channel.key === "lazada"
       ? `/api/admin/channel-credentials/${channel.key}/authorize`
       : "/api/admin/channel-credentials/rotate";
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
-      body: JSON.stringify({ credentialId: current?.id, channel: channel.key, environment, secretPayload, expiresAt: expiryIso, rotationDays: Number(rotationDays), warningDays: Number(warningDays), graceDays: current ? Number(graceDays) : 0 }),
+      body: JSON.stringify({ credentialId: current?.id, channel: channel.key, environment, secretPayload, expiresAt: expiryIso, rotationDays: Number(rotationDays), warningDays: Number(warningDays), graceDays: current ? Number(graceDays) : 0, startOAuth: channel.key === "lazada" && !current }),
     });
-    const payload = await response.json().catch(() => ({ message: `${channel.name} 인증 응답을 읽지 못했습니다.` })) as { message: string };
+    const payload = await response.json().catch(() => ({ message: `${channel.name} 인증 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
     if (!response.ok) rotateError = { message: payload.message };
     setSaving(false);
     if (rotateError) {
       setError(rotateError.message.includes("administrator") ? "관리자 권한이 필요합니다." : "키를 저장하지 못했습니다. 입력값과 Vault 연결을 확인해 주세요.");
       return;
     }
-    await onSaved(`${channel.name} ${current ? "키 교체" : "키 등록"}가 완료됐습니다. 원문은 Vault에만 보관됩니다.`);
+    await onSaved(`${channel.name} ${current ? "키 교체" : "킥 연결 준비"}가 완료됐습니다. 원문은 Vault에만 보관됩니다.`);
+    if (payload.authorizationUrl) window.location.assign(payload.authorizationUrl);
   };
 
   return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal" role="dialog" aria-modal="true" aria-label={`${channel.name} 키 ${current ? "교체" : "등록"}`} onSubmit={submit}>

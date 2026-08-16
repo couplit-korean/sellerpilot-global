@@ -47,7 +47,10 @@ export const workerCompletionSchema = z.discriminatedUnion("status", [
     jobId: z.string().uuid(),
     status: z.literal("succeeded"),
     result: cliStudioResultSchema,
-    heroStoragePath: z.string().max(400).optional(),
+    assetStoragePaths: z.record(
+      z.enum(["hero", "square", "portrait", "wide"]),
+      z.string().min(1).max(400),
+    ),
   }),
   z.object({
     jobId: z.string().uuid(),

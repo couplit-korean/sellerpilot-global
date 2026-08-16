@@ -25,19 +25,25 @@ export async function POST(request: Request) {
 
   if (parsed.data.status === "succeeded") {
     resultPayload = { ...parsed.data.result };
-    if (parsed.data.heroStoragePath) {
-      const expectedPath = `results/${parsed.data.jobId}/hero.png`;
-      if (parsed.data.heroStoragePath !== expectedPath) {
+    const expectedPaths = {
+      hero: `results/${parsed.data.jobId}/hero.png`,
+      square: `results/${parsed.data.jobId}/thumbnail-square.png`,
+      portrait: `results/${parsed.data.jobId}/thumbnail-portrait.png`,
+      wide: `results/${parsed.data.jobId}/thumbnail-wide.png`,
+    } as const;
+    for (const [id, expectedPath] of Object.entries(expectedPaths)) {
+      if (parsed.data.assetStoragePaths[id as keyof typeof expectedPaths] !== expectedPath) {
         return NextResponse.json({ message: "생성 이미지 저장 경로가 작업과 일치하지 않습니다." }, { status: 403 });
       }
-      const { data: stored, error: storedError } = await serviceClient.storage
-        .from("sellerpilot-ai")
-        .list(`results/${parsed.data.jobId}`, { limit: 1, search: "hero.png" });
-      if (storedError || !stored?.some((item) => item.name === "hero.png")) {
-        return NextResponse.json({ message: "업로드된 생성 이미지를 확인하지 못했습니다." }, { status: 400 });
-      }
-      resultPayload.hero_storage_path = expectedPath;
     }
+    const { data: stored, error: storedError } = await serviceClient.storage
+      .from("sellerpilot-ai")
+      .list(`results/${parsed.data.jobId}`, { limit: 10 });
+    const storedNames = new Set((stored ?? []).map((item) => item.name));
+    if (storedError || Object.values(expectedPaths).some((path) => !storedNames.has(path.split("/").at(-1) ?? ""))) {
+      return NextResponse.json({ message: "업로드된 생성 이미지 4종을 모두 확인하지 못했습니다." }, { status: 400 });
+    }
+    resultPayload.asset_storage_paths = parsed.data.assetStoragePaths;
   }
 
   const { data, error } = await serviceClient.rpc("sellerpilot_complete_ai_job", {
@@ -47,7 +53,13 @@ export async function POST(request: Request) {
     p_result_payload: resultPayload,
     p_error_message: parsed.data.status === "failed" ? parsed.data.error : null,
   });
-  if (error) return NextResponse.json({ message: "CLI 작업 완료 상태를 저장하지 못했습니다." }, { status: 401 });
-  if (data !== true) return NextResponse.json({ message: "실행 중인 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
+  const uploadedAssets = parsed.data.status === "succeeded" ? Object.values(parsed.data.assetStoragePaths) : [];
+  if (error || data !== true) {
+    if (uploadedAssets.length) {
+      await serviceClient.storage.from("sellerpilot-ai").remove(uploadedAssets);
+    }
+    if (error) return NextResponse.json({ message: "CLI 작업 완료 상태를 저장하지 못했습니다." }, { status: 401 });
+    return NextResponse.json({ message: "실행 중인 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
+  }
   return NextResponse.json({ message: "CLI 작업 결과가 안전하게 저장됐습니다." });
 }

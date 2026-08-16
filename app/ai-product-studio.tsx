@@ -19,7 +19,10 @@ type OptimizedPhoto = { name: string; mediaType: "image/jpeg"; blob: Blob };
 type CliJobPayload = {
   id: string;
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
-  result?: (ProductStudioResult & { heroUrl?: string | null }) | null;
+  result?: (ProductStudioResult & {
+    heroUrl?: string | null;
+    generatedImages?: { id: string; url: string | null }[];
+  }) | null;
   error?: string | null;
 };
 
@@ -91,93 +94,6 @@ async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string,
   }
 }
 
-function roundedRect(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
-  context.beginPath();
-  context.roundRect(x, y, width, height, radius);
-  context.fill();
-}
-
-function drawContained(context: CanvasRenderingContext2D, image: HTMLImageElement, x: number, y: number, width: number, height: number) {
-  const scale = Math.min(width / image.naturalWidth, height / image.naturalHeight);
-  const drawWidth = image.naturalWidth * scale;
-  const drawHeight = image.naturalHeight * scale;
-  context.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
-}
-
-function wrapText(context: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number, maxLines = 3) {
-  const manualLines = text.split("\n");
-  let lineIndex = 0;
-  for (const manualLine of manualLines) {
-    const words = manualLine.split(" ");
-    let line = "";
-    for (const word of words) {
-      const next = line ? `${line} ${word}` : word;
-      if (context.measureText(next).width > maxWidth && line) {
-        context.fillText(line, x, y + lineIndex * lineHeight);
-        lineIndex += 1;
-        line = word;
-        if (lineIndex >= maxLines) return;
-      } else line = next;
-    }
-    if (lineIndex < maxLines) context.fillText(line, x, y + lineIndex * lineHeight);
-    lineIndex += 1;
-    if (lineIndex >= maxLines) return;
-  }
-}
-
-async function renderThumbnail(photoUrl: string, result: ProductStudioResult, preset: Omit<AutoThumbnail, "dataUrl">): Promise<AutoThumbnail> {
-  const image = await loadImage(photoUrl);
-  const canvas = document.createElement("canvas");
-  canvas.width = preset.width;
-  canvas.height = preset.height;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas를 사용할 수 없습니다.");
-  const { primary, accent, surface } = result.design.palette;
-  const gradient = context.createLinearGradient(0, 0, preset.width, preset.height);
-  gradient.addColorStop(0, surface);
-  gradient.addColorStop(1, accent);
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, preset.width, preset.height);
-
-  context.globalAlpha = 0.18;
-  context.fillStyle = primary;
-  context.beginPath();
-  context.arc(preset.width * 0.82, preset.height * 0.22, Math.min(preset.width, preset.height) * 0.3, 0, Math.PI * 2);
-  context.fill();
-  context.globalAlpha = 1;
-
-  const isWide = preset.width / preset.height > 1.4;
-  const imageX = isWide ? preset.width * 0.53 : preset.width * 0.25;
-  const imageY = isWide ? preset.height * 0.07 : preset.height * 0.08;
-  const imageWidth = isWide ? preset.width * 0.43 : preset.width * 0.7;
-  const imageHeight = isWide ? preset.height * 0.86 : preset.height * 0.6;
-  context.save();
-  context.shadowColor = "rgba(30, 35, 28, .18)";
-  context.shadowBlur = Math.round(preset.width * 0.025);
-  context.shadowOffsetY = Math.round(preset.height * 0.015);
-  drawContained(context, image, imageX, imageY, imageWidth, imageHeight);
-  context.restore();
-
-  const copyX = Math.round(preset.width * 0.07);
-  const copyWidth = isWide ? preset.width * 0.42 : preset.width * 0.86;
-  const copyY = isWide ? preset.height * 0.22 : preset.height * 0.72;
-  context.fillStyle = primary;
-  context.font = `800 ${Math.round(preset.width * (isWide ? 0.022 : 0.025))}px Arial, sans-serif`;
-  roundedRect(context, copyX, copyY - preset.height * 0.08, preset.width * 0.22, preset.height * 0.045, preset.height * 0.022);
-  context.fillStyle = surface;
-  context.textBaseline = "middle";
-  context.fillText(result.thumbnail.badge, copyX + preset.width * 0.018, copyY - preset.height * 0.058);
-  context.textBaseline = "alphabetic";
-  context.fillStyle = primary;
-  context.font = `900 ${Math.round(preset.width * (isWide ? 0.052 : 0.064))}px Arial, sans-serif`;
-  wrapText(context, result.thumbnail.headline, copyX, copyY + preset.height * 0.04, copyWidth, preset.height * (isWide ? 0.105 : 0.065), 2);
-  context.font = `700 ${Math.round(preset.width * (isWide ? 0.018 : 0.024))}px Arial, sans-serif`;
-  context.globalAlpha = 0.72;
-  context.fillText(result.thumbnail.subline, copyX, preset.height * 0.94);
-  context.globalAlpha = 1;
-  return { ...preset, dataUrl: canvas.toDataURL("image/jpeg", 0.92) };
-}
-
 const thumbnailPresets = [
   { id: "square", label: "마켓 대표", ratio: "1:1 · 1080", width: 1080, height: 1080 },
   { id: "portrait", label: "모바일 피드", ratio: "4:5 · 1080×1350", width: 1080, height: 1350 },
@@ -201,17 +117,12 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
   const [cliPhase, setCliPhase] = useState<"idle" | "queued" | "running">("idle");
   const [editorOpen, setEditorOpen] = useState(false);
   const [savedDetailData, setSavedDetailData] = useState<ProductDetailData | null>(null);
+  const [lastError, setLastError] = useState("");
   const handledRequest = useRef(0);
   const currentImageUrl = aiHero || mainPhoto?.url || sampleImage;
 
-  const makeLocalThumbnails = useCallback(async (nextResult: ProductStudioResult, photo = mainPhoto) => {
-    if (!photo) return;
-    const items = await Promise.all(thumbnailPresets.map((preset) => renderThumbnail(photo.url, nextResult, preset)));
-    setThumbnails(items);
-  }, [mainPhoto]);
-
   const waitForCliJob = useCallback(async (jobId: string, accessToken: string) => {
-    const deadline = Date.now() + 12 * 60_000;
+    const deadline = Date.now() + 30 * 60_000;
     while (Date.now() < deadline) {
       const response = await fetch(`/api/ai/jobs/${jobId}`, {
         headers: { authorization: `Bearer ${accessToken}` },
@@ -226,7 +137,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
       setCliPhase(payload.status === "running" ? "running" : "queued");
       await delay(3_000);
     }
-    throw new Error("ChatGPT CLI 작업 대기시간이 12분을 초과했습니다. 작업자 연결 상태를 확인해 주세요.");
+    throw new Error("ChatGPT CLI 작업 대기시간이 30분을 초과했습니다. 작업자 연결 상태를 확인해 주세요.");
   }, []);
 
   const generate = useCallback(async () => {
@@ -234,6 +145,8 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
     setGenerating(true);
     onRunningChange(true);
     setAiHero("");
+    setThumbnails([]);
+    setLastError("");
     setCliPhase("queued");
     try {
       const { data: sessionData } = await createClient().auth.getSession();
@@ -251,23 +164,38 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
       const queued = await response.json().catch(() => ({ message: "CLI 작업 등록 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
       if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
       const cliResult = await waitForCliJob(queued.jobId, accessToken);
-      const { heroUrl, ...nextResult } = cliResult;
+      const { heroUrl, generatedImages, ...nextResult } = cliResult;
       setResult(nextResult);
       setAiHero(heroUrl ?? "");
+      setThumbnails(thumbnailPresets.map((preset) => ({
+        ...preset,
+        dataUrl: generatedImages?.find((image) => image.id === preset.id)?.url ?? "",
+      })).filter((thumbnail) => thumbnail.dataUrl));
       setSavedDetailData(null);
-      await makeLocalThumbnails(nextResult, mainPhoto);
-      notify("ChatGPT CLI 분석과 codex-image 상품 연출컷 제작을 완료했습니다.");
+      const productResponse = await fetch("/api/operations/snapshot", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          action: "product_create",
+          jobId: queued.jobId,
+          name: nextResult.product.name,
+          description: nextResult.product.oneLine,
+          sourceUrl: productUrl.trim() || undefined,
+        }),
+      });
+      notify(productResponse.ok
+        ? "ChatGPT CLI 분석, codex-image 이미지 4종과 상품 초안 저장을 완료했습니다."
+        : "이미지 4종 제작은 완료됐지만 상품 원장 저장을 확인해 주세요.");
     } catch (error) {
-      const fallback = createDemoStudioResult(description);
-      setResult(fallback);
-      await makeLocalThumbnails(fallback, mainPhoto);
-      notify(error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.");
+      const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";
+      setLastError(message);
+      notify(message);
     } finally {
       setGenerating(false);
       setCliPhase("idle");
       onRunningChange(false);
     }
-  }, [description, generating, mainPhoto, makeLocalThumbnails, notify, onRunningChange, photos, productUrl, waitForCliJob]);
+  }, [description, generating, mainPhoto, notify, onRunningChange, photos, productUrl, waitForCliJob]);
 
   useEffect(() => {
     if (!requestId || handledRequest.current === requestId) return;
@@ -286,7 +214,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
         <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>로컬 ChatGPT CLI가 사진과 설명을 분석하고, codex-image와 Puck 편집 흐름으로 결과를 만듭니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result.mode}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result.mode === "cli" ? "CLI 실데이터" : "임의 데이터"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating}>{generating ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}다시 생성</button></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result.mode}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result.mode === "cli" ? "CLI 실데이터" : "실행 전 예시"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating}>{generating ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}다시 생성</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>
@@ -309,6 +237,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
           <div className="detail-preview-scroll"><div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} data={savedDetailData} /></div></div>
         </article>
       </div>
+      {lastError && <div className="studio-warning error"><b>실제 AI 작업 실패</b><p>{lastError}</p><small>예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 CLI 작업자 상태를 확인해 주세요.</small></div>}
       {result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
       {editorOpen && <ProductDetailEditor result={result} imageUrl={currentImageUrl} data={savedDetailData} onSave={(next) => { setSavedDetailData(next); notify("상세페이지 편집 내용을 현재 작업에 저장했습니다."); }} onClose={() => setEditorOpen(false)} />}
     </section>

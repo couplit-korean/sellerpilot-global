@@ -7,7 +7,7 @@ export type ReadinessCheck = {
 };
 
 export type ChannelReadiness = {
-  key: "qoo10" | "shopee" | "lazada";
+  key: "qoo10" | "lazada";
   code: "Q" | "S" | "L";
   name: string;
   market: string;
@@ -47,27 +47,6 @@ export const channelReadiness: ChannelReadiness[] = [
     ],
     blockers: ["QAPI 키를 서버 비밀 저장소에 연결", "테스트상품과 테스트 주문 범위 확정", "카테고리·필수속성 QAPI 응답 보관"],
     nextAction: "QAPI 연결 확인 → 카테고리 조회 → 이미지 업로드 → 테스트상품 1건 등록·조회·중지",
-  },
-  {
-    key: "shopee",
-    code: "S",
-    name: "Shopee Open Platform",
-    market: "글로벌 / SG 우선",
-    console: "Shopee 개발자 콘솔",
-    appState: "사용자 요청으로 이번 연동 범위 제외",
-    overall: "not_configured",
-    summary: "개발자 앱 상태는 읽기 전용으로 확인했지만, 사용자 지시에 따라 Shopee 인증·토큰·콜백 작업은 진행하지 않습니다.",
-    checks: [
-      { label: "개발자 앱 상태", state: "verified", evidence: "Seller In House System 앱 Online" },
-      { label: "민감정보 접근", state: "verified", evidence: "콘솔에서 접근 가능 상태 확인" },
-      { label: "Sandbox v2", state: "verified", evidence: "계정 유형·Shop Area 기반 테스트계정 생성 도구 확인" },
-      { label: "운영 OAuth", state: "not_configured", evidence: "이번 작업 범위에서 제외 · 설정 변경 없음" },
-      { label: "라이브 푸시", state: "not_configured", evidence: "이번 작업 범위에서 제외 · 설정 변경 없음" },
-      { label: "테스트 콜백", state: "not_configured", evidence: "이번 작업 범위에서 제외 · 설정 변경 없음" },
-      { label: "파트너 키 수명", state: "not_configured", evidence: "재개 지시가 있기 전에는 키를 생성·교체하지 않음" },
-    ],
-    blockers: [],
-    nextAction: "사용자가 Shopee 연동 재개를 명시하기 전까지 인증·토큰·설정 변경 금지",
   },
   {
     key: "lazada",

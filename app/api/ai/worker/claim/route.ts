@@ -37,11 +37,19 @@ export async function POST(request: Request) {
     .from("sellerpilot-ai")
     .createSignedUrls(paths, 10 * 60);
   if (signedError) return NextResponse.json({ message: "작업 이미지 URL을 만들지 못했습니다." }, { status: 500 });
-  const heroStoragePath = `results/${String(job.id)}/hero.png`;
-  const { data: heroUpload, error: heroUploadError } = await serviceClient.storage
-    .from("sellerpilot-ai")
-    .createSignedUploadUrl(heroStoragePath, { upsert: true });
-  if (heroUploadError || !heroUpload?.token) {
+  const assetPaths = [
+    { id: "hero", path: `results/${String(job.id)}/hero.png` },
+    { id: "square", path: `results/${String(job.id)}/thumbnail-square.png` },
+    { id: "portrait", path: `results/${String(job.id)}/thumbnail-portrait.png` },
+    { id: "wide", path: `results/${String(job.id)}/thumbnail-wide.png` },
+  ];
+  const assetUploads = await Promise.all(assetPaths.map(async (asset) => {
+    const { data: upload, error: uploadError } = await serviceClient.storage
+      .from("sellerpilot-ai")
+      .createSignedUploadUrl(asset.path, { upsert: true });
+    return uploadError || !upload?.token ? null : { ...asset, token: upload.token };
+  }));
+  if (assetUploads.some((upload) => !upload)) {
     return NextResponse.json({ message: "생성 이미지 업로드 URL을 만들지 못했습니다." }, { status: 500 });
   }
 
@@ -55,12 +63,11 @@ export async function POST(request: Request) {
         signedUrl: file.signedUrl,
       })),
     },
-    resultUpload: {
+    resultUploads: assetUploads.map((upload) => ({
+      ...upload,
       supabaseUrl,
       publishableKey: supabasePublishableKey,
       bucket: "sellerpilot-ai",
-      path: heroStoragePath,
-      token: heroUpload.token,
-    },
+    })),
   }, { headers: { "cache-control": "no-store, max-age=0" } });
 }

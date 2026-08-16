@@ -16,7 +16,16 @@ export async function GET(request: Request, context: RouteContext<"/api/ai/jobs/
   const result = job.result && typeof job.result === "object" && !Array.isArray(job.result)
     ? { ...(job.result as Record<string, unknown>) }
     : null;
-  if (result && typeof result.hero_storage_path === "string") {
+  if (result && result.asset_storage_paths && typeof result.asset_storage_paths === "object" && !Array.isArray(result.asset_storage_paths)) {
+    const entries = Object.entries(result.asset_storage_paths as Record<string, unknown>)
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string");
+    const { data: signed } = await admin.serviceClient.storage
+      .from("sellerpilot-ai")
+      .createSignedUrls(entries.map(([, path]) => path), 60 * 60);
+    result.heroUrl = signed?.[entries.findIndex(([id]) => id === "hero")]?.signedUrl ?? null;
+    result.generatedImages = entries.map(([id], index) => ({ id, url: signed?.[index]?.signedUrl ?? null }));
+    delete result.asset_storage_paths;
+  } else if (result && typeof result.hero_storage_path === "string") {
     const { data: signed } = await admin.serviceClient.storage
       .from("sellerpilot-ai")
       .createSignedUrl(result.hero_storage_path, 60 * 60);

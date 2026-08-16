@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { lookup } from "node:dns/promises";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
@@ -7,7 +7,23 @@ import { basename, extname, join, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
 const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
-const workerToken = process.env.SELLERPILOT_AI_WORKER_TOKEN?.trim() ?? "";
+function loadWorkerToken() {
+  const environmentToken = process.env.SELLERPILOT_AI_WORKER_TOKEN?.trim();
+  if (environmentToken) return environmentToken;
+  if (process.platform !== "darwin") return "";
+  try {
+    return execFileSync("/usr/bin/security", [
+      "find-generic-password",
+      "-s", "SellerPilot AI Worker",
+      "-a", sellerpilotUrl,
+      "-w",
+    ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+}
+
+const workerToken = loadWorkerToken();
 const pollMs = Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS ?? 5_000));
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const codexBin = process.env.CODEX_BIN?.trim() || "/Applications/ChatGPT.app/Contents/Resources/codex";
@@ -16,8 +32,15 @@ const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "
 const once = process.argv.includes("--once");
 let stopping = false;
 
+class JobCancelledError extends Error {
+  constructor() {
+    super("AI 작업이 관리자에 의해 취소됐습니다.");
+    this.name = "JobCancelledError";
+  }
+}
+
 if (!workerToken.startsWith("spw_")) {
-  throw new Error("SELLERPILOT_AI_WORKER_TOKEN 환경변수에 웹에서 발급한 CLI 작업자 토큰을 입력해 주세요.");
+  throw new Error("웹에서 발급한 CLI 작업자 토큰을 환경변수 또는 macOS 키체인 'SellerPilot AI Worker'에 저장해 주세요.");
 }
 
 await access(codexBin);
@@ -45,7 +68,18 @@ async function api(path, init = {}) {
   });
 }
 
-async function runCodex(args, timeoutMs) {
+async function touchJob(jobId) {
+  const response = await api("/api/ai/worker/heartbeat", {
+    method: "POST",
+    body: JSON.stringify({ jobId, version: "sellerpilot-cli-worker/1.1" }),
+  });
+  if (!response.ok) throw new Error(`CLI 작업자 신호 실패 · HTTP ${response.status}`);
+  const payload = await response.json();
+  if (payload.status !== "running") throw new JobCancelledError();
+}
+
+async function runCodex(args, timeoutMs, jobId) {
+  if (jobId) await touchJob(jobId);
   return new Promise((resolveRun, rejectRun) => {
     const codexEnv = { ...process.env };
     delete codexEnv.OPENAI_API_KEY;
@@ -57,6 +91,20 @@ async function runCodex(args, timeoutMs) {
     });
     let stdout = "";
     let stderr = "";
+    let heartbeatError = null;
+    let heartbeatInFlight = false;
+    const heartbeatTimer = jobId ? setInterval(async () => {
+      if (heartbeatInFlight || heartbeatError) return;
+      heartbeatInFlight = true;
+      try {
+        await touchJob(jobId);
+      } catch (error) {
+        heartbeatError = error;
+        child.kill("SIGTERM");
+      } finally {
+        heartbeatInFlight = false;
+      }
+    }, 20_000) : null;
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       rejectRun(new Error("Codex CLI 실행 제한시간을 초과했습니다."));
@@ -65,11 +113,14 @@ async function runCodex(args, timeoutMs) {
     child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
     child.once("error", (error) => {
       clearTimeout(timer);
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       rejectRun(error);
     });
     child.once("close", (code) => {
       clearTimeout(timer);
-      if (code === 0) resolveRun({ stdout, stderr });
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (heartbeatError) rejectRun(heartbeatError);
+      else if (code === 0) resolveRun({ stdout, stderr });
       else rejectRun(new Error((stderr || stdout || `Codex CLI exit ${code}`).slice(-800)));
     });
   });
@@ -179,14 +230,15 @@ function buildAnalysisPrompt(job, referenceText) {
   ].join("\n");
 }
 
-function buildImagePrompt(result, outputPath) {
+function buildImagePrompt(result, outputPath, preset) {
   return [
     "설치된 codex-image 스킬의 규칙을 사용하고 반드시 내장 image_gen 도구로 이미지를 제작하세요.",
     "첨부된 첫 번째 이미지는 편집 대상이자 제품 사실 기준입니다.",
-    `Scene/backdrop: premium Korean ecommerce product hero, ${result.design.palette.surface} and ${result.design.palette.accent}, soft directional studio light, restrained editorial composition.`,
+    `Scene/backdrop: premium Korean ecommerce ${preset.label}, ${result.design.palette.surface} and ${result.design.palette.accent}, soft directional studio light, restrained editorial composition.`,
     `Subject: ${result.product.name}; preserve package shape, label, logo and printed information exactly.`,
     `Details: ${result.design.themeName}; communicate ${result.product.oneLine}; realistic shadow and minimal supporting props.`,
-    "Constraints: no invented text, ingredients, certification, barcode, count or extra product; no watermark; no floating copy; square 1024x1024; high fidelity.",
+    `Composition: ${preset.composition}; target aspect ratio ${preset.ratio}.`,
+    "Constraints: no invented text, ingredients, certification, barcode, count or extra product; no watermark; no floating copy; high fidelity.",
     `생성 결과 PNG를 정확히 ${outputPath} 경로에 저장하세요. Python·SVG·Canvas로 대체 이미지를 만들지 마세요.`,
   ].join("\n");
 }
@@ -209,58 +261,65 @@ async function processJob(job) {
     ];
     for (const file of imageFiles) analysisArgs.push(`--image=${file}`);
     analysisArgs.push(buildAnalysisPrompt(job, reference.text));
-    await runCodex(analysisArgs, 4 * 60_000);
+    await runCodex(analysisArgs, 4 * 60_000, job.id);
 
     const result = JSON.parse(await readFile(resultFile, "utf8"));
     if (reference.warning) result.warnings = [...(Array.isArray(result.warnings) ? result.warnings : []), reference.warning].slice(0, 5);
-    const heroFile = join(jobDir, "hero.png");
-    const imageArgs = [
-      "exec",
-      "--model", model,
-      "--enable", "image_generation",
-      "--sandbox", "workspace-write",
-      "--skip-git-repo-check",
-      "--ephemeral",
-      "--cd", jobDir,
-      `--image=${imageFiles[0]}`,
-      buildImagePrompt(result, heroFile),
+    const imagePresets = [
+      { id: "hero", file: "hero.png", label: "product hero", ratio: "1:1", composition: "square hero with the package centered and generous negative space" },
+      { id: "square", file: "thumbnail-square.png", label: "marketplace square thumbnail", ratio: "1:1", composition: "single package large and centered, readable at small size" },
+      { id: "portrait", file: "thumbnail-portrait.png", label: "mobile portrait thumbnail", ratio: "4:5", composition: "vertical editorial layout with the complete package in the upper two-thirds" },
+      { id: "wide", file: "thumbnail-wide.png", label: "wide promotion thumbnail", ratio: "16:9", composition: "package on the right with calm visual breathing room on the left" },
     ];
-
-    let heroStoragePath;
-    try {
-      await runCodex(imageArgs, 5 * 60_000);
-      const upload = job.resultUpload;
-      if (!upload?.supabaseUrl || !upload?.publishableKey || !upload?.bucket || !upload?.path || !upload?.token) {
-        throw new Error("생성 이미지 업로드 정보가 없습니다.");
-      }
-      const storageClient = createClient(upload.supabaseUrl, upload.publishableKey, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+    const uploads = Array.isArray(job.resultUploads) ? job.resultUploads : [];
+    if (uploads.length !== imagePresets.length) throw new Error("생성 이미지 4종 업로드 정보가 없습니다.");
+    const storageClient = createClient(uploads[0].supabaseUrl, uploads[0].publishableKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const assetStoragePaths = {};
+    for (const preset of imagePresets) {
+      const outputFile = join(jobDir, preset.file);
+      const imageArgs = [
+        "exec",
+        "--model", model,
+        "--enable", "image_generation",
+        "--sandbox", "workspace-write",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--cd", jobDir,
+        `--image=${imageFiles[0]}`,
+        buildImagePrompt(result, outputFile, preset),
+      ];
+      await runCodex(imageArgs, 6 * 60_000, job.id);
+      const upload = uploads.find((item) => item?.id === preset.id);
+      if (!upload?.bucket || !upload?.path || !upload?.token) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
       const { error: uploadError } = await storageClient.storage
         .from(upload.bucket)
-        .uploadToSignedUrl(upload.path, upload.token, await readFile(heroFile), {
+        .uploadToSignedUrl(upload.path, upload.token, await readFile(outputFile), {
           contentType: "image/png",
           cacheControl: "3600",
         });
-      if (uploadError) throw new Error(`생성 이미지 직접 업로드 실패: ${uploadError.message}`);
-      heroStoragePath = upload.path;
-    } catch (error) {
-      result.warnings = [...(Array.isArray(result.warnings) ? result.warnings : []), `codex-image 생성 보류: ${error instanceof Error ? error.message.slice(0, 180) : "알 수 없는 오류"}`].slice(0, 5);
+      if (uploadError) throw new Error(`${preset.id} 이미지 업로드 실패: ${uploadError.message}`);
+      assetStoragePaths[preset.id] = upload.path;
     }
 
     const response = await api("/api/ai/worker/complete", {
       method: "POST",
-      body: JSON.stringify({ jobId: job.id, status: "succeeded", result, heroStoragePath }),
+      body: JSON.stringify({ jobId: job.id, status: "succeeded", result, assetStoragePaths }),
     });
     if (!response.ok) throw new Error(`작업 결과 저장 실패 · HTTP ${response.status}`);
     console.log(`[완료] ${job.id} · ${basename(jobDir)}`);
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 500) : "CLI 작업 처리 오류";
-    await api("/api/ai/worker/complete", {
-      method: "POST",
-      body: JSON.stringify({ jobId: job.id, status: "failed", error: message }),
-    }).catch(() => undefined);
-    console.error(`[실패] ${job.id} · ${message}`);
+    if (error instanceof JobCancelledError) {
+      console.log(`[취소] ${job.id} · 관리자 요청`);
+    } else {
+      await api("/api/ai/worker/complete", {
+        method: "POST",
+        body: JSON.stringify({ jobId: job.id, status: "failed", error: message }),
+      }).catch(() => undefined);
+      console.error(`[실패] ${job.id} · ${message}`);
+    }
   } finally {
     await rm(jobDir, { recursive: true, force: true });
   }
@@ -271,7 +330,7 @@ do {
   try {
     const response = await api("/api/ai/worker/claim", {
       method: "POST",
-      body: JSON.stringify({ version: "sellerpilot-cli-worker/1.0" }),
+      body: JSON.stringify({ version: "sellerpilot-cli-worker/1.1" }),
     });
     if (response.status === 204) {
       if (once) break;

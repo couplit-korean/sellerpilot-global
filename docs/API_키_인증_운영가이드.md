@@ -3,9 +3,7 @@
 ## 현재 운영 연결
 
 - Vercel 프로젝트: `sellerpilot-global` (`couplitofficial-4206` 계정)
-- Supabase 조직: `couplit-korean's Org`
-- Supabase 프로젝트: `couplit-korean's Project`
-- Supabase 프로젝트 참조: `sqaoqucxakebqkiygdxb`
+- Supabase 조직·프로젝트: Couplit 소유 계정으로 전환 후 최종 확정 필요
 - 운영 도메인: `https://sellerpilot-global.vercel.app`
 - 인증 방식: Supabase Auth 이메일·비밀번호, 관리자 초대 전용
 - 비밀 보관: Supabase Vault, 버전별 불변 저장
@@ -29,15 +27,14 @@
 | 채널 | 필수 연결값 | 현재 수명 기준 | 안전 검사 |
 |---|---|---|---|
 | Qoo10 Japan | Seller ID, QAPI Key, 승인된 테스트 상품번호 | 콘솔 만료 표시 없음, 내부 90일 교체 권장 | 자격 형식 확인 후 승인 상품 읽기 검수 |
-| Shopee | Partner ID, Partner Key, Shop ID, Access Token | 관찰된 Partner Key 만료일 2026-09-15 | `get_shop_info` 읽기 API |
 | Lazada | App Key, App Secret, Access Token, Refresh Token, 국가 | Access 30일, Refresh 180일 | `/seller/get` 읽기 API |
 | AI 작업자 | 웹에서 1회 표시되는 Worker Token | 30·90·180·365일 선택 | 15초 상태 갱신, 작업 claim/complete 왕복, Codex CLI 결과 검사 |
 
 ## 2026-08-16 실제 연동 상태
 
 - Qoo10: 실판매자 콘솔과 등록 필드 확인 완료. QAPI 키는 Qoo10 측 발급이 필요해 아직 Vault 미등록.
-- Shopee: 사용자 요청에 따라 이번 연동 범위에서 제외. 인증·토큰·콜백 변경 없음.
-- Lazada: 운영 콜백 변경, MY 판매자 허용목록 확인, OAuth 승인 코드 수신 완료. 토큰 교환은 `AppWhiteIpLimit`로 실패했으며 토큰·키·감사기록은 저장하지 않음. 단일 고정 공인 IP가 필요.
+- Shopee: 사용자 요청으로 실제 API 연동 범위에서 제외됐다.
+- Lazada: 일회성 state 검증, code URL 제거, 토큰 교환, Vault 버전 저장, 72시간 전 Access Token 자동 갱신까지 코드로 구현했다. 실계정 토큰 교환은 고정 송신 IP 허용 후 검증한다.
 - ChatGPT CLI: OpenAI API 결제·Project Key와 분리했다. Mac의 `codex login` 인증은 로컬에만 남고 웹은 해시된 Worker Token으로 작업 큐만 전달한다.
 - Supabase: 비공개 `sellerpilot-ai` Storage와 CLI 작업 큐·토큰 지문·감사 기록을 운영 DB에 적용한다. 익명·일반 사용자는 원문 또는 작업자 함수를 실행할 수 없다.
 
@@ -65,10 +62,11 @@ Secret Key는 절대 `NEXT_PUBLIC_` 접두사를 사용하지 않는다. 새 키
 - [x] 비공개 스키마와 Vault 저장
 - [x] 관리자 UUID 권한 확인
 - [x] 키 버전·만료·경고·유예·감사기록
-- [x] Shopee/Lazada 읽기 연결 검사 구현
+- [x] Qoo10/Lazada 읽기 연결 검사 구현
+- [x] Lazada OAuth state 검증·콜백 처리·만료 전 자동 갱신 구현
 - [x] ChatGPT CLI 작업자 토큰 발급·교체·만료·상태·처리 건수 UI 구현
 - [x] 연결 검사 응답의 비밀·원문 로그 차단
-- [x] Supabase Security Advisor 오류 0건 확인
+- [ ] Couplit Supabase 계정 전환 후 Security/Performance Advisor 재검증
 - [x] Vercel 새 Publishable/Secret 환경변수 연결
 - [ ] Qoo10 승인 테스트 상품번호로 읽기 API 실검수
 - [ ] Lazada 고정 송신 IP 구성 후 운영 토큰을 Vault에 등록하고 실호출 통과

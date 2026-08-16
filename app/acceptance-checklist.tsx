@@ -25,12 +25,14 @@ const developmentLabels: Record<DevelopmentStatus, string> = {
   done: "개발 완료",
   partial: "부분 구현",
   not_started: "미구현",
+  excluded: "범위 제외",
 };
 
 const verificationLabels: Record<VerificationStatus, string> = {
   passed: "실검수 완료",
   pending: "실검수 대기",
   external: "외부 준비 필요",
+  excluded: "범위 제외",
 };
 
 export function AcceptanceChecklistPage() {
@@ -73,24 +75,24 @@ export function AcceptanceChecklistPage() {
         </div>
         <aside>
           <ShieldCheck size={21} />
-          <div><strong>현재 단계 · 운영 프로토타입</strong><span>3개 실계정 콘솔 확인 · 서버 API·중앙 DB·백그라운드 작업 연결 전</span></div>
+          <div><strong>현재 단계 · 운영 코어 구현 완료</strong><span>중앙 DB·관리자 RPC·AI 작업자·보관 정리 구현 · 원격 계정 적용과 채널 E2E 승인 대기</span></div>
         </aside>
       </section>
 
       <section className="acceptance-summary" aria-label="175개 요구사항 진행 요약">
         <article><span>전체 요구사항</span><strong>{acceptanceSummary.total}</strong><small>PPT 의도 기반</small></article>
-        <article className="partial"><span>부분 구현</span><strong>{acceptanceSummary.development.partial}</strong><small>화면·계산·AI 초안</small></article>
+        <article className="verified"><span>개발 완료</span><strong>{acceptanceSummary.development.done}</strong><small>코드·DB 실행 검증</small></article>
+        <article className="partial"><span>부분 구현</span><strong>{acceptanceSummary.development.partial}</strong><small>외부 데이터 연결 전</small></article>
         <article className="pending"><span>미구현</span><strong>{acceptanceSummary.development.notStarted}</strong><small>백엔드·자동화 중심</small></article>
-        <article className="external"><span>외부 준비 필요</span><strong>{acceptanceSummary.verification.external}</strong><small>계정·API·정책·데이터</small></article>
-        <article className="verified"><span>실검수 완료</span><strong>{acceptanceSummary.verification.passed}</strong><small>실계정 증거 기준</small></article>
+        <article className="external"><span>외부 준비 필요</span><strong>{acceptanceSummary.verification.external}</strong><small>계정·API·정책 · 제외 {acceptanceSummary.development.excluded}</small></article>
       </section>
 
       <section className="acceptance-gates">
         <div><span>GATE 0</span><b>범위·계정·테스트상품</b><em>계정 일부 확보</em></div>
         <i />
-        <div><span>GATE 1</span><b>3채널 API PoC</b><em>읽기·쓰기 미검증</em></div>
+        <div><span>GATE 1</span><b>Qoo10·Lazada API PoC</b><em>자격증명 적용 대기</em></div>
         <i />
-        <div><span>PHASE 1–3</span><b>운영코어·콘텐츠·매칭</b><em>개발 예정</em></div>
+        <div><span>PHASE 1–3</span><b>운영코어·콘텐츠·매칭</b><em>핵심 코어 구현 · 고도화 지속</em></div>
         <i />
         <div><span>PHASE 4</span><b>30–100 SKU 제한운영</b><em>미착수</em></div>
       </section>
@@ -98,7 +100,7 @@ export function AcceptanceChecklistPage() {
       <section className="panel acceptance-panel">
         <div className="acceptance-toolbar">
           <div className="acceptance-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="REQ-ID 또는 기능 검색" /></div>
-          <label><Filter size={15} /><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} aria-label="검수 상태 필터"><option value="all">모든 상태</option><option value="partial">부분 구현</option><option value="not_started">미구현</option><option value="external">외부 준비 필요</option><option value="pending">실검수 대기</option><option value="done">개발 완료</option><option value="passed">실검수 완료</option></select><ChevronDown size={14} /></label>
+          <label><Filter size={15} /><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} aria-label="검수 상태 필터"><option value="all">모든 상태</option><option value="partial">부분 구현</option><option value="not_started">미구현</option><option value="external">외부 준비 필요</option><option value="pending">실검수 대기</option><option value="done">개발 완료</option><option value="passed">실검수 완료</option><option value="excluded">범위 제외</option></select><ChevronDown size={14} /></label>
           <span>{visibleCount}개 표시</span>
         </div>
 
@@ -111,13 +113,13 @@ export function AcceptanceChecklistPage() {
         <div className="acceptance-sections">
           {sections.map((section) => {
             const open = openSections.has(section.code) || Boolean(query) || status !== "all";
-            const sectionPartial = section.items.filter((item) => item.development === "partial").length;
+            const sectionDeveloped = section.items.filter((item) => item.development === "partial" || item.development === "done").length;
             return <article className="acceptance-section" key={section.code}>
               <button className="acceptance-section-head" onClick={() => toggleSection(section.code)} aria-expanded={open}>
                 <span className="acceptance-code">{section.code}</span>
                 <span><b>{section.title}</b><small>{section.intent}</small></span>
                 <em>PPT {section.pptSlides}</em>
-                <span className="acceptance-section-count"><b>{sectionPartial}</b> / {section.items.length} 부분 구현</span>
+                <span className="acceptance-section-count"><b>{sectionDeveloped}</b> / {section.items.length} 구현 진행</span>
                 <ChevronDown className={open ? "open" : ""} size={17} />
               </button>
               {open && <div className="acceptance-items">
@@ -134,7 +136,7 @@ export function AcceptanceChecklistPage() {
         </div>
       </section>
 
-      <section className="acceptance-note"><AlertTriangle size={16} /><div><b>최종 완료 기준</b><p>사진 업로드 후 시스템이 자동 등록·자동 제외·재촬영 요청 중 하나를 결정하고, 등록된 상품의 주문·재고·가격·알림이 Qoo10 Japan·Shopee·Lazada에서 안정적으로 운영되는 증거가 있어야 합니다.</p></div></section>
+      <section className="acceptance-note"><AlertTriangle size={16} /><div><b>최종 완료 기준</b><p>사진 업로드 후 시스템이 자동 등록·자동 제외·재촬영 요청 중 하나를 결정하고, 등록된 상품의 주문·재고·가격·알림이 Qoo10 Japan과 Lazada에서 안정적으로 운영되는 증거가 있어야 합니다. Shopee는 사용자 요청으로 범위에서 제외합니다.</p></div></section>
     </div>
   );
 }

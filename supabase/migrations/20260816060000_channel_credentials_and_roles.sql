@@ -1,6 +1,8 @@
 -- SellerPilot secure credential control plane for Supabase.
 -- Secrets live in Supabase Vault. Browser clients can only call metadata RPCs.
 
+begin;
+
 create extension if not exists pgcrypto;
 create extension if not exists supabase_vault with schema vault;
 
@@ -15,7 +17,7 @@ create table if not exists sellerpilot_private.admin_users (
 
 create table if not exists sellerpilot_private.channel_credentials (
   id uuid primary key default gen_random_uuid(),
-  channel text not null check (channel in ('qoo10', 'shopee', 'lazada', 'openai')),
+  channel text not null check (channel in ('qoo10', 'lazada')),
   environment text not null default 'production' check (environment in ('sandbox', 'production')),
   version integer not null check (version > 0),
   vault_secret_id uuid not null,
@@ -129,7 +131,7 @@ begin
   if not public.sellerpilot_is_admin() then
     raise exception 'administrator access required' using errcode = '42501';
   end if;
-  if p_channel not in ('qoo10', 'shopee', 'lazada', 'openai') then
+  if p_channel not in ('qoo10', 'lazada') then
     raise exception 'unsupported channel';
   end if;
   if p_environment not in ('sandbox', 'production') then
@@ -341,7 +343,7 @@ begin
   if coalesce(current_setting('request.jwt.claim.role', true), '') <> 'service_role' then
     raise exception 'service role required' using errcode = '42501';
   end if;
-  if p_channel not in ('qoo10', 'shopee', 'lazada', 'openai') or p_environment not in ('sandbox', 'production') then
+  if p_channel not in ('qoo10', 'lazada') or p_environment not in ('sandbox', 'production') then
     raise exception 'unsupported credential selector';
   end if;
 
@@ -381,3 +383,5 @@ grant execute on function public.sellerpilot_list_credential_audit(integer) to a
 grant execute on function public.sellerpilot_decrypt_credential(uuid) to service_role;
 grant execute on function public.sellerpilot_record_credential_test(uuid, text, text) to service_role;
 grant execute on function public.sellerpilot_get_active_credential_secret(text, text) to service_role;
+
+commit;

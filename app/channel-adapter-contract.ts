@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const primaryChannelSchema = z.enum(["qoo10", "shopee", "lazada"]);
+export const primaryChannelSchema = z.enum(["qoo10", "lazada"]);
 export type PrimaryChannel = z.infer<typeof primaryChannelSchema>;
 
 export const channelContextSchema = z.object({
@@ -131,4 +131,3 @@ export interface ChannelAdapter {
   acknowledgeShipment(context: ChannelContext, input: { externalOrderId: string; carrierCode: string; trackingNumber: string; shippedAt: string }): Promise<AdapterResult<{ accepted: boolean }>>;
   verifyWebhook(input: { rawBody: Uint8Array; headers: Headers; receivedAt: Date }): Promise<AdapterResult<{ externalEventId: string; eventType: string; occurredAt?: string }>>;
 }
-

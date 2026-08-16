@@ -53,11 +53,11 @@ export function ChannelReadinessPage() {
       </section>
 
       <section className="readiness-summary" aria-label="채널 연동 준비 상태 요약">
-        <article><span>콘솔 확인</span><strong>3 / 3</strong><small>Qoo10 · Shopee · Lazada</small></article>
-        <article><span>대상 Online 앱</span><strong>{onlineApps} / 1</strong><small>Lazada · Shopee 제외</small></article>
+        <article><span>콘솔 확인</span><strong>2 / 2</strong><small>Qoo10 · Lazada</small></article>
+        <article><span>대상 Online 앱</span><strong>{onlineApps} / 1</strong><small>Lazada 운영 앱</small></article>
         <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>읽기 전용 화면 증거</small></article>
         <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>QAPI 발급 · Lazada 고정 IP</small></article>
-        <article className="danger"><span>API E2E 통과</span><strong>0 / 2</strong><small>Shopee 제외 · Qoo10/Lazada 기준</small></article>
+        <article className="danger"><span>API E2E 통과</span><strong>0 / 2</strong><small>Qoo10/Lazada 실계정 기준</small></article>
       </section>
 
       <section className="readiness-channel-grid">
