@@ -286,10 +286,13 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
       });
       const payload = await response.json().catch(() => ({ message: `${channelCatalog[credential.channel].name} OAuth 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
       if (!response.ok || !payload.authorizationUrl) throw new Error(payload.message);
+      setError("");
       setPendingOAuth({ channelName: channelCatalog[credential.channel].name, authorizationUrl: payload.authorizationUrl });
       notify(`${channelCatalog[credential.channel].name} 판매자 승인 링크를 준비했습니다.`);
     } catch (oauthError) {
-      notify(oauthError instanceof Error ? oauthError.message : "판매 채널 OAuth를 시작하지 못했습니다.");
+      const message = oauthError instanceof Error ? oauthError.message : "판매 채널 OAuth를 시작하지 못했습니다.";
+      setError(message);
+      notify(message);
     } finally {
       setOauthStartingId("");
     }
