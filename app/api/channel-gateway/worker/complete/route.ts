@@ -27,6 +27,7 @@ export async function POST(request: Request) {
 
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
   let storedResponse: Record<string, unknown> | null = null;
+  let refreshedCredentialId = "";
   if (parsed.data.status === "succeeded") {
     if (job.channel !== parsed.data.result.channel || job.operation !== parsed.data.result.operation) {
       return NextResponse.json({ message: "채널 작업 결과가 요청과 일치하지 않습니다." }, { status: 409 });
@@ -36,14 +37,17 @@ export async function POST(request: Request) {
       ? { payload: oauthResult.credentialPayload, expiresAt: oauthResult.expiresAt }
       : parsed.data.credentialRefresh;
     if (credentialRefresh) {
+      if (job.channel !== "shopee" && job.channel !== "lazada") {
+        return NextResponse.json({ message: "이 채널에는 OAuth 인증값 갱신을 적용할 수 없습니다." }, { status: 409 });
+      }
       const credentialId = typeof job.credential_id === "string" ? job.credential_id : "";
       const rpcName = job.channel === "shopee" ? "sellerpilot_service_refresh_shopee" : "sellerpilot_service_refresh_lazada";
-      const { error: refreshError } = await serviceClient.rpc(rpcName, {
+      const { data: nextCredentialId, error: refreshError } = await serviceClient.rpc(rpcName, {
         p_credential_id: credentialId,
         p_secret_payload: credentialRefresh.payload,
         p_expires_at: credentialRefresh.expiresAt,
       });
-      if (refreshError) {
+      if (refreshError || typeof nextCredentialId !== "string") {
         await serviceClient.rpc("sellerpilot_complete_channel_gateway_job", {
           p_token_hash: tokenHash,
           p_job_id: parsed.data.jobId,
@@ -52,6 +56,17 @@ export async function POST(request: Request) {
           p_error_message: "Refreshed channel credential could not be stored.",
         });
         return NextResponse.json({ message: "갱신된 채널 인증값을 Vault에 저장하지 못했습니다." }, { status: 500 });
+      }
+      refreshedCredentialId = nextCredentialId;
+    }
+    if (refreshedCredentialId && parsed.data.result.operation === "diagnostic.test") {
+      const { error: diagnosticError } = await serviceClient.rpc("sellerpilot_record_credential_test", {
+        p_credential_id: refreshedCredentialId,
+        p_status: parsed.data.result.diagnostic.status,
+        p_safe_message: parsed.data.result.diagnostic.message,
+      });
+      if (diagnosticError) {
+        return NextResponse.json({ message: "갱신된 채널 인증값에 연결 검사 결과를 기록하지 못했습니다." }, { status: 500 });
       }
     }
     storedResponse = oauthResult

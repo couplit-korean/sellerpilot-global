@@ -19,7 +19,7 @@ const mutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("margin_save"),
     name: z.string().trim().min(1).max(120),
-    channelKey: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"]),
+    channelKey: z.enum(["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"]),
     inputs: z.record(z.string(), z.unknown()),
     result: z.record(z.string(), z.unknown()),
   }),

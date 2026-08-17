@@ -1,6 +1,9 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ChannelDiagnostic } from "../channel-diagnostics";
 import type { ChannelOperationName, ChannelOperationResult } from "./operations";
+
+export type ChannelGatewayChannel = "shopee" | "lazada" | "coupang" | "smartstore" | "temu";
 
 type GatewayJobSnapshot = {
   status?: unknown;
@@ -35,7 +38,7 @@ export async function executeViaChannelGateway(input: {
   serviceClient: SupabaseClient;
   credentialId: string;
   attemptId: string | null;
-  channel: "shopee" | "lazada";
+  channel: ChannelGatewayChannel;
   operation: ChannelOperationName;
   arguments: Record<string, unknown>;
   timeoutMs?: number;
@@ -50,6 +53,30 @@ export async function executeViaChannelGateway(input: {
   if (enqueueError || typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
 
   return await waitForGatewayJob(input.serviceClient, jobId, input.timeoutMs ?? 45_000) as ChannelOperationResult;
+}
+
+export async function executeDiagnosticViaChannelGateway(input: {
+  serviceClient: SupabaseClient;
+  credentialId: string;
+  channel: ChannelGatewayChannel;
+  timeoutMs?: number;
+}) {
+  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+    p_credential_id: input.credentialId,
+    p_attempt_id: null,
+    p_channel: input.channel,
+    p_operation: "diagnostic.test",
+    p_request_payload: {},
+  });
+  if (enqueueError || typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+  const response = await waitForGatewayJob(input.serviceClient, jobId, input.timeoutMs ?? 45_000);
+  const diagnostic = response && typeof response === "object" && !Array.isArray(response) && "diagnostic" in response
+    ? response.diagnostic
+    : null;
+  if (!diagnostic || typeof diagnostic !== "object" || Array.isArray(diagnostic)) {
+    throw new Error("CHANNEL_GATEWAY_RESPONSE_INVALID");
+  }
+  return diagnostic as ChannelDiagnostic;
 }
 
 export async function exchangeOAuthViaChannelGateway(input: {

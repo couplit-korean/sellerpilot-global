@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import test from "node:test";
 import { compareSync as bcryptCompareSync } from "bcryptjs";
 import { activeChannelKeys, channelCatalog } from "../lib/channels/catalog";
@@ -9,6 +9,7 @@ import {
   buildQoo10Url,
   buildShopeeAuthorizationUrl,
   buildShopeeSignature,
+  buildTemuSignature,
   createNaverClientSecretSign,
   ensureEbayAccessToken,
   ensureShopeeAccessToken,
@@ -17,7 +18,7 @@ import {
   fetchNaverAccessToken,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
-import { qoo10CatalogCode, qoo10ExpiryDate, qoo10ResultMessage } from "../lib/channels/qoo10";
+import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
 
 test("Coupang CEA authorization signs the documented canonical value", () => {
   const now = new Date("2026-08-16T03:04:05.000Z");
@@ -98,6 +99,11 @@ test("Qoo10 draft helpers keep internal catalog codes numeric and use a one-year
   assert.equal(qoo10CatalogCode("No Brand"), "");
   assert.equal(qoo10CatalogCode("12345678901"), "");
   assert.equal(qoo10ExpiryDate(new Date("2026-08-17T12:00:00.000Z")), "2027-08-17");
+  assert.equal(qoo10SellerCode("PROGRAM-20260818-003"), "PROGRAM-20260818-003");
+  assert.equal(qoo10SellerCode("PROGRAM-20260818-003", "1216221951"), "PROGRAM-20260-R21951");
+  assert.ok(qoo10SellerCode("PROGRAM-20260818-003", "1216221951").length <= 20);
+  assert.deepEqual(qoo10PauseParams("1216221951"), { ItemCode: "1216221951", Status: "1" });
+  assert.throws(() => qoo10PauseParams("invalid"), /QOO10_ITEM_CODE_INVALID/);
 });
 
 test("Qoo10 provider errors are useful without exposing remote URLs or tokens", async () => {
@@ -156,13 +162,13 @@ test("Shopee authorization URL uses the current auth endpoint and preserves Sell
 });
 
 test("all seven active channels define every normalized capability", () => {
-  assert.deepEqual(activeChannelKeys, ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"]);
+  assert.deepEqual(activeChannelKeys, ["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"]);
   const expectedCapabilities = Object.keys(channelCatalog.qoo10.capabilities).sort();
   for (const channel of activeChannelKeys) {
     assert.deepEqual(Object.keys(channelCatalog[channel].capabilities).sort(), expectedCapabilities);
     assert.ok(channelCatalog[channel].officialDocs.length > 0);
   }
-  assert.equal(channelCatalog.elevenst.capabilities.listingCreate.mode, "vendor_docs_required");
+  assert.equal(channelCatalog.temu.capabilities.listingCreate.mode, "api");
   assert.equal(channelCatalog.qoo10.capabilities.webhooks.mode, "unsupported");
 });
 
@@ -310,8 +316,9 @@ test("Lazada product create serializes the structured request as official XML an
           Request: {
             Product: {
               PrimaryCategory: "12345",
-              Attributes: { name: "White cup", description: "Cup & mug" },
-              Skus: { Sku: [{ SellerSku: "CUP-001", price: "12.90", quantity: "1", Status: "inactive" }] },
+              Images: { Image: ["https://example.com/cup-1.jpg", "https://example.com/cup-2.jpg"] },
+              Attributes: { name: "White cup", description: "Cup & mug", "Units_(per_Bundle)": "" },
+              Skus: { Sku: [{ SellerSku: "CUP-001", price: "12.90", quantity: "1", Status: "inactive", Images: { Image: ["https://example.com/cup-1.jpg"] } }] },
             },
           },
         },
@@ -325,9 +332,47 @@ test("Lazada product create serializes the structured request as official XML an
     const xml = form.get("payload") ?? "";
     assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
     assert.match(xml, /<Request><Product><PrimaryCategory>12345<\/PrimaryCategory>/);
+    assert.match(xml, /<Images><Image>https:\/\/example\.com\/cup-1\.jpg<\/Image><Image>https:\/\/example\.com\/cup-2\.jpg<\/Image><\/Images>/);
     assert.match(xml, /<description>Cup &amp; mug<\/description>/);
+    assert.doesNotMatch(xml, /Units_\(per_Bundle\)/);
     assert.match(xml, /<Skus><Sku><SellerSku>CUP-001<\/SellerSku>/);
+    assert.match(xml, /<Status>inactive<\/Status><Images><Image>https:\/\/example\.com\/cup-1\.jpg<\/Image><\/Images>/);
     assert.match(calls[1].url, /\/product\/item\/get/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada category suggestion forwards the mandatory product image URL", async () => {
+  const originalFetch = globalThis.fetch;
+  const calledUrls: string[] = [];
+  globalThis.fetch = async (input) => {
+    calledUrls.push(String(input));
+    return new Response(JSON.stringify({ code: "0", request_id: "category-request", data: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada",
+      operation: "categories.suggest",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "access-token", country: "my" },
+      arguments: {
+        query: "Moisturizing cream",
+        queryParams: { language_code: "en_US", image_url: "https://example.com/cream.jpg" },
+      },
+      environment: "production",
+    });
+    const suggestionUrl = new URL(calledUrls.find((url) => url.includes("/product/category/suggestion/get")) ?? "");
+    const treeUrl = new URL(calledUrls.find((url) => url.includes("/category/tree/get")) ?? "");
+    assert.equal(result.ok, true);
+    assert.equal(suggestionUrl.pathname, "/rest/product/category/suggestion/get");
+    assert.equal(suggestionUrl.searchParams.get("product_name"), "Moisturizing cream");
+    assert.equal(suggestionUrl.searchParams.get("image_url"), "https://example.com/cream.jpg");
+    assert.equal(treeUrl.pathname, "/rest/category/tree/get");
+    assert.equal(treeUrl.searchParams.get("language_code"), "en_US");
+    assert.equal(treeUrl.searchParams.get("image_url"), null);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -382,6 +427,68 @@ test("Coupang category recommendation sends the official product context payload
     assert.equal(result.ok, true);
     assert.equal(new URL(calledUrl).pathname, "/v2/providers/openapi/apis/api/v1/categorization/predict");
     assert.deepEqual(JSON.parse(calledBody), { productDescription: "분말형 살균 표백제", brand: "유한양행", productName: "유한젠 가루세제 1kg" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Coupang category list uses the required root or parent category path segment", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    return new Response(JSON.stringify({ code: "SUCCESS", data: { displayItemCategoryCode: 0, child: [] } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const input = {
+      channel: "coupang" as const,
+      operation: "categories.list" as const,
+      payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
+      environment: "production" as const,
+    };
+    assert.equal((await executeChannelOperation({ ...input, arguments: {} })).ok, true);
+    assert.equal((await executeChannelOperation({ ...input, arguments: { categoryId: "77834" } })).ok, true);
+    assert.equal(new URL(calls[0]).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/0");
+    assert.equal(new URL(calls[1]).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/77834");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Coupang product creation is only successful after seller-product readback matches", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (init?.method === "POST") {
+      return new Response(JSON.stringify({ code: "SUCCESS", data: 987654321 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ code: "SUCCESS", data: { sellerProductId: 987654321, requested: false } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "coupang",
+      operation: "listing.create",
+      payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
+      arguments: { body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: false, items: [{}] } },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "987654321");
+    assert.deepEqual(result.steps.map((item) => item.name), ["listing.create", "listing-readback"]);
+    assert.equal(calls.length, 2);
+    assert.equal(new URL(calls[1].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321");
+    assert.equal(calls[1].init?.method, "GET");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -495,6 +602,37 @@ test("Naver category preflight loads the category, attributes, values, and stand
   }
 });
 
+test("Naver product creation is only successful after the origin product readback matches", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith("/v1/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "naver-token", expires_in: 10_800 }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.endsWith("/v2/products") && init?.method === "POST") {
+      return new Response(JSON.stringify({ originProductNo: 10000001, smartstoreChannelProductNo: 20000001 }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ originProductNo: 10000001, originProduct: { statusType: "SALE" } }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "smartstore",
+      operation: "listing.create",
+      payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
+      arguments: { body: { originProduct: { name: "API test" }, smartstoreChannelProduct: {} } },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "10000001");
+    assert.deepEqual(result.steps.map((item) => item.name), ["product-create", "product-readback"]);
+    assert.equal(calls.some((call) => call.url.endsWith("/v2/products/origin-products/10000001") && call.init?.method === "GET"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("eBay listing workflow creates inventory, creates an offer, then publishes", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
@@ -530,17 +668,41 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
   }
 });
 
-test("11st writes stay blocked until the authenticated seller specification is fixed", async () => {
-  await assert.rejects(
-    executeChannelOperation({
-      channel: "elevenst",
+test("Temu signs compact request values in ASCII key order", () => {
+  const request = { type: "temu.local.goods.v3.add", timestamp: 1_786_848_245, app_key: "app-key", data_type: "JSON", goodsBasic: { goodsName: "테스트" } };
+  const ordered = `app_keyapp-keydata_typeJSONgoodsBasic${JSON.stringify(request.goodsBasic)}timestamp${request.timestamp}typetemu.local.goods.v3.add`;
+  const expected = createHash("md5").update(`app-secret${ordered}app-secret`, "utf8").digest("hex").toUpperCase();
+  assert.equal(buildTemuSignature("app-secret", request), expected);
+});
+
+test("Temu V3 product creation requires an external-id readback match", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    if (body.type === "temu.local.goods.v3.add") {
+      return new Response(JSON.stringify({ success: true, result: { goodsId: 900001, externalGoodsId: "TEST-TEMU-001" } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true, result: { goodsList: [{ goodsId: 900001, outGoodsSn: "TEST-TEMU-001", status: 1 }] } }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "temu",
       operation: "listing.create",
-      payload: { api_key: "key", seller_id: "seller" },
-      arguments: { body: {} },
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
+      arguments: { body: { goodsBasic: { externalGoodsId: "TEST-TEMU-001", goodsName: "API test" }, skuList: [{ externalSkuId: "TEST-TEMU-001" }] } },
       environment: "production",
-    }),
-    /CHANNEL_VENDOR_SPEC_REQUIRED/,
-  );
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "900001");
+    assert.deepEqual(calls.map((call) => call.type), ["temu.local.goods.v3.add", "temu.local.goods.list.retrieve"]);
+    assert.deepEqual(calls[1].outGoodsSnList, ["TEST-TEMU-001"]);
+    assert.equal("app_secret" in calls[0], false);
+    assert.match(String(calls[0].sign), /^[0-9A-F]{32}$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("eBay does not invent a domestic-style order acknowledgement step", async () => {

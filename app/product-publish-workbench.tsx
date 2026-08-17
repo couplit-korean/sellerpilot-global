@@ -1,10 +1,11 @@
 "use client";
 
-import { AlertTriangle, Check, CircleCheck, Code2, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
-import { qoo10CatalogCode, qoo10ExpiryDate } from "../lib/channels/qoo10";
+import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10SellerCode } from "../lib/channels/qoo10";
 import { createClient } from "../lib/supabase/client";
+import { fetchChannelTargets } from "./channel-target-client";
 import { channels } from "./channel-config";
 
 type CredentialRow = {
@@ -108,6 +109,7 @@ function html(value: string) {
 
 function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number) {
   const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
+  const existingListing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
   const product = context.product;
   const sourceImage = context.sourceImages[0]?.url ?? "";
   const localized = context.localizedListings?.find((item) => item.channel === channel && item.market === target?.marketCode);
@@ -130,7 +132,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         BrandNo: qoo10CatalogCode(assignment?.providedAttributes.BrandNo),
         ItemTitle: product.name.slice(0, 200),
         PromotionName: product.description.slice(0, 20),
-        SellerCode: product.sku.slice(0, 200),
+        SellerCode: qoo10SellerCode(product.sku, existingListing?.status !== "published" ? existingListing?.remoteId ?? undefined : undefined),
         IndustrialCode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "",
         ProductionPlace: manual.countryOfOrigin,
         AudultYN: "N",
@@ -197,6 +199,10 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     };
   }
   if (channel === "lazada") {
+    const providedAttributes = Object.fromEntries(
+      Object.entries(assignment?.providedAttributes ?? {})
+        .filter(([, value]) => value.trim().length > 0),
+    );
     return {
       country: target?.marketCode.toLowerCase() ?? "my",
       imageUrls,
@@ -204,20 +210,36 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         Request: {
           Product: {
             PrimaryCategory: assignment?.categoryId ?? "",
-            Images: { Image: [] },
-            Attributes: { name: title.slice(0, 255), description, short_description: shortDescription.slice(0, 500), brand: manual.brandName, ...(assignment?.providedAttributes ?? {}) },
-            Skus: { Sku: [{ SellerSku: marketSku, price: String(price), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: [] } }] },
+            Images: { Image: imageUrls },
+            // Category metadata contains many empty optional fields and can also
+            // repeat core fields such as `name` and `description`. Keep only
+            // selected values, then make the listing's verified core content
+            // authoritative so an empty category field cannot blank the title.
+            Attributes: { ...providedAttributes, name: title.slice(0, 255), description, short_description: shortDescription.slice(0, 500), brand: manual.brandName },
+            Skus: { Sku: [{ SellerSku: marketSku, price: String(price), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: imageUrls } }] },
           },
         },
       },
     };
   }
   if (channel === "coupang") {
+    const categoryAttributes = Object.entries(assignment?.providedAttributes ?? {}).map(([attributeTypeName, attributeValueName]) => ({
+      attributeTypeName,
+      attributeValueName,
+    }));
     return {
+      facts: {
+        material: manual.material,
+        packageContents: manual.packageContents,
+        countryOfOrigin: manual.countryOfOrigin,
+        manufacturer: manual.manufacturer,
+        weightKg: packageFields.weight,
+        dimensionsCm: [packageFields.length, packageFields.width, packageFields.height],
+      },
       body: {
         displayCategoryCode: Number(assignment?.categoryId ?? 0),
         sellerProductName: product.name,
-        displayedProductName: product.name,
+        displayProductName: product.name,
         vendorId: "SERVER_MANAGED",
         saleStartedAt: "",
         saleEndedAt: "",
@@ -232,18 +254,19 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         returnCharge: 0,
         outboundShippingPlaceCode: "",
         returnCenterCode: "",
-        returnCenterName: "",
+        returnChargeName: "",
         companyContactNumber: "",
         returnZipCode: "",
         returnAddress: "",
         returnAddressDetail: "",
-        requested: true,
-        items: [{ itemName: product.name, originalPrice: price, salePrice: price, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: 3, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: [{ imageOrder: 0, imageType: "REPRESENTATION", vendorPath: sourceImage }], notices: [], attributes: [], contents: [{ contentsType: "TEXT", contentDetails: [{ content: product.description, detailType: "TEXT" }] }] }],
+        requested: false,
+        items: [{ itemName: product.name, originalPrice: price, salePrice: price, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: 3, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: [{ imageOrder: 0, imageType: "REPRESENTATION", vendorPath: sourceImage }], notices: [], attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: product.description, detailType: "TEXT" }] }] }],
       },
     };
   }
   if (channel === "smartstore") {
     return {
+      imageUrls,
       body: {
         originProduct: {
           statusType: "SALE",
@@ -251,14 +274,46 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
           leafCategoryId: assignment?.categoryId ?? "",
           name: product.name,
           detailContent: `<section><h1>${html(product.name)}</h1><p>${html(product.description)}</p></section>`,
-          images: { representativeImage: { url: "NAVER_UPLOADED_IMAGE_URL_REQUIRED" }, optionalImages: [] },
+          images: { representativeImage: { url: "PROGRAM_UPLOAD_PENDING" }, optionalImages: [] },
           salePrice: price,
           stockQuantity: quantity,
-          deliveryInfo: {},
-          detailAttribute: { afterServiceInfo: {}, originAreaInfo: { content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
+          detailAttribute: { afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" }, originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
           customerBenefit: {},
         },
         smartstoreChannelProduct: { naverShoppingRegistration: true, channelProductName: product.name },
+      },
+    };
+  }
+  if (channel === "temu") {
+    const externalGoodsId = (manual.sellerSku || product.sku).slice(0, 128);
+    return {
+      body: {
+        language: "ko",
+        goodsBasic: {
+          externalGoodsId,
+          goodsName: product.name.slice(0, 500),
+          extCatName: (assignment?.categoryPath.join(" > ") || manual.categoryHint).slice(0, 500),
+          goodsDesc: product.description.slice(0, 10_000),
+          goodsCarouselImage: imageUrls.slice(0, 10),
+          detailImage: imageUrls.slice(0, 10),
+          productType: 1,
+          bulletPoints: [manual.material, manual.packageContents, `[PROGRAM TEST · NOT FOR SALE] ${product.description}`].filter(Boolean).slice(0, 10),
+        },
+        attributes: [
+          { name: "Brand", value: [manual.brandName] },
+          { name: "Manufacturer", value: [manual.manufacturer] },
+          { name: "Country of origin", value: [manual.countryOfOrigin] },
+          { name: "Material", value: [manual.material] },
+        ],
+        skuList: [{
+          externalSkuId: externalGoodsId,
+          images: imageUrls.slice(0, 10),
+          price: { basePrice: { amount: String(price), currency: manual.currency || "KRW" } },
+          quantity,
+          packageInfo: { weight: String(Math.round(packageFields.weight * 1_000)), length: String(packageFields.length), width: String(packageFields.width), height: String(packageFields.height) },
+          variations: [{ name: "Type", value: "Standard" }],
+          ...(manual.gtinStatus === "HAS_GTIN" && manual.gtin ? { barCode: { barCodeType: "GTIN-14", barCodeId: [manual.gtin] } } : {}),
+        }],
       },
     };
   }
@@ -279,8 +334,9 @@ function missingNativeValues(channel: ActiveChannelKey, value: Record<string, un
   }
   if (channel === "shopee") return [!String(value.shopId ?? "").trim() ? "shopId" : "", !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", json.includes('"weight":0') ? "package weight" : ""].filter(Boolean);
   if (channel === "lazada") return [!Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", json.includes('"package_weight":"0"') || json.includes('"package_weight":""') ? "package size/weight" : ""].filter(Boolean);
-  if (channel === "coupang") return ["outboundShippingPlaceCode", "returnCenterCode", "notices", "category attributes"].filter((key) => json.includes(`"${key}":""`) || json.includes(`"${key}":[]`));
-  if (channel === "smartstore") return [json.includes("NAVER_UPLOADED_IMAGE_URL_REQUIRED") ? "Naver uploaded image" : "", json.includes('"deliveryInfo":{}') ? "deliveryInfo" : "", json.includes('"afterServiceInfo":{}') ? "afterServiceInfo/originAreaInfo" : ""].filter(Boolean);
+  if (channel === "coupang") return [json.includes('"displayCategoryCode":0') ? "displayCategoryCode" : "", !json.includes('"vendorPath":"https://') ? "public product image" : ""].filter(Boolean);
+  if (channel === "smartstore") return [!Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", !json.includes('"originAreaCode":"04"') ? "originAreaInfo" : ""].filter(Boolean);
+  if (channel === "temu") return [json.includes('"skuList":[]') ? "skuList" : "", json.includes('"images":[]') ? "images" : "", json.includes('"externalGoodsId":""') ? "externalGoodsId" : ""].filter(Boolean);
   return [json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
 }
 
@@ -317,6 +373,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const [packageFields, setPackageFields] = useState<PackageFields>({ weight: 0.35, length: 12, width: 12, height: 10 });
   const [loading, setLoading] = useState(false);
   const [bulkRunning, setBulkRunning] = useState(false);
+  const [qoo10CleanupId, setQoo10CleanupId] = useState("");
   const priceRef = useRef(price);
   const globalBaseUsdPriceRef = useRef(globalBaseUsdPrice);
   const quantityRef = useRef(quantity);
@@ -336,8 +393,8 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const [contextResponse, credentialsResponse, shopeeTargetsResponse, lazadaTargetsResponse] = await Promise.all([
         fetch(`/api/admin/products/${productId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
         supabase.rpc("sellerpilot_list_credentials"),
-        fetch("/api/admin/channel-targets?channel=shopee", { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
-        fetch("/api/admin/channel-targets?channel=lazada", { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
+        fetchChannelTargets("shopee", accessToken),
+        fetchChannelTargets("lazada", accessToken),
       ]);
       const payload = await contextResponse.json().catch(() => ({ message: "상품 준비 응답을 읽지 못했습니다." })) as PublishContext & { message?: string };
       if (!contextResponse.ok) throw new Error(payload.message ?? "상품 등록 준비 정보를 불러오지 못했습니다.");
@@ -483,6 +540,81 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     }
   };
 
+  const stopQoo10Listing = async (listing: Listing) => {
+    const credential = activeCredentials.get("qoo10");
+    if (!credential || !listing.remoteId || !productId) return notify("Qoo10 활성 키와 원격 상품번호를 확인해 주세요.");
+    if (!window.confirm(`Qoo10 원격 상품 ${listing.remoteId}를 공식 API의 거래대기 상태로 전환하고 이 상품을 재등록 가능한 상태로 되돌릴까요?`)) return;
+    setResults((current) => ({ ...current, qoo10: { phase: "running", message: "Qoo10 거래대기 전환 요청 중" } }));
+    try {
+      const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
+      if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
+      const response = await fetch("/api/admin/channel-operations", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          credentialId: credential.id,
+          channel: "qoo10",
+          operation: "listing.stop",
+          idempotencyKey: `listing-stop:${productId}:qoo10:${listing.remoteId}:status-1`,
+          confirmWrite: true,
+          productId,
+          currency,
+          price,
+          market: listing.market,
+          targetId: listing.targetId,
+          arguments: { params: qoo10PauseParams(listing.remoteId) },
+        }),
+      });
+      const payload = await response.json().catch(() => ({ message: "Qoo10 판매 중지 응답을 읽지 못했습니다." })) as { ok?: boolean; message?: string; safeMessage?: string; attemptId?: string };
+      if (!response.ok || payload.ok !== true) throw Object.assign(new Error(payload.message ?? payload.safeMessage ?? "Qoo10 판매 중지에 실패했습니다."), { attemptId: payload.attemptId });
+      setResults((current) => ({ ...current, qoo10: { phase: "succeeded", message: payload.safeMessage, attemptId: payload.attemptId } }));
+      await load();
+      onChanged?.();
+      notify("Qoo10 상품을 거래대기로 전환했고 올바른 카테고리로 다시 등록할 수 있습니다.");
+    } catch (error) {
+      setResults((current) => ({ ...current, qoo10: { phase: "failed", message: error instanceof Error ? error.message : "Qoo10 판매 중지에 실패했습니다." } }));
+      notify(error instanceof Error ? error.message : "Qoo10 판매 중지에 실패했습니다.");
+    }
+  };
+
+  const pausePreviousQoo10Remote = async () => {
+    const credential = activeCredentials.get("qoo10");
+    const remoteId = qoo10CleanupId.trim();
+    if (!credential) return notify("Qoo10 활성 키를 확인해 주세요.");
+    let params: ReturnType<typeof qoo10PauseParams>;
+    try {
+      params = qoo10PauseParams(remoteId);
+    } catch {
+      return notify("정리할 Qoo10 상품번호 9~10자리를 입력해 주세요.");
+    }
+    if (!window.confirm(`이전 Qoo10 원격 상품 ${remoteId}를 거래대기 상태로 전환합니다. 현재 새 상품은 그대로 판매중으로 유지합니다. 계속할까요?`)) return;
+    setResults((current) => ({ ...current, qoo10: { phase: "running", message: `이전 원격 상품 ${remoteId} 거래대기 전환 중` } }));
+    try {
+      const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
+      if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
+      const response = await fetch("/api/admin/channel-operations", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          credentialId: credential.id,
+          channel: "qoo10",
+          operation: "listing.stop",
+          idempotencyKey: `qoo10-remote-pause:${remoteId}:status-1`,
+          confirmWrite: true,
+          arguments: { params },
+        }),
+      });
+      const payload = await response.json().catch(() => ({ message: "Qoo10 거래대기 전환 응답을 읽지 못했습니다." })) as { ok?: boolean; message?: string; safeMessage?: string; attemptId?: string };
+      if (!response.ok || payload.ok !== true) throw Object.assign(new Error(payload.message ?? payload.safeMessage ?? "Qoo10 거래대기 전환에 실패했습니다."), { attemptId: payload.attemptId });
+      setResults((current) => ({ ...current, qoo10: { phase: "succeeded", message: `이전 원격 상품 ${remoteId} 거래대기 전환 요청 완료`, attemptId: payload.attemptId } }));
+      setQoo10CleanupId("");
+      notify(`이전 Qoo10 원격 상품 ${remoteId}를 거래대기로 전환했습니다.`);
+    } catch (error) {
+      setResults((current) => ({ ...current, qoo10: { phase: "failed", message: error instanceof Error ? error.message : "Qoo10 거래대기 전환에 실패했습니다." } }));
+      notify(error instanceof Error ? error.message : "Qoo10 거래대기 전환에 실패했습니다.");
+    }
+  };
+
   if (!productId) return <section className="panel product-publish-workbench disabled"><PackageCheck size={28} /><b>실제 채널 등록은 상품 원장 생성 후 열립니다.</b><small>대표사진 분석을 완료하면 상품 UUID와 채널 등록 초안이 자동으로 연결됩니다.</small></section>;
   if (loading && !context) return <section className="panel product-publish-workbench disabled"><LoaderCircle className="spin" size={26} /><b>상품·카테고리·이미지 원장 확인 중</b></section>;
   if (!context) return <section className="panel product-publish-workbench disabled"><AlertTriangle size={26} /><b>상품 등록 준비 정보를 불러오지 못했습니다.</b><button type="button" onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></section>;
@@ -509,6 +641,8 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
           <button type="button" className="publish-execute" disabled={!credential || !assignment || result.phase === "running" || listing?.status === "published"} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : listing?.status === "published" ? <Check size={15} /> : <Rocket size={15} />}{listing?.status === "published" ? "등록 완료" : "검증 후 실제 1건 등록"}</button>
+          {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={result.phase === "running"} onClick={() => void stopQoo10Listing(listing)}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
+          {channel === "qoo10" && listing?.status === "published" && <label className="qoo10-remote-cleanup"><span>이전 Qoo10 상품 정리</span><input aria-label="정리할 이전 Qoo10 상품번호" inputMode="numeric" value={qoo10CleanupId} onChange={(event) => setQoo10CleanupId(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="9~10자리 상품번호" /><button type="button" className="credential-secondary" disabled={result.phase === "running" || !/^\d{9,10}$/.test(qoo10CleanupId)} onClick={() => void pausePreviousQoo10Remote()}><CirclePause size={15} />이전 상품 거래대기</button></label>}
         </>}
       </article>;
     })}</div>

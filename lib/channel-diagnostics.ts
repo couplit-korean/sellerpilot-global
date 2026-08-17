@@ -6,6 +6,7 @@ import {
   naverRequest,
   qoo10Request,
   shopeeRequest,
+  temuRequest,
   textValue,
   type SecretPayload,
 } from "./channels/protocols";
@@ -115,14 +116,16 @@ async function testEbay(payload: SecretPayload, environment: "sandbox" | "produc
   return { status: "failed", message: `eBay 판매자 권한 검사 실패 · HTTP ${remote.response.status}`, remoteRequestId: remoteRequestId(remote.data) };
 }
 
-function testElevenStreet(payload: SecretPayload): ChannelDiagnostic {
-  if (!textValue(payload, "api_key") || !textValue(payload, "seller_id")) {
-    return { status: "failed", message: "11번가 Open API Key와 판매자 ID가 필요합니다." };
+async function testTemu(payload: SecretPayload): Promise<ChannelDiagnostic> {
+  if (!textValue(payload, "app_key") || !textValue(payload, "app_secret") || !textValue(payload, "access_token")) {
+    return { status: "failed", message: "Temu App Key·App Secret·판매자 Access Token이 모두 필요합니다." };
   }
-  return {
-    status: "manual",
-    message: "키는 저장됐습니다. 11번가 로그인 전용 판매자 상세 명세에서 운영 Base URL·서비스 코드를 확정한 뒤 읽기 검사를 활성화해야 합니다.",
-  };
+  const remote = await temuRequest({ payload, type: "temu.local.goods.list.retrieve", arguments: { pageSize: 1, goodsSearchType: "ALL" } });
+  if (remote.response.ok && remote.data.success === true) {
+    return { status: "passed", message: "Temu 판매자 상품 목록 읽기 API가 정상 응답했습니다.", remoteRequestId: remoteRequestId(remote.data) };
+  }
+  const errorCode = String(remote.data.errorCode ?? "");
+  return { status: "failed", message: `Temu 인증 검사 실패${errorCode ? ` · ${errorCode}` : ` · HTTP ${remote.response.status}`}`, remoteRequestId: remoteRequestId(remote.data) };
 }
 
 export async function runChannelDiagnostic(
@@ -138,7 +141,8 @@ export async function runChannelDiagnostic(
     if (channel === "coupang") return await testCoupang(payload);
     if (channel === "smartstore") return await testSmartstore(payload);
     if (channel === "ebay") return await testEbay(payload, environment);
-    return testElevenStreet(payload);
+    if (channel === "temu") return await testTemu(payload);
+    return { status: "failed", message: "지원하지 않는 채널입니다." };
   } catch (error) {
     const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
     const missing = error instanceof Error && /(?:CREDENTIALS_MISSING|TOKEN_EXCHANGE_FAILED|ACCESS_TOKEN_MISSING)/.test(error.message);

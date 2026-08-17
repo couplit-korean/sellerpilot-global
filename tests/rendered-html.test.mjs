@@ -66,7 +66,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /Shopee Global/);
   assert.match(page, /Lazada Malaysia/);
   assert.match(page, /쿠팡/);
-  assert.match(page, /11번가/);
+  assert.match(page, /Temu/);
   assert.match(page, /네이버 스마트스토어/);
   assert.match(page, /eBay Global/);
   assert.match(page, /서비스 스토리보드/);
@@ -82,13 +82,14 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /ChatGPT CLI 답변 생성은 채널 정책/);
   assert.match(page, /공식 카테고리 확정/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
+  assert.match(page, /URL로 불러오기/);
   assert.match(page, /id: "front"/);
   assert.match(page, /id: "barcode"/);
   assert.match(page, /option-photo-\$\{slot\.id\}/);
   assert.match(page, /id="extra-product-photos"[^>]*multiple/);
-  assert.match(page, /상품 간략 설명/);
-  assert.match(page, /참고 상품 링크/);
-  assert.match(page, /AI 상품 분석 시작/);
+  assert.match(page, /상품 사실 설명/);
+  assert.match(page, /자료 출처·상품 링크/);
+  assert.match(page, /1개 바로 분석/);
   assert.doesNotMatch(page, /DEMO_DATA_META|createDemoStudioResult|seed_demo/);
   assert.match(page, /MarginCalculatorPage/);
   assert.match(styles, /\.margin-workspace/);
@@ -135,6 +136,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(channelMapping, /Shopee Open Platform 준비도/);
   assert.match(channelMapping, /Lazada Open Platform/);
   const credentialPage = await readFile(new URL("../app/api-credential-center.tsx", import.meta.url), "utf8");
+  const credentialTestRoute = await readFile(new URL("../app/api/admin/channel-credentials/test/route.ts", import.meta.url), "utf8");
+  const gatewayCompleteRoute = await readFile(new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url), "utf8");
   const cliRuntimeCard = await readFile(new URL("../app/ai-cli-runtime-card.tsx", import.meta.url), "utf8");
   const cliWorker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
   const cliMigration = await readFile(new URL("../supabase/migrations/20260816065848_sellerpilot_ai_cli_jobs.sql", import.meta.url), "utf8");
@@ -159,6 +162,10 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(credentialPage, /Project API Key|OpenAI API/);
   assert.match(credentialPage, /키 수명 · 교체 일정/);
   assert.match(credentialPage, /연결 검사/);
+  assert.match(credentialTestRoute, /parsed\.data\.channel === "shopee"/);
+  assert.match(credentialTestRoute, /parsed\.data\.channel === "lazada"/);
+  assert.match(gatewayCompleteRoute, /refreshedCredentialId/);
+  assert.match(gatewayCompleteRoute, /sellerpilot_record_credential_test/);
   assert.match(credentialPage, /API 실행 검수/);
   assert.match(credentialPage, /중복 방지 키/);
   assert.match(credentialPage, /confirmWrite/);
@@ -176,6 +183,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const channelOperations = await readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8");
   const channelOperationsRoute = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   const channelOperationsContract = await readFile(new URL("../docs/판매채널_실행_API_계약.md", import.meta.url), "utf8");
+  const channelTargetClient = await readFile(new URL("../app/channel-target-client.ts", import.meta.url), "utf8");
   const ebayAuthorizeRoute = await readFile(new URL("../app/api/admin/channel-credentials/ebay/authorize/route.ts", import.meta.url), "utf8");
   assert.match(lazadaAuthorizeRoute, /sellerpilot_lazada_oauth/);
   assert.match(lazadaAuthorizeRoute, /timingSafeEqual/);
@@ -187,8 +195,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(connectorMigration, /sellerpilot_service_refresh_ebay/);
   assert.match(shopeeMigration, /sellerpilot_service_refresh_shopee/);
   assert.match(shopeeMigration, /'qoo10', 'shopee', 'lazada'/);
-  assert.equal((channelCatalog.match(/key: "(?:qoo10|shopee|lazada|coupang|elevenst|smartstore|ebay)"/g) ?? []).length, 7);
-  assert.match(channelCatalog, /vendor_docs_required/);
+  assert.equal((channelCatalog.match(/key: "(?:qoo10|shopee|lazada|coupang|smartstore|ebay|temu)"/g) ?? []).length, 7);
+  assert.match(channelCatalog, /temu\.local\.goods\.v3\.add/);
   assert.match(channelProtocols, /CEA algorithm=HmacSHA256/);
   assert.match(channelProtocols, /client_secret_sign/);
   assert.match(channelProtocols, /ebayjapan\.qapi/);
@@ -202,6 +210,9 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(channelOperationsRoute, /idempotencyKey/);
   assert.match(channelOperationsRoute, /sellerpilot_claim_channel_operation/);
   assert.match(channelOperationsRoute, /ensureEbayAccessToken/);
+  assert.match(channelTargetClient, /cached\.status === 401/);
+  assert.match(channelTargetClient, /request\("POST"\)/);
+  assert.match(channelTargetClient, /pendingTargetRequests/);
   assert.match(connectorMigration, /channel_operation_attempts/);
   assert.match(connectorMigration, /sellerpilot_claim_channel_operation/);
   assert.match(connectorMigration, /sellerpilot_service_complete_channel_operation/);

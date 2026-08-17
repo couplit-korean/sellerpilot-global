@@ -1,4 +1,4 @@
-export const activeChannelKeys = ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"] as const;
+export const activeChannelKeys = ["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"] as const;
 
 export type ActiveChannelKey = (typeof activeChannelKeys)[number];
 export type ChannelCapabilityKey =
@@ -51,7 +51,6 @@ const api = (note: string): ChannelCapability => ({ mode: "api", note });
 const polling = (note: string): ChannelCapability => ({ mode: "polling", note });
 const webhook = (note: string): ChannelCapability => ({ mode: "webhook", note });
 const unsupported = (note: string): ChannelCapability => ({ mode: "unsupported", note });
-const vendorDocs = (note: string): ChannelCapability => ({ mode: "vendor_docs_required", note });
 
 export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
   qoo10: {
@@ -166,7 +165,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       { key: "vendor_id", label: "Vendor ID", placeholder: "A00012345", help: "WING 우측 상단 판매자명 메뉴의 업체코드" },
       { key: "access_key", label: "Access Key", secret: true, placeholder: "Coupang Access Key", help: "WING → 추가판매정보 → OpenAPI Key" },
       { key: "secret_key", label: "Secret Key", secret: true, placeholder: "Coupang Secret Key", help: "재발급하면 Secret Key가 변경됩니다." },
-      { key: "requested_by", label: "요청자 ID", optional: true, placeholder: "미입력 시 Vendor ID" },
+      { key: "requested_by", label: "WING 실사용자 ID", placeholder: "상품을 등록하는 WING 로그인 ID", help: "상품 생성의 vendorUserId 필수값입니다. Vendor ID가 아니라 실제 WING 로그인 ID를 입력합니다." },
       { key: "market", label: "시장", optional: true, placeholder: "KR" },
     ],
     officialDocs: [
@@ -191,38 +190,38 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       webhooks: unsupported("공개 판매자 API는 주문/CS 주기조회 중심으로 설계"),
     },
   },
-  elevenst: {
-    key: "elevenst",
-    code: "11",
-    name: "11번가",
-    market: "Korea · Seller Open API",
+  temu: {
+    key: "temu",
+    code: "T",
+    name: "Temu Korea",
+    market: "Korea · Partner Open API",
     authType: "seller-key",
-    credentialPolicy: "Open API Key 180일 · 만료 30일 전 경고",
+    credentialPolicy: "Partner App Key·Secret + 판매자 Access Token · 승인 범위에 따라 교체",
     oauth: false,
     fields: [
-      { key: "api_key", label: "Open API Key", secret: true, placeholder: "11번가 Open API Key" },
-      { key: "seller_id", label: "판매자 ID", placeholder: "11번가 판매자 ID" },
-      { key: "seller_api_base_url", label: "판매자 API Base URL", optional: true, placeholder: "로그인 문서의 운영 URL" },
+      { key: "app_key", label: "App Key", placeholder: "Temu Partner App Key" },
+      { key: "app_secret", label: "App Secret", secret: true, placeholder: "Temu Partner App Secret" },
+      { key: "access_token", label: "Seller Access Token", secret: true, placeholder: "판매자 승인 후 발급된 Access Token" },
     ],
     officialDocs: [
-      { label: "Open API 센터", url: "https://openapi.11st.co.kr/openapi/OpenApiFrontMain.tmall" },
-      { label: "판매자 상품 기능", url: "https://openapi.11st.co.kr/openapi/OpenApiServiceIntroduce.tmall?introduceType=PRODUCT" },
+      { label: "Partner Platform", url: "https://partner.temu.com/documentation" },
+      { label: "Product Publishing V3", url: "https://partner.temu.com/documentation?sub_menu_code=419748d505a3483f8d210d978cb813f8" },
     ],
     capabilities: {
-      connection: vendorDocs("판매자 상세 명세 로그인 후 운영 URL·서비스 코드를 확정해야 함"),
-      categories: vendorDocs("카테고리 조회 지원 · 상세 XML 규격은 판매자 문서 필요"),
-      imageUpload: vendorDocs("상품 이미지 규격은 로그인 문서 버전에 고정"),
-      listingCreate: vendorDocs("상품 등록/수정 지원 · 서비스 코드 확인 필요"),
-      listingUpdate: vendorDocs("상품 관리 지원 · 서비스 코드 확인 필요"),
-      listingStop: vendorDocs("판매중지/재개 지원 · 서비스 코드 확인 필요"),
-      price: vendorDocs("상품 수정 명세의 가격 필드 사용"),
-      inventory: vendorDocs("재고 조회/수정 지원 · XML 명세 확인 필요"),
-      orders: vendorDocs("주문 목록/상세 지원 · 상태 코드표 확인 필요"),
-      shipment: vendorDocs("발주확인/배송처리 지원 · 택배사 코드표 확인 필요"),
-      claims: vendorDocs("취소·교환·반품 승인/거부 지원"),
-      inquiries: vendorDocs("상품문의/리뷰 지원 · 답변 서비스 코드 확인 필요"),
-      settlements: unsupported("공개 소개 페이지에 정산 API 범위가 명시되지 않음"),
-      webhooks: unsupported("공개 소개 페이지 기준 폴링 방식"),
+      connection: api("temu.local.goods.list.retrieve로 판매자 상품 1건 읽기"),
+      categories: api("bg.local.goods.category.recommend 자동 추천"),
+      imageUpload: api("V3가 공개 HTTPS 이미지 URL을 자동 다운로드·저장"),
+      listingCreate: api("temu.local.goods.v3.add"),
+      listingUpdate: api("bg.local.goods.update / partial.update"),
+      listingStop: api("bg.local.goods.sale.status.set · off-shelf"),
+      price: api("상품 가격 관리 API"),
+      inventory: api("bg.local.goods.stock.edit"),
+      orders: polling("주문 목록·상세 API 체크포인트 조회"),
+      shipment: api("주문 발송·물류 API"),
+      claims: api("반품·환불 API"),
+      inquiries: polling("메시지·문의 API 권한 범위 사용"),
+      settlements: polling("정산 권한 활성화 시 지급·거래 조회"),
+      webhooks: webhook("메시지 구독을 보조 신호로 사용하고 주문 폴링으로 보정"),
     },
   },
   smartstore: {
@@ -238,6 +237,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       { key: "client_secret", label: "Application Secret", secret: true, placeholder: "Commerce API Secret" },
       { key: "token_type", label: "인증 유형", placeholder: "SELLER", help: "상품·주문 등 판매자 데이터는 SELLER 유형만 사용합니다.", options: [{ value: "SELLER", label: "SELLER · 판매자 데이터" }] },
       { key: "account_id", label: "판매자 UID (account_id)", placeholder: "Commerce API 판매자 UID", help: "로그인 이메일이 아니라 애플리케이션에 연결된 판매자 UID입니다." },
+      { key: "after_service_phone", label: "스토어 A/S 전화번호", secret: true, placeholder: "스마트스토어에 등록된 실제 연락처", help: "상품 A/S 필수값이며 기존 스토어 정보와 같은 번호만 입력합니다." },
     ],
     officialDocs: [
       { label: "API센터 앱 관리", url: "https://apicenter.commerce.naver.com/ko/basic/main" },

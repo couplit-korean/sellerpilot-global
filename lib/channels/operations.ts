@@ -7,6 +7,7 @@ import {
   qoo10Request,
   shopeeMerchantRequest,
   shopeeRequest,
+  temuRequest,
   textValue,
   type RemoteResponse,
   type SecretPayload,
@@ -144,6 +145,7 @@ function step(name: string, remote: RemoteResponse): ChannelOperationStep {
   const resultCode = remote.data.ResultCode ?? remote.data.ErrorCode;
   const commonCode = remote.data.code;
   const shopeeError = remote.data.error;
+  const temuSuccess = remote.data.success;
   const normalizedCommonCode = commonCode === undefined || commonCode === null ? "" : String(commonCode).toUpperCase();
   const commonCodeAccepted = !normalizedCommonCode
     || ["0", "SUCCESS", "SUCCES", "OK"].includes(normalizedCommonCode)
@@ -151,6 +153,7 @@ function step(name: string, remote: RemoteResponse): ChannelOperationStep {
   const providerAccepted =
     (resultCode === undefined || resultCode === null || String(resultCode) === "0") &&
     commonCodeAccepted &&
+    (temuSuccess === undefined || temuSuccess === true) &&
     (shopeeError === undefined || shopeeError === null || String(shopeeError) === "");
   return {
     name,
@@ -189,9 +192,13 @@ function lazadaXmlEscape(value: string) {
 }
 
 function lazadaXmlNode(name: string, value: unknown): string {
+  // Lazada's category metadata can contain optional attribute keys that are not
+  // valid XML element names (for example `Units_(per_Bundle)`). Empty optional
+  // values are not part of a create request, so discard them before validating
+  // the element name.
+  if (value === null || value === undefined || value === "") return "";
   if (!/^[A-Za-z][A-Za-z0-9_:-]*$/.test(name)) throw new Error("LAZADA_PAYLOAD_TAG_INVALID");
   if (Array.isArray(value)) return value.map((item) => lazadaXmlNode(name, item)).join("");
-  if (value === null || value === undefined) return "";
   if (typeof value === "object") {
     const children = Object.entries(value as Record<string, unknown>)
       .map(([childName, childValue]) => lazadaXmlNode(childName, childValue))
@@ -517,8 +524,13 @@ async function executeLazada(input: ExecuteInput) {
   const query = stringMap(input.arguments, "queryParams");
   if (input.operation === "categories.suggest") {
     const params = { ...query, product_name: stringArgument(input.arguments, "query") };
-    const remote = await lazadaRequest({ payload: input.payload, path: "/product/category/suggestion/get", params });
-    return result(input, [step("category-suggestion", remote)]);
+    const treeParams: Record<string, string> = {};
+    if (query.language_code) treeParams.language_code = query.language_code;
+    const [remote, tree] = await Promise.all([
+      lazadaRequest({ payload: input.payload, path: "/product/category/suggestion/get", params }),
+      lazadaRequest({ payload: input.payload, path: "/category/tree/get", params: treeParams }),
+    ]);
+    return result(input, [step("category-suggestion", remote), step("category-tree", tree)]);
   }
   if (input.operation === "categories.attributes" || input.operation === "categories.validate") {
     const params = { ...query, primary_category_id: stringArgument(input.arguments, "categoryId") };
@@ -578,11 +590,13 @@ async function executeCoupang(input: ExecuteInput) {
   if (!vendorId) throw new Error("COUPANG_CREDENTIALS_MISSING");
   const sellerProductsPath = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products";
   if (input.operation === "categories.list") {
+    // Coupang requires a display category code in the path. Code 0 returns the
+    // first depth, and a returned code can be passed back to fetch its children.
+    const categoryId = pathSegment(stringArgument(input.arguments, "categoryId", false) || "0");
     const remote = await coupangRequest({
       payload: input.payload,
       method: "GET",
-      path: "/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories",
-      query: queryParams(input.arguments),
+      path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/${categoryId}`,
     });
     return result(input, [step("categories", remote)]);
   }
@@ -617,14 +631,27 @@ async function executeCoupang(input: ExecuteInput) {
   }
   if (input.operation === "listing.create" || input.operation === "listing.update") {
     const body = { ...objectValue(input.arguments, "body"), vendorId };
-    const remote = await coupangRequest({
+    const writeRemote = await coupangRequest({
       payload: input.payload,
       method: input.operation === "listing.create" ? "POST" : "PUT",
       path: sellerProductsPath,
       body,
     });
-    const remoteId = typeof remote.data.data === "number" || typeof remote.data.data === "string" ? String(remote.data.data) : undefined;
-    return result(input, [step(input.operation, remote)], remoteId);
+    const remoteId = typeof writeRemote.data.data === "number" || typeof writeRemote.data.data === "string" ? String(writeRemote.data.data) : undefined;
+    const writeStep = step(input.operation, writeRemote);
+    if (input.operation !== "listing.create" || !writeStep.ok || !remoteId) return result(input, [writeStep], remoteId);
+    const readbackRemote = await coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `${sellerProductsPath}/${pathSegment(remoteId)}`,
+    });
+    const readbackStep = step("listing-readback", readbackRemote);
+    const readbackData = readbackRemote.data.data;
+    const readbackId = readbackData && typeof readbackData === "object" && !Array.isArray(readbackData)
+      ? (readbackData as Record<string, unknown>).sellerProductId
+      : readbackRemote.data.sellerProductId;
+    readbackStep.ok = readbackStep.ok && readbackId !== undefined && String(readbackId) === remoteId;
+    return result(input, [writeStep, readbackStep], remoteId);
   }
   if (input.operation === "listing.stop") {
     const vendorItemId = pathSegment(stringArgument(input.arguments, "vendorItemId"));
@@ -716,9 +743,16 @@ async function executeSmartstore(input: ExecuteInput) {
     return result(input, [step("category-validation", remote)], categoryId);
   }
   if (input.operation === "listing.create") {
-    const remote = await request({ method: "POST", path: "/v2/products", body: objectValue(input.arguments, "body") });
-    const remoteId = remote.data.originProductNo === undefined ? undefined : String(remote.data.originProductNo);
-    return result(input, [step("product-create", remote)], remoteId);
+    const createRemote = await request({ method: "POST", path: "/v2/products", body: objectValue(input.arguments, "body") });
+    const remoteId = createRemote.data.originProductNo === undefined ? undefined : String(createRemote.data.originProductNo);
+    const steps = [step("product-create", createRemote)];
+    if (!steps[0].ok || !remoteId) return result(input, steps, remoteId);
+    const readbackRemote = await request({ method: "GET", path: `/v2/products/origin-products/${pathSegment(remoteId)}` });
+    const readbackStep = step("product-readback", readbackRemote);
+    const readbackId = readbackRemote.data.originProductNo;
+    readbackStep.ok = readbackStep.ok && readbackId !== undefined && String(readbackId) === remoteId;
+    steps.push(readbackStep);
+    return result(input, steps, remoteId);
   }
   if (input.operation === "listing.update") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
@@ -762,6 +796,68 @@ async function executeSmartstore(input: ExecuteInput) {
   }
   const remote = await request({ method: "POST", path: "/v1/pay-order/seller/product-orders/dispatch", body: objectValue(input.arguments, "body") });
   return result(input, [step("dispatch", remote)]);
+}
+
+function temuResultObject(data: Record<string, unknown>) {
+  const value = data.result;
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+async function executeTemu(input: ExecuteInput) {
+  if (input.operation === "categories.list" || input.operation === "categories.suggest" || input.operation === "categories.attributes" || input.operation === "categories.validate") {
+    const goodsName = stringArgument(input.arguments, "goodsName", false)
+      || stringArgument(input.arguments, "query", false)
+      || stringArgument(input.arguments, "categoryId", false);
+    if (!goodsName) throw new Error("CHANNEL_ARGUMENT_REQUIRED:goodsName");
+    const remote = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.category.recommend",
+      arguments: {
+        goodsName,
+        ...(stringArgument(input.arguments, "description", false) ? { description: stringArgument(input.arguments, "description", false) } : {}),
+        ...(stringArgument(input.arguments, "imageUrl", false) ? { imageUrl: stringArgument(input.arguments, "imageUrl", false) } : {}),
+      },
+    });
+    const categoryId = temuResultObject(remote.data).catId;
+    return result(input, [step("category-recommend", remote)], categoryId === undefined ? undefined : String(categoryId));
+  }
+  if (input.operation === "listing.create") {
+    const body = objectValue(input.arguments, "body");
+    const goodsBasic = objectValue(body, "goodsBasic");
+    const externalGoodsId = stringArgument(goodsBasic, "externalGoodsId");
+    const createRemote = await temuRequest({ payload: input.payload, type: "temu.local.goods.v3.add", arguments: body });
+    const created = temuResultObject(createRemote.data);
+    const remoteId = created.goodsId === undefined ? undefined : String(created.goodsId);
+    const steps = [step("goods-v3-add", createRemote)];
+    if (!steps[0].ok || !remoteId) return result(input, steps, remoteId);
+    const readbackRemote = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.list.retrieve",
+      arguments: { outGoodsSnList: [externalGoodsId], pageSize: 25 },
+    });
+    const readbackStep = step("goods-readback", readbackRemote);
+    const goodsList = temuResultObject(readbackRemote.data).goodsList;
+    const matched = Array.isArray(goodsList) && goodsList.some((item) => item && typeof item === "object" && !Array.isArray(item)
+      && String((item as Record<string, unknown>).goodsId ?? "") === remoteId
+      && String((item as Record<string, unknown>).outGoodsSn ?? "") === externalGoodsId);
+    readbackStep.ok = readbackStep.ok && matched;
+    steps.push(readbackStep);
+    return result(input, steps, remoteId);
+  }
+  if (input.operation === "listing.stop") {
+    const goodsId = stringArgument(input.arguments, "goodsId");
+    const remote = await temuRequest({ payload: input.payload, type: "bg.local.goods.sale.status.set", arguments: { goodsId: Number(goodsId), onsale: 0, operationType: 1 } });
+    return result(input, [step("goods-off-shelf", remote)], goodsId);
+  }
+  if (input.operation === "inventory.update") {
+    const remote = await temuRequest({ payload: input.payload, type: "bg.local.goods.stock.edit", arguments: objectValue(input.arguments, "body") });
+    const goodsId = temuResultObject(remote.data).goodsId;
+    return result(input, [step("goods-stock", remote)], goodsId === undefined ? undefined : String(goodsId));
+  }
+  if (input.operation === "orders.list" || input.operation === "orders.get" || input.operation === "shipment.acknowledge" || input.operation === "shipment.confirm") {
+    throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
+  }
+  throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
 }
 
 async function executeEbay(input: ExecuteInput) {
@@ -852,5 +948,6 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
   if (input.channel === "coupang") return executeCoupang(input);
   if (input.channel === "smartstore") return executeSmartstore(input);
   if (input.channel === "ebay") return executeEbay(input);
-  throw new Error("CHANNEL_VENDOR_SPEC_REQUIRED:elevenst");
+  if (input.channel === "temu") return executeTemu(input);
+  throw new Error("CHANNEL_OPERATION_UNSUPPORTED");
 }

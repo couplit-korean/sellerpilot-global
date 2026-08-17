@@ -80,6 +80,7 @@ import { CategoryClassificationWorkbench } from "./category-classification-workb
 import { ProductPublishWorkbench } from "./product-publish-workbench";
 import { MarginCalculatorPage } from "./margin-calculator";
 import { channels, type ChannelKey } from "./channel-config";
+import { activeChannelKeys } from "../lib/channels/catalog";
 import { useOperationsSnapshot, type OperationsSnapshot } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
@@ -98,7 +99,7 @@ type View =
   | "shopee"
   | "lazada"
   | "coupang"
-  | "elevenst"
+  | "temu"
   | "smartstore"
   | "ebay"
   | "alibaba"
@@ -127,9 +128,9 @@ const navGroups = [
       { id: "shopee" as View, label: "Shopee Global", channel: "S" },
       { id: "lazada" as View, label: "Lazada MY", channel: "L" },
       { id: "coupang" as View, label: "쿠팡", channel: "C" },
-      { id: "elevenst" as View, label: "11번가", channel: "11" },
       { id: "smartstore" as View, label: "네이버 스마트스토어", channel: "N" },
       { id: "ebay" as View, label: "eBay Global", channel: "E" },
+      { id: "temu" as View, label: "Temu Korea", channel: "T" },
       { id: "alibaba" as View, label: "Alibaba.com", channel: "A", disabled: true },
       { id: "one688" as View, label: "1688.com", channel: "1688", disabled: true },
     ],
@@ -156,9 +157,9 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   shopee: { title: "Shopee Global", description: "8개 국가 Shopee 숍의 상품, 매출, 주문, CS 성과입니다." },
   lazada: { title: "Lazada Malaysia", description: "말레이시아 스토어의 상품, 매출, 주문, CS 성과입니다." },
   coupang: { title: "쿠팡", description: "쿠팡 스토어의 상품, 매출, 주문, CS 성과입니다." },
-  elevenst: { title: "11번가", description: "11번가 스토어의 상품, 매출, 주문, CS 성과입니다." },
   smartstore: { title: "네이버 스마트스토어", description: "스마트스토어의 상품, 매출, 주문, CS 성과입니다." },
   ebay: { title: "eBay Global", description: "글로벌 스토어의 상품, 매출, 주문, CS 성과입니다." },
+  temu: { title: "Temu Korea", description: "Temu 한국 스토어의 상품, 매출, 주문, CS 성과입니다." },
   alibaba: { title: "Alibaba.com", description: "글로벌 B2B 채널 연동을 준비하고 있습니다." },
   one688: { title: "1688.com", description: "중국 내수 B2B 채널 연동을 준비하고 있습니다." },
   acceptance: { title: "개발 · 실검수", description: "PPT 기반 175개 요구사항의 개발 상태와 실제 작동 증거를 분리해 관리합니다." },
@@ -170,9 +171,9 @@ const ticketChannelCodes: Record<string, string> = {
   Shopee: "S",
   Lazada: "L",
   쿠팡: "C",
-  "11번가": "11",
   "네이버 스마트스토어": "N",
   eBay: "E",
+  Temu: "T",
 };
 
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
@@ -238,9 +239,9 @@ const channelNameByKey: Record<string, string> = {
   shopee: "Shopee",
   lazada: "Lazada",
   coupang: "쿠팡",
-  elevenst: "11번가",
   smartstore: "네이버 스마트스토어",
   ebay: "eBay",
+  temu: "Temu",
 };
 
 function relativeTime(value: string) {
@@ -375,12 +376,13 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   const [rateSource, setRateSource] = useState("실데이터 확인 중");
   const [today] = useState(() => new Date());
   const monthlyTopProducts = useMemo(() => [...displayProducts].sort((a, b) => b.sales - a.sales).slice(0, 10), [displayProducts]);
+  const activeMetrics = useMemo(() => channelMetrics.filter((channel) => activeChannelKeys.includes(channel.channelKey as (typeof activeChannelKeys)[number])), [channelMetrics]);
   const summary = operationSummary ?? { revenue30dKrw: 0, sold30d: 0, orderCount: 0, paidOrderCount: 0, readyToShipCount: 0, openTicketCount: 0, lowStockCount: 0, productCount: 0, registrationErrorCount: 0, activeCredentialCount: 0 };
   const livePipeline = pipeline ?? { aiRunning: 0, listingQueued: 0, listingPublished: 0, listingFailed: 0 };
   const totalTasks = summary.readyToShipCount + summary.openTicketCount + summary.lowStockCount + summary.registrationErrorCount;
   const totalListings = livePipeline.listingPublished + livePipeline.listingFailed;
   const successRate = totalListings > 0 ? (livePipeline.listingPublished / totalListings) * 100 : 0;
-  const maxChannelRevenue = Math.max(1, ...channelMetrics.map((channel) => channel.revenue30dKrw));
+  const maxChannelRevenue = Math.max(1, ...activeMetrics.map((channel) => channel.revenue30dKrw));
   const currentDate = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "long" }).format(today);
   const rangeDays = period === "7일" ? 7 : period === "90일" ? 90 : 30;
   const rangeStart = new Date(today.getTime() - (rangeDays - 1) * 86_400_000).toISOString().slice(0, 10);
@@ -440,7 +442,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
       <section className="dashboard-main-grid">
         <article className="panel revenue-panel">
           <div className="panel-heading"><div><span className="panel-kicker">실매출 분석</span><h3>채널별 최근 30일 매출</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>상품 원장<ChevronRight size={15} /></button></div>
-          <div className="live-channel-bars">{channelMetrics.map((channel) => <button key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><span><i style={{ background: channel.color }} />{channel.name}</span><b>{formatCompactWon(channel.revenue30dKrw)}</b><em>{channel.orderCount.toLocaleString()}건</em><small><i style={{ width: `${Math.round((channel.revenue30dKrw / maxChannelRevenue) * 100)}%`, background: channel.color }} /></small></button>)}</div>
+          <div className="live-channel-bars">{activeMetrics.map((channel) => <button key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><span><i style={{ background: channel.color }} />{channel.name}</span><b>{formatCompactWon(channel.revenue30dKrw)}</b><em>{channel.orderCount.toLocaleString()}건</em><small><i style={{ width: `${Math.round((channel.revenue30dKrw / maxChannelRevenue) * 100)}%`, background: channel.color }} /></small></button>)}</div>
         </article>
 
         <article className="panel top-ranking-card">
@@ -463,7 +465,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
         <article className="panel channel-performance">
           <div className="panel-heading"><div><span className="panel-kicker">실계정 운영 상태</span><h3>채널별 실데이터</h3></div><span className="live-label"><i />LIVE</span></div>
           <div className="channel-list">
-            {channelMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : ""}><i />{channel.credentialStatus === "active" ? "운영 키 연결" : "API 키 연결 필요"}</span></div><div className="channel-metric"><small>30일 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
+            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : ""}><i />{channel.credentialStatus === "active" ? "운영 키 연결" : "API 키 연결 필요"}</span></div><div className="channel-metric"><small>30일 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -543,6 +545,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
   const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
   const [uploadError, setUploadError] = useState("");
+  const [mainPhotoUrl, setMainPhotoUrl] = useState("");
+  const [importingMainPhoto, setImportingMainPhoto] = useState(false);
   const [studioRequestId, setStudioRequestId] = useState(0);
   const [analyzedProductName, setAnalyzedProductName] = useState(initialProduct?.name ?? "");
   const [analyzedProductId, setAnalyzedProductId] = useState<string | null>(initialProduct?.id ?? null);
@@ -550,7 +554,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
   const [publishRefreshVersion, setPublishRefreshVersion] = useState(0);
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
   const [batchItems, setBatchItems] = useState<BatchProductItem[]>([]);
-  const connectedChannelKeys = useMemo(() => channelMetrics.filter((metric) => metric.credentialStatus === "active").map((metric) => metric.channelKey), [channelMetrics]);
+  const connectedChannelKeys = useMemo(() => channelMetrics
+    .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
+    .map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
 
   const setIntakeField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
@@ -595,6 +601,37 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
       const message = error instanceof Error ? error.message : "대표사진을 확인해 주세요.";
       setUploadError(message);
       notify(message);
+    }
+  };
+
+  const importMainPhotoFromUrl = async () => {
+    if (importingMainPhoto) return;
+    try {
+      const url = new URL(mainPhotoUrl.trim(), window.location.href);
+      if (!/^https?:$/.test(url.protocol)) throw new Error("http:// 또는 https:// 공개 이미지 URL을 입력해 주세요.");
+      setImportingMainPhoto(true);
+      const response = await fetch(url.toString(), { cache: "no-store" });
+      if (!response.ok) throw new Error(`이미지를 가져오지 못했습니다. HTTP ${response.status}`);
+      const blob = await response.blob();
+      const contentType = blob.type.split(";")[0].toLowerCase();
+      if (!["image/jpeg", "image/png", "image/webp"].includes(contentType)) throw new Error("URL이 JPG, PNG, WEBP 이미지를 가리키는지 확인해 주세요.");
+      if (blob.size > 20 * 1024 * 1024) throw new Error("원본 이미지는 20MB 이하로 등록해 주세요.");
+      const pathnameName = decodeURIComponent(url.pathname.split("/").pop() || "product-image").replace(/[^a-zA-Z0-9._-]+/g, "-");
+      const extension = contentType === "image/png" ? ".png" : contentType === "image/webp" ? ".webp" : ".jpg";
+      const fileName = /\.(?:jpe?g|png|webp)$/i.test(pathnameName) ? pathnameName : `${pathnameName}${extension}`;
+      const photo = await toPhoto(new File([blob], fileName, { type: contentType }), "main");
+      if (mainPhoto) URL.revokeObjectURL(mainPhoto.url);
+      setMainPhoto(photo);
+      setUploadError("");
+      notify("공개 이미지 URL을 대표사진으로 불러왔습니다.");
+    } catch (error) {
+      const message = error instanceof TypeError
+        ? "브라우저에서 읽을 수 없는 URL입니다. 같은 사이트 이미지 또는 CORS가 허용된 공개 이미지를 사용해 주세요."
+        : error instanceof Error ? error.message : "공개 이미지 URL을 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+    } finally {
+      setImportingMainPhoto(false);
     }
   };
 
@@ -714,6 +751,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
     setSlotPhotos({});
     setExtraPhotos([]);
     setIntake({ ...emptyProductIntake });
+    setMainPhotoUrl("");
     setManualErrors({});
     setUploadError("");
     notify(`${parsed.data.productName}을 동시 처리 대기열에 담았습니다. ${batchItems.length + 1} / 8`);
@@ -763,8 +801,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
   ];
   const intakeCompletedCount = intakeCompletionItems.filter(Boolean).length;
   const intakeProgress = Math.round((intakeCompletedCount / intakeCompletionItems.length) * 100);
-  const connectedChannelEntries = Object.entries(channels).filter(([key, channel]) => channel.enabled && connectedChannelKeys.includes(key));
-  const unavailableChannelEntries = Object.entries(channels).filter(([key, channel]) => !channel.enabled || !connectedChannelKeys.includes(key));
+  const uploadChannelEntries = activeChannelKeys.map((key) => [key, channels[key]] as const);
+  const connectedChannelEntries = uploadChannelEntries.filter(([key]) => connectedChannelKeys.includes(key));
+  const unavailableChannelEntries = uploadChannelEntries.filter(([key]) => !connectedChannelKeys.includes(key));
 
   return (
     <div className="page-stack publishing-page">
@@ -787,6 +826,15 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
               {mainPhoto ? <><span className="main-photo-preview"><Image src={mainPhoto.url} alt="등록한 대표 상품 사진" fill sizes="700px" unoptimized /></span><span className="photo-preview-overlay"><ImagePlus size={17} />대표사진 교체</span><strong className="photo-file-name">{mainPhoto.name} · {mainPhoto.originalWidth}×{mainPhoto.originalHeight} → 1200×1200</strong></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>대표 상품 사진을 넣으세요</strong><p>JPG, PNG, WEBP · 최소 600×600px · 자동 1:1 여백 보정</p><em><ImagePlus size={15} />대표사진 선택</em></>}
               {running && <span className="analysis-overlay"><LoaderCircle className="spin" size={29} /><b>사진·설명·링크 통합 분석 중</b><small>OCR과 상품 정보 교차검증을 진행하고 있습니다.</small><i><span /></i></span>}
             </label>
+            <div className="main-photo-url-import">
+              <Link2 size={16} />
+              <input type="url" value={mainPhotoUrl} onChange={(event) => setMainPhotoUrl(event.target.value)} placeholder="https:// 공개 이미지 URL" aria-label="공개 이미지 URL" />
+              <button type="button" onClick={() => void importMainPhotoFromUrl()} disabled={!mainPhotoUrl.trim() || importingMainPhoto || running}>
+                {importingMainPhoto ? <LoaderCircle className="spin" size={15} /> : <ImagePlus size={15} />}
+                {importingMainPhoto ? "불러오는 중" : "URL로 불러오기"}
+              </button>
+            </div>
+            <small className="main-photo-url-help">로그인 없이 열리는 JPG, PNG, WEBP URL을 기존 대표사진 규격으로 검사합니다.</small>
             {uploadError && <p className="upload-error"><AlertCircle size={14} />{uploadError}</p>}
           </section>
 
@@ -848,7 +896,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
           <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 키가 연결된 채널만 선택할 수 있습니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
           <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 공식 API 등록 가능</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
           <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : connected ? "연결됨" : "키 필요"}</em></span>; })}</div></details>
-          <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>ChatGPT CLI 분석 완료</b><small>실제 작업 결과가 저장된 상품만 진행</small></span><em>필수</em></div><div className="automation-requirement"><span><b>동시 처리 정책</b><small>상품 최대 8건 · 생성 이미지 2장씩 · 판매 채널 최대 8개 병렬 실행</small></span><em>자동</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
+          <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>ChatGPT CLI 분석 완료</b><small>실제 작업 결과가 저장된 상품만 진행</small></span><em>필수</em></div><div className="automation-requirement"><span><b>동시 처리 정책</b><small>상품 최대 8건 · 생성 이미지 2장씩 · 판매 채널 7개 병렬 실행</small></span><em>자동</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
         </aside>
       </section>
       <section className="panel product-batch-panel">
@@ -965,7 +1013,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
     { no: "03", title: "사진으로 상품 등록", desc: "정면·라벨·바코드 사진을 올려 상품 사실정보 추출", view: "publishing" as View, icon: ImagePlus, outcome: "반복 입력 제거" },
     { no: "04", title: "AI 상세·썸네일 제작", desc: "ChatGPT CLI 분석, codex-image 연출컷, 3종 썸네일과 편집 가능한 상세페이지 생성", view: "publishing" as View, icon: WandSparkles, outcome: "Puck 블록으로 직접 수정 가능한 초안" },
     { no: "05", title: "채널별 마진 검증", desc: "원가·수수료·환율·광고비를 반영해 목표 마진 판매가를 결정", view: "margin" as View, icon: Calculator, outcome: "팔아도 남는 가격 확정" },
-    { no: "06", title: "7개 채널 동시 등록", desc: "Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
+    { no: "06", title: "7개 채널 동시 등록", desc: "Qoo10·Shopee·Lazada·쿠팡·스마트스토어·eBay·Temu 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
     { no: "07", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
     { no: "08", title: "다국어 CS 응대", desc: "문의 자동번역과 주문정보 기반 AI 답변 초안", view: "cs" as View, icon: Bot, outcome: "응답시간 단축" },
     { no: "09", title: "성과 개선", desc: "채널·상품별 매출, 전환율, CS와 오류 데이터를 비교", view: "qoo10" as View, icon: TrendingUp, outcome: "잘 팔리는 상품에 집중" },
@@ -1007,7 +1055,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     sales: product.sold30d,
     revenue: `₩${Math.round(product.revenue30dKrw).toLocaleString("ko-KR")}`,
     status: productStatusLabel[product.status],
-    channels: product.listingChannels,
+    channels: product.status === "active" ? product.listingChannels : [],
   })) ?? [], [operations.data]);
 
   const displayOrders = useMemo<DisplayOrder[]>(() => operations.data?.orders.map((order) => ({

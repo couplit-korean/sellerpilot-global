@@ -17,7 +17,7 @@ export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
-  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"]),
+  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"]),
   operation: z.enum(channelOperationNames),
   idempotencyKey: z.string().trim().min(16).max(160),
   confirmWrite: z.boolean().default(false),
@@ -47,6 +47,10 @@ function errorMessage(error: unknown) {
   if (message.startsWith("CHANNEL_OPERATION_UNSUPPORTED:")) return "해당 채널에서 지원하지 않는 작업입니다.";
   if (message.startsWith("CHANNEL_VENDOR_SPEC_REQUIRED:")) return "판매자 전용 상세 API 명세를 확정한 뒤 사용할 수 있습니다.";
   if (/CREDENTIALS_MISSING|ACCESS_TOKEN_MISSING|TOKEN_EXCHANGE_FAILED|TOKEN_REFRESH_FAILED|REFRESH_TOKEN_EXPIRED|REFRESH_CREDENTIALS_MISSING|CREDENTIAL_REFRESH_STORE_FAILED/.test(message)) return "필수 인증값 또는 OAuth 토큰이 누락됐거나 만료됐습니다.";
+  if (message.includes("COUPANG_USABLE_OUTBOUND_MISSING")) return "쿠팡 WING에 사용 가능한 국내 출고지가 없습니다. WING의 출고지 설정을 확인해 주세요.";
+  if (message.includes("COUPANG_USABLE_RETURN_CENTER_MISSING")) return "쿠팡 WING에 사용 가능한 국내 반품지와 택배사 설정이 없습니다. WING의 반품지 설정을 확인해 주세요.";
+  if (message.includes("COUPANG_RETURN_FEE_MISSING")) return "쿠팡 WING 반품지에 0원보다 큰 반품 배송비가 설정되어 있지 않습니다.";
+  if (message.includes("COUPANG_WING_USER_ID_MISSING")) return "쿠팡 API Vault에 WING 로그인 사용자 ID가 없습니다.";
   if (message.startsWith("CHANNEL_GATEWAY_TIMEOUT")) return "허용 IP 채널 작업자의 응답 제한시간을 초과했습니다. 작업자 상태를 확인해 주세요.";
   if (message.startsWith("CHANNEL_GATEWAY_")) return "허용 IP 채널 작업 경로에서 안전하게 처리된 오류가 발생했습니다.";
   if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return "판매채널 응답 제한시간(15초)을 초과했습니다.";
@@ -70,7 +74,7 @@ export async function POST(request: NextRequest) {
   if (capability.mode === "unsupported") {
     return NextResponse.json({ message: capability.note, mode: capability.mode }, { status: 409 });
   }
-  if (capability.mode === "vendor_docs_required" || channel === "elevenst") {
+  if (capability.mode === "vendor_docs_required") {
     return NextResponse.json({ message: capability.note, mode: "vendor_docs_required" }, { status: 409 });
   }
   if (writeChannelOperations.has(operation) && !parsed.data.confirmWrite) {
@@ -213,7 +217,7 @@ export async function POST(request: NextRequest) {
     return !error && data === true;
   };
 
-  if (channel === "shopee" || channel === "lazada") {
+  if (channel === "shopee" || channel === "lazada" || channel === "coupang" || channel === "smartstore" || channel === "temu") {
     try {
       const result = await executeViaChannelGateway({
         serviceClient,

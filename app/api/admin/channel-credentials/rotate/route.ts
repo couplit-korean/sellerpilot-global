@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid().optional(),
-  channel: z.enum(["qoo10", "coupang", "elevenst", "smartstore"]),
+  channel: z.enum(["qoo10", "coupang", "smartstore", "temu"]),
   environment: z.enum(["sandbox", "production"]),
   secretPayload: z.record(z.string(), z.string().trim().max(8_000)),
   expiresAt: z.string().datetime().nullable(),

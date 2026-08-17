@@ -7,7 +7,7 @@ export type ReadinessCheck = {
 };
 
 export type ChannelReadiness = {
-  key: "qoo10" | "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "ebay";
+  key: "qoo10" | "shopee" | "lazada" | "coupang" | "smartstore" | "ebay" | "temu";
   code: string;
   name: string;
   market: string;
@@ -123,23 +123,23 @@ export const channelReadiness: ChannelReadiness[] = [
     nextAction: "비밀번호 재확인 → 키 확인/발급 → Vault 등록 → 등록상품 1건 읽기 → 제한 쓰기 검수",
   },
   {
-    key: "elevenst",
-    code: "11",
-    name: "11번가",
+    key: "temu",
+    code: "T",
+    name: "Temu Korea",
     market: "한국",
-    console: "11st Open API Center",
-    appState: "공개 기능표 반영 · 판매자 상세 명세 필요",
+    console: "Temu Partner Platform",
+    appState: "판매자 계정 활성 · Partner App 및 판매자 Access Token 연결 대기",
     overall: "blocked",
-    summary: "상품·재고·주문·배송·취소/교환/반품 지원 범위는 확인했지만 판매자 상세 XML 서비스 코드와 운영 URL은 로그인 뒤 문서에서만 확정할 수 있습니다.",
+    summary: "Temu 한국 판매자 계정과 V3 상품 발행·자동 이미지 저장·자동 카테고리 매칭 규격을 확인했습니다. 프로그램 전송 전 Partner App 발행과 판매자 승인 토큰이 필요합니다.",
     checks: [
-      { label: "키 정책", state: "verified", evidence: "2026-06-30부터 Open API Key 유효기간 180일" },
-      { label: "기능 범위", state: "verified", evidence: "상품·주문·클레임 공식 소개 페이지 확인" },
-      { label: "XML 전송기", state: "verified", evidence: "OpenApiKey 헤더·XML 응답·타임아웃 골격 구현" },
-      { label: "판매자 상세 규격", state: "blocked", evidence: "로그인 전용 문서의 서비스 코드·상태표 필요" },
-      { label: "실계정 E2E", state: "not_configured", evidence: "판매자 키 미연결" },
+      { label: "판매자 계정", state: "verified", evidence: "COUPLIT 한국 스토어 활성 상태 확인" },
+      { label: "V3 상품 발행", state: "verified", evidence: "temu.local.goods.v3.add 공식 필드·서명·응답 규격 구현" },
+      { label: "이미지·카테고리", state: "verified", evidence: "공개 HTTPS 이미지 자동 저장·카테고리 자동 추천 규격 반영" },
+      { label: "프로그램 재조회", state: "verified", evidence: "외부 상품코드로 temu.local.goods.list.retrieve 재검증 구현" },
+      { label: "실계정 E2E", state: "not_configured", evidence: "Partner App Key·Secret·판매자 Access Token 미연결" },
     ],
-    blockers: ["11번가 개발자센터 판매자 문서 접근", "운영 Base URL·서비스 코드·상태 코드표 캡처", "180일 키 연결"],
-    nextAction: "판매자 문서 접근 → 버전 고정 → 계약 테스트 추가 → 읽기 API 검수",
+    blockers: ["Partner App 생성·발행", "한국 판매자 승인 Access Token 발급", "기본 배송 템플릿 설정"],
+    nextAction: "Partner App 발행 → 판매자 승인 → Vault 연결 → 상품 목록 읽기 → V3 테스트상품 등록·재조회",
   },
   {
     key: "smartstore",
@@ -147,9 +147,9 @@ export const channelReadiness: ChannelReadiness[] = [
     name: "네이버 스마트스토어",
     market: "한국",
     console: "Naver Commerce API",
-    appState: "Commerce API 개발업체 로그인 완료 · 등록 애플리케이션 0개",
+    appState: "SellerPilot Couplet 애플리케이션 생성 완료 · Secret 확인 CAPTCHA 대기",
     overall: "partial",
-    summary: "Commerce API센터에서 개발업체 ‘커플릿’ 로그인을 확인했고 ‘내 스토어 애플리케이션’은 현재 비어 있습니다. 애플리케이션을 등록하면 발급 정보만 Vault에 저장해 즉시 SELLER 토큰 검증을 진행할 수 있습니다.",
+    summary: "올바른 Couplet Seoul 판매자 세션에서 SellerPilot Couplet 애플리케이션을 생성하고 상품·N배송·판매자정보 권한과 고정 IP를 등록했습니다. Secret 표시 단계의 네이버 CAPTCHA를 사용자가 통과한 뒤 Vault 연결과 SELLER 토큰 검증을 진행합니다.",
     checks: [
       { label: "판매자 세션", state: "verified", evidence: "Couplet Seoul 통합매니저 스마트스토어센터 로그인 확인" },
       { label: "API센터 세션", state: "verified", evidence: "개발업체 커플릿 계정으로 Commerce API센터 로그인" },
@@ -157,11 +157,11 @@ export const channelReadiness: ChannelReadiness[] = [
       { label: "토큰 정책", state: "verified", evidence: "판매자 API는 SELLER + account_id · 10,800초 토큰 · GW.AUTHN 1회 재발급" },
       { label: "주문 체크포인트", state: "verified", evidence: "moreFrom/moreSequence · 1~3분 폴링" },
       { label: "개발업체 계정", state: "verified", evidence: "내 스토어 애플리케이션 화면 접근 완료" },
-      { label: "등록 애플리케이션", state: "blocked", evidence: "현재 등록된 애플리케이션이 없어 Application ID·Secret 미발급" },
-      { label: "실계정 E2E", state: "not_configured", evidence: "애플리케이션 등록 후 Application ID·Secret·판매자 UID 연결 필요" },
+      { label: "등록 애플리케이션", state: "verified", evidence: "SellerPilot Couplet 생성 · 상품·N배송·판매자정보 권한 · 고정 IP 등록" },
+      { label: "실계정 E2E", state: "not_configured", evidence: "Secret 표시 CAPTCHA 통과 후 Application ID·Secret·판매자 UID 연결 필요" },
     ],
-    blockers: ["내 스토어 애플리케이션 등록 승인", "Application ID·Secret·판매자 UID의 Couplit Vault 저장", "SELLER 토큰 발급"],
-    nextAction: "애플리케이션 등록 → SELLER 키 등록 → /v1/seller/account → 카테고리·필수속성 실검수",
+    blockers: ["Secret 표시 CAPTCHA 사용자 통과", "Application ID·Secret·판매자 UID의 Couplit Vault 저장", "SELLER 토큰 발급"],
+    nextAction: "CAPTCHA 통과 → SELLER 키 등록 → /v1/seller/account → 카테고리·필수속성 실검수",
   },
   {
     key: "ebay",

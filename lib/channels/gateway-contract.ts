@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { channelOperationNames } from "./operations";
 
+const gatewayChannelSchema = z.enum(["shopee", "lazada", "coupang", "smartstore", "temu"]);
+
 const credentialPayloadSchema = z.record(z.string(), z.unknown()).refine(
   (value) => JSON.stringify(value).length <= 64_000,
   "credential payload too large",
@@ -9,8 +11,8 @@ const credentialPayloadSchema = z.record(z.string(), z.unknown()).refine(
 export const gatewayClaimSchema = z.object({
   id: z.string().uuid(),
   credential_id: z.string().uuid(),
-  channel: z.enum(["shopee", "lazada"]),
-  operation: z.union([z.literal("oauth.exchange"), z.literal("shops.get"), z.enum(channelOperationNames)]),
+  channel: gatewayChannelSchema,
+  operation: z.union([z.literal("oauth.exchange"), z.literal("shops.get"), z.literal("diagnostic.test"), z.enum(channelOperationNames)]),
   environment: z.enum(["sandbox", "production"]),
   request: z.record(z.string(), z.unknown()),
   credential: credentialPayloadSchema,
@@ -19,7 +21,7 @@ export const gatewayClaimSchema = z.object({
 
 const operationResultSchema = z.object({
   ok: z.boolean(),
-  channel: z.enum(["shopee", "lazada"]),
+  channel: gatewayChannelSchema,
   operation: z.enum(channelOperationNames),
   steps: z.array(z.object({
     name: z.string().min(1).max(160),
@@ -37,12 +39,25 @@ const credentialRefreshSchema = z.object({
   expiresAt: z.string().datetime().nullable(),
 });
 
+const diagnosticResultSchema = z.object({
+  ok: z.boolean(),
+  channel: gatewayChannelSchema,
+  operation: z.literal("diagnostic.test"),
+  diagnostic: z.object({
+    status: z.enum(["passed", "failed", "manual"]),
+    message: z.string().min(1).max(1_000),
+    remoteRequestId: z.string().max(160).optional(),
+  }),
+  safeMessage: z.string().min(1).max(1_000),
+});
+
 export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
   z.object({
     jobId: z.string().uuid(),
     status: z.literal("succeeded"),
     result: z.union([
       operationResultSchema,
+      diagnosticResultSchema,
       z.object({
         ok: z.literal(true),
         channel: z.enum(["shopee", "lazada"]),

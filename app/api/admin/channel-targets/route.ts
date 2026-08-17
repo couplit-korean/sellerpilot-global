@@ -2,8 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { executeChannelTargetDiscovery } from "../../../../lib/channels/gateway";
-import { channelMarket, lazadaMarkets } from "../../../../lib/channels/markets";
-import { isCompleteChannelTarget, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
+import { channelMarket, lazadaMarkets, shopeeMarkets } from "../../../../lib/channels/markets";
+import { isCompleteChannelTarget, shopeeShopTargetIds, supportedShopeeTargets, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -57,11 +57,21 @@ export async function GET(request: Request) {
       verifiedAt: textValue(target.verified_at),
     }))
     : [];
-  if (normalizedCachedTargets.length && normalizedCachedTargets.every((target) => isCompleteChannelTarget(channel.data, target))) {
+  const cachedTargetsComplete = normalizedCachedTargets.length > 0
+    && normalizedCachedTargets.every((target) => isCompleteChannelTarget(channel.data, target));
+  if (channel.data === "lazada" && cachedTargetsComplete) {
     return NextResponse.json({
       channel: channel.data,
       credentialId: credential.id,
       targets: normalizedCachedTargets,
+    }, { headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  const normalizedSupportedShopeeTargets = channel.data === "shopee" ? supportedShopeeTargets(normalizedCachedTargets) : [];
+  if (channel.data === "shopee" && normalizedSupportedShopeeTargets.length === shopeeMarkets.length) {
+    return NextResponse.json({
+      channel: channel.data,
+      credentialId: credential.id,
+      targets: normalizedSupportedShopeeTargets,
     }, { headers: { "cache-control": "no-store, max-age=0" } });
   }
 
@@ -170,10 +180,7 @@ export async function POST(request: Request) {
 
   try {
     if (parsed.data.channel === "shopee") {
-      const targetIds = objectRows(secret.shopee_targets)
-        .filter((target) => target.type === "shop")
-        .map((target) => textValue(target.id))
-        .filter(Boolean);
+      const targetIds = shopeeShopTargetIds(secret);
       const profiles = [];
       for (const targetId of targetIds) {
         const currentCredentialId = await activeCredentialId();
@@ -181,34 +188,38 @@ export async function POST(request: Request) {
         const profile = remoteProfile(result);
         const marketCode = textValue(profile.region || profile.country || profile.market).toUpperCase();
         const market = channelMarket("shopee", marketCode);
+        if (!market) continue;
         profiles.push({
           targetId,
           displayName: textValue(profile.shop_name || profile.shopName || profile.name),
           marketCode,
-          locale: market?.locale ?? "",
-          language: market?.language ?? "",
-          currency: market?.currency ?? "",
+          locale: market.locale,
+          language: market.language,
+          currency: market.currency,
           status: textValue(profile.status || profile.shop_status),
         });
         const latestCredentialId = await activeCredentialId();
-        await serviceClient.rpc("sellerpilot_service_upsert_channel_market_target", {
+        const { data: storedTargetId, error: storeTargetError } = await serviceClient.rpc("sellerpilot_service_upsert_channel_market_target", {
           p_owner_id: userData.user.id,
           p_credential_id: latestCredentialId,
           p_channel: "shopee",
           p_target_id: targetId,
           p_display_name: textValue(profile.shop_name || profile.shopName || profile.name),
           p_market_code: marketCode,
-          p_locale: market?.locale ?? "",
-          p_language: market?.language ?? "",
-          p_currency: market?.currency ?? "",
+          p_locale: market.locale,
+          p_language: market.language,
+          p_currency: market.currency,
           p_remote_status: textValue(profile.status || profile.shop_status),
         });
+        if (storeTargetError || typeof storedTargetId !== "string") throw new Error("CHANNEL_TARGET_CACHE_STORE_FAILED");
       }
+      if (!profiles.length) return NextResponse.json({ message: "Shopee 승인 숍에서 지원 국가 정보를 확인하지 못했습니다.", channel: "shopee", credentialId: credential.id, targets: [] }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
       return NextResponse.json({ channel: "shopee", credentialId: credential.id, targets: profiles }, { headers: { "cache-control": "no-store, max-age=0" } });
     }
 
     const profiles = [];
-    for (const market of lazadaMarkets) {
+    const configuredMarket = channelMarket("lazada", textValue(secret.country || "MY").toUpperCase()) ?? lazadaMarkets[0];
+    for (const market of [configuredMarket]) {
       const currentCredentialId = await activeCredentialId();
       const result = await executeChannelTargetDiscovery({ serviceClient, credentialId: currentCredentialId, channel: "lazada", request: { country: market.code.toLowerCase() } });
       const profile = remoteProfile(result);
@@ -222,7 +233,7 @@ export async function POST(request: Request) {
         status: textValue(profile.status),
       });
       const latestCredentialId = await activeCredentialId();
-      await serviceClient.rpc("sellerpilot_service_upsert_channel_market_target", {
+      const { data: storedTargetId, error: storeTargetError } = await serviceClient.rpc("sellerpilot_service_upsert_channel_market_target", {
         p_owner_id: userData.user.id,
         p_credential_id: latestCredentialId,
         p_channel: "lazada",
@@ -234,7 +245,9 @@ export async function POST(request: Request) {
         p_currency: market.currency,
         p_remote_status: textValue(profile.status),
       });
+      if (storeTargetError || typeof storedTargetId !== "string") throw new Error("CHANNEL_TARGET_CACHE_STORE_FAILED");
     }
+    if (!profiles[0]?.targetId) return NextResponse.json({ message: "Lazada 판매자 응답에서 실제 Seller ID를 확인하지 못했습니다.", channel: "lazada", credentialId: credential.id, targets: [] }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     return NextResponse.json({ channel: "lazada", credentialId: credential.id, targets: profiles }, { headers: { "cache-control": "no-store, max-age=0" } });
   } catch {
     return NextResponse.json({ message: "허용 IP 채널 작업자에서 판매자 대상을 확인하지 못했습니다." }, { status: 422 });

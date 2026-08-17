@@ -820,6 +820,54 @@ button {
   font-size: 10px;
 }
 
+.main-photo-url-import {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid #cfd6df;
+  border-radius: 8px;
+  color: #687587;
+  background: #f8f9fa;
+}
+
+.main-photo-url-import input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: #263448;
+  background: transparent;
+  font: 10px/1.4 var(--font-geist-mono), monospace;
+}
+
+.main-photo-url-import button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid #c55a0d;
+  border-radius: 6px;
+  color: #fff;
+  background: var(--primary);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.main-photo-url-import button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+.main-photo-url-help {
+  display: block;
+  margin-top: 6px;
+  color: #7a8594;
+  font-size: 9px;
+}
+
 .upload-graphic {
   width: 56px;
   height: 56px;

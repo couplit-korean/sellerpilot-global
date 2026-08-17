@@ -69,9 +69,9 @@ const marginChannelProfiles: ChannelProfile[] = [
   { key: "shopee", currency: "SGD", symbol: "S$", rateToKrw: 1072.65, platformFee: 10, paymentFee: 2.18 },
   { key: "lazada", currency: "MYR", symbol: "RM", rateToKrw: 325.84, platformFee: 10, paymentFee: 3 },
   { key: "coupang", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: 10.8, paymentFee: 0 },
-  { key: "elevenst", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: 13, paymentFee: 0 },
   { key: "smartstore", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: 5.63, paymentFee: 0 },
   { key: "ebay", currency: "USD", symbol: "$", rateToKrw: 1378.4, platformFee: 12.35, paymentFee: 2.9 },
+  { key: "temu", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: 0, paymentFee: 0 },
 ];
 
 const defaultMarginForm: MarginForm = {

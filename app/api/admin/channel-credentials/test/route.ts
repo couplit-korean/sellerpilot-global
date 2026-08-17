@@ -2,14 +2,15 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { runChannelDiagnostic } from "../../../../../lib/channel-diagnostics";
-import { ensureEbayAccessToken, ensureShopeeAccessToken } from "../../../../../lib/channels/protocols";
+import { executeDiagnosticViaChannelGateway } from "../../../../../lib/channels/gateway";
+import { ensureEbayAccessToken } from "../../../../../lib/channels/protocols";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
-  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"]),
+  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"]),
 });
 
 export async function POST(request: NextRequest) {
@@ -46,6 +47,45 @@ export async function POST(request: NextRequest) {
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  if (
+    parsed.data.channel === "shopee"
+    || parsed.data.channel === "lazada"
+    || parsed.data.channel === "coupang"
+    || parsed.data.channel === "smartstore"
+    || parsed.data.channel === "temu"
+  ) {
+    try {
+      const result = await executeDiagnosticViaChannelGateway({
+        serviceClient,
+        credentialId: parsed.data.credentialId,
+        channel: parsed.data.channel,
+      });
+      await serviceClient.rpc("sellerpilot_record_credential_test", {
+        p_credential_id: parsed.data.credentialId,
+        p_status: result.status,
+        p_safe_message: result.message,
+      });
+      return NextResponse.json(result, {
+        status: result.status === "failed" ? 422 : 200,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
+    } catch {
+      const channelName = {
+        shopee: "Shopee",
+        lazada: "Lazada",
+        coupang: "쿠팡",
+        smartstore: "네이버",
+        temu: "Temu",
+      }[parsed.data.channel];
+      const message = `${channelName} 고정 IP 채널 워커에서 연결 검사를 완료하지 못했습니다. 워커 상태와 채널 인증값을 확인해 주세요.`;
+      await serviceClient.rpc("sellerpilot_record_credential_test", {
+        p_credential_id: parsed.data.credentialId,
+        p_status: "failed",
+        p_safe_message: message,
+      });
+      return NextResponse.json({ status: "failed", message }, { status: 422 });
+    }
+  }
   const { data: secretPayload, error: secretError } = await serviceClient.rpc("sellerpilot_decrypt_credential", {
     p_credential_id: parsed.data.credentialId,
   });
@@ -56,23 +96,6 @@ export async function POST(request: NextRequest) {
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
   let diagnosticPayload = secretPayload as Record<string, unknown>;
   let diagnosticCredentialId = parsed.data.credentialId;
-  if (parsed.data.channel === "shopee") {
-    try {
-      const ensured = await ensureShopeeAccessToken(diagnosticPayload, environment);
-      diagnosticPayload = ensured.payload;
-      if (ensured.refreshed) {
-        const { data: nextCredentialId, error: refreshError } = await serviceClient.rpc("sellerpilot_service_refresh_shopee", {
-          p_credential_id: parsed.data.credentialId,
-          p_secret_payload: ensured.payload,
-          p_expires_at: ensured.credentialExpiresAt,
-        });
-        if (refreshError || typeof nextCredentialId !== "string") throw new Error("refresh_store_failed");
-        diagnosticCredentialId = nextCredentialId;
-      }
-    } catch {
-      return NextResponse.json({ status: "failed", message: "Shopee OAuth 토큰을 갱신하지 못했습니다. 판매자 승인을 다시 확인해 주세요." }, { status: 422 });
-    }
-  }
   if (parsed.data.channel === "ebay") {
     try {
       const ensured = await ensureEbayAccessToken(diagnosticPayload, environment);

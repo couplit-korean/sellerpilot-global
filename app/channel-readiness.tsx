@@ -65,7 +65,7 @@ export function ChannelReadinessPage() {
         <article><span>실콘솔 확인</span><strong>2 / 6</strong><small>Qoo10 · Lazada</small></article>
         <article><span>대상 Online 앱</span><strong>{onlineApps} / 1</strong><small>Lazada 운영 앱</small></article>
         <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>문서·코드·화면 증거</small></article>
-        <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>키·승인·고정 IP·11st 문서</small></article>
+        <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>키·승인·고정 IP·Partner 앱</small></article>
         <article className="danger"><span>API E2E 통과</span><strong>0 / 6</strong><small>실계정 읽기 기준</small></article>
       </section>
 

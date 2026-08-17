@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { hashSync as bcryptHashSync } from "bcryptjs";
 
 export type SecretPayload = Record<string, unknown>;
@@ -153,6 +153,53 @@ export async function naverRequest(input: {
       "user-agent": "SellerPilot-Naver-Commerce-Connector/1.0",
     },
     body: input.body === undefined ? undefined : JSON.stringify(input.body),
+  });
+  return readRemoteResponse(response);
+}
+
+function temuSignedValue(value: unknown) {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) return "";
+  return typeof value === "string" ? serialized.slice(1, -1) : serialized;
+}
+
+export function buildTemuSignature(appSecret: string, request: Record<string, unknown>) {
+  const concatenated = Object.entries(request)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, value]) => `${key}${temuSignedValue(value)}`)
+    .join("");
+  return createHash("md5").update(`${appSecret}${concatenated}${appSecret}`, "utf8").digest("hex").toUpperCase();
+}
+
+export async function temuRequest(input: {
+  payload: SecretPayload;
+  type: string;
+  arguments?: Record<string, unknown>;
+}) {
+  const appKey = textValue(input.payload, "app_key");
+  const appSecret = textValue(input.payload, "app_secret");
+  const accessToken = textValue(input.payload, "access_token");
+  if (!appKey || !appSecret || !accessToken) throw new Error("TEMU_CREDENTIALS_MISSING");
+  const unsigned = {
+    access_token: accessToken,
+    app_key: appKey,
+    data_type: "JSON",
+    timestamp: Math.floor(Date.now() / 1000),
+    type: input.type,
+    version: "V1",
+    ...(input.arguments ?? {}),
+  };
+  const response = await fetch("https://openapi-b-global.temu.com/openapi/router", {
+    method: "POST",
+    cache: "no-store",
+    signal: AbortSignal.timeout(30_000),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "user-agent": "SellerPilot-Temu-Connector/1.0",
+    },
+    body: JSON.stringify({ ...unsigned, sign: buildTemuSignature(appSecret, unsigned) }),
   });
   return readRemoteResponse(response);
 }
@@ -745,33 +792,6 @@ export async function ebayRequest(input: {
       "user-agent": "SellerPilot-eBay-Sell-Connector/1.0",
     },
     body: input.body === undefined ? undefined : JSON.stringify(input.body),
-  });
-  return readRemoteResponse(response);
-}
-
-export async function elevenStreetRequest(input: {
-  payload: SecretPayload;
-  path: string;
-  method?: "GET" | "POST" | "PUT";
-  query?: URLSearchParams;
-  body?: string;
-}) {
-  const apiKey = textValue(input.payload, "api_key");
-  const baseUrl = textValue(input.payload, "seller_api_base_url");
-  if (!apiKey || !baseUrl) throw new Error("ELEVENST_VENDOR_SPEC_REQUIRED");
-  const url = new URL(input.path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
-  if (input.query) url.search = input.query.toString();
-  const response = await fetch(url, {
-    method: input.method ?? "GET",
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-    headers: {
-      accept: "application/xml,text/xml",
-      "content-type": "application/xml;charset=UTF-8",
-      openapikey: apiKey,
-      "user-agent": "SellerPilot-11st-Connector/1.0",
-    },
-    body: input.body,
   });
   return readRemoteResponse(response);
 }

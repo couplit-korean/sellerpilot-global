@@ -6,14 +6,17 @@ import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { cliStudioResultSchema } from "../lib/ai-cli-contract.ts";
+import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { executeChannelOperation } from "../lib/channels/operations.ts";
 import {
   ensureLazadaAccessToken,
   ensureShopeeAccessToken,
   ensureShopeeMerchantAccessToken,
   buildShopeeSignature,
+  coupangRequest,
   exchangeLazadaOAuthToken,
   exchangeShopeeOAuthToken,
+  fetchNaverAccessToken,
   lazadaRequest,
   shopeeMerchantRequest,
   shopeePartnerRequest,
@@ -42,12 +45,14 @@ function loadWorkerToken() {
 const workerToken = loadWorkerToken();
 const pollMs = Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS ?? 5_000));
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
+const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
+const imageGenerationTimeoutMs = Math.max(6 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 10 * 60_000));
 const codexBin = process.env.CODEX_BIN?.trim() || "/Applications/ChatGPT.app/Contents/Resources/codex";
 const schemaPath = resolve("scripts/ai-studio-output.schema.json");
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.2";
+const workerVersion = "sellerpilot-cli-worker/1.3";
 
 class JobCancelledError extends Error {
   constructor() {
@@ -88,7 +93,7 @@ async function api(path, init = {}) {
 async function touchJob(jobId) {
   const response = await api("/api/ai/worker/heartbeat", {
     method: "POST",
-    body: JSON.stringify({ jobId, version: "sellerpilot-cli-worker/1.1" }),
+    body: JSON.stringify({ jobId, version: workerVersion }),
   });
   if (!response.ok) throw new Error(`CLI 작업자 신호 실패 · HTTP ${response.status}`);
   const payload = await response.json();
@@ -327,6 +332,220 @@ async function prepareLazadaListing(payload, argumentsValue) {
   return { ...argumentsValue, request };
 }
 
+async function prepareSmartstoreListing(payload, argumentsValue) {
+  const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 10) : [];
+  if (!imageUrls.length) throw new Error("네이버 등록 이미지가 없습니다.");
+  const phone = textValue(payload, "after_service_phone");
+  if (!phone) throw new Error("NAVER_AFTER_SERVICE_PHONE_MISSING");
+  const token = await fetchNaverAccessToken(payload);
+  const form = new FormData();
+  for (let index = 0; index < imageUrls.length; index += 1) {
+    const image = await publicImage(imageUrls[index]);
+    const extension = image.contentType === "image/png" ? "png" : image.contentType === "image/webp" ? "webp" : "jpg";
+    form.append("imageFiles", new Blob([image.bytes], { type: image.contentType }), `sellerpilot-${index + 1}.${extension}`);
+  }
+  const uploadResponse = await fetch("https://api.commerce.naver.com/external/v1/product-images/upload", {
+    method: "POST",
+    body: form,
+    signal: AbortSignal.timeout(30_000),
+    headers: { accept: "application/json;charset=UTF-8", authorization: `Bearer ${token.accessToken}`, "user-agent": "SellerPilot-Naver-Media/1.0" },
+  });
+  const uploadData = await uploadResponse.json().catch(() => ({}));
+  const uploadedUrls = Array.isArray(uploadData.images) ? uploadData.images.map((image) => String(image?.url ?? "").trim()).filter(Boolean) : [];
+  if (!uploadResponse.ok || uploadedUrls.length !== imageUrls.length) throw new Error(`네이버 이미지 업로드 실패 · HTTP ${uploadResponse.status}`);
+  const body = argumentsValue.body && typeof argumentsValue.body === "object" ? structuredClone(argumentsValue.body) : {};
+  const originProduct = body.originProduct && typeof body.originProduct === "object" ? body.originProduct : {};
+  const detailAttribute = originProduct.detailAttribute && typeof originProduct.detailAttribute === "object" ? originProduct.detailAttribute : {};
+  originProduct.images = {
+    representativeImage: { url: uploadedUrls[0] },
+    optionalImages: uploadedUrls.slice(1).map((url) => ({ url })),
+  };
+  originProduct.detailAttribute = {
+    ...detailAttribute,
+    afterServiceInfo: {
+      afterServiceTelephoneNumber: phone,
+      afterServiceGuideContent: "상품 상세 설명과 스마트스토어 판매자 안내를 확인해 주세요.",
+    },
+  };
+  body.originProduct = originProduct;
+  return { ...argumentsValue, body };
+}
+
+function nestedContent(data) {
+  if (Array.isArray(data?.content)) return data.content;
+  if (Array.isArray(data?.data?.content)) return data.data.content;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+function coupangUsable(value) {
+  if (value === true || value === 1) return true;
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return normalized === "TRUE" || normalized === "Y" || normalized === "YES" || normalized === "1";
+}
+
+function preferredKoreanAddress(addresses) {
+  if (!Array.isArray(addresses)) return null;
+  const korean = addresses.filter((address) => String(address?.countryCode ?? "").trim().toUpperCase() === "KR");
+  return korean.find((address) => String(address?.addressType ?? "").trim().toUpperCase().includes("ROADNAME"))
+    ?? korean.find((address) => String(address?.addressType ?? "").trim().toUpperCase() === "JIBUN")
+    ?? korean[0]
+    ?? null;
+}
+
+function safeCoupangCenterSummary(centers) {
+  return [
+    `total=${centers.length}`,
+    `usable=${centers.filter((center) => coupangUsable(center?.usable)).length}`,
+    `domestic=${centers.filter((center) => preferredKoreanAddress(center?.placeAddresses)).length}`,
+  ].join(",");
+}
+
+function positiveFee(center) {
+  for (const key of ["returnFee02kg", "returnFee05kg", "returnFee10kg", "returnFee20kg", "vendorCreditFee02kg", "vendorCreditFee05kg", "vendorCashFee02kg", "vendorCashFee05kg"]) {
+    const value = Number(center?.[key]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return null;
+}
+
+function coupangAttributeValue(attribute, facts) {
+  const name = String(attribute?.attributeTypeName ?? "").replace(/\s+/g, "");
+  const usableUnits = Array.isArray(attribute?.usableUnits) ? attribute.usableUnits.map(String) : [];
+  const firstUnit = (...candidates) => candidates.find((unit) => usableUnits.includes(unit)) ?? "";
+  if (/총?수량|개수|구성수/.test(name)) {
+    const unit = firstUnit("개", "세트", "팩", "박스", "매") || String(attribute?.basicUnit ?? "개").replace(/^없음$/, "개");
+    return `1${unit}`;
+  }
+  if (/중량|무게/.test(name) && Number(facts?.weightKg) > 0) {
+    const unit = firstUnit("g", "kg");
+    return unit === "kg" ? `${Number(facts.weightKg)}kg` : `${Math.round(Number(facts.weightKg) * 1_000)}g`;
+  }
+  if (/크기|사이즈/.test(name) && Array.isArray(facts?.dimensionsCm) && facts.dimensionsCm.length === 3) {
+    return `${facts.dimensionsCm.map(Number).join("x")}cm`.slice(0, 30);
+  }
+  const material = String(facts?.material ?? "").trim();
+  if (/재질|소재/.test(name) && material && !/미확인|미기재/.test(material)) return material.slice(0, 30);
+  return "";
+}
+
+function coupangMetadata(data) {
+  const value = data?.data && typeof data.data === "object" && !Array.isArray(data.data) ? data.data : data;
+  return value && typeof value === "object" ? value : {};
+}
+
+function prepareCoupangItem(itemValue, metadata, facts) {
+  const item = itemValue && typeof itemValue === "object" ? structuredClone(itemValue) : {};
+  const metaAttributes = Array.isArray(metadata.attributes) ? metadata.attributes : [];
+  const supplied = new Map((Array.isArray(item.attributes) ? item.attributes : [])
+    .filter((attribute) => attribute && typeof attribute === "object")
+    .map((attribute) => [String(attribute.attributeTypeName ?? "").trim(), String(attribute.attributeValueName ?? "").trim()]));
+
+  const missing = [];
+  const mandatorySingles = metaAttributes.filter((attribute) => attribute?.required === "MANDATORY" && String(attribute?.groupNumber ?? "NONE") === "NONE" && attribute?.exposed === "EXPOSED");
+  for (const attribute of mandatorySingles) {
+    const name = String(attribute?.attributeTypeName ?? "").trim();
+    if (!name || supplied.get(name)) continue;
+    const derived = coupangAttributeValue(attribute, facts);
+    if (derived) supplied.set(name, derived);
+    else missing.push(name);
+  }
+  const groups = Map.groupBy(
+    metaAttributes.filter((attribute) => attribute?.required === "MANDATORY" && !["", "NONE"].includes(String(attribute?.groupNumber ?? "")) && attribute?.exposed === "EXPOSED"),
+    (attribute) => String(attribute.groupNumber),
+  );
+  for (const attributes of groups.values()) {
+    if (attributes.some((attribute) => supplied.get(String(attribute?.attributeTypeName ?? "").trim()))) continue;
+    const derivedAttribute = attributes.map((attribute) => [attribute, coupangAttributeValue(attribute, facts)]).find((entry) => entry[1]);
+    if (derivedAttribute) supplied.set(String(derivedAttribute[0].attributeTypeName).trim(), derivedAttribute[1]);
+    else missing.push(attributes.map((attribute) => String(attribute?.attributeTypeName ?? "").trim()).filter(Boolean).join(" 또는 "));
+  }
+  if (missing.length) throw new Error(`COUPANG_MANDATORY_ATTRIBUTES_MISSING:${missing.join(", ")}`);
+  item.attributes = [...supplied.entries()].map(([attributeTypeName, attributeValueName]) => ({ attributeTypeName, attributeValueName }));
+
+  if (!Array.isArray(item.notices) || !item.notices.length) {
+    const noticeCategories = Array.isArray(metadata.noticeCategories) ? metadata.noticeCategories : [];
+    const noticeCategory = noticeCategories.find((category) => Array.isArray(category?.noticeCategoryDetailNames) && category.noticeCategoryDetailNames.some((detail) => detail?.required === "MANDATORY"))
+      ?? noticeCategories[0];
+    const details = Array.isArray(noticeCategory?.noticeCategoryDetailNames) ? noticeCategory.noticeCategoryDetailNames : [];
+    item.notices = details
+      .filter((detail) => detail?.required === "MANDATORY")
+      .map((detail) => ({
+        noticeCategoryName: String(noticeCategory.noticeCategoryName),
+        noticeCategoryDetailName: String(detail.noticeCategoryDetailName),
+        content: "상품상세 참조",
+      }));
+    if (!item.notices.length) throw new Error("COUPANG_NOTICE_METADATA_MISSING");
+  }
+
+  if (!Array.isArray(item.certifications) || !item.certifications.length) {
+    const mandatoryCertifications = (Array.isArray(metadata.certifications) ? metadata.certifications : []).filter((certification) => certification?.required === "MANDATORY");
+    const coded = mandatoryCertifications.filter((certification) => certification?.dataType === "CODE");
+    if (coded.length) throw new Error(`COUPANG_CERTIFICATION_REQUIRED:${coded.map((certification) => certification?.name || certification?.certificationType).join(", ")}`);
+    item.certifications = mandatoryCertifications.map((certification) => ({ certificationType: certification.certificationType, certificationCode: "" }));
+  }
+  return item;
+}
+
+async function prepareCoupangListing(payload, argumentsValue) {
+  const requestedBy = textValue(payload, "requested_by");
+  if (!requestedBy) throw new Error("COUPANG_WING_USER_ID_MISSING");
+  const body = argumentsValue.body && typeof argumentsValue.body === "object" ? structuredClone(argumentsValue.body) : {};
+  const categoryCode = Number(body.displayCategoryCode);
+  if (!Number.isSafeInteger(categoryCode) || categoryCode <= 0) throw new Error("COUPANG_DISPLAY_CATEGORY_REQUIRED");
+  const vendorId = textValue(payload, "vendor_id");
+  const [outboundRemote, returnRemote, metadataRemote] = await Promise.all([
+    coupangRequest({ payload, method: "GET", path: "/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound", query: new URLSearchParams({ pageSize: "50", pageNum: "1" }) }),
+    coupangRequest({ payload, method: "GET", path: `/v2/providers/openapi/apis/api/v5/vendors/${encodeURIComponent(vendorId)}/returnShippingCenters`, query: new URLSearchParams({ pageNum: "1", pageSize: "50" }) }),
+    coupangRequest({ payload, method: "GET", path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/${categoryCode}` }),
+  ]);
+  if (!outboundRemote.response.ok) throw new Error(`COUPANG_OUTBOUND_QUERY_FAILED:${outboundRemote.response.status}`);
+  if (!returnRemote.response.ok) throw new Error(`COUPANG_RETURN_CENTER_QUERY_FAILED:${returnRemote.response.status}`);
+  if (!metadataRemote.response.ok) throw new Error(`COUPANG_CATEGORY_METADATA_FAILED:${metadataRemote.response.status}`);
+
+  const outboundCenters = nestedContent(outboundRemote.data);
+  const returnCenters = nestedContent(returnRemote.data);
+  const outbound = outboundCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
+  const returnCenter = returnCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses) && String(center?.deliverCode ?? "").trim());
+  if (!outbound) throw new Error(`COUPANG_USABLE_OUTBOUND_MISSING:${safeCoupangCenterSummary(outboundCenters)}`);
+  if (!returnCenter) throw new Error(`COUPANG_USABLE_RETURN_CENTER_MISSING:${safeCoupangCenterSummary(returnCenters)}`);
+  const returnAddress = preferredKoreanAddress(returnCenter.placeAddresses);
+  const returnFee = positiveFee(returnCenter);
+  if (!returnFee) throw new Error("COUPANG_RETURN_FEE_MISSING");
+  const metadata = coupangMetadata(metadataRemote.data);
+  const items = Array.isArray(body.items) ? body.items.map((item) => prepareCoupangItem(item, metadata, argumentsValue.facts)) : [];
+  if (!items.length) throw new Error("COUPANG_ITEMS_MISSING");
+
+  return {
+    ...argumentsValue,
+    body: {
+      ...body,
+      vendorId,
+      displayProductName: body.displayProductName || body.sellerProductName,
+      saleStartedAt: body.saleStartedAt || new Date(Date.now() - 60_000).toISOString().slice(0, 19),
+      saleEndedAt: body.saleEndedAt || "2099-01-01T23:59:59",
+      deliveryCompanyCode: String(returnCenter.deliverCode),
+      deliveryChargeType: "FREE",
+      deliveryCharge: 0,
+      freeShipOverAmount: 0,
+      deliveryChargeOnReturn: returnFee,
+      remoteAreaDeliverable: "N",
+      unionDeliveryType: "UNION_DELIVERY",
+      outboundShippingPlaceCode: Number(outbound.outboundShippingPlaceCode),
+      returnCenterCode: String(returnCenter.returnCenterCode),
+      returnChargeName: String(returnCenter.shippingPlaceName),
+      companyContactNumber: String(returnAddress.companyContactNumber),
+      returnZipCode: String(returnAddress.returnZipCode),
+      returnAddress: String(returnAddress.returnAddress),
+      returnAddressDetail: String(returnAddress.returnAddressDetail),
+      returnCharge: returnFee,
+      vendorUserId: requestedBy,
+      requested: false,
+      items,
+    },
+  };
+}
+
 function htmlToText(html) {
   return html
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
@@ -445,7 +664,7 @@ async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId) {
     "--output-last-message", resultFile,
     "--cd", jobDir,
     repairPrompt,
-  ], 8 * 60_000, jobId);
+  ], analysisTimeoutMs, jobId);
 
   const repaired = cliStudioResultSchema.safeParse(JSON.parse(await readFile(resultFile, "utf8")));
   if (!repaired.success) {
@@ -475,7 +694,7 @@ async function processJob(job) {
     ];
     for (const file of imageFiles) analysisArgs.push(`--image=${file}`);
     analysisArgs.push(buildAnalysisPrompt(job, reference.text));
-    await runCodex(analysisArgs, 8 * 60_000, job.id);
+    await runCodex(analysisArgs, analysisTimeoutMs, job.id);
 
     let result = JSON.parse(await readFile(resultFile, "utf8"));
     if (reference.warning) result.warnings = [...(Array.isArray(result.warnings) ? result.warnings : []), reference.warning].slice(0, 5);
@@ -508,7 +727,7 @@ async function processJob(job) {
           `--image=${imageFiles[0]}`,
           buildImagePrompt(result, outputFile, preset),
         ];
-        await runCodex(imageArgs, 6 * 60_000, job.id);
+        await runCodex(imageArgs, imageGenerationTimeoutMs, job.id);
         const upload = uploads.find((item) => item?.id === preset.id);
         if (!upload?.bucket || !upload?.path || !upload?.token) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
         const { error: uploadError } = await resultStorageClient.storage
@@ -729,7 +948,9 @@ async function processGatewayJob(job) {
     let result;
     let credentialRefresh;
     if (job.operation === "oauth.exchange") {
-      result = job.channel === "shopee" ? await shopeeOAuthResult(job) : await lazadaOAuthResult(job);
+      if (job.channel === "shopee") result = await shopeeOAuthResult(job);
+      else if (job.channel === "lazada") result = await lazadaOAuthResult(job);
+      else throw new Error("이 채널은 OAuth 교환 작업을 지원하지 않습니다.");
     } else if (job.operation === "shops.get") {
       let remote;
       if (job.channel === "shopee") {
@@ -742,12 +963,12 @@ async function processGatewayJob(job) {
           path: "/api/v2/shop/get_shop_info",
         });
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
-      } else {
+      } else if (job.channel === "lazada") {
         const ensured = await ensureLazadaAccessToken(job.credential);
         const country = String(job.request?.country || textValue(ensured.payload, "country") || "my").toLowerCase();
         remote = await lazadaRequest({ payload: { ...ensured.payload, country }, path: "/seller/get" });
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
-      }
+      } else throw new Error("이 채널은 판매점 대상 조회를 지원하지 않습니다.");
       const providerCode = String(remote.data.code ?? "");
       const providerError = textValue(remote.data, "error");
       const ok = remote.response.ok && !providerError && (!providerCode || providerCode === "0");
@@ -757,6 +978,25 @@ async function processGatewayJob(job) {
         operation: "shops.get",
         steps: [{ name: job.channel === "shopee" ? "shop-info" : "seller-info", ok, status: remote.response.status, data: remote.data }],
         safeMessage: ok ? `${job.channel} 판매자 대상 정보를 확인했습니다.` : `${job.channel} 판매자 대상 조회가 원격 오류로 종료됐습니다.`,
+      };
+    } else if (job.operation === "diagnostic.test") {
+      let diagnosticCredential = job.credential;
+      if (job.channel === "shopee") {
+        const ensured = await ensureShopeeAccessToken(diagnosticCredential, job.environment);
+        diagnosticCredential = ensured.payload;
+        if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
+      } else if (job.channel === "lazada") {
+        const ensured = await ensureLazadaAccessToken(diagnosticCredential);
+        diagnosticCredential = ensured.payload;
+        if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
+      }
+      const diagnostic = await runChannelDiagnostic(job.channel, diagnosticCredential, job.environment);
+      result = {
+        ok: diagnostic.status !== "failed",
+        channel: job.channel,
+        operation: "diagnostic.test",
+        diagnostic,
+        safeMessage: diagnostic.message,
       };
     } else {
       let credential = job.credential;
@@ -786,7 +1026,7 @@ async function processGatewayJob(job) {
           credential = ensured.payload;
           if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
         }
-      } else {
+      } else if (job.channel === "lazada") {
         const country = String(operationArguments.country || textValue(credential, "country") || "my").toLowerCase();
         credential = { ...credential, country };
         const ensured = await ensureLazadaAccessToken(credential);
@@ -794,11 +1034,20 @@ async function processGatewayJob(job) {
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       }
       if (job.operation === "listing.create") {
-        operationArguments = job.channel === "shopee"
-          ? operationArguments.globalProduct === true
+        if (job.channel === "shopee") {
+          operationArguments = operationArguments.globalProduct === true
             ? operationArguments
-            : await prepareShopeeListing(credential, job.environment, operationArguments)
-          : await prepareLazadaListing(credential, operationArguments);
+            : await prepareShopeeListing(credential, job.environment, operationArguments);
+        } else if (job.channel === "lazada") {
+          operationArguments = await prepareLazadaListing(credential, operationArguments);
+        } else if (job.channel === "smartstore") {
+          operationArguments = await prepareSmartstoreListing(credential, operationArguments);
+        } else if (job.channel === "coupang") {
+          operationArguments = await prepareCoupangListing(credential, operationArguments);
+        }
+      }
+      if (job.channel === "lazada" && job.operation === "categories.suggest") {
+        console.log(`[Lazada category debug] query=${String(operationArguments.query || "").slice(0, 160)}`);
       }
       result = await executeChannelOperation({
         channel: job.channel,
@@ -807,6 +1056,13 @@ async function processGatewayJob(job) {
         arguments: operationArguments,
         environment: job.environment,
       });
+      if (job.channel === "lazada" && job.operation === "categories.suggest") {
+        const names = result.steps.flatMap((entry) => entry?.data?.data?.categorySuggestions ?? []).map((entry) => entry.categoryName).slice(0, 10);
+        console.log(`[Lazada category debug] candidates=${names.join(" | ")}`);
+      }
+      if (job.channel === "lazada" && job.operation === "listing.create" && !result.ok) {
+        console.log(`[Lazada listing debug] ${JSON.stringify(result.steps.map((entry) => entry.data)).slice(0, 4000)}`);
+      }
       if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true && result.ok && result.remoteId && shopeeShopCredential) {
         const readLocalItem = () => shopeeRequest({
           payload: shopeeShopCredential,

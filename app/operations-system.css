@@ -1805,7 +1805,7 @@ a:focus-visible,
 }
 .credential-card.lazada { --channel-accent: #6a4ad5; }
 .credential-card.coupang { --channel-accent: #1774e7; }
-.credential-card.elevenst { --channel-accent: #ef4423; }
+.credential-card.temu { --channel-accent: #ff5a00; }
 .credential-card.smartstore { --channel-accent: #03a85a; }
 .credential-card.ebay { --channel-accent: #2557a7; }
 .credential-card > header { display: grid; min-height: 74px; align-items: center; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; padding: 14px 16px; }
@@ -2007,7 +2007,7 @@ a:focus-visible,
 .readiness-channel-card.qoo10 { --channel-accent: #d64245; }
 .readiness-channel-card.lazada { --channel-accent: #6a4ad5; }
 .readiness-channel-card.coupang { --channel-accent: #1774e7; }
-.readiness-channel-card.elevenst { --channel-accent: #ef4423; }
+.readiness-channel-card.temu { --channel-accent: #ff5a00; }
 .readiness-channel-card.smartstore { --channel-accent: #03a85a; }
 .readiness-channel-card.ebay { --channel-accent: #2557a7; }
 .readiness-channel-card > header { display: grid; align-items: center; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; padding: 17px 17px 13px; }

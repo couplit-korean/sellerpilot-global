@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Ban, CheckCircle2, Clock3, Copy, Cpu, History, KeyRound, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SquareTerminal } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, Clock3, Copy, Cpu, DatabaseZap, History, KeyRound, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 
@@ -127,6 +127,24 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     }
   };
 
+  const recoverProduct = async (job: AiJob) => {
+    setWorkingJobId(job.id);
+    setJobsError("");
+    try {
+      const response = await authenticatedFetch("/api/operations/snapshot", {
+        method: "POST",
+        body: JSON.stringify({ action: "product_create", jobId: job.id }),
+      });
+      const payload = await response.json().catch(() => ({ message: "상품 원장 연결 응답을 읽지 못했습니다." })) as { id?: string | null; message?: string };
+      if (!response.ok || typeof payload.id !== "string") throw new Error(payload.message ?? "완료된 AI 작업을 상품 원장에 연결하지 못했습니다.");
+      notify("완료된 AI 작업을 상품 원장에 연결했습니다.");
+    } catch (recoverError) {
+      setJobsError(recoverError instanceof Error ? recoverError.message : "완료된 AI 작업을 상품 원장에 연결하지 못했습니다.");
+    } finally {
+      setWorkingJobId("");
+    }
+  };
+
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void load(), 0);
     const interval = window.setInterval(() => void load(), 15_000);
@@ -192,7 +210,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
             <div><b>{job.product_description || "상품 상세페이지 생성"}</b><small>{job.image_count}개 이미지 · {job.attempt_count}회 시도 · {formatDate(job.created_at)}</small>{job.error_message && <em>{job.error_message}</em>}</div>
           </div>
           <div className="cli-job-controls">
-            {job.status === "succeeded" && <span className="cli-job-output">{job.has_hero ? "대표 이미지 포함" : job.has_result ? "분석 완료" : "완료"}</span>}
+            {job.status === "succeeded" && <><span className="cli-job-output">{job.has_hero ? "대표 이미지 포함" : job.has_result ? "분석 완료" : "완료"}</span><button type="button" onClick={() => void recoverProduct(job)} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <DatabaseZap size={13} />}상품 원장 연결</button></>}
             {(job.status === "failed" || job.status === "cancelled") && <button type="button" onClick={() => void controlJob(job, "retry")} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}다시 실행</button>}
             {(job.status === "queued" || job.status === "running") && <button type="button" className="danger" onClick={() => void controlJob(job, "cancel")} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <Ban size={13} />}취소</button>}
           </div>

@@ -93,6 +93,7 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
     if (channel === "smartstore") return { leafOnly: true };
     if (channel === "ebay") return { categoryTreeId: "0" };
     if (channel === "shopee") return { shopId: "", query: { language: "en" } };
+    if (channel === "coupang") return { categoryId: "0" };
     return channel === "qoo10" ? { params: {} } : { query: {} };
   }
   if (operation === "categories.suggest") {
@@ -337,7 +338,7 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
             </div>
             {credential?.last_check_message && <p className={`last-check ${credential.last_check_status}`}>{credential.last_check_status === "passed" ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}{credential.last_check_message}</p>}
             {graceCredential && <p className="credential-grace"><RotateCcw size={13} /><span><b>이전 v{graceCredential.version} 롤백 유예</b>{formatDate(graceCredential.grace_ends_at, true)}까지 Vault 보관</span></p>}
-            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}OAuth 재연결</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential || channel.key === "elevenst"} title={channel.key === "elevenst" ? "판매자 로그인 문서의 상세 API 명세 확정 후 활성화됩니다." : "실제 판매 API 요청을 관리자 권한으로 검수합니다."}><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
+            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}OAuth 재연결</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential} title="실제 판매 API 요청을 관리자 권한으로 검수합니다."><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
           </article>;
         })}
       </section>

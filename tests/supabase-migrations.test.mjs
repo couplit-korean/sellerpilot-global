@@ -130,6 +130,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260817184500_fix_oauth_state_service_guards.sql",
       "20260817190000_require_product_intake_fields.sql",
       "20260817191500_allow_admin_oauth_state_for_global_credentials.sql",
+      "20260817203000_route_coupang_through_local_gateway.sql",
+      "20260817213000_add_temu_and_route_naver.sql",
+      "20260818040000_filter_published_listing_badges.sql",
+      "20260818041000_share_channel_targets_across_admins.sql",
+      "20260818043000_keep_stopped_products_relistable.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -277,7 +282,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
 
     await setClaims(db);
-    for (const channel of ["coupang", "elevenst", "smartstore", "ebay"]) {
+    for (const channel of ["coupang", "smartstore", "ebay", "temu"]) {
       const id = await scalar(
         db,
         "select public.sellerpilot_rotate_credential($1, 'production', $2::jsonb, now() + interval '180 days', 90, 30, 0)",
