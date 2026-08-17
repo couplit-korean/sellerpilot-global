@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { CheckCircle2, Download, ExternalLink, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
-import type { NormalizedProductImageSpec, ProductIntakeDraft } from "../lib/product-intake";
+import { productIntakeSchema, type NormalizedProductImageSpec, type ProductIntakeDraft } from "../lib/product-intake";
 import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
 import type { ProductDetailData } from "./product-detail-puck";
 import type { ProductStudioResult } from "./product-studio-types";
@@ -184,6 +184,10 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
     setLastError("");
     setCliPhase("queued");
     try {
+      const validatedIntake = productIntakeSchema.safeParse(manualFields);
+      if (!validatedIntake.success) {
+        throw new Error(validatedIntake.error.issues[0]?.message ?? "상품 필수정보와 자료 사용 권한을 확인해 주세요.");
+      }
       const { data: sessionData } = await createClient().auth.getSession();
       const accessToken = sessionData.session?.access_token;
       const userId = sessionData.session?.user.id;
@@ -194,7 +198,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       const response = await fetch("/api/ai/product-studio", {
         method: "POST",
         headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ jobId, manualFields, imagePaths, imageSpecs }),
+        body: JSON.stringify({ jobId, manualFields: validatedIntake.data, imagePaths, imageSpecs }),
       });
       const queued = await response.json().catch(() => ({ message: "CLI 작업 등록 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
       if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");

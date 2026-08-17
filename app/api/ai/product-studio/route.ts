@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from "../../../../lib/admin-api";
+import { rejectedUploadPaths } from "../../../../lib/ai-upload-guard";
 import { studioJobRequestSchema } from "../../../../lib/ai-cli-contract";
 
 export const runtime = "nodejs";
@@ -41,8 +42,11 @@ export async function POST(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
 
-  const parsed = studioJobRequestSchema.safeParse(await request.json().catch(() => null));
+  const payload = await request.json().catch(() => null);
+  const parsed = studioJobRequestSchema.safeParse(payload);
   if (!parsed.success) {
+    const orphanedPaths = rejectedUploadPaths(payload, admin.user.id);
+    if (orphanedPaths.length) await admin.serviceClient.storage.from("sellerpilot-ai").remove(orphanedPaths);
     return NextResponse.json({ message: "대표 이미지를 포함한 상품 분석 요청 형식을 확인해 주세요." }, { status: 400 });
   }
 
