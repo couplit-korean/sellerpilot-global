@@ -15,7 +15,12 @@ export async function POST(request: Request) {
   }
 
   const parsed = workerCompletionSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ message: "CLI 완료 응답 형식이 올바르지 않습니다." }, { status: 400 });
+  if (!parsed.success) {
+    return NextResponse.json({
+      message: "CLI 완료 응답 형식이 올바르지 않습니다.",
+      issues: parsed.error.issues.slice(0, 12).map((issue) => ({ path: issue.path, message: issue.message })),
+    }, { status: 400 });
+  }
 
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },

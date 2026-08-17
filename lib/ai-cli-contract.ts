@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizedProductImageSpecSchema, productIntakeSchema } from "./product-intake";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 
@@ -98,9 +99,16 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
 
 export const studioJobRequestSchema = z.object({
   jobId: z.string().uuid(),
-  description: z.string().max(4_000).optional().default(""),
-  productUrl: z.string().max(1_000).optional().default(""),
+  manualFields: productIntakeSchema,
   imagePaths: z.array(z.string().min(1).max(400)).min(1).max(100),
+  imageSpecs: z.array(normalizedProductImageSpecSchema).min(1).max(100),
+}).superRefine((value, context) => {
+  if (value.imagePaths.length !== value.imageSpecs.length) {
+    context.addIssue({ code: "custom", path: ["imageSpecs"], message: "이미지 경로와 규격 정보 수가 일치해야 합니다." });
+  }
+  if (value.imageSpecs[0]?.role !== "main") {
+    context.addIssue({ code: "custom", path: ["imageSpecs", 0, "role"], message: "첫 번째 이미지는 대표사진이어야 합니다." });
+  }
 });
 
 export const workerCompletionSchema = z.discriminatedUnion("status", [

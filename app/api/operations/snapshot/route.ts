@@ -30,9 +30,6 @@ const mutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("product_create"),
     jobId: z.string().uuid(),
-    name: z.string().trim().min(1).max(160),
-    description: z.string().max(4000),
-    sourceUrl: z.string().max(1000).optional(),
   }),
 ]);
 
@@ -110,11 +107,8 @@ export async function POST(request: Request) {
     });
     mutationError = error ?? (data === true ? null : { message: "scenario not found" });
   } else {
-    const { data, error } = await admin.userClient.rpc("sellerpilot_create_product_from_ai", {
+    const { data, error } = await admin.userClient.rpc("sellerpilot_create_product_from_ai_v2", {
       p_job_id: parsed.data.jobId,
-      p_name: parsed.data.name,
-      p_description: parsed.data.description,
-      p_source_url: parsed.data.sourceUrl ?? null,
     });
     id = typeof data === "string" ? data : null;
     mutationError = error;

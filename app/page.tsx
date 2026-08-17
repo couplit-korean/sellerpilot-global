@@ -52,6 +52,7 @@ import {
   PanelLeftClose,
   Plus,
   RefreshCw,
+  Rocket,
   Search,
   Send,
   Settings,
@@ -82,6 +83,7 @@ import { channels, type ChannelKey } from "./channel-config";
 import { useOperationsSnapshot, type OperationsSnapshot } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
+import { emptyProductIntake, productConditions, productCurrencies, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
 
 type View =
   | "overview"
@@ -510,7 +512,16 @@ function ProductsPage({ onNavigate, displayProducts }: { onNavigate: (view: View
   );
 }
 
-type UploadedPhoto = { name: string; url: string; file: File };
+type UploadedPhoto = { name: string; url: string; file: File; role: string; originalWidth: number; originalHeight: number };
+type BatchProductItem = {
+  id: string;
+  mainPhoto: UploadedPhoto;
+  photos: UploadedPhoto[];
+  manualFields: ProductIntakeDraft;
+  requestId: number;
+  status: "ready" | "running" | "succeeded" | "failed";
+  productId: string | null;
+};
 
 const optionalPhotoSlots = [
   { id: "front", label: "정면", guide: "제품 전체 정면" },
@@ -528,8 +539,8 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
   const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
-  const [description, setDescription] = useState("");
-  const [productUrl, setProductUrl] = useState("");
+  const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
+  const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
   const [uploadError, setUploadError] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
   const [analyzedProductName, setAnalyzedProductName] = useState("");
@@ -537,35 +548,89 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
   const [categoryDraftRef] = useState(() => crypto.randomUUID());
   const [publishRefreshVersion, setPublishRefreshVersion] = useState(0);
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
+  const [batchItems, setBatchItems] = useState<BatchProductItem[]>([]);
   const connectedChannelKeys = useMemo(() => channelMetrics.filter((metric) => metric.credentialStatus === "active").map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
 
-  const toPhoto = (file: File): UploadedPhoto => ({ name: file.name, url: URL.createObjectURL(file), file });
-
-  const selectMainPhoto = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (mainPhoto) URL.revokeObjectURL(mainPhoto.url);
-    setMainPhoto(toPhoto(file));
-    setUploadError("");
-    event.target.value = "";
-  };
-
-  const selectSlotPhoto = (slotId: string, event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setSlotPhotos((current) => {
-      if (current[slotId]) URL.revokeObjectURL(current[slotId].url);
-      return { ...current, [slotId]: toPhoto(file) };
+  const setIntakeField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
+    setIntake((current) => ({ ...current, [key]: value }));
+    setManualErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
     });
-    event.target.value = "";
   };
 
-  const selectExtraPhotos = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const toPhoto = async (file: File, role: string): Promise<UploadedPhoto> => {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("JPG, PNG, WEBP 이미지만 등록할 수 있습니다.");
+    if (file.size > 20 * 1024 * 1024) throw new Error("원본 이미지는 20MB 이하로 등록해 주세요.");
+    const url = URL.createObjectURL(file);
+    try {
+      const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        const image = new window.Image();
+        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => reject(new Error("이미지를 읽지 못했습니다."));
+        image.src = url;
+      });
+      if (dimensions.width < 600 || dimensions.height < 600) throw new Error("이미지는 최소 600×600px 이상이어야 합니다.");
+      return { name: file.name, url, file, role, originalWidth: dimensions.width, originalHeight: dimensions.height };
+    } catch (error) {
+      URL.revokeObjectURL(url);
+      throw error;
+    }
+  };
+
+  const selectMainPhoto = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = "";
+    try {
+      const photo = await toPhoto(file, "main");
+      if (mainPhoto) URL.revokeObjectURL(mainPhoto.url);
+      setMainPhoto(photo);
+      setUploadError("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "대표사진을 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+    }
+  };
+
+  const selectSlotPhoto = async (slotId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = "";
+    try {
+      const photo = await toPhoto(file, slotId);
+      setSlotPhotos((current) => {
+        if (current[slotId]) URL.revokeObjectURL(current[slotId].url);
+        return { ...current, [slotId]: photo };
+      });
+      setUploadError("");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "옵션 사진을 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+    }
+  };
+
+  const selectExtraPhotos = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
-    setExtraPhotos((current) => [...current, ...files.map(toPhoto)]);
     event.target.value = "";
+    const remaining = Math.max(0, 100 - ((mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length));
+    if (!remaining) return notify("한 상품은 분석용 사진을 최대 100장까지 등록할 수 있습니다.");
+    const selected = files.slice(0, remaining);
+    const settled = await Promise.allSettled(selected.map((file, index) => toPhoto(file, `extra-${extraPhotos.length + index + 1}`)));
+    const accepted = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+    const firstFailure = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (accepted.length) setExtraPhotos((current) => [...current, ...accepted]);
+    if (firstFailure) {
+      const message = firstFailure.reason instanceof Error ? firstFailure.reason.message : "일부 추가 사진을 확인해 주세요.";
+      setUploadError(message);
+      notify(`${accepted.length}장 등록 · ${message}`);
+    }
   };
 
   const removeSlotPhoto = (slotId: string) => {
@@ -586,7 +651,7 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
 
   const openProductUrl = () => {
     try {
-      const url = new URL(productUrl);
+      const url = new URL(intake.productUrl);
       if (!url.protocol.startsWith("http")) throw new Error("invalid protocol");
       window.open(url.toString(), "_blank", "noopener,noreferrer");
     } catch {
@@ -595,6 +660,19 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
   };
 
   const startAutomation = () => {
+    const parsed = productIntakeSchema.safeParse(intake);
+    if (!parsed.success) {
+      const errors: Record<string, string> = {};
+      for (const issue of parsed.error.issues) {
+        const field = String(issue.path[0] ?? "form");
+        if (!errors[field]) errors[field] = issue.message;
+      }
+      setManualErrors(errors);
+      const message = parsed.error.issues[0]?.message ?? "필수 상품 정보를 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
     if (!mainPhoto) {
       setUploadError("AI 상품 분석을 시작하려면 대표사진 1장이 반드시 필요합니다.");
       notify("대표사진 1장을 먼저 등록해 주세요.");
@@ -603,12 +681,66 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
     const photoCount = 1 + Object.keys(slotPhotos).length + extraPhotos.length;
     setRunning(true);
     setUploadError("");
-    const context = [description.trim() ? "상품 설명" : "", productUrl.trim() ? "참고 링크" : ""].filter(Boolean).join("과 ");
-    notify(`${photoCount}장의 사진${context ? `, ${context}` : ""}이 AI 분석 자료에 반영되었습니다.`);
+    notify(`${photoCount}장을 1200×1200 공통 규격으로 보정하고 필수 상품 정보와 함께 AI 분석에 반영합니다.`);
     setStudioRequestId((current) => current + 1);
   };
 
+  const addCurrentProductToBatch = () => {
+    const parsed = productIntakeSchema.safeParse(intake);
+    if (!parsed.success || !mainPhoto) {
+      startAutomation();
+      return;
+    }
+    if (batchItems.length >= 8) {
+      notify("동시 처리 대기열은 최대 8개 상품까지 담을 수 있습니다.");
+      return;
+    }
+    if (batchItems.some((item) => item.manualFields.sellerSku === parsed.data.sellerSku)) {
+      notify("동시 처리 대기열에 같은 판매자 SKU가 이미 있습니다.");
+      return;
+    }
+    const photos = [mainPhoto, ...Object.values(slotPhotos), ...extraPhotos];
+    setBatchItems((current) => [...current, {
+      id: crypto.randomUUID(),
+      mainPhoto,
+      photos,
+      manualFields: { ...intake },
+      requestId: 0,
+      status: "ready",
+      productId: null,
+    }]);
+    setMainPhoto(null);
+    setSlotPhotos({});
+    setExtraPhotos([]);
+    setIntake({ ...emptyProductIntake });
+    setManualErrors({});
+    setUploadError("");
+    notify(`${parsed.data.productName}을 동시 처리 대기열에 담았습니다. ${batchItems.length + 1} / 8`);
+  };
+
+  const removeBatchItem = (id: string) => {
+    setBatchItems((current) => {
+      const target = current.find((item) => item.id === id);
+      if (target) for (const url of new Set(target.photos.map((photo) => photo.url))) URL.revokeObjectURL(url);
+      return current.filter((item) => item.id !== id);
+    });
+  };
+
+  const startBatchAutomation = () => {
+    const readyCount = batchItems.filter((item) => item.status === "ready" || item.status === "failed").length;
+    if (!readyCount) {
+      notify("실행할 동시 처리 상품이 없습니다.");
+      return;
+    }
+    const marker = Date.now();
+    setBatchItems((current) => current.map((item, index) => item.status === "ready" || item.status === "failed"
+      ? { ...item, requestId: marker + index, status: "running" }
+      : item));
+    notify(`${readyCount}개 상품을 동시에 분석 대기열에 등록했습니다. 최대 8개가 병렬 처리됩니다.`);
+  };
+
   const totalPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length;
+  const intakeReady = productIntakeSchema.safeParse(intake).success;
 
   return (
     <div className="page-stack publishing-page">
@@ -623,8 +755,8 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
           <section className="main-photo-section">
             <div className="upload-section-heading"><div><b>대표사진</b><span className="required-chip">필수</span><small>검색 결과와 채널 목록에서 가장 먼저 보이는 이미지입니다.</small></div><em>{mainPhoto ? "1장 등록됨" : "미등록"}</em></div>
             <label className={`drop-zone main-drop-zone ${mainPhoto ? "has-photo" : ""} ${running ? "running" : ""}`} htmlFor="main-product-photo">
-              <input id="main-product-photo" className="visually-hidden" type="file" accept="image/*" onChange={selectMainPhoto} />
-              {mainPhoto ? <><span className="main-photo-preview"><Image src={mainPhoto.url} alt="등록한 대표 상품 사진" fill sizes="700px" unoptimized /></span><span className="photo-preview-overlay"><ImagePlus size={17} />대표사진 교체</span><strong className="photo-file-name">{mainPhoto.name}</strong></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>대표 상품 사진을 넣으세요</strong><p>클릭하여 JPG, PNG, WEBP 파일 선택 · 대표사진 1장 필수</p><em><ImagePlus size={15} />대표사진 선택</em></>}
+              <input id="main-product-photo" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={selectMainPhoto} />
+              {mainPhoto ? <><span className="main-photo-preview"><Image src={mainPhoto.url} alt="등록한 대표 상품 사진" fill sizes="700px" unoptimized /></span><span className="photo-preview-overlay"><ImagePlus size={17} />대표사진 교체</span><strong className="photo-file-name">{mainPhoto.name} · {mainPhoto.originalWidth}×{mainPhoto.originalHeight} → 1200×1200</strong></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>대표 상품 사진을 넣으세요</strong><p>JPG, PNG, WEBP · 최소 600×600px · 자동 1:1 여백 보정</p><em><ImagePlus size={15} />대표사진 선택</em></>}
               {running && <span className="analysis-overlay"><LoaderCircle className="spin" size={29} /><b>사진·설명·링크 통합 분석 중</b><small>OCR과 상품 정보 교차검증을 진행하고 있습니다.</small><i><span /></i></span>}
             </label>
             {uploadError && <p className="upload-error"><AlertCircle size={14} />{uploadError}</p>}
@@ -635,36 +767,64 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
             <div className="option-photo-grid">
               {optionalPhotoSlots.map((slot) => {
                 const photo = slotPhotos[slot.id];
-                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/*" onChange={(event) => selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>클릭하여 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
+                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>{photo.originalWidth}×{photo.originalHeight} · 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
               })}
             </div>
           </section>
 
           <section className="extra-photo-section">
             <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>상세컷, 구성품, 포장 상태 등 필요한 만큼 한 번에 선택할 수 있습니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
-            <label className="extra-photo-uploader" htmlFor="extra-product-photos"><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/*" multiple onChange={selectExtraPhotos} /><Plus size={17} /><span><b>추가 사진 더 넣기</b><small>여러 파일을 동시에 선택할 수 있습니다.</small></span></label>
+            <label className="extra-photo-uploader" htmlFor="extra-product-photos"><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void selectExtraPhotos(event)} /><Plus size={17} /><span><b>추가 사진 더 넣기</b><small>분석용 최대 100장 · 채널 등록은 앞 8~9장 자동 선별</small></span></label>
             {extraPhotos.length > 0 && <div className="extra-photo-list">{extraPhotos.map((photo, index) => <div key={`${photo.name}-${index}`}><span><Image src={photo.url} alt={`추가 상품 사진 ${index + 1}`} fill sizes="100px" unoptimized /></span><small>{index + 1}</small><button type="button" aria-label={`추가 사진 ${index + 1} 삭제`} onClick={() => removeExtraPhoto(index)}><X size={12} /></button></div>)}</div>}
           </section>
 
-          <section className="product-context-section">
-            <div className="upload-section-heading"><div><b>상품 분석 참고 정보</b><span className="optional-chip">선택</span><small>입력한 텍스트와 공개 링크의 상품 정보를 이미지 분석 결과와 함께 반영합니다.</small></div></div>
-            <label className="context-field"><span>상품 간략 설명</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1000} placeholder="용도, 재질, 구성, 핵심 특징, 판매 국가 등 사진만으로 알기 어려운 정보를 입력하세요." /><small>{description.length} / 1,000자</small></label>
-            <label className="context-field"><span>참고 상품 링크</span><div className="product-link-input"><Link2 size={16} /><input type="url" value={productUrl} onChange={(event) => setProductUrl(event.target.value)} placeholder="https:// 제조사 또는 공급사 상품 페이지" /><button type="button" onClick={openProductUrl} disabled={!productUrl.trim()}><ExternalLink size={14} />링크 열기</button></div><small>로그인 없이 접근 가능한 제조사·공급사·공식 상품 링크를 권장합니다.</small></label>
-            <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>AI 분석 반영 방식</b><small>대표사진을 기준으로 옵션 사진의 OCR·바코드와 설명·링크 정보를 교차검증합니다. 충돌하는 정보는 자동 확정하지 않고 확인 필요로 표시합니다.</small></span></div>
+          <section className="product-context-section required-product-intake">
+            <div className="upload-section-heading"><div><b>판매자 필수 입력</b><span className="required-chip">전부 필수</span><small>AI가 추측하면 안 되는 실물·포장·책임 정보입니다. 사진과 함께 입력해야 다음 단계로 갈 수 있습니다.</small></div><em>{intakeReady ? "입력 완료" : "확인 필요"}</em></div>
+            <div className="manual-field-grid">
+              <label className={manualErrors.productName ? "field-error" : ""}><span>상품명 <i>필수</i></span><input required value={intake.productName} maxLength={160} onChange={(event) => setIntakeField("productName", event.target.value)} placeholder="실물과 일치하는 상품명" />{manualErrors.productName && <small>{manualErrors.productName}</small>}</label>
+              <label className={manualErrors.sellerSku ? "field-error" : ""}><span>판매자 SKU <i>필수</i></span><input required value={intake.sellerSku} maxLength={100} onChange={(event) => setIntakeField("sellerSku", event.target.value.toUpperCase())} placeholder="COUPLET-MUG-001" />{manualErrors.sellerSku && <small>{manualErrors.sellerSku}</small>}</label>
+              <label className={manualErrors.categoryHint ? "field-error" : ""}><span>상품군 힌트 <i>필수</i></span><input required value={intake.categoryHint} maxLength={120} onChange={(event) => setIntakeField("categoryHint", event.target.value)} placeholder="예: 카페 머그컵" />{manualErrors.categoryHint && <small>{manualErrors.categoryHint}</small>}</label>
+              <label className={manualErrors.brandName ? "field-error" : ""}><span>브랜드 <i>필수</i></span><input required value={intake.brandName} maxLength={120} onChange={(event) => setIntakeField("brandName", event.target.value)} placeholder="없으면 No Brand" />{manualErrors.brandName && <small>{manualErrors.brandName}</small>}</label>
+              <label className={manualErrors.manufacturer ? "field-error" : ""}><span>제조사·공급처 <i>필수</i></span><input required value={intake.manufacturer} maxLength={160} onChange={(event) => setIntakeField("manufacturer", event.target.value)} placeholder="직접 제조 또는 공급처명" />{manualErrors.manufacturer && <small>{manualErrors.manufacturer}</small>}</label>
+              <label className={manualErrors.countryOfOrigin ? "field-error" : ""}><span>원산지 <i>필수</i></span><input required value={intake.countryOfOrigin} maxLength={80} onChange={(event) => setIntakeField("countryOfOrigin", event.target.value)} placeholder="예: 대한민국" />{manualErrors.countryOfOrigin && <small>{manualErrors.countryOfOrigin}</small>}</label>
+              <label className={manualErrors.material ? "field-error" : ""}><span>소재·성분 <i>필수</i></span><input required value={intake.material} maxLength={500} onChange={(event) => setIntakeField("material", event.target.value)} placeholder="예: 도자기 100%" />{manualErrors.material && <small>{manualErrors.material}</small>}</label>
+              <label className={manualErrors.packageContents ? "field-error" : ""}><span>판매 구성 <i>필수</i></span><input required value={intake.packageContents} maxLength={500} onChange={(event) => setIntakeField("packageContents", event.target.value)} placeholder="예: 머그컵 1개" />{manualErrors.packageContents && <small>{manualErrors.packageContents}</small>}</label>
+              <label><span>상품 상태 <i>필수</i></span><select value={intake.condition} onChange={(event) => setIntakeField("condition", event.target.value as ProductIntakeDraft["condition"])}>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select></label>
+              <label><span>바코드 상태 <i>필수</i></span><select value={intake.gtinStatus} onChange={(event) => setIntakeField("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select></label>
+              {intake.gtinStatus === "HAS_GTIN" && <label className={manualErrors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC <i>필수</i></span><input inputMode="numeric" required value={intake.gtin} maxLength={14} onChange={(event) => setIntakeField("gtin", event.target.value.replace(/\D/g, ""))} placeholder="8~14자리 숫자" />{manualErrors.gtin && <small>{manualErrors.gtin}</small>}</label>}
+              <label className={manualErrors.sellingPrice ? "field-error" : ""}><span>판매가 <i>필수</i></span><input type="number" required min="0.01" step="0.01" value={intake.sellingPrice || ""} onChange={(event) => setIntakeField("sellingPrice", Number(event.target.value))} placeholder="0" />{manualErrors.sellingPrice && <small>{manualErrors.sellingPrice}</small>}</label>
+              <label><span>통화 <i>필수</i></span><select value={intake.currency} onChange={(event) => setIntakeField("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+              <label className={manualErrors.stock ? "field-error" : ""}><span>재고 <i>필수</i></span><input type="number" required min="1" step="1" value={intake.stock || ""} onChange={(event) => setIntakeField("stock", Number(event.target.value))} placeholder="1" />{manualErrors.stock && <small>{manualErrors.stock}</small>}</label>
+              <label className={manualErrors.weightKg ? "field-error" : ""}><span>포장 중량 kg <i>필수</i></span><input type="number" required min="0.01" step="0.01" value={intake.weightKg || ""} onChange={(event) => setIntakeField("weightKg", Number(event.target.value))} placeholder="0.35" />{manualErrors.weightKg && <small>{manualErrors.weightKg}</small>}</label>
+              <label className={manualErrors.packageLengthCm ? "field-error" : ""}><span>포장 가로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageLengthCm || ""} onChange={(event) => setIntakeField("packageLengthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageLengthCm && <small>{manualErrors.packageLengthCm}</small>}</label>
+              <label className={manualErrors.packageWidthCm ? "field-error" : ""}><span>포장 세로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageWidthCm || ""} onChange={(event) => setIntakeField("packageWidthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageWidthCm && <small>{manualErrors.packageWidthCm}</small>}</label>
+              <label className={manualErrors.packageHeightCm ? "field-error" : ""}><span>포장 높이 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageHeightCm || ""} onChange={(event) => setIntakeField("packageHeightCm", Number(event.target.value))} placeholder="10" />{manualErrors.packageHeightCm && <small>{manualErrors.packageHeightCm}</small>}</label>
+            </div>
+            <label className={`context-field ${manualErrors.description ? "field-error" : ""}`}><span>상품 사실 설명 <i>필수</i></span><textarea required value={intake.description} onChange={(event) => setIntakeField("description", event.target.value)} maxLength={4000} placeholder="용도, 재질, 구성, 핵심 특징, 주의사항을 실물 기준으로 입력하세요." /><small>{manualErrors.description ?? `${intake.description.length} / 4,000자`}</small></label>
+            <label className={`context-field ${manualErrors.productUrl ? "field-error" : ""}`}><span>자료 출처·상품 링크 <i>필수</i></span><div className="product-link-input"><Link2 size={16} /><input type="url" required value={intake.productUrl} onChange={(event) => setIntakeField("productUrl", event.target.value)} placeholder="https:// 제조사, 공급사 또는 오픈라이선스 원문" /><button type="button" onClick={openProductUrl} disabled={!intake.productUrl.trim()}><ExternalLink size={14} />링크 열기</button></div><small>{manualErrors.productUrl ?? "로그인 없이 접근 가능한 공개 링크를 입력하세요."}</small></label>
+            <div className="intake-confirmations">
+              <label htmlFor="image-rights-confirmed" className={manualErrors.imageRightsConfirmed ? "field-error" : ""}><input id="image-rights-confirmed" aria-label="이미지와 상품 자료 사용 권한 확인" type="checkbox" checked={intake.imageRightsConfirmed} onChange={(event) => setIntakeField("imageRightsConfirmed", event.target.checked)} /><span><b>이미지·상품 자료 사용 권한</b><small>본인 촬영, 공급사 승인 또는 오픈라이선스 자료임을 확인합니다.</small></span></label>
+              <label htmlFor="product-facts-confirmed" className={manualErrors.productFactsConfirmed ? "field-error" : ""}><input id="product-facts-confirmed" aria-label="상품 사실정보 확인" type="checkbox" checked={intake.productFactsConfirmed} onChange={(event) => setIntakeField("productFactsConfirmed", event.target.checked)} /><span><b>상품 사실정보 확인</b><small>원산지·소재·구성·규격이 실물과 일치합니다.</small></span></label>
+            </div>
+            <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지와 입력값 교차검증</b><small>대표사진·라벨 OCR·바코드·공개 링크를 비교하고, 충돌하는 정보는 AI가 덮어쓰지 않고 확인 필요로 표시합니다.</small></span></div>
           </section>
 
-          <div className="analysis-start-bar"><span><b>{totalPhotoCount}장</b>의 상품 사진 · 설명 {description.trim() ? "입력됨" : "미입력"} · 링크 {productUrl.trim() ? "입력됨" : "미입력"}</span><button type="button" onClick={startAutomation} disabled={running}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : <><WandSparkles size={17} />AI 상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 1200×1200 JPG 자동보정 · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}</span><div><button type="button" className="batch-add-button" onClick={addCurrentProductToBatch} disabled={running || batchItems.length >= 8}><Plus size={17} />대기열에 담기</button><button type="button" onClick={startAutomation} disabled={running}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : <><WandSparkles size={17} />1개 바로 분석</>}</button></div></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">OFFICIAL PREFLIGHT</span><h3>API 검증 대상 채널</h3></div><Settings size={16} /></div>
           <div className="publish-channel-list">{Object.entries(channels).map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); const selectable = channel.enabled && connected; const selected = selectedChannels.includes(key); return <label key={channel.letter} className={selectable ? "" : "channel-disabled"}><ChannelMark code={channel.letter} /><span><b>{channel.name}{!channel.enabled ? <em>준비중</em> : !connected ? <em>키 필요</em> : null}</b><small>{!channel.enabled ? `${channel.market} · 연동 준비 중` : connected ? `${channel.market} · 공식 API 분류 대상` : `${channel.market} · API 키 연결 필요`}</small></span><input type="checkbox" checked={selected} disabled={!selectable} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : selectable ? "선택 가능" : "비활성화"}`} /><i><Check size={12} /></i></label>; })}</div>
-          <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>ChatGPT CLI 분석 완료</b><small>실제 작업 결과가 저장된 상품만 진행</small></span><em>필수</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
+          <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>ChatGPT CLI 분석 완료</b><small>실제 작업 결과가 저장된 상품만 진행</small></span><em>필수</em></div><div className="automation-requirement"><span><b>동시 처리 정책</b><small>상품 최대 8건 · 생성 이미지 2장씩 · 판매 채널 최대 8개 병렬 실행</small></span><em>자동</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
         </aside>
+      </section>
+      <section className="panel product-batch-panel">
+        <div className="panel-heading"><div><span className="panel-kicker">PARALLEL PRODUCT QUEUE</span><h3>상품 동시 처리</h3><p>필수값과 대표사진을 완성한 상품을 차례로 담은 뒤 한 번에 최대 8개까지 시작합니다.</p></div><span className="step-chip">{batchItems.length} / 8</span></div>
+        {batchItems.length ? <div className="batch-product-list">{batchItems.map((item) => <div className="batch-product-row" key={item.id}><AiProductStudio mainPhoto={item.mainPhoto} photos={item.photos} manualFields={item.manualFields} requestId={item.requestId} compact notify={notify} onRunningChange={(isRunning) => setBatchItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: isRunning ? "running" : entry.status === "succeeded" ? "succeeded" : "failed" } : entry))} onResultReady={(_, productId) => { setBatchItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: productId ? "succeeded" : "failed", productId } : entry)); if (productId) { setAnalyzedProductId(productId); setAnalyzedProductName(item.manualFields.productName); setPublishRefreshVersion((current) => current + 1); } }} /><button type="button" aria-label={`${item.manualFields.productName} 대기열에서 삭제`} disabled={item.status === "running"} onClick={() => removeBatchItem(item.id)}><X size={14} /></button></div>)}</div> : <div className="batch-product-empty"><Upload size={22} /><span><b>대기열이 비어 있습니다.</b><small>현재 상품의 필수정보와 사진을 입력하고 ‘대기열에 담기’를 누르세요.</small></span></div>}
+        <div className="batch-product-actions"><span>실패 항목은 보완 후 다시 실행할 수 있고, 완료 상품은 각각 상품 원장에 저장됩니다.</span><button type="button" disabled={!batchItems.some((item) => item.status === "ready" || item.status === "failed")} onClick={startBatchAutomation}><Rocket size={16} />최대 8개 동시 분석 시작</button></div>
       </section>
       <AiProductStudio
         mainPhoto={mainPhoto}
         photos={mainPhoto ? [mainPhoto, ...Object.values(slotPhotos), ...extraPhotos] : []}
-        description={description}
-        productUrl={productUrl}
+        manualFields={intake}
         requestId={studioRequestId}
         onRunningChange={setRunning}
         notify={notify}
@@ -676,8 +836,8 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
       />
       <CategoryClassificationWorkbench
         productId={analyzedProductId}
-        productName={analyzedProductName || description.slice(0, 180)}
-        description={description}
+        productName={analyzedProductName || `${intake.productName} ${intake.categoryHint}`.trim()}
+        description={intake.description}
         sourceRef={analyzedProductId ?? categoryDraftRef}
         enabledChannels={selectedChannels}
         notify={notify}

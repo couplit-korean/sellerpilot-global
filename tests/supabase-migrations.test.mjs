@@ -126,6 +126,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260817062221_market_listing_ledger.sql",
       "20260817184000_channel_oauth_state_store.sql",
       "20260817184500_fix_oauth_state_service_guards.sql",
+      "20260817190000_require_product_intake_fields.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -353,8 +354,34 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(gatewaySnapshot.status, "succeeded");
     assert.equal(gatewaySnapshot.response.operation, "categories.list");
     await setClaims(db);
+    const requiredManualFields = {
+      productName: "AI 생성 테스트 상품",
+      sellerSku: "AI-REQUIRED-001",
+      categoryHint: "도자기 머그컵",
+      brandName: "No Brand",
+      manufacturer: "테스트 공급처",
+      countryOfOrigin: "대한민국",
+      material: "도자기 100%",
+      packageContents: "머그컵 1개",
+      condition: "NEW",
+      gtinStatus: "NO_GTIN",
+      gtin: "",
+      sellingPrice: 12900,
+      currency: "KRW",
+      stock: 2,
+      weightKg: 0.35,
+      packageLengthCm: 12,
+      packageWidthCm: 12,
+      packageHeightCm: 10,
+      description: "실제 사진과 입력값을 교차검증하는 흰색 도자기 머그컵입니다.",
+      productUrl: "https://example.test/product/1",
+      imageRightsConfirmed: true,
+      productFactsConfirmed: true,
+    };
     const requestPayload = {
-      image_paths: [`${ADMIN_ID}/${JOB_ID}/input/hero.webp`],
+      image_paths: [`${ADMIN_ID}/${JOB_ID}/input/hero.jpg`],
+      image_specs: [{ name: "hero.jpg", role: "main", originalWidth: 1200, originalHeight: 1200, width: 1200, height: 1200, bytes: 120000, mediaType: "image/jpeg", fit: "contain" }],
+      manual_fields: requiredManualFields,
       description: "실제 상품 분석 테스트",
       product_url: "https://example.test/product/1",
     };
@@ -396,10 +423,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await setClaims(db);
     const aiProductId = await scalar(
       db,
-      "select public.sellerpilot_create_product_from_ai($1, 'AI 생성 테스트 상품', '검증된 설명', 'https://example.test/product/1')",
+      "select public.sellerpilot_create_product_from_ai_v2($1)",
       [JOB_ID],
     );
     assert.match(aiProductId, /^[0-9a-f-]{36}$/i);
+    assert.equal(await scalar(db, "select sku from sellerpilot_private.products where id = $1", [aiProductId]), "AI-REQUIRED-001");
     await assert.rejects(
       db.query(
         `select public.sellerpilot_save_product_category_assignment(
@@ -431,6 +459,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.deepEqual(categoryAssignments.rows[0].missing_required_attributes, []);
     const publishContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [aiProductId]);
     assert.equal(publishContext.product.id, aiProductId);
+    assert.equal(publishContext.manualFields.sellerSku, "AI-REQUIRED-001");
+    assert.equal(publishContext.imageSpecs[0].width, 1200);
     assert.equal(publishContext.assignments.length, 1);
     const coupangCredentialId = await scalar(
       db,

@@ -58,6 +58,9 @@ export async function POST(request: Request) {
     request: {
       description: typeof jobRequest.description === "string" ? jobRequest.description : "",
       productUrl: typeof jobRequest.product_url === "string" ? jobRequest.product_url : "",
+      manualFields: jobRequest.manual_fields && typeof jobRequest.manual_fields === "object" && !Array.isArray(jobRequest.manual_fields)
+        ? jobRequest.manual_fields
+        : {},
       images: (signedFiles ?? []).map((file, index) => ({
         path: paths[index],
         signedUrl: file.signedUrl,

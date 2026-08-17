@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cliStudioResultSchema } from "../lib/ai-cli-contract";
+import { cliStudioResultSchema, studioJobRequestSchema } from "../lib/ai-cli-contract";
 
 const localized = [
   ["shopee", "SG", "en-SG", "White ceramic espresso cup"],
@@ -77,4 +77,52 @@ test("AI studio contract rejects Korean residue in localized listings", () => {
   const parsed = cliStudioResultSchema.safeParse(result);
   assert.equal(parsed.success, false);
   assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /한국어/);
+});
+
+function validRequiredIntake() {
+  return {
+    productName: "White ceramic mug",
+    sellerSku: "MUG-OPEN-001",
+    categoryHint: "Ceramic mug",
+    brandName: "No Brand",
+    manufacturer: "Open licensed test supplier",
+    countryOfOrigin: "Republic of Korea",
+    material: "Ceramic",
+    packageContents: "One mug",
+    condition: "NEW" as const,
+    gtinStatus: "NO_GTIN" as const,
+    gtin: "",
+    sellingPrice: 12.9,
+    currency: "USD" as const,
+    stock: 1,
+    weightKg: 0.35,
+    packageLengthCm: 12,
+    packageWidthCm: 12,
+    packageHeightCm: 10,
+    description: "A white ceramic mug collected from an open licensed reference source.",
+    productUrl: "https://commons.wikimedia.org/wiki/File:Example.jpg",
+    imageRightsConfirmed: true as const,
+    productFactsConfirmed: true as const,
+  };
+}
+
+test("AI studio request requires seller facts and normalized listing images", () => {
+  const parsed = studioJobRequestSchema.safeParse({
+    jobId: "11111111-1111-4111-8111-111111111111",
+    manualFields: validRequiredIntake(),
+    imagePaths: ["user/job/input/001.jpg"],
+    imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1200, height: 1200, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],
+  });
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("AI studio request rejects missing rights confirmation and non-square output", () => {
+  const manualFields = { ...validRequiredIntake(), imageRightsConfirmed: false };
+  const parsed = studioJobRequestSchema.safeParse({
+    jobId: "11111111-1111-4111-8111-111111111111",
+    manualFields,
+    imagePaths: ["user/job/input/001.jpg"],
+    imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1080, height: 1080, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],
+  });
+  assert.equal(parsed.success, false);
 });

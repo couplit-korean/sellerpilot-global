@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { CheckCircle2, Download, ExternalLink, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
+import type { NormalizedProductImageSpec, ProductIntakeDraft } from "../lib/product-intake";
 import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
 import type { ProductDetailData } from "./product-detail-puck";
 import type { ProductStudioResult } from "./product-studio-types";
@@ -12,9 +13,9 @@ import type { ProductStudioResult } from "./product-studio-types";
 const ProductDetailRender = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailRender), { ssr: false, loading: () => <div className="studio-loading"><LoaderCircle className="spin" size={24} />상세페이지 불러오는 중</div> });
 const ProductDetailEditor = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailEditor), { ssr: false });
 
-type StudioPhoto = { name: string; url: string; file: File };
+type StudioPhoto = { name: string; url: string; file: File; role: string; originalWidth: number; originalHeight: number };
 type AutoThumbnail = { id: string; label: string; ratio: string; width: number; height: number; dataUrl: string };
-type OptimizedPhoto = { name: string; mediaType: "image/jpeg"; blob: Blob };
+type OptimizedPhoto = { name: string; mediaType: "image/jpeg"; blob: Blob; spec: NormalizedProductImageSpec };
 type CliJobPayload = {
   id: string;
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -47,19 +48,50 @@ function loadImage(source: string) {
   });
 }
 
-async function optimizePhoto(photo: StudioPhoto, isMain: boolean): Promise<OptimizedPhoto> {
+async function canvasToJpeg(canvas: HTMLCanvasElement) {
+  for (const quality of [0.9, 0.82, 0.72]) {
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (blob && blob.size <= 3 * 1024 * 1024) return blob;
+  }
+  throw new Error("채널 공통 제한인 3MB 아래로 이미지를 최적화하지 못했습니다.");
+}
+
+async function optimizePhoto(photo: StudioPhoto): Promise<OptimizedPhoto> {
   try {
     const source = await blobToDataUrl(photo.file);
     const image = await loadImage(source);
-    const maxEdge = isMain ? 1600 : 1200;
-    const scale = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-    canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", isMain ? 0.84 : 0.78));
-    if (!blob) throw new Error("이미지 변환 실패");
-    return { name: photo.name.replace(/\.[^.]+$/, ".jpg"), mediaType: "image/jpeg", blob };
+    canvas.width = 1200;
+    canvas.height = 1200;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("이미지 변환 화면을 열지 못했습니다.");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const inset = 48;
+    const scale = Math.min((canvas.width - inset * 2) / image.naturalWidth, (canvas.height - inset * 2) / image.naturalHeight);
+    const width = Math.round(image.naturalWidth * scale);
+    const height = Math.round(image.naturalHeight * scale);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image, Math.round((canvas.width - width) / 2), Math.round((canvas.height - height) / 2), width, height);
+    const blob = await canvasToJpeg(canvas);
+    const name = photo.name.replace(/\.[^.]+$/, ".jpg");
+    return {
+      name,
+      mediaType: "image/jpeg",
+      blob,
+      spec: {
+        name,
+        role: photo.role,
+        originalWidth: photo.originalWidth,
+        originalHeight: photo.originalHeight,
+        width: 1200,
+        height: 1200,
+        bytes: blob.size,
+        mediaType: "image/jpeg",
+        fit: "contain",
+      },
+    };
   } catch {
     throw new Error(`${photo.name} 이미지를 JPEG로 변환하지 못했습니다.`);
   }
@@ -68,9 +100,10 @@ async function optimizePhoto(photo: StudioPhoto, isMain: boolean): Promise<Optim
 async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string, jobId: string) {
   const supabase = createClient();
   const uploadedPaths: string[] = [];
+  const imageSpecs: NormalizedProductImageSpec[] = [];
   try {
     for (let start = 0; start < photos.length; start += 4) {
-      const batch = await Promise.all(photos.slice(start, start + 4).map((photo, offset) => optimizePhoto(photo, start + offset === 0)));
+      const batch = await Promise.all(photos.slice(start, start + 4).map((photo) => optimizePhoto(photo)));
       const results = await Promise.allSettled(batch.map(async (photo, offset) => {
         const index = start + offset;
         const path = `${userId}/${jobId}/input/${String(index + 1).padStart(3, "0")}.jpg`;
@@ -80,13 +113,16 @@ async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string,
           upsert: false,
         });
         if (error) throw new Error(`${photo.name} 비공개 업로드에 실패했습니다.`);
-        return path;
+        return { path, spec: photo.spec };
       }));
-      for (const result of results) if (result.status === "fulfilled") uploadedPaths.push(result.value);
+      for (const result of results) if (result.status === "fulfilled") {
+        uploadedPaths.push(result.value.path);
+        imageSpecs.push(result.value.spec);
+      }
       const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
       if (failed) throw failed.reason;
     }
-    return uploadedPaths;
+    return { uploadedPaths, imageSpecs };
   } catch (error) {
     if (uploadedPaths.length) await supabase.storage.from("sellerpilot-ai").remove(uploadedPaths);
     throw error;
@@ -99,15 +135,15 @@ const thumbnailPresets = [
   { id: "wide", label: "프로모션 배너", ratio: "16:9 · 1200×675", width: 1200, height: 675 },
 ];
 
-export function AiProductStudio({ mainPhoto, photos, description, productUrl, requestId, onRunningChange, notify, onResultReady }: {
+export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, onRunningChange, notify, onResultReady, compact = false }: {
   mainPhoto: StudioPhoto | null;
   photos: StudioPhoto[];
-  description: string;
-  productUrl: string;
+  manualFields: ProductIntakeDraft;
   requestId: number;
   onRunningChange: (running: boolean) => void;
   notify: (message: string) => void;
   onResultReady?: (result: ProductStudioResult, productId: string | null) => void;
+  compact?: boolean;
 }) {
   const [result, setResult] = useState<ProductStudioResult | null>(null);
   const [thumbnails, setThumbnails] = useState<AutoThumbnail[]>([]);
@@ -154,11 +190,11 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
       if (!accessToken || !userId) throw new Error("AI 제작을 실행하려면 관리자 로그인이 필요합니다.");
       if (photos.length > 100) throw new Error("한 작업에는 대표사진을 포함해 최대 100장까지 분석할 수 있습니다.");
       const jobId = crypto.randomUUID();
-      const imagePaths = await optimizeAndUploadInBatches(photos, userId, jobId);
+      const { uploadedPaths: imagePaths, imageSpecs } = await optimizeAndUploadInBatches(photos, userId, jobId);
       const response = await fetch("/api/ai/product-studio", {
         method: "POST",
         headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ jobId, description, productUrl, imagePaths }),
+        body: JSON.stringify({ jobId, manualFields, imagePaths, imageSpecs }),
       });
       const queued = await response.json().catch(() => ({ message: "CLI 작업 등록 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
       if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
@@ -177,9 +213,6 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
         body: JSON.stringify({
           action: "product_create",
           jobId: queued.jobId,
-          name: nextResult.product.name,
-          description: nextResult.product.oneLine,
-          sourceUrl: productUrl.trim() || undefined,
         }),
       });
       const productPayload = await productResponse.json().catch(() => ({})) as { id?: string | null };
@@ -197,7 +230,7 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
       setCliPhase("idle");
       onRunningChange(false);
     }
-  }, [description, generating, mainPhoto, notify, onResultReady, onRunningChange, photos, productUrl, waitForCliJob]);
+  }, [generating, mainPhoto, manualFields, notify, onResultReady, onRunningChange, photos, waitForCliJob]);
 
   useEffect(() => {
     if (!requestId || handledRequest.current === requestId) return;
@@ -211,6 +244,16 @@ export function AiProductStudio({ mainPhoto, photos, description, productUrl, re
     anchor.download = `sellerpilot-${thumbnail.id}.jpg`;
     anchor.click();
   };
+
+  if (compact) {
+    return (
+      <article className={`batch-studio-item ${generating ? "running" : result ? "succeeded" : lastError ? "failed" : "ready"}`}>
+        <span className="batch-studio-thumb">{currentImageUrl ? <img src={currentImageUrl} alt="동시 처리 상품 대표사진" /> : <ImageIcon size={18} />}</span>
+        <span><b>{manualFields.productName}</b><small>{manualFields.sellerSku} · {photos.length}장</small></span>
+        <em>{generating ? cliPhase === "running" ? "CLI 처리 중" : "대기 중" : result ? "원장 생성 완료" : lastError ? "확인 필요" : "실행 대기"}</em>
+      </article>
+    );
+  }
 
   return (
     <section className="panel ai-product-studio" id="ai-product-studio">
