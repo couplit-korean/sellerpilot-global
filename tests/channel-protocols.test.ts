@@ -17,6 +17,7 @@ import {
   fetchNaverAccessToken,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { qoo10CatalogCode, qoo10ExpiryDate, qoo10ResultMessage } from "../lib/channels/qoo10";
 
 test("Coupang CEA authorization signs the documented canonical value", () => {
   const now = new Date("2026-08-16T03:04:05.000Z");
@@ -87,6 +88,36 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
     assert.equal(result.remoteId, "1234567890");
     assert.equal(url.searchParams.get("method"), "ItemsBasic.SetNewGoods");
     assert.equal(url.searchParams.get("v"), "1.1");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Qoo10 draft helpers keep internal catalog codes numeric and use a one-year sale period", () => {
+  assert.equal(qoo10CatalogCode("1234567890"), "1234567890");
+  assert.equal(qoo10CatalogCode("No Brand"), "");
+  assert.equal(qoo10CatalogCode("12345678901"), "");
+  assert.equal(qoo10ExpiryDate(new Date("2026-08-17T12:00:00.000Z")), "2027-08-17");
+});
+
+test("Qoo10 provider errors are useful without exposing remote URLs or tokens", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    ResultCode: -9999,
+    ResultMsg: "ManufactureNo is invalid https://private.example/item?token=secret-value",
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const result = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.create",
+      payload: { api_key: "test-key" },
+      arguments: { params: { SecondSubCat: "300000503", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: "<p>Test</p>", RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-08-17", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.safeMessage, /ManufactureNo is invalid/);
+    assert.doesNotMatch(result.safeMessage, /private\.example|secret-value/);
+    assert.equal(qoo10ResultMessage({ ResultMsg: "  invalid   value  " }), "invalid value");
   } finally {
     globalThis.fetch = originalFetch;
   }

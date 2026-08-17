@@ -16,6 +16,7 @@ import {
   type ActiveChannelKey,
   type ChannelCapabilityKey,
 } from "./catalog";
+import { qoo10ResultMessage } from "./qoo10";
 
 export const channelOperationNames = [
   "categories.list",
@@ -162,6 +163,9 @@ function step(name: string, remote: RemoteResponse): ChannelOperationStep {
 
 function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: string): ChannelOperationResult {
   const ok = steps.length > 0 && steps.every((item) => item.ok);
+  const providerMessage = input.channel === "qoo10"
+    ? steps.map((item) => qoo10ResultMessage(item.data)).find(Boolean)
+    : "";
   return {
     ok,
     channel: input.channel,
@@ -170,7 +174,7 @@ function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: s
     remoteId,
     safeMessage: ok
       ? `${channelCatalog[input.channel].name} ${input.operation} 작업이 정상 응답했습니다.`
-      : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.`,
+      : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.${providerMessage ? ` · ${providerMessage}` : ""}`,
   };
 }
 

@@ -3,6 +3,7 @@
 import { AlertTriangle, Check, CircleCheck, Code2, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
+import { qoo10CatalogCode, qoo10ExpiryDate } from "../lib/channels/qoo10";
 import { createClient } from "../lib/supabase/client";
 import { channels } from "./channel-config";
 
@@ -105,11 +106,6 @@ function html(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character] ?? character));
 }
 
-function qoo10Expiry() {
-  const year = new Date().getUTCFullYear() + 1;
-  return `${year}-12-31`;
-}
-
 function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number) {
   const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
   const product = context.product;
@@ -130,8 +126,8 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         SecondSubCat: assignment?.categoryId ?? "",
         OuterSecondSubCat: "",
         Drugtype: "",
-        ManufactureNo: manual.manufacturer,
-        BrandNo: manual.brandName,
+        ManufactureNo: qoo10CatalogCode(assignment?.providedAttributes.ManufactureNo),
+        BrandNo: qoo10CatalogCode(assignment?.providedAttributes.BrandNo),
         ItemTitle: product.name.slice(0, 200),
         PromotionName: product.description.slice(0, 20),
         SellerCode: product.sku.slice(0, 200),
@@ -147,7 +143,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         ItemPrice: String(price),
         TaxRate: "S",
         ItemQty: String(quantity),
-        ExpireDate: qoo10Expiry(),
+        ExpireDate: qoo10ExpiryDate(),
         ShippingNo: "0",
         AvailableDateType: "0",
         AvailableDateValue: "3",
