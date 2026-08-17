@@ -206,6 +206,7 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
   const [showAudit, setShowAudit] = useState(false);
   const [testingId, setTestingId] = useState("");
   const [oauthStartingId, setOauthStartingId] = useState("");
+  const [pendingOAuth, setPendingOAuth] = useState<{ channelName: string; authorizationUrl: string } | null>(null);
   const [operationTarget, setOperationTarget] = useState<{ channel: ChannelDefinition; credential: Credential } | null>(null);
 
   const load = useCallback(async () => {
@@ -270,6 +271,7 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
 
   const startOAuth = async (credential: Credential) => {
     setOauthStartingId(credential.id);
+    setPendingOAuth(null);
     try {
       const { data: sessionData } = await createClient().auth.getSession();
       const response = await fetch(`/api/admin/channel-credentials/${credential.channel}/authorize`, {
@@ -284,9 +286,11 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
       });
       const payload = await response.json().catch(() => ({ message: `${channelCatalog[credential.channel].name} OAuth 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
       if (!response.ok || !payload.authorizationUrl) throw new Error(payload.message);
-      window.location.assign(payload.authorizationUrl);
+      setPendingOAuth({ channelName: channelCatalog[credential.channel].name, authorizationUrl: payload.authorizationUrl });
+      notify(`${channelCatalog[credential.channel].name} 판매자 승인 링크를 준비했습니다.`);
     } catch (oauthError) {
       notify(oauthError instanceof Error ? oauthError.message : "판매 채널 OAuth를 시작하지 못했습니다.");
+    } finally {
       setOauthStartingId("");
     }
   };
@@ -308,6 +312,7 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
       </section>
 
       {error && <div className="credential-alert"><AlertTriangle size={16} /><span><b>연결 설정 확인</b>{error}</span><button onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></div>}
+      {pendingOAuth && <div className="credential-alert"><KeyRound size={16} /><span><b>{pendingOAuth.channelName} 판매자 승인 준비 완료</b>승인 화면에서 로그인하고 연결을 허용해 주세요.</span><button onClick={() => window.location.assign(pendingOAuth.authorizationUrl)}><KeyRound size={14} />판매자 승인 화면 열기</button><button aria-label="승인 링크 닫기" onClick={() => setPendingOAuth(null)}><X size={14} /></button></div>}
 
       <section className="credential-channel-grid">
         {channelDefinitions.map((channel) => {
