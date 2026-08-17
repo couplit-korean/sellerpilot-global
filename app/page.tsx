@@ -178,6 +178,7 @@ const ticketChannelCodes: Record<string, string> = {
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
 type DisplayProduct = {
   id: string;
+  sourceId: string;
   name: string;
   sku: string;
   image: string | null;
@@ -493,7 +494,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   );
 }
 
-function ProductsPage({ onNavigate, displayProducts }: { onNavigate: (view: View) => void; displayProducts: DisplayProduct[] }) {
+function ProductsPage({ onNavigate, onOpenProduct, displayProducts }: { onNavigate: (view: View) => void; onOpenProduct: (product: DisplayProduct) => void; displayProducts: DisplayProduct[] }) {
   const [query, setQuery] = useState("");
   const filtered = displayProducts.filter((product) => product.name.toLowerCase().includes(query.toLowerCase()) || product.sku.toLowerCase().includes(query.toLowerCase()));
   const activeCount = displayProducts.filter((product) => product.status === "판매중").length;
@@ -504,7 +505,7 @@ function ProductsPage({ onNavigate, displayProducts }: { onNavigate: (view: View
       <section className="summary-strip"><div><Package size={18} /><span>전체 상품<strong>{displayProducts.length}</strong></span></div><div><CheckCircle2 size={18} /><span>정상 판매<strong>{activeCount}</strong></span></div><div><AlertCircle size={18} /><span>재고 주의<strong>{lowStockCount}</strong></span></div><div><Box size={18} /><span>품절<strong>{outOfStockCount}</strong></span></div><button className="primary-button" onClick={() => onNavigate("publishing")}><Plus size={16} />새 상품 등록</button></section>
       <section className="panel data-panel">
         <div className="data-toolbar"><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="상품명, SKU 검색" /></div><button className="filter-button" disabled><Filter size={15} />채널 필터<ChevronDown size={14} /></button><button className="filter-button" disabled><ListFilter size={15} />상태 필터<ChevronDown size={14} /></button><span className="toolbar-spacer" /><button className="icon-text-button" disabled title="채널 운영 키 연결 후 활성화"><RefreshCw size={15} />채널 동기화</button><button className="icon-only-button" aria-label="더보기" disabled><MoreHorizontal size={18} /></button></div>
-        <div className="table-wrap"><table className="data-table product-table"><thead><tr><th><input type="checkbox" aria-label="전체 선택" /></th><th>상품</th><th>판매 채널</th><th>재고</th><th>30일 판매</th><th>30일 매출</th><th>상태</th><th /></tr></thead><tbody>{filtered.map((product) => <tr key={product.id}><td><input type="checkbox" aria-label={`${product.name} 선택`} /></td><td><div className="product-cell"><div className="product-thumb"><ProductVisual src={product.image} size="52px" /></div><span><b>{product.name}</b><small>{product.sku} · {product.id}</small></span></div></td><td><div className="channel-stack">{product.channels.map((code) => <ChannelMark key={code} code={code} size="sm" />)}</div></td><td><strong className={product.stock < 20 ? "stock-low" : ""}>{product.stock}</strong><small> 개</small></td><td><b>{product.sales}</b><small> 개</small></td><td><b>{product.revenue}</b></td><td><StatusBadge status={product.status} /></td><td><button className="table-action"><MoreHorizontal size={17} /></button></td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table className="data-table product-table"><thead><tr><th><input type="checkbox" aria-label="전체 선택" /></th><th>상품</th><th>판매 채널</th><th>재고</th><th>30일 판매</th><th>30일 매출</th><th>상태</th><th /></tr></thead><tbody>{filtered.map((product) => <tr key={product.id}><td><input type="checkbox" aria-label={`${product.name} 선택`} /></td><td><div className="product-cell"><div className="product-thumb"><ProductVisual src={product.image} size="52px" /></div><span><b>{product.name}</b><small>{product.sku} · {product.id}</small></span></div></td><td><div className="channel-stack">{product.channels.map((code) => <ChannelMark key={code} code={code} size="sm" />)}</div></td><td><strong className={product.stock < 20 ? "stock-low" : ""}>{product.stock}</strong><small> 개</small></td><td><b>{product.sales}</b><small> 개</small></td><td><b>{product.revenue}</b></td><td><StatusBadge status={product.status} /></td><td><button className="table-action" title="카테고리·채널 등록 준비 열기" aria-label={`${product.name} 등록 준비 열기`} onClick={() => onOpenProduct(product)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
         {filtered.length === 0 && <div className="live-empty-state table-empty"><PackageSearch size={28} /><b>실상품 데이터가 없습니다.</b><small>상품을 등록하거나 채널 동기화를 실행하면 이 목록에 표시됩니다.</small></div>}
         <div className="table-footer"><span>총 {displayProducts.length}개 중 1–{filtered.length}개 표시</span><div><button disabled><ChevronRight className="flip" size={15} /></button><button className="active">1</button><button disabled><ChevronRight size={15} /></button></div></div>
       </section>
@@ -534,7 +535,7 @@ const optionalPhotoSlots = [
   { id: "barcode", label: "바코드", guide: "숫자까지 보이게" },
 ] as const;
 
-function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null }) {
+function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; initialProduct?: { id: string; name: string } | null }) {
   const [running, setRunning] = useState(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
@@ -543,8 +544,8 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
   const [uploadError, setUploadError] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
-  const [analyzedProductName, setAnalyzedProductName] = useState("");
-  const [analyzedProductId, setAnalyzedProductId] = useState<string | null>(null);
+  const [analyzedProductName, setAnalyzedProductName] = useState(initialProduct?.name ?? "");
+  const [analyzedProductId, setAnalyzedProductId] = useState<string | null>(initialProduct?.id ?? null);
   const [categoryDraftRef] = useState(() => crypto.randomUUID());
   const [publishRefreshVersion, setPublishRefreshVersion] = useState(0);
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
@@ -984,6 +985,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<{ id: string; name: string } | null>(null);
   const operations = useOperationsSnapshot();
   const operationSummary = operations.data?.summary ?? null;
   const channelMetrics = useMemo(() => operations.data?.channelMetrics ?? [], [operations.data]);
@@ -997,6 +999,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 
   const displayProducts = useMemo<DisplayProduct[]>(() => operations.data?.products.map((product) => ({
     id: product.externalCode,
+    sourceId: product.id,
     name: product.name,
     sku: product.sku,
     image: product.imageUrl ?? null,
@@ -1075,15 +1078,23 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, [operations, notify]);
 
   const navigate = useCallback((next: View) => {
+    if (next === "publishing") setSelectedProduct(null);
     setView(next);
+    setSidebarOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const openProductForPublishing = useCallback((product: DisplayProduct) => {
+    setSelectedProduct({ id: product.sourceId, name: product.name });
+    setView("publishing");
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} operationsAvailable={operations.state === "database"} />;
-    if (view === "products") return <ProductsPage onNavigate={navigate} displayProducts={displayProducts} />;
-    if (view === "publishing") return <PublishingPage notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} />;
+    if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductForPublishing} displayProducts={displayProducts} />;
+    if (view === "publishing") return <PublishingPage key={selectedProduct?.id ?? "new-product"} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} initialProduct={selectedProduct} />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={operations.data?.marginScenarios ?? []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage displayOrders={displayOrders} onAdvance={advanceOrder} />;
     if (view === "cs") return <CsPage notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} />;
