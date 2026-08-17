@@ -119,6 +119,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260817003000_fix_pgcrypto_schema.sql",
       "20260817004500_product_publish_workflow.sql",
       "20260817045529_fix_service_role_rpc_guards.sql",
+      "20260817054039_channel_gateway_queue.sql",
+      "20260817060625_channel_target_discovery.sql",
+      "20260817061531_localized_market_listings.sql",
+      "20260817061650_channel_market_targets.sql",
+      "20260817062221_market_listing_ledger.sql",
+      "20260817184000_channel_oauth_state_store.sql",
+      "20260817184500_fix_oauth_state_service_guards.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -138,6 +145,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_prune_ai_jobs(timestamp with time zone,integer)",
       "public.sellerpilot_touch_ai_job(text,uuid,text)",
       "public.sellerpilot_service_complete_product_listing(uuid,uuid,text,boolean,text,text)",
+      "public.sellerpilot_enqueue_channel_gateway_job(uuid,uuid,text,text,jsonb)",
+      "public.sellerpilot_claim_channel_gateway_job(text,text)",
+      "public.sellerpilot_complete_channel_gateway_job(text,uuid,text,jsonb,text)",
+      "public.sellerpilot_get_channel_gateway_job(uuid)",
+      "public.sellerpilot_service_upsert_channel_market_target(uuid,uuid,text,text,text,text,text,text,text,text)",
+      "public.sellerpilot_service_store_channel_oauth_state(uuid,uuid,text,text)",
+      "public.sellerpilot_service_claim_channel_oauth_state(uuid,text,text)",
     ];
     for (const signature of serviceOnlyFunctions) {
       assert.equal(
@@ -209,6 +223,32 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.equal(refreshedSecret.secret_payload.access_token, "new-access-token");
 
+    const oauthStateHash = "c".repeat(64);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_store_channel_oauth_state($1, $2, 'lazada', $3)",
+        [ADMIN_ID, refreshedCredentialId, oauthStateHash],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_claim_channel_oauth_state($1, 'lazada', $2)",
+        [ADMIN_ID, oauthStateHash],
+      ),
+      refreshedCredentialId,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_claim_channel_oauth_state($1, 'lazada', $2)",
+        [ADMIN_ID, oauthStateHash],
+      ),
+      null,
+    );
+
     await setClaims(db);
     for (const channel of ["coupang", "elevenst", "smartstore", "ebay"]) {
       const id = await scalar(
@@ -268,6 +308,51 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "select public.sellerpilot_issue_ai_worker_token('test worker', $1, 'AAAAAAAAAAAA', now() + interval '30 days')",
       [TOKEN_HASH],
     );
+    const shopeeCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'shopee', 'production',
+        '{"partner_id":"2031489","partner_key":"test-partner-key-long","shop_id":"123456789","access_token":"test-access-token","refresh_token":"test-refresh-token"}'::jsonb,
+        now() + interval '365 days', 90, 30, 0
+      )`,
+    );
+    const shopeeAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'shopee', 'categories.list', 'shopee-categories-migration-0001', $2)",
+      [shopeeCredentialId, "d".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    const gatewayJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_channel_gateway_job($1, $2, 'shopee', 'categories.list', '{\"arguments\":{\"shopId\":\"123456789\"}}'::jsonb)",
+      [shopeeCredentialId, shopeeAttempt.attempt_id],
+    );
+    const gatewayClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_gateway_job($1, 'migration-test/1.2')",
+      [TOKEN_HASH],
+    );
+    assert.equal(gatewayClaim.id, gatewayJobId);
+    assert.equal(gatewayClaim.credential.partner_key, "test-partner-key-long");
+    const gatewayResponse = {
+      ok: true,
+      channel: "shopee",
+      operation: "categories.list",
+      steps: [{ name: "categories", ok: true, status: 200, data: { response: { category_list: [] } } }],
+      safeMessage: "Shopee category read completed.",
+    };
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_complete_channel_gateway_job($1, $2, 'succeeded', $3::jsonb, null)",
+        [TOKEN_HASH, gatewayJobId, JSON.stringify(gatewayResponse)],
+      ),
+      true,
+    );
+    const gatewaySnapshot = await scalar(db, "select public.sellerpilot_get_channel_gateway_job($1)", [gatewayJobId]);
+    assert.equal(gatewaySnapshot.status, "succeeded");
+    assert.equal(gatewaySnapshot.response.operation, "categories.list");
+    await setClaims(db);
     const requestPayload = {
       image_paths: [`${ADMIN_ID}/${JOB_ID}/input/hero.webp`],
       description: "실제 상품 분석 테스트",

@@ -12,6 +12,7 @@ import {
   createNaverClientSecretSign,
   ensureEbayAccessToken,
   ensureShopeeAccessToken,
+  ensureShopeeMerchantAccessToken,
   exchangeShopeeOAuthToken,
   fetchNaverAccessToken,
 } from "../lib/channels/protocols";
@@ -209,6 +210,96 @@ test("Shopee operation token selection projects the requested authorized shop wi
   assert.equal(selected.payload.access_token, "shop-two-access");
   assert.equal(selected.payload.refresh_token, "shop-two-refresh");
   await assert.rejects(ensureShopeeAccessToken(payload, "production", 10 * 60 * 1000, "9999"), /SHOPEE_SHOP_NOT_AUTHORIZED/);
+});
+
+test("Shopee merchant token and GlobalProduct category request use the merchant signature dimension", async () => {
+  const payload = {
+    partner_id: "2031489",
+    partner_key: "partner-secret",
+    merchant_id: "2001",
+    authorization_expires_at: "2099-01-01T00:00:00.000Z",
+    shopee_targets: [
+      { type: "merchant", id: "2001", access_token: "merchant-access", refresh_token: "merchant-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+      { type: "shop", id: "1001", access_token: "shop-access", refresh_token: "shop-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+    ],
+  };
+  const selected = await ensureShopeeMerchantAccessToken(payload, "production", 10 * 60 * 1000, "2001");
+  assert.equal(selected.payload.merchant_id, "2001");
+  assert.equal(selected.payload.access_token, "merchant-access");
+
+  const originalFetch = globalThis.fetch;
+  let calledUrl = "";
+  globalThis.fetch = async (input) => {
+    calledUrl = String(input);
+    return new Response(JSON.stringify({ error: "", request_id: "request", response: { category_list: [] } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "shopee",
+      operation: "categories.list",
+      payload: selected.payload,
+      arguments: { globalProduct: true, query: { language: "en" } },
+      environment: "production",
+    });
+    const url = new URL(calledUrl);
+    assert.equal(result.ok, true);
+    assert.equal(url.pathname, "/api/v2/global_product/get_category");
+    assert.equal(url.searchParams.get("merchant_id"), "2001");
+    assert.equal(url.searchParams.get("shop_id"), null);
+    assert.equal(url.searchParams.get("access_token"), "merchant-access");
+    assert.match(url.searchParams.get("sign") ?? "", /^[0-9a-f]{64}$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada product create serializes the structured request as official XML and reads the item back", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), body: String(init?.body ?? "") });
+    const creating = String(input).includes("/product/create");
+    return new Response(JSON.stringify(creating
+      ? { code: "0", request_id: "create-request", data: { item_id: 987654321 } }
+      : { code: "0", request_id: "read-request", data: { item_id: 987654321, primary_category: 12345 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada",
+      operation: "listing.create",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "access-token", country: "my" },
+      arguments: {
+        request: {
+          Request: {
+            Product: {
+              PrimaryCategory: "12345",
+              Attributes: { name: "White cup", description: "Cup & mug" },
+              Skus: { Sku: [{ SellerSku: "CUP-001", price: "12.90", quantity: "1", Status: "inactive" }] },
+            },
+          },
+        },
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "987654321");
+    assert.equal(calls.length, 2);
+    const form = new URLSearchParams(calls[0].body);
+    const xml = form.get("payload") ?? "";
+    assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+    assert.match(xml, /<Request><Product><PrimaryCategory>12345<\/PrimaryCategory>/);
+    assert.match(xml, /<description>Cup &amp; mug<\/description>/);
+    assert.match(xml, /<Skus><Sku><SellerSku>CUP-001<\/SellerSku>/);
+    assert.match(calls[1].url, /\/product\/item\/get/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Coupang operation routing uses the documented item price endpoint", async () => {

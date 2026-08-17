@@ -15,6 +15,7 @@ type CredentialRow = {
 
 type Assignment = {
   channel: ActiveChannelKey;
+  market: string;
   categoryId: string;
   categoryPath: string[];
   providedAttributes: Record<string, string>;
@@ -24,10 +25,16 @@ type Assignment = {
 
 type Listing = {
   channel: ActiveChannelKey;
+  market: string;
+  targetId: string;
   remoteId: string | null;
   status: string;
   lastError: string | null;
 };
+
+type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
+type LocalizedListing = { channel: "shopee" | "lazada"; market: string; locale: string; title: string; shortDescription: string; description: string; keywords: string[] };
+type PackageFields = { weight: number; length: number; width: number; height: number };
 
 type PublishContext = {
   product: {
@@ -43,6 +50,7 @@ type PublishContext = {
   listings: Listing[];
   sourceImages: Array<{ path: string; url: string | null }>;
   generatedImages: Array<{ id: string; path: string; url: string | null }>;
+  localizedListings: LocalizedListing[];
 };
 
 type ChannelResult = { phase: "idle" | "running" | "succeeded" | "failed"; message?: string; remoteId?: string; attemptId?: string };
@@ -56,10 +64,16 @@ function qoo10Expiry() {
   return `${year}-12-31`;
 }
 
-function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number) {
-  const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed");
+function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number) {
+  const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
   const product = context.product;
   const sourceImage = context.sourceImages[0]?.url ?? "";
+  const localized = context.localizedListings?.find((item) => item.channel === channel && item.market === target?.marketCode);
+  const title = localized?.title || product.name;
+  const description = localized?.description || product.description;
+  const shortDescription = localized?.shortDescription || product.description.slice(0, 500);
+  const marketSku = target ? `${product.sku}-${target.marketCode}`.slice(0, 100) : product.sku;
+  const imageUrls = [...context.sourceImages, ...context.generatedImages].map((item) => item.url).filter((url): url is string => Boolean(url));
   if (channel === "qoo10") {
     return {
       params: {
@@ -92,35 +106,61 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     };
   }
   if (channel === "shopee") {
+    const attributeList = Object.entries(assignment?.providedAttributes ?? {}).map(([attribute_id, original_value_name]) => ({
+      attribute_id: Number(attribute_id),
+      attribute_value_list: /^\d+$/.test(original_value_name) ? [{ value_id: Number(original_value_name) }] : [{ original_value_name }],
+    }));
+    const commonProductFields = {
+      category_id: Number(assignment?.categoryId ?? 0),
+      description: description.slice(0, 3_000),
+      brand: { brand_id: 0, original_brand_name: "No Brand" },
+      condition: "NEW",
+      normal_stock: quantity,
+      seller_stock: [{ stock: quantity }],
+      image: { image_id_list: [] },
+      weight: packageFields.weight,
+      dimension: { package_length: packageFields.length, package_width: packageFields.width, package_height: packageFields.height },
+      pre_order: { is_pre_order: false, days_to_ship: 1 },
+      attribute_list: attributeList,
+    };
+    const globalSku = `${product.sku}-GLOBAL`.slice(0, 100);
     return {
-      shopId: "",
+      globalProduct: true,
+      shopId: target?.targetId ?? "",
+      country: target?.marketCode.toLowerCase() ?? "",
+      imageUrls,
       body: {
-        category_id: Number(assignment?.categoryId ?? 0),
-        item_name: product.name,
-        description: product.description,
-        item_sku: product.sku,
-        original_price: price,
-        normal_stock: quantity,
-        image: { image_id_list: [] },
-        weight: 0,
-        dimension: { package_length: 0, package_width: 0, package_height: 0 },
-        logistic_info: [],
-        attribute_list: Object.entries(assignment?.providedAttributes ?? {}).map(([attribute_id, original_value_name]) => ({
-          attribute_id: Number(attribute_id),
-          attribute_value_list: [{ original_value_name }],
-        })),
+        ...commonProductFields,
+        original_price: globalBaseUsdPrice,
+        global_item_name: title.slice(0, 120),
+        global_item_sku: globalSku,
+      },
+      publish: {
+        shop_id: Number(target?.targetId ?? 0),
+        shop_region: target?.marketCode ?? "",
+        item: {
+          ...commonProductFields,
+          original_price: price,
+          item_name: title.slice(0, 120),
+          item_sku: marketSku,
+          item_status: "UNLIST",
+          logistic: [],
+        },
       },
     };
   }
   if (channel === "lazada") {
     return {
+      country: target?.marketCode.toLowerCase() ?? "my",
+      imageUrls,
       request: {
-        Product: {
-          PrimaryCategory: assignment?.categoryId ?? "",
-          SPUId: "",
-          AssociatedSku: "",
-          Attributes: { name: product.name, description: product.description, brand: "No Brand" },
-          Skus: { Sku: [{ SellerSku: product.sku, price: String(price), quantity: String(quantity), package_weight: "", package_length: "", package_width: "", package_height: "", Images: { Image: [] } }] },
+        Request: {
+          Product: {
+            PrimaryCategory: assignment?.categoryId ?? "",
+            Images: { Image: [] },
+            Attributes: { name: title.slice(0, 255), description, short_description: shortDescription.slice(0, 500), brand: "No Brand", ...(assignment?.providedAttributes ?? {}) },
+            Skus: { Sku: [{ SellerSku: marketSku, price: String(price), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: title.slice(0, 255), Status: "inactive", Images: { Image: [] } }] },
+          },
         },
       },
     };
@@ -190,8 +230,8 @@ function missingNativeValues(channel: ActiveChannelKey, value: Record<string, un
     return ["SecondSubCat", "ItemTitle", "StandardImage", "ItemDescription", "ItemPrice", "ItemQty", "ShippingNo", "AvailableDateType", "AvailableDateValue"]
       .filter((key) => params?.[key] === undefined || String(params[key]).trim() === "");
   }
-  if (channel === "shopee") return [!String(value.shopId ?? "").trim() ? "shopId" : "", json.includes('"image_id_list":[]') ? "Shopee image_id_list" : "", json.includes('"logistic_info":[]') ? "Shopee logistic_info" : ""].filter(Boolean);
-  if (channel === "lazada") return [json.includes('"Images":{"Image":[]}') ? "Lazada migrated image" : "", json.includes('"package_weight":""') ? "package size/weight" : ""].filter(Boolean);
+  if (channel === "shopee") return [!String(value.shopId ?? "").trim() ? "shopId" : "", !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", json.includes('"weight":0') ? "package weight" : ""].filter(Boolean);
+  if (channel === "lazada") return [!Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", json.includes('"package_weight":"0"') || json.includes('"package_weight":""') ? "package size/weight" : ""].filter(Boolean);
   if (channel === "coupang") return ["outboundShippingPlaceCode", "returnCenterCode", "notices", "category attributes"].filter((key) => json.includes(`"${key}":""`) || json.includes(`"${key}":[]`));
   if (channel === "smartstore") return [json.includes("NAVER_UPLOADED_IMAGE_URL_REQUIRED") ? "Naver uploaded image" : "", json.includes('"deliveryInfo":{}') ? "deliveryInfo" : "", json.includes('"afterServiceInfo":{}') ? "afterServiceInfo/originAreaInfo" : ""].filter(Boolean);
   return [json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
@@ -203,10 +243,10 @@ async function fingerprint(value: unknown) {
   return Array.from(new Uint8Array(digest)).slice(0, 12).map((item) => item.toString(16).padStart(2, "0")).join("");
 }
 
-function buildDraftMap(context: PublishContext, price: number, quantity: number) {
+function buildDraftMap(context: PublishContext, price: number, quantity: number, targets: Partial<Record<ActiveChannelKey, ChannelTarget>>, packageFields: PackageFields, globalBaseUsdPrice: number) {
   return Object.fromEntries(activeChannelKeys.map((channel) => [
     channel,
-    JSON.stringify(buildChannelArguments(channel, context, price, quantity), null, 2),
+    JSON.stringify(buildChannelArguments(channel, context, price, quantity, targets[channel], packageFields, globalBaseUsdPrice), null, 2),
   ]));
 }
 
@@ -221,12 +261,18 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
   const [drafts, setDrafts] = useState<Partial<Record<ActiveChannelKey, string>>>({});
   const [results, setResults] = useState<Partial<Record<ActiveChannelKey, ChannelResult>>>({});
+  const [availableTargets, setAvailableTargets] = useState<Partial<Record<"shopee" | "lazada", ChannelTarget[]>>>({});
+  const [selectedTargets, setSelectedTargets] = useState<Partial<Record<ActiveChannelKey, ChannelTarget>>>({});
   const [price, setPrice] = useState(2500);
+  const [globalBaseUsdPrice, setGlobalBaseUsdPrice] = useState(12.9);
   const [quantity, setQuantity] = useState(1);
   const [currency, setCurrency] = useState("JPY");
+  const [packageFields, setPackageFields] = useState<PackageFields>({ weight: 0.35, length: 12, width: 12, height: 10 });
   const [loading, setLoading] = useState(false);
   const priceRef = useRef(price);
+  const globalBaseUsdPriceRef = useRef(globalBaseUsdPrice);
   const quantityRef = useRef(quantity);
+  const packageFieldsRef = useRef(packageFields);
 
   const load = useCallback(async () => {
     if (!productId) {
@@ -239,15 +285,24 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("상품 등록 준비 정보를 보려면 다시 로그인해 주세요.");
-      const [contextResponse, credentialsResponse] = await Promise.all([
+      const [contextResponse, credentialsResponse, shopeeTargetsResponse, lazadaTargetsResponse] = await Promise.all([
         fetch(`/api/admin/products/${productId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
         supabase.rpc("sellerpilot_list_credentials"),
+        fetch("/api/admin/channel-targets?channel=shopee", { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
+        fetch("/api/admin/channel-targets?channel=lazada", { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
       ]);
       const payload = await contextResponse.json().catch(() => ({ message: "상품 준비 응답을 읽지 못했습니다." })) as PublishContext & { message?: string };
       if (!contextResponse.ok) throw new Error(payload.message ?? "상품 등록 준비 정보를 불러오지 못했습니다.");
+      const shopeePayload = await shopeeTargetsResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[] };
+      const lazadaPayload = await lazadaTargetsResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[] };
+      const shopeeTargets = shopeeTargetsResponse.ok && Array.isArray(shopeePayload.targets) ? shopeePayload.targets : [];
+      const lazadaTargets = lazadaTargetsResponse.ok && Array.isArray(lazadaPayload.targets) ? lazadaPayload.targets : [];
+      const initialTargets: Partial<Record<ActiveChannelKey, ChannelTarget>> = { shopee: shopeeTargets[0], lazada: lazadaTargets[0] };
       setContext(payload);
       setCredentials(Array.isArray(credentialsResponse.data) ? credentialsResponse.data as CredentialRow[] : []);
-      setDrafts(buildDraftMap(payload, priceRef.current, quantityRef.current));
+      setAvailableTargets({ shopee: shopeeTargets, lazada: lazadaTargets });
+      setSelectedTargets(initialTargets);
+      setDrafts(buildDraftMap(payload, priceRef.current, quantityRef.current, initialTargets, packageFieldsRef.current, globalBaseUsdPriceRef.current));
     } catch (error) {
       notify(error instanceof Error ? error.message : "상품 등록 준비 정보를 불러오지 못했습니다.");
     } finally {
@@ -270,7 +325,8 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const executeChannel = async (channel: ActiveChannelKey) => {
     if (!context || !productId) return;
     const credential = activeCredentials.get(channel);
-    const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed");
+    const target = selectedTargets[channel];
+    const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
     if (!credential || !assignment) return notify(`${channelCatalog[channel].name} 활성 키와 확정 카테고리를 확인해 주세요.`);
     let channelArguments: Record<string, unknown>;
     try {
@@ -280,7 +336,8 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     }
     const missing = missingNativeValues(channel, channelArguments);
     if (missing.length) return notify(`${channelCatalog[channel].name} 필수값 보완: ${missing.join(", ")}`);
-    const confirmed = window.confirm(`${channelCatalog[channel].name} 운영 계정에 실제 상품 1건을 등록합니다. 가격 ${price.toLocaleString()} ${currency}, 재고 ${quantity}개가 맞습니까?`);
+    const listingCurrency = target?.currency || currency;
+    const confirmed = window.confirm(`${channelCatalog[channel].name}${target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정에 실제 상품 1건을 등록합니다. 가격 ${price.toLocaleString()} ${listingCurrency}, 재고 ${quantity}개가 맞습니까?`);
     if (!confirmed) return;
 
     setResults((current) => ({ ...current, [channel]: { phase: "running" } }));
@@ -288,7 +345,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const { data: sessionData } = await createClient().auth.getSession();
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
-      const idempotencyKey = `listing:${productId}:${channel}:${await fingerprint({ channelArguments, currency, price })}`;
+      const idempotencyKey = `listing:${productId}:${channel}:${target?.marketCode ?? "default"}:${await fingerprint({ channelArguments, listingCurrency, price })}`;
       const response = await fetch("/api/admin/channel-operations", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
@@ -299,8 +356,10 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
           idempotencyKey,
           confirmWrite: true,
           productId,
-          currency,
+          currency: listingCurrency,
           price,
+          market: target?.marketCode ?? "",
+          targetId: target?.targetId ?? "",
           arguments: channelArguments,
         }),
       });
@@ -324,17 +383,19 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
 
   return <section className="panel product-publish-workbench">
     <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 실행</h3><p>공식 카테고리, 원본 대표사진, 가격·재고와 채널 필수값을 마지막으로 검증한 뒤 운영 API에 1건씩 등록합니다.</p></div><span className="step-chip">FINAL</span></div>
-    <div className="publish-common-fields"><label><span>판매가</span><input type="number" min="0" step="1" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); }} /></label><label><span>통화</span><input value={currency} maxLength={3} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label><label><span>재고</span><input type="number" min="0" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); }} /></label><button type="button" onClick={() => setDrafts(buildDraftMap(context, price, quantity))}><RefreshCw size={14} />공통값으로 초안 갱신</button></div>
+    <div className="publish-common-fields"><label><span>국가별 판매가</span><input type="number" min="0" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); }} /></label><label><span>판매 통화</span><input value={currency} maxLength={3} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label><label><span>Shopee 글로벌 기준가 USD</span><input type="number" min="0.01" step="0.01" value={globalBaseUsdPrice} onChange={(event) => { const value = Number(event.target.value); globalBaseUsdPriceRef.current = value; setGlobalBaseUsdPrice(value); }} /></label><label><span>재고</span><input type="number" min="0" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); }} /></label><label><span>중량 kg</span><input type="number" min="0.01" step="0.01" value={packageFields.weight} onChange={(event) => { const next = { ...packageFields, weight: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label><label><span>가로 cm</span><input type="number" min="1" step="1" value={packageFields.length} onChange={(event) => { const next = { ...packageFields, length: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label><label><span>세로 cm</span><input type="number" min="1" step="1" value={packageFields.width} onChange={(event) => { const next = { ...packageFields, width: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label><label><span>높이 cm</span><input type="number" min="1" step="1" value={packageFields.height} onChange={(event) => { const next = { ...packageFields, height: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label><button type="button" onClick={() => setDrafts(buildDraftMap(context, price, quantity, selectedTargets, packageFields, globalBaseUsdPrice))}><RefreshCw size={14} />공통값으로 초안 갱신</button></div>
     <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>상품 원장</b>{context.product.sku}</span><span><Check size={15} /><b>원본 이미지</b>{context.sourceImages.length}장</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
     <div className="publish-channel-cards">{visibleChannels.map((channel) => {
       const definition = channelCatalog[channel];
       const credential = activeCredentials.get(channel);
-      const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed");
-      const listing = context.listings.find((item) => item.channel === channel);
+      const target = selectedTargets[channel];
+      const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
+      const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
       const result = results[channel] ?? { phase: "idle" as const };
       const capability = definition.capabilities.listingCreate;
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
         <header><span style={{ background: channels[channel].color }}>{definition.code}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{listing?.status === "published" ? "등록 완료" : credential ? assignment ? "실행 준비" : "카테고리 필요" : "키 필요"}</em></header>
+        {(channel === "shopee" || channel === "lazada") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target?.marketCode ?? ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => item.marketCode === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select></label>}
         {capability.mode === "vendor_docs_required" ? <div className="publish-blocked"><AlertTriangle size={18} /><b>판매자 상세 명세 승인 필요</b><small>{capability.note}</small></div> : <>
           <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span></div>
           {assignment && <small className="publish-category-path">{assignment.categoryPath.join(" › ")} · {assignment.categoryId}</small>}

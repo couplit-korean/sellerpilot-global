@@ -75,7 +75,7 @@ export function AcceptanceChecklistPage() {
         </div>
         <aside>
           <ShieldCheck size={21} />
-          <div><strong>현재 단계 · 운영 코어 구현 완료</strong><span>중앙 DB·관리자 RPC·AI 작업자·보관 정리 구현 · 원격 계정 적용과 채널 E2E 승인 대기</span></div>
+          <div><strong>현재 단계 · Shopee 8개 실숍 E2E 완료</strong><span>글로벌 상품→8개 국가 UNLIST 현지화·통화·재고·물류 재조회 완료 · Lazada 공급사 셀러 화이트리스트 수정 필요</span></div>
         </aside>
       </section>
 
@@ -88,9 +88,9 @@ export function AcceptanceChecklistPage() {
       </section>
 
       <section className="acceptance-gates">
-        <div><span>GATE 0</span><b>범위·계정·테스트상품</b><em>계정 일부 확보</em></div>
+        <div><span>GATE 0</span><b>범위·계정·테스트상품</b><em>실상품·스튜디오 이미지 5장 확보</em></div>
         <i />
-        <div><span>GATE 1</span><b>Qoo10·Lazada API PoC</b><em>자격증명 적용 대기</em></div>
+        <div><span>GATE 1</span><b>Qoo10·Shopee·Lazada API PoC</b><em>Shopee 8개 숍 통과 · Qoo10 읽기 통과 · Lazada 공급사 차단</em></div>
         <i />
         <div><span>PHASE 1–3</span><b>운영코어·콘텐츠·매칭</b><em>핵심 코어 구현 · 고도화 지속</em></div>
         <i />

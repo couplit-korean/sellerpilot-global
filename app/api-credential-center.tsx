@@ -107,7 +107,7 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
   if (operation === "categories.attributes" || operation === "categories.validate") {
     if (channel === "qoo10") return { categoryId: "", params: {} };
     if (channel === "shopee") return { shopId: "", categoryId: "", query: { language: "en" } };
-    if (channel === "lazada") return { categoryId: "", query: {} };
+    if (channel === "lazada") return { categoryId: "", queryParams: {} };
     if (channel === "coupang" || channel === "smartstore") return { categoryId: "" };
     if (channel === "ebay") return { categoryTreeId: "0", categoryId: "" };
     return {};

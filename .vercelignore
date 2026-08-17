@@ -7,3 +7,5 @@ node_modules
 output
 prompts
 tmp
+docs/판매채널_실계정_UI_필드_매핑 2.md
+lib/channel-diagnostics 2.ts

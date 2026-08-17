@@ -30,3 +30,32 @@ test("Qoo10 category normalization maps current QAPI fields and cross-locale cup
 test("Qoo10 category normalization does not return an arbitrary leaf without a lexical match", () => {
   assert.deepEqual(normalizeSuggestions("qoo10", qoo10Response, "분류 사전이 없는 임의 상품"), []);
 });
+
+const shopeeGlobalResponse = {
+  ok: true,
+  steps: [{
+    name: "global-categories",
+    ok: true,
+    status: 200,
+    data: {
+      response: {
+        category_list: [
+          { category_id: 100017, display_category_name: "Women Clothes", has_children: false },
+          { category_id: 101240, display_category_name: "Mugs", has_children: false },
+          { category_id: 100630, display_category_name: "Shoes", has_children: false },
+        ],
+      },
+    },
+  }],
+};
+
+test("Shopee GlobalProduct normalization chooses a lexical category instead of the first leaf", () => {
+  const suggestions = normalizeSuggestions("shopee", shopeeGlobalResponse, "White ceramic espresso cup");
+  assert.equal(suggestions[0]?.id, "101240");
+  assert.equal(suggestions[0]?.name, "Mugs");
+  assert.equal(suggestions[0]?.leaf, true);
+});
+
+test("Shopee GlobalProduct normalization blocks arbitrary categories without a lexical match", () => {
+  assert.deepEqual(normalizeSuggestions("shopee", shopeeGlobalResponse, "Unmapped industrial component"), []);
+});

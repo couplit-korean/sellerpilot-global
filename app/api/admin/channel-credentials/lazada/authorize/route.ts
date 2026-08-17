@@ -1,7 +1,8 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { exchangeOAuthViaChannelGateway } from "../../../../../../lib/channels/gateway";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -26,8 +27,20 @@ function sameValue(left: string, right: string) {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function oauthStartResponse(request: NextRequest, appKey: string, credentialId: string) {
+function stateHash(state: string) {
+  return createHash("sha256").update(state).digest("hex");
+}
+
+async function oauthStartResponse(
+  request: NextRequest,
+  appKey: string,
+  credentialId: string,
+  persistState: (state: string) => Promise<boolean>,
+) {
   const state = `sellerpilot-lazada-${randomBytes(24).toString("base64url")}`;
+  if (!await persistState(state)) {
+    return NextResponse.json({ message: "Lazada OAuth 상태를 안전하게 저장하지 못했습니다." }, { status: 500 });
+  }
   const redirectUri = new URL("/", request.nextUrl.origin).toString();
   const authorizationUrl = new URL("https://auth.lazada.com/oauth/authorize");
   authorizationUrl.search = new URLSearchParams({
@@ -85,10 +98,24 @@ export async function POST(request: NextRequest) {
     const separator = cookieValue.lastIndexOf(".");
     const cookieState = separator > 0 ? cookieValue.slice(0, separator) : "";
     const cookieCredentialId = separator > 0 ? cookieValue.slice(separator + 1) : "";
-    if (!parsed.data.oauthState || !cookieState || !sameValue(parsed.data.oauthState, cookieState) || !z.string().uuid().safeParse(cookieCredentialId).success) {
+    if (!parsed.data.oauthState) {
       return NextResponse.json({ message: "Lazada OAuth 상태가 만료됐거나 일치하지 않습니다. 연결을 다시 시작해 주세요." }, { status: 403 });
     }
-    credentialId = cookieCredentialId;
+    const cookieValid = Boolean(cookieState)
+      && sameValue(parsed.data.oauthState, cookieState)
+      && z.string().uuid().safeParse(cookieCredentialId).success;
+    const { data: storedCredentialId, error: stateError } = await serviceClient.rpc("sellerpilot_service_claim_channel_oauth_state", {
+      p_owner_id: userData.user.id,
+      p_channel: "lazada",
+      p_state_hash: stateHash(parsed.data.oauthState),
+    });
+    const persistedCredentialId = !stateError && z.string().uuid().safeParse(storedCredentialId).success
+      ? String(storedCredentialId)
+      : "";
+    if (!persistedCredentialId && !cookieValid) {
+      return NextResponse.json({ message: "Lazada OAuth 상태가 만료됐거나 일치하지 않습니다. 연결을 다시 시작해 주세요." }, { status: 403 });
+    }
+    credentialId = persistedCredentialId || cookieCredentialId;
   }
 
   let previousSecret: Record<string, unknown> = {};
@@ -113,29 +140,33 @@ export async function POST(request: NextRequest) {
 
   const nextSecret: Record<string, unknown> = { ...previousSecret, ...incoming, app_key: appKey, app_secret: appSecret, country };
   delete nextSecret.authorization_code;
-  let credentialExpiresAt = parsed.data.expiresAt;
+  const credentialExpiresAt = parsed.data.expiresAt;
   if (code) {
-    const path = "/auth/token/create";
-    const params: Record<string, string> = { app_key: appKey, code, sign_method: "sha256", timestamp: Date.now().toString() };
-    const signingInput = path + Object.keys(params).sort().map((key) => `${key}${params[key]}`).join("");
-    params.sign = createHmac("sha256", appSecret).update(signingInput).digest("hex").toUpperCase();
-    const url = new URL(`https://auth.lazada.com/rest${path}`);
-    url.search = new URLSearchParams(params).toString();
-    const response = await fetch(url, { method: "GET", cache: "no-store", signal: AbortSignal.timeout(12_000), headers: { accept: "application/json" } });
-    const data = await response.json().catch(() => ({})) as Record<string, unknown>;
-    const accessToken = textValue(data, "access_token");
-    const refreshToken = textValue(data, "refresh_token");
-    const responseCode = String(data.code ?? "");
-    if (!response.ok || !accessToken || !refreshToken || (responseCode && responseCode !== "0")) return NextResponse.json({ message: `Lazada OAuth 토큰 교환에 실패했습니다${responseCode ? ` · ${responseCode}` : ""}.` }, { status: 422 });
-    nextSecret.access_token = accessToken;
-    nextSecret.refresh_token = refreshToken;
-    nextSecret.access_token_expires_at = new Date(Date.now() + Number(data.expires_in ?? 2_592_000) * 1000).toISOString();
-    nextSecret.refresh_token_expires_at = new Date(Date.now() + Number(data.refresh_expires_in ?? 15_552_000) * 1000).toISOString();
-    credentialExpiresAt ||= nextSecret.refresh_token_expires_at as string;
+    try {
+      await exchangeOAuthViaChannelGateway({
+        serviceClient,
+        credentialId: credentialId ?? "",
+        channel: "lazada",
+        request: { code, country },
+      });
+    } catch {
+      return NextResponse.json({ message: "Lazada OAuth 토큰 교환을 허용 IP 작업자에서 완료하지 못했습니다. 작업자 연결을 확인하고 다시 승인해 주세요." }, { status: 422 });
+    }
+    const response = NextResponse.json({ message: "Lazada OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
+    response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
+    return response;
   }
 
   if (!code && parsed.data.startOAuth && credentialId) {
-    return oauthStartResponse(request, appKey, credentialId);
+    return oauthStartResponse(request, appKey, credentialId, async (state) => {
+      const { data, error } = await serviceClient.rpc("sellerpilot_service_store_channel_oauth_state", {
+        p_owner_id: userData.user.id,
+        p_credential_id: credentialId,
+        p_channel: "lazada",
+        p_state_hash: stateHash(state),
+      });
+      return !error && data === true;
+    });
   }
   if (!code && !parsed.data.startOAuth && !textValue(nextSecret, "access_token")) {
     return NextResponse.json({ message: "Lazada Access Token이 없습니다. OAuth 연결을 시작해 주세요." }, { status: 400 });
@@ -152,7 +183,15 @@ export async function POST(request: NextRequest) {
   });
   if (rotateError) return NextResponse.json({ message: rotateError.message.includes("administrator") ? "관리자 권한이 필요합니다." : "Lazada 키를 Vault에 저장하지 못했습니다." }, { status: 500 });
   if (!code && parsed.data.startOAuth) {
-    return oauthStartResponse(request, appKey, String(nextCredentialId));
+    return oauthStartResponse(request, appKey, String(nextCredentialId), async (state) => {
+      const { data, error } = await serviceClient.rpc("sellerpilot_service_store_channel_oauth_state", {
+        p_owner_id: userData.user.id,
+        p_credential_id: String(nextCredentialId),
+        p_channel: "lazada",
+        p_state_hash: stateHash(state),
+      });
+      return !error && data === true;
+    });
   }
   const response = NextResponse.json({ message: code ? "Lazada OAuth 연결과 Vault 저장이 완료됐습니다." : "Lazada 키를 Vault에 저장했습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
   if (code) response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });

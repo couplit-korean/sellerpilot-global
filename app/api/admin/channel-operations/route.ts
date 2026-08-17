@@ -9,7 +9,8 @@ import {
   writeChannelOperations,
 } from "../../../../lib/channels/operations";
 import { channelCatalog } from "../../../../lib/channels/catalog";
-import { ensureEbayAccessToken, ensureShopeeAccessToken } from "../../../../lib/channels/protocols";
+import { executeViaChannelGateway } from "../../../../lib/channels/gateway";
+import { ensureEbayAccessToken } from "../../../../lib/channels/protocols";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -23,6 +24,8 @@ const requestSchema = z.object({
   productId: z.string().uuid().optional(),
   currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).optional(),
   price: z.number().nonnegative().max(999_999_999).optional(),
+  market: z.string().trim().max(80).optional().default(""),
+  targetId: z.string().trim().max(160).optional().default(""),
   arguments: z.record(z.string(), z.unknown()).refine((value) => JSON.stringify(value).length <= 128_000, "payload too large"),
 });
 
@@ -44,6 +47,8 @@ function errorMessage(error: unknown) {
   if (message.startsWith("CHANNEL_OPERATION_UNSUPPORTED:")) return "해당 채널에서 지원하지 않는 작업입니다.";
   if (message.startsWith("CHANNEL_VENDOR_SPEC_REQUIRED:")) return "판매자 전용 상세 API 명세를 확정한 뒤 사용할 수 있습니다.";
   if (/CREDENTIALS_MISSING|ACCESS_TOKEN_MISSING|TOKEN_EXCHANGE_FAILED|TOKEN_REFRESH_FAILED|REFRESH_TOKEN_EXPIRED|REFRESH_CREDENTIALS_MISSING|CREDENTIAL_REFRESH_STORE_FAILED/.test(message)) return "필수 인증값 또는 OAuth 토큰이 누락됐거나 만료됐습니다.";
+  if (message.startsWith("CHANNEL_GATEWAY_TIMEOUT")) return "허용 IP 채널 작업자의 응답 제한시간을 초과했습니다. 작업자 상태를 확인해 주세요.";
+  if (message.startsWith("CHANNEL_GATEWAY_")) return "허용 IP 채널 작업 경로에서 안전하게 처리된 오류가 발생했습니다.";
   if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return "판매채널 응답 제한시간(15초)을 초과했습니다.";
   return "판매채널 작업 중 안전하게 처리된 오류가 발생했습니다.";
 }
@@ -101,6 +106,8 @@ export async function POST(request: NextRequest) {
       productId: parsed.data.productId ?? null,
       currency: parsed.data.currency ?? null,
       price: parsed.data.price ?? null,
+      market: parsed.data.market,
+      targetId: parsed.data.targetId,
       arguments: parsed.data.arguments,
     }))
     .digest("hex");
@@ -124,10 +131,12 @@ export async function POST(request: NextRequest) {
     if (claim.status === "succeeded") {
       let duplicateListingId = "";
       if (parsed.data.productId && ["listing.create", "listing.update", "listing.stop"].includes(operation)) {
-        const { data: preparedListingId, error: prepareError } = await userClient.rpc("sellerpilot_prepare_product_listing", {
+        const { data: preparedListingId, error: prepareError } = await userClient.rpc("sellerpilot_prepare_product_market_listing", {
           p_product_id: parsed.data.productId,
           p_channel: channel,
           p_operation: operation,
+          p_market: parsed.data.market,
+          p_target_id: parsed.data.targetId,
           p_currency: parsed.data.currency ?? "KRW",
           p_price: parsed.data.price ?? 0,
         });
@@ -166,10 +175,12 @@ export async function POST(request: NextRequest) {
 
   let listingId = "";
   if (parsed.data.productId && ["listing.create", "listing.update", "listing.stop"].includes(operation)) {
-    const { data: preparedListingId, error: prepareError } = await userClient.rpc("sellerpilot_prepare_product_listing", {
+    const { data: preparedListingId, error: prepareError } = await userClient.rpc("sellerpilot_prepare_product_market_listing", {
       p_product_id: parsed.data.productId,
       p_channel: channel,
       p_operation: operation,
+      p_market: parsed.data.market,
+      p_target_id: parsed.data.targetId,
       p_currency: parsed.data.currency ?? "KRW",
       p_price: parsed.data.price ?? 0,
     });
@@ -202,6 +213,51 @@ export async function POST(request: NextRequest) {
     return !error && data === true;
   };
 
+  if (channel === "shopee" || channel === "lazada") {
+    try {
+      const result = await executeViaChannelGateway({
+        serviceClient,
+        credentialId: parsed.data.credentialId,
+        attemptId,
+        channel,
+        operation,
+        arguments: parsed.data.arguments,
+      });
+      const remoteStatus = result.steps.find((item) => !item.ok)?.status ?? result.steps.at(-1)?.status ?? 200;
+      await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
+        p_attempt_id: attemptId,
+        p_status: result.ok ? "succeeded" : "failed",
+        p_http_status: remoteStatus,
+        p_remote_id: result.remoteId ?? null,
+        p_safe_message: result.safeMessage,
+      });
+      const listingRecorded = await completeListing({ success: result.ok, remoteId: result.remoteId, safeMessage: result.safeMessage });
+      if (!listingRecorded) {
+        return NextResponse.json({
+          message: "원격 작업은 완료됐지만 상품 원장 조정이 필요합니다. 같은 멱등키로 다시 요청하면 원격 재호출 없이 복구합니다.",
+          attemptId,
+          remoteId: result.remoteId,
+          reconciliationRequired: true,
+        }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      return NextResponse.json({ ...result, attemptId, listingId: listingId || undefined, gateway: "allowlisted-local-worker" }, {
+        status: result.ok ? 200 : 422,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
+    } catch (error) {
+      const message = errorMessage(error);
+      await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
+        p_attempt_id: attemptId,
+        p_status: "failed",
+        p_http_status: 422,
+        p_remote_id: null,
+        p_safe_message: message,
+      });
+      await completeListing({ success: false, safeMessage: message });
+      return NextResponse.json({ message, attemptId }, { status: 422 });
+    }
+  }
+
   const { data: secretPayload, error: secretError } = await serviceClient.rpc("sellerpilot_decrypt_credential", {
     p_credential_id: parsed.data.credentialId,
   });
@@ -220,24 +276,6 @@ export async function POST(request: NextRequest) {
   try {
     let executionPayload = secretPayload as Record<string, unknown>;
     let credentialRefreshed = false;
-    if (channel === "shopee") {
-      const requestedShopId = typeof parsed.data.arguments.shopId === "string"
-        ? parsed.data.arguments.shopId.trim()
-        : typeof parsed.data.arguments.shop_id === "string"
-          ? parsed.data.arguments.shop_id.trim()
-          : "";
-      const ensured = await ensureShopeeAccessToken(executionPayload, environment, 10 * 60 * 1000, requestedShopId);
-      executionPayload = ensured.payload;
-      if (ensured.refreshed) {
-        const { error: refreshStoreError } = await serviceClient.rpc("sellerpilot_service_refresh_shopee", {
-          p_credential_id: parsed.data.credentialId,
-          p_secret_payload: ensured.payload,
-          p_expires_at: ensured.credentialExpiresAt,
-        });
-        if (refreshStoreError) throw new Error("SHOPEE_CREDENTIAL_REFRESH_STORE_FAILED");
-        credentialRefreshed = true;
-      }
-    }
     if (channel === "ebay") {
       const ensured = await ensureEbayAccessToken(executionPayload, environment);
       executionPayload = ensured.payload;

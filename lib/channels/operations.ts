@@ -5,6 +5,7 @@ import {
   lazadaRequest,
   naverRequest,
   qoo10Request,
+  shopeeMerchantRequest,
   shopeeRequest,
   textValue,
   type RemoteResponse,
@@ -173,10 +174,37 @@ function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: s
   };
 }
 
+function lazadaXmlEscape(value: string) {
+  return value.replace(/[<>&'"]/g, (character) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    "'": "&apos;",
+    '"': "&quot;",
+  })[character] ?? character);
+}
+
+function lazadaXmlNode(name: string, value: unknown): string {
+  if (!/^[A-Za-z][A-Za-z0-9_:-]*$/.test(name)) throw new Error("LAZADA_PAYLOAD_TAG_INVALID");
+  if (Array.isArray(value)) return value.map((item) => lazadaXmlNode(name, item)).join("");
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    const children = Object.entries(value as Record<string, unknown>)
+      .map(([childName, childValue]) => lazadaXmlNode(childName, childValue))
+      .join("");
+    return `<${name}>${children}</${name}>`;
+  }
+  return `<${name}>${lazadaXmlEscape(String(value))}</${name}>`;
+}
+
 function lazadaPayload(argumentsValue: Record<string, unknown>) {
   const request = argumentsValue.request;
   if (typeof request === "string" && request.trim()) return request.trim();
-  if (request && typeof request === "object") return JSON.stringify(request);
+  if (request && typeof request === "object" && !Array.isArray(request)) {
+    const root = Object.entries(request as Record<string, unknown>);
+    if (root.length !== 1 || root[0][0] !== "Request") throw new Error("LAZADA_PAYLOAD_ROOT_INVALID");
+    return `<?xml version="1.0" encoding="UTF-8"?>${lazadaXmlNode(root[0][0], root[0][1])}`;
+  }
   throw new Error("CHANNEL_ARGUMENT_REQUIRED:request");
 }
 
@@ -245,6 +273,140 @@ function shopeeResponseId(data: Record<string, unknown>, key: string) {
 }
 
 async function executeShopee(input: ExecuteInput) {
+  const globalProduct = booleanArgument(input.arguments, "globalProduct");
+  if (globalProduct && (input.operation === "categories.list" || input.operation === "categories.suggest")) {
+    const remote = await shopeeMerchantRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/global_product/get_category",
+      query: queryParams(input.arguments),
+    });
+    return result(input, [step("global-categories", remote)]);
+  }
+  if (globalProduct && (input.operation === "categories.attributes" || input.operation === "categories.validate")) {
+    const categoryId = stringArgument(input.arguments, "categoryId");
+    const query = queryParams(input.arguments);
+    query.delete("category_id");
+    if (!query.has("category_id_list")) query.set("category_id_list", categoryId);
+    const remote = await shopeeMerchantRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/global_product/get_attribute_tree",
+      query,
+    });
+    return result(input, [step("global-category-attribute-tree", remote)], categoryId);
+  }
+  if (globalProduct && input.operation === "listing.create") {
+    let globalItemId = stringArgument(input.arguments, "globalItemId", false);
+    const steps: ChannelOperationStep[] = [];
+    if (!globalItemId) {
+      const createRemote = await shopeeMerchantRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "POST",
+        path: "/api/v2/global_product/add_global_item",
+        body: objectValue(input.arguments, "body"),
+      });
+      const createStep = step("global-item-create", createRemote);
+      globalItemId = shopeeResponseId(createRemote.data, "global_item_id") ?? "";
+      steps.push(createStep);
+      if (!createStep.ok || !globalItemId) return result(input, steps, globalItemId || undefined);
+    }
+
+    const readbackRemote = await shopeeMerchantRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/global_product/get_global_item_info",
+      query: new URLSearchParams({ global_item_id_list: globalItemId }),
+    });
+    steps.push(step("global-item-readback", readbackRemote));
+    const publish = objectValue(input.arguments, "publish", false);
+    const publishedItem = async (maxAttempts = 1) => {
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 3_000));
+        const remote = await shopeeMerchantRequest({
+          payload: input.payload,
+          environment: input.environment,
+          method: "GET",
+          path: "/api/v2/global_product/get_published_list",
+          query: new URLSearchParams({ global_item_id: globalItemId }),
+        });
+        const publishedStep = step(attempt === 0 ? "published-item-readback" : `published-item-readback-${attempt + 1}`, remote);
+        steps.push(publishedStep);
+        const response = remote.data.response;
+        const rows = response && typeof response === "object" && !Array.isArray(response)
+          && Array.isArray((response as Record<string, unknown>).published_item)
+          ? (response as { published_item: unknown[] }).published_item
+          : [];
+        const requestedShopId = String(publish.shop_id ?? "");
+        const row = rows.find((item) => item && typeof item === "object" && !Array.isArray(item)
+          && (!requestedShopId || String((item as Record<string, unknown>).shop_id ?? "") === requestedShopId)) as Record<string, unknown> | undefined;
+        const itemId = row?.item_id;
+        if (typeof itemId === "string" || typeof itemId === "number") return { itemId: String(itemId), ok: publishedStep.ok };
+        if (!publishedStep.ok) return { itemId: "", ok: false };
+      }
+      return { itemId: "", ok: true };
+    };
+    if (booleanArgument(input.arguments, "recoverPublished")) {
+      const published = await publishedItem();
+      return result(input, steps, published.itemId || globalItemId);
+    }
+    let publishTaskId = stringArgument(input.arguments, "publishTaskId", false);
+    if (!publishTaskId) {
+      if (!Object.keys(publish).length) return result(input, steps, globalItemId);
+      const publishRemote = await shopeeMerchantRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "POST",
+        path: "/api/v2/global_product/create_publish_task",
+        body: { ...publish, global_item_id: Number(globalItemId) },
+      });
+      const publishStep = step("publish-task-create", publishRemote);
+      steps.push(publishStep);
+      publishTaskId = shopeeResponseId(publishRemote.data, "publish_task_id") ?? "";
+      if (!publishStep.ok || !publishTaskId) {
+        const alreadyPublished = String(publishRemote.data.message ?? "").toLowerCase().includes("published this global item");
+        if (!alreadyPublished) return result(input, steps, globalItemId);
+        const published = await publishedItem();
+        if (published.ok && published.itemId) publishStep.ok = true;
+        return result(input, steps, published.itemId || globalItemId);
+      }
+    }
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      const taskRemote = await shopeeMerchantRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/global_product/get_publish_task_result",
+        query: new URLSearchParams({ publish_task_id: publishTaskId }),
+      });
+      const taskStep = step(`publish-task-result-${attempt + 1}`, taskRemote);
+      const transientNotFound = String(taskRemote.data.message ?? "").toLowerCase().includes("task not found");
+      if (transientNotFound && attempt < 5) continue;
+      const response = taskRemote.data.response;
+      const responseRecord = response && typeof response === "object" && !Array.isArray(response)
+        ? response as Record<string, unknown>
+        : {};
+      const status = String(responseRecord.publish_status ?? responseRecord.status ?? "").toUpperCase();
+      if (["FAILED", "FAIL"].includes(status)) taskStep.ok = false;
+      const terminal = ["SUCCESS", "FAILED", "FAIL", "COMPLETED", "DONE"].includes(status);
+      if (terminal || !taskStep.ok || attempt === 5) {
+        if (!terminal && taskStep.ok) taskStep.ok = false;
+        steps.push(taskStep);
+        break;
+      }
+    }
+    const published = await publishedItem(4);
+    if (published.ok && published.itemId) {
+      for (const item of steps) if (item.name.startsWith("publish-task-result-")) item.ok = true;
+    }
+    return result(input, steps, published.itemId || globalItemId);
+  }
   if (input.operation === "categories.list" || input.operation === "categories.suggest") {
     const remote = await shopeeRequest({
       payload: input.payload,
@@ -256,16 +418,33 @@ async function executeShopee(input: ExecuteInput) {
     return result(input, [step("categories", remote)]);
   }
   if (input.operation === "categories.attributes" || input.operation === "categories.validate") {
+    const categoryId = stringArgument(input.arguments, "categoryId");
     const query = queryParams(input.arguments);
-    if (!query.has("category_id")) query.set("category_id", stringArgument(input.arguments, "categoryId"));
-    const remote = await shopeeRequest({
+    query.delete("category_id");
+    if (!query.has("category_id_list")) query.set("category_id_list", categoryId);
+    const treeRemote = await shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/product/get_attribute_tree",
+      query,
+    });
+    const treeStep = step("category-attribute-tree", treeRemote);
+    if (treeStep.ok) return result(input, [treeStep], categoryId);
+    const error = String(treeRemote.data.error ?? "");
+    if (!new Set(["api_suspended", "error_not_found", "wrong_path"]).has(error)) {
+      return result(input, [treeStep], categoryId);
+    }
+    query.delete("category_id_list");
+    query.set("category_id", categoryId);
+    const legacyRemote = await shopeeRequest({
       payload: input.payload,
       environment: input.environment,
       method: "GET",
       path: "/api/v2/product/get_attributes",
       query,
     });
-    return result(input, [step("category-attributes", remote)], stringArgument(input.arguments, "categoryId"));
+    return result(input, [step("category-attributes-compatibility", legacyRemote)], categoryId);
   }
   const writePaths: Partial<Record<ChannelOperationName, string>> = {
     "listing.create": "/api/v2/product/add_item",
@@ -285,7 +464,18 @@ async function executeShopee(input: ExecuteInput) {
       body: objectValue(input.arguments, "body"),
     });
     const remoteId = shopeeResponseId(remote.data, input.operation === "listing.create" ? "item_id" : "request_id");
-    return result(input, [step(input.operation, remote)], remoteId);
+    const writeStep = step(input.operation, remote);
+    if (input.operation === "listing.create" && writeStep.ok && remoteId) {
+      const readback = await shopeeRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/product/get_item_base_info",
+        query: new URLSearchParams({ item_id_list: remoteId }),
+      });
+      return result(input, [writeStep, step("listing-readback", readback)], remoteId);
+    }
+    return result(input, [writeStep], remoteId);
   }
   if (input.operation === "orders.list") {
     const remote = await shopeeRequest({
@@ -320,7 +510,7 @@ async function executeShopee(input: ExecuteInput) {
 }
 
 async function executeLazada(input: ExecuteInput) {
-  const query = stringMap(input.arguments, "query");
+  const query = stringMap(input.arguments, "queryParams");
   if (input.operation === "categories.suggest") {
     const params = { ...query, product_name: stringArgument(input.arguments, "query") };
     const remote = await lazadaRequest({ payload: input.payload, path: "/product/category/suggestion/get", params });
@@ -367,7 +557,16 @@ async function executeLazada(input: ExecuteInput) {
   const remoteId = dataValue && typeof dataValue === "object" && !Array.isArray(dataValue) && "item_id" in dataValue
     ? String((dataValue as Record<string, unknown>).item_id)
     : undefined;
-  return result(input, [step(path, remote)], remoteId);
+  const writeStep = step(path, remote);
+  if (input.operation === "listing.create" && writeStep.ok && remoteId) {
+    const readback = await lazadaRequest({
+      payload: input.payload,
+      path: "/product/item/get",
+      params: { item_id: remoteId },
+    });
+    return result(input, [writeStep, step("listing-readback", readback)], remoteId);
+  }
+  return result(input, [writeStep], remoteId);
 }
 
 async function executeCoupang(input: ExecuteInput) {

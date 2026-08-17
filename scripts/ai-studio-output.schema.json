@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["mode", "product", "design", "thumbnail", "warnings"],
+  "required": ["mode", "product", "design", "thumbnail", "localizedListings", "warnings"],
   "properties": {
     "mode": { "type": "string", "const": "cli" },
     "product": {
@@ -65,6 +65,25 @@
         "headline": { "type": "string" },
         "subline": { "type": "string" },
         "badge": { "type": "string" }
+      }
+    },
+    "localizedListings": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channel", "market", "locale", "title", "shortDescription", "description", "keywords"],
+        "properties": {
+          "channel": { "type": "string", "enum": ["shopee", "lazada"] },
+          "market": { "type": "string", "enum": ["SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID"] },
+          "locale": { "type": "string", "enum": ["en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID"] },
+          "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "shortDescription": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "keywords": { "type": "array", "minItems": 3, "maxItems": 10, "items": { "type": "string", "minLength": 1, "maxLength": 80 } }
+        }
       }
     },
     "warnings": { "type": "array", "maxItems": 5, "items": { "type": "string" } }

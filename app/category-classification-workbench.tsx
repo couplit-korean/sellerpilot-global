@@ -3,6 +3,7 @@
 import { AlertTriangle, BadgeCheck, Check, ChevronRight, LoaderCircle, RefreshCw, Search, ShieldCheck, Tags } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
+import { channelMarket } from "../lib/channels/markets";
 import { createClient } from "../lib/supabase/client";
 
 type CredentialRow = {
@@ -15,7 +16,9 @@ type CredentialRow = {
 type OperationStep = { name: string; ok: boolean; status: number; data: Record<string, unknown> };
 type OperationPayload = { ok?: boolean; steps?: OperationStep[]; message?: string };
 type CategorySuggestion = { id: string; name: string; path: string[]; confidence: number; leaf: boolean };
-type CategoryAttribute = { id: string; name: string; required: boolean; values: string[] };
+type CategoryAttribute = { id: string; name: string; required: boolean; values: Array<{ id: string; name: string }> };
+type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
+type LocalizedListing = { channel: "shopee" | "lazada"; market: string; locale: string; title: string; shortDescription: string; description: string; keywords: string[] };
 type ChannelState = {
   phase: "idle" | "suggesting" | "inspecting" | "ready" | "confirmed" | "error";
   suggestions: CategorySuggestion[];
@@ -74,6 +77,17 @@ function qoo10SearchTerms(query: string) {
   return aliases.join(" ");
 }
 
+function shopeeSearchTerms(query: string) {
+  const normalized = query.toLocaleLowerCase();
+  const aliases = [query];
+  if (/(cup|mug|espresso|컵|머그|잔)/u.test(normalized)) aliases.push("mug cups drinkware dinnerware coffee tea");
+  if (/(shirt|dress|pants|clothes|의류|옷|바지)/u.test(normalized)) aliases.push("fashion apparel tops bottoms clothing");
+  if (/(cosmetic|beauty|skin|cream|화장품|스킨|크림)/u.test(normalized)) aliases.push("beauty skincare makeup cosmetics");
+  if (/(bag|pouch|가방|백)/u.test(normalized)) aliases.push("bags luggage accessories");
+  if (/(shoe|sneaker|sandal|신발|슈즈)/u.test(normalized)) aliases.push("shoes sneakers footwear sandals");
+  return aliases.join(" ");
+}
+
 export function normalizeSuggestions(channel: ActiveChannelKey, payload: OperationPayload, query: string) {
   const root = { steps: payload.steps ?? [] };
   const directCoupang = records(root).find((row) => text(row, ["predictedCategoryId"]));
@@ -98,7 +112,7 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
       : [];
     const path = qoo10Path.length ? qoo10Path : whole ? whole.split(/\s*>\s*|\s*\/\s*/).filter(Boolean) : [...ancestors, name];
     const leaf = qoo10Path.length > 0 || booleanValue(row, ["leaf", "last", "leafCategoryTreeNode"], !booleanValue(row, ["has_children", "hasChildren"], false));
-    const scoreQuery = channel === "qoo10" ? qoo10SearchTerms(query) : query;
+    const scoreQuery = channel === "qoo10" ? qoo10SearchTerms(query) : channel === "shopee" ? shopeeSearchTerms(query) : query;
     const score = Math.max(queryScore(scoreQuery, `${path.join(" ")} ${name}`), Number(row.confidence ?? row.score ?? 0));
     const confidence = channel === "qoo10"
       ? Math.min(0.99, 0.45 + score * 0.54)
@@ -109,6 +123,7 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
   return [...new Map(candidates.map((item) => [`${item.id}:${item.name}`, item])).values()]
     .filter((item) => item.leaf)
     .filter((item) => channel !== "qoo10" || queryScore(qoo10SearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
+    .filter((item) => channel !== "shopee" || queryScore(shopeeSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
     .sort((left, right) => right.confidence - left.confidence)
     .slice(0, 5);
 }
@@ -128,10 +143,19 @@ function normalizeAttributes(payloads: OperationPayload[]) {
     const required = booleanValue(row, ["required", "mandatory", "is_mandatory", "isMandatory"], false)
       || constraint.aspectRequired === true
       || row.attributeType === "PRIMARY";
-    const optionRows = Array.isArray(row.options) ? row.options : Array.isArray(row.attributeValues) ? row.attributeValues : Array.isArray(row.aspectValues) ? row.aspectValues : [];
-    const values = optionRows.map((item) => item && typeof item === "object"
-      ? text(item as Record<string, unknown>, ["name", "value", "localizedValue", "display_value"])
-      : typeof item === "string" ? item : "").filter(Boolean).slice(0, 100);
+    const optionRows = Array.isArray(row.options) ? row.options
+      : Array.isArray(row.attribute_value_list) ? row.attribute_value_list
+        : Array.isArray(row.attributeValues) ? row.attributeValues
+          : Array.isArray(row.aspectValues) ? row.aspectValues : [];
+    const values = optionRows.flatMap((item) => {
+      if (item && typeof item === "object") {
+        const option = item as Record<string, unknown>;
+        const name = text(option, ["display_value_name", "original_value_name", "name", "value", "localizedValue", "display_value", "en_name"]);
+        const id = text(option, ["value_id", "id", "option_id"]) || name;
+        return id && name ? [{ id, name }] : [];
+      }
+      return typeof item === "string" && item ? [{ id: item, name: item }] : [];
+    }).slice(0, 100);
     return [{ id, name, required, values }];
   });
   return [...new Map(found.map((item) => [item.id, item])).values()].sort((left, right) => Number(right.required) - Number(left.required));
@@ -152,20 +176,48 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
 }) {
   const [query, setQuery] = useState(productName);
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
-  const [states, setStates] = useState<Partial<Record<ActiveChannelKey, ChannelState>>>({});
+  const [states, setStates] = useState<Record<string, ChannelState>>({});
+  const [targets, setTargets] = useState<Partial<Record<"shopee" | "lazada", ChannelTarget[]>>>({});
+  const [selectedMarkets, setSelectedMarkets] = useState<Partial<Record<"shopee" | "lazada", string>>>({});
+  const [localizedListings, setLocalizedListings] = useState<LocalizedListing[]>([]);
   const [loadingCredentials, setLoadingCredentials] = useState(true);
 
   useEffect(() => setQuery(productName), [productName]);
   useEffect(() => {
     let mounted = true;
     void (async () => {
-      const { data, error } = await createClient().rpc("sellerpilot_list_credentials");
+      const supabase = createClient();
+      const [{ data, error }, { data: sessionData }] = await Promise.all([
+        supabase.rpc("sellerpilot_list_credentials"),
+        supabase.auth.getSession(),
+      ]);
       if (!mounted) return;
       setCredentials(error || !Array.isArray(data) ? [] : data.filter((row): row is CredentialRow => Boolean(row && typeof row === "object" && "id" in row && "channel" in row && "environment" in row && "status" in row)));
+      const accessToken = sessionData.session?.access_token;
+      if (accessToken) {
+        const [shopeeResponse, lazadaResponse, contextResponse] = await Promise.all([
+          fetch("/api/admin/channel-targets?channel=shopee", { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
+          fetch("/api/admin/channel-targets?channel=lazada", { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
+          productId ? fetch(`/api/admin/products/${productId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }) : null,
+        ]);
+        const shopeePayload = await shopeeResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[] };
+        const lazadaPayload = await lazadaResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[] };
+        const contextPayload = contextResponse ? await contextResponse.json().catch(() => ({ localizedListings: [] })) as { localizedListings?: LocalizedListing[] } : { localizedListings: [] };
+        if (mounted) {
+          const shopeeTargets = shopeeResponse.ok && Array.isArray(shopeePayload.targets) ? shopeePayload.targets : [];
+          const lazadaTargets = lazadaResponse.ok && Array.isArray(lazadaPayload.targets) ? lazadaPayload.targets : [];
+          setTargets({ shopee: shopeeTargets, lazada: lazadaTargets });
+          setSelectedMarkets((current) => ({
+            shopee: current.shopee ?? shopeeTargets[0]?.marketCode,
+            lazada: current.lazada ?? lazadaTargets[0]?.marketCode,
+          }));
+          setLocalizedListings(Array.isArray(contextPayload.localizedListings) ? contextPayload.localizedListings : []);
+        }
+      }
       setLoadingCredentials(false);
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [productId]);
 
   const activeCredential = useMemo(() => new Map(credentials.filter((row) => row.status === "active").map((row) => [row.channel, row])), [credentials]);
   const visibleChannels = useMemo(() => {
@@ -173,6 +225,35 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const enabled = new Set(enabledChannels);
     return activeChannelKeys.filter((channel) => enabled.has(channel));
   }, [enabledChannels]);
+
+  const selectedTarget = useCallback((channel: ActiveChannelKey) => {
+    if (channel !== "shopee" && channel !== "lazada") return undefined;
+    const rows = targets[channel] ?? [];
+    return rows.find((target) => target.marketCode === selectedMarkets[channel]) ?? rows[0];
+  }, [selectedMarkets, targets]);
+
+  const stateKey = useCallback((channel: ActiveChannelKey) => {
+    const target = selectedTarget(channel);
+    return `${channel}:${target?.marketCode ?? channelCatalog[channel].market}`;
+  }, [selectedTarget]);
+
+  const marketArguments = useCallback((channel: ActiveChannelKey) => {
+    const target = selectedTarget(channel);
+    if (channel === "shopee") {
+      return { globalProduct: true, shopId: target?.targetId ?? "", query: { language: "en" } };
+    }
+    if (channel === "lazada") {
+      const market = target ? channelMarket("lazada", target.marketCode) : undefined;
+      return { country: target?.marketCode.toLowerCase() ?? "my", queryParams: { language_code: market?.lazadaLanguage ?? "en_US" } };
+    }
+    return {};
+  }, [selectedTarget]);
+
+  const localizedQuery = useCallback((channel: ActiveChannelKey) => {
+    const target = selectedTarget(channel);
+    if (channel === "shopee") return localizedListings.find((listing) => listing.channel === "shopee" && listing.market === "SG")?.title || query.trim();
+    return localizedListings.find((listing) => listing.channel === channel && listing.market === target?.marketCode)?.title || query.trim();
+  }, [localizedListings, query, selectedTarget]);
 
   const operation = useCallback(async (channel: ActiveChannelKey, name: "categories.suggest" | "categories.attributes" | "categories.validate", args: Record<string, unknown>) => {
     const credential = activeCredential.get(channel);
@@ -189,50 +270,55 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   }, [activeCredential]);
 
   const suggest = async (channel: ActiveChannelKey) => {
-    const textQuery = query.trim();
+    const textQuery = localizedQuery(channel);
     if (textQuery.length < 2) return notify("카테고리 검색에 사용할 상품명을 2자 이상 입력해 주세요.");
-    setStates((current) => ({ ...current, [channel]: { ...(current[channel] ?? initialState()), phase: "suggesting", error: undefined } }));
+    const key = stateKey(channel);
+    setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "suggesting", error: undefined } }));
     try {
       const args: Record<string, unknown> = channel === "coupang"
         ? { query: textQuery, body: { productDescription: description.slice(0, 3000), attributes: {} } }
         : channel === "ebay"
           ? { query: textQuery, marketplaceId: "EBAY_US", categoryTreeId: "" }
           : channel === "shopee"
-            ? { queryText: textQuery, query: { language: "en" } }
+            ? { queryText: textQuery, ...marketArguments(channel) }
             : channel === "lazada"
-              ? { query: textQuery, queryParams: {} }
+              ? { query: textQuery, ...marketArguments(channel) }
               : channel === "qoo10"
                 ? { query: textQuery, params: {} }
                 : { query: textQuery };
       const payload = await operation(channel, "categories.suggest", args);
       const suggestions = normalizeSuggestions(channel, payload, textQuery);
       if (!suggestions.length) throw new Error("공식 카테고리 응답에서 일치하는 말단 카테고리를 찾지 못했습니다.");
-      setStates((current) => ({ ...current, [channel]: { ...initialState(), phase: "idle", suggestions } }));
+      setStates((current) => ({ ...current, [key]: { ...initialState(), phase: "idle", suggestions } }));
     } catch (error) {
-      setStates((current) => ({ ...current, [channel]: { ...(current[channel] ?? initialState()), phase: "error", error: error instanceof Error ? error.message : "카테고리 추천 실패" } }));
+      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "error", error: error instanceof Error ? error.message : "카테고리 추천 실패" } }));
     }
   };
 
   const inspect = async (channel: ActiveChannelKey, selected: CategorySuggestion) => {
-    setStates((current) => ({ ...current, [channel]: { ...(current[channel] ?? initialState()), selected, phase: "inspecting", error: undefined } }));
+    const key = stateKey(channel);
+    setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "inspecting", error: undefined } }));
     try {
-      const common = channel === "ebay" ? { categoryId: selected.id, categoryTreeId: "0" } : { categoryId: selected.id };
+      const common = channel === "ebay" ? { categoryId: selected.id, categoryTreeId: "0" } : { categoryId: selected.id, ...marketArguments(channel) };
       const [attributesPayload, validationPayload] = await Promise.all([
         operation(channel, "categories.attributes", common),
         operation(channel, "categories.validate", common),
       ]);
       const attributes = normalizeAttributes([attributesPayload]);
       const verifiedLeaf = selected.leaf && validationPayload.ok !== false;
-      setStates((current) => ({ ...current, [channel]: { ...(current[channel] ?? initialState()), selected, attributes, values: {}, verifiedLeaf, phase: "ready" } }));
+      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, attributes, values: {}, verifiedLeaf, phase: "ready" } }));
     } catch (error) {
-      setStates((current) => ({ ...current, [channel]: { ...(current[channel] ?? initialState()), selected, phase: "error", error: error instanceof Error ? error.message : "카테고리 메타정보 조회 실패" } }));
+      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "error", error: error instanceof Error ? error.message : "카테고리 메타정보 조회 실패" } }));
     }
   };
 
   const confirm = async (channel: ActiveChannelKey) => {
-    const state = states[channel];
+    const key = stateKey(channel);
+    const state = states[key];
     const credential = activeCredential.get(channel);
+    const target = selectedTarget(channel);
     if (!state?.selected || !credential) return;
+    const selectedCategory = state.selected;
     if (!productId) {
       notify("ChatGPT CLI 분석과 상품 원장 저장을 먼저 완료해 주세요.");
       return;
@@ -243,27 +329,31 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       return;
     }
     const requiredAttributes = state.attributes.map((attribute) => ({ id: attribute.id, name: attribute.name, required: attribute.required, values: attribute.values }));
-    const { error } = await createClient().rpc("sellerpilot_save_product_category_assignment", {
+    const shopeeTargets = targets.shopee ?? [];
+    const assignmentTargets: Array<ChannelTarget | undefined> = channel === "shopee" && shopeeTargets.length > 0
+      ? shopeeTargets
+      : [target];
+    const results = await Promise.all(assignmentTargets.map((assignmentTarget) => createClient().rpc("sellerpilot_save_product_category_assignment", {
       p_product_id: productId,
       p_source_ref: sourceRef,
       p_product_name: productName,
       p_channel: channel,
       p_environment: credential.environment,
-      p_market: channel === "ebay" ? "EBAY_US" : channelCatalog[channel].market,
-      p_category_id: state.selected.id,
-      p_category_path: state.selected.path,
+      p_market: assignmentTarget?.marketCode ?? (channel === "ebay" ? "EBAY_US" : channelCatalog[channel].market),
+      p_category_id: selectedCategory.id,
+      p_category_path: selectedCategory.path,
       p_is_leaf: state.verifiedLeaf,
-      p_confidence: state.selected.confidence,
+      p_confidence: selectedCategory.confidence,
       p_classification_source: channel === "coupang" || channel === "lazada" || channel === "ebay" ? "channel_recommendation" : "official_tree_search",
       p_required_attributes: requiredAttributes,
       p_provided_attributes: state.values,
-      p_official_metadata: { verifiedBy: "channel_api", verifiedAt: new Date().toISOString() },
+      p_official_metadata: { verifiedBy: "channel_api", verifiedAt: new Date().toISOString(), targetId: assignmentTarget?.targetId ?? null, locale: assignmentTarget?.locale ?? null, globalProduct: channel === "shopee" },
       p_confirm: true,
-    });
-    if (error) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");
-    setStates((current) => ({ ...current, [channel]: { ...state, phase: "confirmed" } }));
+    })));
+    if (results.some((result) => result.error)) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");
+    setStates((current) => ({ ...current, [key]: { ...state, phase: "confirmed" } }));
     onConfirmed?.(channel);
-    notify(`${channelCatalog[channel].name} 카테고리와 필수 속성을 확정했습니다.`);
+    notify(`${channelCatalog[channel].name} 카테고리와 필수 속성을 ${channel === "shopee" ? `${assignmentTargets.length}개 숍에 ` : ""}확정했습니다.`);
   };
 
   return <section className="panel category-workbench">
@@ -272,15 +362,18 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     <div className="category-channel-grid">{visibleChannels.map((channel) => {
       const definition = channelCatalog[channel];
       const credential = activeCredential.get(channel);
-      const state = states[channel] ?? initialState();
+      const target = selectedTarget(channel);
+      const key = stateKey(channel);
+      const state = states[key] ?? initialState();
       const busy = state.phase === "suggesting" || state.phase === "inspecting";
       const required = state.attributes.filter((attribute) => attribute.required);
       const completedRequired = required.filter((attribute) => state.values[attribute.id]?.trim()).length;
       return <article className={`category-channel-card ${state.phase}`} key={channel}>
-        <header><span>{definition.code}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "실키 연결" : "키 필요"}</em></header>
+        <header><span>{definition.code}</span><div><small>{target ? `${target.marketCode} · ${target.language}` : definition.market}</small><h4>{definition.name}</h4></div><em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "실키 연결" : "키 필요"}</em></header>
+        {(channel === "shopee" || channel === "lazada") && (targets[channel]?.length ?? 0) > 0 && <label className="category-market-select"><span>등록 국가·언어</span><select value={target?.marketCode ?? ""} onChange={(event) => setSelectedMarkets((current) => ({ ...current, [channel]: event.target.value }))}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select></label>}
         {!state.suggestions.length && !state.selected && <div className="category-empty"><Tags size={21} /><b>{credential ? productId ? "공식 카테고리 추천 대기" : "상품 원장 연결 대기" : "API 키 연결 후 사용"}</b><small>{credential ? productId ? "상품명으로 채널 원본 분류를 조회합니다." : "AI 분석을 완료해 상품 UUID를 먼저 생성하세요." : "API 키 관리에서 운영 키를 먼저 연결하세요."}</small><button type="button" disabled={!credential || !productId || busy || channel === "elevenst"} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{channel === "elevenst" ? "판매자 명세 확인 필요" : "공식 API 추천"}</button></div>}
         {state.suggestions.length > 0 && !state.selected && <div className="category-suggestions">{state.suggestions.map((suggestion, index) => <button type="button" onClick={() => void inspect(channel, suggestion)} key={`${suggestion.id}-${suggestion.name}`}><span><b>{index + 1}. {suggestion.name}</b><small>{categoryPathLabel(suggestion)}</small></span><em>{Math.round(suggestion.confidence * 100)}%</em><ChevronRight size={14} /></button>)}</div>}
-        {state.selected && <div className="category-inspection"><div className="selected-category"><BadgeCheck size={18} /><span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · ID {state.selected.id}</small></span><button type="button" onClick={() => setStates((current) => ({ ...current, [channel]: { ...initialState(), suggestions: state.suggestions } }))}>다시 선택</button></div>{state.phase === "inspecting" ? <p className="category-loading"><LoaderCircle className="spin" size={16} />공식 속성·유효성 동시 확인 중</p> : <><div className="category-proof"><span className={state.verifiedLeaf ? "passed" : "failed"}><ShieldCheck size={14} />{state.verifiedLeaf ? "말단 카테고리 확인" : "유효성 확인 필요"}</span><span className={completedRequired === required.length ? "passed" : "failed"}><Check size={14} />필수 속성 {completedRequired}/{required.length}</span></div>{required.length > 0 && <div className="category-attribute-list">{required.map((attribute) => <label key={attribute.id}><span>{attribute.name}<em>필수</em></span>{attribute.values.length ? <select value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [channel]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))}><option value="">값 선택</option>{attribute.values.map((value) => <option value={value} key={value}>{value}</option>)}</select> : <input value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [channel]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))} placeholder={`${attribute.name} 입력`} />}</label>)}</div>}<button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || completedRequired !== required.length || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리 저장됨</> : "카테고리·속성 저장"}</button></>}</div>}
+        {state.selected && <div className="category-inspection"><div className="selected-category"><BadgeCheck size={18} /><span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · ID {state.selected.id}</small></span><button type="button" onClick={() => setStates((current) => ({ ...current, [key]: { ...initialState(), suggestions: state.suggestions } }))}>다시 선택</button></div>{state.phase === "inspecting" ? <p className="category-loading"><LoaderCircle className="spin" size={16} />공식 속성·유효성 동시 확인 중</p> : <><div className="category-proof"><span className={state.verifiedLeaf ? "passed" : "failed"}><ShieldCheck size={14} />{state.verifiedLeaf ? "말단 카테고리 확인" : "유효성 확인 필요"}</span><span className={completedRequired === required.length ? "passed" : "failed"}><Check size={14} />필수 속성 {completedRequired}/{required.length}</span></div>{required.length > 0 && <div className="category-attribute-list">{required.map((attribute) => <label key={attribute.id}><span>{attribute.name}<em>필수</em></span>{attribute.values.length ? <select value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))}><option value="">값 선택</option>{attribute.values.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select> : <input value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))} placeholder={`${attribute.name} 입력`} />}</label>)}</div>}<button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || completedRequired !== required.length || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리 저장됨</> : "카테고리·속성 저장"}</button></>}</div>}
         {state.error && <p className="category-error"><AlertTriangle size={14} />{state.error}</p>}
       </article>;
     })}</div>

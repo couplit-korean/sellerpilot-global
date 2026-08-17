@@ -73,8 +73,8 @@ const rawSections: Array<Omit<AcceptanceSection, "items"> & { items: RawItem[] }
   ] },
 ];
 
-// 화면·계산·AI 초안 등 현재 코드에서 확인되는 항목입니다. 실제 채널 데이터가
-// 연결되지 않았으므로 완료(done)가 아니라 부분 구현(partial)로만 분류합니다.
+// 화면·계산·AI 초안과 실계정 검수 증거를 분리합니다. 실계정 검수는
+// 원격 상품 ID와 읽기 응답을 확보한 항목만 passed로 올립니다.
 const partialDevelopmentIds = new Set([
   "B-01", "B-02", "B-04", "B-05", "B-06", "B-08", "B-09",
   "C-01", "C-02", "C-03", "C-04", "C-05", "C-10",
@@ -107,6 +107,10 @@ const doneDevelopmentIds = new Set([
 
 const excludedIds = new Set<string>();
 
+const passedVerificationIds = new Set([
+  "G-15", // Shopee Merchant·8개 숍 OAuth, 글로벌 상품→8개 숍 UNLIST 실발행·읽기
+]);
+
 // 사용자 결정, 판매자 계정, 공식 API 권한, 법무·규제 데이터 또는 외부 서비스
 // 승인이 없으면 실검수를 시작할 수 없는 항목입니다.
 const externalVerificationIds = new Set([
@@ -129,7 +133,7 @@ export const acceptanceSections: AcceptanceSection[] = rawSections.map((section)
       title,
       priority,
       development: excludedIds.has(id) ? "excluded" : doneDevelopmentIds.has(id) ? "done" : partialDevelopmentIds.has(id) ? "partial" : "not_started",
-      verification: excludedIds.has(id) ? "excluded" : externalVerificationIds.has(id) ? "external" : "pending",
+      verification: excludedIds.has(id) ? "excluded" : passedVerificationIds.has(id) ? "passed" : externalVerificationIds.has(id) ? "external" : "pending",
     };
   }),
 }));

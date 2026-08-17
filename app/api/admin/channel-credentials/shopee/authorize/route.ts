@@ -4,9 +4,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
   buildShopeeAuthorizationUrl,
-  exchangeShopeeOAuthToken,
   textValue,
 } from "../../../../../../lib/channels/protocols";
+import { exchangeOAuthViaChannelGateway } from "../../../../../../lib/channels/gateway";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -58,15 +58,6 @@ function oauthStartResponse(
     maxAge: 10 * 60,
   });
   return response;
-}
-
-function numericIdList(value: unknown) {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.map((item) => String(item)).filter((item) => /^\d+$/.test(item)))];
-}
-
-function tokenExpiry(data: Record<string, unknown>) {
-  return new Date(Date.now() + Number(data.expire_in ?? 14_400) * 1000).toISOString();
 }
 
 export async function POST(request: NextRequest) {
@@ -144,92 +135,23 @@ export async function POST(request: NextRequest) {
 
   if (oauthCode) {
     if (!callbackShopId && !mainAccountId) return NextResponse.json({ message: "Shopee 승인 응답에 Shop ID 또는 Main Account ID가 없습니다. 판매자 승인을 다시 시작해 주세요." }, { status: 400 });
-    const remote = await exchangeShopeeOAuthToken({
-      environment: credentialEnvironment,
-      partnerId,
-      partnerKey,
-      code: oauthCode,
-      ...(mainAccountId ? { mainAccountId } : { shopId: callbackShopId }),
-    });
-    const accessToken = textValue(remote.data, "access_token");
-    const refreshToken = textValue(remote.data, "refresh_token");
-    const errorCode = textValue(remote.data, "error");
-    if (!remote.response.ok || errorCode || !accessToken || !refreshToken) {
-      return NextResponse.json({ message: `Shopee OAuth 토큰 교환에 실패했습니다${errorCode ? ` · ${errorCode}` : ""}.` }, { status: 422 });
-    }
-    const refreshTokenExpiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
-    if (mainAccountId) {
-      const shopIds = numericIdList(remote.data.shop_id_list);
-      const merchantIds = numericIdList(remote.data.merchant_id_list);
-      if (!shopIds.length) return NextResponse.json({ message: "Shopee Main account 승인에 연결된 Shop ID 목록이 없습니다." }, { status: 422 });
-      const targetTokens = await Promise.all([
-        ...shopIds.map(async (targetShopId) => ({
-          type: "shop" as const,
-          id: targetShopId,
-          remote: await exchangeShopeeOAuthToken({
-            environment: credentialEnvironment,
-            partnerId,
-            partnerKey,
-            refreshToken,
-            shopId: targetShopId,
-          }),
-        })),
-        ...merchantIds.map(async (merchantId) => ({
-          type: "merchant" as const,
-          id: merchantId,
-          remote: await exchangeShopeeOAuthToken({
-            environment: credentialEnvironment,
-            partnerId,
-            partnerKey,
-            refreshToken,
-            merchantId,
-          }),
-        })),
-      ]);
-      const invalidTarget = targetTokens.find(({ remote: targetRemote }) => {
-        const targetAccess = textValue(targetRemote.data, "access_token");
-        const targetRefresh = textValue(targetRemote.data, "refresh_token");
-        return !targetRemote.response.ok || textValue(targetRemote.data, "error") || !targetAccess || !targetRefresh;
+    try {
+      await exchangeOAuthViaChannelGateway({
+        serviceClient,
+        credentialId: credentialId ?? "",
+        channel: "shopee",
+        request: {
+          code: oauthCode,
+          ...(mainAccountId ? { mainAccountId } : { shopId: callbackShopId }),
+          authorizationExpiresAt: credentialExpiresAt ?? new Date(Date.now() + 365 * 86_400_000).toISOString(),
+        },
       });
-      if (invalidTarget) return NextResponse.json({ message: `Shopee ${invalidTarget.type} 토큰 발급에 실패했습니다.` }, { status: 422 });
-      const shopeeTargets = targetTokens.map(({ type, id, remote: targetRemote }) => ({
-        type,
-        id,
-        access_token: textValue(targetRemote.data, "access_token"),
-        refresh_token: textValue(targetRemote.data, "refresh_token"),
-        access_token_expires_at: tokenExpiry(targetRemote.data),
-        refresh_token_expires_at: refreshTokenExpiresAt,
-      }));
-      const primaryShop = shopeeTargets.find((target) => target.type === "shop");
-      if (!primaryShop) return NextResponse.json({ message: "Shopee 기본 Shop 토큰을 만들지 못했습니다." }, { status: 422 });
-      nextSecret.main_account_id = mainAccountId;
-      nextSecret.main_account_access_token = accessToken;
-      nextSecret.main_account_refresh_token = refreshToken;
-      nextSecret.shop_ids = shopIds;
-      nextSecret.merchant_ids = merchantIds;
-      nextSecret.shopee_targets = shopeeTargets;
-      nextSecret.shop_id = primaryShop.id;
-      nextSecret.access_token = primaryShop.access_token;
-      nextSecret.refresh_token = primaryShop.refresh_token;
-      nextSecret.access_token_expires_at = primaryShop.access_token_expires_at;
-      nextSecret.refresh_token_expires_at = primaryShop.refresh_token_expires_at;
-    } else {
-      nextSecret.shop_id = callbackShopId;
-      nextSecret.access_token = accessToken;
-      nextSecret.refresh_token = refreshToken;
-      nextSecret.access_token_expires_at = tokenExpiry(remote.data);
-      nextSecret.refresh_token_expires_at = refreshTokenExpiresAt;
-      nextSecret.shop_ids = [callbackShopId];
-      nextSecret.shopee_targets = [{
-        type: "shop",
-        id: callbackShopId,
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        access_token_expires_at: nextSecret.access_token_expires_at,
-        refresh_token_expires_at: refreshTokenExpiresAt,
-      }];
+    } catch {
+      return NextResponse.json({ message: "Shopee OAuth 토큰 교환을 허용 IP 작업자에서 완료하지 못했습니다. 작업자 연결을 확인하고 다시 승인해 주세요." }, { status: 422 });
     }
-    nextSecret.authorization_expires_at = credentialExpiresAt ?? new Date(Date.now() + 365 * 86_400_000).toISOString();
+    const response = NextResponse.json({ message: "Shopee 8개 숍 OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
+    response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
+    return response;
   }
 
   if (!oauthCode && parsed.data.startOAuth && credentialId) {
