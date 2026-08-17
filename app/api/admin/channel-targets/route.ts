@@ -101,6 +101,17 @@ export async function GET(request: Request) {
       return [{ targetId: "", displayName: "", marketCode, locale: market?.locale ?? "", language: market?.language ?? "", currency: market?.currency ?? "" }];
     })();
 
+  if (!targets.length || targets.some((target) => !isCompleteChannelTarget(channel.data, target))) {
+    return NextResponse.json({
+      message: channel.data === "shopee"
+        ? "Shopee 숍의 국가·언어 정보가 없어 OAuth 재승인과 숍 동기화가 필요합니다."
+        : "Lazada 셀러의 국가·언어 정보를 확인하지 못했습니다. OAuth 재승인이 필요합니다.",
+      channel: channel.data,
+      credentialId: credential.id,
+      targets: [],
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+
   return NextResponse.json({ channel: channel.data, credentialId: credential.id, targets }, { headers: { "cache-control": "no-store, max-age=0" } });
 }
 
