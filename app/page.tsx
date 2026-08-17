@@ -741,12 +741,39 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
 
   const totalPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length;
   const intakeReady = productIntakeSchema.safeParse(intake).success;
+  const intakeCompletionItems = [
+    Boolean(mainPhoto),
+    intake.productName.trim().length >= 2,
+    intake.sellerSku.trim().length >= 2,
+    intake.categoryHint.trim().length >= 2,
+    Boolean(intake.brandName.trim()),
+    Boolean(intake.manufacturer.trim()),
+    intake.countryOfOrigin.trim().length >= 2,
+    intake.material.trim().length >= 2,
+    intake.packageContents.trim().length >= 2,
+    intake.sellingPrice > 0,
+    intake.stock > 0,
+    intake.weightKg > 0,
+    intake.packageLengthCm > 0 && intake.packageWidthCm > 0 && intake.packageHeightCm > 0,
+    intake.description.trim().length >= 20,
+    /^https?:\/\//i.test(intake.productUrl.trim()),
+    intake.imageRightsConfirmed,
+    intake.productFactsConfirmed,
+  ];
+  const intakeCompletedCount = intakeCompletionItems.filter(Boolean).length;
+  const intakeProgress = Math.round((intakeCompletedCount / intakeCompletionItems.length) * 100);
+  const connectedChannelEntries = Object.entries(channels).filter(([key, channel]) => channel.enabled && connectedChannelKeys.includes(key));
+  const unavailableChannelEntries = Object.entries(channels).filter(([key, channel]) => !channel.enabled || !connectedChannelKeys.includes(key));
 
   return (
     <div className="page-stack publishing-page">
-      <section className="publishing-hero">
-        <div><span className="eyebrow dark"><Sparkles size={14} /> AI PRODUCT PUBLISHER</span><h2>사진은 충분히,<br /><em>등록은 한 번에.</em></h2><p>대표사진과 여러 각도의 옵션 사진, 상품 설명과 참고 링크를 함께 분석해<br />더 정확한 상품 정보와 채널별 등록 초안을 생성합니다.</p></div>
-        <div className="automation-flow-mini"><span><ImagePlus size={17} />다각도 사진</span><ArrowRight size={15} /><span><Bot size={17} />통합 분석</span><ArrowRight size={15} /><span><Languages size={17} />다국어</span><ArrowRight size={15} /><span><Globe2 size={17} />7개 채널</span></div>
+      <section className="publishing-workflow-header">
+        <div className="publishing-workflow-copy"><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>상품 하나를 완성하고, 최대 8개까지 함께 실행하세요.</h2><p>대표사진과 사실정보를 먼저 확정하면 AI 분석·카테고리 분류·채널 등록이 순서대로 이어집니다.</p></div>
+        <ol className="publishing-steps" aria-label="상품 등록 단계">
+          <li className="active"><span>1</span><b>자료 입력</b><small>{intakeProgress}% 완료</small></li>
+          <li><span>2</span><b>AI 분석</b><small>이미지·사실 검증</small></li>
+          <li><span>3</span><b>채널 등록</b><small>{selectedChannels.length}개 채널 선택</small></li>
+        </ol>
       </section>
       <section className="publishing-layout">
         <article className="panel upload-panel">
@@ -781,20 +808,24 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
           <section className="product-context-section required-product-intake">
             <div className="upload-section-heading"><div><b>판매자 필수 입력</b><span className="required-chip">전부 필수</span><small>AI가 추측하면 안 되는 실물·포장·책임 정보입니다. 사진과 함께 입력해야 다음 단계로 갈 수 있습니다.</small></div><em>{intakeReady ? "입력 완료" : "확인 필요"}</em></div>
             <div className="manual-field-grid">
+              <div className="intake-group-heading"><span>01</span><div><b>기본 상품 정보</b><small>상품을 식별하고 채널 카테고리를 찾는 기준입니다.</small></div></div>
               <label className={manualErrors.productName ? "field-error" : ""}><span>상품명 <i>필수</i></span><input required value={intake.productName} maxLength={160} onChange={(event) => setIntakeField("productName", event.target.value)} placeholder="실물과 일치하는 상품명" />{manualErrors.productName && <small>{manualErrors.productName}</small>}</label>
               <label className={manualErrors.sellerSku ? "field-error" : ""}><span>판매자 SKU <i>필수</i></span><input required value={intake.sellerSku} maxLength={100} onChange={(event) => setIntakeField("sellerSku", event.target.value.toUpperCase())} placeholder="COUPLET-MUG-001" />{manualErrors.sellerSku && <small>{manualErrors.sellerSku}</small>}</label>
               <label className={manualErrors.categoryHint ? "field-error" : ""}><span>상품군 힌트 <i>필수</i></span><input required value={intake.categoryHint} maxLength={120} onChange={(event) => setIntakeField("categoryHint", event.target.value)} placeholder="예: 카페 머그컵" />{manualErrors.categoryHint && <small>{manualErrors.categoryHint}</small>}</label>
               <label className={manualErrors.brandName ? "field-error" : ""}><span>브랜드 <i>필수</i></span><input required value={intake.brandName} maxLength={120} onChange={(event) => setIntakeField("brandName", event.target.value)} placeholder="없으면 No Brand" />{manualErrors.brandName && <small>{manualErrors.brandName}</small>}</label>
               <label className={manualErrors.manufacturer ? "field-error" : ""}><span>제조사·공급처 <i>필수</i></span><input required value={intake.manufacturer} maxLength={160} onChange={(event) => setIntakeField("manufacturer", event.target.value)} placeholder="직접 제조 또는 공급처명" />{manualErrors.manufacturer && <small>{manualErrors.manufacturer}</small>}</label>
               <label className={manualErrors.countryOfOrigin ? "field-error" : ""}><span>원산지 <i>필수</i></span><input required value={intake.countryOfOrigin} maxLength={80} onChange={(event) => setIntakeField("countryOfOrigin", event.target.value)} placeholder="예: 대한민국" />{manualErrors.countryOfOrigin && <small>{manualErrors.countryOfOrigin}</small>}</label>
+              <div className="intake-group-heading"><span>02</span><div><b>구성·표시 정보</b><small>라벨과 실물 기준으로 소재, 구성품, 바코드를 확인합니다.</small></div></div>
               <label className={manualErrors.material ? "field-error" : ""}><span>소재·성분 <i>필수</i></span><input required value={intake.material} maxLength={500} onChange={(event) => setIntakeField("material", event.target.value)} placeholder="예: 도자기 100%" />{manualErrors.material && <small>{manualErrors.material}</small>}</label>
               <label className={manualErrors.packageContents ? "field-error" : ""}><span>판매 구성 <i>필수</i></span><input required value={intake.packageContents} maxLength={500} onChange={(event) => setIntakeField("packageContents", event.target.value)} placeholder="예: 머그컵 1개" />{manualErrors.packageContents && <small>{manualErrors.packageContents}</small>}</label>
               <label><span>상품 상태 <i>필수</i></span><select value={intake.condition} onChange={(event) => setIntakeField("condition", event.target.value as ProductIntakeDraft["condition"])}>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select></label>
               <label><span>바코드 상태 <i>필수</i></span><select value={intake.gtinStatus} onChange={(event) => setIntakeField("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select></label>
               {intake.gtinStatus === "HAS_GTIN" && <label className={manualErrors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC <i>필수</i></span><input inputMode="numeric" required value={intake.gtin} maxLength={14} onChange={(event) => setIntakeField("gtin", event.target.value.replace(/\D/g, ""))} placeholder="8~14자리 숫자" />{manualErrors.gtin && <small>{manualErrors.gtin}</small>}</label>}
+              <div className="intake-group-heading"><span>03</span><div><b>판매·재고</b><small>기준 통화의 판매가와 실제 가용 재고를 입력합니다.</small></div></div>
               <label className={manualErrors.sellingPrice ? "field-error" : ""}><span>판매가 <i>필수</i></span><input type="number" required min="0.01" step="0.01" value={intake.sellingPrice || ""} onChange={(event) => setIntakeField("sellingPrice", Number(event.target.value))} placeholder="0" />{manualErrors.sellingPrice && <small>{manualErrors.sellingPrice}</small>}</label>
               <label><span>통화 <i>필수</i></span><select value={intake.currency} onChange={(event) => setIntakeField("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label className={manualErrors.stock ? "field-error" : ""}><span>재고 <i>필수</i></span><input type="number" required min="1" step="1" value={intake.stock || ""} onChange={(event) => setIntakeField("stock", Number(event.target.value))} placeholder="1" />{manualErrors.stock && <small>{manualErrors.stock}</small>}</label>
+              <div className="intake-group-heading"><span>04</span><div><b>포장·배송 규격</b><small>운임 계산과 채널 배송 제한 검증에 사용합니다.</small></div></div>
               <label className={manualErrors.weightKg ? "field-error" : ""}><span>포장 중량 kg <i>필수</i></span><input type="number" required min="0.01" step="0.01" value={intake.weightKg || ""} onChange={(event) => setIntakeField("weightKg", Number(event.target.value))} placeholder="0.35" />{manualErrors.weightKg && <small>{manualErrors.weightKg}</small>}</label>
               <label className={manualErrors.packageLengthCm ? "field-error" : ""}><span>포장 가로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageLengthCm || ""} onChange={(event) => setIntakeField("packageLengthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageLengthCm && <small>{manualErrors.packageLengthCm}</small>}</label>
               <label className={manualErrors.packageWidthCm ? "field-error" : ""}><span>포장 세로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageWidthCm || ""} onChange={(event) => setIntakeField("packageWidthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageWidthCm && <small>{manualErrors.packageWidthCm}</small>}</label>
@@ -811,8 +842,11 @@ function PublishingPage({ notify, channelMetrics, pipeline }: { notify: (message
 
           <div className={`analysis-start-bar ${intakeReady && mainPhoto ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 1200×1200 JPG 자동보정 · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}</span><div><button type="button" className="batch-add-button" onClick={addCurrentProductToBatch} disabled={running || batchItems.length >= 8}><Plus size={17} />대기열에 담기</button><button type="button" onClick={startAutomation} disabled={running}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : <><WandSparkles size={17} />1개 바로 분석</>}</button></div></div>
         </article>
-        <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">OFFICIAL PREFLIGHT</span><h3>API 검증 대상 채널</h3></div><Settings size={16} /></div>
-          <div className="publish-channel-list">{Object.entries(channels).map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); const selectable = channel.enabled && connected; const selected = selectedChannels.includes(key); return <label key={channel.letter} className={selectable ? "" : "channel-disabled"}><ChannelMark code={channel.letter} /><span><b>{channel.name}{!channel.enabled ? <em>준비중</em> : !connected ? <em>키 필요</em> : null}</b><small>{!channel.enabled ? `${channel.market} · 연동 준비 중` : connected ? `${channel.market} · 공식 API 분류 대상` : `${channel.market} · API 키 연결 필요`}</small></span><input type="checkbox" checked={selected} disabled={!selectable} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : selectable ? "선택 가능" : "비활성화"}`} /><i><Check size={12} /></i></label>; })}</div>
+        <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
+          <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>동시 대기열</span><b>{batchItems.length} / 8</b></div></div>
+          <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 키가 연결된 채널만 선택할 수 있습니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
+          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 공식 API 등록 가능</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
+          <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : connected ? "연결됨" : "키 필요"}</em></span>; })}</div></details>
           <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>ChatGPT CLI 분석 완료</b><small>실제 작업 결과가 저장된 상품만 진행</small></span><em>필수</em></div><div className="automation-requirement"><span><b>동시 처리 정책</b><small>상품 최대 8건 · 생성 이미지 2장씩 · 판매 채널 최대 8개 병렬 실행</small></span><em>자동</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
         </aside>
       </section>
