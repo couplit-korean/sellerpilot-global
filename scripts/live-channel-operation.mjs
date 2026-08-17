@@ -55,6 +55,31 @@ if (process.env.LIVE_LAZADA_START_OAUTH === "true") {
   if (!response.ok) process.exitCode = 1;
   process.exit();
 }
+if (process.env.LIVE_SHOPEE_START_OAUTH === "true") {
+  const response = await fetch(`${siteUrl}/api/admin/channel-credentials/shopee/authorize`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${signIn.session.access_token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      credentialId: credential.id,
+      environment: credential.environment,
+      secretPayload: {},
+      expiresAt: credential.expires_at ? new Date(credential.expires_at).toISOString() : null,
+      rotationDays: Number(credential.rotation_interval_days ?? 90),
+      warningDays: Number(credential.warning_days ?? 30),
+      graceDays: 0,
+      startOAuth: true,
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const result = await response.json().catch(() => ({ message: `HTTP ${response.status}` }));
+  console.log(JSON.stringify({
+    status: response.status,
+    authorizationUrl: typeof result.authorizationUrl === "string" ? result.authorizationUrl : null,
+    message: result.message ?? null,
+  }, null, 2));
+  if (!response.ok) process.exitCode = 1;
+  process.exit();
+}
 if (process.env.LIVE_SHOPEE_ITEM_ID) {
   const { data: secretPayload, error: secretError } = await service.rpc("sellerpilot_decrypt_credential", { p_credential_id: credential.id });
   if (secretError) throw secretError;

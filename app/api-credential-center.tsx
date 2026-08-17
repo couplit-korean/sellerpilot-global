@@ -174,6 +174,17 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
   return { orderId: "", body: {} };
 }
 
+function boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric >= minimum && numeric <= maximum ? numeric : fallback;
+}
+
+function normalizedExpiry(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 const channelDefinitions: ChannelDefinition[] = activeChannelKeys.map((key) => channelCatalog[key]);
 
 const actionLabels: Record<string, string> = {
@@ -279,9 +290,9 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
           credentialId: credential.id,
           environment: credential.environment,
           secretPayload: {},
-          expiresAt: credential.expires_at,
-          rotationDays: credential.rotation_interval_days,
-          warningDays: credential.warning_days,
+          expiresAt: normalizedExpiry(credential.expires_at),
+          rotationDays: boundedInteger(credential.rotation_interval_days, credential.channel === "lazada" ? 30 : 90, 1, 365),
+          warningDays: boundedInteger(credential.warning_days, credential.channel === "lazada" ? 14 : 30, 1, 180),
           graceDays: 0,
           startOAuth: true,
         }),
