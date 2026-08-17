@@ -4,6 +4,8 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
 const ADMIN_ID = "d0f39ad6-e4af-4b7e-965d-9e0a324f2fab";
+const SECOND_ADMIN_ID = "1173e28d-9b03-46cc-a207-b68a780e95c7";
+const NON_ADMIN_ID = "9753c228-73b7-4e1f-8cad-b6635c32ba7f";
 const JOB_ID = "b231a1ac-7c2f-48bc-b2e4-8ad6db2902b7";
 const CANCEL_JOB_ID = "95303cb5-f3ba-49b6-9bd4-7c5e558f0b14";
 const TOKEN_HASH = "a".repeat(64);
@@ -127,6 +129,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260817184000_channel_oauth_state_store.sql",
       "20260817184500_fix_oauth_state_service_guards.sql",
       "20260817190000_require_product_intake_fields.sql",
+      "20260817191500_allow_admin_oauth_state_for_global_credentials.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -171,6 +174,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await db.query(
       "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Migration Test Admin')",
       [ADMIN_ID],
+    );
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'second-admin@example.test'), ($2, 'non-admin@example.test')",
+      [SECOND_ADMIN_ID, NON_ADMIN_ID],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Second Migration Test Admin')",
+      [SECOND_ADMIN_ID],
     );
     await setClaims(db);
     assert.equal(await scalar(db, "select public.sellerpilot_is_admin()"), true);
@@ -229,15 +240,30 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(
         db,
         "select public.sellerpilot_service_store_channel_oauth_state($1, $2, 'lazada', $3)",
-        [ADMIN_ID, refreshedCredentialId, oauthStateHash],
+        [SECOND_ADMIN_ID, refreshedCredentialId, oauthStateHash],
       ),
       true,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_store_channel_oauth_state($1, $2, 'lazada', $3)",
+        [NON_ADMIN_ID, refreshedCredentialId, "d".repeat(64)],
+      ),
+      /invalid oauth state request/,
     );
     assert.equal(
       await scalar(
         db,
         "select public.sellerpilot_service_claim_channel_oauth_state($1, 'lazada', $2)",
         [ADMIN_ID, oauthStateHash],
+      ),
+      null,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_claim_channel_oauth_state($1, 'lazada', $2)",
+        [SECOND_ADMIN_ID, oauthStateHash],
       ),
       refreshedCredentialId,
     );
@@ -245,7 +271,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(
         db,
         "select public.sellerpilot_service_claim_channel_oauth_state($1, 'lazada', $2)",
-        [ADMIN_ID, oauthStateHash],
+        [SECOND_ADMIN_ID, oauthStateHash],
       ),
       null,
     );
