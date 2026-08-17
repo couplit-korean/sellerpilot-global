@@ -118,10 +118,38 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260817001500_live_operations_snapshot.sql",
       "20260817003000_fix_pgcrypto_schema.sql",
       "20260817004500_product_publish_workflow.sql",
+      "20260817045529_fix_service_role_rpc_guards.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(sql));
+    }
+
+    const serviceOnlyFunctions = [
+      "public.sellerpilot_decrypt_credential(uuid)",
+      "public.sellerpilot_record_credential_test(uuid,text,text)",
+      "public.sellerpilot_get_active_credential_secret(text,text)",
+      "public.sellerpilot_service_refresh_lazada(uuid,jsonb,timestamp with time zone)",
+      "public.sellerpilot_service_refresh_ebay(uuid,jsonb,timestamp with time zone)",
+      "public.sellerpilot_service_refresh_shopee(uuid,jsonb,timestamp with time zone)",
+      "public.sellerpilot_service_complete_channel_operation(uuid,text,integer,text,text)",
+      "public.sellerpilot_claim_ai_job(text,text)",
+      "public.sellerpilot_complete_ai_job(text,uuid,text,jsonb,text)",
+      "public.sellerpilot_prune_ai_jobs(timestamp with time zone,integer)",
+      "public.sellerpilot_touch_ai_job(text,uuid,text)",
+      "public.sellerpilot_service_complete_product_listing(uuid,uuid,text,boolean,text,text)",
+    ];
+    for (const signature of serviceOnlyFunctions) {
+      assert.equal(
+        await scalar(db, "select has_function_privilege('authenticated', $1, 'EXECUTE')", [signature]),
+        false,
+      );
+      assert.equal(
+        await scalar(db, "select has_function_privilege('service_role', $1, 'EXECUTE')", [signature]),
+        true,
+      );
+      const definition = await scalar(db, "select pg_get_functiondef($1::regprocedure)", [signature]);
+      assert.doesNotMatch(definition, /request\.jwt\.claim\.role/);
     }
 
     await db.query("insert into auth.users (id, email) values ($1, 'admin@example.test')", [ADMIN_ID]);

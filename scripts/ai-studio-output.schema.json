@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["mode", "product", "design", "thumbnail", "warnings"],
   "properties": {
-    "mode": { "const": "cli" },
+    "mode": { "type": "string", "const": "cli" },
     "product": {
       "type": "object",
       "additionalProperties": false,
@@ -47,7 +47,7 @@
             "additionalProperties": false,
             "required": ["type", "eyebrow", "title", "body", "points"],
             "properties": {
-              "type": { "enum": ["benefit", "story", "howto", "proof", "spec", "caution"] },
+              "type": { "type": "string", "enum": ["benefit", "story", "howto", "proof", "spec", "caution"] },
               "eyebrow": { "type": "string" },
               "title": { "type": "string" },
               "body": { "type": "string" },

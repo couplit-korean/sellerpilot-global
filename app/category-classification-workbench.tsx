@@ -62,7 +62,19 @@ function queryScore(query: string, candidate: string) {
   return words.length ? matched / words.length : 0;
 }
 
-function normalizeSuggestions(channel: ActiveChannelKey, payload: OperationPayload, query: string) {
+function qoo10SearchTerms(query: string) {
+  const normalized = query.toLocaleLowerCase();
+  const aliases = [query];
+  if (/(컵|머그|cup|mug|잔)/u.test(normalized)) aliases.push("マグカップ", "ティーカップ", "食器");
+  if (/(에스프레소|커피|coffee|espresso)/u.test(normalized)) aliases.push("コーヒー");
+  if (/(의류|옷|shirt|dress|팬츠|바지)/u.test(normalized)) aliases.push("服", "シャツ", "パンツ");
+  if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalized)) aliases.push("コスメ", "スキンケア", "クリーム");
+  if (/(가방|백|bag)/u.test(normalized)) aliases.push("バッグ");
+  if (/(신발|슈즈|shoe|sneaker)/u.test(normalized)) aliases.push("シューズ", "スニーカー");
+  return aliases.join(" ");
+}
+
+export function normalizeSuggestions(channel: ActiveChannelKey, payload: OperationPayload, query: string) {
   const root = { steps: payload.steps ?? [] };
   const directCoupang = records(root).find((row) => text(row, ["predictedCategoryId"]));
   if (channel === "coupang" && directCoupang) {
@@ -76,21 +88,27 @@ function normalizeSuggestions(channel: ActiveChannelKey, payload: OperationPaylo
   }
 
   const candidates = records(root).flatMap((row): CategorySuggestion[] => {
-    const id = text(row, ["categoryId", "category_id", "category_id_list", "categoryId", "id", "catId", "category_code", "SecondSubCatCd"]);
-    const name = text(row, ["categoryName", "category_name", "display_category_name", "display_name", "name", "catName", "SecondSubCatNm"]);
+    const id = text(row, ["categoryId", "category_id", "category_id_list", "id", "catId", "category_code", "SecondSubCatCd", "CATE_S_CD"]);
+    const name = text(row, ["categoryName", "category_name", "display_category_name", "display_name", "name", "catName", "SecondSubCatNm", "CATE_S_NM"]);
     if (!id || !name || id.length > 120 || name.length > 300) return [];
     const whole = text(row, ["wholeCategoryName", "category_path", "categoryPath", "path"]);
+    const qoo10Path = [text(row, ["CATE_L_NM"]), text(row, ["CATE_M_NM"]), text(row, ["CATE_S_NM"])].filter(Boolean);
     const ancestors = Array.isArray(row.categoryTreeNodeAncestors)
       ? row.categoryTreeNodeAncestors.map((item) => item && typeof item === "object" ? text(item as Record<string, unknown>, ["categoryName", "name"]) : "").filter(Boolean).reverse()
       : [];
-    const path = whole ? whole.split(/\s*>\s*|\s*\/\s*/).filter(Boolean) : [...ancestors, name];
-    const leaf = booleanValue(row, ["leaf", "last", "leafCategoryTreeNode"], !booleanValue(row, ["has_children", "hasChildren"], false));
-    const score = Math.max(queryScore(query, `${path.join(" ")} ${name}`), Number(row.confidence ?? row.score ?? 0));
-    return [{ id, name, path: path.length ? path : [name], confidence: Math.min(0.99, Math.max(0.45, score || 0.58)), leaf }];
+    const path = qoo10Path.length ? qoo10Path : whole ? whole.split(/\s*>\s*|\s*\/\s*/).filter(Boolean) : [...ancestors, name];
+    const leaf = qoo10Path.length > 0 || booleanValue(row, ["leaf", "last", "leafCategoryTreeNode"], !booleanValue(row, ["has_children", "hasChildren"], false));
+    const scoreQuery = channel === "qoo10" ? qoo10SearchTerms(query) : query;
+    const score = Math.max(queryScore(scoreQuery, `${path.join(" ")} ${name}`), Number(row.confidence ?? row.score ?? 0));
+    const confidence = channel === "qoo10"
+      ? Math.min(0.99, 0.45 + score * 0.54)
+      : Math.min(0.99, Math.max(0.45, score || 0.58));
+    return [{ id, name, path: path.length ? path : [name], confidence, leaf }];
   });
 
   return [...new Map(candidates.map((item) => [`${item.id}:${item.name}`, item])).values()]
     .filter((item) => item.leaf)
+    .filter((item) => channel !== "qoo10" || queryScore(qoo10SearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
     .sort((left, right) => right.confidence - left.confidence)
     .slice(0, 5);
 }
