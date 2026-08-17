@@ -5443,7 +5443,7 @@ a:focus-visible,
 
 .batch-product-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   border: 1px solid var(--border);
@@ -5452,7 +5452,29 @@ a:focus-visible,
   background: #fff;
 }
 
-.batch-product-row > button {
+.batch-product-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.batch-product-row-actions > button {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid #d4dae2;
+  border-radius: 3px;
+  padding: 0 8px;
+  color: #657083;
+  background: #f7f8fa;
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.batch-product-row-actions > .batch-remove-product {
   display: inline-grid;
   width: 32px;
   height: 32px;
@@ -5463,7 +5485,13 @@ a:focus-visible,
   background: #f7f8fa;
 }
 
-.batch-product-row > button:disabled {
+.batch-product-row-actions > .batch-open-product {
+  border-color: #b8d8ce;
+  color: #0b6f5f;
+  background: #eef9f5;
+}
+
+.batch-product-row-actions > button:disabled {
   opacity: .45;
 }
 
@@ -5624,5 +5652,13 @@ a:focus-visible,
   .batch-studio-item em {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .batch-product-row {
+    grid-template-columns: 1fr;
+  }
+
+  .batch-product-row-actions {
+    justify-content: flex-end;
   }
 }
