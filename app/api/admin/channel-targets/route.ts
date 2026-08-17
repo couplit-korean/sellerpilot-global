@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { executeChannelTargetDiscovery } from "../../../../lib/channels/gateway";
 import { channelMarket, lazadaMarkets } from "../../../../lib/channels/markets";
+import { isCompleteChannelTarget, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -44,20 +45,23 @@ export async function GET(request: Request) {
     : null;
   if (!credential || !("id" in credential) || typeof credential.id !== "string") return NextResponse.json({ message: "활성 채널 키가 없습니다." }, { status: 404 });
 
-  if (Array.isArray(cachedTargets) && cachedTargets.length) {
+  const normalizedCachedTargets: ChannelTargetRecord[] = Array.isArray(cachedTargets)
+    ? cachedTargets.map((target) => ({
+      targetId: textValue(target.target_id),
+      displayName: textValue(target.display_name),
+      marketCode: textValue(target.market_code).toUpperCase(),
+      locale: textValue(target.locale),
+      language: textValue(target.language),
+      currency: textValue(target.currency),
+      status: textValue(target.remote_status),
+      verifiedAt: textValue(target.verified_at),
+    }))
+    : [];
+  if (normalizedCachedTargets.length && normalizedCachedTargets.every((target) => isCompleteChannelTarget(channel.data, target))) {
     return NextResponse.json({
       channel: channel.data,
       credentialId: credential.id,
-      targets: cachedTargets.map((target) => ({
-        targetId: textValue(target.target_id),
-        displayName: textValue(target.display_name),
-        marketCode: textValue(target.market_code),
-        locale: textValue(target.locale),
-        language: textValue(target.language),
-        currency: textValue(target.currency),
-        status: textValue(target.remote_status),
-        verifiedAt: textValue(target.verified_at),
-      })),
+      targets: normalizedCachedTargets,
     }, { headers: { "cache-control": "no-store, max-age=0" } });
   }
 

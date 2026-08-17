@@ -75,7 +75,7 @@ export function AcceptanceChecklistPage() {
         </div>
         <aside>
           <ShieldCheck size={21} />
-          <div><strong>현재 단계 · Shopee 8개 실숍 E2E 완료</strong><span>글로벌 상품→8개 국가 UNLIST 현지화·통화·재고·물류 재조회 완료 · Lazada 공급사 셀러 화이트리스트 수정 필요</span></div>
+          <div><strong>현재 단계 · Qoo10 쓰기 PoC 완료, Shopee·Lazada 재인증 필요</strong><span>Qoo10 테스트상품 생성·재조회 성공 · Shopee 과거 8개 숍 UNLIST 이력은 유지되지만 현재 토큰 갱신 실패 · Lazada OAuth 만료/누락</span></div>
         </aside>
       </section>
 
@@ -90,7 +90,7 @@ export function AcceptanceChecklistPage() {
       <section className="acceptance-gates">
         <div><span>GATE 0</span><b>범위·계정·테스트상품</b><em>실상품·스튜디오 이미지 5장 확보</em></div>
         <i />
-        <div><span>GATE 1</span><b>Qoo10·Shopee·Lazada API PoC</b><em>Shopee 8개 숍 통과 · Qoo10 읽기 통과 · Lazada 공급사 차단</em></div>
+        <div><span>GATE 1</span><b>Qoo10·Shopee·Lazada API PoC</b><em>Qoo10 생성·재조회 통과 · Shopee·Lazada 현재 OAuth 재승인 필요</em></div>
         <i />
         <div><span>PHASE 1–3</span><b>운영코어·콘텐츠·매칭</b><em>핵심 코어 구현 · 고도화 지속</em></div>
         <i />
