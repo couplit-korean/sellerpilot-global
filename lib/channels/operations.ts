@@ -760,14 +760,50 @@ async function executeSmartstore(input: ExecuteInput) {
     return result(input, [step("category-validation", remote)], categoryId);
   }
   if (input.operation === "listing.create") {
-    const createRemote = await request({ method: "POST", path: "/v2/products", body: objectValue(input.arguments, "body") });
+    const body = objectValue(input.arguments, "body");
+    const originProduct = objectValue(body, "originProduct", false);
+    const detailAttribute = objectValue(originProduct, "detailAttribute", false);
+    const sellerCodeInfo = objectValue(detailAttribute, "sellerCodeInfo", false);
+    const sellerManagementCode = textValue(sellerCodeInfo, "sellerManagementCode");
+    if (sellerManagementCode) {
+      const searchRemote = await request({
+        method: "POST",
+        path: "/v1/products/search",
+        body: {
+          searchKeywordType: "SELLER_CODE",
+          sellerManagementCode,
+          page: 1,
+          size: 50,
+          orderType: "NO",
+        },
+      });
+      const contents: unknown[] = Array.isArray(searchRemote.data.contents) ? searchRemote.data.contents : [];
+      const existing = contents.find((item: unknown) => {
+        if (!item || typeof item !== "object") return false;
+        const record = item as Record<string, unknown>;
+        const channelProducts: unknown[] = Array.isArray(record.channelProducts) ? record.channelProducts : [];
+        return channelProducts.some((channelProduct: unknown) => channelProduct && typeof channelProduct === "object" && (channelProduct as Record<string, unknown>).sellerManagementCode === sellerManagementCode);
+      });
+      const existingOriginProductNo = existing && typeof existing === "object" ? (existing as Record<string, unknown>).originProductNo : undefined;
+      if (existingOriginProductNo !== undefined) {
+        const remoteId = String(existingOriginProductNo);
+        const searchStep = step("product-reconcile", searchRemote);
+        const updateRemote = await request({ method: "PUT", path: `/v2/products/origin-products/${pathSegment(remoteId)}`, body });
+        const updateStep = step("product-update", updateRemote);
+        if (!updateStep.ok) return result(input, [searchStep, updateStep], remoteId);
+        const readbackRemote = await request({ method: "GET", path: `/v2/products/origin-products/${pathSegment(remoteId)}` });
+        const readbackStep = step("product-readback", readbackRemote);
+        readbackStep.ok = readbackStep.ok && Boolean(readbackRemote.data.originProduct && typeof readbackRemote.data.originProduct === "object");
+        return result(input, [searchStep, updateStep, readbackStep], remoteId);
+      }
+    }
+    const createRemote = await request({ method: "POST", path: "/v2/products", body });
     const remoteId = createRemote.data.originProductNo === undefined ? undefined : String(createRemote.data.originProductNo);
     const steps = [step("product-create", createRemote)];
     if (!steps[0].ok || !remoteId) return result(input, steps, remoteId);
     const readbackRemote = await request({ method: "GET", path: `/v2/products/origin-products/${pathSegment(remoteId)}` });
     const readbackStep = step("product-readback", readbackRemote);
-    const readbackId = readbackRemote.data.originProductNo;
-    readbackStep.ok = readbackStep.ok && readbackId !== undefined && String(readbackId) === remoteId;
+    readbackStep.ok = readbackStep.ok && Boolean(readbackRemote.data.originProduct && typeof readbackRemote.data.originProduct === "object");
     steps.push(readbackStep);
     return result(input, steps, remoteId);
   }

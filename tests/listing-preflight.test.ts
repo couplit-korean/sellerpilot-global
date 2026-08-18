@@ -63,3 +63,30 @@ test("zero price and stock are rejected before a write", () => {
     ["price", "stock"],
   );
 });
+
+test("Smartstore preflight exposes the official purchase-age and display-status fields", () => {
+  const draft = {
+    imageUrls: ["https://example.com/storage.jpg"],
+    body: {
+      originProduct: {
+        leafCategoryId: "50001330",
+        name: "[API TEST] 수납함",
+        detailContent: "테스트 상세 설명",
+        salePrice: 10_000,
+        stockQuantity: 1,
+        detailAttribute: {
+          originAreaInfo: { content: "중국" },
+          minorPurchasable: true,
+          productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC" },
+        },
+      },
+      smartstoreChannelProduct: { channelProductDisplayStatusType: "ON" },
+    },
+  };
+
+  const requirements = inspectListingDraft("smartstore", draft);
+  assert.equal(requirements.find((item) => item.key === "minor-purchasable")?.status, "ready");
+  assert.equal(requirements.find((item) => item.key === "provided-notice")?.status, "ready");
+  assert.equal(requirements.find((item) => item.key === "display-status")?.status, "ready");
+  assert.deepEqual(blockingListingRequirements("smartstore", draft), []);
+});

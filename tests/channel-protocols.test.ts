@@ -654,7 +654,7 @@ test("Naver category preflight accepts an official NOT_FOUND response as empty o
   }
 });
 
-test("Naver product creation is only successful after the origin product readback matches", async () => {
+test("Naver product creation is only successful after the origin product readback succeeds", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   globalThis.fetch = async (input, init) => {
@@ -666,7 +666,7 @@ test("Naver product creation is only successful after the origin product readbac
     if (url.endsWith("/v2/products") && init?.method === "POST") {
       return new Response(JSON.stringify({ originProductNo: 10000001, smartstoreChannelProductNo: 20000001 }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    return new Response(JSON.stringify({ originProductNo: 10000001, originProduct: { statusType: "SALE" } }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ originProduct: { statusType: "SALE" } }), { status: 200, headers: { "content-type": "application/json" } });
   };
   try {
     const result = await executeChannelOperation({
@@ -680,6 +680,48 @@ test("Naver product creation is only successful after the origin product readbac
     assert.equal(result.remoteId, "10000001");
     assert.deepEqual(result.steps.map((item) => item.name), ["product-create", "product-readback"]);
     assert.equal(calls.some((call) => call.url.endsWith("/v2/products/origin-products/10000001") && call.init?.method === "GET"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Naver product creation reconciles an existing seller management code without creating a duplicate", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith("/v1/oauth2/token")) {
+      return new Response(JSON.stringify({ access_token: "naver-token", expires_in: 10_800 }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.endsWith("/v1/products/search") && init?.method === "POST") {
+      return new Response(JSON.stringify({ contents: [{ originProductNo: 10000001, channelProducts: [{ sellerManagementCode: "SELLERPILOT-001", channelProductNo: 20000001 }] }] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.endsWith("/v2/products/origin-products/10000001") && init?.method === "PUT") {
+      return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.endsWith("/v2/products/origin-products/10000001") && init?.method === "GET") {
+      return new Response(JSON.stringify({ originProduct: { statusType: "SALE" } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ code: "UNEXPECTED" }), { status: 500, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "smartstore",
+      operation: "listing.create",
+      payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
+      arguments: {
+        body: {
+          originProduct: { detailAttribute: { sellerCodeInfo: { sellerManagementCode: "SELLERPILOT-001" } } },
+          smartstoreChannelProduct: {},
+        },
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "10000001");
+    assert.deepEqual(result.steps.map((item) => item.name), ["product-reconcile", "product-update", "product-readback"]);
+    assert.equal(calls.some((call) => call.url.endsWith("/v2/products") && call.init?.method === "POST"), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

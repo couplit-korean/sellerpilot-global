@@ -370,18 +370,57 @@ async function prepareSmartstoreListing(payload, argumentsValue) {
   const body = argumentsValue.body && typeof argumentsValue.body === "object" ? structuredClone(argumentsValue.body) : {};
   const originProduct = body.originProduct && typeof body.originProduct === "object" ? body.originProduct : {};
   const detailAttribute = originProduct.detailAttribute && typeof originProduct.detailAttribute === "object" ? originProduct.detailAttribute : {};
+  const existingProvidedNotice = detailAttribute.productInfoProvidedNotice && typeof detailAttribute.productInfoProvidedNotice === "object" ? detailAttribute.productInfoProvidedNotice : {};
+  const existingEtcNotice = existingProvidedNotice.etc && typeof existingProvidedNotice.etc === "object" ? existingProvidedNotice.etc : {};
+  const productName = String(originProduct.name ?? "상품상세 참조").trim() || "상품상세 참조";
+  const sellerCode = String(detailAttribute.sellerCodeInfo?.sellerManagementCode ?? productName).trim() || productName;
+  const providedNotice = String(existingProvidedNotice.productInfoProvidedNoticeType ?? "").trim()
+    ? existingProvidedNotice
+    : {
+        productInfoProvidedNoticeType: "ETC",
+        etc: {
+          returnCostReason: "상품상세 참조",
+          noRefundReason: "상품상세 참조",
+          qualityAssuranceStandard: "상품상세 참조",
+          compensationProcedure: "상품상세 참조",
+          troubleShootingContents: "상품상세 참조",
+          itemName: productName.slice(0, 50),
+          modelName: sellerCode.slice(0, 50),
+          certificateDetails: "해당사항 없음",
+          manufacturer: "상품상세 참조",
+          customerServicePhoneNumber: phone,
+        },
+      };
+  if (providedNotice.productInfoProvidedNoticeType === "ETC") {
+    providedNotice.etc = {
+      ...existingEtcNotice,
+      ...(providedNotice.etc && typeof providedNotice.etc === "object" ? providedNotice.etc : {}),
+      customerServicePhoneNumber: phone,
+    };
+    delete providedNotice.etc.afterServiceDirector;
+  }
   originProduct.images = {
     representativeImage: { url: uploadedUrls[0] },
     optionalImages: uploadedUrls.slice(1).map((url) => ({ url })),
   };
   originProduct.detailAttribute = {
     ...detailAttribute,
+    minorPurchasable: typeof detailAttribute.minorPurchasable === "boolean" ? detailAttribute.minorPurchasable : true,
+    productInfoProvidedNotice: providedNotice,
     afterServiceInfo: {
       afterServiceTelephoneNumber: phone,
       afterServiceGuideContent: "상품 상세 설명과 스마트스토어 판매자 안내를 확인해 주세요.",
     },
   };
   body.originProduct = originProduct;
+  const smartstoreChannelProduct = body.smartstoreChannelProduct && typeof body.smartstoreChannelProduct === "object" ? body.smartstoreChannelProduct : {};
+  body.smartstoreChannelProduct = {
+    ...smartstoreChannelProduct,
+    naverShoppingRegistration: smartstoreChannelProduct.naverShoppingRegistration === true,
+    channelProductDisplayStatusType: ["ON", "SUSPENSION"].includes(String(smartstoreChannelProduct.channelProductDisplayStatusType))
+      ? smartstoreChannelProduct.channelProductDisplayStatusType
+      : "ON",
+  };
   return { ...argumentsValue, body };
 }
 

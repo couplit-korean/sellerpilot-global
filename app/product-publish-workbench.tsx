@@ -278,10 +278,10 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
           images: { representativeImage: { url: "PROGRAM_UPLOAD_PENDING" }, optionalImages: [] },
           salePrice: price,
           stockQuantity: quantity,
-          detailAttribute: { afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" }, originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
+          detailAttribute: { minorPurchasable: true, productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: { returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조", qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조", troubleShootingContents: "상품상세 참조", itemName: product.name.slice(0, 50), modelName: (manual.sellerSku || product.sku).slice(0, 50), certificateDetails: "해당사항 없음", manufacturer: manual.manufacturer.slice(0, 200), customerServicePhoneNumber: "SERVER_MANAGED" } }, afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" }, originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
           customerBenefit: {},
         },
-        smartstoreChannelProduct: { naverShoppingRegistration: true, channelProductName: product.name },
+        smartstoreChannelProduct: { naverShoppingRegistration: true, channelProductName: product.name, channelProductDisplayStatusType: "ON" },
       },
     };
   }
@@ -333,7 +333,15 @@ function missingNativeValues(channel: ActiveChannelKey, value: Record<string, un
     return ["SecondSubCat", "ItemTitle", "StandardImage", "ItemDescription", "ItemPrice", "ItemQty", "ShippingNo", "AvailableDateType", "AvailableDateValue"]
       .filter((key) => params?.[key] === undefined || String(params[key]).trim() === "");
   }
-  if (channel === "shopee") return [!String(value.shopId ?? "").trim() ? "shopId" : "", !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", json.includes('"weight":0') ? "package weight" : ""].filter(Boolean);
+  if (channel === "shopee") {
+    const body = value.body && typeof value.body === "object" && !Array.isArray(value.body) ? value.body as Record<string, unknown> : {};
+    const packageWeight = Number(body.weight);
+    return [
+      !String(value.shopId ?? "").trim() ? "shopId" : "",
+      !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "",
+      !Number.isFinite(packageWeight) || packageWeight <= 0 ? "package weight" : "",
+    ].filter(Boolean);
+  }
   if (channel === "lazada") return [!Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", json.includes('"package_weight":"0"') || json.includes('"package_weight":""') ? "package size/weight" : ""].filter(Boolean);
   if (channel === "coupang") return [json.includes('"displayCategoryCode":0') ? "displayCategoryCode" : "", !json.includes('"vendorPath":"https://') ? "public product image" : ""].filter(Boolean);
   if (channel === "smartstore") return [!Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", !json.includes('"originAreaCode":"04"') ? "originAreaInfo" : ""].filter(Boolean);
