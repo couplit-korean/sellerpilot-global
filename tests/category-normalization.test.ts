@@ -118,6 +118,8 @@ const shopeeGlobalResponse = {
           { category_id: 101240, display_category_name: "Mugs", has_children: false },
           { category_id: 100629, display_category_name: "Beauty & Personal Care > Bath & Body > Bar Soap", has_children: false },
           { category_id: 100630, display_category_name: "Shoes", has_children: false },
+          { category_id: 100780, display_category_name: "Home Appliances > Kitchen Appliances > Rice Cookers", has_children: false },
+          { category_id: 100779, display_category_name: "Health & Wellness > Pregnancy Tests", has_children: false },
           { category_id: 100781, display_category_name: "Food & Beverages > Food Staples > Rice", has_children: false },
           { category_id: 100912, display_category_name: "Toys, Games & Collectibles > Toy Vehicles > Toy Cars", has_children: false },
           { category_id: 100623, display_category_name: "Health & Wellness > Vitamins & Supplements > Fish Oil & Omega 3", has_children: false },

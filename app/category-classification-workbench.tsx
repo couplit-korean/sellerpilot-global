@@ -189,6 +189,68 @@ function shopeeSearchTerms(query: string) {
   return aliases.join(" ");
 }
 
+function shopeeCategoryCompatibility(query: string, candidate: string) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  const normalizedCandidate = candidate.toLocaleLowerCase().trim();
+  const exactOrLeaf = (term: string) => normalizedCandidate === term
+    || normalizedCandidate.endsWith(`> ${term}`)
+    || normalizedCandidate.endsWith(`› ${term}`)
+    || normalizedCandidate.endsWith(`/ ${term}`);
+
+  if (/(rice|쌀|밥)/u.test(normalizedQuery)) {
+    if (/(rice\s+cooker|appliance)/u.test(normalizedCandidate)) return false;
+    return exactOrLeaf("rice") || /(food|beverage|staple|instant rice|ready meal)/u.test(normalizedCandidate);
+  }
+  if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) {
+    if (/(pasta\s+(maker|machine)|appliance)/u.test(normalizedCandidate)) return false;
+    return exactOrLeaf("pasta") || /(food|beverage|staple|noodle|penne)/u.test(normalizedCandidate);
+  }
+  if (/(flour|밀가루)/u.test(normalizedQuery)) {
+    if (/(flour\s+mill|appliance)/u.test(normalizedCandidate)) return false;
+    return exactOrLeaf("flour") || /(food|beverage|baking|cooking ingredient|staple)/u.test(normalizedCandidate);
+  }
+  if (/(teddy|plush|stuffed|테디|곰인형|봉제|toy\s?car|자동차.*완구|완구.*자동차|장난감.*차)/u.test(normalizedQuery)) {
+    return /(toy|game|collectible|plush|stuffed|teddy)/u.test(normalizedCandidate);
+  }
+  if (/(fish\s?oil|omega|어유|오메가|dha|epa|vitamin|비타민)/u.test(normalizedQuery)) {
+    return /(health|wellness|vitamin|supplement|fish oil|omega|dha|epa)/u.test(normalizedCandidate)
+      && !/(pet|animal feed)/u.test(normalizedCandidate);
+  }
+  if (/(brush|브러시|sponge|puff|스펀지|퍼프|curler|eyelash|뷰러|속눈썹|cosmetic|beauty|skin|cream|화장품|스킨|크림)/u.test(normalizedQuery)) {
+    return /(beauty|personal care|makeup|cosmetic|skin care)/u.test(normalizedCandidate);
+  }
+  if (/(t[\s-]?shirt|tee|티셔츠|반팔|hoodie|hood|jacket|후드|재킷)/u.test(normalizedQuery)) {
+    return /(fashion|clothes|clothing|apparel|top|shirt|hoodie|sweatshirt|jacket|outerwear)/u.test(normalizedCandidate);
+  }
+  if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) {
+    return /(home|living|organizer|organization|storage box|storage bin)/u.test(normalizedCandidate);
+  }
+  if (/(hanger|옷걸이|행거)/u.test(normalizedQuery)) {
+    return exactOrLeaf("hangers") || /(home|living|laundry|clothes hanger|clothing hanger)/u.test(normalizedCandidate);
+  }
+  if (/(tote|canvas|캔버스.*토트|토트백)/u.test(normalizedQuery)) {
+    return /(fashion|bag|luggage|accessor)/u.test(normalizedCandidate);
+  }
+  return queryScore(shopeeSearchTerms(query), candidate) > 0;
+}
+
+function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  const value = `${candidate.path.join(" ")} ${candidate.name}`.toLocaleLowerCase();
+  const score = (terms: string[]) => terms.reduce((total, term, index) => (
+    value.includes(term) ? Math.max(total, terms.length - index) : total
+  ), 0);
+  if (/(rice|쌀|밥)/u.test(normalizedQuery)) return score(["food staples", "food & beverages", "instant rice", "ready meal", "rice"]);
+  if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return score(["pasta", "penne", "noodles", "food staples", "food & beverages"]);
+  if (/(flour|밀가루)/u.test(normalizedQuery)) return score(["flour", "baking", "cooking ingredients", "food staples", "food & beverages"]);
+  if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(normalizedQuery)) return score(["teddy", "plush", "stuffed", "toys"]);
+  if (/(toy\s?car|자동차.*완구|완구.*자동차|장난감.*차)/u.test(normalizedQuery)) return score(["toy cars", "toy vehicles", "toys"]);
+  if (/(fish\s?oil|omega|어유|오메가|dha|epa)/u.test(normalizedQuery)) return score(["fish oil", "omega 3", "omega", "supplements", "health"]);
+  if (/(vitamin|비타민)/u.test(normalizedQuery)) return score(["vitamins", "supplements", "health"]);
+  if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) return score(["storage boxes", "home organizers", "home & living"]);
+  return 0;
+}
+
 function lazadaSearchTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   const aliases = [query];
@@ -325,13 +387,18 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
   return [...deduplicated.values()]
     .filter((item) => item.leaf)
     .filter((item) => channel !== "qoo10" || queryScore(qoo10SearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
-    .filter((item) => channel !== "shopee" || queryScore(shopeeSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
+    .filter((item) => channel !== "shopee" || shopeeCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
     .filter((item) => channel !== "lazada" || lazadaQueryScore(lazadaSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
     .filter((item) => channel !== "smartstore" || queryScore(smartstoreSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
     .sort((left, right) => {
       if (channel === "qoo10") {
         const leftPriority = qoo10PriorityScore(query, left);
         const rightPriority = qoo10PriorityScore(query, right);
+        if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+      }
+      if (channel === "shopee") {
+        const leftPriority = shopeePriorityScore(query, left);
+        const rightPriority = shopeePriorityScore(query, right);
         if (leftPriority !== rightPriority) return rightPriority - leftPriority;
       }
       return right.confidence - left.confidence;
