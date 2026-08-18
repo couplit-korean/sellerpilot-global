@@ -91,6 +91,8 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
   const originalFetch = globalThis.fetch;
   let createUrl = "";
   let createInit: RequestInit | undefined;
+  let detailUrl = "";
+  let detailInit: RequestInit | undefined;
   let fetchCount = 0;
   globalThis.fetch = async (input, init) => {
     fetchCount += 1;
@@ -98,7 +100,12 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
       createUrl = String(input);
       createInit = init;
     }
-    if (fetchCount > 1) {
+    if (fetchCount === 2) {
+      detailUrl = String(input);
+      detailInit = init;
+      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    }
+    if (fetchCount > 2) {
       return new Response(JSON.stringify({
         ResultCode: 0,
         ResultObject: { ItemDetail: '<div><img src="1.jpg"><img src="2.jpg"><img src="3.jpg"><img src="4.jpg"></div>' },
@@ -126,6 +133,15 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
     assert.equal(url.searchParams.has("ItemDescription"), false);
     const body = new URLSearchParams(String(createInit?.body));
     assert.equal((body.get("ItemDescription")?.match(/<img /g) ?? []).length, 4);
+    const detailRequestUrl = new URL(detailUrl);
+    assert.equal(detailRequestUrl.searchParams.get("method"), "ItemsBasic.EditGoodsContents");
+    assert.equal(detailRequestUrl.searchParams.has("Contents"), false);
+    assert.equal(detailInit?.method, "POST");
+    const detailBody = new URLSearchParams(String(detailInit?.body));
+    assert.equal(detailBody.get("ItemCode"), "1234567890");
+    assert.equal((detailBody.get("Contents")?.match(/<img /g) ?? []).length, 4);
+    assert.equal(result.steps.at(-2)?.name, "EditGoodsContents");
+    assert.equal(result.steps.at(-2)?.ok, true);
     assert.equal(result.steps.at(-1)?.name, "detail-image-readback");
     assert.equal(result.steps.at(-1)?.ok, true);
   } finally {
@@ -142,6 +158,9 @@ test("Qoo10 pauses a created item when detail-image readback is incomplete", asy
     if (url.searchParams.get("method") === "ItemsBasic.SetNewGoods") {
       return Response.json({ ResultCode: 0, ResultObject: { GdNo: "1234567890" } });
     }
+    if (url.searchParams.get("method") === "ItemsBasic.EditGoodsContents") {
+      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    }
     if (url.searchParams.get("method") === "ItemsBasic.EditGoodsStatus") {
       return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
     }
@@ -157,6 +176,7 @@ test("Qoo10 pauses a created item when detail-image readback is incomplete", asy
     });
     assert.equal(result.ok, false);
     assert.equal(result.remoteId, "1234567890");
+    assert.equal(calls.some((item) => item.method === "ItemsBasic.EditGoodsContents"), true);
     assert.equal(result.steps.find((item) => item.name === "detail-image-readback")?.ok, false);
     assert.equal(calls.at(-1)?.method, "ItemsBasic.EditGoodsStatus");
     assert.equal(calls.at(-1)?.status, "1");

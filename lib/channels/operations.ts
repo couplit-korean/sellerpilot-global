@@ -333,10 +333,21 @@ async function executeQoo10(input: ExecuteInput) {
     return result(input, [createStep], remoteId);
   }
 
-  const expectedDetailImages = qoo10ImageCount(params.ItemDescription ?? "");
+  // SetNewGoods accepts ItemDescription, but Qoo10 exposes a dedicated
+  // EditGoodsContents method for the public product-detail surface. Persist the
+  // same verified HTML through that method before treating the create as done.
+  const detailHtml = params.ItemDescription ?? "";
+  const expectedDetailImages = qoo10ImageCount(detailHtml);
+  const detailUpdate = await qoo10Request({
+    payload: input.payload,
+    service: "ItemsBasic",
+    method: "EditGoodsContents",
+    params: { ItemCode: remoteId, SellerCode: "", Contents: detailHtml },
+  });
+  const detailUpdateStep = step("EditGoodsContents", detailUpdate);
   let readbackStatus = 422;
   let readbackImageCount = 0;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; detailUpdateStep.ok && attempt < 4; attempt += 1) {
     if (attempt > 0) await operationDelay(750 * attempt);
     const readback = await qoo10Request({
       payload: input.payload,
@@ -349,7 +360,7 @@ async function executeQoo10(input: ExecuteInput) {
     readbackStatus = readbackStep.status;
     readbackImageCount = qoo10ImageCount(qoo10DetailHtml(readback.data.ResultObject));
     if (readbackStep.ok && expectedDetailImages >= 4 && readbackImageCount >= expectedDetailImages) {
-      return result(input, [createStep, qoo10VerificationStep(true, readbackStatus, readbackImageCount)], remoteId);
+      return result(input, [createStep, detailUpdateStep, qoo10VerificationStep(true, readbackStatus, readbackImageCount)], remoteId);
     }
   }
 
@@ -364,6 +375,7 @@ async function executeQoo10(input: ExecuteInput) {
   });
   return result(input, [
     createStep,
+    detailUpdateStep,
     qoo10VerificationStep(false, readbackStatus, readbackImageCount),
     step("rollback-missing-detail", rollback),
   ], remoteId);

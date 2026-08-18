@@ -655,12 +655,12 @@ export async function qoo10Request(input: {
 }) {
   const apiKey = textValue(input.payload, "api_key");
   if (!apiKey) throw new Error("QOO10_CREDENTIALS_MISSING");
-  // SetNewGoods can carry a complete HTML detail page. Sending that payload in
-  // the query string caused Qoo10 to create the item while silently dropping
-  // the long ItemDescription value. QAPI accepts form-encoded REST requests, so
-  // keep the gateway controls in the URL and send the product fields in a POST
-  // body for creation.
-  const useFormBody = input.method === "SetNewGoods";
+  // Qoo10's create and dedicated detail-content methods can carry a complete
+  // HTML detail page. Sending those payloads in the query string can create or
+  // update an item while silently truncating the long HTML value. QAPI accepts
+  // form-encoded REST requests, so keep the gateway controls in the URL and
+  // send product/detail fields in a POST body for both write methods.
+  const useFormBody = ["SetNewGoods", "EditGoodsContents"].includes(input.method);
   const response = await fetch(buildQoo10Url({
     ...input,
     apiKey,
