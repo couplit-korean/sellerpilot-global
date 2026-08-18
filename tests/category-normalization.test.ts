@@ -147,6 +147,18 @@ test("Shopee GlobalProduct normalization maps soap instead of an unrelated beaut
   assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, "Natural cleansing soap bar")[0]?.id, "100629");
 });
 
+test("Shopee beauty-tool normalization keeps sponges separate from brushes", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
+      { category_id: 1, display_category_name: "Beauty > Makeup Brushes", has_children: false },
+      { category_id: 2, display_category_name: "Beauty > Makeup Sponges & Puffs", has_children: false },
+    ] } } }],
+  };
+  assert.equal(normalizeSuggestions("shopee", response, "makeup sponge puff")[0]?.id, "2");
+  assert.equal(normalizeSuggestions("shopee", response, "makeup brush set")[0]?.id, "1");
+});
+
 const shopeeProgramCatalogCases = [
   ["흰쌀밥 식품 샘플", "100781"],
   ["노란색 자동차 완구", "100912"],
@@ -200,6 +212,17 @@ test("Smartstore category normalization accepts an official working-toy vehicle 
     ] } }],
   };
   assert.equal(normalizeSuggestions("smartstore", response, "노란색 자동차 완구")[0]?.id, "TOY-CAR");
+});
+
+test("Smartstore beauty-tool normalization does not map a sponge to a brush", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
+      { id: "BRUSH", name: "브러시세트", wholeCategoryName: "화장품>미용>뷰티소품>메이크업브러시>브러시세트", last: true },
+      { id: "SPONGE", name: "메이크업스펀지", wholeCategoryName: "화장품>미용>뷰티소품>메이크업소품>메이크업스펀지", last: true },
+    ] } }],
+  };
+  assert.equal(normalizeSuggestions("smartstore", response, "메이크업 스펀지 퍼프")[0]?.id, "SPONGE");
 });
 
 test("Smartstore category normalization ranks a storage-box leaf above unrelated equal-score leaves", () => {
