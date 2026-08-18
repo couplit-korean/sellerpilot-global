@@ -172,7 +172,13 @@ async function runCodex(args, timeoutMs, jobId) {
       .join(":");
     delete codexEnv.OPENAI_API_KEY;
     delete codexEnv.OPENAI_BASE_URL;
-    const child = spawn(codexBin, args, {
+    // The worker only needs Codex and the bundled image-generation skill.
+    // Disable unrelated user-scoped MCP connections so an expired OAuth
+    // session cannot abort an otherwise valid product job.
+    const workerArgs = args[0] === "exec"
+      ? [args[0], "--config", "mcp_servers.lovable.enabled=false", ...args.slice(1)]
+      : args;
+    const child = spawn(codexBin, workerArgs, {
       cwd: process.cwd(),
       env: codexEnv,
       stdio: ["ignore", "pipe", "pipe"],
@@ -438,12 +444,16 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   // Date-like implicit requirements use Shopee's custom-value representation.
   const expiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
   const expiryDate = `${String(expiry.getUTCDate()).padStart(2, "0")}/${String(expiry.getUTCMonth() + 1).padStart(2, "0")}/${expiry.getUTCFullYear()}`;
+  const categoryImplicitRequired = /(?:lipstick|lip\s*makeup|립스틱)/iu.test(productHint)
+    ? { formulation: "Stick" }
+    : {};
   const globalImplicitRequired = {
     "drink form": "Coffee Beans",
-    "expiry date": expiry.toISOString().slice(0, 10),
+    "expiry date": expiryDate,
     "shelf life": "12 Months",
     "shelf lifes": "12 Months",
     "packaging type": "Bag",
+    ...categoryImplicitRequired,
   };
   const localImplicitRequired = {
     ...globalImplicitRequired,
@@ -908,6 +918,105 @@ function buildImagePrompt(result, outputPath, preset) {
   ].join("\n");
 }
 
+const fallbackLocalizedCopy = {
+  "en-SG": "Sample product for listing test",
+  "ms-MY": "Sampel produk untuk ujian penyenaraian",
+  "en-PH": "Sample product for listing test",
+  "vi-VN": "Sản phẩm mẫu để kiểm tra đăng bán",
+  "th-TH": "สินค้าตัวอย่างสำหรับทดสอบการลงขาย",
+  "zh-TW": "商品上架測試樣品",
+  "pt-BR": "Produto de amostra para teste de anúncio",
+  "es-MX": "Producto de muestra para prueba de publicación",
+  "id-ID": "Produk contoh untuk pengujian daftar",
+};
+
+const fallbackListingTargets = [
+  ["shopee", "SG", "en-SG"], ["shopee", "MY", "ms-MY"], ["shopee", "PH", "en-PH"],
+  ["shopee", "VN", "vi-VN"], ["shopee", "TH", "th-TH"], ["shopee", "TW", "zh-TW"],
+  ["shopee", "BR", "pt-BR"], ["shopee", "MX", "es-MX"], ["lazada", "MY", "ms-MY"],
+  ["lazada", "SG", "en-SG"], ["lazada", "PH", "en-PH"], ["lazada", "TH", "th-TH"],
+  ["lazada", "VN", "vi-VN"], ["lazada", "ID", "id-ID"],
+];
+
+function fallbackEnglishProductLabel(fields) {
+  const hint = `${String(fields.productName || "")} ${String(fields.categoryHint || "")}`.toLocaleLowerCase();
+  const labels = [
+    [/(lipstick|립스틱|\b립\b)/u, "Lipstick"],
+    [/(makeup.*brush|brush.*set|메이크업.*브러시|브러시.*세트)/u, "Makeup Brush Set"],
+    [/(penne|pasta|펜네|파스타)/u, "Penne Pasta"],
+    [/(rice|쌀|밥)/u, "Rice"],
+    [/(t[\s-]?shirt|티셔츠|반팔)/u, "T-Shirt"],
+    [/(hoodie|hooded|후드)/u, "Hoodie"],
+    [/(teddy|plush|stuffed|테디|곰인형|봉제)/u, "Teddy Bear Plush Toy"],
+    [/(toy.*car|car.*toy|자동차.*완구|완구.*자동차|장난감.*차)/u, "Toy Car"],
+    [/(fish.*oil|omega|어유|오메가|dha|epa)/u, "Fish Oil Capsules"],
+    [/(vitamin|비타민)/u, "Vitamin Tablets"],
+    [/(canvas.*tote|tote.*bag|캔버스.*토트|토트백)/u, "Canvas Tote Bag"],
+    [/(storage.*(?:box|bin)|수납.*박스|보관.*박스)/u, "Storage Box"],
+  ];
+  return labels.find(([pattern]) => pattern.test(hint))?.[1] ?? "General Merchandise";
+}
+
+function buildFallbackStudioResult(job) {
+  const fields = job.request?.manualFields ?? {};
+  const productName = String(fields.productName || "업로드 테스트 상품").slice(0, 160);
+  const category = String(fields.categoryHint || "일반 상품").slice(0, 120);
+  const material = String(fields.material || "판매자 입력 소재 정보").slice(0, 240);
+  const packageContents = String(fields.packageContents || "상품 1개").slice(0, 240);
+  const dimensions = `${Number(fields.packageLengthCm || 0)} × ${Number(fields.packageWidthCm || 0)} × ${Number(fields.packageHeightCm || 0)} cm`;
+  const englishProductLabel = fallbackEnglishProductLabel(fields);
+  const localizedListings = fallbackListingTargets.map(([channel, market, locale]) => {
+    const copy = fallbackLocalizedCopy[locale];
+    const title = `${englishProductLabel} - ${copy}`;
+    return {
+      channel,
+      market,
+      locale,
+      title,
+      shortDescription: title,
+      description: `${title}. ${copy}.`,
+      keywords: [englishProductLabel, copy, `${englishProductLabel} product`],
+    };
+  });
+  return cliStudioResultSchema.parse({
+    mode: "cli",
+    product: {
+      name: productName,
+      category,
+      oneLine: String(fields.description || `${category} 등록 검수 상품`).slice(0, 240),
+      targetCustomer: "멀티채널 상품 등록 검수 담당자",
+      features: [material, packageContents, `포장 규격 ${dimensions}`],
+      cautions: ["판매자가 입력한 사실정보와 원본 사진을 기준으로 등록 전 최종 확인이 필요합니다."],
+    },
+    design: {
+      themeName: "안정적인 상품 정보형",
+      palette: { primary: "#172033", accent: "#3B82F6", surface: "#F8FAFC", text: "#111827" },
+      heroCopy: productName,
+      heroSubcopy: `${category} 상품 정보와 구성을 확인하세요.`.slice(0, 240),
+      cta: "상품 정보 확인",
+      sections: [
+        { type: "benefit", eyebrow: "상품 안내", title: "확인된 상품 정보", body: material, points: [material, packageContents] },
+        { type: "spec", eyebrow: "구성", title: "판매 구성 확인", body: packageContents, points: [packageContents, `포장 규격 ${dimensions}`] },
+        { type: "proof", eyebrow: "사진", title: "원본 사진 기준", body: "등록된 원본 이미지를 기준으로 상품 형태와 구성을 확인합니다.", points: ["원본 비율 유지", "채널 규격 자동 보정"] },
+        { type: "howto", eyebrow: "등록", title: "채널별 정보 확인", body: "카테고리와 필수 속성을 확인한 뒤 판매 채널에 등록합니다.", points: ["카테고리 확인", "필수 속성 확인"] },
+        { type: "caution", eyebrow: "주의", title: "판매 전 최종 확인", body: "확인되지 않은 성분·인증·원산지는 임의로 단정하지 않습니다.", points: ["판매자 사실정보 우선", "채널 정책 확인"] },
+      ],
+    },
+    thumbnail: { headline: productName.slice(0, 120), subline: category.slice(0, 120), badge: "상품 등록 테스트" },
+    localizedListings,
+    warnings: ["외부 AI 서비스가 일시적으로 제한되어 판매자 입력 사실과 원본 이미지 기반의 안전 모드로 처리했습니다."],
+  });
+}
+
+async function createFallbackAsset(sourceFile, outputFile, preset) {
+  const fit = preset.id === "detail-feature" ? "cover" : "contain";
+  await sharp(sourceFile, { failOn: "warning", limitInputPixels: 64_000_000 })
+    .rotate()
+    .resize(preset.width, preset.height, { fit, position: "centre", background: { r: 248, g: 250, b: 252, alpha: 1 } })
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toFile(outputFile);
+}
+
 async function normalizeGeneratedAsset(outputFile, preset) {
   const source = await readFile(outputFile);
   const normalized = await sharp(source, { failOn: "warning", limitInputPixels: 64_000_000 })
@@ -983,11 +1092,18 @@ async function processJob(job) {
     ];
     for (const file of imageFiles) analysisArgs.push(`--image=${file}`);
     analysisArgs.push(buildAnalysisPrompt(job, reference.text));
-    await runCodex(analysisArgs, analysisTimeoutMs, job.id);
-
-    let result = JSON.parse(await readFile(resultFile, "utf8"));
-    if (reference.warning) result.warnings = [...(Array.isArray(result.warnings) ? result.warnings : []), reference.warning].slice(0, 5);
-    result = await validateOrRepairStudioResult(result, resultFile, jobDir, job.id);
+    let result;
+    let safeMode = false;
+    try {
+      await runCodex(analysisArgs, analysisTimeoutMs, job.id);
+      result = JSON.parse(await readFile(resultFile, "utf8"));
+      if (reference.warning) result.warnings = [...(Array.isArray(result.warnings) ? result.warnings : []), reference.warning].slice(0, 5);
+      result = await validateOrRepairStudioResult(result, resultFile, jobDir, job.id);
+    } catch (analysisError) {
+      safeMode = true;
+      result = buildFallbackStudioResult(job);
+      console.warn(`[안전 모드] ${job.id} · AI 분석 대신 판매자 사실정보를 사용합니다. · ${analysisError instanceof Error ? analysisError.message.slice(0, 120) : "분석 오류"}`);
+    }
     const imagePresets = aiGeneratedAssetSpecs;
     const uploads = Array.isArray(job.resultUploads) ? job.resultUploads : [];
     if (uploads.length !== imagePresets.length) throw new Error("대표·썸네일·상세 이미지 8종 업로드 정보가 없습니다.");
@@ -1011,7 +1127,16 @@ async function processJob(job) {
           `--image=${imageFiles[0]}`,
           buildImagePrompt(result, outputFile, preset),
         ];
-        await runCodex(imageArgs, imageGenerationTimeoutMs, job.id);
+        try {
+          if (safeMode) throw new Error("AI 분석 안전 모드");
+          await runCodex(imageArgs, imageGenerationTimeoutMs, job.id);
+        } catch (imageError) {
+          await createFallbackAsset(imageFiles[0], outputFile, preset);
+          if (!result.warnings.includes("일부 이미지는 원본 사진을 채널 규격에 맞춰 자동 보정했습니다.")) {
+            result.warnings = [...result.warnings, "일부 이미지는 원본 사진을 채널 규격에 맞춰 자동 보정했습니다."].slice(0, 5);
+          }
+          console.warn(`[이미지 안전 모드] ${job.id} · ${preset.id} · ${imageError instanceof Error ? imageError.message.slice(0, 120) : "생성 오류"}`);
+        }
         const upload = uploads.find((item) => item?.id === preset.id);
         if (!upload?.bucket || !upload?.path || !upload?.token) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
         const normalized = await normalizeGeneratedAsset(outputFile, preset);

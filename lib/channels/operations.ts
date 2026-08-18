@@ -871,12 +871,14 @@ async function executeCoupang(input: ExecuteInput) {
     if (approvalReadback.readbackStep.ok) {
       initialReadback.readbackStep.ok = true;
       approvalStep.ok = true;
-    } else if (approvalWasAlreadySubmitted && approvalReadback.providerAndIdentityOk) {
+    } else if (approvalWasAlreadySubmitted && initialReadback.providerAndIdentityOk) {
       // The create request can submit approval itself (`requested: true`).  Coupang
       // then rejects a duplicate approval call with this exact message while its
       // readback lags behind the state transition.  The matching seller-product
-      // readback proves the write exists, so reconcile the duplicate request as
-      // an idempotent success instead of creating another seller product.
+      // initial readback proves the write exists. A later readback can briefly
+      // return "상품 정보가 등록 또는 수정되고 있습니다", so reconcile the
+      // duplicate request as an idempotent success instead of creating another
+      // seller product.
       initialReadback.readbackStep.ok = true;
       approvalStep.ok = true;
       approvalReadback.readbackStep.ok = true;

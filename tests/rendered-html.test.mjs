@@ -149,6 +149,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const gatewayCompleteRoute = await readFile(new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url), "utf8");
   const cliRuntimeCard = await readFile(new URL("../app/ai-cli-runtime-card.tsx", import.meta.url), "utf8");
   const cliWorker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const categoryWorkbench = await readFile(new URL("../app/category-classification-workbench.tsx", import.meta.url), "utf8");
   const cliMigration = await readFile(new URL("../supabase/migrations/20260816065848_sellerpilot_ai_cli_jobs.sql", import.meta.url), "utf8");
   const credentialMigration = await readFile(new URL("../supabase/migrations/20260816060000_channel_credentials_and_roles.sql", import.meta.url), "utf8");
   const operationsMigration = await readFile(new URL("../supabase/migrations/20260816104732_operations_core.sql", import.meta.url), "utf8");
@@ -160,6 +161,13 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(cliWorker, /codex-image/);
   assert.match(cliWorker, /--enable", "image_generation/);
   assert.match(cliWorker, /codexEnv\.PATH = \[codexDirectory/);
+  assert.match(cliWorker, /mcp_servers\.lovable\.enabled=false/);
+  assert.match(cliWorker, /buildFallbackStudioResult/);
+  assert.match(cliWorker, /createFallbackAsset/);
+  assert.match(cliWorker, /이미지 안전 모드/);
+  assert.match(cliWorker, /fallbackEnglishProductLabel/);
+  assert.match(cliWorker, /formulation: "Stick"/);
+  assert.match(categoryWorkbench, /row\.status === "active" && row\.environment === "production"/);
   assert.doesNotMatch(packageJson, /local-analyzer-server|run-local-demo/);
   assert.match(cliMigration, /sellerpilot_claim_ai_job/);
   assert.match(cliMigration, /sellerpilot-ai/);
@@ -191,6 +199,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const channelCatalog = await readFile(new URL("../lib/channels/catalog.ts", import.meta.url), "utf8");
   const channelProtocols = await readFile(new URL("../lib/channels/protocols.ts", import.meta.url), "utf8");
   const channelOperations = await readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8");
+  assert.match(channelOperations, /approvalWasAlreadySubmitted && initialReadback\.providerAndIdentityOk/);
   const channelOperationsRoute = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   const channelOperationsContract = await readFile(new URL("../docs/판매채널_실행_API_계약.md", import.meta.url), "utf8");
   const channelTargetClient = await readFile(new URL("../app/channel-target-client.ts", import.meta.url), "utf8");

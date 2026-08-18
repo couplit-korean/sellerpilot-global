@@ -654,7 +654,9 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     return () => { mounted = false; };
   }, [productId]);
 
-  const activeCredential = useMemo(() => new Map(credentials.filter((row) => row.status === "active").map((row) => [row.channel, row])), [credentials]);
+  const activeCredential = useMemo(() => new Map(credentials
+    .filter((row) => row.status === "active" && row.environment === "production")
+    .map((row) => [row.channel, row])), [credentials]);
   const visibleChannels = useMemo(() => {
     if (!enabledChannels?.length) return activeChannelKeys;
     const enabled = new Set(enabledChannels);
