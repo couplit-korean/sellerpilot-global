@@ -370,6 +370,7 @@ function smartstoreSearchTerms(query: string) {
   if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalized)) aliases.push("건강식품 건강기능식품 영양제 비타민 오메가3 어유");
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalized)) aliases.push("수납 박스 수납박스 리빙박스 수납함 정리함 정리 바구니");
   if (/(옷걸이|행거|hanger)/u.test(normalized)) aliases.push("옷걸이 행거 의류수납 세탁용품");
+  if (/(머그|컵|잔|mug|cup)/u.test(normalized)) aliases.push("머그컵 머그잔 컵 물컵 찻잔 식기 주방용품");
   return aliases.join(" ");
 }
 
@@ -399,6 +400,8 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return /(수납박스|리빙박스|수납함|정리함|정리 바구니)/u.test(normalizedCandidate);
   if (/(옷걸이|행거|hanger)/u.test(normalizedQuery)) return /(옷걸이|의류수납|세탁용품)/u.test(normalizedCandidate);
   if (/(캔버스.*토트|토트백|tote)/u.test(normalizedQuery)) return /(토트백|숄더백|에코백)/u.test(normalizedCandidate);
+  if (/(머그|컵|잔|mug|cup)/u.test(normalizedQuery)) return /(머그컵|머그잔|물컵|찻잔|커피잔|일반컵)/u.test(normalizedCandidate)
+    && !/(월경|생리|계량|흡착|유아)/u.test(normalizedCandidate);
   return queryScore(smartstoreSearchTerms(query), candidate) > 0;
 }
 
@@ -413,6 +416,7 @@ function smartstorePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(브러시)/u.test(normalizedQuery)) return score(["브러시세트", "메이크업브러시", "브러시"]);
   if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return score(["미니카", "자동차완구", "장난감자동차", "작동완구", "탈것완구"]);
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return score(["리빙박스", "수납박스", "수납함", "정리함"]);
+  if (/(머그|컵|잔|mug|cup)/u.test(normalizedQuery)) return score(["머그컵", "머그잔", "물컵", "커피잔", "찻잔", "일반컵"]);
   return 0;
 }
 

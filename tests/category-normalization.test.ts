@@ -241,6 +241,18 @@ test("Smartstore category normalization accepts an official working-toy vehicle 
   assert.equal(normalizeSuggestions("smartstore", response, "노란색 자동차 완구")[0]?.id, "TOY-CAR");
 });
 
+test("Smartstore category normalization maps a ceramic mug to a drinkware leaf", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
+      { id: "MENSTRUAL-CUP", name: "생리컵", wholeCategoryName: "생활/건강>건강관리용품>생리컵", last: true },
+      { id: "MEASURING-CUP", name: "계량컵", wholeCategoryName: "생활/건강>주방용품>조리도구>계량컵", last: true },
+      { id: "MUG", name: "머그컵", wholeCategoryName: "생활/건강>주방용품>식기>컵>머그컵", last: true },
+    ] } }],
+  };
+  assert.equal(normalizeSuggestions("smartstore", response, "화이트 세라믹 머그컵")[0]?.id, "MUG");
+});
+
 test("Smartstore beauty-tool normalization does not map a sponge to a brush", () => {
   const response = {
     ok: true,
