@@ -121,6 +121,7 @@ const shopeeGlobalResponse = {
           { category_id: 100780, display_category_name: "Home Appliances > Kitchen Appliances > Rice Cookers", has_children: false },
           { category_id: 100779, display_category_name: "Health & Wellness > Pregnancy Tests", has_children: false },
           { category_id: 100781, display_category_name: "Food & Beverages > Food Staples > Rice", has_children: false },
+          { category_id: 100911, display_category_name: "Health & Wellness > Sexual Wellness > Sex Toys", has_children: false },
           { category_id: 100912, display_category_name: "Toys, Games & Collectibles > Toy Vehicles > Toy Cars", has_children: false },
           { category_id: 100623, display_category_name: "Health & Wellness > Vitamins & Supplements > Fish Oil & Omega 3", has_children: false },
           { category_id: 100618, display_category_name: "Home & Living > Home Organizers > Storage Boxes", has_children: false },
@@ -183,6 +184,16 @@ test("Smartstore category normalization rejects unrelated processed food for an 
     ] } }],
   };
   assert.equal(normalizeSuggestions("smartstore", response, "즉석밥 흰쌀밥")[0]?.id, "FOOD-RICE");
+});
+
+test("Smartstore category normalization accepts an official working-toy vehicle leaf", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
+      { id: "TOY-CAR", name: "자동차/버스 작동완구", wholeCategoryName: "생활/건강>완구>작동완구>자동차/버스 작동완구", last: true },
+    ] } }],
+  };
+  assert.equal(normalizeSuggestions("smartstore", response, "노란색 자동차 완구")[0]?.id, "TOY-CAR");
 });
 
 test("Smartstore category normalization ranks a storage-box leaf above unrelated equal-score leaves", () => {

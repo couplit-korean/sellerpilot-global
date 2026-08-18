@@ -215,8 +215,12 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
     if (/(flour\s+mill|appliance)/u.test(normalizedCandidate)) return false;
     return exactOrLeaf("flour") || /(food|beverage|baking|cooking ingredient|staple)/u.test(normalizedCandidate);
   }
-  if (/(teddy|plush|stuffed|테디|곰인형|봉제|toy\s?car|자동차.*완구|완구.*자동차|장난감.*차)/u.test(normalizedQuery)) {
+  if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(normalizedQuery)) {
     return /(toy|game|collectible|plush|stuffed|teddy)/u.test(normalizedCandidate);
+  }
+  if (/(toy\s?car|자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차)/u.test(normalizedQuery)) {
+    return /(toy vehicle|toy car|vehicle playset|diecast)/u.test(normalizedCandidate)
+      && !/(sex|pet|bird)/u.test(normalizedCandidate);
   }
   if (/(fish\s?oil|omega|어유|오메가|dha|epa|vitamin|비타민)/u.test(normalizedQuery)) {
     return /(health|wellness|vitamin|supplement|fish oil|omega|dha|epa)/u.test(normalizedCandidate)
@@ -331,7 +335,7 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
   if (/(티셔츠|셔츠|반팔|t[\s-]?shirt)/u.test(normalizedQuery)) return /(티셔츠|반팔티|상의|패션의류)/u.test(normalizedCandidate);
   if (/(후드|재킷|hood|jacket)/u.test(normalizedQuery)) return /(후드|후드집업|재킷|점퍼|아우터)/u.test(normalizedCandidate);
   if (/(테디|곰인형|봉제|teddy|plush)/u.test(normalizedQuery)) return /(봉제인형|곰인형|인형)/u.test(normalizedCandidate);
-  if (/(자동차.*완구|완구.*자동차|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return /(자동차완구|미니카|장난감자동차|자동차장난감)/u.test(normalizedCandidate);
+  if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return /(자동차완구|미니카|장난감자동차|자동차장난감|작동완구|탈것완구|운송수단완구)/u.test(normalizedCandidate);
   if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalizedQuery)) {
     return /(건강식품|건강기능식품|영양제|비타민|오메가3|어유|epa|dha)/u.test(normalizedCandidate)
       && !/(반려|애완|동물)/u.test(normalizedCandidate);
@@ -349,7 +353,7 @@ function smartstorePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(쌀|밥|rice)/u.test(normalizedQuery)) return score(["즉석밥", "백미", "쌀", "밥류"]);
   if (/(파스타|펜네|pasta|penne)/u.test(normalizedQuery)) return score(["펜네", "스파게티면", "면/파스타", "면류", "파스타"]);
   if (/(밀가루|flour)/u.test(normalizedQuery)) return score(["밀가루", "제빵용가루", "가루"]);
-  if (/(자동차.*완구|완구.*자동차|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return score(["미니카", "자동차완구", "장난감자동차"]);
+  if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return score(["미니카", "자동차완구", "장난감자동차", "작동완구", "탈것완구"]);
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return score(["리빙박스", "수납박스", "수납함", "정리함"]);
   return 0;
 }
