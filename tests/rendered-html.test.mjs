@@ -150,6 +150,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const cliRuntimeCard = await readFile(new URL("../app/ai-cli-runtime-card.tsx", import.meta.url), "utf8");
   const cliWorker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
   const categoryWorkbench = await readFile(new URL("../app/category-classification-workbench.tsx", import.meta.url), "utf8");
+  const publishWorkbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
   const cliMigration = await readFile(new URL("../supabase/migrations/20260816065848_sellerpilot_ai_cli_jobs.sql", import.meta.url), "utf8");
   const credentialMigration = await readFile(new URL("../supabase/migrations/20260816060000_channel_credentials_and_roles.sql", import.meta.url), "utf8");
   const operationsMigration = await readFile(new URL("../supabase/migrations/20260816104732_operations_core.sql", import.meta.url), "utf8");
@@ -171,6 +172,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(cliWorker, /formulation: "Stick"/);
   assert.match(cliWorker, /categoryId === 101642/);
   assert.match(categoryWorkbench, /row\.status === "active" && row\.environment === "production"/);
+  assert.match(publishWorkbench, /existingListing\?\.status === "failed" \? crypto\.randomUUID\(\)/);
   assert.doesNotMatch(packageJson, /local-analyzer-server|run-local-demo/);
   assert.match(cliMigration, /sellerpilot_claim_ai_job/);
   assert.match(cliMigration, /sellerpilot-ai/);

@@ -550,7 +550,9 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     try {
       const accessToken = options.accessToken ?? (await createClient().auth.getSession()).data.session?.access_token;
       if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
-      const idempotencyKey = `listing:${productId}:${channel}:${target?.marketCode ?? "default"}:${await fingerprint({ channelArguments, listingCurrency, price: operationPrice })}`;
+      const existingListing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
+      const retryNonce = existingListing?.status === "failed" ? crypto.randomUUID() : "";
+      const idempotencyKey = `listing:${productId}:${channel}:${target?.marketCode ?? "default"}:${await fingerprint({ channelArguments, listingCurrency, price: operationPrice, retryNonce })}`;
       const response = await fetch("/api/admin/channel-operations", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
