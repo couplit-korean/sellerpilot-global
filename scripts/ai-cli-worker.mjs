@@ -1325,7 +1325,8 @@ async function processGatewayJob(job) {
             arguments: { body: localBody },
             environment: job.environment,
           });
-          console.log(`[Shopee direct-shop fallback] ${directResult.ok ? "success" : "failed"} · category=${String(localBody.category_id ?? "")}`);
+          const directDetail = directResult.ok ? "" : ` · ${JSON.stringify(directResult.steps.map((entry) => entry.data)).slice(0, 2000)}`;
+          console.log(`[Shopee direct-shop fallback] ${directResult.ok ? "success" : "failed"} · category=${String(localBody.category_id ?? "")}${directDetail}`);
           if (directResult.ok) result = directResult;
         }
       }
