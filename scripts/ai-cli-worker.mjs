@@ -449,7 +449,7 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   // Date-like implicit requirements use Shopee's custom-value representation.
   const expiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
   const expiryDate = `${String(expiry.getUTCDate()).padStart(2, "0")}/${String(expiry.getUTCMonth() + 1).padStart(2, "0")}/${expiry.getUTCFullYear()}`;
-  const categoryImplicitRequired = /(?:lipstick|lip\s*makeup|립스틱)/iu.test(productHint)
+  const categoryImplicitRequired = categoryId === 101642 || /(?:lipstick|lip\s*makeup|립스틱)/iu.test(productHint)
     ? { formulation: "Stick" }
     : {};
   const globalImplicitRequired = {

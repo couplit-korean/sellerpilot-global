@@ -169,6 +169,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(cliWorker, /await import\("sharp"\)/);
   assert.match(cliWorker, /fallbackEnglishProductLabel/);
   assert.match(cliWorker, /formulation: "Stick"/);
+  assert.match(cliWorker, /categoryId === 101642/);
   assert.match(categoryWorkbench, /row\.status === "active" && row\.environment === "production"/);
   assert.doesNotMatch(packageJson, /local-analyzer-server|run-local-demo/);
   assert.match(cliMigration, /sellerpilot_claim_ai_job/);
