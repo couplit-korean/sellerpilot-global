@@ -254,16 +254,23 @@ export function ApiCredentialCenter({ notify }: { notify: (message: string) => v
 
   const testConnection = async (credential: Credential) => {
     setTestingId(credential.id);
-    const { data: sessionData } = await createClient().auth.getSession();
-    const response = await fetch("/api/admin/channel-credentials/test", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
-      body: JSON.stringify({ credentialId: credential.id, channel: credential.channel }),
-    });
-    const payload = await response.json().catch(() => ({ message: "연결 검사 응답을 읽지 못했습니다." })) as { message: string };
-    notify(payload.message);
-    setTestingId("");
-    await load();
+    try {
+      const { data: sessionData } = await createClient().auth.getSession();
+      if (!sessionData.session?.access_token) throw new Error("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+      const response = await fetch("/api/admin/channel-credentials/test", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },
+        body: JSON.stringify({ credentialId: credential.id, channel: credential.channel }),
+      });
+      const payload = await response.json().catch(() => ({ message: "연결 검사 응답을 읽지 못했습니다." })) as { message: string };
+      if (!response.ok) throw new Error(payload.message);
+      notify(payload.message);
+      await load();
+    } catch (connectionError) {
+      notify(connectionError instanceof Error ? connectionError.message : "연결을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setTestingId("");
+    }
   };
 
   const startOAuth = async (credential: Credential) => {
@@ -460,27 +467,29 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cha
     }
     setSaving(true);
     setError("");
-    const secretPayload = Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
-    const expiryIso = expiresAt ? new Date(`${expiresAt}T23:59:59+09:00`).toISOString() : null;
-    let rotateError: { message: string } | null = null;
-    const { data: sessionData } = await createClient().auth.getSession();
-    const endpoint = channel.oauth
-      ? `/api/admin/channel-credentials/${channel.key}/authorize`
-      : "/api/admin/channel-credentials/rotate";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
-      body: JSON.stringify({ credentialId: current?.id, channel: channel.key, environment, secretPayload, expiresAt: expiryIso, rotationDays: Number(rotationDays), warningDays: Number(warningDays), graceDays: current ? Number(graceDays) : 0, startOAuth: channel.oauth && !current }),
-    });
-    const payload = await response.json().catch(() => ({ message: `${channel.name} 인증 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
-    if (!response.ok) rotateError = { message: payload.message };
-    setSaving(false);
-    if (rotateError) {
-      setError(rotateError.message.includes("administrator") ? "관리자 권한이 필요합니다." : "키를 저장하지 못했습니다. 입력값과 Vault 연결을 확인해 주세요.");
-      return;
+    try {
+      const secretPayload = Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
+      const expiryIso = expiresAt ? new Date(`${expiresAt}T23:59:59+09:00`).toISOString() : null;
+      const { data: sessionData } = await createClient().auth.getSession();
+      if (!sessionData.session?.access_token) throw new Error("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+      const endpoint = channel.oauth
+        ? `/api/admin/channel-credentials/${channel.key}/authorize`
+        : "/api/admin/channel-credentials/rotate";
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },
+        body: JSON.stringify({ credentialId: current?.id, channel: channel.key, environment, secretPayload, expiresAt: expiryIso, rotationDays: Number(rotationDays), warningDays: Number(warningDays), graceDays: current ? Number(graceDays) : 0, startOAuth: channel.oauth && !current }),
+      });
+      const payload = await response.json().catch(() => ({ message: `${channel.name} 인증 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
+      if (!response.ok) throw new Error(payload.message);
+      await onSaved(`${channel.name} ${current ? "연결 정보 변경" : "연결 준비"}가 완료됐습니다. 중요한 정보는 안전하게 보관됩니다.`);
+      if (payload.authorizationUrl) window.location.assign(payload.authorizationUrl);
+    } catch (saveError) {
+      const message = saveError instanceof Error ? saveError.message : "채널 연결 정보를 저장하지 못했습니다.";
+      setError(message.includes("administrator") ? "관리자 권한이 필요합니다." : message);
+    } finally {
+      setSaving(false);
     }
-    await onSaved(`${channel.name} ${current ? "연결 정보 변경" : "연결 준비"}가 완료됐습니다. 중요한 정보는 안전하게 보관됩니다.`);
-    if (payload.authorizationUrl) window.location.assign(payload.authorizationUrl);
   };
 
   return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal" role="dialog" aria-modal="true" aria-label={`${channel.name} ${current ? "연결 정보 변경" : "연결"}`} onSubmit={submit}>

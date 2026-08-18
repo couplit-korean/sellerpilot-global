@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 
 export type OperationProduct = {
@@ -111,12 +111,15 @@ export type OperationsSnapshot = {
   };
 };
 
-type LoadState = "loading" | "database" | "unavailable";
+type LoadState = "loading" | "database" | "stale" | "unavailable";
 
 export function useOperationsSnapshot() {
   const [data, setData] = useState<OperationsSnapshot | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [message, setMessage] = useState("");
+  const activeRequestRef = useRef<AbortController | null>(null);
+  const requestSequenceRef = useRef(0);
+  const hasDataRef = useRef(false);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data: sessionData } = await createClient().auth.getSession();
@@ -134,26 +137,44 @@ export function useOperationsSnapshot() {
   }, []);
 
   const load = useCallback(async () => {
+    const sequence = requestSequenceRef.current + 1;
+    requestSequenceRef.current = sequence;
+    activeRequestRef.current?.abort();
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
     try {
-      const response = await authenticatedFetch("/api/operations/snapshot");
+      const response = await authenticatedFetch("/api/operations/snapshot", { signal: controller.signal });
       const payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "운영 데이터를 불러오지 못했습니다.");
+      if (controller.signal.aborted || sequence !== requestSequenceRef.current) return;
       setData(payload);
+      hasDataRef.current = true;
       setState("database");
-      setMessage("Supabase 운영 DB · 실데이터만 표시");
+      setMessage("판매 정보가 최신 상태입니다.");
     } catch (error) {
-      setData(null);
-      setState("unavailable");
-      setMessage(error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.");
+      if (controller.signal.aborted || sequence !== requestSequenceRef.current) return;
+      setState(hasDataRef.current ? "stale" : "unavailable");
+      setMessage(error instanceof Error ? error.message : "판매 정보를 불러오지 못했습니다.");
+    } finally {
+      if (activeRequestRef.current === controller) activeRequestRef.current = null;
     }
   }, [authenticatedFetch]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void load(), 0);
-    const refresh = window.setInterval(() => void load(), 60_000);
+    const refresh = window.setInterval(() => {
+      if (document.visibilityState === "visible" && navigator.onLine) void load();
+    }, 60_000);
+    const handleOnline = () => { if (document.visibilityState === "visible") void load(); };
+    const handleVisibility = () => { if (document.visibilityState === "visible" && navigator.onLine) void load(); };
+    window.addEventListener("online", handleOnline);
+    document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(refresh);
+      window.removeEventListener("online", handleOnline);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      activeRequestRef.current?.abort();
     };
   }, [load]);
 

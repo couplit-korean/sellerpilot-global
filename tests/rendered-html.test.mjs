@@ -69,8 +69,10 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /Temu/);
   assert.match(page, /네이버 스마트스토어/);
   assert.match(page, /eBay Global/);
-  assert.match(page, /서비스 스토리보드/);
-  assert.match(page, /개발 · 실검수/);
+  assert.doesNotMatch(page, /서비스 스토리보드/);
+  assert.doesNotMatch(page, /개발 · 실검수/);
+  assert.match(page, /dynamic\(\(\) => import\("\.\/api-credential-center"\)/);
+  assert.match(page, /dynamic\(\(\) => import\("\.\/product-publish-workbench"\)/);
   assert.match(page, /label: "연결 상태"/);
   assert.match(page, /label: "채널 연결"/);
   assert.match(page, /commerce-service-rail/);

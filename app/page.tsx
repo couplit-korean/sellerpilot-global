@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import {
   Activity,
   AlertCircle,
@@ -28,7 +29,6 @@ import {
   ExternalLink,
   FileText,
   Filter,
-  Globe2,
   Headphones,
   HelpCircle,
   ImagePlus,
@@ -59,8 +59,6 @@ import {
   ShoppingBag,
   ShoppingCart,
   Sparkles,
-  Store,
-  TrendingUp,
   Trash2,
   Truck,
   Upload,
@@ -71,19 +69,23 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { AiProductStudio } from "./ai-product-studio";
-import { AcceptanceChecklistPage } from "./acceptance-checklist";
-import { ApiCredentialCenter } from "./api-credential-center";
-import { ChannelReadinessPage } from "./channel-readiness";
-import { CategoryClassificationWorkbench } from "./category-classification-workbench";
-import { ProductPublishWorkbench } from "./product-publish-workbench";
-import { MarginCalculatorPage } from "./margin-calculator";
 import { channels, type ChannelKey } from "./channel-config";
 import { activeChannelKeys } from "../lib/channels/catalog";
 import { useOperationsSnapshot, type OperationsSnapshot } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import { emptyProductIntake, productConditions, productCurrencies, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
+
+const AiProductStudio = dynamic(() => import("./ai-product-studio").then((module) => module.AiProductStudio), { loading: () => <PageSectionLoading label="AI 상품 도구" /> });
+const ApiCredentialCenter = dynamic(() => import("./api-credential-center").then((module) => module.ApiCredentialCenter), { loading: () => <PageSectionLoading label="채널 연결" /> });
+const ChannelReadinessPage = dynamic(() => import("./channel-readiness").then((module) => module.ChannelReadinessPage), { loading: () => <PageSectionLoading label="연결 상태" /> });
+const CategoryClassificationWorkbench = dynamic(() => import("./category-classification-workbench").then((module) => module.CategoryClassificationWorkbench), { loading: () => <PageSectionLoading label="판매 카테고리" /> });
+const ProductPublishWorkbench = dynamic(() => import("./product-publish-workbench").then((module) => module.ProductPublishWorkbench), { loading: () => <PageSectionLoading label="채널 등록" /> });
+const MarginCalculatorPage = dynamic(() => import("./margin-calculator").then((module) => module.MarginCalculatorPage), { loading: () => <PageSectionLoading label="수익 계산" /> });
+
+function PageSectionLoading({ label }: { label: string }) {
+  return <section className="panel page-section-loading" role="status"><LoaderCircle className="spin" size={22} /><b>{label} 불러오는 중</b></section>;
+}
 
 type View =
   | "overview"
@@ -100,11 +102,7 @@ type View =
   | "coupang"
   | "temu"
   | "smartstore"
-  | "ebay"
-  | "alibaba"
-  | "one688"
-  | "acceptance"
-  | "storyboard";
+  | "ebay";
 
 const navGroups = [
   {
@@ -150,10 +148,6 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   smartstore: { title: "네이버 스마트스토어", description: "스마트스토어의 상품, 매출, 주문, CS 성과입니다." },
   ebay: { title: "eBay Global", description: "글로벌 스토어의 상품, 매출, 주문, CS 성과입니다." },
   temu: { title: "Temu Korea", description: "Temu 한국 스토어의 상품, 매출, 주문, CS 성과입니다." },
-  alibaba: { title: "Alibaba.com", description: "글로벌 B2B 채널 연동을 준비하고 있습니다." },
-  one688: { title: "1688.com", description: "중국 내수 B2B 채널 연동을 준비하고 있습니다." },
-  acceptance: { title: "개발 · 실검수", description: "PPT 기반 175개 요구사항의 개발 상태와 실제 작동 증거를 분리해 관리합니다." },
-  storyboard: { title: "서비스 스토리보드", description: "로그인부터 자동 등록, 판매, CS까지의 전체 사용자 흐름입니다." },
 };
 
 const ticketChannelCodes: Record<string, string> = {
@@ -1006,27 +1000,6 @@ function ChannelPage({ channelKey, onNavigate, metric, displayProducts }: {
   );
 }
 
-function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
-  const scenes = [
-    { no: "01", title: "관리자 로그인", desc: "ID·PW를 입력해 운영 데이터에 안전하게 접근", view: "overview" as View, icon: LockKeyhole, outcome: "권한별 대시보드 진입" },
-    { no: "02", title: "통합 현황 파악", desc: "매출, 주문, 등록, CS와 월간 베스트 상품을 한 화면에서 확인", view: "overview" as View, icon: LayoutDashboard, outcome: "30초 안에 오늘의 우선순위 결정" },
-    { no: "03", title: "사진으로 상품 등록", desc: "정면·라벨·바코드 사진을 올려 상품 사실정보 추출", view: "publishing" as View, icon: ImagePlus, outcome: "반복 입력 제거" },
-    { no: "04", title: "AI 상세·썸네일 제작", desc: "ChatGPT CLI 분석, codex-image 연출컷, 3종 썸네일과 편집 가능한 상세페이지 생성", view: "publishing" as View, icon: WandSparkles, outcome: "Puck 블록으로 직접 수정 가능한 초안" },
-    { no: "05", title: "채널별 마진 검증", desc: "원가·수수료·환율·광고비를 반영해 목표 마진 판매가를 결정", view: "margin" as View, icon: Calculator, outcome: "팔아도 남는 가격 확정" },
-    { no: "06", title: "7개 채널 동시 등록", desc: "Qoo10·Shopee·Lazada·쿠팡·스마트스토어·eBay·Temu 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
-    { no: "07", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
-    { no: "08", title: "다국어 CS 응대", desc: "문의 자동번역과 주문정보 기반 AI 답변 초안", view: "cs" as View, icon: Bot, outcome: "응답시간 단축" },
-    { no: "09", title: "성과 개선", desc: "채널·상품별 매출, 전환율, CS와 오류 데이터를 비교", view: "qoo10" as View, icon: TrendingUp, outcome: "잘 팔리는 상품에 집중" },
-  ];
-  return (
-    <div className="page-stack storyboard-page">
-      <section className="storyboard-intro"><div><span className="eyebrow dark"><FileText size={14} /> PRODUCT STORYBOARD · V1.3</span><h2>운영자가 길을 잃지 않는<br /><em>9개의 핵심 장면</em></h2><p>‘오늘 무엇을 봐야 하는가’에서 시작해 등록, AI 제작, 판매, CS, 개선까지<br />하나의 루프로 연결한 멀티채널 커머스 운영 경험입니다.</p></div><div className="oss-card"><span>OPEN SOURCE FOUNDATION</span><strong>Ant Design</strong><em>MIT · ENTERPRISE PATTERNS</em><p>복잡한 판매 업무를 익숙하고 확실하게 처리하는 관리자 화면 원칙</p><strong>Radix UI</strong><em>MIT · ACCESSIBLE PRIMITIVES</em><p>키보드와 보조기기 사용까지 고려한 상호작용 기반</p><strong>TanStack Table</strong><em>MIT · DATA WORKFLOWS</em><p>상품·주문·CS 데이터의 정렬, 필터, 선택과 밀도 높은 표현</p><strong>Puck</strong><em>MIT · PAGE EDITOR</em><p>React·Next.js용 드래그앤드롭 상세페이지 편집기</p></div></section>
-      <section className="story-flow"><div className="flow-line" />{scenes.map((scene, index) => <article className="story-scene" key={scene.no}><div className="scene-number">{scene.no}</div><div className="scene-icon"><scene.icon size={22} /></div><div className="scene-copy"><span>{index < 2 ? "DISCOVER" : index < 5 ? "AUTOMATE" : index < 7 ? "OPERATE" : "GROW"}</span><h3>{scene.title}</h3><p>{scene.desc}</p><em><CheckCircle2 size={14} />{scene.outcome}</em></div><button onClick={() => onNavigate(scene.view)}>화면 열기<ArrowRight size={15} /></button></article>)}</section>
-      <section className="panel information-architecture"><div className="panel-heading"><div><span className="panel-kicker">INFORMATION ARCHITECTURE</span><h3>화면 구성과 운영 목적</h3></div></div><div className="ia-grid"><div><span className="ia-icon"><LayoutDashboard size={19} /></span><b>총괄</b><small>핵심 KPI · 베스트 상품 · 채널 건강도 · 긴급 항목</small></div><div><span className="ia-icon"><Package size={19} /></span><b>상품</b><small>상품 원장 · 채널 상태 · 재고 · 판매 성과</small></div><div><span className="ia-icon"><CloudUpload size={19} /></span><b>등록</b><small>촬영 · AI 분석 · 번역 · 가격 · 게시 작업</small></div><div><span className="ia-icon"><Calculator size={19} /></span><b>마진</b><small>원가 · 채널 수수료 · 환율 · 목표 판매가</small></div><div><span className="ia-icon"><ShoppingCart size={19} /></span><b>주문</b><small>통합 주문 · 출고 · 배송 · 중앙 재고</small></div><div><span className="ia-icon"><Headphones size={19} /></span><b>CS</b><small>문의 통합 · 자동 번역 · AI 답변 · SLA</small></div><div><span className="ia-icon"><Store size={19} /></span><b>채널별</b><small>매출 · 주문 · 전환율 · 상품 · 운영 점수</small></div></div></section>
-    </div>
-  );
-}
-
 function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>; userEmail: string }) {
   const [view, setView] = useState<View>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1034,15 +1007,25 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const [toast, setToast] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<{ id: string; name: string } | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
   const operations = useOperationsSnapshot();
+  const operationsAvailable = operations.data !== null;
   const operationSummary = operations.data?.summary ?? null;
   const channelMetrics = useMemo(() => operations.data?.channelMetrics ?? [], [operations.data]);
   const pipeline = operations.data?.pipeline ?? null;
   const meta = pageMeta[view];
 
   const notify = useCallback((message: string) => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
     setToast(message);
-    window.setTimeout(() => setToast(""), 3200);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast("");
+      toastTimerRef.current = null;
+    }, 3200);
+  }, []);
+
+  useEffect(() => () => {
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
   }, []);
 
   const displayProducts = useMemo<DisplayProduct[]>(() => operations.data?.products.map((product) => ({
@@ -1140,7 +1123,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, []);
 
   const content = (() => {
-    if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} operationsAvailable={operations.state === "database"} />;
+    if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} operationsAvailable={operationsAvailable} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductForPublishing} displayProducts={displayProducts} />;
     if (view === "publishing") return <PublishingPage key={selectedProduct?.id ?? "new-product"} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} initialProduct={selectedProduct} />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={operations.data?.marginScenarios ?? []} onChanged={() => void operations.reload()} />;
@@ -1148,8 +1131,6 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     if (view === "cs") return <CsPage notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} />;
     if (view === "readiness") return <ChannelReadinessPage />;
     if (view === "credentials") return <ApiCredentialCenter notify={notify} />;
-    if (view === "acceptance") return <AcceptanceChecklistPage />;
-    if (view === "storyboard") return <StoryboardPage onNavigate={navigate} />;
     const channelKey = view as ChannelKey;
     return <ChannelPage channelKey={channelKey} onNavigate={navigate} metric={channelMetrics.find((metric) => metric.channelKey === channelKey) ?? null} displayProducts={displayProducts} />;
   })();
@@ -1172,14 +1153,14 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
         <div className="app-header-stack">
           <div className="commerce-service-rail" aria-label="채널 운영 상태">
             <strong>통합 판매관리</strong>
-            <span><i className={operations.state === "database" ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? "판매 정보 연결됨" : "판매 정보 확인 중"}</span>
+            <span><i className={operations.state === "database" ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? "판매 정보 연결됨" : operations.state === "stale" ? "최근 저장 정보 표시 중" : "판매 정보 확인 중"}</span>
             <span><i className={operationSummary?.activeCredentialCount ? "rail-ok" : "rail-pending"} />채널 {operationSummary?.activeCredentialCount ?? 0}개 연결</span>
             <span><i className="rail-ok" />연결 정보 안전하게 보호</span>
-            <em>{operations.state === "database" ? "1분마다 자동 업데이트" : operations.state === "loading" ? "정보를 불러오는 중" : "연결 상태를 확인해 주세요"}</em>
+            <em>{operations.state === "database" ? "1분마다 자동 업데이트" : operations.state === "stale" ? "연결되면 자동으로 갱신됩니다" : operations.state === "loading" ? "정보를 불러오는 중" : "연결 상태를 확인해 주세요"}</em>
           </div>
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
-          <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={operations.message}><Activity size={13} /><b>{operations.state === "database" ? "최신 정보" : operations.state === "loading" ? "확인 중" : "연결 확인"}</b><small>{operations.state === "database" ? "자동 업데이트" : "잠시 후 다시 확인해 주세요"}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={() => setSearchOpen(true)}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap"><button className="top-icon-button" aria-label="알림" onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} />{Boolean((operationSummary?.lowStockCount ?? 0) + (operationSummary?.registrationErrorCount ?? 0)) && <i />}</button>{notificationsOpen && <div className="notification-popover"><div><h4>알림</h4><button onClick={() => setNotificationsOpen(false)}>닫기</button></div><button onClick={() => navigate("products")}><span className="alert-icon danger"><Box size={15} /></span><span><b>재고 부족 상품 {operationSummary?.lowStockCount ?? 0}건</b><small>현재 재고 기준</small></span></button><button onClick={() => navigate("publishing")}><span className="alert-icon warning"><AlertCircle size={15} /></span><span><b>등록 확인 필요 {operationSummary?.registrationErrorCount ?? 0}건</b><small>최근 등록 결과 기준</small></span></button></div>}</div><button className="user-menu"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>관리자</small></span><ChevronDown size={14} /></button></div>
+          <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={operations.message}><Activity size={13} /><b>{operations.state === "database" ? "최신 정보" : operations.state === "stale" ? "업데이트 지연" : operations.state === "loading" ? "확인 중" : "연결 확인"}</b><small>{operations.state === "database" ? "자동 업데이트" : operations.state === "stale" ? "최근 정보 표시 중" : "잠시 후 다시 확인해 주세요"}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={() => setSearchOpen(true)}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap"><button className="top-icon-button" aria-label="알림" onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} />{Boolean((operationSummary?.lowStockCount ?? 0) + (operationSummary?.registrationErrorCount ?? 0)) && <i />}</button>{notificationsOpen && <div className="notification-popover"><div><h4>알림</h4><button onClick={() => setNotificationsOpen(false)}>닫기</button></div><button onClick={() => navigate("products")}><span className="alert-icon danger"><Box size={15} /></span><span><b>재고 부족 상품 {operationSummary?.lowStockCount ?? 0}건</b><small>현재 재고 기준</small></span></button><button onClick={() => navigate("publishing")}><span className="alert-icon warning"><AlertCircle size={15} /></span><span><b>등록 확인 필요 {operationSummary?.registrationErrorCount ?? 0}건</b><small>최근 등록 결과 기준</small></span></button></div>}</div><button className="user-menu"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>관리자</small></span><ChevronDown size={14} /></button></div>
           </header>
         </div>
         <div className="app-content">{content}</div>
