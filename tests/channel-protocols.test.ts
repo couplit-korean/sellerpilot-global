@@ -726,6 +726,45 @@ test("Coupang product update reuses the requested seller product ID and verifies
   }
 });
 
+test("Coupang listing reconciles its duplicate approval rejection while readback is delayed", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (init?.method === "POST") {
+      return Response.json({ code: "SUCCESS", data: 987654322 });
+    }
+    if (url.endsWith("/approvals") && init?.method === "PUT") {
+      return Response.json({ code: "ERROR", message: "'임시저장' 상태의 상품만 승인 요청 가능합니다." }, { status: 400 });
+    }
+    return Response.json({
+      code: "SUCCESS",
+      data: { sellerProductId: 987654322, requested: false, mdId: "NLUP_TEMP_SAVED" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "coupang",
+      operation: "listing.create",
+      payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
+      arguments: { body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] } },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "987654322");
+    assert.equal(calls.filter((call) => call.init?.method === "POST").length, 1);
+    assert.deepEqual(result.steps.map((item) => [item.name, item.ok]), [
+      ["listing.create", true],
+      ["listing-readback", true],
+      ["listing-approval-request", true],
+      ["listing-approval-readback", true],
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Naver order detail routing exchanges a token and uses the official batch query", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];

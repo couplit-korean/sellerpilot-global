@@ -853,6 +853,7 @@ async function executeCoupang(input: ExecuteInput) {
       path: `${sellerProductsPath}/${pathSegment(remoteId)}/approvals`,
     });
     const approvalStep = step("listing-approval-request", approvalRemote);
+    const approvalWasAlreadySubmitted = /임시저장[^\n]*상품만 승인 요청 가능합니다/.test(JSON.stringify(approvalRemote.data));
     let approvalReadback = initialReadback;
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 750));
@@ -870,6 +871,15 @@ async function executeCoupang(input: ExecuteInput) {
     if (approvalReadback.readbackStep.ok) {
       initialReadback.readbackStep.ok = true;
       approvalStep.ok = true;
+    } else if (approvalWasAlreadySubmitted && approvalReadback.providerAndIdentityOk) {
+      // The create request can submit approval itself (`requested: true`).  Coupang
+      // then rejects a duplicate approval call with this exact message while its
+      // readback lags behind the state transition.  The matching seller-product
+      // readback proves the write exists, so reconcile the duplicate request as
+      // an idempotent success instead of creating another seller product.
+      initialReadback.readbackStep.ok = true;
+      approvalStep.ok = true;
+      approvalReadback.readbackStep.ok = true;
     }
     return result(input, [writeStep, initialReadback.readbackStep, approvalStep, approvalReadback.readbackStep], remoteId);
   }
