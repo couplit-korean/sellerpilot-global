@@ -9,6 +9,11 @@ import sharp from "sharp";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
 import { cliStudioResultSchema } from "../lib/ai-cli-contract.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
+import {
+  normalizeCoupangAttributeValue,
+  normalizeTenWonAmount,
+  replaceMarketplaceImageUrls,
+} from "../lib/channels/listing-normalization.ts";
 import { executeChannelOperation } from "../lib/channels/operations.ts";
 import {
   ensureLazadaAccessToken,
@@ -55,7 +60,7 @@ const schemaPath = resolve("scripts/ai-studio-output.schema.json");
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.4";
+const workerVersion = "sellerpilot-cli-worker/1.5";
 
 class JobCancelledError extends Error {
   constructor() {
@@ -340,8 +345,11 @@ async function prepareLazadaListing(payload, argumentsValue) {
   const request = argumentsValue.request && typeof argumentsValue.request === "object" ? structuredClone(argumentsValue.request) : {};
   const product = request.Request?.Product;
   if (!product || typeof product !== "object") throw new Error("CHANNEL_ARGUMENT_REQUIRED:request.Request.Product");
-  product.Images = { Image: migrated };
-  const skus = Array.isArray(product.Skus?.Sku) ? product.Skus.Sku : [];
+  const replacements = new Map(imageUrls.map((source, index) => [source, migrated[index]]));
+  const migratedProduct = replaceMarketplaceImageUrls(product, replacements);
+  request.Request.Product = migratedProduct;
+  migratedProduct.Images = { Image: migrated };
+  const skus = Array.isArray(migratedProduct.Skus?.Sku) ? migratedProduct.Skus.Sku : [];
   for (const sku of skus) if (sku && typeof sku === "object") sku.Images = { Image: migrated };
   return { ...argumentsValue, request };
 }
@@ -382,6 +390,7 @@ async function prepareSmartstoreListing(payload, argumentsValue) {
   if (!uploadResponse.ok || uploadedUrls.length !== imageUrls.length) throw new Error(`네이버 이미지 업로드 실패 · HTTP ${uploadResponse.status}`);
   const body = argumentsValue.body && typeof argumentsValue.body === "object" ? structuredClone(argumentsValue.body) : {};
   const originProduct = body.originProduct && typeof body.originProduct === "object" ? body.originProduct : {};
+  originProduct.salePrice = normalizeTenWonAmount(originProduct.salePrice);
   const detailAttribute = originProduct.detailAttribute && typeof originProduct.detailAttribute === "object" ? originProduct.detailAttribute : {};
   const existingProvidedNotice = detailAttribute.productInfoProvidedNotice && typeof detailAttribute.productInfoProvidedNotice === "object" ? detailAttribute.productInfoProvidedNotice : {};
   const existingEtcNotice = existingProvidedNotice.etc && typeof existingProvidedNotice.etc === "object" ? existingProvidedNotice.etc : {};
@@ -506,6 +515,8 @@ function prepareCoupangItem(itemValue, metadata, facts) {
   const supplied = new Map((Array.isArray(item.attributes) ? item.attributes : [])
     .filter((attribute) => attribute && typeof attribute === "object")
     .map((attribute) => [String(attribute.attributeTypeName ?? "").trim(), String(attribute.attributeValueName ?? "").trim()]));
+  const metadataByName = new Map(metaAttributes.map((attribute) => [String(attribute?.attributeTypeName ?? "").trim(), attribute]));
+  for (const [name, value] of supplied) supplied.set(name, normalizeCoupangAttributeValue(metadataByName.get(name), value));
 
   const missing = [];
   const mandatorySingles = metaAttributes.filter((attribute) => attribute?.required === "MANDATORY" && String(attribute?.groupNumber ?? "NONE") === "NONE" && attribute?.exposed === "EXPOSED");
@@ -527,7 +538,11 @@ function prepareCoupangItem(itemValue, metadata, facts) {
     else missing.push(attributes.map((attribute) => String(attribute?.attributeTypeName ?? "").trim()).filter(Boolean).join(" 또는 "));
   }
   if (missing.length) throw new Error(`COUPANG_MANDATORY_ATTRIBUTES_MISSING:${missing.join(", ")}`);
-  item.attributes = [...supplied.entries()].map(([attributeTypeName, attributeValueName]) => ({ attributeTypeName, attributeValueName }));
+  item.attributes = [...supplied.entries()].map(([attributeTypeName, attributeValueName]) => ({
+    attributeTypeName,
+    attributeValueName,
+    ...(metadataByName.get(attributeTypeName)?.exposed ? { exposed: metadataByName.get(attributeTypeName).exposed } : {}),
+  }));
 
   if (!Array.isArray(item.notices) || !item.notices.length) {
     const noticeCategories = Array.isArray(metadata.noticeCategories) ? metadata.noticeCategories : [];
@@ -609,7 +624,12 @@ async function prepareCoupangListing(payload, argumentsValue) {
     ? String(returnCenter.returnCenterCode)
     : "NO_RETURN_CENTERCODE";
   const metadata = coupangMetadata(metadataRemote.data);
-  const items = Array.isArray(body.items) ? body.items.map((item) => prepareCoupangItem(item, metadata, argumentsValue.facts)) : [];
+  const items = Array.isArray(body.items) ? body.items.map((item) => {
+    const prepared = prepareCoupangItem(item, metadata, argumentsValue.facts);
+    prepared.originalPrice = normalizeTenWonAmount(prepared.originalPrice);
+    prepared.salePrice = normalizeTenWonAmount(prepared.salePrice);
+    return prepared;
+  }) : [];
   if (!items.length) throw new Error("COUPANG_ITEMS_MISSING");
 
   return {

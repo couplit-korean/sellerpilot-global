@@ -30,7 +30,16 @@ export function classifyListingFailure(result: ChannelOperationResult): ListingF
       retryableAfterCorrection: true,
     };
   }
-  if (/image|이미지|MEDIA_SPACE|MIGRATE_IMAGE|picture|photo|thumbnail/i.test(text)) {
+  if (/10원 단위|1원단위|NumberUnit|Invalid Attribute Value|구매 옵션 값 혹은 단위|유효하지 않은.*(?:단위|옵션)/i.test(text)) {
+    return {
+      kind: "missing_field",
+      code: "PRICE_OR_ATTRIBUTE_UNIT_REJECTED",
+      safeMessage: "채널의 가격·옵션 단위 규칙에 맞지 않습니다. 판매가는 채널 단위로 자동 보정하고 숫자형 옵션은 공식 카테고리 단위를 붙인 뒤 다시 등록해 주세요.",
+      rejectCategory: false,
+      retryableAfterCorrection: true,
+    };
+  }
+  if (/BIZ_CHECK_EXIST_OUTER_DESCRIPTION_IMAGE|MEDIA_SPACE|MIGRATE_IMAGE|image[_ -]?(?:url|upload|file|size|format|required|invalid|failed|rejected)|(?:picture|photo|thumbnail)[_ -]?(?:url|upload|file|size|format|required|invalid|failed|rejected)|이미지\s*(?:URL|업로드|규격|경로|파일|오류|실패|거절)/i.test(text)) {
     return {
       kind: "image",
       code: "IMAGE_REJECTED_AFTER_NORMALIZATION",

@@ -3,6 +3,7 @@
 import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
+import { marketplaceListingPrice } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10SellerCode } from "../lib/channels/qoo10";
 import { createClient } from "../lib/supabase/client";
@@ -113,6 +114,7 @@ function uniqueUrls(values: Array<string | null | undefined>) {
 }
 
 function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number) {
+  const channelPrice = marketplaceListingPrice(channel, price);
   const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
   const existingListing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
   const product = context.product;
@@ -158,7 +160,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         AdditionalOption: "",
         ItemType: "",
         RetailPrice: "0",
-        ItemPrice: String(price),
+        ItemPrice: String(channelPrice),
         TaxRate: "S",
         ItemQty: String(quantity),
         ExpireDate: qoo10ExpiryDate(),
@@ -206,7 +208,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         shop_region: target?.marketCode ?? "",
         item: {
           ...commonProductFields,
-          original_price: price,
+          original_price: channelPrice,
           item_name: title.slice(0, 120),
           item_sku: marketSku,
           item_status: "UNLIST",
@@ -234,7 +236,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
             // selected values, then make the listing's verified core content
             // authoritative so an empty category field cannot blank the title.
             Attributes: { ...providedAttributes, name: title.slice(0, 255), description, short_description: shortDescription.slice(0, 500), brand: manual.brandName },
-            Skus: { Sku: [{ SellerSku: marketSku, price: String(price), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: galleryImageUrls } }] },
+            Skus: { Sku: [{ SellerSku: marketSku, price: String(channelPrice), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: galleryImageUrls } }] },
           },
         },
       },
@@ -279,7 +281,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         returnAddress: "",
         returnAddressDetail: "",
         requested: false,
-        items: [{ itemName: product.name, originalPrice: price, salePrice: price, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: 3, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: galleryImageUrls.map((url, index) => ({ imageOrder: index, imageType: index === 0 ? "REPRESENTATION" : "DETAIL", vendorPath: url })), notices: [], attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: product.description, detailType: "TEXT" }] }] }],
+        items: [{ itemName: product.name, originalPrice: channelPrice, salePrice: channelPrice, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: 3, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: galleryImageUrls.map((url, index) => ({ imageOrder: index, imageType: index === 0 ? "REPRESENTATION" : "DETAIL", vendorPath: url })), notices: [], attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: product.description, detailType: "TEXT" }] }] }],
       },
     };
   }
@@ -295,7 +297,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
           name: product.name,
           detailContent: `<section><h1>${html(product.name)}</h1><p>${html(product.description)}</p></section>`,
           images: { representativeImage: { url: "PROGRAM_UPLOAD_PENDING" }, optionalImages: [] },
-          salePrice: price,
+          salePrice: channelPrice,
           stockQuantity: quantity,
           detailAttribute: { minorPurchasable: true, productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: { returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조", qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조", troubleShootingContents: "상품상세 참조", itemName: product.name.slice(0, 50), modelName: (manual.sellerSku || product.sku).slice(0, 50), certificateDetails: "해당사항 없음", manufacturer: manual.manufacturer.slice(0, 200), customerServicePhoneNumber: "SERVER_MANAGED" } }, afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" }, originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
           customerBenefit: {},
@@ -329,7 +331,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         skuList: [{
           externalSkuId: externalGoodsId,
           images: galleryImageUrls.slice(0, 10),
-          price: { basePrice: { amount: String(price), currency: manual.currency || "KRW" } },
+          price: { basePrice: { amount: String(channelPrice), currency: manual.currency || "KRW" } },
           quantity,
           packageInfo: { weight: String(Math.round(packageFields.weight * 1_000)), length: String(packageFields.length), width: String(packageFields.width), height: String(packageFields.height) },
           variations: [{ name: "Type", value: "Standard" }],
@@ -342,7 +344,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     sellerpilotAssets,
     sku: manual.sellerSku || product.sku,
     inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: product.name, description: product.description, imageUrls: galleryImageUrls, brand: manual.brandName, mpn: manual.sellerSku || product.sku, aspects: { ...(assignment?.providedAttributes ?? {}), Material: [manual.material], "Country/Region of Manufacture": [manual.countryOfOrigin] } } },
-    offer: { sku: manual.sellerSku || product.sku, marketplaceId: "EBAY_US", format: "FIXED_PRICE", availableQuantity: quantity, categoryId: assignment?.categoryId ?? "", listingDescription: product.description, listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" }, merchantLocationKey: "SERVER_MANAGED", pricingSummary: { price: { value: String(price), currency: "USD" } } },
+    offer: { sku: manual.sellerSku || product.sku, marketplaceId: "EBAY_US", format: "FIXED_PRICE", availableQuantity: quantity, categoryId: assignment?.categoryId ?? "", listingDescription: product.description, listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" }, merchantLocationKey: "SERVER_MANAGED", pricingSummary: { price: { value: String(channelPrice), currency: "USD" } } },
     publish: true,
   };
 }
@@ -536,6 +538,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       return false;
     }
     const listingCurrency = target?.currency || currency;
+    const operationPrice = marketplaceListingPrice(channel, price);
     if (!options.skipConfirm) {
       setConfirmingChannel(channel);
       return false;
@@ -546,7 +549,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     try {
       const accessToken = options.accessToken ?? (await createClient().auth.getSession()).data.session?.access_token;
       if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
-      const idempotencyKey = `listing:${productId}:${channel}:${target?.marketCode ?? "default"}:${await fingerprint({ channelArguments, listingCurrency, price })}`;
+      const idempotencyKey = `listing:${productId}:${channel}:${target?.marketCode ?? "default"}:${await fingerprint({ channelArguments, listingCurrency, price: operationPrice })}`;
       const response = await fetch("/api/admin/channel-operations", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
@@ -558,7 +561,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
           confirmWrite: true,
           productId,
           currency: listingCurrency,
-          price,
+          price: operationPrice,
           market: target?.marketCode ?? "",
           targetId: target?.targetId ?? "",
           arguments: channelArguments,
