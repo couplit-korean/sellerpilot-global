@@ -508,7 +508,7 @@ test("Coupang product creation is only successful after seller-product readback 
         headers: { "content-type": "application/json" },
       });
     }
-    return new Response(JSON.stringify({ code: "SUCCESS", data: { sellerProductId: 987654321, requested: false } }), {
+    return new Response(JSON.stringify({ code: "SUCCESS", data: { sellerProductId: 987654321, requested: true } }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
@@ -518,7 +518,7 @@ test("Coupang product creation is only successful after seller-product readback 
       channel: "coupang",
       operation: "listing.create",
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
-      arguments: { body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: false, items: [{}] } },
+      arguments: { body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] } },
       environment: "production",
     });
     assert.equal(result.ok, true);
@@ -527,6 +527,41 @@ test("Coupang product creation is only successful after seller-product readback 
     assert.equal(calls.length, 2);
     assert.equal(new URL(calls[1].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321");
     assert.equal(calls[1].init?.method, "GET");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Coupang product update reuses the requested seller product ID and verifies approval state", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (init?.method === "PUT") {
+      return new Response(JSON.stringify({ code: "SUCCESS", data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ code: "SUCCESS", data: { sellerProductId: 987654321, requested: true } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "coupang",
+      operation: "listing.update",
+      payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
+      arguments: { body: { sellerProductId: 987654321, sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] } },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "987654321");
+    assert.deepEqual(result.steps.map((item) => item.name), ["listing.update", "listing-readback"]);
+    assert.equal(calls[0].init?.method, "PUT");
+    assert.equal(new URL(calls[1].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321");
   } finally {
     globalThis.fetch = originalFetch;
   }

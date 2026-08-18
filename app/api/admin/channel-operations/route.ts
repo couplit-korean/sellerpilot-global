@@ -308,7 +308,7 @@ export async function POST(request: NextRequest) {
 
   if (channel === "shopee" || channel === "lazada" || channel === "coupang" || channel === "smartstore" || channel === "temu") {
     try {
-      const gatewayArguments = channel === "coupang" && operation === "listing.create"
+      const gatewayArguments = channel === "coupang" && (operation === "listing.create" || operation === "listing.update")
         ? await prepareCoupangMarketplaceImages(serviceClient, parsed.data.arguments)
         : parsed.data.arguments;
       const result = await executeViaChannelGateway({

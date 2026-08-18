@@ -642,16 +642,18 @@ async function executeCoupang(input: ExecuteInput) {
     return result(input, [step("category-status", remote)], categoryId);
   }
   if (input.operation === "listing.create" || input.operation === "listing.update") {
-    const body = { ...objectValue(input.arguments, "body"), vendorId };
+    const body: Record<string, unknown> = { ...objectValue(input.arguments, "body"), vendorId };
     const writeRemote = await coupangRequest({
       payload: input.payload,
       method: input.operation === "listing.create" ? "POST" : "PUT",
       path: sellerProductsPath,
       body,
     });
-    const remoteId = typeof writeRemote.data.data === "number" || typeof writeRemote.data.data === "string" ? String(writeRemote.data.data) : undefined;
+    const responseId = typeof writeRemote.data.data === "number" || typeof writeRemote.data.data === "string" ? String(writeRemote.data.data) : undefined;
+    const requestedId = typeof body.sellerProductId === "number" || typeof body.sellerProductId === "string" ? String(body.sellerProductId) : undefined;
+    const remoteId = responseId ?? requestedId;
     const writeStep = step(input.operation, writeRemote);
-    if (input.operation !== "listing.create" || !writeStep.ok || !remoteId) return result(input, [writeStep], remoteId);
+    if (!writeStep.ok || !remoteId) return result(input, [writeStep], remoteId);
     const readbackRemote = await coupangRequest({
       payload: input.payload,
       method: "GET",
@@ -662,7 +664,11 @@ async function executeCoupang(input: ExecuteInput) {
     const readbackId = readbackData && typeof readbackData === "object" && !Array.isArray(readbackData)
       ? (readbackData as Record<string, unknown>).sellerProductId
       : readbackRemote.data.sellerProductId;
-    readbackStep.ok = readbackStep.ok && readbackId !== undefined && String(readbackId) === remoteId;
+    const readbackRequested = readbackData && typeof readbackData === "object" && !Array.isArray(readbackData)
+      ? (readbackData as Record<string, unknown>).requested
+      : readbackRemote.data.requested;
+    const requestStateMatches = typeof body.requested !== "boolean" || readbackRequested === body.requested;
+    readbackStep.ok = readbackStep.ok && readbackId !== undefined && String(readbackId) === remoteId && requestStateMatches;
     return result(input, [writeStep, readbackStep], remoteId);
   }
   if (input.operation === "listing.stop") {

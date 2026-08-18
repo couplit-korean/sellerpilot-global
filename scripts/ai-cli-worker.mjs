@@ -634,7 +634,7 @@ async function prepareCoupangListing(payload, argumentsValue) {
       returnAddressDetail: String(returnAddress.returnAddressDetail),
       returnCharge: returnFee,
       vendorUserId: requestedBy,
-      requested: false,
+      requested: true,
       items,
     },
   };
@@ -1127,7 +1127,7 @@ async function processGatewayJob(job) {
         credential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       }
-      if (job.operation === "listing.create") {
+      if (job.operation === "listing.create" || job.operation === "listing.update") {
         if (job.channel === "shopee") {
           operationArguments = operationArguments.globalProduct === true
             ? operationArguments
