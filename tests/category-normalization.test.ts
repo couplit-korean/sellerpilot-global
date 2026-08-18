@@ -314,3 +314,14 @@ test("Lazada normalization does not choose a rice leaf merely because its parent
   };
   assert.equal(normalizeSuggestions("lazada", response, "펜네 파스타 식품")[0]?.id, "PASTA");
 });
+
+test("Lazada omega matching falls back to a health-supplement leaf and excludes pet products", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
+      { category_id: "PET", name: "Pet Supplements", leaf: true },
+      { category_id: "HEALTH", name: "Vitamins & Supplements", leaf: true },
+    ] } }],
+  };
+  assert.equal(normalizeSuggestions("lazada", response, "fish oil omega 3")[0]?.id, "HEALTH");
+});
