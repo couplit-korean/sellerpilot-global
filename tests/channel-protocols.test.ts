@@ -539,6 +539,12 @@ test("Coupang product update reuses the requested seller product ID and verifies
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, init });
+    if (url.endsWith("/approvals") && init?.method === "PUT") {
+      return new Response(JSON.stringify({ code: "ERROR", message: "already requested" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (init?.method === "PUT") {
       return new Response(JSON.stringify({ code: "SUCCESS", data: null }), {
         status: 200,

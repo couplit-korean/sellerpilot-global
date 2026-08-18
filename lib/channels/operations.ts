@@ -688,15 +688,21 @@ async function executeCoupang(input: ExecuteInput) {
       path: `${sellerProductsPath}/${pathSegment(remoteId)}/approvals`,
     });
     const approvalStep = step("listing-approval-request", approvalRemote);
-    if (!approvalStep.ok) return result(input, [writeStep, initialReadback.readbackStep, approvalStep], remoteId);
-    initialReadback.readbackStep.ok = true;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    readbackRemote = await coupangRequest({
-      payload: input.payload,
-      method: "GET",
-      path: `${sellerProductsPath}/${pathSegment(remoteId)}`,
-    });
-    const approvalReadback = verifyReadback("listing-approval-readback");
+    let approvalReadback = initialReadback;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      readbackRemote = await coupangRequest({
+        payload: input.payload,
+        method: "GET",
+        path: `${sellerProductsPath}/${pathSegment(remoteId)}`,
+      });
+      approvalReadback = verifyReadback("listing-approval-readback");
+      if (approvalReadback.readbackStep.ok) break;
+    }
+    if (approvalReadback.readbackStep.ok) {
+      initialReadback.readbackStep.ok = true;
+      approvalStep.ok = true;
+    }
     return result(input, [writeStep, initialReadback.readbackStep, approvalStep, approvalReadback.readbackStep], remoteId);
   }
   if (input.operation === "listing.stop") {
