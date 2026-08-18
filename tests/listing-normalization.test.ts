@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   marketplaceListingCurrency,
   marketplaceListingPrice,
+  mergeShopeeRequiredAttributes,
   normalizeCoupangAttributeValue,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
@@ -30,6 +31,30 @@ test("Coupang numeric attributes inherit the official category unit", () => {
   const metadata = { dataType: "NUMBER", basicUnit: "개", usableUnits: ["개", "박스", "세트"] };
   assert.equal(normalizeCoupangAttributeValue(metadata, "1"), "1개");
   assert.equal(normalizeCoupangAttributeValue(metadata, "2세트"), "2세트");
+});
+
+test("Shopee local publish metadata fills mandatory enumerations missing from the global tree", () => {
+  const result = mergeShopeeRequiredAttributes([], [{
+    attribute_id: 7001,
+    name: "Sets & Packages Type",
+    mandatory: true,
+    attribute_value_list: [
+      { value_id: 1, name: "Other" },
+      { value_id: 2, name: "Eye Makeup Set" },
+    ],
+  }], "makeup eyeshadow palette cosmetics");
+  assert.deepEqual(result.attributes, [{ attribute_id: 7001, attribute_value_list: [{ value_id: 2 }] }]);
+  assert.deepEqual(result.unresolved, []);
+  assert.match(result.autoFilled[0] ?? "", /Sets & Packages Type/);
+});
+
+test("Shopee local publish preserves seller input and exposes mandatory attributes without allowed values", () => {
+  const result = mergeShopeeRequiredAttributes([{ attribute_id: 10, attribute_value_list: [{ value_id: 99 }] }], [
+    { attribute_id: 10, display_attribute_name: "Brand", is_mandatory: true, attribute_value_list: [{ value_id: 1, display_value_name: "No Brand" }] },
+    { attribute_id: 11, display_attribute_name: "Compliance Code", is_mandatory: true, attribute_value_list: [] },
+  ], "test product");
+  assert.equal(result.attributes.length, 1);
+  assert.deepEqual(result.unresolved, ["Compliance Code"]);
 });
 
 test("Lazada migration rewrites images embedded in rich description HTML", () => {

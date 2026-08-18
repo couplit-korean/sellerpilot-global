@@ -75,3 +75,56 @@ export function normalizeCoupangAttributeValue(metadata: CoupangAttributeMetadat
   if (!unit || usableUnits.some((candidate) => raw.endsWith(candidate))) return raw;
   return /^[-+]?\d+(?:\.\d+)?$/.test(raw) ? `${raw}${unit}` : raw;
 }
+
+type ShopeeAttributeValue = { value_id?: unknown; name?: unknown; display_value_name?: unknown; original_value_name?: unknown };
+type ShopeeAttributeMetadata = {
+  attribute_id?: unknown;
+  name?: unknown;
+  display_attribute_name?: unknown;
+  is_mandatory?: unknown;
+  mandatory?: unknown;
+  attribute_value_list?: unknown;
+};
+
+function shopeeWords(value: unknown) {
+  return String(value ?? "").toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 1);
+}
+
+export function mergeShopeeRequiredAttributes(existing: unknown, metadata: ShopeeAttributeMetadata[], productHint: string) {
+  const attributes = Array.isArray(existing)
+    ? existing.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))).map((item) => structuredClone(item))
+    : [];
+  const supplied = new Set(attributes.map((item) => Number(item.attribute_id)).filter(Number.isSafeInteger));
+  const hintWords = shopeeWords(productHint);
+  const autoFilled: string[] = [];
+  const unresolved: string[] = [];
+  for (const attribute of metadata) {
+    const required = attribute.is_mandatory === true || attribute.is_mandatory === 1 || attribute.is_mandatory === "1"
+      || attribute.mandatory === true || attribute.mandatory === 1 || attribute.mandatory === "1";
+    const attributeId = Number(attribute.attribute_id);
+    if (!required || !Number.isSafeInteger(attributeId) || attributeId <= 0 || supplied.has(attributeId)) continue;
+    const values = Array.isArray(attribute.attribute_value_list)
+      ? attribute.attribute_value_list.filter((item): item is ShopeeAttributeValue => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+      : [];
+    const ranked = values
+      .map((value, index) => {
+        const name = String(value.display_value_name ?? value.original_value_name ?? value.name ?? "").trim();
+        const words = shopeeWords(name);
+        const matches = words.filter((word) => hintWords.some((hint) => hint === word || hint.includes(word) || word.includes(hint))).length;
+        const fallbackPenalty = /^(?:other|others|기타|其他)$/iu.test(name) ? 1 : 0;
+        return { value, name, score: matches * 100 - fallbackPenalty, index };
+      })
+      .filter((item) => Number.isSafeInteger(Number(item.value.value_id)) && Number(item.value.value_id) > 0)
+      .sort((left, right) => right.score - left.score || left.index - right.index);
+    const selected = ranked[0];
+    const label = String(attribute.display_attribute_name ?? attribute.name ?? attributeId).trim();
+    if (!selected) {
+      unresolved.push(label);
+      continue;
+    }
+    attributes.push({ attribute_id: attributeId, attribute_value_list: [{ value_id: Number(selected.value.value_id) }] });
+    supplied.add(attributeId);
+    autoFilled.push(`${label}: ${selected.name || selected.value.value_id}`);
+  }
+  return { attributes, autoFilled, unresolved };
+}

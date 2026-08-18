@@ -10,6 +10,7 @@ import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
 import { cliStudioResultSchema } from "../lib/ai-cli-contract.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import {
+  mergeShopeeRequiredAttributes,
   normalizeCoupangAttributeValue,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
@@ -363,14 +364,49 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   const body = argumentsValue.body && typeof argumentsValue.body === "object" ? argumentsValue.body : {};
   const publish = argumentsValue.publish && typeof argumentsValue.publish === "object" ? structuredClone(argumentsValue.publish) : {};
   const publishItem = publish.item && typeof publish.item === "object" ? publish.item : {};
+  const categoryId = Number(publishItem.category_id ?? body.category_id);
+  if (!Number.isSafeInteger(categoryId) || categoryId <= 0) throw new Error("Shopee 현지 숍 카테고리가 없습니다.");
+  let attributeRemote = await shopeeRequest({
+    payload: shopPayload,
+    environment,
+    method: "GET",
+    path: "/api/v2/product/get_attribute_tree",
+    query: new URLSearchParams({ category_id_list: String(categoryId), language: "en" }),
+  });
+  if (!attributeRemote.response.ok || attributeRemote.data.error) {
+    attributeRemote = await shopeeRequest({
+      payload: shopPayload,
+      environment,
+      method: "GET",
+      path: "/api/v2/product/get_attributes",
+      query: new URLSearchParams({ category_id: String(categoryId), language: "en" }),
+    });
+  }
+  const attributeRows = objectRecords(attributeRemote.data)
+    .filter((row) => row.attribute_id !== undefined);
+  const attributeMetadata = attributeRows
+    .filter((row) => row.attribute_id !== undefined && (row.is_mandatory !== undefined || row.mandatory !== undefined));
+  if (!attributeRemote.response.ok || attributeRemote.data.error) {
+    const code = String(attributeRemote.data.error ?? attributeRemote.response.status).replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 80);
+    throw new Error(`Shopee 현지 숍 필수 속성을 확인하지 못했습니다${code ? `: ${code}` : ""}`);
+  }
+  const productHint = `${String(publishItem.item_name ?? body.global_item_name ?? "")} ${String(publishItem.description ?? body.description ?? "")}`;
+  const suppliedAttributes = [
+    ...(Array.isArray(body.attribute_list) ? body.attribute_list : []),
+    ...(Array.isArray(publishItem.attribute_list) ? publishItem.attribute_list : []),
+  ];
+  const requiredAttributes = mergeShopeeRequiredAttributes(suppliedAttributes, attributeMetadata, productHint);
+  if (requiredAttributes.unresolved.length) throw new Error(`Shopee 필수 속성 선택값이 없습니다: ${requiredAttributes.unresolved.join(", ")}`);
+  if (requiredAttributes.autoFilled.length) console.log(`[Shopee attribute autofill] category=${categoryId} · ${requiredAttributes.autoFilled.join(" | ").slice(0, 600)}`);
   publish.item = {
     ...publishItem,
     image: { image_id_list: imageIds },
     logistic: logistics,
+    attribute_list: requiredAttributes.attributes,
   };
   return {
     ...argumentsValue,
-    body: { ...body, image: { image_id_list: imageIds } },
+    body: { ...body, image: { image_id_list: imageIds }, attribute_list: requiredAttributes.attributes },
     publish,
   };
 }
