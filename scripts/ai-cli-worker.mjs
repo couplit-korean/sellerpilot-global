@@ -1368,6 +1368,20 @@ async function processGatewayJob(job) {
       if (job.channel === "lazada" && job.operation === "listing.create" && !result.ok) {
         console.log(`[Lazada listing debug] ${JSON.stringify(result.steps.map((entry) => entry.data)).slice(0, 4000)}`);
       }
+      if (job.channel === "coupang" && job.operation === "listing.create" && !result.ok) {
+        const debugSteps = result.steps.map((entry) => ({
+          name: entry.name,
+          ok: entry.ok,
+          status: entry.status,
+          code: entry.data?.code,
+          message: entry.data?.message,
+          sellerProductId: entry.data?.data?.sellerProductId,
+          requested: entry.data?.data?.requested,
+          mdId: entry.data?.data?.mdId,
+          statusName: entry.data?.data?.statusName,
+        }));
+        console.log(`[Coupang listing debug] ${JSON.stringify(debugSteps)}`);
+      }
       if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true && result.ok && result.remoteId && shopeeShopCredential) {
         const readLocalItem = () => shopeeRequest({
           payload: shopeeShopCredential,
