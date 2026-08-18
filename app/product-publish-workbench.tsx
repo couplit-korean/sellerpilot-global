@@ -423,6 +423,8 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkConfirming, setBulkConfirming] = useState(false);
   const [confirmingChannel, setConfirmingChannel] = useState<ActiveChannelKey | null>(null);
+  const [qoo10StopConfirming, setQoo10StopConfirming] = useState<Listing | null>(null);
+  const [qoo10CleanupConfirming, setQoo10CleanupConfirming] = useState<string | null>(null);
   const [qoo10CleanupId, setQoo10CleanupId] = useState("");
   const priceRef = useRef(price);
   const globalBaseUsdPriceRef = useRef(globalBaseUsdPrice);
@@ -618,7 +620,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const stopQoo10Listing = async (listing: Listing) => {
     const credential = activeCredentials.get("qoo10");
     if (!credential || !listing.remoteId || !productId) return notify("Qoo10 활성 키와 원격 상품번호를 확인해 주세요.");
-    if (!window.confirm(`Qoo10 원격 상품 ${listing.remoteId}를 공식 API의 거래대기 상태로 전환하고 이 상품을 재등록 가능한 상태로 되돌릴까요?`)) return;
+    setQoo10StopConfirming(null);
     setResults((current) => ({ ...current, qoo10: { phase: "running", message: "Qoo10 거래대기 전환 요청 중" } }));
     try {
       const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
@@ -652,9 +654,14 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     }
   };
 
-  const pausePreviousQoo10Remote = async () => {
-    const credential = activeCredentials.get("qoo10");
+  const requestPausePreviousQoo10Remote = () => {
     const remoteId = qoo10CleanupId.trim();
+    if (!/^\d{9,10}$/.test(remoteId)) return notify("정리할 Qoo10 상품번호 9~10자리를 입력해 주세요.");
+    setQoo10CleanupConfirming(remoteId);
+  };
+
+  const pausePreviousQoo10Remote = async (remoteId: string) => {
+    const credential = activeCredentials.get("qoo10");
     if (!credential) return notify("Qoo10 활성 키를 확인해 주세요.");
     let params: ReturnType<typeof qoo10PauseParams>;
     try {
@@ -662,7 +669,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     } catch {
       return notify("정리할 Qoo10 상품번호 9~10자리를 입력해 주세요.");
     }
-    if (!window.confirm(`이전 Qoo10 원격 상품 ${remoteId}를 거래대기 상태로 전환합니다. 현재 새 상품은 그대로 판매중으로 유지합니다. 계속할까요?`)) return;
+    setQoo10CleanupConfirming(null);
     setResults((current) => ({ ...current, qoo10: { phase: "running", message: `이전 원격 상품 ${remoteId} 거래대기 전환 중` } }));
     try {
       const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
@@ -759,9 +766,11 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
           {confirmingChannel === channel && <div className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 등록 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정에 실제 상품 1건을 등록합니다.</b><small>가격 {price.toLocaleString()} {target?.currency || currency} · 재고 {quantity}개</small></div><button type="button" className="credential-secondary" onClick={() => setConfirmingChannel(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 등록 실행</button></div>}
+          {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={() => setQoo10StopConfirming(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
           <button type="button" className="publish-execute" disabled={!credential || !assignment || invalidDraft || blockingCount > 0 || result.phase === "running" || listing?.status === "published" || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : listing?.status === "published" ? <Check size={15} /> : <Rocket size={15} />}{listing?.status === "published" ? "등록 완료" : blockingCount ? `필수 보완 ${blockingCount}개 후 등록` : confirmingChannel === channel ? "최종 확인 열림" : "검증 후 실제 1건 등록"}</button>
-          {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={result.phase === "running"} onClick={() => void stopQoo10Listing(listing)}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
-          {channel === "qoo10" && listing?.status === "published" && <label className="qoo10-remote-cleanup"><span>이전 Qoo10 상품 정리</span><input aria-label="정리할 이전 Qoo10 상품번호" inputMode="numeric" value={qoo10CleanupId} onChange={(event) => setQoo10CleanupId(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="9~10자리 상품번호" /><button type="button" className="credential-secondary" disabled={result.phase === "running" || !/^\d{9,10}$/.test(qoo10CleanupId)} onClick={() => void pausePreviousQoo10Remote()}><CirclePause size={15} />이전 상품 거래대기</button></label>}
+          {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={result.phase === "running" || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => setQoo10StopConfirming(listing)}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
+          {channel === "qoo10" && listing?.status === "published" && <label className="qoo10-remote-cleanup"><span>이전 Qoo10 상품 정리</span><input aria-label="정리할 이전 Qoo10 상품번호" inputMode="numeric" value={qoo10CleanupId} onChange={(event) => setQoo10CleanupId(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="9~10자리 상품번호" /><button type="button" className="credential-secondary" disabled={result.phase === "running" || !/^\d{9,10}$/.test(qoo10CleanupId)} onClick={requestPausePreviousQoo10Remote}><CirclePause size={15} />이전 상품 거래대기</button></label>}
+          {channel === "qoo10" && qoo10CleanupConfirming && <div className="publish-write-confirmation channel" role="alertdialog" aria-label="이전 Qoo10 상품 거래대기 최종 확인"><AlertTriangle size={18} /><div><b>이전 Qoo10 원격 상품 {qoo10CleanupConfirming}를 거래대기로 전환합니다.</b><small>현재 새 상품은 판매중 상태를 그대로 유지합니다.</small></div><button type="button" className="credential-secondary" onClick={() => setQoo10CleanupConfirming(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void pausePreviousQoo10Remote(qoo10CleanupConfirming)}>이전 상품 거래대기 실행</button></div>}
         </>}
       </article>;
     })}</div>
