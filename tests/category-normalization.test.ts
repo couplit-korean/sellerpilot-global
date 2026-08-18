@@ -170,6 +170,17 @@ test("Shopee clothing normalization does not map a hoodie to a generic shirt", (
   assert.equal(normalizeSuggestions("shopee", response, "unisex hoodie sweatshirt")[0]?.id, "2");
 });
 
+test("Shopee hanger normalization excludes laundry appliances", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
+      { category_id: 1, display_category_name: "Home Appliances > Laundry Dryers", has_children: false },
+      { category_id: 2, display_category_name: "Home & Living > Home Organizers > Clothes Hangers", has_children: false },
+    ] } } }],
+  };
+  assert.equal(normalizeSuggestions("shopee", response, "clothes hangers")[0]?.id, "2");
+});
+
 const shopeeProgramCatalogCases = [
   ["흰쌀밥 식품 샘플", "100781"],
   ["노란색 자동차 완구", "100912"],

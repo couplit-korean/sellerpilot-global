@@ -255,7 +255,7 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
     return /(home|living|organizer|organization|storage box|storage bin)/u.test(normalizedCandidate);
   }
   if (/(hanger|옷걸이|행거)/u.test(normalizedQuery)) {
-    return exactOrLeaf("hangers") || /(home|living|laundry|clothes hanger|clothing hanger)/u.test(normalizedCandidate);
+    return exactOrLeaf("hangers") || /(clothes? hangers?|clothing hangers?|coat hangers?)/u.test(normalizedCandidate);
   }
   if (/(tote|canvas|캔버스.*토트|토트백)/u.test(normalizedQuery)) {
     return /(fashion|bag|luggage|accessor)/u.test(normalizedCandidate);
@@ -282,6 +282,7 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(hoodie|hood|후드)/u.test(normalizedQuery)) return score(["hoodies", "hooded sweatshirts", "sweatshirts"]);
   if (/(jacket|재킷)/u.test(normalizedQuery)) return score(["jackets", "outerwear"]);
   if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) return score(["storage boxes", "home organizers", "home & living"]);
+  if (/(hanger|옷걸이|행거)/u.test(normalizedQuery)) return score(["clothes hangers", "clothing hangers", "coat hangers", "hangers"]);
   return 0;
 }
 
