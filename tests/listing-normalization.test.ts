@@ -71,7 +71,7 @@ test("Shopee local publish fills implicit enumerations and free-text dates whose
     display_attribute_name: "Expiry Date",
     attribute_value_list: [],
   }], "roasted whole coffee beans", {
-    implicitRequired: { "drink form": true, "expiry date": "19/08/2027" },
+    implicitRequired: { "drink form": "Whole Bean", "expiry date": "19/08/2027" },
   });
   assert.deepEqual(result.attributes, [
     { attribute_id: 12, attribute_value_list: [{ value_id: 120 }] },

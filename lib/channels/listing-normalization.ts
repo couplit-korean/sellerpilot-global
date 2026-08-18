@@ -128,7 +128,9 @@ export function mergeShopeeRequiredAttributes(
       })
       .filter((item) => Number.isSafeInteger(Number(item.value.value_id)) && Number(item.value.value_id) > 0)
       .sort((left, right) => right.score - left.score || left.index - right.index);
-    const selected = ranked[0];
+    const selected = typeof implicitValue === "string"
+      ? ranked.find((item) => item.name.toLocaleLowerCase() === implicitValue.toLocaleLowerCase()) ?? ranked[0]
+      : ranked[0];
     if (!selected && typeof implicitValue === "string" && implicitValue.trim()) {
       attributes.push({
         attribute_id: attributeId,

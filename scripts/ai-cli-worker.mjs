@@ -429,7 +429,7 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   const expiryDate = `${String(expiry.getUTCDate()).padStart(2, "0")}/${String(expiry.getUTCMonth() + 1).padStart(2, "0")}/${expiry.getUTCFullYear()}`;
   const requiredAttributes = mergeShopeeRequiredAttributes(suppliedAttributes, attributeMetadata, productHint, {
     implicitRequired: {
-      "drink form": true,
+      "drink form": "Coffee Beans",
       "expiry date": expiryDate,
     },
   });
