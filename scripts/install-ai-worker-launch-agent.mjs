@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
 const label = "chatgpt.sellerpilot.ai-worker";
 const service = "SellerPilot AI Worker";
@@ -9,7 +9,9 @@ const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-glob
 const launchAgents = join(homedir(), "Library", "LaunchAgents");
 const logDirectory = join(homedir(), "Library", "Logs", "SellerPilot");
 const plistPath = join(launchAgents, `${label}.plist`);
-const workerPath = resolve("scripts/ai-cli-worker.mjs");
+const sourceRoot = process.cwd();
+const runtimeRoot = join(homedir(), "Library", "Application Support", "SellerPilot", "worker-runtime");
+const workerPath = join(runtimeRoot, "scripts", "ai-cli-worker.mjs");
 const guiDomain = `gui/${process.getuid?.() ?? 0}`;
 
 function command(program, args, options = {}) {
@@ -33,6 +35,37 @@ function promptForToken() {
     "-e", 'display dialog "SellerPilot 웹에서 방금 발급한 spw_ 토큰을 입력하세요. 값은 macOS 키체인에만 저장됩니다." default answer "" with hidden answer buttons {"취소", "저장"} default button "저장"',
     "-e", "text returned of result",
   ]);
+}
+
+async function findPnpm() {
+  const candidates = [
+    process.env.SELLERPILOT_PNPM_BIN,
+    join(homedir(), "Library", "pnpm", "pnpm"),
+    "/opt/homebrew/bin/pnpm",
+    "/usr/local/bin/pnpm",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // Try the next standard pnpm installation path.
+    }
+  }
+  throw new Error("pnpm 실행 파일을 찾지 못했습니다. SELLERPILOT_PNPM_BIN을 지정해 주세요.");
+}
+
+async function stageRuntime() {
+  const pnpm = await findPnpm();
+  await rm(runtimeRoot, { recursive: true, force: true });
+  await mkdir(runtimeRoot, { recursive: true, mode: 0o700 });
+  for (const entry of ["lib", "scripts", "package.json", "pnpm-lock.yaml", "tsconfig.json"]) {
+    await cp(join(sourceRoot, entry), join(runtimeRoot, entry), { recursive: true });
+  }
+  command(pnpm, ["install", "--frozen-lockfile", "--ignore-scripts"], {
+    cwd: runtimeRoot,
+    env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH ?? "/usr/bin:/bin"}` },
+  });
 }
 
 if (process.platform !== "darwin") throw new Error("이 설치기는 macOS LaunchAgent 전용입니다.");
@@ -64,13 +97,14 @@ command("/usr/bin/security", [
 
 await mkdir(launchAgents, { recursive: true, mode: 0o700 });
 await mkdir(logDirectory, { recursive: true, mode: 0o700 });
+await stageRuntime();
 
 const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>--import</string><string>tsx</string><string>${xml(workerPath)}</string></array>
-  <key>WorkingDirectory</key><string>${xml(process.cwd())}</string>
+  <key>WorkingDirectory</key><string>${xml(runtimeRoot)}</string>
   <key>EnvironmentVariables</key><dict><key>SELLERPILOT_URL</key><string>${xml(sellerpilotUrl)}</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
