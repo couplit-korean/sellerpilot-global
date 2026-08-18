@@ -868,11 +868,22 @@ test("Naver product creation reconciles an existing seller management code witho
 
 test("eBay listing workflow creates inventory, creates an offer, then publishes", async () => {
   const originalFetch = globalThis.fetch;
-  const calls: string[] = [];
-  globalThis.fetch = async (input) => {
+  const calls: Array<{ url: string; method: string }> = [];
+  const imageUrls = [
+    "https://cdn.example.com/hero.jpg",
+    "https://cdn.example.com/detail-1.jpg",
+    "https://cdn.example.com/detail-2.jpg",
+    "https://cdn.example.com/detail-3.jpg",
+    "https://cdn.example.com/detail-4.jpg",
+  ];
+  const listingDescription = imageUrls.slice(1).map((url) => `<img src="${url}" />`).join("");
+  globalThis.fetch = async (input, init) => {
     const url = String(input);
-    calls.push(url);
-    if (url.endsWith("/offer")) return new Response(JSON.stringify({ offerId: "36445435465" }), { status: 201, headers: { "content-type": "application/json" } });
+    const method = init?.method ?? "GET";
+    calls.push({ url, method });
+    if (url.includes("/inventory_item/") && method === "GET") return Response.json({ product: { imageUrls } });
+    if (url.endsWith("/offer") && method === "POST") return new Response(JSON.stringify({ offerId: "36445435465" }), { status: 201, headers: { "content-type": "application/json" } });
+    if (url.endsWith("/offer/36445435465") && method === "GET") return Response.json({ listingDescription });
     if (url.endsWith("/publish")) return new Response(JSON.stringify({ listingId: "110000000001" }), { status: 200, headers: { "content-type": "application/json" } });
     return new Response(null, { status: 204 });
   };
@@ -883,11 +894,12 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
       payload: { access_token: "token", marketplace_id: "EBAY_US" },
       arguments: {
         sku: "SELLERPILOT-001",
-        inventoryItem: { availability: { shipToLocationAvailability: { quantity: 1 } }, condition: "NEW", product: { title: "Test" } },
+        inventoryItem: { availability: { shipToLocationAvailability: { quantity: 1 } }, condition: "NEW", product: { title: "Test", imageUrls } },
         offer: {
           sku: "SELLERPILOT-001",
           marketplaceId: "EBAY_US",
           format: "FIXED_PRICE",
+          listingDescription,
           listingPolicies: { fulfillmentPolicyId: "fulfillment-1", paymentPolicyId: "payment-1", returnPolicyId: "return-1" },
           merchantLocationKey: "seoul-warehouse",
         },
@@ -897,11 +909,14 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "110000000001");
-    assert.deepEqual(calls.map((url) => new URL(url).pathname), [
-      "/sell/inventory/v1/inventory_item/SELLERPILOT-001",
-      "/sell/inventory/v1/offer",
-      "/sell/inventory/v1/offer/36445435465/publish",
+    assert.deepEqual(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`), [
+      "PUT /sell/inventory/v1/inventory_item/SELLERPILOT-001",
+      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
+      "POST /sell/inventory/v1/offer",
+      "GET /sell/inventory/v1/offer/36445435465",
+      "POST /sell/inventory/v1/offer/36445435465/publish",
     ]);
+    assert.deepEqual(result.steps.map((item) => item.name), ["inventory-item", "inventory-image-readback", "offer", "offer-detail-image-readback", "publish"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -918,7 +933,9 @@ test("eBay listing auto-selects non-vehicle policies and an enabled inventory lo
     if (url.includes("/payment_policy")) return Response.json({ paymentPolicies: [{ paymentPolicyId: "payment-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
     if (url.includes("/return_policy")) return Response.json({ returnPolicies: [{ returnPolicyId: "return-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
     if (url.includes("/location?")) return Response.json({ locations: [{ merchantLocationKey: "warehouse-auto", location: { merchantLocationStatus: "ENABLED" } }] });
-    if (url.endsWith("/offer")) return Response.json({ offerId: "offer-auto" }, { status: 201 });
+    if (url.includes("/inventory_item/") && init?.method === "GET") return Response.json({ product: { imageUrls: ["https://cdn.example.com/item.jpg"] } });
+    if (url.endsWith("/offer") && init?.method === "POST") return Response.json({ offerId: "offer-auto" }, { status: 201 });
+    if (url.endsWith("/offer/offer-auto") && init?.method === "GET") return Response.json({ offerId: "offer-auto" });
     return new Response(null, { status: 204 });
   };
   try {
@@ -928,7 +945,7 @@ test("eBay listing auto-selects non-vehicle policies and an enabled inventory lo
       payload: { access_token: "token", marketplace_id: "EBAY_US" },
       arguments: {
         sku: "SELLERPILOT-AUTO",
-        inventoryItem: { product: { title: "Test" } },
+        inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
         offer: {
           sku: "SELLERPILOT-AUTO",
           marketplaceId: "EBAY_US",
@@ -947,7 +964,59 @@ test("eBay listing auto-selects non-vehicle policies and an enabled inventory lo
       returnPolicyId: "return-auto",
     });
     assert.equal(offerCall?.body?.merchantLocationKey, "warehouse-auto");
-    assert.deepEqual(result.steps.map((item) => item.name), ["fulfillment-policies", "payment-policies", "return-policies", "inventory-locations", "inventory-item", "offer"]);
+    assert.deepEqual(result.steps.map((item) => item.name), ["fulfillment-policies", "payment-policies", "return-policies", "inventory-locations", "inventory-item", "inventory-image-readback", "offer", "offer-readback"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay stops before offer creation when the inventory image readback loses detail images", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push({ url, method });
+    if (url.includes("/inventory_item/") && method === "GET") {
+      return Response.json({ product: { imageUrls: ["https://cdn.example.com/hero.jpg"] } });
+    }
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.create",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: {
+        sku: "SELLERPILOT-IMAGE-FAIL",
+        inventoryItem: {
+          product: {
+            title: "Image readback test",
+            imageUrls: [
+              "https://cdn.example.com/hero.jpg",
+              "https://cdn.example.com/detail-1.jpg",
+              "https://cdn.example.com/detail-2.jpg",
+              "https://cdn.example.com/detail-3.jpg",
+              "https://cdn.example.com/detail-4.jpg",
+            ],
+          },
+        },
+        offer: {
+          sku: "SELLERPILOT-IMAGE-FAIL",
+          marketplaceId: "EBAY_US",
+          listingPolicies: { fulfillmentPolicyId: "fulfillment-1", paymentPolicyId: "payment-1", returnPolicyId: "return-1" },
+          merchantLocationKey: "seoul-warehouse",
+        },
+        publish: true,
+      },
+      environment: "production",
+    });
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.steps.map((item) => item.name), ["inventory-item", "inventory-image-readback"]);
+    assert.equal(result.steps[1].data.expectedImageCount, 5);
+    assert.equal(result.steps[1].data.actualImageCount, 1);
+    assert.equal(calls.some((call) => call.url.endsWith("/offer")), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -1079,6 +1079,33 @@ async function executeEbay(input: ExecuteInput) {
     const inventoryItem = objectValue(input.arguments, "inventoryItem");
     const offer = structuredClone(objectValue(input.arguments, "offer"));
     const steps: ChannelOperationStep[] = [];
+    const inventoryProduct = inventoryItem.product && typeof inventoryItem.product === "object" && !Array.isArray(inventoryItem.product)
+      ? inventoryItem.product as Record<string, unknown>
+      : {};
+    const expectedImageUrls = Array.isArray(inventoryProduct.imageUrls)
+      ? [...new Set(inventoryProduct.imageUrls.map(String).map((value) => value.trim()).filter(Boolean))]
+      : [];
+    if (!expectedImageUrls.length) throw new Error("EBAY_IMAGE_REQUIRED");
+    const expectedDescriptionImages = (String(offer.listingDescription ?? "").match(/<img\b/gi) ?? []).length;
+    const verifiedReadbackStep = (
+      name: string,
+      remote: RemoteResponse,
+      expectedImageCount: number,
+      actualImageCount: number,
+    ): ChannelOperationStep => {
+      const remoteStep = step(name, remote);
+      const verified = remoteStep.ok && actualImageCount >= expectedImageCount;
+      return {
+        ...remoteStep,
+        ok: verified,
+        data: {
+          ...remoteStep.data,
+          expectedImageCount,
+          actualImageCount,
+          sellerpilotVerification: verified ? "IMAGES_VERIFIED" : "EBAY_IMAGE_READBACK_MISSING",
+        },
+      };
+    };
     const listingPolicies = offer.listingPolicies && typeof offer.listingPolicies === "object" && !Array.isArray(offer.listingPolicies)
       ? offer.listingPolicies as Record<string, unknown>
       : {};
@@ -1123,9 +1150,28 @@ async function executeEbay(input: ExecuteInput) {
     const itemRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "PUT", path: `/sell/inventory/v1/inventory_item/${sku}`, body: inventoryItem });
     steps.push(step("inventory-item", itemRemote));
     if (!itemRemote.response.ok) return result(input, steps, sku);
+    const itemReadback = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: `/sell/inventory/v1/inventory_item/${sku}` });
+    const readbackProduct = itemReadback.data.product && typeof itemReadback.data.product === "object" && !Array.isArray(itemReadback.data.product)
+      ? itemReadback.data.product as Record<string, unknown>
+      : {};
+    const actualImageCount = Array.isArray(readbackProduct.imageUrls)
+      ? new Set(readbackProduct.imageUrls.map(String).map((value) => value.trim()).filter(Boolean)).size
+      : 0;
+    const inventoryImageStep = verifiedReadbackStep("inventory-image-readback", itemReadback, expectedImageUrls.length, actualImageCount);
+    steps.push(inventoryImageStep);
+    if (!inventoryImageStep.ok) return result(input, steps, sku);
     const offerRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "POST", path: "/sell/inventory/v1/offer", body: offer });
     steps.push(step("offer", offerRemote));
     const offerId = offerRemote.data.offerId === undefined ? undefined : String(offerRemote.data.offerId);
+    if (offerRemote.response.ok && offerId) {
+      const offerReadback = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: `/sell/inventory/v1/offer/${pathSegment(offerId)}` });
+      const actualDescriptionImages = (String(offerReadback.data.listingDescription ?? "").match(/<img\b/gi) ?? []).length;
+      const offerReadbackStep = expectedDescriptionImages > 0
+        ? verifiedReadbackStep("offer-detail-image-readback", offerReadback, expectedDescriptionImages, actualDescriptionImages)
+        : step("offer-readback", offerReadback);
+      steps.push(offerReadbackStep);
+      if (!offerReadbackStep.ok) return result(input, steps, offerId);
+    }
     if (offerRemote.response.ok && offerId && booleanArgument(input.arguments, "publish")) {
       const publishRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "POST", path: `/sell/inventory/v1/offer/${pathSegment(offerId)}/publish` });
       steps.push(step("publish", publishRemote));

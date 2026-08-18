@@ -1593,6 +1593,13 @@ a:focus-visible,
 .category-empty small { margin-top: 4px; font-size: 10px; }
 .category-empty button,.category-confirm { display: inline-flex; min-height: 34px; align-items: center; justify-content: center; gap: 6px; margin-top: 13px; border: 1px solid #1e6d59; border-radius: 4px; background: #247f68; padding: 0 12px; color: #fff; font-size: 10px; font-weight: 800; }
 .category-empty button:disabled,.category-confirm:disabled { cursor: not-allowed; border-color: #cdd3d1; color: #8a9490; background: #edf0ef; }
+.category-manual-fallback { display: grid; width: 100%; gap: 8px; margin-top: 14px; border-top: 1px solid #e3e8e6; padding-top: 13px; text-align: left; }
+.category-manual-fallback > b { margin: 0; color: #35413c; font-size: 11px; }
+.category-manual-fallback > small { margin: 0 0 2px; color: #717d78; font-size: 9px; line-height: 1.5; }
+.category-manual-fallback label > span { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; color: #46504c; font-size: 9px; font-weight: 800; }
+.category-manual-fallback label em { color: #b14b35; font-size: 8px; font-style: normal; }
+.category-manual-fallback input { width: 100%; height: 34px; border: 1px solid #c7cecb; border-radius: 3px; background: #fff; padding: 0 9px; color: #28312e; font-size: 10px; }
+.category-manual-fallback .category-manual-verify { margin-top: 3px; }
 .category-suggestions { display: grid; padding: 8px 12px 12px; }
 .category-suggestions button { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px; border-bottom: 1px solid #edf0ef; padding: 10px 5px; color: #303a36; background: #fff; text-align: left; }
 .category-suggestions button:hover { background: #f6faf8; }
