@@ -218,32 +218,43 @@ async function uploadShopeeImage(payload, environment, imageUrl) {
   const targetKey = merchantId ? "merchant_id" : "shop_id";
   if (!partnerId || !partnerKey || !targetId || !accessToken) throw new Error("SHOPEE_CREDENTIALS_MISSING");
   const path = "/api/v2/media_space/upload_image";
-  const timestamp = Math.floor(Date.now() / 1000);
-  const query = new URLSearchParams({
-    partner_id: partnerId,
-    timestamp: String(timestamp),
-    access_token: accessToken,
-    [targetKey]: targetId,
-    sign: buildShopeeSignature({
-      partnerId,
-      partnerKey,
-      path,
-      timestamp,
-      accessToken,
-      ...(merchantId ? { merchantId } : { shopId }),
-    }),
-  });
   const image = await publicImage(imageUrl);
-  const form = new FormData();
   const extension = image.contentType === "image/png" ? "png" : image.contentType === "image/webp" ? "webp" : "jpg";
-  form.append("image", new Blob([image.bytes], { type: image.contentType }), `sellerpilot.${extension}`);
-  const response = await fetch(`${shopeeEnvironment(environment)}${path}?${query}`, {
-    method: "POST",
-    body: form,
-    signal: AbortSignal.timeout(30_000),
-    headers: { accept: "application/json", "user-agent": "SellerPilot-Shopee-Media/1.0" },
-  });
-  const data = await response.json().catch(() => ({}));
+  const upload = async (scope) => {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const query = scope === "partner"
+      ? new URLSearchParams({
+          partner_id: partnerId,
+          timestamp: String(timestamp),
+          sign: buildShopeeSignature({ partnerId, partnerKey, path, timestamp }),
+        })
+      : new URLSearchParams({
+          partner_id: partnerId,
+          timestamp: String(timestamp),
+          access_token: accessToken,
+          [targetKey]: targetId,
+          sign: buildShopeeSignature({
+            partnerId,
+            partnerKey,
+            path,
+            timestamp,
+            accessToken,
+            ...(merchantId ? { merchantId } : { shopId }),
+          }),
+        });
+    const form = new FormData();
+    form.append("image", new Blob([image.bytes], { type: image.contentType }), `sellerpilot.${extension}`);
+    const response = await fetch(`${shopeeEnvironment(environment)}${path}?${query}`, {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+      headers: { accept: "application/json", "user-agent": "SellerPilot-Shopee-Media/1.0" },
+    });
+    return { response, data: await response.json().catch(() => ({})) };
+  };
+  let remote = await upload("target");
+  if (remote.data?.error === "error_sign") remote = await upload("partner");
+  const { response, data } = remote;
   const imageId = String(data?.response?.image_info?.image_id ?? data?.response?.image_id ?? "").trim();
   if (!response.ok || data?.error || !imageId) throw new Error(`Shopee 이미지 업로드 실패${data?.error ? ` · ${data.error}` : ""}`);
   return imageId;

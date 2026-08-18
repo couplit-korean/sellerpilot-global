@@ -182,6 +182,19 @@ test("Shopee authorization URL uses the current auth endpoint and preserves Sell
   assert.equal(url.searchParams.get("state"), "sellerpilot-shopee-test-state");
 });
 
+test("Shopee MediaSpace partner signature excludes shop authorization dimensions", () => {
+  const timestamp = 1_786_848_245;
+  const expected = createHmac("sha256", "partner-secret")
+    .update(`2031489/api/v2/media_space/upload_image${timestamp}`)
+    .digest("hex");
+  assert.equal(buildShopeeSignature({
+    partnerId: "2031489",
+    partnerKey: "partner-secret",
+    path: "/api/v2/media_space/upload_image",
+    timestamp,
+  }), expected);
+});
+
 test("all seven active channels define every normalized capability", () => {
   assert.deepEqual(activeChannelKeys, ["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"]);
   const expectedCapabilities = Object.keys(channelCatalog.qoo10.capabilities).sort();
