@@ -247,3 +247,18 @@ test("Lazada normalization excludes a matching parent and keeps the official nes
   assert.equal(suggestion?.id, "11");
   assert.deepEqual(suggestion?.path, ["Stuffed Toys", "Teddy Bears"]);
 });
+
+test("Lazada normalization does not choose a rice leaf merely because its parent path contains Pasta", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [{
+      category_id: "FOOD",
+      name: "Noodles, Pasta & Rice",
+      children: [
+        { category_id: "RICE", name: "White Rice", leaf: true },
+        { category_id: "PASTA", name: "Pasta", leaf: true },
+      ],
+    }] } }],
+  };
+  assert.equal(normalizeSuggestions("lazada", response, "펜네 파스타 식품")[0]?.id, "PASTA");
+});

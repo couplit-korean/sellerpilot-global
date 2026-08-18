@@ -162,6 +162,12 @@ function qoo10PriorityScore(query: string, candidate: CategorySuggestion) {
   return 0;
 }
 
+function qoo10CategoryCompatibility(query: string, candidate: CategorySuggestion) {
+  const path = candidate.path.join(" ").toLocaleLowerCase();
+  if (!/(ふるさと納税|고향세)/u.test(query.toLocaleLowerCase()) && path.includes("ふるさと納税")) return false;
+  return queryScore(qoo10SearchTerms(query), `${candidate.path.join(" ")} ${candidate.name}`) > 0;
+}
+
 function shopeeSearchTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   const aliases = [query];
@@ -275,6 +281,31 @@ function lazadaSearchTerms(query: string) {
   return aliases.join(" ");
 }
 
+function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestion) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  const name = candidate.name.toLocaleLowerCase();
+  const path = candidate.path.join(" ").toLocaleLowerCase();
+  if (/(rice|쌀|밥|nasi)/u.test(normalizedQuery)) return /rice|beras|nasi/u.test(name);
+  if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return /pasta|penne|noodle/u.test(name) && !/rice|beras/u.test(name);
+  if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return /flour|tepung/u.test(name);
+  if (/(teddy|plush|stuffed|테디|곰인형|beruang)/u.test(normalizedQuery)) return /teddy|plush|stuffed|soft toy|beruang/u.test(name);
+  if (/(toy\s?car|자동차.*완구|완구.*자동차|kereta)/u.test(normalizedQuery)) return /toy car|vehicle|kereta|car/u.test(name) && /toy|kereta|vehicle/u.test(path);
+  if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return /fish oil|omega|dha|epa|minyak ikan/u.test(`${path} ${name}`);
+  if (/(vitamin|비타민)/u.test(normalizedQuery)) return /vitamin|supplement/u.test(`${path} ${name}`);
+  if (/(storage\s?(?:box|bin)|수납.*박스|kotak simpanan)/u.test(normalizedQuery)) return /storage|organizer|kotak|box/u.test(name);
+  return lazadaQueryScore(lazadaSearchTerms(query), `${path} ${name}`) > 0;
+}
+
+function lazadaPriorityScore(query: string, candidate: CategorySuggestion) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  const name = candidate.name.toLocaleLowerCase();
+  const score = (terms: string[]) => terms.reduce((total, term, index) => name.includes(term) ? Math.max(total, terms.length - index) : total, 0);
+  if (/(rice|쌀|밥|nasi)/u.test(normalizedQuery)) return score(["ready to eat rice", "instant rice", "white rice", "rice"]);
+  if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return score(["penne", "pasta", "noodles"]);
+  if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return score(["wheat flour", "flour", "tepung"]);
+  return 0;
+}
+
 function smartstoreSearchTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   const aliases = [query];
@@ -293,7 +324,7 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
   const normalizedQuery = query.toLocaleLowerCase();
   const normalizedCandidate = candidate.toLocaleLowerCase();
   if (/(쌀|밥|rice)/u.test(normalizedQuery)) return /(즉석밥|쌀|백미|현미|잡곡|볶음밥|밥류)/u.test(normalizedCandidate);
-  if (/(파스타|펜네|pasta|penne)/u.test(normalizedQuery)) return /(파스타|스파게티|펜네|면류)/u.test(normalizedCandidate);
+  if (/(파스타|펜네|pasta|penne)/u.test(normalizedQuery)) return /(파스타|스파게티|펜네|면류)/u.test(normalizedCandidate) && !/소스/u.test(normalizedCandidate);
   if (/(밀가루|flour)/u.test(normalizedQuery)) return /(밀가루|부침가루|튀김가루|제빵용가루)/u.test(normalizedCandidate);
   if (/(브러시|스펀지|퍼프|뷰러|속눈썹|화장도구)/u.test(normalizedQuery)) return /(메이크업소품|화장소품|미용소품|브러시|퍼프|스펀지|뷰러)/u.test(normalizedCandidate);
   if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalizedQuery)) return /(화장품|스킨케어|크림|로션|메이크업)/u.test(normalizedCandidate);
@@ -316,7 +347,7 @@ function smartstorePriorityScore(query: string, candidate: CategorySuggestion) {
   const value = `${candidate.path.join(" ")} ${candidate.name}`.toLocaleLowerCase();
   const score = (terms: string[]) => terms.reduce((total, term, index) => value.includes(term) ? Math.max(total, terms.length - index) : total, 0);
   if (/(쌀|밥|rice)/u.test(normalizedQuery)) return score(["즉석밥", "백미", "쌀", "밥류"]);
-  if (/(파스타|펜네|pasta|penne)/u.test(normalizedQuery)) return score(["펜네", "파스타", "스파게티", "면류"]);
+  if (/(파스타|펜네|pasta|penne)/u.test(normalizedQuery)) return score(["펜네", "스파게티면", "면/파스타", "면류", "파스타"]);
   if (/(밀가루|flour)/u.test(normalizedQuery)) return score(["밀가루", "제빵용가루", "가루"]);
   if (/(자동차.*완구|완구.*자동차|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return score(["미니카", "자동차완구", "장난감자동차"]);
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return score(["리빙박스", "수납박스", "수납함", "정리함"]);
@@ -420,9 +451,9 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
 
   return [...deduplicated.values()]
     .filter((item) => item.leaf)
-    .filter((item) => channel !== "qoo10" || queryScore(qoo10SearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
+    .filter((item) => channel !== "qoo10" || qoo10CategoryCompatibility(query, item))
     .filter((item) => channel !== "shopee" || shopeeCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
-    .filter((item) => channel !== "lazada" || lazadaQueryScore(lazadaSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
+    .filter((item) => channel !== "lazada" || lazadaCategoryCompatibility(query, item))
     .filter((item) => channel !== "smartstore" || smartstoreCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
     .sort((left, right) => {
       if (channel === "qoo10") {
@@ -438,6 +469,11 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
       if (channel === "smartstore") {
         const leftPriority = smartstorePriorityScore(query, left);
         const rightPriority = smartstorePriorityScore(query, right);
+        if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+      }
+      if (channel === "lazada") {
+        const leftPriority = lazadaPriorityScore(query, left);
+        const rightPriority = lazadaPriorityScore(query, right);
         if (leftPriority !== rightPriority) return rightPriority - leftPriority;
       }
       return right.confidence - left.confidence;
