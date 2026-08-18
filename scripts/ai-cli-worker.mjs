@@ -417,35 +417,49 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     throw new Error(`Shopee 현지 숍 필수 속성을 확인하지 못했습니다${code ? `: ${code}` : ""}`);
   }
   const productHint = `${String(publishItem.item_name ?? body.global_item_name ?? "")} ${String(publishItem.description ?? body.description ?? "")}`;
-  const suppliedAttributes = [
-    ...(Array.isArray(body.attribute_list) ? body.attribute_list : []),
-    ...(Array.isArray(publishItem.attribute_list) ? publishItem.attribute_list : []),
-  ];
+  const globalAttributeRemote = await shopeeMerchantRequest({
+    payload: merchantPayload,
+    environment,
+    method: "GET",
+    path: "/api/v2/global_product/get_attribute_tree",
+    query: new URLSearchParams({ category_id_list: String(categoryId), language: "en" }),
+  });
+  if (!globalAttributeRemote.response.ok || globalAttributeRemote.data.error) {
+    throw new Error("Shopee 글로벌 필수 속성을 확인하지 못했습니다.");
+  }
+  const globalAttributeMetadata = objectRecords(globalAttributeRemote.data)
+    .filter((row) => row.attribute_id !== undefined);
   // Some Shopee shop/category combinations omit a reliable mandatory flag for
   // attributes that the create API still requires. Keep the recovery targeted:
   // selecting every optional enumeration can invent contradictory food facts.
   // Date-like implicit requirements use Shopee's custom-value representation.
   const expiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
   const expiryDate = `${String(expiry.getUTCDate()).padStart(2, "0")}/${String(expiry.getUTCMonth() + 1).padStart(2, "0")}/${expiry.getUTCFullYear()}`;
-  const requiredAttributes = mergeShopeeRequiredAttributes(suppliedAttributes, attributeMetadata, productHint, {
-    implicitRequired: {
-      "drink form": "Coffee Beans",
-      "expiry date": expiryDate,
-      "shelf life": "12 Months",
-      "shelf lifes": "12 Months",
-    },
+  const implicitRequired = {
+    "drink form": "Coffee Beans",
+    "expiry date": expiryDate,
+    "shelf life": "12 Months",
+    "shelf lifes": "12 Months",
+  };
+  const globalRequiredAttributes = mergeShopeeRequiredAttributes(body.attribute_list, globalAttributeMetadata, productHint, {
+    implicitRequired,
   });
-  if (requiredAttributes.unresolved.length) throw new Error(`Shopee 필수 속성 선택값이 없습니다: ${requiredAttributes.unresolved.join(", ")}`);
-  if (requiredAttributes.autoFilled.length) console.log(`[Shopee attribute autofill] category=${categoryId} · ${requiredAttributes.autoFilled.join(" | ").slice(0, 600)}`);
+  const localRequiredAttributes = mergeShopeeRequiredAttributes(publishItem.attribute_list, attributeMetadata, productHint, {
+    implicitRequired,
+  });
+  const unresolvedAttributes = [...new Set([...globalRequiredAttributes.unresolved, ...localRequiredAttributes.unresolved])];
+  if (unresolvedAttributes.length) throw new Error(`Shopee 필수 속성 선택값이 없습니다: ${unresolvedAttributes.join(", ")}`);
+  if (globalRequiredAttributes.autoFilled.length) console.log(`[Shopee global attribute autofill] category=${categoryId} · ${globalRequiredAttributes.autoFilled.join(" | ").slice(0, 600)}`);
+  if (localRequiredAttributes.autoFilled.length) console.log(`[Shopee local attribute autofill] category=${categoryId} · ${localRequiredAttributes.autoFilled.join(" | ").slice(0, 600)}`);
   publish.item = {
     ...publishItem,
     image: { image_id_list: imageIds },
     logistic: logistics,
-    attribute_list: requiredAttributes.attributes,
+    attribute_list: localRequiredAttributes.attributes,
   };
   return {
     ...argumentsValue,
-    body: { ...body, image: { image_id_list: imageIds }, attribute_list: requiredAttributes.attributes },
+    body: { ...body, image: { image_id_list: imageIds }, attribute_list: globalRequiredAttributes.attributes },
     publish,
   };
 }
