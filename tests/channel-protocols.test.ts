@@ -1093,6 +1093,7 @@ test("provider listing errors expose a sanitized actionable message", async () =
   globalThis.fetch = async () => Response.json({
     error: "invalid_attribute",
     message: "Missing attribute shade https://private.example/item?token=secret-value",
+    invalidInputs: [{ field: "detailAttribute.sellerCodeInfo", message: "sellerManagementCode is invalid" }],
   }, { status: 400 });
   try {
     const result = await executeChannelOperation({
@@ -1104,6 +1105,7 @@ test("provider listing errors expose a sanitized actionable message", async () =
     });
     assert.equal(result.ok, false);
     assert.match(result.safeMessage, /invalid_attribute|Missing attribute shade/);
+    assert.match(result.safeMessage, /sellerManagementCode is invalid/);
     assert.doesNotMatch(result.safeMessage, /private\.example|secret-value/);
   } finally {
     globalThis.fetch = originalFetch;

@@ -402,7 +402,11 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     ...(Array.isArray(body.attribute_list) ? body.attribute_list : []),
     ...(Array.isArray(publishItem.attribute_list) ? publishItem.attribute_list : []),
   ];
-  const requiredAttributes = mergeShopeeRequiredAttributes(suppliedAttributes, attributeMetadata, productHint);
+  // Some Shopee shop/category combinations return enumerated attributes without
+  // a reliable mandatory flag and then reject the publish request as missing
+  // that attribute (for example Drink Form). Populate every advertised local
+  // enumeration deterministically while preserving seller-supplied values.
+  const requiredAttributes = mergeShopeeRequiredAttributes(suppliedAttributes, attributeMetadata, productHint, { fillEnumerated: true });
   if (requiredAttributes.unresolved.length) throw new Error(`Shopee 필수 속성 선택값이 없습니다: ${requiredAttributes.unresolved.join(", ")}`);
   if (requiredAttributes.autoFilled.length) console.log(`[Shopee attribute autofill] category=${categoryId} · ${requiredAttributes.autoFilled.join(" | ").slice(0, 600)}`);
   publish.item = {

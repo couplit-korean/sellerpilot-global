@@ -58,6 +58,20 @@ test("Shopee local publish preserves seller input and exposes mandatory attribut
   assert.deepEqual(result.unresolved, ["Compliance Code"]);
 });
 
+test("Shopee local publish can fill enumerations whose mandatory flag is missing", () => {
+  const result = mergeShopeeRequiredAttributes([], [{
+    attribute_id: 12,
+    display_attribute_name: "Drink Form",
+    attribute_value_list: [
+      { value_id: 120, display_value_name: "Whole Bean" },
+      { value_id: 121, display_value_name: "Ground" },
+    ],
+  }], "roasted whole coffee beans", { fillEnumerated: true });
+  assert.deepEqual(result.attributes, [{ attribute_id: 12, attribute_value_list: [{ value_id: 120 }] }]);
+  assert.deepEqual(result.unresolved, []);
+  assert.match(result.autoFilled[0] ?? "", /Drink Form: Whole Bean/);
+});
+
 test("eBay item aspects use string arrays and an accepted country enumeration", () => {
   assert.deepEqual(normalizeEbayAspects({
     Brand: "Unbranded",

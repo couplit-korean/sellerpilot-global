@@ -202,6 +202,7 @@ function safeProviderError(data: Record<string, unknown>) {
   const keys = new Set([
     "error", "errors", "errorcode", "error_code", "errormsg", "error_msg", "errormessage", "error_message",
     "message", "msg", "detail", "details", "reason", "failure_reason", "issue", "issues",
+    "invalidinputs", "invalid_inputs", "invalidinput", "invalid_input",
   ]);
   const visit = (value: unknown, depth: number, keyed = false) => {
     if (depth > 6 || values.length >= 16 || value === null || value === undefined) return;

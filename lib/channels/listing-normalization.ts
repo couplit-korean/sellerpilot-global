@@ -90,7 +90,12 @@ function shopeeWords(value: unknown) {
   return String(value ?? "").toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 1);
 }
 
-export function mergeShopeeRequiredAttributes(existing: unknown, metadata: ShopeeAttributeMetadata[], productHint: string) {
+export function mergeShopeeRequiredAttributes(
+  existing: unknown,
+  metadata: ShopeeAttributeMetadata[],
+  productHint: string,
+  options: { fillEnumerated?: boolean } = {},
+) {
   const attributes = Array.isArray(existing)
     ? existing.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))).map((item) => structuredClone(item))
     : [];
@@ -102,10 +107,11 @@ export function mergeShopeeRequiredAttributes(existing: unknown, metadata: Shope
     const required = attribute.is_mandatory === true || attribute.is_mandatory === 1 || attribute.is_mandatory === "1"
       || attribute.mandatory === true || attribute.mandatory === 1 || attribute.mandatory === "1";
     const attributeId = Number(attribute.attribute_id);
-    if (!required || !Number.isSafeInteger(attributeId) || attributeId <= 0 || supplied.has(attributeId)) continue;
     const values = Array.isArray(attribute.attribute_value_list)
       ? attribute.attribute_value_list.filter((item): item is ShopeeAttributeValue => Boolean(item && typeof item === "object" && !Array.isArray(item)))
       : [];
+    const shouldFill = required || (options.fillEnumerated === true && values.length > 0);
+    if (!shouldFill || !Number.isSafeInteger(attributeId) || attributeId <= 0 || supplied.has(attributeId)) continue;
     const ranked = values
       .map((value, index) => {
         const name = String(value.display_value_name ?? value.original_value_name ?? value.name ?? "").trim();
@@ -118,10 +124,11 @@ export function mergeShopeeRequiredAttributes(existing: unknown, metadata: Shope
       .sort((left, right) => right.score - left.score || left.index - right.index);
     const selected = ranked[0];
     const label = String(attribute.display_attribute_name ?? attribute.name ?? attributeId).trim();
-    if (!selected) {
+    if (!selected && required) {
       unresolved.push(label);
       continue;
     }
+    if (!selected) continue;
     attributes.push({ attribute_id: attributeId, attribute_value_list: [{ value_id: Number(selected.value.value_id) }] });
     supplied.add(attributeId);
     autoFilled.push(`${label}: ${selected.name || selected.value.value_id}`);
