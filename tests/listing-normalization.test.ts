@@ -4,6 +4,7 @@ import {
   marketplaceListingCurrency,
   marketplaceListingPrice,
   mergeShopeeRequiredAttributes,
+  normalizeEbayAspects,
   normalizeCoupangAttributeValue,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
@@ -55,6 +56,19 @@ test("Shopee local publish preserves seller input and exposes mandatory attribut
   ], "test product");
   assert.equal(result.attributes.length, 1);
   assert.deepEqual(result.unresolved, ["Compliance Code"]);
+});
+
+test("eBay item aspects use string arrays and an accepted country enumeration", () => {
+  assert.deepEqual(normalizeEbayAspects({
+    Brand: "Unbranded",
+    Shade: ["Assorted"],
+    Empty: "",
+    "Country/Region of Manufacture": "대한민국",
+  }), {
+    Brand: ["Unbranded"],
+    Shade: ["Assorted"],
+    "Country/Region of Manufacture": ["Korea, South"],
+  });
 });
 
 test("Lazada migration rewrites images embedded in rich description HTML", () => {

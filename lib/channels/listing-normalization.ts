@@ -128,3 +128,24 @@ export function mergeShopeeRequiredAttributes(existing: unknown, metadata: Shope
   }
   return { attributes, autoFilled, unresolved };
 }
+
+const ebayCountryNames = new Map([
+  ["대한민국", "Korea, South"],
+  ["한국", "Korea, South"],
+  ["south korea", "Korea, South"],
+  ["republic of korea", "Korea, South"],
+  ["중국", "China"],
+  ["일본", "Japan"],
+  ["미국", "United States"],
+]);
+
+export function normalizeEbayAspects(values: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(values).flatMap(([name, raw]) => {
+    const list = (Array.isArray(raw) ? raw : [raw]).map((value) => String(value ?? "").trim()).filter(Boolean);
+    if (!list.length) return [];
+    const normalized = name === "Country/Region of Manufacture"
+      ? list.map((value) => ebayCountryNames.get(value.toLocaleLowerCase()) ?? value)
+      : list;
+    return [[name, [...new Set(normalized)]]];
+  }));
+}

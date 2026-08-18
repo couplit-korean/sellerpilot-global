@@ -77,5 +77,10 @@ export function classifyListingFailure(result: ChannelOperationResult): ListingF
 
 export function applyListingRemediation(result: ChannelOperationResult) {
   const remediation = classifyListingFailure(result);
-  return remediation ? { result: { ...result, safeMessage: remediation.safeMessage }, remediation } : { result, remediation: null };
+  if (!remediation) return { result, remediation: null };
+  const providerDetail = result.safeMessage.trim();
+  const safeMessage = providerDetail && providerDetail !== remediation.safeMessage
+    ? `${remediation.safeMessage} 원격 응답: ${providerDetail}`.slice(0, 1000)
+    : remediation.safeMessage;
+  return { result: { ...result, safeMessage }, remediation };
 }

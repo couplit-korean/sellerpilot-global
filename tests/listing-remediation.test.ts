@@ -43,6 +43,18 @@ test("image errors surface the automatic normalized-image recovery state", () =>
   assert.match(remediation?.safeMessage ?? "", /1200×1200 JPEG/);
 });
 
+test("remediation keeps a sanitized provider detail after the operator guidance", () => {
+  const result = applyListingRemediation({
+    ok: false,
+    channel: "ebay",
+    operation: "listing.create",
+    safeMessage: "eBay listing.create failed · Brand is mandatory and must be an array",
+    steps: [{ name: "inventory-item", ok: false, status: 400, data: { message: "Brand is mandatory and must be an array" } }],
+  });
+  assert.match(result.result.safeMessage, /필수 입력값/);
+  assert.match(result.result.safeMessage, /Brand is mandatory and must be an array/);
+});
+
 test("Temu and eBay image readback failures remain automatically retryable image errors", () => {
   for (const [channel, marker] of [
     ["temu", "TEMU_IMAGE_READBACK_MISSING"],
