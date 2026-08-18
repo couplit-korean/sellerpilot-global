@@ -99,6 +99,7 @@ type ShopeeAttributeMetadata = {
   display_attribute_name?: unknown;
   is_mandatory?: unknown;
   mandatory?: unknown;
+  mandatory_region?: unknown;
   attribute_value_list?: unknown;
 };
 
@@ -112,7 +113,7 @@ export function mergeShopeeRequiredAttributes(
   existing: unknown,
   metadata: ShopeeAttributeMetadata[],
   productHint: string,
-  options: { fillEnumerated?: boolean; implicitRequired?: Record<string, true | string> } = {},
+  options: { fillEnumerated?: boolean; implicitRequired?: Record<string, true | string>; marketCode?: string } = {},
 ) {
   const attributes = Array.isArray(existing)
     ? existing.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))).map((item) => structuredClone(item))
@@ -126,8 +127,13 @@ export function mergeShopeeRequiredAttributes(
     const normalizedLabel = label.toLocaleLowerCase();
     const implicitValue = Object.entries(options.implicitRequired ?? {})
       .find(([name]) => name.toLocaleLowerCase() === normalizedLabel)?.[1];
-    const required = attribute.is_mandatory === true || attribute.is_mandatory === 1 || attribute.is_mandatory === "1"
-      || attribute.mandatory === true || attribute.mandatory === 1 || attribute.mandatory === "1";
+    const requiredRegions = Array.isArray(attribute.mandatory_region)
+      ? attribute.mandatory_region.map(String).map((value) => value.toUpperCase())
+      : [];
+    const requiredForMarket = !requiredRegions.length || !options.marketCode
+      || requiredRegions.includes(options.marketCode.toUpperCase());
+    const required = requiredForMarket && (attribute.is_mandatory === true || attribute.is_mandatory === 1 || attribute.is_mandatory === "1"
+      || attribute.mandatory === true || attribute.mandatory === 1 || attribute.mandatory === "1");
     const attributeId = Number(attribute.attribute_id);
     const values = Array.isArray(attribute.attribute_value_list)
       ? attribute.attribute_value_list.filter((item): item is ShopeeAttributeValue => Boolean(item && typeof item === "object" && !Array.isArray(item)))

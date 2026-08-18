@@ -171,6 +171,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(cliWorker, /fallbackEnglishProductLabel/);
   assert.match(cliWorker, /formulation: "Stick"/);
   assert.match(cliWorker, /categoryId === 101642/);
+  assert.match(cliWorker, /categoryId === 100824/);
   assert.match(categoryWorkbench, /row\.status === "active" && row\.environment === "production"/);
   assert.match(publishWorkbench, /existingListing\?\.status === "failed" \? crypto\.randomUUID\(\)/);
   assert.doesNotMatch(packageJson, /local-analyzer-server|run-local-demo/);

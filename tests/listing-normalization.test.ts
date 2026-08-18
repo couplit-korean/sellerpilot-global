@@ -93,6 +93,18 @@ test("Shopee local publish fills implicit enumerations and free-text dates whose
   assert.match(result.autoFilled[1] ?? "", /Expiry Date: 19\/08\/2027/);
 });
 
+test("Shopee ignores attributes mandatory only in other markets", () => {
+  const result = mergeShopeeRequiredAttributes([], [{
+    attribute_id: 100010,
+    name: "shelf lifes",
+    mandatory: true,
+    mandatory_region: ["CO"],
+    attribute_value_list: [{ value_id: 593, name: "12 Months" }],
+  }], "Lipstick", { marketCode: "SG" });
+  assert.deepEqual(result.attributes, []);
+  assert.deepEqual(result.unresolved, []);
+});
+
 test("eBay item aspects use string arrays and an accepted country enumeration", () => {
   assert.deepEqual(normalizeEbayAspects({
     Brand: "Unbranded",

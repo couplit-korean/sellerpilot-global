@@ -452,12 +452,15 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   const categoryImplicitRequired = categoryId === 101642 || /(?:lipstick|lip\s*makeup|립스틱)/iu.test(productHint)
     ? { formulation: "Stick" }
     : {};
-  const globalImplicitRequired = {
+  const foodImplicitRequired = categoryId === 100824 ? {
     "drink form": "Coffee Beans",
     "expiry date": expiryDate,
     "shelf life": "12 Months",
     "shelf lifes": "12 Months",
     "packaging type": "Bag",
+  } : {};
+  const globalImplicitRequired = {
+    ...foodImplicitRequired,
     ...categoryImplicitRequired,
   };
   const localImplicitRequired = {
@@ -466,9 +469,11 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   };
   const globalRequiredAttributes = mergeShopeeRequiredAttributes(body.attribute_list, globalAttributeMetadata, productHint, {
     implicitRequired: globalImplicitRequired,
+    marketCode: String(publish.shop_region ?? ""),
   });
   const localRequiredAttributes = mergeShopeeRequiredAttributes(publishItem.attribute_list, attributeMetadata, productHint, {
     implicitRequired: localImplicitRequired,
+    marketCode: String(publish.shop_region ?? ""),
   });
   const unresolvedAttributes = [...new Set([...globalRequiredAttributes.unresolved, ...localRequiredAttributes.unresolved])];
   if (unresolvedAttributes.length) throw new Error(`Shopee 필수 속성 선택값이 없습니다: ${unresolvedAttributes.join(", ")}`);
