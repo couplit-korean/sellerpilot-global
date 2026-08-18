@@ -289,6 +289,40 @@ function smartstoreSearchTerms(query: string) {
   return aliases.join(" ");
 }
 
+function smartstoreCategoryCompatibility(query: string, candidate: string) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  const normalizedCandidate = candidate.toLocaleLowerCase();
+  if (/(쌀|밥|rice)/u.test(normalizedQuery)) return /(즉석밥|쌀|백미|현미|잡곡|볶음밥|밥류)/u.test(normalizedCandidate);
+  if (/(파스타|펜네|pasta|penne)/u.test(normalizedQuery)) return /(파스타|스파게티|펜네|면류)/u.test(normalizedCandidate);
+  if (/(밀가루|flour)/u.test(normalizedQuery)) return /(밀가루|부침가루|튀김가루|제빵용가루)/u.test(normalizedCandidate);
+  if (/(브러시|스펀지|퍼프|뷰러|속눈썹|화장도구)/u.test(normalizedQuery)) return /(메이크업소품|화장소품|미용소품|브러시|퍼프|스펀지|뷰러)/u.test(normalizedCandidate);
+  if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalizedQuery)) return /(화장품|스킨케어|크림|로션|메이크업)/u.test(normalizedCandidate);
+  if (/(티셔츠|셔츠|반팔|t[\s-]?shirt)/u.test(normalizedQuery)) return /(티셔츠|반팔티|상의|패션의류)/u.test(normalizedCandidate);
+  if (/(후드|재킷|hood|jacket)/u.test(normalizedQuery)) return /(후드|후드집업|재킷|점퍼|아우터)/u.test(normalizedCandidate);
+  if (/(테디|곰인형|봉제|teddy|plush)/u.test(normalizedQuery)) return /(봉제인형|곰인형|인형)/u.test(normalizedCandidate);
+  if (/(자동차.*완구|완구.*자동차|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return /(자동차완구|미니카|장난감자동차|자동차장난감)/u.test(normalizedCandidate);
+  if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalizedQuery)) {
+    return /(건강식품|건강기능식품|영양제|비타민|오메가3|어유|epa|dha)/u.test(normalizedCandidate)
+      && !/(반려|애완|동물)/u.test(normalizedCandidate);
+  }
+  if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return /(수납박스|리빙박스|수납함|정리함|정리 바구니)/u.test(normalizedCandidate);
+  if (/(옷걸이|행거|hanger)/u.test(normalizedQuery)) return /(옷걸이|의류수납|세탁용품)/u.test(normalizedCandidate);
+  if (/(캔버스.*토트|토트백|tote)/u.test(normalizedQuery)) return /(토트백|숄더백|에코백)/u.test(normalizedCandidate);
+  return queryScore(smartstoreSearchTerms(query), candidate) > 0;
+}
+
+function smartstorePriorityScore(query: string, candidate: CategorySuggestion) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  const value = `${candidate.path.join(" ")} ${candidate.name}`.toLocaleLowerCase();
+  const score = (terms: string[]) => terms.reduce((total, term, index) => value.includes(term) ? Math.max(total, terms.length - index) : total, 0);
+  if (/(쌀|밥|rice)/u.test(normalizedQuery)) return score(["즉석밥", "백미", "쌀", "밥류"]);
+  if (/(파스타|펜네|pasta|penne)/u.test(normalizedQuery)) return score(["펜네", "파스타", "스파게티", "면류"]);
+  if (/(밀가루|flour)/u.test(normalizedQuery)) return score(["밀가루", "제빵용가루", "가루"]);
+  if (/(자동차.*완구|완구.*자동차|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return score(["미니카", "자동차완구", "장난감자동차"]);
+  if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return score(["리빙박스", "수납박스", "수납함", "정리함"]);
+  return 0;
+}
+
 function lazadaTreeLeaves(value: unknown, parentPath: string[] = [], depth = 0): CategorySuggestion[] {
   if (depth > 10 || value === null || value === undefined) return [];
   if (Array.isArray(value)) return value.flatMap((item) => lazadaTreeLeaves(item, parentPath, depth + 1));
@@ -389,7 +423,7 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
     .filter((item) => channel !== "qoo10" || queryScore(qoo10SearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
     .filter((item) => channel !== "shopee" || shopeeCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
     .filter((item) => channel !== "lazada" || lazadaQueryScore(lazadaSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
-    .filter((item) => channel !== "smartstore" || queryScore(smartstoreSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
+    .filter((item) => channel !== "smartstore" || smartstoreCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
     .sort((left, right) => {
       if (channel === "qoo10") {
         const leftPriority = qoo10PriorityScore(query, left);
@@ -399,6 +433,11 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
       if (channel === "shopee") {
         const leftPriority = shopeePriorityScore(query, left);
         const rightPriority = shopeePriorityScore(query, right);
+        if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+      }
+      if (channel === "smartstore") {
+        const leftPriority = smartstorePriorityScore(query, left);
+        const rightPriority = smartstorePriorityScore(query, right);
         if (leftPriority !== rightPriority) return rightPriority - leftPriority;
       }
       return right.confidence - left.confidence;

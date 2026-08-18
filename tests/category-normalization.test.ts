@@ -165,6 +165,7 @@ const smartstoreCategoryResponse = {
     ok: true,
     status: 200,
     data: { items: [
+      { id: "500000", name: "갈비찜", wholeCategoryName: "식품>축산물>축산가공식품>갈비찜", last: true },
       { id: "500001", name: "풀오버", wholeCategoryName: "패션의류>여성의류>니트>풀오버", last: true },
       { id: "500002", name: "수납소파", wholeCategoryName: "가구/인테리어>거실가구>소파>수납소파", last: true },
       { id: "500003", name: "리빙박스", wholeCategoryName: "생활/건강>생활용품>수납/정리용품>리빙박스", last: true },
@@ -172,6 +173,17 @@ const smartstoreCategoryResponse = {
     ] },
   }],
 };
+
+test("Smartstore category normalization rejects unrelated processed food for an instant-rice query", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
+      { id: "FOOD-MEAT", name: "갈비찜", wholeCategoryName: "식품>축산물>축산가공식품>갈비찜", last: true },
+      { id: "FOOD-RICE", name: "즉석밥", wholeCategoryName: "식품>농산물>쌀>즉석밥", last: true },
+    ] } }],
+  };
+  assert.equal(normalizeSuggestions("smartstore", response, "즉석밥 흰쌀밥")[0]?.id, "FOOD-RICE");
+});
 
 test("Smartstore category normalization ranks a storage-box leaf above unrelated equal-score leaves", () => {
   const suggestions = normalizeSuggestions("smartstore", smartstoreCategoryResponse, "[API TEST] 수납 박스 이미지 샘플");
