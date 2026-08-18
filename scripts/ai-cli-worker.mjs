@@ -380,6 +380,7 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     path: "/api/v2/product/get_attribute_tree",
     query: new URLSearchParams({ category_id_list: String(categoryId), language: "en" }),
   });
+  let supplementalAttributeRows = [];
   if (!attributeRemote.response.ok || attributeRemote.data.error) {
     attributeRemote = await shopeeRequest({
       payload: shopPayload,
@@ -388,9 +389,28 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
       path: "/api/v2/product/get_attributes",
       query: new URLSearchParams({ category_id: String(categoryId), language: "en" }),
     });
+  } else {
+    const supplementalRemote = await shopeeRequest({
+      payload: shopPayload,
+      environment,
+      method: "GET",
+      path: "/api/v2/product/get_attributes",
+      query: new URLSearchParams({ category_id: String(categoryId), language: "en" }),
+    });
+    if (supplementalRemote.response.ok && !supplementalRemote.data.error) {
+      supplementalAttributeRows = objectRecords(supplementalRemote.data)
+        .filter((row) => row.attribute_id !== undefined);
+    }
   }
-  const attributeRows = objectRecords(attributeRemote.data)
-    .filter((row) => row.attribute_id !== undefined);
+  const attributeRowMap = [...objectRecords(attributeRemote.data), ...supplementalAttributeRows]
+    .filter((row) => row.attribute_id !== undefined)
+    .reduce((rows, row) => {
+      const attributeId = Number(row.attribute_id);
+      const previous = rows.get(attributeId) ?? {};
+      rows.set(attributeId, { ...previous, ...row });
+      return rows;
+    }, new Map());
+  const attributeRows = Array.from(attributeRowMap.values());
   const attributeMetadata = attributeRows;
   if (!attributeRemote.response.ok || attributeRemote.data.error) {
     const code = String(attributeRemote.data.error ?? attributeRemote.response.status).replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 80);
