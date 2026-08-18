@@ -646,6 +646,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const key = stateKey(channel);
     setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "suggesting", error: undefined } }));
     try {
+      if (channel === "lazada" && !sourceImageUrl) throw new Error("Lazada 공식 카테고리 추천에 사용할 대표이미지를 불러오지 못했습니다.");
       const marketArgs = marketArguments(channel);
       const args: Record<string, unknown> = channel === "coupang"
         ? { query: textQuery, body: { productDescription: description.slice(0, 3000), attributes: {} } }
@@ -659,6 +660,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
                   ...marketArgs,
                   queryParams: {
                     ...((marketArgs.queryParams as Record<string, string> | undefined) ?? {}),
+                    image_url: sourceImageUrl,
                   },
                 }
               : channel === "qoo10"
