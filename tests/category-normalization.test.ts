@@ -118,6 +118,10 @@ const shopeeGlobalResponse = {
           { category_id: 101240, display_category_name: "Mugs", has_children: false },
           { category_id: 100629, display_category_name: "Beauty & Personal Care > Bath & Body > Bar Soap", has_children: false },
           { category_id: 100630, display_category_name: "Shoes", has_children: false },
+          { category_id: 100781, display_category_name: "Food & Beverages > Food Staples > Rice", has_children: false },
+          { category_id: 100912, display_category_name: "Toys, Games & Collectibles > Toy Vehicles > Toy Cars", has_children: false },
+          { category_id: 100623, display_category_name: "Health & Wellness > Vitamins & Supplements > Fish Oil & Omega 3", has_children: false },
+          { category_id: 100618, display_category_name: "Home & Living > Home Organizers > Storage Boxes", has_children: false },
         ],
       },
     },
@@ -138,6 +142,19 @@ test("Shopee GlobalProduct normalization blocks arbitrary categories without a l
 test("Shopee GlobalProduct normalization maps soap instead of an unrelated beauty leaf", () => {
   assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, "Natural cleansing soap bar")[0]?.id, "100629");
 });
+
+const shopeeProgramCatalogCases = [
+  ["흰쌀밥 식품 샘플", "100781"],
+  ["노란색 자동차 완구", "100912"],
+  ["어유 오메가3 캡슐 건강식품", "100623"],
+  ["생활 수납 박스", "100618"],
+] as const;
+
+for (const [query, expectedId] of shopeeProgramCatalogCases) {
+  test(`Shopee program catalog maps ${query}`, () => {
+    assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, query)[0]?.id, expectedId);
+  });
+}
 
 const smartstoreCategoryResponse = {
   ok: true,
