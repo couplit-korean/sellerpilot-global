@@ -346,8 +346,12 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
   if (/(쌀|밥|rice)/u.test(normalizedQuery)) return /(즉석밥|쌀|백미|현미|잡곡|볶음밥|밥류)/u.test(normalizedCandidate);
   if (/(파스타|펜네|pasta|penne)/u.test(normalizedQuery)) return /(파스타|스파게티|펜네|면류)/u.test(normalizedCandidate) && !/소스/u.test(normalizedCandidate);
   if (/(밀가루|flour)/u.test(normalizedQuery)) return /(밀가루|부침가루|튀김가루|제빵용가루)/u.test(normalizedCandidate);
-  if (/(스펀지|퍼프)/u.test(normalizedQuery)) return /(스펀지|퍼프)/u.test(normalizedCandidate) && !/브러시/u.test(normalizedCandidate);
-  if (/(브러시)/u.test(normalizedQuery)) return /브러시/u.test(normalizedCandidate) && !/(클렌저|세척|케이스)/u.test(normalizedCandidate);
+  if (/(스펀지|퍼프)/u.test(normalizedQuery)) return /(스펀지|퍼프)/u.test(normalizedCandidate)
+    && /(화장품|미용|뷰티|메이크업)/u.test(normalizedCandidate)
+    && !/(유아|목욕|청소|주방|브러시)/u.test(normalizedCandidate);
+  if (/(브러시)/u.test(normalizedQuery)) return /브러시/u.test(normalizedCandidate)
+    && /(화장품|미용|뷰티|메이크업)/u.test(normalizedCandidate)
+    && !/(클렌저|세척|케이스|칫솔)/u.test(normalizedCandidate);
   if (/(뷰러|속눈썹)/u.test(normalizedQuery)) return /(뷰러|아이래쉬컬러)/u.test(normalizedCandidate);
   if (/(화장도구)/u.test(normalizedQuery)) return /(메이크업소품|화장소품|미용소품|브러시|퍼프|스펀지|뷰러)/u.test(normalizedCandidate);
   if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalizedQuery)) return /(화장품|스킨케어|크림|로션|메이크업)/u.test(normalizedCandidate);

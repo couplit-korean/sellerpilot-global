@@ -218,6 +218,7 @@ test("Smartstore beauty-tool normalization does not map a sponge to a brush", ()
   const response = {
     ok: true,
     steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
+      { id: "BABY", name: "유아목욕스펀지", wholeCategoryName: "출산>육아>목욕용품>유아목욕스펀지", last: true },
       { id: "BRUSH", name: "브러시세트", wholeCategoryName: "화장품>미용>뷰티소품>메이크업브러시>브러시세트", last: true },
       { id: "SPONGE", name: "메이크업스펀지", wholeCategoryName: "화장품>미용>뷰티소품>메이크업소품>메이크업스펀지", last: true },
     ] } }],
