@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 
 const label = "chatgpt.sellerpilot.ai-worker";
 const service = "SellerPilot AI Worker";
+const temuEgressService = "SellerPilot Temu Egress IPs";
 const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
 const launchAgents = join(homedir(), "Library", "LaunchAgents");
 const logDirectory = join(homedir(), "Library", "Logs", "SellerPilot");
@@ -25,6 +26,14 @@ function xml(value) {
 function keychainToken() {
   try {
     return command("/usr/bin/security", ["find-generic-password", "-s", service, "-a", sellerpilotUrl, "-w"]);
+  } catch {
+    return "";
+  }
+}
+
+function keychainTemuEgressIps() {
+  try {
+    return command("/usr/bin/security", ["find-generic-password", "-s", temuEgressService, "-a", sellerpilotUrl, "-w"]);
   } catch {
     return "";
   }
@@ -80,6 +89,7 @@ if (process.argv.includes("--status")) {
   }
   console.log(`SellerPilot AI 작업자: ${launchStatus}`);
   console.log(`키체인 토큰: ${token.startsWith("spw_") ? "저장됨" : "없음"}`);
+  console.log(`Temu 작업자 허용 IP: ${keychainTemuEgressIps() ? "설정됨" : "없음"}`);
   console.log(`서버: ${sellerpilotUrl}`);
   process.exit(launchStatus === "미설치" || !token.startsWith("spw_") ? 1 : 0);
 }

@@ -32,9 +32,12 @@ SellerPilot은 OpenAI API Key를 사용하지 않습니다. 관리자가 `API �
 codex login status
 npm run ai:worker:install
 npm run ai:worker:status
+npm run ai:worker:temu-egress
 ```
 
 Vercel은 비공개 Supabase 작업 큐와 서명된 이미지 URL만 처리합니다. ChatGPT OAuth 자격은 Mac 밖으로 전송하거나 저장하지 않습니다. 이미지 생성은 설치된 [`wjb127/codex-image`](https://github.com/wjb127/codex-image) 스킬과 Codex 내장 `image_gen`만 사용합니다. 실패한 작업을 예시 결과로 바꾸지 않으며 운영 화면에서 재시도·취소할 수 있습니다.
+
+Temu는 모바일·웹 클라이언트가 직접 호출하지 않습니다. 모든 사용자는 SellerPilot API로 요청하고, Temu API 호출은 허용된 채널 작업자에서만 실행됩니다. `ai:worker:temu-egress`는 현재 작업자의 공인 IP를 macOS 키체인에 저장하며, 실행 시 등록값과 실제 송신 IP가 다르면 Temu 작업만 `TEMU_EGRESS_IP_CHANGED`로 중지합니다. 작업자를 늘릴 때는 각 작업자의 고정 송신 IP를 Temu에 추가하거나 하나의 고정 egress 게이트웨이를 사용해야 합니다.
 
 기본 모델은 Codex CLI의 `gpt-5.6-sol`이며 필요할 때만 `SELLERPILOT_CODEX_MODEL` 환경변수로 바꿀 수 있습니다. 작업자는 시작할 때 `codex login status`가 `Logged in using ChatGPT`인지 확인하고, 셸에 남아 있는 `OPENAI_API_KEY`는 자식 프로세스에 전달하지 않습니다.
 - 서비스 전체 흐름을 설명하는 화면형 스토리보드

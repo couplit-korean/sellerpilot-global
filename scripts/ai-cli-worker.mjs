@@ -15,6 +15,7 @@ import {
   replaceMarketplaceImageUrls,
 } from "../lib/channels/listing-normalization.ts";
 import { executeChannelOperation } from "../lib/channels/operations.ts";
+import { evaluateTemuEgressIp, parseTemuEgressAllowlist } from "../lib/channels/temu-egress-policy.ts";
 import {
   ensureLazadaAccessToken,
   ensureShopeeAccessToken,
@@ -51,6 +52,24 @@ function loadWorkerToken() {
 }
 
 const workerToken = loadWorkerToken();
+function loadTemuEgressAllowlist() {
+  const environmentValue = process.env.SELLERPILOT_TEMU_EGRESS_IPS?.trim();
+  if (environmentValue) return parseTemuEgressAllowlist(environmentValue);
+  if (process.platform !== "darwin") return [];
+  try {
+    const stored = execFileSync("/usr/bin/security", [
+      "find-generic-password",
+      "-s", "SellerPilot Temu Egress IPs",
+      "-a", sellerpilotUrl,
+      "-w",
+    ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return parseTemuEgressAllowlist(stored);
+  } catch {
+    return [];
+  }
+}
+
+const temuEgressAllowlist = loadTemuEgressAllowlist();
 const pollMs = Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS ?? 5_000));
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
@@ -60,7 +79,9 @@ const schemaPath = resolve("scripts/ai-studio-output.schema.json");
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.6";
+const workerVersion = "sellerpilot-cli-worker/1.7";
+const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
+let temuEgressCache = { checkedAt: 0, currentIp: "" };
 
 class JobCancelledError extends Error {
   constructor() {
@@ -84,6 +105,34 @@ process.once("SIGTERM", () => { stopping = true; });
 
 function delay(ms) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+async function currentPublicIp() {
+  if (Date.now() - temuEgressCache.checkedAt < temuEgressCacheMs && temuEgressCache.currentIp) {
+    return temuEgressCache.currentIp;
+  }
+  for (const url of ["https://api.ipify.org", "https://checkip.amazonaws.com"]) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      const value = (await response.text()).trim();
+      if (response.ok && isIP(value) !== 0) {
+        temuEgressCache = { checkedAt: Date.now(), currentIp: value };
+        return value;
+      }
+    } catch {
+      // Try the next independent public-IP service.
+    }
+  }
+  return "";
+}
+
+async function assertTemuEgressAllowed() {
+  if (!temuEgressAllowlist.length) {
+    const decision = evaluateTemuEgressIp(temuEgressAllowlist, "");
+    throw new Error(`${decision.code}: ${decision.message}`);
+  }
+  const decision = evaluateTemuEgressIp(temuEgressAllowlist, await currentPublicIp());
+  if (!decision.ok) throw new Error(`${decision.code}: ${decision.message}`);
 }
 
 async function api(path, init = {}) {
@@ -1075,6 +1124,7 @@ async function lazadaOAuthResult(job) {
 
 async function processGatewayJob(job) {
   try {
+    if (job.channel === "temu") await assertTemuEgressAllowed();
     let result;
     let credentialRefresh;
     if (job.operation === "oauth.exchange") {
@@ -1284,6 +1334,7 @@ async function processGatewayJob(job) {
 }
 
 console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · model=${model}`);
+console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 8);
 const maxAiConcurrency = Math.min(8, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 8));
 const activeAiJobs = new Set();
