@@ -235,9 +235,9 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
     fields: [
       { key: "client_id", label: "Application ID", placeholder: "Commerce API Application ID" },
       { key: "client_secret", label: "Application Secret", secret: true, placeholder: "Commerce API Secret" },
-      { key: "token_type", label: "인증 유형", placeholder: "SELLER", help: "상품·주문 등 판매자 데이터는 SELLER 유형만 사용합니다.", options: [{ value: "SELLER", label: "SELLER · 판매자 데이터" }] },
-      { key: "account_id", label: "판매자 UID (account_id)", placeholder: "Commerce API 판매자 UID", help: "로그인 이메일이 아니라 애플리케이션에 연결된 판매자 UID입니다." },
-      { key: "after_service_phone", label: "스토어 A/S 전화번호", secret: true, placeholder: "스마트스토어에 등록된 실제 연락처", help: "상품 A/S 필수값이며 기존 스토어 정보와 같은 번호만 입력합니다." },
+      { key: "token_type", label: "인증 유형", placeholder: "SELF", help: "내 스토어 애플리케이션은 SELF, 솔루션 구독 판매자 연동은 SELLER를 사용합니다.", options: [{ value: "SELF", label: "SELF · 내 스토어 앱" }, { value: "SELLER", label: "SELLER · 솔루션 구독 판매자" }] },
+      { key: "account_id", label: "판매자 ID/UID (account_id)", optional: true, placeholder: "SELLER 유형에서만 필수", help: "SELF 유형은 비우고, SELLER 유형은 연결된 판매자 ID 또는 UID를 입력합니다." },
+      { key: "after_service_phone", label: "스토어 A/S 전화번호", secret: true, optional: true, placeholder: "비우면 판매자 주소록에서 자동 조회", help: "주소록 연락처를 자동 사용하며, 다른 실제 A/S 번호가 필요할 때만 입력합니다." },
     ],
     officialDocs: [
       { label: "API센터 앱 관리", url: "https://apicenter.commerce.naver.com/ko/basic/main" },

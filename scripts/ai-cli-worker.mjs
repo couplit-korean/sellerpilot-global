@@ -18,6 +18,7 @@ import {
   exchangeShopeeOAuthToken,
   fetchNaverAccessToken,
   lazadaRequest,
+  naverRequest,
   shopeeMerchantRequest,
   shopeePartnerRequest,
   shopeeEnvironment,
@@ -335,9 +336,22 @@ async function prepareLazadaListing(payload, argumentsValue) {
 async function prepareSmartstoreListing(payload, argumentsValue) {
   const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 10) : [];
   if (!imageUrls.length) throw new Error("네이버 등록 이미지가 없습니다.");
-  const phone = textValue(payload, "after_service_phone");
-  if (!phone) throw new Error("NAVER_AFTER_SERVICE_PHONE_MISSING");
   const token = await fetchNaverAccessToken(payload);
+  let phone = textValue(payload, "after_service_phone");
+  if (!phone) {
+    const addressRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "GET",
+      path: "/v1/seller/addressbooks-for-page",
+      query: new URLSearchParams({ page: "1" }),
+    });
+    const addressBooks = Array.isArray(addressRemote.data?.addressBooks) ? addressRemote.data.addressBooks : [];
+    const address = addressBooks.find((item) => item?.addressType === "REPRESENTATIVE")
+      ?? addressBooks.find((item) => item?.addressType === "RELEASE")
+      ?? addressBooks[0];
+    phone = String(address?.phoneNumber1 ?? address?.phoneNumber2 ?? "").trim();
+    if (!addressRemote.response.ok || !phone) throw new Error("NAVER_AFTER_SERVICE_PHONE_MISSING");
+  }
   const form = new FormData();
   for (let index = 0; index < imageUrls.length; index += 1) {
     const image = await publicImage(imageUrls[index]);

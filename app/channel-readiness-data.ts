@@ -154,7 +154,7 @@ export const channelReadiness: ChannelReadiness[] = [
       { label: "판매자 세션", state: "verified", evidence: "Couplet Seoul 통합매니저 스마트스토어센터 로그인 확인" },
       { label: "API센터 세션", state: "verified", evidence: "개발업체 커플릿 계정으로 Commerce API센터 로그인" },
       { label: "인증 서명", state: "verified", evidence: "client_id_timestamp bcrypt → Base64" },
-      { label: "토큰 정책", state: "verified", evidence: "판매자 API는 SELLER + account_id · 10,800초 토큰 · GW.AUTHN 1회 재발급" },
+      { label: "토큰 정책", state: "verified", evidence: "내 스토어 앱 SELF / 솔루션 SELLER + account_id · 10,800초 토큰 · GW.AUTHN 1회 재발급" },
       { label: "주문 체크포인트", state: "verified", evidence: "moreFrom/moreSequence · 1~3분 폴링" },
       { label: "개발업체 계정", state: "verified", evidence: "내 스토어 애플리케이션 화면 접근 완료" },
       { label: "등록 애플리케이션", state: "verified", evidence: "SellerPilot Couplet 생성 · 상품·N배송·판매자정보 권한 · 고정 IP 등록" },

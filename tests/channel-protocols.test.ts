@@ -42,15 +42,36 @@ test("Naver client secret signature is a bcrypt hash wrapped in Base64", () => {
   assert.equal(bcryptCompareSync(`${clientId}_${timestamp}`, decoded), true);
 });
 
-test("Naver seller data token requires SELLER type and account_id", async () => {
+test("Naver seller data token rejects SELLER without account_id", async () => {
   await assert.rejects(
     fetchNaverAccessToken({
       client_id: "client",
       client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze",
-      token_type: "SELF",
+      token_type: "SELLER",
     }),
     /NAVER_CREDENTIALS_MISSING/,
   );
+});
+
+test("Naver self-store token uses SELF without account_id", async () => {
+  const originalFetch = globalThis.fetch;
+  let tokenBody = new URLSearchParams();
+  globalThis.fetch = async (_input, init) => {
+    tokenBody = new URLSearchParams(String(init?.body));
+    return Response.json({ access_token: "self-token", expires_in: 10_800, token_type: "Bearer" });
+  };
+  try {
+    const token = await fetchNaverAccessToken({
+      client_id: "client",
+      client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze",
+      token_type: "SELF",
+    });
+    assert.equal(token.accessToken, "self-token");
+    assert.equal(tokenBody.get("type"), "SELF");
+    assert.equal(tokenBody.has("account_id"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Qoo10 uses current QAPI endpoint and qualified method name", () => {
@@ -651,7 +672,13 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
       arguments: {
         sku: "SELLERPILOT-001",
         inventoryItem: { availability: { shipToLocationAvailability: { quantity: 1 } }, condition: "NEW", product: { title: "Test" } },
-        offer: { sku: "SELLERPILOT-001", marketplaceId: "EBAY_US", format: "FIXED_PRICE" },
+        offer: {
+          sku: "SELLERPILOT-001",
+          marketplaceId: "EBAY_US",
+          format: "FIXED_PRICE",
+          listingPolicies: { fulfillmentPolicyId: "fulfillment-1", paymentPolicyId: "payment-1", returnPolicyId: "return-1" },
+          merchantLocationKey: "seoul-warehouse",
+        },
         publish: true,
       },
       environment: "sandbox",
@@ -663,6 +690,52 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
       "/sell/inventory/v1/offer",
       "/sell/inventory/v1/offer/36445435465/publish",
     ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay listing auto-selects non-vehicle policies and an enabled inventory location", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, body });
+    if (url.includes("/fulfillment_policy")) return Response.json({ fulfillmentPolicies: [{ fulfillmentPolicyId: "fulfillment-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/payment_policy")) return Response.json({ paymentPolicies: [{ paymentPolicyId: "payment-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/return_policy")) return Response.json({ returnPolicies: [{ returnPolicyId: "return-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/location?")) return Response.json({ locations: [{ merchantLocationKey: "warehouse-auto", location: { merchantLocationStatus: "ENABLED" } }] });
+    if (url.endsWith("/offer")) return Response.json({ offerId: "offer-auto" }, { status: 201 });
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.create",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: {
+        sku: "SELLERPILOT-AUTO",
+        inventoryItem: { product: { title: "Test" } },
+        offer: {
+          sku: "SELLERPILOT-AUTO",
+          marketplaceId: "EBAY_US",
+          listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
+          merchantLocationKey: "SERVER_MANAGED",
+        },
+        publish: false,
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    const offerCall = calls.find((call) => call.url.endsWith("/offer"));
+    assert.deepEqual(offerCall?.body?.listingPolicies, {
+      fulfillmentPolicyId: "fulfillment-auto",
+      paymentPolicyId: "payment-auto",
+      returnPolicyId: "return-auto",
+    });
+    assert.equal(offerCall?.body?.merchantLocationKey, "warehouse-auto");
+    assert.deepEqual(result.steps.map((item) => item.name), ["fulfillment-policies", "payment-policies", "return-policies", "inventory-locations", "inventory-item", "offer"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

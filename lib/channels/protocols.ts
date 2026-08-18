@@ -99,9 +99,9 @@ export function createNaverClientSecretSign(clientId: string, clientSecret: stri
 export async function fetchNaverAccessToken(payload: SecretPayload) {
   const clientId = textValue(payload, "client_id");
   const clientSecret = textValue(payload, "client_secret");
-  const type = (textValue(payload, "token_type") || "SELLER").toUpperCase();
+  const type = (textValue(payload, "token_type") || "SELF").toUpperCase();
   const accountId = textValue(payload, "account_id");
-  if (!clientId || !clientSecret || type !== "SELLER" || !accountId) {
+  if (!clientId || !clientSecret || !["SELF", "SELLER"].includes(type) || (type === "SELLER" && !accountId)) {
     throw new Error("NAVER_CREDENTIALS_MISSING");
   }
   const timestamp = Date.now();
@@ -112,7 +112,7 @@ export async function fetchNaverAccessToken(payload: SecretPayload) {
     grant_type: "client_credentials",
     type,
   });
-  body.set("account_id", accountId);
+  if (type === "SELLER") body.set("account_id", accountId);
   const response = await fetch("https://api.commerce.naver.com/external/v1/oauth2/token", {
     method: "POST",
     cache: "no-store",

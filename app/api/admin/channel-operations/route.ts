@@ -51,6 +51,9 @@ function errorMessage(error: unknown) {
   if (message.includes("COUPANG_USABLE_RETURN_CENTER_MISSING")) return "쿠팡 WING에 사용 가능한 국내 반품지와 택배사 설정이 없습니다. WING의 반품지 설정을 확인해 주세요.";
   if (message.includes("COUPANG_RETURN_FEE_MISSING")) return "쿠팡 WING 반품지에 0원보다 큰 반품 배송비가 설정되어 있지 않습니다.";
   if (message.includes("COUPANG_WING_USER_ID_MISSING")) return "쿠팡 API Vault에 WING 로그인 사용자 ID가 없습니다.";
+  if (message.includes("NAVER_AFTER_SERVICE_PHONE_MISSING")) return "네이버 판매자 주소록에서 A/S 연락처를 찾지 못했습니다. API 키의 A/S 전화번호 필드에 실제 연락처를 입력해 주세요.";
+  if (message.includes("EBAY_BUSINESS_POLICIES_MISSING")) return "eBay 계정에 해당 마켓의 배송·결제·반품 Business Policy가 없습니다. Seller Hub에서 정책을 만들거나 필수 입력란에 실제 정책 ID를 입력해 주세요.";
+  if (message.includes("EBAY_INVENTORY_LOCATION_MISSING")) return "eBay 계정에 사용할 Inventory Location이 없습니다. Seller Hub에서 재고 위치를 만들거나 필수 입력란에 실제 위치 키를 입력해 주세요.";
   if (message.startsWith("CHANNEL_GATEWAY_TIMEOUT")) return "허용 IP 채널 작업자의 응답 제한시간을 초과했습니다. 작업자 상태를 확인해 주세요.";
   if (message.startsWith("CHANNEL_GATEWAY_")) return "허용 IP 채널 작업 경로에서 안전하게 처리된 오류가 발생했습니다.";
   if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return "판매채널 응답 제한시간(15초)을 초과했습니다.";

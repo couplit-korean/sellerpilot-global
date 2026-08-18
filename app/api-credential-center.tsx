@@ -438,7 +438,7 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cha
   const [form, setForm] = useState<Record<string, string>>({
     country: channel.key === "lazada" ? "my" : "",
     market: channel.key === "coupang" ? "KR" : "",
-    token_type: channel.key === "smartstore" ? "SELLER" : "",
+    token_type: channel.key === "smartstore" ? "SELF" : "",
     marketplace_id: channel.key === "ebay" ? "EBAY_US" : "",
   });
   const [environment, setEnvironment] = useState<"sandbox" | "production">(current?.environment ?? "production");
@@ -456,8 +456,12 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cha
       setError(`${requiredMissing.map((field) => field.label).join(" · ")} 입력이 필요합니다.`);
       return;
     }
-    if (channel.key === "smartstore" && ((form.token_type || "SELLER").trim().toUpperCase() !== "SELLER" || (!current && !form.account_id?.trim()))) {
-      setError("네이버 판매자 데이터 연결은 SELLER 인증 유형과 판매자 UID(account_id)가 필요합니다.");
+    if (channel.key === "smartstore" && !["SELF", "SELLER"].includes((form.token_type || "SELF").trim().toUpperCase())) {
+      setError("네이버 인증 유형은 SELF 또는 SELLER여야 합니다.");
+      return;
+    }
+    if (channel.key === "smartstore" && (form.token_type || "SELF").trim().toUpperCase() === "SELLER" && !current && !form.account_id?.trim()) {
+      setError("SELLER 인증 유형은 연결된 판매자 ID 또는 UID(account_id)가 필요합니다.");
       return;
     }
     setSaving(true);
