@@ -320,6 +320,7 @@ test("Lazada omega matching falls back to a health-supplement leaf and excludes 
     ok: true,
     steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
       { category_id: "PET", name: "Pet Supplements", leaf: true },
+      { category_id: "BABY", name: "Vitamins & Supplements", category_path: "Mother & Baby > Baby Health Care > Vitamins & Supplements", leaf: true },
       { category_id: "HEALTH", name: "Vitamins & Supplements", leaf: true },
     ] } }],
   };
