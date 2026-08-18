@@ -535,6 +535,7 @@ test("Coupang product creation is only successful after seller-product readback 
 test("Coupang product update reuses the requested seller product ID and verifies approval state", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
+  let readbackCount = 0;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, init });
@@ -544,7 +545,13 @@ test("Coupang product update reuses the requested seller product ID and verifies
         headers: { "content-type": "application/json" },
       });
     }
-    return new Response(JSON.stringify({ code: "SUCCESS", data: { sellerProductId: 987654321, requested: true } }), {
+    readbackCount += 1;
+    return new Response(JSON.stringify({
+      code: "SUCCESS",
+      data: readbackCount === 1
+        ? { sellerProductId: 987654321, requested: false, mdId: "NLUP_TEMP_SAVED" }
+        : { sellerProductId: 987654321, requested: true, mdId: "NLUP_APPROVAL_REQUESTED" },
+    }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
@@ -559,9 +566,12 @@ test("Coupang product update reuses the requested seller product ID and verifies
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "987654321");
-    assert.deepEqual(result.steps.map((item) => item.name), ["listing.update", "listing-readback"]);
+    assert.deepEqual(result.steps.map((item) => item.name), ["listing.update", "listing-readback", "listing-approval-request", "listing-approval-readback"]);
     assert.equal(calls[0].init?.method, "PUT");
     assert.equal(new URL(calls[1].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321");
+    assert.equal(new URL(calls[2].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321/approvals");
+    assert.equal(calls[2].init?.method, "PUT");
+    assert.equal(calls[3].init?.method, "GET");
   } finally {
     globalThis.fetch = originalFetch;
   }

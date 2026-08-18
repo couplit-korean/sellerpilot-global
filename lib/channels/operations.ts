@@ -654,22 +654,50 @@ async function executeCoupang(input: ExecuteInput) {
     const remoteId = responseId ?? requestedId;
     const writeStep = step(input.operation, writeRemote);
     if (!writeStep.ok || !remoteId) return result(input, [writeStep], remoteId);
-    const readbackRemote = await coupangRequest({
+    let readbackRemote = await coupangRequest({
       payload: input.payload,
       method: "GET",
       path: `${sellerProductsPath}/${pathSegment(remoteId)}`,
     });
-    const readbackStep = step("listing-readback", readbackRemote);
-    const readbackData = readbackRemote.data.data;
-    const readbackId = readbackData && typeof readbackData === "object" && !Array.isArray(readbackData)
-      ? (readbackData as Record<string, unknown>).sellerProductId
-      : readbackRemote.data.sellerProductId;
-    const readbackRequested = readbackData && typeof readbackData === "object" && !Array.isArray(readbackData)
-      ? (readbackData as Record<string, unknown>).requested
-      : readbackRemote.data.requested;
-    const requestStateMatches = typeof body.requested !== "boolean" || readbackRequested === body.requested;
-    readbackStep.ok = readbackStep.ok && readbackId !== undefined && String(readbackId) === remoteId && requestStateMatches;
-    return result(input, [writeStep, readbackStep], remoteId);
+    const verifyReadback = (name: string) => {
+      const readbackStep = step(name, readbackRemote);
+      const readbackData = readbackRemote.data.data;
+      const readbackObject = readbackData && typeof readbackData === "object" && !Array.isArray(readbackData)
+        ? readbackData as Record<string, unknown>
+        : readbackRemote.data;
+      const readbackId = readbackObject.sellerProductId;
+      const requested = readbackObject.requested;
+      const stateIndicators = [readbackObject.mdId, readbackObject.status, readbackObject.statusName]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .join(" ")
+        .toUpperCase();
+      const requestStateMatches = body.requested !== true
+        || requested === true
+        || (stateIndicators.length > 0 && !/(TEMP_SAVED|\bSAVED\b)/.test(stateIndicators));
+      readbackStep.ok = readbackStep.ok && readbackId !== undefined && String(readbackId) === remoteId && requestStateMatches;
+      return { readbackStep, requested, stateIndicators };
+    };
+    const initialReadback = verifyReadback("listing-readback");
+    if (body.requested !== true || initialReadback.readbackStep.ok) {
+      return result(input, [writeStep, initialReadback.readbackStep], remoteId);
+    }
+
+    const approvalRemote = await coupangRequest({
+      payload: input.payload,
+      method: "PUT",
+      path: `${sellerProductsPath}/${pathSegment(remoteId)}/approvals`,
+    });
+    const approvalStep = step("listing-approval-request", approvalRemote);
+    if (!approvalStep.ok) return result(input, [writeStep, initialReadback.readbackStep, approvalStep], remoteId);
+    initialReadback.readbackStep.ok = true;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    readbackRemote = await coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `${sellerProductsPath}/${pathSegment(remoteId)}`,
+    });
+    const approvalReadback = verifyReadback("listing-approval-readback");
+    return result(input, [writeStep, initialReadback.readbackStep, approvalStep, approvalReadback.readbackStep], remoteId);
   }
   if (input.operation === "listing.stop") {
     const vendorItemId = pathSegment(stringArgument(input.arguments, "vendorItemId"));
