@@ -5,7 +5,6 @@ import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
-import sharp from "sharp";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
 import { cliStudioResultSchema } from "../lib/ai-cli-contract.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
@@ -81,6 +80,7 @@ const schemaPath = resolve("scripts/ai-studio-output.schema.json");
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
+let sharpFactory;
 const workerVersion = "sellerpilot-cli-worker/1.7";
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
 let temuEgressCache = { checkedAt: 0, currentIp: "" };
@@ -90,6 +90,11 @@ class JobCancelledError extends Error {
     super("AI 작업이 관리자에 의해 취소됐습니다.");
     this.name = "JobCancelledError";
   }
+}
+
+async function sharpImage(input, options) {
+  if (!sharpFactory) sharpFactory = (await import("sharp")).default;
+  return sharpFactory(input, options);
 }
 
 if (!workerToken.startsWith("spw_")) {
@@ -1010,7 +1015,7 @@ function buildFallbackStudioResult(job) {
 
 async function createFallbackAsset(sourceFile, outputFile, preset) {
   const fit = preset.id === "detail-feature" ? "cover" : "contain";
-  await sharp(sourceFile, { failOn: "warning", limitInputPixels: 64_000_000 })
+  await (await sharpImage(sourceFile, { failOn: "warning", limitInputPixels: 64_000_000 }))
     .rotate()
     .resize(preset.width, preset.height, { fit, position: "centre", background: { r: 248, g: 250, b: 252, alpha: 1 } })
     .png({ compressionLevel: 9, adaptiveFiltering: true })
@@ -1019,12 +1024,12 @@ async function createFallbackAsset(sourceFile, outputFile, preset) {
 
 async function normalizeGeneratedAsset(outputFile, preset) {
   const source = await readFile(outputFile);
-  const normalized = await sharp(source, { failOn: "warning", limitInputPixels: 64_000_000 })
+  const normalized = await (await sharpImage(source, { failOn: "warning", limitInputPixels: 64_000_000 }))
     .rotate()
     .resize(preset.width, preset.height, { fit: "cover", position: "centre" })
     .png({ compressionLevel: 9, adaptiveFiltering: true })
     .toBuffer();
-  const metadata = await sharp(normalized).metadata();
+  const metadata = await (await sharpImage(normalized)).metadata();
   if (metadata.width !== preset.width || metadata.height !== preset.height || metadata.format !== "png") {
     throw new Error(`${preset.id} 이미지 규격 검증 실패`);
   }

@@ -165,6 +165,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(cliWorker, /buildFallbackStudioResult/);
   assert.match(cliWorker, /createFallbackAsset/);
   assert.match(cliWorker, /이미지 안전 모드/);
+  assert.doesNotMatch(cliWorker, /import sharp from "sharp"/);
+  assert.match(cliWorker, /await import\("sharp"\)/);
   assert.match(cliWorker, /fallbackEnglishProductLabel/);
   assert.match(cliWorker, /formulation: "Stick"/);
   assert.match(categoryWorkbench, /row\.status === "active" && row\.environment === "production"/);
