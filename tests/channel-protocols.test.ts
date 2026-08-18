@@ -134,7 +134,8 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
     const body = new URLSearchParams(String(createInit?.body));
     assert.equal((body.get("ItemDescription")?.match(/<img /g) ?? []).length, 4);
     const detailRequestUrl = new URL(detailUrl);
-    assert.equal(detailRequestUrl.searchParams.get("method"), "ItemsBasic.EditGoodsContents");
+    assert.equal(detailRequestUrl.searchParams.get("method"), "ItemsContents.EditGoodsContents");
+    assert.equal(detailRequestUrl.searchParams.get("v"), "1.0");
     assert.equal(detailRequestUrl.searchParams.has("Contents"), false);
     assert.equal(detailInit?.method, "POST");
     const detailBody = new URLSearchParams(String(detailInit?.body));
@@ -158,7 +159,7 @@ test("Qoo10 pauses a created item when detail-image readback is incomplete", asy
     if (url.searchParams.get("method") === "ItemsBasic.SetNewGoods") {
       return Response.json({ ResultCode: 0, ResultObject: { GdNo: "1234567890" } });
     }
-    if (url.searchParams.get("method") === "ItemsBasic.EditGoodsContents") {
+    if (url.searchParams.get("method") === "ItemsContents.EditGoodsContents") {
       return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
     }
     if (url.searchParams.get("method") === "ItemsBasic.EditGoodsStatus") {
@@ -176,7 +177,7 @@ test("Qoo10 pauses a created item when detail-image readback is incomplete", asy
     });
     assert.equal(result.ok, false);
     assert.equal(result.remoteId, "1234567890");
-    assert.equal(calls.some((item) => item.method === "ItemsBasic.EditGoodsContents"), true);
+    assert.equal(calls.some((item) => item.method === "ItemsContents.EditGoodsContents"), true);
     assert.equal(result.steps.find((item) => item.name === "detail-image-readback")?.ok, false);
     assert.equal(calls.at(-1)?.method, "ItemsBasic.EditGoodsStatus");
     assert.equal(calls.at(-1)?.status, "1");

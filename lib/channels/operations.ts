@@ -340,8 +340,9 @@ async function executeQoo10(input: ExecuteInput) {
   const expectedDetailImages = qoo10ImageCount(detailHtml);
   const detailUpdate = await qoo10Request({
     payload: input.payload,
-    service: "ItemsBasic",
+    service: "ItemsContents",
     method: "EditGoodsContents",
+    version: "1.0",
     params: { ItemCode: remoteId, SellerCode: "", Contents: detailHtml },
   });
   const detailUpdateStep = step("EditGoodsContents", detailUpdate);
