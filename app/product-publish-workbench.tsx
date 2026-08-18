@@ -139,7 +139,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
   const marketSku = target ? `${manual.sellerSku || product.sku}-${target.marketCode}`.slice(0, 100) : manual.sellerSku || product.sku;
   if (channel === "qoo10") {
     return {
-      sellerpilotAssets,
+      sellerpilotAssets: { ...sellerpilotAssets, integrationRevision: "itemscontents-v1" },
       params: {
         SecondSubCat: assignment?.categoryId ?? "",
         OuterSecondSubCat: "",
