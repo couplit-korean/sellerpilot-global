@@ -1025,6 +1025,17 @@ function temuResultObject(data: Record<string, unknown>) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function temuGoodsMatch(value: unknown, remoteId: string, externalGoodsId: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return String(item.goodsId ?? "") === remoteId
+    && [item.outGoodsSn, item.externalGoodsId].some((candidate) => String(candidate ?? "") === externalGoodsId);
+}
+
+function temuStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
 async function executeTemu(input: ExecuteInput) {
   if (input.operation === "categories.list" || input.operation === "categories.suggest" || input.operation === "categories.attributes" || input.operation === "categories.validate") {
     const goodsName = stringArgument(input.arguments, "goodsName", false)
@@ -1049,9 +1060,40 @@ async function executeTemu(input: ExecuteInput) {
     const externalGoodsId = stringArgument(goodsBasic, "externalGoodsId");
     const createRemote = await temuRequest({ payload: input.payload, type: "temu.local.goods.v3.add", arguments: body });
     const created = temuResultObject(createRemote.data);
-    const remoteId = created.goodsId === undefined ? undefined : String(created.goodsId);
-    const steps = [step("goods-v3-add", createRemote)];
-    if (!steps[0].ok || !remoteId) return result(input, steps, remoteId);
+    let remoteId = created.goodsId === undefined ? "" : String(created.goodsId);
+    const createStep = step("goods-v3-add", createRemote);
+    const steps: ChannelOperationStep[] = [];
+    if (createStep.ok && remoteId) {
+      steps.push(createStep);
+    } else {
+      // A successful Temu create can outlive a gateway timeout. Retrying the same
+      // external ID would otherwise fail as a duplicate, so recover the existing
+      // product and continue the same status/image verification path.
+      const reconcileRemote = await temuRequest({
+        payload: input.payload,
+        type: "temu.local.goods.list.retrieve",
+        arguments: { outGoodsSnList: [externalGoodsId], pageSize: 25 },
+      });
+      const reconcileGoods = temuResultObject(reconcileRemote.data).goodsList;
+      const existing = Array.isArray(reconcileGoods)
+        ? reconcileGoods.find((item) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+          const record = item as Record<string, unknown>;
+          return [record.outGoodsSn, record.externalGoodsId].some((candidate) => String(candidate ?? "") === externalGoodsId);
+        }) as Record<string, unknown> | undefined
+        : undefined;
+      remoteId = existing?.goodsId === undefined ? "" : String(existing.goodsId);
+      const reconcileStep = step("goods-reconcile", reconcileRemote);
+      reconcileStep.ok = reconcileStep.ok && Boolean(remoteId);
+      reconcileStep.data = {
+        ...reconcileStep.data,
+        recoveredGoodsId: remoteId || undefined,
+        createStatus: createRemote.response.status,
+        sellerpilotVerification: remoteId ? "EXISTING_GOODS_RECOVERED" : "TEMU_GOODS_RECONCILE_MISSING",
+      };
+      steps.push(reconcileStep);
+      if (!reconcileStep.ok || !remoteId) return result(input, steps, remoteId || undefined);
+    }
     const readbackRemote = await temuRequest({
       payload: input.payload,
       type: "temu.local.goods.list.retrieve",
@@ -1059,11 +1101,61 @@ async function executeTemu(input: ExecuteInput) {
     });
     const readbackStep = step("goods-readback", readbackRemote);
     const goodsList = temuResultObject(readbackRemote.data).goodsList;
-    const matched = Array.isArray(goodsList) && goodsList.some((item) => item && typeof item === "object" && !Array.isArray(item)
-      && String((item as Record<string, unknown>).goodsId ?? "") === remoteId
-      && String((item as Record<string, unknown>).outGoodsSn ?? "") === externalGoodsId);
+    const matched = Array.isArray(goodsList) && goodsList.some((item) => temuGoodsMatch(item, remoteId, externalGoodsId));
     readbackStep.ok = readbackStep.ok && matched;
+    readbackStep.data = {
+      ...readbackStep.data,
+      sellerpilotVerification: matched ? "EXTERNAL_ID_VERIFIED" : "TEMU_EXTERNAL_ID_READBACK_MISSING",
+    };
     steps.push(readbackStep);
+    if (!readbackStep.ok) return result(input, steps, remoteId);
+
+    const publishStatusRemote = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.publish.status.get",
+      arguments: { goodsIdList: [Number(remoteId)] },
+    });
+    const publishStatusStep = step("goods-publish-status", publishStatusRemote);
+    const publishStatuses = temuResultObject(publishStatusRemote.data).goodsPublishStatusList;
+    const publishStatus = Array.isArray(publishStatuses)
+      ? publishStatuses.find((item) => item && typeof item === "object" && !Array.isArray(item)
+        && String((item as Record<string, unknown>).goodsId ?? "") === remoteId) as Record<string, unknown> | undefined
+      : undefined;
+    publishStatusStep.ok = publishStatusStep.ok && Boolean(publishStatus);
+    publishStatusStep.data = {
+      ...publishStatusStep.data,
+      remoteGoodsStatus: publishStatus?.status,
+      remoteGoodsSubStatus: publishStatus?.subStatus,
+      sellerpilotVerification: publishStatus ? "PUBLISH_STATUS_VERIFIED" : "TEMU_PUBLISH_STATUS_MISSING",
+    };
+    steps.push(publishStatusStep);
+    if (!publishStatusStep.ok) return result(input, steps, remoteId);
+
+    const detailRemote = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.detail.query",
+      arguments: { goodsId: Number(remoteId), versionQueryType: 1 },
+    });
+    const detailStep = step("goods-detail-image-readback", detailRemote);
+    const detail = temuResultObject(detailRemote.data);
+    const gallery = objectValue(detail, "goodsGallery", false);
+    const expectedCarouselImageCount = temuStringArray(goodsBasic.goodsCarouselImage).length;
+    const expectedDetailImageCount = temuStringArray(goodsBasic.detailImage).length;
+    const actualCarouselImageCount = temuStringArray(gallery.goodsCarouselImage).length;
+    const actualDetailImageCount = temuStringArray(gallery.detailImage).length;
+    const detailMatches = String(detail.goodsId ?? "") === remoteId;
+    const imagesMatch = actualCarouselImageCount >= expectedCarouselImageCount
+      && actualDetailImageCount >= expectedDetailImageCount;
+    detailStep.ok = detailStep.ok && detailMatches && imagesMatch;
+    detailStep.data = {
+      ...detailStep.data,
+      expectedCarouselImageCount,
+      actualCarouselImageCount,
+      expectedDetailImageCount,
+      actualDetailImageCount,
+      sellerpilotVerification: detailStep.ok ? "IMAGES_VERIFIED" : "TEMU_IMAGE_READBACK_MISSING",
+    };
+    steps.push(detailStep);
     return result(input, steps, remoteId);
   }
   if (input.operation === "listing.stop") {
@@ -1196,9 +1288,51 @@ async function executeEbay(input: ExecuteInput) {
     steps.push(inventoryImageStep);
     if (!inventoryImageStep.ok) return result(input, steps, sku);
     const offerRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "POST", path: "/sell/inventory/v1/offer", body: offer });
-    steps.push(step("offer", offerRemote));
-    const offerId = offerRemote.data.offerId === undefined ? undefined : String(offerRemote.data.offerId);
+    let offerId = offerRemote.data.offerId === undefined ? undefined : String(offerRemote.data.offerId);
     if (offerRemote.response.ok && offerId) {
+      steps.push(step("offer", offerRemote));
+    } else {
+      // A timed-out create call may still have persisted the offer remotely. eBay
+      // also rejects a second offer for the same SKU, so reconcile by SKU before
+      // deciding that the retry failed.
+      const reconcileRemote = await ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/sell/inventory/v1/offer",
+        query: new URLSearchParams({ sku: decodeURIComponent(sku), limit: "25" }),
+      });
+      const offers = Array.isArray(reconcileRemote.data.offers)
+        ? reconcileRemote.data.offers as Array<Record<string, unknown>>
+        : [];
+      const existing = offers.find((candidate) =>
+        String(candidate.marketplaceId ?? "") === marketplaceId
+        && String(candidate.format ?? "") === String(offer.format ?? "FIXED_PRICE"),
+      ) ?? offers.find((candidate) => String(candidate.marketplaceId ?? "") === marketplaceId) ?? offers[0];
+      offerId = existing?.offerId === undefined ? undefined : String(existing.offerId);
+      const reconcileStep = step("offer-reconcile", reconcileRemote);
+      reconcileStep.ok = reconcileStep.ok && Boolean(offerId);
+      reconcileStep.data = {
+        ...reconcileStep.data,
+        recoveredOfferId: offerId,
+        createStatus: offerRemote.response.status,
+        sellerpilotVerification: offerId ? "EXISTING_OFFER_RECOVERED" : "EBAY_OFFER_RECONCILE_MISSING",
+      };
+      steps.push(reconcileStep);
+      if (!reconcileStep.ok || !offerId) return result(input, steps, sku);
+      const updateRemote = await ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "PUT",
+        path: `/sell/inventory/v1/offer/${pathSegment(offerId)}`,
+        body: offer,
+      });
+      const updateStep = step("offer-update-after-reconcile", updateRemote);
+      steps.push(updateStep);
+      if (!updateStep.ok) return result(input, steps, offerId);
+    }
+    let publishedListingId = "";
+    if (offerId) {
       const offerReadback = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: `/sell/inventory/v1/offer/${pathSegment(offerId)}` });
       const actualDescriptionImages = (String(offerReadback.data.listingDescription ?? "").match(/<img\b/gi) ?? []).length;
       const offerReadbackStep = expectedDescriptionImages > 0
@@ -1206,14 +1340,20 @@ async function executeEbay(input: ExecuteInput) {
         : step("offer-readback", offerReadback);
       steps.push(offerReadbackStep);
       if (!offerReadbackStep.ok) return result(input, steps, offerId);
+      const listing = offerReadback.data.listing && typeof offerReadback.data.listing === "object" && !Array.isArray(offerReadback.data.listing)
+        ? offerReadback.data.listing as Record<string, unknown>
+        : {};
+      if (String(offerReadback.data.status ?? "").toUpperCase() === "PUBLISHED") {
+        publishedListingId = String(listing.listingId ?? "").trim();
+      }
     }
-    if (offerRemote.response.ok && offerId && booleanArgument(input.arguments, "publish")) {
+    if (offerId && booleanArgument(input.arguments, "publish") && !publishedListingId) {
       const publishRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "POST", path: `/sell/inventory/v1/offer/${pathSegment(offerId)}/publish` });
       steps.push(step("publish", publishRemote));
       const listingId = publishRemote.data.listingId === undefined ? undefined : String(publishRemote.data.listingId);
       return result(input, steps, listingId ?? offerId);
     }
-    return result(input, steps, offerId ?? sku);
+    return result(input, steps, publishedListingId || offerId || sku);
   }
   if (input.operation === "listing.update") {
     const offerId = pathSegment(stringArgument(input.arguments, "offerId"));

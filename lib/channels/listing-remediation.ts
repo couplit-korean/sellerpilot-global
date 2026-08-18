@@ -39,7 +39,7 @@ export function classifyListingFailure(result: ChannelOperationResult): ListingF
       retryableAfterCorrection: true,
     };
   }
-  if (/BIZ_CHECK_EXIST_OUTER_DESCRIPTION_IMAGE|MEDIA_SPACE|MIGRATE_IMAGE|image[_ -]?(?:url|upload|file|size|format|required|invalid|failed|rejected)|(?:picture|photo|thumbnail)[_ -]?(?:url|upload|file|size|format|required|invalid|failed|rejected)|이미지\s*(?:URL|업로드|규격|경로|파일|오류|실패|거절)/i.test(text)) {
+  if (/BIZ_CHECK_EXIST_OUTER_DESCRIPTION_IMAGE|MEDIA_SPACE|MIGRATE_IMAGE|TEMU_IMAGE_READBACK_MISSING|EBAY_IMAGE_READBACK_MISSING|image[_ -]?(?:url|upload|file|size|dimensions?|format|required|invalid|failed|rejected)|(?:picture|photo|thumbnail)[_ -]?(?:url|upload|file|size|dimensions?|format|required|invalid|failed|rejected)|이미지\s*(?:URL|업로드|규격|크기|경로|파일|오류|실패|거절)/i.test(text)) {
     return {
       kind: "image",
       code: "IMAGE_REJECTED_AFTER_NORMALIZATION",

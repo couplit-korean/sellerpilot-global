@@ -1017,6 +1017,77 @@ test("eBay listing auto-selects non-vehicle policies and an enabled inventory lo
   }
 });
 
+test("eBay listing retry reconciles an existing SKU offer and returns its published listing", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  const imageUrls = [
+    "https://cdn.example.com/hero.jpg",
+    "https://cdn.example.com/detail-1.jpg",
+    "https://cdn.example.com/detail-2.jpg",
+    "https://cdn.example.com/detail-3.jpg",
+    "https://cdn.example.com/detail-4.jpg",
+  ];
+  const listingDescription = imageUrls.slice(1).map((url) => `<img src="${url}" />`).join("");
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push({ url, method });
+    if (url.includes("/inventory_item/") && method === "GET") return Response.json({ product: { imageUrls } });
+    if (url.endsWith("/offer") && method === "POST") {
+      return Response.json({ errors: [{ errorId: 25002, message: "Offer already exists" }] }, { status: 409 });
+    }
+    if (url.includes("/offer?sku=") && method === "GET") {
+      return Response.json({ offers: [{ offerId: "existing-offer", marketplaceId: "EBAY_US", format: "FIXED_PRICE", status: "PUBLISHED" }] });
+    }
+    if (url.endsWith("/offer/existing-offer") && method === "GET") {
+      return Response.json({
+        offerId: "existing-offer",
+        marketplaceId: "EBAY_US",
+        format: "FIXED_PRICE",
+        status: "PUBLISHED",
+        listing: { listingId: "110000000777" },
+        listingDescription,
+      });
+    }
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.create",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: {
+        sku: "SELLERPILOT-RETRY",
+        inventoryItem: { product: { title: "Retry", imageUrls } },
+        offer: {
+          sku: "SELLERPILOT-RETRY",
+          marketplaceId: "EBAY_US",
+          format: "FIXED_PRICE",
+          listingDescription,
+          listingPolicies: { fulfillmentPolicyId: "fulfillment-1", paymentPolicyId: "payment-1", returnPolicyId: "return-1" },
+          merchantLocationKey: "seoul-warehouse",
+        },
+        publish: true,
+      },
+      environment: "production",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "110000000777");
+    assert.deepEqual(result.steps.map((item) => item.name), [
+      "inventory-item",
+      "inventory-image-readback",
+      "offer-reconcile",
+      "offer-update-after-reconcile",
+      "offer-detail-image-readback",
+    ]);
+    assert.equal(result.steps[2].data.sellerpilotVerification, "EXISTING_OFFER_RECOVERED");
+    assert.equal(calls.some((call) => call.url.endsWith("/publish")), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("eBay stops before offer creation when the inventory image readback loses detail images", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];
@@ -1085,22 +1156,128 @@ test("Temu V3 product creation requires an external-id readback match", async ()
     if (body.type === "temu.local.goods.v3.add") {
       return new Response(JSON.stringify({ success: true, result: { goodsId: 900001, externalGoodsId: "TEST-TEMU-001" } }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    return new Response(JSON.stringify({ success: true, result: { goodsList: [{ goodsId: 900001, outGoodsSn: "TEST-TEMU-001", status: 1 }] } }), { status: 200, headers: { "content-type": "application/json" } });
+    if (body.type === "temu.local.goods.list.retrieve") {
+      return new Response(JSON.stringify({ success: true, result: { goodsList: [{ goodsId: 900001, outGoodsSn: "TEST-TEMU-001", status: 1 }] } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (body.type === "bg.local.goods.publish.status.get") {
+      return new Response(JSON.stringify({ success: true, result: { goodsPublishStatusList: [{ goodsId: 900001, status: 1, subStatus: 2 }] } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ success: true, result: { goodsId: 900001, goodsGallery: { goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: ["https://cdn.example.com/detail.jpg"] } } }), { status: 200, headers: { "content-type": "application/json" } });
   };
   try {
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
       payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
-      arguments: { body: { goodsBasic: { externalGoodsId: "TEST-TEMU-001", goodsName: "API test" }, skuList: [{ externalSkuId: "TEST-TEMU-001" }] } },
+      arguments: { body: { goodsBasic: { externalGoodsId: "TEST-TEMU-001", goodsName: "API test", goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: ["https://cdn.example.com/detail.jpg"] }, skuList: [{ externalSkuId: "TEST-TEMU-001" }] } },
       environment: "production",
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "900001");
-    assert.deepEqual(calls.map((call) => call.type), ["temu.local.goods.v3.add", "temu.local.goods.list.retrieve"]);
+    assert.deepEqual(calls.map((call) => call.type), [
+      "temu.local.goods.v3.add",
+      "temu.local.goods.list.retrieve",
+      "bg.local.goods.publish.status.get",
+      "bg.local.goods.detail.query",
+    ]);
     assert.deepEqual(calls[1].outGoodsSnList, ["TEST-TEMU-001"]);
+    assert.deepEqual(calls[2].goodsIdList, [900001]);
+    assert.equal(calls[3].versionQueryType, 1);
+    assert.equal(result.steps[2].data.sellerpilotVerification, "PUBLISH_STATUS_VERIFIED");
+    assert.equal(result.steps[3].data.sellerpilotVerification, "IMAGES_VERIFIED");
+    assert.equal(result.steps[3].data.actualCarouselImageCount, 1);
+    assert.equal(result.steps[3].data.actualDetailImageCount, 1);
     assert.equal("app_secret" in calls[0], false);
     assert.match(String(calls[0].sign), /^[0-9A-F]{32}$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu listing retry reconciles an existing external ID and still verifies images", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    if (body.type === "temu.local.goods.v3.add") {
+      return new Response(JSON.stringify({ success: false, errorCode: 150010041, errorMsg: "externalGoodsId already exists" }), { status: 409, headers: { "content-type": "application/json" } });
+    }
+    if (body.type === "temu.local.goods.list.retrieve") {
+      return Response.json({ success: true, result: { goodsList: [{ goodsId: 900002, outGoodsSn: "TEST-TEMU-RETRY" }] } });
+    }
+    if (body.type === "bg.local.goods.publish.status.get") {
+      return Response.json({ success: true, result: { goodsPublishStatusList: [{ goodsId: 900002, status: 1, subStatus: 1 }] } });
+    }
+    return Response.json({ success: true, result: { goodsId: 900002, goodsGallery: { goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: ["https://cdn.example.com/detail.jpg"] } } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "temu",
+      operation: "listing.create",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
+      arguments: {
+        body: {
+          goodsBasic: {
+            externalGoodsId: "TEST-TEMU-RETRY",
+            goodsName: "Retry test",
+            goodsCarouselImage: ["https://cdn.example.com/hero.jpg"],
+            detailImage: ["https://cdn.example.com/detail.jpg"],
+          },
+          skuList: [{ externalSkuId: "TEST-TEMU-RETRY" }],
+        },
+      },
+      environment: "production",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "900002");
+    assert.deepEqual(result.steps.map((item) => item.name), [
+      "goods-reconcile",
+      "goods-readback",
+      "goods-publish-status",
+      "goods-detail-image-readback",
+    ]);
+    assert.equal(result.steps[0].data.sellerpilotVerification, "EXISTING_GOODS_RECOVERED");
+    assert.equal(calls.filter((call) => call.type === "temu.local.goods.v3.add").length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu listing fails verification when processed detail images are missing", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    if (body.type === "temu.local.goods.v3.add") return Response.json({ success: true, result: { goodsId: 900003 } });
+    if (body.type === "temu.local.goods.list.retrieve") return Response.json({ success: true, result: { goodsList: [{ goodsId: 900003, outGoodsSn: "TEST-TEMU-IMAGE-FAIL" }] } });
+    if (body.type === "bg.local.goods.publish.status.get") return Response.json({ success: true, result: { goodsPublishStatusList: [{ goodsId: 900003, status: 1, subStatus: 1 }] } });
+    return Response.json({ success: true, result: { goodsId: 900003, goodsGallery: { goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: [] } } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "temu",
+      operation: "listing.create",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
+      arguments: {
+        body: {
+          goodsBasic: {
+            externalGoodsId: "TEST-TEMU-IMAGE-FAIL",
+            goodsName: "Image test",
+            goodsCarouselImage: ["https://cdn.example.com/hero.jpg"],
+            detailImage: ["https://cdn.example.com/detail-1.jpg", "https://cdn.example.com/detail-2.jpg"],
+          },
+          skuList: [{ externalSkuId: "TEST-TEMU-IMAGE-FAIL" }],
+        },
+      },
+      environment: "production",
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.steps.at(-1)?.name, "goods-detail-image-readback");
+    assert.equal(result.steps.at(-1)?.data.expectedDetailImageCount, 2);
+    assert.equal(result.steps.at(-1)?.data.actualDetailImageCount, 0);
+    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "TEMU_IMAGE_READBACK_MISSING");
   } finally {
     globalThis.fetch = originalFetch;
   }

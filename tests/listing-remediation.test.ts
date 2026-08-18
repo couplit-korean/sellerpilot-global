@@ -43,6 +43,17 @@ test("image errors surface the automatic normalized-image recovery state", () =>
   assert.match(remediation?.safeMessage ?? "", /1200×1200 JPEG/);
 });
 
+test("Temu and eBay image readback failures remain automatically retryable image errors", () => {
+  for (const [channel, marker] of [
+    ["temu", "TEMU_IMAGE_READBACK_MISSING"],
+    ["ebay", "EBAY_IMAGE_READBACK_MISSING"],
+  ] as const) {
+    const remediation = classifyListingFailure(failedResult({ sellerpilotVerification: marker }, channel));
+    assert.equal(remediation?.kind, "image");
+    assert.equal(remediation?.retryableAfterCorrection, true);
+  }
+});
+
 test("successful writes do not create remediation work", () => {
   const result: ChannelOperationResult = {
     ok: true,
