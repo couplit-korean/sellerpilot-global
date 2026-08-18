@@ -264,7 +264,7 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
       if (!response.ok) throw new Error(payload.message ?? "마진 계산 결과를 저장하지 못했습니다.");
       setLocalScenarios((current) => [{ ...saved, id: payload.id ?? saved.id }, ...current].slice(0, 5));
       onChanged?.();
-      notify(`${selectedChannelInfo.name} 마진 계산 결과를 운영 DB에 저장했습니다.`);
+      notify(`${selectedChannelInfo.name} 수익 계산 결과를 저장했습니다.`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "마진 계산 결과를 저장하지 못했습니다.");
     } finally {
@@ -286,7 +286,7 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
       setLocalScenarios((current) => current.filter((item) => item.id !== scenario.id));
       setDeletedScenarioIds((current) => new Set(current).add(scenario.id));
       onChanged?.();
-      notify("저장된 마진 계산을 운영 DB에서 삭제했습니다.");
+      notify("저장된 수익 계산을 삭제했습니다.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "저장된 마진 계산을 삭제하지 못했습니다.");
     }
@@ -381,9 +381,9 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
       </section>
 
       <section className="panel saved-margin-panel">
-        <div className="panel-heading"><div><span className="panel-kicker">RECENT CALCULATIONS</span><h3>최근 저장한 계산</h3></div><small>운영 DB 저장 후 최근 5개를 화면에 표시합니다.</small></div>
-        <div className="saved-margin-list">{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.letter}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제`} onClick={() => void deleteScenario(scenario)}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</div>
-        <div className="margin-disclaimer"><AlertCircle size={15} /><span><b>입력값 기반 예상 계산입니다.</b> 채널 수수료는 카테고리·판매자 등급·프로모션 기간에 따라 달라질 수 있으므로 등록 직전 채널 API 메타정보와 대조해야 합니다.</span></div>
+        <div className="panel-heading"><div><h3>최근 저장한 계산</h3></div><small>최근 계산 5개를 보여드립니다.</small></div>
+        <div className="saved-margin-list">{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.letter}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제`} onClick={() => void deleteScenario(scenario)}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 계산이 없습니다.</b><small>상품 비용을 입력하고 계산 결과를 저장하면 여기에 표시됩니다.</small></div> : null}</div>
+        <div className="margin-disclaimer"><AlertCircle size={15} /><span><b>입력한 정보를 기준으로 계산한 예상 금액입니다.</b> 실제 수수료는 카테고리, 판매자 등급과 할인 행사에 따라 달라질 수 있으니 상품 등록 전에 판매 채널에서 최종 확인해 주세요.</span></div>
       </section>
     </div>
   );

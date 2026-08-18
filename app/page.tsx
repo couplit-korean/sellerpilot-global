@@ -22,7 +22,6 @@ import {
   CircleDollarSign,
   Clock3,
   CloudUpload,
-  ClipboardCheck,
   Command,
   Eye,
   EyeOff,
@@ -109,16 +108,16 @@ type View =
 
 const navGroups = [
   {
-    label: "운영",
+    label: "판매 관리",
     items: [
-      { id: "overview" as View, label: "통합 대시보드", icon: LayoutDashboard },
-      { id: "products" as View, label: "상품 관리", icon: Package },
+      { id: "overview" as View, label: "홈", icon: LayoutDashboard },
+      { id: "products" as View, label: "상품", icon: Package },
       { id: "publishing" as View, label: "상품 등록", icon: CloudUpload },
-      { id: "margin" as View, label: "마진 계산", icon: Calculator },
-      { id: "orders" as View, label: "주문 · 판매", icon: ShoppingCart },
-      { id: "cs" as View, label: "CS 통합함", icon: Headphones },
-      { id: "readiness" as View, label: "채널 연동 준비", icon: ShieldCheck },
-      { id: "credentials" as View, label: "API 키 · 인증", icon: KeyRound },
+      { id: "margin" as View, label: "수익 계산", icon: Calculator },
+      { id: "orders" as View, label: "주문", icon: ShoppingCart },
+      { id: "cs" as View, label: "고객 문의", icon: Headphones },
+      { id: "readiness" as View, label: "연결 상태", icon: ShieldCheck },
+      { id: "credentials" as View, label: "채널 연결", icon: KeyRound },
     ],
   },
   {
@@ -131,28 +130,19 @@ const navGroups = [
       { id: "smartstore" as View, label: "네이버 스마트스토어", channel: "N" },
       { id: "ebay" as View, label: "eBay Global", channel: "E" },
       { id: "temu" as View, label: "Temu Korea", channel: "T" },
-      { id: "alibaba" as View, label: "Alibaba.com", channel: "A", disabled: true },
-      { id: "one688" as View, label: "1688.com", channel: "1688", disabled: true },
-    ],
-  },
-  {
-    label: "기획",
-    items: [
-      { id: "acceptance" as View, label: "개발 · 실검수", icon: ClipboardCheck },
-      { id: "storyboard" as View, label: "서비스 스토리보드", icon: FileText },
     ],
   },
 ];
 
 const pageMeta: Record<View, { title: string; description: string }> = {
-  overview: { title: "통합 대시보드", description: "모든 채널의 오늘을 한눈에 확인하세요." },
-  products: { title: "상품 관리", description: "채널별 등록 상태, 재고와 판매 성과를 관리합니다." },
-  publishing: { title: "상품 등록 센터", description: "대표사진과 다양한 각도 사진, 설명과 링크를 함께 분석해 채널 등록을 자동화합니다." },
-  margin: { title: "마진 계산", description: "원가와 채널 비용을 반영해 순이익과 목표 마진 판매가를 계산합니다." },
-  orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
-  cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
-  readiness: { title: "채널 연동 준비", description: "실제 판매자·개발자 콘솔 상태와 API 연결 차단 요인을 증거 기준으로 관리합니다." },
-  credentials: { title: "API 키 · 인증 관리", description: "채널 키의 보관, 만료, 교체, 연결 검사와 감사기록을 한곳에서 관리합니다." },
+  overview: { title: "홈", description: "모든 판매 채널의 오늘 할 일을 한눈에 확인하세요." },
+  products: { title: "상품", description: "등록 상태와 재고, 판매 현황을 한곳에서 관리하세요." },
+  publishing: { title: "상품 등록", description: "사진과 상품 정보를 입력하면 여러 판매 채널에 맞게 준비합니다." },
+  margin: { title: "수익 계산", description: "상품 원가와 판매 비용을 반영해 예상 수익을 계산하세요." },
+  orders: { title: "주문", description: "모든 판매 채널의 주문과 배송을 한곳에서 처리하세요." },
+  cs: { title: "고객 문의", description: "여러 언어와 판매 채널의 문의를 한곳에서 답변하세요." },
+  readiness: { title: "연결 상태", description: "판매 채널별 연결 상태와 필요한 조치를 확인하세요." },
+  credentials: { title: "채널 연결", description: "판매 채널을 연결하고 만료 일정을 안전하게 관리하세요." },
   qoo10: { title: "Qoo10 Japan", description: "일본 스토어의 상품, 매출, 주문, CS 성과입니다." },
   shopee: { title: "Shopee Global", description: "8개 국가 Shopee 숍의 상품, 매출, 주문, CS 성과입니다." },
   lazada: { title: "Lazada Malaysia", description: "말레이시아 스토어의 상품, 매출, 주문, CS 성과입니다." },
@@ -304,21 +294,21 @@ function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, pa
   return (
     <main className="login-shell">
       <section className="login-brand-panel">
-        <div className="brand-lockup"><span className="brand-symbol"><Zap size={18} fill="currentColor" /></span><strong>SellerPilot</strong><small>SELLER CONTROL</small></div>
+        <div className="brand-lockup"><span className="brand-symbol"><Zap size={18} fill="currentColor" /></span><strong>SellerPilot</strong><small>판매 운영을 더 간단하게</small></div>
         <div className="login-message">
-          <span className="login-section-label">글로벌 셀러 통합 업무 화면</span>
-          <h1>주문·상품·문의 업무를<br />하나의 작업대에서.</h1>
-          <p>판매 채널을 오가며 확인하던 주문, 상품 등록, 재고, 정산과 고객 문의를<br />업무 우선순위에 맞춰 한 화면에 정리했습니다.</p>
+          <span className="login-section-label">여러 판매 채널을 한곳에서</span>
+          <h1>상품부터 주문·문의까지<br />SellerPilot 하나로.</h1>
+          <p>판매 채널마다 반복하던 상품 등록, 주문 확인, 재고 관리와 고객 응대를<br />한 화면에서 쉽고 빠르게 처리하세요.</p>
           <div className="login-operations-preview">
-            <div className="preview-heading"><b>운영 워크플로</b><span>LIVE DATA ONLY</span></div>
-            <div className="preview-task urgent"><span>01</span><div><b>상품 등록 전 검증</b><small>카테고리 · 필수속성 · 이미지 확인</small></div><strong>READY</strong></div>
-            <div className="preview-task"><span>02</span><div><b>판매 채널 동기화</b><small>유효한 API 키가 있는 채널만 실행</small></div><strong>API</strong></div>
-            <div className="preview-task"><span>03</span><div><b>주문 · 문의 통합</b><small>실제 주문과 고객 문의만 운영 DB 집계</small></div><strong>LIVE</strong></div>
-            <div className="preview-settlement"><span>대시보드 집계 기준</span><b>실데이터 전용</b><em>샘플 자동 생성 없음</em></div>
+            <div className="preview-heading"><b>오늘의 판매 업무</b><span>자동으로 정리해 드려요</span></div>
+            <div className="preview-task urgent"><span>01</span><div><b>상품 정보 준비</b><small>사진 · 카테고리 · 필수 정보 확인</small></div><strong>준비 확인</strong></div>
+            <div className="preview-task"><span>02</span><div><b>판매 채널 등록</b><small>연결된 채널에 상품 정보 전송</small></div><strong>자동 연결</strong></div>
+            <div className="preview-task"><span>03</span><div><b>주문 · 문의 관리</b><small>주문과 고객 문의를 한 화면에서 확인</small></div><strong>한곳에서</strong></div>
+            <div className="preview-settlement"><span>정보 업데이트</span><b>자동으로 최신 상태 유지</b><em>연결된 판매 채널 기준</em></div>
           </div>
           <div className="login-market-row"><span>판매 채널</span><div><ChannelMark code="Q" size="sm" /><ChannelMark code="S" size="sm" /><ChannelMark code="L" size="sm" /><ChannelMark code="C" size="sm" /><ChannelMark code="11" size="sm" /><ChannelMark code="N" size="sm" /><ChannelMark code="E" size="sm" /></div><b><i />연동 상태 통합 관리</b></div>
         </div>
-        <footer><span>SellerPilot Commerce Control</span><span>상품 · 주문 · CS · 정산 통합 운영</span></footer>
+        <footer><span>SellerPilot</span><span>상품 · 주문 · 문의 · 정산을 한곳에서</span></footer>
       </section>
 
       <section className="login-form-panel">
@@ -326,8 +316,8 @@ function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, pa
         <form className="login-card" onSubmit={submit}>
           <div className="login-card-heading">
             <span className="secure-mark"><LockKeyhole size={21} /></span>
-            <h2>운영센터 로그인</h2>
-            <p>관리자 계정으로 통합 대시보드에 접속하세요.</p>
+            <h2>로그인</h2>
+            <p>SellerPilot 계정으로 시작하세요.</p>
           </div>
           <label className="field-label" htmlFor="email">아이디</label>
           <div className="input-wrap"><UserRound size={17} /><input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" placeholder="관리자 이메일" /></div>
@@ -335,8 +325,8 @@ function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, pa
           <div className="input-wrap"><LockKeyhole size={17} /><input id="password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" /><button type="button" className="password-toggle" aria-label={showPassword ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowPassword((current) => !current)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
           <div className="remember-row"><span><Check size={12} /></span>이 브라우저에서 로그인 세션 유지</div>
           {error && <p className="login-error"><AlertCircle size={14} />{error}</p>}
-          <button className="login-button" type="submit" disabled={loading}>{loading ? <><LoaderCircle className="spin" size={18} />접속 중...</> : <>대시보드 접속<ArrowRight size={18} /></>}</button>
-          <div className="demo-account"><ShieldCheck size={15} /><span>Supabase Auth로 인증하며 채널 키 원문은 로그인 후에도 표시하지 않습니다.<br /><b>관리자 초대 메일에서 비밀번호를 설정해 주세요.</b></span></div>
+          <button className="login-button" type="submit" disabled={loading}>{loading ? <><LoaderCircle className="spin" size={18} />로그인 중...</> : <>로그인<ArrowRight size={18} /></>}</button>
+          <div className="demo-account"><ShieldCheck size={15} /><span>판매 채널 연결 정보는 암호화해 안전하게 보호합니다.<br /><b>초대 메일에서 비밀번호를 설정해 주세요.</b></span></div>
         </form>
         <div className="login-support"><HelpCircle size={15} />접속에 문제가 있나요? <a href="mailto:couplit.official@gmail.com?subject=SellerPilot%20운영%20지원%20문의">운영 지원팀 문의</a></div>
       </section>
@@ -421,7 +411,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
           <button onClick={() => onNavigate("cs")}><span className="task-tone claim" /><small>미처리 CS</small><b>{operationsAvailable ? summary.openTicketCount : "—"}</b><em>통합 문의함</em></button>
           <button onClick={() => onNavigate("publishing")}><span className="task-tone error" /><small>등록 오류</small><b>{operationsAvailable ? summary.registrationErrorCount : "—"}</b><em>실패 작업</em></button>
         </div>
-        <aside className="briefing-settlement"><span>운영 API 연결</span><strong>{operationsAvailable ? `${summary.activeCredentialCount} / 7` : "확인 중"}</strong><small>운영 키가 활성화된 판매 채널</small><button onClick={() => onNavigate("credentials")}>키 · 인증 관리<ChevronRight size={14} /></button></aside>
+        <aside className="briefing-settlement"><span>연결된 판매 채널</span><strong>{operationsAvailable ? `${summary.activeCredentialCount} / 7` : "확인 중"}</strong><small>상품과 주문을 불러올 수 있는 채널</small><button onClick={() => onNavigate("credentials")}>채널 연결<ChevronRight size={14} /></button></aside>
       </section>
       <section className="overview-toolbar">
         <article className="exchange-widget" aria-label="현재 환율">
@@ -441,7 +431,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
 
       <section className="dashboard-main-grid">
         <article className="panel revenue-panel">
-          <div className="panel-heading"><div><span className="panel-kicker">실매출 분석</span><h3>채널별 최근 30일 매출</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>상품 원장<ChevronRight size={15} /></button></div>
+          <div className="panel-heading"><div><span className="panel-kicker">매출 현황</span><h3>채널별 최근 30일 매출</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>상품 보기<ChevronRight size={15} /></button></div>
           <div className="live-channel-bars">{activeMetrics.map((channel) => <button key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><span><i style={{ background: channel.color }} />{channel.name}</span><b>{formatCompactWon(channel.revenue30dKrw)}</b><em>{channel.orderCount.toLocaleString()}건</em><small><i style={{ width: `${Math.round((channel.revenue30dKrw / maxChannelRevenue) * 100)}%`, background: channel.color }} /></small></button>)}</div>
         </article>
 
@@ -463,9 +453,9 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
 
       <section className="dashboard-lower-grid">
         <article className="panel channel-performance">
-          <div className="panel-heading"><div><span className="panel-kicker">실계정 운영 상태</span><h3>채널별 실데이터</h3></div><span className="live-label"><i />LIVE</span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">판매 채널</span><h3>채널별 판매 현황</h3></div><span className="live-label"><i />최신</span></div>
           <div className="channel-list">
-            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : ""}><i />{channel.credentialStatus === "active" ? "운영 키 연결" : "API 키 연결 필요"}</span></div><div className="channel-metric"><small>30일 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
+            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : ""}><i />{channel.credentialStatus === "active" ? "연결됨" : "채널 연결 필요"}</span></div><div className="channel-metric"><small>30일 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric"><small>주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `확인 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -827,14 +817,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
       </section>
       <section className="publishing-layout">
         <article className="panel upload-panel">
-          <div className="panel-heading"><div><span className="panel-kicker">NEW PRODUCT</span><h3>새 상품 분석 자료</h3></div><span className="step-chip">STEP 1 / 3</span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">1단계</span><h3>새 상품 정보</h3></div><span className="step-chip">1 / 3</span></div>
 
           <section className="main-photo-section">
             <div className="upload-section-heading"><div><b>대표사진</b><span className="required-chip">필수</span><small>검색 결과와 채널 목록에서 가장 먼저 보이는 이미지입니다.</small></div><em>{mainPhoto ? "1장 등록됨" : "미등록"}</em></div>
             <label className={`drop-zone main-drop-zone ${mainPhoto ? "has-photo" : ""} ${running ? "running" : ""}`} htmlFor="main-product-photo">
               <input id="main-product-photo" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={selectMainPhoto} />
               {mainPhoto ? <><span className="main-photo-preview"><Image src={mainPhoto.url} alt="등록한 대표 상품 사진" fill sizes="700px" unoptimized /></span><span className="photo-preview-overlay"><ImagePlus size={17} />대표사진 교체</span><strong className="photo-file-name">{mainPhoto.name} · {mainPhoto.originalWidth}×{mainPhoto.originalHeight} → 1200×1200</strong></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>대표 상품 사진을 넣으세요</strong><p>JPG, PNG, WEBP · 최소 600×600px · 자동 1:1 여백 보정</p><em><ImagePlus size={15} />대표사진 선택</em></>}
-              {running && <span className="analysis-overlay"><LoaderCircle className="spin" size={29} /><b>사진·설명·링크 통합 분석 중</b><small>OCR과 상품 정보 교차검증을 진행하고 있습니다.</small><i><span /></i></span>}
+              {running && <span className="analysis-overlay"><LoaderCircle className="spin" size={29} /><b>사진과 상품 정보를 분석하는 중</b><small>사진 속 글자와 입력한 정보를 함께 확인하고 있습니다.</small><i><span /></i></span>}
             </label>
             <div className="main-photo-url-import">
               <Link2 size={16} />
@@ -869,8 +859,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
             <div className="manual-field-grid">
               <div className="intake-group-heading"><span>01</span><div><b>기본 상품 정보</b><small>상품을 식별하고 채널 카테고리를 찾는 기준입니다.</small></div></div>
               <label className={manualErrors.productName ? "field-error" : ""}><span>상품명 <i>필수</i></span><input required value={intake.productName} maxLength={160} onChange={(event) => setIntakeField("productName", event.target.value)} placeholder="실물과 일치하는 상품명" />{manualErrors.productName && <small>{manualErrors.productName}</small>}</label>
-              <label className={manualErrors.sellerSku ? "field-error" : ""}><span>판매자 SKU <i>필수</i></span><input required value={intake.sellerSku} maxLength={100} onChange={(event) => setIntakeField("sellerSku", event.target.value.toUpperCase())} placeholder="COUPLET-MUG-001" />{manualErrors.sellerSku && <small>{manualErrors.sellerSku}</small>}</label>
-              <label className={manualErrors.categoryHint ? "field-error" : ""}><span>상품군 힌트 <i>필수</i></span><input required value={intake.categoryHint} maxLength={120} onChange={(event) => setIntakeField("categoryHint", event.target.value)} placeholder="예: 카페 머그컵" />{manualErrors.categoryHint && <small>{manualErrors.categoryHint}</small>}</label>
+              <label className={manualErrors.sellerSku ? "field-error" : ""}><span>상품 관리 코드(SKU) <i>필수</i></span><input required value={intake.sellerSku} maxLength={100} onChange={(event) => setIntakeField("sellerSku", event.target.value.toUpperCase())} placeholder="예: MUG-001" />{manualErrors.sellerSku && <small>{manualErrors.sellerSku}</small>}</label>
+              <label className={manualErrors.categoryHint ? "field-error" : ""}><span>상품 종류 <i>필수</i></span><input required value={intake.categoryHint} maxLength={120} onChange={(event) => setIntakeField("categoryHint", event.target.value)} placeholder="예: 카페 머그컵" />{manualErrors.categoryHint && <small>{manualErrors.categoryHint}</small>}</label>
               <label className={manualErrors.brandName ? "field-error" : ""}><span>브랜드 <i>필수</i></span><input required value={intake.brandName} maxLength={120} onChange={(event) => setIntakeField("brandName", event.target.value)} placeholder="없으면 No Brand" />{manualErrors.brandName && <small>{manualErrors.brandName}</small>}</label>
               <label className={manualErrors.manufacturer ? "field-error" : ""}><span>제조사·공급처 <i>필수</i></span><input required value={intake.manufacturer} maxLength={160} onChange={(event) => setIntakeField("manufacturer", event.target.value)} placeholder="직접 제조 또는 공급처명" />{manualErrors.manufacturer && <small>{manualErrors.manufacturer}</small>}</label>
               <label className={manualErrors.countryOfOrigin ? "field-error" : ""}><span>원산지 <i>필수</i></span><input required value={intake.countryOfOrigin} maxLength={80} onChange={(event) => setIntakeField("countryOfOrigin", event.target.value)} placeholder="예: 대한민국" />{manualErrors.countryOfOrigin && <small>{manualErrors.countryOfOrigin}</small>}</label>
@@ -896,21 +886,21 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
               <label htmlFor="image-rights-confirmed" className={manualErrors.imageRightsConfirmed ? "field-error" : ""}><input id="image-rights-confirmed" aria-label="이미지와 상품 자료 사용 권한 확인" type="checkbox" checked={intake.imageRightsConfirmed} onChange={(event) => setIntakeField("imageRightsConfirmed", event.target.checked)} /><span><b>이미지·상품 자료 사용 권한</b><small>본인 촬영, 공급사 승인 또는 오픈라이선스 자료임을 확인합니다.</small></span></label>
               <label htmlFor="product-facts-confirmed" className={manualErrors.productFactsConfirmed ? "field-error" : ""}><input id="product-facts-confirmed" aria-label="상품 사실정보 확인" type="checkbox" checked={intake.productFactsConfirmed} onChange={(event) => setIntakeField("productFactsConfirmed", event.target.checked)} /><span><b>상품 사실정보 확인</b><small>원산지·소재·구성·규격이 실물과 일치합니다.</small></span></label>
             </div>
-            <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지와 입력값 교차검증</b><small>대표사진·라벨 OCR·바코드·공개 링크를 비교하고, 충돌하는 정보는 AI가 덮어쓰지 않고 확인 필요로 표시합니다.</small></span></div>
+            <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>사진과 입력 정보 함께 확인</b><small>대표사진, 상품 라벨, 바코드와 공개 링크를 비교하고 서로 다른 정보는 확인이 필요하다고 알려드립니다.</small></span></div>
           </section>
 
           <div className={`analysis-start-bar ${intakeReady && mainPhoto ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 1200×1200 JPG 자동보정 · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}</span><div><button type="button" className="batch-add-button" onClick={addCurrentProductToBatch} disabled={running || batchItems.length >= 8}><Plus size={17} />대기열에 담기</button><button type="button" onClick={startAutomation} disabled={running}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : <><WandSparkles size={17} />1개 바로 분석</>}</button></div></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>동시 대기열</span><b>{batchItems.length} / 8</b></div></div>
-          <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 키가 연결된 채널만 선택할 수 있습니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
-          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 공식 API 등록 가능</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
-          <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : connected ? "연결됨" : "키 필요"}</em></span>; })}</div></details>
-          <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>ChatGPT CLI 분석 완료</b><small>실제 작업 결과가 저장된 상품만 진행</small></span><em>필수</em></div><div className="automation-requirement"><span><b>동시 처리 정책</b><small>상품 최대 8건 · 생성 이미지 2장씩 · 판매 채널 7개 병렬 실행</small></span><em>자동</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
+          <div className="channel-selection-heading"><div><b>등록할 판매 채널</b><small>연결된 채널을 선택할 수 있습니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
+          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 등록 가능</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
+          <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비 중" : connected ? "연결됨" : "연결 필요"}</em></span>; })}</div></details>
+          <div className="auto-options"><h4>등록 전 확인</h4><div className="automation-requirement"><span><b>AI 상품 분석</b><small>상품 사진과 필수 정보 분석 완료</small></span><em>필수</em></div><div className="automation-requirement"><span><b>여러 상품 한 번에 처리</b><small>상품은 한 번에 최대 8개까지 준비</small></span><em>자동</em></div><div className="automation-requirement"><span><b>판매 카테고리</b><small>등록 가능한 카테고리와 필수 정보 확인</small></span><em>필수</em></div><div className="automation-requirement"><span><b>등록 전 마지막 확인</b><small>가격, 재고와 배송 정보를 확인한 뒤 등록</small></span><em>필수</em></div></div>
         </aside>
       </section>
       <section className="panel product-batch-panel">
-        <div className="panel-heading"><div><span className="panel-kicker">PARALLEL PRODUCT QUEUE</span><h3>상품 동시 처리</h3><p>필수값과 대표사진을 완성한 상품을 차례로 담은 뒤 한 번에 최대 8개까지 시작합니다.</p></div><span className="step-chip">{batchItems.length} / 8</span></div>
+        <div className="panel-heading"><div><span className="panel-kicker">여러 상품 등록</span><h3>상품 한 번에 준비하기</h3><p>필수 정보와 대표사진을 입력한 상품을 담아 한 번에 최대 8개까지 분석할 수 있습니다.</p></div><span className="step-chip">{batchItems.length} / 8</span></div>
         {batchItems.length ? <div className="batch-product-list">{batchItems.map((item) => <div className="batch-product-row" key={item.id}><AiProductStudio mainPhoto={item.mainPhoto} photos={item.photos} manualFields={item.manualFields} requestId={item.requestId} compact notify={notify} onRunningChange={(isRunning) => setBatchItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: isRunning ? "running" : entry.status === "succeeded" ? "succeeded" : "failed" } : entry))} onResultReady={(_, productId) => { setBatchItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: productId ? "succeeded" : "failed", productId } : entry)); if (productId) { setAnalyzedProductId(productId); setAnalyzedProductName(item.manualFields.productName); setPublishRefreshVersion((current) => current + 1); } }} /><div className="batch-product-row-actions">{item.productId && <button type="button" className="batch-open-product" onClick={() => { setAnalyzedProductId(item.productId); setAnalyzedProductName(item.manualFields.productName); setPublishRefreshVersion((current) => current + 1); notify(`${item.manualFields.productName}의 카테고리·채널 등록 화면을 열었습니다.`); }}><ChevronRight size={13} />등록 준비</button>}<button type="button" className="batch-remove-product" aria-label={`${item.manualFields.productName} 대기열에서 삭제`} disabled={item.status === "running"} onClick={() => removeBatchItem(item.id)}><X size={14} /></button></div></div>)}</div> : <div className="batch-product-empty"><Upload size={22} /><span><b>대기열이 비어 있습니다.</b><small>현재 상품의 필수정보와 사진을 입력하고 ‘대기열에 담기’를 누르세요.</small></span></div>}
         <div className="batch-product-actions"><span>실패 항목은 보완 후 다시 실행할 수 있고, 완료 상품은 각각 상품 원장에 저장됩니다.</span><button type="button" disabled={!batchItems.some((item) => item.status === "ready" || item.status === "failed")} onClick={startBatchAutomation}><Rocket size={16} />최대 8개 동시 분석 시작</button></div>
       </section>
@@ -957,11 +947,11 @@ function OrdersPage({ displayOrders, onAdvance }: { displayOrders: DisplayOrder[
   const shippingCount = displayOrders.filter((order) => order.status === "배송중").length;
   return (
     <div className="page-stack">
-      <section className="order-summary-grid"><article><span className="metric-icon blue"><ShoppingCart size={19} /></span><div><small>통합 주문</small><strong>{displayOrders.length}</strong></div><em>운영 원장</em></article><article><span className="metric-icon orange"><Clock3 size={19} /></span><div><small>출고 대기</small><strong>{readyCount}</strong></div><em className="neutral">결제완료 {paidCount}건</em></article><article><span className="metric-icon violet"><Truck size={19} /></span><div><small>배송 중</small><strong>{shippingCount}</strong></div><em className="neutral">상태 변경 가능</em></article><article><span className="metric-icon green"><CircleDollarSign size={19} /></span><div><small>데이터 연결</small><strong>DB</strong></div><em>1분 자동 갱신</em></article></section>
+      <section className="order-summary-grid"><article><span className="metric-icon blue"><ShoppingCart size={19} /></span><div><small>전체 주문</small><strong>{displayOrders.length}</strong></div><em>모든 채널</em></article><article><span className="metric-icon orange"><Clock3 size={19} /></span><div><small>출고 대기</small><strong>{readyCount}</strong></div><em className="neutral">결제완료 {paidCount}건</em></article><article><span className="metric-icon violet"><Truck size={19} /></span><div><small>배송 중</small><strong>{shippingCount}</strong></div><em className="neutral">상태 변경 가능</em></article><article><span className="metric-icon green"><CircleDollarSign size={19} /></span><div><small>정보 업데이트</small><strong>자동</strong></div><em>1분마다 확인</em></article></section>
       <section className="panel data-panel"><div className="tab-toolbar"><div>{["전체 주문", "결제완료", "출고대기", "배송중", "완료 · 취소"].map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}{tab === "출고대기" && <span>{readyCount}</span>}</button>)}</div><div className="search-field"><Search size={16} /><input placeholder="주문번호, 구매자 검색" /></div><button className="filter-button"><Filter size={15} />필터</button></div>
         <div className="table-wrap"><table className="data-table order-table"><thead><tr><th>주문번호</th><th>채널</th><th>구매자</th><th>상품</th><th>결제금액</th><th>주문상태</th><th>주문시간</th><th /></tr></thead><tbody>{displayOrders.filter((order) => active === "전체 주문" || active === "완료 · 취소" && ["배송완료", "취소완료", "환불완료"].includes(order.status) || order.status === active).map((order) => <tr key={order.id}><td><b className="mono">{order.id}</b></td><td><ChannelMark code={order.channel} size="sm" /></td><td><b>{order.customer}</b></td><td><span className="truncate-product">{order.product}</span></td><td><b>{order.amount}</b></td><td><StatusBadge status={order.status} /></td><td><span className="muted-cell">{order.time}</span></td><td><button className="table-action" title="다음 주문 상태로 변경" aria-label={`${order.id} 다음 상태로 변경`} onClick={() => void onAdvance(order)}><ChevronRight size={16} /></button></td></tr>)}</tbody></table></div>
-        {displayOrders.length === 0 && <div className="live-empty-state table-empty"><ShoppingCart size={28} /><b>동기화된 실제 주문이 없습니다.</b><small>채널 API 키 연결 후 주문 조회를 실행하면 표시됩니다.</small></div>}
-        <div className="bulk-order-bar"><span><input type="checkbox" disabled />선택한 주문</span><button disabled><Truck size={15} />일괄 출고 처리</button><button disabled>송장 업로드</button><span className="toolbar-spacer" /><small>실제 주문 API 연결 후 활성화</small><button className="table-action" disabled><RefreshCw size={15} /></button></div>
+        {displayOrders.length === 0 && <div className="live-empty-state table-empty"><ShoppingCart size={28} /><b>불러온 주문이 없습니다.</b><small>판매 채널을 연결하면 주문이 여기에 표시됩니다.</small></div>}
+        <div className="bulk-order-bar"><span><input type="checkbox" disabled />선택한 주문</span><button disabled><Truck size={15} />일괄 출고 처리</button><button disabled>송장 올리기</button><span className="toolbar-spacer" /><small>주문을 불러오면 사용할 수 있습니다</small><button className="table-action" disabled><RefreshCw size={15} /></button></div>
       </section>
     </div>
   );
@@ -980,13 +970,13 @@ function CsPage({ notify, displayTickets, displayOrders, onSend }: { notify: (me
   const linkedOrder = selected ? displayOrders.find((order) => order.customer === selected.customer) ?? null : null;
   return (
     <div className="page-stack cs-page">
-      <section className="cs-summary"><div><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{displayTickets.length}</strong></span></div><div><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{displayTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></div><div><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>연결 주문</small><strong>{displayOrders.length}</strong></span></div><div><span className="metric-icon blue"><Bot size={18} /></span><span><small>AI 답변</small><strong>CLI</strong></span></div></section>
-      {!selected ? <section className="panel live-empty-state large"><Inbox size={32} /><b>동기화된 실제 문의가 없습니다.</b><small>채널 API 연결 후 문의를 동기화하면 고객 정보와 주문 맥락이 표시됩니다.</small></section> :
+      <section className="cs-summary"><div><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{displayTickets.length}</strong></span></div><div><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{displayTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></div><div><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>연결 주문</small><strong>{displayOrders.length}</strong></span></div><div><span className="metric-icon blue"><Bot size={18} /></span><span><small>AI 답변</small><strong>준비</strong></span></div></section>
+      {!selected ? <section className="panel live-empty-state large"><Inbox size={32} /><b>불러온 고객 문의가 없습니다.</b><small>판매 채널을 연결하면 고객 문의와 관련 주문이 여기에 표시됩니다.</small></section> :
       <section className="cs-workspace panel">
         <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input placeholder="문의 검색" /></div><button className="icon-only-button"><Filter size={16} /></button></div><div className="ticket-tabs"><button className="active">미답변 <span>{displayTickets.length}</span></button><button>처리 중</button><button>완료</button></div>{displayTickets.map((ticket) => <button key={ticket.id} className={`ticket-item ${selected.id === ticket.id ? "active" : ""}`} onClick={() => { setSelectedId(ticket.id); setReply(""); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.status} /></div></button>)}</aside>
         <article className="conversation"><header><div><button className="mobile-back"><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div><button className="filter-button">처리 중<ChevronDown size={14} /></button><button className="icon-only-button"><MoreHorizontal size={18} /></button></div></header>
           <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b></span><em>{linkedOrder?.id ?? "-"}<ChevronRight size={14} /></em></div><div className="message-date"><span>실제 수신 문의</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.preview}</p><span>채널 동기화 원문</span></div></div></div>
-          <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />ChatGPT CLI 답변 생성은 채널 정책·주문 데이터 연결 후 실행합니다.</span><button disabled><RefreshCw size={13} />CLI 생성</button></div><textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="실제 답변을 입력하세요." /><div><span><button disabled><Languages size={15} />번역 후 전송<ChevronDown size={13} /></button><button disabled><FileText size={15} />템플릿</button></span><button className="send-button" disabled={!reply} onClick={() => void sendReply()}>답변 저장<Send size={15} /></button></div></footer>
+          <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />주문 정보와 판매 채널 정책을 확인해 AI 답변을 준비합니다.</span><button disabled><RefreshCw size={13} />AI 답변</button></div><textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="고객에게 보낼 답변을 입력하세요." /><div><span><button disabled><Languages size={15} />번역 후 전송<ChevronDown size={13} /></button><button disabled><FileText size={15} />자주 쓰는 답변</button></span><button className="send-button" disabled={!reply} onClick={() => void sendReply()}>답변 저장<Send size={15} /></button></div></footer>
         </article>
         <aside className="customer-panel"><div className="customer-profile"><div className="ticket-avatar xl">{selected.customer.charAt(0)}</div><h4>{selected.customer}</h4><span>{selected.channel} 구매자</span></div><div className="customer-facts"><div><small>총 주문</small><b>{displayOrders.filter((order) => order.customer === selected.customer).length}건</b></div><div><small>데이터 출처</small><b>실제 채널 API</b></div></div><div className="detail-section"><h5>현재 주문</h5><div className="mini-order"><span className="tiny-thumb"><Package size={17} /></span><span><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b><small>{linkedOrder?.amount ?? "-"}</small></span></div><dl><div><dt>주문번호</dt><dd>{linkedOrder?.id ?? "-"}</dd></div><div><dt>배송상태</dt><dd><StatusBadge status={linkedOrder?.status ?? "확인 필요"} /></dd></div><div><dt>운송장</dt><dd>배송 API 동기화 값</dd></div></dl></div><div className="detail-section"><h5>응대 원칙</h5><p className="ai-guide"><Bot size={16} />실제 주문·배송 상태를 확인한 뒤 답변을 저장하세요.</p></div></aside>
       </section>}
@@ -1008,10 +998,10 @@ function ChannelPage({ channelKey, onNavigate, metric, displayProducts }: {
   const averageOrder = orderCount > 0 ? revenue / orderCount : 0;
   return (
     <div className="page-stack">
-      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em className={connected ? "connected" : ""}><i />{connected ? "운영 API 키 연결 · 실데이터 집계" : "운영 API 키 연결 필요"}</em></span></div><div><button className="filter-button" onClick={() => onNavigate("readiness")}><ShieldCheck size={15} />연동 준비도</button><button className="primary-button" onClick={() => onNavigate("credentials")}><KeyRound size={15} />API 운영 콘솔</button></div></section>
+      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em className={connected ? "connected" : ""}><i />{connected ? "연결됨 · 판매 정보 자동 업데이트" : "채널 연결 필요"}</em></span></div><div><button className="filter-button" onClick={() => onNavigate("readiness")}><ShieldCheck size={15} />연결 상태</button><button className="primary-button" onClick={() => onNavigate("credentials")}><KeyRound size={15} />채널 연결</button></div></section>
       <section className="metric-grid channel-metrics"><MetricCard label="30일 매출" value={formatCompactWon(revenue)} detail="실제 게시 상품 매출" icon={CircleDollarSign} tone="violet" /><MetricCard label="주문" value={orderCount.toLocaleString()} detail={`출고대기 ${metric?.readyToShipCount ?? 0}건`} icon={ShoppingBag} tone="blue" /><MetricCard label="판매 상품" value={(metric?.publishedCount ?? 0).toLocaleString()} detail={`관리 상품 ${metric?.productCount ?? 0}개`} icon={Package} tone="green" /><MetricCard label="미처리 CS" value={(metric?.openTicketCount ?? 0).toLocaleString()} detail="실제 채널 문의" icon={Headphones} tone="orange" /></section>
-      <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE PERFORMANCE</span><h3>최근 30일 운영 집계</h3></div><span className="live-label"><i />DB</span></div><div className="channel-live-summary"><div><small>판매량</small><b>{(metric?.sold30d ?? 0).toLocaleString()}개</b></div><div><small>평균 주문금액</small><b>{formatCompactWon(averageOrder)}</b></div><div><small>실주문</small><b>{orderCount.toLocaleString()}건</b></div><div><small>최근 API 오류</small><b>{metric?.failedAttemptCount ?? 0}건</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">CONNECTION</span><h3>채널 연결 상태</h3></div><span className={`score-grade ${connected ? "connected" : ""}`}>{connected ? "ON" : "OFF"}</span></div>{[{ label: "운영 자격증명", score: connected ? "연결됨" : "키 필요" }, { label: "등록 상품", score: `${metric?.publishedCount ?? 0}개` }, { label: "출고 대기", score: `${metric?.readyToShipCount ?? 0}건` }, { label: "실패 작업", score: `${metric?.failedAttemptCount ?? 0}건` }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
-      <section className="panel data-panel"><div className="panel-heading table-title"><div><span className="panel-kicker">LIVE PRODUCTS</span><h3>채널 내 판매 상품</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>전체 상품<ChevronRight size={15} /></button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>순위</th><th>상품</th><th>30일 판매</th><th>30일 매출</th><th>재고</th><th>상태</th></tr></thead><tbody>{channelProducts.slice(0, 10).map((product, index) => <tr key={product.id}><td><b className="rank-number">{String(index + 1).padStart(2, "0")}</b></td><td><div className="product-cell"><div className="product-thumb"><ProductVisual src={product.image} size="52px" /></div><span><b>{product.name}</b><small>{product.sku}</small></span></div></td><td><b>{product.sales}</b>개</td><td><b>{product.revenue}</b></td><td><b>{product.stock}</b>개</td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div>{channelProducts.length === 0 && <div className="live-empty-state table-empty"><PackageSearch size={28} /><b>이 채널의 실상품이 없습니다.</b><small>API 키 연결 후 상품 동기화 또는 신규 등록을 실행하세요.</small></div>}</section>
+      <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">판매 현황</span><h3>최근 30일 요약</h3></div><span className="live-label"><i />최신</span></div><div className="channel-live-summary"><div><small>판매량</small><b>{(metric?.sold30d ?? 0).toLocaleString()}개</b></div><div><small>평균 주문금액</small><b>{formatCompactWon(averageOrder)}</b></div><div><small>주문</small><b>{orderCount.toLocaleString()}건</b></div><div><small>확인할 등록</small><b>{metric?.failedAttemptCount ?? 0}건</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">연결 상태</span><h3>판매 채널 연결</h3></div><span className={`score-grade ${connected ? "connected" : ""}`}>{connected ? "연결됨" : "연결 전"}</span></div>{[{ label: "채널 연결", score: connected ? "정상" : "연결 필요" }, { label: "등록 상품", score: `${metric?.publishedCount ?? 0}개` }, { label: "출고 대기", score: `${metric?.readyToShipCount ?? 0}건` }, { label: "확인할 작업", score: `${metric?.failedAttemptCount ?? 0}건` }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
+      <section className="panel data-panel"><div className="panel-heading table-title"><div><span className="panel-kicker">판매 상품</span><h3>채널에 등록된 상품</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>전체 상품<ChevronRight size={15} /></button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>순위</th><th>상품</th><th>30일 판매</th><th>30일 매출</th><th>재고</th><th>상태</th></tr></thead><tbody>{channelProducts.slice(0, 10).map((product, index) => <tr key={product.id}><td><b className="rank-number">{String(index + 1).padStart(2, "0")}</b></td><td><div className="product-cell"><div className="product-thumb"><ProductVisual src={product.image} size="52px" /></div><span><b>{product.name}</b><small>{product.sku}</small></span></div></td><td><b>{product.sales}</b>개</td><td><b>{product.revenue}</b></td><td><b>{product.stock}</b>개</td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div>{channelProducts.length === 0 && <div className="live-empty-state table-empty"><PackageSearch size={28} /><b>이 채널에 등록된 상품이 없습니다.</b><small>판매 채널을 연결한 뒤 상품을 등록해 주세요.</small></div>}</section>
     </div>
   );
 }
@@ -1167,15 +1157,14 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   return (
     <main className="app-shell">
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        <div className="sidebar-head"><div className="brand-lockup light"><span className="brand-symbol"><Zap size={17} fill="currentColor" /></span><span className="sidebar-brand-copy"><strong>SellerPilot</strong><small>SELLER CONTROL</small></span></div><button aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={18} /></button></div>
+        <div className="sidebar-head"><div className="brand-lockup light"><span className="brand-symbol"><Zap size={17} fill="currentColor" /></span><span className="sidebar-brand-copy"><strong>SellerPilot</strong><small>통합 판매 관리</small></span></div><button aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={18} /></button></div>
         <nav>{navGroups.map((group) => <div className="nav-group" key={group.label}><span className="nav-label">{group.label}</span>{group.items.map((item) => {
           const Icon = "icon" in item ? item.icon : null;
           const isActive = view === item.id;
-          const isDisabled = "disabled" in item && item.disabled;
-          return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
+          return <button key={item.id} className={isActive ? "active" : ""} onClick={() => navigate(item.id)} aria-label={item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
-        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>7개 판매채널</b> 인증과 기능 차이를<br />보안 저장소에서 관리합니다.</p><span><i /></span><small>키 만료일·OAuth·갱신 주기 관리</small></div>
-        <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말 · 가이드</span></button><button onClick={() => navigate("credentials")}><Settings size={17} /><span>API · 보안 설정</span></button><button onClick={() => void onLogout()}><LogOut size={17} /><span>로그아웃</span></button></div>
+        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span></div><p><b>7개 판매 채널</b>을 한곳에서<br />연결하고 관리할 수 있습니다.</p><span><i /></span><small>연결 상태와 갱신 일정 확인</small></div>
+        <div className="sidebar-foot"><button><LifeBuoy size={17} /><span>도움말</span></button><button onClick={() => navigate("credentials")}><Settings size={17} /><span>채널 연결 설정</span></button><button onClick={() => void onLogout()}><LogOut size={17} /><span>로그아웃</span></button></div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
 
@@ -1183,18 +1172,28 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
         <div className="app-header-stack">
           <div className="commerce-service-rail" aria-label="채널 운영 상태">
             <strong>통합 판매관리</strong>
-            <span><i className={operations.state === "database" ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? "실데이터 원장 연결" : "운영 원장 확인 중"}</span>
-            <span><i className={operationSummary?.activeCredentialCount ? "rail-ok" : "rail-pending"} />운영 키 {operationSummary?.activeCredentialCount ?? 0}개 연결</span>
-            <span><i className="rail-ok" />보안 저장소 연결</span>
-            <em>{operations.state === "database" ? "운영 DB 1분 자동 갱신" : operations.state === "loading" ? "운영 DB 확인 중" : "운영 DB 연결 오류"}</em>
+            <span><i className={operations.state === "database" ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? "판매 정보 연결됨" : "판매 정보 확인 중"}</span>
+            <span><i className={operationSummary?.activeCredentialCount ? "rail-ok" : "rail-pending"} />채널 {operationSummary?.activeCredentialCount ?? 0}개 연결</span>
+            <span><i className="rail-ok" />연결 정보 안전하게 보호</span>
+            <em>{operations.state === "database" ? "1분마다 자동 업데이트" : operations.state === "loading" ? "정보를 불러오는 중" : "연결 상태를 확인해 주세요"}</em>
           </div>
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
-          <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={operations.message}><Activity size={13} /><b>{operations.state === "database" ? "실데이터" : operations.state === "loading" ? "연결 확인" : "연결 오류"}</b><small>{operations.state === "database" ? "Supabase 운영 원장" : operations.message}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={() => setSearchOpen(true)}><Search size={16} /><span>상품, 주문, CS 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap"><button className="top-icon-button" aria-label="알림" onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} />{Boolean((operationSummary?.lowStockCount ?? 0) + (operationSummary?.registrationErrorCount ?? 0)) && <i />}</button>{notificationsOpen && <div className="notification-popover"><div><h4>실시간 알림</h4><button onClick={() => setNotificationsOpen(false)}>닫기</button></div><button onClick={() => navigate("products")}><span className="alert-icon danger"><Box size={15} /></span><span><b>재고주의 상품 {operationSummary?.lowStockCount ?? 0}건</b><small>운영 원장 실재고 기준</small></span></button><button onClick={() => navigate("publishing")}><span className="alert-icon warning"><AlertCircle size={15} /></span><span><b>등록 실패 {operationSummary?.registrationErrorCount ?? 0}건</b><small>채널 API 작업 이력 기준</small></span></button></div>}</div><button className="user-menu"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
+          <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={operations.message}><Activity size={13} /><b>{operations.state === "database" ? "최신 정보" : operations.state === "loading" ? "확인 중" : "연결 확인"}</b><small>{operations.state === "database" ? "자동 업데이트" : "잠시 후 다시 확인해 주세요"}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={() => setSearchOpen(true)}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap"><button className="top-icon-button" aria-label="알림" onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} />{Boolean((operationSummary?.lowStockCount ?? 0) + (operationSummary?.registrationErrorCount ?? 0)) && <i />}</button>{notificationsOpen && <div className="notification-popover"><div><h4>알림</h4><button onClick={() => setNotificationsOpen(false)}>닫기</button></div><button onClick={() => navigate("products")}><span className="alert-icon danger"><Box size={15} /></span><span><b>재고 부족 상품 {operationSummary?.lowStockCount ?? 0}건</b><small>현재 재고 기준</small></span></button><button onClick={() => navigate("publishing")}><span className="alert-icon warning"><AlertCircle size={15} /></span><span><b>등록 확인 필요 {operationSummary?.registrationErrorCount ?? 0}건</b><small>최근 등록 결과 기준</small></span></button></div>}</div><button className="user-menu"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>관리자</small></span><ChevronDown size={14} /></button></div>
           </header>
         </div>
         <div className="app-content">{content}</div>
       </section>
+
+      <nav className="mobile-bottom-nav" aria-label="주요 메뉴">
+        {([
+          { id: "overview" as View, label: "홈", icon: LayoutDashboard },
+          { id: "products" as View, label: "상품", icon: Package },
+          { id: "publishing" as View, label: "등록", icon: Plus },
+          { id: "orders" as View, label: "주문", icon: ShoppingCart },
+          { id: "cs" as View, label: "문의", icon: MessageCircleMore },
+        ]).map((item) => <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => navigate(item.id)} aria-current={view === item.id ? "page" : undefined}><item.icon size={20} /><span>{item.label}</span></button>)}
+      </nav>
 
       {searchOpen && <div className="command-overlay" role="button" tabIndex={0} aria-label="검색창 닫기" onClick={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape" || event.key === "Enter") setSearchOpen(false); }}><div className="command-dialog" role="dialog" aria-modal="true" aria-label="통합 검색"><div className="command-input"><Search size={18} /><input placeholder="상품명, 주문번호, 고객명 검색" /><button aria-label="검색창 닫기" onClick={() => setSearchOpen(false)}><X size={17} /></button></div><span className="command-label">빠른 이동</span>{navGroups[0].items.map((item) => { const Icon = "icon" in item ? item.icon : null; return Icon ? <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button> : null; })}</div></div>}
       {toast && <div className="toast"><CheckCircle2 size={18} /><span>{toast}</span><button onClick={() => setToast("")}><X size={14} /></button></div>}

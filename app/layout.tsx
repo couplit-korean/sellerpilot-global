@@ -4,6 +4,7 @@ import "@puckeditor/core/puck.css";
 import "./globals.css";
 import "./operations-system.css";
 import "./commerce-ux-refactor.css";
+import "./customer-experience.css";
 
 const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`

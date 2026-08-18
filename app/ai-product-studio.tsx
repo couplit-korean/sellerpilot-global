@@ -2,12 +2,11 @@
 /* eslint-disable @next/next/no-img-element -- previews use browser-generated object/data URLs */
 
 import dynamic from "next/dynamic";
-import { CheckCircle2, Download, ExternalLink, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
+import { CheckCircle2, Download, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import { createClient } from "../lib/supabase/client";
 import { productIntakeSchema, type NormalizedProductImageSpec, type ProductIntakeDraft } from "../lib/product-intake";
-import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
 import type { ProductDetailData } from "./product-detail-puck";
 import type { ProductStudioResult } from "./product-studio-types";
 
@@ -173,16 +172,16 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
         headers: { authorization: `Bearer ${accessToken}` },
         cache: "no-store",
       });
-      const payload = await response.json().catch(() => ({ message: "CLI 작업 상태 응답을 읽지 못했습니다." })) as CliJobPayload & { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? "CLI 작업 상태를 확인하지 못했습니다.");
+      const payload = await response.json().catch(() => ({ message: "AI 제작 상태를 확인하지 못했습니다." })) as CliJobPayload & { message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "AI 제작 상태를 확인하지 못했습니다.");
       if (payload.status === "succeeded" && payload.result) return payload.result;
       if (payload.status === "failed" || payload.status === "cancelled") {
-        throw new Error(payload.error || "ChatGPT CLI 작업이 완료되지 못했습니다.");
+        throw new Error(payload.error || "AI 제작을 완료하지 못했습니다.");
       }
       setCliPhase(payload.status === "running" ? "running" : "queued");
       await delay(3_000);
     }
-    throw new Error("ChatGPT CLI 작업 대기시간이 30분을 초과했습니다. 작업자 연결 상태를 확인해 주세요.");
+    throw new Error("AI 제작 시간이 예상보다 오래 걸리고 있습니다. 잠시 후 다시 시도해 주세요.");
   }, []);
 
   const generate = useCallback(async () => {
@@ -210,7 +209,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
         headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ jobId, manualFields: validatedIntake.data, imagePaths, imageSpecs }),
       });
-      const queued = await response.json().catch(() => ({ message: "CLI 작업 등록 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
+      const queued = await response.json().catch(() => ({ message: "AI 제작 요청을 시작하지 못했습니다." })) as { jobId?: string; message?: string };
       if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
       const cliResult = await waitForCliJob(queued.jobId, accessToken);
       const { heroUrl, generatedImages, ...nextResult } = cliResult;
@@ -233,8 +232,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       const productId = productResponse.ok && typeof productPayload.id === "string" ? productPayload.id : null;
       onResultReady?.(nextResult, productId);
       notify(productResponse.ok
-        ? `ChatGPT CLI 분석, codex-image 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장 연결을 완료했습니다.`
-        : `이미지 ${aiGeneratedAssetSpecs.length}종 제작은 완료됐지만 상품 원장 저장을 확인해 주세요.`);
+        ? `상품 분석과 이미지 ${aiGeneratedAssetSpecs.length}종 제작을 완료했습니다.`
+        : `이미지 ${aiGeneratedAssetSpecs.length}종 제작을 완료했습니다. 상품 저장 상태를 확인해 주세요.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";
       setLastError(message);
@@ -264,7 +263,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       <article className={`batch-studio-item ${generating ? "running" : result ? "succeeded" : lastError ? "failed" : "ready"}`}>
         <span className="batch-studio-thumb">{currentImageUrl ? <img src={currentImageUrl} alt="동시 처리 상품 대표사진" /> : <ImageIcon size={18} />}</span>
         <span><b>{manualFields.productName}</b><small>{manualFields.sellerSku} · {photos.length}장</small></span>
-        <em>{generating ? cliPhase === "running" ? "CLI 처리 중" : "대기 중" : result ? "원장 생성 완료" : lastError ? "확인 필요" : "실행 대기"}</em>
+        <em>{generating ? cliPhase === "running" ? "AI 제작 중" : "대기 중" : result ? "준비 완료" : lastError ? "확인 필요" : "시작 전"}</em>
       </article>
     );
   }
@@ -275,19 +274,19 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
   return (
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
-        <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>로컬 ChatGPT CLI가 사진과 설명을 분석하고, codex-image와 Puck 편집 흐름으로 결과를 만듭니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result ? "CLI 실데이터" : "실행 대기"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating}>{generating ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}다시 생성</button></div>
+        <div><span className="panel-kicker">AI 자동 제작</span><h3>상품 이미지 · 상세페이지</h3><p>등록한 사진과 설명을 분석해 판매 채널에 맞는 이미지와 상세페이지를 만듭니다.</p></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "제작 중" : "대기 중" : result ? "준비 완료" : "시작 전"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating}>{generating ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}다시 만들기</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>
         <span><Sparkles size={15} /><b>상세 기획</b><small>5–7개 구매 흐름 섹션</small></span>
         <span><ImageIcon size={15} /><b>자동 이미지</b><small>대표 4종 · 상세 4종</small></span>
-        <a href={CODEX_IMAGE_SOURCE} target="_blank" rel="noreferrer"><WandSparkles size={15} /><b>Codex Image 규칙</b><small>gpt-image-2 · MIT</small><ExternalLink size={12} /></a>
+        <span><WandSparkles size={15} /><b>상품 특징 유지</b><small>원본을 참고해 자연스럽게 제작</small></span>
       </div>
       <div className="studio-workspace">
         <aside className="creative-rail">
           <div className="creative-rail-head"><span><b>자동 제작 썸네일</b><small>제품이 프레임의 70% 이상 보이는 마켓용 이미지</small></span><em>{creativeThumbnails.length || 3}종</em></div>
-          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" /><span>CODEX IMAGE</span></div><b>CLI 상품 연출컷</b><small>ChatGPT OAuth · 원본 충실도 높음</small></article>}
+          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="AI가 제작한 상품 연출 이미지" /><span>AI 생성 이미지</span></div><b>상품 연출 이미지</b><small>원본 상품의 특징을 유지해 제작</small></article>}
           <div className="thumbnail-grid">
             {creativeThumbnails.length ? creativeThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
@@ -295,15 +294,15 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
           <div className="thumbnail-grid detail-assets">
             {detailThumbnails.length ? detailThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 상세 이미지`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>) : detailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>상세 전용 이미지 생성 대기</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
-          {result ? <div className="creative-summary"><span>CREATIVE DIRECTION</span><b>{result.design.themeName}</b><p>{result.product.oneLine}</p><div>{Object.values(result.design.palette).map((color) => <i key={color} style={{ background: color }} title={color} />)}</div></div> : <div className="creative-summary empty"><span>CLI RESULT</span><b>실제 분석 결과 대기</b><p>대표사진을 등록하고 분석을 시작하면 결과만 표시합니다.</p></div>}
+          {result ? <div className="creative-summary"><span>디자인 방향</span><b>{result.design.themeName}</b><p>{result.product.oneLine}</p><div>{Object.values(result.design.palette).map((color) => <i key={color} style={{ background: color }} title={color} />)}</div></div> : <div className="creative-summary empty"><span>분석 결과</span><b>상품 사진을 기다리고 있어요</b><p>대표사진을 등록하고 분석을 시작하면 결과를 표시합니다.</p></div>}
         </aside>
 
         <article className="detail-preview-panel">
-          <div className="detail-preview-toolbar"><span><MonitorSmartphone size={16} /><b>상세페이지 라이브 미리보기</b><small>모바일 우선 · 블록형 구성</small></span><button type="button" onClick={() => setEditorOpen(true)} disabled={!result}><PencilRuler size={15} />Puck으로 직접 편집</button></div>
-          <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>실제 상세페이지 결과가 아직 없습니다.</b><small>대표사진과 상품 정보를 분석한 뒤 ChatGPT CLI 결과를 표시합니다.</small></div>}</div>
+          <div className="detail-preview-toolbar"><span><MonitorSmartphone size={16} /><b>상세페이지 미리보기</b><small>모바일 화면에 맞게 제작</small></span><button type="button" onClick={() => setEditorOpen(true)} disabled={!result}><PencilRuler size={15} />상세페이지 편집</button></div>
+          <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>상세페이지를 아직 만들지 않았습니다.</b><small>대표사진과 상품 정보를 분석하면 결과를 여기에서 확인할 수 있습니다.</small></div>}</div>
         </article>
       </div>
-      {lastError && <div className="studio-warning error"><b>실제 AI 작업 실패</b><p>{lastError}</p><small>예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 CLI 작업자 상태를 확인해 주세요.</small></div>}
+      {lastError && <div className="studio-warning error"><b>AI 제작을 완료하지 못했습니다</b><p>{lastError}</p><small>입력한 사진과 정보를 확인한 뒤 다시 시도해 주세요.</small></div>}
       {result && result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
       {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} data={savedDetailData} onSave={(next) => { setSavedDetailData(next); notify("상세페이지 편집 내용을 현재 작업에 저장했습니다."); }} onClose={() => setEditorOpen(false)} />}
     </section>
