@@ -60,7 +60,7 @@ const schemaPath = resolve("scripts/ai-studio-output.schema.json");
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.5";
+const workerVersion = "sellerpilot-cli-worker/1.6";
 
 class JobCancelledError extends Error {
   constructor() {

@@ -737,16 +737,23 @@ async function executeCoupang(input: ExecuteInput) {
   }
   if (input.operation === "listing.create" || input.operation === "listing.update") {
     const body: Record<string, unknown> = { ...objectValue(input.arguments, "body"), vendorId };
-    const writeRemote = await coupangRequest({
+    const resumeRemoteId = input.operation === "listing.create"
+      ? stringArgument(input.arguments, "resumeRemoteId", false)
+      : "";
+    const writeRemote = resumeRemoteId ? null : await coupangRequest({
       payload: input.payload,
       method: input.operation === "listing.create" ? "POST" : "PUT",
       path: sellerProductsPath,
       body,
     });
-    const responseId = typeof writeRemote.data.data === "number" || typeof writeRemote.data.data === "string" ? String(writeRemote.data.data) : undefined;
+    const responseId = writeRemote && (typeof writeRemote.data.data === "number" || typeof writeRemote.data.data === "string")
+      ? String(writeRemote.data.data)
+      : undefined;
     const requestedId = typeof body.sellerProductId === "number" || typeof body.sellerProductId === "string" ? String(body.sellerProductId) : undefined;
-    const remoteId = responseId ?? requestedId;
-    const writeStep = step(input.operation, writeRemote);
+    const remoteId = resumeRemoteId || responseId || requestedId;
+    const writeStep: ChannelOperationStep = writeRemote
+      ? step(input.operation, writeRemote)
+      : { name: "listing.resume", ok: Boolean(remoteId), status: 200, data: { sellerProductId: remoteId, resumed: true } };
     if (!writeStep.ok || !remoteId) return result(input, [writeStep], remoteId);
     let readbackRemote = await coupangRequest({
       payload: input.payload,
@@ -765,14 +772,39 @@ async function executeCoupang(input: ExecuteInput) {
         .filter((value): value is string => typeof value === "string" && value.length > 0)
         .join(" ")
         .toUpperCase();
-      const requestStateMatches = body.requested !== true
-        || requested === true
-        || (stateIndicators.length > 0 && !/(TEMP_SAVED|\bSAVED\b)/.test(stateIndicators));
-      readbackStep.ok = readbackStep.ok && readbackId !== undefined && String(readbackId) === remoteId && requestStateMatches;
-      return { readbackStep, requested, stateIndicators };
+      const identityMatches = readbackId !== undefined && String(readbackId) === remoteId;
+      const saved = /(TEMP_SAVED|\bSAVED\b)/.test(stateIndicators);
+      const approvalObserved = requested === true
+        || (stateIndicators.length > 0 && !saved && !/ID_GEN/.test(stateIndicators));
+      const providerAndIdentityOk = readbackStep.ok && identityMatches;
+      readbackStep.ok = providerAndIdentityOk && (body.requested !== true || approvalObserved);
+      return { readbackStep, providerAndIdentityOk, approvalObserved, saved };
     };
-    const initialReadback = verifyReadback("listing-readback");
-    if (body.requested !== true || initialReadback.readbackStep.ok) {
+    let initialReadback = verifyReadback("listing-readback");
+    if (body.requested !== true || initialReadback.approvalObserved) {
+      initialReadback.readbackStep.ok = initialReadback.providerAndIdentityOk;
+      return result(input, [writeStep, initialReadback.readbackStep], remoteId);
+    }
+
+    // Coupang can return ID_GEN for several seconds after a successful create.
+    // Approval during that window is rejected even though the same readback soon
+    // transitions to SAVED, so wait for the documented temporary-save state.
+    for (let attempt = 0; attempt < 8 && !initialReadback.saved; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 750));
+      readbackRemote = await coupangRequest({
+        payload: input.payload,
+        method: "GET",
+        path: `${sellerProductsPath}/${pathSegment(remoteId)}`,
+      });
+      initialReadback = verifyReadback("listing-readback");
+      if (initialReadback.approvalObserved) break;
+    }
+    if (initialReadback.approvalObserved) {
+      initialReadback.readbackStep.ok = initialReadback.providerAndIdentityOk;
+      return result(input, [writeStep, initialReadback.readbackStep], remoteId);
+    }
+    initialReadback.readbackStep.ok = initialReadback.providerAndIdentityOk && initialReadback.saved;
+    if (!initialReadback.readbackStep.ok) {
       return result(input, [writeStep, initialReadback.readbackStep], remoteId);
     }
 
@@ -783,15 +815,18 @@ async function executeCoupang(input: ExecuteInput) {
     });
     const approvalStep = step("listing-approval-request", approvalRemote);
     let approvalReadback = initialReadback;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 750));
       readbackRemote = await coupangRequest({
         payload: input.payload,
         method: "GET",
         path: `${sellerProductsPath}/${pathSegment(remoteId)}`,
       });
       approvalReadback = verifyReadback("listing-approval-readback");
-      if (approvalReadback.readbackStep.ok) break;
+      if (approvalReadback.approvalObserved) {
+        approvalReadback.readbackStep.ok = approvalReadback.providerAndIdentityOk;
+        break;
+      }
     }
     if (approvalReadback.readbackStep.ok) {
       initialReadback.readbackStep.ok = true;

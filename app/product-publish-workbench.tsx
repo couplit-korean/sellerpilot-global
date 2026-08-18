@@ -3,7 +3,7 @@
 import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
-import { marketplaceListingPrice } from "../lib/channels/listing-normalization";
+import { marketplaceListingCurrency, marketplaceListingPrice } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10SellerCode } from "../lib/channels/qoo10";
 import { createClient } from "../lib/supabase/client";
@@ -114,7 +114,7 @@ function uniqueUrls(values: Array<string | null | undefined>) {
 }
 
 function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number) {
-  const channelPrice = marketplaceListingPrice(channel, price);
+  const channelPrice = marketplaceListingPrice(channel, price, { globalBaseUsdPrice, targetCurrency: target?.currency });
   const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
   const existingListing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
   const product = context.product;
@@ -132,7 +132,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     ? dedicatedDetailImageUrls
     : [generatedImage("portrait"), generatedImage("wide"), generatedImage("hero")]);
   const sourceImage = galleryImageUrls[0] ?? "";
-  const sellerpilotAssets = { galleryImageUrls, detailImageUrls, detailAssetMode: dedicatedDetailReady ? "dedicated" : "legacy_fallback" };
+  const sellerpilotAssets = { galleryImageUrls, detailImageUrls, detailAssetMode: dedicatedDetailReady ? "dedicated" : "legacy_fallback", integrationRevision: "marketplace-write-v2" };
   const localized = context.localizedListings?.find((item) => item.channel === channel && item.market === target?.marketCode);
   const manual = context.manualFields;
   const title = localized?.title || product.name;
@@ -249,6 +249,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     }));
     return {
       sellerpilotAssets,
+      ...(existingListing?.remoteId && existingListing.status !== "published" ? { resumeRemoteId: existingListing.remoteId } : {}),
       facts: {
         material: manual.material,
         packageContents: manual.packageContents,
@@ -537,8 +538,8 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       notify(`${channelCatalog[channel].name} 필수값 보완: ${missing.join(", ")}`);
       return false;
     }
-    const listingCurrency = target?.currency || currency;
-    const operationPrice = marketplaceListingPrice(channel, price);
+    const listingCurrency = marketplaceListingCurrency(channel, target?.currency);
+    const operationPrice = marketplaceListingPrice(channel, price, { globalBaseUsdPrice, targetCurrency: target?.currency });
     if (!options.skipConfirm) {
       setConfirmingChannel(channel);
       return false;
@@ -712,9 +713,9 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 실행</h3><p>공식 카테고리, 원본 대표사진, 가격·재고와 채널 필수값을 마지막으로 검증한 뒤 준비된 채널을 최대 8개까지 병렬 실행합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "동시 등록 중" : bulkConfirming ? "최종 확인 열림" : "최대 8개 동시 등록"}</button></div></div>
     {bulkConfirming && <div className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 최종 확인"><AlertTriangle size={18} /><div><b>준비된 모든 채널에 실제 상품을 등록합니다.</b><small>채널별 payload와 가격·재고를 최종 확인한 뒤 실행하세요.</small></div><button type="button" className="credential-secondary" onClick={() => setBulkConfirming(false)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeReadyChannels(true)}>확인 후 동시 등록 실행</button></div>}
     <div className="publish-common-fields">
-      <label><span>국가별 판매가 <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); }} /></label>
+      <label><span>국내 기준 판매가 KRW <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); }} /></label>
       <label><span>판매 통화 <i>필수</i></span><input required value={currency} maxLength={3} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
-      <label><span>Shopee 글로벌 기준가 USD <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={globalBaseUsdPrice} onChange={(event) => { const value = Number(event.target.value); globalBaseUsdPriceRef.current = value; setGlobalBaseUsdPrice(value); }} /></label>
+      <label><span>글로벌 채널 기준가 USD <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={globalBaseUsdPrice} onChange={(event) => { const value = Number(event.target.value); globalBaseUsdPriceRef.current = value; setGlobalBaseUsdPrice(value); }} /></label>
       <label><span>재고 <i>필수</i></span><input required type="number" min="1" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); }} /></label>
       <label><span>중량 kg <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={packageFields.weight} onChange={(event) => { const next = { ...packageFields, weight: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
       <label><span>가로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.length} onChange={(event) => { const next = { ...packageFields, length: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>

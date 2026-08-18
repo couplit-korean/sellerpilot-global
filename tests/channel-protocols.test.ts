@@ -603,6 +603,53 @@ test("Coupang product creation is only successful after seller-product readback 
   }
 });
 
+test("Coupang listing resume waits for SAVED before requesting approval without creating a duplicate", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  let readbackCount = 0;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith("/approvals") && init?.method === "PUT") {
+      return new Response(JSON.stringify({ code: "SUCCESS", data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (init?.method === "POST") throw new Error("resume must not create another seller product");
+    readbackCount += 1;
+    const data = readbackCount === 1
+      ? { sellerProductId: 987654321, requested: false, mdId: "NLUP_ID_GEN" }
+      : readbackCount === 2
+        ? { sellerProductId: 987654321, requested: false, mdId: "NLUP_TEMP_SAVED" }
+        : { sellerProductId: 987654321, requested: true, mdId: "NLUP_APPROVAL_REQUESTED" };
+    return new Response(JSON.stringify({ code: "SUCCESS", data }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "coupang",
+      operation: "listing.create",
+      payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
+      arguments: {
+        resumeRemoteId: "987654321",
+        body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] },
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "987654321");
+    assert.deepEqual(result.steps.map((item) => item.name), ["listing.resume", "listing-readback", "listing-approval-request", "listing-approval-readback"]);
+    assert.equal(calls.some((call) => call.init?.method === "POST"), false);
+    const approvalIndex = calls.findIndex((call) => call.url.endsWith("/approvals"));
+    assert.equal(approvalIndex, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Coupang product update reuses the requested seller product ID and verifies approval state", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];

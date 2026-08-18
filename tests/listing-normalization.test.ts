@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  marketplaceListingCurrency,
   marketplaceListingPrice,
   normalizeCoupangAttributeValue,
   normalizeTenWonAmount,
@@ -14,6 +15,15 @@ test("KRW channels round positive prices up to the required ten-won unit", () =>
   assert.equal(marketplaceListingPrice("coupang", 99_999), 100_000);
   assert.equal(marketplaceListingPrice("smartstore", 99_999), 100_000);
   assert.equal(marketplaceListingPrice("lazada", 299), 299);
+});
+
+test("global marketplaces derive a realistic local price from the USD base price", () => {
+  assert.equal(marketplaceListingPrice("lazada", 99_999, { globalBaseUsdPrice: 12.9, targetCurrency: "MYR" }), 58.05);
+  assert.equal(marketplaceListingPrice("shopee", 99_999, { globalBaseUsdPrice: 12.9, targetCurrency: "SGD" }), 16.77);
+  assert.equal(marketplaceListingPrice("qoo10", 99_999, { globalBaseUsdPrice: 12.9 }), 1871);
+  assert.equal(marketplaceListingPrice("ebay", 99_999, { globalBaseUsdPrice: 12.9 }), 12.9);
+  assert.equal(marketplaceListingCurrency("lazada", "myr"), "MYR");
+  assert.equal(marketplaceListingCurrency("coupang"), "KRW");
 });
 
 test("Coupang numeric attributes inherit the official category unit", () => {
