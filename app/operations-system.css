@@ -1800,6 +1800,15 @@ a:focus-visible,
 .publish-channel-card textarea { display: block; width: 100%; min-height: 260px; resize: vertical; border: 0; border-top: 1px solid var(--border); outline: 0; background: #111820; padding: 12px; color: #d9e3ea; font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .publish-execute { display: inline-flex; width: 100%; align-items: center; justify-content: center; gap: 7px; border: 0; border-radius: 8px; background: #1b5b48; padding: 10px 12px; color: #fff; font-weight: 800; }
 .publish-execute:disabled { cursor: not-allowed; background: #dde4e1; color: #7b8984; }
+.publish-write-confirmation { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; border: 1px solid #e1bd7f; border-radius: 9px; background: #fff8e8; padding: 11px 12px; color: #815718; }
+.publish-write-confirmation.channel { grid-template-columns: auto minmax(0, 1fr); }
+.publish-write-confirmation > div { display: grid; gap: 3px; }
+.publish-write-confirmation b { color: #71470f; font-size: 11px; }
+.publish-write-confirmation small { color: #8a682f; font-size: 10px; line-height: 1.45; }
+.publish-write-confirmation.channel > button { grid-row: 2; }
+.publish-write-confirmation.channel > button:nth-of-type(1) { grid-column: 1; }
+.publish-write-confirmation.channel > button:nth-of-type(2) { grid-column: 2; }
+.publish-confirm-execute { min-height: 34px; border: 1px solid #9c681f; border-radius: 7px; background: #9c681f; padding: 0 11px; color: #fff; font-size: 10px; font-weight: 850; }
 .publish-remote-id { margin: 0; color: var(--text-secondary); font-size: 11px; }
 .publish-remote-id b { margin-right: 6px; color: var(--text-primary); }
 .publish-result { display: grid; gap: 3px; margin: 0; border-radius: 7px; padding: 8px 9px; font-size: 11px; }
@@ -1818,6 +1827,8 @@ a:focus-visible,
 @media (max-width: 600px) {
   .publish-workbench-head { display: grid; }
   .publish-head-actions { min-width: 0; flex-wrap: wrap; }
+  .publish-write-confirmation { grid-template-columns: auto minmax(0, 1fr); }
+  .publish-write-confirmation > button { grid-row: auto; }
   .publish-common-fields { grid-template-columns: 1fr 1fr; }
   .publish-common-fields label:first-child { grid-column: 1 / -1; }
   .publish-channel-card { padding: 12px; }
