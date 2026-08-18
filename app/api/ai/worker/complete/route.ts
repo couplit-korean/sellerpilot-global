@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
 import { workerCompletionSchema } from "../../../../../lib/ai-cli-contract";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
 
@@ -30,14 +31,13 @@ export async function POST(request: Request) {
 
   if (parsed.data.status === "succeeded") {
     resultPayload = { ...parsed.data.result };
-    const expectedPaths = {
-      hero: `results/${parsed.data.jobId}/hero.png`,
-      square: `results/${parsed.data.jobId}/thumbnail-square.png`,
-      portrait: `results/${parsed.data.jobId}/thumbnail-portrait.png`,
-      wide: `results/${parsed.data.jobId}/thumbnail-wide.png`,
-    } as const;
-    for (const [id, expectedPath] of Object.entries(expectedPaths)) {
-      if (parsed.data.assetStoragePaths[id as keyof typeof expectedPaths] !== expectedPath) {
+    const expectedPaths = Object.fromEntries(aiGeneratedAssetSpecs.map((asset) => [
+      asset.id,
+      aiGeneratedAssetPath(parsed.data.jobId, asset),
+    ]));
+    for (const asset of aiGeneratedAssetSpecs) {
+      const expectedPath = expectedPaths[asset.id];
+      if (parsed.data.assetStoragePaths[asset.id] !== expectedPath) {
         return NextResponse.json({ message: "생성 이미지 저장 경로가 작업과 일치하지 않습니다." }, { status: 403 });
       }
     }
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
       .list(`results/${parsed.data.jobId}`, { limit: 10 });
     const storedNames = new Set((stored ?? []).map((item) => item.name));
     if (storedError || Object.values(expectedPaths).some((path) => !storedNames.has(path.split("/").at(-1) ?? ""))) {
-      return NextResponse.json({ message: "업로드된 생성 이미지 4종을 모두 확인하지 못했습니다." }, { status: 400 });
+      return NextResponse.json({ message: "업로드된 대표·썸네일·상세 이미지 8종을 모두 확인하지 못했습니다." }, { status: 400 });
     }
     resultPayload.asset_storage_paths = parsed.data.assetStoragePaths;
   }

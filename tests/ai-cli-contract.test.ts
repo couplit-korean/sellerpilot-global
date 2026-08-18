@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cliStudioResultSchema, studioJobRequestSchema } from "../lib/ai-cli-contract";
+import { cliStudioResultSchema, studioJobRequestSchema, workerCompletionSchema } from "../lib/ai-cli-contract";
+import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 
 const localized = [
   ["shopee", "SG", "en-SG", "White ceramic espresso cup"],
@@ -125,4 +126,16 @@ test("AI studio request rejects missing rights confirmation and non-square outpu
     imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1080, height: 1080, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],
   });
   assert.equal(parsed.success, false);
+});
+
+test("AI worker completion requires the full thumbnail and detail-image set", () => {
+  const jobId = "11111111-1111-4111-8111-111111111111";
+  const assetStoragePaths = Object.fromEntries(aiGeneratedAssetSpecs.map((asset) => [asset.id, aiGeneratedAssetPath(jobId, asset)]));
+  const complete = workerCompletionSchema.safeParse({ jobId, status: "succeeded", result: validResult(), assetStoragePaths });
+  if (!complete.success) assert.fail(JSON.stringify(complete.error.issues, null, 2));
+
+  const incompletePaths = { ...assetStoragePaths };
+  delete incompletePaths["detail-package"];
+  assert.equal(workerCompletionSchema.safeParse({ jobId, status: "succeeded", result: validResult(), assetStoragePaths: incompletePaths }).success, false);
+  assert.equal(aiGeneratedAssetSpecs.filter((asset) => asset.role === "detail").length, 4);
 });

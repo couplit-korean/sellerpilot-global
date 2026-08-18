@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { aiGeneratedAssetIds } from "./ai-generated-assets";
 import { normalizedProductImageSpecSchema, productIntakeSchema } from "./product-intake";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
@@ -117,7 +118,7 @@ export const workerCompletionSchema = z.discriminatedUnion("status", [
     status: z.literal("succeeded"),
     result: cliStudioResultSchema,
     assetStoragePaths: z.record(
-      z.enum(["hero", "square", "portrait", "wide"]),
+      z.enum(aiGeneratedAssetIds),
       z.string().min(1).max(400),
     ),
   }),

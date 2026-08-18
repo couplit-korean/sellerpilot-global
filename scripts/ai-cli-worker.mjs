@@ -5,6 +5,8 @@ import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import sharp from "sharp";
+import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
 import { cliStudioResultSchema } from "../lib/ai-cli-contract.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { executeChannelOperation } from "../lib/channels/operations.ts";
@@ -53,7 +55,7 @@ const schemaPath = resolve("scripts/ai-studio-output.schema.json");
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.3";
+const workerVersion = "sellerpilot-cli-worker/1.4";
 
 class JobCancelledError extends Error {
   constructor() {
@@ -718,14 +720,32 @@ function buildAnalysisPrompt(job, referenceText) {
 function buildImagePrompt(result, outputPath, preset) {
   return [
     "설치된 codex-image 스킬의 규칙을 사용하고 반드시 내장 image_gen 도구로 이미지를 제작하세요.",
-    "첨부된 첫 번째 이미지는 편집 대상이자 제품 사실 기준입니다.",
-    `Scene/backdrop: premium Korean ecommerce ${preset.label}, ${result.design.palette.surface} and ${result.design.palette.accent}, soft directional studio light, restrained editorial composition.`,
-    `Subject: ${result.product.name}; preserve package shape, label, logo and printed information exactly.`,
-    `Details: ${result.design.themeName}; communicate ${result.product.oneLine}; realistic shadow and minimal supporting props.`,
-    `Composition: ${preset.composition}; target aspect ratio ${preset.ratio}.`,
-    "Constraints: no invented text, ingredients, certification, barcode, count or extra product; no watermark; no floating copy; high fidelity.",
+    "Use case: product-mockup",
+    `Asset type: ${preset.label} for a real marketplace listing`,
+    "Input images: Image 1 is the edit target and factual product reference; preserve the same product identity.",
+    `Scene/backdrop: restrained premium ecommerce studio using ${result.design.palette.surface} and ${result.design.palette.accent}; simple surface; realistic soft shadow.`,
+    `Subject: ${result.product.name}; preserve package shape, label, logo, printed information, color, count and included items exactly as visible.`,
+    `Composition/framing: ${preset.composition}; target aspect ratio ${preset.ratio}.`,
+    "Lighting/mood: clean soft directional studio lighting, crisp product edges, commercial catalog clarity.",
+    "Constraints: the product must be the obvious dominant subject; no invented ingredients, certification, barcode, quantity, accessories, package text or extra product; no watermark; no floating copy; no decorative text.",
+    "Avoid: distant product, tiny subject, scenic landscape dominating the frame, illegible altered label, duplicate product, cropped package, busy props, people, hands, logos not present in the reference.",
     `생성 결과 PNG를 정확히 ${outputPath} 경로에 저장하세요. Python·SVG·Canvas로 대체 이미지를 만들지 마세요.`,
   ].join("\n");
+}
+
+async function normalizeGeneratedAsset(outputFile, preset) {
+  const source = await readFile(outputFile);
+  const normalized = await sharp(source, { failOn: "warning", limitInputPixels: 64_000_000 })
+    .rotate()
+    .resize(preset.width, preset.height, { fit: "cover", position: "centre" })
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toBuffer();
+  const metadata = await sharp(normalized).metadata();
+  if (metadata.width !== preset.width || metadata.height !== preset.height || metadata.format !== "png") {
+    throw new Error(`${preset.id} 이미지 규격 검증 실패`);
+  }
+  await writeFile(outputFile, normalized);
+  return normalized;
 }
 
 function summarizeStudioIssues(issues) {
@@ -793,14 +813,9 @@ async function processJob(job) {
     let result = JSON.parse(await readFile(resultFile, "utf8"));
     if (reference.warning) result.warnings = [...(Array.isArray(result.warnings) ? result.warnings : []), reference.warning].slice(0, 5);
     result = await validateOrRepairStudioResult(result, resultFile, jobDir, job.id);
-    const imagePresets = [
-      { id: "hero", file: "hero.png", label: "product hero", ratio: "1:1", composition: "square hero with the package centered and generous negative space" },
-      { id: "square", file: "thumbnail-square.png", label: "marketplace square thumbnail", ratio: "1:1", composition: "single package large and centered, readable at small size" },
-      { id: "portrait", file: "thumbnail-portrait.png", label: "mobile portrait thumbnail", ratio: "4:5", composition: "vertical editorial layout with the complete package in the upper two-thirds" },
-      { id: "wide", file: "thumbnail-wide.png", label: "wide promotion thumbnail", ratio: "16:9", composition: "package on the right with calm visual breathing room on the left" },
-    ];
+    const imagePresets = aiGeneratedAssetSpecs;
     const uploads = Array.isArray(job.resultUploads) ? job.resultUploads : [];
-    if (uploads.length !== imagePresets.length) throw new Error("생성 이미지 4종 업로드 정보가 없습니다.");
+    if (uploads.length !== imagePresets.length) throw new Error("대표·썸네일·상세 이미지 8종 업로드 정보가 없습니다.");
     resultStorageClient = createClient(uploads[0].supabaseUrl, uploads[0].publishableKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
@@ -824,9 +839,10 @@ async function processJob(job) {
         await runCodex(imageArgs, imageGenerationTimeoutMs, job.id);
         const upload = uploads.find((item) => item?.id === preset.id);
         if (!upload?.bucket || !upload?.path || !upload?.token) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
+        const normalized = await normalizeGeneratedAsset(outputFile, preset);
         const { error: uploadError } = await resultStorageClient.storage
           .from(upload.bucket)
-          .uploadToSignedUrl(upload.path, upload.token, await readFile(outputFile), {
+          .uploadToSignedUrl(upload.path, upload.token, normalized, {
             contentType: "image/png",
             cacheControl: "3600",
           });

@@ -278,8 +278,10 @@ if (process.env.LIVE_SHOPEE_GLOBAL_TEST_PRODUCT_ID) {
   const target = targetsPayload.targets?.find((item) => item.marketCode === market);
   const listing = context.localizedListings.find((item) => item.channel === "shopee" && item.market === market);
   const assignment = context.assignments.find((item) => item.channel === "shopee" && item.market === market && item.status === "confirmed");
-  const imageUrls = [...context.sourceImages, ...context.generatedImages].map((item) => item.url).filter(Boolean);
-  if (!target || !listing || !assignment || !imageUrls.length) throw new Error(`Shopee ${market} target, listing, confirmed category, or images are missing.`);
+  const generatedImage = (id) => context.generatedImages.find((item) => item.id === id)?.url;
+  const imageUrls = [...new Set([generatedImage("square"), ...context.sourceImages.map((item) => item.url), generatedImage("hero")].filter(Boolean))];
+  const detailImageUrls = [...new Set(context.generatedImages.filter((item) => String(item.id).startsWith("detail-")).map((item) => item.url).filter(Boolean))];
+  if (!target || !listing || !assignment || !imageUrls.length || detailImageUrls.length < 4) throw new Error(`Shopee ${market} target, listing, confirmed category, thumbnail, or four detail images are missing.`);
   const sku = `${context.product.sku}-GLOBAL-${Date.now().toString(36).toUpperCase()}`.slice(0, 100);
   const attributeList = Object.entries(assignment.providedAttributes ?? {}).map(([attributeId, value]) => ({
     attribute_id: Number(attributeId),
@@ -305,6 +307,7 @@ if (process.env.LIVE_SHOPEE_GLOBAL_TEST_PRODUCT_ID) {
     publishTaskId: process.env.LIVE_SHOPEE_PUBLISH_TASK_ID,
   } : {
     globalProduct: true,
+    sellerpilotAssets: { galleryImageUrls: imageUrls, detailImageUrls, detailAssetMode: "dedicated" },
     imageUrls,
     body: {
       ...common,

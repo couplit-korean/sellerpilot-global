@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -37,12 +38,10 @@ export async function POST(request: Request) {
     .from("sellerpilot-ai")
     .createSignedUrls(paths, 10 * 60);
   if (signedError) return NextResponse.json({ message: "작업 이미지 URL을 만들지 못했습니다." }, { status: 500 });
-  const assetPaths = [
-    { id: "hero", path: `results/${String(job.id)}/hero.png` },
-    { id: "square", path: `results/${String(job.id)}/thumbnail-square.png` },
-    { id: "portrait", path: `results/${String(job.id)}/thumbnail-portrait.png` },
-    { id: "wide", path: `results/${String(job.id)}/thumbnail-wide.png` },
-  ];
+  const assetPaths = aiGeneratedAssetSpecs.map((asset) => ({
+    id: asset.id,
+    path: aiGeneratedAssetPath(String(job.id), asset),
+  }));
   const assetUploads = await Promise.all(assetPaths.map(async (asset) => {
     const { data: upload, error: uploadError } = await serviceClient.storage
       .from("sellerpilot-ai")

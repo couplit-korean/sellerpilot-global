@@ -128,6 +128,22 @@ function strings(value: unknown) {
   return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
 }
 
+function uniqueStrings(values: string[]) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+export function renderMarketplaceDetailImages(urls: string[]) {
+  if (!urls.length) return "";
+  return `<section data-sellerpilot-detail-images="true" style="max-width:860px;margin:24px auto">${urls
+    .map((url, index) => `<img src="${url.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}" alt="상품 상세 이미지 ${index + 1}" style="display:block;width:100%;height:auto;margin:0 auto 18px" />`)
+    .join("")}</section>`;
+}
+
+function appendDetailImages(value: unknown, urls: string[]) {
+  const source = typeof value === "string" ? value : "";
+  return `${source}${renderMarketplaceDetailImages(urls)}`;
+}
+
 export async function prepareMarketplaceImages(serviceClient: SupabaseClient, channel: ActiveChannelKey, argumentsValue: Record<string, unknown>) {
   const next = structuredClone(argumentsValue);
   const normalizedBySource = new Map<string, string>();
@@ -144,16 +160,48 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     return Promise.all(unique.map(normalize));
   };
 
+  const assets = record(next.sellerpilotAssets);
+  delete next.sellerpilotAssets;
+  if (assets && (assets.detailAssetMode !== "dedicated" || new Set(strings(assets.detailImageUrls)).size < 4)) {
+    throw new Error("MARKETPLACE_DETAIL_IMAGE_REQUIRED");
+  }
+  const gallery = assets ? await normalizeList(assets.galleryImageUrls, 12) : [];
+  const details = assets ? await normalizeList(assets.detailImageUrls, 8) : [];
+
   if (channel === "qoo10") {
     const params = record(next.params);
-    const sourceUrl = typeof params?.StandardImage === "string" ? params.StandardImage.trim() : "";
+    const sourceUrl = gallery[0] ?? (typeof params?.StandardImage === "string" ? params.StandardImage.trim() : "");
     if (!params || !sourceUrl) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    params.StandardImage = await normalize(sourceUrl);
+    params.StandardImage = gallery[0] ?? await normalize(sourceUrl);
+    params.ItemDescription = appendDetailImages(params.ItemDescription, details);
     return next;
   }
 
   if (channel === "shopee" || channel === "lazada" || channel === "smartstore") {
-    next.imageUrls = await normalizeList(next.imageUrls, channel === "smartstore" ? 10 : channel === "shopee" ? 9 : 8);
+    const limit = channel === "smartstore" ? 10 : channel === "shopee" ? 9 : 8;
+    const sourceGallery = gallery.length ? gallery : await normalizeList(next.imageUrls, limit);
+    next.imageUrls = uniqueStrings([...sourceGallery, ...details]).slice(0, limit);
+    if (channel === "lazada") {
+      const request = record(next.request);
+      const requestRoot = record(request?.Request);
+      const product = record(requestRoot?.Product);
+      const attributes = record(product?.Attributes);
+      if (!product || !attributes) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
+      product.Images = { Image: next.imageUrls };
+      const skus = record(product.Skus);
+      const skuList = Array.isArray(skus?.Sku) ? skus.Sku : [];
+      for (const skuValue of skuList) {
+        const sku = record(skuValue);
+        if (sku) sku.Images = { Image: next.imageUrls };
+      }
+      attributes.description = appendDetailImages(attributes.description, details);
+    }
+    if (channel === "smartstore") {
+      const body = record(next.body);
+      const originProduct = record(body?.originProduct);
+      if (!originProduct) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
+      originProduct.detailContent = appendDetailImages(originProduct.detailContent, details);
+    }
     return next;
   }
 
@@ -164,6 +212,21 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     let count = 0;
     for (const itemValue of items) {
       const item = record(itemValue);
+      if (item && gallery.length) {
+        const combined = uniqueStrings([...gallery, ...details]).slice(0, 10);
+        item.images = combined.map((url, index) => ({
+          imageOrder: index,
+          imageType: index === 0 ? "REPRESENTATION" : "DETAIL",
+          vendorPath: url,
+        }));
+        const currentContents = Array.isArray(item.contents) ? item.contents : [];
+        item.contents = [
+          ...details.map((url) => ({ contentsType: "IMAGE", contentDetails: [{ content: url, detailType: "IMAGE" }] })),
+          ...currentContents,
+        ];
+        count += combined.length;
+        continue;
+      }
       const images = Array.isArray(item?.images) ? item.images : [];
       for (const imageValue of images) {
         const image = record(imageValue);
@@ -181,9 +244,10 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     const body = record(next.body);
     const goodsBasic = record(body?.goodsBasic);
     if (!body || !goodsBasic) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    const normalized = await normalizeList(goodsBasic.goodsCarouselImage, 10);
+    const normalized = gallery.length ? gallery.slice(0, 10) : await normalizeList(goodsBasic.goodsCarouselImage, 10);
+    const normalizedDetails = details.length ? details.slice(0, 10) : normalized;
     goodsBasic.goodsCarouselImage = normalized;
-    goodsBasic.detailImage = normalized;
+    goodsBasic.detailImage = normalizedDetails;
     const skuList = Array.isArray(body.skuList) ? body.skuList : [];
     for (const skuValue of skuList) {
       const sku = record(skuValue);
@@ -195,6 +259,9 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   const inventoryItem = record(next.inventoryItem);
   const product = record(inventoryItem?.product);
   if (!product) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-  product.imageUrls = await normalizeList(product.imageUrls, 12);
+  const normalized = gallery.length ? uniqueStrings([...gallery, ...details]).slice(0, 12) : await normalizeList(product.imageUrls, 12);
+  product.imageUrls = normalized;
+  const offer = record(next.offer);
+  if (offer) offer.listingDescription = appendDetailImages(offer.listingDescription, details);
   return next;
 }

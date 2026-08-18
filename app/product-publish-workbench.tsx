@@ -108,23 +108,38 @@ function html(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character] ?? character));
 }
 
+function uniqueUrls(values: Array<string | null | undefined>) {
+  return [...new Set(values.map((value) => value?.trim() ?? "").filter((value) => value.startsWith("https://")))];
+}
+
 function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number) {
   const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
   const existingListing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
   const product = context.product;
-  const sourceImage = context.sourceImages[0]?.url ?? "";
+  const generatedImage = (id: string) => context.generatedImages.find((item) => item.id === id)?.url;
+  const galleryImageUrls = uniqueUrls([
+    generatedImage("square"),
+    ...context.sourceImages.map((item) => item.url),
+    generatedImage("hero"),
+  ]);
+  const dedicatedDetailImageUrls = context.generatedImages
+    .filter((item) => item.id.startsWith("detail-"))
+    .map((item) => item.url);
+  const dedicatedDetailReady = uniqueUrls(dedicatedDetailImageUrls).length >= 4;
+  const detailImageUrls = uniqueUrls(dedicatedDetailReady
+    ? dedicatedDetailImageUrls
+    : [generatedImage("portrait"), generatedImage("wide"), generatedImage("hero")]);
+  const sourceImage = galleryImageUrls[0] ?? "";
+  const sellerpilotAssets = { galleryImageUrls, detailImageUrls, detailAssetMode: dedicatedDetailReady ? "dedicated" : "legacy_fallback" };
   const localized = context.localizedListings?.find((item) => item.channel === channel && item.market === target?.marketCode);
   const manual = context.manualFields;
   const title = localized?.title || product.name;
   const description = localized?.description || product.description;
   const shortDescription = localized?.shortDescription || product.description.slice(0, 500);
   const marketSku = target ? `${manual.sellerSku || product.sku}-${target.marketCode}`.slice(0, 100) : manual.sellerSku || product.sku;
-  const imageUrls = [
-    ...context.sourceImages,
-    ...context.generatedImages.filter((item) => item.id === "square" || item.id === "hero"),
-  ].map((item) => item.url).filter((url): url is string => Boolean(url));
   if (channel === "qoo10") {
     return {
+      sellerpilotAssets,
       params: {
         SecondSubCat: assignment?.categoryId ?? "",
         OuterSecondSubCat: "",
@@ -175,10 +190,11 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     };
     const globalSku = `${manual.sellerSku || product.sku}-GLOBAL`.slice(0, 100);
     return {
+      sellerpilotAssets,
       globalProduct: true,
       shopId: target?.targetId ?? "",
       country: target?.marketCode.toLowerCase() ?? "",
-      imageUrls,
+      imageUrls: galleryImageUrls,
       body: {
         ...commonProductFields,
         original_price: globalBaseUsdPrice,
@@ -205,19 +221,20 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         .filter(([, value]) => value.trim().length > 0),
     );
     return {
+      sellerpilotAssets,
       country: target?.marketCode.toLowerCase() ?? "my",
-      imageUrls,
+      imageUrls: galleryImageUrls,
       request: {
         Request: {
           Product: {
             PrimaryCategory: assignment?.categoryId ?? "",
-            Images: { Image: imageUrls },
+            Images: { Image: galleryImageUrls },
             // Category metadata contains many empty optional fields and can also
             // repeat core fields such as `name` and `description`. Keep only
             // selected values, then make the listing's verified core content
             // authoritative so an empty category field cannot blank the title.
             Attributes: { ...providedAttributes, name: title.slice(0, 255), description, short_description: shortDescription.slice(0, 500), brand: manual.brandName },
-            Skus: { Sku: [{ SellerSku: marketSku, price: String(price), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: imageUrls } }] },
+            Skus: { Sku: [{ SellerSku: marketSku, price: String(price), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: galleryImageUrls } }] },
           },
         },
       },
@@ -229,6 +246,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
       attributeValueName,
     }));
     return {
+      sellerpilotAssets,
       facts: {
         material: manual.material,
         packageContents: manual.packageContents,
@@ -261,13 +279,14 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         returnAddress: "",
         returnAddressDetail: "",
         requested: false,
-        items: [{ itemName: product.name, originalPrice: price, salePrice: price, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: 3, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: [{ imageOrder: 0, imageType: "REPRESENTATION", vendorPath: sourceImage }], notices: [], attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: product.description, detailType: "TEXT" }] }] }],
+        items: [{ itemName: product.name, originalPrice: price, salePrice: price, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: 3, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: galleryImageUrls.map((url, index) => ({ imageOrder: index, imageType: index === 0 ? "REPRESENTATION" : "DETAIL", vendorPath: url })), notices: [], attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: product.description, detailType: "TEXT" }] }] }],
       },
     };
   }
   if (channel === "smartstore") {
     return {
-      imageUrls,
+      sellerpilotAssets,
+      imageUrls: galleryImageUrls,
       body: {
         originProduct: {
           statusType: "SALE",
@@ -288,6 +307,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
   if (channel === "temu") {
     const externalGoodsId = (manual.sellerSku || product.sku).slice(0, 128);
     return {
+      sellerpilotAssets,
       body: {
         language: "ko",
         goodsBasic: {
@@ -295,8 +315,8 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
           goodsName: product.name.slice(0, 500),
           extCatName: (assignment?.categoryPath.join(" > ") || manual.categoryHint).slice(0, 500),
           goodsDesc: product.description.slice(0, 10_000),
-          goodsCarouselImage: imageUrls.slice(0, 10),
-          detailImage: imageUrls.slice(0, 10),
+          goodsCarouselImage: galleryImageUrls.slice(0, 10),
+          detailImage: detailImageUrls.slice(0, 10),
           productType: 1,
           bulletPoints: [manual.material, manual.packageContents, `[PROGRAM TEST · NOT FOR SALE] ${product.description}`].filter(Boolean).slice(0, 10),
         },
@@ -308,7 +328,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         ],
         skuList: [{
           externalSkuId: externalGoodsId,
-          images: imageUrls.slice(0, 10),
+          images: galleryImageUrls.slice(0, 10),
           price: { basePrice: { amount: String(price), currency: manual.currency || "KRW" } },
           quantity,
           packageInfo: { weight: String(Math.round(packageFields.weight * 1_000)), length: String(packageFields.length), width: String(packageFields.width), height: String(packageFields.height) },
@@ -319,8 +339,9 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     };
   }
   return {
+    sellerpilotAssets,
     sku: manual.sellerSku || product.sku,
-    inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: product.name, description: product.description, imageUrls: sourceImage ? [sourceImage] : [], brand: manual.brandName, mpn: manual.sellerSku || product.sku, aspects: { ...(assignment?.providedAttributes ?? {}), Material: [manual.material], "Country/Region of Manufacture": [manual.countryOfOrigin] } } },
+    inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: product.name, description: product.description, imageUrls: galleryImageUrls, brand: manual.brandName, mpn: manual.sellerSku || product.sku, aspects: { ...(assignment?.providedAttributes ?? {}), Material: [manual.material], "Country/Region of Manufacture": [manual.countryOfOrigin] } } },
     offer: { sku: manual.sellerSku || product.sku, marketplaceId: "EBAY_US", format: "FIXED_PRICE", availableQuantity: quantity, categoryId: assignment?.categoryId ?? "", listingDescription: product.description, listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" }, merchantLocationKey: "SERVER_MANAGED", pricingSummary: { price: { value: String(price), currency: "USD" } } },
     publish: true,
   };
@@ -328,25 +349,34 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
 
 function missingNativeValues(channel: ActiveChannelKey, value: Record<string, unknown>) {
   const json = JSON.stringify(value);
+  const assets = value.sellerpilotAssets && typeof value.sellerpilotAssets === "object" && !Array.isArray(value.sellerpilotAssets)
+    ? value.sellerpilotAssets as Record<string, unknown>
+    : {};
+  const galleryImages = Array.isArray(assets.galleryImageUrls) ? assets.galleryImageUrls.filter(Boolean) : [];
+  const detailImages = Array.isArray(assets.detailImageUrls) ? assets.detailImageUrls.filter(Boolean) : [];
+  const assetRequirements = [
+    galleryImages.length === 0 ? "marketplace thumbnail image" : "",
+    assets.detailAssetMode !== "dedicated" || detailImages.length < 4 ? "dedicated marketplace detail images (4)" : "",
+  ].filter(Boolean);
   if (channel === "qoo10") {
     const params = value.params as Record<string, unknown> | undefined;
-    return ["SecondSubCat", "ItemTitle", "StandardImage", "ItemDescription", "ItemPrice", "ItemQty", "ShippingNo", "AvailableDateType", "AvailableDateValue"]
-      .filter((key) => params?.[key] === undefined || String(params[key]).trim() === "");
+    return [...assetRequirements, ...["SecondSubCat", "ItemTitle", "StandardImage", "ItemDescription", "ItemPrice", "ItemQty", "ShippingNo", "AvailableDateType", "AvailableDateValue"]
+      .filter((key) => params?.[key] === undefined || String(params[key]).trim() === "")];
   }
   if (channel === "shopee") {
     const body = value.body && typeof value.body === "object" && !Array.isArray(value.body) ? value.body as Record<string, unknown> : {};
     const packageWeight = Number(body.weight);
-    return [
+    return [...assetRequirements,
       !String(value.shopId ?? "").trim() ? "shopId" : "",
       !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "",
       !Number.isFinite(packageWeight) || packageWeight <= 0 ? "package weight" : "",
     ].filter(Boolean);
   }
-  if (channel === "lazada") return [!Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", json.includes('"package_weight":"0"') || json.includes('"package_weight":""') ? "package size/weight" : ""].filter(Boolean);
-  if (channel === "coupang") return [json.includes('"displayCategoryCode":0') ? "displayCategoryCode" : "", !json.includes('"vendorPath":"https://') ? "public product image" : ""].filter(Boolean);
-  if (channel === "smartstore") return [!Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", !json.includes('"originAreaCode":"04"') ? "originAreaInfo" : ""].filter(Boolean);
-  if (channel === "temu") return [json.includes('"skuList":[]') ? "skuList" : "", json.includes('"images":[]') ? "images" : "", json.includes('"externalGoodsId":""') ? "externalGoodsId" : ""].filter(Boolean);
-  return [json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
+  if (channel === "lazada") return [...assetRequirements, !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", json.includes('"package_weight":"0"') || json.includes('"package_weight":""') ? "package size/weight" : ""].filter(Boolean);
+  if (channel === "coupang") return [...assetRequirements, json.includes('"displayCategoryCode":0') ? "displayCategoryCode" : "", !json.includes('"vendorPath":"https://') ? "public product image" : ""].filter(Boolean);
+  if (channel === "smartstore") return [...assetRequirements, !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", !json.includes('"originAreaCode":"04"') ? "originAreaInfo" : ""].filter(Boolean);
+  if (channel === "temu") return [...assetRequirements, json.includes('"skuList":[]') ? "skuList" : "", json.includes('"images":[]') ? "images" : "", json.includes('"externalGoodsId":""') ? "externalGoodsId" : ""].filter(Boolean);
+  return [...assetRequirements, json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
 }
 
 function parseDraft(value: string | undefined) {
@@ -664,6 +694,10 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   if (loading && !context) return <section className="panel product-publish-workbench disabled"><LoaderCircle className="spin" size={26} /><b>상품·카테고리·이미지 원장 확인 중</b></section>;
   if (!context) return <section className="panel product-publish-workbench disabled"><AlertTriangle size={26} /><b>상품 등록 준비 정보를 불러오지 못했습니다.</b><button type="button" onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></section>;
 
+  const marketplaceThumbnailCount = context.generatedImages.filter((item) => (item.id === "square" || item.id === "hero") && item.url).length;
+  const dedicatedDetailImageCount = context.generatedImages.filter((item) => item.id.startsWith("detail-") && item.url).length;
+  const imagePackageReady = marketplaceThumbnailCount >= 1 && dedicatedDetailImageCount >= 4;
+
   return <section className="panel product-publish-workbench">
     <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 실행</h3><p>공식 카테고리, 원본 대표사진, 가격·재고와 채널 필수값을 마지막으로 검증한 뒤 준비된 채널을 최대 8개까지 병렬 실행합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "동시 등록 중" : bulkConfirming ? "최종 확인 열림" : "최대 8개 동시 등록"}</button></div></div>
     {bulkConfirming && <div className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 최종 확인"><AlertTriangle size={18} /><div><b>준비된 모든 채널에 실제 상품을 등록합니다.</b><small>채널별 payload와 가격·재고를 최종 확인한 뒤 실행하세요.</small></div><button type="button" className="credential-secondary" onClick={() => setBulkConfirming(false)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeReadyChannels(true)}>확인 후 동시 등록 실행</button></div>}
@@ -683,7 +717,8 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       <label><span>판매 구성품 <i>필수</i></span><input required value={context.manualFields.packageContents} onChange={(event) => updateProductFact("packageContents", event.target.value)} placeholder="예: 본품 1개" /></label>
       <button type="button" onClick={() => setDrafts(buildDraftMap(context, price, quantity, selectedTargets, packageFields, globalBaseUsdPrice))}><RefreshCw size={14} />공통값으로 초안 갱신</button>
     </div>
-    <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>이미지 자동보정</b>{context.imageSpecs.filter((item) => item.width === 1200 && item.height === 1200 && item.mediaType === "image/jpeg").length}장 · 등록 직전 서버 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
+    <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>대표 {marketplaceThumbnailCount}장 · 상세 전용 {dedicatedDetailImageCount}/4장</span><span><Check size={15} /><b>등록 직전 보정</b>1200×1200 JPEG · 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
+    {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>대표 썸네일과 상세 전용 이미지 4장이 모두 필요합니다.</b><small>이전 4종 생성 상품은 실제 등록을 차단했습니다. 상품 등록 화면에서 AI 상세·썸네일을 다시 생성하면 새 8종 이미지 세트로 교체됩니다.</small></div></div>}
     <div className="publish-channel-cards">{visibleChannels.map((channel) => {
       const definition = channelCatalog[channel];
       const credential = activeCredentials.get(channel);
@@ -696,13 +731,16 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const draftObject = parseDraft(drafts[channel]);
       const requirements = draftObject ? inspectListingDraft(channel, draftObject) : [];
       const blockingRequirements = requirements.filter((item) => item.status === "manual");
+      const nativeMissing = draftObject ? missingNativeValues(channel, draftObject) : [];
+      const blockingCount = blockingRequirements.length + nativeMissing.length;
       const invalidDraft = !draftObject;
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
-        <header><span style={{ background: channels[channel].color }}>{definition.code}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{listing?.status === "published" ? "등록 완료" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingRequirements.length ? `수동 입력 ${blockingRequirements.length}` : "실행 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
+        <header><span style={{ background: channels[channel].color }}>{definition.code}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{listing?.status === "published" ? "등록 완료" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "실행 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target?.marketCode ?? ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => item.marketCode === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select></label>}
         {capability.mode === "vendor_docs_required" ? <div className="publish-blocked"><AlertTriangle size={18} /><b>판매자 상세 명세 승인 필요</b><small>{capability.note}</small></div> : <>
-          <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span></div>
+          <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}대표+상세 4장</span></div>
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
+          {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>등록 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
           {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>채널 JSON 형식 확인 필요</b><small>아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다.</small></div> : <div className="publish-required-fields">
             <div className="publish-required-head"><b>채널 필수 입력 체크</b><small>{blockingRequirements.length ? `${blockingRequirements.length}개 수동 입력 필요` : "모든 입력값 준비"}</small></div>
             <div className="publish-required-list">{requirements.map((item) => <div key={item.key} className={`publish-required-item ${item.status}`} title={item.help}>
@@ -721,7 +759,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
           {confirmingChannel === channel && <div className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 등록 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정에 실제 상품 1건을 등록합니다.</b><small>가격 {price.toLocaleString()} {target?.currency || currency} · 재고 {quantity}개</small></div><button type="button" className="credential-secondary" onClick={() => setConfirmingChannel(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 등록 실행</button></div>}
-          <button type="button" className="publish-execute" disabled={!credential || !assignment || invalidDraft || blockingRequirements.length > 0 || result.phase === "running" || listing?.status === "published" || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : listing?.status === "published" ? <Check size={15} /> : <Rocket size={15} />}{listing?.status === "published" ? "등록 완료" : blockingRequirements.length ? `필수값 ${blockingRequirements.length}개 입력 후 등록` : confirmingChannel === channel ? "최종 확인 열림" : "검증 후 실제 1건 등록"}</button>
+          <button type="button" className="publish-execute" disabled={!credential || !assignment || invalidDraft || blockingCount > 0 || result.phase === "running" || listing?.status === "published" || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : listing?.status === "published" ? <Check size={15} /> : <Rocket size={15} />}{listing?.status === "published" ? "등록 완료" : blockingCount ? `필수 보완 ${blockingCount}개 후 등록` : confirmingChannel === channel ? "최종 확인 열림" : "검증 후 실제 1건 등록"}</button>
           {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={result.phase === "running"} onClick={() => void stopQoo10Listing(listing)}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
           {channel === "qoo10" && listing?.status === "published" && <label className="qoo10-remote-cleanup"><span>이전 Qoo10 상품 정리</span><input aria-label="정리할 이전 Qoo10 상품번호" inputMode="numeric" value={qoo10CleanupId} onChange={(event) => setQoo10CleanupId(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="9~10자리 상품번호" /><button type="button" className="credential-secondary" disabled={result.phase === "running" || !/^\d{9,10}$/.test(qoo10CleanupId)} onClick={() => void pausePreviousQoo10Remote()}><CirclePause size={15} />이전 상품 거래대기</button></label>}
         </>}
