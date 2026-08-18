@@ -431,6 +431,8 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     implicitRequired: {
       "drink form": "Coffee Beans",
       "expiry date": expiryDate,
+      "shelf life": "12 Months",
+      "shelf lifes": "12 Months",
     },
   });
   if (requiredAttributes.unresolved.length) throw new Error(`Shopee 필수 속성 선택값이 없습니다: ${requiredAttributes.unresolved.join(", ")}`);
