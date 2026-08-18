@@ -187,6 +187,20 @@ function lazadaSearchTerms(query: string) {
   return aliases.join(" ");
 }
 
+function smartstoreSearchTerms(query: string) {
+  const normalized = query.toLocaleLowerCase();
+  const aliases = [query];
+  if (/(화장품|메이크업|스킨|크림|립스틱|cosmetic|beauty)/u.test(normalized)) aliases.push("화장품 메이크업 스킨케어 뷰티");
+  if (/(브러시|스펀지|퍼프|뷰러|속눈썹|화장도구)/u.test(normalized)) aliases.push("메이크업소품 화장소품 미용소품 브러시 퍼프 뷰러");
+  if (/(쌀|밥|파스타|펜네|밀가루|식품|food|rice|pasta|flour)/u.test(normalized)) aliases.push("식품 농산물 가공식품 면류 쌀 밀가루");
+  if (/(티셔츠|셔츠|후드|재킷|의류|옷|clothes|shirt|jacket)/u.test(normalized)) aliases.push("패션의류 티셔츠 셔츠 후드 집업 재킷");
+  if (/(테디|곰인형|자동차.*완구|완구|장난감|toy|plush)/u.test(normalized)) aliases.push("완구 장난감 봉제인형 자동차완구 미니카");
+  if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalized)) aliases.push("건강식품 건강기능식품 영양제 비타민 오메가3 어유");
+  if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalized)) aliases.push("수납 박스 수납박스 리빙박스 수납함 정리함 정리 바구니");
+  if (/(옷걸이|행거|hanger)/u.test(normalized)) aliases.push("옷걸이 행거 의류수납 세탁용품");
+  return aliases.join(" ");
+}
+
 function lazadaTreeLeaves(value: unknown, parentPath: string[] = [], depth = 0): CategorySuggestion[] {
   if (depth > 10 || value === null || value === undefined) return [];
   if (Array.isArray(value)) return value.flatMap((item) => lazadaTreeLeaves(item, parentPath, depth + 1));
@@ -243,14 +257,16 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
         ? shopeeSearchTerms(query)
         : channel === "lazada"
           ? lazadaSearchTerms(query)
-          : query;
+          : channel === "smartstore"
+            ? smartstoreSearchTerms(query)
+            : query;
     const score = Math.max(
       channel === "lazada" ? lazadaQueryScore(scoreQuery, `${path.join(" ")} ${name}`) : queryScore(scoreQuery, `${path.join(" ")} ${name}`),
       Number(row.confidence ?? row.score ?? 0),
     );
-    const confidence = channel === "qoo10" || channel === "lazada"
+    const confidence = channel === "qoo10" || channel === "lazada" || channel === "smartstore"
       ? Math.min(0.99, 0.45 + score * 0.54)
-      : Math.min(0.99, Math.max(0.45, score || 0.58));
+      : Math.min(0.99, Math.max(0.45, score));
     return [{ id, name, path: path.length ? path : [name], confidence, leaf }];
   });
 
@@ -285,6 +301,7 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
     .filter((item) => channel !== "qoo10" || queryScore(qoo10SearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
     .filter((item) => channel !== "shopee" || queryScore(shopeeSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
     .filter((item) => channel !== "lazada" || lazadaQueryScore(lazadaSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
+    .filter((item) => channel !== "smartstore" || queryScore(smartstoreSearchTerms(query), `${item.path.join(" ")} ${item.name}`) > 0)
     .sort((left, right) => {
       if (channel === "qoo10") {
         const leftPriority = qoo10PriorityScore(query, left);

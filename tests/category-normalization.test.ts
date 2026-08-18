@@ -139,6 +139,31 @@ test("Shopee GlobalProduct normalization maps soap instead of an unrelated beaut
   assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, "Natural cleansing soap bar")[0]?.id, "100629");
 });
 
+const smartstoreCategoryResponse = {
+  ok: true,
+  steps: [{
+    name: "category-tree",
+    ok: true,
+    status: 200,
+    data: { items: [
+      { id: "500001", name: "풀오버", wholeCategoryName: "패션의류>여성의류>니트>풀오버", last: true },
+      { id: "500002", name: "수납소파", wholeCategoryName: "가구/인테리어>거실가구>소파>수납소파", last: true },
+      { id: "500003", name: "리빙박스", wholeCategoryName: "생활/건강>생활용품>수납/정리용품>리빙박스", last: true },
+      { id: "500004", name: "공간박스", wholeCategoryName: "가구/인테리어>수납가구>공간박스", last: true },
+    ] },
+  }],
+};
+
+test("Smartstore category normalization ranks a storage-box leaf above unrelated equal-score leaves", () => {
+  const suggestions = normalizeSuggestions("smartstore", smartstoreCategoryResponse, "[API TEST] 수납 박스 이미지 샘플");
+  assert.equal(suggestions[0]?.id, "500003");
+  assert.equal(suggestions.some((item) => item.id === "500001"), false);
+});
+
+test("Smartstore category normalization rejects arbitrary leaves without a lexical match", () => {
+  assert.deepEqual(normalizeSuggestions("smartstore", smartstoreCategoryResponse, "산업용 무관 부품"), []);
+});
+
 const lazadaCategoryResponse = {
   ok: true,
   steps: [{
