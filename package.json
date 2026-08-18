@@ -2,8 +2,9 @@
   "name": "site-creator-vinext-starter",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.28.0",
   "engines": {
-    "node": ">=22.13.0"
+    "node": "22.x"
   },
   "scripts": {
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
