@@ -165,6 +165,7 @@ function qoo10PriorityScore(query: string, candidate: CategorySuggestion) {
 function qoo10CategoryCompatibility(query: string, candidate: CategorySuggestion) {
   const path = candidate.path.join(" ").toLocaleLowerCase();
   if (!/(ふるさと納税|고향세)/u.test(query.toLocaleLowerCase()) && path.includes("ふるさと納税")) return false;
+  if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(query.toLocaleLowerCase()) && /(犬用品|猫用品|ペット)/u.test(candidate.path.join(" "))) return false;
   return queryScore(qoo10SearchTerms(query), `${candidate.path.join(" ")} ${candidate.name}`) > 0;
 }
 
@@ -216,7 +217,7 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
     return exactOrLeaf("flour") || /(food|beverage|baking|cooking ingredient|staple)/u.test(normalizedCandidate);
   }
   if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(normalizedQuery)) {
-    return /(toy|game|collectible|plush|stuffed|teddy)/u.test(normalizedCandidate);
+    return /(plush|stuffed|teddy)/u.test(normalizedCandidate) && !/(sex|pet|bird)/u.test(normalizedCandidate);
   }
   if (/(toy\s?car|자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차)/u.test(normalizedQuery)) {
     return /(toy vehicle|toy car|vehicle playset|diecast)/u.test(normalizedCandidate)
@@ -334,7 +335,7 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
   if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalizedQuery)) return /(화장품|스킨케어|크림|로션|메이크업)/u.test(normalizedCandidate);
   if (/(티셔츠|셔츠|반팔|t[\s-]?shirt)/u.test(normalizedQuery)) return /(티셔츠|반팔티|상의|패션의류)/u.test(normalizedCandidate);
   if (/(후드|재킷|hood|jacket)/u.test(normalizedQuery)) return /(후드|후드집업|재킷|점퍼|아우터)/u.test(normalizedCandidate);
-  if (/(테디|곰인형|봉제|teddy|plush)/u.test(normalizedQuery)) return /(봉제인형|곰인형|인형)/u.test(normalizedCandidate);
+  if (/(테디|곰인형|봉제|teddy|plush)/u.test(normalizedQuery)) return /(봉제인형|곰인형|테디베어)\s*$/u.test(normalizedCandidate);
   if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return /(자동차완구|미니카|장난감자동차|자동차장난감|작동완구|탈것완구|운송수단완구)/u.test(normalizedCandidate);
   if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalizedQuery)) {
     return /(건강식품|건강기능식품|영양제|비타민|오메가3|어유|epa|dha)/u.test(normalizedCandidate)
