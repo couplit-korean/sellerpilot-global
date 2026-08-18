@@ -803,6 +803,7 @@ export async function ebayRequest(input: {
     signal: AbortSignal.timeout(15_000),
     headers: {
       accept: "application/json",
+      "accept-language": "en-US",
       "content-type": "application/json",
       authorization: `Bearer ${accessToken}`,
       "content-language": "en-US",

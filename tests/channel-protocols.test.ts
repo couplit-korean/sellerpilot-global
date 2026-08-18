@@ -11,6 +11,7 @@ import {
   buildShopeeSignature,
   buildTemuSignature,
   createNaverClientSecretSign,
+  ebayRequest,
   ensureEbayAccessToken,
   ensureShopeeAccessToken,
   ensureShopeeMerchantAccessToken,
@@ -234,6 +235,28 @@ test("eBay consent URL separates sandbox and production and includes CSRF state"
   assert.equal(url.searchParams.get("redirect_uri"), "test-runame");
   assert.equal(url.searchParams.get("state"), "sellerpilot-ebay-test-state");
   assert.match(url.searchParams.get("scope") ?? "", /sell\.inventory/);
+});
+
+test("eBay Sell requests override the runtime Accept-Language wildcard", async () => {
+  const originalFetch = globalThis.fetch;
+  let headers: HeadersInit | undefined;
+  globalThis.fetch = async (_input, init) => {
+    headers = init?.headers;
+    return Response.json({ locations: [] });
+  };
+  try {
+    await ebayRequest({
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      environment: "production",
+      method: "GET",
+      path: "/sell/inventory/v1/location",
+    });
+    const normalized = new Headers(headers);
+    assert.equal(normalized.get("accept-language"), "en-US");
+    assert.equal(normalized.get("content-language"), "en-US");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Shopee authorization URL uses the current auth endpoint and preserves SellerPilot CSRF state", () => {
