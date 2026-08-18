@@ -623,6 +623,37 @@ test("Naver category preflight loads the category, attributes, values, and stand
   }
 });
 
+test("Naver category preflight accepts an official NOT_FOUND response as empty optional metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/v1/oauth2/token")) return new Response(JSON.stringify({ access_token: "naver-token", expires_in: 10_800 }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("/v1/categories/50001330")) return new Response(JSON.stringify({ id: "50001330", name: "소품수납함", last: true }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("/v1/options/standard-options")) return new Response(JSON.stringify([]), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ code: "NOT_FOUND", message: "데이터를 찾을 수 없습니다." }), { status: 404, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "smartstore",
+      operation: "categories.attributes",
+      payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
+      arguments: { categoryId: "50001330" },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.steps.map((item) => [item.name, item.ok, item.status]), [
+      ["category", true, 200],
+      ["attributes", true, 404],
+      ["attribute-values", true, 404],
+      ["standard-options", true, 200],
+    ]);
+    assert.deepEqual(result.steps[1].data, { items: [] });
+    assert.deepEqual(result.steps[2].data, { items: [] });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Naver product creation is only successful after the origin product readback matches", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];

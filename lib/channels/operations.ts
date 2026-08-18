@@ -164,6 +164,18 @@ function step(name: string, remote: RemoteResponse): ChannelOperationStep {
   };
 }
 
+function naverOptionalCategoryMetadataStep(name: string, remote: RemoteResponse): ChannelOperationStep {
+  const metadataStep = step(name, remote);
+  const noMetadataForCategory = remote.response.status === 404
+    && String(remote.data.code ?? "").toUpperCase() === "NOT_FOUND";
+  if (!noMetadataForCategory) return metadataStep;
+  return {
+    ...metadataStep,
+    ok: true,
+    data: { items: [] },
+  };
+}
+
 function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: string): ChannelOperationResult {
   const ok = steps.length > 0 && steps.every((item) => item.ok);
   const providerMessage = input.channel === "qoo10"
@@ -735,7 +747,12 @@ async function executeSmartstore(input: ExecuteInput) {
       request({ method: "GET", path: "/v1/product-attributes/attribute-values", query }),
       request({ method: "GET", path: "/v1/options/standard-options", query }),
     ]);
-    return result(input, [step("category", category), step("attributes", attributes), step("attribute-values", values), step("standard-options", options)], categoryId);
+    return result(input, [
+      step("category", category),
+      naverOptionalCategoryMetadataStep("attributes", attributes),
+      naverOptionalCategoryMetadataStep("attribute-values", values),
+      naverOptionalCategoryMetadataStep("standard-options", options),
+    ], categoryId);
   }
   if (input.operation === "categories.validate") {
     const categoryId = stringArgument(input.arguments, "categoryId");
