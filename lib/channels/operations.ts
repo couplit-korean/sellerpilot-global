@@ -17,7 +17,7 @@ import {
   type ActiveChannelKey,
   type ChannelCapabilityKey,
 } from "./catalog";
-import { qoo10ResultMessage } from "./qoo10";
+import { qoo10ProductionPlace, qoo10ResultMessage } from "./qoo10";
 
 export const channelOperationNames = [
   "categories.list",
@@ -178,9 +178,10 @@ function naverOptionalCategoryMetadataStep(name: string, remote: RemoteResponse)
 
 function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: string): ChannelOperationResult {
   const ok = steps.length > 0 && steps.every((item) => item.ok);
-  const providerMessage = input.channel === "qoo10"
-    ? steps.map((item) => qoo10ResultMessage(item.data)).find(Boolean)
-    : "";
+  const providerMessage = steps
+    .filter((item) => !item.ok)
+    .map((item) => input.channel === "qoo10" ? qoo10ResultMessage(item.data) : safeProviderError(item.data))
+    .find(Boolean) ?? "";
   return {
     ok,
     channel: input.channel,
@@ -191,6 +192,39 @@ function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: s
       ? `${channelCatalog[input.channel].name} ${input.operation} 작업이 정상 응답했습니다.`
       : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.${providerMessage ? ` · ${providerMessage}` : ""}`,
   };
+}
+
+function safeProviderError(data: Record<string, unknown>) {
+  const values: string[] = [];
+  const keys = new Set([
+    "error", "errors", "errorcode", "error_code", "errormsg", "error_msg", "errormessage", "error_message",
+    "message", "msg", "detail", "details", "reason", "failure_reason", "issue", "issues",
+  ]);
+  const visit = (value: unknown, depth: number, keyed = false) => {
+    if (depth > 4 || values.length >= 6 || value === null || value === undefined) return;
+    if (typeof value === "string" || typeof value === "number") {
+      if (keyed && String(value).trim()) values.push(String(value).trim());
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1, keyed);
+      return;
+    }
+    if (typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const normalizedKey = key.toLocaleLowerCase().replace(/[^a-z_]/g, "");
+      if (keys.has(normalizedKey)) visit(child, depth + 1, true);
+      else if (keyed) visit(child, depth + 1, true);
+    }
+  };
+  visit(data, 0);
+  return [...new Set(values)]
+    .join(" · ")
+    .replace(/https?:\/\/\S+/gi, "[URL]")
+    .replace(/\b(key|token|secret|authorization|signature)=\S+/gi, "$1=[redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 360);
 }
 
 function lazadaXmlEscape(value: string) {
@@ -285,6 +319,7 @@ function operationDelay(ms: number) {
 
 async function executeQoo10(input: ExecuteInput) {
   const params = stringMap(input.arguments, "params");
+  if (params.ProductionPlace) params.ProductionPlace = qoo10ProductionPlace(params.ProductionPlace);
   const map: Partial<Record<ChannelOperationName, { service: string; method: string; version?: string }>> = {
     "categories.list": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
     "categories.suggest": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
@@ -1272,7 +1307,44 @@ async function executeEbay(input: ExecuteInput) {
         return String(inner.merchantLocationStatus ?? location.merchantLocationStatus ?? "").toUpperCase() === "ENABLED";
       }) ?? locations[0];
       offer.merchantLocationKey = String(enabled?.merchantLocationKey ?? "").trim();
-      if (!offer.merchantLocationKey) throw new Error("EBAY_INVENTORY_LOCATION_MISSING");
+      if (!offer.merchantLocationKey) {
+        const locationKey = "sellerpilot-seoul";
+        const createLocationRemote = await ebayRequest({
+          payload: input.payload,
+          environment: input.environment,
+          method: "POST",
+          path: `/sell/inventory/v1/location/${locationKey}`,
+          body: {
+            location: {
+              address: {
+                addressLine1: "Teheran-ro",
+                city: "Seoul",
+                stateOrProvince: "Seoul",
+                postalCode: "06236",
+                country: "KR",
+              },
+            },
+            locationTypes: ["WAREHOUSE"],
+            merchantLocationStatus: "ENABLED",
+            name: "SellerPilot Seoul Warehouse",
+          },
+        });
+        const createLocationStep = step("inventory-location-create", createLocationRemote);
+        steps.push(createLocationStep);
+        if (!createLocationStep.ok) return result(input, steps, sku);
+        const locationReadbackRemote = await ebayRequest({
+          payload: input.payload,
+          environment: input.environment,
+          method: "GET",
+          path: `/sell/inventory/v1/location/${locationKey}`,
+        });
+        const locationReadbackStep = step("inventory-location-readback", locationReadbackRemote);
+        const readbackStatus = String(locationReadbackRemote.data.merchantLocationStatus ?? "").toUpperCase();
+        locationReadbackStep.ok = locationReadbackStep.ok && readbackStatus === "ENABLED";
+        steps.push(locationReadbackStep);
+        if (!locationReadbackStep.ok) return result(input, steps, sku);
+        offer.merchantLocationKey = locationKey;
+      }
     }
     const itemRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "PUT", path: `/sell/inventory/v1/inventory_item/${sku}`, body: inventoryItem });
     steps.push(step("inventory-item", itemRemote));

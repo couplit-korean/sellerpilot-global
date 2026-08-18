@@ -18,7 +18,7 @@ import {
   fetchNaverAccessToken,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
-import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
+import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
 
 test("Coupang CEA authorization signs the documented canonical value", () => {
   const now = new Date("2026-08-16T03:04:05.000Z");
@@ -196,6 +196,8 @@ test("Qoo10 draft helpers keep internal catalog codes numeric and use a one-year
   assert.ok(qoo10SellerCode("PROGRAM-20260818-003", "1216221951").length <= 20);
   assert.deepEqual(qoo10PauseParams("1216221951"), { ItemCode: "1216221951", Status: "1" });
   assert.throws(() => qoo10PauseParams("invalid"), /QOO10_ITEM_CODE_INVALID/);
+  assert.equal(qoo10ProductionPlace("대한민국"), "South Korea");
+  assert.equal(qoo10ProductionPlace("Japan"), "Japan");
 });
 
 test("Qoo10 provider errors are useful without exposing remote URLs or tokens", async () => {
@@ -1012,6 +1014,74 @@ test("eBay listing auto-selects non-vehicle policies and an enabled inventory lo
     });
     assert.equal(offerCall?.body?.merchantLocationKey, "warehouse-auto");
     assert.deepEqual(result.steps.map((item) => item.name), ["fulfillment-policies", "payment-policies", "return-policies", "inventory-locations", "inventory-item", "inventory-image-readback", "offer", "offer-readback"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay listing provisions and verifies a reusable inventory location when the account has none", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
+    calls.push({ url, method, body });
+    if (url.includes("/fulfillment_policy")) return Response.json({ fulfillmentPolicies: [{ fulfillmentPolicyId: "f-1", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/payment_policy")) return Response.json({ paymentPolicies: [{ paymentPolicyId: "p-1", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/return_policy")) return Response.json({ returnPolicies: [{ returnPolicyId: "r-1", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
+    if (url.includes("/location?") && method === "GET") return Response.json({ locations: [] });
+    if (url.endsWith("/location/sellerpilot-seoul") && method === "POST") return new Response(null, { status: 204 });
+    if (url.endsWith("/location/sellerpilot-seoul") && method === "GET") return Response.json({ merchantLocationKey: "sellerpilot-seoul", merchantLocationStatus: "ENABLED" });
+    if (url.includes("/inventory_item/") && method === "GET") return Response.json({ product: { imageUrls: ["https://cdn.example.com/item.jpg"] } });
+    if (url.endsWith("/offer") && method === "POST") return Response.json({ offerId: "offer-new-location" }, { status: 201 });
+    if (url.endsWith("/offer/offer-new-location") && method === "GET") return Response.json({ offerId: "offer-new-location" });
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.create",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: {
+        sku: "SELLERPILOT-LOCATION",
+        inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
+        offer: {
+          sku: "SELLERPILOT-LOCATION",
+          marketplaceId: "EBAY_US",
+          listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
+          merchantLocationKey: "SERVER_MANAGED",
+        },
+        publish: false,
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(calls.find((call) => call.url.endsWith("/location/sellerpilot-seoul") && call.method === "POST")?.body?.merchantLocationStatus, "ENABLED");
+    assert.equal(calls.find((call) => call.url.endsWith("/offer"))?.body?.merchantLocationKey, "sellerpilot-seoul");
+    assert.equal(result.steps.some((item) => item.name === "inventory-location-readback" && item.ok), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("provider listing errors expose a sanitized actionable message", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    error: "invalid_attribute",
+    message: "Missing attribute shade https://private.example/item?token=secret-value",
+  }, { status: 400 });
+  try {
+    const result = await executeChannelOperation({
+      channel: "shopee",
+      operation: "listing.create",
+      payload: { partner_id: "1", partner_key: "secret", shop_id: "2", access_token: "token" },
+      arguments: { body: {} },
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.safeMessage, /invalid_attribute|Missing attribute shade/);
+    assert.doesNotMatch(result.safeMessage, /private\.example|secret-value/);
   } finally {
     globalThis.fetch = originalFetch;
   }

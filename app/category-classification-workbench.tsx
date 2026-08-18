@@ -78,6 +78,16 @@ function queryScore(query: string, candidate: string) {
   return words.length ? matched / words.length : 0;
 }
 
+export function sanitizeCategoryQuery(value: string) {
+  return value
+    .replace(/\[(?:api|program)\s*test[^\]]*\]/giu, " ")
+    .replace(/\b(?:api|program)\s*test\b/giu, " ")
+    .replace(/(?:판매\s*금지|섭취\s*금지|샘플\s*등록|not\s*for\s*sale|do\s*not\s*(?:sell|consume))/giu, " ")
+    .replace(/[·|]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function lazadaQueryScore(query: string, candidate: string) {
   const words = query.toLocaleLowerCase().split(/[^a-z0-9]+/u).filter((word) => word.length > 1);
   const tokens = candidate.toLocaleLowerCase().split(/[^a-z0-9]+/u).filter(Boolean);
@@ -99,6 +109,8 @@ function qoo10SearchTerms(query: string) {
   if (/(티셔츠|t[\s-]?shirt|반팔)/u.test(normalized)) aliases.push("Tシャツ", "カットソー", "トップス");
   if (/(후드|재킷|hood|jacket)/u.test(normalized)) aliases.push("パーカー", "ジャケット", "アウター", "服");
   if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalized)) aliases.push("コスメ", "スキンケア", "クリーム");
+  if (/(마스카라|mascara)/u.test(normalized)) aliases.push("マスカラ", "アイメイク", "ポイントメイク");
+  if (/(아이섀도|팔레트|eye\s*shadow|eyeshadow|palette)/u.test(normalized)) aliases.push("アイシャドウ", "アイシャドウパレット", "ポイントメイク");
   if (/(비누|세정|soap|cleanser|cleansing)/u.test(normalized)) aliases.push("石鹸", "石鹼", "ボディソープ", "洗顔", "クレンジング");
   if (/(립스틱|립|lipstick|lip\s?care)/u.test(normalized)) aliases.push("口紅", "リップ", "リップケア", "メイクアップ");
   if (/(브러시|brush)/u.test(normalized)) aliases.push("メイクブラシ", "化粧ブラシ", "ブラシ");
@@ -112,17 +124,23 @@ function qoo10SearchTerms(query: string) {
   if (/(테디|곰인형|봉제|teddy|plush)/u.test(normalized)) aliases.push("テディベア", "ぬいぐるみ", "おもちゃ");
   if (/(자동차.*완구|완구.*자동차|장난감.*차|toy\s?car|miniature\s?car)/u.test(normalized)) aliases.push("ミニカー", "車のおもちゃ", "おもちゃ");
   if (/(완구|장난감|toy)/u.test(normalized)) aliases.push("おもちゃ", "玩具");
+  if (/(기차|열차|train)/u.test(normalized)) aliases.push("電車のおもちゃ", "木製玩具", "知育玩具");
+  if (/(블록|blocks?)/u.test(normalized)) aliases.push("ブロック", "積み木", "知育玩具");
   if (/(어유|오메가|fish\s?oil|omega|オメガ|フィッシュオイル|dha|epa)/u.test(normalized)) aliases.push("DHA・EPA", "DHA", "EPA", "オメガ3", "フィッシュオイル");
   if (/(비타민|vitamin|ビタミン)/u.test(normalized)) aliases.push("その他ビタミン", "ビタミン", "サプリメント", "健康食品");
+  if (/(칼슘|calcium)/u.test(normalized)) aliases.push("カルシウム", "ミネラル", "サプリメント", "健康食品");
   if (/(건강식품|보충제|supplement)/u.test(normalized)) aliases.push("サプリメント", "健康食品");
   if (/(수납.*박스|보관.*박스|storage\s?(?:box|bin)|organizer)/u.test(normalized)) aliases.push("収納ボックス", "収納ケース", "収納用品");
   if (/(옷걸이|행거|hanger|ハンガー)/u.test(normalized)) aliases.push("ハンガー", "衣類ハンガー", "衣類収納");
+  if (/(우산|umbrella)/u.test(normalized)) aliases.push("傘", "雨具", "ファッション雑貨");
   return aliases.join(" ");
 }
 
 function qoo10PriorityTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   if (/(립스틱|lipstick)/u.test(normalized)) return ["リップスティック", "口紅"];
+  if (/(마스카라|mascara)/u.test(normalized)) return ["マスカラ"];
+  if (/(아이섀도|팔레트|eye\s*shadow|eyeshadow|palette)/u.test(normalized)) return ["アイシャドウパレット", "アイシャドウ"];
   if (/(고체.*비누|비누|soap)/u.test(normalized)) return ["洗顔せっけん", "石鹸", "石鹼"];
   if (/(보습.*크림|스킨.*크림|moistur)/u.test(normalized)) return ["乳液・クリーム"];
   if (/(브러시|brush)/u.test(normalized)) return ["メイクブラシ", "化粧ブラシ"];
@@ -137,13 +155,17 @@ function qoo10PriorityTerms(query: string) {
   if (/(후드|hood)/u.test(normalized)) return ["パーカー", "フード付きジャケット", "ジャケット"];
   if (/(재킷|jacket)/u.test(normalized)) return ["ジャケット", "アウター"];
   if (/(테디|곰인형|teddy)/u.test(normalized)) return ["テディベア", "ぬいぐるみ"];
+  if (/(기차|열차|train)/u.test(normalized)) return ["電車のおもちゃ", "木製玩具"];
+  if (/(블록|blocks?)/u.test(normalized)) return ["ブロック", "積み木"];
   if (/(자동차.*완구|완구.*자동차|toy\s?car)/u.test(normalized)) return ["ミニカー", "車のおもちゃ"];
   if (/(어유|오메가|fish\s?oil|omega|オメガ|フィッシュオイル|dha|epa)/u.test(normalized)) return ["DHA・EPA", "DHA", "EPA", "オメガ3", "フィッシュオイル"];
   if (/(비타민|vitamin|ビタミン)/u.test(normalized)) return ["その他ビタミン", "ビタミン"];
+  if (/(칼슘|calcium)/u.test(normalized)) return ["カルシウム", "ミネラル"];
   if (/(캔버스.*토트|토트.*백|tote)/u.test(normalized)) return ["トートバッグ"];
   if (/(수납.*박스|storage\s?(?:box|bin))/u.test(normalized)) return ["収納ボックス", "収納ケース"];
   if (/(옷걸이|행거|hanger|ハンガー)/u.test(normalized)) return ["衣類ハンガー", "ハンガー"];
   if (/(컵|머그|cup|mug)/u.test(normalized)) return ["マグカップ・ティーカップ", "マグカップ"];
+  if (/(우산|umbrella)/u.test(normalized)) return ["傘"];
   return [];
 }
 
@@ -659,12 +681,20 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   }, [selectedTarget]);
 
   const localizedQuery = useCallback((channel: ActiveChannelKey) => {
-    const manualQuery = query.trim();
-    if (channel === "lazada") return manualQuery;
-    if (manualQuery && manualQuery !== productName.trim()) return manualQuery;
-    if (channel === "shopee") return localizedListings.find((listing) => listing.channel === "shopee" && listing.market === "SG")?.title || manualQuery;
+    const manualQuery = sanitizeCategoryQuery(query);
+    const defaultQuery = sanitizeCategoryQuery(productName);
+    if (manualQuery && manualQuery !== defaultQuery) return manualQuery;
+    if (channel === "shopee" || channel === "lazada") {
+      const targetMarket = selectedTarget(channel)?.marketCode;
+      const localized = localizedListings.find((listing) => listing.channel === channel && (listing.market === targetMarket || listing.market === "SG"));
+      return sanitizeCategoryQuery(localized?.title ?? manualQuery);
+    }
+    if (channel === "ebay") {
+      const english = localizedListings.find((listing) => listing.channel === "shopee" && listing.market === "SG")?.title;
+      return sanitizeCategoryQuery(english ?? manualQuery);
+    }
     return manualQuery;
-  }, [localizedListings, productName, query]);
+  }, [localizedListings, productName, query, selectedTarget]);
 
   const operation = useCallback(async (channel: ActiveChannelKey, name: "categories.suggest" | "categories.attributes" | "categories.validate", args: Record<string, unknown>) => {
     const credential = activeCredential.get(channel);

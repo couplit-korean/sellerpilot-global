@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { marketplaceListingCurrency, marketplaceListingPrice } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
-import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10SellerCode } from "../lib/channels/qoo10";
+import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10SellerCode } from "../lib/channels/qoo10";
 import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
 import { channels } from "./channel-config";
@@ -152,7 +152,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         PromotionName: product.description.slice(0, 20),
         SellerCode: qoo10SellerCode(product.sku, existingListing?.status !== "published" ? existingListing?.remoteId ?? undefined : undefined),
         IndustrialCode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "",
-        ProductionPlace: manual.countryOfOrigin,
+        ProductionPlace: qoo10ProductionPlace(manual.countryOfOrigin),
         AudultYN: "N",
         ContactTel: "",
         StandardImage: sourceImage,

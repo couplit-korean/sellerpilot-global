@@ -3,6 +3,25 @@ export function qoo10CatalogCode(value: unknown) {
   return /^\d{1,10}$/.test(normalized) ? normalized : "";
 }
 
+const qoo10CountryNames = new Map([
+  ["대한민국", "South Korea"],
+  ["한국", "South Korea"],
+  ["republic of korea", "South Korea"],
+  ["korea, republic of", "South Korea"],
+  ["south korea", "South Korea"],
+  ["중국", "China"],
+  ["일본", "Japan"],
+  ["미국", "United States"],
+  ["베트남", "Vietnam"],
+  ["태국", "Thailand"],
+  ["대만", "Taiwan"],
+]);
+
+export function qoo10ProductionPlace(value: unknown) {
+  const normalized = typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
+  return qoo10CountryNames.get(normalized.toLocaleLowerCase()) ?? normalized;
+}
+
 export function qoo10ExpiryDate(now = new Date()) {
   const expiry = new Date(now);
   expiry.setUTCFullYear(expiry.getUTCFullYear() + 1);

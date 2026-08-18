@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeSuggestions } from "../app/category-classification-workbench";
+import { normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-classification-workbench";
+
+test("category queries discard test-only prefixes before provider classification", () => {
+  assert.equal(sanitizeCategoryQuery("[API TEST · 판매금지] 메이크업 팔레트 화장품 샘플 등록"), "메이크업 팔레트 화장품");
+  assert.equal(sanitizeCategoryQuery("[PROGRAM TEST · NOT FOR SALE] vitamin tablets"), "vitamin tablets");
+});
 
 const qoo10Response = {
   ok: true,

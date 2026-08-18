@@ -1322,7 +1322,8 @@ async function processGatewayJob(job) {
       body: JSON.stringify({ jobId: job.id, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}) }),
     });
     if (!response.ok) throw new Error(`채널 작업 결과 저장 실패 · HTTP ${response.status}`);
-    console.log(`[채널 완료] ${job.channel} · ${job.operation} · ${job.id}`);
+    if (result.ok) console.log(`[채널 완료] ${job.channel} · ${job.operation} · ${job.id}`);
+    else console.error(`[채널 원격 실패] ${job.channel} · ${job.operation} · ${job.id} · ${result.safeMessage}`);
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 500) : "채널 작업 처리 오류";
     await api("/api/channel-gateway/worker/complete", {
