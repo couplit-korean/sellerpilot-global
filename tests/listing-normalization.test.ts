@@ -58,7 +58,7 @@ test("Shopee local publish preserves seller input and exposes mandatory attribut
   assert.deepEqual(result.unresolved, ["Compliance Code"]);
 });
 
-test("Shopee local publish can fill enumerations whose mandatory flag is missing", () => {
+test("Shopee local publish fills implicit enumerations and free-text dates whose mandatory flag is missing", () => {
   const result = mergeShopeeRequiredAttributes([], [{
     attribute_id: 12,
     display_attribute_name: "Drink Form",
@@ -66,10 +66,20 @@ test("Shopee local publish can fill enumerations whose mandatory flag is missing
       { value_id: 120, display_value_name: "Whole Bean" },
       { value_id: 121, display_value_name: "Ground" },
     ],
-  }], "roasted whole coffee beans", { fillEnumerated: true });
-  assert.deepEqual(result.attributes, [{ attribute_id: 12, attribute_value_list: [{ value_id: 120 }] }]);
+  }, {
+    attribute_id: 13,
+    display_attribute_name: "Expiry Date",
+    attribute_value_list: [],
+  }], "roasted whole coffee beans", {
+    implicitRequired: { "drink form": true, "expiry date": "2027-08-19" },
+  });
+  assert.deepEqual(result.attributes, [
+    { attribute_id: 12, attribute_value_list: [{ value_id: 120 }] },
+    { attribute_id: 13, attribute_value_list: [{ value_id: 0, original_value_name: "2027-08-19" }] },
+  ]);
   assert.deepEqual(result.unresolved, []);
   assert.match(result.autoFilled[0] ?? "", /Drink Form: Whole Bean/);
+  assert.match(result.autoFilled[1] ?? "", /Expiry Date: 2027-08-19/);
 });
 
 test("eBay item aspects use string arrays and an accepted country enumeration", () => {

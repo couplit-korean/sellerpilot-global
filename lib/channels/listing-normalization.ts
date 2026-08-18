@@ -94,7 +94,7 @@ export function mergeShopeeRequiredAttributes(
   existing: unknown,
   metadata: ShopeeAttributeMetadata[],
   productHint: string,
-  options: { fillEnumerated?: boolean } = {},
+  options: { fillEnumerated?: boolean; implicitRequired?: Record<string, true | string> } = {},
 ) {
   const attributes = Array.isArray(existing)
     ? existing.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))).map((item) => structuredClone(item))
@@ -104,13 +104,17 @@ export function mergeShopeeRequiredAttributes(
   const autoFilled: string[] = [];
   const unresolved: string[] = [];
   for (const attribute of metadata) {
+    const label = String(attribute.display_attribute_name ?? attribute.name ?? attribute.attribute_id ?? "").trim();
+    const normalizedLabel = label.toLocaleLowerCase();
+    const implicitValue = Object.entries(options.implicitRequired ?? {})
+      .find(([name]) => name.toLocaleLowerCase() === normalizedLabel)?.[1];
     const required = attribute.is_mandatory === true || attribute.is_mandatory === 1 || attribute.is_mandatory === "1"
       || attribute.mandatory === true || attribute.mandatory === 1 || attribute.mandatory === "1";
     const attributeId = Number(attribute.attribute_id);
     const values = Array.isArray(attribute.attribute_value_list)
       ? attribute.attribute_value_list.filter((item): item is ShopeeAttributeValue => Boolean(item && typeof item === "object" && !Array.isArray(item)))
       : [];
-    const shouldFill = required || (options.fillEnumerated === true && values.length > 0);
+    const shouldFill = required || implicitValue !== undefined || (options.fillEnumerated === true && values.length > 0);
     if (!shouldFill || !Number.isSafeInteger(attributeId) || attributeId <= 0 || supplied.has(attributeId)) continue;
     const ranked = values
       .map((value, index) => {
@@ -123,7 +127,15 @@ export function mergeShopeeRequiredAttributes(
       .filter((item) => Number.isSafeInteger(Number(item.value.value_id)) && Number(item.value.value_id) > 0)
       .sort((left, right) => right.score - left.score || left.index - right.index);
     const selected = ranked[0];
-    const label = String(attribute.display_attribute_name ?? attribute.name ?? attributeId).trim();
+    if (!selected && typeof implicitValue === "string" && implicitValue.trim()) {
+      attributes.push({
+        attribute_id: attributeId,
+        attribute_value_list: [{ value_id: 0, original_value_name: implicitValue.trim() }],
+      });
+      supplied.add(attributeId);
+      autoFilled.push(`${label}: ${implicitValue.trim()}`);
+      continue;
+    }
     if (!selected && required) {
       unresolved.push(label);
       continue;

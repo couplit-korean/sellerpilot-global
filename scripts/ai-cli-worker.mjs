@@ -391,8 +391,7 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   }
   const attributeRows = objectRecords(attributeRemote.data)
     .filter((row) => row.attribute_id !== undefined);
-  const attributeMetadata = attributeRows
-    .filter((row) => row.attribute_id !== undefined && (row.is_mandatory !== undefined || row.mandatory !== undefined));
+  const attributeMetadata = attributeRows;
   if (!attributeRemote.response.ok || attributeRemote.data.error) {
     const code = String(attributeRemote.data.error ?? attributeRemote.response.status).replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 80);
     throw new Error(`Shopee 현지 숍 필수 속성을 확인하지 못했습니다${code ? `: ${code}` : ""}`);
@@ -402,11 +401,17 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     ...(Array.isArray(body.attribute_list) ? body.attribute_list : []),
     ...(Array.isArray(publishItem.attribute_list) ? publishItem.attribute_list : []),
   ];
-  // Some Shopee shop/category combinations return enumerated attributes without
-  // a reliable mandatory flag and then reject the publish request as missing
-  // that attribute (for example Drink Form). Populate every advertised local
-  // enumeration deterministically while preserving seller-supplied values.
-  const requiredAttributes = mergeShopeeRequiredAttributes(suppliedAttributes, attributeMetadata, productHint, { fillEnumerated: true });
+  // Some Shopee shop/category combinations omit a reliable mandatory flag for
+  // attributes that the create API still requires. Keep the recovery targeted:
+  // selecting every optional enumeration can invent contradictory food facts.
+  // Date-like implicit requirements use Shopee's custom-value representation.
+  const expiryDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const requiredAttributes = mergeShopeeRequiredAttributes(suppliedAttributes, attributeMetadata, productHint, {
+    implicitRequired: {
+      "drink form": true,
+      "expiry date": expiryDate,
+    },
+  });
   if (requiredAttributes.unresolved.length) throw new Error(`Shopee 필수 속성 선택값이 없습니다: ${requiredAttributes.unresolved.join(", ")}`);
   if (requiredAttributes.autoFilled.length) console.log(`[Shopee attribute autofill] category=${categoryId} · ${requiredAttributes.autoFilled.join(" | ").slice(0, 600)}`);
   publish.item = {
