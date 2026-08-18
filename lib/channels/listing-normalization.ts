@@ -87,7 +87,9 @@ type ShopeeAttributeMetadata = {
 };
 
 function shopeeWords(value: unknown) {
-  return String(value ?? "").toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 1);
+  return String(value ?? "").toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length > 1)
+    .map((word) => word.length > 3 && word.endsWith("s") ? word.slice(0, -1) : word);
 }
 
 export function mergeShopeeRequiredAttributes(

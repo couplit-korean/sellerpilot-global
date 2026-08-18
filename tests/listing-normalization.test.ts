@@ -71,15 +71,15 @@ test("Shopee local publish fills implicit enumerations and free-text dates whose
     display_attribute_name: "Expiry Date",
     attribute_value_list: [],
   }], "roasted whole coffee beans", {
-    implicitRequired: { "drink form": true, "expiry date": "2027-08-19" },
+    implicitRequired: { "drink form": true, "expiry date": "19/08/2027" },
   });
   assert.deepEqual(result.attributes, [
     { attribute_id: 12, attribute_value_list: [{ value_id: 120 }] },
-    { attribute_id: 13, attribute_value_list: [{ value_id: 0, original_value_name: "2027-08-19" }] },
+    { attribute_id: 13, attribute_value_list: [{ value_id: 0, original_value_name: "19/08/2027" }] },
   ]);
   assert.deepEqual(result.unresolved, []);
   assert.match(result.autoFilled[0] ?? "", /Drink Form: Whole Bean/);
-  assert.match(result.autoFilled[1] ?? "", /Expiry Date: 2027-08-19/);
+  assert.match(result.autoFilled[1] ?? "", /Expiry Date: 19\/08\/2027/);
 });
 
 test("eBay item aspects use string arrays and an accepted country enumeration", () => {

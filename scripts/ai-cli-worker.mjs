@@ -425,7 +425,8 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   // attributes that the create API still requires. Keep the recovery targeted:
   // selecting every optional enumeration can invent contradictory food facts.
   // Date-like implicit requirements use Shopee's custom-value representation.
-  const expiryDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const expiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+  const expiryDate = `${String(expiry.getUTCDate()).padStart(2, "0")}/${String(expiry.getUTCMonth() + 1).padStart(2, "0")}/${expiry.getUTCFullYear()}`;
   const requiredAttributes = mergeShopeeRequiredAttributes(suppliedAttributes, attributeMetadata, productHint, {
     implicitRequired: {
       "drink form": true,
