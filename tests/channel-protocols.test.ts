@@ -89,9 +89,21 @@ test("Qoo10 uses current QAPI endpoint and qualified method name", () => {
 
 test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () => {
   const originalFetch = globalThis.fetch;
-  let calledUrl = "";
-  globalThis.fetch = async (input) => {
-    calledUrl = String(input);
+  let createUrl = "";
+  let createInit: RequestInit | undefined;
+  let fetchCount = 0;
+  globalThis.fetch = async (input, init) => {
+    fetchCount += 1;
+    if (fetchCount === 1) {
+      createUrl = String(input);
+      createInit = init;
+    }
+    if (fetchCount > 1) {
+      return new Response(JSON.stringify({
+        ResultCode: 0,
+        ResultObject: { ItemDetail: '<div><img src="1.jpg"><img src="2.jpg"><img src="3.jpg"><img src="4.jpg"></div>' },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     return new Response(JSON.stringify({ ResultCode: 0, ResultMsg: "SUCCESS", ResultObject: { GdNo: "1234567890" } }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -102,14 +114,52 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
       channel: "qoo10",
       operation: "listing.create",
       payload: { api_key: "test-key" },
-      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: "<p>Test</p>", RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
+      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: '<p>Test</p><img src="1.jpg"><img src="2.jpg"><img src="3.jpg"><img src="4.jpg">', RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
       environment: "production",
     });
-    const url = new URL(calledUrl);
+    const url = new URL(createUrl);
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "1234567890");
     assert.equal(url.searchParams.get("method"), "ItemsBasic.SetNewGoods");
     assert.equal(url.searchParams.get("v"), "1.1");
+    assert.equal(createInit?.method, "POST");
+    assert.equal(url.searchParams.has("ItemDescription"), false);
+    const body = new URLSearchParams(String(createInit?.body));
+    assert.equal((body.get("ItemDescription")?.match(/<img /g) ?? []).length, 4);
+    assert.equal(result.steps.at(-1)?.name, "detail-image-readback");
+    assert.equal(result.steps.at(-1)?.ok, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Qoo10 pauses a created item when detail-image readback is incomplete", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ method: string; body: string; status: string | null }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    calls.push({ method: url.searchParams.get("method") ?? "", body: String(init?.body ?? ""), status: url.searchParams.get("Status") });
+    if (url.searchParams.get("method") === "ItemsBasic.SetNewGoods") {
+      return Response.json({ ResultCode: 0, ResultObject: { GdNo: "1234567890" } });
+    }
+    if (url.searchParams.get("method") === "ItemsBasic.EditGoodsStatus") {
+      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    }
+    return Response.json({ ResultCode: 0, ResultObject: { ItemDetail: "<p>description only</p>" } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.create",
+      payload: { api_key: "test-key" },
+      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: '<img src="1"><img src="2"><img src="3"><img src="4">', RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.remoteId, "1234567890");
+    assert.equal(result.steps.find((item) => item.name === "detail-image-readback")?.ok, false);
+    assert.equal(calls.at(-1)?.method, "ItemsBasic.EditGoodsStatus");
+    assert.equal(calls.at(-1)?.status, "1");
   } finally {
     globalThis.fetch = originalFetch;
   }

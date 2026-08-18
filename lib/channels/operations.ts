@@ -240,6 +240,49 @@ function ensureProviderSupport(channel: ActiveChannelKey, operation: ChannelOper
   if (capability.mode === "vendor_docs_required") throw new Error(`CHANNEL_VENDOR_SPEC_REQUIRED:${operation}`);
 }
 
+function qoo10DetailHtml(value: unknown, depth = 0): string {
+  if (depth > 5 || value === null || value === undefined) return "";
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = qoo10DetailHtml(item, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (typeof value !== "object") return "";
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (["itemdetail", "itemdescription", "description"].includes(key.toLowerCase()) && typeof item === "string") {
+      return item;
+    }
+  }
+  for (const item of Object.values(value as Record<string, unknown>)) {
+    const found = qoo10DetailHtml(item, depth + 1);
+    if (found) return found;
+  }
+  return "";
+}
+
+function qoo10ImageCount(html: string) {
+  return (html.match(/(?:<|&lt;)img\b/gi) ?? []).length;
+}
+
+function qoo10VerificationStep(ok: boolean, status: number, imageCount: number): ChannelOperationStep {
+  return {
+    name: "detail-image-readback",
+    ok,
+    status,
+    data: {
+      ResultCode: ok ? 0 : -9999,
+      ResultMsg: ok ? "DETAIL_IMAGES_VERIFIED" : "QOO10_DETAIL_IMAGE_READBACK_MISSING",
+      detailImageCount: imageCount,
+    },
+  };
+}
+
+function operationDelay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function executeQoo10(input: ExecuteInput) {
   const params = stringMap(input.arguments, "params");
   const map: Partial<Record<ChannelOperationName, { service: string; method: string; version?: string }>> = {
@@ -276,6 +319,7 @@ async function executeQoo10(input: ExecuteInput) {
   const definition = map[input.operation];
   if (!definition) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
   const remote = await qoo10Request({ payload: input.payload, ...definition, params });
+  const createStep = step(definition.method, remote);
   const resultObject = remote.data.ResultObject;
   const remoteId = typeof resultObject === "string" || typeof resultObject === "number"
     ? String(resultObject)
@@ -285,7 +329,44 @@ async function executeQoo10(input: ExecuteInput) {
         .find((value): value is string | number => typeof value === "string" || typeof value === "number")
         ?.toString()
       : undefined;
-  return result(input, [step(definition.method, remote)], remoteId);
+  if (input.operation !== "listing.create" || !createStep.ok || !remoteId) {
+    return result(input, [createStep], remoteId);
+  }
+
+  const expectedDetailImages = qoo10ImageCount(params.ItemDescription ?? "");
+  let readbackStatus = 422;
+  let readbackImageCount = 0;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (attempt > 0) await operationDelay(750 * attempt);
+    const readback = await qoo10Request({
+      payload: input.payload,
+      service: "ItemsLookup",
+      method: "GetItemDetailInfo",
+      version: "1.2",
+      params: { ItemCode: remoteId, SellerCode: "" },
+    });
+    const readbackStep = step("GetItemDetailInfo", readback);
+    readbackStatus = readbackStep.status;
+    readbackImageCount = qoo10ImageCount(qoo10DetailHtml(readback.data.ResultObject));
+    if (readbackStep.ok && expectedDetailImages >= 4 && readbackImageCount >= expectedDetailImages) {
+      return result(input, [createStep, qoo10VerificationStep(true, readbackStatus, readbackImageCount)], remoteId);
+    }
+  }
+
+  // A create response is not sufficient: Qoo10 can accept the item while
+  // omitting its long detail HTML. Pause that incomplete remote item so it
+  // cannot remain orderable, and report a failed verification to the ledger.
+  const rollback = await qoo10Request({
+    payload: input.payload,
+    service: "ItemsBasic",
+    method: "EditGoodsStatus",
+    params: { ItemCode: remoteId, Status: "1" },
+  });
+  return result(input, [
+    createStep,
+    qoo10VerificationStep(false, readbackStatus, readbackImageCount),
+    step("rollback-missing-detail", rollback),
+  ], remoteId);
 }
 
 function shopeeResponseId(data: Record<string, unknown>, key: string) {

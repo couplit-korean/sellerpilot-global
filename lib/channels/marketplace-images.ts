@@ -139,6 +139,23 @@ export function renderMarketplaceDetailImages(urls: string[]) {
     .join("")}</section>`;
 }
 
+export function renderQoo10DetailDescription(value: unknown, urls: string[]) {
+  const source = (typeof value === "string" ? value : "")
+    .replace(/<\/?section(?:\s[^>]*)?>/gi, (tag) => tag.startsWith("</") ? "</div>" : "<div>")
+    .replace(/<dl(?:\s[^>]*)?>/gi, "<div>")
+    .replace(/<\/dl>/gi, "</div>")
+    .replace(/<dt(?:\s[^>]*)?>/gi, "<p><strong>")
+    .replace(/<\/dt>/gi, "</strong></p>")
+    .replace(/<dd(?:\s[^>]*)?>/gi, "<p>")
+    .replace(/<\/dd>/gi, "</p>");
+  if (!urls.length) return source;
+  const images = urls.map((url, index) => {
+    const safeUrl = url.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+    return `<img src="${safeUrl}" alt="상품 상세 이미지 ${index + 1}" width="860" border="0" style="display:block;width:100%;max-width:860px;height:auto;margin:0 auto 18px" /><br />`;
+  }).join("");
+  return `${source}<div align="center" style="text-align:center;margin:24px auto">${images}</div>`;
+}
+
 function appendDetailImages(value: unknown, urls: string[]) {
   const source = typeof value === "string" ? value : "";
   return `${source}${renderMarketplaceDetailImages(urls)}`;
@@ -173,7 +190,7 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     const sourceUrl = gallery[0] ?? (typeof params?.StandardImage === "string" ? params.StandardImage.trim() : "");
     if (!params || !sourceUrl) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
     params.StandardImage = gallery[0] ?? await normalize(sourceUrl);
-    params.ItemDescription = appendDetailImages(params.ItemDescription, details);
+    params.ItemDescription = renderQoo10DetailDescription(params.ItemDescription, details);
     return next;
   }
 

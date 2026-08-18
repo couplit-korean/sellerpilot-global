@@ -655,11 +655,26 @@ export async function qoo10Request(input: {
 }) {
   const apiKey = textValue(input.payload, "api_key");
   if (!apiKey) throw new Error("QOO10_CREDENTIALS_MISSING");
-  const response = await fetch(buildQoo10Url({ ...input, apiKey }), {
-    method: "GET",
+  // SetNewGoods can carry a complete HTML detail page. Sending that payload in
+  // the query string caused Qoo10 to create the item while silently dropping
+  // the long ItemDescription value. QAPI accepts form-encoded REST requests, so
+  // keep the gateway controls in the URL and send the product fields in a POST
+  // body for creation.
+  const useFormBody = input.method === "SetNewGoods";
+  const response = await fetch(buildQoo10Url({
+    ...input,
+    apiKey,
+    params: useFormBody ? undefined : input.params,
+  }), {
+    method: useFormBody ? "POST" : "GET",
+    body: useFormBody ? new URLSearchParams(input.params ?? {}) : undefined,
     cache: "no-store",
     signal: AbortSignal.timeout(15_000),
-    headers: { accept: "application/json", "user-agent": "SellerPilot-Qoo10-QAPI-Connector/1.0" },
+    headers: {
+      accept: "application/json",
+      ...(useFormBody ? { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" } : {}),
+      "user-agent": "SellerPilot-Qoo10-QAPI-Connector/1.0",
+    },
   });
   return readRemoteResponse(response);
 }
