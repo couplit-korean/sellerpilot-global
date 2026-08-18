@@ -567,15 +567,45 @@ async function prepareCoupangListing(payload, argumentsValue) {
   if (!returnRemote.response.ok) throw new Error(`COUPANG_RETURN_CENTER_QUERY_FAILED:${returnRemote.response.status}`);
   if (!metadataRemote.response.ok) throw new Error(`COUPANG_CATEGORY_METADATA_FAILED:${metadataRemote.response.status}`);
 
-  const outboundCenters = nestedContent(outboundRemote.data);
+  let outboundCenters = nestedContent(outboundRemote.data);
   const returnCenters = nestedContent(returnRemote.data);
-  const outbound = outboundCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
-  const returnCenter = returnCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses) && String(center?.deliverCode ?? "").trim());
-  if (!outbound) throw new Error(`COUPANG_USABLE_OUTBOUND_MISSING:${safeCoupangCenterSummary(outboundCenters)}`);
+  let outbound = outboundCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
+  const returnCenter = returnCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
   if (!returnCenter) throw new Error(`COUPANG_USABLE_RETURN_CENTER_MISSING:${safeCoupangCenterSummary(returnCenters)}`);
+  if (!outbound) {
+    const createRemote = await coupangRequest({
+      payload,
+      method: "POST",
+      path: `/v2/providers/openapi/apis/api/v5/vendors/${encodeURIComponent(vendorId)}/outboundShippingCenters`,
+      body: {
+        vendorId,
+        userId: requestedBy,
+        shippingPlaceName: "SellerPilot API 출고지",
+        usable: true,
+        global: false,
+        placeAddresses: returnCenter.placeAddresses,
+      },
+    });
+    const createdCode = String(createRemote.data?.data?.resultMessage ?? "").trim();
+    const created = createRemote.response.ok && String(createRemote.data?.data?.resultCode ?? "").toUpperCase() === "SUCCESS" && /^\d+$/.test(createdCode);
+    if (!created) throw new Error(`COUPANG_OUTBOUND_CREATE_FAILED:${createRemote.response.status}`);
+    const createdRemote = await coupangRequest({
+      payload,
+      method: "GET",
+      path: "/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound",
+      query: new URLSearchParams({ placeCodes: createdCode }),
+    });
+    if (!createdRemote.response.ok) throw new Error(`COUPANG_OUTBOUND_READBACK_FAILED:${createdRemote.response.status}`);
+    outboundCenters = nestedContent(createdRemote.data);
+    outbound = outboundCenters.find((center) => String(center?.outboundShippingPlaceCode ?? "") === createdCode && coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
+    if (!outbound) throw new Error(`COUPANG_OUTBOUND_READBACK_MISMATCH:${safeCoupangCenterSummary(outboundCenters)}`);
+  }
   const returnAddress = preferredKoreanAddress(returnCenter.placeAddresses);
-  const returnFee = positiveFee(returnCenter);
-  if (!returnFee) throw new Error("COUPANG_RETURN_FEE_MISSING");
+  const contractedDeliveryCode = String(returnCenter.deliverCode ?? "").trim();
+  const returnFee = positiveFee(returnCenter) ?? 3_000;
+  const returnCenterCode = contractedDeliveryCode
+    ? String(returnCenter.returnCenterCode)
+    : "NO_RETURN_CENTERCODE";
   const metadata = coupangMetadata(metadataRemote.data);
   const items = Array.isArray(body.items) ? body.items.map((item) => prepareCoupangItem(item, metadata, argumentsValue.facts)) : [];
   if (!items.length) throw new Error("COUPANG_ITEMS_MISSING");
@@ -588,7 +618,7 @@ async function prepareCoupangListing(payload, argumentsValue) {
       displayProductName: body.displayProductName || body.sellerProductName,
       saleStartedAt: body.saleStartedAt || new Date(Date.now() - 60_000).toISOString().slice(0, 19),
       saleEndedAt: body.saleEndedAt || "2099-01-01T23:59:59",
-      deliveryCompanyCode: String(returnCenter.deliverCode),
+      deliveryCompanyCode: contractedDeliveryCode || "CJGLS",
       deliveryChargeType: "FREE",
       deliveryCharge: 0,
       freeShipOverAmount: 0,
@@ -596,7 +626,7 @@ async function prepareCoupangListing(payload, argumentsValue) {
       remoteAreaDeliverable: "N",
       unionDeliveryType: "UNION_DELIVERY",
       outboundShippingPlaceCode: Number(outbound.outboundShippingPlaceCode),
-      returnCenterCode: String(returnCenter.returnCenterCode),
+      returnCenterCode,
       returnChargeName: String(returnCenter.shippingPlaceName),
       companyContactNumber: String(returnAddress.companyContactNumber),
       returnZipCode: String(returnAddress.returnZipCode),
