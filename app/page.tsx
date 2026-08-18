@@ -610,8 +610,20 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
       const url = new URL(mainPhotoUrl.trim(), window.location.href);
       if (!/^https?:$/.test(url.protocol)) throw new Error("http:// 또는 https:// 공개 이미지 URL을 입력해 주세요.");
       setImportingMainPhoto(true);
-      const response = await fetch(url.toString(), { cache: "no-store" });
-      if (!response.ok) throw new Error(`이미지를 가져오지 못했습니다. HTTP ${response.status}`);
+      const { data: sessionData } = await createSupabaseClient().auth.getSession();
+      const response = await fetch("/api/images/import", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${sessionData.session?.access_token ?? ""}`,
+        },
+        body: JSON.stringify({ url: url.toString() }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { message?: string } | null;
+        throw new Error(payload?.message || `이미지를 가져오지 못했습니다. HTTP ${response.status}`);
+      }
       const blob = await response.blob();
       const contentType = blob.type.split(";")[0].toLowerCase();
       if (!["image/jpeg", "image/png", "image/webp"].includes(contentType)) throw new Error("URL이 JPG, PNG, WEBP 이미지를 가리키는지 확인해 주세요.");
@@ -625,9 +637,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
       setUploadError("");
       notify("공개 이미지 URL을 대표사진으로 불러왔습니다.");
     } catch (error) {
-      const message = error instanceof TypeError
-        ? "브라우저에서 읽을 수 없는 URL입니다. 같은 사이트 이미지 또는 CORS가 허용된 공개 이미지를 사용해 주세요."
-        : error instanceof Error ? error.message : "공개 이미지 URL을 확인해 주세요.";
+      const message = error instanceof Error ? error.message : "공개 이미지 URL을 확인해 주세요.";
       setUploadError(message);
       notify(message);
     } finally {
