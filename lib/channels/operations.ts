@@ -180,7 +180,10 @@ function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: s
   const ok = steps.length > 0 && steps.every((item) => item.ok);
   const providerMessage = steps
     .filter((item) => !item.ok)
-    .map((item) => input.channel === "qoo10" ? qoo10ResultMessage(item.data) : safeProviderError(item.data))
+    .map((item) => {
+      const message = input.channel === "qoo10" ? qoo10ResultMessage(item.data) : safeProviderError(item.data);
+      return message ? `${item.name}: ${message}` : "";
+    })
     .find(Boolean) ?? "";
   return {
     ok,
@@ -201,7 +204,7 @@ function safeProviderError(data: Record<string, unknown>) {
     "message", "msg", "detail", "details", "reason", "failure_reason", "issue", "issues",
   ]);
   const visit = (value: unknown, depth: number, keyed = false) => {
-    if (depth > 4 || values.length >= 6 || value === null || value === undefined) return;
+    if (depth > 6 || values.length >= 16 || value === null || value === undefined) return;
     if (typeof value === "string" || typeof value === "number") {
       if (keyed && String(value).trim()) values.push(String(value).trim());
       return;
@@ -224,7 +227,7 @@ function safeProviderError(data: Record<string, unknown>) {
     .replace(/\b(key|token|secret|authorization|signature)=\S+/gi, "$1=[redacted]")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 360);
+    .slice(0, 700);
 }
 
 function lazadaXmlEscape(value: string) {
