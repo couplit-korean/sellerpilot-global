@@ -150,6 +150,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(cliRuntimeCard, /npm run ai:worker:install/);
   assert.match(cliWorker, /codex-image/);
   assert.match(cliWorker, /--enable", "image_generation/);
+  assert.match(cliWorker, /codexEnv\.PATH = \[codexDirectory/);
   assert.doesNotMatch(packageJson, /local-analyzer-server|run-local-demo/);
   assert.match(cliMigration, /sellerpilot_claim_ai_job/);
   assert.match(cliMigration, /sellerpilot-ai/);

@@ -3,7 +3,7 @@ import { lookup } from "node:dns/promises";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
@@ -162,6 +162,13 @@ async function runCodex(args, timeoutMs, jobId) {
   if (jobId) await touchJob(jobId);
   return new Promise((resolveRun, rejectRun) => {
     const codexEnv = { ...process.env };
+    // Image-generation turns invoke the installed codex-image skill. Its
+    // preflight resolves `codex` from PATH, so keep the absolute worker binary
+    // discoverable by every nested Codex process as well.
+    const codexDirectory = dirname(codexBin);
+    codexEnv.PATH = [codexDirectory, codexEnv.PATH ?? "/usr/bin:/bin"]
+      .filter(Boolean)
+      .join(":");
     delete codexEnv.OPENAI_API_KEY;
     delete codexEnv.OPENAI_BASE_URL;
     const child = spawn(codexBin, args, {
