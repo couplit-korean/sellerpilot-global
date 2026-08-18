@@ -4,6 +4,7 @@ import {
   marketplaceListingCurrency,
   marketplaceListingPrice,
   mergeShopeeRequiredAttributes,
+  naverUnitCapacity,
   normalizeEbayAspects,
   normalizeCoupangAttributeValue,
   normalizeTenWonAmount,
@@ -32,6 +33,16 @@ test("Coupang numeric attributes inherit the official category unit", () => {
   const metadata = { dataType: "NUMBER", basicUnit: "개", usableUnits: ["개", "박스", "세트"] };
   assert.equal(normalizeCoupangAttributeValue(metadata, "1"), "1개");
   assert.equal(normalizeCoupangAttributeValue(metadata, "2세트"), "2세트");
+});
+
+test("Naver unit-price data follows the official category exception flag", () => {
+  assert.deepEqual(naverUnitCapacity(["UNIT_PRICE"]), {
+    unitPriceYn: true,
+    totalCapacityValue: 500,
+    unitCapacity: 100,
+    indicationUnit: "g",
+  });
+  assert.deepEqual(naverUnitCapacity([]), { unitPriceYn: false });
 });
 
 test("Shopee local publish metadata fills mandatory enumerations missing from the global tree", () => {

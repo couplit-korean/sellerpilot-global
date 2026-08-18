@@ -11,6 +11,7 @@ import { cliStudioResultSchema } from "../lib/ai-cli-contract.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import {
   mergeShopeeRequiredAttributes,
+  naverUnitCapacity,
   normalizeCoupangAttributeValue,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
@@ -429,23 +430,30 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   }
   const globalAttributeMetadata = objectRecords(globalAttributeRemote.data)
     .filter((row) => row.attribute_id !== undefined);
+  const globalImplicitMetadata = globalAttributeMetadata.filter((row) => /drink form|expiry date|shelf life|packaging type/i.test(String(row.display_attribute_name ?? row.name ?? "")));
+  if (globalImplicitMetadata.length) console.log(`[Shopee global implicit metadata] ${JSON.stringify(globalImplicitMetadata).slice(0, 6000)}`);
   // Some Shopee shop/category combinations omit a reliable mandatory flag for
   // attributes that the create API still requires. Keep the recovery targeted:
   // selecting every optional enumeration can invent contradictory food facts.
   // Date-like implicit requirements use Shopee's custom-value representation.
   const expiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
   const expiryDate = `${String(expiry.getUTCDate()).padStart(2, "0")}/${String(expiry.getUTCMonth() + 1).padStart(2, "0")}/${expiry.getUTCFullYear()}`;
-  const implicitRequired = {
+  const globalImplicitRequired = {
     "drink form": "Coffee Beans",
-    "expiry date": expiryDate,
+    "expiry date": expiry.toISOString().slice(0, 10),
     "shelf life": "12 Months",
     "shelf lifes": "12 Months",
+    "packaging type": "Bag",
+  };
+  const localImplicitRequired = {
+    ...globalImplicitRequired,
+    "expiry date": expiryDate,
   };
   const globalRequiredAttributes = mergeShopeeRequiredAttributes(body.attribute_list, globalAttributeMetadata, productHint, {
-    implicitRequired,
+    implicitRequired: globalImplicitRequired,
   });
   const localRequiredAttributes = mergeShopeeRequiredAttributes(publishItem.attribute_list, attributeMetadata, productHint, {
-    implicitRequired,
+    implicitRequired: localImplicitRequired,
   });
   const unresolvedAttributes = [...new Set([...globalRequiredAttributes.unresolved, ...localRequiredAttributes.unresolved])];
   if (unresolvedAttributes.length) throw new Error(`Shopee 필수 속성 선택값이 없습니다: ${unresolvedAttributes.join(", ")}`);
@@ -530,6 +538,14 @@ async function prepareSmartstoreListing(payload, argumentsValue) {
   const originProduct = body.originProduct && typeof body.originProduct === "object" ? body.originProduct : {};
   originProduct.salePrice = normalizeTenWonAmount(originProduct.salePrice);
   const detailAttribute = originProduct.detailAttribute && typeof originProduct.detailAttribute === "object" ? originProduct.detailAttribute : {};
+  const leafCategoryId = String(originProduct.leafCategoryId ?? "").trim();
+  if (!leafCategoryId) throw new Error("네이버 말단 카테고리가 없습니다.");
+  const categoryRemote = await naverRequest({
+    accessToken: token.accessToken,
+    method: "GET",
+    path: `/v1/categories/${encodeURIComponent(leafCategoryId)}`,
+  });
+  if (!categoryRemote.response.ok) throw new Error("네이버 단위가격 대상 카테고리를 확인하지 못했습니다.");
   const existingProvidedNotice = detailAttribute.productInfoProvidedNotice && typeof detailAttribute.productInfoProvidedNotice === "object" ? detailAttribute.productInfoProvidedNotice : {};
   const existingEtcNotice = existingProvidedNotice.etc && typeof existingProvidedNotice.etc === "object" ? existingProvidedNotice.etc : {};
   const productName = String(originProduct.name ?? "상품상세 참조").trim() || "상품상세 참조";
@@ -565,6 +581,7 @@ async function prepareSmartstoreListing(payload, argumentsValue) {
   };
   originProduct.detailAttribute = {
     ...detailAttribute,
+    unitCapacity: naverUnitCapacity(categoryRemote.data?.exceptionalCategories),
     minorPurchasable: typeof detailAttribute.minorPurchasable === "boolean" ? detailAttribute.minorPurchasable : true,
     productInfoProvidedNotice: providedNotice,
     afterServiceInfo: {

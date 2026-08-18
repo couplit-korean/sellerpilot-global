@@ -7,6 +7,22 @@ export function normalizeTenWonAmount(value: unknown) {
   return typeof value === "string" ? String(normalized) : normalized;
 }
 
+export function naverUnitCapacity(exceptionalCategories: unknown, defaults: {
+  totalCapacityValue?: number;
+  unitCapacity?: number;
+  indicationUnit?: string;
+} = {}) {
+  const required = Array.isArray(exceptionalCategories)
+    && exceptionalCategories.some((value) => String(value).toUpperCase() === "UNIT_PRICE");
+  if (!required) return { unitPriceYn: false };
+  return {
+    unitPriceYn: true,
+    totalCapacityValue: defaults.totalCapacityValue ?? 500,
+    unitCapacity: defaults.unitCapacity ?? 100,
+    indicationUnit: defaults.indicationUnit ?? "g",
+  };
+}
+
 const usdCurrencyReference: Record<string, number> = {
   USD: 1,
   JPY: 145,
