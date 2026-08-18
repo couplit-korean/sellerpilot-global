@@ -159,6 +159,17 @@ test("Shopee beauty-tool normalization keeps sponges separate from brushes", () 
   assert.equal(normalizeSuggestions("shopee", response, "makeup brush set")[0]?.id, "1");
 });
 
+test("Shopee clothing normalization does not map a hoodie to a generic shirt", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
+      { category_id: 1, display_category_name: "Fashion > Tops > T-Shirts", has_children: false },
+      { category_id: 2, display_category_name: "Fashion > Tops > Hoodies & Sweatshirts", has_children: false },
+    ] } } }],
+  };
+  assert.equal(normalizeSuggestions("shopee", response, "unisex hoodie sweatshirt")[0]?.id, "2");
+});
+
 const shopeeProgramCatalogCases = [
   ["흰쌀밥 식품 샘플", "100781"],
   ["노란색 자동차 완구", "100912"],

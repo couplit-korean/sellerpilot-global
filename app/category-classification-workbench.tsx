@@ -242,7 +242,13 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
   if (/(cosmetic|beauty|skin|화장품|스킨)/u.test(normalizedQuery)) {
     return /(beauty|personal care|makeup|cosmetic|skin care)/u.test(normalizedCandidate);
   }
-  if (/(t[\s-]?shirt|tee|티셔츠|반팔|hoodie|hood|jacket|후드|재킷)/u.test(normalizedQuery)) {
+  if (/(hoodie|hood|후드)/u.test(normalizedQuery)) {
+    return /(hoodie|sweatshirt)/u.test(normalizedCandidate) && !/(pet|baby costume)/u.test(normalizedCandidate);
+  }
+  if (/(jacket|재킷)/u.test(normalizedQuery)) {
+    return /(jacket|outerwear)/u.test(normalizedCandidate) && !/(pet|baby costume)/u.test(normalizedCandidate);
+  }
+  if (/(t[\s-]?shirt|tee|티셔츠|반팔)/u.test(normalizedQuery)) {
     return /(fashion|clothes|clothing|apparel|top|shirt|hoodie|sweatshirt|jacket|outerwear)/u.test(normalizedCandidate);
   }
   if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) {
@@ -273,6 +279,8 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(sponge|puff|스펀지|퍼프)/u.test(normalizedQuery)) return score(["makeup sponges", "makeup puffs", "sponges", "puffs", "applicators"]);
   if (/(brush|브러시)/u.test(normalizedQuery)) return score(["makeup brushes", "cosmetic brushes"]);
   if (/(cream|moistur|크림|보습)/u.test(normalizedQuery)) return score(["face moisturizers", "facial moisturizers", "face cream", "skin care"]);
+  if (/(hoodie|hood|후드)/u.test(normalizedQuery)) return score(["hoodies", "hooded sweatshirts", "sweatshirts"]);
+  if (/(jacket|재킷)/u.test(normalizedQuery)) return score(["jackets", "outerwear"]);
   if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) return score(["storage boxes", "home organizers", "home & living"]);
   return 0;
 }
