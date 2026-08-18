@@ -329,8 +329,11 @@ function shopeeStoredTargets(payload: SecretPayload) {
 }
 
 function projectShopeeTarget(payload: SecretPayload, target: ShopeeStoredTarget) {
+  const projected = { ...payload };
+  if (target.type === "shop") delete projected.merchant_id;
+  else delete projected.shop_id;
   return {
-    ...payload,
+    ...projected,
     ...(target.type === "shop" ? { shop_id: target.id } : { merchant_id: target.id }),
     access_token: target.access_token,
     refresh_token: target.refresh_token,

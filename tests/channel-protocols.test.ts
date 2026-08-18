@@ -256,6 +256,7 @@ test("Shopee operation token selection projects the requested authorized shop wi
     partner_id: "2031489",
     partner_key: "partner-secret",
     shop_id: "1001",
+    merchant_id: "2001",
     authorization_expires_at: "2099-01-01T00:00:00.000Z",
     shopee_targets: [
       { type: "shop", id: "1001", access_token: "shop-one-access", refresh_token: "shop-one-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
@@ -265,6 +266,7 @@ test("Shopee operation token selection projects the requested authorized shop wi
   const selected = await ensureShopeeAccessToken(payload, "production", 10 * 60 * 1000, "1002");
   assert.equal(selected.refreshed, false);
   assert.equal(selected.payload.shop_id, "1002");
+  assert.equal(selected.payload.merchant_id, undefined);
   assert.equal(selected.payload.access_token, "shop-two-access");
   assert.equal(selected.payload.refresh_token, "shop-two-refresh");
   await assert.rejects(ensureShopeeAccessToken(payload, "production", 10 * 60 * 1000, "9999"), /SHOPEE_SHOP_NOT_AUTHORIZED/);
@@ -274,6 +276,7 @@ test("Shopee merchant token and GlobalProduct category request use the merchant 
   const payload = {
     partner_id: "2031489",
     partner_key: "partner-secret",
+    shop_id: "1001",
     merchant_id: "2001",
     authorization_expires_at: "2099-01-01T00:00:00.000Z",
     shopee_targets: [
@@ -283,6 +286,7 @@ test("Shopee merchant token and GlobalProduct category request use the merchant 
   };
   const selected = await ensureShopeeMerchantAccessToken(payload, "production", 10 * 60 * 1000, "2001");
   assert.equal(selected.payload.merchant_id, "2001");
+  assert.equal(selected.payload.shop_id, undefined);
   assert.equal(selected.payload.access_token, "merchant-access");
 
   const originalFetch = globalThis.fetch;
