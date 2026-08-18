@@ -1311,6 +1311,24 @@ async function processGatewayJob(job) {
         arguments: operationArguments,
         environment: job.environment,
       });
+      if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true
+        && !result.ok && shopeeShopCredential && /attribute/i.test(JSON.stringify(result.steps))) {
+        const publishItem = operationArguments.publish?.item;
+        if (publishItem && typeof publishItem === "object" && !Array.isArray(publishItem)) {
+          const localBody = structuredClone(publishItem);
+          localBody.logistic_info = Array.isArray(localBody.logistic) ? localBody.logistic : [];
+          delete localBody.logistic;
+          const directResult = await executeChannelOperation({
+            channel: "shopee",
+            operation: "listing.create",
+            payload: shopeeShopCredential,
+            arguments: { body: localBody },
+            environment: job.environment,
+          });
+          console.log(`[Shopee direct-shop fallback] ${directResult.ok ? "success" : "failed"} · category=${String(localBody.category_id ?? "")}`);
+          if (directResult.ok) result = directResult;
+        }
+      }
       if (job.channel === "lazada" && job.operation === "categories.suggest") {
         const names = result.steps.flatMap((entry) => entry?.data?.data?.categorySuggestions ?? []).map((entry) => entry.categoryName).slice(0, 10);
         console.log(`[Lazada category debug] candidates=${names.join(" | ")}`);
