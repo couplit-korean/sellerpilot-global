@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
@@ -10,6 +10,8 @@ import {
 } from "../../../../lib/channels/operations";
 import { channelCatalog } from "../../../../lib/channels/catalog";
 import { executeViaChannelGateway } from "../../../../lib/channels/gateway";
+import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
+import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
 import { ensureEbayAccessToken } from "../../../../lib/channels/protocols";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
@@ -40,91 +42,6 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-const marketplaceImageBucket = "sellerpilot-marketplace";
-const marketplaceImageMimeTypes = ["image/jpeg", "image/png", "image/webp"];
-
-async function ensureMarketplaceImageBucket(serviceClient: SupabaseClient) {
-  const { data: bucket } = await serviceClient.storage.getBucket(marketplaceImageBucket);
-  const bucketOptions = {
-    public: true,
-    allowedMimeTypes: marketplaceImageMimeTypes,
-    fileSizeLimit: "10MB",
-  };
-  if (!bucket) {
-    const { error } = await serviceClient.storage.createBucket(marketplaceImageBucket, bucketOptions);
-    if (error) {
-      const { data: racedBucket } = await serviceClient.storage.getBucket(marketplaceImageBucket);
-      if (!racedBucket) throw new Error("COUPANG_IMAGE_BUCKET_CREATE_FAILED");
-      if (!racedBucket.public) {
-        const { error: updateError } = await serviceClient.storage.updateBucket(marketplaceImageBucket, bucketOptions);
-        if (updateError) throw new Error("COUPANG_IMAGE_BUCKET_UPDATE_FAILED");
-      }
-    }
-    return;
-  }
-  if (!bucket.public) {
-    const { error } = await serviceClient.storage.updateBucket(marketplaceImageBucket, bucketOptions);
-    if (error) throw new Error("COUPANG_IMAGE_BUCKET_UPDATE_FAILED");
-  }
-}
-
-async function publishMarketplaceImage(serviceClient: SupabaseClient, sourceUrl: string) {
-  let parsedUrl: URL;
-  try {
-    parsedUrl = new URL(sourceUrl);
-  } catch {
-    throw new Error("COUPANG_IMAGE_URL_INVALID");
-  }
-  const storageOrigin = new URL(supabaseUrl).origin;
-  if (parsedUrl.origin !== storageOrigin || !parsedUrl.pathname.startsWith("/storage/v1/object/sign/sellerpilot-ai/")) {
-    if (sourceUrl.length <= 200) return sourceUrl;
-    throw new Error("COUPANG_IMAGE_URL_TOO_LONG");
-  }
-
-  const response = await fetch(parsedUrl, { redirect: "error", signal: AbortSignal.timeout(15_000) });
-  const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0].toLowerCase();
-  if (!response.ok || !marketplaceImageMimeTypes.includes(contentType)) throw new Error("COUPANG_IMAGE_DOWNLOAD_FAILED");
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (!bytes.length || bytes.length > 10 * 1024 * 1024) throw new Error("COUPANG_IMAGE_SIZE_INVALID");
-
-  await ensureMarketplaceImageBucket(serviceClient);
-  const extension = contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
-  const objectPath = `c/${createHash("sha256").update(bytes).digest("hex").slice(0, 24)}.${extension}`;
-  const { error: uploadError } = await serviceClient.storage
-    .from(marketplaceImageBucket)
-    .upload(objectPath, bytes, { cacheControl: "31536000", contentType, upsert: true });
-  if (uploadError) throw new Error("COUPANG_IMAGE_UPLOAD_FAILED");
-  const { data } = serviceClient.storage.from(marketplaceImageBucket).getPublicUrl(objectPath);
-  if (!data.publicUrl || data.publicUrl.length > 200) throw new Error("COUPANG_IMAGE_PUBLIC_URL_INVALID");
-  const verify = await fetch(data.publicUrl, { redirect: "error", signal: AbortSignal.timeout(15_000) });
-  await verify.body?.cancel();
-  if (!verify.ok || !(verify.headers.get("content-type") ?? "").toLowerCase().startsWith("image/")) {
-    throw new Error("COUPANG_IMAGE_READBACK_FAILED");
-  }
-  return data.publicUrl;
-}
-
-async function prepareCoupangMarketplaceImages(serviceClient: SupabaseClient, argumentsValue: Record<string, unknown>) {
-  const next = structuredClone(argumentsValue);
-  const body = next.body && typeof next.body === "object" && !Array.isArray(next.body)
-    ? next.body as Record<string, unknown>
-    : null;
-  const items = body && Array.isArray(body.items) ? body.items : [];
-  for (const itemValue of items) {
-    if (!itemValue || typeof itemValue !== "object" || Array.isArray(itemValue)) continue;
-    const item = itemValue as Record<string, unknown>;
-    const images = Array.isArray(item.images) ? item.images : [];
-    for (const imageValue of images) {
-      if (!imageValue || typeof imageValue !== "object" || Array.isArray(imageValue)) continue;
-      const image = imageValue as Record<string, unknown>;
-      const sourceUrl = typeof image.vendorPath === "string" ? image.vendorPath.trim() : "";
-      if (!sourceUrl) throw new Error("COUPANG_IMAGE_URL_INVALID");
-      image.vendorPath = await publishMarketplaceImage(serviceClient, sourceUrl);
-    }
-  }
-  return next;
-}
-
 function errorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   if (message.startsWith("CHANNEL_ARGUMENT_REQUIRED:")) return `필수 작업값이 누락됐습니다 · ${message.split(":")[1]}`;
@@ -136,7 +53,7 @@ function errorMessage(error: unknown) {
   if (message.includes("COUPANG_USABLE_RETURN_CENTER_MISSING")) return "쿠팡 WING에 사용 가능한 국내 반품지와 택배사 설정이 없습니다. WING의 반품지 설정을 확인해 주세요.";
   if (message.includes("COUPANG_RETURN_FEE_MISSING")) return "쿠팡 WING 반품지에 0원보다 큰 반품 배송비가 설정되어 있지 않습니다.";
   if (message.includes("COUPANG_WING_USER_ID_MISSING")) return "쿠팡 API Vault에 WING 로그인 사용자 ID가 없습니다.";
-  if (message.includes("COUPANG_IMAGE_")) return "쿠팡 등록용 대표 이미지를 영구 공개 경로로 준비하지 못했습니다.";
+  if (message.includes("MARKETPLACE_IMAGE_")) return "대표 이미지를 1200×1200 JPEG·3MB 이하 영구 공개 경로로 자동 보정하지 못했습니다.";
   if (message.includes("NAVER_AFTER_SERVICE_PHONE_MISSING")) return "네이버 판매자 주소록에서 A/S 연락처를 찾지 못했습니다. API 키의 A/S 전화번호 필드에 실제 연락처를 입력해 주세요.";
   if (message.includes("EBAY_BUSINESS_POLICIES_MISSING")) return "eBay 계정에 해당 마켓의 배송·결제·반품 Business Policy가 없습니다. Seller Hub에서 정책을 만들거나 필수 입력란에 실제 정책 ID를 입력해 주세요.";
   if (message.includes("EBAY_INVENTORY_LOCATION_MISSING")) return "eBay 계정에 사용할 Inventory Location이 없습니다. Seller Hub에서 재고 위치를 만들거나 필수 입력란에 실제 위치 키를 입력해 주세요.";
@@ -306,12 +223,22 @@ export async function POST(request: NextRequest) {
     return !error && data === true;
   };
 
+  const rejectBlockedCategory = async (code: string) => {
+    if (!parsed.data.productId) return;
+    await serviceClient.rpc("sellerpilot_service_reject_category_assignment", {
+      p_product_id: parsed.data.productId,
+      p_channel: channel,
+      p_market: parsed.data.market,
+      p_reason_code: code,
+    });
+  };
+
   if (channel === "shopee" || channel === "lazada" || channel === "coupang" || channel === "smartstore" || channel === "temu") {
     try {
-      const gatewayArguments = channel === "coupang" && (operation === "listing.create" || operation === "listing.update")
-        ? await prepareCoupangMarketplaceImages(serviceClient, parsed.data.arguments)
+      const gatewayArguments = operation === "listing.create" || operation === "listing.update"
+        ? await prepareMarketplaceImages(serviceClient, channel, parsed.data.arguments)
         : parsed.data.arguments;
-      const result = await executeViaChannelGateway({
+      const rawResult = await executeViaChannelGateway({
         serviceClient,
         credentialId: parsed.data.credentialId,
         attemptId,
@@ -319,6 +246,8 @@ export async function POST(request: NextRequest) {
         operation,
         arguments: gatewayArguments,
       });
+      const { result, remediation } = applyListingRemediation(rawResult);
+      if (remediation?.rejectCategory) await rejectBlockedCategory(remediation.code);
       const remoteStatus = result.steps.find((item) => !item.ok)?.status ?? result.steps.at(-1)?.status ?? 200;
       await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
         p_attempt_id: attemptId,
@@ -385,13 +314,18 @@ export async function POST(request: NextRequest) {
         credentialRefreshed = true;
       }
     }
-    const result = await executeChannelOperation({
+    const operationArguments = operation === "listing.create" || operation === "listing.update"
+      ? await prepareMarketplaceImages(serviceClient, channel, parsed.data.arguments)
+      : parsed.data.arguments;
+    const rawResult = await executeChannelOperation({
       channel,
       operation,
       payload: executionPayload,
-      arguments: parsed.data.arguments,
+      arguments: operationArguments,
       environment,
     });
+    const { result, remediation } = applyListingRemediation(rawResult);
+    if (remediation?.rejectCategory) await rejectBlockedCategory(remediation.code);
     const remoteStatus = result.steps.find((item) => !item.ok)?.status ?? result.steps.at(-1)?.status ?? 200;
     await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
       p_attempt_id: attemptId,

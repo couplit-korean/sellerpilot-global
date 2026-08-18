@@ -135,6 +135,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260818040000_filter_published_listing_badges.sql",
       "20260818041000_share_channel_targets_across_admins.sql",
       "20260818043000_keep_stopped_products_relistable.sql",
+      "20260818170000_reject_blocked_categories.sql",
+      "20260818171500_personal_data_retention.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -161,6 +163,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_upsert_channel_market_target(uuid,uuid,text,text,text,text,text,text,text,text)",
       "public.sellerpilot_service_store_channel_oauth_state(uuid,uuid,text,text)",
       "public.sellerpilot_service_claim_channel_oauth_state(uuid,text,text)",
+      "public.sellerpilot_service_reject_category_assignment(uuid,text,text,text)",
+      "public.sellerpilot_prune_personal_data(timestamp with time zone)",
     ];
     for (const signature of serviceOnlyFunctions) {
       assert.equal(

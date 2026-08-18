@@ -1,0 +1,17 @@
+.privacy-page { min-height: 100vh; padding: 24px; color: #18312d; background: #f1f4ee; font-family: Arial, sans-serif; }
+.privacy-page > header { display: flex; justify-content: space-between; max-width: 1120px; margin: 0 auto; padding: 18px 0 34px; border-bottom: 1px solid #cbd5cc; }
+.privacy-page > header a { color: #18312d; font-size: 18px; font-weight: 900; text-decoration: none; letter-spacing: -.04em; }
+.privacy-page > header span { color: #66756f; font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
+.privacy-page article { max-width: 1120px; margin: 0 auto; padding: 64px 0; }
+.privacy-kicker { color: #577d69; font-size: 11px; font-weight: 800; letter-spacing: .15em; }
+.privacy-page h1 { max-width: 900px; margin: 18px 0 24px; font-size: clamp(42px, 7vw, 82px); line-height: .98; letter-spacing: -.065em; }
+.privacy-lead { max-width: 730px; color: #53625d; font-size: 18px; line-height: 1.75; }
+.privacy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-top: 68px; background: #cbd5cc; border: 1px solid #cbd5cc; }
+.privacy-grid section { min-height: 230px; padding: 30px; background: #fafbf8; }
+.privacy-grid h2 { margin: 0 0 20px; font-size: 17px; }
+.privacy-grid p, .privacy-page aside p { margin: 0; color: #56645f; font-size: 14px; line-height: 1.8; }
+.privacy-page aside { margin-top: 1px; padding: 32px; color: #f7faf5; background: #1d3833; }
+.privacy-page aside b { display: block; margin-bottom: 12px; font-size: 13px; letter-spacing: .05em; }
+.privacy-page aside p { color: #d5e0da; }
+.privacy-page footer { display: flex; justify-content: space-between; padding-top: 28px; color: #78847f; font-size: 11px; }
+@media (max-width: 720px) { .privacy-page { padding: 18px; } .privacy-page article { padding: 44px 0; } .privacy-grid { grid-template-columns: 1fr; margin-top: 46px; } .privacy-grid section { min-height: auto; } .privacy-page > header span { display: none; } }

@@ -208,14 +208,19 @@ export async function GET(request: Request) {
   } catch {
     return NextResponse.json({ message: "채널 OAuth 토큰 자동 갱신을 완료하지 못했습니다." }, { status: 502 });
   }
-  const retentionDays = 90;
+  const retentionDays = 30;
   const completedBefore = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-  const { data, error } = await serviceClient.rpc("sellerpilot_prune_ai_jobs", {
-    p_completed_before: completedBefore,
-    p_limit: 200,
-  });
-  if (error) {
-    return NextResponse.json({ message: "AI 보관기간 정리를 완료하지 못했습니다." }, { status: 500 });
+  const [{ data, error }, { data: personalData, error: personalDataError }] = await Promise.all([
+    serviceClient.rpc("sellerpilot_prune_ai_jobs", {
+      p_completed_before: completedBefore,
+      p_limit: 200,
+    }),
+    serviceClient.rpc("sellerpilot_prune_personal_data", {
+      p_completed_before: completedBefore,
+    }),
+  ]);
+  if (error || personalDataError) {
+    return NextResponse.json({ message: "30일 보관기간 정리를 완료하지 못했습니다." }, { status: 500 });
   }
 
   const rows = (data ?? []) as PrunedJob[];
@@ -236,6 +241,7 @@ export async function GET(request: Request) {
     retentionDays,
     jobsPruned: rows.length,
     storageRemoved,
+    personalData,
     shopeeToken: shopeeToken.status,
     lazadaToken: lazadaToken.status,
     ebayToken: ebayToken.status,
