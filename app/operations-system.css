@@ -1826,6 +1826,15 @@ a:focus-visible,
 .publish-result.succeeded { background: #edf8f2; color: #176848; }
 .publish-result.failed { background: #fff1ef; color: #9f3628; }
 .publish-result small { opacity: .75; }
+.inventory-sync-result { gap: 9px; }
+.inventory-sync-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 5px 10px; }
+.inventory-sync-tasks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.inventory-sync-task { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: 7px; background: color-mix(in srgb, #fff 86%, transparent); padding: 7px 8px; }
+.inventory-sync-task .channel-code { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 6px; background: color-mix(in srgb, currentColor 12%, #fff); font-size: 9px; font-weight: 900; }
+.inventory-sync-task > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
+.inventory-sync-task b { font-size: 10px; }
+.inventory-sync-task small { overflow-wrap: anywhere; font-size: 9px; line-height: 1.35; }
+.inventory-sync-task em { font-size: 9px; font-style: normal; font-weight: 850; }
 .publish-blocked { display: grid; justify-items: start; gap: 5px; border-radius: 8px; background: #fff7e9; padding: 12px; color: #8b5a13; }
 .publish-blocked small { line-height: 1.5; }
 
@@ -1845,6 +1854,7 @@ a:focus-visible,
   .publish-channel-card { padding: 12px; }
   .publish-channel-card textarea { min-height: 220px; }
   .publish-required-list, .publish-manual-fields { grid-template-columns: 1fr; }
+  .inventory-sync-tasks { grid-template-columns: 1fr; }
 }
 .credential-card.lazada { --channel-accent: #6a4ad5; }
 .credential-card.coupang { --channel-accent: #1774e7; }

@@ -67,13 +67,14 @@ export function buildInventoryUpdateArguments(input: {
       params: {
         ItemCode: remoteId,
         SellerCode: String(params.SellerCode ?? productSku),
-        ItemPrice: String(params.ItemPrice ?? ""),
-        ItemQty: String(quantity),
+        Price: String(params.ItemPrice ?? params.Price ?? ""),
+        Qty: String(quantity),
       },
     };
   }
   if (channel === "shopee") {
     return {
+      quantity,
       shopId: targetId,
       globalProduct: false,
       body: {
@@ -88,26 +89,21 @@ export function buildInventoryUpdateArguments(input: {
     const product = record(requestRoot.Product, "lazada.Product");
     const skus = record(product.Skus, "lazada.Skus");
     const sku = record(array(skus.Sku, "lazada.Sku")[0], "lazada.Sku[0]");
-    const sellerSku = String(sku.SellerSku ?? "").trim();
-    if (!sellerSku) throw new Error("INVENTORY_SYNC_SELLER_SKU_REQUIRED:lazada");
     return {
       country: market.toLowerCase(),
       itemId: remoteId,
+      quantity,
       queryParams: {},
-      request: { Request: { Product: { Skus: { Sku: [{ SellerSku: sellerSku, quantity: String(quantity) }] } } } },
     };
   }
   if (channel === "coupang") {
     return { sellerProductId: remoteId, quantity };
   }
   if (channel === "smartstore") {
-    const body = record(draft.body, "smartstore.body");
-    const originProduct = record(body.originProduct, "smartstore.originProduct");
     return {
       originProductNo: remoteId,
       mode: "origin-product",
       quantity,
-      body: { ...body, originProduct: { ...originProduct, stockQuantity: quantity } },
     };
   }
   if (channel === "temu") {

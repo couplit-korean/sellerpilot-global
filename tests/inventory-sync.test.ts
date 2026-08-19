@@ -18,9 +18,10 @@ function build(channel: ActiveChannelKey, draft: Record<string, unknown>) {
 test("inventory sync builds provider-native arguments for all seven channels", () => {
   assert.deepEqual(build("qoo10", { params: { SellerCode: "SELLER-1", ItemPrice: "2500" } }), {
     quantity: 17,
-    params: { ItemCode: "123456789", SellerCode: "SELLER-1", ItemPrice: "2500", ItemQty: "17" },
+    params: { ItemCode: "123456789", SellerCode: "SELLER-1", Price: "2500", Qty: "17" },
   });
   assert.deepEqual(build("shopee", {}), {
+    quantity: 17,
     shopId: "70001",
     globalProduct: false,
     body: { item_id: 123456789, stock_list: [{ seller_stock: [{ stock: 17 }] }] },
@@ -28,15 +29,14 @@ test("inventory sync builds provider-native arguments for all seven channels", (
   assert.deepEqual(build("lazada", { request: { Request: { Product: { Skus: { Sku: [{ SellerSku: "MY-SKU" }] } } } } }), {
     country: "my",
     itemId: "123456789",
+    quantity: 17,
     queryParams: {},
-    request: { Request: { Product: { Skus: { Sku: [{ SellerSku: "MY-SKU", quantity: "17" }] } } } },
   });
   assert.deepEqual(build("coupang", {}), { sellerProductId: "123456789", quantity: 17 });
   assert.deepEqual(build("smartstore", { body: { originProduct: { name: "상품", stockQuantity: 3 }, smartstoreChannelProduct: { channelProductName: "상품" } } }), {
     originProductNo: "123456789",
     mode: "origin-product",
     quantity: 17,
-    body: { originProduct: { name: "상품", stockQuantity: 17 }, smartstoreChannelProduct: { channelProductName: "상품" } },
   });
   assert.deepEqual(build("temu", { body: { skuList: [{ externalSkuId: "TEMU-SKU" }] } }), {
     goodsId: 123456789,

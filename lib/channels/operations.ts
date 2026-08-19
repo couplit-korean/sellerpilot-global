@@ -178,6 +178,15 @@ function naverOptionalCategoryMetadataStep(name: string, remote: RemoteResponse)
 
 function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: string): ChannelOperationResult {
   const ok = steps.length > 0 && steps.every((item) => item.ok);
+  const verificationFailure = steps.find((item) => !item.ok && item.data.sellerpilotVerification === "INVENTORY_QUANTITY_MISMATCH");
+  const expectedQuantity = verificationFailure?.data.sellerpilotExpectedQuantity;
+  const observedQuantities = verificationFailure?.data.sellerpilotObservedQuantities;
+  const observedQuantityLabel = Array.isArray(observedQuantities) && observedQuantities.length
+    ? `${observedQuantities.join("/")}개`
+    : "확인 불가";
+  const verificationMessage = verificationFailure
+    ? `${verificationFailure.name}: 요청 수량 ${String(expectedQuantity ?? "확인 불가")}개, 채널 조회 수량 ${observedQuantityLabel}`
+    : "";
   const providerMessage = steps
     .filter((item) => !item.ok)
     .map((item) => {
@@ -193,7 +202,7 @@ function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: s
     remoteId,
     safeMessage: ok
       ? `${channelCatalog[input.channel].name} ${input.operation} 작업이 정상 응답했습니다.`
-      : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.${providerMessage ? ` · ${providerMessage}` : ""}`,
+      : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.${verificationMessage ? ` · ${verificationMessage}` : providerMessage ? ` · ${providerMessage}` : ""}`,
   };
 }
 
@@ -361,6 +370,12 @@ function operationDelay(ms: number) {
 
 async function executeQoo10(input: ExecuteInput) {
   const params = stringMap(input.arguments, "params");
+  if (input.operation === "inventory.update" || input.operation === "price.update") {
+    params.Price ||= params.ItemPrice ?? "";
+    params.Qty ||= params.ItemQty ?? "";
+    delete params.ItemPrice;
+    delete params.ItemQty;
+  }
   if (params.ProductionPlace) params.ProductionPlace = qoo10ProductionPlace(params.ProductionPlace);
   const map: Partial<Record<ChannelOperationName, { service: string; method: string; version?: string }>> = {
     "categories.list": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
@@ -420,18 +435,24 @@ async function executeQoo10(input: ExecuteInput) {
       : resumeRemoteId || undefined;
   if (input.operation === "inventory.update") {
     const itemCode = stringArgument(params, "ItemCode");
-    const expectedQuantity = integerArgument(params, "ItemQty", { min: 0, max: 99_999_999 });
+    const expectedQuantity = integerArgument(params, "Qty", { min: 0, max: 99_999_999 });
     if (!createStep.ok) return result(input, [createStep], itemCode);
-    const readback = await qoo10Request({
-      payload: input.payload,
-      service: "ItemsLookup",
-      method: "GetItemDetailInfo",
-      version: "1.2",
-      params: { ItemCode: itemCode, SellerCode: params.SellerCode ?? "" },
-    });
+    let readbackStep: ChannelOperationStep | null = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) await operationDelay(attempt * 750);
+      const readback = await qoo10Request({
+        payload: input.payload,
+        service: "ItemsLookup",
+        method: "GetItemDetailInfo",
+        version: "1.2",
+        params: { ItemCode: itemCode, SellerCode: params.SellerCode ?? "" },
+      });
+      readbackStep = quantityReadbackStep("inventory-readback", readback, expectedQuantity, ["ItemQty", "Quantity", "StockQty"]);
+      if (readbackStep.ok) break;
+    }
     return result(input, [
       createStep,
-      quantityReadbackStep("inventory-readback", readback, expectedQuantity, ["ItemQty", "Quantity", "StockQty"]),
+      readbackStep!,
     ], itemCode);
   }
   if (input.operation !== "listing.create" || !remoteId) {
@@ -861,6 +882,47 @@ async function executeLazada(input: ExecuteInput) {
       return result(input, [resumeStep, ...await lazadaListingReadback(resumeRemoteId)], resumeRemoteId);
     }
   }
+  if (input.operation === "inventory.update") {
+    const itemId = stringArgument(input.arguments, "itemId");
+    const expectedQuantity = integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 });
+    let skuReadbackStep: ChannelOperationStep | null = null;
+    let skuIds: string[] = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) await operationDelay(attempt * 1_200);
+      const skuReadback = await lazadaRequest({ payload: input.payload, path: "/product/item/get", params: { item_id: itemId } });
+      skuReadbackStep = step("inventory-sku-readback", skuReadback);
+      skuIds = [...new Set(stringFieldValues(skuReadback.data, ["SkuId", "sku_id"]))];
+      skuReadbackStep.ok = skuReadbackStep.ok && skuIds.length === 1;
+      const transientRateLimit = /access frequency exceeds the limit|frequency limit|too many requests|apicalllimit/i.test(JSON.stringify(skuReadback.data));
+      if (skuReadbackStep.ok || !transientRateLimit || attempt === 2) break;
+    }
+    if (!skuReadbackStep) throw new Error("LAZADA_INVENTORY_SKU_READBACK_MISSING");
+    skuReadbackStep.data = {
+      ...skuReadbackStep.data,
+      sellerpilotSkuCount: skuIds.length,
+      sellerpilotVerification: skuReadbackStep.ok ? "SKU_ID_RESOLVED" : "VARIANT_INVENTORY_REQUIRES_OPTION_QUANTITIES",
+    };
+    if (!skuReadbackStep.ok) return result(input, [skuReadbackStep], itemId);
+    const quantityWrite = await lazadaRequest({
+      payload: input.payload,
+      path,
+      method: "POST",
+      params: {
+        ...query,
+        payload: lazadaPayload({
+          request: { Request: { Product: { Skus: { Sku: [{ ItemId: itemId, SkuId: skuIds[0], Quantity: String(expectedQuantity) }] } } } },
+        }),
+      },
+    });
+    const quantityWriteStep = step(path, quantityWrite);
+    if (!quantityWriteStep.ok) return result(input, [skuReadbackStep, quantityWriteStep], itemId);
+    const readback = await lazadaRequest({ payload: input.payload, path: "/product/item/get", params: { item_id: itemId } });
+    return result(input, [
+      skuReadbackStep,
+      quantityWriteStep,
+      quantityReadbackStep("inventory-readback", readback, expectedQuantity, ["quantity", "available", "availableStock", "stock"]),
+    ], itemId);
+  }
   const write = writeChannelOperations.has(input.operation);
   const params = write ? { ...query, payload: lazadaPayload(input.arguments) } : query;
   const remote = await lazadaRequest({ payload: input.payload, path, method: write ? "POST" : "GET", params });
@@ -871,17 +933,6 @@ async function executeLazada(input: ExecuteInput) {
   const writeStep = step(path, remote);
   if (input.operation === "listing.create" && writeStep.ok && remoteId) {
     return result(input, [writeStep, ...await lazadaListingReadback(remoteId)], remoteId);
-  }
-  if (input.operation === "inventory.update") {
-    const itemId = stringArgument(input.arguments, "itemId");
-    const expectedQuantity = numericFieldValues(input.arguments.request, ["quantity"]).at(0);
-    if (expectedQuantity === undefined) throw new Error("CHANNEL_ARGUMENT_REQUIRED:quantity");
-    if (!writeStep.ok) return result(input, [writeStep], itemId);
-    const readback = await lazadaRequest({ payload: input.payload, path: "/product/item/get", params: { item_id: itemId } });
-    return result(input, [
-      writeStep,
-      quantityReadbackStep("inventory-readback", readback, expectedQuantity, ["quantity", "available", "availableStock", "stock"]),
-    ], itemId);
   }
   return result(input, [writeStep], remoteId);
 }
@@ -1082,8 +1133,8 @@ async function executeCoupang(input: ExecuteInput) {
       const writeStep = step("quantity-update", write);
       steps.push(writeStep);
       if (!writeStep.ok) continue;
-      const readback = await coupangRequest({ payload: input.payload, method: "GET", path: `${vendorItemsPath}/${pathSegment(vendorItemId)}` });
-      steps.push(quantityReadbackStep("inventory-readback", readback, quantity, ["quantity", "saleQuantity", "stockQuantity"]));
+      const readback = await coupangRequest({ payload: input.payload, method: "GET", path: `${vendorItemsPath}/${pathSegment(vendorItemId)}/inventories` });
+      steps.push(quantityReadbackStep("inventory-readback", readback, quantity, ["amountInStock", "quantity", "saleQuantity", "stockQuantity"]));
     }
     return result(input, steps, sellerProductId || explicitVendorItemId);
   }
@@ -1230,17 +1281,35 @@ async function executeSmartstore(input: ExecuteInput) {
   }
   if (input.operation === "inventory.update") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
-    const body = objectValue(input.arguments, "body");
     const mode = stringArgument(input.arguments, "mode", false);
     const expectedQuantity = integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 });
+    let body = objectValue(input.arguments, "body", false);
+    const steps: ChannelOperationStep[] = [];
+    if (mode === "origin-product") {
+      const current = await request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
+      const currentStep = step("product-current-readback", current);
+      const currentOriginProduct = objectValue(current.data, "originProduct", false);
+      currentStep.ok = currentStep.ok && Object.keys(currentOriginProduct).length > 0;
+      steps.push(currentStep);
+      if (!currentStep.ok) return result(input, steps, originProductNo);
+      body = {
+        originProduct: { ...currentOriginProduct, stockQuantity: expectedQuantity },
+        ...(current.data.smartstoreChannelProduct && typeof current.data.smartstoreChannelProduct === "object" && !Array.isArray(current.data.smartstoreChannelProduct)
+          ? { smartstoreChannelProduct: current.data.smartstoreChannelProduct }
+          : {}),
+        ...(current.data.windowChannelProduct && typeof current.data.windowChannelProduct === "object" && !Array.isArray(current.data.windowChannelProduct)
+          ? { windowChannelProduct: current.data.windowChannelProduct }
+          : {}),
+      };
+    }
     const remote = mode === "origin-product"
       ? await request({ method: "PUT", path: `/v2/products/origin-products/${originProductNo}`, body })
       : await request({ method: "PUT", path: `/v1/products/origin-products/${originProductNo}/option-stock`, body });
     const writeStep = step(mode === "origin-product" ? "product-stock" : "option-stock", remote);
-    if (!writeStep.ok) return result(input, [writeStep], originProductNo);
+    steps.push(writeStep);
+    if (!writeStep.ok) return result(input, steps, originProductNo);
     const readback = await request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
-    return result(input, [
-      writeStep,
+    return result(input, [...steps,
       quantityReadbackStep("inventory-readback", readback, expectedQuantity, ["stockQuantity"]),
     ], originProductNo);
   }

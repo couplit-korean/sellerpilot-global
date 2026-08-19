@@ -5,9 +5,12 @@ import { executeChannelOperation } from "../lib/channels/operations";
 test("Qoo10 inventory succeeds only after quantity readback", async () => {
   const originalFetch = globalThis.fetch;
   const methods: string[] = [];
+  let normalizedWriteQuantity = "";
   globalThis.fetch = async (input) => {
-    const method = new URL(String(input)).searchParams.get("method") ?? "";
+    const url = new URL(String(input));
+    const method = url.searchParams.get("method") ?? "";
     methods.push(method);
+    if (method.endsWith("SetGoodsPriceQty")) normalizedWriteQuantity = url.searchParams.get("Qty") ?? "";
     return method.endsWith("GetItemDetailInfo")
       ? Response.json({ ResultCode: 0, ResultObject: { ItemQty: "17" } })
       : Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
@@ -20,6 +23,7 @@ test("Qoo10 inventory succeeds only after quantity readback", async () => {
     });
     assert.equal(result.ok, true);
     assert.deepEqual(methods, ["ItemsOrder.SetGoodsPriceQty", "ItemsLookup.GetItemDetailInfo"]);
+    assert.equal(normalizedWriteQuantity, "17");
     assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "INVENTORY_QUANTITY_VERIFIED");
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -53,16 +57,16 @@ test("Lazada inventory verifies the item quantity after price-quantity update", 
     calls.push(url.pathname);
     return url.pathname.endsWith("price_quantity/update")
       ? Response.json({ code: "0", data: {} })
-      : Response.json({ code: "0", data: { skus: [{ SellerSku: "MY-SKU", quantity: "17" }] } });
+      : Response.json({ code: "0", data: { skus: [{ SkuId: "987654321", SellerSku: "MY-SKU", quantity: "17" }] } });
   };
   try {
     const result = await executeChannelOperation({
       channel: "lazada", operation: "inventory.update", environment: "production",
       payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
-      arguments: { itemId: "123456789", queryParams: {}, request: { Request: { Product: { Skus: { Sku: [{ SellerSku: "MY-SKU", quantity: "17" }] } } } } },
+      arguments: { itemId: "123456789", quantity: 17, queryParams: {} },
     });
     assert.equal(result.ok, true);
-    assert.deepEqual(calls, ["/rest/product/price_quantity/update", "/rest/product/item/get"]);
+    assert.deepEqual(calls, ["/rest/product/item/get", "/rest/product/price_quantity/update", "/rest/product/item/get"]);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -74,7 +78,7 @@ test("Coupang resolves the vendor item and verifies its quantity", async () => {
     methods.push(`${init?.method}:${url.pathname}`);
     if (url.pathname.includes("seller-products")) return Response.json({ code: "SUCCESS", data: { sellerProductId: 123456789, items: [{ vendorItemId: 998877 }] } });
     if (init?.method === "PUT") return Response.json({ code: "SUCCESS", data: {} });
-    return Response.json({ code: "SUCCESS", data: { vendorItemId: 998877, quantity: 17 } });
+    return Response.json({ code: "SUCCESS", data: { vendorItemId: 998877, amountInStock: 17 } });
   };
   try {
     const result = await executeChannelOperation({
@@ -84,6 +88,7 @@ test("Coupang resolves the vendor item and verifies its quantity", async () => {
     });
     assert.equal(result.ok, true);
     assert.equal(methods.some((value) => value.includes("vendor-items/998877/quantities/17")), true);
+    assert.equal(methods.some((value) => value.includes("vendor-items/998877/inventories")), true);
     assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "INVENTORY_QUANTITY_VERIFIED");
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -96,13 +101,13 @@ test("Smartstore full-product stock update is read back before success", async (
     calls.push(`${init?.method}:${url.pathname}`);
     if (url.pathname.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "token", expires_in: 10_800 });
     if (init?.method === "PUT") return Response.json({});
-    return Response.json({ originProduct: { stockQuantity: 17 } });
+    return Response.json({ originProduct: { name: "상품", images: { representativeImage: { url: "https://example.com/item.jpg" } }, stockQuantity: 17 }, smartstoreChannelProduct: {} });
   };
   try {
     const result = await executeChannelOperation({
       channel: "smartstore", operation: "inventory.update", environment: "production",
       payload: { client_id: "client", client_secret: "$2b$10$abcdefghijklmnopqrstuu", token_type: "SELF" },
-      arguments: { originProductNo: "123456789", mode: "origin-product", quantity: 17, body: { originProduct: { name: "상품", stockQuantity: 17 }, smartstoreChannelProduct: {} } },
+      arguments: { originProductNo: "123456789", mode: "origin-product", quantity: 17 },
     });
     assert.equal(result.ok, true);
     assert.equal(calls.some((value) => value === "GET:/external/v2/products/origin-products/123456789"), true);
