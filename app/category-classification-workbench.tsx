@@ -276,8 +276,8 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
     || normalizedCandidate.endsWith(`/ ${term}`);
 
   if (/(cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) {
-    return /(mugs?|cups?|drinkware|coffee ware|tea ware)/u.test(normalizedCandidate)
-      && !/(menstrual|measuring|suction|baby|teeth|whitening|tea bags?)/u.test(normalizedCandidate);
+    return /(?:\b(?:mugs?|cups?)\b|drinkware|coffee ware|tea ware)/u.test(normalizedCandidate)
+      && !/(menstrual|measuring|suction|baby|teeth|whitening|tea bags?|cup holders?|cupboards?)/u.test(normalizedCandidate);
   }
 
   if (/(rice|쌀|밥)/u.test(normalizedQuery)) {
@@ -415,8 +415,8 @@ function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestio
   const normalizedQuery = query.toLocaleLowerCase();
   const name = candidate.name.toLocaleLowerCase();
   const path = candidate.path.join(" ").toLocaleLowerCase();
-  if (/(cawan|cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) return /mug|cup|drinkware|coffee ware|tea ware|cawan/u.test(`${path} ${name}`)
-    && !/menstrual|measuring|suction|baby|tea bags?|coffee beans?/u.test(`${path} ${name}`);
+  if (/(cawan|cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) return /(?:\b(?:mugs?|cups?)\b|drinkware|coffee ware|tea ware|cawan)/u.test(`${path} ${name}`)
+    && !/menstrual|measuring|suction|baby|tea bags?|coffee beans?|cup holders?|cupboards?/u.test(`${path} ${name}`);
   if (/(rice|쌀|밥|nasi)/u.test(normalizedQuery)) return /rice|beras|nasi/u.test(name);
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return /pasta|penne|noodle/u.test(name) && !/rice|beras/u.test(name);
   if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return /flour|tepung/u.test(name);

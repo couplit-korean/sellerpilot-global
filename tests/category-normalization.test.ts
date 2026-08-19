@@ -180,6 +180,9 @@ test("Shopee mug normalization rejects tea bags and unrelated cup-adjacent categ
       { category_id: 1, display_category_name: "Food & Beverages > Tea & Tea Bags", has_children: false },
       { category_id: 2, display_category_name: "Home & Living > Dinnerware > Mugs", has_children: false },
       { category_id: 3, display_category_name: "Health & Wellness > Teeth Whitening", has_children: false },
+      { category_id: 4, display_category_name: "Men's Fashion > Occupational Attire", has_children: false },
+      { category_id: 5, display_category_name: "Home & Living > Cup Holder & Organizers", has_children: false },
+      { category_id: 6, display_category_name: "Home & Living > Cupboards & Cabinets", has_children: false },
     ] } } }],
   };
   assert.deepEqual(normalizeSuggestions("shopee", response, "white ceramic coffee mug").map((item) => item.id), ["2"]);
