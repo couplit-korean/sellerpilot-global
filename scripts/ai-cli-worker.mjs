@@ -429,6 +429,8 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     throw new Error(`Shopee 현지 숍 필수 속성을 확인하지 못했습니다${code ? `: ${code}` : ""}`);
   }
   const productHint = `${String(publishItem.item_name ?? body.global_item_name ?? "")} ${String(publishItem.description ?? body.description ?? "")}`;
+  const expiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+  const expiryDate = `${String(expiry.getUTCDate()).padStart(2, "0")}/${String(expiry.getUTCMonth() + 1).padStart(2, "0")}/${expiry.getUTCFullYear()}`;
   const globalAttributeRemote = await shopeeMerchantRequest({
     payload: merchantPayload,
     environment,
@@ -447,19 +449,19 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   // attributes that the create API still requires. Keep the recovery targeted:
   // selecting every optional enumeration can invent contradictory food facts.
   // Date-like implicit requirements use Shopee's custom-value representation.
-  const expiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
-  const expiryDate = `${String(expiry.getUTCDate()).padStart(2, "0")}/${String(expiry.getUTCMonth() + 1).padStart(2, "0")}/${expiry.getUTCFullYear()}`;
   const categoryImplicitRequired = categoryId === 101642 || /(?:lipstick|lip\s*makeup|립스틱)/iu.test(productHint)
     ? { formulation: "Stick" }
-    : {};
+    : categoryId === 100093 || /(?:tote\s*bag|canvas\s*bag|토트백|에코백)/iu.test(productHint)
+      ? { "bag set": "No", "bag style": "Others" }
+      : {};
   const foodLike = [100782, 100797, 100824].includes(categoryId)
     || /(?:coffee|noodle|pasta|rice|food|grocery|커피|면|파스타|쌀|식품)/iu.test(productHint);
   const foodImplicitRequired = foodLike ? {
-    "drink form": "Coffee Beans",
     "expiry date": expiryDate,
+    "packaging type": "Bag",
+    "pork origin region": "No Pork",
     "shelf life": "12 Months",
     "shelf lifes": "12 Months",
-    "packaging type": "Bag",
   } : {};
   const globalImplicitRequired = {
     ...foodImplicitRequired,
@@ -467,7 +469,6 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   };
   const localImplicitRequired = {
     ...globalImplicitRequired,
-    "expiry date": expiryDate,
   };
   const globalRequiredAttributes = mergeShopeeRequiredAttributes(body.attribute_list, globalAttributeMetadata, productHint, {
     implicitRequired: globalImplicitRequired,

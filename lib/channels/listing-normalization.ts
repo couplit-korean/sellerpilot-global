@@ -101,6 +101,7 @@ type ShopeeAttributeMetadata = {
   is_mandatory?: unknown;
   mandatory?: unknown;
   mandatory_region?: unknown;
+  attribute_info?: { mandatory_region?: unknown };
   attribute_value_list?: unknown;
 };
 
@@ -128,8 +129,9 @@ export function mergeShopeeRequiredAttributes(
     const normalizedLabel = label.toLocaleLowerCase();
     const implicitValue = Object.entries(options.implicitRequired ?? {})
       .find(([name]) => name.toLocaleLowerCase() === normalizedLabel)?.[1];
-    const requiredRegions = Array.isArray(attribute.mandatory_region)
-      ? attribute.mandatory_region.map(String).map((value) => value.toUpperCase())
+    const mandatoryRegion = attribute.mandatory_region ?? attribute.attribute_info?.mandatory_region;
+    const requiredRegions = Array.isArray(mandatoryRegion)
+      ? mandatoryRegion.map(String).map((value) => value.toUpperCase())
       : [];
     const requiredForMarket = !requiredRegions.length || !options.marketCode
       || requiredRegions.includes(options.marketCode.toUpperCase());
@@ -157,7 +159,7 @@ export function mergeShopeeRequiredAttributes(
     if (!selected && typeof implicitValue === "string" && implicitValue.trim()) {
       attributes.push({
         attribute_id: attributeId,
-        attribute_value_list: [{ value_id: 0, original_value_name: implicitValue.trim() }],
+        attribute_value_list: [{ value_id: 0, original_value_name: implicitValue.trim(), value_unit: "" }],
       });
       supplied.add(attributeId);
       autoFilled.push(`${label}: ${implicitValue.trim()}`);

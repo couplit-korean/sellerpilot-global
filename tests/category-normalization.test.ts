@@ -176,6 +176,19 @@ test("Shopee clothing normalization does not map a hoodie to a generic shirt", (
   assert.equal(normalizeSuggestions("shopee", response, "unisex hoodie sweatshirt")[0]?.id, "2");
 });
 
+test("Shopee clothing normalization maps a dress and rejects generic tops and bottoms", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
+      { category_id: 1, display_category_name: "Fashion > Bottoms", has_children: false },
+      { category_id: 2, display_category_name: "Fashion > Tops", has_children: false },
+      { category_id: 3, display_category_name: "Women's Clothing > Dresses", has_children: false },
+      { category_id: 4, display_category_name: "Toys > Dress Up Costumes", has_children: false },
+    ] } } }],
+  };
+  assert.equal(normalizeSuggestions("shopee", response, "women's denim midi dress")[0]?.id, "3");
+});
+
 test("Shopee hanger normalization excludes laundry appliances", () => {
   const response = {
     ok: true,
@@ -252,6 +265,17 @@ test("Smartstore category normalization maps a ceramic mug to a drinkware leaf",
     ] } }],
   };
   assert.equal(normalizeSuggestions("smartstore", response, "화이트 세라믹 머그컵")[0]?.id, "MUG");
+});
+
+test("Smartstore category normalization maps a dress to a women's one-piece leaf", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
+      { id: "TOP", name: "티셔츠", wholeCategoryName: "패션의류>여성의류>티셔츠", last: true },
+      { id: "DRESS", name: "미디원피스", wholeCategoryName: "패션의류>여성의류>원피스>미디원피스", last: true },
+    ] } }],
+  };
+  assert.equal(normalizeSuggestions("smartstore", response, "여성 데님 미디 원피스")[0]?.id, "DRESS");
 });
 
 test("Smartstore beauty-tool normalization does not map a sponge to a brush", () => {
@@ -342,6 +366,18 @@ test("Lazada normalization does not choose a rice leaf merely because its parent
     }] } }],
   };
   assert.equal(normalizeSuggestions("lazada", response, "펜네 파스타 식품")[0]?.id, "PASTA");
+});
+
+test("Lazada normalization maps a dress to women's clothing and excludes costumes", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
+      { category_id: "COSTUME", name: "Women", category_path: "Toys & Games > Dress Up & Pretend Play > Women", leaf: true },
+      { category_id: "DRESS", name: "Dresses", category_path: "Women's Clothing > Dresses", leaf: true },
+      { category_id: "MATERNITY", name: "Maternity Dresses", category_path: "Women's Clothing > Maternity Dresses", leaf: true },
+    ] } }],
+  };
+  assert.equal(normalizeSuggestions("lazada", response, "women's denim midi dress")[0]?.id, "DRESS");
 });
 
 test("Lazada omega matching falls back to a health-supplement leaf and excludes pet products", () => {

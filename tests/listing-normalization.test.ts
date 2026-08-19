@@ -88,7 +88,7 @@ test("Shopee local publish fills implicit enumerations and free-text dates whose
   });
   assert.deepEqual(result.attributes, [
     { attribute_id: 12, attribute_value_list: [{ value_id: 120 }] },
-    { attribute_id: 13, attribute_value_list: [{ value_id: 0, original_value_name: "19/08/2027" }] },
+    { attribute_id: 13, attribute_value_list: [{ value_id: 0, original_value_name: "19/08/2027", value_unit: "" }] },
   ]);
   assert.deepEqual(result.unresolved, []);
   assert.match(result.autoFilled[0] ?? "", /Drink Form: Whole Bean/);
@@ -104,6 +104,35 @@ test("Shopee ignores attributes mandatory only in other markets", () => {
     attribute_value_list: [{ value_id: 593, name: "12 Months" }],
   }], "Lipstick", { marketCode: "SG" });
   assert.deepEqual(result.attributes, []);
+  assert.deepEqual(result.unresolved, []);
+});
+
+test("Shopee reads market requirements nested in attribute_info", () => {
+  const result = mergeShopeeRequiredAttributes([], [{
+    attribute_id: 61,
+    name: "Expiry Date",
+    mandatory: true,
+    attribute_info: { mandatory_region: ["MX", "FR"] },
+  }], "instant rice", { marketCode: "SG" });
+
+  assert.deepEqual(result.attributes, []);
+  assert.deepEqual(result.unresolved, []);
+});
+
+test("Shopee fills a category-specific mandatory enumeration even when metadata omits its mandatory flag", () => {
+  const result = mergeShopeeRequiredAttributes([], [{
+    attribute_id: 100522,
+    name: "Bag Set",
+    attribute_value_list: [
+      { value_id: 1, display_value_name: "Yes" },
+      { value_id: 2, display_value_name: "No" },
+    ],
+  }], "canvas tote bag", { implicitRequired: { "bag set": "No" }, marketCode: "SG" });
+
+  assert.deepEqual(result.attributes, [{
+    attribute_id: 100522,
+    attribute_value_list: [{ value_id: 2 }],
+  }]);
   assert.deepEqual(result.unresolved, []);
 });
 

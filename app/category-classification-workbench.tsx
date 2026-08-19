@@ -96,6 +96,7 @@ function englishCategoryQuery(value: string) {
     [/(브러시|brush)/u, "makeup brush set"],
     [/(흰쌀밥|백미|쌀|rice)/u, "white rice"],
     [/(펜네|파스타|penne|pasta)/u, "penne pasta"],
+    [/(원피스|데님.*드레스|dress(?:es)?)/u, "women's dress"],
     [/(티셔츠|t[\s-]?shirt)/u, "white t-shirt"],
     [/(후드|hood)/u, "hoodie"],
     [/(테디|곰인형|teddy|plush)/u, "teddy bear plush toy"],
@@ -130,6 +131,7 @@ function qoo10SearchTerms(query: string) {
   if (/(컵|머그|cup|mug|잔)/u.test(normalized)) aliases.push("マグカップ", "ティーカップ", "食器");
   if (/(에스프레소|커피|coffee|espresso)/u.test(normalized)) aliases.push("コーヒー");
   if (/(의류|옷|shirt|dress|팬츠|바지)/u.test(normalized)) aliases.push("服", "シャツ", "パンツ");
+  if (/(원피스|dress(?:es)?)/u.test(normalized)) aliases.push("ワンピース", "ドレス", "レディース ワンピース");
   if (/(티셔츠|t[\s-]?shirt|반팔)/u.test(normalized)) aliases.push("Tシャツ", "カットソー", "トップス");
   if (/(후드|재킷|hood|jacket)/u.test(normalized)) aliases.push("パーカー", "ジャケット", "アウター", "服");
   if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalized)) aliases.push("コスメ", "スキンケア", "クリーム");
@@ -175,6 +177,7 @@ function qoo10PriorityTerms(query: string) {
   if (/(펜네|penne)/u.test(normalized)) return ["ペンネ", "パスタ"];
   if (/(파스타|pasta)/u.test(normalized)) return ["パスタ"];
   if (/(밀가루|flour)/u.test(normalized)) return ["小麦粉"];
+  if (/(원피스|dress(?:es)?)/u.test(normalized)) return ["ワンピース", "シャツワンピ", "ドレス"];
   if (/(티셔츠|t[\s-]?shirt|반팔)/u.test(normalized)) return ["Tシャツ・カットソー", "Tシャツ"];
   if (/(후드|hood)/u.test(normalized)) return ["パーカー", "フード付きジャケット", "ジャケット"];
   if (/(재킷|jacket)/u.test(normalized)) return ["ジャケット", "アウター"];
@@ -220,6 +223,7 @@ function shopeeSearchTerms(query: string) {
   const aliases = [query];
   if (/(cup|mug|espresso|컵|머그|잔)/u.test(normalized)) aliases.push("mug cups drinkware dinnerware coffee tea");
   if (/(shirt|dress|pants|clothes|의류|옷|바지)/u.test(normalized)) aliases.push("fashion apparel tops bottoms clothing");
+  if (/(원피스|dress(?:es)?)/u.test(normalized)) aliases.push("women dresses dress fashion clothing");
   if (/(t[\s-]?shirt|tee|티셔츠|반팔)/u.test(normalized)) aliases.push("t-shirt tee shirts tops");
   if (/(hoodie|hood|jacket|후드|재킷)/u.test(normalized)) aliases.push("hoodies sweatshirts jackets outerwear clothing");
   if (/(cosmetic|beauty|skin|cream|화장품|스킨|크림)/u.test(normalized)) aliases.push("beauty skincare makeup cosmetics");
@@ -294,6 +298,10 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
   if (/(jacket|재킷)/u.test(normalizedQuery)) {
     return /(jacket|outerwear)/u.test(normalizedCandidate) && !/(pet|baby costume)/u.test(normalizedCandidate);
   }
+  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) {
+    return /(?:^|\b)dresses?(?:\b|$)/u.test(normalizedCandidate)
+      && !/(dress\s*up|costume|toy|maternity|wash|cream|liner)/u.test(normalizedCandidate);
+  }
   if (/(t[\s-]?shirt|tee|티셔츠|반팔)/u.test(normalizedQuery)) {
     return /(fashion|clothes|clothing|apparel|top|shirt|hoodie|sweatshirt|jacket|outerwear)/u.test(normalizedCandidate);
   }
@@ -327,6 +335,7 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(cream|moistur|크림|보습)/u.test(normalizedQuery)) return score(["face moisturizers", "facial moisturizers", "face cream", "skin care"]);
   if (/(hoodie|hood|후드)/u.test(normalizedQuery)) return score(["hoodies", "hooded sweatshirts", "sweatshirts"]);
   if (/(jacket|재킷)/u.test(normalizedQuery)) return score(["jackets", "outerwear"]);
+  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return score(["women's dresses", "dresses", "dress"]);
   if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) return score(["storage boxes", "home organizers", "home & living"]);
   if (/(hanger|옷걸이|행거)/u.test(normalizedQuery)) return score(["clothes hangers", "clothing hangers", "coat hangers", "hangers"]);
   return 0;
@@ -345,6 +354,7 @@ function lazadaSearchTerms(query: string) {
   if (/(pasta|penne|파스타|펜네)/u.test(normalized)) aliases.push("pasta noodles penne");
   if (/(tepung|flour|밀가루)/u.test(normalized)) aliases.push("flour baking cooking ingredients");
   if (/(t-?shirt|티셔츠|반팔)/u.test(normalized)) aliases.push("t-shirts tops clothing");
+  if (/(원피스|dress(?:es)?)/u.test(normalized)) aliases.push("women dresses women's clothing fashion");
   if (/(hoodie|후드|jaket)/u.test(normalized)) aliases.push("hoodies sweatshirts jackets clothing");
   if (/(teddy|beruang|곰인형|테디)/u.test(normalized)) aliases.push("teddy bears plush toys stuffed animals");
   if (/(kereta|toy\s?car|자동차.*완구|완구.*자동차)/u.test(normalized)) aliases.push("toy cars vehicles toys");
@@ -368,6 +378,9 @@ function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestio
   if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return /fish oil|omega|dha|epa|minyak ikan|vitamin|supplement|health/u.test(`${path} ${name}`)
     && !/pet|animal feed|veterinary|mother|baby|infant|bayi|kanak|ibu/u.test(`${path} ${name}`);
   if (/(vitamin|비타민)/u.test(normalizedQuery)) return /vitamin|supplement/u.test(`${path} ${name}`);
+  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return /dresses?/u.test(name)
+    && /women'?s clothing|women fashion|pakaian wanita/u.test(path)
+    && !/maternity|costume|pretend|toy/u.test(`${path} ${name}`);
   if (/(storage\s?(?:box|bin)|수납.*박스|kotak simpanan)/u.test(normalizedQuery)) return /storage|organizer|kotak|box/u.test(name);
   return lazadaQueryScore(lazadaSearchTerms(query), `${path} ${name}`) > 0;
 }
@@ -380,6 +393,7 @@ function lazadaPriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return score(["penne", "pasta", "noodles"]);
   if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return score(["wheat flour", "flour", "tepung"]);
   if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return score(["fish oil", "omega 3", "omega", "dietary supplements", "vitamins & supplements", "health supplements"]);
+  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return score(["dresses", "dress"]);
   return 0;
 }
 
@@ -390,6 +404,7 @@ function smartstoreSearchTerms(query: string) {
   if (/(브러시|스펀지|퍼프|뷰러|속눈썹|화장도구)/u.test(normalized)) aliases.push("메이크업소품 화장소품 미용소품 브러시 퍼프 뷰러");
   if (/(쌀|밥|파스타|펜네|밀가루|식품|food|rice|pasta|flour)/u.test(normalized)) aliases.push("식품 농산물 가공식품 면류 쌀 밀가루");
   if (/(티셔츠|셔츠|후드|재킷|의류|옷|clothes|shirt|jacket)/u.test(normalized)) aliases.push("패션의류 티셔츠 셔츠 후드 집업 재킷");
+  if (/(원피스|dress(?:es)?)/u.test(normalized)) aliases.push("여성의류 원피스 미디원피스 롱원피스");
   if (/(테디|곰인형|자동차.*완구|완구|장난감|toy|plush)/u.test(normalized)) aliases.push("완구 장난감 봉제인형 자동차완구 미니카");
   if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalized)) aliases.push("건강식품 건강기능식품 영양제 비타민 오메가3 어유");
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalized)) aliases.push("수납 박스 수납박스 리빙박스 수납함 정리함 정리 바구니");
@@ -415,6 +430,7 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
   if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalizedQuery)) return /(화장품|스킨케어|크림|로션|메이크업)/u.test(normalizedCandidate);
   if (/(티셔츠|셔츠|반팔|t[\s-]?shirt)/u.test(normalizedQuery)) return /(티셔츠|반팔티|상의|패션의류)/u.test(normalizedCandidate);
   if (/(후드|재킷|hood|jacket)/u.test(normalizedQuery)) return /(후드|후드집업|재킷|점퍼|아우터)/u.test(normalizedCandidate);
+  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return /(여성의류.*원피스|원피스.*여성의류|미디원피스|롱원피스|미니원피스)/u.test(normalizedCandidate);
   if (/(테디|곰인형|봉제|teddy|plush)/u.test(normalizedQuery)) return /(봉제인형|곰인형|테디베어)\s*$/u.test(normalizedCandidate);
   if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return /(자동차완구|미니카|장난감자동차|자동차장난감|작동완구|탈것완구|운송수단완구)/u.test(normalizedCandidate);
   if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalizedQuery)) {
@@ -439,6 +455,7 @@ function smartstorePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(스펀지|퍼프)/u.test(normalizedQuery)) return score(["메이크업스펀지", "메이크업퍼프", "스펀지", "퍼프"]);
   if (/(브러시)/u.test(normalizedQuery)) return score(["브러시세트", "메이크업브러시", "브러시"]);
   if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return score(["미니카", "자동차완구", "장난감자동차", "작동완구", "탈것완구"]);
+  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return score(["여성의류 원피스", "미디원피스", "롱원피스", "미니원피스", "원피스"]);
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return score(["리빙박스", "수납박스", "수납함", "정리함"]);
   if (/(머그|컵|잔|mug|cup)/u.test(normalizedQuery)) return score(["머그컵", "머그잔", "물컵", "커피잔", "찻잔", "일반컵"]);
   return 0;
