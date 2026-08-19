@@ -133,7 +133,8 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     : [generatedImage("portrait"), generatedImage("wide"), generatedImage("hero")]);
   const sourceImage = galleryImageUrls[0] ?? "";
   const sellerpilotAssets = { galleryImageUrls, detailImageUrls, detailAssetMode: dedicatedDetailReady ? "dedicated" : "legacy_fallback", integrationRevision: "marketplace-write-v3" };
-  const localized = context.localizedListings?.find((item) => item.channel === channel && item.market === target?.marketCode);
+  const localized = context.localizedListings?.find((item) => item.channel === channel && item.market === target?.marketCode)
+    ?? (channel === "shopee" ? context.localizedListings?.find((item) => item.channel === "shopee" && item.locale.toLocaleLowerCase().startsWith("en")) : undefined);
   const manual = context.manualFields;
   const title = localized?.title || product.name;
   const description = localized?.description || product.description;
