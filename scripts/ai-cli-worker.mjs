@@ -460,7 +460,7 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     : categoryId === 100093 || /(?:tote\s*bag|canvas\s*bag|토트백|에코백)/iu.test(productHint)
       ? { "bag set": "No", "bag style": "Others" }
       : categoryId === 100244 || /(?:t-?shirt|tee\s*shirt|티셔츠)/iu.test(productHint)
-        ? { material: apparelMaterial }
+        ? { material: apparelMaterial, "plus size": "No" }
         : {};
   const foodLike = [100782, 100797, 100824].includes(categoryId)
     || /(?:coffee|noodle|pasta|rice|food|grocery|커피|면|파스타|쌀|식품)/iu.test(productHint);

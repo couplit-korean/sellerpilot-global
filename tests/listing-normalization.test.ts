@@ -148,17 +148,25 @@ test("Shopee fills an apparel material requirement even when category metadata o
       { value_id: 2, display_value_name: "Cotton Blend" },
       { value_id: 3, display_value_name: "Cotton" },
     ],
+  }, {
+    attribute_id: 100014,
+    name: "Plus Size",
+    attribute_value_list: [
+      { value_id: 10, display_value_name: "Yes" },
+      { value_id: 11, display_value_name: "No" },
+    ],
   }], "multicolor cotton blend t-shirt", {
-    implicitRequired: { material: "Cotton Blend" },
+    implicitRequired: { material: "Cotton Blend", "plus size": "No" },
     marketCode: "SG",
   });
 
-  assert.deepEqual(result.attributes, [{
-    attribute_id: 100013,
-    attribute_value_list: [{ value_id: 2 }],
-  }]);
+  assert.deepEqual(result.attributes, [
+    { attribute_id: 100013, attribute_value_list: [{ value_id: 2 }] },
+    { attribute_id: 100014, attribute_value_list: [{ value_id: 11 }] },
+  ]);
   assert.deepEqual(result.unresolved, []);
   assert.match(result.autoFilled[0] ?? "", /Material: Cotton Blend/);
+  assert.match(result.autoFilled[1] ?? "", /Plus Size: No/);
 });
 
 test("eBay item aspects use string arrays and an accepted country enumeration", () => {
