@@ -464,9 +464,11 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
         : {};
   const foodLike = [100782, 100797, 100824].includes(categoryId)
     || /(?:coffee|noodle|pasta|rice|food|grocery|커피|면|파스타|쌀|식품)/iu.test(productHint);
-  const foodImplicitRequired = foodLike ? {
+  const supplementLike = categoryId === 100944
+    || /(?:fish\s*oil|omega|vitamin|supplement|capsule|softgel|어유|오메가|비타민|건강식품|영양제)/iu.test(productHint);
+  const foodImplicitRequired = foodLike || supplementLike ? {
     "expiry date": expiryDate,
-    "packaging type": "Bag",
+    "packaging type": supplementLike ? "Bottle" : "Bag",
     "pork origin region": "No Pork",
     "shelf life": "12 Months",
     "shelf lifes": "12 Months",
@@ -715,6 +717,7 @@ function prepareCoupangItem(itemValue, metadata, facts) {
 
   const missing = [];
   const mandatorySingles = metaAttributes.filter((attribute) => attribute?.required === "MANDATORY" && String(attribute?.groupNumber ?? "NONE") === "NONE" && attribute?.exposed === "EXPOSED");
+  const selectedAttributeNames = new Set(mandatorySingles.map((attribute) => String(attribute?.attributeTypeName ?? "").trim()).filter(Boolean));
   for (const attribute of mandatorySingles) {
     const name = String(attribute?.attributeTypeName ?? "").trim();
     if (!name || supplied.get(name)) continue;
@@ -727,13 +730,21 @@ function prepareCoupangItem(itemValue, metadata, facts) {
     (attribute) => String(attribute.groupNumber),
   );
   for (const attributes of groups.values()) {
-    if (attributes.some((attribute) => supplied.get(String(attribute?.attributeTypeName ?? "").trim()))) continue;
+    const suppliedAttribute = attributes.find((attribute) => supplied.get(String(attribute?.attributeTypeName ?? "").trim()));
+    if (suppliedAttribute) {
+      selectedAttributeNames.add(String(suppliedAttribute.attributeTypeName).trim());
+      continue;
+    }
     const derivedAttribute = attributes.map((attribute) => [attribute, coupangAttributeValue(attribute, facts)]).find((entry) => entry[1]);
-    if (derivedAttribute) supplied.set(String(derivedAttribute[0].attributeTypeName).trim(), derivedAttribute[1]);
+    if (derivedAttribute) {
+      const name = String(derivedAttribute[0].attributeTypeName).trim();
+      supplied.set(name, derivedAttribute[1]);
+      selectedAttributeNames.add(name);
+    }
     else missing.push(attributes.map((attribute) => String(attribute?.attributeTypeName ?? "").trim()).filter(Boolean).join(" 또는 "));
   }
   if (missing.length) throw new Error(`COUPANG_MANDATORY_ATTRIBUTES_MISSING:${missing.join(", ")}`);
-  item.attributes = [...supplied.entries()].map(([attributeTypeName, attributeValueName]) => ({
+  item.attributes = [...supplied.entries()].filter(([attributeTypeName]) => selectedAttributeNames.has(attributeTypeName)).map(([attributeTypeName, attributeValueName]) => ({
     attributeTypeName,
     attributeValueName,
     ...(metadataByName.get(attributeTypeName)?.exposed ? { exposed: metadataByName.get(attributeTypeName).exposed } : {}),
