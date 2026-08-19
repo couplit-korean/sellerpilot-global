@@ -206,9 +206,10 @@ test("Lazada copies required color and size sales properties into each SKU", () 
   assert.deepEqual(lazadaSkuSaleAttributes({
     color_family: "Blue",
     size: "Int:M",
+    "100006346units": "1",
     dress_type: "Shirt Dresses",
     brand: "No Brand",
-  }), { color_family: "Blue", size: "Int:M" });
+  }), { color_family: "Blue", size: "Int:M", "100006346units": "1" });
 });
 
 test("Shopee replaces an unsupported localized title with a market-safe fallback", () => {

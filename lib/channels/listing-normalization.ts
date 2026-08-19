@@ -87,7 +87,12 @@ export function normalizeLazadaSizeChartImages(value: unknown, fallbackImageUrl:
 export function lazadaSkuSaleAttributes(attributes: Record<string, string>) {
   return Object.fromEntries(Object.entries(attributes).filter(([key, value]) => {
     const normalizedKey = key.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
-    return value.trim().length > 0 && ["color", "colorfamily", "size"].includes(normalizedKey);
+    // Lazada can return category-specific sales-property names such as
+    // `100006346units`. Those values must live on every SKU, not only in the
+    // product Attributes node, otherwise /product/create rejects customSaleProp.
+    const categorySaleProperty = /^\d+[a-z][a-z0-9]*$/u.test(normalizedKey);
+    return value.trim().length > 0
+      && (["color", "colorfamily", "size"].includes(normalizedKey) || categorySaleProperty);
   }));
 }
 
