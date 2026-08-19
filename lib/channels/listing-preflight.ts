@@ -52,15 +52,15 @@ function itemHasAttribute(draft: Record<string, unknown>, name: string) {
 
 const sharedImage = (path: Array<string | number>): RequirementSpec => ({
   key: "images",
-  label: "공개 상품 이미지",
+  label: "상품 사진",
   source: "상품 정보",
   path,
-  help: "채널 작업자가 공식 이미지 API 규격으로 다시 업로드합니다.",
+  help: "판매 채널 규격에 맞게 크기와 용량을 자동으로 준비합니다.",
 });
 
 const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   qoo10: [
-    { key: "category", label: "Qoo10 말단 카테고리", source: "카테고리", path: ["params", "SecondSubCat"] },
+    { key: "category", label: "Qoo10 최종 카테고리", source: "카테고리", path: ["params", "SecondSubCat"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["params", "ItemTitle"] },
     { key: "origin", label: "원산지", source: "상품 정보", path: ["params", "ProductionPlace"] },
     sharedImage(["params", "StandardImage"]),
@@ -69,8 +69,8 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "shipping", label: "배송비 코드", source: "판매자 계정", test: (draft) => valueAt(draft, ["params", "ShippingNo"]) !== undefined, help: "0은 Qoo10 무료배송 코드로 유효합니다." },
   ],
   shopee: [
-    { key: "shop", label: "승인 Shop ID", source: "판매자 계정", path: ["shopId"] },
-    { key: "category", label: "Shopee 말단 카테고리", source: "카테고리", path: ["body", "category_id"] },
+    { key: "shop", label: "승인된 판매 계정", source: "판매자 계정", path: ["shopId"] },
+    { key: "category", label: "Shopee 최종 카테고리", source: "카테고리", path: ["body", "category_id"] },
     { key: "title", label: "글로벌 상품명", source: "상품 정보", path: ["body", "global_item_name"] },
     { key: "description", label: "상품 설명", source: "상품 정보", path: ["body", "description"] },
     { key: "brand", label: "브랜드", source: "상품 정보", path: ["body", "brand", "original_brand_name"] },
@@ -82,7 +82,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   ],
   lazada: [
     { key: "market", label: "승인 판매 국가", source: "판매자 계정", path: ["country"] },
-    { key: "category", label: "Lazada 말단 카테고리", source: "카테고리", path: ["request", "Request", "Product", "PrimaryCategory"] },
+    { key: "category", label: "Lazada 최종 카테고리", source: "카테고리", path: ["request", "Request", "Product", "PrimaryCategory"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["request", "Request", "Product", "Attributes", "name"] },
     { key: "description", label: "상품 설명", source: "상품 정보", path: ["request", "Request", "Product", "Attributes", "description"] },
     { key: "brand", label: "브랜드", source: "상품 정보", path: ["request", "Request", "Product", "Attributes", "brand"] },
@@ -102,12 +102,12 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "image", label: "대표 이미지", source: "상품 정보", path: ["body", "items", 0, "images", 0, "vendorPath"] },
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["body", "items", 0, "salePrice"]) },
     { key: "stock", label: "구매 가능 수량", source: "상품 정보", test: positive(["body", "items", 0, "maximumBuyCount"]) },
-    { key: "outbound", label: "사용 가능 국내 출고지", source: "판매자 계정", runtime: true, help: "WING 출고지 API에서 사용 가능 상태를 확인합니다." },
-    { key: "return", label: "반품지·택배사·반품비", source: "판매자 계정", runtime: true, help: "WING 반품지 API의 실제 주소와 요금을 사용합니다." },
-    { key: "notices", label: "카테고리 고시정보", source: "카테고리", runtime: true, help: "쿠팡 카테고리 메타 API에서 필수 고시 항목을 생성합니다." },
+    { key: "outbound", label: "사용 가능 국내 출고지", source: "판매자 계정", runtime: true, help: "쿠팡 WING에 등록된 사용 가능한 출고지를 자동으로 확인합니다." },
+    { key: "return", label: "반품지·택배사·반품비", source: "판매자 계정", runtime: true, help: "쿠팡 WING에 등록된 실제 주소와 요금을 자동으로 적용합니다." },
+    { key: "notices", label: "카테고리 고시정보", source: "카테고리", runtime: true, help: "선택한 카테고리에 필요한 고시 항목을 자동으로 준비합니다." },
   ],
   smartstore: [
-    { key: "category", label: "스마트스토어 말단 카테고리", source: "카테고리", path: ["body", "originProduct", "leafCategoryId"] },
+    { key: "category", label: "스마트스토어 최종 카테고리", source: "카테고리", path: ["body", "originProduct", "leafCategoryId"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["body", "originProduct", "name"] },
     { key: "description", label: "상세 설명", source: "상품 정보", path: ["body", "originProduct", "detailContent"] },
     sharedImage(["imageUrls"]),
@@ -115,10 +115,10 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "stock", label: "재고", source: "상품 정보", test: positive(["body", "originProduct", "stockQuantity"]) },
     { key: "origin", label: "원산지", source: "상품 정보", path: ["body", "originProduct", "detailAttribute", "originAreaInfo", "content"] },
     { key: "minor-purchasable", label: "미성년자 구매 가능 여부", source: "상품 정보", test: (draft) => typeof valueAt(draft, ["body", "originProduct", "detailAttribute", "minorPurchasable"]) === "boolean", help: "일반 상품은 true, 성인 카테고리 상품은 false가 필요합니다." },
-    { key: "provided-notice", label: "상품정보제공고시", source: "상품 정보", path: ["body", "originProduct", "detailAttribute", "productInfoProvidedNotice", "productInfoProvidedNoticeType"], help: "상품군 유형과 필수 고시 항목을 채널 payload에 포함합니다." },
+    { key: "provided-notice", label: "상품정보제공고시", source: "상품 정보", path: ["body", "originProduct", "detailAttribute", "productInfoProvidedNotice", "productInfoProvidedNoticeType"], help: "상품 종류에 필요한 고시 항목을 등록 정보에 자동으로 포함합니다." },
     { key: "display-status", label: "스마트스토어 전시 상태", source: "상품 정보", test: (draft) => ["ON", "SUSPENSION"].includes(String(valueAt(draft, ["body", "smartstoreChannelProduct", "channelProductDisplayStatusType"]))), help: "상품 등록에는 ON 또는 SUSPENSION만 허용됩니다." },
-    { key: "phone", label: "스토어 A/S 전화번호", source: "판매자 계정", runtime: true, help: "Vault의 실제 스마트스토어 A/S 번호를 등록 직전에 적용합니다." },
-    { key: "uploaded-image", label: "네이버 이미지 업로드", source: "판매자 계정", runtime: true, help: "원본 이미지를 Commerce API로 업로드한 URL로 교체합니다." },
+    { key: "phone", label: "스토어 A/S 전화번호", source: "판매자 계정", runtime: true, help: "저장된 스마트스토어 A/S 번호를 등록할 때 자동으로 적용합니다." },
+    { key: "uploaded-image", label: "네이버 상품 사진", source: "판매자 계정", runtime: true, help: "상품 사진을 네이버 등록 기준에 맞게 자동으로 준비합니다." },
   ],
   temu: [
     { key: "category", label: "Temu 카테고리", source: "카테고리", path: ["body", "goodsBasic", "extCatName"] },
@@ -135,16 +135,16 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "package", label: "포장 중량·규격", source: "상품 정보", test: (draft) => positiveFields(draft, [["body", "skuList", 0, "packageInfo", "weight"], ["body", "skuList", 0, "packageInfo", "length"], ["body", "skuList", 0, "packageInfo", "width"], ["body", "skuList", 0, "packageInfo", "height"]]) },
   ],
   ebay: [
-    { key: "category", label: "eBay 말단 카테고리", source: "카테고리", path: ["offer", "categoryId"] },
+    { key: "category", label: "eBay 최종 카테고리", source: "카테고리", path: ["offer", "categoryId"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["inventoryItem", "product", "title"] },
     { key: "description", label: "상품 설명", source: "상품 정보", path: ["inventoryItem", "product", "description"] },
     sharedImage(["inventoryItem", "product", "imageUrls"]),
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["offer", "pricingSummary", "price", "value"]) },
     { key: "stock", label: "재고", source: "상품 정보", test: positive(["offer", "availableQuantity"]) },
-    { key: "fulfillment-policy", label: "배송 정책 ID", source: "판매자 계정", runtime: true, path: ["offer", "listingPolicies", "fulfillmentPolicyId"], manualPath: ["offer", "listingPolicies", "fulfillmentPolicyId"], placeholder: "자동조회 실패 시 fulfillmentPolicyId", help: "eBay Account API에서 자동 조회하며 필요하면 Seller Hub 값을 직접 입력할 수 있습니다." },
-    { key: "payment-policy", label: "결제 정책 ID", source: "판매자 계정", runtime: true, path: ["offer", "listingPolicies", "paymentPolicyId"], manualPath: ["offer", "listingPolicies", "paymentPolicyId"], placeholder: "자동조회 실패 시 paymentPolicyId" },
-    { key: "return-policy", label: "반품 정책 ID", source: "판매자 계정", runtime: true, path: ["offer", "listingPolicies", "returnPolicyId"], manualPath: ["offer", "listingPolicies", "returnPolicyId"], placeholder: "자동조회 실패 시 returnPolicyId" },
-    { key: "location", label: "재고 위치 키", source: "판매자 계정", runtime: true, path: ["offer", "merchantLocationKey"], manualPath: ["offer", "merchantLocationKey"], placeholder: "자동조회 실패 시 merchantLocationKey", help: "eBay Inventory API에서 자동 조회하며 필요하면 등록된 위치 키를 직접 입력할 수 있습니다." },
+    { key: "fulfillment-policy", label: "배송 정책 번호", source: "판매자 계정", runtime: true, path: ["offer", "listingPolicies", "fulfillmentPolicyId"], manualPath: ["offer", "listingPolicies", "fulfillmentPolicyId"], placeholder: "자동으로 찾지 못한 경우 배송 정책 번호 입력", help: "eBay 판매자 설정에서 자동으로 찾으며, 필요한 경우 정책 번호를 직접 입력할 수 있습니다." },
+    { key: "payment-policy", label: "결제 정책 번호", source: "판매자 계정", runtime: true, path: ["offer", "listingPolicies", "paymentPolicyId"], manualPath: ["offer", "listingPolicies", "paymentPolicyId"], placeholder: "자동으로 찾지 못한 경우 결제 정책 번호 입력" },
+    { key: "return-policy", label: "반품 정책 번호", source: "판매자 계정", runtime: true, path: ["offer", "listingPolicies", "returnPolicyId"], manualPath: ["offer", "listingPolicies", "returnPolicyId"], placeholder: "자동으로 찾지 못한 경우 반품 정책 번호 입력" },
+    { key: "location", label: "상품 발송지 번호", source: "판매자 계정", runtime: true, path: ["offer", "merchantLocationKey"], manualPath: ["offer", "merchantLocationKey"], placeholder: "자동으로 찾지 못한 경우 발송지 번호 입력", help: "eBay에 등록된 상품 발송지를 자동으로 찾으며, 필요한 경우 발송지 번호를 직접 입력할 수 있습니다." },
   ],
 };
 

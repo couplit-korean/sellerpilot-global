@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
+import { userFacingErrorMessage } from "../lib/user-facing-errors";
 
 export type OperationProduct = {
   id: string;
@@ -154,7 +155,7 @@ export function useOperationsSnapshot() {
     } catch (error) {
       if (controller.signal.aborted || sequence !== requestSequenceRef.current) return;
       setState(hasDataRef.current ? "stale" : "unavailable");
-      setMessage(error instanceof Error ? error.message : "판매 정보를 불러오지 못했습니다.");
+      setMessage(userFacingErrorMessage(error, "판매 정보를 불러오지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요."));
     } finally {
       if (activeRequestRef.current === controller) activeRequestRef.current = null;
     }

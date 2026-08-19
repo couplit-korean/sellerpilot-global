@@ -22,7 +22,7 @@ test("restricted category responses stop retries and require a new category conf
 
   assert.equal(remediation?.kind, "category_permission");
   assert.equal(remediation?.rejectCategory, true);
-  assert.match(applyListingRemediation(result).result.safeMessage, /같은 카테고리 재시도를 중단/);
+  assert.match(applyListingRemediation(result).result.safeMessage, /다른 최종 카테고리/);
 });
 
 test("Qoo10 category permission failures use the same deterministic remediation", () => {
@@ -49,10 +49,10 @@ test("image errors surface the automatic normalized-image recovery state", () =>
 
   assert.equal(remediation?.kind, "image");
   assert.equal(remediation?.rejectCategory, false);
-  assert.match(remediation?.safeMessage ?? "", /1200×1200 JPEG/);
+  assert.match(remediation?.safeMessage ?? "", /크기와 용량을 자동/);
 });
 
-test("remediation keeps a sanitized provider detail after the operator guidance", () => {
+test("remediation keeps provider details out of the customer guidance", () => {
   const result = applyListingRemediation({
     ok: false,
     channel: "ebay",
@@ -60,8 +60,8 @@ test("remediation keeps a sanitized provider detail after the operator guidance"
     safeMessage: "eBay listing.create failed · Brand is mandatory and must be an array",
     steps: [{ name: "inventory-item", ok: false, status: 400, data: { message: "Brand is mandatory and must be an array" } }],
   });
-  assert.match(result.result.safeMessage, /필수 입력값/);
-  assert.match(result.result.safeMessage, /Brand is mandatory and must be an array/);
+  assert.match(result.result.safeMessage, /직접 입력 필요/);
+  assert.doesNotMatch(result.result.safeMessage, /Brand is mandatory|listing\.create/);
 });
 
 test("Temu and eBay image readback failures remain automatically retryable image errors", () => {

@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { channelCatalog } from "../lib/channels/catalog";
+import { customerFacingCopy } from "../lib/user-facing-errors";
 import {
   channelReadiness,
   type ReadinessState,
@@ -25,23 +26,6 @@ const stateLabels: Record<ReadinessState, string> = {
 function ReadinessBadge({ state }: { state: ReadinessState }) {
   const Icon = state === "verified" ? CheckCircle2 : state === "blocked" ? AlertTriangle : state === "partial" ? Clock3 : CircleDashed;
   return <span className={`readiness-badge ${state}`}><Icon size={14} />{stateLabels[state]}</span>;
-}
-
-function customerCopy(value: string) {
-  return value
-    .replaceAll("API E2E", "전체 연결")
-    .replaceAll("API", "채널 연결")
-    .replaceAll("OAuth", "판매자 승인")
-    .replaceAll("HMAC", "보안 인증")
-    .replaceAll("Partner 앱", "판매자 앱")
-    .replaceAll("Partner", "판매자")
-    .replaceAll("Developer", "판매자")
-    .replaceAll("developer", "판매자")
-    .replaceAll("credential", "연결 정보")
-    .replaceAll("Credential", "연결 정보")
-    .replaceAll("Online", "사용 가능")
-    .replaceAll("Production", "실제 판매용")
-    .replaceAll("Sandbox", "테스트용");
 }
 
 export function ChannelReadinessPage() {
@@ -74,23 +58,23 @@ export function ChannelReadinessPage() {
           <article className={`readiness-channel-card ${channel.key}`} key={channel.key}>
             <header>
               <span className="readiness-channel-mark">{channel.code}</span>
-              <div><small>{customerCopy(channel.market)}</small><h3>{channel.name}</h3></div>
+              <div><small>{customerFacingCopy(channel.market)}</small><h3>{channel.name}</h3></div>
               <ReadinessBadge state={channel.overall} />
             </header>
-            <p className="readiness-channel-summary">{customerCopy(channel.summary)}</p>
+            <p className="readiness-channel-summary">{customerFacingCopy(channel.summary)}</p>
             <div className="readiness-checks">
               {channel.checks.map((check) => (
                 <div key={check.label}>
-                  <span><b>{customerCopy(check.label)}</b><small>{customerCopy(check.evidence)}</small></span>
+                  <span><b>{customerFacingCopy(check.label)}</b><small>{customerFacingCopy(check.evidence)}</small></span>
                   <ReadinessBadge state={check.state} />
                 </div>
               ))}
             </div>
             {channel.blockers.length > 0 && <div className="readiness-blockers">
               <span><AlertTriangle size={14} /> 확인해 주세요</span>
-              <ul>{channel.blockers.map((blocker) => <li key={blocker}>{customerCopy(blocker)}</li>)}</ul>
+              <ul>{channel.blockers.map((blocker) => <li key={blocker}>{customerFacingCopy(blocker)}</li>)}</ul>
             </div>}
-            <footer><span>다음 단계</span><p>{customerCopy(channel.nextAction)}</p></footer>
+            <footer><span>다음 단계</span><p>{customerFacingCopy(channel.nextAction)}</p></footer>
             <div className="readiness-doc-links">{channelCatalog[channel.key].officialDocs.slice(0, 1).map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>판매 채널 도움말<ExternalLink size={12} /></a>)}</div>
           </article>
         ))}

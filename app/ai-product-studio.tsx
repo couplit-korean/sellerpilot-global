@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import { createClient } from "../lib/supabase/client";
 import { productIntakeSchema, type NormalizedProductImageSpec, type ProductIntakeDraft } from "../lib/product-intake";
+import { userFacingErrorMessage } from "../lib/user-facing-errors";
 import type { ProductDetailData } from "./product-detail-puck";
 import type { ProductStudioResult } from "./product-studio-types";
 
@@ -235,7 +236,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
         ? `상품 분석과 이미지 ${aiGeneratedAssetSpecs.length}종 제작을 완료했습니다.`
         : `이미지 ${aiGeneratedAssetSpecs.length}종 제작을 완료했습니다. 상품 저장 상태를 확인해 주세요.`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";
+      const message = userFacingErrorMessage(error, "상품 이미지와 상세페이지를 만들지 못했습니다. 입력한 사진과 정보를 확인하고 다시 시도해 주세요.");
       setLastError(message);
       notify(message);
     } finally {
@@ -302,7 +303,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
           <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>상세페이지를 아직 만들지 않았습니다.</b><small>대표사진과 상품 정보를 분석하면 결과를 여기에서 확인할 수 있습니다.</small></div>}</div>
         </article>
       </div>
-      {lastError && <div className="studio-warning error"><b>AI 제작을 완료하지 못했습니다</b><p>{lastError}</p><small>입력한 사진과 정보를 확인한 뒤 다시 시도해 주세요.</small></div>}
+      {lastError && <div className="studio-warning error" role="alert"><b>상품 콘텐츠를 만들지 못했습니다</b><p>{lastError}</p><small>입력한 사진과 정보를 확인한 뒤 다시 시도해 주세요.</small></div>}
       {result && result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
       {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} data={savedDetailData} onSave={(next) => { setSavedDetailData(next); notify("상세페이지 편집 내용을 현재 작업에 저장했습니다."); }} onClose={() => setEditorOpen(false)} />}
     </section>

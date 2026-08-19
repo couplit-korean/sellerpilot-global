@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { createClient } from "../lib/supabase/client";
+import { userFacingErrorMessage } from "../lib/user-facing-errors";
 import { channels, type ChannelKey } from "./channel-config";
 import type { OperationMarginScenario } from "./use-operations-snapshot";
 
@@ -266,7 +267,7 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
       onChanged?.();
       notify(`${selectedChannelInfo.name} 수익 계산 결과를 저장했습니다.`);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "마진 계산 결과를 저장하지 못했습니다.");
+      notify(userFacingErrorMessage(error, "수익 계산 결과를 저장하지 못했습니다. 다시 시도해 주세요."));
     } finally {
       setSavingScenario(false);
     }
@@ -288,7 +289,7 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
       onChanged?.();
       notify("저장된 수익 계산을 삭제했습니다.");
     } catch (error) {
-      notify(error instanceof Error ? error.message : "저장된 마진 계산을 삭제하지 못했습니다.");
+      notify(userFacingErrorMessage(error, "저장된 수익 계산을 삭제하지 못했습니다. 다시 시도해 주세요."));
     }
   };
 

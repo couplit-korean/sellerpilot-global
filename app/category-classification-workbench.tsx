@@ -11,6 +11,7 @@ import {
 } from "../lib/channels/category-learning";
 import { channelMarket } from "../lib/channels/markets";
 import { createClient } from "../lib/supabase/client";
+import { userFacingErrorMessage } from "../lib/user-facing-errors";
 import { fetchChannelTargets } from "./channel-target-client";
 
 type CredentialRow = {
@@ -741,8 +742,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
           const lazadaTargets = lazadaResponse.ok && Array.isArray(lazadaPayload.targets) ? lazadaPayload.targets : [];
           setTargets({ shopee: shopeeTargets, lazada: lazadaTargets });
           setTargetErrors({
-            shopee: shopeeResponse.ok ? "" : shopeePayload.message ?? "Shopee 등록 대상 정보를 불러오지 못했습니다.",
-            lazada: lazadaResponse.ok ? "" : lazadaPayload.message ?? "Lazada 등록 대상 정보를 불러오지 못했습니다.",
+            shopee: shopeeResponse.ok ? "" : userFacingErrorMessage(shopeePayload.message, "Shopee 판매 국가 정보를 불러오지 못했습니다. 다시 연결해 주세요."),
+            lazada: lazadaResponse.ok ? "" : userFacingErrorMessage(lazadaPayload.message, "Lazada 판매 국가 정보를 불러오지 못했습니다. 다시 연결해 주세요."),
           });
           setSelectedMarkets((current) => ({
             shopee: current.shopee ?? shopeeTargets[0]?.marketCode,
@@ -828,7 +829,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       body: JSON.stringify({ credentialId: credential.id, channel, operation: name, idempotencyKey: crypto.randomUUID(), confirmWrite: false, arguments: args }),
     });
     const payload = await response.json().catch(() => ({ message: "채널 응답을 읽지 못했습니다." })) as OperationPayload;
-    if (!response.ok || payload.ok === false) throw new Error(payload.message ?? `${channelCatalog[channel].name} 공식 API가 오류를 반환했습니다.`);
+    if (!response.ok || payload.ok === false) throw new Error(userFacingErrorMessage(payload.message, `${channelCatalog[channel].name}에서 카테고리를 확인하지 못했습니다.`));
     return payload;
   }, [activeCredential]);
 
@@ -838,7 +839,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const key = stateKey(channel);
     setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "suggesting", error: undefined } }));
     try {
-      if (channel === "lazada" && !sourceImageUrl) throw new Error("Lazada 공식 카테고리 추천에 사용할 대표이미지를 불러오지 못했습니다.");
+      if (channel === "lazada" && !sourceImageUrl) throw new Error("Lazada 카테고리를 찾는 데 필요한 대표사진을 불러오지 못했습니다.");
       const marketArgs = marketArguments(channel);
       const args: Record<string, unknown> = channel === "coupang"
         ? { query: textQuery, body: { productDescription: description.slice(0, 3000), attributes: {} } }
@@ -875,10 +876,10 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         ? learningResult.data as CategoryLearningExample[]
         : [];
       const suggestions = applyCategoryLearning(textQuery, officialSuggestions, examples);
-      if (!suggestions.length) throw new Error("공식 카테고리 응답에서 일치하는 말단 카테고리를 찾지 못했습니다.");
+      if (!suggestions.length) throw new Error("상품과 일치하는 최종 카테고리를 찾지 못했습니다. 상품명을 더 구체적으로 입력해 주세요.");
       setStates((current) => ({ ...current, [key]: { ...initialState(), phase: "idle", suggestions } }));
     } catch (error) {
-      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "error", error: error instanceof Error ? error.message : "카테고리 추천 실패" } }));
+      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "error", error: userFacingErrorMessage(error, "카테고리를 찾지 못했습니다. 상품명을 확인하고 다시 시도해 주세요.") } }));
     }
   };
 
@@ -899,7 +900,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       const verifiedLeaf = selected.leaf && validationPayload.ok !== false;
       setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, attributes, values: {}, verifiedLeaf, phase: "ready" } }));
     } catch (error) {
-      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "error", error: error instanceof Error ? error.message : "카테고리 메타정보 조회 실패" } }));
+      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "error", error: userFacingErrorMessage(error, "카테고리 필수 정보를 불러오지 못했습니다. 다시 시도해 주세요.") } }));
     }
   };
 
@@ -967,7 +968,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       p_official_metadata: { verifiedBy: "channel_api", verifiedAt: new Date().toISOString(), targetId: assignmentTarget?.targetId ?? null, locale: assignmentTarget?.locale ?? null, globalProduct: channel === "shopee" },
       p_confirm: true,
     })));
-    if (results.some((result) => result.error)) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");
+    if (results.some((result) => result.error)) return notify("카테고리를 저장하지 못했습니다. 로그인 상태를 확인하고 다시 시도해 주세요.");
     setStates((current) => ({ ...current, [key]: { ...state, phase: "confirmed" } }));
     onConfirmed?.(channel);
     notify(`${channelCatalog[channel].name} 카테고리와 필수 속성을 ${channel === "shopee" ? `${assignmentTargets.length}개 숍에 ` : ""}확정했습니다.`);
@@ -990,7 +991,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       return <article className={`category-channel-card ${state.phase}`} key={channel}>
         <header><span>{definition.code}</span><div><small>{target ? `${target.marketCode} · ${target.language}` : definition.market}</small><h4>{definition.name}</h4></div><em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "연결됨" : "연결 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada") && (targets[channel]?.length ?? 0) > 0 && <label className="category-market-select"><span>등록 국가·언어</span><select value={target?.marketCode ?? ""} onChange={(event) => setSelectedMarkets((current) => ({ ...current, [channel]: event.target.value }))}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select></label>}
-        {requiresTarget && targetErrors[channel] && <p className="category-error"><AlertTriangle size={14} />{targetErrors[channel]}</p>}
+        {requiresTarget && targetErrors[channel] && <p className="category-error" role="alert"><AlertTriangle size={14} />{targetErrors[channel]}</p>}
         {!state.suggestions.length && !state.selected && <div className="category-empty"><Tags size={21} /><b>{!targetReady ? "판매 국가 확인 필요" : credential ? productId ? "카테고리를 찾아보세요" : "상품 분석을 먼저 완료해 주세요" : "판매 채널을 먼저 연결해 주세요"}</b><small>{!targetReady ? "판매 채널을 다시 연결한 뒤 국가와 언어를 확인해 주세요." : credential ? productId ? "상품명으로 알맞은 카테고리를 찾아드립니다." : "상품 사진과 정보를 분석하면 카테고리를 찾을 수 있습니다." : "채널 연결 메뉴에서 이 판매 채널을 연결해 주세요."}</small><button type="button" disabled={!credential || !productId || !targetReady || busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{!targetReady ? "다시 연결하기" : "추천 카테고리 찾기"}</button>{credential && productId && targetReady && <div className="category-manual-fallback"><b>카테고리 직접 입력</b><small>추천 결과가 없을 때 판매 채널에서 확인한 카테고리 정보를 입력해 주세요.</small><label><span>카테고리 번호 <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리 번호`} value={state.manualCategoryId} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryId: event.target.value } }))} placeholder="판매 채널의 카테고리 번호" /></label><label><span>카테고리명 <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리명`} value={state.manualCategoryName} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryName: event.target.value } }))} placeholder="카테고리명" /></label><label><span>카테고리 경로</span><input aria-label={`${definition.name} 수동 카테고리 경로`} value={state.manualCategoryPath} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryPath: event.target.value } }))} placeholder="상위 › 하위 › 선택한 카테고리" /></label><button type="button" className="category-manual-verify" disabled={busy || !state.manualCategoryId.trim() || !state.manualCategoryName.trim()} onClick={() => void inspectManualCategory(channel)}><ShieldCheck size={14} />카테고리 확인</button></div>}</div>}
         {state.suggestions.length > 0 && !state.selected && <div className="category-suggestions">{state.suggestions.map((suggestion, index) => {
           const blocked = suggestion.learning?.permissionBlocked === true;
@@ -998,7 +999,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
           return <button type="button" disabled={blocked} onClick={() => void inspect(channel, suggestion)} key={`${suggestion.id}-${suggestion.name}`}><span><b>{index + 1}. {suggestion.name}</b><small>{categoryPathLabel(suggestion)}</small></span><em className={blocked ? "blocked" : successes > 0 ? "learned" : ""}>{blocked ? "판매 권한 확인" : successes > 0 ? `이전 등록 성공 ${successes}회` : `${Math.round(suggestion.confidence * 100)}%`}</em><ChevronRight size={14} /></button>;
         })}{state.suggestions.some((suggestion) => suggestion.learning?.permissionBlocked) && <p className="category-learning-note"><AlertTriangle size={13} />판매 권한이 거절된 카테고리는 자동 선택에서 제외했습니다. 해당 채널에서 판매 권한을 받은 뒤 다시 찾아보세요.</p>}</div>}
         {state.selected && <div className="category-inspection"><div className="selected-category"><BadgeCheck size={18} /><span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · 카테고리 번호 {state.selected.id}</small></span><button type="button" onClick={() => setStates((current) => ({ ...current, [key]: { ...initialState(), suggestions: state.suggestions } }))}>다시 선택</button></div>{state.phase === "inspecting" ? <p className="category-loading"><LoaderCircle className="spin" size={16} />카테고리 정보를 확인하는 중</p> : <><div className="category-proof"><span className={state.verifiedLeaf ? "passed" : "failed"}><ShieldCheck size={14} />{state.verifiedLeaf ? "등록 가능한 카테고리" : "카테고리 확인 필요"}</span><span className={completedRequired === required.length ? "passed" : "failed"}><Check size={14} />필수 정보 {completedRequired}/{required.length}</span></div>{required.length > 0 && <div className="category-attribute-list">{required.map((attribute) => <label key={attribute.id}><span>{attribute.name}<em>필수</em></span>{attribute.values.length ? <select value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))}><option value="">값 선택</option>{attribute.values.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select> : <input value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))} placeholder={`${attribute.name} 입력`} />}</label>)}</div>}<button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || completedRequired !== required.length || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리 저장됨</> : "카테고리 저장"}</button></>}</div>}
-        {state.error && <p className="category-error"><AlertTriangle size={14} />{state.error}</p>}
+        {state.error && <p className="category-error" role="alert"><AlertTriangle size={14} />{state.error}</p>}
       </article>;
     })}</div>
   </section>;

@@ -190,9 +190,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(credentialTestRoute, /parsed\.data\.channel === "lazada"/);
   assert.match(gatewayCompleteRoute, /refreshedCredentialId/);
   assert.match(gatewayCompleteRoute, /sellerpilot_record_credential_test/);
-  assert.match(credentialPage, /API 실행 검수/);
-  assert.match(credentialPage, /중복 방지 키/);
-  assert.match(credentialPage, /confirmWrite/);
+  assert.match(credentialPage, /공식 연결 안내/);
+  assert.doesNotMatch(credentialPage, /API 실행 검수|중복 방지 키|operation-console|confirmWrite/);
   assert.match(credentialMigration, /sellerpilot_rotate_credential/);
   assert.match(credentialMigration, /vault\.create_secret/);
   assert.match(credentialMigration, /sellerpilot_list_credential_audit/);

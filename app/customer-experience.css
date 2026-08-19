@@ -911,6 +911,106 @@ table td {
   color: var(--text-muted, #64748b);
 }
 
+/* Customer notices: clear state, plain-language hierarchy, and touch-friendly controls. */
+.toast {
+  width: min(430px, calc(100vw - 32px));
+  min-height: 72px !important;
+  align-items: flex-start !important;
+  gap: 12px !important;
+  padding: 14px !important;
+  overflow: hidden;
+  border-width: 1px 1px 1px 4px !important;
+  border-radius: 16px !important;
+  color: #29362f !important;
+  background: rgba(255, 255, 255, .98) !important;
+  box-shadow: 0 22px 60px rgba(17, 37, 26, .2) !important;
+  font-size: 13px !important;
+  animation: customer-notice-in .22s ease-out both;
+}
+
+.toast-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px !important;
+  place-items: center;
+  border-radius: 11px;
+}
+
+.toast-copy {
+  display: block;
+  min-width: 0;
+  flex: 1 !important;
+  padding-top: 1px;
+}
+
+.toast-copy > b,
+.toast-copy > span {
+  display: block;
+}
+
+.toast-copy > b {
+  margin-bottom: 3px;
+  color: #243129;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.toast-copy > span {
+  flex: none !important;
+  color: #66736b;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.toast > button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  color: #7b8780;
+  background: transparent;
+}
+
+.toast > button:hover { background: #f2f5f3; }
+.toast > button:focus-visible { outline: 3px solid rgba(20, 108, 67, .18); outline-offset: 1px; }
+.toast.notice-success { border-color: #b9ddca #dbe9e1 #dbe9e1 #188555 !important; }
+.toast.notice-success .toast-icon { color: #147448; background: #eaf7ef; }
+.toast.notice-info { border-color: #bfd9ec #dde7ee #dde7ee #3478a5 !important; }
+.toast.notice-info .toast-icon { color: #2f6f98; background: #edf6fc; }
+.toast.notice-warning { border-color: #ecd49c #eee4cf #eee4cf #cc8b18 !important; }
+.toast.notice-warning .toast-icon { color: #a96800; background: #fff7e6; }
+.toast.notice-error { border-color: #edc2bd #efdfdd #efdfdd #cb4338 !important; }
+.toast.notice-error .toast-icon { color: #b9372f; background: #fff0ef; }
+
+.category-error,
+.credential-form-error,
+.studio-warning.error,
+.publish-result.failed,
+.publish-blocked {
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+}
+
+.category-error,
+.credential-form-error {
+  align-items: flex-start !important;
+  padding: 12px 13px !important;
+  border: 1px solid #efcfca !important;
+  border-radius: 11px !important;
+  color: #963d36 !important;
+  background: #fff7f6 !important;
+}
+
+@keyframes customer-notice-in {
+  from { opacity: 0; transform: translateY(10px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

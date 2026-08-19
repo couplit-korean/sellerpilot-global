@@ -8,8 +8,8 @@ test("Qoo10 pause actions use controllable in-app confirmations", async () => {
   assert.doesNotMatch(source, /window\.confirm/);
   assert.match(source, /aria-label="Qoo10 거래대기 전환 최종 확인"/);
   assert.match(source, /aria-label="이전 Qoo10 상품 거래대기 최종 확인"/);
-  assert.match(source, /Qoo10 거래대기 전환 실행/);
-  assert.match(source, /이전 상품 거래대기 실행/);
+  assert.match(source, />거래대기로 변경</);
+  assert.doesNotMatch(source, /원격 상품|실행 검수/);
 });
 
 test("market target operations use the credential that discovered those targets", async () => {
