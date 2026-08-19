@@ -357,9 +357,21 @@ async function executeQoo10(input: ExecuteInput) {
   }
   const definition = map[input.operation];
   if (!definition) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
-  const remote = await qoo10Request({ payload: input.payload, ...definition, params });
-  const createStep = step(definition.method, remote);
-  const resultObject = remote.data.ResultObject;
+  const resumeRemoteId = input.operation === "listing.create"
+    ? stringArgument(input.arguments, "resumeRemoteId", false)
+    : "";
+  const remote = resumeRemoteId
+    ? null
+    : await qoo10Request({ payload: input.payload, ...definition, params });
+  const createStep: ChannelOperationStep = remote
+    ? step(definition.method, remote)
+    : {
+      name: "listing.resume",
+      ok: true,
+      status: 200,
+      data: { ResultCode: 0, ResultMsg: "RESUME_EXISTING_ITEM", ResultObject: resumeRemoteId },
+    };
+  const resultObject = remote?.data.ResultObject;
   const remoteId = typeof resultObject === "string" || typeof resultObject === "number"
     ? String(resultObject)
     : resultObject && typeof resultObject === "object" && !Array.isArray(resultObject)
@@ -367,7 +379,7 @@ async function executeQoo10(input: ExecuteInput) {
         .map((key) => (resultObject as Record<string, unknown>)[key])
         .find((value): value is string | number => typeof value === "string" || typeof value === "number")
         ?.toString()
-      : undefined;
+      : resumeRemoteId || undefined;
   if (input.operation !== "listing.create" || !remoteId) {
     return result(input, [createStep], remoteId);
   }

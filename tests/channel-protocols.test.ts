@@ -187,6 +187,36 @@ test("Qoo10 pauses a created item when detail-image readback is incomplete", asy
   }
 });
 
+test("Qoo10 listing retry resumes a warning-created item without creating a duplicate", async () => {
+  const originalFetch = globalThis.fetch;
+  const methods: string[] = [];
+  globalThis.fetch = async (input) => {
+    const method = new URL(String(input)).searchParams.get("method") ?? "";
+    methods.push(method);
+    if (method === "ItemsBasic.SetNewGoods") throw new Error("resume must not create another Qoo10 item");
+    if (method === "ItemsContents.EditGoodsContents") return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    return Response.json({ ResultCode: 0, ResultObject: { ItemDetail: '<img src="1"><img src="2"><img src="3"><img src="4">' } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.create",
+      payload: { api_key: "test-key" },
+      arguments: {
+        resumeRemoteId: "1234567890",
+        params: { ItemDescription: '<img src="1"><img src="2"><img src="3"><img src="4">' },
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "1234567890");
+    assert.deepEqual(result.steps.map((item) => item.name), ["listing.resume", "EditGoodsContents", "detail-image-readback"]);
+    assert.equal(methods.includes("ItemsBasic.SetNewGoods"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Qoo10 draft helpers keep internal catalog codes numeric and use a one-year sale period", () => {
   assert.equal(qoo10CatalogCode("1234567890"), "1234567890");
   assert.equal(qoo10CatalogCode("No Brand"), "");

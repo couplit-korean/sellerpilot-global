@@ -142,6 +142,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
   if (channel === "qoo10") {
     return {
       sellerpilotAssets: { ...sellerpilotAssets, integrationRevision: "itemscontents-v1" },
+      ...(existingListing?.remoteId && existingListing.status !== "published" ? { resumeRemoteId: existingListing.remoteId } : {}),
       params: {
         SecondSubCat: assignment?.categoryId ?? "",
         OuterSecondSubCat: "",
