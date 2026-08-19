@@ -514,9 +514,15 @@ async function prepareLazadaListing(payload, argumentsValue) {
   for (const imageUrl of imageUrls) {
     await assertPublicUrl(new URL(imageUrl));
     const xml = `<?xml version="1.0" encoding="UTF-8"?><Request><Image><Url>${xmlEscape(imageUrl)}</Url></Image></Request>`;
-    const remote = await lazadaRequest({ payload, path: "/image/migrate", method: "POST", params: { payload: xml } });
-    const url = String(remote.data?.data?.image?.url ?? "").trim();
-    if (!remote.response.ok || String(remote.data?.code ?? "") !== "0" || !url) throw new Error(`Lazada 이미지 이관 실패${remote.data?.message ? ` · ${remote.data.message}` : ""}`);
+    let remote;
+    let url = "";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      remote = await lazadaRequest({ payload, path: "/image/migrate", method: "POST", params: { payload: xml } });
+      url = String(remote.data?.data?.image?.url ?? "").trim();
+      if (remote.response.ok && String(remote.data?.code ?? "") === "0" && url) break;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+    }
+    if (!remote?.response.ok || String(remote.data?.code ?? "") !== "0" || !url) throw new Error(`Lazada 이미지 이관 실패${remote?.data?.message ? ` · ${remote.data.message}` : ""}`);
     migrated.push(url);
   }
   const request = argumentsValue.request && typeof argumentsValue.request === "object" ? structuredClone(argumentsValue.request) : {};

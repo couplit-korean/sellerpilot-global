@@ -199,6 +199,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     const globalSku = `${manual.sellerSku || product.sku}-GLOBAL`.slice(0, 100);
     return {
       sellerpilotAssets,
+      ...(existingListing?.remoteId && existingListing.status !== "published" ? { globalItemId: existingListing.remoteId } : {}),
       globalProduct: true,
       shopId: target?.targetId ?? "",
       country: target?.marketCode.toLowerCase() ?? "",
@@ -297,6 +298,38 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     };
   }
   if (channel === "smartstore") {
+    const naverAttributes = assignment?.providedAttributes ?? {};
+    const certificationInfoId = Number(naverAttributes.NAVER_CHILD_CERTIFICATION_INFO_ID ?? 0);
+    const hasChildCertification = Number.isSafeInteger(certificationInfoId) && certificationInfoId > 0;
+    const commonNotice = {
+      returnCostReason: "상품상세 참조",
+      noRefundReason: "상품상세 참조",
+      qualityAssuranceStandard: "상품상세 참조",
+      compensationProcedure: "상품상세 참조",
+      troubleShootingContents: "상품상세 참조",
+    };
+    const productInfoProvidedNotice = hasChildCertification ? {
+      productInfoProvidedNoticeType: "KIDS",
+      kids: {
+        ...commonNotice,
+        itemName: product.name.slice(0, 50),
+        modelName: naverAttributes.NAVER_MODEL_NAME.slice(0, 50),
+        certificationType: naverAttributes.NAVER_CHILD_CERTIFICATION_TYPE.slice(0, 200),
+        size: naverAttributes.NAVER_SIZE.slice(0, 200),
+        weight: `${packageFields.weight} kg`,
+        color: naverAttributes.NAVER_COLOR.slice(0, 200),
+        material: manual.material.slice(0, 200),
+        recommendedAge: naverAttributes.NAVER_RECOMMENDED_AGE.slice(0, 30),
+        releaseDateText: naverAttributes.NAVER_RELEASE_DATE_TEXT.slice(0, 300),
+        manufacturer: manual.manufacturer.slice(0, 200),
+        caution: "보호자 감독 아래 사용하고 작은 부품을 삼키지 않도록 주의하세요.",
+        warrantyPolicy: "상품상세 참조",
+        afterServiceDirector: "판매자 고객센터 참조",
+      },
+    } : {
+      productInfoProvidedNoticeType: "ETC",
+      etc: { ...commonNotice, itemName: product.name.slice(0, 50), modelName: (manual.sellerSku || product.sku).slice(0, 50), certificateDetails: "해당사항 없음", manufacturer: manual.manufacturer.slice(0, 200), customerServicePhoneNumber: "SERVER_MANAGED" },
+    };
     return {
       sellerpilotAssets,
       imageUrls: galleryImageUrls,
@@ -310,7 +343,26 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
           images: { representativeImage: { url: "PROGRAM_UPLOAD_PENDING" }, optionalImages: [] },
           salePrice: channelPrice,
           stockQuantity: quantity,
-          detailAttribute: { minorPurchasable: true, productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: { returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조", qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조", troubleShootingContents: "상품상세 참조", itemName: product.name.slice(0, 50), modelName: (manual.sellerSku || product.sku).slice(0, 50), certificateDetails: "해당사항 없음", manufacturer: manual.manufacturer.slice(0, 200), customerServicePhoneNumber: "SERVER_MANAGED" } }, afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" }, originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
+          detailAttribute: {
+            minorPurchasable: true,
+            ...(hasChildCertification ? {
+              naverShoppingSearchInfo: { modelName: naverAttributes.NAVER_MODEL_NAME.slice(0, 50) },
+              productCertificationInfos: [{
+                certificationInfoId,
+                certificationKindType: "CHILD_CERTIFICATION",
+                name: naverAttributes.NAVER_CHILD_CERTIFICATION_AGENCY.slice(0, 200),
+                certificationNumber: naverAttributes.NAVER_CHILD_CERTIFICATION_NUMBER.slice(0, 200),
+                certificationMark: true,
+                companyName: naverAttributes.NAVER_CHILD_CERTIFICATION_COMPANY.slice(0, 200),
+              }],
+              certificationTargetExcludeContent: { childCertifiedProductExclusionYn: false },
+            } : {}),
+            productInfoProvidedNotice,
+            afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" },
+            originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin },
+            sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku },
+            optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true },
+          },
           customerBenefit: {},
         },
         smartstoreChannelProduct: { naverShoppingRegistration: true, channelProductName: product.name, channelProductDisplayStatusType: "ON" },

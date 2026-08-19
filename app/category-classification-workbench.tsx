@@ -621,7 +621,7 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
     .slice(0, 5);
 }
 
-function normalizeAttributes(payloads: OperationPayload[]) {
+export function normalizeAttributes(payloads: OperationPayload[]) {
   const found = records({ payloads }).flatMap((row): CategoryAttribute[] => {
     const constraint = row.aspectConstraint && typeof row.aspectConstraint === "object" && !Array.isArray(row.aspectConstraint)
       ? row.aspectConstraint as Record<string, unknown>
@@ -651,7 +651,30 @@ function normalizeAttributes(payloads: OperationPayload[]) {
     }).slice(0, 100);
     return [{ id, name, required, values }];
   });
-  return [...new Map(found.map((item) => [item.id, item])).values()].sort((left, right) => Number(right.required) - Number(left.required));
+  const childCertificationRows = records({ payloads }).filter((row) => (
+    Array.isArray(row.kindTypes)
+    && row.kindTypes.map(String).includes("CHILD_CERTIFICATION")
+    && text(row, ["id"])
+  ));
+  const childCertificationAttributes: CategoryAttribute[] = childCertificationRows.length ? [
+    { id: "NAVER_MODEL_NAME", name: "모델명", required: true, values: [] },
+    { id: "NAVER_COLOR", name: "색상", required: true, values: [] },
+    { id: "NAVER_SIZE", name: "크기", required: true, values: [] },
+    { id: "NAVER_RECOMMENDED_AGE", name: "권장 사용 연령", required: true, values: [] },
+    { id: "NAVER_RELEASE_DATE_TEXT", name: "동일 모델 출시연월", required: true, values: [] },
+    {
+      id: "NAVER_CHILD_CERTIFICATION_INFO_ID",
+      name: "어린이제품 인증 종류",
+      required: true,
+      values: childCertificationRows.map((row) => ({ id: text(row, ["id"]), name: text(row, ["name"]) })).filter((item) => item.id && item.name),
+    },
+    { id: "NAVER_CHILD_CERTIFICATION_TYPE", name: "KC 인증정보", required: true, values: [] },
+    { id: "NAVER_CHILD_CERTIFICATION_NUMBER", name: "어린이제품 인증번호", required: true, values: [] },
+    { id: "NAVER_CHILD_CERTIFICATION_AGENCY", name: "인증 기관명", required: true, values: [] },
+    { id: "NAVER_CHILD_CERTIFICATION_COMPANY", name: "인증 상호명", required: true, values: [] },
+  ] : [];
+  return [...new Map([...found, ...childCertificationAttributes].map((item) => [item.id, item])).values()]
+    .sort((left, right) => Number(right.required) - Number(left.required));
 }
 
 function categoryPathLabel(category: CategorySuggestion) {

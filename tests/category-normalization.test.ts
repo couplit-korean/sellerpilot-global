@@ -1,11 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-classification-workbench";
+import { normalizeAttributes, normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-classification-workbench";
 
 test("category queries discard test-only prefixes before provider classification", () => {
   assert.equal(sanitizeCategoryQuery("[API TEST · 판매금지] 메이크업 팔레트 화장품 샘플 등록"), "메이크업 팔레트 화장품");
   assert.equal(sanitizeCategoryQuery("[PROGRAM TEST · NOT FOR SALE] vitamin tablets"), "vitamin tablets");
   assert.equal(sanitizeCategoryQuery("[업로드 테스트 · 판매금지 · 섭취금지] 흰쌀밥 이미지 샘플 2차"), "흰쌀밥");
+});
+
+test("Naver child-product categories expose certification facts as manual required fields", () => {
+  const attributes = normalizeAttributes([{ ok: true, steps: [{ name: "category", ok: true, status: 200, data: {
+    id: "50004209",
+    certificationInfos: [{ id: 1042, name: "어린이제품 안전확인", kindTypes: ["CHILD_CERTIFICATION"] }],
+  } }] }]);
+  const requiredIds = new Set(attributes.filter((item) => item.required).map((item) => item.id));
+  assert.equal(requiredIds.has("NAVER_MODEL_NAME"), true);
+  assert.equal(requiredIds.has("NAVER_CHILD_CERTIFICATION_INFO_ID"), true);
+  assert.equal(requiredIds.has("NAVER_CHILD_CERTIFICATION_NUMBER"), true);
+  assert.deepEqual(attributes.find((item) => item.id === "NAVER_CHILD_CERTIFICATION_INFO_ID")?.values, [
+    { id: "1042", name: "어린이제품 안전확인" },
+  ]);
 });
 
 const qoo10Response = {
