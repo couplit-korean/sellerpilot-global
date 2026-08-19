@@ -96,9 +96,10 @@ export function sanitizeCategoryQuery(value: string) {
     .trim();
 }
 
-function englishCategoryQuery(value: string) {
+export function englishCategoryQuery(value: string) {
   const normalized = value.toLocaleLowerCase();
   const aliases: Array<[RegExp, string]> = [
+    [/(머그|컵|잔|mug|cup)/u, "white ceramic coffee mug"],
     [/(토너|화장수|toner|face\s*mist)/u, "facial toner skincare"],
     [/(립스틱|lipstick)/u, "lipstick"],
     [/(브러시|brush)/u, "makeup brush set"],
@@ -274,6 +275,11 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
     || normalizedCandidate.endsWith(`› ${term}`)
     || normalizedCandidate.endsWith(`/ ${term}`);
 
+  if (/(cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) {
+    return /(mugs?|cups?|drinkware|coffee ware|tea ware)/u.test(normalizedCandidate)
+      && !/(menstrual|measuring|suction|baby|teeth|whitening|tea bags?)/u.test(normalizedCandidate);
+  }
+
   if (/(rice|쌀|밥)/u.test(normalizedQuery)) {
     if (/(rice\s+cooker|appliance)/u.test(normalizedCandidate)) return false;
     return exactOrLeaf("rice") || /(food|beverage|staple|instant rice|ready meal)/u.test(normalizedCandidate);
@@ -354,6 +360,7 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   const score = (terms: string[]) => terms.reduce((total, term, index) => (
     value.includes(term) ? Math.max(total, terms.length - index) : total
   ), 0);
+  if (/(cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) return score(["mugs", "mug", "coffee cups", "cups", "drinkware", "dinnerware"]);
   if (/(rice|쌀|밥)/u.test(normalizedQuery)) return score(["food staples", "food & beverages", "instant rice", "ready meal", "rice"]);
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return score(["pasta", "penne", "noodles", "food staples", "food & beverages"]);
   if (/(flour|밀가루)/u.test(normalizedQuery)) return score(["flour", "baking", "cooking ingredients", "food staples", "food & beverages"]);
@@ -378,6 +385,7 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
 function lazadaSearchTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   const aliases = [query];
+  if (/(cawan|cup|mug|espresso|컵|머그|잔)/u.test(normalized)) aliases.push("mugs cups drinkware coffee tea dinnerware");
   if (/(toner|mist|토너|화장수)/u.test(normalized)) aliases.push("toner facial toner toner & mists skin care");
   if (/(krim|cream|크림|moistur)/u.test(normalized)) aliases.push("facial moisturizers skin care cream");
   if (/(sabun|soap|cleanser|cleansing|비누|세정)/u.test(normalized)) aliases.push("soap facial cleansers bath body skin care");
@@ -407,6 +415,8 @@ function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestio
   const normalizedQuery = query.toLocaleLowerCase();
   const name = candidate.name.toLocaleLowerCase();
   const path = candidate.path.join(" ").toLocaleLowerCase();
+  if (/(cawan|cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) return /mug|cup|drinkware|coffee ware|tea ware|cawan/u.test(`${path} ${name}`)
+    && !/menstrual|measuring|suction|baby|tea bags?|coffee beans?/u.test(`${path} ${name}`);
   if (/(rice|쌀|밥|nasi)/u.test(normalizedQuery)) return /rice|beras|nasi/u.test(name);
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return /pasta|penne|noodle/u.test(name) && !/rice|beras/u.test(name);
   if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return /flour|tepung/u.test(name);
@@ -430,6 +440,7 @@ function lazadaPriorityScore(query: string, candidate: CategorySuggestion) {
   const normalizedQuery = query.toLocaleLowerCase();
   const name = candidate.name.toLocaleLowerCase();
   const score = (terms: string[]) => terms.reduce((total, term, index) => name.includes(term) ? Math.max(total, terms.length - index) : total, 0);
+  if (/(cawan|cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) return score(["mugs", "mug", "coffee cups", "cups", "drinkware"]);
   if (/(rice|쌀|밥|nasi)/u.test(normalizedQuery)) return score(["ready to eat rice", "instant rice", "white rice", "rice"]);
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return score(["penne", "pasta", "noodles"]);
   if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return score(["wheat flour", "flour", "tepung"]);

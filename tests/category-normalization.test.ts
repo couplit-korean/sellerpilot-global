@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeAttributes, normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-classification-workbench";
+import { englishCategoryQuery, normalizeAttributes, normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-classification-workbench";
 
 test("category queries discard test-only prefixes before provider classification", () => {
   assert.equal(sanitizeCategoryQuery("[API TEST · 판매금지] 메이크업 팔레트 화장품 샘플 등록"), "메이크업 팔레트 화장품");
   assert.equal(sanitizeCategoryQuery("[PROGRAM TEST · NOT FOR SALE] vitamin tablets"), "vitamin tablets");
   assert.equal(sanitizeCategoryQuery("[업로드 테스트 · 판매금지 · 섭취금지] 흰쌀밥 이미지 샘플 2차"), "흰쌀밥");
+});
+
+test("English marketplace query translates Korean mug names to a catalog noun", () => {
+  assert.equal(englishCategoryQuery("SellerPilot 품질검증 화이트 세라믹 머그 1개"), "white ceramic coffee mug");
 });
 
 test("Naver child-product categories expose certification facts as manual required fields", () => {
@@ -167,6 +171,18 @@ test("Shopee GlobalProduct normalization chooses a lexical category instead of t
   assert.equal(suggestions[0]?.id, "101240");
   assert.equal(suggestions[0]?.name, "Mugs");
   assert.equal(suggestions[0]?.leaf, true);
+});
+
+test("Shopee mug normalization rejects tea bags and unrelated cup-adjacent categories", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
+      { category_id: 1, display_category_name: "Food & Beverages > Tea & Tea Bags", has_children: false },
+      { category_id: 2, display_category_name: "Home & Living > Dinnerware > Mugs", has_children: false },
+      { category_id: 3, display_category_name: "Health & Wellness > Teeth Whitening", has_children: false },
+    ] } } }],
+  };
+  assert.deepEqual(normalizeSuggestions("shopee", response, "white ceramic coffee mug").map((item) => item.id), ["2"]);
 });
 
 test("Shopee GlobalProduct normalization blocks arbitrary categories without a lexical match", () => {
