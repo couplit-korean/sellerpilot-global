@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, BadgeCheck, Check, ChevronRight, LoaderCircle, RefreshCw, Search, ShieldCheck, Tags } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import {
   applyCategoryLearning,
@@ -710,8 +710,13 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   const [localizedListings, setLocalizedListings] = useState<LocalizedListing[]>([]);
   const [sourceImageUrl, setSourceImageUrl] = useState("");
   const [loadingCredentials, setLoadingCredentials] = useState(true);
+  const stateScopeRef = useRef(sourceRef);
 
-  useEffect(() => setQuery(productName), [productName]);
+  useEffect(() => {
+    stateScopeRef.current = sourceRef;
+    setQuery(productName);
+    setStates({});
+  }, [productId, productName, sourceRef]);
   useEffect(() => {
     let mounted = true;
     setSourceImageUrl("");
@@ -834,6 +839,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   }, [activeCredential]);
 
   const suggest = async (channel: ActiveChannelKey) => {
+    const requestScope = stateScopeRef.current;
     const textQuery = localizedQuery(channel);
     if (textQuery.length < 2) return notify("카테고리 검색에 사용할 상품명을 2자 이상 입력해 주세요.");
     const key = stateKey(channel);
@@ -877,13 +883,16 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         : [];
       const suggestions = applyCategoryLearning(textQuery, officialSuggestions, examples);
       if (!suggestions.length) throw new Error("상품과 일치하는 최종 카테고리를 찾지 못했습니다. 상품명을 더 구체적으로 입력해 주세요.");
+      if (stateScopeRef.current !== requestScope) return;
       setStates((current) => ({ ...current, [key]: { ...initialState(), phase: "idle", suggestions } }));
     } catch (error) {
+      if (stateScopeRef.current !== requestScope) return;
       setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "error", error: userFacingErrorMessage(error, "카테고리를 찾지 못했습니다. 상품명을 확인하고 다시 시도해 주세요.") } }));
     }
   };
 
   const inspect = async (channel: ActiveChannelKey, selected: CategorySuggestion) => {
+    const requestScope = stateScopeRef.current;
     const key = stateKey(channel);
     setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "inspecting", error: undefined } }));
     try {
@@ -898,8 +907,10 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       ]);
       const attributes = normalizeAttributes([attributesPayload]);
       const verifiedLeaf = selected.leaf && validationPayload.ok !== false;
+      if (stateScopeRef.current !== requestScope) return;
       setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, attributes, values: {}, verifiedLeaf, phase: "ready" } }));
     } catch (error) {
+      if (stateScopeRef.current !== requestScope) return;
       setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "error", error: userFacingErrorMessage(error, "카테고리 필수 정보를 불러오지 못했습니다. 다시 시도해 주세요.") } }));
     }
   };
@@ -924,6 +935,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   };
 
   const confirm = async (channel: ActiveChannelKey) => {
+    const requestScope = stateScopeRef.current;
     const key = stateKey(channel);
     const state = states[key];
     const credential = activeCredential.get(channel);
@@ -969,6 +981,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       p_confirm: true,
     })));
     if (results.some((result) => result.error)) return notify("카테고리를 저장하지 못했습니다. 로그인 상태를 확인하고 다시 시도해 주세요.");
+    if (stateScopeRef.current !== requestScope) return;
     setStates((current) => ({ ...current, [key]: { ...state, phase: "confirmed" } }));
     onConfirmed?.(channel);
     notify(`${channelCatalog[channel].name} 카테고리와 필수 속성을 ${channel === "shopee" ? `${assignmentTargets.length}개 숍에 ` : ""}확정했습니다.`);
