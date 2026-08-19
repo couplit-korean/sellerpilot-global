@@ -402,7 +402,8 @@ function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestio
   if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return /building toy|building block|block toy|construction (?:set|toy)|stacking block|brick|educational toy/u.test(`${path} ${name}`);
   if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return /fish oil|omega|dha|epa|minyak ikan|vitamin|supplement|health/u.test(`${path} ${name}`)
     && !/pet|animal feed|veterinary|mother|baby|infant|bayi|kanak|ibu/u.test(`${path} ${name}`);
-  if (/(vitamin|비타민)/u.test(normalizedQuery)) return /vitamin|supplement/u.test(`${path} ${name}`);
+  if (/(vitamin|비타민)/u.test(normalizedQuery)) return /vitamin|supplement/u.test(`${path} ${name}`)
+    && !/pet|animal feed|veterinary|mother|baby|infant|bayi|kanak|ibu/u.test(`${path} ${name}`);
   if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return /dresses?/u.test(name)
     && /women'?s clothing|women fashion|pakaian wanita/u.test(path)
     && !/maternity|costume|pretend|toy/u.test(`${path} ${name}`);

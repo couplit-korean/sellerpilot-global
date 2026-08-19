@@ -475,3 +475,14 @@ test("Lazada omega matching falls back to a health-supplement leaf and excludes 
   };
   assert.equal(normalizeSuggestions("lazada", response, "fish oil omega 3")[0]?.id, "HEALTH");
 });
+
+test("Lazada adult vitamin matching does not suggest baby or pet supplements", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
+      { category_id: "BABY", name: "Vitamins & Supplements", category_path: "Mother & Baby > Baby Health Care > Vitamins & Supplements", leaf: true },
+      { category_id: "PET", name: "Vitamins & Minerals", category_path: "Pet Supplies > Pet Healthcare > Supplements & Vitamins > Vitamins & Minerals", leaf: true },
+    ] } }],
+  };
+  assert.deepEqual(normalizeSuggestions("lazada", response, "adult vitamin supplement"), []);
+});

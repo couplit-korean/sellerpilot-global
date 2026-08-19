@@ -21,7 +21,7 @@ function providerText(result: ChannelOperationResult) {
 export function classifyListingFailure(result: ChannelOperationResult): ListingFailureRemediation | null {
   if (result.ok || (result.operation !== "listing.create" && result.operation !== "listing.update")) return null;
   const text = `${result.safeMessage} ${providerText(result)}`;
-  if (/not authori[sz]ed to sell|do not have permission to list|NO_AUTHORITY|RESTRICTED_CATEGORY|판매 권한.*카테고리/i.test(text)) {
+  if (/not authori[sz]ed to sell|do not have permission to list|NO_AUTHORITY|NotAuthority\.product\.category\.id|RESTRICTED_CATEGORY|판매 권한.*카테고리|등록권한이 있어야만 판매/i.test(text)) {
     return {
       kind: "category_permission",
       code: "CATEGORY_PERMISSION_REQUIRED",

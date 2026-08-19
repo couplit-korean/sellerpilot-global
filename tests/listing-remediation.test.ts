@@ -35,6 +35,15 @@ test("Qoo10 category permission failures use the same deterministic remediation"
   assert.equal(remediation?.retryableAfterCorrection, true);
 });
 
+test("Naver category authority failures stop retries and reject the saved category", () => {
+  const remediation = classifyListingFailure(failedResult({
+    code: "NotAuthority.product.category.id",
+    message: "등록권한이 있어야만 판매가 가능합니다.",
+  }));
+  assert.equal(remediation?.kind, "category_permission");
+  assert.equal(remediation?.rejectCategory, true);
+});
+
 test("image errors surface the automatic normalized-image recovery state", () => {
   const remediation = classifyListingFailure(failedResult({ error: "invalid image dimensions" }, "shopee"));
 
