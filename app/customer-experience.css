@@ -333,15 +333,6 @@ button {
   padding: 20px;
 }
 
-.metric-foot .neutral {
-  font-size: 0;
-}
-
-.metric-foot .neutral::after {
-  content: "최신";
-  font-size: 11px;
-}
-
 .product-image-missing small {
   display: none;
 }

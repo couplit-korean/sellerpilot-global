@@ -346,7 +346,7 @@ function MetricCard({ label, value, delta, detail, icon: Icon, tone, reverse }: 
     <article className="metric-card">
       <div className="metric-copy"><span>{label}</span><strong>{value}</strong></div>
       <div className={`metric-icon ${tone}`}><Icon size={18} /></div>
-      <div className="metric-foot">{delta ? <span className={reverse ? "negative" : "positive"}>{reverse ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{delta}</span> : <span className="neutral"><Activity size={13} />최신</span>}<small>{detail}</small></div>
+      <div className="metric-foot">{delta ? <span className={reverse ? "negative" : "positive"}>{reverse ? <ArrowDownRight size={13} /> : <ArrowUpRight size={13} />}{delta}</span> : <span className="neutral" aria-label="최신 정보"><Activity size={13} aria-hidden="true" />최신 정보</span>}<small>{detail}</small></div>
     </article>
   );
 }
@@ -411,7 +411,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   return (
     <div className="page-stack">
       <section className="daily-briefing">
-        <div className="briefing-copy"><span>{currentDate}</span><h2>현재 처리할 업무가 <b>{operationsAvailable ? `${totalTasks}건` : "확인 중"}</b> 있습니다.</h2><p>주문·재고·고객 문의·상품 등록 결과를 기준으로 정리했습니다.</p></div>
+        <div className="briefing-copy"><span>{currentDate}</span><h2>{operationsAvailable ? <>현재 처리할 업무가 <b>{totalTasks}건</b> 있습니다.</> : <>오늘 할 일을 <b>확인하고 있습니다.</b></>}</h2><p>주문·재고·고객 문의·상품 등록 결과를 기준으로 정리했습니다.</p></div>
         <div className="briefing-tasks">
           <button onClick={() => onNavigate("orders")}><span className="task-tone order" /><small>통합 주문</small><b>{operationsAvailable ? summary.orderCount : "—"}</b><em>주문 관리</em></button>
           <button onClick={() => onNavigate("orders")}><span className="task-tone shipping" /><small>출고 대기</small><b>{operationsAvailable ? summary.readyToShipCount : "—"}</b><em>배송 준비</em></button>
@@ -479,7 +479,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
         <article className="panel alert-panel">
           <div className="panel-heading"><div><span className="panel-kicker">우선 처리 필요</span><h3>지금 확인할 항목</h3></div><span className="count-chip">{summary.lowStockCount + summary.registrationErrorCount + summary.openTicketCount}</span></div>
           <div className="alert-list">
-            <button onClick={() => onNavigate("products")}><span className="alert-icon danger"><Box size={16} /></span><span><b>재고주의 상품 {summary.lowStockCount}건</b><small>실재고와 재주문 기준으로 집계했습니다.</small></span><em>상품 보기<ChevronRight size={14} /></em></button>
+            <button onClick={() => onNavigate("products")}><span className="alert-icon danger"><Box size={16} /></span><span><b>재고주의 상품 {summary.lowStockCount}건</b><small>현재 재고와 재주문 기준으로 집계했습니다.</small></span><em>상품 보기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("publishing")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>등록 확인 필요 {summary.registrationErrorCount}건</b><small>카테고리와 필수 정보를 확인해 주세요.</small></span><em>확인하기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("cs")}><span className="alert-icon blue"><MessageCircleMore size={16} /></span><span><b>답변 대기 문의 {summary.openTicketCount}건</b><small>판매 채널에서 새로 받은 문의입니다.</small></span><em>답변하기<ChevronRight size={14} /></em></button>
           </div>
