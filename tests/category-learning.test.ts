@@ -56,6 +56,7 @@ test("semantic guard rejects a confidently wrong product family and risky audien
   assert.equal(categoryKindCompatibility("즉석 흰쌀밥", "Kitchen Appliances > Rice Cookers"), false);
   assert.equal(categoryKindCompatibility("비타민 정제 건강식품", "Health > Adult Vitamins"), true);
   assert.equal(categoryKindCompatibility("Cica facial toner skincare", "Beauty > Beauty Supplements"), false);
+  assert.equal(categoryKindCompatibility("Cica facial toner skincare", "Printers & Scanners > Inks & Toners"), false);
   assert.equal(categoryKindCompatibility("Cica facial toner skincare", "Beauty > Toners & Mists"), true);
 });
 

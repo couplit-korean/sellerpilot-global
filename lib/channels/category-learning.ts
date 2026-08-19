@@ -114,6 +114,9 @@ export function categoryKindCompatibility(query: string, candidate: string) {
   if (queryKey === "beauty.toner" && !/(토너|화장수|미스트|toners?|mists?|化粧水)/iu.test(candidate)) {
     return false;
   }
+  if (queryKey === "beauty.toner" && /(inks?|laser|printers?|printing\s*consumables?|잉크|프린터)/iu.test(candidate)) {
+    return false;
+  }
   if (queryKey && !queryKey.startsWith("terms:") && candidateKinds.length && !candidateKinds.includes(queryKey)) {
     const queryFamily = queryKey.split(".")[0];
     const candidateFamilies = new Set(candidateKinds.map((kind) => kind.split(".")[0]));
