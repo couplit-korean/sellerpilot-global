@@ -80,12 +80,36 @@ function queryScore(query: string, candidate: string) {
 
 export function sanitizeCategoryQuery(value: string) {
   return value
-    .replace(/\[(?:api|program)\s*test[^\]]*\]/giu, " ")
+    .replace(/\[(?:(?:api|program)\s*test|업로드\s*테스트)[^\]]*\]/giu, " ")
     .replace(/\b(?:api|program)\s*test\b/giu, " ")
     .replace(/(?:판매\s*금지|섭취\s*금지|샘플\s*등록|not\s*for\s*sale|do\s*not\s*(?:sell|consume))/giu, " ")
+    .replace(/이미지\s*샘플(?:\s*\d+차)?/gu, " ")
     .replace(/[·|]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function englishCategoryQuery(value: string) {
+  const normalized = value.toLocaleLowerCase();
+  const aliases: Array<[RegExp, string]> = [
+    [/(립스틱|lipstick)/u, "lipstick"],
+    [/(브러시|brush)/u, "makeup brush set"],
+    [/(흰쌀밥|백미|쌀|rice)/u, "white rice"],
+    [/(펜네|파스타|penne|pasta)/u, "penne pasta"],
+    [/(티셔츠|t[\s-]?shirt)/u, "white t-shirt"],
+    [/(후드|hood)/u, "hoodie"],
+    [/(테디|곰인형|teddy|plush)/u, "teddy bear plush toy"],
+    [/(장난감.*자동차|자동차.*장난감|toy\s*car)/u, "toy car"],
+    [/(어유|오메가|fish\s*oil|omega)/u, "fish oil supplement"],
+    [/(비타민|vitamin)/u, "vitamin supplement"],
+    [/(캔버스.*토트|토트.*백|tote)/u, "canvas tote bag"],
+    [/(수납.*박스|보관.*박스|storage\s*(?:box|bin))/u, "storage box"],
+  ];
+  return aliases.find(([pattern]) => pattern.test(normalized))?.[1] ?? value;
+}
+
+function isGenericFallbackTitle(value: string) {
+  return /(?:sample product|sampel produk|listing test|ujian penyenaraian)/iu.test(value);
 }
 
 function lazadaQueryScore(query: string, candidate: string) {
@@ -693,11 +717,17 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     if (channel === "shopee" || channel === "lazada") {
       const targetMarket = selectedTarget(channel)?.marketCode;
       const localized = localizedListings.find((listing) => listing.channel === channel && (listing.market === targetMarket || listing.market === "SG"));
-      return sanitizeCategoryQuery(localized?.title ?? manualQuery);
+      const localizedTitle = sanitizeCategoryQuery(localized?.title ?? "");
+      return localizedTitle && !isGenericFallbackTitle(localizedTitle)
+        ? localizedTitle
+        : englishCategoryQuery(defaultQuery || manualQuery);
     }
     if (channel === "ebay") {
       const english = localizedListings.find((listing) => listing.channel === "shopee" && listing.market === "SG")?.title;
-      return sanitizeCategoryQuery(english ?? manualQuery);
+      const englishTitle = sanitizeCategoryQuery(english ?? "");
+      return englishTitle && !isGenericFallbackTitle(englishTitle)
+        ? englishTitle
+        : englishCategoryQuery(defaultQuery || manualQuery);
     }
     return manualQuery;
   }, [localizedListings, productName, query, selectedTarget]);

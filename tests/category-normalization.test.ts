@@ -5,6 +5,7 @@ import { normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-cla
 test("category queries discard test-only prefixes before provider classification", () => {
   assert.equal(sanitizeCategoryQuery("[API TEST · 판매금지] 메이크업 팔레트 화장품 샘플 등록"), "메이크업 팔레트 화장품");
   assert.equal(sanitizeCategoryQuery("[PROGRAM TEST · NOT FOR SALE] vitamin tablets"), "vitamin tablets");
+  assert.equal(sanitizeCategoryQuery("[업로드 테스트 · 판매금지 · 섭취금지] 흰쌀밥 이미지 샘플 2차"), "흰쌀밥");
 });
 
 const qoo10Response = {
