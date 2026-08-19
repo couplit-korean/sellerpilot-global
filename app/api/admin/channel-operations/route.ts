@@ -29,7 +29,16 @@ const requestSchema = z.object({
   price: z.number().nonnegative().max(999_999_999).optional(),
   market: z.string().trim().max(80).optional().default(""),
   targetId: z.string().trim().max(160).optional().default(""),
+  inventorySyncRunId: z.string().uuid().optional(),
+  inventorySyncItemId: z.string().uuid().optional(),
   arguments: z.record(z.string(), z.unknown()).refine((value) => JSON.stringify(value).length <= 128_000, "payload too large"),
+}).superRefine((value, context) => {
+  if (Boolean(value.inventorySyncRunId) !== Boolean(value.inventorySyncItemId)) {
+    context.addIssue({ code: "custom", message: "inventory sync identifiers must be paired" });
+  }
+  if (value.inventorySyncRunId && value.operation !== "inventory.update") {
+    context.addIssue({ code: "custom", message: "inventory sync identifiers require inventory.update" });
+  }
 });
 
 function canonicalJson(value: unknown): string {
@@ -120,6 +129,8 @@ export async function POST(request: NextRequest) {
       price: parsed.data.price ?? null,
       market: parsed.data.market,
       targetId: parsed.data.targetId,
+      inventorySyncRunId: parsed.data.inventorySyncRunId ?? null,
+      inventorySyncItemId: parsed.data.inventorySyncItemId ?? null,
       arguments: parsed.data.arguments,
     }))
     .digest("hex");
@@ -137,6 +148,21 @@ export async function POST(request: NextRequest) {
   const claim = claimData as Record<string, unknown>;
   const attemptId = typeof claim.attempt_id === "string" ? claim.attempt_id : "";
   if (!attemptId) return NextResponse.json({ message: "작업 추적 ID를 만들지 못했습니다." }, { status: 500 });
+  const inventoryQuantity = operation === "inventory.update"
+    ? Number(parsed.data.arguments.quantity)
+    : Number.NaN;
+  const completeInventorySync = async (input: { success: boolean; safeMessage: string }) => {
+    if (!parsed.data.inventorySyncRunId || !parsed.data.inventorySyncItemId) return true;
+    const { data, error } = await serviceClient.rpc("sellerpilot_service_complete_inventory_sync_item", {
+      p_run_id: parsed.data.inventorySyncRunId,
+      p_item_id: parsed.data.inventorySyncItemId,
+      p_attempt_id: attemptId,
+      p_success: input.success,
+      p_verified_quantity: input.success && Number.isInteger(inventoryQuantity) ? inventoryQuantity : null,
+      p_safe_message: input.safeMessage,
+    });
+    return !error && data === true;
+  };
   if (claim.duplicate === true) {
     const duplicateRemoteId = typeof claim.remote_id === "string" ? claim.remote_id : undefined;
     const duplicateMessage = typeof claim.safe_message === "string" ? claim.safe_message : "같은 작업이 이미 완료됐습니다.";
@@ -167,6 +193,9 @@ export async function POST(request: NextRequest) {
         if (reconcileError || reconciled !== true) {
           return NextResponse.json({ message: "원격 성공 이력을 상품 원장과 조정하지 못했습니다.", attemptId, remoteId: duplicateRemoteId }, { status: 500 });
         }
+      }
+      if (!await completeInventorySync({ success: true, safeMessage: duplicateMessage })) {
+        return NextResponse.json({ message: "완료된 재고 작업을 중앙 재고 원장과 다시 연결하지 못했습니다.", attemptId }, { status: 500 });
       }
       return NextResponse.json({
         ok: true,
@@ -260,7 +289,8 @@ export async function POST(request: NextRequest) {
         p_safe_message: result.safeMessage,
       });
       const listingRecorded = await completeListing({ success: result.ok, remoteId: result.remoteId, safeMessage: result.safeMessage });
-      if (!listingRecorded) {
+      const inventoryRecorded = await completeInventorySync({ success: result.ok, safeMessage: result.safeMessage });
+      if (!listingRecorded || !inventoryRecorded) {
         return NextResponse.json({
           message: "원격 작업은 완료됐지만 상품 원장 조정이 필요합니다. 같은 멱등키로 다시 요청하면 원격 재호출 없이 복구합니다.",
           attemptId,
@@ -287,6 +317,7 @@ export async function POST(request: NextRequest) {
         p_safe_message: message,
       });
       await completeListing({ success: false, safeMessage: message });
+      await completeInventorySync({ success: false, safeMessage: message });
       return NextResponse.json({ message, attemptId }, { status: 422 });
     }
   }
@@ -303,6 +334,7 @@ export async function POST(request: NextRequest) {
       p_safe_message: "활성 키를 안전하게 불러오지 못했습니다.",
     });
     await completeListing({ success: false, safeMessage: "활성 키를 안전하게 불러오지 못했습니다." });
+    await completeInventorySync({ success: false, safeMessage: "활성 키를 안전하게 불러오지 못했습니다." });
     return NextResponse.json({ message: "활성 키를 안전하게 불러오지 못했습니다.", attemptId }, { status: 404 });
   }
 
@@ -343,7 +375,8 @@ export async function POST(request: NextRequest) {
       p_safe_message: result.safeMessage,
     });
     const listingRecorded = await completeListing({ success: result.ok, remoteId: result.remoteId, safeMessage: result.safeMessage });
-    if (!listingRecorded) {
+    const inventoryRecorded = await completeInventorySync({ success: result.ok, safeMessage: result.safeMessage });
+    if (!listingRecorded || !inventoryRecorded) {
       return NextResponse.json({
         message: "원격 작업은 완료됐지만 상품 원장 조정이 필요합니다. 같은 멱등키로 다시 요청하면 원격 재호출 없이 복구합니다.",
         attemptId,
@@ -365,6 +398,7 @@ export async function POST(request: NextRequest) {
       p_safe_message: message,
     });
     await completeListing({ success: false, safeMessage: message });
+    await completeInventorySync({ success: false, safeMessage: message });
     return NextResponse.json({ message, attemptId }, { status: 422 });
   }
 }

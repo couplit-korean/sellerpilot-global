@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import {
   applyCategoryLearning,
+  categoryKindCompatibility,
   type CategoryLearningExample,
   type LearnableCategorySuggestion,
 } from "../lib/channels/category-learning";
@@ -525,13 +526,14 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
   const root = { steps: payload.steps ?? [] };
   const directCoupang = records(root).find((row) => text(row, ["predictedCategoryId"]));
   if (channel === "coupang" && directCoupang) {
-    return [{
+    const suggestion = {
       id: text(directCoupang, ["predictedCategoryId"]),
       name: text(directCoupang, ["predictedCategoryName"]) || "쿠팡 추천 카테고리",
       path: [text(directCoupang, ["predictedCategoryName"])].filter(Boolean),
       confidence: text(directCoupang, ["autoCategorizationPredictionResultType"]) === "SUCCESS" ? 0.98 : 0.72,
       leaf: true,
-    }];
+    };
+    return categoryKindCompatibility(query, `${suggestion.path.join(" ")} ${suggestion.name}`) ? [suggestion] : [];
   }
   const directTemu = records(root).find((row) => text(row, ["catId"]));
   if (channel === "temu" && directTemu) {
@@ -601,6 +603,7 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
     .filter((item) => channel !== "shopee" || shopeeCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
     .filter((item) => channel !== "lazada" || lazadaCategoryCompatibility(query, item))
     .filter((item) => channel !== "smartstore" || smartstoreCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
+    .filter((item) => categoryKindCompatibility(query, `${item.path.join(" ")} ${item.name}`))
     .sort((left, right) => {
       if (channel === "qoo10") {
         const leftPriority = qoo10PriorityScore(query, left);

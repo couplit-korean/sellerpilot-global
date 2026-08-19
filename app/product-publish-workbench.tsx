@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { lazadaSkuSaleAttributes, marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects, shopeeLanguageSafeText } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
+import { buildInventoryUpdateArguments, type InventorySyncRun } from "../lib/channels/inventory-sync";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10SellerCode } from "../lib/channels/qoo10";
 import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
@@ -28,6 +29,7 @@ type Assignment = {
 };
 
 type Listing = {
+  id: string;
   channel: ActiveChannelKey;
   market: string;
   targetId: string;
@@ -70,6 +72,7 @@ type PublishContext = {
     description: string;
     sourceUrl: string | null;
     status: string;
+    onHand: number;
   };
   manualFields: ManualFields;
   imageSpecs: Array<{ role: string; width: number; height: number; bytes: number; mediaType: string; fit: string }>;
@@ -493,6 +496,9 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const [loading, setLoading] = useState(false);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkConfirming, setBulkConfirming] = useState(false);
+  const [inventoryRunning, setInventoryRunning] = useState(false);
+  const [inventoryConfirming, setInventoryConfirming] = useState(false);
+  const [inventoryRun, setInventoryRun] = useState<InventorySyncRun | null>(null);
   const [confirmingChannel, setConfirmingChannel] = useState<ActiveChannelKey | null>(null);
   const [qoo10StopConfirming, setQoo10StopConfirming] = useState<Listing | null>(null);
   const [qoo10CleanupConfirming, setQoo10CleanupConfirming] = useState<string | null>(null);
@@ -513,11 +519,12 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("상품 등록 준비 정보를 보려면 다시 로그인해 주세요.");
-      const [contextResponse, credentialsResponse, shopeeTargetsResponse, lazadaTargetsResponse] = await Promise.all([
+      const [contextResponse, credentialsResponse, shopeeTargetsResponse, lazadaTargetsResponse, inventoryResponse] = await Promise.all([
         fetch(`/api/admin/products/${productId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
         supabase.rpc("sellerpilot_list_credentials"),
         fetchChannelTargets("shopee", accessToken),
         fetchChannelTargets("lazada", accessToken),
+        supabase.rpc("sellerpilot_get_inventory_sync", { p_product_id: productId }),
       ]);
       const payload = await contextResponse.json().catch(() => ({ message: "상품 준비 응답을 읽지 못했습니다." })) as PublishContext & { message?: string };
       if (!contextResponse.ok) throw new Error(payload.message ?? "상품 등록 준비 정보를 불러오지 못했습니다.");
@@ -529,7 +536,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const initialTargets: Partial<Record<ActiveChannelKey, ChannelTarget>> = { shopee: shopeeTargets[0], lazada: lazadaTargets[0] };
       const manual = nextPayload.manualFields;
       const initialPrice = manual.sellingPrice;
-      const initialQuantity = manual.stock;
+      const initialQuantity = Math.max(0, Number(nextPayload.product.onHand ?? manual.stock) || 0);
       const initialPackage = { weight: manual.weightKg, length: manual.packageLengthCm, width: manual.packageWidthCm, height: manual.packageHeightCm };
       priceRef.current = initialPrice;
       quantityRef.current = initialQuantity;
@@ -547,6 +554,9 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       setAvailableTargets({ shopee: shopeeTargets, lazada: lazadaTargets });
       setTargetCredentialIds({ shopee: shopeePayload.credentialId, lazada: lazadaPayload.credentialId });
       setSelectedTargets(initialTargets);
+      setInventoryRun(inventoryResponse.data && typeof inventoryResponse.data === "object" && !Array.isArray(inventoryResponse.data)
+        ? inventoryResponse.data as InventorySyncRun
+        : null);
       setDrafts(buildDraftMap(nextPayload, initialPrice, initialQuantity, initialTargets, initialPackage, manual.currency === "USD" ? initialPrice : globalBaseUsdPriceRef.current));
     } catch (error) {
       notify(error instanceof Error ? error.message : "상품 등록 준비 정보를 불러오지 못했습니다.");
@@ -592,6 +602,10 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
 
   const executeChannel = async (channel: ActiveChannelKey, options: { skipConfirm?: boolean; accessToken?: string; deferRefresh?: boolean } = {}) => {
     if (!context || !productId) return false;
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      notify("새 상품 등록 재고는 1개 이상이어야 합니다. 품절 전파는 ‘등록 채널 재고 맞추기’를 사용해 주세요.");
+      return false;
+    }
     const credential = activeCredentials.get(channel);
     const target = selectedTargets[channel];
     const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
@@ -674,7 +688,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
       const parsedDraft = parseDraft(drafts[channel]);
       const hasMissingRequired = !parsedDraft || blockingListingRequirements(channel, parsedDraft).length > 0 || missingNativeValues(channel, parsedDraft).length > 0;
-      return Boolean(credential && assignment && !hasMissingRequired && listing?.status !== "published" && results[channel]?.phase !== "running");
+      return Boolean(quantity >= 1 && credential && assignment && !hasMissingRequired && listing?.status !== "published" && results[channel]?.phase !== "running");
     }).slice(0, 8);
     if (!readyChannels.length) return notify("활성 키와 확정 카테고리가 모두 준비된 미등록 채널이 없습니다.");
     if (!confirmed) {
@@ -696,6 +710,119 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       notify(error instanceof Error ? error.message : "동시 채널 등록을 완료하지 못했습니다.");
     } finally {
       setBulkRunning(false);
+    }
+  };
+
+  const executeInventorySync = async (confirmed = false) => {
+    if (!context || !productId || inventoryRunning) return;
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 99_999_999) {
+      return notify("재고는 0 이상의 정수로 입력해 주세요.");
+    }
+    const publishedListings = context.listings.filter((listing) => listing.status === "published" && listing.remoteId);
+    if (!publishedListings.length) return notify("먼저 한 개 이상의 판매 채널에 상품을 등록해 주세요.");
+
+    const prepared = new Map<string, { credential: CredentialRow; arguments: Record<string, unknown> }>();
+    try {
+      for (const listing of publishedListings) {
+        const credential = activeCredentials.get(listing.channel);
+        if (!credential) throw new Error(`${channelCatalog[listing.channel].name} 활성 키가 없어 재고 동기화를 시작할 수 없습니다.`);
+        const target = listing.channel === "shopee" || listing.channel === "lazada"
+          ? availableTargets[listing.channel]?.find((item) => item.targetId === listing.targetId && item.marketCode === listing.market)
+          : undefined;
+        if ((listing.channel === "shopee" || listing.channel === "lazada") && !target) {
+          throw new Error(`${channelCatalog[listing.channel].name} ${listing.market} 판매 계정을 다시 확인해 주세요.`);
+        }
+        const listingDraft = buildChannelArguments(
+          listing.channel,
+          context,
+          price,
+          quantity,
+          target,
+          packageFields,
+          globalBaseUsdPrice,
+        );
+        prepared.set(listing.id, {
+          credential,
+          arguments: buildInventoryUpdateArguments({
+            channel: listing.channel,
+            remoteId: listing.remoteId!,
+            quantity,
+            productSku: context.product.sku,
+            market: listing.market,
+            targetId: listing.targetId,
+            draft: listingDraft,
+          }),
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error && error.message.includes("SINGLE_SKU_REQUIRED")
+        ? "옵션이 여러 개인 상품은 옵션별 재고를 먼저 입력해야 합니다. 총재고를 각 옵션에 복제하지 않았습니다."
+        : error instanceof Error ? error.message : "채널별 재고 정보를 준비하지 못했습니다.";
+      return notify(message);
+    }
+    if (!confirmed) {
+      setInventoryConfirming(true);
+      return;
+    }
+
+    setInventoryConfirming(false);
+    setInventoryRunning(true);
+    try {
+      const supabase = createClient();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
+      const syncKey = `inventory:${productId}:${quantity}:${crypto.randomUUID()}`;
+      const { data: startData, error: startError } = await supabase.rpc("sellerpilot_start_inventory_sync", {
+        p_product_id: productId,
+        p_on_hand: quantity,
+        p_idempotency_key: syncKey,
+      });
+      if (startError || !startData || typeof startData !== "object" || Array.isArray(startData)) {
+        throw new Error(startError?.message || "중앙 재고 동기화 작업을 시작하지 못했습니다.");
+      }
+      const run = startData as InventorySyncRun;
+      setInventoryRun(run);
+      const completed = await Promise.all(run.tasks.map(async (task) => {
+        const plan = prepared.get(task.listingId);
+        if (!plan) return false;
+        const response = await fetch("/api/admin/channel-operations", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({
+            credentialId: plan.credential.id,
+            channel: task.channel,
+            operation: "inventory.update",
+            idempotencyKey: `inventory:${run.runId}:${task.id}:verified-v1`,
+            confirmWrite: true,
+            productId,
+            market: task.market,
+            targetId: task.targetId,
+            inventorySyncRunId: run.runId,
+            inventorySyncItemId: task.id,
+            arguments: plan.arguments,
+          }),
+        });
+        const payload = await response.json().catch(() => ({ message: "재고 변경 응답을 읽지 못했습니다." })) as { ok?: boolean; message?: string; safeMessage?: string };
+        if (!response.ok || payload.ok !== true) {
+          notify(`${channelCatalog[task.channel].name}: ${payload.message ?? payload.safeMessage ?? "원격 재고 확인 실패"}`);
+          return false;
+        }
+        return true;
+      }));
+      const { data: completedRun } = await supabase.rpc("sellerpilot_get_inventory_sync", { p_product_id: productId });
+      const latest = completedRun && typeof completedRun === "object" && !Array.isArray(completedRun)
+        ? completedRun as InventorySyncRun
+        : run;
+      setInventoryRun(latest);
+      await load();
+      onChanged?.();
+      const succeeded = completed.filter(Boolean).length;
+      notify(`재고 동기화 확인 완료 · 성공 ${succeeded}개 / 확인 필요 ${completed.length - succeeded}개`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "재고 동기화를 완료하지 못했습니다.");
+    } finally {
+      setInventoryRunning(false);
     }
   };
 
@@ -788,13 +915,15 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const imagePackageReady = marketplaceThumbnailCount >= 1 && dedicatedDetailImageCount >= 4;
 
   return <section className="panel product-publish-workbench">
-    <div className="publish-workbench-head"><div><span className="panel-kicker">3단계</span><h3>판매 채널에 등록하기</h3><p>상품 이미지, 카테고리, 가격, 재고와 필수 정보를 마지막으로 확인한 뒤 준비된 판매 채널에 등록합니다.</p></div><div className="publish-head-actions"><span className="step-chip">3 / 3</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "등록 중" : bulkConfirming ? "마지막 확인" : "준비된 채널에 등록"}</button></div></div>
+    <div className="publish-workbench-head"><div><span className="panel-kicker">3단계</span><h3>판매 채널에 등록하기</h3><p>상품 이미지, 카테고리, 가격, 재고와 필수 정보를 마지막으로 확인한 뒤 준비된 판매 채널에 등록합니다.</p></div><div className="publish-head-actions"><span className="step-chip">3 / 3</span><button type="button" className="credential-secondary" disabled={inventoryRunning || inventoryConfirming} onClick={() => void executeInventorySync()}>{inventoryRunning ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{inventoryRunning ? "재고 확인 중" : inventoryConfirming ? "마지막 확인" : "등록 채널 재고 맞추기"}</button><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "등록 중" : bulkConfirming ? "마지막 확인" : "준비된 채널에 등록"}</button></div></div>
     {bulkConfirming && <div className="publish-write-confirmation" role="alertdialog" aria-label="여러 판매 채널 등록 최종 확인"><AlertTriangle size={18} /><div><b>준비된 모든 판매 채널에 상품을 등록합니다.</b><small>가격과 재고, 필수 정보를 한 번 더 확인해 주세요.</small></div><button type="button" className="credential-secondary" onClick={() => setBulkConfirming(false)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeReadyChannels(true)}>확인하고 등록</button></div>}
+    {inventoryConfirming && <div className="publish-write-confirmation" role="alertdialog" aria-label="전체 판매 채널 재고 동기화 최종 확인"><AlertTriangle size={18} /><div><b>등록된 모든 판매 채널의 판매 가능 재고를 {quantity}개로 맞춥니다.</b><small>각 채널 변경 후 다시 조회해 수량이 정확히 일치한 경우만 성공으로 기록합니다.</small></div><button type="button" className="credential-secondary" onClick={() => setInventoryConfirming(false)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeInventorySync(true)}>확인하고 재고 맞추기</button></div>}
+    {inventoryRun && <div className={`publish-result ${inventoryRun.status === "succeeded" ? "succeeded" : inventoryRun.status === "failed" || inventoryRun.status === "partial" ? "failed" : "running"}`}><b>최근 재고 동기화</b> · {inventoryRun.status === "succeeded" ? "전체 채널 확인 완료" : inventoryRun.status === "partial" ? "일부 채널 재확인 필요" : inventoryRun.status === "failed" ? "채널 확인 필요" : "처리 중"} · 성공 {inventoryRun.succeededCount}/{inventoryRun.totalCount}</div>}
     <div className="publish-common-fields">
       <label><span>판매가(원) <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); }} /></label>
       <label><span>판매 통화 <i>필수</i></span><input required value={currency} maxLength={3} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
       <label><span>해외 판매 기준가(달러) <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={globalBaseUsdPrice} onChange={(event) => { const value = Number(event.target.value); globalBaseUsdPriceRef.current = value; setGlobalBaseUsdPrice(value); }} /></label>
-      <label><span>재고 <i>필수</i></span><input required type="number" min="1" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); }} /></label>
+      <label><span>재고 <i>필수</i></span><input required type="number" min="0" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); }} /></label>
       <label><span>중량 kg <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={packageFields.weight} onChange={(event) => { const next = { ...packageFields, weight: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
       <label><span>가로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.length} onChange={(event) => { const next = { ...packageFields, length: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
       <label><span>세로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.width} onChange={(event) => { const next = { ...packageFields, width: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
@@ -850,7 +979,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}</p>}
           {confirmingChannel === channel && <div className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 등록 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정에 실제 상품 1건을 등록합니다.</b><small>실제 전송 가격 {confirmationPrice.toLocaleString()} {confirmationCurrency} · 재고 {quantity}개</small></div><button type="button" className="credential-secondary" onClick={() => setConfirmingChannel(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 등록 실행</button></div>}
           {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={() => setQoo10StopConfirming(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
-          <button type="button" className="publish-execute" disabled={!credential || !assignment || invalidDraft || blockingCount > 0 || result.phase === "running" || listing?.status === "published" || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : listing?.status === "published" ? <Check size={15} /> : <Rocket size={15} />}{listing?.status === "published" ? "등록 완료" : blockingCount ? `필수 정보 ${blockingCount}개 입력 후 등록` : confirmingChannel === channel ? "마지막 확인" : "이 채널에 등록"}</button>
+          <button type="button" className="publish-execute" disabled={!credential || !assignment || invalidDraft || blockingCount > 0 || quantity < 1 || result.phase === "running" || listing?.status === "published" || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : listing?.status === "published" ? <Check size={15} /> : <Rocket size={15} />}{listing?.status === "published" ? "등록 완료" : quantity < 1 ? "등록 재고 1개 이상 필요" : blockingCount ? `필수 정보 ${blockingCount}개 입력 후 등록` : confirmingChannel === channel ? "마지막 확인" : "이 채널에 등록"}</button>
           {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={result.phase === "running" || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => setQoo10StopConfirming(listing)}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
           {channel === "qoo10" && listing?.status === "published" && <label className="qoo10-remote-cleanup"><span>이전 Qoo10 상품 정리</span><input aria-label="정리할 이전 Qoo10 상품번호" inputMode="numeric" value={qoo10CleanupId} onChange={(event) => setQoo10CleanupId(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="9~10자리 상품번호" /><button type="button" className="credential-secondary" disabled={result.phase === "running" || !/^\d{9,10}$/.test(qoo10CleanupId)} onClick={requestPausePreviousQoo10Remote}><CirclePause size={15} />이전 상품 거래대기</button></label>}
           {channel === "qoo10" && qoo10CleanupConfirming && <div className="publish-write-confirmation channel" role="alertdialog" aria-label="이전 Qoo10 상품 거래대기 최종 확인"><AlertTriangle size={18} /><div><b>이전 Qoo10 원격 상품 {qoo10CleanupConfirming}를 거래대기로 전환합니다.</b><small>현재 새 상품은 판매중 상태를 그대로 유지합니다.</small></div><button type="button" className="credential-secondary" onClick={() => setQoo10CleanupConfirming(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void pausePreviousQoo10Remote(qoo10CleanupConfirming)}>이전 상품 거래대기 실행</button></div>}

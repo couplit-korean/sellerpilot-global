@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyCategoryLearning,
+  categoryKindCompatibility,
   productLearningKey,
   type CategoryLearningExample,
   type LearnableCategorySuggestion,
@@ -46,6 +47,22 @@ test("the six customer product groups resolve to distinct reusable kinds", () =>
     ["생활 수납 박스 잡화", "misc.storage_box"],
   ] as const;
   for (const [title, expected] of cases) assert.equal(productLearningKey(title), expected);
+});
+
+test("semantic guard rejects a confidently wrong product family and risky audience", () => {
+  assert.equal(categoryKindCompatibility("비타민 정제 건강식품", "Pet Supplies > Dog Vitamins"), false);
+  assert.equal(categoryKindCompatibility("여성 데님 원피스", "Toys > Dress Up Costumes"), false);
+  assert.equal(categoryKindCompatibility("즉석 흰쌀밥", "Kitchen Appliances > Rice Cookers"), false);
+  assert.equal(categoryKindCompatibility("비타민 정제 건강식품", "Health > Adult Vitamins"), true);
+});
+
+test("learning removes an explicit cross-kind provider suggestion", () => {
+  const suggestions: LearnableCategorySuggestion[] = [
+    { id: "mascara", name: "Mascara", path: ["Beauty", "Mascara"], confidence: 0.99, leaf: true },
+    { id: "lip", name: "Lipstick", path: ["Beauty", "Lipstick"], confidence: 0.74, leaf: true },
+  ];
+  const learned = applyCategoryLearning("레드 립스틱 화장품", suggestions, []);
+  assert.deepEqual(learned.map((item) => item.id), ["lip"]);
 });
 
 test("a successful category outranks a higher-confidence generic API suggestion", () => {

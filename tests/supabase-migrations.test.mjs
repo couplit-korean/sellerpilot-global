@@ -138,6 +138,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260818170000_reject_blocked_categories.sql",
       "20260818171500_personal_data_retention.sql",
       "20260819110000_category_learning_history.sql",
+      "20260819150000_inventory_sync_ledger.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -166,6 +167,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_claim_channel_oauth_state(uuid,text,text)",
       "public.sellerpilot_service_reject_category_assignment(uuid,text,text,text)",
       "public.sellerpilot_prune_personal_data(timestamp with time zone)",
+      "public.sellerpilot_service_complete_inventory_sync_item(uuid,uuid,uuid,boolean,integer,text)",
     ];
     for (const signature of serviceOnlyFunctions) {
       assert.equal(
@@ -537,6 +539,44 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [preparedListingId, listingAttempt.attempt_id],
       ),
       true,
+    );
+    await setClaims(db);
+    const inventoryRun = await scalar(
+      db,
+      "select public.sellerpilot_start_inventory_sync($1, 37, 'inventory-ai-product-coupang-0001')",
+      [aiProductId],
+    );
+    assert.equal(inventoryRun.status, "running");
+    assert.equal(inventoryRun.availableQuantity, 37);
+    assert.equal(inventoryRun.totalCount, 1);
+    assert.equal(inventoryRun.tasks[0].channel, "coupang");
+    assert.equal(inventoryRun.tasks[0].remoteId, "remote-product-1");
+    const inventoryAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'coupang', 'inventory.update', 'inventory-ai-product-coupang-0001', $2)",
+      [coupangCredentialId, "d".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_inventory_sync_item($1, $2, $3, true, 37, 'remote quantity verified')",
+        [inventoryRun.runId, inventoryRun.tasks[0].id, inventoryAttempt.attempt_id],
+      ),
+      true,
+    );
+    await setClaims(db);
+    const completedInventoryRun = await scalar(
+      db,
+      "select public.sellerpilot_get_inventory_sync($1)",
+      [aiProductId],
+    );
+    assert.equal(completedInventoryRun.status, "succeeded");
+    assert.equal(completedInventoryRun.succeededCount, 1);
+    assert.equal(completedInventoryRun.tasks[0].status, "succeeded");
+    assert.equal(
+      await scalar(db, "select last_inventory_quantity from sellerpilot_private.product_listings where id = $1", [preparedListingId]),
+      37,
     );
     await setClaims(db);
     const learnedCategories = await db.query(
