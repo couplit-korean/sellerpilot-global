@@ -91,6 +91,11 @@ export function lazadaSkuSaleAttributes(attributes: Record<string, string>) {
   }));
 }
 
+export function shopeeLanguageSafeText(value: string, fallback: string) {
+  const normalized = value.trim();
+  return normalized && /^[\x20-\x7e]+$/u.test(normalized) ? normalized : fallback.trim();
+}
+
 type CoupangAttributeMetadata = {
   dataType?: unknown;
   basicUnit?: unknown;

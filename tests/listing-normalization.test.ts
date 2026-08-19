@@ -11,6 +11,7 @@ import {
   normalizeLazadaSizeChartImages,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
+  shopeeLanguageSafeText,
 } from "../lib/channels/listing-normalization";
 import { classifyListingFailure } from "../lib/channels/listing-remediation";
 
@@ -178,6 +179,14 @@ test("Lazada copies required color and size sales properties into each SKU", () 
     dress_type: "Shirt Dresses",
     brand: "No Brand",
   }), { color_family: "Blue", size: "Int:M" });
+});
+
+test("Shopee replaces an unsupported localized title with a market-safe fallback", () => {
+  assert.equal(shopeeLanguageSafeText("Women's Denim Dress", "Fallback"), "Women's Denim Dress");
+  assert.equal(
+    shopeeLanguageSafeText("[업로드 테스트] 여성 데님 원피스", "[TEST NOT FOR SALE] Dresses FX2-001"),
+    "[TEST NOT FOR SALE] Dresses FX2-001",
+  );
 });
 
 test("an echoed Korean product name containing 이미지 does not misclassify a price error", () => {

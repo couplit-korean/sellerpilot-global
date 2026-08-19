@@ -3,7 +3,7 @@
 import { AlertTriangle, Check, CircleCheck, CirclePause, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
-import { lazadaSkuSaleAttributes, marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
+import { lazadaSkuSaleAttributes, marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects, shopeeLanguageSafeText } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10SellerCode } from "../lib/channels/qoo10";
 import { createClient } from "../lib/supabase/client";
@@ -173,13 +173,16 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     };
   }
   if (channel === "shopee") {
+    const shopeeCategoryName = assignment?.categoryPath.at(-1) || "General Product";
+    const shopeeTitle = shopeeLanguageSafeText(title, `[TEST NOT FOR SALE] ${shopeeCategoryName} ${manual.sellerSku || product.sku}`);
+    const shopeeDescription = shopeeLanguageSafeText(description, `Test listing not for sale. Category: ${shopeeCategoryName}. SKU: ${manual.sellerSku || product.sku}.`);
     const attributeList = Object.entries(assignment?.providedAttributes ?? {}).map(([attribute_id, original_value_name]) => ({
       attribute_id: Number(attribute_id),
       attribute_value_list: /^\d+$/.test(original_value_name) ? [{ value_id: Number(original_value_name) }] : [{ original_value_name }],
     }));
     const commonProductFields = {
       category_id: Number(assignment?.categoryId ?? 0),
-      description: description.slice(0, 3_000),
+      description: shopeeDescription.slice(0, 3_000),
       brand: { brand_id: 0, original_brand_name: manual.brandName },
       condition: manual.condition,
       gtin_code: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "00",
@@ -201,7 +204,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
       body: {
         ...commonProductFields,
         original_price: globalBaseUsdPrice,
-        global_item_name: title.slice(0, 120),
+        global_item_name: shopeeTitle.slice(0, 120),
         global_item_sku: globalSku,
       },
       publish: {
@@ -210,7 +213,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         item: {
           ...commonProductFields,
           original_price: channelPrice,
-          item_name: title.slice(0, 120),
+          item_name: shopeeTitle.slice(0, 120),
           item_sku: marketSku,
           item_status: "UNLIST",
           logistic: [],
