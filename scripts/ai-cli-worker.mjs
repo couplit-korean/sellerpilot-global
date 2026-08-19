@@ -452,7 +452,8 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   const categoryImplicitRequired = categoryId === 101642 || /(?:lipstick|lip\s*makeup|립스틱)/iu.test(productHint)
     ? { formulation: "Stick" }
     : {};
-  const foodImplicitRequired = categoryId === 100824 ? {
+  const foodLike = categoryId === 100824 || /(?:coffee|noodle|pasta|rice|food|grocery|커피|면|파스타|쌀|식품)/iu.test(productHint);
+  const foodImplicitRequired = foodLike ? {
     "drink form": "Coffee Beans",
     "expiry date": expiryDate,
     "shelf life": "12 Months",
