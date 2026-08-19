@@ -140,6 +140,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260819110000_category_learning_history.sql",
       "20260819150000_inventory_sync_ledger.sql",
       "20260819170000_preserve_failed_listing_remote_id.sql",
+      "20260819203000_list_published_product_destinations.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -628,6 +629,23 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(aiProduct.status, "active");
     assert.deepEqual(aiProduct.listingChannels, ["C"]);
     assert.equal(aiProduct.aiHeroPath, resultPayload.asset_storage_paths.hero);
+    const publishedDestinations = await scalar(db, "select public.sellerpilot_list_published_product_destinations()");
+    assert.deepEqual(publishedDestinations, [{
+      productId: aiProductId,
+      channelKey: "coupang",
+      channelCode: "C",
+      remoteId: "remote-product-1",
+      market: "",
+      targetId: "",
+    }]);
+    assert.equal(
+      await scalar(db, "select has_function_privilege('authenticated', 'public.sellerpilot_list_published_product_destinations()', 'EXECUTE')"),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select has_function_privilege('anon', 'public.sellerpilot_list_published_product_destinations()', 'EXECUTE')"),
+      false,
+    );
 
     const firstOrderId = snapshot.orders[0].id;
     const firstTicketId = snapshot.tickets[0].id;

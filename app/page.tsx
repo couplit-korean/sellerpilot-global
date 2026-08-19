@@ -70,7 +70,8 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { channels, type ChannelKey } from "./channel-config";
-import { activeChannelKeys } from "../lib/channels/catalog";
+import { activeChannelKeys, type ActiveChannelKey } from "../lib/channels/catalog";
+import { marketplaceListingDestination } from "../lib/channels/listing-normalization";
 import { useOperationsSnapshot, type OperationsSnapshot } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
@@ -185,6 +186,13 @@ type DisplayProduct = {
   revenue: string;
   status: string;
   channels: string[];
+  listings: Array<{
+    channelKey: ActiveChannelKey;
+    channelCode: string;
+    remoteId: string;
+    market: string;
+    targetId: string;
+  }>;
 };
 
 type DisplayOrder = {
@@ -258,7 +266,33 @@ const initialExchangeRates = [
 
 function ChannelMark({ code, size = "md" }: { code: string; size?: "sm" | "md" | "lg" }) {
   const config = channelByCode.get(code) ?? channels.qoo10;
-  return <span className={`channel-mark ${size} ${code.length > 1 ? "wide" : ""}`} style={{ "--channel-color": config.color } as React.CSSProperties}>{code}</span>;
+  return <span className={`channel-mark ${size} ${config.symbol.length > 1 ? "wide" : ""}`} style={{ "--channel-color": config.color } as React.CSSProperties} title={config.name} aria-label={config.name}>{config.symbol}</span>;
+}
+
+function isActiveChannelKey(value: string): value is ActiveChannelKey {
+  return activeChannelKeys.includes(value as ActiveChannelKey);
+}
+
+function ChannelListingLink({ listing, productName }: { listing: DisplayProduct["listings"][number]; productName: string }) {
+  const channel = channels[listing.channelKey];
+  const destination = marketplaceListingDestination(listing.channelKey, listing.remoteId, productName, listing.market);
+  const shortName = channelNameByKey[listing.channelKey] ?? channel.name;
+  const scopedName = listing.market && (listing.channelKey === "shopee" || listing.channelKey === "lazada")
+    ? `${shortName} ${listing.market}`
+    : shortName;
+  return <a
+    className={`channel-listing-link ${listing.channelKey}`}
+    style={{ "--channel-color": channel.color } as React.CSSProperties}
+    href={destination.url}
+    target="_blank"
+    rel="noopener noreferrer"
+    title={`${scopedName} ${destination.label} 새 창에서 열기`}
+    aria-label={`${productName} ${scopedName} ${destination.label} 새 창에서 열기`}
+  >
+    <ChannelMark code={listing.channelCode} size="sm" />
+    <span><b>{scopedName}</b><small>{destination.label}</small></span>
+    <ExternalLink size={13} aria-hidden="true" />
+  </a>;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -504,7 +538,7 @@ function ProductsPage({ onNavigate, onOpenProduct, displayProducts }: { onNaviga
       <section className="summary-strip"><div><Package size={18} /><span>전체 상품<strong>{displayProducts.length}</strong></span></div><div><CheckCircle2 size={18} /><span>정상 판매<strong>{activeCount}</strong></span></div><div><AlertCircle size={18} /><span>재고 주의<strong>{lowStockCount}</strong></span></div><div><Box size={18} /><span>품절<strong>{outOfStockCount}</strong></span></div><button className="primary-button" onClick={() => onNavigate("publishing")}><Plus size={16} />새 상품 등록</button></section>
       <section className="panel data-panel">
         <div className="data-toolbar"><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="상품명, SKU 검색" /></div><button className="filter-button" disabled><Filter size={15} />채널 필터<ChevronDown size={14} /></button><button className="filter-button" disabled><ListFilter size={15} />상태 필터<ChevronDown size={14} /></button><span className="toolbar-spacer" /><button className="icon-text-button" disabled title="판매 채널 연결 후 사용할 수 있습니다"><RefreshCw size={15} />정보 새로고침</button><button className="icon-only-button" aria-label="더보기" disabled><MoreHorizontal size={18} /></button></div>
-        <div className="table-wrap"><table className="data-table product-table"><thead><tr><th><input type="checkbox" aria-label="전체 선택" /></th><th>상품</th><th>판매 채널</th><th>재고</th><th>30일 판매</th><th>30일 매출</th><th>상태</th><th /></tr></thead><tbody>{filtered.map((product) => <tr key={product.id}><td><input type="checkbox" aria-label={`${product.name} 선택`} /></td><td><div className="product-cell"><div className="product-thumb"><ProductVisual src={product.image} size="52px" /></div><span><b>{product.name}</b><small>{product.sku} · {product.id}</small></span></div></td><td><div className="channel-stack">{product.channels.map((code) => <ChannelMark key={code} code={code} size="sm" />)}</div></td><td><strong className={product.stock < 20 ? "stock-low" : ""}>{product.stock}</strong><small> 개</small></td><td><b>{product.sales}</b><small> 개</small></td><td><b>{product.revenue}</b></td><td><StatusBadge status={product.status} /></td><td><button className="table-action" title="카테고리·채널 등록 준비 열기" aria-label={`${product.name} 등록 준비 열기`} onClick={() => onOpenProduct(product)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table className="data-table product-table"><thead><tr><th><input type="checkbox" aria-label="전체 선택" /></th><th>상품</th><th>판매 채널 · 바로가기</th><th>재고</th><th>30일 판매</th><th>30일 매출</th><th>상태</th><th /></tr></thead><tbody>{filtered.map((product) => <tr key={product.id}><td><input type="checkbox" aria-label={`${product.name} 선택`} /></td><td><div className="product-cell"><div className="product-thumb"><ProductVisual src={product.image} size="52px" /></div><span><b>{product.name}</b><small>{product.sku} · {product.id}</small></span></div></td><td><div className="channel-listing-links">{product.listings.map((listing) => <ChannelListingLink key={`${listing.channelKey}-${listing.market}-${listing.targetId}-${listing.remoteId}`} listing={listing} productName={product.name} />)}{product.listings.length === 0 && product.channels.map((code) => { const channel = channelByCode.get(code); return <span className="channel-listing-pending" key={code}><ChannelMark code={code} size="sm" /><span><b>{channel?.name ?? code}</b><small>상품 주소 확인 중</small></span></span>; })}</div></td><td><strong className={product.stock < 20 ? "stock-low" : ""}>{product.stock}</strong><small> 개</small></td><td><b>{product.sales}</b><small> 개</small></td><td><b>{product.revenue}</b></td><td><StatusBadge status={product.status} /></td><td><button className="table-action" title="카테고리·채널 등록 준비 열기" aria-label={`${product.name} 등록 준비 열기`} onClick={() => onOpenProduct(product)}><ChevronRight size={17} /></button></td></tr>)}</tbody></table></div>
         {filtered.length === 0 && <div className="live-empty-state table-empty"><PackageSearch size={28} /><b>등록된 상품이 없습니다.</b><small>상품을 등록하면 이 목록에 표시됩니다.</small></div>}
         <div className="table-footer"><span>총 {displayProducts.length}개 중 1–{filtered.length}개 표시</span><div><button disabled><ChevronRight className="flip" size={15} /></button><button className="active">1</button><button disabled><ChevronRight size={15} /></button></div></div>
       </section>
@@ -1096,18 +1130,30 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
   }, []);
 
-  const displayProducts = useMemo<DisplayProduct[]>(() => operations.data?.products.map((product) => ({
-    id: product.externalCode,
-    sourceId: product.id,
-    name: product.name,
-    sku: product.sku,
-    image: product.imageUrl ?? null,
-    stock: product.available,
-    sales: product.sold30d,
-    revenue: `₩${Math.round(product.revenue30dKrw).toLocaleString("ko-KR")}`,
-    status: productStatusLabel[product.status],
-    channels: product.status === "active" ? product.listingChannels : [],
-  })) ?? [], [operations.data]);
+  const displayProducts = useMemo<DisplayProduct[]>(() => operations.data?.products.map((product) => {
+    const listings = (product.listings ?? []).flatMap((listing) => isActiveChannelKey(listing.channelKey) && listing.remoteId.trim()
+      ? [{
+        channelKey: listing.channelKey,
+        channelCode: listing.channelCode,
+        remoteId: listing.remoteId,
+        market: listing.market,
+        targetId: listing.targetId,
+      }]
+      : []);
+    return {
+      id: product.externalCode,
+      sourceId: product.id,
+      name: product.name,
+      sku: product.sku,
+      image: product.imageUrl ?? null,
+      stock: product.available,
+      sales: product.sold30d,
+      revenue: `₩${Math.round(product.revenue30dKrw).toLocaleString("ko-KR")}`,
+      status: productStatusLabel[product.status],
+      channels: product.listingChannels,
+      listings,
+    };
+  }) ?? [], [operations.data]);
 
   const displayOrders = useMemo<DisplayOrder[]>(() => operations.data?.orders.map((order) => ({
     id: order.externalOrderId,

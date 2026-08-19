@@ -74,6 +74,35 @@ export function marketplaceListingPresentation(
   };
 }
 
+const marketplaceManagementUrls: Record<ActiveChannelKey, string> = {
+  qoo10: "https://qsm.qoo10.jp/GMKT.INC.Gsm.Web/Items/GoodsList.aspx",
+  shopee: "https://seller.shopee.kr/portal/product/list/all",
+  lazada: "https://sellercenter-my.lazada-seller.cn/apps/product/list",
+  coupang: "https://wing.coupang.com/vendor-inventory/product/list",
+  smartstore: "https://sell.smartstore.naver.com/#/products/origin-product-list",
+  ebay: "https://www.ebay.com/sh/lst/active",
+  temu: "https://kr.seller.temu.com/home.html",
+};
+
+export function marketplaceListingDestination(
+  channel: ActiveChannelKey,
+  remoteId: string,
+  productName: string,
+  targetMarketCode = "",
+) {
+  const presentation = marketplaceListingPresentation(channel, remoteId, productName, targetMarketCode);
+  if (presentation.url) return {
+    url: presentation.url,
+    label: "상품 페이지",
+    kind: "product" as const,
+  };
+  return {
+    url: marketplaceManagementUrls[channel],
+    label: "판매자센터",
+    kind: "management" as const,
+  };
+}
+
 export function normalizeTenWonAmount(value: unknown) {
   const amount = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   if (!Number.isFinite(amount) || amount <= 0) return value;

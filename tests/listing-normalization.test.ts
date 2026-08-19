@@ -6,6 +6,7 @@ import {
   isLazadaBrandEnumerationError,
   lazadaSkuSaleAttributes,
   marketplaceListingCurrency,
+  marketplaceListingDestination,
   marketplaceListingPresentation,
   marketplaceListingPrice,
   mergeShopeeRequiredAttributes,
@@ -33,6 +34,22 @@ test("listing links and customer labels never present seller-only ids as public 
   assert.equal(marketplaceListingPresentation("coupang", "16351551544", "일반 상품").url, undefined);
   assert.equal(marketplaceListingPresentation("smartstore", "13666210620", "일반 상품").url, undefined);
   assert.equal(marketplaceListingPresentation("coupang", "1", "[판매금지] 테스트").badge, "테스트 임시저장");
+});
+
+test("every published channel has a safe product or seller-center destination", () => {
+  assert.deepEqual(marketplaceListingDestination("qoo10", "1216458662", "일반 상품"), {
+    url: "https://www.qoo10.jp/g/1216458662",
+    label: "상품 페이지",
+    kind: "product",
+  });
+  assert.deepEqual(marketplaceListingDestination("coupang", "16351551544", "일반 상품"), {
+    url: "https://wing.coupang.com/vendor-inventory/product/list",
+    label: "판매자센터",
+    kind: "management",
+  });
+  assert.equal(marketplaceListingDestination("smartstore", "13666210620", "일반 상품").url, "https://sell.smartstore.naver.com/#/products/origin-product-list");
+  assert.equal(marketplaceListingDestination("shopee", "48366301456", "일반 상품", "SG").url, "https://seller.shopee.kr/portal/product/list/all");
+  assert.equal(marketplaceListingDestination("temu", "900001", "일반 상품").url, "https://kr.seller.temu.com/home.html");
 });
 
 test("Lazada retries only the private brand-enumeration rejection", () => {

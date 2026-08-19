@@ -37,9 +37,10 @@ export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
 
-  const [{ data, error }, { data: marginScenarios }] = await Promise.all([
+  const [{ data, error }, { data: marginScenarios }, { data: publishedDestinations }] = await Promise.all([
     admin.userClient.rpc("sellerpilot_get_operations_snapshot"),
     admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: 5 }),
+    admin.userClient.rpc("sellerpilot_list_published_product_destinations"),
   ]);
   if (error) {
     return NextResponse.json({ message: "운영 데이터를 불러오지 못했습니다." }, { status: 500 });
@@ -50,6 +51,18 @@ export async function GET(request: Request) {
   payload.marginScenarios = Array.isArray(marginScenarios) ? marginScenarios : [];
   if (Array.isArray(payload.products)) {
     const products = payload.products.filter((product): product is Record<string, unknown> => Boolean(product) && typeof product === "object" && !Array.isArray(product));
+    const destinationsByProduct = new Map<string, Array<Record<string, unknown>>>();
+    if (Array.isArray(publishedDestinations)) {
+      for (const destination of publishedDestinations) {
+        if (!destination || typeof destination !== "object" || Array.isArray(destination)) continue;
+        const row = destination as Record<string, unknown>;
+        const productId = typeof row.productId === "string" ? row.productId : "";
+        if (!productId) continue;
+        const existing = destinationsByProduct.get(productId) ?? [];
+        existing.push(row);
+        destinationsByProduct.set(productId, existing);
+      }
+    }
     const paths = products.map((product) => typeof product.aiHeroPath === "string" ? product.aiHeroPath : "").filter(Boolean);
     const { data: signed } = paths.length
       ? await admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrls(paths, 60 * 60)
@@ -57,6 +70,7 @@ export async function GET(request: Request) {
     let signedIndex = 0;
     payload.products = products.map((product) => {
       const next = { ...product };
+      next.listings = destinationsByProduct.get(String(product.id ?? "")) ?? [];
       if (typeof next.aiHeroPath === "string" && next.aiHeroPath) {
         next.imageUrl = signed?.[signedIndex]?.signedUrl ?? next.imageUrl ?? null;
         signedIndex += 1;

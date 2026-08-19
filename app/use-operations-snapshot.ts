@@ -20,6 +20,14 @@ export type OperationProduct = {
   sold30d: number;
   revenue30dKrw: number;
   listingChannels: string[];
+  listings?: Array<{
+    productId: string;
+    channelKey: string;
+    channelCode: string;
+    remoteId: string;
+    market: string;
+    targetId: string;
+  }>;
   demo: boolean;
   updatedAt: string;
 };
