@@ -218,7 +218,7 @@ test("toy-train normalization rejects generic toy noise across official channel 
     steps: [{ name: "categories", ok: true, status: 200, data: {
       ResultObject: [
         { SecondSubCatCd: "SEASONAL", SecondSubCatNm: "その他", CATE_L_NM: "おもちゃ・知育", CATE_M_NM: "季節玩具", CATE_S_NM: "その他" },
-        { SecondSubCatCd: "TRAIN", SecondSubCatNm: "電車のおもちゃ", CATE_L_NM: "おもちゃ・知育", CATE_M_NM: "乗り物玩具", CATE_S_NM: "電車のおもちゃ" },
+        { SecondSubCatCd: "TRAIN", SecondSubCatNm: "電車・汽車・レール", CATE_L_NM: "おもちゃ・知育", CATE_M_NM: "ミニカー・電車・飛行機", CATE_S_NM: "電車・汽車・レール" },
       ],
     } }],
   }, "원목 기차 장난감");
@@ -228,7 +228,7 @@ test("toy-train normalization rejects generic toy noise across official channel 
     ok: true,
     steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
       { category_id: 1, display_category_name: "Health & Wellness > Sex Toys", has_children: false },
-      { category_id: 2, display_category_name: "Toys, Games & Collectibles > Toy Vehicles > Toy Trains", has_children: false },
+      { category_id: 2, display_category_name: "Toys, Games & Collectibles > Toy Vehicles", has_children: false },
     ] } } }],
   }, "wooden toy train");
   assert.equal(shopee[0]?.id, "2");
@@ -237,7 +237,7 @@ test("toy-train normalization rejects generic toy noise across official channel 
     ok: true,
     steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
       { category_id: "L1", name: "Performance Enhancement", leaf: true },
-      { category_id: "L2", name: "Toy Trains & Railway Sets", category_path: "Toys & Games > Toy Vehicles > Toy Trains & Railway Sets", leaf: true },
+      { category_id: "L2", name: "Train Cars & Sets", category_path: "Toys & Games > Toy Vehicles > Train Cars & Sets", leaf: true },
     ] } }],
   }, "wooden toy train");
   assert.equal(lazada[0]?.id, "L2");
