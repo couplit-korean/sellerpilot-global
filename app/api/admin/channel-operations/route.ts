@@ -273,6 +273,11 @@ export async function POST(request: NextRequest) {
         headers: { "cache-control": "no-store, max-age=0" },
       });
     } catch (error) {
+      console.error("[channel-operation gateway]", {
+        channel,
+        operation,
+        code: error instanceof Error ? error.message.slice(0, 240) : "unknown",
+      });
       const message = errorMessage(error);
       await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
         p_attempt_id: attemptId,
