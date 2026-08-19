@@ -139,6 +139,28 @@ test("Shopee fills a category-specific mandatory enumeration even when metadata 
   assert.deepEqual(result.unresolved, []);
 });
 
+test("Shopee fills an apparel material requirement even when category metadata omits its mandatory flag", () => {
+  const result = mergeShopeeRequiredAttributes([], [{
+    attribute_id: 100013,
+    name: "Material",
+    attribute_value_list: [
+      { value_id: 1, display_value_name: "Polyester" },
+      { value_id: 2, display_value_name: "Cotton Blend" },
+      { value_id: 3, display_value_name: "Cotton" },
+    ],
+  }], "multicolor cotton blend t-shirt", {
+    implicitRequired: { material: "Cotton Blend" },
+    marketCode: "SG",
+  });
+
+  assert.deepEqual(result.attributes, [{
+    attribute_id: 100013,
+    attribute_value_list: [{ value_id: 2 }],
+  }]);
+  assert.deepEqual(result.unresolved, []);
+  assert.match(result.autoFilled[0] ?? "", /Material: Cotton Blend/);
+});
+
 test("eBay item aspects use string arrays and an accepted country enumeration", () => {
   assert.deepEqual(normalizeEbayAspects({
     Brand: "Unbranded",

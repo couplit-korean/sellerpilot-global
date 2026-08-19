@@ -450,11 +450,18 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   // attributes that the create API still requires. Keep the recovery targeted:
   // selecting every optional enumeration can invent contradictory food facts.
   // Date-like implicit requirements use Shopee's custom-value representation.
+  const apparelMaterial = /(?:cotton\s*blend|면\s*혼방)/iu.test(productHint)
+    ? "Cotton Blend"
+    : /(?:cotton|\b면\b)/iu.test(productHint)
+      ? "Cotton"
+      : "Others";
   const categoryImplicitRequired = categoryId === 101642 || /(?:lipstick|lip\s*makeup|립스틱)/iu.test(productHint)
     ? { formulation: "Stick" }
     : categoryId === 100093 || /(?:tote\s*bag|canvas\s*bag|토트백|에코백)/iu.test(productHint)
       ? { "bag set": "No", "bag style": "Others" }
-      : {};
+      : categoryId === 100244 || /(?:t-?shirt|tee\s*shirt|티셔츠)/iu.test(productHint)
+        ? { material: apparelMaterial }
+        : {};
   const foodLike = [100782, 100797, 100824].includes(categoryId)
     || /(?:coffee|noodle|pasta|rice|food|grocery|커피|면|파스타|쌀|식품)/iu.test(productHint);
   const foodImplicitRequired = foodLike ? {
