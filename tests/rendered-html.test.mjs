@@ -166,6 +166,13 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(cliWorker, /buildFallbackStudioResult/);
   assert.match(cliWorker, /createFallbackAsset/);
   assert.match(cliWorker, /이미지 안전 모드/);
+  assert.match(cliWorker, /async function claimAiJob\(\)/);
+  assert.match(cliWorker, /if \(!once && activeAiJobs\.size < maxAiConcurrency\) await claimAiJob\(\)/);
+  assert.ok(
+    cliWorker.indexOf("if (!once && activeAiJobs.size < maxAiConcurrency) await claimAiJob()")
+      < cliWorker.indexOf('api("/api/channel-gateway/worker/claim"'),
+    "AI 제작 작업을 채널 동기화 작업보다 먼저 공정하게 확보해야 합니다.",
+  );
   assert.doesNotMatch(cliWorker, /import sharp from "sharp"/);
   assert.match(cliWorker, /await import\("sharp"\)/);
   assert.match(cliWorker, /fallbackEnglishProductLabel/);

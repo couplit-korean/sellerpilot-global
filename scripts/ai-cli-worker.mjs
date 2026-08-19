@@ -1702,8 +1702,31 @@ console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : 
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 8);
 const maxAiConcurrency = Math.min(8, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 8));
 const activeAiJobs = new Set();
+async function claimAiJob() {
+  const response = await api("/api/ai/worker/claim", {
+    method: "POST",
+    body: JSON.stringify({ version: workerVersion }),
+  });
+  if (response.status === 204) return false;
+  if (!response.ok) throw new Error(`작업 요청 실패 · HTTP ${response.status}`);
+  const job = await response.json();
+  if (once) {
+    await processJob(job);
+  } else {
+    const activeJob = processJob(job).finally(() => {
+      activeAiJobs.delete(activeJob);
+    });
+    activeAiJobs.add(activeJob);
+  }
+  return true;
+}
+
 do {
   try {
+    // 채널 재고 동기화 작업이 계속 들어와도 상품 이미지 제작이 굶지 않도록
+    // 여유 슬롯마다 AI 작업을 먼저 한 건 확보합니다. 채널 작업도 같은 반복에서
+    // 바로 처리하므로 두 작업 종류가 서로를 장시간 막지 않습니다.
+    if (!once && activeAiJobs.size < maxAiConcurrency) await claimAiJob();
     const gatewayResponse = await api("/api/channel-gateway/worker/claim", {
       method: "POST",
       body: JSON.stringify({ version: workerVersion }),
@@ -1721,24 +1744,11 @@ do {
       else await delay(pollMs);
       continue;
     }
-    const response = await api("/api/ai/worker/claim", {
-      method: "POST",
-      body: JSON.stringify({ version: workerVersion }),
-    });
-    if (response.status === 204) {
+    const claimedAiJob = await claimAiJob();
+    if (!claimedAiJob) {
       if (once) break;
       await delay(pollMs);
       continue;
-    }
-    if (!response.ok) throw new Error(`작업 요청 실패 · HTTP ${response.status}`);
-    const job = await response.json();
-    if (once) {
-      await processJob(job);
-    } else {
-      const activeJob = processJob(job).finally(() => {
-        activeAiJobs.delete(activeJob);
-      });
-      activeAiJobs.add(activeJob);
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : "CLI worker 오류");

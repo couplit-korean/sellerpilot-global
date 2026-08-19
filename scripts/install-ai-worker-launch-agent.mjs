@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -13,6 +13,7 @@ const plistPath = join(launchAgents, `${label}.plist`);
 const sourceRoot = process.cwd();
 const runtimeRoot = join(homedir(), "Library", "Application Support", "SellerPilot", "worker-runtime");
 const workerPath = join(runtimeRoot, "scripts", "ai-cli-worker.mjs");
+const workerNodePath = join(runtimeRoot, "bin", "node");
 const guiDomain = `gui/${process.getuid?.() ?? 0}`;
 
 function command(program, args, options = {}) {
@@ -75,6 +76,14 @@ async function stageRuntime() {
     cwd: runtimeRoot,
     env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH ?? "/usr/bin:/bin"}` },
   });
+  await mkdir(dirname(workerNodePath), { recursive: true, mode: 0o700 });
+  await cp(process.execPath, workerNodePath);
+  await chmod(workerNodePath, 0o700);
+  // The desktop app's bundled Node enables macOS library validation. A private,
+  // ad-hoc-signed runtime copy remains executable by launchd without rejecting
+  // Sharp's official native module solely because it has a different Team ID.
+  try { command("/usr/bin/codesign", ["--remove-signature", workerNodePath]); } catch { /* already unsigned */ }
+  command("/usr/bin/codesign", ["--force", "--sign", "-", workerNodePath]);
 }
 
 if (process.platform !== "darwin") throw new Error("이 설치기는 macOS LaunchAgent 전용입니다.");
@@ -113,7 +122,7 @@ const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>${label}</string>
-  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>--import</string><string>tsx</string><string>${xml(workerPath)}</string></array>
+  <key>ProgramArguments</key><array><string>${xml(workerNodePath)}</string><string>--import</string><string>tsx</string><string>${xml(workerPath)}</string></array>
   <key>WorkingDirectory</key><string>${xml(runtimeRoot)}</string>
   <key>EnvironmentVariables</key><dict><key>SELLERPILOT_URL</key><string>${xml(sellerpilotUrl)}</string></dict>
   <key>RunAtLoad</key><true/>
