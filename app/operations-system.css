@@ -1603,9 +1603,13 @@ a:focus-visible,
 .category-suggestions { display: grid; padding: 8px 12px 12px; }
 .category-suggestions button { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 9px; border-bottom: 1px solid #edf0ef; padding: 10px 5px; color: #303a36; background: #fff; text-align: left; }
 .category-suggestions button:hover { background: #f6faf8; }
+.category-suggestions button:disabled { cursor: not-allowed; color: #8a746f; background: #fff8f6; }
 .category-suggestions b,.category-suggestions small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .category-suggestions b { font-size: 11px; }.category-suggestions small { margin-top: 3px; color: #7d8783; font-size: 9px; }
 .category-suggestions em { color: #187159; font-size: 10px; font-style: normal; font-weight: 800; }
+.category-suggestions em.learned { border-radius: 99px; padding: 4px 7px; color: #17644f; background: #e4f2ed; }
+.category-suggestions em.blocked { color: #a23a2d; }
+.category-learning-note { display: flex; align-items: flex-start; gap: 6px; margin: 8px 0 0; border-radius: 4px; padding: 9px; color: #8c4337; background: #fff1ee; font-size: 9px; line-height: 1.5; }
 .category-inspection { padding: 13px 16px 16px; }
 .selected-category { display: flex; align-items: center; gap: 9px; border: 1px solid #bfdbd1; background: #f2f8f6; padding: 10px; }
 .selected-category > svg { color: #21775f; }.selected-category > span { min-width: 0; flex: 1; }

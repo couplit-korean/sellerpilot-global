@@ -137,6 +137,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260818043000_keep_stopped_products_relistable.sql",
       "20260818170000_reject_blocked_categories.sql",
       "20260818171500_personal_data_retention.sql",
+      "20260819110000_category_learning_history.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -194,6 +195,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     await setClaims(db);
     assert.equal(await scalar(db, "select public.sellerpilot_is_admin()"), true);
+    assert.equal(
+      await scalar(db, "select has_function_privilege('authenticated', 'public.sellerpilot_list_category_learning(text,text,text)', 'EXECUTE')"),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select has_function_privilege('anon', 'public.sellerpilot_list_category_learning(text,text,text)', 'EXECUTE')"),
+      false,
+    );
 
     const credentialId = await scalar(
       db,
@@ -530,6 +539,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       true,
     );
     await setClaims(db);
+    const learnedCategories = await db.query(
+      "select * from public.sellerpilot_list_category_learning('coupang', 'production', 'KR')",
+    );
+    assert.equal(learnedCategories.rows.length, 1);
+    assert.equal(learnedCategories.rows[0].category_id, "63955");
+    assert.equal(learnedCategories.rows[0].listing_success, true);
+    assert.equal(learnedCategories.rows[0].permission_blocked, false);
     await assert.rejects(
       db.query("select public.sellerpilot_seed_demo_operations()"),
       /demo data is disabled/,
