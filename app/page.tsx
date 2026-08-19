@@ -536,6 +536,7 @@ const optionalPhotoSlots = [
 
 function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; initialProduct?: { id: string; name: string } | null }) {
   const [running, setRunning] = useState(false);
+  const [recoveringRecentProducts, setRecoveringRecentProducts] = useState(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
   const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
@@ -555,6 +556,60 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
     .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
     .map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
+
+  const recoverRecentProducts = useCallback(async () => {
+    if (recoveringRecentProducts) return;
+    setRecoveringRecentProducts(true);
+    try {
+      const { data } = await createSupabaseClient().auth.getSession();
+      const accessToken = data.session?.access_token;
+      if (!accessToken) throw new Error("완료된 상품을 불러오려면 다시 로그인해 주세요.");
+
+      const jobsResponse = await fetch("/api/admin/ai-jobs?limit=100", {
+        headers: { authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+      const jobsPayload = await jobsResponse.json().catch(() => ({ jobs: [], message: "완료 작업을 확인하지 못했습니다." })) as {
+        jobs?: Array<{ id: string; status: string; created_at: string }>;
+        message?: string;
+      };
+      if (!jobsResponse.ok) throw new Error(jobsPayload.message ?? "완료 작업을 확인하지 못했습니다.");
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const jobs = (jobsPayload.jobs ?? []).filter((job) => job.status === "succeeded" && new Date(job.created_at).getTime() >= today.getTime());
+      if (!jobs.length) {
+        notify("오늘 완료된 상품이 아직 없습니다.");
+        return;
+      }
+
+      const recoveredIds: string[] = [];
+      for (const job of jobs) {
+        const productResponse = await fetch("/api/operations/snapshot", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({ action: "product_create", jobId: job.id }),
+        });
+        const productPayload = await productResponse.json().catch(() => ({})) as { id?: string | null; message?: string };
+        if (!productResponse.ok || typeof productPayload.id !== "string") {
+          throw new Error(productPayload.message ?? "완료된 상품 일부를 목록에 연결하지 못했습니다.");
+        }
+        recoveredIds.push(productPayload.id);
+      }
+
+      const latestProductId = recoveredIds.at(0) ?? null;
+      if (latestProductId) {
+        setAnalyzedProductName("");
+        setAnalyzedProductId(latestProductId);
+        setPublishRefreshVersion((current) => current + 1);
+      }
+      notify(`오늘 완료된 상품 ${recoveredIds.length}개를 목록에 연결했습니다.`);
+    } catch (error) {
+      notify(userFacingErrorMessage(error, "완료된 상품을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."));
+    } finally {
+      setRecoveringRecentProducts(false);
+    }
+  }, [notify, recoveringRecentProducts]);
 
   const setIntakeField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
     setIntake((current) => ({ ...current, [key]: value }));
@@ -909,7 +964,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
       <section className="panel product-batch-panel">
         <div className="panel-heading"><div><span className="panel-kicker">여러 상품 등록</span><h3>상품 한 번에 준비하기</h3><p>필수 정보와 대표사진을 입력한 상품을 담아 한 번에 최대 8개까지 분석할 수 있습니다.</p></div><span className="step-chip">{batchItems.length} / 8</span></div>
         {batchItems.length ? <div className="batch-product-list">{batchItems.map((item) => <div className="batch-product-row" key={item.id}><AiProductStudio mainPhoto={item.mainPhoto} photos={item.photos} manualFields={item.manualFields} requestId={item.requestId} compact notify={notify} onRunningChange={(isRunning) => setBatchItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: isRunning ? "running" : entry.status === "succeeded" ? "succeeded" : "failed" } : entry))} onResultReady={(_, productId) => { setBatchItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, status: productId ? "succeeded" : "failed", productId } : entry)); if (productId) { setAnalyzedProductId(productId); setAnalyzedProductName(item.manualFields.productName); setPublishRefreshVersion((current) => current + 1); } }} /><div className="batch-product-row-actions">{item.productId && <button type="button" className="batch-open-product" onClick={() => { setAnalyzedProductId(item.productId); setAnalyzedProductName(item.manualFields.productName); setPublishRefreshVersion((current) => current + 1); notify(`${item.manualFields.productName}의 카테고리·채널 등록 화면을 열었습니다.`); }}><ChevronRight size={13} />등록 준비</button>}<button type="button" className="batch-remove-product" aria-label={`${item.manualFields.productName} 대기열에서 삭제`} disabled={item.status === "running"} onClick={() => removeBatchItem(item.id)}><X size={14} /></button></div></div>)}</div> : <div className="batch-product-empty"><Upload size={22} /><span><b>대기열이 비어 있습니다.</b><small>현재 상품의 필수정보와 사진을 입력하고 ‘대기열에 담기’를 누르세요.</small></span></div>}
-        <div className="batch-product-actions"><span>확인이 필요한 항목은 정보를 보완해 다시 처리할 수 있으며, 완료한 상품은 상품 목록에 저장됩니다.</span><button type="button" disabled={!batchItems.some((item) => item.status === "ready" || item.status === "failed")} onClick={startBatchAutomation}><Rocket size={16} />최대 8개 함께 분석</button></div>
+        <div className="batch-product-actions"><span>확인이 필요한 항목은 정보를 보완해 다시 처리할 수 있으며, 완료한 상품은 상품 목록에 저장됩니다.</span><div className="batch-product-action-buttons"><button type="button" className="secondary" disabled={recoveringRecentProducts} onClick={() => void recoverRecentProducts()}>{recoveringRecentProducts ? <LoaderCircle className="spin" size={16} /> : <PackageCheck size={16} />}{recoveringRecentProducts ? "불러오는 중" : "오늘 완료 상품 불러오기"}</button><button type="button" disabled={!batchItems.some((item) => item.status === "ready" || item.status === "failed")} onClick={startBatchAutomation}><Rocket size={16} />최대 8개 함께 분석</button></div></div>
       </section>
       <AiProductStudio
         mainPhoto={mainPhoto}

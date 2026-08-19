@@ -84,6 +84,12 @@ export function normalizeLazadaSizeChartImages(value: unknown, fallbackImageUrl:
   }));
 }
 
+export function isLazadaBrandEnumerationError(value: unknown) {
+  const detail = JSON.stringify(value ?? "");
+  return /CHK_CATPROP_CPV_NOT_ENUM|not included in the dropdown list/i.test(detail)
+    && /p-20000|brand/i.test(detail);
+}
+
 export function lazadaSkuSaleAttributes(attributes: Record<string, string>) {
   return Object.fromEntries(Object.entries(attributes).filter(([key, value]) => {
     const normalizedKey = key.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");

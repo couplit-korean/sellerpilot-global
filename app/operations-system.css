@@ -5657,7 +5657,13 @@ a:focus-visible,
   font-size: 10px;
 }
 
-.batch-product-actions > button {
+.batch-product-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.batch-product-action-buttons > button {
   display: inline-flex;
   min-height: 38px;
   align-items: center;
@@ -5673,7 +5679,13 @@ a:focus-visible,
   white-space: nowrap;
 }
 
-.batch-product-actions > button:disabled {
+.batch-product-action-buttons > button.secondary {
+  border-color: #cfd6dd;
+  color: #334155;
+  background: #fff;
+}
+
+.batch-product-action-buttons > button:disabled {
   cursor: not-allowed;
   border-color: #c8cfd8;
   color: #7d8795;
@@ -5694,6 +5706,11 @@ a:focus-visible,
 
   .analysis-start-bar > div,
   .batch-product-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .batch-product-action-buttons {
     display: grid;
     grid-template-columns: 1fr;
   }

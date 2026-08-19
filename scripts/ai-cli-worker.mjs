@@ -11,6 +11,7 @@ import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import {
   mergeShopeeRequiredAttributes,
   marketplaceListingPrice,
+  isLazadaBrandEnumerationError,
   naverUnitCapacity,
   normalizeCoupangAttributeValue,
   normalizeLazadaSizeChartImages,
@@ -1503,6 +1504,28 @@ async function processGatewayJob(job) {
         arguments: operationArguments,
         environment: job.environment,
       });
+      if (job.channel === "lazada" && job.operation === "listing.create" && !result.ok && !result.remoteId
+        && isLazadaBrandEnumerationError(result.steps)) {
+        const fallbackArguments = structuredClone(operationArguments);
+        const productAttributes = fallbackArguments.request?.Request?.Product?.Attributes;
+        if (productAttributes && typeof productAttributes === "object" && !Array.isArray(productAttributes)) {
+          // Lazada occasionally exposes Brand as a free-text field even though
+          // product creation accepts only its private enumeration. Retry once
+          // with the provider's universal fallback after the precise enum error;
+          // the first request failed before creating a remote product.
+          productAttributes.brand = "No Brand";
+          const fallbackResult = await executeChannelOperation({
+            channel: "lazada",
+            operation: "listing.create",
+            payload: credential,
+            arguments: fallbackArguments,
+            environment: job.environment,
+          });
+          console.log(`[Lazada brand fallback] ${fallbackResult.ok ? "success" : "failed"}`);
+          result = fallbackResult;
+          operationArguments = fallbackArguments;
+        }
+      }
       if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true
         && !result.ok && result.remoteId) {
         const publishabilityStep = result.steps.find((entry) => entry.name === "publishable-shop-readback");

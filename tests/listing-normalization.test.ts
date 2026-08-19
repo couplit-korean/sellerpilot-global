@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { classifyListingFailure } from "../lib/channels/listing-remediation";
 import {
+  isLazadaBrandEnumerationError,
   lazadaSkuSaleAttributes,
   marketplaceListingCurrency,
   marketplaceListingPrice,
@@ -13,7 +15,12 @@ import {
   replaceMarketplaceImageUrls,
   shopeeLanguageSafeText,
 } from "../lib/channels/listing-normalization";
-import { classifyListingFailure } from "../lib/channels/listing-remediation";
+
+test("Lazada retries only the private brand-enumeration rejection", () => {
+  assert.equal(isLazadaBrandEnumerationError({ detail: [{ field: "p-20000", code: "CHK_CATPROP_CPV_NOT_ENUM" }] }), true);
+  assert.equal(isLazadaBrandEnumerationError({ message: "Attribute value is not included in the dropdown list", field: "brand" }), true);
+  assert.equal(isLazadaBrandEnumerationError({ code: "BIZ_CHECK_PROP_REQUIRED", field: "units" }), false);
+});
 
 test("KRW channels round positive prices up to the required ten-won unit", () => {
   assert.equal(normalizeTenWonAmount(99_999), 100_000);
