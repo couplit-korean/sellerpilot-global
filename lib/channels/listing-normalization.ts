@@ -89,7 +89,8 @@ export function normalizeCoupangAttributeValue(metadata: CoupangAttributeMetadat
   const basicUnit = String(metadata?.basicUnit ?? "").trim();
   const unit = basicUnit && basicUnit !== "없음" ? basicUnit : usableUnits[0] ?? "";
   if (!unit || usableUnits.some((candidate) => raw.endsWith(candidate))) return raw;
-  return /^[-+]?\d+(?:\.\d+)?$/.test(raw) ? `${raw}${unit}` : raw;
+  const numeric = raw.match(/^([-+]?\d+(?:\.\d+)?)(?:\s*[^\d.]+)?$/u)?.[1];
+  return numeric ? `${numeric}${unit}` : raw;
 }
 
 type ShopeeAttributeValue = { value_id?: unknown; name?: unknown; display_value_name?: unknown; original_value_name?: unknown };
