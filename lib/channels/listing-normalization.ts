@@ -214,6 +214,11 @@ export function mergeShopeeRequiredAttributes(
   return { attributes, autoFilled, unresolved };
 }
 
+export function shopeeNeedsShelfLife(categoryId: number, productHint: string) {
+  return [100782, 100797, 100824, 100892, 100944].includes(categoryId)
+    || /(?:coffee|noodle|pasta|rice|food|grocery|fish\s*oil|omega|vitamin|supplement|capsule|softgel|skincare|skin\s*care|facial\s*(?:toner|mist)|cosmetic|커피|면|파스타|쌀|식품|어유|오메가|비타민|건강식품|영양제|스킨케어|화장품|화장수)/iu.test(productHint);
+}
+
 const ebayCountryNames = new Map([
   ["대한민국", "Korea, South"],
   ["한국", "Korea, South"],

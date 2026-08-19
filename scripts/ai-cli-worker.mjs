@@ -17,6 +17,7 @@ import {
   normalizeLazadaSizeChartImages,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
+  shopeeNeedsShelfLife,
 } from "../lib/channels/listing-normalization.ts";
 import { executeChannelOperation } from "../lib/channels/operations.ts";
 import { evaluateTemuEgressIp, parseTemuEgressAllowlist } from "../lib/channels/temu-egress-policy.ts";
@@ -464,12 +465,16 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     || /(?:coffee|noodle|pasta|rice|food|grocery|커피|면|파스타|쌀|식품)/iu.test(productHint);
   const supplementLike = categoryId === 100944
     || /(?:fish\s*oil|omega|vitamin|supplement|capsule|softgel|어유|오메가|비타민|건강식품|영양제)/iu.test(productHint);
-  const foodImplicitRequired = foodLike || supplementLike ? {
-    "packaging type": supplementLike ? "Bottle" : "Bag",
-    "pork origin region": "No Pork",
-    "shelf life": "12 Months",
-    "shelf lifes": "12 Months",
-  } : {};
+  const foodImplicitRequired = {
+    ...(foodLike || supplementLike ? {
+      "packaging type": supplementLike ? "Bottle" : "Bag",
+      "pork origin region": "No Pork",
+    } : {}),
+    ...(shopeeNeedsShelfLife(categoryId, productHint) ? {
+      "shelf life": "12 Months",
+      "shelf lifes": "12 Months",
+    } : {}),
+  };
   const globalImplicitRequired = {
     ...foodImplicitRequired,
     ...categoryImplicitRequired,

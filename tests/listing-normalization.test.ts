@@ -14,6 +14,7 @@ import {
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
   shopeeLanguageSafeText,
+  shopeeNeedsShelfLife,
 } from "../lib/channels/listing-normalization";
 
 test("Lazada retries only the private brand-enumeration rejection", () => {
@@ -111,6 +112,24 @@ test("Shopee local publish fills implicit enumerations and free-text dates whose
   assert.deepEqual(result.unresolved, []);
   assert.match(result.autoFilled[0] ?? "", /Drink Form: Whole Bean/);
   assert.match(result.autoFilled[1] ?? "", /Expiry Date: 19\/08\/2027/);
+});
+
+test("Shopee cosmetic toner publishing supplies the API-only shelf-life requirement", () => {
+  assert.equal(shopeeNeedsShelfLife(100892, "BRING GREEN facial toner skincare"), true);
+  assert.equal(shopeeNeedsShelfLife(999999, "laser printer toner cartridge"), false);
+  const result = mergeShopeeRequiredAttributes([], [{
+    attribute_id: 100010,
+    name: "Shelf Life",
+    mandatory: false,
+    attribute_value_list: [
+      { value_id: 580, name: "6 Months" },
+      { value_id: 593, name: "12 Months" },
+    ],
+  }], "BRING GREEN facial toner skincare", {
+    implicitRequired: { "shelf life": "12 Months" },
+    marketCode: "SG",
+  });
+  assert.deepEqual(result.attributes, [{ attribute_id: 100010, attribute_value_list: [{ value_id: 593 }] }]);
 });
 
 test("Shopee ignores attributes mandatory only in other markets", () => {
