@@ -731,7 +731,12 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const manualQuery = sanitizeCategoryQuery(query);
     const defaultQuery = sanitizeCategoryQuery(productName);
     if (manualQuery && manualQuery !== defaultQuery) return manualQuery;
-    if (channel === "shopee" || channel === "lazada") {
+    if (channel === "lazada") {
+      // Lazada's MY suggestion endpoint reliably accepts English product terms,
+      // while generated Malay display copy may omit the catalog noun entirely.
+      return englishCategoryQuery(defaultQuery || manualQuery);
+    }
+    if (channel === "shopee") {
       const targetMarket = selectedTarget(channel)?.marketCode;
       const localized = localizedListings.find((listing) => listing.channel === channel && (listing.market === targetMarket || listing.market === "SG"));
       const localizedTitle = sanitizeCategoryQuery(localized?.title ?? "");
