@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  lazadaSkuSaleAttributes,
   marketplaceListingCurrency,
   marketplaceListingPrice,
   mergeShopeeRequiredAttributes,
   naverUnitCapacity,
   normalizeEbayAspects,
   normalizeCoupangAttributeValue,
+  normalizeLazadaSizeChartImages,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
 } from "../lib/channels/listing-normalization";
@@ -157,6 +159,25 @@ test("Lazada migration rewrites images embedded in rich description HTML", () =>
     Attributes: { description: `<p>detail</p><img src="${target}">` },
     Images: { Image: [target] },
   });
+});
+
+test("Lazada size-chart fields always use a migrated public image URL", () => {
+  assert.deepEqual(normalizeLazadaSizeChartImages({
+    Attributes: { size_chart: "M: bust 90cm", color: "Blue" },
+    Skus: [{ SizeChartImage: "invalid text" }],
+  }, "https://my-live-02.slatic.net/p/detail-size.jpg"), {
+    Attributes: { size_chart: "https://my-live-02.slatic.net/p/detail-size.jpg", color: "Blue" },
+    Skus: [{ SizeChartImage: "https://my-live-02.slatic.net/p/detail-size.jpg" }],
+  });
+});
+
+test("Lazada copies required color and size sales properties into each SKU", () => {
+  assert.deepEqual(lazadaSkuSaleAttributes({
+    color_family: "Blue",
+    size: "Int:M",
+    dress_type: "Shirt Dresses",
+    brand: "No Brand",
+  }), { color_family: "Blue", size: "Int:M" });
 });
 
 test("an echoed Korean product name containing 이미지 does not misclassify a price error", () => {

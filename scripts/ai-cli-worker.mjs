@@ -12,6 +12,7 @@ import {
   mergeShopeeRequiredAttributes,
   naverUnitCapacity,
   normalizeCoupangAttributeValue,
+  normalizeLazadaSizeChartImages,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
 } from "../lib/channels/listing-normalization.ts";
@@ -515,7 +516,10 @@ async function prepareLazadaListing(payload, argumentsValue) {
   const product = request.Request?.Product;
   if (!product || typeof product !== "object") throw new Error("CHANNEL_ARGUMENT_REQUIRED:request.Request.Product");
   const replacements = new Map(imageUrls.map((source, index) => [source, migrated[index]]));
-  const migratedProduct = replaceMarketplaceImageUrls(product, replacements);
+  const migratedProduct = normalizeLazadaSizeChartImages(
+    replaceMarketplaceImageUrls(product, replacements),
+    migrated.at(-1) ?? migrated[0] ?? "",
+  );
   request.Request.Product = migratedProduct;
   migratedProduct.Images = { Image: migrated };
   const skus = Array.isArray(migratedProduct.Skus?.Sku) ? migratedProduct.Skus.Sku : [];

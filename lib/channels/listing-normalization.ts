@@ -74,6 +74,23 @@ export function replaceMarketplaceImageUrls(value: unknown, replacements: Readon
     .map(([key, item]) => [key, replaceMarketplaceImageUrls(item, replacements)]));
 }
 
+export function normalizeLazadaSizeChartImages(value: unknown, fallbackImageUrl: string): unknown {
+  if (Array.isArray(value)) return value.map((item) => normalizeLazadaSizeChartImages(item, fallbackImageUrl));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+    const normalizedKey = key.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (normalizedKey.includes("sizechart") && fallbackImageUrl) return [key, fallbackImageUrl];
+    return [key, normalizeLazadaSizeChartImages(item, fallbackImageUrl)];
+  }));
+}
+
+export function lazadaSkuSaleAttributes(attributes: Record<string, string>) {
+  return Object.fromEntries(Object.entries(attributes).filter(([key, value]) => {
+    const normalizedKey = key.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+    return value.trim().length > 0 && ["color", "colorfamily", "size"].includes(normalizedKey);
+  }));
+}
+
 type CoupangAttributeMetadata = {
   dataType?: unknown;
   basicUnit?: unknown;

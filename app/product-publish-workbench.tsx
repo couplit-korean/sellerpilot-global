@@ -3,7 +3,7 @@
 import { AlertTriangle, Check, CircleCheck, CirclePause, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
-import { marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
+import { lazadaSkuSaleAttributes, marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10SellerCode } from "../lib/channels/qoo10";
 import { createClient } from "../lib/supabase/client";
@@ -223,6 +223,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
       Object.entries(assignment?.providedAttributes ?? {})
         .filter(([, value]) => value.trim().length > 0),
     );
+    const skuSaleAttributes = lazadaSkuSaleAttributes(providedAttributes);
     return {
       sellerpilotAssets,
       country: target?.marketCode.toLowerCase() ?? "my",
@@ -237,7 +238,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
             // selected values, then make the listing's verified core content
             // authoritative so an empty category field cannot blank the title.
             Attributes: { ...providedAttributes, name: title.slice(0, 255), description, short_description: shortDescription.slice(0, 500), brand: manual.brandName },
-            Skus: { Sku: [{ SellerSku: marketSku, price: String(channelPrice), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: galleryImageUrls } }] },
+            Skus: { Sku: [{ ...skuSaleAttributes, SellerSku: marketSku, price: String(channelPrice), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: galleryImageUrls } }] },
           },
         },
       },
