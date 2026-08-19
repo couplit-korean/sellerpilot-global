@@ -217,7 +217,10 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
           original_price: channelPrice,
           item_name: shopeeTitle.slice(0, 120),
           item_sku: marketSku,
-          item_status: "UNLIST",
+          // GlobalProduct create_publish_task accepts the official local item
+          // status. Non-standard values can yield a task id that never becomes
+          // queryable and later surfaces only as `task not found`.
+          item_status: "NORMAL",
           logistic: [],
         },
       },

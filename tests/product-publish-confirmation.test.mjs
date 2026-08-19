@@ -21,9 +21,12 @@ test("market target operations use the credential that discovered those targets"
 });
 
 test("Shopee publishing receives an eventual-consistency timeout budget", async () => {
+  const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
   const route = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   const operations = await readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8");
 
+  assert.match(workbench, /item_status: "NORMAL"/);
+  assert.doesNotMatch(workbench, /item_status: "UNLIST"/);
   assert.match(route, /export const maxDuration = 90/);
   assert.match(route, /channel === "shopee" && operation === "listing\.create" \? 80_000/);
   assert.match(operations, /attempt < 10/);
