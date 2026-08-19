@@ -246,7 +246,7 @@ function shopeeSearchTerms(query: string) {
   if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(normalized)) aliases.push("teddy bears plush stuffed toys");
   if (/(toy\s?car|자동차.*완구|완구.*자동차|장난감.*차)/u.test(normalized)) aliases.push("toy cars vehicles toys");
   if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalized)) aliases.push("toy trains train sets railway wooden toys vehicles");
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalized)) aliases.push("building blocks construction sets educational toys");
+  if (/(building\s*blocks?|blocks?|블록)/u.test(normalized)) aliases.push("building blocks block toys construction toys building toys bricks educational toys");
   if (/(fish\s?oil|omega|어유|오메가|dha|epa)/u.test(normalized)) aliases.push("fish oil omega 3 vitamins supplements health");
   if (/(vitamin|비타민)/u.test(normalized)) aliases.push("vitamins supplements health");
   if (/(tote|canvas|캔버스.*토트|토트백)/u.test(normalized)) aliases.push("tote bags fashion bags");
@@ -289,7 +289,7 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
       && !/(sex|pet|shoe|performance enhancement)/u.test(normalizedCandidate);
   }
   if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) {
-    return /(building blocks?|construction sets?|stacking blocks?|educational toys?)/u.test(normalizedCandidate)
+    return /(building blocks?|block toys?|construction (?:sets?|toys?)|building toys?|stacking blocks?|bricks?|educational toys?)/u.test(normalizedCandidate)
       && !/(sex|pet|engine|motor)/u.test(normalizedCandidate);
   }
   if (/(fish\s?oil|omega|어유|오메가|dha|epa|vitamin|비타민)/u.test(normalizedQuery)) {
@@ -348,7 +348,7 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(normalizedQuery)) return score(["teddy", "plush", "stuffed", "toys"]);
   if (/(toy\s?car|자동차.*완구|완구.*자동차|장난감.*차)/u.test(normalizedQuery)) return score(["toy cars", "toy vehicles", "toys"]);
   if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalizedQuery)) return score(["toy trains", "train sets", "railway", "toy vehicles", "vehicle toys", "wooden toys", "toys"]);
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return score(["building blocks", "construction sets", "stacking blocks", "educational toys", "toys"]);
+  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return score(["building blocks", "block toys", "construction toys", "construction sets", "building toys", "bricks", "stacking blocks", "educational toys", "toys"]);
   if (/(fish\s?oil|omega|어유|오메가|dha|epa)/u.test(normalizedQuery)) return score(["fish oil", "omega 3", "omega", "supplements", "health"]);
   if (/(vitamin|비타민)/u.test(normalizedQuery)) return score(["vitamins", "supplements", "health"]);
   if (/(sponge|puff|스펀지|퍼프)/u.test(normalizedQuery)) return score(["makeup sponges", "makeup puffs", "sponges", "puffs", "applicators"]);
@@ -380,7 +380,7 @@ function lazadaSearchTerms(query: string) {
   if (/(teddy|beruang|곰인형|테디)/u.test(normalized)) aliases.push("teddy bears plush toys stuffed animals");
   if (/(kereta|toy\s?car|자동차.*완구|완구.*자동차)/u.test(normalized)) aliases.push("toy cars vehicles toys");
   if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalized)) aliases.push("toy trains train sets railway wooden toys");
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalized)) aliases.push("building blocks construction sets educational toys");
+  if (/(building\s*blocks?|blocks?|블록)/u.test(normalized)) aliases.push("building toys building blocks block toys construction toys construction sets educational toys");
   if (/(minyak ikan|fish\s?oil|omega|오메가|어유)/u.test(normalized)) aliases.push("fish oil omega 3 supplements dha epa");
   if (/(vitamin|비타민)/u.test(normalized)) aliases.push("vitamins supplements health");
   if (/(tote|kanvas|캔버스.*토트|토트백)/u.test(normalized)) aliases.push("tote bags fashion bags");
@@ -399,7 +399,7 @@ function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestio
   if (/(teddy|plush|stuffed|테디|곰인형|beruang)/u.test(normalizedQuery)) return /teddy|plush|stuffed|soft toy|beruang/u.test(name);
   if (/(toy\s?car|자동차.*완구|완구.*자동차|kereta)/u.test(normalizedQuery)) return /toy car|vehicle|kereta|car/u.test(name) && /toy|kereta|vehicle/u.test(path);
   if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalizedQuery)) return /toy train|train car|train set|railway|wooden toy|push & pull toy/u.test(`${path} ${name}`) && /toy|game|vehicle|wooden/u.test(path);
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return /building block|construction set|stacking block|educational toy/u.test(`${path} ${name}`);
+  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return /building toy|building block|block toy|construction (?:set|toy)|stacking block|brick|educational toy/u.test(`${path} ${name}`);
   if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return /fish oil|omega|dha|epa|minyak ikan|vitamin|supplement|health/u.test(`${path} ${name}`)
     && !/pet|animal feed|veterinary|mother|baby|infant|bayi|kanak|ibu/u.test(`${path} ${name}`);
   if (/(vitamin|비타민)/u.test(normalizedQuery)) return /vitamin|supplement/u.test(`${path} ${name}`);
@@ -418,7 +418,7 @@ function lazadaPriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return score(["penne", "pasta", "noodles"]);
   if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return score(["wheat flour", "flour", "tepung"]);
   if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalizedQuery)) return score(["train cars & sets", "toy trains", "train sets", "railway", "wooden toys", "push & pull toys"]);
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return score(["building blocks", "construction sets", "stacking blocks", "educational toys"]);
+  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return score(["building toys", "building blocks", "block toys", "construction toys", "construction sets", "bricks", "stacking blocks", "educational toys"]);
   if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return score(["fish oil", "omega 3", "omega", "dietary supplements", "vitamins & supplements", "health supplements"]);
   if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return score(["dresses", "dress"]);
   return 0;
@@ -801,11 +801,9 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         : englishCategoryQuery(defaultQuery || manualQuery);
     }
     if (channel === "ebay") {
-      const english = localizedListings.find((listing) => listing.channel === "shopee" && listing.market === "SG")?.title;
-      const englishTitle = sanitizeCategoryQuery(english ?? "");
-      return englishTitle && !isGenericFallbackTitle(englishTitle)
-        ? englishTitle
-        : englishCategoryQuery(defaultQuery || manualQuery);
+      // eBay category search is most stable with a short catalog noun. Reusing a
+      // generated display title can bury that noun and produce unrelated leaves.
+      return englishCategoryQuery(defaultQuery || manualQuery);
     }
     return manualQuery;
   }, [localizedListings, productName, query, selectedTarget]);

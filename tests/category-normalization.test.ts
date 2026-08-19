@@ -271,10 +271,19 @@ test("building-block normalization chooses construction-toy leaves", () => {
     ok: true,
     steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
       { category_id: 1, display_category_name: "Automotive > Engine Blocks", has_children: false },
-      { category_id: 2, display_category_name: "Toys, Games & Collectibles > Building Blocks & Construction Sets", has_children: false },
+      { category_id: 2, display_category_name: "Toys, Games & Collectibles > Block Toys", has_children: false },
     ] } } }],
   }, "color building blocks toy");
   assert.equal(shopee[0]?.id, "2");
+
+  const lazada = normalizeSuggestions("lazada", {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
+      { category_id: "L1", name: "Engine Blocks", category_path: "Automotive > Engine Blocks", leaf: true },
+      { category_id: "L2", name: "Building Toys", category_path: "Toys & Games > Building Toys", leaf: true },
+    ] } }],
+  }, "color building blocks toy");
+  assert.equal(lazada[0]?.id, "L2");
 });
 
 for (const [query, expectedId] of shopeeProgramCatalogCases) {
