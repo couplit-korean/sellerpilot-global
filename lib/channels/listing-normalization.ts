@@ -96,6 +96,25 @@ export function lazadaSkuSaleAttributes(attributes: Record<string, string>) {
   }));
 }
 
+export function lazadaRequiredCustomSaleProperties(remoteResult: unknown, attributes: Record<string, unknown>) {
+  let serialized = "";
+  try {
+    serialized = JSON.stringify(remoteResult);
+  } catch {
+    return {};
+  }
+  const entries = [...serialized.matchAll(/BIZ_CHECK_PROP_REQUIRED:(\d+([a-z][a-z0-9_]*))/giu)]
+    .flatMap((match) => {
+      const providerKey = match[1];
+      const suffix = match[2].toLocaleLowerCase();
+      const source = Object.entries(attributes).find(([key, value]) => (
+        key.toLocaleLowerCase() === suffix && String(value ?? "").trim().length > 0
+      ));
+      return providerKey && source ? [[providerKey, source[1]]] : [];
+    });
+  return Object.fromEntries(entries);
+}
+
 export function shopeeLanguageSafeText(value: string, fallback: string) {
   const normalized = value.trim();
   return normalized && /^[\x20-\x7e]+$/u.test(normalized) ? normalized : fallback.trim();

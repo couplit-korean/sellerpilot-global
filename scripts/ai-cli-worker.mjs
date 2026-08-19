@@ -9,6 +9,7 @@ import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
 import { cliStudioResultSchema } from "../lib/ai-cli-contract.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import {
+  lazadaRequiredCustomSaleProperties,
   mergeShopeeRequiredAttributes,
   naverUnitCapacity,
   normalizeCoupangAttributeValue,
@@ -1497,6 +1498,25 @@ async function processGatewayJob(job) {
         arguments: operationArguments,
         environment: job.environment,
       });
+      if (job.channel === "lazada" && job.operation === "listing.create" && !result.ok) {
+        const productRequest = operationArguments?.request?.Request?.Product;
+        const sku = productRequest?.Skus?.Sku?.[0];
+        const attributes = productRequest?.Attributes;
+        if (sku && attributes && typeof sku === "object" && typeof attributes === "object") {
+          const recoveredSaleProperties = lazadaRequiredCustomSaleProperties(result.steps, attributes);
+          if (Object.keys(recoveredSaleProperties).length > 0) {
+            Object.assign(sku, recoveredSaleProperties);
+            result = await executeChannelOperation({
+              channel: job.channel,
+              operation: job.operation,
+              payload: credential,
+              arguments: operationArguments,
+              environment: job.environment,
+            });
+            console.log(`[Lazada sale property recovery] ${result.ok ? "success" : "failed"} · ${Object.keys(recoveredSaleProperties).join(" | ")}`);
+          }
+        }
+      }
       if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true
         && !result.ok && shopeeShopCredential && /attribute/i.test(JSON.stringify(result.steps))) {
         const publishItem = operationArguments.publish?.item;
