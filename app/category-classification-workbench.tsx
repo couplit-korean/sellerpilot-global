@@ -626,7 +626,16 @@ export function normalizeAttributes(payloads: OperationPayload[]) {
     const constraint = row.aspectConstraint && typeof row.aspectConstraint === "object" && !Array.isArray(row.aspectConstraint)
       ? row.aspectConstraint as Record<string, unknown>
       : {};
-    const id = text(row, ["attribute_id", "attributeId", "attributeSeq", "attributeTypeName", "name", "localizedAspectName"]);
+    const providerAttributeId = text(row, ["attribute_id", "attributeId", "attributeSeq", "attributeTypeName", "name", "localizedAspectName"]);
+    const providerAttributeName = text(row, ["name"]);
+    // Lazada encodes category-specific SKU sales properties by concatenating
+    // their numeric attribute id and API name (for example `100006346units`).
+    // Store that exact XML key so the selected value reaches customSaleProp.
+    const id = /^\d+$/u.test(providerAttributeId)
+      && providerAttributeName
+      && booleanValue(row, ["is_sale_prop", "isSaleProp", "sale_prop", "saleProp"], false)
+      ? `${providerAttributeId}${providerAttributeName}`
+      : providerAttributeId;
     const name = text(row, ["display_attribute_name", "original_attribute_name", "attributeName", "attributeTypeName", "label", "name", "localizedAspectName"]);
     const looksLikeAttribute = Boolean(
       row.attribute_id !== undefined || row.attributeSeq !== undefined || row.attributeTypeName !== undefined
