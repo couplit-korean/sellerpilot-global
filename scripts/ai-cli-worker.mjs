@@ -452,7 +452,7 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   const categoryImplicitRequired = categoryId === 101642 || /(?:lipstick|lip\s*makeup|립스틱)/iu.test(productHint)
     ? { formulation: "Stick" }
     : {};
-  const foodLike = [100797, 100824].includes(categoryId)
+  const foodLike = [100782, 100797, 100824].includes(categoryId)
     || /(?:coffee|noodle|pasta|rice|food|grocery|커피|면|파스타|쌀|식품)/iu.test(productHint);
   const foodImplicitRequired = foodLike ? {
     "drink form": "Coffee Beans",
