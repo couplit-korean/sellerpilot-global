@@ -368,7 +368,7 @@ async function executeQoo10(input: ExecuteInput) {
         .find((value): value is string | number => typeof value === "string" || typeof value === "number")
         ?.toString()
       : undefined;
-  if (input.operation !== "listing.create" || !createStep.ok || !remoteId) {
+  if (input.operation !== "listing.create" || !remoteId) {
     return result(input, [createStep], remoteId);
   }
 
@@ -400,7 +400,16 @@ async function executeQoo10(input: ExecuteInput) {
     readbackStatus = readbackStep.status;
     readbackImageCount = qoo10ImageCount(qoo10DetailHtml(readback.data.ResultObject));
     if (readbackStep.ok && expectedDetailImages >= 4 && readbackImageCount >= expectedDetailImages) {
-      return result(input, [createStep, detailUpdateStep, qoo10VerificationStep(true, readbackStatus, readbackImageCount)], remoteId);
+      const verifiedCreateStep = createStep.ok ? createStep : {
+        ...createStep,
+        ok: true,
+        data: {
+          ...createStep.data,
+          ResultCode: 0,
+          ResultMsg: "CREATE_WARNING_RECOVERED_BY_ITEM_READBACK",
+        },
+      };
+      return result(input, [verifiedCreateStep, detailUpdateStep, qoo10VerificationStep(true, readbackStatus, readbackImageCount)], remoteId);
     }
   }
 
