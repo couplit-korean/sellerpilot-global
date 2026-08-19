@@ -184,8 +184,8 @@ test("Lazada copies required color and size sales properties into each SKU", () 
 test("Shopee replaces an unsupported localized title with a market-safe fallback", () => {
   assert.equal(shopeeLanguageSafeText("Women's Denim Dress", "Fallback"), "Women's Denim Dress");
   assert.equal(
-    shopeeLanguageSafeText("[업로드 테스트] 여성 데님 원피스", "[TEST NOT FOR SALE] Dresses FX2-001"),
-    "[TEST NOT FOR SALE] Dresses FX2-001",
+    shopeeLanguageSafeText("[업로드 테스트] 여성 데님 원피스", "Unbranded Dresses Sample Product Not For Sale"),
+    "Unbranded Dresses Sample Product Not For Sale",
   );
 });
 

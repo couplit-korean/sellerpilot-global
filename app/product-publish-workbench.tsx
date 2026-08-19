@@ -174,8 +174,8 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
   }
   if (channel === "shopee") {
     const shopeeCategoryName = assignment?.categoryPath.at(-1) || "General Product";
-    const shopeeTitle = shopeeLanguageSafeText(title, `[TEST NOT FOR SALE] ${shopeeCategoryName} ${manual.sellerSku || product.sku}`);
-    const shopeeDescription = shopeeLanguageSafeText(description, `Test listing not for sale. Category: ${shopeeCategoryName}. SKU: ${manual.sellerSku || product.sku}.`);
+    const shopeeTitle = shopeeLanguageSafeText(title, `Unbranded ${shopeeCategoryName} Sample Product Not For Sale`);
+    const shopeeDescription = shopeeLanguageSafeText(description, `This is a test listing for an unbranded ${shopeeCategoryName} sample product. It is not for sale.`);
     const attributeList = Object.entries(assignment?.providedAttributes ?? {}).map(([attribute_id, original_value_name]) => ({
       attribute_id: Number(attribute_id),
       attribute_value_list: /^\d+$/.test(original_value_name) ? [{ value_id: Number(original_value_name) }] : [{ original_value_name }],
