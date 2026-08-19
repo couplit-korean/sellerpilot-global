@@ -33,6 +33,7 @@ test("product learning uses stable product kinds across Korean and English title
   assert.equal(productLearningKey("레드 립스틱 화장품"), "beauty.lipstick");
   assert.equal(productLearningKey("Premium lipstick cosmetics"), "beauty.lipstick");
   assert.equal(productLearningKey("메이크업 브러시 8종"), "beauty.brush");
+  assert.equal(productLearningKey("Cica facial toner skincare"), "beauty.toner");
   assert.equal(productLearningKey("Wooden toy train"), "toy.train");
   assert.equal(productLearningKey("어유 오메가3 소프트젤"), "health.fish_oil");
 });

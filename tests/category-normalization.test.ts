@@ -189,6 +189,18 @@ test("Shopee beauty-tool normalization keeps sponges separate from brushes", () 
   assert.equal(normalizeSuggestions("shopee", response, "makeup brush set")[0]?.id, "1");
 });
 
+test("Shopee facial-toner normalization excludes supplements and brushes", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
+      { category_id: 1, display_category_name: "Beauty > Beauty Supplements", has_children: false },
+      { category_id: 2, display_category_name: "Beauty > Makeup Brushes", has_children: false },
+      { category_id: 3, display_category_name: "Beauty > Skin Care > Toners & Mists", has_children: false },
+    ] } } }],
+  };
+  assert.equal(normalizeSuggestions("shopee", response, "facial toner skincare cica")[0]?.id, "3");
+});
+
 test("Shopee clothing normalization does not map a hoodie to a generic shirt", () => {
   const response = {
     ok: true,
@@ -374,6 +386,18 @@ test("Smartstore beauty-tool normalization does not map a sponge to a brush", ()
   assert.equal(normalizeSuggestions("smartstore", response, "메이크업 스펀지 퍼프")[0]?.id, "SPONGE");
 });
 
+test("Smartstore facial-toner normalization excludes brush and toner-pad leaves", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
+      { id: "BRUSH", name: "브러시세트", wholeCategoryName: "화장품>미용>뷰티소품>메이크업브러시>브러시세트", last: true },
+      { id: "PAD", name: "토너패드", wholeCategoryName: "화장품>미용>스킨케어>토너패드", last: true },
+      { id: "TONER", name: "스킨/토너", wholeCategoryName: "화장품>미용>스킨케어>스킨>토너", last: true },
+    ] } }],
+  };
+  assert.equal(normalizeSuggestions("smartstore", response, "facial toner skincare cica 화장품")[0]?.id, "TONER");
+});
+
 test("Smartstore category normalization ranks a storage-box leaf above unrelated equal-score leaves", () => {
   const suggestions = normalizeSuggestions("smartstore", smartstoreCategoryResponse, "[API TEST] 수납 박스 이미지 샘플");
   assert.equal(suggestions[0]?.id, "500003");
@@ -412,6 +436,18 @@ test("Lazada normalization rejects equal-score aquarium noise and chooses lipsti
 
 test("Lazada normalization maps Malay soap wording to a beauty cleanser leaf", () => {
   assert.equal(normalizeSuggestions("lazada", lazadaCategoryResponse, "Sabun pembersih pepejal")[0]?.id, "1002");
+});
+
+test("Lazada facial-toner normalization prefers Toner & Mists over generic skincare", () => {
+  const response = {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
+      { category_id: "1", name: "Facial Oils", leaf: true },
+      { category_id: "2", name: "Facial Cleansers", leaf: true },
+      { category_id: "3", name: "Toner & Mists", leaf: true },
+    ] } }],
+  };
+  assert.equal(normalizeSuggestions("lazada", response, "facial toner skincare cica")[0]?.id, "3");
 });
 
 test("Lazada normalization excludes a matching parent and keeps the official nested leaf path", () => {

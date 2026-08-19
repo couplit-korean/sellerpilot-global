@@ -99,6 +99,7 @@ export function sanitizeCategoryQuery(value: string) {
 function englishCategoryQuery(value: string) {
   const normalized = value.toLocaleLowerCase();
   const aliases: Array<[RegExp, string]> = [
+    [/(토너|화장수|toner|face\s*mist)/u, "facial toner skincare"],
     [/(립스틱|lipstick)/u, "lipstick"],
     [/(브러시|brush)/u, "makeup brush set"],
     [/(흰쌀밥|백미|쌀|rice)/u, "white rice"],
@@ -243,6 +244,7 @@ function shopeeSearchTerms(query: string) {
   if (/(t[\s-]?shirt|tee|티셔츠|반팔)/u.test(normalized)) aliases.push("t-shirt tee shirts tops");
   if (/(hoodie|hood|jacket|후드|재킷)/u.test(normalized)) aliases.push("hoodies sweatshirts jackets outerwear clothing");
   if (/(cosmetic|beauty|skin|cream|화장품|스킨|크림)/u.test(normalized)) aliases.push("beauty skincare makeup cosmetics");
+  if (/(toner|mist|토너|화장수)/u.test(normalized)) aliases.push("facial toner face mist skincare beauty");
   if (/(soap|cleanser|cleansing|wash|비누|세정)/u.test(normalized)) aliases.push("soap cleanser cleansing bath body wash skincare");
   if (/(brush|브러시)/u.test(normalized)) aliases.push("makeup brushes beauty tools");
   if (/(sponge|puff|스펀지|퍼프)/u.test(normalized)) aliases.push("makeup sponges puffs beauty tools");
@@ -315,6 +317,9 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
   if (/(curler|eyelash|뷰러|속눈썹)/u.test(normalizedQuery)) {
     return /(eyelash curler|lash curler)/u.test(normalizedCandidate);
   }
+  if (/(toner|mist|토너|화장수)/u.test(normalizedQuery)) {
+    return /(toner|face mist|facial mist)/u.test(normalizedCandidate) && !/(supplement|test)/u.test(normalizedCandidate);
+  }
   if (/(cosmetic|beauty|skin|화장품|스킨)/u.test(normalizedQuery)) {
     return /(beauty|personal care|makeup|cosmetic|skin care)/u.test(normalizedCandidate);
   }
@@ -358,6 +363,7 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return score(["building blocks", "block toys", "construction toys", "construction sets", "building toys", "bricks", "stacking blocks", "educational toys", "toys"]);
   if (/(fish\s?oil|omega|어유|오메가|dha|epa)/u.test(normalizedQuery)) return score(["fish oil", "omega 3", "omega", "supplements", "health"]);
   if (/(vitamin|비타민)/u.test(normalizedQuery)) return score(["vitamins", "supplements", "health"]);
+  if (/(toner|mist|토너|화장수)/u.test(normalizedQuery)) return score(["toners & mists", "facial toners", "toners", "face mists", "mists"]);
   if (/(sponge|puff|스펀지|퍼프)/u.test(normalizedQuery)) return score(["makeup sponges", "makeup puffs", "sponges", "puffs", "applicators"]);
   if (/(brush|브러시)/u.test(normalizedQuery)) return score(["makeup brushes", "cosmetic brushes"]);
   if (/(cream|moistur|크림|보습)/u.test(normalizedQuery)) return score(["face moisturizers", "facial moisturizers", "face cream", "skin care"]);
@@ -372,6 +378,7 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
 function lazadaSearchTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   const aliases = [query];
+  if (/(toner|mist|토너|화장수)/u.test(normalized)) aliases.push("toner facial toner toner & mists skin care");
   if (/(krim|cream|크림|moistur)/u.test(normalized)) aliases.push("facial moisturizers skin care cream");
   if (/(sabun|soap|cleanser|cleansing|비누|세정)/u.test(normalized)) aliases.push("soap facial cleansers bath body skin care");
   if (/(lipstik|lipstick|립스틱|gincu)/u.test(normalized)) aliases.push("lipstick lip color makeup lips");
@@ -411,6 +418,7 @@ function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestio
     && !/pet|animal feed|veterinary|mother|baby|infant|bayi|kanak|ibu/u.test(`${path} ${name}`);
   if (/(vitamin|비타민)/u.test(normalizedQuery)) return /vitamin|supplement/u.test(`${path} ${name}`)
     && !/pet|animal feed|veterinary|mother|baby|infant|bayi|kanak|ibu/u.test(`${path} ${name}`);
+  if (/(toner|mist|토너|화장수)/u.test(normalizedQuery)) return /toner|mist/u.test(name) && !/room|air|car/u.test(path);
   if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return /dresses?/u.test(name)
     && /women'?s clothing|women fashion|pakaian wanita/u.test(path)
     && !/maternity|costume|pretend|toy/u.test(`${path} ${name}`);
@@ -428,6 +436,7 @@ function lazadaPriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalizedQuery)) return score(["train cars & sets", "toy trains", "train sets", "railway", "wooden toys", "push & pull toys"]);
   if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return score(["building toys", "building blocks", "block toys", "construction toys", "construction sets", "bricks", "stacking blocks", "educational toys"]);
   if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return score(["fish oil", "omega 3", "omega", "dietary supplements", "vitamins & supplements", "health supplements"]);
+  if (/(toner|mist|토너|화장수)/u.test(normalizedQuery)) return score(["toner & mists", "facial toner", "toner", "face mist", "mist"]);
   if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return score(["dresses", "dress"]);
   return 0;
 }
@@ -435,6 +444,7 @@ function lazadaPriorityScore(query: string, candidate: CategorySuggestion) {
 function smartstoreSearchTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   const aliases = [query];
+  if (/(토너|화장수|toner|mist)/u.test(normalized)) aliases.push("스킨 토너 화장수 페이셜토너 스킨케어 화장품");
   if (/(화장품|메이크업|스킨|크림|립스틱|cosmetic|beauty)/u.test(normalized)) aliases.push("화장품 메이크업 스킨케어 뷰티");
   if (/(브러시|스펀지|퍼프|뷰러|속눈썹|화장도구)/u.test(normalized)) aliases.push("메이크업소품 화장소품 미용소품 브러시 퍼프 뷰러");
   if (/(쌀|밥|파스타|펜네|밀가루|식품|food|rice|pasta|flour)/u.test(normalized)) aliases.push("식품 농산물 가공식품 면류 쌀 밀가루");
@@ -463,6 +473,8 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
     && /(화장품|미용|뷰티|메이크업)/u.test(normalizedCandidate)
     && !/(클렌저|세척|케이스|칫솔)/u.test(normalizedCandidate);
   if (/(뷰러|속눈썹)/u.test(normalizedQuery)) return /(뷰러|아이래쉬컬러)/u.test(normalizedCandidate);
+  if (/(토너|화장수|toner|mist)/u.test(normalizedQuery)) return /(스킨\/토너|스킨.*토너|토너|화장수)/u.test(normalizedCandidate)
+    && !/(브러시|패드|남성)/u.test(normalizedCandidate);
   if (/(화장도구)/u.test(normalizedQuery)) return /(메이크업소품|화장소품|미용소품|브러시|퍼프|스펀지|뷰러)/u.test(normalizedCandidate);
   if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalizedQuery)) return /(화장품|스킨케어|크림|로션|메이크업)/u.test(normalizedCandidate);
   if (/(티셔츠|셔츠|반팔|t[\s-]?shirt)/u.test(normalizedQuery)) return /(티셔츠|반팔티|상의|패션의류)/u.test(normalizedCandidate);
@@ -493,6 +505,7 @@ function smartstorePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(밀가루|flour)/u.test(normalizedQuery)) return score(["밀가루", "제빵용가루", "가루"]);
   if (/(스펀지|퍼프)/u.test(normalizedQuery)) return score(["메이크업스펀지", "메이크업퍼프", "스펀지", "퍼프"]);
   if (/(브러시)/u.test(normalizedQuery)) return score(["브러시세트", "메이크업브러시", "브러시"]);
+  if (/(토너|화장수|toner|mist)/u.test(normalizedQuery)) return score(["스킨/토너", "스킨 토너", "토너", "화장수"]);
   if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return score(["미니카", "자동차완구", "장난감자동차", "작동완구", "탈것완구"]);
   if (/(원목.*기차|기차|열차|wooden\s*train|toy\s*train)/u.test(normalizedQuery)) return score(["기차/트랙 작동완구", "기차완구", "철도완구", "원목완구", "작동완구"]);
   if (/(컬러.*블록|블록|blocks?|building\s*set)/u.test(normalizedQuery)) return score(["블록완구", "블록", "조립완구", "쌓기나무"]);

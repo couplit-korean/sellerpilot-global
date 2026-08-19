@@ -35,6 +35,7 @@ const productKinds: Array<[string, RegExp]> = [
   ["beauty.sponge", /(메이크업|화장|makeup|cosmetic|化粧|メイク).{0,12}(스펀지|퍼프|sponge|puff|スポンジ|パフ)|(스펀지|퍼프|sponge|puff|スポンジ|パフ).{0,12}(메이크업|화장|makeup|cosmetic|化粧|メイク)/iu],
   ["beauty.curler", /(뷰러|속눈썹\s*컬러|eyelash\s*curler|ビューラー)/iu],
   ["beauty.soap", /(고체\s*비누|세안\s*비누|soap\s*bar|facial\s*soap|洗顔せっけん|石鹸)/iu],
+  ["beauty.toner", /(스킨\s*[·/]?\s*토너|토너|화장수|facial\s*toner|face\s*mist|toner\s*(?:&|and)\s*mists?|化粧水)/iu],
   ["beauty.cream", /(보습|스킨|페이스|moistur|skin|face|乳液).{0,12}(크림|cream|クリーム)|(크림|cream|クリーム).{0,12}(보습|스킨|페이스|moistur|skin|face|乳液)/iu],
   ["beauty.serum", /(세럼|에센스|앰플|serum|essence|ampoule|美容液)/iu],
   ["beauty.cleanser", /(클렌저|클렌징\s*(?:폼|오일|밤)|face\s*wash|cleanser|cleansing\s*(?:foam|oil|balm)|洗顔フォーム|クレンジング)/iu],
