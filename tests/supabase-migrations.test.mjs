@@ -139,6 +139,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260818171500_personal_data_retention.sql",
       "20260819110000_category_learning_history.sql",
       "20260819150000_inventory_sync_ledger.sql",
+      "20260819170000_preserve_failed_listing_remote_id.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -181,6 +182,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       const definition = await scalar(db, "select pg_get_functiondef($1::regprocedure)", [signature]);
       assert.doesNotMatch(definition, /request\.jwt\.claim\.role/);
     }
+    const listingCompletionDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_service_complete_product_listing(uuid,uuid,text,boolean,text,text)'::regprocedure)",
+    );
+    assert.match(listingCompletionDefinition, /when nullif\(trim\(coalesce\(p_remote_id, ''\)\), ''\) is not null then trim\(p_remote_id\)/);
+    assert.doesNotMatch(listingCompletionDefinition, /when p_success and nullif\(trim\(coalesce\(p_remote_id/);
 
     await db.query("insert into auth.users (id, email) values ($1, 'admin@example.test')", [ADMIN_ID]);
     await db.query(

@@ -16,7 +16,7 @@ import { ensureEbayAccessToken } from "../../../../lib/channels/protocols";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
-export const maxDuration = 90;
+export const maxDuration = 180;
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
@@ -276,7 +276,7 @@ export async function POST(request: NextRequest) {
         channel,
         operation,
         arguments: gatewayArguments,
-        timeoutMs: channel === "shopee" && operation === "listing.create" ? 80_000 : undefined,
+        timeoutMs: channel === "shopee" && operation === "listing.create" ? 150_000 : undefined,
       });
       const { result, remediation } = applyListingRemediation(rawResult);
       if (remediation?.rejectCategory) await rejectBlockedCategory(remediation.code);

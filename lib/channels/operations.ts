@@ -659,8 +659,8 @@ async function executeShopee(input: ExecuteInput) {
     // Shopee can acknowledge a publish task before its task-result replica is
     // queryable. Keep polling long enough for that eventual consistency window;
     // the published-list readback below remains the final source of truth.
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
       const taskRemote = await shopeeMerchantRequest({
         payload: input.payload,
         environment: input.environment,
@@ -670,7 +670,7 @@ async function executeShopee(input: ExecuteInput) {
       });
       const taskStep = step(`publish-task-result-${attempt + 1}`, taskRemote);
       const transientNotFound = String(taskRemote.data.message ?? "").toLowerCase().includes("task not found");
-      if (transientNotFound && attempt < 9) continue;
+      if (transientNotFound && attempt < 19) continue;
       const response = taskRemote.data.response;
       const responseRecord = response && typeof response === "object" && !Array.isArray(response)
         ? response as Record<string, unknown>
@@ -678,13 +678,13 @@ async function executeShopee(input: ExecuteInput) {
       const status = String(responseRecord.publish_status ?? responseRecord.status ?? "").toUpperCase();
       if (["FAILED", "FAIL"].includes(status)) taskStep.ok = false;
       const terminal = ["SUCCESS", "FAILED", "FAIL", "COMPLETED", "DONE"].includes(status);
-      if (terminal || !taskStep.ok || attempt === 9) {
+      if (terminal || !taskStep.ok || attempt === 19) {
         if (!terminal && taskStep.ok) taskStep.ok = false;
         steps.push(taskStep);
         break;
       }
     }
-    const published = await publishedItem(8);
+    const published = await publishedItem(20);
     if (published.ok && published.itemId) {
       for (const item of steps) if (item.name.startsWith("publish-task-result-")) item.ok = true;
     }

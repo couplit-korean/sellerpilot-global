@@ -1584,8 +1584,10 @@ async function processGatewayJob(job) {
           }
         }
       }
+      const hasShopeeAttributeFailure = result.steps.some((entry) => !entry.ok
+        && /(?:attribute|mandatory|required|invalid field)/i.test(JSON.stringify(entry.data)));
       if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true
-        && !result.ok && shopeeShopCredential && /attribute/i.test(JSON.stringify(result.steps))) {
+        && !result.ok && shopeeShopCredential && hasShopeeAttributeFailure) {
         const publishItem = operationArguments.publish?.item;
         if (publishItem && typeof publishItem === "object" && !Array.isArray(publishItem)) {
           const localBody = structuredClone(publishItem);

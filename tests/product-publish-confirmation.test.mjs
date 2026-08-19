@@ -27,10 +27,10 @@ test("Shopee publishing receives an eventual-consistency timeout budget", async 
 
   assert.match(workbench, /item_status: "NORMAL"/);
   assert.doesNotMatch(workbench, /item_status: "UNLIST"/);
-  assert.match(route, /export const maxDuration = 90/);
-  assert.match(route, /channel === "shopee" && operation === "listing\.create" \? 80_000/);
-  assert.match(operations, /attempt < 10/);
-  assert.match(operations, /publishedItem\(8\)/);
+  assert.match(route, /export const maxDuration = 180/);
+  assert.match(route, /channel === "shopee" && operation === "listing\.create" \? 150_000/);
+  assert.match(operations, /attempt < 20/);
+  assert.match(operations, /publishedItem\(20\)/);
 });
 
 test("Lazada variant values are nested under the official SKU saleProp node", async () => {
