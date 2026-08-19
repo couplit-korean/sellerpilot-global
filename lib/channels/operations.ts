@@ -763,6 +763,32 @@ async function executeLazada(input: ExecuteInput) {
   }
   const path = pathMap[input.operation];
   if (!path) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
+  const lazadaListingReadback = async (itemId: string) => {
+    const readbackSteps: ChannelOperationStep[] = [];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1_200));
+      const readback = await lazadaRequest({
+        payload: input.payload,
+        path: "/product/item/get",
+        params: { item_id: itemId },
+      });
+      const readbackStep = step(attempt === 0 ? "listing-readback" : `listing-readback-${attempt + 1}`, readback);
+      const transientRateLimit = /access frequency exceeds the limit|frequency limit|too many requests/i.test(JSON.stringify(readback.data));
+      if (readbackStep.ok || !transientRateLimit || attempt === 2) {
+        readbackSteps.push(readbackStep);
+        break;
+      }
+      readbackSteps.push({ ...readbackStep, ok: true, data: { ...readbackStep.data, sellerpilotTransientRetry: true } });
+    }
+    return readbackSteps;
+  };
+  if (input.operation === "listing.create") {
+    const resumeRemoteId = stringArgument(input.arguments, "resumeRemoteId", false);
+    if (resumeRemoteId) {
+      const resumeStep: ChannelOperationStep = { name: "listing.resume", ok: true, status: 200, data: { item_id: resumeRemoteId, resumed: true } };
+      return result(input, [resumeStep, ...await lazadaListingReadback(resumeRemoteId)], resumeRemoteId);
+    }
+  }
   const write = writeChannelOperations.has(input.operation);
   const params = write ? { ...query, payload: lazadaPayload(input.arguments) } : query;
   const remote = await lazadaRequest({ payload: input.payload, path, method: write ? "POST" : "GET", params });
@@ -772,12 +798,7 @@ async function executeLazada(input: ExecuteInput) {
     : undefined;
   const writeStep = step(path, remote);
   if (input.operation === "listing.create" && writeStep.ok && remoteId) {
-    const readback = await lazadaRequest({
-      payload: input.payload,
-      path: "/product/item/get",
-      params: { item_id: remoteId },
-    });
-    return result(input, [writeStep, step("listing-readback", readback)], remoteId);
+    return result(input, [writeStep, ...await lazadaListingReadback(remoteId)], remoteId);
   }
   return result(input, [writeStep], remoteId);
 }

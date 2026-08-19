@@ -507,6 +507,68 @@ test("Lazada product create serializes the structured request as official XML an
   }
 });
 
+test("Lazada product readback retries a one-second API frequency limit", async () => {
+  const originalFetch = globalThis.fetch;
+  let readbacks = 0;
+  globalThis.fetch = async (input) => {
+    const creating = String(input).includes("/product/create");
+    if (creating) return new Response(JSON.stringify({ code: "0", data: { item_id: 987654322 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    readbacks += 1;
+    return new Response(JSON.stringify(readbacks === 1
+      ? { code: "ISP", message: "Api access frequency exceeds the limit. this ban will last 1 seconds" }
+      : { code: "0", data: { item_id: 987654322 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada",
+      operation: "listing.create",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "access-token", country: "my" },
+      arguments: { request: { Request: { Product: { PrimaryCategory: "8105" } } } },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "987654322");
+    assert.equal(readbacks, 2);
+    assert.deepEqual(result.steps.map((item) => item.name), ["/product/create", "listing-readback", "listing-readback-2"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada listing retry resumes a created item without creating a duplicate", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    return new Response(JSON.stringify({ code: "0", data: { item_id: 987654323 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada",
+      operation: "listing.create",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "access-token", country: "my" },
+      arguments: { resumeRemoteId: "987654323", request: { Request: { Product: { PrimaryCategory: "8105" } } } },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "987654323");
+    assert.deepEqual(result.steps.map((item) => item.name), ["listing.resume", "listing-readback"]);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /\/product\/item\/get/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Lazada category suggestion forwards the mandatory product image URL", async () => {
   const originalFetch = globalThis.fetch;
   const calledUrls: string[] = [];

@@ -239,6 +239,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     const skuSaleAttributes = lazadaSkuSaleAttributes(providedAttributes);
     return {
       sellerpilotAssets,
+      ...(existingListing?.remoteId && existingListing.status !== "published" ? { resumeRemoteId: existingListing.remoteId } : {}),
       country: target?.marketCode.toLowerCase() ?? "my",
       imageUrls: galleryImageUrls,
       request: {
