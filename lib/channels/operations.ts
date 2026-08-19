@@ -856,6 +856,7 @@ async function executeLazada(input: ExecuteInput) {
   }
   const path = pathMap[input.operation];
   if (!path) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
+  const expectedPublishStatus = stringArgument(input.arguments, "expectedPublishStatus", false).toLocaleLowerCase();
   const lazadaListingReadback = async (itemId: string) => {
     const readbackSteps: ChannelOperationStep[] = [];
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -867,7 +868,23 @@ async function executeLazada(input: ExecuteInput) {
       });
       const readbackStep = step(attempt === 0 ? "listing-readback" : `listing-readback-${attempt + 1}`, readback);
       const transientRateLimit = /access frequency exceeds the limit|frequency limit|too many requests/i.test(JSON.stringify(readback.data));
-      if (readbackStep.ok || !transientRateLimit || attempt === 2) {
+      const observedStatuses = expectedPublishStatus
+        ? collectFieldValues(readback.data, new Set(["status"]))
+          .map((value) => String(value).trim().toLocaleLowerCase())
+          .filter(Boolean)
+        : [];
+      const publishStatusMatched = !expectedPublishStatus || observedStatuses.includes(expectedPublishStatus);
+      if (readbackStep.ok && expectedPublishStatus) {
+        readbackStep.ok = publishStatusMatched;
+        readbackStep.data = {
+          ...readbackStep.data,
+          sellerpilotExpectedPublishStatus: expectedPublishStatus,
+          sellerpilotObservedPublishStatuses: observedStatuses,
+          sellerpilotVerification: publishStatusMatched ? "PUBLISH_STATUS_VERIFIED" : "PUBLISH_STATUS_NOT_VERIFIED",
+        };
+      }
+      const waitingForPublishStatus = expectedPublishStatus && !publishStatusMatched;
+      if (readbackStep.ok || (!transientRateLimit && !waitingForPublishStatus) || attempt === 2) {
         readbackSteps.push(readbackStep);
         break;
       }

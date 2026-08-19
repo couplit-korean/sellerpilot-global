@@ -88,7 +88,7 @@ export function buildInventoryUpdateArguments(input: {
     const requestRoot = record(request.Request, "lazada.Request");
     const product = record(requestRoot.Product, "lazada.Product");
     const skus = record(product.Skus, "lazada.Skus");
-    const sku = record(array(skus.Sku, "lazada.Sku")[0], "lazada.Sku[0]");
+    record(array(skus.Sku, "lazada.Sku")[0], "lazada.Sku[0]");
     return {
       country: market.toLowerCase(),
       itemId: remoteId,

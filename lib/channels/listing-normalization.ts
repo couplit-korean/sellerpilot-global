@@ -1,5 +1,79 @@
 import type { ActiveChannelKey } from "./catalog";
 
+export function isNonSaleTestListing(value: string) {
+  return /(?:\bapi[\s_-]*test\b|\bqa[\s_-]*\d|\bnot\s+for\s+sale\b|업로드\s*테스트|판매\s*금지|비매품)/iu.test(value);
+}
+
+const lazadaCountryDomains: Record<string, string> = {
+  ID: "www.lazada.co.id",
+  MY: "www.lazada.com.my",
+  PH: "www.lazada.com.ph",
+  SG: "www.lazada.sg",
+  TH: "www.lazada.co.th",
+  VN: "www.lazada.vn",
+};
+
+export function marketplaceListingPresentation(
+  channel: ActiveChannelKey,
+  remoteId: string,
+  productName: string,
+  targetMarketCode = "",
+) {
+  const nonSaleTest = isNonSaleTestListing(productName);
+  if (channel === "qoo10") return {
+    badge: "판매 등록 확인",
+    button: "등록 확인됨",
+    remoteLabel: "Qoo10 상품 번호",
+    url: `https://www.qoo10.jp/g/${encodeURIComponent(remoteId)}`,
+    note: "상품 페이지 주소가 발급되었습니다.",
+  };
+  if (channel === "ebay") return {
+    badge: "판매 등록 확인",
+    button: "등록 확인됨",
+    remoteLabel: "eBay 상품 번호",
+    url: `https://www.ebay.com/itm/${encodeURIComponent(remoteId)}`,
+    note: "공개 상품 페이지까지 발행된 번호입니다.",
+  };
+  if (channel === "lazada") {
+    const domain = lazadaCountryDomains[targetMarketCode.toUpperCase()] ?? lazadaCountryDomains.MY;
+    return {
+      badge: nonSaleTest ? "테스트 비활성 등록" : "판매 활성 등록",
+      button: nonSaleTest ? "비활성 등록 완료" : "활성 등록 완료",
+      remoteLabel: "Lazada 상품 번호",
+      url: `https://${domain}/products/i${encodeURIComponent(remoteId)}.html`,
+      note: nonSaleTest ? "판매금지 테스트 상품이라 노출하지 않았습니다." : "활성 상태로 등록하고 채널에서 다시 조회했습니다.",
+    };
+  }
+  if (channel === "coupang") return {
+    badge: nonSaleTest ? "테스트 임시저장" : "판매 승인 요청",
+    button: nonSaleTest ? "임시저장 완료" : "승인 요청 완료",
+    remoteLabel: "쿠팡 판매자상품 번호",
+    url: undefined,
+    note: nonSaleTest ? "판매금지 테스트 상품이라 승인 요청하지 않았습니다." : "쿠팡 승인 뒤 공개 상품 주소가 발급됩니다.",
+  };
+  if (channel === "smartstore") return {
+    badge: "판매 등록·재조회 확인",
+    button: "등록 확인됨",
+    remoteLabel: "스마트스토어 원상품 번호",
+    url: undefined,
+    note: "공개 주소가 아닌 원상품 관리 번호입니다.",
+  };
+  if (channel === "shopee") return {
+    badge: "판매 등록·재조회 확인",
+    button: "등록 확인됨",
+    remoteLabel: "Shopee 상품 번호",
+    url: undefined,
+    note: "연결된 판매 국가의 상품을 다시 조회해 확인했습니다.",
+  };
+  return {
+    badge: "판매 등록·재조회 확인",
+    button: "등록 확인됨",
+    remoteLabel: "Temu 상품 번호",
+    url: undefined,
+    note: "상품 상태와 이미지를 채널에서 다시 조회해 확인했습니다.",
+  };
+}
+
 export function normalizeTenWonAmount(value: unknown) {
   const amount = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
   if (!Number.isFinite(amount) || amount <= 0) return value;

@@ -541,6 +541,33 @@ test("Lazada product readback retries a one-second API frequency limit", async (
   }
 });
 
+test("Lazada sellable listing succeeds only after the active SKU is read back", async () => {
+  const originalFetch = globalThis.fetch;
+  let readbacks = 0;
+  globalThis.fetch = async (input) => {
+    if (String(input).includes("/product/create")) return Response.json({ code: "0", data: { item_id: 987654399 } });
+    readbacks += 1;
+    return Response.json({ code: "0", data: { item_id: 987654399, skus: [{ Status: readbacks === 1 ? "inactive" : "active" }] } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada",
+      operation: "listing.create",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "access-token", country: "my" },
+      arguments: {
+        expectedPublishStatus: "active",
+        request: { Request: { Product: { PrimaryCategory: "8105", Skus: { Sku: [{ Status: "active" }] } } } },
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(readbacks, 2);
+    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "PUBLISH_STATUS_VERIFIED");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Lazada listing retry resumes a created item without creating a duplicate", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];

@@ -1820,8 +1820,11 @@ a:focus-visible,
 .publish-write-confirmation.channel > button:nth-of-type(1) { grid-column: 1; }
 .publish-write-confirmation.channel > button:nth-of-type(2) { grid-column: 2; }
 .publish-confirm-execute { min-height: 34px; border: 1px solid #9c681f; border-radius: 7px; background: #9c681f; padding: 0 11px; color: #fff; font-size: 10px; font-weight: 850; }
-.publish-remote-id { margin: 0; color: var(--text-secondary); font-size: 11px; }
-.publish-remote-id b { margin-right: 6px; color: var(--text-primary); }
+.publish-remote-id { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; margin: 0; color: var(--text-secondary); font-size: 11px; }
+.publish-remote-id b { color: var(--text-primary); }
+.publish-remote-id a { display: inline-flex; align-items: center; gap: 4px; color: var(--brand); font-weight: 750; text-decoration: none; }
+.publish-remote-id a:hover { text-decoration: underline; }
+.publish-remote-id small { flex-basis: 100%; color: var(--text-tertiary); }
 .publish-result { display: grid; gap: 3px; margin: 0; border-radius: 7px; padding: 8px 9px; font-size: 11px; }
 .publish-result.succeeded { background: #edf8f2; color: #176848; }
 .publish-result.failed { background: #fff1ef; color: #9f3628; }

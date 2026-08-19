@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyListingFailure } from "../lib/channels/listing-remediation";
 import {
+  isNonSaleTestListing,
   isLazadaBrandEnumerationError,
   lazadaSkuSaleAttributes,
   marketplaceListingCurrency,
+  marketplaceListingPresentation,
   marketplaceListingPrice,
   mergeShopeeRequiredAttributes,
   naverUnitCapacity,
@@ -16,6 +18,21 @@ import {
   shopeeLanguageSafeText,
   shopeeNeedsShelfLife,
 } from "../lib/channels/listing-normalization";
+
+test("test-only titles stay inactive while ordinary customer products are sellable", () => {
+  assert.equal(isNonSaleTestListing("[업로드 테스트 · 판매금지] 스킨 토너"), true);
+  assert.equal(isNonSaleTestListing("API TEST mug not for sale"), true);
+  assert.equal(isNonSaleTestListing("저자극 수분 스킨 토너 200ml"), false);
+});
+
+test("listing links and customer labels never present seller-only ids as public URLs", () => {
+  assert.equal(marketplaceListingPresentation("qoo10", "1216458662", "일반 상품").url, "https://www.qoo10.jp/g/1216458662");
+  assert.equal(marketplaceListingPresentation("ebay", "800533354969", "일반 상품").url, "https://www.ebay.com/itm/800533354969");
+  assert.equal(marketplaceListingPresentation("lazada", "14971941210", "일반 상품", "MY").url, "https://www.lazada.com.my/products/i14971941210.html");
+  assert.equal(marketplaceListingPresentation("coupang", "16351551544", "일반 상품").url, undefined);
+  assert.equal(marketplaceListingPresentation("smartstore", "13666210620", "일반 상품").url, undefined);
+  assert.equal(marketplaceListingPresentation("coupang", "1", "[판매금지] 테스트").badge, "테스트 임시저장");
+});
 
 test("Lazada retries only the private brand-enumeration rejection", () => {
   assert.equal(isLazadaBrandEnumerationError({ detail: [{ field: "p-20000", code: "CHK_CATPROP_CPV_NOT_ENUM" }] }), true);
