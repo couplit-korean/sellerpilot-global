@@ -34,6 +34,7 @@ test("Coupang numeric attributes inherit the official category unit", () => {
   assert.equal(normalizeCoupangAttributeValue(metadata, "1"), "1개");
   assert.equal(normalizeCoupangAttributeValue(metadata, "2세트"), "2세트");
   assert.equal(normalizeCoupangAttributeValue(metadata, "3팩"), "3개");
+  assert.equal(normalizeCoupangAttributeValue(metadata, "상품 상세 참조"), "1개");
 });
 
 test("Naver unit-price data follows the official category exception flag", () => {

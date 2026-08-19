@@ -90,7 +90,7 @@ export function normalizeCoupangAttributeValue(metadata: CoupangAttributeMetadat
   const unit = basicUnit && basicUnit !== "없음" ? basicUnit : usableUnits[0] ?? "";
   if (!unit || usableUnits.some((candidate) => raw.endsWith(candidate))) return raw;
   const numeric = raw.match(/^([-+]?\d+(?:\.\d+)?)(?:\s*[^\d.]+)?$/u)?.[1];
-  return numeric ? `${numeric}${unit}` : raw;
+  return `${numeric ?? "1"}${unit}`;
 }
 
 type ShopeeAttributeValue = { value_id?: unknown; name?: unknown; display_value_name?: unknown; original_value_name?: unknown };
