@@ -293,6 +293,30 @@ export function shopeeNeedsShelfLife(categoryId: number, productHint: string) {
     || /(?:coffee|noodle|pasta|rice|food|grocery|fish\s*oil|omega|vitamin|supplement|capsule|softgel|skincare|skin\s*care|facial\s*(?:toner|mist)|cosmetic|커피|면|파스타|쌀|식품|어유|오메가|비타민|건강식품|영양제|스킨케어|화장품|화장수)/iu.test(productHint);
 }
 
+export function resolveShopeeGlobalItemId(
+  configuredId: unknown,
+  steps: Array<{ name?: unknown; data?: unknown }>,
+) {
+  const configured = String(configuredId ?? "").trim();
+  if (configured) return configured;
+  for (const step of steps) {
+    if (!String(step.name ?? "").startsWith("global-item-")) continue;
+    const data = step.data && typeof step.data === "object" && !Array.isArray(step.data)
+      ? step.data as Record<string, unknown>
+      : {};
+    const response = data.response && typeof data.response === "object" && !Array.isArray(data.response)
+      ? data.response as Record<string, unknown>
+      : {};
+    const direct = String(response.global_item_id ?? "").trim();
+    if (direct) return direct;
+    const rows = Array.isArray(response.global_item_list) ? response.global_item_list : [];
+    const first = rows.find((item) => item && typeof item === "object" && !Array.isArray(item)) as Record<string, unknown> | undefined;
+    const listed = String(first?.global_item_id ?? "").trim();
+    if (listed) return listed;
+  }
+  return "";
+}
+
 const ebayCountryNames = new Map([
   ["대한민국", "Korea, South"],
   ["한국", "Korea, South"],

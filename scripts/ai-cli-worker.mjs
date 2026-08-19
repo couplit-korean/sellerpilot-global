@@ -17,6 +17,7 @@ import {
   normalizeLazadaSizeChartImages,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
+  resolveShopeeGlobalItemId,
   shopeeNeedsShelfLife,
 } from "../lib/channels/listing-normalization.ts";
 import { executeChannelOperation } from "../lib/channels/operations.ts";
@@ -1675,7 +1676,7 @@ async function processGatewayJob(job) {
           result.steps.push({ name: "local-stock-reconcile", ok: stockOk, status: stockRemote.response.status, data: stockRemote.data });
           const cbscGlobalStockOnly = stockRemote.data?.error === "product.cnsc_shop_block";
           if (!stockOk && cbscGlobalStockOnly) {
-            const globalItemId = String(operationArguments.globalItemId ?? "").trim();
+            const globalItemId = resolveShopeeGlobalItemId(operationArguments.globalItemId, result.steps);
             if (globalItemId) {
               const globalStockRemote = await shopeeMerchantRequest({
                 payload: credential,

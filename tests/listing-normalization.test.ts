@@ -15,6 +15,7 @@ import {
   normalizeLazadaSizeChartImages,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
+  resolveShopeeGlobalItemId,
   shopeeLanguageSafeText,
   shopeeNeedsShelfLife,
 } from "../lib/channels/listing-normalization";
@@ -55,6 +56,18 @@ test("global marketplaces derive a realistic local price from the USD base price
   assert.equal(marketplaceListingPrice("ebay", 99_999, { globalBaseUsdPrice: 12.9 }), 12.9);
   assert.equal(marketplaceListingCurrency("lazada", "myr"), "MYR");
   assert.equal(marketplaceListingCurrency("coupang"), "KRW");
+});
+
+test("Shopee stock verification recovers a newly created global item id", () => {
+  assert.equal(resolveShopeeGlobalItemId("existing-1", []), "existing-1");
+  assert.equal(resolveShopeeGlobalItemId("", [{
+    name: "global-item-create",
+    data: { response: { global_item_id: 123456789 } },
+  }]), "123456789");
+  assert.equal(resolveShopeeGlobalItemId(undefined, [{
+    name: "global-item-readback",
+    data: { response: { global_item_list: [{ global_item_id: "987654321" }] } },
+  }]), "987654321");
 });
 
 test("Coupang numeric attributes inherit the official category unit", () => {
