@@ -501,6 +501,34 @@ async function executeShopee(input: ExecuteInput) {
     });
     steps.push(step("global-item-readback", readbackRemote));
     const publish = objectValue(input.arguments, "publish", false);
+    if (Object.keys(publish).length) {
+      const publishableRemote = await shopeeMerchantRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/global_product/get_publishable_shop",
+        query: new URLSearchParams({ global_item_id: globalItemId }),
+      });
+      const publishableStep = step("publishable-shop-readback", publishableRemote);
+      steps.push(publishableStep);
+      const response = publishableRemote.data.response;
+      const shops = response && typeof response === "object" && !Array.isArray(response)
+        && Array.isArray((response as Record<string, unknown>).publishable_shop)
+        ? (response as { publishable_shop: unknown[] }).publishable_shop
+        : [];
+      const requestedShopId = String(publish.shop_id ?? "");
+      const requestedShopIsPublishable = shops.some((item) => item && typeof item === "object" && !Array.isArray(item)
+        && String((item as Record<string, unknown>).shop_id ?? "") === requestedShopId);
+      if (!publishableStep.ok || (requestedShopId && !requestedShopIsPublishable)) {
+        publishableStep.ok = false;
+        publishableStep.data = {
+          ...publishableStep.data,
+          sellerpilotRequestedShopId: requestedShopId,
+          sellerpilotPublishableShops: shops,
+        };
+        return result(input, steps, globalItemId);
+      }
+    }
     const publishedItem = async (maxAttempts = 1) => {
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 3_000));
