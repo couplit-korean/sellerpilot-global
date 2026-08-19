@@ -247,7 +247,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
             // selected values, then make the listing's verified core content
             // authoritative so an empty category field cannot blank the title.
             Attributes: { ...providedAttributes, name: title.slice(0, 255), description, short_description: shortDescription.slice(0, 500), brand: manual.brandName },
-            Skus: { Sku: [{ ...skuSaleAttributes, SellerSku: marketSku, price: String(channelPrice), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: galleryImageUrls } }] },
+            Skus: { Sku: [{ saleProp: skuSaleAttributes, SellerSku: marketSku, price: String(channelPrice), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: galleryImageUrls } }] },
           },
         },
       },

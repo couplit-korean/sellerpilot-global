@@ -87,32 +87,12 @@ export function normalizeLazadaSizeChartImages(value: unknown, fallbackImageUrl:
 export function lazadaSkuSaleAttributes(attributes: Record<string, string>) {
   return Object.fromEntries(Object.entries(attributes).filter(([key, value]) => {
     const normalizedKey = key.toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
-    // Lazada can return category-specific sales-property names such as
-    // `100006346units`. Those values must live on every SKU, not only in the
-    // product Attributes node, otherwise /product/create rejects customSaleProp.
-    const categorySaleProperty = /^\d+[a-z][a-z0-9]*$/u.test(normalizedKey);
+    // These values must be nested under the SKU `saleProp` node. Lazada error
+    // messages prefix the API name with an internal numeric id, but that prefix
+    // is diagnostic metadata and is not a valid XML element name.
     return value.trim().length > 0
-      && (["color", "colorfamily", "size"].includes(normalizedKey) || categorySaleProperty);
+      && ["color", "colorfamily", "size", "units"].includes(normalizedKey);
   }));
-}
-
-export function lazadaRequiredCustomSaleProperties(remoteResult: unknown, attributes: Record<string, unknown>) {
-  let serialized = "";
-  try {
-    serialized = JSON.stringify(remoteResult);
-  } catch {
-    return {};
-  }
-  const entries = [...serialized.matchAll(/BIZ_CHECK_PROP_REQUIRED:(\d+([a-z][a-z0-9_]*))/giu)]
-    .flatMap((match) => {
-      const providerKey = match[1];
-      const suffix = match[2].toLocaleLowerCase();
-      const source = Object.entries(attributes).find(([key, value]) => (
-        key.toLocaleLowerCase() === suffix && String(value ?? "").trim().length > 0
-      ));
-      return providerKey && source ? [[providerKey, source[1]]] : [];
-    });
-  return Object.fromEntries(entries);
 }
 
 export function shopeeLanguageSafeText(value: string, fallback: string) {

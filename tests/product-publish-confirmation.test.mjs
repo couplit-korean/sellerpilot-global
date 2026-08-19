@@ -32,3 +32,10 @@ test("Shopee publishing receives an eventual-consistency timeout budget", async 
   assert.match(operations, /attempt < 10/);
   assert.match(operations, /publishedItem\(8\)/);
 });
+
+test("Lazada variant values are nested under the official SKU saleProp node", async () => {
+  const source = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /saleProp: skuSaleAttributes/);
+  assert.doesNotMatch(source, /Sku: \[\{ \.\.\.skuSaleAttributes/);
+});

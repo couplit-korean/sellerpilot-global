@@ -22,25 +22,6 @@ test("Naver child-product categories expose certification facts as manual requir
   ]);
 });
 
-test("Lazada custom sales properties preserve the provider XML key", () => {
-  const attributes = normalizeAttributes([{ ok: true, steps: [{ name: "attributes", ok: true, status: 200, data: {
-    data: [{
-      attribute_id: 100006346,
-      name: "units",
-      label: "Units per Set",
-      is_mandatory: 1,
-      is_sale_prop: 1,
-      options: [],
-    }],
-  } }] }]);
-  assert.deepEqual(attributes[0], {
-    id: "100006346units",
-    name: "Units per Set",
-    required: true,
-    values: [],
-  });
-});
-
 const qoo10Response = {
   ok: true,
   steps: [{

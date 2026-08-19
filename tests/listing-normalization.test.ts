@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  lazadaRequiredCustomSaleProperties,
   lazadaSkuSaleAttributes,
   marketplaceListingCurrency,
   marketplaceListingPrice,
@@ -207,19 +206,10 @@ test("Lazada copies required color and size sales properties into each SKU", () 
   assert.deepEqual(lazadaSkuSaleAttributes({
     color_family: "Blue",
     size: "Int:M",
-    "100006346units": "1",
+    units: "1",
     dress_type: "Shirt Dresses",
     brand: "No Brand",
-  }), { color_family: "Blue", size: "Int:M", "100006346units": "1" });
-});
-
-test("Lazada recovers provider-prefixed custom sales properties after a create rejection", () => {
-  assert.deepEqual(lazadaRequiredCustomSaleProperties({
-    detail: [{ message: "BIZ_CHECK_PROP_REQUIRED:100006346units This sales property is required." }],
-  }, {
-    units: "1",
-    color_family: "Multicolor",
-  }), { "100006346units": "1" });
+  }), { color_family: "Blue", size: "Int:M", units: "1" });
 });
 
 test("Shopee replaces an unsupported localized title with a market-safe fallback", () => {
