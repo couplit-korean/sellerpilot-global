@@ -55,6 +55,8 @@ test("semantic guard rejects a confidently wrong product family and risky audien
   assert.equal(categoryKindCompatibility("여성 데님 원피스", "Toys > Dress Up Costumes"), false);
   assert.equal(categoryKindCompatibility("즉석 흰쌀밥", "Kitchen Appliances > Rice Cookers"), false);
   assert.equal(categoryKindCompatibility("비타민 정제 건강식품", "Health > Adult Vitamins"), true);
+  assert.equal(categoryKindCompatibility("Cica facial toner skincare", "Beauty > Beauty Supplements"), false);
+  assert.equal(categoryKindCompatibility("Cica facial toner skincare", "Beauty > Toners & Mists"), true);
 });
 
 test("learning removes an explicit cross-kind provider suggestion", () => {
@@ -82,6 +84,19 @@ test("a previously published category is reused even when the suggestion endpoin
 test("learning never crosses distinct product kinds", () => {
   const learned = applyCategoryLearning("메이크업 브러시 세트", official, [example()]);
   assert.equal(learned.some((item) => item.learning?.successfulListings), false);
+});
+
+test("a successful but semantically wrong toner history is never reintroduced", () => {
+  const wrongHistory = example({
+    product_name: "Cica facial toner skincare",
+    category_id: "brush",
+    category_path: ["Beauty", "Makeup", "Makeup Brushes"],
+  });
+  const suggestions: LearnableCategorySuggestion[] = [
+    { id: "toner", name: "Toners & Mists", path: ["Beauty", "Skin Care", "Toners & Mists"], confidence: 0.82, leaf: true },
+  ];
+  const learned = applyCategoryLearning("Cica facial toner skincare", suggestions, [wrongHistory]);
+  assert.deepEqual(learned.map((item) => item.id), ["toner"]);
 });
 
 test("a later category-permission rejection demotes the blocked category", () => {

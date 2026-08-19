@@ -111,6 +111,9 @@ function sameProductKind(left: string, right: string) {
 export function categoryKindCompatibility(query: string, candidate: string) {
   const queryKey = productLearningKey(query);
   const candidateKinds = productKinds.filter(([, pattern]) => pattern.test(candidate)).map(([kind]) => kind);
+  if (queryKey === "beauty.toner" && !/(토너|화장수|미스트|toners?|mists?|化粧水)/iu.test(candidate)) {
+    return false;
+  }
   if (queryKey && !queryKey.startsWith("terms:") && candidateKinds.length && !candidateKinds.includes(queryKey)) {
     const queryFamily = queryKey.split(".")[0];
     const candidateFamilies = new Set(candidateKinds.map((kind) => kind.split(".")[0]));
@@ -189,6 +192,7 @@ export function applyCategoryLearning(
     const permissionBlocked = Boolean(signal.latestBlock && signal.latestBlock > signal.latestSuccess);
     if (result.some((item) => item.id === categoryId) || signal.successes === 0 || permissionBlocked) continue;
     const name = signal.path.at(-1) ?? categoryId;
+    if (!categoryKindCompatibility(query, `${signal.path.join(" ")} ${name}`)) continue;
     result.push({
       id: categoryId,
       name,
