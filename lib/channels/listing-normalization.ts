@@ -113,7 +113,12 @@ export function normalizeCoupangAttributeValue(metadata: CoupangAttributeMetadat
     ? metadata.usableUnits.map(String).map((unit) => unit.trim()).filter((unit) => unit && unit !== "없음")
     : [];
   const basicUnit = String(metadata?.basicUnit ?? "").trim();
-  const unit = basicUnit && basicUnit !== "없음" ? basicUnit : usableUnits[0] ?? "";
+  // Some Coupang category metadata exposes a display-only basic unit that is
+  // not accepted as a buying-option unit. Prefer it only when the usable-unit
+  // list also permits it; otherwise choose the first explicitly usable unit.
+  const basicUnitIsUsable = basicUnit && basicUnit !== "없음"
+    && (!usableUnits.length || usableUnits.includes(basicUnit));
+  const unit = basicUnitIsUsable ? basicUnit : usableUnits[0] ?? "";
   if (!unit || usableUnits.some((candidate) => raw.endsWith(candidate))) return raw;
   const numeric = raw.match(/^([-+]?\d+(?:\.\d+)?)(?:\s*[^\d.]+)?$/u)?.[1];
   return `${numeric ?? "1"}${unit}`;

@@ -197,9 +197,13 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
       attribute_list: attributeList,
     };
     const globalSku = `${manual.sellerSku || product.sku}-GLOBAL`.slice(0, 100);
+    const reusableGlobalItemId = existingListing?.remoteId && existingListing.status !== "published"
+      && !existingListing.lastError?.includes("로컬 상품·재고 재검증")
+      ? existingListing.remoteId
+      : "";
     return {
       sellerpilotAssets,
-      ...(existingListing?.remoteId && existingListing.status !== "published" ? { globalItemId: existingListing.remoteId } : {}),
+      ...(reusableGlobalItemId ? { globalItemId: reusableGlobalItemId } : {}),
       globalProduct: true,
       shopId: target?.targetId ?? "",
       country: target?.marketCode.toLowerCase() ?? "",

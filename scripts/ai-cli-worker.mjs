@@ -10,6 +10,7 @@ import { cliStudioResultSchema } from "../lib/ai-cli-contract.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import {
   mergeShopeeRequiredAttributes,
+  marketplaceListingPrice,
   naverUnitCapacity,
   normalizeCoupangAttributeValue,
   normalizeLazadaSizeChartImages,
@@ -430,8 +431,6 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     throw new Error(`Shopee 현지 숍 필수 속성을 확인하지 못했습니다${code ? `: ${code}` : ""}`);
   }
   const productHint = `${String(publishItem.item_name ?? body.global_item_name ?? "")} ${String(publishItem.description ?? body.description ?? "")}`;
-  const expiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
-  const expiryDate = `${String(expiry.getUTCDate()).padStart(2, "0")}/${String(expiry.getUTCMonth() + 1).padStart(2, "0")}/${expiry.getUTCFullYear()}`;
   const globalAttributeRemote = await shopeeMerchantRequest({
     payload: merchantPayload,
     environment,
@@ -444,8 +443,6 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   }
   const globalAttributeMetadata = objectRecords(globalAttributeRemote.data)
     .filter((row) => row.attribute_id !== undefined);
-  const globalImplicitMetadata = globalAttributeMetadata.filter((row) => /drink form|expiry date|shelf life|packaging type/i.test(String(row.display_attribute_name ?? row.name ?? "")));
-  if (globalImplicitMetadata.length) console.log(`[Shopee global implicit metadata] ${JSON.stringify(globalImplicitMetadata).slice(0, 6000)}`);
   // Some Shopee shop/category combinations omit a reliable mandatory flag for
   // attributes that the create API still requires. Keep the recovery targeted:
   // selecting every optional enumeration can invent contradictory food facts.
@@ -467,7 +464,6 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
   const supplementLike = categoryId === 100944
     || /(?:fish\s*oil|omega|vitamin|supplement|capsule|softgel|어유|오메가|비타민|건강식품|영양제)/iu.test(productHint);
   const foodImplicitRequired = foodLike || supplementLike ? {
-    "expiry date": expiryDate,
     "packaging type": supplementLike ? "Bottle" : "Bag",
     "pork origin region": "No Pork",
     "shelf life": "12 Months",
@@ -749,7 +745,6 @@ function prepareCoupangItem(itemValue, metadata, facts) {
     attributeValueName,
     ...(metadataByName.get(attributeTypeName)?.exposed ? { exposed: metadataByName.get(attributeTypeName).exposed } : {}),
   }));
-
   if (!Array.isArray(item.notices) || !item.notices.length) {
     const noticeCategories = Array.isArray(metadata.noticeCategories) ? metadata.noticeCategories : [];
     const noticeCategory = noticeCategories.find((category) => Array.isArray(category?.noticeCategoryDetailNames) && category.noticeCategoryDetailNames.some((detail) => detail?.required === "MANDATORY"))
@@ -1508,6 +1503,58 @@ async function processGatewayJob(job) {
         arguments: operationArguments,
         environment: job.environment,
       });
+      if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true
+        && !result.ok && result.remoteId) {
+        const publishabilityStep = result.steps.find((entry) => entry.name === "publishable-shop-readback");
+        const publishableShops = Array.isArray(publishabilityStep?.data?.sellerpilotPublishableShops)
+          ? publishabilityStep.data.sellerpilotPublishableShops
+          : [];
+        const requestedShopId = String(operationArguments.publish?.shop_id ?? "");
+        for (const shop of publishableShops) {
+          if (!shop || typeof shop !== "object" || Array.isArray(shop)) continue;
+          const fallbackShopId = String(shop.shop_id ?? "").trim();
+          const fallbackRegion = String(shop.shop_region ?? "").trim().toUpperCase();
+          if (!fallbackShopId || fallbackShopId === requestedShopId) continue;
+          try {
+            const fallbackShop = await ensureShopeeAccessToken(credential, job.environment, 10 * 60 * 1000, fallbackShopId);
+            if (fallbackShop.refreshed) credentialRefresh = { payload: fallbackShop.payload, expiresAt: fallbackShop.credentialExpiresAt };
+            let fallbackArguments = structuredClone(operationArguments);
+            fallbackArguments.globalItemId = result.remoteId;
+            fallbackArguments.publish.shop_id = Number(fallbackShopId);
+            fallbackArguments.publish.shop_region = fallbackRegion;
+            const currency = ({ SG: "SGD", MY: "MYR", PH: "PHP", VN: "VND", TH: "THB", TW: "TWD", BR: "BRL", MX: "MXN" })[fallbackRegion] ?? "USD";
+            const baseUsdPrice = Number(fallbackArguments.body?.original_price ?? 0);
+            if (Number.isFinite(baseUsdPrice) && baseUsdPrice > 0) {
+              fallbackArguments.publish.item.original_price = marketplaceListingPrice("shopee", baseUsdPrice, {
+                globalBaseUsdPrice: baseUsdPrice,
+                targetCurrency: currency,
+              });
+            }
+            const currentSku = String(fallbackArguments.publish.item.item_sku ?? "");
+            fallbackArguments.publish.item.item_sku = /-(?:SG|MY|PH|VN|TH|TW|BR|MX)$/u.test(currentSku)
+              ? currentSku.replace(/-(?:SG|MY|PH|VN|TH|TW|BR|MX)$/u, `-${fallbackRegion}`)
+              : `${currentSku}-${fallbackRegion}`.slice(0, 100);
+            fallbackArguments = await prepareShopeeGlobalListing(credential, fallbackShop.payload, job.environment, fallbackArguments);
+            const fallbackResult = await executeChannelOperation({
+              channel: "shopee",
+              operation: "listing.create",
+              payload: credential,
+              arguments: fallbackArguments,
+              environment: job.environment,
+            });
+            console.log(`[Shopee publishable-shop fallback] ${fallbackRegion} · ${fallbackResult.ok ? "success" : "failed"}`);
+            if (fallbackResult.ok) {
+              result = fallbackResult;
+              operationArguments = fallbackArguments;
+              shopeeShopCredential = fallbackShop.payload;
+              break;
+            }
+          } catch (error) {
+            const code = String(error instanceof Error ? error.message : error).replace(/[^a-zA-Z0-9_.:-]/g, "").slice(0, 100);
+            console.log(`[Shopee publishable-shop fallback] ${fallbackRegion || fallbackShopId} · skipped${code ? ` · ${code}` : ""}`);
+          }
+        }
+      }
       if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true
         && !result.ok && shopeeShopCredential && /attribute/i.test(JSON.stringify(result.steps))) {
         const publishItem = operationArguments.publish?.item;

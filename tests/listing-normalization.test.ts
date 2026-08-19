@@ -65,6 +65,14 @@ test("Shopee local publish metadata fills mandatory enumerations missing from th
   assert.match(result.autoFilled[0] ?? "", /Sets & Packages Type/);
 });
 
+test("Coupang numeric options prefer an allowed unit over a display-only basic unit", () => {
+  assert.equal(normalizeCoupangAttributeValue({
+    dataType: "NUMBER",
+    basicUnit: "개",
+    usableUnits: ["정", "회분"],
+  }, "1"), "1정");
+});
+
 test("Shopee local publish preserves seller input and exposes mandatory attributes without allowed values", () => {
   const result = mergeShopeeRequiredAttributes([{ attribute_id: 10, attribute_value_list: [{ value_id: 99 }] }], [
     { attribute_id: 10, display_attribute_name: "Brand", is_mandatory: true, attribute_value_list: [{ value_id: 1, display_value_name: "No Brand" }] },
