@@ -212,6 +212,57 @@ test("Shopee teddy matching excludes adult and pet toy categories", () => {
   assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, "테디베어 봉제 완구").some((item) => item.id === "100911"), false);
 });
 
+test("toy-train normalization rejects generic toy noise across official channel trees", () => {
+  const qoo10 = normalizeSuggestions("qoo10", {
+    ok: true,
+    steps: [{ name: "categories", ok: true, status: 200, data: {
+      ResultObject: [
+        { SecondSubCatCd: "SEASONAL", SecondSubCatNm: "その他", CATE_L_NM: "おもちゃ・知育", CATE_M_NM: "季節玩具", CATE_S_NM: "その他" },
+        { SecondSubCatCd: "TRAIN", SecondSubCatNm: "電車のおもちゃ", CATE_L_NM: "おもちゃ・知育", CATE_M_NM: "乗り物玩具", CATE_S_NM: "電車のおもちゃ" },
+      ],
+    } }],
+  }, "원목 기차 장난감");
+  assert.equal(qoo10[0]?.id, "TRAIN");
+
+  const shopee = normalizeSuggestions("shopee", {
+    ok: true,
+    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
+      { category_id: 1, display_category_name: "Health & Wellness > Sex Toys", has_children: false },
+      { category_id: 2, display_category_name: "Toys, Games & Collectibles > Toy Vehicles > Toy Trains", has_children: false },
+    ] } } }],
+  }, "wooden toy train");
+  assert.equal(shopee[0]?.id, "2");
+
+  const lazada = normalizeSuggestions("lazada", {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
+      { category_id: "L1", name: "Performance Enhancement", leaf: true },
+      { category_id: "L2", name: "Toy Trains & Railway Sets", category_path: "Toys & Games > Toy Vehicles > Toy Trains & Railway Sets", leaf: true },
+    ] } }],
+  }, "wooden toy train");
+  assert.equal(lazada[0]?.id, "L2");
+
+  const smartstore = normalizeSuggestions("smartstore", {
+    ok: true,
+    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
+      { id: "N1", name: "장난감총", wholeCategoryName: "출산>육아>완구>작동완구>장난감총", last: true },
+      { id: "N2", name: "기차/트랙 작동완구", wholeCategoryName: "출산>육아>완구>작동완구>기차/트랙 작동완구", last: true },
+    ] } }],
+  }, "원목 기차 장난감");
+  assert.equal(smartstore[0]?.id, "N2");
+});
+
+test("building-block normalization chooses construction-toy leaves", () => {
+  const shopee = normalizeSuggestions("shopee", {
+    ok: true,
+    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
+      { category_id: 1, display_category_name: "Automotive > Engine Blocks", has_children: false },
+      { category_id: 2, display_category_name: "Toys, Games & Collectibles > Building Blocks & Construction Sets", has_children: false },
+    ] } } }],
+  }, "color building blocks toy");
+  assert.equal(shopee[0]?.id, "2");
+});
+
 for (const [query, expectedId] of shopeeProgramCatalogCases) {
   test(`Shopee program catalog maps ${query}`, () => {
     assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, query)[0]?.id, expectedId);
