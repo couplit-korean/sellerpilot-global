@@ -37,6 +37,7 @@ type Listing = {
 };
 
 type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
+type ChannelTargetsResponse = { credentialId?: string; targets?: ChannelTarget[] };
 type LocalizedListing = { channel: "shopee" | "lazada"; market: string; locale: string; title: string; shortDescription: string; description: string; keywords: string[] };
 type PackageFields = { weight: number; length: number; width: number; height: number };
 type ManualFields = {
@@ -422,6 +423,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const [drafts, setDrafts] = useState<Partial<Record<ActiveChannelKey, string>>>({});
   const [results, setResults] = useState<Partial<Record<ActiveChannelKey, ChannelResult>>>({});
   const [availableTargets, setAvailableTargets] = useState<Partial<Record<"shopee" | "lazada", ChannelTarget[]>>>({});
+  const [targetCredentialIds, setTargetCredentialIds] = useState<Partial<Record<"shopee" | "lazada", string>>>({});
   const [selectedTargets, setSelectedTargets] = useState<Partial<Record<ActiveChannelKey, ChannelTarget>>>({});
   const [price, setPrice] = useState(2500);
   const [globalBaseUsdPrice, setGlobalBaseUsdPrice] = useState(12.9);
@@ -460,8 +462,8 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const payload = await contextResponse.json().catch(() => ({ message: "상품 준비 응답을 읽지 못했습니다." })) as PublishContext & { message?: string };
       if (!contextResponse.ok) throw new Error(payload.message ?? "상품 등록 준비 정보를 불러오지 못했습니다.");
       const nextPayload = { ...payload, manualFields: normalizeManualFields(payload), imageSpecs: Array.isArray(payload.imageSpecs) ? payload.imageSpecs : [] };
-      const shopeePayload = await shopeeTargetsResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[] };
-      const lazadaPayload = await lazadaTargetsResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[] };
+      const shopeePayload = await shopeeTargetsResponse.json().catch(() => ({ targets: [] })) as ChannelTargetsResponse;
+      const lazadaPayload = await lazadaTargetsResponse.json().catch(() => ({ targets: [] })) as ChannelTargetsResponse;
       const shopeeTargets = shopeeTargetsResponse.ok && Array.isArray(shopeePayload.targets) ? shopeePayload.targets : [];
       const lazadaTargets = lazadaTargetsResponse.ok && Array.isArray(lazadaPayload.targets) ? lazadaPayload.targets : [];
       const initialTargets: Partial<Record<ActiveChannelKey, ChannelTarget>> = { shopee: shopeeTargets[0], lazada: lazadaTargets[0] };
@@ -483,6 +485,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       setContext(nextPayload);
       setCredentials(Array.isArray(credentialsResponse.data) ? credentialsResponse.data as CredentialRow[] : []);
       setAvailableTargets({ shopee: shopeeTargets, lazada: lazadaTargets });
+      setTargetCredentialIds({ shopee: shopeePayload.credentialId, lazada: lazadaPayload.credentialId });
       setSelectedTargets(initialTargets);
       setDrafts(buildDraftMap(nextPayload, initialPrice, initialQuantity, initialTargets, initialPackage, manual.currency === "USD" ? initialPrice : globalBaseUsdPriceRef.current));
     } catch (error) {
@@ -497,11 +500,18 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     return () => window.clearTimeout(timer);
   }, [load, refreshVersion]);
 
-  const activeCredentials = useMemo(() => new Map(
-    credentials
-      .filter((item) => item.status === "active" && item.environment === "production")
-      .map((item) => [item.channel, item]),
-  ), [credentials]);
+  const activeCredentials = useMemo(() => {
+    const byChannel = new Map<ActiveChannelKey, CredentialRow>();
+    for (const item of credentials) {
+      if (item.status === "active" && item.environment === "production" && !byChannel.has(item.channel)) byChannel.set(item.channel, item);
+    }
+    for (const channel of ["shopee", "lazada"] as const) {
+      const credentialId = targetCredentialIds[channel];
+      const credential = credentialId ? credentials.find((item) => item.id === credentialId && item.channel === channel && item.status === "active" && item.environment === "production") : undefined;
+      if (credential) byChannel.set(channel, credential);
+    }
+    return byChannel;
+  }, [credentials, targetCredentialIds]);
   const visibleChannels = useMemo(() => activeChannelKeys.filter((channel) => selectedChannels.includes(channel)), [selectedChannels]);
 
   const updateProductFact = (key: "brandName" | "manufacturer" | "countryOfOrigin" | "material" | "packageContents", value: string) => {
