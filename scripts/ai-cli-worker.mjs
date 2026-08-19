@@ -1510,6 +1510,17 @@ async function processGatewayJob(job) {
       if (job.channel === "lazada" && job.operation === "listing.create" && !result.ok) {
         console.log(`[Lazada listing debug] ${JSON.stringify(result.steps.map((entry) => entry.data)).slice(0, 4000)}`);
       }
+      if (job.channel === "shopee" && job.operation === "listing.create" && !result.ok) {
+        const debugSteps = result.steps.map((entry) => ({
+          name: entry.name,
+          ok: entry.ok,
+          status: entry.status,
+          error: entry.data?.error,
+          message: entry.data?.message,
+          response: entry.data?.response,
+        }));
+        console.log(`[Shopee listing debug] ${JSON.stringify(debugSteps).slice(0, 6000)}`);
+      }
       if (job.channel === "coupang" && job.operation === "listing.create" && !result.ok) {
         const debugSteps = result.steps.map((entry) => ({
           name: entry.name,
