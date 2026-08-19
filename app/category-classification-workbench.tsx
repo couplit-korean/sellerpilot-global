@@ -656,7 +656,8 @@ export function normalizeAttributes(payloads: OperationPayload[]) {
     && row.kindTypes.map(String).includes("CHILD_CERTIFICATION")
     && text(row, ["id"])
   ));
-  const childCertificationAttributes: CategoryAttribute[] = childCertificationRows.length ? [
+  const childCategorySignal = found.some((attribute) => /(연령|어린이|아동|키즈|(?:^|\s)age(?:\s|$))/iu.test(attribute.name));
+  const childCertificationAttributes: CategoryAttribute[] = childCertificationRows.length && childCategorySignal ? [
     { id: "NAVER_MODEL_NAME", name: "모델명", required: true, values: [] },
     { id: "NAVER_COLOR", name: "색상", required: true, values: [] },
     { id: "NAVER_SIZE", name: "크기", required: true, values: [] },

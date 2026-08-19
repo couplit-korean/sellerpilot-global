@@ -11,6 +11,7 @@ test("category queries discard test-only prefixes before provider classification
 test("Naver child-product categories expose certification facts as manual required fields", () => {
   const attributes = normalizeAttributes([{ ok: true, steps: [{ name: "category", ok: true, status: 200, data: {
     id: "50004209",
+    attributes: [{ name: "권장 연령", is_mandatory: 1 }],
     certificationInfos: [{ id: 1042, name: "어린이제품 안전확인", kindTypes: ["CHILD_CERTIFICATION"] }],
   } }] }]);
   const requiredIds = new Set(attributes.filter((item) => item.required).map((item) => item.id));
@@ -20,6 +21,15 @@ test("Naver child-product categories expose certification facts as manual requir
   assert.deepEqual(attributes.find((item) => item.id === "NAVER_CHILD_CERTIFICATION_INFO_ID")?.values, [
     { id: "1042", name: "어린이제품 안전확인" },
   ]);
+});
+
+test("Naver non-child categories do not inherit global child certification choices", () => {
+  const attributes = normalizeAttributes([{ ok: true, steps: [{ name: "category", ok: true, status: 200, data: {
+    id: "50002447",
+    attributes: [{ name: "DHA+EPA", is_mandatory: 1 }],
+    certificationInfos: [{ id: 1042, name: "어린이제품 안전확인", kindTypes: ["CHILD_CERTIFICATION"] }],
+  } }] }]);
+  assert.equal(attributes.some((item) => item.id.startsWith("NAVER_CHILD_")), false);
 });
 
 const qoo10Response = {
