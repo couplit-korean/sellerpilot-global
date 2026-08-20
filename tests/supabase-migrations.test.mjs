@@ -160,6 +160,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260821103500_shared_inventory_workflow.sql",
       "20260821104500_shared_listing_completion.sql",
       "20260821105500_order_amount_listing_fallback.sql",
+      "20260821106000_fix_ai_prune_job_id_ambiguity.sql",
       "20260821113000_scope_push_deliveries_to_owner.sql",
     ]);
     for (const name of migrationNames) {
