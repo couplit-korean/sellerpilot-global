@@ -63,7 +63,13 @@ function normalizeCoupang(data: Record<string, unknown>) {
     const items = list(row.orderItems);
     const externalOrderId = text(row.orderId, row.shipmentBoxId);
     if (!externalOrderId) return null;
-    const total = number(row.orderPrice, row.totalPrice, ...items.map((item) => number(item.orderPrice, item.salesPrice) * Math.max(1, number(item.shippingCount, item.quantity))));
+    const itemTotal = items.reduce((sum, item) => {
+      const unitPrice = number(item.orderPrice, item.salesPrice, item.unitPrice, item.discountPrice);
+      const quantity = Math.max(1, number(item.shippingCount, item.quantity, item.orderQuantity));
+      return sum + unitPrice * quantity;
+    }, 0);
+    const sheetTotal = number(row.orderPrice, row.totalPrice, row.paidAmount, row.paymentAmount);
+    const total = sheetTotal > 0 ? sheetTotal : itemTotal;
     return {
       externalOrderId,
       customerName: text(object(row.orderer).name, object(row.receiver).name, "쿠팡 구매자"),

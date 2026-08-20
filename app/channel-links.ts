@@ -6,6 +6,10 @@ export type RemoteListingReference = {
   targetId?: string;
   remoteId?: string | null;
   status?: string;
+  currency?: string;
+  price?: number;
+  lastError?: string | null;
+  updatedAt?: string;
 };
 
 const shopeeDomains: Record<string, string> = {
@@ -28,29 +32,17 @@ export function sellerCenterUrl(channel: string) {
 }
 
 export function marketplaceListingLinkLabel(reference: RemoteListingReference) {
-  if (!reference.remoteId?.trim()) return "판매자센터 열기";
-
-  if (reference.channel === "shopee") {
-    const market = (reference.market ?? "SG").toUpperCase();
-    return reference.targetId?.trim() && shopeeDomains[market]
-      ? "등록 상품 열기"
-      : "채널에서 상품 찾기";
-  }
-
-  return ["qoo10", "elevenst", "ebay", "temu"].includes(reference.channel)
-    ? "등록 상품 열기"
-    : "채널에서 상품 찾기";
+  return reference.remoteId?.trim() ? "판매 상품 페이지 열기" : "판매 상품 주소 확인 필요";
 }
 
 /**
- * 공개 상품 URL이 원격 ID만으로 안정적으로 만들어지는 채널은 공개 페이지로,
- * 별도의 공개 상품번호나 slug가 필요한 채널은 공식 판매자센터의 상품 조회로 보냅니다.
+ * 원격 ID만으로 공개 판매 페이지를 정확히 만들 수 있는 채널만 반환합니다.
+ * 판매자센터나 검색 화면은 상품 페이지가 아니므로 대체 링크로 사용하지 않습니다.
  */
 export function marketplaceListingUrl(reference: RemoteListingReference) {
   if (!isKnownChannelKey(reference.channel)) return null;
   const remoteId = reference.remoteId?.trim();
-  const fallback = channels[reference.channel].sellerCenterUrl;
-  if (!remoteId) return fallback;
+  if (!remoteId || reference.status !== "published") return null;
 
   switch (reference.channel) {
     case "qoo10":
@@ -60,21 +52,23 @@ export function marketplaceListingUrl(reference: RemoteListingReference) {
       const domain = shopeeDomains[(reference.market ?? "SG").toUpperCase()];
       return shopId && domain
         ? `https://${domain}/product/${encodeURIComponent(shopId)}/${encodeURIComponent(remoteId)}`
-        : fallback;
+        : null;
     }
     case "lazada":
-      return `https://sellercenter.lazada.com.my/apps/product/list?search=${encodeURIComponent(remoteId)}`;
+      return (reference.market ?? "MY").toUpperCase() === "MY"
+        ? `https://www.lazada.com.my/products/i${encodeURIComponent(remoteId)}.html`
+        : null;
     case "coupang":
-      return `https://wing.coupang.com/vendor-inventory/list?page=1&countPerPage=10&searchKeyword=${encodeURIComponent(remoteId)}`;
+      return null;
     case "elevenst":
       return `https://www.11st.co.kr/products/${encodeURIComponent(remoteId)}`;
     case "smartstore":
-      return "https://sell.smartstore.naver.com/#/products/origin-list";
+      return null;
     case "ebay":
       return `https://www.ebay.com/itm/${encodeURIComponent(remoteId)}`;
     case "temu":
       return `https://www.temu.com/goods.html?_bg_fs=1&goods_id=${encodeURIComponent(remoteId)}`;
     default:
-      return fallback;
+      return null;
   }
 }

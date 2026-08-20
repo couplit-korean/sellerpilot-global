@@ -66,7 +66,7 @@ const detailConfig: Config<DetailComponents> = {
       defaultProps: { eyebrow: "NEW PRODUCT", title: "제품의 핵심 가치를 한 문장으로", description: "짧고 명확한 제품 설명", cta: "상품 확인하기", imageUrl: "", primary: "#25352d", accent: "#d9eeae", surface: "#f4f1e9" },
       render: ({ eyebrow, title, description, cta, imageUrl, primary, accent, surface }) => (
         <section className="pdp-hero-block" style={{ "--pdp-primary": primary, "--pdp-accent": accent, "--pdp-surface": surface } as React.CSSProperties}>
-          <div className="pdp-hero-copy"><span>{eyebrow}</span><h1>{title}</h1><p>{description}</p><button>{cta}</button></div>
+          <div className="pdp-hero-copy"><span>{eyebrow}</span><h1>{title}</h1><p>{description}</p><span className="pdp-visual-cta">{cta}</span></div>
           <div className="pdp-hero-visual">{imageUrl ? <img src={imageUrl} alt="상품 대표 이미지" /> : <span>PRODUCT IMAGE</span>}<i /></div>
         </section>
       ),
@@ -99,7 +99,7 @@ const detailConfig: Config<DetailComponents> = {
       fields: { title: { type: "text", label: "제목" }, description: { type: "textarea", label: "설명" }, button: { type: "text", label: "버튼" }, primary: { type: "text", label: "주 색상" }, accent: { type: "text", label: "강조 색상" } },
       defaultProps: { title: "오늘부터 시작해 보세요", description: "상품 정보를 확인하고 나에게 맞는 옵션을 선택하세요.", button: "상품 확인하기", primary: "#25352d", accent: "#d9eeae" },
       render: ({ title, description, button, primary, accent }) => (
-        <section className="pdp-cta-block" style={{ "--pdp-primary": primary, "--pdp-accent": accent } as React.CSSProperties}><span>READY TO START?</span><h2>{title}</h2><p>{description}</p><button>{button}</button></section>
+        <section className="pdp-cta-block" style={{ "--pdp-primary": primary, "--pdp-accent": accent } as React.CSSProperties}><span>READY TO START?</span><h2>{title}</h2><p>{description}</p><span className="pdp-visual-cta">{button}</span></section>
       ),
     },
   },

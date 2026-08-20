@@ -31,6 +31,11 @@ export async function POST(request: Request) {
   const jobRequest = job.request && typeof job.request === "object" && !Array.isArray(job.request)
     ? job.request as Record<string, unknown>
     : {};
+  if (job.kind === "support_reply") {
+    return NextResponse.json({ ...job, request: jobRequest }, {
+      headers: { "cache-control": "no-store, max-age=0" },
+    });
+  }
   if (job.kind === "product_research" || jobRequest.research_only === true) {
     return NextResponse.json({
       ...job,

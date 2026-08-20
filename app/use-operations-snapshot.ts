@@ -68,6 +68,19 @@ export type OperationMarginScenario = {
 
 export type OperationsSnapshot = {
   generatedAt: string;
+  aiRuntime: {
+    worker: {
+      label: string;
+      fingerprint: string;
+      expires_at: string;
+      last_seen_at: string | null;
+      last_version: string | null;
+    } | null;
+    queued: number;
+    running: number;
+    succeeded_today: number;
+    failed_today: number;
+  } | null;
   syncStatus: Array<{
     channel_key: string;
     data_type: "orders" | "inquiries";
@@ -86,6 +99,8 @@ export type OperationsSnapshot = {
     color: string;
     channelStatus: string;
     credentialStatus: string;
+    credentialLastCheckStatus: "passed" | "failed" | "manual" | null;
+    credentialLastCheckedAt: string | null;
     credentialExpiresAt: string | null;
     productCount: number;
     publishedCount: number;
@@ -106,6 +121,7 @@ export type OperationsSnapshot = {
     listingQueued: number;
     listingPublished: number;
     listingFailed: number;
+    listingBlocked: number;
   };
   summary: {
     revenue30dKrw: number;
@@ -117,7 +133,9 @@ export type OperationsSnapshot = {
     lowStockCount: number;
     productCount: number;
     registrationErrorCount: number;
+    registrationBlockedCount: number;
     activeCredentialCount: number;
+    registeredCredentialCount: number;
   };
 };
 
@@ -160,7 +178,7 @@ export function useOperationsSnapshot() {
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void load(), 0);
-    const refresh = window.setInterval(() => void load(), 60_000);
+    const refresh = window.setInterval(() => void load(), 5 * 60_000);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(refresh);

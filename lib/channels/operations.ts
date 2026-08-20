@@ -166,6 +166,27 @@ function step(name: string, remote: RemoteResponse): ChannelOperationStep {
   };
 }
 
+function inventoryQuantityVerificationStep(
+  name: string,
+  remote: RemoteResponse,
+  expectedQuantity: number,
+  actualQuantity: unknown,
+): ChannelOperationStep {
+  const verifiedStep = step(name, remote);
+  const normalizedActual = typeof actualQuantity === "number" ? actualQuantity : Number(actualQuantity);
+  const verified = verifiedStep.ok && Number.isFinite(normalizedActual) && normalizedActual === expectedQuantity;
+  return {
+    ...verifiedStep,
+    ok: verified,
+    data: {
+      ...verifiedStep.data,
+      expectedQuantity,
+      actualQuantity: Number.isFinite(normalizedActual) ? normalizedActual : null,
+      sellerpilotVerification: verified ? "INVENTORY_QUANTITY_VERIFIED" : "INVENTORY_QUANTITY_MISMATCH",
+    },
+  };
+}
+
 function naverOptionalCategoryMetadataStep(name: string, remote: RemoteResponse): ChannelOperationStep {
   const metadataStep = step(name, remote);
   const noMetadataForCategory = remote.response.status === 404
@@ -323,7 +344,18 @@ function operationDelay(ms: number) {
 }
 
 async function executeQoo10(input: ExecuteInput) {
-  const params = stringMap(input.arguments, "params");
+  const suppliedParams = stringMap(input.arguments, "params");
+  const inventoryQuantity = input.operation === "inventory.update"
+    ? integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 })
+    : null;
+  const params = input.operation === "inventory.update"
+    ? {
+      ...suppliedParams,
+      ItemCode: suppliedParams.ItemCode || stringArgument(input.arguments, "remoteId", false),
+      Qty: String(inventoryQuantity),
+    }
+    : suppliedParams;
+  if (input.operation === "inventory.update") delete params.ItemQty;
   if (params.ProductionPlace) params.ProductionPlace = qoo10ProductionPlace(params.ProductionPlace);
   const map: Partial<Record<ChannelOperationName, { service: string; method: string; version?: string }>> = {
     "categories.list": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
@@ -370,6 +402,23 @@ async function executeQoo10(input: ExecuteInput) {
         .find((value): value is string | number => typeof value === "string" || typeof value === "number")
         ?.toString()
       : undefined;
+  if (input.operation === "inventory.update") {
+    const itemCode = params.ItemCode;
+    const readback = await qoo10Request({
+      payload: input.payload,
+      service: "ItemsLookup",
+      method: "GetItemDetailInfo",
+      version: "1.2",
+      params: { ItemCode: itemCode, SellerCode: params.SellerCode ?? "" },
+    });
+    const readbackObject = readback.data.ResultObject && typeof readback.data.ResultObject === "object" && !Array.isArray(readback.data.ResultObject)
+      ? readback.data.ResultObject as Record<string, unknown>
+      : {};
+    return result(input, [
+      createStep,
+      inventoryQuantityVerificationStep("GetItemDetailInfo", readback, inventoryQuantity ?? 0, readbackObject.ItemQty ?? readbackObject.Qty),
+    ], itemCode || remoteId);
+  }
   if (input.operation !== "listing.create" || !createStep.ok || !remoteId) {
     return result(input, [createStep], remoteId);
   }
@@ -604,6 +653,67 @@ async function executeShopee(input: ExecuteInput) {
     });
     return result(input, [step("category-attributes-compatibility", legacyRemote)], categoryId);
   }
+  if (input.operation === "inventory.update") {
+    const suppliedBody = input.arguments.body ? objectValue(input.arguments, "body") : null;
+    const itemId = suppliedBody
+      ? String(suppliedBody.item_id ?? suppliedBody.itemId ?? "").trim()
+      : stringArgument(input.arguments, "itemId");
+    if (!itemId) throw new Error("CHANNEL_ARGUMENT_REQUIRED:itemId");
+    const suppliedStockList = suppliedBody && Array.isArray(suppliedBody.stock_list)
+      ? suppliedBody.stock_list as Array<Record<string, unknown>>
+      : [];
+    const suppliedQuantity = suppliedStockList
+      .flatMap((stock) => Array.isArray(stock.seller_stock) ? stock.seller_stock as Array<Record<string, unknown>> : [])
+      .map((stock) => stock.stock)
+      .find((value) => Number.isInteger(Number(value)));
+    const quantity = suppliedQuantity === undefined
+      ? integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 })
+      : Number(suppliedQuantity);
+    const steps: ChannelOperationStep[] = [];
+    let writeBody = suppliedBody;
+    if (!writeBody) {
+      const modelsRemote = await shopeeRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/product/get_model_list",
+        query: new URLSearchParams({ item_id: itemId }),
+      });
+      const modelsStep = step("inventory-models", modelsRemote);
+      steps.push(modelsStep);
+      if (!modelsStep.ok) return result(input, steps, itemId);
+      const response = objectValue(modelsRemote.data, "response", false);
+      const modelList = Array.isArray(response.model) ? response.model.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : [];
+      const stockList = modelList.length
+        ? modelList.map((model) => ({ model_id: Number(model.model_id), seller_stock: [{ stock: quantity }] }))
+        : [{ model_id: 0, seller_stock: [{ stock: quantity }] }];
+      writeBody = { item_id: Number(itemId), stock_list: stockList };
+    }
+    const writeRemote = await shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "POST",
+      path: "/api/v2/product/update_stock",
+      body: writeBody,
+    });
+    const writeStep = step("inventory.update", writeRemote);
+    steps.push(writeStep);
+    if (!writeStep.ok) return result(input, steps, itemId);
+    const readback = await shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/product/get_item_base_info",
+      query: new URLSearchParams({ item_id_list: itemId }),
+    });
+    const response = objectValue(readback.data, "response", false);
+    const itemList = Array.isArray(response.item_list) ? response.item_list as Array<Record<string, unknown>> : [];
+    const item = itemList.find((candidate) => String(candidate.item_id ?? "") === itemId) ?? itemList[0] ?? {};
+    const stockInfo = objectValue(item, "stock_info_v2", false);
+    const summaryInfo = objectValue(stockInfo, "summary_info", false);
+    steps.push(inventoryQuantityVerificationStep("inventory-readback", readback, quantity, summaryInfo.total_available_stock));
+    return result(input, steps, itemId);
+  }
   const writePaths: Partial<Record<ChannelOperationName, string>> = {
     "listing.create": "/api/v2/product/add_item",
     "listing.update": "/api/v2/product/update_item",
@@ -710,6 +820,55 @@ async function executeLazada(input: ExecuteInput) {
       params: { ...query, payload: lazadaPayload(input.arguments) },
     });
     return result(input, [step("pack", remote)]);
+  }
+  if (input.operation === "inventory.update" && !input.arguments.request) {
+    const itemId = stringArgument(input.arguments, "itemId");
+    const quantity = integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 });
+    const readback = await lazadaRequest({ payload: input.payload, path: "/product/item/get", params: { item_id: itemId } });
+    const readbackStep = step("inventory-item-readback", readback);
+    if (!readbackStep.ok) return result(input, [readbackStep], itemId);
+    const data = objectValue(readback.data, "data", false);
+    const product = objectValue(data, "item", false);
+    const skusContainer = product.Skus && typeof product.Skus === "object" && !Array.isArray(product.Skus)
+      ? product.Skus as Record<string, unknown>
+      : data.Skus && typeof data.Skus === "object" && !Array.isArray(data.Skus)
+        ? data.Skus as Record<string, unknown>
+        : {};
+    const rawSkuValue = skusContainer.Sku ?? data.skus;
+    const skuRoot = rawSkuValue && typeof rawSkuValue === "object" && !Array.isArray(rawSkuValue)
+      ? rawSkuValue as Record<string, unknown>
+      : {};
+    const rawSkus = Array.isArray(rawSkuValue)
+      ? rawSkuValue.filter((sku): sku is Record<string, unknown> => Boolean(sku) && typeof sku === "object" && !Array.isArray(sku))
+      : Object.keys(skuRoot).length ? [skuRoot] : [];
+    const sellerSkus = rawSkus.map((sku) => String(sku.SellerSku ?? sku.seller_sku ?? "").trim()).filter(Boolean);
+    if (!sellerSkus.length) throw new Error("CHANNEL_ARGUMENT_REQUIRED:sellerSku");
+    const request = { Request: { Product: { Skus: { Sku: sellerSkus.map((sellerSku) => ({ SellerSku: sellerSku, Quantity: quantity })) } } } };
+    const write = await lazadaRequest({ payload: input.payload, path: "/product/price_quantity/update", method: "POST", params: { ...query, payload: lazadaPayload({ request }) } });
+    const writeStep = step("inventory.update", write);
+    if (!writeStep.ok) return result(input, [readbackStep, writeStep], itemId);
+    const verificationRemote = await lazadaRequest({ payload: input.payload, path: "/product/item/get", params: { item_id: itemId } });
+    const verificationData = objectValue(verificationRemote.data, "data", false);
+    const verificationProduct = objectValue(verificationData, "item", false);
+    const verificationSkusContainer = verificationProduct.Skus && typeof verificationProduct.Skus === "object" && !Array.isArray(verificationProduct.Skus)
+      ? verificationProduct.Skus as Record<string, unknown>
+      : verificationData.Skus && typeof verificationData.Skus === "object" && !Array.isArray(verificationData.Skus)
+        ? verificationData.Skus as Record<string, unknown>
+        : {};
+    const verificationSkuValue = verificationSkusContainer.Sku ?? verificationData.skus;
+    const verificationSkus = Array.isArray(verificationSkuValue)
+      ? verificationSkuValue.filter((sku): sku is Record<string, unknown> => Boolean(sku) && typeof sku === "object" && !Array.isArray(sku))
+      : verificationSkuValue && typeof verificationSkuValue === "object" && !Array.isArray(verificationSkuValue)
+        ? [verificationSkuValue as Record<string, unknown>]
+        : [];
+    const matchingQuantities = verificationSkus
+      .filter((sku) => sellerSkus.includes(String(sku.SellerSku ?? sku.seller_sku ?? "").trim()))
+      .map((sku) => Number(sku.Quantity ?? sku.quantity));
+    const verifiedQuantity = matchingQuantities.length > 0 && matchingQuantities.every((value) => value === quantity)
+      ? quantity
+      : Number.NaN;
+    const verificationStep = inventoryQuantityVerificationStep("inventory-readback", verificationRemote, quantity, verifiedQuantity);
+    return result(input, [readbackStep, writeStep, verificationStep], itemId);
   }
   const path = pathMap[input.operation];
   if (!path) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
@@ -889,10 +1048,39 @@ async function executeCoupang(input: ExecuteInput) {
     return result(input, [step("price", remote)], vendorItemId);
   }
   if (input.operation === "inventory.update") {
-    const vendorItemId = pathSegment(stringArgument(input.arguments, "vendorItemId"));
     const quantity = integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 });
-    const remote = await coupangRequest({ payload: input.payload, method: "PUT", path: `${sellerProductsPath.replace("seller-products", "vendor-items")}/${vendorItemId}/quantities/${quantity}` });
-    return result(input, [step("quantity", remote)], vendorItemId);
+    const suppliedVendorItemId = stringArgument(input.arguments, "vendorItemId", false);
+    let vendorItemIds = suppliedVendorItemId ? [suppliedVendorItemId] : [];
+    const steps: ChannelOperationStep[] = [];
+    const sellerProductId = stringArgument(input.arguments, "sellerProductId", false);
+    if (!vendorItemIds.length && sellerProductId) {
+      const readback = await coupangRequest({ payload: input.payload, method: "GET", path: `${sellerProductsPath}/${pathSegment(sellerProductId)}` });
+      const readbackStep = step("inventory-item-readback", readback);
+      steps.push(readbackStep);
+      if (!readbackStep.ok) return result(input, steps, sellerProductId);
+      const data = readback.data.data && typeof readback.data.data === "object" && !Array.isArray(readback.data.data)
+        ? readback.data.data as Record<string, unknown>
+        : readback.data;
+      const items = Array.isArray(data.items) ? data.items.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : [];
+      vendorItemIds = items.map((item) => String(item.vendorItemId ?? "").trim()).filter(Boolean);
+    }
+    if (!vendorItemIds.length) throw new Error("CHANNEL_ARGUMENT_REQUIRED:vendorItemId");
+    for (const vendorItemId of vendorItemIds) {
+      const remote = await coupangRequest({ payload: input.payload, method: "PUT", path: `${sellerProductsPath.replace("seller-products", "vendor-items")}/${pathSegment(vendorItemId)}/quantities/${quantity}` });
+      const writeStep = step("quantity", remote);
+      steps.push(writeStep);
+      if (!writeStep.ok) continue;
+      const verificationRemote = await coupangRequest({
+        payload: input.payload,
+        method: "GET",
+        path: `${sellerProductsPath.replace("seller-products", "vendor-items")}/${pathSegment(vendorItemId)}/inventories`,
+      });
+      const verificationData = verificationRemote.data.data && typeof verificationRemote.data.data === "object" && !Array.isArray(verificationRemote.data.data)
+        ? verificationRemote.data.data as Record<string, unknown>
+        : verificationRemote.data;
+      steps.push(inventoryQuantityVerificationStep("inventory-readback", verificationRemote, quantity, verificationData.amountInStock ?? verificationData.quantity));
+    }
+    return result(input, steps, sellerProductId || vendorItemIds[0]);
   }
   const orderBase = `/v2/providers/openapi/apis/api/v5/vendors/${pathSegment(vendorId)}`;
   if (input.operation === "inquiries.list") {
@@ -1047,8 +1235,33 @@ async function executeSmartstore(input: ExecuteInput) {
   }
   if (input.operation === "inventory.update") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
-    const remote = await request({ method: "PUT", path: `/v1/products/origin-products/${originProductNo}/option-stock`, body: objectValue(input.arguments, "body") });
-    return result(input, [step("option-stock", remote)], originProductNo);
+    const quantity = integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 });
+    if (stringArgument(input.arguments, "mode", false) === "origin-product" || !input.arguments.body) {
+      const readback = await request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
+      const readbackStep = step("inventory-item-readback", readback);
+      if (!readbackStep.ok) return result(input, [readbackStep], decodeURIComponent(originProductNo));
+      const originProduct = objectValue(readback.data, "originProduct", false);
+      if (!Object.keys(originProduct).length) return result(input, [{ ...readbackStep, ok: false }], decodeURIComponent(originProductNo));
+      const body = {
+        ...readback.data,
+        originProduct: { ...originProduct, stockQuantity: quantity },
+      };
+      const writeRemote = await request({ method: "PUT", path: `/v2/products/origin-products/${originProductNo}`, body });
+      const writeStep = step("origin-product-stock", writeRemote);
+      if (!writeStep.ok) return result(input, [readbackStep, writeStep], decodeURIComponent(originProductNo));
+      const verificationRemote = await request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
+      const verificationProduct = objectValue(verificationRemote.data, "originProduct", false);
+      return result(input, [
+        readbackStep,
+        writeStep,
+        inventoryQuantityVerificationStep("inventory-readback", verificationRemote, quantity, verificationProduct.stockQuantity),
+      ], decodeURIComponent(originProductNo));
+    }
+    const body = input.arguments.body
+      ? objectValue(input.arguments, "body")
+      : { stockQuantity: quantity };
+    const remote = await request({ method: "PUT", path: `/v1/products/origin-products/${originProductNo}/option-stock`, body });
+    return result(input, [step("option-stock", remote)], decodeURIComponent(originProductNo));
   }
   if (input.operation === "orders.list") {
     const remote = await request({ method: "GET", path: "/v1/pay-order/seller/product-orders/last-changed-statuses", query: queryParams(input.arguments) });
@@ -1219,9 +1432,39 @@ async function executeTemu(input: ExecuteInput) {
     return result(input, [step("goods-off-shelf", remote)], goodsId);
   }
   if (input.operation === "inventory.update") {
-    const remote = await temuRequest({ payload: input.payload, type: "bg.local.goods.stock.edit", arguments: objectValue(input.arguments, "body") });
-    const goodsId = temuResultObject(remote.data).goodsId;
-    return result(input, [step("goods-stock", remote)], goodsId === undefined ? undefined : String(goodsId));
+    const goodsId = stringArgument(input.arguments, "goodsId", false);
+    const quantity = integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 });
+    let body = input.arguments.body ? objectValue(input.arguments, "body") : null;
+    const steps: ChannelOperationStep[] = [];
+    if (!body && goodsId) {
+      const detail = await temuRequest({ payload: input.payload, type: "temu.local.goods.detail.query", arguments: { goodsId: Number(goodsId), versionQueryType: 1 } });
+      const detailStep = step("inventory-item-readback", detail);
+      steps.push(detailStep);
+      if (!detailStep.ok) return result(input, steps, goodsId);
+      const detailData = temuResultObject(detail.data);
+      const skus = Array.isArray(detailData.skuList) ? detailData.skuList.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : [];
+      const skuStockList = skus.map((sku) => ({ skuId: Number(sku.skuId ?? sku.goodsSkuId), stockQuantity: quantity })).filter((sku) => Number.isFinite(sku.skuId));
+      body = { goodsId: Number(goodsId), skuStockList };
+    }
+    if (!body) throw new Error("CHANNEL_ARGUMENT_REQUIRED:body");
+    const remote = await temuRequest({ payload: input.payload, type: "bg.local.goods.stock.edit", arguments: body });
+    const responseGoodsId = temuResultObject(remote.data).goodsId;
+    const writeStep = step("goods-stock", remote);
+    steps.push(writeStep);
+    if (!writeStep.ok || !goodsId) return result(input, steps, responseGoodsId === undefined ? goodsId || undefined : String(responseGoodsId));
+    const verificationRemote = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.detail.query",
+      arguments: { goodsId: Number(goodsId), versionQueryType: 1 },
+    });
+    const verificationData = temuResultObject(verificationRemote.data);
+    const verificationSkus = Array.isArray(verificationData.skuList)
+      ? verificationData.skuList.filter((sku): sku is Record<string, unknown> => Boolean(sku) && typeof sku === "object" && !Array.isArray(sku))
+      : [];
+    const quantities = verificationSkus.map((sku) => Number(sku.stockQuantity ?? sku.quantity));
+    const verifiedQuantity = quantities.length > 0 && quantities.every((value) => value === quantity) ? quantity : Number.NaN;
+    steps.push(inventoryQuantityVerificationStep("inventory-readback", verificationRemote, quantity, verifiedQuantity));
+    return result(input, steps, responseGoodsId === undefined ? goodsId : String(responseGoodsId));
   }
   if (input.operation === "orders.list" || input.operation === "orders.get" || input.operation === "shipment.acknowledge" || input.operation === "shipment.confirm") {
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
@@ -1464,8 +1707,30 @@ async function executeEbay(input: ExecuteInput) {
   }
   if (input.operation === "inventory.update") {
     const sku = pathSegment(stringArgument(input.arguments, "sku"));
-    const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "PUT", path: `/sell/inventory/v1/inventory_item/${sku}`, body: objectValue(input.arguments, "body") });
-    return result(input, [step("inventory-item", remote)], sku);
+    const quantity = integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 });
+    const decodedSku = decodeURIComponent(sku);
+    const bulkBody = input.arguments.body ? objectValue(input.arguments, "body") : {
+      requests: [{
+        sku: decodedSku,
+        shipToLocationAvailability: { quantity },
+      }],
+    };
+    const writeRemote = await ebayRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "POST",
+      path: "/sell/inventory/v1/bulk_update_price_quantity",
+      body: bulkBody,
+    });
+    const writeStep = step("bulk-inventory", writeRemote);
+    if (!writeStep.ok) return result(input, [writeStep], decodedSku);
+    const readback = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: `/sell/inventory/v1/inventory_item/${sku}` });
+    const availability = objectValue(readback.data, "availability", false);
+    const shipToLocationAvailability = objectValue(availability, "shipToLocationAvailability", false);
+    return result(input, [
+      writeStep,
+      inventoryQuantityVerificationStep("inventory-readback", readback, quantity, shipToLocationAvailability.quantity),
+    ], decodedSku);
   }
   if (input.operation === "orders.list") {
     const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: "/sell/fulfillment/v1/order", query: queryParams(input.arguments) });

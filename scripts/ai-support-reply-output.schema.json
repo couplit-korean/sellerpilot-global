@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "targetLocale", "draft", "sourceSummary", "cautions"],
+  "properties": {
+    "mode": { "type": "string", "const": "support-reply" },
+    "targetLocale": { "type": "string", "enum": ["ko-KR", "en-US", "ja-JP", "zh-TW", "th-TH", "vi-VN", "id-ID", "ms-MY", "pt-BR", "es-MX"] },
+    "draft": { "type": "string", "minLength": 10, "maxLength": 4000 },
+    "sourceSummary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "cautions": { "type": "array", "maxItems": 5, "items": { "type": "string", "minLength": 1, "maxLength": 300 } }
+  }
+}

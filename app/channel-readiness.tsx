@@ -30,6 +30,7 @@ import {
   qoo10RegistrationMap,
   type ReadinessState,
 } from "./channel-readiness-data";
+import type { OperationsSnapshot } from "./use-operations-snapshot";
 
 const stateLabels: Record<ReadinessState, string> = {
   verified: "확인 완료",
@@ -43,11 +44,19 @@ function ReadinessBadge({ state }: { state: ReadinessState }) {
   return <span className={`readiness-badge ${state}`}><Icon size={12} />{stateLabels[state]}</span>;
 }
 
-export function ChannelReadinessPage({ embedded = false }: { embedded?: boolean }) {
+export function ChannelReadinessPage({ embedded = false, channelMetrics = [] }: {
+  embedded?: boolean;
+  channelMetrics?: OperationsSnapshot["channelMetrics"];
+}) {
   const capabilityKeys = Object.keys(capabilityLabels) as ChannelCapabilityKey[];
-  const onlineApps = channelReadiness.filter((channel) => channel.appState.includes("Online")).length;
   const consoleVerifiedChannels = channelReadiness.filter((channel) => channel.consoleVerified);
-  const apiReadPassed = channelReadiness.filter((channel) => channel.apiReadPassed).length;
+  const hasLiveMetrics = channelMetrics.length > 0;
+  const registeredCredentials = hasLiveMetrics
+    ? channelMetrics.filter((metric) => metric.credentialStatus !== "missing").length
+    : channelReadiness.filter((channel) => channel.apiReadPassed).length;
+  const apiReadPassed = hasLiveMetrics
+    ? channelMetrics.filter((metric) => metric.credentialStatus === "active").length
+    : channelReadiness.filter((channel) => channel.apiReadPassed).length;
   const verifiedChecks = channelReadiness.flatMap((channel) => channel.checks).filter((check) => check.state === "verified").length;
   const blockerCount = channelReadiness.reduce((total, channel) => total + channel.blockers.length, 0);
 
@@ -67,23 +76,38 @@ export function ChannelReadinessPage({ embedded = false }: { embedded?: boolean 
 
       <section className="readiness-summary" aria-label="채널 연동 준비 상태 요약">
         <article><span>판매채널 실콘솔</span><strong>{consoleVerifiedChannels.length} / {channelReadiness.length}</strong><small>11번가 포함 전체 대상</small></article>
-        <article><span>운영 앱 Online</span><strong>{onlineApps}개</strong><small>현재 확인된 개발자 앱</small></article>
+        <article><span>Vault 운영 키</span><strong>{registeredCredentials} / {channelReadiness.length}</strong><small>현재 운영 DB 실시간 집계</small></article>
         <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>문서·코드·화면 증거</small></article>
         <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>키·승인·고정 IP·Partner 앱</small></article>
-        <article className="danger"><span>현재 API 읽기 통과</span><strong>{apiReadPassed} / {channelReadiness.length}</strong><small>Qoo10 복구 · Temu·11번가 키 대기</small></article>
+        <article className="danger"><span>현재 API 읽기 통과</span><strong>{apiReadPassed} / {channelReadiness.length}</strong><small>최근 운영 키 읽기 진단 기준</small></article>
       </section>
 
       <section className="readiness-channel-grid">
         {channelReadiness.map((channel) => {
           const apiDefinition = isActiveChannelKey(channel.key) ? channelCatalog[channel.key] : null;
           const officialDocs = channel.officialDocs ?? apiDefinition?.officialDocs ?? [];
+          const liveMetric = channelMetrics.find((metric) => metric.channelKey === channel.key);
+          const liveState: ReadinessState = !liveMetric
+            ? channel.overall
+            : liveMetric.credentialStatus === "active"
+              ? "verified"
+              : liveMetric.credentialStatus === "unverified"
+                ? "partial"
+                : "not_configured";
+          const liveStateCopy = !liveMetric
+            ? channel.appState
+            : liveMetric.credentialStatus === "active"
+              ? `Vault 운영 키 등록 · 최근 읽기 진단 정상${liveMetric.credentialLastCheckedAt ? ` · ${new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(liveMetric.credentialLastCheckedAt))}` : ""}`
+              : liveMetric.credentialStatus === "unverified"
+                ? `Vault 운영 키 등록 · ${liveMetric.credentialLastCheckStatus === "failed" ? "최근 읽기 진단 실패" : "읽기 진단 필요"}`
+                : "Vault 운영 키 미등록";
           return <article className={`readiness-channel-card ${channel.key}`} key={channel.key}>
             <header>
               <span className="readiness-channel-mark">{channels[channel.key].mark}</span>
               <div><small>{channel.console}</small><h3>{channel.name}</h3><p>{channel.market}</p></div>
-              <ReadinessBadge state={channel.overall} />
+              <ReadinessBadge state={liveState} />
             </header>
-            <div className="readiness-app-state"><i />{channel.appState}</div>
+            <div className={`readiness-app-state ${liveMetric ? "live" : ""}`}><i />{liveStateCopy}</div>
             <p className="readiness-channel-summary">{channel.summary}</p>
             <div className="readiness-doc-links">{officialDocs.map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}<ExternalLink size={11} /></a>)}</div>
             <div className="readiness-checks">

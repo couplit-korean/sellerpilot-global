@@ -153,6 +153,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260820170000_periodic_channel_sync.sql",
       "20260820173000_worker_periodic_sync_auth.sql",
       "20260820180000_activate_elevenst_credentials.sql",
+      "20260821100000_order_fulfillment_workflow.sql",
+      "20260821101500_operations_accuracy_inventory_ui.sql",
+      "20260821102500_order_product_linking.sql",
+      "20260821103000_support_reply_cli.sql",
+      "20260821103500_shared_inventory_workflow.sql",
+      "20260821104500_shared_listing_completion.sql",
+      "20260821113000_scope_push_deliveries_to_owner.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -738,11 +745,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.equal(
       await scalar(db, "select count(*) from sellerpilot_private.push_notification_deliveries where subscription_id = $1", [pushSubscriptionId]),
-      3,
+      1,
     );
     await setClaims(db, "service_role");
     const claimedPush = await db.query("select * from public.sellerpilot_service_claim_push_deliveries(10)");
-    assert.equal(claimedPush.rows.length, 3);
+    assert.equal(claimedPush.rows.length, 1);
     assert.equal(claimedPush.rows.every((delivery) => delivery.endpoint === "https://push.example.test/subscriptions/admin-device"), true);
     assert.equal(
       await scalar(db, "select public.sellerpilot_service_finish_push_delivery($1, 'sent', null)", [claimedPush.rows[0].delivery_id]),

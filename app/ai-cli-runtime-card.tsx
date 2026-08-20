@@ -50,6 +50,12 @@ const jobStatusLabel: Record<AiJob["status"], string> = {
   cancelled: "취소",
 };
 
+const jobKindLabel: Record<string, string> = {
+  product_studio: "상품 상세페이지 생성",
+  product_research: "상품정보 조사",
+  support_reply: "고객 문의 답변 초안",
+};
+
 function formatDate(value: string | null) {
   if (!value) return "아직 접속 없음";
   return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
@@ -207,10 +213,10 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         {jobs.map((job) => <article key={job.id} className="cli-job-row">
           <div className="cli-job-main">
             <span className={`cli-job-status ${job.status}`}>{jobStatusLabel[job.status]}</span>
-            <div><b>{job.product_description || "상품 상세페이지 생성"}</b><small>{job.image_count}개 이미지 · {job.attempt_count}회 시도 · {formatDate(job.created_at)}</small>{job.error_message && <em>{job.error_message}</em>}</div>
+            <div><b>{job.product_description || jobKindLabel[job.kind] || "CLI 작업"}</b><small>{job.kind === "product_studio" ? `${job.image_count}개 이미지 · ` : ""}{job.attempt_count}회 시도 · {formatDate(job.created_at)}</small>{job.error_message && <em>{job.error_message}</em>}</div>
           </div>
           <div className="cli-job-controls">
-            {job.status === "succeeded" && <><span className="cli-job-output">{job.has_hero ? "대표 이미지 포함" : job.has_result ? "분석 완료" : "완료"}</span><button type="button" onClick={() => void recoverProduct(job)} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <DatabaseZap size={13} />}상품 원장 연결</button></>}
+            {job.status === "succeeded" && <><span className="cli-job-output">{job.has_hero ? "대표 이미지 포함" : job.kind === "support_reply" ? "답변 초안 완료" : job.has_result ? "분석 완료" : "완료"}</span>{job.kind === "product_studio" && <button type="button" onClick={() => void recoverProduct(job)} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <DatabaseZap size={13} />}상품 원장 연결</button>}</>}
             {(job.status === "failed" || job.status === "cancelled") && <button type="button" onClick={() => void controlJob(job, "retry")} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}다시 실행</button>}
             {(job.status === "queued" || job.status === "running") && <button type="button" className="danger" onClick={() => void controlJob(job, "cancel")} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <Ban size={13} />}취소</button>}
           </div>

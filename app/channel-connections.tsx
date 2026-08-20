@@ -4,10 +4,14 @@ import { Activity, KeyRound, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { ApiCredentialCenter } from "./api-credential-center";
 import { ChannelReadinessPage } from "./channel-readiness";
+import type { OperationsSnapshot } from "./use-operations-snapshot";
 
 type ConnectionSection = "status" | "settings";
 
-export function ChannelConnectionsPage({ notify }: { notify: (message: string) => void }) {
+export function ChannelConnectionsPage({ notify, channelMetrics }: {
+  notify: (message: string) => void;
+  channelMetrics: OperationsSnapshot["channelMetrics"];
+}) {
   const [section, setSection] = useState<ConnectionSection>("status");
 
   return (
@@ -24,7 +28,7 @@ export function ChannelConnectionsPage({ notify }: { notify: (message: string) =
         </aside>
       </section>
 
-      <nav className="connection-section-tabs" aria-label="채널 연결 페이지 구역" role="tablist">
+      <div className="connection-section-tabs" aria-label="채널 연결 페이지 구역" role="tablist">
         <button
           type="button"
           role="tab"
@@ -47,7 +51,7 @@ export function ChannelConnectionsPage({ notify }: { notify: (message: string) =
           <KeyRound size={17} />
           <span><b>채널 연결 설정</b><small>API 키, OAuth와 연결 검사</small></span>
         </button>
-      </nav>
+      </div>
 
       <section
         id={section === "status" ? "connection-status-panel" : "connection-settings-panel"}
@@ -55,7 +59,7 @@ export function ChannelConnectionsPage({ notify }: { notify: (message: string) =
         role="tabpanel"
       >
         {section === "status"
-          ? <ChannelReadinessPage embedded />
+          ? <ChannelReadinessPage embedded channelMetrics={channelMetrics} />
           : <ApiCredentialCenter notify={notify} embedded />}
       </section>
     </div>

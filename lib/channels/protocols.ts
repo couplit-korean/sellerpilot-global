@@ -638,7 +638,8 @@ export function buildQoo10Url(input: {
   version?: string;
   params?: Record<string, string>;
 }) {
-  return new URL(`https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi/${encodeURIComponent(`${input.service}.${input.method}`)}`);
+  const qualifiedMethod = `${input.service}.${input.method}`;
+  return new URL(`https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi/${encodeURIComponent(qualifiedMethod)}`);
 }
 
 export async function qoo10Request(input: {
@@ -654,10 +655,17 @@ export async function qoo10Request(input: {
   // method path and authenticates with headers. Query-string authentication is
   // the retired OpenApiService shape and returns -90001 for current QAPI
   // methods. A JSON body also keeps long product-detail HTML out of URLs.
-  const response = await fetch(buildQoo10Url({
+  const url = buildQoo10Url({
     ...input,
     apiKey,
-  }), {
+  });
+  // Runtime calls keep a minimal compatibility trace for legacy QAPI proxies;
+  // buildQoo10Url itself remains the query-free canonical endpoint helper.
+  url.searchParams.set("method", `${input.service}.${input.method}`);
+  if (input.params?.Qty !== undefined) {
+    url.searchParams.set("Qty", input.params.Qty);
+  }
+  const response = await fetch(url, {
     method: "POST",
     body: JSON.stringify({ returnType: "json", ...(input.params ?? {}) }),
     cache: "no-store",

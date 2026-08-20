@@ -211,9 +211,20 @@
   }
 
   .commerce-service-rail strong {
-    min-width: 132px;
+    min-width: 102px;
     margin-left: calc(var(--mobile-gutter) * -1);
     padding-left: var(--mobile-gutter);
+  }
+
+  .commerce-service-rail span:nth-of-type(2),
+  .commerce-service-rail span:nth-of-type(3) {
+    display: inline-flex;
+  }
+
+  .commerce-service-rail span:nth-of-type(1),
+  .commerce-service-rail span:nth-of-type(4),
+  .commerce-service-rail em {
+    display: none;
   }
 
   .topbar {
@@ -513,6 +524,38 @@
     margin: 0;
   }
 
+  .data-toolbar .filter-select {
+    min-width: 0;
+    min-height: 44px;
+    flex: 1 1 calc(50% - 5px);
+  }
+
+  .data-toolbar .filter-select select {
+    width: 100%;
+    min-width: 0;
+    font-size: 12px;
+  }
+
+  .data-toolbar .toolbar-menu {
+    margin-left: auto;
+  }
+
+  .selection-toolbar {
+    min-height: 0;
+    align-items: stretch;
+    flex-wrap: wrap;
+    padding: 10px;
+  }
+
+  .selection-toolbar b {
+    width: 100%;
+  }
+
+  .selection-toolbar button {
+    min-height: 42px;
+    flex: 1;
+  }
+
   .data-toolbar .filter-button,
   .data-toolbar .icon-text-button,
   .tab-toolbar > .filter-button {
@@ -561,6 +604,50 @@
   .bulk-order-bar > button:not(.table-action) {
     min-height: 40px;
     flex: 1 1 120px;
+  }
+
+  .shipment-dialog-overlay {
+    align-items: end;
+    padding: 0;
+  }
+
+  .shipment-dialog {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .shipment-dialog > header {
+    min-height: 72px;
+    padding: 12px 14px;
+  }
+
+  .shipment-warning {
+    margin: 10px 12px 0;
+  }
+
+  .shipment-draft-list {
+    padding: 12px;
+  }
+
+  .shipment-draft-list article {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shipment-draft-list input {
+    min-height: 44px;
+    font-size: 13px;
+  }
+
+  .shipment-dialog > footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .shipment-dialog > footer button {
+    width: 100%;
+    min-height: 46px;
   }
 
   /* Product detail */
@@ -632,6 +719,47 @@
   .product-channel-link {
     width: fit-content;
     grid-column: 2;
+  }
+
+  .product-detail-assets,
+  .product-detail-localized {
+    padding: 16px;
+  }
+
+  .product-detail-asset-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+  }
+
+  .product-detail-localized-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    margin-top: 14px;
+  }
+
+  .product-detail-asset-grid figure > div,
+  .product-detail-asset-grid .product-image-missing {
+    min-height: min(43vw, 210px);
+  }
+
+  .product-inventory-editor { padding: 16px; }
+  .inventory-editor-grid { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 12px; }
+  .inventory-editor-actions { justify-content: stretch; }
+  .inventory-editor-actions > button { min-height: 44px; flex: 1; }
+
+  .live-channel-bars,
+  .channel-list,
+  .cs-channel-verification-grid,
+  .order-detail-ledger { grid-template-columns: minmax(0, 1fr); }
+
+  .channel-list .channel-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .channel-list .channel-row .channel-metric:nth-of-type(2) { display: none; }
+  .automatic-sync-label { width: 100%; justify-content: flex-end; }
+  .order-detail-ledger { padding: 8px 16px 16px; }
+
+  .product-detail-localized-grid h4 {
+    white-space: normal;
   }
 
   /* Single-product registration */
@@ -803,6 +931,26 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .cs-workspace .conversation {
+    display: none;
+  }
+
+  .cs-workspace.mobile-conversation-open .ticket-list {
+    display: none;
+  }
+
+  .cs-workspace.mobile-conversation-open .conversation {
+    display: flex;
+  }
+
+  .cs-workspace.mobile-conversation-open .mobile-back {
+    display: inline-grid;
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    place-items: center;
+  }
+
   .ticket-list {
     max-height: 340px;
     border-right: 0;
@@ -827,8 +975,19 @@
 
   .conversation > header > div:last-child,
   .conversation > header > div:last-child .filter-button,
+  .conversation > header > div:last-child .filter-select,
   .send-button {
     width: 100%;
+  }
+
+  .reply-tool-select {
+    min-height: 38px;
+    flex: 1;
+  }
+
+  .reply-tool-select select {
+    max-width: none;
+    flex: 1;
   }
 
   .conversation-body {
@@ -1199,7 +1358,7 @@
   }
 
   .global-search {
-    display: none;
+    display: inline-flex;
   }
 
   .notification-popover {
@@ -1626,5 +1785,22 @@
 
   .mobile-push-chip {
     left: max(14px, env(safe-area-inset-left));
+  }
+}
+
+/* Keep the global product/order/inquiry search reachable across every mobile width.
+   Earlier visual layers hide it below 720px, so this final override must stay last. */
+@media (max-width: 720px) {
+  .topbar-actions .global-search {
+    display: inline-flex;
+    width: 44px;
+    min-width: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .topbar-actions .global-search span,
+  .topbar-actions .global-search kbd {
+    display: none;
   }
 }

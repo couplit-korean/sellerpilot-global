@@ -27,7 +27,7 @@ export type ChannelReadiness = {
  * 실제 콘솔에서 확인된 사실과 공식 개발자 문서로 확인한 구현 준비 상태를
  * 분리합니다. 앱 키, 시크릿, 판매자 식별자와 일회성 코드는 포함하지 않습니다.
  */
-export const channelReadinessObservedAt = "2026.08.20";
+export const channelReadinessObservedAt = "2026.08.21";
 
 export const channelReadiness: ChannelReadiness[] = [
   {
@@ -40,7 +40,7 @@ export const channelReadiness: ChannelReadiness[] = [
     overall: "partial",
     consoleVerified: true,
     apiReadPassed: true,
-    summary: "QSM 판매자센터에서 상품·주문·문의 현황을 대조한 뒤 Seller Authorization Key를 재발급해 Vault에 교체했습니다. 현재 상품 상세 읽기 진단은 정상이며 주문·문의 주기수집은 새 키 기준 재대조 단계입니다.",
+    summary: "QSM 판매자센터에서 상품·주문·문의 현황을 대조한 뒤 Seller Authorization Key를 재발급해 Vault에 교체했습니다. 상품 상세 읽기와 새 키 기준 주문·문의 주기수집이 모두 정상이며, 판매자센터의 현재 0건 현황과 통합 원장이 일치합니다.",
     checks: [
       { label: "판매자 콘솔 접근", state: "verified", evidence: "실계정 QSM 로그인과 대시보드 조회 완료" },
       { label: "상품 현황", state: "verified", evidence: "전체 48개 · 판매중 42개 · 재고 10개 이하 37개 · 판매종료 1개" },
@@ -49,10 +49,10 @@ export const channelReadiness: ChannelReadiness[] = [
       { label: "QAPI 프로토콜", state: "verified", evidence: "ItemsLookup.GetItemDetailInfo v1.2 진단과 현재 엔드포인트 구현" },
       { label: "Vault 자격증명", state: "verified", evidence: "운영 키 v6 · 만료일 2027-08-20 · 새 Seller Authorization Key 암호화 보관" },
       { label: "현재 읽기 진단", state: "verified", evidence: "2026-08-20 실제 상품 1건 ItemsLookup.GetItemDetailInfo 정상 응답" },
-      { label: "주문 동기화", state: "partial", evidence: "QSM 신규주문 0건 대조 완료 · 새 키 기준 주문·문의 폴링 재검사 필요" },
+      { label: "주문·문의 동기화", state: "verified", evidence: "새 키 기준 주문·미답변 문의 주기수집 정상 완료 · 판매자센터 0건과 원장 일치" },
     ],
-    blockers: ["새 키 기준 주문·문의 주기수집 결과 재대조", "실주문·문의 발생 시 통합 원장 누락 검수"],
-    nextAction: "주문·문의 폴링 재검사 → 0건 원장 대조 → 실데이터 발생 시 누락 검수",
+    blockers: ["실주문·문의 발생 시 통합 원장 누락 검수"],
+    nextAction: "주문·문의 주기수집 유지 → 실데이터 발생 시 원장 누락 검수",
   },
   {
     key: "shopee",
@@ -138,23 +138,23 @@ export const channelReadiness: ChannelReadiness[] = [
     name: "11번가",
     market: "한국",
     console: "11번가 Seller Office · OPEN API",
-    appState: "OPEN API 서비스 등록·개발자 이메일·고정 IP 저장 완료 · 32자리 Key 확인 대기",
-    overall: "blocked",
+    appState: "운영 API Key Vault 연결 · 고정 IP ProductSearch 읽기 정상",
+    overall: "partial",
     consoleVerified: true,
-    apiReadPassed: false,
-    summary: "11번가 판매자센터와 OPEN API 센터 로그인, 서비스 등록, 개발자 이메일과 고정 실행 IP 저장을 완료했습니다. 2차 인증 콜백 뒤 32자리 Key를 확인·검사해야 하며, SellerPilot은 현재 공개 ProductSearch 읽기 진단만 지원하고 판매자 주문·문의는 별도 공식 명세 승인이 필요합니다.",
+    apiReadPassed: true,
+    summary: "11번가 판매자센터와 OPEN API 센터 로그인, 서비스 등록, 개발자 이메일·고정 실행 IP 저장과 운영 API Key의 Vault 연결을 완료했습니다. 등록 IP에서 공개 ProductSearch 읽기 진단도 정상 통과했습니다. 판매자 주문·문의 동기화는 별도 공식 서비스 명세와 계정 권한을 확인한 뒤 연결해야 합니다.",
     checks: [
       { label: "판매자센터 접근", state: "verified", evidence: "Seller Office 실계정 로그인과 주문·문의 읽기 화면 확인" },
       { label: "OPEN API 계정", state: "verified", evidence: "동일 판매자 계정으로 API 관리 최초 등록 화면 진입" },
       { label: "상품 API 범위", state: "verified", evidence: "상품 등록·수정·재고·판매중지·상품 Q&A 공식 제공 확인" },
       { label: "주문 API 범위", state: "verified", evidence: "주문 목록·내역·발주·발송·입고 업무 공식 제공 확인" },
       { label: "서비스 등록", state: "verified", evidence: "이용 동의 · 개발자 이메일 · 개발·PC·상용 고정 IP 저장 완료" },
-      { label: "운영 API Key", state: "not_configured", evidence: "2차 인증 콜백 완료 후 32자리 Key 확인·Vault 저장 필요" },
-      { label: "SellerPilot 읽기 진단", state: "partial", evidence: "32자리 Key + 등록 IP 기반 공개 ProductSearch 진단 구현 · Key 대기" },
+      { label: "운영 API Key", state: "verified", evidence: "2차 인증 완료 · 운영 Key를 SellerPilot Vault에 암호화 저장" },
+      { label: "SellerPilot 읽기 진단", state: "verified", evidence: "등록 고정 IP에서 공개 ProductSearch 운영 호출 정상 응답" },
       { label: "주문·문의 동기화", state: "blocked", evidence: "공개 Key 외 판매자 전용 주문·문의 서비스 명세와 권한 확인 필요" },
     ],
-    blockers: ["2차 인증 콜백 확인 후 32자리 API Key 조회", "Key Vault 저장 및 등록 IP ProductSearch 검사", "판매자 주문·문의 공식 서비스 명세 승인"],
-    nextAction: "API Key 확인 → Vault 저장 → 공개 ProductSearch 읽기 → 판매자 주문·문의 서비스 명세 확보",
+    blockers: ["판매자 주문·문의 공식 서비스 명세와 계정 권한 확인", "실데이터 주기수집 후 통합 원장 대조"],
+    nextAction: "판매자 주문·문의 서비스 명세·권한 확인 → 읽기 어댑터 연결 → 통합 원장 대조",
     officialDocs: [
       { label: "OPEN API 센터", url: "https://openapi.11st.co.kr/openapi/OpenApiFrontMain.tmall" },
       { label: "상품 API", url: "https://openapi.11st.co.kr/openapi/OpenApiServiceIntroduce.tmall?introduceType=PRODUCT" },
@@ -191,11 +191,11 @@ export const channelReadiness: ChannelReadiness[] = [
     name: "네이버 스마트스토어",
     market: "한국",
     console: "Naver Commerce API",
-    appState: "문의·주문 판매자 권한 추가 · 판매자 계정 및 주문 목록 읽기 정상",
+    appState: "문의·주문 판매자 권한 연결 · 주문·문의 목록 읽기 정상",
     overall: "partial",
     consoleVerified: true,
     apiReadPassed: true,
-    summary: "스마트스토어센터에서 주문과 문의가 모두 0건임을 대조했고 Commerce API 앱에 문의·주문 판매자 권한을 추가했습니다. SellerPilot 판매자 계정 진단과 최근 변경 주문 목록 운영 호출이 모두 정상 통과했으며 문의 목록 직접 검수만 남았습니다.",
+    summary: "스마트스토어센터에서 주문과 문의가 모두 0건임을 대조했고 Commerce API 앱에 문의·주문 판매자 권한을 추가했습니다. SellerPilot 판매자 계정, 최근 변경 주문, 상품 Q&A 목록 운영 호출이 모두 정상 통과했으며 통합 원장도 현재 0건으로 일치합니다.",
     checks: [
       { label: "판매자 세션", state: "verified", evidence: "Couplet Seoul 통합매니저 스마트스토어센터 로그인 확인" },
       { label: "API센터 세션", state: "verified", evidence: "개발업체 커플릿 계정으로 Commerce API센터 로그인" },
@@ -206,10 +206,10 @@ export const channelReadiness: ChannelReadiness[] = [
       { label: "판매자센터 대조", state: "verified", evidence: "실주문 0 · 고객문의 0" },
       { label: "현재 읽기 진단", state: "verified", evidence: "Commerce API 판매자 계정 읽기 정상" },
       { label: "주문 API 권한", state: "verified", evidence: "2026-08-20 orders.list 최근 변경 주문 조회 HTTP 200" },
-      { label: "문의 API 권한", state: "partial", evidence: "문의 권한 그룹 저장 완료 · inquiries.list 직접 운영 검수 대기" },
+      { label: "문의 API 권한", state: "verified", evidence: "필수 기간 인자를 적용한 상품 Q&A 목록 운영 호출 정상 완료" },
     ],
-    blockers: ["문의 목록 직접 운영 호출과 통합 원장 0건 대조", "실주문·문의 발생 시 체크포인트 누락 검수"],
-    nextAction: "문의 목록 읽기 검수 → 주문·문의 통합 원장 0건 대조 → 실데이터 발생 시 누락 검수",
+    blockers: ["실주문·문의 발생 시 체크포인트 누락 검수"],
+    nextAction: "주문·문의 주기수집 유지 → 실데이터 발생 시 원장 누락 검수",
   },
   {
     key: "ebay",

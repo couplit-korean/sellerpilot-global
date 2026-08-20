@@ -153,9 +153,9 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       orders: polling("GetOrders + GetOrderItems 누락 보정"),
       shipment: api("/order/fulfill/pack → /order/package/rts"),
       claims: api("Reverse/Return 주문 API 권한에 따라 처리"),
-      inquiries: polling("Reviews API와 판매자 문의 권한 범위 사용"),
+      inquiries: api("IM 이력 초기 동기화 + Push 수신 · 정기 폴링 금지"),
       settlements: polling("Finance API 거래·정산 조회"),
-      webhooks: webhook("Push Mechanism 서명 검증 + 이벤트 중복 제거"),
+      webhooks: webhook("IM/주문 Push 서명 검증 + 이벤트 중복 제거"),
     },
   },
   coupang: {

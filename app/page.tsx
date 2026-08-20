@@ -152,7 +152,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   products: { title: "상품 관리", description: "채널별 등록 상태, 재고와 판매 성과를 관리합니다." },
   "product-detail": { title: "상품 상세정보", description: "등록된 상품의 이미지, 기본 정보, 재고와 채널 상태를 확인합니다." },
   publishing: { title: "상품 등록 센터", description: "대표사진과 다양한 각도 사진, 설명과 링크를 함께 분석해 채널 등록을 자동화합니다." },
-  "style-learning": { title: "스타일 학습 검증", description: "6개 카테고리 1,200개 상품 범위와 7개 채널의 국가·언어별 제작 규칙을 확인합니다." },
+  "style-learning": { title: "스타일 학습 검증", description: "6개 카테고리 1,200개 상품 범위와 8개 채널의 국가·언어별 제작 규칙을 확인합니다." },
   margin: { title: "마진 계산", description: "원가와 채널 비용을 반영해 순이익과 목표 마진 판매가를 계산합니다." },
   orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
   cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
@@ -183,7 +183,6 @@ const ticketChannelCodes: Record<string, string> = {
 };
 
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
-const channelKeyByCode = new Map(Object.entries(channels).map(([key, channel]) => [channel.letter, key]));
 const enabledSalesChannelCount = Object.values(channels).filter((channel) => channel.enabled).length;
 const deepLinkViews = new Set<View>(["overview", "products", "publishing", "margin", "orders", "cs", "connections"]);
 type DisplayProduct = {
@@ -207,7 +206,9 @@ type DisplayProduct = {
 };
 
 type DisplayOrder = {
+  sourceId: string;
   id: string;
+  channelKey: string;
   channel: string;
   customer: string;
   product: string;
@@ -217,14 +218,31 @@ type DisplayOrder = {
 };
 
 type DisplayTicket = {
+  sourceId: string;
   id: string;
+  channelKey: string;
   customer: string;
   channel: string;
   subject: string;
+  originalMessage: string;
   preview: string;
+  replyDraft: string | null;
   time: string;
   status: "긴급" | "답변 대기" | "처리 중" | "처리 완료";
 };
+
+type SupportLocale = "ko-KR" | "en-US" | "ja-JP" | "zh-TW" | "th-TH" | "vi-VN" | "id-ID" | "ms-MY" | "pt-BR" | "es-MX";
+
+const supportLocaleLabels: Record<SupportLocale, string> = {
+  "ko-KR": "한국어", "en-US": "영어", "ja-JP": "일본어", "zh-TW": "중국어(번체)", "th-TH": "태국어",
+  "vi-VN": "베트남어", "id-ID": "인도네시아어", "ms-MY": "말레이어", "pt-BR": "포르투갈어", "es-MX": "스페인어",
+};
+
+const supportReplyTemplates = [
+  { label: "주문 확인 안내", value: "문의해 주셔서 감사합니다. 주문 내역과 현재 처리 상태를 확인한 뒤 정확한 내용으로 다시 안내드리겠습니다." },
+  { label: "배송 확인 안내", value: "배송으로 불편을 드려 죄송합니다. 판매채널에 등록된 배송 상태와 운송장 정보를 확인한 뒤 안내드리겠습니다." },
+  { label: "교환·반품 확인", value: "교환·반품 요청 내용을 확인했습니다. 상품 상태와 판매채널 정책을 확인한 뒤 가능한 처리 방법을 안내드리겠습니다." },
+];
 
 type UnifiedSearchResult = {
   kind: "product" | "order" | "inquiry";
@@ -303,6 +321,12 @@ function ChannelMark({ code, size = "md" }: { code: string; size?: "sm" | "md" |
 function StatusBadge({ status }: { status: string }) {
   const tone = status.includes("완료") || status === "판매중" || status === "정상" ? "success" : status.includes("주의") || status.includes("대기") || status === "처리 중" ? "warning" : status.includes("긴급") || status === "품절" || status.includes("실패") ? "danger" : "neutral";
   return <span className={`status-badge ${tone}`}><i />{status}</span>;
+}
+
+function credentialConnectionLabel(status: string | undefined) {
+  if (status === "active") return "읽기 진단 정상";
+  if (status === "unverified") return "키 등록됨 · 진단 필요";
+  return "API 키 등록 필요";
 }
 
 function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, password: string) => Promise<string | null>; onPasswordReset: (email: string) => Promise<string | null> }) {
@@ -410,22 +434,22 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   pipeline: OperationsSnapshot["pipeline"] | null;
   operationsAvailable: boolean;
 }) {
-  const [period, setPeriod] = useState("30일");
   const [exchangeRates, setExchangeRates] = useState(initialExchangeRates);
   const [rateUpdatedAt, setRateUpdatedAt] = useState("화면 기준값");
   const [rateSource, setRateSource] = useState("실데이터 확인 중");
   const [today] = useState(() => new Date());
   const monthlyTopProducts = useMemo(() => [...displayProducts].sort((a, b) => b.sales - a.sales).slice(0, 10), [displayProducts]);
-  const activeMetrics = useMemo(() => channelMetrics.filter((channel) => activeChannelKeys.includes(channel.channelKey as (typeof activeChannelKeys)[number])), [channelMetrics]);
-  const summary = operationSummary ?? { revenue30dKrw: 0, sold30d: 0, orderCount: 0, paidOrderCount: 0, readyToShipCount: 0, openTicketCount: 0, lowStockCount: 0, productCount: 0, registrationErrorCount: 0, activeCredentialCount: 0 };
-  const livePipeline = pipeline ?? { aiRunning: 0, listingQueued: 0, listingPublished: 0, listingFailed: 0 };
-  const totalTasks = summary.readyToShipCount + summary.openTicketCount + summary.lowStockCount + summary.registrationErrorCount;
+  const activeMetrics = useMemo(() => channelMetrics
+    .filter((channel) => activeChannelKeys.includes(channel.channelKey as (typeof activeChannelKeys)[number]))
+    .sort((left, right) => right.revenue30dKrw - left.revenue30dKrw || right.orderCount - left.orderCount || left.name.localeCompare(right.name, "ko")), [channelMetrics]);
+  const summary = operationSummary ?? { revenue30dKrw: 0, sold30d: 0, orderCount: 0, paidOrderCount: 0, readyToShipCount: 0, openTicketCount: 0, lowStockCount: 0, productCount: 0, registrationErrorCount: 0, registrationBlockedCount: 0, activeCredentialCount: 0, registeredCredentialCount: 0 };
+  const livePipeline = pipeline ?? { aiRunning: 0, listingQueued: 0, listingPublished: 0, listingFailed: 0, listingBlocked: 0 };
+  const totalTasks = summary.paidOrderCount + summary.readyToShipCount + summary.openTicketCount + summary.registrationErrorCount;
   const totalListings = livePipeline.listingPublished + livePipeline.listingFailed;
   const successRate = totalListings > 0 ? (livePipeline.listingPublished / totalListings) * 100 : 0;
   const maxChannelRevenue = Math.max(1, ...activeMetrics.map((channel) => channel.revenue30dKrw));
   const currentDate = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "long" }).format(today);
-  const rangeDays = period === "7일" ? 7 : period === "90일" ? 90 : 30;
-  const rangeStart = new Date(today.getTime() - (rangeDays - 1) * 86_400_000).toISOString().slice(0, 10);
+  const rangeStart = new Date(today.getTime() - 29 * 86_400_000).toISOString().slice(0, 10);
   const rangeEnd = today.toISOString().slice(0, 10);
 
   const refreshExchangeRates = useCallback(async () => {
@@ -454,14 +478,14 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   return (
     <div className="page-stack">
       <section className="daily-briefing">
-        <div className="briefing-copy"><span>{currentDate}</span><h2>현재 처리할 업무가 <b>{operationsAvailable ? `${totalTasks}건` : "확인 중"}</b> 있습니다.</h2><p>실제 주문·재고·CS·등록 오류를 기준으로 집계합니다.</p></div>
+        <div className="briefing-copy"><span>{currentDate}</span><h2>현재 즉시 처리할 업무가 <b>{operationsAvailable ? `${totalTasks}건` : "확인 중"}</b> 있습니다.</h2><p>결제완료·출고대기·미처리 CS·재시도 가능 등록 오류만 집계합니다. 재고주의와 외부 권한 대기는 별도 표시합니다.</p></div>
         <div className="briefing-tasks">
           <button onClick={() => onNavigate("orders")}><span className="task-tone order" /><small>통합 주문</small><b>{operationsAvailable ? summary.orderCount : "—"}</b><em>실주문 원장</em></button>
           <button onClick={() => onNavigate("orders")}><span className="task-tone shipping" /><small>출고 대기</small><b>{operationsAvailable ? summary.readyToShipCount : "—"}</b><em>채널 상태 동기화</em></button>
           <button onClick={() => onNavigate("cs")}><span className="task-tone claim" /><small>미처리 CS</small><b>{operationsAvailable ? summary.openTicketCount : "—"}</b><em>통합 문의함</em></button>
-          <button onClick={() => onNavigate("publishing")}><span className="task-tone error" /><small>등록 오류</small><b>{operationsAvailable ? summary.registrationErrorCount : "—"}</b><em>실패 작업</em></button>
+          <button onClick={() => onNavigate("publishing")}><span className="task-tone error" /><small>재시도 오류</small><b>{operationsAvailable ? summary.registrationErrorCount : "—"}</b><em>권한 대기 {summary.registrationBlockedCount}건</em></button>
         </div>
-        <aside className="briefing-settlement"><span>실제 연결 확인</span><strong>{operationsAvailable ? `${summary.activeCredentialCount} / ${enabledSalesChannelCount}` : "확인 중"}</strong><small>8개 대상 중 최신 운영 키 검사를 통과한 채널</small><button onClick={() => onNavigate("connections")}>채널 연결 관리<ChevronRight size={14} /></button></aside>
+        <aside className="briefing-settlement"><span>실제 연결 확인</span><strong>{operationsAvailable ? `${summary.activeCredentialCount} / ${enabledSalesChannelCount} 진단 통과` : "확인 중"}</strong><small>운영 키 {summary.registeredCredentialCount} / {enabledSalesChannelCount} · 미등록·미검증 채널을 전체 수에서 숨기지 않습니다.</small><button onClick={() => onNavigate("connections")}>채널 연결 관리<ChevronRight size={14} /></button></aside>
       </section>
       <section className="overview-toolbar">
         <article className="exchange-widget" aria-label="현재 환율">
@@ -469,7 +493,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
           <div className="exchange-rate-list">{exchangeRates.map((rate) => <div className="exchange-rate" key={rate.code}><small>{rate.code} {rate.unit}</small><strong>₩{rate.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong><em className={rate.change >= 0 ? "up" : "down"}>{rate.change >= 0 ? "▲" : "▼"} {Math.abs(rate.change).toFixed(2)}%</em></div>)}</div>
           <button type="button" className="exchange-refresh" aria-label="환율 새로고침" title="환율 새로고침" onClick={refreshExchangeRates}><RefreshCw size={14} /></button>
         </article>
-        <div className="overview-date-actions"><div className="period-control"><CalendarDays size={15} /><button>{rangeStart}</button><span>—</span><button>{rangeEnd}</button></div><div className="segmented-control">{["7일", "30일", "90일"].map((item) => <button className={period === item ? "active" : ""} key={item} onClick={() => setPeriod(item)}>{item}</button>)}</div></div>
+        <div className="overview-date-actions"><div className="period-control"><CalendarDays size={15} /><time dateTime={rangeStart}>{rangeStart}</time><span>—</span><time dateTime={rangeEnd}>{rangeEnd}</time></div><div className="segmented-control fixed-period" aria-label="집계 기간"><span>최근 30일 실데이터</span></div></div>
       </section>
 
       <section className="metric-grid">
@@ -505,7 +529,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
         <article className="panel channel-performance">
           <div className="panel-heading"><div><span className="panel-kicker">실계정 운영 상태</span><h3>채널별 실데이터</h3></div><span className="live-label"><i />LIVE</span></div>
           <div className="channel-list">
-            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : ""}><i />{channel.credentialStatus === "active" ? "운영 키 연결" : "API 키 연결 필요"}</span></div><div className="channel-metric"><small>30일 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
+            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus)}</span></div><div className="channel-metric"><small>30일 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -513,17 +537,18 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
           <div className="panel-heading"><div><span className="panel-kicker">오늘 자동 등록 작업</span><h3>상품 등록 현황</h3></div><button className="ghost-button" onClick={() => onNavigate("publishing")}>전체 보기<ChevronRight size={15} /></button></div>
           <div className="pipeline-summary"><div><strong>{totalListings}</strong><span>실제 등록 처리</span></div><i /><div><strong>{successRate.toFixed(1)}%</strong><span>등록 성공률</span></div></div>
           <div className="pipeline-list">
-            {[{ label: "AI 분석 중", value: livePipeline.aiRunning, tone: "violet", icon: WandSparkles }, { label: "채널 등록 대기", value: livePipeline.listingQueued, tone: "blue", icon: Upload }, { label: "등록 완료", value: livePipeline.listingPublished, tone: "green", icon: CheckCircle2 }, { label: "확인 필요", value: livePipeline.listingFailed, tone: "red", icon: AlertCircle }].map((item) => <div key={item.label}><span className={`pipeline-icon ${item.tone}`}><item.icon size={16} /></span><span>{item.label}</span><strong>{item.value}<small>건</small></strong></div>)}
+            {[{ label: "AI 분석 중", value: livePipeline.aiRunning, tone: "violet", icon: WandSparkles }, { label: "채널 등록 대기", value: livePipeline.listingQueued, tone: "blue", icon: Upload }, { label: "등록 완료", value: livePipeline.listingPublished, tone: "green", icon: CheckCircle2 }, { label: "재시도 가능", value: livePipeline.listingFailed, tone: "red", icon: AlertCircle }, { label: "외부 권한 대기", value: livePipeline.listingBlocked, tone: "orange", icon: ShieldCheck }].map((item) => <div key={item.label}><span className={`pipeline-icon ${item.tone}`}><item.icon size={16} /></span><span>{item.label}</span><strong>{item.value}<small>건</small></strong></div>)}
           </div>
         </article>
       </section>
 
       <section className="dashboard-bottom-grid">
         <article className="panel alert-panel">
-          <div className="panel-heading"><div><span className="panel-kicker">우선 처리 필요</span><h3>지금 확인할 항목</h3></div><span className="count-chip">{summary.lowStockCount + summary.registrationErrorCount + summary.openTicketCount}</span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">우선 처리 필요</span><h3>지금 확인할 항목</h3></div><span className="count-chip">{summary.lowStockCount + summary.registrationErrorCount + summary.registrationBlockedCount + summary.openTicketCount}</span></div>
           <div className="alert-list">
             <button onClick={() => onNavigate("products")}><span className="alert-icon danger"><Box size={16} /></span><span><b>재고주의 상품 {summary.lowStockCount}건</b><small>실재고와 재주문 기준으로 집계했습니다.</small></span><em>상품 보기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("publishing")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>채널 등록 실패 {summary.registrationErrorCount}건</b><small>카테고리·필수 속성·API 응답을 확인하세요.</small></span><em>오류 보기<ChevronRight size={14} /></em></button>
+            <button onClick={() => onNavigate("connections")}><span className="alert-icon warning"><ShieldCheck size={16} /></span><span><b>외부 판매 권한 대기 {summary.registrationBlockedCount}건</b><small>같은 요청을 반복하지 않고 판매자센터 권한·인증 보완을 기다립니다.</small></span><em>연결 보기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("cs")}><span className="alert-icon blue"><MessageCircleMore size={16} /></span><span><b>미처리 CS {summary.openTicketCount}건</b><small>각 채널에서 동기화된 실제 문의입니다.</small></span><em>답변하기<ChevronRight size={14} /></em></button>
           </div>
         </article>
@@ -536,20 +561,52 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   );
 }
 
-function ProductsPage({ onNavigate, onOpenProduct, displayProducts }: { onNavigate: (view: View) => void; onOpenProduct: (product: DisplayProduct) => void; displayProducts: DisplayProduct[] }) {
+function ProductsPage({ onNavigate, onOpenProduct, onRefresh, displayProducts }: {
+  onNavigate: (view: View) => void;
+  onOpenProduct: (product: DisplayProduct) => void;
+  onRefresh: () => Promise<void>;
+  displayProducts: DisplayProduct[];
+}) {
   const [query, setQuery] = useState("");
-  const filtered = displayProducts.filter((product) => product.name.toLowerCase().includes(query.toLowerCase()) || product.sku.toLowerCase().includes(query.toLowerCase()));
+  const [channelFilter, setChannelFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const pageSize = 25;
+  const availableChannels = useMemo(() => [...new Set(displayProducts.flatMap((product) => product.channels))]
+    .sort((left, right) => (channelByCode.get(left)?.name ?? left).localeCompare(channelByCode.get(right)?.name ?? right, "ko")), [displayProducts]);
+  const availableStatuses = useMemo(() => [...new Set(displayProducts.map((product) => product.status))].sort((left, right) => left.localeCompare(right, "ko")), [displayProducts]);
+  const filtered = displayProducts.filter((product) => {
+    const searchable = `${product.name} ${product.sku} ${product.id}`;
+    return (!query.trim() || matchesSearch(searchable, query))
+      && (channelFilter === "all" || product.channels.includes(channelFilter))
+      && (statusFilter === "all" || product.status === statusFilter);
+  });
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pagedProducts = filtered.slice(pageStart, pageStart + pageSize);
   const activeCount = displayProducts.filter((product) => product.status === "판매중").length;
   const lowStockCount = displayProducts.filter((product) => product.status === "재고주의").length;
   const outOfStockCount = displayProducts.filter((product) => product.status === "품절").length;
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
   return (
     <div className="page-stack">
       <section className="summary-strip"><div><Package size={18} /><span>전체 상품<strong>{displayProducts.length}</strong></span></div><div><CheckCircle2 size={18} /><span>정상 판매<strong>{activeCount}</strong></span></div><div><AlertCircle size={18} /><span>재고 주의<strong>{lowStockCount}</strong></span></div><div><Box size={18} /><span>품절<strong>{outOfStockCount}</strong></span></div><button className="primary-button" onClick={() => onNavigate("publishing")}><Plus size={16} />새 상품 등록</button></section>
       <section className="panel data-panel">
-        <div className="data-toolbar"><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="상품명, SKU 검색" /></div><button className="filter-button" disabled><Filter size={15} />채널 필터<ChevronDown size={14} /></button><button className="filter-button" disabled><ListFilter size={15} />상태 필터<ChevronDown size={14} /></button><span className="toolbar-spacer" /><button className="icon-text-button" disabled title="채널 운영 키 연결 후 활성화"><RefreshCw size={15} />채널 동기화</button><button className="icon-only-button" aria-label="더보기" disabled><MoreHorizontal size={18} /></button></div>
-        <div className="table-wrap"><table className="data-table product-table"><thead><tr><th><input type="checkbox" aria-label="전체 선택" /></th><th>상품</th><th>판매 채널</th><th>재고</th><th>30일 판매</th><th>30일 매출</th><th>상태</th></tr></thead><tbody>{filtered.map((product) => <tr key={product.id}><td><input type="checkbox" aria-label={`${product.name} 선택`} /></td><td><button type="button" className="product-cell product-cell-button" aria-label={`${product.name} 상품 상세정보 보기`} onClick={() => onOpenProduct(product)}><div className="product-thumb"><ProductVisual src={product.image} size="52px" alt={product.name} /></div><span><b>{product.name}</b><small>{product.sku} · {product.id}</small></span></button></td><td><div className="channel-stack">{product.channels.map((code) => <ChannelMark key={code} code={code} size="sm" />)}</div></td><td><strong className={product.stock < 20 ? "stock-low" : ""}>{product.stock}</strong><small> 개</small></td><td><b>{product.sales}</b><small> 개</small></td><td><b>{product.revenue}</b></td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div>
+        <div className="data-toolbar"><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="상품명, SKU 검색" /></div><label className="filter-select"><Filter size={15} /><span className="sr-only">판매 채널 필터</span><select value={channelFilter} onChange={(event) => { setChannelFilter(event.target.value); setPage(1); }}><option value="all">전체 채널</option>{availableChannels.map((code) => <option value={code} key={code}>{channelByCode.get(code)?.mark ?? code}</option>)}</select><ChevronDown size={14} /></label><label className="filter-select"><ListFilter size={15} /><span className="sr-only">상품 상태 필터</span><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}><option value="all">전체 상태</option>{availableStatuses.map((status) => <option value={status} key={status}>{status}</option>)}</select><ChevronDown size={14} /></label><span className="toolbar-spacer" /><button className="icon-text-button" type="button" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{refreshing ? "새로고침 중" : "목록 새로고침"}</button><div className="toolbar-menu"><button className="icon-only-button" type="button" aria-label="상품 추가 작업" aria-expanded={actionsOpen} onClick={() => setActionsOpen((open) => !open)}><MoreHorizontal size={18} /></button>{actionsOpen && <div className="toolbar-menu-popover" role="menu"><button type="button" role="menuitem" onClick={() => onNavigate("publishing")}>새 상품 등록</button><button type="button" role="menuitem" onClick={() => onNavigate("connections")}>채널 연결 관리</button></div>}</div></div>
+        <div className="table-wrap"><table className="data-table product-table"><thead><tr><th>상품</th><th>판매 채널</th><th>재고</th><th>30일 판매</th><th>30일 매출</th><th>상태</th></tr></thead><tbody>{pagedProducts.map((product) => <tr key={product.id}><td><button type="button" className="product-cell product-cell-button" aria-label={`${product.name} 상품 상세정보 보기`} onClick={() => onOpenProduct(product)}><div className="product-thumb"><ProductVisual src={product.image} size="52px" alt={product.name} /></div><span><b>{product.name}</b><small>{product.sku} · {product.id}</small></span></button></td><td><div className="channel-stack">{product.channels.map((code) => <ChannelMark key={code} code={code} size="sm" />)}</div></td><td><strong className={product.stock < 20 ? "stock-low" : ""}>{product.stock}</strong><small> 개</small></td><td><b>{product.sales}</b><small> 개</small></td><td><b>{product.revenue}</b></td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div>
         {displayProducts.length === 0 ? <div className="live-empty-state table-empty"><PackageSearch size={28} /><b>실상품 데이터가 없습니다.</b><small>상품을 등록하거나 채널 동기화를 실행하면 이 목록에 표시됩니다.</small></div> : filtered.length === 0 ? <div className="live-empty-state table-empty"><Search size={28} /><b>검색 조건에 맞는 상품이 없습니다.</b><small>상품명 또는 SKU를 다시 확인해 주세요.</small></div> : null}
-        <div className="table-footer"><span>총 {displayProducts.length}개 중 {filtered.length > 0 ? `1–${filtered.length}` : "0"}개 표시</span><div><button disabled><ChevronRight className="flip" size={15} /></button><button className="active">1</button><button disabled><ChevronRight size={15} /></button></div></div>
+        <div className="table-footer"><span>총 {displayProducts.length}개 중 {filtered.length > 0 ? `${pageStart + 1}–${Math.min(pageStart + pageSize, filtered.length)}` : "0"}개 표시</span><div><button type="button" aria-label="이전 페이지" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronRight className="flip" size={15} /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(Math.max(0, currentPage - 3), Math.max(5, currentPage + 2)).map((pageNumber) => <button type="button" className={currentPage === pageNumber ? "active" : ""} onClick={() => setPage(pageNumber)} key={pageNumber}>{pageNumber}</button>)}<button type="button" aria-label="다음 페이지" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}><ChevronRight size={15} /></button></div></div>
       </section>
     </div>
   );
@@ -561,37 +618,171 @@ function formatProductUpdatedAt(value: string) {
   return date.toLocaleString("ko-KR", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
+type ProductDetailAsset = {
+  id?: string;
+  path: string;
+  url: string | null;
+};
+
+type ProductDetailLocalizedListing = {
+  channel: string;
+  market: string;
+  locale: string;
+  title: string;
+  shortDescription: string;
+  description: string;
+};
+
+type ProductDetailContext = {
+  manualFields: Record<string, unknown>;
+  sourceImages: ProductDetailAsset[];
+  generatedImages: ProductDetailAsset[];
+  localizedListings: ProductDetailLocalizedListing[];
+};
+
+type InventorySyncContext = {
+  runId?: string;
+  status?: string;
+  requestedOnHand?: number;
+  availableQuantity?: number;
+  totalCount?: number;
+  succeededCount?: number;
+  failedCount?: number;
+  tasks?: Array<{ id: string; channel: string; status: string; safeMessage?: string | null }>;
+};
+
+const emptyProductDetailContext: ProductDetailContext = {
+  manualFields: {},
+  sourceImages: [],
+  generatedImages: [],
+  localizedListings: [],
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function detailFieldValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value.toLocaleString("ko-KR");
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return null;
+}
+
 function ProductDetailPage({ product, onBack, authenticatedFetch }: {
   product: DisplayProduct;
   onBack: () => void;
   authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>;
 }) {
   const [remoteListings, setRemoteListings] = useState<RemoteListingReference[]>([]);
+  const [detailContext, setDetailContext] = useState<ProductDetailContext>(emptyProductDetailContext);
   const [remoteListingState, setRemoteListingState] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [inventoryEditing, setInventoryEditing] = useState(false);
+  const [inventoryOnHand, setInventoryOnHand] = useState(product.onHand);
+  const [inventorySaving, setInventorySaving] = useState(false);
+  const [inventorySync, setInventorySync] = useState<InventorySyncContext | null>(null);
+  const [inventoryMessage, setInventoryMessage] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    setRemoteListingState("loading");
     void authenticatedFetch(`/api/admin/products/${product.sourceId}/publish-context`)
       .then(async (response) => {
         if (!response.ok) throw new Error("상품 채널 원격 정보를 불러오지 못했습니다.");
-        const payload = await response.json() as { listings?: unknown };
+        const payload = await response.json() as Record<string, unknown>;
         const listings = Array.isArray(payload.listings)
-          ? payload.listings.filter((item): item is RemoteListingReference => Boolean(item) && typeof item === "object" && !Array.isArray(item) && "channel" in item && typeof item.channel === "string")
+          ? payload.listings.filter((item): item is RemoteListingReference => isRecord(item) && typeof item.channel === "string")
+          : [];
+        const parseAssets = (value: unknown): ProductDetailAsset[] => Array.isArray(value)
+          ? value.filter(isRecord).map((item) => ({
+            id: typeof item.id === "string" ? item.id : undefined,
+            path: typeof item.path === "string" ? item.path : "",
+            url: typeof item.url === "string" ? item.url : null,
+          })).filter((item) => Boolean(item.path || item.url))
+          : [];
+        const localizedListings = Array.isArray(payload.localizedListings)
+          ? payload.localizedListings.filter(isRecord).map((item) => ({
+            channel: typeof item.channel === "string" ? item.channel : "",
+            market: typeof item.market === "string" ? item.market : "",
+            locale: typeof item.locale === "string" ? item.locale : "",
+            title: typeof item.title === "string" ? item.title : "",
+            shortDescription: typeof item.shortDescription === "string" ? item.shortDescription : "",
+            description: typeof item.description === "string" ? item.description : "",
+          })).filter((item) => Boolean(item.channel && item.title))
           : [];
         if (!cancelled) {
           setRemoteListings(listings);
+          setDetailContext({
+            manualFields: isRecord(payload.manualFields) ? payload.manualFields : {},
+            sourceImages: parseAssets(payload.sourceImages),
+            generatedImages: parseAssets(payload.generatedImages),
+            localizedListings,
+          });
           setRemoteListingState("ready");
         }
       })
       .catch(() => {
         if (!cancelled) {
           setRemoteListings([]);
+          setDetailContext(emptyProductDetailContext);
           setRemoteListingState("unavailable");
         }
       });
     return () => { cancelled = true; };
   }, [authenticatedFetch, product.sourceId]);
+
+  useEffect(() => {
+    void authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`)
+      .then(async (response) => {
+        if (!response.ok) return;
+        const payload = await response.json() as { sync?: InventorySyncContext | null };
+        setInventorySync(payload.sync ?? null);
+      })
+      .catch(() => null);
+  }, [authenticatedFetch, product.sourceId]);
+
+  const applyInventory = async () => {
+    if (inventorySaving || !Number.isInteger(inventoryOnHand) || inventoryOnHand < product.reserved) {
+      setInventoryMessage(`실재고는 예약 재고 ${product.reserved.toLocaleString()}개 이상이어야 합니다.`);
+      return;
+    }
+    setInventorySaving(true);
+    setInventoryMessage("");
+    try {
+      const response = await authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`, {
+        method: "POST",
+        body: JSON.stringify({ onHand: inventoryOnHand, confirmWrite: true }),
+      });
+      const payload = await response.json().catch(() => ({ message: "통합 재고 결과를 읽지 못했습니다." })) as { sync?: InventorySyncContext; results?: Array<{ ok: boolean }>; message?: string };
+      if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "통합 재고 적용에 실패했습니다.");
+      setInventorySync(payload.sync ?? null);
+      const failed = payload.results?.filter((item) => !item.ok).length ?? 0;
+      setInventoryMessage(failed ? `중앙 재고는 저장됐고 ${failed}개 채널은 확인이 필요합니다.` : "중앙 재고와 게시된 판매채널 재고를 적용했습니다.");
+      setInventoryEditing(false);
+    } catch (error) {
+      setInventoryMessage(error instanceof Error ? error.message : "통합 재고 적용에 실패했습니다.");
+    } finally {
+      setInventorySaving(false);
+    }
+  };
+
+  const detailChannelKeys = useMemo(() => {
+    const listed = new Set(remoteListings.map((listing) => listing.channel));
+    const publishedCodes = new Set(product.channels);
+    return activeChannelKeys.filter((key) => listed.has(key) || publishedCodes.has(channels[key].letter));
+  }, [product.channels, remoteListings]);
+  const manualFieldRows = [
+    ["브랜드", detailFieldValue(detailContext.manualFields.brandName)],
+    ["제조사·공급처", detailFieldValue(detailContext.manualFields.manufacturer)],
+    ["원산지", detailFieldValue(detailContext.manualFields.countryOfOrigin)],
+    ["소재·성분", detailFieldValue(detailContext.manualFields.material)],
+    ["판매 구성", detailFieldValue(detailContext.manualFields.packageContents)],
+    ["카테고리", detailFieldValue(detailContext.manualFields.categoryHint)],
+    ["판매가", detailFieldValue(detailContext.manualFields.sellingPrice) && `${detailFieldValue(detailContext.manualFields.sellingPrice)} ${detailFieldValue(detailContext.manualFields.currency) ?? ""}`.trim()],
+    ["포장 중량", detailFieldValue(detailContext.manualFields.weightKg) && `${detailFieldValue(detailContext.manualFields.weightKg)} kg`],
+    ["포장 크기", [detailFieldValue(detailContext.manualFields.packageLengthCm), detailFieldValue(detailContext.manualFields.packageWidthCm), detailFieldValue(detailContext.manualFields.packageHeightCm)].every(Boolean)
+      ? `${detailFieldValue(detailContext.manualFields.packageLengthCm)} × ${detailFieldValue(detailContext.manualFields.packageWidthCm)} × ${detailFieldValue(detailContext.manualFields.packageHeightCm)} cm`
+      : null],
+  ].filter((row): row is [string, string] => typeof row[1] === "string" && row[1].length > 0);
+  const detailAssets = detailContext.generatedImages.length > 0 ? detailContext.generatedImages : detailContext.sourceImages;
 
   return (
     <div className="page-stack product-detail-page">
@@ -610,7 +801,6 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
             <div><dt>SKU</dt><dd>{product.sku}</dd></div>
             <div><dt>상품 원장 ID</dt><dd>{product.sourceId}</dd></div>
           </dl>
-          {product.sourceUrl ? <a className="product-source-link" href={product.sourceUrl} target="_blank" rel="noreferrer">원본 상품 페이지 열기<ExternalLink size={14} /></a> : <span className="product-source-empty">원본 상품 링크 없음</span>}
         </div>
       </section>
 
@@ -618,6 +808,17 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
         <article className="panel"><span className="metric-icon blue"><Box size={17} /></span><div><small>실재고</small><strong>{product.onHand.toLocaleString()}개</strong><em>예약 {product.reserved.toLocaleString()}개 · 판매 가능 {product.stock.toLocaleString()}개</em></div></article>
         <article className="panel"><span className="metric-icon violet"><ShoppingBag size={17} /></span><div><small>최근 30일 판매</small><strong>{product.sales.toLocaleString()}개</strong><em>상품 원장 집계</em></div></article>
         <article className="panel"><span className="metric-icon green"><CircleDollarSign size={17} /></span><div><small>최근 30일 매출</small><strong>{product.revenue}</strong><em>원가 {formatCompactWon(product.costKrw)}</em></div></article>
+      </section>
+
+      <section className="panel product-inventory-editor">
+        <div className="panel-heading"><div><span className="panel-kicker">INTEGRATED INVENTORY</span><h3>통합 재고 관리</h3></div><Box size={18} /></div>
+        <div className="inventory-editor-grid">
+          <div><small>현재 실재고</small><strong>{inventoryOnHand.toLocaleString()}개</strong><em>예약 {product.reserved.toLocaleString()}개 · 적용 수량 {(inventoryOnHand - product.reserved).toLocaleString()}개</em></div>
+          <label><span>수정할 실재고</span><input type="number" min={product.reserved} max={99_999_999} value={inventoryOnHand} disabled={!inventoryEditing || inventorySaving} onChange={(event) => setInventoryOnHand(Math.max(0, Number(event.target.value) || 0))} /></label>
+          <div className="inventory-editor-actions">{inventoryEditing ? <><button type="button" className="credential-secondary" disabled={inventorySaving} onClick={() => { setInventoryOnHand(product.onHand); setInventoryEditing(false); setInventoryMessage(""); }}>취소</button><button type="button" className="publish-execute" disabled={inventorySaving || inventoryOnHand < product.reserved} onClick={() => void applyInventory()}>{inventorySaving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{inventorySaving ? "채널 적용 중" : "모든 판매채널에 적용"}</button></> : <button type="button" className="publish-execute" onClick={() => setInventoryEditing(true)}>재고 수정</button>}</div>
+        </div>
+        <div className="inventory-sync-state"><span>최근 적용</span><b>{inventorySync?.status ? `${inventorySync.status} · 성공 ${inventorySync.succeededCount ?? 0}/${inventorySync.totalCount ?? 0}` : "적용 이력 없음"}</b>{inventorySync?.failedCount ? <em>{inventorySync.failedCount}개 채널 확인 필요</em> : null}</div>
+        {inventoryMessage ? <p className="inventory-editor-message">{inventoryMessage}</p> : null}
       </section>
 
       <section className="product-detail-grid">
@@ -629,27 +830,32 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
             <div><dt>상품 코드</dt><dd>{product.id}</dd></div>
             <div><dt>SKU</dt><dd>{product.sku}</dd></div>
             <div><dt>판매 상태</dt><dd>{product.status}</dd></div>
+            {manualFieldRows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
           </dl>
         </article>
         <article className="panel product-detail-section">
           <div className="panel-heading"><div><span className="panel-kicker">SALES CHANNELS</span><h3>판매 채널 상태</h3></div><Store size={18} /></div>
-          {product.channels.length > 0 ? <div className="product-detail-channels">{product.channels.map((code) => {
-            const channel = channelByCode.get(code);
-            const channelKey = channelKeyByCode.get(code);
-            const listing = channelKey
-              ? remoteListings.filter((item) => item.channel === channelKey).sort((a, b) => Number(b.status === "published") - Number(a.status === "published"))[0]
-              : undefined;
-            const listingReference = channelKey ? (listing ?? { channel: channelKey }) : null;
-            const destination = listingReference ? marketplaceListingUrl(listingReference) : null;
+          {detailChannelKeys.length > 0 ? <div className="product-detail-channels">{detailChannelKeys.map((channelKey) => {
+            const channel = channels[channelKey];
+            const code = channel.letter;
+            const listing = remoteListings.filter((item) => item.channel === channelKey).sort((a, b) => Number(Boolean(marketplaceListingUrl(b))) - Number(Boolean(marketplaceListingUrl(a))) || Number(b.status === "published") - Number(a.status === "published") || Number(Boolean(b.remoteId)) - Number(Boolean(a.remoteId)))[0];
+            const listingReference = listing ?? { channel: channelKey };
+            const destination = marketplaceListingUrl(listingReference);
             const stateCopy = remoteListingState === "loading"
               ? "원격 상품번호 확인 중"
               : listing?.remoteId
                 ? `${listing.status === "published" ? "등록 완료" : listing.status ?? "상품 연결"} · 원격 ID ${listing.remoteId}`
-                : remoteListingState === "unavailable" ? "연결 정보 조회 실패 · 판매자센터에서 확인" : "판매자센터 상품 조회 필요";
-            return <div key={code}><ChannelMark code={code} /><span><b>{channel?.name ?? code}</b><small>{stateCopy}</small></span>{destination && listingReference ? <a className="product-channel-link" href={destination} target="_blank" rel="noreferrer">{marketplaceListingLinkLabel(listingReference)}<ExternalLink size={13} /></a> : <CheckCircle2 size={16} />}</div>;
-          })}</div> : <div className="product-detail-empty"><Store size={24} /><b>연결된 판매 채널이 없습니다.</b><small>현재 상품 정보만 등록되어 있으며 채널 게시 전 상태입니다.</small></div>}
+                : remoteListingState === "unavailable" ? "연결 정보 조회 실패" : listing?.status ? `${listing.status} · 판매 상품 주소 확인 필요` : "게시 이력 없음";
+            return <div key={channelKey}><ChannelMark code={code} /><span><b>{channel.name}</b><small>{stateCopy}</small>{listing?.lastError ? <em>{listing.lastError}</em> : null}</span>{destination ? <a className="product-channel-link" href={destination} target="_blank" rel="noreferrer">{marketplaceListingLinkLabel(listingReference)}<ExternalLink size={13} /></a> : <span className="product-channel-unavailable">판매 상품 주소 확인 필요</span>}</div>;
+          })}</div> : remoteListingState === "loading" ? <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>상품 채널 연결을 확인하고 있습니다.</b><small>등록 시도·게시 완료·실패 이력을 함께 불러옵니다.</small></div> : <div className="product-detail-empty"><Store size={24} /><b>연결된 판매 채널이 없습니다.</b><small>현재 상품 정보만 등록되어 있으며 채널 게시 전 상태입니다.</small></div>}
         </article>
       </section>
+
+      <section className="panel product-detail-assets">
+        <div className="panel-heading"><div><span className="panel-kicker">GENERATED DETAIL PAGE</span><h3>등록 이미지 · 상세페이지 디자인</h3></div><ImagePlus size={18} /></div>
+        {remoteListingState === "loading" ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>상세페이지 결과를 불러오는 중입니다.</b></div> : detailAssets.length > 0 ? <div className="product-detail-asset-grid">{detailAssets.map((asset, index) => <figure key={`${asset.id ?? asset.path}-${index}`}><div><ProductVisual src={asset.url} size="(max-width: 760px) 88vw, 280px" alt={`${product.name} ${asset.id ?? `상품 이미지 ${index + 1}`}`} /></div><figcaption>{asset.id?.replaceAll("-", " ") ?? `원본 이미지 ${index + 1}`}</figcaption></figure>)}</div> : <div className="product-detail-empty compact"><ImagePlus size={24} /><b>저장된 상세 이미지가 없습니다.</b><small>기존 텍스트 상품이거나 이미지 생성 결과가 상품 원장에 연결되지 않은 상태입니다.</small></div>}
+      </section>
+
     </div>
   );
 }
@@ -1038,24 +1244,32 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
         notify={notify}
       />
       <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE QUEUE</span><h3>실제 등록 작업 현황</h3></div><button className="ghost-button" onClick={() => notify("채널 작업 이력은 API 운영 콘솔에서 확인할 수 있습니다.")}>작업 이력<ChevronRight size={15} /></button></div>
-        <div className="queue-live-summary"><div><small>AI 실행 중</small><b>{pipeline?.aiRunning ?? 0}건</b></div><div><small>등록 대기</small><b>{pipeline?.listingQueued ?? 0}건</b></div><div><small>등록 완료</small><b>{pipeline?.listingPublished ?? 0}건</b></div><div><small>확인 필요</small><b>{pipeline?.listingFailed ?? 0}건</b></div></div>
-        {!pipeline || pipeline.aiRunning + pipeline.listingQueued + pipeline.listingPublished + pipeline.listingFailed === 0 ? <div className="live-empty-state"><Upload size={26} /><b>실제 등록 작업이 아직 없습니다.</b><small>대표사진 분석과 카테고리 확정 후 채널 등록을 실행하면 여기에 표시됩니다.</small></div> : null}
+        <div className="queue-live-summary"><div><small>AI 실행 중</small><b>{pipeline?.aiRunning ?? 0}건</b></div><div><small>등록 대기</small><b>{pipeline?.listingQueued ?? 0}건</b></div><div><small>등록 완료</small><b>{pipeline?.listingPublished ?? 0}건</b></div><div><small>재시도 가능</small><b>{pipeline?.listingFailed ?? 0}건</b></div><div><small>외부 권한 대기</small><b>{pipeline?.listingBlocked ?? 0}건</b></div></div>
+        {!pipeline || pipeline.aiRunning + pipeline.listingQueued + pipeline.listingPublished + pipeline.listingFailed + pipeline.listingBlocked === 0 ? <div className="live-empty-state"><Upload size={26} /><b>실제 등록 작업이 아직 없습니다.</b><small>대표사진 분석과 카테고리 확정 후 채널 등록을 실행하면 여기에 표시됩니다.</small></div> : null}
       </section>
     </div>
   );
 }
 
-function OrdersPage({ displayOrders, onAdvance, onSync, syncing, syncStatus, initialQuery = "", initialOrderId = null }: {
+type ShipmentInput = { id: string; carrierCode: string; trackingNumber: string };
+type ShipmentResult = { succeeded: number; failed: number; results: Array<{ id: string; channel: string; ok: boolean; message: string }> };
+
+function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery = "", initialOrderId = null }: {
+  notify: (message: string) => void;
   displayOrders: DisplayOrder[];
-  onAdvance: (order: DisplayOrder) => Promise<void>;
-  onSync: () => Promise<void>;
-  syncing: boolean;
+  onFulfill: (shipments: ShipmentInput[]) => Promise<ShipmentResult>;
   syncStatus: OperationsSnapshot["syncStatus"];
   initialQuery?: string;
   initialOrderId?: string | null;
 }) {
   const [active, setActive] = useState("전체 주문");
   const [query, setQuery] = useState(initialQuery);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [shipmentDrafts, setShipmentDrafts] = useState<Record<string, { carrierCode: string; trackingNumber: string }>>({});
+  const [fulfillmentOpen, setFulfillmentOpen] = useState(false);
+  const [detailOrder, setDetailOrder] = useState<DisplayOrder | null>(() => displayOrders.find((order) => order.id === initialOrderId) ?? null);
+  const [fulfilling, setFulfilling] = useState(false);
+  const invoiceInputRef = useRef<HTMLInputElement>(null);
   const paidCount = displayOrders.filter((order) => order.status === "결제완료").length;
   const readyCount = displayOrders.filter((order) => order.status === "출고대기").length;
   const shippingCount = displayOrders.filter((order) => order.status === "배송중").length;
@@ -1067,19 +1281,104 @@ function OrdersPage({ displayOrders, onAdvance, onSync, syncing, syncStatus, ini
       || order.status === active;
     return matchesTab && (!query.trim() || matchesSearch(`${order.id} ${order.customer} ${order.product} ${order.status}`, query));
   });
+  const eligibleOrders = filteredOrders.filter((order) => ["결제완료", "출고대기"].includes(order.status));
+  const selectedOrders = displayOrders.filter((order) => selectedIds.has(order.sourceId));
+  const allEligibleSelected = eligibleOrders.length > 0 && eligibleOrders.every((order) => selectedIds.has(order.sourceId));
+  const toggleAllEligible = () => setSelectedIds((current) => {
+    const next = new Set(current);
+    if (allEligibleSelected) eligibleOrders.forEach((order) => next.delete(order.sourceId));
+    else eligibleOrders.forEach((order) => next.add(order.sourceId));
+    return next;
+  });
+  const toggleOrder = (order: DisplayOrder) => setSelectedIds((current) => {
+    const next = new Set(current);
+    if (next.has(order.sourceId)) next.delete(order.sourceId);
+    else next.add(order.sourceId);
+    return next;
+  });
+  const openFulfillment = () => {
+    if (!selectedOrders.length) {
+      notify("결제완료 또는 출고대기 주문을 먼저 선택해 주세요.");
+      return;
+    }
+    setShipmentDrafts((current) => Object.fromEntries(selectedOrders.map((order) => [order.sourceId, current[order.sourceId] ?? { carrierCode: "", trackingNumber: "" }])));
+    setFulfillmentOpen(true);
+  };
+  const importInvoices = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const lines = (await file.text()).replace(/^\uFEFF/, "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (!lines.length) throw new Error("empty");
+      const rows = lines.map((line) => line.split(",").map((value) => value.trim().replace(/^"|"$/g, "")));
+      const header = rows[0].map((value) => normalizeSearchText(value));
+      const hasHeader = header.some((value) => ["orderid", "주문번호", "tracking", "운송장번호"].includes(value.replace(/\s/g, "")));
+      const dataRows = hasHeader ? rows.slice(1) : rows;
+      const nextDrafts: Record<string, { carrierCode: string; trackingNumber: string }> = {};
+      const nextSelected = new Set<string>();
+      for (const row of dataRows) {
+        const [externalOrderId, carrierCode, trackingNumber] = row;
+        const order = displayOrders.find((candidate) => candidate.id === externalOrderId);
+        if (!order || !carrierCode || !trackingNumber) continue;
+        nextSelected.add(order.sourceId);
+        nextDrafts[order.sourceId] = { carrierCode, trackingNumber };
+      }
+      if (!nextSelected.size) throw new Error("unmatched");
+      setSelectedIds(nextSelected);
+      setShipmentDrafts(nextDrafts);
+      setFulfillmentOpen(true);
+      notify(`${nextSelected.size}건의 송장 정보를 불러왔습니다.`);
+    } catch {
+      notify("CSV를 ‘주문번호,택배사코드,운송장번호’ 순서로 확인해 주세요.");
+    } finally {
+      if (invoiceInputRef.current) invoiceInputRef.current.value = "";
+    }
+  };
+  const confirmFulfillment = async () => {
+    const shipments = selectedOrders.map((order) => ({ id: order.sourceId, ...shipmentDrafts[order.sourceId] }));
+    if (shipments.some((shipment) => !shipment.carrierCode?.trim() || !shipment.trackingNumber?.trim())) {
+      notify("선택한 모든 주문의 택배사 코드와 운송장번호를 입력해 주세요.");
+      return;
+    }
+    setFulfilling(true);
+    try {
+      const result = await onFulfill(shipments);
+      if (result.succeeded) setSelectedIds((current) => {
+        const next = new Set(current);
+        result.results.filter((item) => item.ok).forEach((item) => next.delete(item.id));
+        return next;
+      });
+      if (result.failed === 0) setFulfillmentOpen(false);
+    } finally {
+      setFulfilling(false);
+    }
+  };
   return (
     <div className="page-stack">
       <section className="order-summary-grid"><article><span className="metric-icon blue"><ShoppingCart size={19} /></span><div><small>통합 주문</small><strong>{displayOrders.length}</strong></div><em>운영 원장</em></article><article><span className="metric-icon orange"><Clock3 size={19} /></span><div><small>출고 대기</small><strong>{readyCount}</strong></div><em className="neutral">결제완료 {paidCount}건</em></article><article><span className="metric-icon violet"><Truck size={19} /></span><div><small>배송 중</small><strong>{shippingCount}</strong></div><em className="neutral">상태 변경 가능</em></article><article><span className={`metric-icon ${failedCount ? "orange" : "green"}`}><RefreshCw size={19} /></span><div><small>최근 동기화</small><strong>{lastSuccess ? relativeTime(lastSuccess) : "대기"}</strong></div><em className={failedCount ? "neutral" : ""}>{failedCount ? `${failedCount}개 채널 확인 필요` : "실제 채널 API"}</em></article></section>
-      <section className="panel data-panel"><div className="tab-toolbar"><div>{["전체 주문", "결제완료", "출고대기", "배송중", "완료 · 취소"].map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}{tab === "출고대기" && <span>{readyCount}</span>}</button>)}</div><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주문번호, 구매자, 상품 검색" aria-label="주문 검색" /></div><button className="filter-button" type="button" onClick={() => void onSync()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{syncing ? "요청 중" : "채널 새로고침"}</button></div>
-        <div className="table-wrap"><table className="data-table order-table"><thead><tr><th>주문번호</th><th>채널</th><th>구매자</th><th>상품</th><th>결제금액</th><th>주문상태</th><th>주문시간</th><th /></tr></thead><tbody>{filteredOrders.map((order) => <tr key={order.id} className={initialOrderId === order.id ? "search-target-row" : ""}><td><b className="mono">{order.id}</b></td><td><ChannelMark code={order.channel} size="sm" /></td><td><b>{order.customer}</b></td><td><span className="truncate-product">{order.product}</span></td><td><b>{order.amount}</b></td><td><StatusBadge status={order.status} /></td><td><span className="muted-cell">{order.time}</span></td><td><button className="table-action" title="다음 주문 상태로 변경" aria-label={`${order.id} 다음 상태로 변경`} onClick={() => void onAdvance(order)}><ChevronRight size={16} /></button></td></tr>)}</tbody></table></div>
+      <section className="panel data-panel"><div className="tab-toolbar"><div>{["전체 주문", "결제완료", "출고대기", "배송중", "완료 · 취소"].map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}{tab === "출고대기" && <span>{readyCount}</span>}</button>)}</div><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주문번호, 구매자, 상품 검색" aria-label="주문 검색" /></div><span className="automatic-sync-label"><RefreshCw size={14} />5분마다 자동 업데이트</span></div>
+        <div className="table-wrap"><table className="data-table order-table"><thead><tr><th><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} /></th><th>주문번호</th><th>채널</th><th>구매자</th><th>상품</th><th>결제금액</th><th>주문상태</th><th>주문시간</th><th /></tr></thead><tbody>{filteredOrders.map((order) => { const eligible = ["결제완료", "출고대기"].includes(order.status); return <tr key={order.sourceId} className={`${initialOrderId === order.id ? "search-target-row" : ""} ${selectedIds.has(order.sourceId) ? "selected-row" : ""}`.trim()}><td><input type="checkbox" aria-label={`${order.id} 출고 선택`} checked={selectedIds.has(order.sourceId)} disabled={!eligible} onChange={() => toggleOrder(order)} /></td><td><button type="button" className="order-detail-link mono" onClick={() => setDetailOrder(order)}>{order.id}</button></td><td><ChannelMark code={order.channel} size="sm" /></td><td><b>{order.customer}</b></td><td><button type="button" className="order-product-button truncate-product" onClick={() => setDetailOrder(order)}>{order.product}</button></td><td><b>{order.amount}</b></td><td><StatusBadge status={order.status} /></td><td><span className="muted-cell">{order.time}</span></td><td><button className="table-action" title="주문 상세정보 보기" aria-label={`${order.id} 주문 상세정보 보기`} onClick={() => setDetailOrder(order)}><ChevronRight size={16} /></button></td></tr>; })}</tbody></table></div>
         {displayOrders.length === 0 ? <div className="live-empty-state table-empty"><ShoppingCart size={28} /><b>동기화된 실제 주문이 없습니다.</b><small>채널 API 키 연결 후 주문 조회를 실행하면 표시됩니다.</small></div> : filteredOrders.length === 0 ? <div className="live-empty-state table-empty"><Search size={28} /><b>검색 조건에 맞는 주문이 없습니다.</b><small>주문번호, 구매자명 또는 상품명을 다시 확인해 주세요.</small></div> : null}
-        <div className="bulk-order-bar"><span><input type="checkbox" disabled />선택한 주문</span><button disabled><Truck size={15} />일괄 출고 처리</button><button disabled>송장 업로드</button><span className="toolbar-spacer" /><small>{syncStatus.length ? "채널별 동기화 상태 기록 중" : "채널 새로고침을 실행해 주세요"}</small><button className="table-action" type="button" onClick={() => void onSync()} disabled={syncing}><RefreshCw className={syncing ? "spin" : ""} size={15} /></button></div>
+        <div className="bulk-order-bar"><span><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} />선택한 주문 <b>{selectedIds.size}</b>건</span><button type="button" disabled={!selectedIds.size || fulfilling} onClick={openFulfillment}><Truck size={15} />일괄 출고 처리</button><button type="button" disabled={fulfilling} onClick={() => invoiceInputRef.current?.click()}><Upload size={15} />송장 CSV 업로드</button><input ref={invoiceInputRef} className="sr-only" type="file" accept=".csv,text/csv" aria-label="송장 CSV 파일 선택" onChange={(event) => void importInvoices(event.target.files?.[0] ?? null)} /><span className="toolbar-spacer" /><small>{syncStatus.length ? "채널별 동기화 상태 기록 중 · 5분 자동 업데이트" : "채널 연결 상태 확인 중"}</small></div>
       </section>
+      {detailOrder && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDetailOrder(null); }}><section className="shipment-dialog order-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="order-detail-title"><header><div><span className="metric-icon blue"><ShoppingCart size={18} /></span><span><h3 id="order-detail-title">주문 상세정보</h3><small>조회만으로 주문·출고 상태는 변경되지 않습니다.</small></span></div><button className="icon-only-button" aria-label="주문 상세 닫기" onClick={() => setDetailOrder(null)}><X size={17} /></button></header><dl className="order-detail-ledger"><div><dt>주문번호</dt><dd>{detailOrder.id}</dd></div><div><dt>판매 채널</dt><dd><ChannelMark code={detailOrder.channel} size="sm" /></dd></div><div><dt>구매 상품</dt><dd>{detailOrder.product}</dd></div><div><dt>구매자</dt><dd>{detailOrder.customer}</dd></div><div><dt>결제금액</dt><dd>{detailOrder.amount}</dd></div><div><dt>주문상태</dt><dd><StatusBadge status={detailOrder.status} /></dd></div><div><dt>주문시간</dt><dd>{detailOrder.time}</dd></div></dl><footer><button type="button" className="credential-secondary" onClick={() => setDetailOrder(null)}>닫기</button>{["결제완료", "출고대기"].includes(detailOrder.status) ? <button type="button" className="publish-execute" onClick={() => { setSelectedIds(new Set([detailOrder.sourceId])); setShipmentDrafts({ [detailOrder.sourceId]: shipmentDrafts[detailOrder.sourceId] ?? { carrierCode: "", trackingNumber: "" } }); setDetailOrder(null); setFulfillmentOpen(true); }}><Truck size={15} />출고 정보 입력</button> : null}</footer></section></div>}
+      {fulfillmentOpen && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget && !fulfilling) setFulfillmentOpen(false); }}><section className="shipment-dialog" role="dialog" aria-modal="true" aria-labelledby="shipment-dialog-title"><header><div><span className="metric-icon violet"><Truck size={18} /></span><span><h3 id="shipment-dialog-title">판매채널 발송 처리</h3><small>선택한 {selectedOrders.length}건을 외부 판매채널에 실제 발송 처리합니다.</small></span></div><button className="icon-only-button" aria-label="출고 창 닫기" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}><X size={17} /></button></header><div className="shipment-warning"><AlertTriangle size={16} /><span><b>실제 판매 상태가 변경됩니다.</b><small>판매채널이 성공 응답한 주문만 SellerPilot에서 배송중으로 변경됩니다.</small></span></div><div className="shipment-draft-list">{selectedOrders.map((order) => <article key={order.sourceId}><div><ChannelMark code={order.channel} size="sm" /><span><b>{order.id}</b><small>{order.product}</small></span></div><label><span>택배사 코드</span><input value={shipmentDrafts[order.sourceId]?.carrierCode ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { trackingNumber: "" }), carrierCode: event.target.value } }))} placeholder="채널 공식 택배사 코드" /></label><label><span>운송장번호</span><input value={shipmentDrafts[order.sourceId]?.trackingNumber ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { carrierCode: "" }), trackingNumber: event.target.value } }))} placeholder="숫자·영문 운송장번호" /></label></article>)}</div><footer><button type="button" className="credential-secondary" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}>취소</button><button type="button" className="publish-execute" disabled={fulfilling || selectedOrders.some((order) => !shipmentDrafts[order.sourceId]?.carrierCode.trim() || !shipmentDrafts[order.sourceId]?.trackingNumber.trim())} onClick={() => void confirmFulfillment()}>{fulfilling ? <LoaderCircle className="spin" size={15} /> : <Truck size={15} />}{fulfilling ? "판매채널 처리 중" : "확인 후 실제 발송 처리"}</button></footer></section></div>}
     </div>
   );
 }
 
-function CsPage({ notify, displayTickets, displayOrders, onSend, onSync, syncing, syncStatus, initialQuery = "", initialTicketId = null }: { notify: (message: string) => void; displayTickets: DisplayTicket[]; displayOrders: DisplayOrder[]; onSend: (ticket: DisplayTicket, reply: string) => Promise<boolean>; onSync: () => Promise<void>; syncing: boolean; syncStatus: OperationsSnapshot["syncStatus"]; initialQuery?: string; initialTicketId?: string | null }) {
+function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStatus, onSync, syncing, syncStatus, initialQuery = "", initialTicketId = null }: {
+  notify: (message: string) => void;
+  displayTickets: DisplayTicket[];
+  displayOrders: DisplayOrder[];
+  onSend: (ticket: DisplayTicket, reply: string) => Promise<boolean>;
+  onDraft: (ticket: DisplayTicket, targetLocale: SupportLocale) => Promise<string | null>;
+  onStatus: (ticket: DisplayTicket, status: "waiting" | "in_progress" | "resolved") => Promise<boolean>;
+  onSync: () => Promise<void>;
+  syncing: boolean;
+  syncStatus: OperationsSnapshot["syncStatus"];
+  initialQuery?: string;
+  initialTicketId?: string | null;
+}) {
   const [selectedId, setSelectedId] = useState<string | null>(initialTicketId);
   const [query, setQuery] = useState(initialQuery);
   const [ticketTab, setTicketTab] = useState<"미답변" | "처리 중" | "완료">(() => {
@@ -1087,6 +1386,9 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onSync, syncing
     return initialStatus === "처리 완료" ? "완료" : initialStatus === "처리 중" ? "처리 중" : "미답변";
   });
   const [reply, setReply] = useState("");
+  const [targetLocale, setTargetLocale] = useState<SupportLocale>("ko-KR");
+  const [drafting, setDrafting] = useState(false);
+  const [mobileConversationOpen, setMobileConversationOpen] = useState(Boolean(initialTicketId));
   const filteredTickets = displayTickets.filter((ticket) => {
     const matchesTab = ticketTab === "미답변"
       ? ticket.status === "긴급" || ticket.status === "답변 대기"
@@ -1104,19 +1406,43 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onSync, syncing
       setReply("");
     }
   };
+  const createDraft = async () => {
+    if (!selected || drafting) return;
+    setDrafting(true);
+    try {
+      const draft = await onDraft(selected, targetLocale);
+      if (draft) {
+        setReply(draft);
+        notify(`${supportLocaleLabels[targetLocale]} CLI 답변 초안을 불러왔습니다. 전송 전 내용을 확인해 주세요.`);
+      }
+    } finally {
+      setDrafting(false);
+    }
+  };
+  const updateStatus = async (status: "waiting" | "in_progress" | "resolved") => {
+    if (!selected) return;
+    if (await onStatus(selected, status)) notify("문의 처리 상태를 저장했습니다.");
+  };
   const linkedOrder = selected ? displayOrders.find((order) => order.customer === selected.customer) ?? null : null;
+  const unresolvedCount = displayTickets.filter((ticket) => ticket.status !== "처리 완료").length;
   const lastSuccess = syncStatus.filter((item) => item.data_type === "inquiries" && item.last_succeeded_at).sort((left, right) => Date.parse(right.last_succeeded_at ?? "") - Date.parse(left.last_succeeded_at ?? ""))[0]?.last_succeeded_at ?? null;
   const failedCount = syncStatus.filter((item) => item.data_type === "inquiries" && item.status === "failed").length;
+  const inquiryChannelStates = activeChannelKeys.map((channelKey) => {
+    const rows = syncStatus.filter((item) => item.channel_key === channelKey && item.data_type === "inquiries").sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
+    const state = rows[0] ?? null;
+    return { channelKey, state };
+  });
   return (
     <div className="page-stack cs-page">
-      <section className="cs-summary"><div><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{displayTickets.length}</strong></span></div><div><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{displayTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></div><div><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>연결 주문</small><strong>{displayOrders.length}</strong></span></div><div><span className="metric-icon blue"><Bot size={18} /></span><span><small>AI 답변</small><strong>CLI</strong></span></div></section>
+      <section className="cs-summary"><div><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{unresolvedCount}</strong></span></div><div><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{displayTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></div><div><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>연결 주문</small><strong>{displayOrders.length}</strong></span></div><div><span className="metric-icon blue"><Bot size={18} /></span><span><small>AI 답변</small><strong>CLI</strong></span></div></section>
       <section className="panel-heading table-title"><div><span className="panel-kicker">LIVE INQUIRIES</span><h3>{lastSuccess ? `최근 동기화 ${relativeTime(lastSuccess)}` : "채널 문의 동기화 대기"}{failedCount ? ` · ${failedCount}개 채널 확인 필요` : ""}</h3></div><button className="filter-button" type="button" onClick={() => void onSync()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{syncing ? "요청 중" : "문의 새로고침"}</button></section>
+      <section className="panel cs-channel-verification"><div className="panel-heading"><div><span className="panel-kicker">CHANNEL VERIFICATION</span><h3>채널별 CS 실제 동작 상태</h3></div><ShieldCheck size={18} /></div><div className="cs-channel-verification-grid">{inquiryChannelStates.map(({ channelKey, state }) => { const supported = state?.status !== "unsupported" && Boolean(state); const passed = state?.status === "passed"; return <article key={channelKey}><ChannelMark code={channels[channelKey].letter} /><span><b>{channels[channelKey].name}</b><small>{passed ? `정상 · ${state?.last_succeeded_at ? relativeTime(state.last_succeeded_at) : "동기화 완료"}` : state?.status === "failed" ? "연결 오류" : state?.status === "unsupported" ? "현재 API 미지원" : "검증 이력 없음"}</small></span><em className={passed ? "passed" : supported ? "failed" : "unsupported"}>{passed ? "동작" : supported ? "오류" : "미지원"}</em></article>; })}</div></section>
       {!selected ? <section className="panel live-empty-state large"><Inbox size={32} /><b>{displayTickets.length === 0 ? "동기화된 실제 문의가 없습니다." : "검색 조건에 맞는 문의가 없습니다."}</b><small>{displayTickets.length === 0 ? "채널 API 연결 후 문의를 동기화하면 고객 정보와 주문 맥락이 표시됩니다." : "고객명, 문의번호 또는 문의 내용을 다시 확인해 주세요."}</small>{displayTickets.length === 0 && <button className="ghost-button" type="button" onClick={() => void onSync()} disabled={syncing}>지금 확인</button>}</section> :
-      <section className="cs-workspace panel">
-        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs">{(["미답변", "처리 중", "완료"] as const).map((tab) => <button key={tab} className={ticketTab === tab ? "active" : ""} onClick={() => { setTicketTab(tab); setSelectedId(null); }}>{tab}{tab === "미답변" && <span>{displayTickets.filter((ticket) => ticket.status === "긴급" || ticket.status === "답변 대기").length}</span>}</button>)}</div>{filteredTickets.map((ticket) => <button key={ticket.id} className={`ticket-item ${selected.id === ticket.id ? "active" : ""}`} onClick={() => { setSelectedId(ticket.id); setReply(""); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.status} /></div></button>)}</aside>
-        <article className="conversation"><header><div><button className="mobile-back"><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div><button className="filter-button">처리 중<ChevronDown size={14} /></button><button className="icon-only-button"><MoreHorizontal size={18} /></button></div></header>
-          <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b></span><em>{linkedOrder?.id ?? "-"}<ChevronRight size={14} /></em></div><div className="message-date"><span>실제 수신 문의</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.preview}</p><span>채널 동기화 원문</span></div></div></div>
-          <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />ChatGPT CLI 답변 생성은 채널 정책·주문 데이터 연결 후 실행합니다.</span><button disabled><RefreshCw size={13} />CLI 생성</button></div><textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="실제 답변을 입력하세요." /><div><span><button disabled><Languages size={15} />번역 후 전송<ChevronDown size={13} /></button><button disabled><FileText size={15} />템플릿</button></span><button className="send-button" disabled={!reply} onClick={() => void sendReply()}>답변 저장<Send size={15} /></button></div></footer>
+      <section className={`cs-workspace panel ${mobileConversationOpen ? "mobile-conversation-open" : ""}`}>
+        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs">{(["미답변", "처리 중", "완료"] as const).map((tab) => <button key={tab} className={ticketTab === tab ? "active" : ""} onClick={() => { setTicketTab(tab); setSelectedId(null); setMobileConversationOpen(false); }}>{tab}{tab === "미답변" && <span>{displayTickets.filter((ticket) => ticket.status === "긴급" || ticket.status === "답변 대기").length}</span>}</button>)}</div>{filteredTickets.map((ticket) => <button key={ticket.id} className={`ticket-item ${selected.id === ticket.id ? "active" : ""}`} onClick={() => { setSelectedId(ticket.id); setReply(ticket.replyDraft ?? ""); setMobileConversationOpen(true); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.status} /></div></button>)}</aside>
+        <article className="conversation"><header><div><button className="mobile-back" type="button" aria-label="문의 목록으로 돌아가기" onClick={() => setMobileConversationOpen(false)}><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div><label className="filter-select compact"><span className="sr-only">문의 처리 상태</span><select value={selected.status === "처리 완료" ? "resolved" : selected.status === "처리 중" ? "in_progress" : "waiting"} onChange={(event) => void updateStatus(event.target.value as "waiting" | "in_progress" | "resolved")}><option value="waiting">답변 대기</option><option value="in_progress">처리 중</option><option value="resolved">처리 완료</option></select><ChevronDown size={14} /></label></div></header>
+          <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b></span><em>{linkedOrder?.id ?? "-"}</em></div><div className="message-date"><span>실제 수신 문의</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.originalMessage}</p><span>채널 동기화 원문</span></div></div></div>
+          <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />주문 맥락과 문의 원문을 바탕으로 검토용 초안을 생성합니다.</span><button type="button" disabled={drafting} onClick={() => void createDraft()}>{drafting ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{drafting ? "CLI 작성 중" : "CLI 초안 생성"}</button></div><textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="실제 답변을 입력하거나 CLI 초안을 생성하세요." /><div><span><label className="reply-tool-select"><Languages size={15} /><span className="sr-only">답변 언어</span><select value={targetLocale} onChange={(event) => setTargetLocale(event.target.value as SupportLocale)}>{Object.entries(supportLocaleLabels).map(([locale, label]) => <option key={locale} value={locale}>{label}</option>)}</select><ChevronDown size={13} /></label><label className="reply-tool-select"><FileText size={15} /><span className="sr-only">답변 템플릿</span><select defaultValue="" onChange={(event) => { const template = supportReplyTemplates.find((item) => item.label === event.target.value); if (template) setReply(template.value); event.target.value = ""; }}><option value="">템플릿</option>{supportReplyTemplates.map((template) => <option value={template.label} key={template.label}>{template.label}</option>)}</select><ChevronDown size={13} /></label></span><button className="send-button" disabled={!reply.trim()} onClick={() => void sendReply()}>검토 답변 저장<Send size={15} /></button></div></footer>
         </article>
         <aside className="customer-panel"><div className="customer-profile"><div className="ticket-avatar xl">{selected.customer.charAt(0)}</div><h4>{selected.customer}</h4><span>{selected.channel} 구매자</span></div><div className="customer-facts"><div><small>총 주문</small><b>{displayOrders.filter((order) => order.customer === selected.customer).length}건</b></div><div><small>데이터 출처</small><b>실제 채널 API</b></div></div><div className="detail-section"><h5>현재 주문</h5><div className="mini-order"><span className="tiny-thumb"><Package size={17} /></span><span><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b><small>{linkedOrder?.amount ?? "-"}</small></span></div><dl><div><dt>주문번호</dt><dd>{linkedOrder?.id ?? "-"}</dd></div><div><dt>배송상태</dt><dd><StatusBadge status={linkedOrder?.status ?? "확인 필요"} /></dd></div><div><dt>운송장</dt><dd>배송 API 동기화 값</dd></div></dl></div><div className="detail-section"><h5>응대 원칙</h5><p className="ai-guide"><Bot size={16} />실제 주문·배송 상태를 확인한 뒤 답변을 저장하세요.</p></div></aside>
       </section>}
@@ -1132,15 +1458,16 @@ function ChannelPage({ channelKey, onNavigate, metric, displayProducts }: {
 }) {
   const channel = channels[channelKey];
   const connected = metric?.credentialStatus === "active";
+  const credentialRegistered = Boolean(metric && metric.credentialStatus !== "missing");
   const channelProducts = displayProducts.filter((product) => product.channels.includes(channel.letter)).sort((a, b) => b.sales - a.sales);
   const revenue = metric?.revenue30dKrw ?? 0;
   const orderCount = metric?.orderCount ?? 0;
   const averageOrder = orderCount > 0 ? revenue / orderCount : 0;
   return (
     <div className="page-stack">
-      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em className={connected ? "connected" : ""}><i />{connected ? "운영 API 키 연결 · 실데이터 집계" : "운영 API 키 연결 필요"}</em></span></div><div><button className="filter-button" onClick={() => onNavigate("connections")}><KeyRound size={15} />연결 관리</button><a className="primary-button channel-console-link" href={channel.sellerCenterUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} />실제 판매자센터 열기</a></div></section>
+      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em className={connected ? "connected" : credentialRegistered ? "pending" : ""}><i />{connected ? "운영 API 키 · 읽기 진단 정상" : credentialRegistered ? "운영 API 키 등록 · 읽기 진단 필요" : "운영 API 키 등록 필요"}</em></span></div><div><button className="filter-button" onClick={() => onNavigate("connections")}><KeyRound size={15} />연결 관리</button><a className="primary-button channel-console-link" href={channel.sellerCenterUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} />실제 판매자센터 열기</a></div></section>
       <section className="metric-grid channel-metrics"><MetricCard label="30일 매출" value={formatCompactWon(revenue)} detail="실제 게시 상품 매출" icon={CircleDollarSign} tone="violet" /><MetricCard label="주문" value={orderCount.toLocaleString()} detail={`출고대기 ${metric?.readyToShipCount ?? 0}건`} icon={ShoppingBag} tone="blue" /><MetricCard label="판매 상품" value={(metric?.publishedCount ?? 0).toLocaleString()} detail={`관리 상품 ${metric?.productCount ?? 0}개`} icon={Package} tone="green" /><MetricCard label="미처리 CS" value={(metric?.openTicketCount ?? 0).toLocaleString()} detail="실제 채널 문의" icon={Headphones} tone="orange" /></section>
-      <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE PERFORMANCE</span><h3>최근 30일 운영 집계</h3></div><span className="live-label"><i />DB</span></div><div className="channel-live-summary"><div><small>판매량</small><b>{(metric?.sold30d ?? 0).toLocaleString()}개</b></div><div><small>평균 주문금액</small><b>{formatCompactWon(averageOrder)}</b></div><div><small>실주문</small><b>{orderCount.toLocaleString()}건</b></div><div><small>최근 API 오류</small><b>{metric?.failedAttemptCount ?? 0}건</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">CONNECTION</span><h3>채널 연결 상태</h3></div><span className={`score-grade ${connected ? "connected" : ""}`}>{connected ? "ON" : "OFF"}</span></div>{[{ label: "운영 자격증명", score: connected ? "연결됨" : "키 필요" }, { label: "등록 상품", score: `${metric?.publishedCount ?? 0}개` }, { label: "출고 대기", score: `${metric?.readyToShipCount ?? 0}건` }, { label: "실패 작업", score: `${metric?.failedAttemptCount ?? 0}건` }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
+      <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE PERFORMANCE</span><h3>최근 30일 운영 집계</h3></div><span className="live-label"><i />DB</span></div><div className="channel-live-summary"><div><small>판매량</small><b>{(metric?.sold30d ?? 0).toLocaleString()}개</b></div><div><small>평균 주문금액</small><b>{formatCompactWon(averageOrder)}</b></div><div><small>실주문</small><b>{orderCount.toLocaleString()}건</b></div><div><small>최근 API 오류</small><b>{metric?.failedAttemptCount ?? 0}건</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">CONNECTION</span><h3>채널 연결 상태</h3></div><span className={`score-grade ${connected ? "connected" : credentialRegistered ? "pending" : ""}`}>{connected ? "ON" : credentialRegistered ? "CHECK" : "OFF"}</span></div>{[{ label: "운영 자격증명", score: credentialRegistered ? "키 등록됨" : "키 필요" }, { label: "읽기 진단", score: connected ? "정상" : credentialRegistered ? "확인 필요" : "미실행" }, { label: "등록 상품", score: `${metric?.publishedCount ?? 0}개` }, { label: "출고 대기", score: `${metric?.readyToShipCount ?? 0}건` }, { label: "실패 작업", score: `${metric?.failedAttemptCount ?? 0}건` }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
       <section className="panel data-panel"><div className="panel-heading table-title"><div><span className="panel-kicker">LIVE PRODUCTS</span><h3>채널 내 판매 상품</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>전체 상품<ChevronRight size={15} /></button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>순위</th><th>상품</th><th>30일 판매</th><th>30일 매출</th><th>재고</th><th>상태</th></tr></thead><tbody>{channelProducts.slice(0, 10).map((product, index) => <tr key={product.id}><td><b className="rank-number">{String(index + 1).padStart(2, "0")}</b></td><td><div className="product-cell"><div className="product-thumb"><ProductVisual src={product.image} size="52px" /></div><span><b>{product.name}</b><small>{product.sku}</small></span></div></td><td><b>{product.sales}</b>개</td><td><b>{product.revenue}</b></td><td><b>{product.stock}</b>개</td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div>{channelProducts.length === 0 && <div className="live-empty-state table-empty"><PackageSearch size={28} /><b>이 채널의 실상품이 없습니다.</b><small>API 키 연결 후 상품 동기화 또는 신규 등록을 실행하세요.</small></div>}</section>
     </div>
   );
@@ -1153,7 +1480,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
     { no: "03", title: "사진으로 상품 등록", desc: "정면·라벨·바코드 사진을 올려 상품 사실정보 추출", view: "publishing" as View, icon: ImagePlus, outcome: "반복 입력 제거" },
     { no: "04", title: "AI 상세·썸네일 제작", desc: "ChatGPT CLI 분석, codex-image 연출컷, 3종 썸네일과 편집 가능한 상세페이지 생성", view: "publishing" as View, icon: WandSparkles, outcome: "Puck 블록으로 직접 수정 가능한 초안" },
     { no: "05", title: "채널별 마진 검증", desc: "원가·수수료·환율·광고비를 반영해 목표 마진 판매가를 결정", view: "margin" as View, icon: Calculator, outcome: "팔아도 남는 가격 확정" },
-    { no: "06", title: "7개 채널 동시 등록", desc: "Qoo10·Shopee·Lazada·쿠팡·스마트스토어·eBay·Temu 규격으로 자동 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 오류 즉시 추적" },
+    { no: "06", title: "8개 판매채널 등록", desc: "한 상품을 Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay·Temu 규격으로 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 사전검증과 오류 추적" },
     { no: "07", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
     { no: "08", title: "다국어 CS 응대", desc: "문의 자동번역과 주문정보 기반 AI 답변 초안", view: "cs" as View, icon: Bot, outcome: "응답시간 단축" },
     { no: "09", title: "성과 개선", desc: "채널·상품별 매출, 전환율, CS와 오류 데이터를 비교", view: "qoo10" as View, icon: TrendingUp, outcome: "잘 팔리는 상품에 집중" },
@@ -1187,6 +1514,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const operationSummary = operations.data?.summary ?? null;
   const channelMetrics = useMemo(() => operations.data?.channelMetrics ?? [], [operations.data]);
   const pipeline = operations.data?.pipeline ?? null;
+  const workerLastSeenAt = operations.data?.aiRuntime?.worker?.last_seen_at ?? null;
+  const workerConnected = Boolean(workerLastSeenAt && operations.data?.generatedAt
+    && Date.parse(operations.data.generatedAt) - Date.parse(workerLastSeenAt) < 10 * 60_000);
   const meta = pageMeta[view];
 
   const notify = useCallback((message: string) => {
@@ -1235,7 +1565,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   })) ?? [], [operations.data]);
 
   const displayOrders = useMemo<DisplayOrder[]>(() => operations.data?.orders.map((order) => ({
+    sourceId: order.id,
     id: order.externalOrderId,
+    channelKey: order.channelKey,
     channel: order.channelCode,
     customer: order.customerName,
     product: order.productName,
@@ -1245,11 +1577,15 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   })) ?? [], [operations.data]);
 
   const displayTickets = useMemo<DisplayTicket[]>(() => operations.data?.tickets.map((ticket) => ({
+    sourceId: ticket.id,
     id: ticket.externalTicketId,
+    channelKey: ticket.channelKey,
     customer: ticket.customerName,
     channel: channelNameByKey[ticket.channelKey] ?? ticket.channelKey,
     subject: ticket.subject,
+    originalMessage: ticket.message,
     preview: ticket.translatedMessage ?? ticket.message,
+    replyDraft: ticket.replyDraft,
     time: relativeTime(ticket.receivedAt),
     status: ticketStatusLabel[ticket.status],
   })) ?? [], [operations.data]);
@@ -1304,35 +1640,30 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     return () => window.removeEventListener("keydown", onShortcut);
   }, [openSearch]);
 
-  const advanceOrder = useCallback(async (order: DisplayOrder) => {
-    const source = operations.data?.orders.find((item) => item.externalOrderId === order.id);
-    if (!source) {
-      notify("운영 DB 마이그레이션 적용 후 주문 상태를 변경할 수 있습니다.");
-      return;
-    }
-    const nextStatus = ({
-      paid: "ready_to_ship",
-      ready_to_ship: "shipped",
-      shipped: "delivered",
-      delivered: "delivered",
-      cancelled: "cancelled",
-      refunded: "refunded",
-    } as const)[source.status];
+  const fulfillOrders = useCallback(async (shipments: ShipmentInput[]): Promise<ShipmentResult> => {
     try {
-      const response = await operations.authenticatedFetch("/api/operations/snapshot", {
+      const response = await operations.authenticatedFetch("/api/admin/orders/fulfill", {
         method: "POST",
-        body: JSON.stringify({ action: "order_status", id: source.id, status: nextStatus }),
+        body: JSON.stringify({ confirmWrite: true, shipments }),
       });
-      if (!response.ok) throw new Error("주문 상태를 저장하지 못했습니다.");
+      const payload = await response.json().catch(() => ({ message: "판매채널 발송 처리 응답을 읽지 못했습니다." })) as ShipmentResult & { message?: string };
+      if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "판매채널 발송 처리를 완료하지 못했습니다.");
       await operations.reload();
-      notify(`${order.id} 주문을 ${orderStatusLabel[nextStatus]} 상태로 변경했습니다.`);
+      notify(payload.message ?? `${payload.succeeded}건 발송 완료 · ${payload.failed}건 확인 필요`);
+      return {
+        succeeded: Number(payload.succeeded ?? 0),
+        failed: Number(payload.failed ?? shipments.length),
+        results: Array.isArray(payload.results) ? payload.results : [],
+      };
     } catch (error) {
-      notify(error instanceof Error ? error.message : "주문 상태를 저장하지 못했습니다.");
+      const message = error instanceof Error ? error.message : "판매채널 발송 처리를 완료하지 못했습니다.";
+      notify(message);
+      return { succeeded: 0, failed: shipments.length, results: shipments.map((shipment) => ({ id: shipment.id, channel: "unknown", ok: false, message })) };
     }
-  }, [operations, notify]);
+  }, [notify, operations]);
 
   const saveTicketReply = useCallback(async (ticket: DisplayTicket, reply: string) => {
-    const source = operations.data?.tickets.find((item) => item.externalTicketId === ticket.id);
+    const source = operations.data?.tickets.find((item) => item.id === ticket.sourceId);
     if (!source) {
       notify("운영 DB 마이그레이션 적용 후 CS 답변을 저장할 수 있습니다.");
       return false;
@@ -1351,7 +1682,59 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     }
   }, [operations, notify]);
 
-  const syncOrders = useCallback(async () => {
+  const updateTicketStatus = useCallback(async (ticket: DisplayTicket, status: "waiting" | "in_progress" | "resolved") => {
+    const source = operations.data?.tickets.find((item) => item.id === ticket.sourceId);
+    if (!source) return false;
+    try {
+      const response = await operations.authenticatedFetch("/api/operations/snapshot", {
+        method: "POST",
+        body: JSON.stringify({ action: "ticket_update", id: source.id, status, replyDraft: source.replyDraft ?? undefined }),
+      });
+      if (!response.ok) throw new Error("문의 처리 상태를 저장하지 못했습니다.");
+      await operations.reload();
+      return true;
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "문의 처리 상태를 저장하지 못했습니다.");
+      return false;
+    }
+  }, [notify, operations]);
+
+  const generateSupportReply = useCallback(async (ticket: DisplayTicket, targetLocale: SupportLocale) => {
+    const jobId = crypto.randomUUID();
+    try {
+      const queued = await operations.authenticatedFetch("/api/ai/support-reply", {
+        method: "POST",
+        body: JSON.stringify({ jobId, ticketId: ticket.sourceId, targetLocale, tone: "polite" }),
+      });
+      const queuedPayload = await queued.json().catch(() => ({ message: "CLI 작업 응답을 읽지 못했습니다." })) as { message?: string };
+      if (!queued.ok) throw new Error(queuedPayload.message ?? "CLI 답변 작업을 시작하지 못했습니다.");
+      notify("ChatGPT CLI가 문의와 주문 맥락을 확인하고 있습니다.");
+
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        await new Promise((resolveDelay) => window.setTimeout(resolveDelay, 2_000));
+        const response = await operations.authenticatedFetch(`/api/ai/jobs/${jobId}`);
+        const payload = await response.json().catch(() => null) as null | {
+          status?: string;
+          error?: string;
+          result?: { mode?: string; draft?: string; targetLocale?: string };
+        };
+        if (!response.ok || !payload) throw new Error("CLI 답변 작업 상태를 확인하지 못했습니다.");
+        if (payload.status === "failed") throw new Error(payload.error || "CLI 답변 초안 생성에 실패했습니다.");
+        if (payload.status === "succeeded") {
+          if (payload.result?.mode !== "support-reply" || typeof payload.result.draft !== "string") {
+            throw new Error("CLI 답변 결과 형식을 확인하지 못했습니다.");
+          }
+          return payload.result.draft;
+        }
+      }
+      throw new Error("CLI 작업이 대기 중입니다. 작업자 연결 상태를 확인한 뒤 다시 시도해 주세요.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "CLI 답변 초안을 만들지 못했습니다.");
+      return null;
+    }
+  }, [notify, operations]);
+
+  const syncOrders = useCallback(async (silent = false) => {
     if (syncingOrders) return;
     setSyncingOrders(true);
     try {
@@ -1361,12 +1744,12 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       });
       const payload = await response.json().catch(() => ({ message: "주문 동기화 응답을 읽지 못했습니다." })) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "판매채널 주문 동기화를 시작하지 못했습니다.");
-      notify("연결된 판매채널의 실제 주문·고객 문의 조회를 시작했습니다. 결과는 자동 반영됩니다.");
+      if (!silent) notify("연결된 판매채널의 실제 주문·고객 문의 조회를 시작했습니다. 결과는 자동 반영됩니다.");
       window.setTimeout(() => void operations.reload(), 3_000);
       window.setTimeout(() => void operations.reload(), 12_000);
       window.setTimeout(() => void operations.reload(), 30_000);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "판매채널 주문·문의 동기화를 시작하지 못했습니다.");
+      if (!silent) notify(error instanceof Error ? error.message : "판매채널 주문·문의 동기화를 시작하지 못했습니다.");
     } finally {
       setSyncingOrders(false);
     }
@@ -1376,9 +1759,16 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     if (view !== "orders" && view !== "cs") return;
     const key = "sellerpilot-operation-sync-requested-at";
     const previous = Number(window.sessionStorage.getItem(key) ?? 0);
-    if (Date.now() - previous < 120_000) return;
-    window.sessionStorage.setItem(key, String(Date.now()));
-    void syncOrders();
+    const run = () => {
+      window.sessionStorage.setItem(key, String(Date.now()));
+      void syncOrders(true);
+    };
+    const timer = Date.now() - previous >= 5 * 60_000 ? window.setTimeout(run, 0) : null;
+    const interval = window.setInterval(run, 5 * 60_000);
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+      window.clearInterval(interval);
+    };
   }, [syncOrders, view]);
 
   const navigate = useCallback((next: View) => {
@@ -1393,14 +1783,16 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     const params = new URLSearchParams(window.location.search);
     const requestedView = params.get("view") as View | null;
     if (!requestedView || !deepLinkViews.has(requestedView)) return;
-    setView(requestedView);
     const orderId = params.get("orderId");
-    if (requestedView === "orders" && orderId) {
-      if (!operations.data) return;
-      const order = operations.data.orders.find((item) => item.id === orderId);
-      if (order) setTargetedSearch({ kind: "order", id: order.externalOrderId, query: order.externalOrderId });
-    }
-    window.history.replaceState(null, "", window.location.pathname);
+    const timer = window.setTimeout(() => {
+      setView(requestedView);
+      if (requestedView === "orders" && orderId) {
+        const order = operations.data?.orders.find((item) => item.id === orderId);
+        if (order) setTargetedSearch({ kind: "order", id: order.externalOrderId, query: order.externalOrderId });
+      }
+      window.history.replaceState(null, "", window.location.pathname);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [operations.data]);
 
   const openProductDetails = useCallback((product: DisplayProduct) => {
@@ -1426,14 +1818,14 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} operationsAvailable={operations.state === "database"} />;
-    if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} displayProducts={displayProducts} />;
+    if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} />;
     if (view === "product-detail" && selectedProduct) return <ProductDetailPage product={selectedProduct} onBack={() => navigate("products")} authenticatedFetch={operations.authenticatedFetch} />;
     if (view === "publishing") return <PublishingPage key={publishingProduct?.id ?? "new-product"} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} initialProduct={publishingProduct} />;
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} onChanged={() => void operations.reload()} />;
-    if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} displayOrders={displayOrders} onAdvance={advanceOrder} onSync={syncOrders} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
-    if (view === "cs") return <CsPage key={`cs-${targetedSearch?.kind === "inquiry" ? targetedSearch.id : "all"}`} notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onSync={syncOrders} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={targetedSearch?.kind === "inquiry" ? targetedSearch.id : null} />;
-    if (view === "connections") return <ChannelConnectionsPage notify={notify} />;
+    if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
+    if (view === "cs") return <CsPage key={`cs-${targetedSearch?.kind === "inquiry" ? targetedSearch.id : "all"}`} notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={targetedSearch?.kind === "inquiry" ? targetedSearch.id : null} />;
+    if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} />;
     if (view === "acceptance") return <AcceptanceChecklistPage />;
     if (view === "storyboard") return <StoryboardPage onNavigate={navigate} />;
     const channelKey = view as ChannelKey;
@@ -1460,7 +1852,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
           <div className="commerce-service-rail" aria-label="채널 운영 상태">
             <strong>통합 판매관리</strong>
             <span><i className={operations.state === "database" ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? "판매 데이터 원장 연결" : "판매 데이터 확인 중"}</span>
-            <span><i className={operationSummary?.activeCredentialCount ? "rail-ok" : "rail-pending"} />연결검사 통과 {operationSummary?.activeCredentialCount ?? 0} / {enabledSalesChannelCount}</span>
+            <span><i className={operationSummary?.registeredCredentialCount ? "rail-ok" : "rail-pending"} />운영 키 {operationSummary?.registeredCredentialCount ?? 0} / {enabledSalesChannelCount}</span>
+            <span><i className={operationSummary?.activeCredentialCount ? "rail-ok" : "rail-pending"} />읽기 진단 {operationSummary?.activeCredentialCount ?? 0} / {enabledSalesChannelCount}</span>
+            <span><i className={workerConnected ? "rail-ok" : "rail-pending"} />자동 동기화 {workerConnected ? "실행 중" : "확인 필요"}</span>
             <span><i className="rail-ok" />인증정보 암호화 보관</span>
             <em>{operations.state === "database" ? "실제 연결 상태 1분 자동 갱신" : operations.state === "loading" ? "연결 상태 확인 중" : "운영 DB 연결 오류"}</em>
           </div>
@@ -1474,8 +1868,8 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 
       <MobilePushManager authenticatedFetch={operations.authenticatedFetch} />
 
-      {searchOpen && <div className="command-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}><div className="command-dialog" role="dialog" aria-modal="true" aria-label="통합 검색" onKeyDown={(event) => { if (event.key === "Escape") setSearchOpen(false); }}><div className="command-input"><Search size={18} /><input ref={searchInputRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key !== "Enter") return; const first = unifiedSearchResults.products[0] ?? unifiedSearchResults.orders[0] ?? unifiedSearchResults.inquiries[0]; if (first) selectUnifiedSearchResult(first); }} placeholder="상품명, 주문번호, 고객명 또는 문의 내용 검색" aria-label="통합 검색어" /><button aria-label="검색창 닫기" onClick={() => setSearchOpen(false)}><X size={17} /></button></div>{searchQuery.trim() ? <div className="command-results" aria-live="polite">{unifiedSearchResultCount > 0 ? <>{([{ label: "상품", items: unifiedSearchResults.products, icon: Package }, { label: "주문", items: unifiedSearchResults.orders, icon: ShoppingCart }, { label: "문의", items: unifiedSearchResults.inquiries, icon: MessageCircleMore }] as const).map((group) => group.items.length > 0 && <section key={group.label}><span className="command-label">{group.label} <b>{group.items.length}</b></span>{group.items.map((result) => <button type="button" className="command-result" key={`${result.kind}-${result.id}`} onClick={() => selectUnifiedSearchResult(result)}><span className={`command-result-icon ${result.kind}`}><group.icon size={16} /></span><span><b>{result.title}</b><small>{result.subtitle}</small></span><em>{result.meta}</em><ArrowRight size={14} /></button>)}</section>)}</> : <div className="command-empty"><Search size={24} /><b>일치하는 상품·주문·문의가 없습니다.</b><small>상품명, SKU, 주문번호, 고객명 또는 문의 내용을 확인해 주세요.</small></div>}</div> : <><span className="command-label">빠른 이동</span>{navGroups[0].items.map((item) => { const Icon = "icon" in item ? item.icon : null; return Icon ? <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button> : null; })}</>}</div></div>}
-      {accountOpen && <div className="account-security-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget && !credentialChanging) setAccountOpen(false); }}><section className="account-security-dialog" role="dialog" aria-modal="true" aria-labelledby="account-security-title"><div className="account-security-head"><span><ShieldCheck size={18} /></span><div><h2 id="account-security-title">관리자 로그인 정보 변경</h2><p>현재 계정의 로그인 아이디를 admin으로 변경합니다.</p></div><button aria-label="계정 설정 닫기" onClick={() => setAccountOpen(false)} disabled={credentialChanging}><X size={17} /></button></div><div className="account-security-values"><div><small>새 아이디</small><strong>admin</strong></div><label><small>새 비밀번호</small><input type="password" value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} autoComplete="new-password" placeholder="보안 정책에 맞게 입력" /></label></div><p className="account-security-warning"><AlertTriangle size={16} />Supabase 보안 정책상 10자 이상이며 영문 대·소문자, 숫자, 특수문자를 모두 포함해야 합니다. 변경이 완료되면 현재 세션에서 로그아웃됩니다.</p>{credentialMessage && <p className="account-security-message">{credentialMessage}</p>}<button className="account-security-submit" type="button" onClick={() => void changeAdminCredentials()} disabled={credentialChanging || !newAdminPassword}>{credentialChanging ? <><LoaderCircle className="spin" size={17} />변경 중</> : <><KeyRound size={17} />admin 계정으로 변경</>}</button></section></div>}
+      {searchOpen && <div className="command-overlay"><div className="command-dialog" role="dialog" aria-modal="true" aria-label="통합 검색"><div className="command-input"><Search size={18} /><input ref={searchInputRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); return; } if (event.key !== "Enter") return; const first = unifiedSearchResults.products[0] ?? unifiedSearchResults.orders[0] ?? unifiedSearchResults.inquiries[0]; if (first) selectUnifiedSearchResult(first); }} placeholder="상품명, 주문번호, 고객명 또는 문의 내용 검색" aria-label="통합 검색어" /><button aria-label="검색창 닫기" onClick={() => setSearchOpen(false)}><X size={17} /></button></div>{searchQuery.trim() ? <div className="command-results" aria-live="polite">{unifiedSearchResultCount > 0 ? <>{([{ label: "상품", items: unifiedSearchResults.products, icon: Package }, { label: "주문", items: unifiedSearchResults.orders, icon: ShoppingCart }, { label: "문의", items: unifiedSearchResults.inquiries, icon: MessageCircleMore }] as const).map((group) => group.items.length > 0 && <section key={group.label}><span className="command-label">{group.label} <b>{group.items.length}</b></span>{group.items.map((result) => <button type="button" className="command-result" key={`${result.kind}-${result.id}`} onClick={() => selectUnifiedSearchResult(result)}><span className={`command-result-icon ${result.kind}`}><group.icon size={16} /></span><span><b>{result.title}</b><small>{result.subtitle}</small></span><em>{result.meta}</em><ArrowRight size={14} /></button>)}</section>)}</> : <div className="command-empty"><Search size={24} /><b>일치하는 상품·주문·문의가 없습니다.</b><small>상품명, SKU, 주문번호, 고객명 또는 문의 내용을 확인해 주세요.</small></div>}</div> : <><span className="command-label">빠른 이동</span>{navGroups[0].items.map((item) => { const Icon = "icon" in item ? item.icon : null; return Icon ? <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button> : null; })}</>}</div></div>}
+      {accountOpen && <div className="account-security-overlay"><section className="account-security-dialog" role="dialog" aria-modal="true" aria-labelledby="account-security-title"><div className="account-security-head"><span><ShieldCheck size={18} /></span><div><h2 id="account-security-title">관리자 로그인 정보 변경</h2><p>현재 계정의 로그인 아이디를 admin으로 변경합니다.</p></div><button aria-label="계정 설정 닫기" onClick={() => setAccountOpen(false)} disabled={credentialChanging}><X size={17} /></button></div><div className="account-security-values"><div><small>새 아이디</small><strong>admin</strong></div><label><small>새 비밀번호</small><input type="password" value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} autoComplete="new-password" placeholder="보안 정책에 맞게 입력" /></label></div><p className="account-security-warning"><AlertTriangle size={16} />Supabase 보안 정책상 10자 이상이며 영문 대·소문자, 숫자, 특수문자를 모두 포함해야 합니다. 변경이 완료되면 현재 세션에서 로그아웃됩니다.</p>{credentialMessage && <p className="account-security-message">{credentialMessage}</p>}<button className="account-security-submit" type="button" onClick={() => void changeAdminCredentials()} disabled={credentialChanging || !newAdminPassword}>{credentialChanging ? <><LoaderCircle className="spin" size={17} />변경 중</> : <><KeyRound size={17} />admin 계정으로 변경</>}</button></section></div>}
       {toast && <div className="toast"><CheckCircle2 size={18} /><span>{toast}</span><button onClick={() => setToast("")}><X size={14} /></button></div>}
     </main>
   );

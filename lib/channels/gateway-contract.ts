@@ -29,7 +29,7 @@ const operationResultSchema = z.object({
     status: z.number().int().min(0).max(999),
     requestId: z.string().max(160).optional(),
     data: z.record(z.string(), z.unknown()),
-  })).min(1).max(12),
+  })).min(1).max(32),
   remoteId: z.string().max(240).optional(),
   safeMessage: z.string().min(1).max(1_000),
 });

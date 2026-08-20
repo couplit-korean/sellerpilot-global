@@ -29,8 +29,8 @@ export function MobilePushManager({ authenticatedFetch }: { authenticatedFetch: 
   const [state, setState] = useState<PushState>("checking");
   const [subscription, setSubscription] = useState<PushSubscription | null>(null);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isAndroid, setIsAndroid] = useState(false);
-  const [isStandalone, setIsStandalone] = useState(false);
+  const [isAndroid] = useState(() => typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent));
+  const [isStandalone, setIsStandalone] = useState(() => typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -42,10 +42,6 @@ export function MobilePushManager({ authenticatedFetch }: { authenticatedFetch: 
   }, [authenticatedFetch]);
 
   useEffect(() => {
-    const android = /Android/i.test(navigator.userAgent);
-    const standalone = window.matchMedia("(display-mode: standalone)").matches;
-    setIsAndroid(android);
-    setIsStandalone(standalone);
     const onInstallPrompt = (event: Event) => {
       event.preventDefault();
       setInstallPrompt(event as BeforeInstallPromptEvent);

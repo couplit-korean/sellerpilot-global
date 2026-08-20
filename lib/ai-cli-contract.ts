@@ -63,6 +63,25 @@ export const productResearchJobRequestSchema = z.object({
   researchInput: z.string().trim().min(2).max(12_000),
 });
 
+export const supportReplyLocaleSchema = z.enum([
+  "ko-KR", "en-US", "ja-JP", "zh-TW", "th-TH", "vi-VN", "id-ID", "ms-MY", "pt-BR", "es-MX",
+]);
+
+export const supportReplyJobRequestSchema = z.object({
+  jobId: z.string().uuid(),
+  ticketId: z.string().uuid(),
+  targetLocale: supportReplyLocaleSchema,
+  tone: z.enum(["polite", "concise", "apologetic"]).default("polite"),
+});
+
+export const supportReplyResultSchema = z.object({
+  mode: z.literal("support-reply"),
+  targetLocale: supportReplyLocaleSchema,
+  draft: z.string().trim().min(10).max(4_000),
+  sourceSummary: z.string().trim().min(1).max(1_000),
+  cautions: z.array(z.string().trim().min(1).max(300)).max(5),
+});
+
 export const studioCoreSchema = z.object({
   product: z.object({
     name: z.string().min(1).max(160),
@@ -206,6 +225,11 @@ export const workerCompletionSchema = z.union([
   }),
   z.object({
     jobId: z.string().uuid(),
+    status: z.literal("succeeded"),
+    result: supportReplyResultSchema,
+  }),
+  z.object({
+    jobId: z.string().uuid(),
     status: z.literal("failed"),
     error: z.string().min(1).max(500),
   }),
@@ -213,3 +237,4 @@ export const workerCompletionSchema = z.union([
 
 export type CliStudioResult = z.infer<typeof cliStudioResultSchema>;
 export type ProductResearchResult = z.infer<typeof productResearchResultSchema>;
+export type SupportReplyResult = z.infer<typeof supportReplyResultSchema>;

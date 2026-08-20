@@ -74,7 +74,15 @@ export function inquirySyncArguments(channel: ActiveChannelKey, now = new Date()
     { kind: "product", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, answeredType: "NOANSWER", pageNum: 1, pageSize: 50 } },
     { kind: "call-center", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, partnerCounselingStatus: "NO_ANSWER", pageNum: 1, pageSize: 30 } },
   ];
-  if (channel === "smartstore") return [{ query: {} }];
+  if (channel === "smartstore") return [{
+    query: {
+      fromDate: from.toISOString(),
+      toDate: now.toISOString(),
+      answered: false,
+      page: 1,
+      size: 100,
+    },
+  }];
   if (channel === "qoo10") return [{
     params: { search_start_dt: qoo10Date(from), search_end_dt: qoo10Date(now), proc_status: "S1" },
   }];

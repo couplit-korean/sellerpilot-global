@@ -38,11 +38,12 @@ export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
 
-  const [{ data, error }, { data: marginScenarios }, { data: syncStatus }, { data: credentialRows, error: credentialError }] = await Promise.all([
+  const [{ data, error }, { data: marginScenarios }, { data: syncStatus }, { data: credentialRows, error: credentialError }, { data: aiRuntime }] = await Promise.all([
     admin.userClient.rpc("sellerpilot_get_operations_snapshot"),
     admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: 5 }),
     admin.userClient.rpc("sellerpilot_get_channel_sync_status"),
     admin.userClient.rpc("sellerpilot_list_credentials"),
+    admin.userClient.rpc("sellerpilot_ai_runtime_status"),
   ]);
   if (error || credentialError) {
     return NextResponse.json({ message: "운영 데이터를 불러오지 못했습니다." }, { status: 500 });
@@ -85,10 +86,12 @@ export async function GET(request: Request) {
     payload.summary = {
       ...(payload.summary as Record<string, unknown>),
       activeCredentialCount: verifiedChannels.size,
+      registeredCredentialCount: activeProductionByChannel.size,
     };
   }
   payload.marginScenarios = Array.isArray(marginScenarios) ? marginScenarios : [];
   payload.syncStatus = Array.isArray(syncStatus) ? syncStatus : [];
+  payload.aiRuntime = aiRuntime && typeof aiRuntime === "object" && !Array.isArray(aiRuntime) ? aiRuntime : null;
   if (Array.isArray(payload.products)) {
     const products = payload.products.filter((product): product is Record<string, unknown> => Boolean(product) && typeof product === "object" && !Array.isArray(product));
     const paths = products.map((product) => typeof product.aiHeroPath === "string" ? product.aiHeroPath : "").filter(Boolean);
