@@ -1,6 +1,7 @@
 import {
   coupangRequest,
   ebayRequest,
+  elevenstOrderRequest,
   fetchNaverAccessToken,
   lazadaRequest,
   naverRequest,
@@ -298,6 +299,18 @@ function ensureProviderSupport(channel: ActiveChannelKey, operation: ChannelOper
   const capability = channelCatalog[channel].capabilities[channelOperationCapabilities[operation]];
   if (capability.mode === "unsupported") throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
   if (capability.mode === "vendor_docs_required") throw new Error(`CHANNEL_VENDOR_SPEC_REQUIRED:${operation}`);
+}
+
+async function executeElevenst(input: ExecuteInput) {
+  if (input.operation !== "orders.list") {
+    throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
+  }
+  const remote = await elevenstOrderRequest({
+    payload: input.payload,
+    startTime: stringArgument(input.arguments, "startTime"),
+    endTime: stringArgument(input.arguments, "endTime"),
+  });
+  return result(input, [step("orders", remote)]);
 }
 
 function qoo10DetailHtml(value: unknown, depth = 0): string {
@@ -1752,6 +1765,7 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
   if (input.channel === "shopee") return executeShopee(input);
   if (input.channel === "lazada") return executeLazada(input);
   if (input.channel === "coupang") return executeCoupang(input);
+  if (input.channel === "elevenst") return executeElevenst(input);
   if (input.channel === "smartstore") return executeSmartstore(input);
   if (input.channel === "ebay") return executeEbay(input);
   if (input.channel === "temu") return executeTemu(input);

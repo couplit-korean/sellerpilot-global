@@ -693,6 +693,27 @@ function elevenstXmlValue(xml: string, tag: string) {
     .trim() ?? "";
 }
 
+function elevenstXmlNodes(xml: string, tag: string) {
+  const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `<(?:[\\w.-]+:)?${escapedTag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?${escapedTag}>`,
+    "gi",
+  );
+  return [...xml.matchAll(pattern)].map((match) => match[1] ?? "");
+}
+
+function elevenstNamespacedXmlValue(xml: string, tag: string) {
+  const node = elevenstXmlNodes(xml, tag)[0] ?? "";
+  return node
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
 export async function elevenstRequest(input: {
   payload: SecretPayload;
   apiCode: string;
@@ -736,6 +757,67 @@ export async function elevenstRequest(input: {
       totalCount: Number.isFinite(totalCount) ? totalCount : 0,
       ...(errorCode ? { errorCode: errorCode.slice(0, 80) } : {}),
       ...(errorMessage ? { errorMessage: errorMessage.slice(0, 240) } : {}),
+    },
+  } satisfies RemoteResponse;
+}
+
+export async function elevenstOrderRequest(input: {
+  payload: SecretPayload;
+  startTime: string;
+  endTime: string;
+}) {
+  const apiKey = textValue(input.payload, "api_key");
+  if (!apiKey) throw new Error("ELEVENST_CREDENTIALS_MISSING");
+  if (!/^\d{12}$/.test(input.startTime) || !/^\d{12}$/.test(input.endTime)) {
+    throw new Error("ELEVENST_ORDER_RANGE_INVALID");
+  }
+  const url = new URL(
+    `https://api.11st.co.kr/rest/ordservices/complete/${input.startTime}/${input.endTime}`,
+  );
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
+      openapikey: apiKey,
+      "user-agent": "SellerPilot-11st-Order-Connector/1.0",
+    },
+  });
+  const bytes = await response.arrayBuffer();
+  let xml = "";
+  try {
+    xml = new TextDecoder("euc-kr").decode(bytes);
+  } catch {
+    xml = new TextDecoder().decode(bytes);
+  }
+  const resultCode = elevenstNamespacedXmlValue(xml, "result_code")
+    || elevenstNamespacedXmlValue(xml, "ResultCode")
+    || elevenstXmlValue(xml, "ErrorCode");
+  const resultMessage = elevenstNamespacedXmlValue(xml, "result_text")
+    || elevenstNamespacedXmlValue(xml, "ResultMessage")
+    || elevenstXmlValue(xml, "ErrorMessage");
+  const orders = elevenstXmlNodes(xml, "order").map((order) => ({
+    orderNo: elevenstNamespacedXmlValue(order, "ordNo"),
+    orderSequence: elevenstNamespacedXmlValue(order, "ordPrdSeq"),
+    customerName: elevenstNamespacedXmlValue(order, "ordNm")
+      || elevenstNamespacedXmlValue(order, "rcvrNm"),
+    productName: elevenstNamespacedXmlValue(order, "prdNm"),
+    quantity: elevenstNamespacedXmlValue(order, "ordQty"),
+    amountPerSequence: elevenstNamespacedXmlValue(order, "ordPayAmtPerSeq"),
+    orderPaymentAmount: elevenstNamespacedXmlValue(order, "ordPayAmt"),
+    unitPrice: elevenstNamespacedXmlValue(order, "selPrc"),
+    orderedAt: elevenstNamespacedXmlValue(order, "ordStlEndDt")
+      || elevenstNamespacedXmlValue(order, "ordDt"),
+    status: "PAID",
+  })).filter((order) => order.orderNo);
+  return {
+    response,
+    text: "",
+    data: {
+      ...(resultCode ? { ResultCode: resultCode } : {}),
+      ...(resultMessage ? { ResultMessage: resultMessage.slice(0, 240) } : {}),
+      orders,
     },
   } satisfies RemoteResponse;
 }

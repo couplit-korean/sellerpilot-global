@@ -19,6 +19,13 @@ function qoo10Date(value: Date) {
   return qoo10DateTime(value).slice(0, 8);
 }
 
+function elevenstDateTime(value: Date) {
+  return new Date(value.getTime() + 9 * 60 * 60 * 1000)
+    .toISOString()
+    .replace(/[-:T]/g, "")
+    .slice(0, 12);
+}
+
 export function orderSyncArguments(channel: ActiveChannelKey, now = new Date()): Record<string, unknown> | null {
   const from = new Date(now.getTime() - 14 * 86_400_000);
   if (channel === "coupang") return { query: { createdAtFrom: coupangDailyDate(from), createdAtTo: coupangDailyDate(now), status: "ACCEPT", maxPerPage: 50 } };
@@ -33,6 +40,10 @@ export function orderSyncArguments(channel: ActiveChannelKey, now = new Date()):
       ShippingStatus: "0",
       SearchCondition: "1",
     },
+  };
+  if (channel === "elevenst") return {
+    startTime: elevenstDateTime(new Date(now.getTime() - 7 * 86_400_000)),
+    endTime: elevenstDateTime(now),
   };
   return null;
 }
@@ -59,6 +70,23 @@ export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()) {
       periodicKey: `orders:${remoteStatus}`,
       arguments: { ...base, params: { ...params, ShippingStatus: remoteStatus } },
     }));
+  }
+  if (channel === "elevenst") {
+    const recentStart = new Date(now.getTime() - 7 * 86_400_000);
+    const olderStart = new Date(now.getTime() - 14 * 86_400_000);
+    return [
+      {
+        periodicKey: `orders:${elevenstDateTime(olderStart)}:${elevenstDateTime(recentStart)}`,
+        arguments: {
+          startTime: elevenstDateTime(olderStart),
+          endTime: elevenstDateTime(recentStart),
+        },
+      },
+      {
+        periodicKey: `orders:${elevenstDateTime(recentStart)}:${elevenstDateTime(now)}`,
+        arguments: base,
+      },
+    ];
   }
   return [{ periodicKey: "orders", arguments: base }];
 }

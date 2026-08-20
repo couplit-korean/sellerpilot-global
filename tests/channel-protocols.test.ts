@@ -15,6 +15,7 @@ import {
   ensureEbayAccessToken,
   ensureShopeeAccessToken,
   ensureShopeeMerchantAccessToken,
+  elevenstOrderRequest,
   elevenstRequest,
   exchangeShopeeOAuthToken,
   fetchNaverAccessToken,
@@ -115,6 +116,52 @@ test("11st fixed-IP diagnostic calls ProductSearch and returns only safe XML met
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("11st seller order feed uses the fixed-IP REST endpoint and Open API header", async () => {
+  const originalFetch = globalThis.fetch;
+  let calledUrl = "";
+  let calledHeaders = new Headers();
+  globalThis.fetch = async (input, init) => {
+    calledUrl = String(input);
+    calledHeaders = new Headers(init?.headers);
+    return new Response(`<?xml version="1.0" encoding="EUC-KR"?>
+      <ns2:orders xmlns:ns2="http://api.11st.co.kr/order">
+        <ns2:order><ordNo>202608210001</ordNo><ordPrdSeq>1</ordPrdSeq><ordNm>테스트 구매자</ordNm><prdNm>테스트 상품 A</prdNm><ordQty>1</ordQty><ordPayAmtPerSeq>10000</ordPayAmtPerSeq><ordPayAmt>15000</ordPayAmt><selPrc>10000</selPrc><ordStlEndDt>2026-08-21 10:00:00</ordStlEndDt></ns2:order>
+        <ns2:order><ordNo>202608210001</ordNo><ordPrdSeq>2</ordPrdSeq><ordNm>테스트 구매자</ordNm><prdNm>테스트 상품 B</prdNm><ordQty>1</ordQty><ordPayAmtPerSeq>5000</ordPayAmtPerSeq><ordPayAmt>15000</ordPayAmt><selPrc>5000</selPrc><ordStlEndDt>2026-08-21 10:00:00</ordStlEndDt></ns2:order>
+      </ns2:orders>`, { status: 200, headers: { "content-type": "application/xml; charset=euc-kr" } });
+  };
+  try {
+    const remote = await elevenstOrderRequest({
+      payload: { api_key: "A".repeat(32) },
+      startTime: "202608140000",
+      endTime: "202608210000",
+    });
+    assert.equal(calledUrl, "https://api.11st.co.kr/rest/ordservices/complete/202608140000/202608210000");
+    assert.equal(calledHeaders.get("openapikey"), "A".repeat(32));
+    assert.equal(Array.isArray(remote.data.orders) ? remote.data.orders.length : 0, 2);
+    assert.equal(remote.text, "");
+
+    const operation = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "orders.list",
+      payload: { api_key: "A".repeat(32) },
+      arguments: { startTime: "202608140000", endTime: "202608210000" },
+      environment: "production",
+    });
+    assert.equal(operation.ok, true);
+    assert.equal(operation.steps[0]?.name, "orders");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st periodic order sync splits the last 14 days into provider-safe seven-day windows", () => {
+  const requests = orderSyncRequests("elevenst", new Date("2026-08-21T03:00:00.000Z"));
+  assert.deepEqual(requests.map((request) => request.arguments), [
+    { startTime: "202608071200", endTime: "202608141200" },
+    { startTime: "202608141200", endTime: "202608211200" },
+  ]);
 });
 
 test("Qoo10 periodic order sync uses the documented Japan-time parameters for every shipping state", () => {
@@ -347,7 +394,7 @@ test("all eight active channels define every normalized capability", () => {
   }
   assert.equal(channelCatalog.temu.capabilities.listingCreate.mode, "api");
   assert.equal(channelCatalog.qoo10.capabilities.webhooks.mode, "unsupported");
-  assert.equal(channelCatalog.elevenst.capabilities.orders.mode, "vendor_docs_required");
+  assert.equal(channelCatalog.elevenst.capabilities.orders.mode, "polling");
 });
 
 test("Shopee operation routing signs the shop request and uses v2 order detail", async () => {

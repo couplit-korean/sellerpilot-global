@@ -190,6 +190,40 @@ function normalizeQoo10(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
+function normalizeElevenst(data: Record<string, unknown>) {
+  const grouped = new Map<string, Record<string, unknown>[]>();
+  for (const row of list(data.orders)) {
+    const orderNo = text(row.orderNo);
+    if (!orderNo) continue;
+    grouped.set(orderNo, [...(grouped.get(orderNo) ?? []), row]);
+  }
+  return [...grouped.entries()].map(([externalOrderId, rows]): NormalizedChannelOrder => {
+    const perSequenceTotal = rows.reduce((sum, row) => sum + number(row.amountPerSequence), 0);
+    const orderTotal = Math.max(...rows.map((row) => number(row.orderPaymentAmount)), 0);
+    const itemTotal = rows.reduce((sum, row) => {
+      const quantity = Math.max(1, number(row.quantity));
+      return sum + number(row.unitPrice) * quantity;
+    }, 0);
+    const amount = perSequenceTotal > 0 ? perSequenceTotal : orderTotal > 0 ? orderTotal : itemTotal;
+    const names = [...new Set(rows.map((row) => text(row.productName)).filter(Boolean))];
+    const rawOrderedAt = text(rows[0]?.orderedAt);
+    const orderedAt = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(rawOrderedAt)
+      ? iso(`${rawOrderedAt.replace(" ", "T")}+09:00`)
+      : iso(rawOrderedAt);
+    return {
+      externalOrderId,
+      customerName: text(rows[0]?.customerName, "11번가 구매자"),
+      productName: names.length > 1 ? `${names[0]} 외 ${names.length - 1}개` : names[0] || "11번가 주문 상품",
+      quantity: Math.max(1, Math.round(rows.reduce((sum, row) => sum + number(row.quantity), 0))),
+      amount,
+      currency: "KRW",
+      amountKrw: amount,
+      status: "paid",
+      orderedAt,
+    };
+  });
+}
+
 export function normalizeChannelOrders(channel: ActiveChannelKey, result: ChannelOperationResult): NormalizedChannelOrder[] {
   const data = result.steps.find((step) => step.name === "orders")?.data ?? result.steps.at(-1)?.data ?? {};
   const normalized = channel === "coupang" ? normalizeCoupang(data)
@@ -198,7 +232,8 @@ export function normalizeChannelOrders(channel: ActiveChannelKey, result: Channe
         : channel === "smartstore" ? normalizeSmartstore(data)
           : channel === "ebay" ? normalizeEbay(data)
             : channel === "qoo10" ? normalizeQoo10(data)
-              : [];
+              : channel === "elevenst" ? normalizeElevenst(data)
+                : [];
   return [...new Map(normalized.map((order) => [order.externalOrderId, order])).values()];
 }
 

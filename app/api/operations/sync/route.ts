@@ -23,7 +23,7 @@ type CredentialRow = {
   expires_at?: string | null;
 };
 
-const gatewayChannels = new Set<ActiveChannelKey>(["shopee", "lazada", "coupang", "smartstore", "temu"]);
+const gatewayChannels = new Set<ActiveChannelKey>(["shopee", "lazada", "coupang", "elevenst", "smartstore", "temu"]);
 
 export async function POST(request: Request) {
   const admin = await authenticateAdminRequest(request);
