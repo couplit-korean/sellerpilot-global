@@ -19,6 +19,7 @@ import {
 import { executeChannelOperation } from "../lib/channels/operations.ts";
 import { evaluateTemuEgressIp, parseTemuEgressAllowlist } from "../lib/channels/temu-egress-policy.ts";
 import {
+  ensureEbayAccessToken,
   ensureLazadaAccessToken,
   ensureShopeeAccessToken,
   ensureShopeeMerchantAccessToken,
@@ -82,7 +83,7 @@ const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.js
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.9";
+const workerVersion = "sellerpilot-cli-worker/1.10";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
@@ -1365,6 +1366,10 @@ async function processGatewayJob(job) {
         const ensured = await ensureLazadaAccessToken(diagnosticCredential);
         diagnosticCredential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
+      } else if (job.channel === "ebay") {
+        const ensured = await ensureEbayAccessToken(diagnosticCredential, job.environment);
+        diagnosticCredential = ensured.payload;
+        if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       }
       const diagnostic = await runChannelDiagnostic(job.channel, diagnosticCredential, job.environment);
       result = {
@@ -1406,6 +1411,10 @@ async function processGatewayJob(job) {
         const country = String(operationArguments.country || textValue(credential, "country") || "my").toLowerCase();
         credential = { ...credential, country };
         const ensured = await ensureLazadaAccessToken(credential);
+        credential = ensured.payload;
+        if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
+      } else if (job.channel === "ebay") {
+        const ensured = await ensureEbayAccessToken(credential, job.environment);
         credential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       }

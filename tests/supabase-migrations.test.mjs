@@ -161,6 +161,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260821104500_shared_listing_completion.sql",
       "20260821105500_order_amount_listing_fallback.sql",
       "20260821106000_fix_ai_prune_job_id_ambiguity.sql",
+      "20260821110000_harden_oauth_rotation_and_cleanup_lints.sql",
       "20260821113000_scope_push_deliveries_to_owner.sql",
     ]);
     for (const name of migrationNames) {
@@ -283,6 +284,19 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       )`,
     );
     await setClaims(db, "service_role");
+    await db.query(
+      "select public.sellerpilot_record_credential_test($1, 'passed', 'OAuth rotation regression diagnostic')",
+      [lazadaCredentialId],
+    );
+    const lazadaPeriodicQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'lazada', 'orders.list',
+        '{"periodicKey":"oauth-rotation-regression","arguments":{}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(lazadaPeriodicQueued.status, "queued");
     const refreshedCredentialId = await scalar(
       db,
       `select public.sellerpilot_service_refresh_lazada(
@@ -293,6 +307,26 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [lazadaCredentialId],
     );
     assert.notEqual(refreshedCredentialId, lazadaCredentialId);
+    assert.equal(
+      await scalar(
+        db,
+        "select last_check_status from sellerpilot_private.channel_credentials where id = $1",
+        [refreshedCredentialId],
+      ),
+      "passed",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select credential_id from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [lazadaPeriodicQueued.jobId],
+      ),
+      refreshedCredentialId,
+    );
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [lazadaPeriodicQueued.jobId],
+    );
     const refreshedSecret = await scalar(
       db,
       "select public.sellerpilot_get_active_credential_secret('lazada', 'production')",

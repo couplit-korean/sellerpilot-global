@@ -42,11 +42,13 @@ export async function POST(request: Request) {
       ? { payload: oauthResult.credentialPayload, expiresAt: oauthResult.expiresAt }
       : parsed.data.credentialRefresh;
     if (credentialRefresh) {
-      if (job.channel !== "shopee" && job.channel !== "lazada") {
+      if (job.channel !== "shopee" && job.channel !== "lazada" && job.channel !== "ebay") {
         return NextResponse.json({ message: "이 채널에는 OAuth 인증값 갱신을 적용할 수 없습니다." }, { status: 409 });
       }
       const credentialId = typeof job.credential_id === "string" ? job.credential_id : "";
-      const rpcName = job.channel === "shopee" ? "sellerpilot_service_refresh_shopee" : "sellerpilot_service_refresh_lazada";
+      const rpcName = job.channel === "shopee"
+        ? "sellerpilot_service_refresh_shopee"
+        : job.channel === "lazada" ? "sellerpilot_service_refresh_lazada" : "sellerpilot_service_refresh_ebay";
       const { data: nextCredentialId, error: refreshError } = await serviceClient.rpc(rpcName, {
         p_credential_id: credentialId,
         p_secret_payload: credentialRefresh.payload,
@@ -64,6 +66,7 @@ export async function POST(request: Request) {
       }
       refreshedCredentialId = nextCredentialId;
     }
+    const effectiveCredentialId = refreshedCredentialId || (typeof job.credential_id === "string" ? job.credential_id : "");
     if (refreshedCredentialId && parsed.data.result.operation === "diagnostic.test") {
       const { error: diagnosticError } = await serviceClient.rpc("sellerpilot_record_credential_test", {
         p_credential_id: refreshedCredentialId,
@@ -75,7 +78,7 @@ export async function POST(request: Request) {
       }
     }
     if (parsed.data.result.operation === "orders.list") {
-      const credentialId = typeof job.credential_id === "string" ? job.credential_id : "";
+      const credentialId = effectiveCredentialId;
       const orderResult = parsed.data.result as ChannelOperationResult;
       if (orderResult.ok) {
         const orders = normalizeChannelOrders(job.channel as ActiveChannelKey, orderResult);
@@ -105,7 +108,7 @@ export async function POST(request: Request) {
       }
     }
     if (parsed.data.result.operation === "inquiries.list") {
-      const credentialId = typeof job.credential_id === "string" ? job.credential_id : "";
+      const credentialId = effectiveCredentialId;
       const inquiryResult = parsed.data.result as ChannelOperationResult;
       if (inquiryResult.ok) {
         const inquiries = normalizeChannelInquiries(job.channel as ActiveChannelKey, inquiryResult);

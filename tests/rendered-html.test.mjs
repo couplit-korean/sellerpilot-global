@@ -96,11 +96,11 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /enabledSalesChannelCount\}개 판매채널/);
   assert.match(page, /summary\.activeCredentialCount\} \/ \$\{enabledSalesChannelCount\}/);
   assert.match(page, /실제 판매자센터 열기/);
-  assert.match(channelLinks, /등록 상품 열기/);
-  assert.match(channelLinks, /채널에서 상품 찾기/);
-  assert.match(channelLinks, /#\/products\/origin-list/);
+  assert.match(channelLinks, /판매 상품 페이지 열기/);
+  assert.doesNotMatch(channelLinks, /채널에서 상품 찾기/);
+  assert.doesNotMatch(channelLinks, /#\/products\/origin-list/);
   assert.match(page, /publish-context/);
-  assert.match(page, /ChatGPT CLI 답변 생성은 채널 정책/);
+  assert.match(page, /ChatGPT CLI가 문의와 주문 맥락을 확인/);
   assert.match(page, /공식 카테고리 확정/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
   assert.match(page, /상품 링크 또는 설명/);
@@ -215,6 +215,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(credentialTestRoute, /parsed\.data\.channel === "lazada"/);
   assert.match(credentialTestRoute, /parsed\.data\.channel === "elevenst"/);
   assert.match(gatewayCompleteRoute, /refreshedCredentialId/);
+  assert.match(gatewayCompleteRoute, /effectiveCredentialId/);
+  assert.match(gatewayCompleteRoute, /sellerpilot_service_refresh_ebay/);
   assert.match(gatewayCompleteRoute, /sellerpilot_record_credential_test/);
   assert.match(gatewayContract, /"qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"/);
   assert.match(credentialPage, /API 실행 검수/);
@@ -229,6 +231,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const periodicSyncRoute = await readFile(new URL("../app/api/internal/channel-sync/route.ts", import.meta.url), "utf8");
   const syncArguments = await readFile(new URL("../lib/channels/sync-arguments.ts", import.meta.url), "utf8");
   const periodicSyncMigration = await readFile(new URL("../supabase/migrations/20260820170000_periodic_channel_sync.sql", import.meta.url), "utf8");
+  const rotationHardeningMigration = await readFile(new URL("../supabase/migrations/20260821110000_harden_oauth_rotation_and_cleanup_lints.sql", import.meta.url), "utf8");
   const vercelConfig = await readFile(new URL("../vercel.json", import.meta.url), "utf8");
   const refreshMigration = await readFile(new URL("../supabase/migrations/20260816110000_lazada_token_refresh.sql", import.meta.url), "utf8");
   const connectorMigration = await readFile(new URL("../supabase/migrations/20260816120321_expand_channel_connectors.sql", import.meta.url), "utf8");
@@ -258,7 +261,10 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(vercelConfig, /"schedule": "\*\/5 \* \* \* \*"/);
   assert.match(cliWorker, /SELLERPILOT_CHANNEL_SYNC_MS/);
   assert.match(cliWorker, /\/api\/internal\/channel-sync/);
-  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.9/);
+  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.10/);
+  assert.match(cliWorker, /ensureEbayAccessToken/);
+  assert.match(rotationHardeningMigration, /diagnostic_preserved/);
+  assert.match(rotationHardeningMigration, /status = 'queued' and attempt_id is null/);
   assert.match(refreshMigration, /token_refreshed/);
   assert.match(connectorMigration, /coupang.*elevenst.*smartstore.*ebay/);
   assert.match(connectorMigration, /sellerpilot_service_refresh_ebay/);
