@@ -1,6 +1,7 @@
 import "server-only";
 import type { ActiveChannelKey } from "./catalog";
 import type { ChannelOperationResult } from "./operations";
+import { firstFiniteNonNegative } from "./normalize-value";
 
 export type NormalizedChannelOrder = {
   externalOrderId: string;
@@ -21,10 +22,7 @@ const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
   ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
   : [];
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
-const number = (...values: unknown[]) => {
-  const raw = values.find((value) => Number.isFinite(Number(value)));
-  return raw === undefined ? 0 : Math.max(0, Number(raw));
-};
+const number = (...values: unknown[]) => firstFiniteNonNegative(values);
 const iso = (...values: unknown[]) => {
   for (const value of values) {
     if (typeof value === "number" && Number.isFinite(value)) {
