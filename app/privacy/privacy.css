@@ -15,3 +15,16 @@
 .privacy-page aside p { color: #d5e0da; }
 .privacy-page footer { display: flex; justify-content: space-between; padding-top: 28px; color: #78847f; font-size: 11px; }
 @media (max-width: 720px) { .privacy-page { padding: 18px; } .privacy-page article { padding: 44px 0; } .privacy-grid { grid-template-columns: 1fr; margin-top: 46px; } .privacy-grid section { min-height: auto; } .privacy-page > header span { display: none; } }
+@media (max-width: 480px) {
+  .privacy-page { padding: max(14px, env(safe-area-inset-top)) 14px max(20px, env(safe-area-inset-bottom)); }
+  .privacy-page > header { align-items: center; padding: 10px 0 22px; }
+  .privacy-page article { padding: 34px 0 12px; }
+  .privacy-kicker { font-size: 9px; line-height: 1.5; letter-spacing: .1em; }
+  .privacy-page h1 { margin: 14px 0 18px; font-size: clamp(34px, 11vw, 46px); line-height: 1.05; }
+  .privacy-lead { font-size: 15px; line-height: 1.7; }
+  .privacy-grid { margin-top: 36px; }
+  .privacy-grid section, .privacy-page aside { padding: 22px 18px; }
+  .privacy-grid h2 { margin-bottom: 12px; font-size: 16px; }
+  .privacy-grid p, .privacy-page aside p { font-size: 13px; line-height: 1.75; }
+  .privacy-page footer { align-items: flex-start; flex-direction: column; gap: 7px; }
+}

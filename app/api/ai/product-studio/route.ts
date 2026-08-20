@@ -68,6 +68,7 @@ export async function POST(request: Request) {
       p_request_payload: {
         description: parsed.data.manualFields.description.trim(),
         product_url: parsed.data.manualFields.productUrl.trim(),
+        research_input: parsed.data.manualFields.researchInput.trim(),
         manual_fields: parsed.data.manualFields,
         image_paths: uploadedPaths,
         image_specs: parsed.data.imageSpecs,

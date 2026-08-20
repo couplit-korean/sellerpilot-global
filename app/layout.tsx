@@ -4,7 +4,8 @@ import "@puckeditor/core/puck.css";
 import "./globals.css";
 import "./operations-system.css";
 import "./commerce-ux-refactor.css";
-import "./customer-experience.css";
+import "./style-learning-center.css";
+import "./mobile-optimization.css";
 
 const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
@@ -19,22 +20,26 @@ const notoSansKr = Noto_Sans_KR({
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
+  manifest: "/manifest.webmanifest",
   title: "SellerPilot | 멀티채널 커머스 운영센터",
-  description: "Qoo10, Shopee, Lazada, 쿠팡, 네이버 스마트스토어, eBay, Temu를 운영하는 AI 커머스 운영센터.",
+  description: "Qoo10, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay, Temu를 운영하는 AI 커머스 운영센터.",
   icons: {
-    icon: "/favicon.svg",
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }, { url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
     shortcut: "/favicon.svg",
+    apple: "/icon-192.png",
   },
+  applicationName: "SellerPilot",
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "SellerPilot" },
   openGraph: {
     title: "SellerPilot | 멀티채널 커머스 운영센터",
     description: "한 번의 등록, 모든 마켓에. 상품 등록부터 판매와 CS까지 하나의 운영 화면으로.",
-    images: [{ url: "/og-commerce.png", width: 1200, height: 630, alt: "SellerPilot 멀티채널 커머스 운영센터" }],
+    images: [{ url: "/og-style-learning.png", width: 1200, height: 630, alt: "SellerPilot 멀티채널 상품·주문·문의 통합 운영" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "SellerPilot | 멀티채널 커머스 운영센터",
     description: "한 번의 등록, 모든 마켓에.",
-    images: ["/og-commerce.png"],
+    images: ["/og-style-learning.png"],
   },
 };
 

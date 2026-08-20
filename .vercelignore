@@ -1,27 +1,25 @@
-/.git
-/.next
-/.openai
-/.vinext
-/.wrangler
-/build
-/coverage
-/dist
-/db
-/drizzle
-/examples
-/node_modules
-/output
-/outputs
-/prompts
-/scripts
-/supabase
-/tests
-/tmp
-/worker
-/package-lock.json
-/docs/판매채널_실계정_UI_필드_매핑 2.md
-/lib/channel-diagnostics 2.ts
-/public/demo
-/public/products
-/public/og.png
-/public/og-showcase.png
+.git
+.next
+.vinext
+.openai
+.codex-upload-staging
+.local
+.wrangler
+build
+db
+dist
+docs
+drizzle
+examples
+node_modules
+output
+outputs
+prompts
+scripts
+supabase
+tests
+tmp
+worker
+*.icloud-placeholder
+docs/판매채널_실계정_UI_필드_매핑 2.md
+lib/channel-diagnostics 2.ts

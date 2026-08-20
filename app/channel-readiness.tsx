@@ -2,82 +2,164 @@
 
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   CircleDashed,
+  ClipboardCheck,
   Clock3,
   ExternalLink,
-  Link2,
+  KeyRound,
+  LockKeyhole,
+  Radio,
+  ServerCog,
   ShieldCheck,
 } from "lucide-react";
-import { channelCatalog } from "../lib/channels/catalog";
-import { customerFacingCopy } from "../lib/user-facing-errors";
+import {
+  activeChannelKeys,
+  capabilityLabels,
+  capabilityModeLabels,
+  channelCatalog,
+  isActiveChannelKey,
+  type ChannelCapabilityKey,
+} from "../lib/channels/catalog";
+import { channels } from "./channel-config";
 import {
   channelReadiness,
+  channelReadinessObservedAt,
+  integrationGates,
+  qoo10RegistrationMap,
   type ReadinessState,
 } from "./channel-readiness-data";
 
 const stateLabels: Record<ReadinessState, string> = {
-  verified: "연결됨",
-  partial: "확인 필요",
-  blocked: "조치 필요",
-  not_configured: "연결 전",
+  verified: "확인 완료",
+  partial: "일부 준비",
+  blocked: "차단 요인",
+  not_configured: "미구성",
 };
 
 function ReadinessBadge({ state }: { state: ReadinessState }) {
   const Icon = state === "verified" ? CheckCircle2 : state === "blocked" ? AlertTriangle : state === "partial" ? Clock3 : CircleDashed;
-  return <span className={`readiness-badge ${state}`}><Icon size={14} />{stateLabels[state]}</span>;
+  return <span className={`readiness-badge ${state}`}><Icon size={12} />{stateLabels[state]}</span>;
 }
 
-export function ChannelReadinessPage() {
-  const connectedCount = channelReadiness.filter((channel) => channel.overall === "verified").length;
-  const attentionCount = channelReadiness.filter((channel) => channel.overall === "partial" || channel.overall === "blocked").length;
-  const remainingCount = channelReadiness.filter((channel) => channel.overall === "not_configured").length;
+export function ChannelReadinessPage({ embedded = false }: { embedded?: boolean }) {
+  const capabilityKeys = Object.keys(capabilityLabels) as ChannelCapabilityKey[];
+  const onlineApps = channelReadiness.filter((channel) => channel.appState.includes("Online")).length;
+  const consoleVerifiedChannels = channelReadiness.filter((channel) => channel.consoleVerified);
+  const apiReadPassed = channelReadiness.filter((channel) => channel.apiReadPassed).length;
+  const verifiedChecks = channelReadiness.flatMap((channel) => channel.checks).filter((check) => check.state === "verified").length;
+  const blockerCount = channelReadiness.reduce((total, channel) => total + channel.blockers.length, 0);
 
   return (
-    <div className="page-stack readiness-page customer-readiness-page">
-      <section className="readiness-hero">
+    <div className="page-stack readiness-page">
+      {!embedded && <section className="readiness-hero">
         <div>
-          <span className="readiness-eyebrow"><Link2 size={14} /> 판매 채널 연결 상태</span>
-          <h2>판매 채널이 잘 연결되어 있는지<br /><em>한눈에 확인하세요.</em></h2>
-          <p>상품 등록과 주문 수집에 필요한 연결 상태를 보여드립니다. 조치가 필요한 채널은 다음에 해야 할 일을 함께 안내합니다.</p>
+          <span className="readiness-eyebrow"><Radio size={14} /> READ-ONLY ACCOUNT INSPECTION · {channelReadinessObservedAt}</span>
+          <h2>로그인됐다는 사실과<br /><em>API가 작동한다는 증거를 분리합니다.</em></h2>
+          <p>운영 대상 {channelReadiness.length}개 판매채널의 공식 문서 구현 상태와 실제 콘솔 확인 상태를 분리했습니다. Vault 읽기 진단, 개발자 앱 심사와 주문·문의 권한을 같은 화면에서 확인할 수 있습니다.</p>
         </div>
         <aside>
           <ShieldCheck size={20} />
-          <span><b>연결 정보 안전 보호</b><small>판매 채널의 비밀번호와 인증 정보는 암호화하여 안전하게 보관합니다.</small></span>
+          <span><b>보안 원칙</b><small>앱 키·시크릿·파트너 ID·IP는 서버 비밀 참조로만 연결하고 화면과 로그에서 마스킹합니다.</small></span>
         </aside>
+      </section>}
+
+      <section className="readiness-summary" aria-label="채널 연동 준비 상태 요약">
+        <article><span>판매채널 실콘솔</span><strong>{consoleVerifiedChannels.length} / {channelReadiness.length}</strong><small>11번가 포함 전체 대상</small></article>
+        <article><span>운영 앱 Online</span><strong>{onlineApps}개</strong><small>현재 확인된 개발자 앱</small></article>
+        <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>문서·코드·화면 증거</small></article>
+        <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>키·승인·고정 IP·Partner 앱</small></article>
+        <article className="danger"><span>현재 API 읽기 통과</span><strong>{apiReadPassed} / {channelReadiness.length}</strong><small>Qoo10 복구 · Temu·11번가 키 대기</small></article>
       </section>
 
-      <section className="readiness-summary" aria-label="판매 채널 연결 요약">
-        <article><span>연결 완료</span><strong>{connectedCount}</strong><small>바로 사용할 수 있어요</small></article>
-        <article className={attentionCount ? "warning" : ""}><span>확인 필요</span><strong>{attentionCount}</strong><small>안내된 항목을 확인해 주세요</small></article>
-        <article><span>연결 전</span><strong>{remainingCount}</strong><small>채널 연결이 필요해요</small></article>
-      </section>
-
-      <section className="readiness-channel-grid" aria-label="판매 채널별 연결 상태">
-        {channelReadiness.map((channel) => (
-          <article className={`readiness-channel-card ${channel.key}`} key={channel.key}>
+      <section className="readiness-channel-grid">
+        {channelReadiness.map((channel) => {
+          const apiDefinition = isActiveChannelKey(channel.key) ? channelCatalog[channel.key] : null;
+          const officialDocs = channel.officialDocs ?? apiDefinition?.officialDocs ?? [];
+          return <article className={`readiness-channel-card ${channel.key}`} key={channel.key}>
             <header>
-              <span className="readiness-channel-mark">{channel.code}</span>
-              <div><small>{customerFacingCopy(channel.market)}</small><h3>{channel.name}</h3></div>
+              <span className="readiness-channel-mark">{channels[channel.key].mark}</span>
+              <div><small>{channel.console}</small><h3>{channel.name}</h3><p>{channel.market}</p></div>
               <ReadinessBadge state={channel.overall} />
             </header>
-            <p className="readiness-channel-summary">{customerFacingCopy(channel.summary)}</p>
+            <div className="readiness-app-state"><i />{channel.appState}</div>
+            <p className="readiness-channel-summary">{channel.summary}</p>
+            <div className="readiness-doc-links">{officialDocs.map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}<ExternalLink size={11} /></a>)}</div>
             <div className="readiness-checks">
               {channel.checks.map((check) => (
                 <div key={check.label}>
-                  <span><b>{customerFacingCopy(check.label)}</b><small>{customerFacingCopy(check.evidence)}</small></span>
+                  <span><b>{check.label}</b><small>{check.evidence}</small></span>
                   <ReadinessBadge state={check.state} />
                 </div>
               ))}
             </div>
-            {channel.blockers.length > 0 && <div className="readiness-blockers">
-              <span><AlertTriangle size={14} /> 확인해 주세요</span>
-              <ul>{channel.blockers.map((blocker) => <li key={blocker}>{customerFacingCopy(blocker)}</li>)}</ul>
-            </div>}
-            <footer><span>다음 단계</span><p>{customerFacingCopy(channel.nextAction)}</p></footer>
-            <div className="readiness-doc-links">{channelCatalog[channel.key].officialDocs.slice(0, 1).map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>판매 채널 도움말<ExternalLink size={12} /></a>)}</div>
-          </article>
-        ))}
+            <div className="readiness-blockers">
+              <span><AlertTriangle size={13} /> 개발 전 해소</span>
+              <ul>{channel.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>
+            </div>
+            <footer><span>다음 검수 흐름</span><p>{channel.nextAction}</p></footer>
+          </article>;
+        })}
+      </section>
+
+      <section className="panel channel-capability-panel">
+        <div className="panel-heading">
+          <div><span className="panel-kicker">CHANNEL CAPABILITY ROUTING</span><h3>채널별 지원 방식 · 대체 흐름</h3></div>
+          <span className="field-map-proof"><ShieldCheck size={14} />공식 문서 기준</span>
+        </div>
+        <p className="capability-intro">같은 버튼을 무조건 호출하지 않습니다. API·주기조회·웹훅·미지원·문서승인 필요 상태를 먼저 판정하고, 미지원 동작은 해당 채널 콘솔로 안내합니다.</p>
+        <div className="table-wrap capability-table-wrap">
+          <table className="capability-table">
+            <thead><tr><th>기능</th>{activeChannelKeys.map((key) => <th key={key}>{channelCatalog[key].name}</th>)}</tr></thead>
+            <tbody>{capabilityKeys.map((capability) => <tr key={capability}><td><b>{capabilityLabels[capability]}</b></td>{activeChannelKeys.map((key) => {
+              const item = channelCatalog[key].capabilities[capability];
+              return <td key={key}><span className={`capability-mode ${item.mode}`}>{capabilityModeLabels[item.mode]}</span><small>{item.note}</small></td>;
+            })}</tr>)}</tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel qoo10-field-map">
+        <div className="panel-heading">
+          <div><span className="panel-kicker">QOO10 ACTUAL REGISTRATION SCHEMA</span><h3>QSM 개별 상품등록 필드 맵</h3></div>
+          <span className="field-map-proof"><ClipboardCheck size={14} />실계정 화면 확인</span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>입력 그룹</th><th>실제 필드</th><th>SellerPilot 사전검사</th></tr></thead>
+            <tbody>{qoo10RegistrationMap.map((row) => <tr key={row.group}><td><b>{row.group}</b></td><td>{row.fields}</td><td>{row.rule}</td></tr>)}</tbody>
+          </table>
+        </div>
+        <div className="qoo10-image-rule">
+          <span><b>대표 이미지</b><em>정확히 1장 필수</em><small>권장 800×800 · 최소 600×600</small></span>
+          <span><b>추가 이미지</b><em>최대 50장</em><small>드래그 순서변경 · URL 업로드 지원</small></span>
+          <span><b>상품 동영상</b><em>최대 1개</em><small>MP4 · 50MB 이하</small></span>
+          <span><b>상세 이미지</b><em>합계 40MB</em><small>권장폭 820px · 개별 1MB 이하</small></span>
+        </div>
+      </section>
+
+      <section className="panel integration-gate-panel">
+        <div className="panel-heading">
+          <div><span className="panel-kicker">PRODUCTION CONNECTION GATES</span><h3>채널별로 동일하게 통과해야 하는 5단계</h3></div>
+          <span className="gate-zero"><LockKeyhole size={14} />채널별 Gate 01 대기</span>
+        </div>
+        <div className="integration-gate-list">
+          {integrationGates.map((gate, index) => (
+            <article key={gate.gate}>
+              <span>{gate.gate}</span>
+              <div><b>{gate.title}</b><p>{gate.description}</p></div>
+              <em>{gate.state}</em>
+              {index < integrationGates.length - 1 && <ArrowRight size={15} />}
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="readiness-security-note">
+        <KeyRound size={18} />
+        <div><b>실제 연결은 Vault 저장과 채널별 읽기 진단이 모두 통과한 뒤 완료로 판정합니다.</b><p>브라우저 로그인이나 OAuth 승인 코드 수신만으로 완료 처리하지 않습니다. HMAC·OAuth·판매자키 검사를 통과한 뒤 테스트상품 쓰기와 주문 동기화를 단계적으로 승인합니다.</p></div>
+        <ServerCog size={22} />
       </section>
     </div>
   );

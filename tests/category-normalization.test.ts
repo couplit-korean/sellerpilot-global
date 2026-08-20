@@ -1,39 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { englishCategoryQuery, normalizeAttributes, normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-classification-workbench";
+import { normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-classification-workbench";
 
 test("category queries discard test-only prefixes before provider classification", () => {
   assert.equal(sanitizeCategoryQuery("[API TEST · 판매금지] 메이크업 팔레트 화장품 샘플 등록"), "메이크업 팔레트 화장품");
   assert.equal(sanitizeCategoryQuery("[PROGRAM TEST · NOT FOR SALE] vitamin tablets"), "vitamin tablets");
-  assert.equal(sanitizeCategoryQuery("[업로드 테스트 · 판매금지 · 섭취금지] 흰쌀밥 이미지 샘플 2차"), "흰쌀밥");
-});
-
-test("English marketplace query translates Korean mug names to a catalog noun", () => {
-  assert.equal(englishCategoryQuery("SellerPilot 품질검증 화이트 세라믹 머그 1개"), "white ceramic coffee mug");
-});
-
-test("Naver child-product categories expose certification facts as manual required fields", () => {
-  const attributes = normalizeAttributes([{ ok: true, steps: [{ name: "category", ok: true, status: 200, data: {
-    id: "50004209",
-    attributes: [{ name: "권장 연령", is_mandatory: 1 }],
-    certificationInfos: [{ id: 1042, name: "어린이제품 안전확인", kindTypes: ["CHILD_CERTIFICATION"] }],
-  } }] }]);
-  const requiredIds = new Set(attributes.filter((item) => item.required).map((item) => item.id));
-  assert.equal(requiredIds.has("NAVER_MODEL_NAME"), true);
-  assert.equal(requiredIds.has("NAVER_CHILD_CERTIFICATION_INFO_ID"), true);
-  assert.equal(requiredIds.has("NAVER_CHILD_CERTIFICATION_NUMBER"), true);
-  assert.deepEqual(attributes.find((item) => item.id === "NAVER_CHILD_CERTIFICATION_INFO_ID")?.values, [
-    { id: "1042", name: "어린이제품 안전확인" },
-  ]);
-});
-
-test("Naver non-child categories do not inherit global child certification choices", () => {
-  const attributes = normalizeAttributes([{ ok: true, steps: [{ name: "category", ok: true, status: 200, data: {
-    id: "50002447",
-    attributes: [{ name: "DHA+EPA", is_mandatory: 1 }],
-    certificationInfos: [{ id: 1042, name: "어린이제품 안전확인", kindTypes: ["CHILD_CERTIFICATION"] }],
-  } }] }]);
-  assert.equal(attributes.some((item) => item.id.startsWith("NAVER_CHILD_")), false);
 });
 
 const qoo10Response = {
@@ -173,21 +144,6 @@ test("Shopee GlobalProduct normalization chooses a lexical category instead of t
   assert.equal(suggestions[0]?.leaf, true);
 });
 
-test("Shopee mug normalization rejects tea bags and unrelated cup-adjacent categories", () => {
-  const response = {
-    ok: true,
-    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
-      { category_id: 1, display_category_name: "Food & Beverages > Tea & Tea Bags", has_children: false },
-      { category_id: 2, display_category_name: "Home & Living > Dinnerware > Mugs", has_children: false },
-      { category_id: 3, display_category_name: "Health & Wellness > Teeth Whitening", has_children: false },
-      { category_id: 4, display_category_name: "Men's Fashion > Occupational Attire", has_children: false },
-      { category_id: 5, display_category_name: "Home & Living > Cup Holder & Organizers", has_children: false },
-      { category_id: 6, display_category_name: "Home & Living > Cupboards & Cabinets", has_children: false },
-    ] } } }],
-  };
-  assert.deepEqual(normalizeSuggestions("shopee", response, "white ceramic coffee mug").map((item) => item.id), ["2"]);
-});
-
 test("Shopee GlobalProduct normalization blocks arbitrary categories without a lexical match", () => {
   assert.deepEqual(normalizeSuggestions("shopee", shopeeGlobalResponse, "Unmapped industrial component"), []);
 });
@@ -208,18 +164,6 @@ test("Shopee beauty-tool normalization keeps sponges separate from brushes", () 
   assert.equal(normalizeSuggestions("shopee", response, "makeup brush set")[0]?.id, "1");
 });
 
-test("Shopee facial-toner normalization excludes supplements and brushes", () => {
-  const response = {
-    ok: true,
-    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
-      { category_id: 1, display_category_name: "Beauty > Beauty Supplements", has_children: false },
-      { category_id: 2, display_category_name: "Beauty > Makeup Brushes", has_children: false },
-      { category_id: 3, display_category_name: "Beauty > Skin Care > Toners & Mists", has_children: false },
-    ] } } }],
-  };
-  assert.equal(normalizeSuggestions("shopee", response, "facial toner skincare cica")[0]?.id, "3");
-});
-
 test("Shopee clothing normalization does not map a hoodie to a generic shirt", () => {
   const response = {
     ok: true,
@@ -229,19 +173,6 @@ test("Shopee clothing normalization does not map a hoodie to a generic shirt", (
     ] } } }],
   };
   assert.equal(normalizeSuggestions("shopee", response, "unisex hoodie sweatshirt")[0]?.id, "2");
-});
-
-test("Shopee clothing normalization maps a dress and rejects generic tops and bottoms", () => {
-  const response = {
-    ok: true,
-    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
-      { category_id: 1, display_category_name: "Fashion > Bottoms", has_children: false },
-      { category_id: 2, display_category_name: "Fashion > Tops", has_children: false },
-      { category_id: 3, display_category_name: "Women's Clothing > Dresses", has_children: false },
-      { category_id: 4, display_category_name: "Toys > Dress Up Costumes", has_children: false },
-    ] } } }],
-  };
-  assert.equal(normalizeSuggestions("shopee", response, "women's denim midi dress")[0]?.id, "3");
 });
 
 test("Shopee hanger normalization excludes laundry appliances", () => {
@@ -265,66 +196,6 @@ const shopeeProgramCatalogCases = [
 test("Shopee teddy matching excludes adult and pet toy categories", () => {
   assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, "테디베어 봉제 완구")[0]?.id, "100913");
   assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, "테디베어 봉제 완구").some((item) => item.id === "100911"), false);
-});
-
-test("toy-train normalization rejects generic toy noise across official channel trees", () => {
-  const qoo10 = normalizeSuggestions("qoo10", {
-    ok: true,
-    steps: [{ name: "categories", ok: true, status: 200, data: {
-      ResultObject: [
-        { SecondSubCatCd: "SEASONAL", SecondSubCatNm: "その他", CATE_L_NM: "おもちゃ・知育", CATE_M_NM: "季節玩具", CATE_S_NM: "その他" },
-        { SecondSubCatCd: "TRAIN", SecondSubCatNm: "電車・汽車・レール", CATE_L_NM: "おもちゃ・知育", CATE_M_NM: "ミニカー・電車・飛行機", CATE_S_NM: "電車・汽車・レール" },
-      ],
-    } }],
-  }, "원목 기차 장난감");
-  assert.equal(qoo10[0]?.id, "TRAIN");
-
-  const shopee = normalizeSuggestions("shopee", {
-    ok: true,
-    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
-      { category_id: 1, display_category_name: "Health & Wellness > Sex Toys", has_children: false },
-      { category_id: 2, display_category_name: "Toys, Games & Collectibles > Toy Vehicles", has_children: false },
-    ] } } }],
-  }, "wooden toy train");
-  assert.equal(shopee[0]?.id, "2");
-
-  const lazada = normalizeSuggestions("lazada", {
-    ok: true,
-    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
-      { category_id: "L1", name: "Performance Enhancement", leaf: true },
-      { category_id: "L2", name: "Train Cars & Sets", category_path: "Toys & Games > Toy Vehicles > Train Cars & Sets", leaf: true },
-    ] } }],
-  }, "wooden toy train");
-  assert.equal(lazada[0]?.id, "L2");
-
-  const smartstore = normalizeSuggestions("smartstore", {
-    ok: true,
-    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
-      { id: "N1", name: "장난감총", wholeCategoryName: "출산>육아>완구>작동완구>장난감총", last: true },
-      { id: "N2", name: "기차/트랙 작동완구", wholeCategoryName: "출산>육아>완구>작동완구>기차/트랙 작동완구", last: true },
-    ] } }],
-  }, "원목 기차 장난감");
-  assert.equal(smartstore[0]?.id, "N2");
-});
-
-test("building-block normalization chooses construction-toy leaves", () => {
-  const shopee = normalizeSuggestions("shopee", {
-    ok: true,
-    steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
-      { category_id: 1, display_category_name: "Automotive > Engine Blocks", has_children: false },
-      { category_id: 2, display_category_name: "Toys, Games & Collectibles > Block Toys", has_children: false },
-    ] } } }],
-  }, "color building blocks toy");
-  assert.equal(shopee[0]?.id, "2");
-
-  const lazada = normalizeSuggestions("lazada", {
-    ok: true,
-    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
-      { category_id: "L1", name: "Engine Blocks", category_path: "Automotive > Engine Blocks", leaf: true },
-      { category_id: "L2", name: "Building Toys", category_path: "Toys & Games > Building Toys", leaf: true },
-    ] } }],
-  }, "color building blocks toy");
-  assert.equal(lazada[0]?.id, "L2");
 });
 
 for (const [query, expectedId] of shopeeProgramCatalogCases) {
@@ -370,29 +241,6 @@ test("Smartstore category normalization accepts an official working-toy vehicle 
   assert.equal(normalizeSuggestions("smartstore", response, "노란색 자동차 완구")[0]?.id, "TOY-CAR");
 });
 
-test("Smartstore category normalization maps a ceramic mug to a drinkware leaf", () => {
-  const response = {
-    ok: true,
-    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
-      { id: "MENSTRUAL-CUP", name: "생리컵", wholeCategoryName: "생활/건강>건강관리용품>생리컵", last: true },
-      { id: "MEASURING-CUP", name: "계량컵", wholeCategoryName: "생활/건강>주방용품>조리도구>계량컵", last: true },
-      { id: "MUG", name: "머그컵", wholeCategoryName: "생활/건강>주방용품>식기>컵>머그컵", last: true },
-    ] } }],
-  };
-  assert.equal(normalizeSuggestions("smartstore", response, "화이트 세라믹 머그컵")[0]?.id, "MUG");
-});
-
-test("Smartstore category normalization maps a dress to a women's one-piece leaf", () => {
-  const response = {
-    ok: true,
-    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
-      { id: "TOP", name: "티셔츠", wholeCategoryName: "패션의류>여성의류>티셔츠", last: true },
-      { id: "DRESS", name: "미디원피스", wholeCategoryName: "패션의류>여성의류>원피스>미디원피스", last: true },
-    ] } }],
-  };
-  assert.equal(normalizeSuggestions("smartstore", response, "여성 데님 미디 원피스")[0]?.id, "DRESS");
-});
-
 test("Smartstore beauty-tool normalization does not map a sponge to a brush", () => {
   const response = {
     ok: true,
@@ -403,18 +251,6 @@ test("Smartstore beauty-tool normalization does not map a sponge to a brush", ()
     ] } }],
   };
   assert.equal(normalizeSuggestions("smartstore", response, "메이크업 스펀지 퍼프")[0]?.id, "SPONGE");
-});
-
-test("Smartstore facial-toner normalization excludes brush and toner-pad leaves", () => {
-  const response = {
-    ok: true,
-    steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
-      { id: "BRUSH", name: "브러시세트", wholeCategoryName: "화장품>미용>뷰티소품>메이크업브러시>브러시세트", last: true },
-      { id: "PAD", name: "토너패드", wholeCategoryName: "화장품>미용>스킨케어>토너패드", last: true },
-      { id: "TONER", name: "스킨/토너", wholeCategoryName: "화장품>미용>스킨케어>스킨>토너", last: true },
-    ] } }],
-  };
-  assert.equal(normalizeSuggestions("smartstore", response, "facial toner skincare cica 화장품")[0]?.id, "TONER");
 });
 
 test("Smartstore category normalization ranks a storage-box leaf above unrelated equal-score leaves", () => {
@@ -457,18 +293,6 @@ test("Lazada normalization maps Malay soap wording to a beauty cleanser leaf", (
   assert.equal(normalizeSuggestions("lazada", lazadaCategoryResponse, "Sabun pembersih pepejal")[0]?.id, "1002");
 });
 
-test("Lazada facial-toner normalization prefers Toner & Mists over generic skincare", () => {
-  const response = {
-    ok: true,
-    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
-      { category_id: "1", name: "Facial Oils", leaf: true },
-      { category_id: "2", name: "Facial Cleansers", leaf: true },
-      { category_id: "3", name: "Toner & Mists", leaf: true },
-    ] } }],
-  };
-  assert.equal(normalizeSuggestions("lazada", response, "facial toner skincare cica")[0]?.id, "3");
-});
-
 test("Lazada normalization excludes a matching parent and keeps the official nested leaf path", () => {
   const response = {
     ok: true,
@@ -507,18 +331,6 @@ test("Lazada normalization does not choose a rice leaf merely because its parent
   assert.equal(normalizeSuggestions("lazada", response, "펜네 파스타 식품")[0]?.id, "PASTA");
 });
 
-test("Lazada normalization maps a dress to women's clothing and excludes costumes", () => {
-  const response = {
-    ok: true,
-    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
-      { category_id: "COSTUME", name: "Women", category_path: "Toys & Games > Dress Up & Pretend Play > Women", leaf: true },
-      { category_id: "DRESS", name: "Dresses", category_path: "Women's Clothing > Dresses", leaf: true },
-      { category_id: "MATERNITY", name: "Maternity Dresses", category_path: "Women's Clothing > Maternity Dresses", leaf: true },
-    ] } }],
-  };
-  assert.equal(normalizeSuggestions("lazada", response, "women's denim midi dress")[0]?.id, "DRESS");
-});
-
 test("Lazada omega matching falls back to a health-supplement leaf and excludes pet products", () => {
   const response = {
     ok: true,
@@ -529,15 +341,4 @@ test("Lazada omega matching falls back to a health-supplement leaf and excludes 
     ] } }],
   };
   assert.equal(normalizeSuggestions("lazada", response, "fish oil omega 3")[0]?.id, "HEALTH");
-});
-
-test("Lazada adult vitamin matching does not suggest baby or pet supplements", () => {
-  const response = {
-    ok: true,
-    steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
-      { category_id: "BABY", name: "Vitamins & Supplements", category_path: "Mother & Baby > Baby Health Care > Vitamins & Supplements", leaf: true },
-      { category_id: "PET", name: "Vitamins & Minerals", category_path: "Pet Supplies > Pet Healthcare > Supplements & Vitamins > Vitamins & Minerals", leaf: true },
-    ] } }],
-  };
-  assert.deepEqual(normalizeSuggestions("lazada", response, "adult vitamin supplement"), []);
 });

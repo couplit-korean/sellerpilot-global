@@ -4,14 +4,63 @@ import { normalizedProductImageSpecSchema, productIntakeSchema } from "./product
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 
+const localizedDetailSectionSchema = z.object({
+  type: z.enum(["overview", "feature", "howto", "spec"]),
+  heading: z.string().min(1).max(100),
+  body: z.string().min(1).max(500),
+  imageAsset: z.enum(["detail-overview", "detail-feature", "detail-use", "detail-package"]),
+  imageAltText: z.string().min(1).max(180),
+});
+
 const localizedListingSchema = z.object({
-  channel: z.enum(["shopee", "lazada"]),
-  market: z.enum(["SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID"]),
-  locale: z.enum(["en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID"]),
+  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
+  market: z.enum(["JP", "SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID", "KR", "US"]),
+  locale: z.enum(["ja-JP", "en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID", "ko-KR", "en-US"]),
   title: z.string().min(1).max(120),
   shortDescription: z.string().min(1).max(500),
   description: z.string().min(1).max(2_000),
   keywords: z.array(z.string().min(1).max(80)).min(3).max(10),
+  thumbnailAltText: z.string().min(1).max(180),
+  detailSections: z.array(localizedDetailSectionSchema).length(4),
+});
+
+const nullableResearchText = (maximum: number) => z.string().trim().min(1).max(maximum).nullable();
+
+export const productResearchResultSchema = z.object({
+  mode: z.literal("cli-research"),
+  summary: z.string().trim().min(20).max(2_000),
+  suggestedFields: z.object({
+    productName: nullableResearchText(160),
+    categoryHint: nullableResearchText(120),
+    brandName: nullableResearchText(120),
+    manufacturer: nullableResearchText(160),
+    countryOfOrigin: nullableResearchText(80),
+    material: nullableResearchText(500),
+    packageContents: nullableResearchText(500),
+    description: nullableResearchText(4_000),
+    gtin: z.string().regex(/^\d{8,14}$/).nullable(),
+  }),
+  details: z.object({
+    features: z.array(z.string().trim().min(1).max(300)).max(12),
+    specifications: z.array(z.object({
+      label: z.string().trim().min(1).max(100),
+      value: z.string().trim().min(1).max(500),
+      evidence: z.string().trim().min(1).max(500),
+    })).max(30),
+    usage: z.array(z.string().trim().min(1).max(300)).max(10),
+    cautions: z.array(z.string().trim().min(1).max(400)).max(10),
+  }),
+  sources: z.array(z.object({
+    url: z.string().url().max(1_000),
+    title: z.string().trim().min(1).max(300),
+    status: z.enum(["read", "unavailable"]),
+  })).max(5),
+  warnings: z.array(z.string().trim().min(1).max(500)).max(10),
+});
+
+export const productResearchJobRequestSchema = z.object({
+  jobId: z.string().uuid(),
+  researchInput: z.string().trim().min(2).max(12_000),
 });
 
 export const studioCoreSchema = z.object({
@@ -42,11 +91,12 @@ export const studioCoreSchema = z.object({
     subline: z.string().min(1).max(120),
     badge: z.string().min(1).max(60),
   }),
-  localizedListings: z.array(localizedListingSchema).length(14),
+  localizedListings: z.array(localizedListingSchema).length(19),
   warnings: z.array(z.string().min(1).max(400)).max(5),
 });
 
 const requiredLocalizedMarkets = {
+  "qoo10:JP": "ja-JP",
   "shopee:SG": "en-SG",
   "shopee:MY": "ms-MY",
   "shopee:PH": "en-PH",
@@ -61,13 +111,26 @@ const requiredLocalizedMarkets = {
   "lazada:TH": "th-TH",
   "lazada:VN": "vi-VN",
   "lazada:ID": "id-ID",
+  "coupang:KR": "ko-KR",
+  "smartstore:KR": "ko-KR",
+  "ebay:US": "en-US",
+  "temu:KR": "ko-KR",
 } as const;
 
 function localizedText(listing: z.infer<typeof localizedListingSchema>) {
-  return [listing.title, listing.shortDescription, listing.description, ...listing.keywords].join(" ");
+  return [
+    listing.title,
+    listing.shortDescription,
+    listing.description,
+    ...listing.keywords,
+    listing.thumbnailAltText,
+    ...listing.detailSections.flatMap((section) => [section.heading, section.body, section.imageAltText]),
+  ].join(" ");
 }
 
 function hasExpectedScript(locale: string, value: string) {
+  if (locale === "ko-KR") return /\p{Script=Hangul}/u.test(value);
+  if (locale === "ja-JP") return /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(value);
   if (locale === "th-TH") return /\p{Script=Thai}/u.test(value);
   if (locale === "zh-TW") return /\p{Script=Han}/u.test(value);
   if (locale === "vi-VN") return /[\u0102\u0103\u00C2\u00E2\u0110\u0111\u00CA\u00EA\u00D4\u00F4\u01A0\u01A1\u01AF\u01B0\u1EA0-\u1EFF]/u.test(value);
@@ -89,11 +152,25 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
       context.addIssue({ code: "custom", path: ["localizedListings", index, "locale"], message: `${key}의 locale은 ${expectedLocale}여야 합니다.` });
     }
     const combined = localizedText(listing);
-    if (/\p{Script=Hangul}/u.test(combined)) {
+    if (expectedLocale !== "ko-KR" && /\p{Script=Hangul}/u.test(combined)) {
       context.addIssue({ code: "custom", path: ["localizedListings", index], message: `${key} 현지화 문안에 한국어가 남아 있습니다.` });
     }
     if (!hasExpectedScript(expectedLocale ?? listing.locale, combined)) {
       context.addIssue({ code: "custom", path: ["localizedListings", index], message: `${key} 문안에 ${expectedLocale ?? listing.locale} 언어 문자가 확인되지 않습니다.` });
+    }
+    const sectionTypes = new Set(listing.detailSections.map((section) => section.type));
+    const imageAssets = new Set(listing.detailSections.map((section) => section.imageAsset));
+    if (sectionTypes.size !== 4 || imageAssets.size !== 4) {
+      context.addIssue({ code: "custom", path: ["localizedListings", index, "detailSections"], message: `${key} 상세 섹션 유형과 이미지 역할은 중복 없이 4개여야 합니다.` });
+    }
+    const searchableCopy = [
+      listing.title,
+      listing.shortDescription,
+      listing.description,
+      ...listing.detailSections.flatMap((section) => [section.heading, section.body]),
+    ].join(" ").toLocaleLowerCase();
+    if (!listing.keywords.some((keyword) => searchableCopy.includes(keyword.toLocaleLowerCase()))) {
+      context.addIssue({ code: "custom", path: ["localizedListings", index, "keywords"], message: `${key} SEO 키워드는 제목·설명·상세본문에 자연스럽게 포함되어야 합니다.` });
     }
   });
 });
@@ -112,7 +189,7 @@ export const studioJobRequestSchema = z.object({
   }
 });
 
-export const workerCompletionSchema = z.discriminatedUnion("status", [
+export const workerCompletionSchema = z.union([
   z.object({
     jobId: z.string().uuid(),
     status: z.literal("succeeded"),
@@ -124,9 +201,15 @@ export const workerCompletionSchema = z.discriminatedUnion("status", [
   }),
   z.object({
     jobId: z.string().uuid(),
+    status: z.literal("succeeded"),
+    result: productResearchResultSchema,
+  }),
+  z.object({
+    jobId: z.string().uuid(),
     status: z.literal("failed"),
     error: z.string().min(1).max(500),
   }),
 ]);
 
 export type CliStudioResult = z.infer<typeof cliStudioResultSchema>;
+export type ProductResearchResult = z.infer<typeof productResearchResultSchema>;

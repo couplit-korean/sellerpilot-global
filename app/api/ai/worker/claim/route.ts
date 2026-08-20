@@ -31,6 +31,15 @@ export async function POST(request: Request) {
   const jobRequest = job.request && typeof job.request === "object" && !Array.isArray(job.request)
     ? job.request as Record<string, unknown>
     : {};
+  if (job.kind === "product_research" || jobRequest.research_only === true) {
+    return NextResponse.json({
+      ...job,
+      request: {
+        researchInput: typeof jobRequest.research_input === "string" ? jobRequest.research_input : "",
+        researchOnly: true,
+      },
+    }, { headers: { "cache-control": "no-store, max-age=0" } });
+  }
   const paths = Array.isArray(jobRequest.image_paths)
     ? jobRequest.image_paths.filter((path): path is string => typeof path === "string")
     : [];
@@ -57,6 +66,7 @@ export async function POST(request: Request) {
     request: {
       description: typeof jobRequest.description === "string" ? jobRequest.description : "",
       productUrl: typeof jobRequest.product_url === "string" ? jobRequest.product_url : "",
+      researchInput: typeof jobRequest.research_input === "string" ? jobRequest.research_input : "",
       manualFields: jobRequest.manual_fields && typeof jobRequest.manual_fields === "object" && !Array.isArray(jobRequest.manual_fields)
         ? jobRequest.manual_fields
         : {},

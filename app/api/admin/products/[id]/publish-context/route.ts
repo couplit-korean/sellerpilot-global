@@ -33,8 +33,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   }
 
   const payload = data as Record<string, unknown>;
+  const productOwnerId = typeof payload.ownerId === "string" ? payload.ownerId : admin.user.id;
   const sourcePaths = stringList(payload.sourceImagePaths)
-    .filter((path) => path.startsWith(`${admin.user.id}/`) && !path.includes(".."));
+    .filter((path) => path.startsWith(`${productOwnerId}/`) && !path.includes(".."));
   const generatedPaths = Object.entries(stringRecord(payload.generatedImagePaths))
     .filter(([, path]) => path.startsWith("results/") && !path.includes(".."));
   const allPaths = [...sourcePaths, ...generatedPaths.map(([, path]) => path)];
@@ -49,6 +50,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     path,
     url: signed?.[sourcePaths.length + index]?.signedUrl ?? null,
   }));
+  delete payload.ownerId;
   delete payload.sourceImagePaths;
   delete payload.generatedImagePaths;
   return NextResponse.json({ ...payload, sourceImages, generatedImages }, {

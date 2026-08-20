@@ -1,5 +1,4 @@
 import type { ChannelOperationResult } from "./operations";
-import { userFacingErrorMessage } from "../user-facing-errors";
 
 export type ListingFailureKind = "category_permission" | "image" | "missing_field" | "authentication" | "provider";
 
@@ -22,11 +21,11 @@ function providerText(result: ChannelOperationResult) {
 export function classifyListingFailure(result: ChannelOperationResult): ListingFailureRemediation | null {
   if (result.ok || (result.operation !== "listing.create" && result.operation !== "listing.update")) return null;
   const text = `${result.safeMessage} ${providerText(result)}`;
-  if (/not authori[sz]ed to sell|do not have permission to list|NO_AUTHORITY|NotAuthority\.product\.category\.id|RESTRICTED_CATEGORY|판매 권한.*카테고리|등록권한이 있어야만 판매/i.test(text)) {
+  if (/not authori[sz]ed to sell|do not have permission to list|NO_AUTHORITY|RESTRICTED_CATEGORY|판매 권한.*카테고리/i.test(text)) {
     return {
       kind: "category_permission",
       code: "CATEGORY_PERMISSION_REQUIRED",
-      safeMessage: "현재 선택한 카테고리는 이 판매자 계정에서 사용할 수 없습니다. 판매 권한을 확인하거나 상품에 맞는 다른 최종 카테고리를 선택해 주세요.",
+      safeMessage: "판매자 계정에 허용되지 않은 카테고리입니다. 같은 카테고리 재시도를 중단했고, 권한이 있는 정확한 말단 카테고리를 다시 확정해야 합니다.",
       rejectCategory: true,
       retryableAfterCorrection: true,
     };
@@ -35,7 +34,7 @@ export function classifyListingFailure(result: ChannelOperationResult): ListingF
     return {
       kind: "missing_field",
       code: "PRICE_OR_ATTRIBUTE_UNIT_REJECTED",
-      safeMessage: "가격 또는 옵션 정보가 판매 채널 기준과 맞지 않습니다. 값을 자동으로 보정한 뒤 다시 확인해 주세요.",
+      safeMessage: "채널의 가격·옵션 단위 규칙에 맞지 않습니다. 판매가는 채널 단위로 자동 보정하고 숫자형 옵션은 공식 카테고리 단위를 붙인 뒤 다시 등록해 주세요.",
       rejectCategory: false,
       retryableAfterCorrection: true,
     };
@@ -44,7 +43,7 @@ export function classifyListingFailure(result: ChannelOperationResult): ListingF
     return {
       kind: "image",
       code: "IMAGE_REJECTED_AFTER_NORMALIZATION",
-      safeMessage: "상품 사진이 판매 채널 기준을 통과하지 못했습니다. 사진을 다시 선택하면 크기와 용량을 자동으로 맞춘 뒤 재등록합니다.",
+      safeMessage: "대표 이미지를 1200×1200 JPEG·3MB 이하 공개 URL로 자동 보정했지만 채널 이미지 API가 거절했습니다. 원격 응답을 확인해 이미지 재생성 후 다시 시도해 주세요.",
       rejectCategory: false,
       retryableAfterCorrection: true,
     };
@@ -53,7 +52,7 @@ export function classifyListingFailure(result: ChannelOperationResult): ListingF
     return {
       kind: "missing_field",
       code: "REQUIRED_FIELD_REJECTED",
-      safeMessage: "등록에 필요한 정보가 빠졌거나 형식이 맞지 않습니다. ‘직접 입력 필요’로 표시된 항목을 확인해 주세요.",
+      safeMessage: "채널이 필수 입력값 또는 카테고리 속성을 거절했습니다. 해당 필드를 수동 입력 필수 상태로 확인한 뒤 다시 등록해 주세요.",
       rejectCategory: false,
       retryableAfterCorrection: true,
     };
@@ -62,7 +61,7 @@ export function classifyListingFailure(result: ChannelOperationResult): ListingF
     return {
       kind: "authentication",
       code: "CHANNEL_AUTHENTICATION_REQUIRED",
-      safeMessage: "판매 채널 연결을 다시 확인해 주세요. ‘채널 연결’에서 해당 계정을 다시 연결한 뒤 시도해 주세요.",
+      safeMessage: "채널 인증 또는 서명 검증에 실패했습니다. 운영 키와 OAuth 연결을 갱신한 뒤 다시 시도해 주세요.",
       rejectCategory: false,
       retryableAfterCorrection: true,
     };
@@ -70,7 +69,7 @@ export function classifyListingFailure(result: ChannelOperationResult): ListingF
   return {
     kind: "provider",
     code: "CHANNEL_PROVIDER_REJECTED",
-    safeMessage: userFacingErrorMessage(result.safeMessage, "판매 채널에서 상품을 등록하지 못했습니다. 입력 정보를 확인하고 다시 시도해 주세요."),
+    safeMessage: result.safeMessage,
     rejectCategory: false,
     retryableAfterCorrection: false,
   };
@@ -79,5 +78,9 @@ export function classifyListingFailure(result: ChannelOperationResult): ListingF
 export function applyListingRemediation(result: ChannelOperationResult) {
   const remediation = classifyListingFailure(result);
   if (!remediation) return { result, remediation: null };
-  return { result: { ...result, safeMessage: remediation.safeMessage }, remediation };
+  const providerDetail = result.safeMessage.trim();
+  const safeMessage = providerDetail && providerDetail !== remediation.safeMessage
+    ? `${remediation.safeMessage} 원격 응답: ${providerDetail}`.slice(0, 1000)
+    : remediation.safeMessage;
+  return { result: { ...result, safeMessage }, remediation };
 }

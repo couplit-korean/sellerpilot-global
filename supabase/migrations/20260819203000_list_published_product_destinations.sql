@@ -3,7 +3,6 @@
 -- authenticated administrators only receive their own published rows.
 
 begin;
-
 create or replace function public.sellerpilot_list_published_product_destinations()
 returns jsonb
 language sql
@@ -30,8 +29,6 @@ as $$
      and p.status <> 'archived'
      and not p.demo
 $$;
-
 revoke all on function public.sellerpilot_list_published_product_destinations() from public, anon;
 grant execute on function public.sellerpilot_list_published_product_destinations() to authenticated;
-
 commit;

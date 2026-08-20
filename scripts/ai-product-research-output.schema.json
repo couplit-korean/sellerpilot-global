@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode", "summary", "suggestedFields", "details", "sources", "warnings"],
+  "properties": {
+    "mode": { "type": "string", "const": "cli-research" },
+    "summary": { "type": "string", "minLength": 20, "maxLength": 2000 },
+    "suggestedFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["productName", "categoryHint", "brandName", "manufacturer", "countryOfOrigin", "material", "packageContents", "description", "gtin"],
+      "properties": {
+        "productName": { "type": ["string", "null"], "minLength": 1, "maxLength": 160 },
+        "categoryHint": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 },
+        "brandName": { "type": ["string", "null"], "minLength": 1, "maxLength": 120 },
+        "manufacturer": { "type": ["string", "null"], "minLength": 1, "maxLength": 160 },
+        "countryOfOrigin": { "type": ["string", "null"], "minLength": 1, "maxLength": 80 },
+        "material": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+        "packageContents": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+        "description": { "type": ["string", "null"], "minLength": 1, "maxLength": 4000 },
+        "gtin": { "type": ["string", "null"], "pattern": "^[0-9]{8,14}$" }
+      }
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["features", "specifications", "usage", "cautions"],
+      "properties": {
+        "features": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+        },
+        "specifications": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["label", "value", "evidence"],
+            "properties": {
+              "label": { "type": "string", "minLength": 1, "maxLength": 100 },
+              "value": { "type": "string", "minLength": 1, "maxLength": 500 },
+              "evidence": { "type": "string", "minLength": 1, "maxLength": 500 }
+            }
+          }
+        },
+        "usage": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+        },
+        "cautions": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "minLength": 1, "maxLength": 400 }
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "title", "status"],
+        "properties": {
+          "url": { "type": "string", "maxLength": 1000 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "status": { "type": "string", "enum": ["read", "unavailable"] }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+    }
+  }
+}

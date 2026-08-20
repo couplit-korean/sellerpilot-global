@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { channelOperationNames } from "./operations";
 
-const gatewayChannelSchema = z.enum(["shopee", "lazada", "coupang", "smartstore", "temu"]);
+const gatewayChannelSchema = z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]);
 
 const credentialPayloadSchema = z.record(z.string(), z.unknown()).refine(
   (value) => JSON.stringify(value).length <= 64_000,
@@ -29,7 +29,7 @@ const operationResultSchema = z.object({
     status: z.number().int().min(0).max(999),
     requestId: z.string().max(160).optional(),
     data: z.record(z.string(), z.unknown()),
-  })).min(1).max(40),
+  })).min(1).max(12),
   remoteId: z.string().max(240).optional(),
   safeMessage: z.string().min(1).max(1_000),
 });

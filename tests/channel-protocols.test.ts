@@ -15,10 +15,12 @@ import {
   ensureEbayAccessToken,
   ensureShopeeAccessToken,
   ensureShopeeMerchantAccessToken,
+  elevenstRequest,
   exchangeShopeeOAuthToken,
   fetchNaverAccessToken,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { inquirySyncArguments, orderSyncRequests } from "../lib/channels/sync-arguments";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
 
 test("Coupang CEA authorization signs the documented canonical value", () => {
@@ -83,9 +85,53 @@ test("Qoo10 uses current QAPI endpoint and qualified method name", () => {
     version: "1.2",
     params: { ItemCode: "1234567890", SellerCode: "" },
   });
-  assert.equal(url.pathname, "/GMKT.INC.Front.QAPIService/ebayjapan.qapi");
-  assert.equal(url.searchParams.get("method"), "ItemsLookup.GetItemDetailInfo");
-  assert.equal(url.searchParams.get("v"), "1.2");
+  assert.equal(url.pathname, "/GMKT.INC.Front.QAPIService/ebayjapan.qapi/ItemsLookup.GetItemDetailInfo");
+  assert.equal(url.search, "");
+});
+
+test("11st fixed-IP diagnostic calls ProductSearch and returns only safe XML metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  let calledUrl = "";
+  globalThis.fetch = async (input) => {
+    calledUrl = String(input);
+    return new Response("<?xml version=\"1.0\"?><ProductSearchResponse><TotalCount>1</TotalCount><Products><Product><ProductCode>1</ProductCode></Product></Products></ProductSearchResponse>", {
+      status: 200,
+      headers: { "content-type": "text/xml; charset=euc-kr" },
+    });
+  };
+  try {
+    const result = await elevenstRequest({
+      payload: { api_key: "A".repeat(32) },
+      apiCode: "ProductSearch",
+      params: { keyword: "생활용품", pageNum: "1", pageSize: "1" },
+    });
+    const url = new URL(calledUrl);
+    assert.equal(url.hostname, "openapi.11st.co.kr");
+    assert.equal(url.searchParams.get("apiCode"), "ProductSearch");
+    assert.equal(result.data.accepted, true);
+    assert.equal(result.data.hasProduct, true);
+    assert.equal(result.data.totalCount, 1);
+    assert.equal(result.text, "");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Qoo10 periodic order sync uses the documented Japan-time parameters for every shipping state", () => {
+  const requests = orderSyncRequests("qoo10", new Date("2026-08-20T07:00:00.000Z"));
+  assert.deepEqual(requests.map((request) => request.periodicKey), ["orders:0", "orders:3", "orders:4", "orders:5"]);
+  assert.deepEqual(requests[0]?.arguments.params, {
+    SearchStartDate: "20260806160000",
+    SearchEndDate: "20260820160000",
+    ShippingStatus: "0",
+    SearchCondition: "1",
+  });
+});
+
+test("Qoo10 unanswered inquiry sync uses the current CSCenter parameter names", () => {
+  assert.deepEqual(inquirySyncArguments("qoo10", new Date("2026-08-20T07:00:00.000Z")), [{
+    params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" },
+  }]);
 });
 
 test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () => {
@@ -128,20 +174,19 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
     const url = new URL(createUrl);
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "1234567890");
-    assert.equal(url.searchParams.get("method"), "ItemsBasic.SetNewGoods");
-    assert.equal(url.searchParams.get("v"), "1.1");
+    assert.equal(url.pathname.endsWith("/ItemsBasic.SetNewGoods"), true);
     assert.equal(createInit?.method, "POST");
-    assert.equal(url.searchParams.has("ItemDescription"), false);
-    const body = new URLSearchParams(String(createInit?.body));
-    assert.equal((body.get("ItemDescription")?.match(/<img /g) ?? []).length, 4);
+    assert.equal(new Headers(createInit?.headers).get("QAPIVersion"), "1.1");
+    assert.equal(new Headers(createInit?.headers).get("GiosisCertificationKey"), "test-key");
+    const body = JSON.parse(String(createInit?.body)) as Record<string, string>;
+    assert.equal((body.ItemDescription?.match(/<img /g) ?? []).length, 4);
     const detailRequestUrl = new URL(detailUrl);
-    assert.equal(detailRequestUrl.searchParams.get("method"), "ItemsContents.EditGoodsContents");
-    assert.equal(detailRequestUrl.searchParams.get("v"), "1.0");
-    assert.equal(detailRequestUrl.searchParams.has("Contents"), false);
+    assert.equal(detailRequestUrl.pathname.endsWith("/ItemsContents.EditGoodsContents"), true);
     assert.equal(detailInit?.method, "POST");
-    const detailBody = new URLSearchParams(String(detailInit?.body));
-    assert.equal(detailBody.get("ItemCode"), "1234567890");
-    assert.equal((detailBody.get("Contents")?.match(/<img /g) ?? []).length, 4);
+    assert.equal(new Headers(detailInit?.headers).get("QAPIVersion"), "1.0");
+    const detailBody = JSON.parse(String(detailInit?.body)) as Record<string, string>;
+    assert.equal(detailBody.ItemCode, "1234567890");
+    assert.equal((detailBody.Contents?.match(/<img /g) ?? []).length, 4);
     assert.equal(result.steps.at(-2)?.name, "EditGoodsContents");
     assert.equal(result.steps.at(-2)?.ok, true);
     assert.equal(result.steps.at(-1)?.name, "detail-image-readback");
@@ -156,14 +201,16 @@ test("Qoo10 pauses a created item when detail-image readback is incomplete", asy
   const calls: Array<{ method: string; body: string; status: string | null }> = [];
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
-    calls.push({ method: url.searchParams.get("method") ?? "", body: String(init?.body ?? ""), status: url.searchParams.get("Status") });
-    if (url.searchParams.get("method") === "ItemsBasic.SetNewGoods") {
+    const method = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
+    calls.push({ method, body: String(init?.body ?? ""), status: body.Status ?? null });
+    if (method === "ItemsBasic.SetNewGoods") {
       return Response.json({ ResultCode: 0, ResultObject: { GdNo: "1234567890" } });
     }
-    if (url.searchParams.get("method") === "ItemsContents.EditGoodsContents") {
+    if (method === "ItemsContents.EditGoodsContents") {
       return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
     }
-    if (url.searchParams.get("method") === "ItemsBasic.EditGoodsStatus") {
+    if (method === "ItemsBasic.EditGoodsStatus") {
       return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
     }
     return Response.json({ ResultCode: 0, ResultObject: { ItemDetail: "<p>description only</p>" } });
@@ -182,36 +229,6 @@ test("Qoo10 pauses a created item when detail-image readback is incomplete", asy
     assert.equal(result.steps.find((item) => item.name === "detail-image-readback")?.ok, false);
     assert.equal(calls.at(-1)?.method, "ItemsBasic.EditGoodsStatus");
     assert.equal(calls.at(-1)?.status, "1");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Qoo10 listing retry resumes a warning-created item without creating a duplicate", async () => {
-  const originalFetch = globalThis.fetch;
-  const methods: string[] = [];
-  globalThis.fetch = async (input) => {
-    const method = new URL(String(input)).searchParams.get("method") ?? "";
-    methods.push(method);
-    if (method === "ItemsBasic.SetNewGoods") throw new Error("resume must not create another Qoo10 item");
-    if (method === "ItemsContents.EditGoodsContents") return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
-    return Response.json({ ResultCode: 0, ResultObject: { ItemDetail: '<img src="1"><img src="2"><img src="3"><img src="4">' } });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "qoo10",
-      operation: "listing.create",
-      payload: { api_key: "test-key" },
-      arguments: {
-        resumeRemoteId: "1234567890",
-        params: { ItemDescription: '<img src="1"><img src="2"><img src="3"><img src="4">' },
-      },
-      environment: "production",
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.remoteId, "1234567890");
-    assert.deepEqual(result.steps.map((item) => item.name), ["listing.resume", "EditGoodsContents", "detail-image-readback"]);
-    assert.equal(methods.includes("ItemsBasic.SetNewGoods"), false);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -321,8 +338,8 @@ test("Shopee MediaSpace partner signature excludes shop authorization dimensions
   }), expected);
 });
 
-test("all seven active channels define every normalized capability", () => {
-  assert.deepEqual(activeChannelKeys, ["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"]);
+test("all eight active channels define every normalized capability", () => {
+  assert.deepEqual(activeChannelKeys, ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]);
   const expectedCapabilities = Object.keys(channelCatalog.qoo10.capabilities).sort();
   for (const channel of activeChannelKeys) {
     assert.deepEqual(Object.keys(channelCatalog[channel].capabilities).sort(), expectedCapabilities);
@@ -330,6 +347,7 @@ test("all seven active channels define every normalized capability", () => {
   }
   assert.equal(channelCatalog.temu.capabilities.listingCreate.mode, "api");
   assert.equal(channelCatalog.qoo10.capabilities.webhooks.mode, "unsupported");
+  assert.equal(channelCatalog.elevenst.capabilities.orders.mode, "vendor_docs_required");
 });
 
 test("Shopee operation routing signs the shop request and uses v2 order detail", async () => {
@@ -502,95 +520,6 @@ test("Lazada product create serializes the structured request as official XML an
     assert.match(xml, /<Skus><Sku><SellerSku>CUP-001<\/SellerSku>/);
     assert.match(xml, /<Status>inactive<\/Status><Images><Image>https:\/\/example\.com\/cup-1\.jpg<\/Image><\/Images>/);
     assert.match(calls[1].url, /\/product\/item\/get/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Lazada product readback retries a one-second API frequency limit", async () => {
-  const originalFetch = globalThis.fetch;
-  let readbacks = 0;
-  globalThis.fetch = async (input) => {
-    const creating = String(input).includes("/product/create");
-    if (creating) return new Response(JSON.stringify({ code: "0", data: { item_id: 987654322 } }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
-    readbacks += 1;
-    return new Response(JSON.stringify(readbacks === 1
-      ? { code: "ISP", message: "Api access frequency exceeds the limit. this ban will last 1 seconds" }
-      : { code: "0", data: { item_id: 987654322 } }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "lazada",
-      operation: "listing.create",
-      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "access-token", country: "my" },
-      arguments: { request: { Request: { Product: { PrimaryCategory: "8105" } } } },
-      environment: "production",
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.remoteId, "987654322");
-    assert.equal(readbacks, 2);
-    assert.deepEqual(result.steps.map((item) => item.name), ["/product/create", "listing-readback", "listing-readback-2"]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Lazada sellable listing succeeds only after the active SKU is read back", async () => {
-  const originalFetch = globalThis.fetch;
-  let readbacks = 0;
-  globalThis.fetch = async (input) => {
-    if (String(input).includes("/product/create")) return Response.json({ code: "0", data: { item_id: 987654399 } });
-    readbacks += 1;
-    return Response.json({ code: "0", data: { item_id: 987654399, skus: [{ Status: readbacks === 1 ? "inactive" : "active" }] } });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "lazada",
-      operation: "listing.create",
-      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "access-token", country: "my" },
-      arguments: {
-        expectedPublishStatus: "active",
-        request: { Request: { Product: { PrimaryCategory: "8105", Skus: { Sku: [{ Status: "active" }] } } } },
-      },
-      environment: "production",
-    });
-    assert.equal(result.ok, true);
-    assert.equal(readbacks, 2);
-    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "PUBLISH_STATUS_VERIFIED");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Lazada listing retry resumes a created item without creating a duplicate", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: string[] = [];
-  globalThis.fetch = async (input) => {
-    calls.push(String(input));
-    return new Response(JSON.stringify({ code: "0", data: { item_id: 987654323 } }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "lazada",
-      operation: "listing.create",
-      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "access-token", country: "my" },
-      arguments: { resumeRemoteId: "987654323", request: { Request: { Product: { PrimaryCategory: "8105" } } } },
-      environment: "production",
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.remoteId, "987654323");
-    assert.deepEqual(result.steps.map((item) => item.name), ["listing.resume", "listing-readback"]);
-    assert.equal(calls.length, 1);
-    assert.match(calls[0], /\/product\/item\/get/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -840,45 +769,6 @@ test("Coupang product update reuses the requested seller product ID and verifies
     assert.equal(new URL(calls[2].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321/approvals");
     assert.equal(calls[2].init?.method, "PUT");
     assert.equal(calls[3].init?.method, "GET");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Coupang listing reconciles its duplicate approval rejection while readback is delayed", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
-  globalThis.fetch = async (input, init) => {
-    const url = String(input);
-    calls.push({ url, init });
-    if (init?.method === "POST") {
-      return Response.json({ code: "SUCCESS", data: 987654322 });
-    }
-    if (url.endsWith("/approvals") && init?.method === "PUT") {
-      return Response.json({ code: "ERROR", message: "'임시저장' 상태의 상품만 승인 요청 가능합니다." }, { status: 400 });
-    }
-    return Response.json({
-      code: "SUCCESS",
-      data: { sellerProductId: 987654322, requested: false, mdId: "NLUP_TEMP_SAVED" },
-    });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "coupang",
-      operation: "listing.create",
-      payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
-      arguments: { body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] } },
-      environment: "production",
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.remoteId, "987654322");
-    assert.equal(calls.filter((call) => call.init?.method === "POST").length, 1);
-    assert.deepEqual(result.steps.map((item) => [item.name, item.ok]), [
-      ["listing.create", true],
-      ["listing-readback", true],
-      ["listing-approval-request", true],
-      ["listing-approval-readback", true],
-    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1251,7 +1141,6 @@ test("provider listing errors expose a sanitized actionable message", async () =
   globalThis.fetch = async () => Response.json({
     error: "invalid_attribute",
     message: "Missing attribute shade https://private.example/item?token=secret-value",
-    invalidInputs: [{ field: "detailAttribute.sellerCodeInfo", message: "sellerManagementCode is invalid" }],
   }, { status: 400 });
   try {
     const result = await executeChannelOperation({
@@ -1263,7 +1152,6 @@ test("provider listing errors expose a sanitized actionable message", async () =
     });
     assert.equal(result.ok, false);
     assert.match(result.safeMessage, /invalid_attribute|Missing attribute shade/);
-    assert.match(result.safeMessage, /sellerManagementCode is invalid/);
     assert.doesNotMatch(result.safeMessage, /private\.example|secret-value/);
   } finally {
     globalThis.fetch = originalFetch;

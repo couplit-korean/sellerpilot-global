@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cliStudioResultSchema, studioJobRequestSchema, workerCompletionSchema } from "../lib/ai-cli-contract";
+import { cliStudioResultSchema, productResearchJobRequestSchema, productResearchResultSchema, studioJobRequestSchema, workerCompletionSchema } from "../lib/ai-cli-contract";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 
 const localized = [
+  ["qoo10", "JP", "ja-JP", "白い陶器のエスプレッソカップ"],
   ["shopee", "SG", "en-SG", "White ceramic espresso cup"],
   ["shopee", "MY", "ms-MY", "Cawan espresso seramik putih"],
   ["shopee", "PH", "en-PH", "White ceramic espresso cup"],
@@ -18,6 +19,10 @@ const localized = [
   ["lazada", "TH", "th-TH", "ถ้วยเอสเปรสโซเซรามิกสีขาว"],
   ["lazada", "VN", "vi-VN", "Tách espresso gốm trắng"],
   ["lazada", "ID", "id-ID", "Cangkir espresso keramik putih"],
+  ["coupang", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
+  ["smartstore", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
+  ["ebay", "US", "en-US", "White Ceramic Espresso Cup"],
+  ["temu", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
 ] as const;
 
 function validResult() {
@@ -54,19 +59,26 @@ function validResult() {
       shortDescription: copy,
       description: `${copy}. ${copy}.`,
       keywords: [copy, `${copy} 1`, `${copy} 2`],
+      thumbnailAltText: copy,
+      detailSections: [
+        { type: "overview" as const, heading: copy, body: copy, imageAsset: "detail-overview" as const, imageAltText: copy },
+        { type: "feature" as const, heading: copy, body: copy, imageAsset: "detail-feature" as const, imageAltText: copy },
+        { type: "howto" as const, heading: copy, body: copy, imageAsset: "detail-use" as const, imageAltText: copy },
+        { type: "spec" as const, heading: copy, body: copy, imageAsset: "detail-package" as const, imageAltText: copy },
+      ],
     })),
     warnings: [],
   };
 }
 
-test("AI studio contract accepts all 14 exact channel-market locales", () => {
+test("AI studio contract accepts all 19 exact channel-market locales", () => {
   const parsed = cliStudioResultSchema.safeParse(validResult());
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
 
 test("AI studio contract rejects a mismatched market locale", () => {
   const result = validResult();
-  result.localizedListings[0].locale = "en-PH";
+  result.localizedListings[1].locale = "en-PH";
   const parsed = cliStudioResultSchema.safeParse(result);
   assert.equal(parsed.success, false);
   assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /en-SG/);
@@ -74,14 +86,31 @@ test("AI studio contract rejects a mismatched market locale", () => {
 
 test("AI studio contract rejects Korean residue in localized listings", () => {
   const result = validResult();
-  result.localizedListings[0].description += " 한국어 문장";
+  result.localizedListings[1].description += " 한국어 문장";
   const parsed = cliStudioResultSchema.safeParse(result);
   assert.equal(parsed.success, false);
   assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /한국어/);
 });
 
+test("AI studio contract rejects duplicated localized detail image roles", () => {
+  const result = validResult();
+  result.localizedListings[1].detailSections[1].imageAsset = "detail-overview";
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /중복 없이 4개/);
+});
+
+test("AI studio contract rejects disconnected keyword stuffing", () => {
+  const result = validResult();
+  result.localizedListings[1].keywords = ["unrelated alpha", "unrelated beta", "unrelated gamma"];
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /자연스럽게 포함/);
+});
+
 function validRequiredIntake() {
   return {
+    researchInput: "https://commons.wikimedia.org/wiki/File:Example.jpg white ceramic mug product reference",
     productName: "White ceramic mug",
     sellerSku: "MUG-OPEN-001",
     categoryHint: "Ceramic mug",
@@ -107,12 +136,60 @@ function validRequiredIntake() {
   };
 }
 
+function validResearchResult() {
+  return {
+    mode: "cli-research" as const,
+    summary: "공개 상품 페이지와 입력 텍스트에서 화이트 도자기 머그의 확인 가능한 정보를 정리했습니다.",
+    suggestedFields: {
+      productName: "White ceramic mug",
+      categoryHint: "Ceramic mug",
+      brandName: null,
+      manufacturer: null,
+      countryOfOrigin: null,
+      material: "Ceramic",
+      packageContents: "One mug",
+      description: "A white ceramic mug described by the supplied public product reference.",
+      gtin: null,
+    },
+    details: {
+      features: ["White ceramic body"],
+      specifications: [{ label: "Material", value: "Ceramic", evidence: "Public product description" }],
+      usage: ["Drinkware"],
+      cautions: ["Unverified dimensions require seller confirmation."],
+    },
+    sources: [{ url: "https://example.com/product", title: "Example product", status: "read" as const }],
+    warnings: ["Brand and origin were not verified."],
+  };
+}
+
+test("product research contract accepts a link or free-text CLI request", () => {
+  assert.equal(productResearchJobRequestSchema.safeParse({
+    jobId: "22222222-2222-4222-8222-222222222222",
+    researchInput: "Model ABC-100, stainless steel bottle, 500 ml",
+  }).success, true);
+  assert.equal(productResearchResultSchema.safeParse(validResearchResult()).success, true);
+});
+
 test("AI studio request requires seller facts and normalized listing images", () => {
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "11111111-1111-4111-8111-111111111111",
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1200, height: 1200, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],
+  });
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("AI studio request accepts free-text research without a source URL", () => {
+  const parsed = studioJobRequestSchema.safeParse({
+    jobId: "33333333-3333-4333-8333-333333333333",
+    manualFields: {
+      ...validRequiredIntake(),
+      researchInput: "Model ABC-100 stainless steel bottle, 500 ml, one bottle included",
+      productUrl: "",
+    },
+    imagePaths: ["user/job/input/001.jpg"],
+    imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1200, originalHeight: 1200, width: 1200, height: 1200, bytes: 350_000, mediaType: "image/jpeg", fit: "contain" }],
   });
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
@@ -138,4 +215,13 @@ test("AI worker completion requires the full thumbnail and detail-image set", ()
   delete incompletePaths["detail-package"];
   assert.equal(workerCompletionSchema.safeParse({ jobId, status: "succeeded", result: validResult(), assetStoragePaths: incompletePaths }).success, false);
   assert.equal(aiGeneratedAssetSpecs.filter((asset) => asset.role === "detail").length, 4);
+});
+
+test("AI worker completion accepts a product research result without generated images", () => {
+  const complete = workerCompletionSchema.safeParse({
+    jobId: "22222222-2222-4222-8222-222222222222",
+    status: "succeeded",
+    result: validResearchResult(),
+  });
+  if (!complete.success) assert.fail(JSON.stringify(complete.error.issues, null, 2));
 });

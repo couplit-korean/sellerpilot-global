@@ -1,4 +1,11 @@
-@import "tailwindcss";
+/*
+ * Tailwind v4 otherwise scans the entire workspace, including imported
+ * marketplace photos and SQL evidence that are never rendered by the app.
+ * Restrict detection to the App Router source so local and CI builds do not
+ * block on cloud-backed operator files.
+ */
+@import "tailwindcss" source(none);
+@source ".";
 
 :root {
   --background: #f2f1ec;
@@ -201,6 +208,26 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .user-menu b, .user-menu small { display: block; }
 .user-menu b { font-size: 10px; }
 .user-menu small { margin-top: 2px; color: #949baa; font-size: 7px; }
+.account-security-overlay { position: fixed; z-index: 100; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(22 27 40 / 48%); backdrop-filter: blur(4px); }
+.account-security-dialog { width: min(430px, 100%); padding: 22px; border: 1px solid #e0e3eb; border-radius: 16px; background: white; box-shadow: 0 24px 70px rgb(31 38 54 / 24%); }
+.account-security-head { display: flex; align-items: flex-start; gap: 12px; }
+.account-security-head > span { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: 10px; color: var(--primary); background: var(--primary-soft); }
+.account-security-head > div { flex: 1; }
+.account-security-head h2 { margin: 1px 0 0; color: #313a4c; font-size: 16px; }
+.account-security-head p { margin: 5px 0 0; color: #858da0; font-size: 10px; }
+.account-security-head > button { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 8px; color: #747d90; background: #f4f5f8; }
+.account-security-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
+.account-security-values > div, .account-security-values > label { padding: 13px 14px; border: 1px solid #e3e5ed; border-radius: 10px; background: #fafbfc; }
+.account-security-values small, .account-security-values strong { display: block; }
+.account-security-values small { color: #8c94a5; font-size: 9px; }
+.account-security-values strong { margin-top: 5px; color: #343d50; font-family: var(--font-geist-mono), monospace; font-size: 14px; }
+.account-security-values input { width: 100%; margin-top: 5px; color: #343d50; background: transparent; font-family: var(--font-geist-mono), monospace; font-size: 12px; outline: none; }
+.account-security-values input::placeholder { color: #a1a8b6; font-family: var(--font-geist-sans), sans-serif; font-size: 9px; }
+.account-security-warning { display: flex; align-items: flex-start; gap: 8px; margin: 14px 0 0; padding: 11px 12px; border: 1px solid #f2d5ae; border-radius: 9px; color: #8c5a17; background: #fff9f0; font-size: 9px; line-height: 1.55; }
+.account-security-warning svg { flex: 0 0 auto; margin-top: 1px; }
+.account-security-message { margin: 12px 0 0; color: #596377; font-size: 10px; line-height: 1.5; }
+.account-security-submit { display: flex; width: 100%; min-height: 42px; align-items: center; justify-content: center; gap: 8px; margin-top: 16px; border-radius: 10px; color: white; background: var(--primary); font-size: 11px; font-weight: 800; }
+.account-security-submit:disabled { cursor: wait; opacity: .65; }
 .app-content { width: min(1440px, 100%); margin: 0 auto; padding: 22px 28px 40px; }
 .page-stack { display: grid; gap: 17px; }
 .overview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -657,7 +684,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .margin-channel-tabs > button { --channel-color: var(--primary); display: grid; min-width: 0; min-height: 68px; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 8px; padding: 8px 9px; border: 1px solid transparent; border-radius: 9px; color: #677185; background: transparent; text-align: left; }
 .margin-channel-tabs > button:hover { background: #f8f9fb; }
 .margin-channel-tabs > button.active { border-color: color-mix(in srgb, var(--channel-color), white 72%); background: color-mix(in srgb, var(--channel-color), white 94%); box-shadow: inset 0 -2px var(--channel-color); }
-.margin-channel-tabs > button > span, .margin-result-head > div > span, .margin-channel-cell > span, .saved-margin-list > article > span { display: grid; width: 31px; height: 31px; grid-row: 1 / 3; place-items: center; border-radius: 9px; color: white; background: var(--channel-color); font-family: var(--font-geist-mono), monospace; font-size: 10px; font-weight: 900; }
+.margin-channel-tabs > button > span, .margin-result-head > div > span, .margin-channel-cell > span, .saved-margin-list > article > span { display: grid; width: auto; min-width: 42px; height: 31px; grid-row: 1 / 3; place-items: center; padding: 0 4px; border-radius: 9px; color: white; background: var(--channel-color); font-family: inherit; font-size: 7px; font-weight: 900; white-space: nowrap; }
 .margin-channel-tabs b, .margin-channel-tabs small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .margin-channel-tabs b { color: #505a6d; font-size: 8px; }
 .margin-channel-tabs small { color: #989fac; font-family: var(--font-geist-mono), monospace; font-size: 6px; }

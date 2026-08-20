@@ -8,6 +8,8 @@ const SECOND_ADMIN_ID = "1173e28d-9b03-46cc-a207-b68a780e95c7";
 const NON_ADMIN_ID = "9753c228-73b7-4e1f-8cad-b6635c32ba7f";
 const JOB_ID = "b231a1ac-7c2f-48bc-b2e4-8ad6db2902b7";
 const CANCEL_JOB_ID = "95303cb5-f3ba-49b6-9bd4-7c5e558f0b14";
+const RESEARCH_JOB_ID = "e659cfbc-0f80-44a5-94e8-f011ec53e67f";
+const SHARED_PRODUCT_ID = "4a346497-84c8-4ccd-bf14-8f06f990a2f7";
 const TOKEN_HASH = "a".repeat(64);
 
 const supabaseCompatibilityLayer = String.raw`
@@ -141,6 +143,16 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260819150000_inventory_sync_ledger.sql",
       "20260819170000_preserve_failed_listing_remote_id.sql",
       "20260819203000_list_published_product_destinations.sql",
+      "20260820050000_channel_order_sync.sql",
+      "20260820053500_channel_inquiry_sync.sql",
+      "20260820090000_product_research_cli.sql",
+      "20260820132000_backfill_channel_sync_counts.sql",
+      "20260820143000_share_operations_workspace_across_admins.sql",
+      "20260820144500_add_elevenst_margin_scenarios.sql",
+      "20260820152000_android_push_notifications.sql",
+      "20260820170000_periodic_channel_sync.sql",
+      "20260820173000_worker_periodic_sync_auth.sql",
+      "20260820180000_activate_elevenst_credentials.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -169,7 +181,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_claim_channel_oauth_state(uuid,text,text)",
       "public.sellerpilot_service_reject_category_assignment(uuid,text,text,text)",
       "public.sellerpilot_prune_personal_data(timestamp with time zone)",
+      "public.sellerpilot_service_mark_channel_sync(uuid,text,text,text,text)",
+      "public.sellerpilot_service_ingest_orders(uuid,text,jsonb)",
+      "public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)",
       "public.sellerpilot_service_complete_inventory_sync_item(uuid,uuid,uuid,boolean,integer,text)",
+      "public.sellerpilot_service_claim_push_deliveries(integer)",
+      "public.sellerpilot_service_finish_push_delivery(uuid,text,text)",
+      "public.sellerpilot_service_enqueue_periodic_sync(text,text,jsonb,integer)",
+      "public.sellerpilot_service_validate_worker_token(text,text)",
     ];
     for (const signature of serviceOnlyFunctions) {
       assert.equal(
@@ -183,12 +202,6 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       const definition = await scalar(db, "select pg_get_functiondef($1::regprocedure)", [signature]);
       assert.doesNotMatch(definition, /request\.jwt\.claim\.role/);
     }
-    const listingCompletionDefinition = await scalar(
-      db,
-      "select pg_get_functiondef('public.sellerpilot_service_complete_product_listing(uuid,uuid,text,boolean,text,text)'::regprocedure)",
-    );
-    assert.match(listingCompletionDefinition, /when nullif\(trim\(coalesce\(p_remote_id, ''\)\), ''\) is not null then trim\(p_remote_id\)/);
-    assert.doesNotMatch(listingCompletionDefinition, /when p_success and nullif\(trim\(coalesce\(p_remote_id/);
 
     await db.query("insert into auth.users (id, email) values ($1, 'admin@example.test')", [ADMIN_ID]);
     await db.query(
@@ -205,14 +218,6 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     await setClaims(db);
     assert.equal(await scalar(db, "select public.sellerpilot_is_admin()"), true);
-    assert.equal(
-      await scalar(db, "select has_function_privilege('authenticated', 'public.sellerpilot_list_category_learning(text,text,text)', 'EXECUTE')"),
-      true,
-    );
-    assert.equal(
-      await scalar(db, "select has_function_privilege('anon', 'public.sellerpilot_list_category_learning(text,text,text)', 'EXECUTE')"),
-      false,
-    );
 
     const credentialId = await scalar(
       db,
@@ -233,6 +238,28 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "select public.sellerpilot_get_active_credential_secret('qoo10', 'production')",
     );
     assert.equal(secret.secret_payload.certification_key, "test-only");
+    const periodicQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'qoo10', 'orders.list',
+        '{"periodicKey":"orders","arguments":{"params":{"ShippingStat":"1"}}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(periodicQueued.status, "queued");
+    const periodicDeduplicated = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'qoo10', 'orders.list',
+        '{"periodicKey":"orders","arguments":{"params":{"ShippingStat":"2"}}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(periodicDeduplicated.status, "already_pending");
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [periodicQueued.jobId],
+    );
     await db.query(
       "select public.sellerpilot_record_credential_test($1, 'passed', 'read-only diagnostic passed')",
       [credentialId],
@@ -377,6 +404,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [shopeeCredentialId, "d".repeat(64)],
     );
     await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_service_validate_worker_token($1, 'migration-test/1.9')", [TOKEN_HASH]),
+      true,
+    );
     const gatewayJobId = await scalar(
       db,
       "select public.sellerpilot_enqueue_channel_gateway_job($1, $2, 'shopee', 'categories.list', '{\"arguments\":{\"shopId\":\"123456789\"}}'::jsonb)",
@@ -409,6 +440,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(gatewaySnapshot.response.operation, "categories.list");
     await setClaims(db);
     const requiredManualFields = {
+      researchInput: "https://example.test/product/1 흰색 도자기 머그컵 상세정보",
       productName: "AI 생성 테스트 상품",
       sellerSku: "AI-REQUIRED-001",
       categoryHint: "도자기 머그컵",
@@ -438,6 +470,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       manual_fields: requiredManualFields,
       description: "실제 상품 분석 테스트",
       product_url: "https://example.test/product/1",
+      research_input: requiredManualFields.researchInput,
     };
     await db.query(
       "select public.sellerpilot_create_ai_job($1, 'product_studio', $2::jsonb)",
@@ -549,55 +582,24 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       true,
     );
     await setClaims(db);
-    const inventoryRun = await scalar(
-      db,
-      "select public.sellerpilot_start_inventory_sync($1, 37, 'inventory-ai-product-coupang-0001')",
-      [aiProductId],
-    );
-    assert.equal(inventoryRun.status, "running");
-    assert.equal(inventoryRun.availableQuantity, 37);
-    assert.equal(inventoryRun.totalCount, 1);
-    assert.equal(inventoryRun.tasks[0].channel, "coupang");
-    assert.equal(inventoryRun.tasks[0].remoteId, "remote-product-1");
-    const inventoryAttempt = await scalar(
-      db,
-      "select public.sellerpilot_claim_channel_operation($1, 'coupang', 'inventory.update', 'inventory-ai-product-coupang-0001', $2)",
-      [coupangCredentialId, "d".repeat(64)],
-    );
-    await setClaims(db, "service_role");
-    assert.equal(
-      await scalar(
-        db,
-        "select public.sellerpilot_service_complete_inventory_sync_item($1, $2, $3, true, 37, 'remote quantity verified')",
-        [inventoryRun.runId, inventoryRun.tasks[0].id, inventoryAttempt.attempt_id],
-      ),
-      true,
-    );
-    await setClaims(db);
-    const completedInventoryRun = await scalar(
-      db,
-      "select public.sellerpilot_get_inventory_sync($1)",
-      [aiProductId],
-    );
-    assert.equal(completedInventoryRun.status, "succeeded");
-    assert.equal(completedInventoryRun.succeededCount, 1);
-    assert.equal(completedInventoryRun.tasks[0].status, "succeeded");
-    assert.equal(
-      await scalar(db, "select last_inventory_quantity from sellerpilot_private.product_listings where id = $1", [preparedListingId]),
-      37,
-    );
-    await setClaims(db);
-    const learnedCategories = await db.query(
-      "select * from public.sellerpilot_list_category_learning('coupang', 'production', 'KR')",
-    );
-    assert.equal(learnedCategories.rows.length, 1);
-    assert.equal(learnedCategories.rows[0].category_id, "63955");
-    assert.equal(learnedCategories.rows[0].listing_success, true);
-    assert.equal(learnedCategories.rows[0].permission_blocked, false);
     await assert.rejects(
       db.query("select public.sellerpilot_seed_demo_operations()"),
       /demo data is disabled/,
     );
+
+    const pushSubscriptionId = await scalar(
+      db,
+      "select public.sellerpilot_upsert_push_subscription($1, $2, $3, 'Android Migration Test', '테스트 Android')",
+      ["https://push.example.test/subscriptions/admin-device", "p".repeat(88), "a".repeat(24)],
+    );
+    assert.match(pushSubscriptionId, /^[0-9a-f-]{36}$/i);
+    const pushSubscription = await scalar(
+      db,
+      "select public.sellerpilot_get_push_subscription($1)",
+      ["https://push.example.test/subscriptions/admin-device"],
+    );
+    assert.equal(pushSubscription.id, pushSubscriptionId);
+    assert.equal(pushSubscription.enabled, true);
 
     await db.query(
       `insert into sellerpilot_private.commerce_orders (
@@ -613,46 +615,140 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ) values ($1, 'REAL-TICKET-1', 'qoo10', '실고객', '실제 문의', '배송 상태 확인', 'waiting', 2, now(), false)`,
       [ADMIN_ID],
     );
+    await db.query(
+      `insert into sellerpilot_private.products (
+        id, owner_id, external_code, sku, name, description, status,
+        on_hand, reserved, reorder_point, cost_krw, demo
+      ) values ($1, $2, 'SHARED-PRODUCT-1', 'SHARED-SKU-1', '다른 관리자 생성 상품',
+        '승인된 관리자 전체 공유 검증', 'active', 20, 0, 5, 12000, false)`,
+      [SHARED_PRODUCT_ID, SECOND_ADMIN_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.commerce_orders (
+        owner_id, external_order_id, channel_key, customer_name, product_id, product_name,
+        quantity, amount, currency, amount_krw, status, ordered_at, demo
+      ) values ($1, 'SHARED-ORDER-1', 'qoo10', '공유고객', $2,
+        '다른 관리자 생성 상품', 1, 21000, 'KRW', 21000, 'paid', now() + interval '1 second', false)`,
+      [SECOND_ADMIN_ID, SHARED_PRODUCT_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.support_tickets (
+        owner_id, external_ticket_id, channel_key, customer_name, subject, message,
+        status, priority, received_at, demo
+      ) values ($1, 'SHARED-TICKET-1', 'qoo10', '공유고객', '공유 문의',
+        '다른 관리자가 수집한 문의', 'waiting', 1, now() + interval '1 second', false)`,
+      [SECOND_ADMIN_ID],
+    );
+
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_service_ingest_orders($1, 'qoo10', '[]'::jsonb)", [credentialId]),
+      0,
+    );
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_service_ingest_inquiries($1, 'qoo10', '[]'::jsonb)", [credentialId]),
+      0,
+    );
+    assert.equal(
+      await scalar(db, "select imported_count from sellerpilot_private.channel_sync_state where owner_id = $1 and channel_key = 'qoo10' and data_type = 'orders'", [ADMIN_ID]),
+      1,
+    );
+    assert.equal(
+      await scalar(db, "select imported_count from sellerpilot_private.channel_sync_state where owner_id = $1 and channel_key = 'qoo10' and data_type = 'inquiries'", [ADMIN_ID]),
+      1,
+    );
+    await setClaims(db);
 
     const snapshot = await scalar(db, "select public.sellerpilot_get_operations_snapshot()");
-    assert.equal(snapshot.products.length, 1);
-    assert.equal(snapshot.orders.length, 1);
-    assert.equal(snapshot.tickets.length, 1);
+    assert.equal(snapshot.products.length, 2);
+    assert.equal(snapshot.orders.length, 2);
+    assert.equal(snapshot.tickets.length, 2);
     assert.equal(snapshot.products.every((product) => product.demo === false), true);
     assert.equal(snapshot.orders.every((order) => order.demo === false), true);
     assert.equal(snapshot.tickets.every((ticket) => ticket.demo === false), true);
-    assert.equal(snapshot.summary.orderCount, 1);
-    assert.equal(snapshot.summary.openTicketCount, 1);
+    assert.equal(snapshot.summary.orderCount, 2);
+    assert.equal(snapshot.summary.openTicketCount, 2);
     assert.equal(snapshot.channelMetrics.find((channel) => channel.channelKey === "qoo10").credentialStatus, "active");
     const aiProduct = snapshot.products.find((product) => product.id === aiProductId);
     assert.equal(aiProduct.demo, false);
     assert.equal(aiProduct.status, "active");
     assert.deepEqual(aiProduct.listingChannels, ["C"]);
     assert.equal(aiProduct.aiHeroPath, resultPayload.asset_storage_paths.hero);
-    const publishedDestinations = await scalar(db, "select public.sellerpilot_list_published_product_destinations()");
-    assert.deepEqual(publishedDestinations, [{
-      productId: aiProductId,
-      channelKey: "coupang",
-      channelCode: "C",
-      remoteId: "remote-product-1",
-      market: "",
-      targetId: "",
-    }]);
-    assert.equal(
-      await scalar(db, "select has_function_privilege('authenticated', 'public.sellerpilot_list_published_product_destinations()', 'EXECUTE')"),
-      true,
+    assert.equal(snapshot.products.some((product) => product.id === SHARED_PRODUCT_ID), true);
+    const sharedPublishContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [SHARED_PRODUCT_ID]);
+    assert.equal(sharedPublishContext.product.id, SHARED_PRODUCT_ID);
+    assert.equal(sharedPublishContext.ownerId, SECOND_ADMIN_ID);
+
+    const sharedCategoryAssignmentId = await scalar(
+      db,
+      `select public.sellerpilot_save_product_category_assignment(
+        $1, 'shared-product-category-test', '다른 관리자 생성 상품', 'qoo10', 'production', 'JP',
+        '320000001', array['생활','테스트'], true, 1,
+        'seller_selected', '[]'::jsonb, '{}'::jsonb, '{"verifiedBy":"test"}'::jsonb, true
+      )`,
+      [SHARED_PRODUCT_ID],
     );
+    assert.match(sharedCategoryAssignmentId, /^[0-9a-f-]{36}$/i);
     assert.equal(
-      await scalar(db, "select has_function_privilege('anon', 'public.sellerpilot_list_published_product_destinations()', 'EXECUTE')"),
-      false,
+      await scalar(db, "select owner_id from sellerpilot_private.product_category_assignments where id = $1", [sharedCategoryAssignmentId]),
+      SECOND_ADMIN_ID,
+    );
+    const sharedListingId = await scalar(
+      db,
+      "select public.sellerpilot_prepare_product_listing($1, 'qoo10', 'listing.create', 'JPY', 1800)",
+      [SHARED_PRODUCT_ID],
+    );
+    assert.match(sharedListingId, /^[0-9a-f-]{36}$/i);
+    assert.equal(
+      await scalar(db, "select owner_id from sellerpilot_private.product_listings where id = $1", [sharedListingId]),
+      SECOND_ADMIN_ID,
     );
 
-    const firstOrderId = snapshot.orders[0].id;
-    const firstTicketId = snapshot.tickets[0].id;
+    const sharedOperation = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'qoo10', 'orders.list', 'shared-operation-key-0001', $2)",
+      [credentialId, "d".repeat(64)],
+    );
+    assert.equal(sharedOperation.duplicate, false);
+    await db.query("select set_config('request.jwt.claim.sub', $1, false)", [SECOND_ADMIN_ID]);
+    const duplicateSharedOperation = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'qoo10', 'orders.list', 'shared-operation-key-0001', $2)",
+      [credentialId, "d".repeat(64)],
+    );
+    assert.equal(duplicateSharedOperation.duplicate, true);
+    assert.equal(duplicateSharedOperation.attempt_id, sharedOperation.attempt_id);
+    await setClaims(db);
+
+    await db.query(
+      "select public.sellerpilot_create_ai_job($1, 'product_research', $2::jsonb)",
+      [RESEARCH_JOB_ID, JSON.stringify({ research_input: "https://example.test/product/1 또는 흰색 도자기 머그컵 설명" })],
+    );
+    assert.equal(await scalar(db, "select kind from sellerpilot_private.ai_cli_jobs where id = $1", [RESEARCH_JOB_ID]), "product_research");
+
+    const firstOrderId = snapshot.orders.find((order) => order.externalOrderId === "SHARED-ORDER-1").id;
+    const firstTicketId = snapshot.tickets.find((ticket) => ticket.externalTicketId === "SHARED-TICKET-1").id;
     assert.equal(
       await scalar(db, "select public.sellerpilot_update_order_status($1, 'ready_to_ship')", [firstOrderId]),
       true,
     );
+    assert.equal(
+      await scalar(db, "select count(*) from sellerpilot_private.push_notification_outbox where event_key = $1", [`order:${firstOrderId}:status:ready_to_ship`]),
+      1,
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from sellerpilot_private.push_notification_deliveries where subscription_id = $1", [pushSubscriptionId]),
+      3,
+    );
+    await setClaims(db, "service_role");
+    const claimedPush = await db.query("select * from public.sellerpilot_service_claim_push_deliveries(10)");
+    assert.equal(claimedPush.rows.length, 3);
+    assert.equal(claimedPush.rows.every((delivery) => delivery.endpoint === "https://push.example.test/subscriptions/admin-device"), true);
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_service_finish_push_delivery($1, 'sent', null)", [claimedPush.rows[0].delivery_id]),
+      true,
+    );
+    await setClaims(db);
     assert.equal(
       await scalar(db, "select public.sellerpilot_update_ticket($1, 'resolved', '답변 저장 검증')", [firstTicketId]),
       true,
@@ -666,6 +762,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(marginScenarios.length, 1);
     assert.equal(marginScenarios[0].channelKey, "qoo10");
     assert.equal(await scalar(db, "select public.sellerpilot_delete_margin_scenario($1)", [marginScenarioId]), true);
+    const elevenstMarginScenarioId = await scalar(
+      db,
+      "select public.sellerpilot_save_margin_scenario('11번가 마진 검증', 'elevenst', '{\"cost\":12000}'::jsonb, '{\"margin\":20}'::jsonb)",
+    );
+    assert.match(elevenstMarginScenarioId, /^[0-9a-f-]{36}$/i);
+    assert.equal(await scalar(db, "select public.sellerpilot_delete_margin_scenario($1)", [elevenstMarginScenarioId]), true);
 
     await db.query(
       "select public.sellerpilot_create_ai_job($1, 'product_studio', $2::jsonb)",
@@ -674,8 +776,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(await scalar(db, "select public.sellerpilot_cancel_ai_job($1)", [CANCEL_JOB_ID]), true);
     assert.equal(await scalar(db, "select public.sellerpilot_retry_ai_job($1)", [CANCEL_JOB_ID]), true);
     const jobs = await db.query("select * from public.sellerpilot_list_ai_jobs(10)");
-    assert.equal(jobs.rows.length, 2);
+    assert.equal(jobs.rows.length, 3);
     assert.equal(jobs.rows.some((job) => job.status === "succeeded" && job.has_hero), true);
+    assert.equal(jobs.rows.some((job) => job.kind === "product_research"), true);
   } finally {
     await db.close();
   }

@@ -3,17 +3,6 @@ import { isIP } from "node:net";
 
 export const publicImageImportLimit = 20 * 1024 * 1024;
 
-export function preferLargerPublicImageUrl(input: string) {
-  const url = new URL(input);
-  if (
-    url.hostname.toLowerCase() === "cdn.daisomall.co.kr"
-    && /^\/file\/resize\/PD\/[^/]+\/thumb\/\d+\//i.test(url.pathname)
-  ) {
-    url.pathname = url.pathname.replace(/\/thumb\/\d+\//i, "/thumbnail/850/");
-  }
-  return url.toString();
-}
-
 export function isPrivateNetworkAddress(address: string) {
   const normalized = address.toLowerCase();
   if (
@@ -73,7 +62,7 @@ async function readLimitedBody(response: Response) {
 }
 
 export async function downloadPublicImage(input: string, fetcher: typeof fetch = fetch) {
-  let url = new URL(preferLargerPublicImageUrl(input));
+  let url = new URL(input);
   for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
     await assertPublicImageUrl(url);
     const response = await fetcher(url, {

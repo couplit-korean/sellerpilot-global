@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
+import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,7 @@ const mutationSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("margin_save"),
     name: z.string().trim().min(1).max(120),
-    channelKey: z.enum(["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"]),
+    channelKey: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
     inputs: z.record(z.string(), z.unknown()),
     result: z.record(z.string(), z.unknown()),
   }),
@@ -37,32 +38,59 @@ export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
 
-  const [{ data, error }, { data: marginScenarios }, { data: publishedDestinations }] = await Promise.all([
+  const [{ data, error }, { data: marginScenarios }, { data: syncStatus }, { data: credentialRows, error: credentialError }] = await Promise.all([
     admin.userClient.rpc("sellerpilot_get_operations_snapshot"),
     admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: 5 }),
-    admin.userClient.rpc("sellerpilot_list_published_product_destinations"),
+    admin.userClient.rpc("sellerpilot_get_channel_sync_status"),
+    admin.userClient.rpc("sellerpilot_list_credentials"),
   ]);
-  if (error) {
+  if (error || credentialError) {
     return NextResponse.json({ message: "운영 데이터를 불러오지 못했습니다." }, { status: 500 });
   }
   const payload = data && typeof data === "object" && !Array.isArray(data)
     ? { ...(data as Record<string, unknown>) }
     : {};
+
+  const credentials = Array.isArray(credentialRows)
+    ? credentialRows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
+    : [];
+  const activeProductionByChannel = new Map<string, Record<string, unknown>>();
+  for (const credential of credentials) {
+    const channel = typeof credential.channel === "string" ? credential.channel : "";
+    if (!channel || credential.environment !== "production" || credential.status !== "active" || activeProductionByChannel.has(channel)) continue;
+    activeProductionByChannel.set(channel, credential);
+  }
+  const verifiedChannels = new Set([...activeProductionByChannel.entries()]
+    .filter(([, credential]) => {
+      const expiresAt = typeof credential.expires_at === "string" ? Date.parse(credential.expires_at) : Number.POSITIVE_INFINITY;
+      return credential.last_check_status === "passed" && expiresAt > Date.now();
+    })
+    .map(([channel]) => channel));
+
+  if (Array.isArray(payload.channelMetrics)) {
+    payload.channelMetrics = payload.channelMetrics.map((metric) => {
+      if (!metric || typeof metric !== "object" || Array.isArray(metric)) return metric;
+      const channelMetric = metric as Record<string, unknown>;
+      const channelKey = typeof channelMetric.channelKey === "string" ? channelMetric.channelKey : "";
+      const credential = activeProductionByChannel.get(channelKey);
+      return {
+        ...channelMetric,
+        credentialStatus: verifiedChannels.has(channelKey) ? "active" : credential ? "unverified" : "missing",
+        credentialLastCheckStatus: credential?.last_check_status ?? null,
+        credentialLastCheckedAt: credential?.last_checked_at ?? null,
+      };
+    });
+  }
+  if (payload.summary && typeof payload.summary === "object" && !Array.isArray(payload.summary)) {
+    payload.summary = {
+      ...(payload.summary as Record<string, unknown>),
+      activeCredentialCount: verifiedChannels.size,
+    };
+  }
   payload.marginScenarios = Array.isArray(marginScenarios) ? marginScenarios : [];
+  payload.syncStatus = Array.isArray(syncStatus) ? syncStatus : [];
   if (Array.isArray(payload.products)) {
     const products = payload.products.filter((product): product is Record<string, unknown> => Boolean(product) && typeof product === "object" && !Array.isArray(product));
-    const destinationsByProduct = new Map<string, Array<Record<string, unknown>>>();
-    if (Array.isArray(publishedDestinations)) {
-      for (const destination of publishedDestinations) {
-        if (!destination || typeof destination !== "object" || Array.isArray(destination)) continue;
-        const row = destination as Record<string, unknown>;
-        const productId = typeof row.productId === "string" ? row.productId : "";
-        if (!productId) continue;
-        const existing = destinationsByProduct.get(productId) ?? [];
-        existing.push(row);
-        destinationsByProduct.set(productId, existing);
-      }
-    }
     const paths = products.map((product) => typeof product.aiHeroPath === "string" ? product.aiHeroPath : "").filter(Boolean);
     const { data: signed } = paths.length
       ? await admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrls(paths, 60 * 60)
@@ -70,7 +98,6 @@ export async function GET(request: Request) {
     let signedIndex = 0;
     payload.products = products.map((product) => {
       const next = { ...product };
-      next.listings = destinationsByProduct.get(String(product.id ?? "")) ?? [];
       if (typeof next.aiHeroPath === "string" && next.aiHeroPath) {
         next.imageUrl = signed?.[signedIndex]?.signedUrl ?? next.imageUrl ?? null;
         signedIndex += 1;
@@ -130,6 +157,9 @@ export async function POST(request: Request) {
 
   if (mutationError) {
     return NextResponse.json({ message: "운영 데이터를 저장하지 못했습니다." }, { status: 500 });
+  }
+  if (parsed.data.action === "order_status") {
+    await dispatchPendingPushNotifications(admin.serviceClient).catch(() => null);
   }
   return NextResponse.json({ ok: true, id }, { headers: { "cache-control": "no-store, max-age=0" } });
 }

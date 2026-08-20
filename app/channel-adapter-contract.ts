@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const primaryChannelSchema = z.enum(["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"]);
+export const primaryChannelSchema = z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]);
 export type PrimaryChannel = z.infer<typeof primaryChannelSchema>;
 
 export const channelContextSchema = z.object({

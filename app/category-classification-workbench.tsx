@@ -1,17 +1,10 @@
 "use client";
 
 import { AlertTriangle, BadgeCheck, Check, ChevronRight, LoaderCircle, RefreshCw, Search, ShieldCheck, Tags } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
-import {
-  applyCategoryLearning,
-  categoryKindCompatibility,
-  type CategoryLearningExample,
-  type LearnableCategorySuggestion,
-} from "../lib/channels/category-learning";
 import { channelMarket } from "../lib/channels/markets";
 import { createClient } from "../lib/supabase/client";
-import { userFacingErrorMessage } from "../lib/user-facing-errors";
 import { fetchChannelTargets } from "./channel-target-client";
 
 type CredentialRow = {
@@ -23,10 +16,10 @@ type CredentialRow = {
 
 type OperationStep = { name: string; ok: boolean; status: number; data: Record<string, unknown> };
 type OperationPayload = { ok?: boolean; steps?: OperationStep[]; message?: string };
-type CategorySuggestion = LearnableCategorySuggestion;
+type CategorySuggestion = { id: string; name: string; path: string[]; confidence: number; leaf: boolean };
 type CategoryAttribute = { id: string; name: string; required: boolean; values: Array<{ id: string; name: string }> };
 type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
-type LocalizedListing = { channel: "shopee" | "lazada"; market: string; locale: string; title: string; shortDescription: string; description: string; keywords: string[] };
+type LocalizedListing = { channel: ActiveChannelKey; market: string; locale: string; title: string; shortDescription: string; description: string; keywords: string[] };
 type ChannelState = {
   phase: "idle" | "suggesting" | "inspecting" | "ready" | "confirmed" | "error";
   suggestions: CategorySuggestion[];
@@ -87,41 +80,12 @@ function queryScore(query: string, candidate: string) {
 
 export function sanitizeCategoryQuery(value: string) {
   return value
-    .replace(/\[(?:(?:api|program)\s*test|업로드\s*테스트)[^\]]*\]/giu, " ")
+    .replace(/\[(?:api|program)\s*test[^\]]*\]/giu, " ")
     .replace(/\b(?:api|program)\s*test\b/giu, " ")
     .replace(/(?:판매\s*금지|섭취\s*금지|샘플\s*등록|not\s*for\s*sale|do\s*not\s*(?:sell|consume))/giu, " ")
-    .replace(/이미지\s*샘플(?:\s*\d+차)?/gu, " ")
     .replace(/[·|]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-export function englishCategoryQuery(value: string) {
-  const normalized = value.toLocaleLowerCase();
-  const aliases: Array<[RegExp, string]> = [
-    [/(머그|컵|잔|mug|cup)/u, "white ceramic coffee mug"],
-    [/(토너|화장수|toner|face\s*mist)/u, "facial toner skincare"],
-    [/(립스틱|lipstick)/u, "lipstick"],
-    [/(브러시|brush)/u, "makeup brush set"],
-    [/(흰쌀밥|백미|쌀|rice)/u, "white rice"],
-    [/(펜네|파스타|penne|pasta)/u, "penne pasta"],
-    [/(원피스|데님.*드레스|dress(?:es)?)/u, "women's dress"],
-    [/(티셔츠|t[\s-]?shirt)/u, "white t-shirt"],
-    [/(후드|hood)/u, "hoodie"],
-    [/(테디|곰인형|teddy|plush)/u, "teddy bear plush toy"],
-    [/(장난감.*자동차|자동차.*장난감|toy\s*car)/u, "toy car"],
-    [/(원목.*기차|기차|열차|wooden\s*train|toy\s*train)/u, "wooden toy train"],
-    [/(컬러.*블록|블록|blocks?|building\s*set)/u, "building blocks toy"],
-    [/(어유|오메가|fish\s*oil|omega)/u, "fish oil supplement"],
-    [/(비타민|vitamin)/u, "vitamin supplement"],
-    [/(캔버스.*토트|토트.*백|tote)/u, "canvas tote bag"],
-    [/(수납.*박스|보관.*박스|storage\s*(?:box|bin))/u, "storage box"],
-  ];
-  return aliases.find(([pattern]) => pattern.test(normalized))?.[1] ?? value;
-}
-
-function isGenericFallbackTitle(value: string) {
-  return /(?:sample product|sampel produk|listing test|ujian penyenaraian)/iu.test(value);
 }
 
 function lazadaQueryScore(query: string, candidate: string) {
@@ -142,7 +106,6 @@ function qoo10SearchTerms(query: string) {
   if (/(컵|머그|cup|mug|잔)/u.test(normalized)) aliases.push("マグカップ", "ティーカップ", "食器");
   if (/(에스프레소|커피|coffee|espresso)/u.test(normalized)) aliases.push("コーヒー");
   if (/(의류|옷|shirt|dress|팬츠|바지)/u.test(normalized)) aliases.push("服", "シャツ", "パンツ");
-  if (/(원피스|dress(?:es)?)/u.test(normalized)) aliases.push("ワンピース", "ドレス", "レディース ワンピース");
   if (/(티셔츠|t[\s-]?shirt|반팔)/u.test(normalized)) aliases.push("Tシャツ", "カットソー", "トップス");
   if (/(후드|재킷|hood|jacket)/u.test(normalized)) aliases.push("パーカー", "ジャケット", "アウター", "服");
   if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalized)) aliases.push("コスメ", "スキンケア", "クリーム");
@@ -188,12 +151,11 @@ function qoo10PriorityTerms(query: string) {
   if (/(펜네|penne)/u.test(normalized)) return ["ペンネ", "パスタ"];
   if (/(파스타|pasta)/u.test(normalized)) return ["パスタ"];
   if (/(밀가루|flour)/u.test(normalized)) return ["小麦粉"];
-  if (/(원피스|dress(?:es)?)/u.test(normalized)) return ["ワンピース", "シャツワンピ", "ドレス"];
   if (/(티셔츠|t[\s-]?shirt|반팔)/u.test(normalized)) return ["Tシャツ・カットソー", "Tシャツ"];
   if (/(후드|hood)/u.test(normalized)) return ["パーカー", "フード付きジャケット", "ジャケット"];
   if (/(재킷|jacket)/u.test(normalized)) return ["ジャケット", "アウター"];
   if (/(테디|곰인형|teddy)/u.test(normalized)) return ["テディベア", "ぬいぐるみ"];
-  if (/(기차|열차|train)/u.test(normalized)) return ["電車・汽車・レール", "電車のおもちゃ", "鉄道玩具", "木製玩具"];
+  if (/(기차|열차|train)/u.test(normalized)) return ["電車のおもちゃ", "木製玩具"];
   if (/(블록|blocks?)/u.test(normalized)) return ["ブロック", "積み木"];
   if (/(자동차.*완구|완구.*자동차|toy\s?car)/u.test(normalized)) return ["ミニカー", "車のおもちゃ"];
   if (/(어유|오메가|fish\s?oil|omega|オメガ|フィッシュオイル|dha|epa)/u.test(normalized)) return ["DHA・EPA", "DHA", "EPA", "オメガ3", "フィッシュオイル"];
@@ -224,15 +186,8 @@ function qoo10PriorityScore(query: string, candidate: CategorySuggestion) {
 
 function qoo10CategoryCompatibility(query: string, candidate: CategorySuggestion) {
   const path = candidate.path.join(" ").toLocaleLowerCase();
-  const normalizedQuery = query.toLocaleLowerCase();
-  if (!/(ふるさと納税|고향세)/u.test(normalizedQuery) && path.includes("ふるさと納税")) return false;
-  if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(normalizedQuery) && /(犬用品|猫用品|ペット)/u.test(candidate.path.join(" "))) return false;
-  if (/(원목.*기차|기차|열차|wooden\s*train|toy\s*train)/u.test(normalizedQuery)) {
-    return /(電車|鉄道|列車|トレイン|木製玩具|知育玩具)/u.test(candidate.path.join(" "));
-  }
-  if (/(컬러.*블록|블록|blocks?|building\s*set)/u.test(normalizedQuery)) {
-    return /(ブロック|積み木|組み立て|知育玩具)/u.test(candidate.path.join(" "));
-  }
+  if (!/(ふるさと納税|고향세)/u.test(query.toLocaleLowerCase()) && path.includes("ふるさと納税")) return false;
+  if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(query.toLocaleLowerCase()) && /(犬用品|猫用品|ペット)/u.test(candidate.path.join(" "))) return false;
   return queryScore(qoo10SearchTerms(query), `${candidate.path.join(" ")} ${candidate.name}`) > 0;
 }
 
@@ -241,11 +196,9 @@ function shopeeSearchTerms(query: string) {
   const aliases = [query];
   if (/(cup|mug|espresso|컵|머그|잔)/u.test(normalized)) aliases.push("mug cups drinkware dinnerware coffee tea");
   if (/(shirt|dress|pants|clothes|의류|옷|바지)/u.test(normalized)) aliases.push("fashion apparel tops bottoms clothing");
-  if (/(원피스|dress(?:es)?)/u.test(normalized)) aliases.push("women dresses dress fashion clothing");
   if (/(t[\s-]?shirt|tee|티셔츠|반팔)/u.test(normalized)) aliases.push("t-shirt tee shirts tops");
   if (/(hoodie|hood|jacket|후드|재킷)/u.test(normalized)) aliases.push("hoodies sweatshirts jackets outerwear clothing");
   if (/(cosmetic|beauty|skin|cream|화장품|스킨|크림)/u.test(normalized)) aliases.push("beauty skincare makeup cosmetics");
-  if (/(toner|mist|토너|화장수)/u.test(normalized)) aliases.push("facial toner face mist skincare beauty");
   if (/(soap|cleanser|cleansing|wash|비누|세정)/u.test(normalized)) aliases.push("soap cleanser cleansing bath body wash skincare");
   if (/(brush|브러시)/u.test(normalized)) aliases.push("makeup brushes beauty tools");
   if (/(sponge|puff|스펀지|퍼프)/u.test(normalized)) aliases.push("makeup sponges puffs beauty tools");
@@ -255,8 +208,6 @@ function shopeeSearchTerms(query: string) {
   if (/(flour|밀가루)/u.test(normalized)) aliases.push("flour baking cooking ingredients food staples");
   if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(normalized)) aliases.push("teddy bears plush stuffed toys");
   if (/(toy\s?car|자동차.*완구|완구.*자동차|장난감.*차)/u.test(normalized)) aliases.push("toy cars vehicles toys");
-  if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalized)) aliases.push("toy trains train sets railway wooden toys vehicles");
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalized)) aliases.push("building blocks block toys construction toys building toys bricks educational toys");
   if (/(fish\s?oil|omega|어유|오메가|dha|epa)/u.test(normalized)) aliases.push("fish oil omega 3 vitamins supplements health");
   if (/(vitamin|비타민)/u.test(normalized)) aliases.push("vitamins supplements health");
   if (/(tote|canvas|캔버스.*토트|토트백)/u.test(normalized)) aliases.push("tote bags fashion bags");
@@ -274,11 +225,6 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
     || normalizedCandidate.endsWith(`> ${term}`)
     || normalizedCandidate.endsWith(`› ${term}`)
     || normalizedCandidate.endsWith(`/ ${term}`);
-
-  if (/(cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) {
-    return /(?:\b(?:mugs?|cups?)\b|drinkware|coffee ware|tea ware)/u.test(normalizedCandidate)
-      && !/(menstrual|measuring|suction|baby|teeth|whitening|tea bags?|cup holders?|cupboards?)/u.test(normalizedCandidate);
-  }
 
   if (/(rice|쌀|밥)/u.test(normalizedQuery)) {
     if (/(rice\s+cooker|appliance)/u.test(normalizedCandidate)) return false;
@@ -299,14 +245,6 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
     return /(toy vehicle|toy car|vehicle playset|diecast)/u.test(normalizedCandidate)
       && !/(sex|pet|bird)/u.test(normalizedCandidate);
   }
-  if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalizedQuery)) {
-    return /(toy trains?|train sets?|railway|wooden toys?|toy vehicles?|vehicle toys?)/u.test(normalizedCandidate)
-      && !/(sex|pet|shoe|performance enhancement)/u.test(normalizedCandidate);
-  }
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) {
-    return /(building blocks?|block toys?|construction (?:sets?|toys?)|building toys?|stacking blocks?|bricks?|educational toys?)/u.test(normalizedCandidate)
-      && !/(sex|pet|engine|motor)/u.test(normalizedCandidate);
-  }
   if (/(fish\s?oil|omega|어유|오메가|dha|epa|vitamin|비타민)/u.test(normalizedQuery)) {
     return /(health|wellness|vitamin|supplement|fish oil|omega|dha|epa)/u.test(normalizedCandidate)
       && !/(pet|animal feed)/u.test(normalizedCandidate);
@@ -323,9 +261,6 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
   if (/(curler|eyelash|뷰러|속눈썹)/u.test(normalizedQuery)) {
     return /(eyelash curler|lash curler)/u.test(normalizedCandidate);
   }
-  if (/(toner|mist|토너|화장수)/u.test(normalizedQuery)) {
-    return /(toner|face mist|facial mist)/u.test(normalizedCandidate) && !/(supplement|test)/u.test(normalizedCandidate);
-  }
   if (/(cosmetic|beauty|skin|화장품|스킨)/u.test(normalizedQuery)) {
     return /(beauty|personal care|makeup|cosmetic|skin care)/u.test(normalizedCandidate);
   }
@@ -334,10 +269,6 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
   }
   if (/(jacket|재킷)/u.test(normalizedQuery)) {
     return /(jacket|outerwear)/u.test(normalizedCandidate) && !/(pet|baby costume)/u.test(normalizedCandidate);
-  }
-  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) {
-    return /(?:^|\b)dresses?(?:\b|$)/u.test(normalizedCandidate)
-      && !/(dress\s*up|costume|toy|maternity|wash|cream|liner)/u.test(normalizedCandidate);
   }
   if (/(t[\s-]?shirt|tee|티셔츠|반팔)/u.test(normalizedQuery)) {
     return /(fashion|clothes|clothing|apparel|top|shirt|hoodie|sweatshirt|jacket|outerwear)/u.test(normalizedCandidate);
@@ -360,23 +291,18 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   const score = (terms: string[]) => terms.reduce((total, term, index) => (
     value.includes(term) ? Math.max(total, terms.length - index) : total
   ), 0);
-  if (/(cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) return score(["mugs", "mug", "coffee cups", "cups", "drinkware", "dinnerware"]);
   if (/(rice|쌀|밥)/u.test(normalizedQuery)) return score(["food staples", "food & beverages", "instant rice", "ready meal", "rice"]);
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return score(["pasta", "penne", "noodles", "food staples", "food & beverages"]);
   if (/(flour|밀가루)/u.test(normalizedQuery)) return score(["flour", "baking", "cooking ingredients", "food staples", "food & beverages"]);
   if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(normalizedQuery)) return score(["teddy", "plush", "stuffed", "toys"]);
   if (/(toy\s?car|자동차.*완구|완구.*자동차|장난감.*차)/u.test(normalizedQuery)) return score(["toy cars", "toy vehicles", "toys"]);
-  if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalizedQuery)) return score(["toy trains", "train sets", "railway", "toy vehicles", "vehicle toys", "wooden toys", "toys"]);
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return score(["building blocks", "block toys", "construction toys", "construction sets", "building toys", "bricks", "stacking blocks", "educational toys", "toys"]);
   if (/(fish\s?oil|omega|어유|오메가|dha|epa)/u.test(normalizedQuery)) return score(["fish oil", "omega 3", "omega", "supplements", "health"]);
   if (/(vitamin|비타민)/u.test(normalizedQuery)) return score(["vitamins", "supplements", "health"]);
-  if (/(toner|mist|토너|화장수)/u.test(normalizedQuery)) return score(["toners & mists", "facial toners", "toners", "face mists", "mists"]);
   if (/(sponge|puff|스펀지|퍼프)/u.test(normalizedQuery)) return score(["makeup sponges", "makeup puffs", "sponges", "puffs", "applicators"]);
   if (/(brush|브러시)/u.test(normalizedQuery)) return score(["makeup brushes", "cosmetic brushes"]);
   if (/(cream|moistur|크림|보습)/u.test(normalizedQuery)) return score(["face moisturizers", "facial moisturizers", "face cream", "skin care"]);
   if (/(hoodie|hood|후드)/u.test(normalizedQuery)) return score(["hoodies", "hooded sweatshirts", "sweatshirts"]);
   if (/(jacket|재킷)/u.test(normalizedQuery)) return score(["jackets", "outerwear"]);
-  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return score(["women's dresses", "dresses", "dress"]);
   if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) return score(["storage boxes", "home organizers", "home & living"]);
   if (/(hanger|옷걸이|행거)/u.test(normalizedQuery)) return score(["clothes hangers", "clothing hangers", "coat hangers", "hangers"]);
   return 0;
@@ -385,8 +311,6 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
 function lazadaSearchTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   const aliases = [query];
-  if (/(cawan|cup|mug|espresso|컵|머그|잔)/u.test(normalized)) aliases.push("mugs cups drinkware coffee tea dinnerware");
-  if (/(toner|mist|토너|화장수)/u.test(normalized)) aliases.push("toner facial toner toner & mists skin care");
   if (/(krim|cream|크림|moistur)/u.test(normalized)) aliases.push("facial moisturizers skin care cream");
   if (/(sabun|soap|cleanser|cleansing|비누|세정)/u.test(normalized)) aliases.push("soap facial cleansers bath body skin care");
   if (/(lipstik|lipstick|립스틱|gincu)/u.test(normalized)) aliases.push("lipstick lip color makeup lips");
@@ -397,12 +321,9 @@ function lazadaSearchTerms(query: string) {
   if (/(pasta|penne|파스타|펜네)/u.test(normalized)) aliases.push("pasta noodles penne");
   if (/(tepung|flour|밀가루)/u.test(normalized)) aliases.push("flour baking cooking ingredients");
   if (/(t-?shirt|티셔츠|반팔)/u.test(normalized)) aliases.push("t-shirts tops clothing");
-  if (/(원피스|dress(?:es)?)/u.test(normalized)) aliases.push("women dresses women's clothing fashion");
   if (/(hoodie|후드|jaket)/u.test(normalized)) aliases.push("hoodies sweatshirts jackets clothing");
   if (/(teddy|beruang|곰인형|테디)/u.test(normalized)) aliases.push("teddy bears plush toys stuffed animals");
   if (/(kereta|toy\s?car|자동차.*완구|완구.*자동차)/u.test(normalized)) aliases.push("toy cars vehicles toys");
-  if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalized)) aliases.push("toy trains train sets railway wooden toys");
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalized)) aliases.push("building toys building blocks block toys construction toys construction sets educational toys");
   if (/(minyak ikan|fish\s?oil|omega|오메가|어유)/u.test(normalized)) aliases.push("fish oil omega 3 supplements dha epa");
   if (/(vitamin|비타민)/u.test(normalized)) aliases.push("vitamins supplements health");
   if (/(tote|kanvas|캔버스.*토트|토트백)/u.test(normalized)) aliases.push("tote bags fashion bags");
@@ -415,23 +336,14 @@ function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestio
   const normalizedQuery = query.toLocaleLowerCase();
   const name = candidate.name.toLocaleLowerCase();
   const path = candidate.path.join(" ").toLocaleLowerCase();
-  if (/(cawan|cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) return /(?:\b(?:mugs?|cups?)\b|drinkware|coffee ware|tea ware|cawan)/u.test(`${path} ${name}`)
-    && !/menstrual|measuring|suction|baby|tea bags?|coffee beans?|cup holders?|cupboards?/u.test(`${path} ${name}`);
   if (/(rice|쌀|밥|nasi)/u.test(normalizedQuery)) return /rice|beras|nasi/u.test(name);
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return /pasta|penne|noodle/u.test(name) && !/rice|beras/u.test(name);
   if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return /flour|tepung/u.test(name);
   if (/(teddy|plush|stuffed|테디|곰인형|beruang)/u.test(normalizedQuery)) return /teddy|plush|stuffed|soft toy|beruang/u.test(name);
   if (/(toy\s?car|자동차.*완구|완구.*자동차|kereta)/u.test(normalizedQuery)) return /toy car|vehicle|kereta|car/u.test(name) && /toy|kereta|vehicle/u.test(path);
-  if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalizedQuery)) return /toy train|train car|train set|railway|wooden toy|push & pull toy/u.test(`${path} ${name}`) && /toy|game|vehicle|wooden/u.test(path);
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return /building toy|building block|block toy|construction (?:set|toy)|stacking block|brick|educational toy/u.test(`${path} ${name}`);
   if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return /fish oil|omega|dha|epa|minyak ikan|vitamin|supplement|health/u.test(`${path} ${name}`)
     && !/pet|animal feed|veterinary|mother|baby|infant|bayi|kanak|ibu/u.test(`${path} ${name}`);
-  if (/(vitamin|비타민)/u.test(normalizedQuery)) return /vitamin|supplement/u.test(`${path} ${name}`)
-    && !/pet|animal feed|veterinary|mother|baby|infant|bayi|kanak|ibu/u.test(`${path} ${name}`);
-  if (/(toner|mist|토너|화장수)/u.test(normalizedQuery)) return /toner|mist/u.test(name) && !/room|air|car/u.test(path);
-  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return /dresses?/u.test(name)
-    && /women'?s clothing|women fashion|pakaian wanita/u.test(path)
-    && !/maternity|costume|pretend|toy/u.test(`${path} ${name}`);
+  if (/(vitamin|비타민)/u.test(normalizedQuery)) return /vitamin|supplement/u.test(`${path} ${name}`);
   if (/(storage\s?(?:box|bin)|수납.*박스|kotak simpanan)/u.test(normalizedQuery)) return /storage|organizer|kotak|box/u.test(name);
   return lazadaQueryScore(lazadaSearchTerms(query), `${path} ${name}`) > 0;
 }
@@ -440,34 +352,24 @@ function lazadaPriorityScore(query: string, candidate: CategorySuggestion) {
   const normalizedQuery = query.toLocaleLowerCase();
   const name = candidate.name.toLocaleLowerCase();
   const score = (terms: string[]) => terms.reduce((total, term, index) => name.includes(term) ? Math.max(total, terms.length - index) : total, 0);
-  if (/(cawan|cup|mug|espresso|컵|머그|잔)/u.test(normalizedQuery)) return score(["mugs", "mug", "coffee cups", "cups", "drinkware"]);
   if (/(rice|쌀|밥|nasi)/u.test(normalizedQuery)) return score(["ready to eat rice", "instant rice", "white rice", "rice"]);
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return score(["penne", "pasta", "noodles"]);
   if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return score(["wheat flour", "flour", "tepung"]);
-  if (/(wooden\s*train|toy\s*train|기차|열차)/u.test(normalizedQuery)) return score(["train cars & sets", "toy trains", "train sets", "railway", "wooden toys", "push & pull toys"]);
-  if (/(building\s*blocks?|blocks?|블록)/u.test(normalizedQuery)) return score(["building toys", "building blocks", "block toys", "construction toys", "construction sets", "bricks", "stacking blocks", "educational toys"]);
   if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return score(["fish oil", "omega 3", "omega", "dietary supplements", "vitamins & supplements", "health supplements"]);
-  if (/(toner|mist|토너|화장수)/u.test(normalizedQuery)) return score(["toner & mists", "facial toner", "toner", "face mist", "mist"]);
-  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return score(["dresses", "dress"]);
   return 0;
 }
 
 function smartstoreSearchTerms(query: string) {
   const normalized = query.toLocaleLowerCase();
   const aliases = [query];
-  if (/(토너|화장수|toner|mist)/u.test(normalized)) aliases.push("스킨 토너 화장수 페이셜토너 스킨케어 화장품");
   if (/(화장품|메이크업|스킨|크림|립스틱|cosmetic|beauty)/u.test(normalized)) aliases.push("화장품 메이크업 스킨케어 뷰티");
   if (/(브러시|스펀지|퍼프|뷰러|속눈썹|화장도구)/u.test(normalized)) aliases.push("메이크업소품 화장소품 미용소품 브러시 퍼프 뷰러");
   if (/(쌀|밥|파스타|펜네|밀가루|식품|food|rice|pasta|flour)/u.test(normalized)) aliases.push("식품 농산물 가공식품 면류 쌀 밀가루");
   if (/(티셔츠|셔츠|후드|재킷|의류|옷|clothes|shirt|jacket)/u.test(normalized)) aliases.push("패션의류 티셔츠 셔츠 후드 집업 재킷");
-  if (/(원피스|dress(?:es)?)/u.test(normalized)) aliases.push("여성의류 원피스 미디원피스 롱원피스");
   if (/(테디|곰인형|자동차.*완구|완구|장난감|toy|plush)/u.test(normalized)) aliases.push("완구 장난감 봉제인형 자동차완구 미니카");
-  if (/(원목.*기차|기차|열차|wooden\s*train|toy\s*train)/u.test(normalized)) aliases.push("완구 작동완구 기차 트랙 철도 기차완구 원목완구");
-  if (/(컬러.*블록|블록|blocks?|building\s*set)/u.test(normalized)) aliases.push("완구 블록 블록완구 조립완구 쌓기나무");
   if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalized)) aliases.push("건강식품 건강기능식품 영양제 비타민 오메가3 어유");
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalized)) aliases.push("수납 박스 수납박스 리빙박스 수납함 정리함 정리 바구니");
   if (/(옷걸이|행거|hanger)/u.test(normalized)) aliases.push("옷걸이 행거 의류수납 세탁용품");
-  if (/(머그|컵|잔|mug|cup)/u.test(normalized)) aliases.push("머그컵 머그잔 컵 물컵 찻잔 식기 주방용품");
   return aliases.join(" ");
 }
 
@@ -484,17 +386,12 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
     && /(화장품|미용|뷰티|메이크업)/u.test(normalizedCandidate)
     && !/(클렌저|세척|케이스|칫솔)/u.test(normalizedCandidate);
   if (/(뷰러|속눈썹)/u.test(normalizedQuery)) return /(뷰러|아이래쉬컬러)/u.test(normalizedCandidate);
-  if (/(토너|화장수|toner|mist)/u.test(normalizedQuery)) return /(스킨\/토너|스킨.*토너|토너|화장수)/u.test(normalizedCandidate)
-    && !/(브러시|패드|남성)/u.test(normalizedCandidate);
   if (/(화장도구)/u.test(normalizedQuery)) return /(메이크업소품|화장소품|미용소품|브러시|퍼프|스펀지|뷰러)/u.test(normalizedCandidate);
   if (/(화장품|스킨|크림|cosmetic|beauty)/u.test(normalizedQuery)) return /(화장품|스킨케어|크림|로션|메이크업)/u.test(normalizedCandidate);
   if (/(티셔츠|셔츠|반팔|t[\s-]?shirt)/u.test(normalizedQuery)) return /(티셔츠|반팔티|상의|패션의류)/u.test(normalizedCandidate);
   if (/(후드|재킷|hood|jacket)/u.test(normalizedQuery)) return /(후드|후드집업|재킷|점퍼|아우터)/u.test(normalizedCandidate);
-  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return /(여성의류.*원피스|원피스.*여성의류|미디원피스|롱원피스|미니원피스)/u.test(normalizedCandidate);
   if (/(테디|곰인형|봉제|teddy|plush)/u.test(normalizedQuery)) return /(봉제인형|곰인형|테디베어)\s*$/u.test(normalizedCandidate);
   if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return /(자동차완구|미니카|장난감자동차|자동차장난감|작동완구|탈것완구|운송수단완구)/u.test(normalizedCandidate);
-  if (/(원목.*기차|기차|열차|wooden\s*train|toy\s*train)/u.test(normalizedQuery)) return /((기차|철도|트랙).*(완구|장난감|놀이)|(완구|장난감|작동완구).*(기차|철도|트랙)|기차\/트랙|원목완구)/u.test(normalizedCandidate);
-  if (/(컬러.*블록|블록|blocks?|building\s*set)/u.test(normalizedQuery)) return /(블록완구|블록|조립완구|쌓기나무)/u.test(normalizedCandidate);
   if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalizedQuery)) {
     return /(건강식품|건강기능식품|영양제|비타민|오메가3|어유|epa|dha)/u.test(normalizedCandidate)
       && !/(반려|애완|동물)/u.test(normalizedCandidate);
@@ -502,8 +399,6 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return /(수납박스|리빙박스|수납함|정리함|정리 바구니)/u.test(normalizedCandidate);
   if (/(옷걸이|행거|hanger)/u.test(normalizedQuery)) return /(옷걸이|의류수납|세탁용품)/u.test(normalizedCandidate);
   if (/(캔버스.*토트|토트백|tote)/u.test(normalizedQuery)) return /(토트백|숄더백|에코백)/u.test(normalizedCandidate);
-  if (/(머그|컵|잔|mug|cup)/u.test(normalizedQuery)) return /(머그컵|머그잔|물컵|찻잔|커피잔|일반컵)/u.test(normalizedCandidate)
-    && !/(월경|생리|계량|흡착|유아)/u.test(normalizedCandidate);
   return queryScore(smartstoreSearchTerms(query), candidate) > 0;
 }
 
@@ -516,13 +411,8 @@ function smartstorePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(밀가루|flour)/u.test(normalizedQuery)) return score(["밀가루", "제빵용가루", "가루"]);
   if (/(스펀지|퍼프)/u.test(normalizedQuery)) return score(["메이크업스펀지", "메이크업퍼프", "스펀지", "퍼프"]);
   if (/(브러시)/u.test(normalizedQuery)) return score(["브러시세트", "메이크업브러시", "브러시"]);
-  if (/(토너|화장수|toner|mist)/u.test(normalizedQuery)) return score(["스킨/토너", "스킨 토너", "토너", "화장수"]);
   if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return score(["미니카", "자동차완구", "장난감자동차", "작동완구", "탈것완구"]);
-  if (/(원목.*기차|기차|열차|wooden\s*train|toy\s*train)/u.test(normalizedQuery)) return score(["기차/트랙 작동완구", "기차완구", "철도완구", "원목완구", "작동완구"]);
-  if (/(컬러.*블록|블록|blocks?|building\s*set)/u.test(normalizedQuery)) return score(["블록완구", "블록", "조립완구", "쌓기나무"]);
-  if (/(원피스|dress(?:es)?)/u.test(normalizedQuery)) return score(["여성의류 원피스", "미디원피스", "롱원피스", "미니원피스", "원피스"]);
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return score(["리빙박스", "수납박스", "수납함", "정리함"]);
-  if (/(머그|컵|잔|mug|cup)/u.test(normalizedQuery)) return score(["머그컵", "머그잔", "물컵", "커피잔", "찻잔", "일반컵"]);
   return 0;
 }
 
@@ -551,14 +441,13 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
   const root = { steps: payload.steps ?? [] };
   const directCoupang = records(root).find((row) => text(row, ["predictedCategoryId"]));
   if (channel === "coupang" && directCoupang) {
-    const suggestion = {
+    return [{
       id: text(directCoupang, ["predictedCategoryId"]),
       name: text(directCoupang, ["predictedCategoryName"]) || "쿠팡 추천 카테고리",
       path: [text(directCoupang, ["predictedCategoryName"])].filter(Boolean),
       confidence: text(directCoupang, ["autoCategorizationPredictionResultType"]) === "SUCCESS" ? 0.98 : 0.72,
       leaf: true,
-    };
-    return categoryKindCompatibility(query, `${suggestion.path.join(" ")} ${suggestion.name}`) ? [suggestion] : [];
+    }];
   }
   const directTemu = records(root).find((row) => text(row, ["catId"]));
   if (channel === "temu" && directTemu) {
@@ -628,7 +517,6 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
     .filter((item) => channel !== "shopee" || shopeeCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
     .filter((item) => channel !== "lazada" || lazadaCategoryCompatibility(query, item))
     .filter((item) => channel !== "smartstore" || smartstoreCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
-    .filter((item) => categoryKindCompatibility(query, `${item.path.join(" ")} ${item.name}`))
     .sort((left, right) => {
       if (channel === "qoo10") {
         const leftPriority = qoo10PriorityScore(query, left);
@@ -655,7 +543,7 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
     .slice(0, 5);
 }
 
-export function normalizeAttributes(payloads: OperationPayload[]) {
+function normalizeAttributes(payloads: OperationPayload[]) {
   const found = records({ payloads }).flatMap((row): CategoryAttribute[] => {
     const constraint = row.aspectConstraint && typeof row.aspectConstraint === "object" && !Array.isArray(row.aspectConstraint)
       ? row.aspectConstraint as Record<string, unknown>
@@ -685,31 +573,7 @@ export function normalizeAttributes(payloads: OperationPayload[]) {
     }).slice(0, 100);
     return [{ id, name, required, values }];
   });
-  const childCertificationRows = records({ payloads }).filter((row) => (
-    Array.isArray(row.kindTypes)
-    && row.kindTypes.map(String).includes("CHILD_CERTIFICATION")
-    && text(row, ["id"])
-  ));
-  const childCategorySignal = found.some((attribute) => /(연령|어린이|아동|키즈|(?:^|\s)age(?:\s|$))/iu.test(attribute.name));
-  const childCertificationAttributes: CategoryAttribute[] = childCertificationRows.length && childCategorySignal ? [
-    { id: "NAVER_MODEL_NAME", name: "모델명", required: true, values: [] },
-    { id: "NAVER_COLOR", name: "색상", required: true, values: [] },
-    { id: "NAVER_SIZE", name: "크기", required: true, values: [] },
-    { id: "NAVER_RECOMMENDED_AGE", name: "권장 사용 연령", required: true, values: [] },
-    { id: "NAVER_RELEASE_DATE_TEXT", name: "동일 모델 출시연월", required: true, values: [] },
-    {
-      id: "NAVER_CHILD_CERTIFICATION_INFO_ID",
-      name: "어린이제품 인증 종류",
-      required: true,
-      values: childCertificationRows.map((row) => ({ id: text(row, ["id"]), name: text(row, ["name"]) })).filter((item) => item.id && item.name),
-    },
-    { id: "NAVER_CHILD_CERTIFICATION_TYPE", name: "KC 인증정보", required: true, values: [] },
-    { id: "NAVER_CHILD_CERTIFICATION_NUMBER", name: "어린이제품 인증번호", required: true, values: [] },
-    { id: "NAVER_CHILD_CERTIFICATION_AGENCY", name: "인증 기관명", required: true, values: [] },
-    { id: "NAVER_CHILD_CERTIFICATION_COMPANY", name: "인증 상호명", required: true, values: [] },
-  ] : [];
-  return [...new Map([...found, ...childCertificationAttributes].map((item) => [item.id, item])).values()]
-    .sort((left, right) => Number(right.required) - Number(left.required));
+  return [...new Map(found.map((item) => [item.id, item])).values()].sort((left, right) => Number(right.required) - Number(left.required));
 }
 
 function categoryPathLabel(category: CategorySuggestion) {
@@ -734,13 +598,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   const [localizedListings, setLocalizedListings] = useState<LocalizedListing[]>([]);
   const [sourceImageUrl, setSourceImageUrl] = useState("");
   const [loadingCredentials, setLoadingCredentials] = useState(true);
-  const stateScopeRef = useRef(sourceRef);
 
-  useEffect(() => {
-    stateScopeRef.current = sourceRef;
-    setQuery(productName);
-    setStates({});
-  }, [productId, productName, sourceRef]);
+  useEffect(() => setQuery(productName), [productName]);
   useEffect(() => {
     let mounted = true;
     setSourceImageUrl("");
@@ -771,8 +630,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
           const lazadaTargets = lazadaResponse.ok && Array.isArray(lazadaPayload.targets) ? lazadaPayload.targets : [];
           setTargets({ shopee: shopeeTargets, lazada: lazadaTargets });
           setTargetErrors({
-            shopee: shopeeResponse.ok ? "" : userFacingErrorMessage(shopeePayload.message, "Shopee 판매 국가 정보를 불러오지 못했습니다. 다시 연결해 주세요."),
-            lazada: lazadaResponse.ok ? "" : userFacingErrorMessage(lazadaPayload.message, "Lazada 판매 국가 정보를 불러오지 못했습니다. 다시 연결해 주세요."),
+            shopee: shopeeResponse.ok ? "" : shopeePayload.message ?? "Shopee 등록 대상 정보를 불러오지 못했습니다.",
+            lazada: lazadaResponse.ok ? "" : lazadaPayload.message ?? "Lazada 등록 대상 정보를 불러오지 못했습니다.",
           });
           setSelectedMarkets((current) => ({
             shopee: current.shopee ?? shopeeTargets[0]?.marketCode,
@@ -791,9 +650,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     return () => { mounted = false; };
   }, [productId]);
 
-  const activeCredential = useMemo(() => new Map(credentials
-    .filter((row) => row.status === "active" && row.environment === "production")
-    .map((row) => [row.channel, row])), [credentials]);
+  const activeCredential = useMemo(() => new Map(credentials.filter((row) => row.status === "active").map((row) => [row.channel, row])), [credentials]);
   const visibleChannels = useMemo(() => {
     if (!enabledChannels?.length) return activeChannelKeys;
     const enabled = new Set(enabledChannels);
@@ -827,30 +684,16 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const manualQuery = sanitizeCategoryQuery(query);
     const defaultQuery = sanitizeCategoryQuery(productName);
     if (manualQuery && manualQuery !== defaultQuery) return manualQuery;
-    if (channel === "lazada") {
-      // Lazada's MY suggestion endpoint reliably accepts English product terms,
-      // while generated Malay display copy may omit the catalog noun entirely.
-      return englishCategoryQuery(defaultQuery || manualQuery);
-    }
-    if (channel === "shopee") {
-      const targetMarket = selectedTarget(channel)?.marketCode;
-      const localized = localizedListings.find((listing) => listing.channel === channel && (listing.market === targetMarket || listing.market === "SG"));
-      const localizedTitle = sanitizeCategoryQuery(localized?.title ?? "");
-      return localizedTitle && !isGenericFallbackTitle(localizedTitle)
-        ? localizedTitle
-        : englishCategoryQuery(defaultQuery || manualQuery);
-    }
-    if (channel === "ebay") {
-      // eBay category search is most stable with a short catalog noun. Reusing a
-      // generated display title can bury that noun and produce unrelated leaves.
-      return englishCategoryQuery(defaultQuery || manualQuery);
-    }
-    return manualQuery;
+    const targetMarket = (channel === "shopee" || channel === "lazada")
+      ? selectedTarget(channel)?.marketCode
+      : ({ qoo10: "JP", coupang: "KR", elevenst: "KR", smartstore: "KR", ebay: "US", temu: "KR" } as const)[channel];
+    const localized = localizedListings.find((listing) => listing.channel === channel && listing.market === targetMarket);
+    return sanitizeCategoryQuery(localized?.title ?? manualQuery);
   }, [localizedListings, productName, query, selectedTarget]);
 
   const operation = useCallback(async (channel: ActiveChannelKey, name: "categories.suggest" | "categories.attributes" | "categories.validate", args: Record<string, unknown>) => {
     const credential = activeCredential.get(channel);
-    if (!credential) throw new Error("판매 채널 연결이 필요합니다.");
+    if (!credential) throw new Error("실제 API 키 연결이 필요합니다.");
     const { data: sessionData } = await createClient().auth.getSession();
     const response = await fetch("/api/admin/channel-operations", {
       method: "POST",
@@ -858,18 +701,17 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       body: JSON.stringify({ credentialId: credential.id, channel, operation: name, idempotencyKey: crypto.randomUUID(), confirmWrite: false, arguments: args }),
     });
     const payload = await response.json().catch(() => ({ message: "채널 응답을 읽지 못했습니다." })) as OperationPayload;
-    if (!response.ok || payload.ok === false) throw new Error(userFacingErrorMessage(payload.message, `${channelCatalog[channel].name}에서 카테고리를 확인하지 못했습니다.`));
+    if (!response.ok || payload.ok === false) throw new Error(payload.message ?? `${channelCatalog[channel].name} 공식 API가 오류를 반환했습니다.`);
     return payload;
   }, [activeCredential]);
 
   const suggest = async (channel: ActiveChannelKey) => {
-    const requestScope = stateScopeRef.current;
     const textQuery = localizedQuery(channel);
     if (textQuery.length < 2) return notify("카테고리 검색에 사용할 상품명을 2자 이상 입력해 주세요.");
     const key = stateKey(channel);
     setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "suggesting", error: undefined } }));
     try {
-      if (channel === "lazada" && !sourceImageUrl) throw new Error("Lazada 카테고리를 찾는 데 필요한 대표사진을 불러오지 못했습니다.");
+      if (channel === "lazada" && !sourceImageUrl) throw new Error("Lazada 공식 카테고리 추천에 사용할 대표이미지를 불러오지 못했습니다.");
       const marketArgs = marketArguments(channel);
       const args: Record<string, unknown> = channel === "coupang"
         ? { query: textQuery, body: { productDescription: description.slice(0, 3000), attributes: {} } }
@@ -889,34 +731,16 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
               : channel === "qoo10"
                 ? { query: textQuery, params: {} }
                 : { query: textQuery };
-      const credential = activeCredential.get(channel);
-      const learningMarket = selectedTarget(channel)?.marketCode ?? (channel === "ebay" ? "EBAY_US" : channelCatalog[channel].market);
-      const [payload, learningResult] = await Promise.all([
-        operation(channel, "categories.suggest", args),
-        credential
-          ? createClient().rpc("sellerpilot_list_category_learning", {
-              p_channel: channel,
-              p_environment: credential.environment,
-              p_market: learningMarket,
-            })
-          : Promise.resolve({ data: [], error: null }),
-      ]);
-      const officialSuggestions = normalizeSuggestions(channel, payload, textQuery);
-      const examples = !learningResult.error && Array.isArray(learningResult.data)
-        ? learningResult.data as CategoryLearningExample[]
-        : [];
-      const suggestions = applyCategoryLearning(textQuery, officialSuggestions, examples);
-      if (!suggestions.length) throw new Error("상품과 일치하는 최종 카테고리를 찾지 못했습니다. 상품명을 더 구체적으로 입력해 주세요.");
-      if (stateScopeRef.current !== requestScope) return;
+      const payload = await operation(channel, "categories.suggest", args);
+      const suggestions = normalizeSuggestions(channel, payload, textQuery);
+      if (!suggestions.length) throw new Error("공식 카테고리 응답에서 일치하는 말단 카테고리를 찾지 못했습니다.");
       setStates((current) => ({ ...current, [key]: { ...initialState(), phase: "idle", suggestions } }));
     } catch (error) {
-      if (stateScopeRef.current !== requestScope) return;
-      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "error", error: userFacingErrorMessage(error, "카테고리를 찾지 못했습니다. 상품명을 확인하고 다시 시도해 주세요.") } }));
+      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "error", error: error instanceof Error ? error.message : "카테고리 추천 실패" } }));
     }
   };
 
   const inspect = async (channel: ActiveChannelKey, selected: CategorySuggestion) => {
-    const requestScope = stateScopeRef.current;
     const key = stateKey(channel);
     setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "inspecting", error: undefined } }));
     try {
@@ -931,11 +755,9 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       ]);
       const attributes = normalizeAttributes([attributesPayload]);
       const verifiedLeaf = selected.leaf && validationPayload.ok !== false;
-      if (stateScopeRef.current !== requestScope) return;
       setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, attributes, values: {}, verifiedLeaf, phase: "ready" } }));
     } catch (error) {
-      if (stateScopeRef.current !== requestScope) return;
-      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "error", error: userFacingErrorMessage(error, "카테고리 필수 정보를 불러오지 못했습니다. 다시 시도해 주세요.") } }));
+      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "error", error: error instanceof Error ? error.message : "카테고리 메타정보 조회 실패" } }));
     }
   };
 
@@ -959,7 +781,6 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   };
 
   const confirm = async (channel: ActiveChannelKey) => {
-    const requestScope = stateScopeRef.current;
     const key = stateKey(channel);
     const state = states[key];
     const credential = activeCredential.get(channel);
@@ -967,12 +788,12 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     if (!state?.selected || !credential) return;
     const selectedCategory = state.selected;
     if (!productId) {
-      notify("AI 상품 분석을 먼저 완료해 주세요.");
+      notify("ChatGPT CLI 분석과 상품 원장 저장을 먼저 완료해 주세요.");
       return;
     }
     const missing = state.attributes.filter((attribute) => attribute.required && !state.values[attribute.id]?.trim());
     if (!state.verifiedLeaf || missing.length) {
-      notify(!state.verifiedLeaf ? "등록 가능한 카테고리인지 먼저 확인해 주세요." : `필수 정보 ${missing.length}개를 모두 입력해 주세요.`);
+      notify(!state.verifiedLeaf ? "공식 API로 말단 카테고리 유효성을 먼저 확인해 주세요." : `필수 속성 ${missing.length}개를 모두 입력해 주세요.`);
       return;
     }
     const requiredAttributes = state.attributes.map((attribute) => ({ id: attribute.id, name: attribute.name, required: attribute.required, values: attribute.values }));
@@ -1004,16 +825,15 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       p_official_metadata: { verifiedBy: "channel_api", verifiedAt: new Date().toISOString(), targetId: assignmentTarget?.targetId ?? null, locale: assignmentTarget?.locale ?? null, globalProduct: channel === "shopee" },
       p_confirm: true,
     })));
-    if (results.some((result) => result.error)) return notify("카테고리를 저장하지 못했습니다. 로그인 상태를 확인하고 다시 시도해 주세요.");
-    if (stateScopeRef.current !== requestScope) return;
+    if (results.some((result) => result.error)) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");
     setStates((current) => ({ ...current, [key]: { ...state, phase: "confirmed" } }));
     onConfirmed?.(channel);
     notify(`${channelCatalog[channel].name} 카테고리와 필수 속성을 ${channel === "shopee" ? `${assignmentTargets.length}개 숍에 ` : ""}확정했습니다.`);
   };
 
   return <section className="panel category-workbench">
-    <div className="category-workbench-head"><div><span className="panel-kicker">2단계</span><h3>판매 카테고리 확인</h3><p>각 판매 채널에서 상품에 맞는 카테고리를 찾고, 등록에 꼭 필요한 정보를 확인합니다.</p></div><span className="step-chip">2 / 3</span></div>
-    <div className="category-query"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="예: 브랜드 + 상품 종류 + 용량" /><small>카테고리에 따라 수수료와 노출 위치가 달라질 수 있으니 추천 결과를 확인해 주세요.</small></div>
+    <div className="category-workbench-head"><div><span className="panel-kicker">OFFICIAL CATEGORY PREFLIGHT</span><h3>채널별 카테고리 확정</h3><p>공식 API 추천·말단 여부·필수 속성을 검증하고 실제 등록 사전조건으로 저장합니다.</p></div><span className="step-chip">STEP 3 / 3</span></div>
+    <div className="category-query"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="브랜드·제품 종류·용량·용도를 포함한 정확한 상품명" /><small>카테고리 수수료와 노출이 달라질 수 있으므로 자동 추천 뒤 판매자가 최종 확정합니다.</small></div>
     <div className="category-channel-grid">{visibleChannels.map((channel) => {
       const definition = channelCatalog[channel];
       const credential = activeCredential.get(channel);
@@ -1026,17 +846,13 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       const requiresTarget = channel === "shopee" || channel === "lazada";
       const targetReady = !requiresTarget || Boolean(target);
       return <article className={`category-channel-card ${state.phase}`} key={channel}>
-        <header><span>{definition.code}</span><div><small>{target ? `${target.marketCode} · ${target.language}` : definition.market}</small><h4>{definition.name}</h4></div><em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "연결됨" : "연결 필요"}</em></header>
+        <header><span>{definition.mark}</span><div><small>{target ? `${target.marketCode} · ${target.language}` : definition.market}</small><h4>{definition.name}</h4></div><em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "실키 연결" : "키 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada") && (targets[channel]?.length ?? 0) > 0 && <label className="category-market-select"><span>등록 국가·언어</span><select value={target?.marketCode ?? ""} onChange={(event) => setSelectedMarkets((current) => ({ ...current, [channel]: event.target.value }))}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select></label>}
-        {requiresTarget && targetErrors[channel] && <p className="category-error" role="alert"><AlertTriangle size={14} />{targetErrors[channel]}</p>}
-        {!state.suggestions.length && !state.selected && <div className="category-empty"><Tags size={21} /><b>{!targetReady ? "판매 국가 확인 필요" : credential ? productId ? "카테고리를 찾아보세요" : "상품 분석을 먼저 완료해 주세요" : "판매 채널을 먼저 연결해 주세요"}</b><small>{!targetReady ? "판매 채널을 다시 연결한 뒤 국가와 언어를 확인해 주세요." : credential ? productId ? "상품명으로 알맞은 카테고리를 찾아드립니다." : "상품 사진과 정보를 분석하면 카테고리를 찾을 수 있습니다." : "채널 연결 메뉴에서 이 판매 채널을 연결해 주세요."}</small><button type="button" disabled={!credential || !productId || !targetReady || busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{!targetReady ? "다시 연결하기" : "추천 카테고리 찾기"}</button>{credential && productId && targetReady && <div className="category-manual-fallback"><b>카테고리 직접 입력</b><small>추천 결과가 없을 때 판매 채널에서 확인한 카테고리 정보를 입력해 주세요.</small><label><span>카테고리 번호 <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리 번호`} value={state.manualCategoryId} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryId: event.target.value } }))} placeholder="판매 채널의 카테고리 번호" /></label><label><span>카테고리명 <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리명`} value={state.manualCategoryName} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryName: event.target.value } }))} placeholder="카테고리명" /></label><label><span>카테고리 경로</span><input aria-label={`${definition.name} 수동 카테고리 경로`} value={state.manualCategoryPath} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryPath: event.target.value } }))} placeholder="상위 › 하위 › 선택한 카테고리" /></label><button type="button" className="category-manual-verify" disabled={busy || !state.manualCategoryId.trim() || !state.manualCategoryName.trim()} onClick={() => void inspectManualCategory(channel)}><ShieldCheck size={14} />카테고리 확인</button></div>}</div>}
-        {state.suggestions.length > 0 && !state.selected && <div className="category-suggestions">{state.suggestions.map((suggestion, index) => {
-          const blocked = suggestion.learning?.permissionBlocked === true;
-          const successes = suggestion.learning?.successfulListings ?? 0;
-          return <button type="button" disabled={blocked} onClick={() => void inspect(channel, suggestion)} key={`${suggestion.id}-${suggestion.name}`}><span><b>{index + 1}. {suggestion.name}</b><small>{categoryPathLabel(suggestion)}</small></span><em className={blocked ? "blocked" : successes > 0 ? "learned" : ""}>{blocked ? "판매 권한 확인" : successes > 0 ? `이전 등록 성공 ${successes}회` : `${Math.round(suggestion.confidence * 100)}%`}</em><ChevronRight size={14} /></button>;
-        })}{state.suggestions.some((suggestion) => suggestion.learning?.permissionBlocked) && <p className="category-learning-note"><AlertTriangle size={13} />판매 권한이 거절된 카테고리는 자동 선택에서 제외했습니다. 해당 채널에서 판매 권한을 받은 뒤 다시 찾아보세요.</p>}</div>}
-        {state.selected && <div className="category-inspection"><div className="selected-category"><BadgeCheck size={18} /><span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · 카테고리 번호 {state.selected.id}</small></span><button type="button" onClick={() => setStates((current) => ({ ...current, [key]: { ...initialState(), suggestions: state.suggestions } }))}>다시 선택</button></div>{state.phase === "inspecting" ? <p className="category-loading"><LoaderCircle className="spin" size={16} />카테고리 정보를 확인하는 중</p> : <><div className="category-proof"><span className={state.verifiedLeaf ? "passed" : "failed"}><ShieldCheck size={14} />{state.verifiedLeaf ? "등록 가능한 카테고리" : "카테고리 확인 필요"}</span><span className={completedRequired === required.length ? "passed" : "failed"}><Check size={14} />필수 정보 {completedRequired}/{required.length}</span></div>{required.length > 0 && <div className="category-attribute-list">{required.map((attribute) => <label key={attribute.id}><span>{attribute.name}<em>필수</em></span>{attribute.values.length ? <select value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))}><option value="">값 선택</option>{attribute.values.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select> : <input value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))} placeholder={`${attribute.name} 입력`} />}</label>)}</div>}<button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || completedRequired !== required.length || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리 저장됨</> : "카테고리 저장"}</button></>}</div>}
-        {state.error && <p className="category-error" role="alert"><AlertTriangle size={14} />{state.error}</p>}
+        {requiresTarget && targetErrors[channel] && <p className="category-error"><AlertTriangle size={14} />{targetErrors[channel]}</p>}
+        {!state.suggestions.length && !state.selected && <div className="category-empty"><Tags size={21} /><b>{!targetReady ? "등록 대상 동기화 필요" : credential ? productId ? "공식 카테고리 추천 대기" : "상품 원장 연결 대기" : "API 키 연결 후 사용"}</b><small>{!targetReady ? "OAuth 재승인 후 국가·언어 정보를 다시 동기화하세요." : credential ? productId ? "상품명으로 채널 원본 분류를 조회합니다." : "AI 분석을 완료해 상품 UUID를 먼저 생성하세요." : "API 키 관리에서 운영 키를 먼저 연결하세요."}</small><button type="button" disabled={!credential || !productId || !targetReady || busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{!targetReady ? "OAuth 재승인 필요" : "공식 API 추천"}</button>{credential && productId && targetReady && <div className="category-manual-fallback"><b>공식 ID 수동 검증</b><small>추천 결과가 없을 때 판매자센터에서 확인한 실제 말단 카테고리를 입력합니다. 저장 전 공식 속성·유효성 API를 다시 통과해야 합니다.</small><label><span>카테고리 ID <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리 ID`} value={state.manualCategoryId} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryId: event.target.value } }))} placeholder="공식 말단 카테고리 ID" /></label><label><span>카테고리명 <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리명`} value={state.manualCategoryName} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryName: event.target.value } }))} placeholder="공식 카테고리명" /></label><label><span>전체 경로</span><input aria-label={`${definition.name} 수동 카테고리 경로`} value={state.manualCategoryPath} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryPath: event.target.value } }))} placeholder="상위 › 하위 › 말단" /></label><button type="button" className="category-manual-verify" disabled={busy || !state.manualCategoryId.trim() || !state.manualCategoryName.trim()} onClick={() => void inspectManualCategory(channel)}><ShieldCheck size={14} />공식 API로 검증</button></div>}</div>}
+        {state.suggestions.length > 0 && !state.selected && <div className="category-suggestions">{state.suggestions.map((suggestion, index) => <button type="button" onClick={() => void inspect(channel, suggestion)} key={`${suggestion.id}-${suggestion.name}`}><span><b>{index + 1}. {suggestion.name}</b><small>{categoryPathLabel(suggestion)}</small></span><em>{Math.round(suggestion.confidence * 100)}%</em><ChevronRight size={14} /></button>)}</div>}
+        {state.selected && <div className="category-inspection"><div className="selected-category"><BadgeCheck size={18} /><span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · ID {state.selected.id}</small></span><button type="button" onClick={() => setStates((current) => ({ ...current, [key]: { ...initialState(), suggestions: state.suggestions } }))}>다시 선택</button></div>{state.phase === "inspecting" ? <p className="category-loading"><LoaderCircle className="spin" size={16} />공식 속성·유효성 동시 확인 중</p> : <><div className="category-proof"><span className={state.verifiedLeaf ? "passed" : "failed"}><ShieldCheck size={14} />{state.verifiedLeaf ? "말단 카테고리 확인" : "유효성 확인 필요"}</span><span className={completedRequired === required.length ? "passed" : "failed"}><Check size={14} />필수 속성 {completedRequired}/{required.length}</span></div>{required.length > 0 && <div className="category-attribute-list">{required.map((attribute) => <label key={attribute.id}><span>{attribute.name}<em>필수</em></span>{attribute.values.length ? <select value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))}><option value="">값 선택</option>{attribute.values.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select> : <input value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))} placeholder={`${attribute.name} 입력`} />}</label>)}</div>}<button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || completedRequired !== required.length || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리 저장됨</> : "카테고리·속성 저장"}</button></>}</div>}
+        {state.error && <p className="category-error"><AlertTriangle size={14} />{state.error}</p>}
       </article>;
     })}</div>
   </section>;

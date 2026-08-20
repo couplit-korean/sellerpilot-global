@@ -3,7 +3,6 @@
 -- the current marketplace API before they can be confirmed again.
 
 begin;
-
 create or replace function public.sellerpilot_list_category_learning(
   p_channel text,
   p_environment text,
@@ -64,8 +63,6 @@ as $$
   order by coalesce(l.published_at, a.confirmed_at, a.updated_at) desc
   limit 300
 $$;
-
 revoke all on function public.sellerpilot_list_category_learning(text, text, text) from public, anon;
 grant execute on function public.sellerpilot_list_category_learning(text, text, text) to authenticated;
-
 commit;

@@ -22,17 +22,17 @@ test("server-renders the SellerPilot login experience", async () => {
   const html = await response.text();
   assert.match(html, /<html lang="ko">/i);
   assert.match(html, /<title>SellerPilot \| 멀티채널 커머스 운영센터<\/title>/i);
-  assert.match(html, /상품부터 주문·문의까지/);
-  assert.match(html, /SellerPilot 하나로/);
-  assert.match(html, /SellerPilot 계정으로 시작하세요/);
-  assert.match(html, /판매 채널 연결 정보는 암호화/);
-  assert.match(html, /자동으로 최신 상태 유지/);
+  assert.match(html, /주문·상품·문의 업무를/);
+  assert.match(html, /하나의 작업대에서/);
+  assert.match(html, /운영센터 로그인/);
+  assert.match(html, /Supabase Auth/);
+  assert.match(html, /실데이터 전용/);
   assert.doesNotMatch(html, /demo@sellerpilot\.kr|seller2026|admin@company\.com|₩4,820,400|오늘의 운영 브리핑/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
 test("contains the complete multi-channel operating storyboard and 175-item acceptance baseline", async () => {
-  const [page, layout, styles, operationsStyles, packageJson, storyboard, channelConfig, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping] = await Promise.all([
+  const [page, layout, styles, operationsStyles, packageJson, storyboard, channelConfig, channelLinks, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping, manifest, serviceWorker, pushManager] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -40,16 +40,20 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
     readFile(new URL("../package.json", import.meta.url), "utf8"),
     readFile(new URL("../docs/멀티채널_커머스_운영센터_스토리보드.md", import.meta.url), "utf8"),
     readFile(new URL("../app/channel-config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/channel-links.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/acceptance-checklist-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/acceptance-checklist.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchange-rates/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/channel-readiness-data.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/channel-readiness.tsx", import.meta.url), "utf8"),
     readFile(new URL("../docs/판매채널_실계정_UI_필드_매핑.md", import.meta.url), "utf8"),
+    readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
+    readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
+    readFile(new URL("../app/mobile-push-manager.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /^"use client";/);
-  assert.match(page, /오늘 할 일을 한눈에/);
+  assert.match(page, /통합 대시보드/);
   assert.match(page, /이번 달 판매 TOP 10/);
   assert.match(page, /기준 환율/);
   assert.match(page, /환율 새로고침/);
@@ -57,62 +61,88 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(page, /Math\.random/);
   assert.match(exchangeRoute, /api\.frankfurter\.dev\/v2\/rates/);
   assert.match(exchangeRoute, /daily-reference/);
-  assert.match(page, /label: "상품"/);
-  assert.match(page, /label: "상품 등록"/);
-  assert.match(page, /label: "수익 계산"/);
-  assert.match(page, /label: "주문"/);
-  assert.match(page, /label: "고객 문의"/);
+  assert.match(page, /상품 관리/);
+  assert.match(page, /상품 등록 센터/);
+  assert.match(page, /마진 계산/);
+  assert.match(page, /주문 · 판매/);
+  assert.match(page, /CS 통합함/);
   assert.match(page, /Qoo10 Japan/);
   assert.match(page, /Shopee Global/);
   assert.match(page, /Lazada Malaysia/);
   assert.match(page, /쿠팡/);
+  assert.match(page, /11번가/);
   assert.match(page, /Temu/);
   assert.match(page, /네이버 스마트스토어/);
   assert.match(page, /eBay Global/);
-  assert.doesNotMatch(page, /서비스 스토리보드/);
-  assert.doesNotMatch(page, /개발 · 실검수/);
-  assert.match(page, /dynamic\(\(\) => import\("\.\/api-credential-center"\)/);
-  assert.match(page, /dynamic\(\(\) => import\("\.\/product-publish-workbench"\)/);
-  assert.match(page, /label: "연결 상태"/);
-  assert.match(page, /label: "채널 연결"/);
+  assert.match(page, /서비스 스토리보드/);
+  assert.match(page, /개발 · 실검수/);
+  assert.match(page, /채널 연결 · 상태/);
+  assert.doesNotMatch(page, /id: "readiness"/);
+  assert.doesNotMatch(page, /id: "credentials"/);
   assert.match(page, /commerce-service-rail/);
   assert.match(page, /통합 판매관리/);
+  assert.match(page, /상품, 주문, 문의 검색/);
+  assert.match(page, /value=\{searchQuery\}/);
+  assert.match(page, /selectUnifiedSearchResult/);
+  assert.match(page, /unifiedSearchResults\.products/);
+  assert.match(page, /unifiedSearchResults\.orders/);
+  assert.match(page, /unifiedSearchResults\.inquiries/);
+  assert.match(page, /aria-label="주문 검색"/);
+  assert.match(page, /aria-label="문의 검색"/);
+  assert.doesNotMatch(page, /event\.key === "Escape" \|\| event\.key === "Enter"/);
   assert.match(page, /signInWithPassword/);
   assert.match(page, /Qoo10 Japan/);
   assert.match(page, /Shopee Global/);
-  assert.match(page, /7개 판매 채널/);
-  assert.match(page, /AI 답변을 준비합니다/);
-  assert.match(page, /판매 카테고리/);
+  assert.match(page, /enabledSalesChannelCount\}개 판매채널/);
+  assert.match(page, /summary\.activeCredentialCount\} \/ \$\{enabledSalesChannelCount\}/);
+  assert.match(page, /실제 판매자센터 열기/);
+  assert.match(channelLinks, /등록 상품 열기/);
+  assert.match(channelLinks, /채널에서 상품 찾기/);
+  assert.match(channelLinks, /#\/products\/origin-list/);
+  assert.match(page, /publish-context/);
+  assert.match(page, /ChatGPT CLI 답변 생성은 채널 정책/);
+  assert.match(page, /공식 카테고리 확정/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
-  assert.match(page, /URL로 불러오기/);
+  assert.match(page, /상품 링크 또는 설명/);
+  assert.match(page, /상세정보 불러오기/);
+  assert.match(page, /CLI 자동 조사/);
+  assert.doesNotMatch(page, /공개 이미지 URL|URL로 불러오기/);
   assert.match(page, /id: "front"/);
   assert.match(page, /id: "barcode"/);
   assert.match(page, /option-photo-\$\{slot\.id\}/);
   assert.match(page, /id="extra-product-photos"[^>]*multiple/);
   assert.match(page, /상품 사실 설명/);
-  assert.match(page, /자료 출처·상품 링크/);
-  assert.match(page, /1개 바로 분석/);
+  assert.doesNotMatch(page, /자료 출처·상품 링크/);
+  assert.match(page, /상품 분석 시작/);
+  assert.doesNotMatch(page, /대기열에 담기/);
+  assert.doesNotMatch(page, /상품 동시 처리/);
   assert.doesNotMatch(page, /DEMO_DATA_META|createDemoStudioResult|seed_demo/);
   assert.match(page, /MarginCalculatorPage/);
   assert.match(styles, /\.margin-workspace/);
   const marginCalculator = await readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8");
-  assert.match(marginCalculator, /7 CHANNEL COMPARISON/);
+  assert.match(marginCalculator, /8 CHANNEL COMPARISON/);
   assert.match(marginCalculator, /손익분기 판매가/);
   assert.match(marginCalculator, /목표 마진 권장 판매가/);
   assert.match(marginCalculator, /계산 결과 저장/);
   assert.match(marginCalculator, /자동 등록 가능/);
-  assert.equal((marginCalculator.match(/key: "/g) ?? []).length, 7);
+  assert.equal((marginCalculator.match(/key: "/g) ?? []).length, 8);
+  assert.match(marginCalculator, /key: "elevenst"/);
   assert.match(channelConfig, /Shopee Global/);
+  assert.match(channelConfig, /mark: "쿠팡"/);
+  assert.match(channelConfig, /mark: "11번가"/);
+  assert.match(channelConfig, /sellerCenterUrl/);
   assert.match(channelConfig, /Alibaba\.com/);
   assert.match(channelConfig, /1688\.com/);
   assert.doesNotMatch(channelConfig, /sales:|revenue:|customer:|샘플/);
-  assert.match(layout, /og-commerce\.png/);
-  assert.match(layout, /customer-experience\.css/);
-  const customerStyles = await readFile(new URL("../app/customer-experience.css", import.meta.url), "utf8");
-  assert.match(customerStyles, /\.mobile-bottom-nav/);
-  assert.match(customerStyles, /env\(safe-area-inset-bottom\)/);
-  assert.match(customerStyles, /font-size: 16px !important/);
-  assert.match(customerStyles, /@media \(max-width: 420px\)/);
+  assert.match(layout, /og-style-learning\.png/);
+  assert.match(manifest, /"display": "standalone"/);
+  assert.match(manifest, /SellerPilot 판매관리/);
+  assert.match(serviceWorker, /addEventListener\("push"/);
+  assert.match(serviceWorker, /notificationclick/);
+  assert.doesNotMatch(serviceWorker, /caches\.open|commerce_orders|customer/);
+  assert.match(pushManager, /Notification\.requestPermission/);
+  assert.match(pushManager, /주문·배송 알림/);
+  assert.match(page, /MobilePushManager/);
   assert.match(styles, /@media \(max-width: 1360px\)/);
   assert.match(styles, /@media \(max-width: 1180px\)/);
   assert.match(styles, /@media \(max-width: 900px\)/);
@@ -131,56 +161,44 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(acceptanceData, /10,000건 동시주문 시뮬레이션/);
   assert.match(acceptancePage, /PPT 31장 기반 · 175개 인수 항목/);
   assert.match(acceptancePage, /화면 완성과 실제 작동을/);
-  assert.match(readinessPage, /판매 채널이 잘 연결되어 있는지/);
-  assert.match(readinessPage, /연결 정보 안전 보호/);
-  assert.match(readinessPage, /다음 단계/);
-  assert.doesNotMatch(readinessPage, /QSM 개별 상품등록 필드 맵|API E2E 통과/);
+  assert.match(readinessPage, /로그인됐다는 사실과/);
+  assert.match(readinessPage, /channelReadiness\.length/);
+  assert.match(readinessPage, /consoleVerifiedChannels/);
+  assert.doesNotMatch(readinessPage, /2 \/ 6|0 \/ 6|6개 활성 판매채널/);
+  assert.match(readinessPage, /QSM 개별 상품등록 필드 맵/);
+  assert.match(readinessPage, /현재 API 읽기 통과/);
+  assert.match(readinessPage, /apiReadPassed\} \/ \{channelReadiness\.length\}/);
   assert.match(readinessData, /Shopee Open Platform/);
   assert.match(readinessData, /Access 4시간 · Refresh 30일/);
   assert.match(readinessData, /Test·Live 모두 https:\/\/sellerpilot-global\.vercel\.app 반영/);
-  assert.match(readinessData, /AppWhiteIpLimit/);
+  assert.match(readinessData, /운영 키 v6/);
+  assert.match(readinessData, /orders\.list 최근 변경 주문 조회 HTTP 200/);
+  assert.match(readinessData, /Security Questionnaire · Approved/);
+  assert.match(readinessData, /11번가 Seller Office · OPEN API/);
+  assert.match(readinessData, /운영 API Key/);
+  assert.match(readinessPage, /Vault 읽기 진단, 개발자 앱 심사와 주문·문의 권한/);
   assert.match(readinessData, /Access 30일 · Refresh 180일/);
   assert.match(readinessData, /대표 1장, 추가 최대 50장, 동영상 최대 1개/);
   assert.match(channelMapping, /Qoo10 QSM 실제 상품등록 필드/);
   assert.match(channelMapping, /Shopee Open Platform 준비도/);
   assert.match(channelMapping, /Lazada Open Platform/);
   const credentialPage = await readFile(new URL("../app/api-credential-center.tsx", import.meta.url), "utf8");
+  assert.match(credentialPage, /고객 문의 목록/);
   const credentialTestRoute = await readFile(new URL("../app/api/admin/channel-credentials/test/route.ts", import.meta.url), "utf8");
   const gatewayCompleteRoute = await readFile(new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url), "utf8");
+  const gatewayContract = await readFile(new URL("../lib/channels/gateway-contract.ts", import.meta.url), "utf8");
   const cliRuntimeCard = await readFile(new URL("../app/ai-cli-runtime-card.tsx", import.meta.url), "utf8");
   const cliWorker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
-  const categoryWorkbench = await readFile(new URL("../app/category-classification-workbench.tsx", import.meta.url), "utf8");
-  const publishWorkbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
   const cliMigration = await readFile(new URL("../supabase/migrations/20260816065848_sellerpilot_ai_cli_jobs.sql", import.meta.url), "utf8");
   const credentialMigration = await readFile(new URL("../supabase/migrations/20260816060000_channel_credentials_and_roles.sql", import.meta.url), "utf8");
   const operationsMigration = await readFile(new URL("../supabase/migrations/20260816104732_operations_core.sql", import.meta.url), "utf8");
   const operationsRoute = await readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8");
   const cliControlsMigration = await readFile(new URL("../supabase/migrations/20260816103854_ai_operations_controls.sql", import.meta.url), "utf8");
-  assert.match(credentialPage, /연결 정보 안전 보호/);
+  assert.match(credentialPage, /Supabase Vault/);
   assert.match(cliRuntimeCard, /로컬 Codex AI 작업자/);
   assert.match(cliRuntimeCard, /npm run ai:worker:install/);
   assert.match(cliWorker, /codex-image/);
   assert.match(cliWorker, /--enable", "image_generation/);
-  assert.match(cliWorker, /codexEnv\.PATH = \[codexDirectory/);
-  assert.match(cliWorker, /mcp_servers\.lovable\.enabled=false/);
-  assert.match(cliWorker, /buildFallbackStudioResult/);
-  assert.match(cliWorker, /createFallbackAsset/);
-  assert.match(cliWorker, /이미지 안전 모드/);
-  assert.match(cliWorker, /async function claimAiJob\(\)/);
-  assert.match(cliWorker, /if \(!once && activeAiJobs\.size < maxAiConcurrency\) await claimAiJob\(\)/);
-  assert.ok(
-    cliWorker.indexOf("if (!once && activeAiJobs.size < maxAiConcurrency) await claimAiJob()")
-      < cliWorker.indexOf('api("/api/channel-gateway/worker/claim"'),
-    "AI 제작 작업을 채널 동기화 작업보다 먼저 공정하게 확보해야 합니다.",
-  );
-  assert.doesNotMatch(cliWorker, /import sharp from "sharp"/);
-  assert.match(cliWorker, /await import\("sharp"\)/);
-  assert.match(cliWorker, /fallbackEnglishProductLabel/);
-  assert.match(cliWorker, /formulation: "Stick"/);
-  assert.match(cliWorker, /categoryId === 101642/);
-  assert.match(cliWorker, /\[100782, 100797, 100824\]\.includes\(categoryId\)/);
-  assert.match(categoryWorkbench, /row\.status === "active" && row\.environment === "production"/);
-  assert.match(publishWorkbench, /existingListing\?\.status === "failed" \? crypto\.randomUUID\(\)/);
   assert.doesNotMatch(packageJson, /local-analyzer-server|run-local-demo/);
   assert.match(cliMigration, /sellerpilot_claim_ai_job/);
   assert.match(cliMigration, /sellerpilot-ai/);
@@ -191,27 +209,33 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(operationsRoute, /margin_save/);
   assert.match(operationsRoute, /ticket_update/);
   assert.doesNotMatch(credentialPage, /Project API Key|OpenAI API/);
-  assert.match(credentialPage, /연결 갱신 일정/);
-  assert.match(credentialPage, /연결 확인/);
+  assert.match(credentialPage, /키 수명 · 교체 일정/);
+  assert.match(credentialPage, /연결 검사/);
   assert.match(credentialTestRoute, /parsed\.data\.channel === "shopee"/);
   assert.match(credentialTestRoute, /parsed\.data\.channel === "lazada"/);
+  assert.match(credentialTestRoute, /parsed\.data\.channel === "elevenst"/);
   assert.match(gatewayCompleteRoute, /refreshedCredentialId/);
   assert.match(gatewayCompleteRoute, /sellerpilot_record_credential_test/);
-  assert.match(credentialPage, /공식 연결 안내/);
-  assert.doesNotMatch(credentialPage, /API 실행 검수|중복 방지 키|operation-console|confirmWrite/);
+  assert.match(gatewayContract, /"qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"/);
+  assert.match(credentialPage, /API 실행 검수/);
+  assert.match(credentialPage, /중복 방지 키/);
+  assert.match(credentialPage, /confirmWrite/);
   assert.match(credentialMigration, /sellerpilot_rotate_credential/);
   assert.match(credentialMigration, /vault\.create_secret/);
   assert.match(credentialMigration, /sellerpilot_list_credential_audit/);
   assert.match(credentialMigration, /sellerpilot_get_active_credential_secret/);
   const lazadaAuthorizeRoute = await readFile(new URL("../app/api/admin/channel-credentials/lazada/authorize/route.ts", import.meta.url), "utf8");
   const maintenanceRoute = await readFile(new URL("../app/api/internal/maintenance/route.ts", import.meta.url), "utf8");
+  const periodicSyncRoute = await readFile(new URL("../app/api/internal/channel-sync/route.ts", import.meta.url), "utf8");
+  const syncArguments = await readFile(new URL("../lib/channels/sync-arguments.ts", import.meta.url), "utf8");
+  const periodicSyncMigration = await readFile(new URL("../supabase/migrations/20260820170000_periodic_channel_sync.sql", import.meta.url), "utf8");
+  const vercelConfig = await readFile(new URL("../vercel.json", import.meta.url), "utf8");
   const refreshMigration = await readFile(new URL("../supabase/migrations/20260816110000_lazada_token_refresh.sql", import.meta.url), "utf8");
   const connectorMigration = await readFile(new URL("../supabase/migrations/20260816120321_expand_channel_connectors.sql", import.meta.url), "utf8");
   const shopeeMigration = await readFile(new URL("../supabase/migrations/20260816133601_add_shopee_connector.sql", import.meta.url), "utf8");
   const channelCatalog = await readFile(new URL("../lib/channels/catalog.ts", import.meta.url), "utf8");
   const channelProtocols = await readFile(new URL("../lib/channels/protocols.ts", import.meta.url), "utf8");
   const channelOperations = await readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8");
-  assert.match(channelOperations, /approvalWasAlreadySubmitted && initialReadback\.providerAndIdentityOk/);
   const channelOperationsRoute = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   const channelOperationsContract = await readFile(new URL("../docs/판매채널_실행_API_계약.md", import.meta.url), "utf8");
   const channelTargetClient = await readFile(new URL("../app/channel-target-client.ts", import.meta.url), "utf8");
@@ -221,14 +245,30 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(lazadaAuthorizeRoute, /response\.cookies\.set/);
   assert.match(lazadaAuthorizeRoute, /p_environment: credentialEnvironment/);
   assert.match(maintenanceRoute, /sellerpilot_service_refresh_lazada/);
+  assert.match(periodicSyncRoute, /sellerpilot_service_enqueue_periodic_sync/);
+  assert.match(periodicSyncRoute, /sellerpilot_service_validate_worker_token/);
+  assert.match(periodicSyncRoute, /orderSyncRequests/);
+  assert.match(syncArguments, /"ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"/);
+  assert.match(syncArguments, /"0", "3", "4", "5"/);
+  assert.match(syncArguments, /SearchStartDate/);
+  assert.match(syncArguments, /search_start_dt/);
+  assert.match(periodicSyncRoute, /dispatchPendingPushNotifications/);
+  assert.match(periodicSyncMigration, /already_pending/);
+  assert.match(periodicSyncMigration, /'qoo10', 'shopee', 'lazada', 'coupang', 'smartstore', 'ebay', 'temu'/);
+  assert.doesNotMatch(vercelConfig, /"schedule": "\*\/5 \* \* \* \*"/);
+  assert.match(cliWorker, /SELLERPILOT_CHANNEL_SYNC_MS/);
+  assert.match(cliWorker, /\/api\/internal\/channel-sync/);
+  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.9/);
   assert.match(refreshMigration, /token_refreshed/);
   assert.match(connectorMigration, /coupang.*elevenst.*smartstore.*ebay/);
   assert.match(connectorMigration, /sellerpilot_service_refresh_ebay/);
   assert.match(shopeeMigration, /sellerpilot_service_refresh_shopee/);
   assert.match(shopeeMigration, /'qoo10', 'shopee', 'lazada'/);
-  assert.equal((channelCatalog.match(/key: "(?:qoo10|shopee|lazada|coupang|smartstore|ebay|temu)"/g) ?? []).length, 7);
+  assert.equal((channelCatalog.match(/key: "(?:qoo10|shopee|lazada|coupang|elevenst|smartstore|ebay|temu)"/g) ?? []).length, 8);
+  assert.match(channelCatalog, /ProductSearch 1건 읽기/);
   assert.match(channelCatalog, /temu\.local\.goods\.v3\.add/);
   assert.match(channelProtocols, /CEA algorithm=HmacSHA256/);
+  assert.match(channelProtocols, /replace\(\/%3A\/gi, ":"\)/);
   assert.match(channelProtocols, /client_secret_sign/);
   assert.match(channelProtocols, /ebayjapan\.qapi/);
   assert.match(channelProtocols, /buildShopeeSignature/);

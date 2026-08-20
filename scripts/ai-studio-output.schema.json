@@ -69,20 +69,38 @@
     },
     "localizedListings": {
       "type": "array",
-      "minItems": 14,
-      "maxItems": 14,
+      "minItems": 19,
+      "maxItems": 19,
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["channel", "market", "locale", "title", "shortDescription", "description", "keywords"],
+        "required": ["channel", "market", "locale", "title", "shortDescription", "description", "keywords", "thumbnailAltText", "detailSections"],
         "properties": {
-          "channel": { "type": "string", "enum": ["shopee", "lazada"] },
-          "market": { "type": "string", "enum": ["SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID"] },
-          "locale": { "type": "string", "enum": ["en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID"] },
+          "channel": { "type": "string", "enum": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"] },
+          "market": { "type": "string", "enum": ["JP", "SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID", "KR", "US"] },
+          "locale": { "type": "string", "enum": ["ja-JP", "en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID", "ko-KR", "en-US"] },
           "title": { "type": "string", "minLength": 1, "maxLength": 120 },
           "shortDescription": { "type": "string", "minLength": 1, "maxLength": 500 },
           "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
-          "keywords": { "type": "array", "minItems": 3, "maxItems": 10, "items": { "type": "string", "minLength": 1, "maxLength": 80 } }
+          "keywords": { "type": "array", "minItems": 3, "maxItems": 10, "items": { "type": "string", "minLength": 1, "maxLength": 80 } },
+          "thumbnailAltText": { "type": "string", "minLength": 1, "maxLength": 180 },
+          "detailSections": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "heading", "body", "imageAsset", "imageAltText"],
+              "properties": {
+                "type": { "type": "string", "enum": ["overview", "feature", "howto", "spec"] },
+                "heading": { "type": "string", "minLength": 1, "maxLength": 100 },
+                "body": { "type": "string", "minLength": 1, "maxLength": 500 },
+                "imageAsset": { "type": "string", "enum": ["detail-overview", "detail-feature", "detail-use", "detail-package"] },
+                "imageAltText": { "type": "string", "minLength": 1, "maxLength": 180 }
+              }
+            }
+          }
         }
       }
     },

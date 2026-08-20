@@ -40,10 +40,8 @@ yarn-error.log*
 *.tsbuildinfo
 /work/
 /tmp/verification/
-/tmp/
-/output/
-/outputs/
 /supabase/.temp/
+*.icloud-placeholder
 
 # Generated PDF documents are delivered separately and must not be committed.
 *.pdf

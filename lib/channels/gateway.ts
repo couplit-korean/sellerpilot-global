@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ChannelDiagnostic } from "../channel-diagnostics";
 import type { ChannelOperationName, ChannelOperationResult } from "./operations";
 
-export type ChannelGatewayChannel = "shopee" | "lazada" | "coupang" | "smartstore" | "temu";
+export type ChannelGatewayChannel = "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "temu";
 
 type GatewayJobSnapshot = {
   status?: unknown;

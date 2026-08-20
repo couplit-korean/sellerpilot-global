@@ -3,14 +3,12 @@
 -- silently skip or add channels midway through a write.
 
 begin;
-
 alter table sellerpilot_private.product_listings
   add column if not exists last_inventory_quantity integer check (last_inventory_quantity is null or last_inventory_quantity >= 0),
   add column if not exists inventory_sync_status text not null default 'never'
     check (inventory_sync_status in ('never', 'pending', 'succeeded', 'failed')),
   add column if not exists inventory_sync_error text,
   add column if not exists last_inventory_synced_at timestamptz;
-
 create table sellerpilot_private.inventory_sync_runs (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -28,7 +26,6 @@ create table sellerpilot_private.inventory_sync_runs (
   updated_at timestamptz not null default now(),
   unique (owner_id, idempotency_key)
 );
-
 create table sellerpilot_private.inventory_sync_items (
   id uuid primary key default gen_random_uuid(),
   run_id uuid not null references sellerpilot_private.inventory_sync_runs(id) on delete cascade,
@@ -49,17 +46,14 @@ create table sellerpilot_private.inventory_sync_items (
   updated_at timestamptz not null default now(),
   unique (run_id, listing_id)
 );
-
 create index inventory_sync_runs_product_idx
   on sellerpilot_private.inventory_sync_runs (owner_id, product_id, created_at desc);
 create index inventory_sync_items_run_status_idx
   on sellerpilot_private.inventory_sync_items (run_id, status, channel);
-
 alter table sellerpilot_private.inventory_sync_runs enable row level security;
 alter table sellerpilot_private.inventory_sync_items enable row level security;
 revoke all on sellerpilot_private.inventory_sync_runs from public, anon, authenticated;
 revoke all on sellerpilot_private.inventory_sync_items from public, anon, authenticated;
-
 create or replace function public.sellerpilot_get_inventory_sync(p_product_id uuid)
 returns jsonb
 language sql
@@ -85,7 +79,6 @@ as $$
      order by r.created_at desc limit 1
   ) end
 $$;
-
 create or replace function public.sellerpilot_start_inventory_sync(
   p_product_id uuid,
   p_on_hand integer,
@@ -192,7 +185,6 @@ begin
   return public.sellerpilot_get_inventory_sync(p_product_id);
 end;
 $$;
-
 create or replace function public.sellerpilot_service_complete_inventory_sync_item(
   p_run_id uuid,
   p_item_id uuid,
@@ -271,12 +263,10 @@ begin
   return true;
 end;
 $$;
-
 revoke all on function public.sellerpilot_start_inventory_sync(uuid, integer, text) from public, anon;
 revoke all on function public.sellerpilot_get_inventory_sync(uuid) from public, anon;
 revoke all on function public.sellerpilot_service_complete_inventory_sync_item(uuid, uuid, uuid, boolean, integer, text) from public, anon, authenticated;
 grant execute on function public.sellerpilot_start_inventory_sync(uuid, integer, text) to authenticated;
 grant execute on function public.sellerpilot_get_inventory_sync(uuid) to authenticated;
 grant execute on function public.sellerpilot_service_complete_inventory_sync_item(uuid, uuid, uuid, boolean, integer, text) to service_role;
-
 commit;

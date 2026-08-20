@@ -7,6 +7,25 @@ export type DetailSection = {
   body: string;
   points: string[];
 };
+
+export type LocalizedListing = {
+  channel: "qoo10" | "shopee" | "lazada" | "coupang" | "smartstore" | "ebay" | "temu";
+  market: string;
+  locale: string;
+  title: string;
+  shortDescription: string;
+  description: string;
+  keywords: string[];
+  thumbnailAltText: string;
+  detailSections: Array<{
+    type: "overview" | "feature" | "howto" | "spec";
+    heading: string;
+    body: string;
+    imageAsset: "detail-overview" | "detail-feature" | "detail-use" | "detail-package";
+    imageAltText: string;
+  }>;
+};
+
 export type ProductStudioResult = {
   mode: StudioMode;
   product: {
@@ -35,5 +54,6 @@ export type ProductStudioResult = {
     subline: string;
     badge: string;
   };
+  localizedListings: LocalizedListing[];
   warnings: string[];
 };

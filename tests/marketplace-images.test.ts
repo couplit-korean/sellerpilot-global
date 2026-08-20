@@ -10,11 +10,12 @@ test("marketplace detail markup renders every verified panel with safe public UR
     "https://cdn.example.com/detail-3.jpg",
     "https://cdn.example.com/detail-4.jpg",
   ];
-  const html = renderMarketplaceDetailImages(urls);
+  const html = renderMarketplaceDetailImages(urls, ["Overview & package", "Feature", "Use", "Package"]);
 
   assert.equal((html.match(/<img /g) ?? []).length, 4);
   assert.match(html, /data-sellerpilot-detail-images="true"/);
   assert.match(html, /a=1&amp;b=2/);
+  assert.match(html, /alt="Overview &amp; package"/);
 });
 
 test("Qoo10 detail markup uses conservative div and image tags", () => {
@@ -27,6 +28,18 @@ test("Qoo10 detail markup uses conservative div and image tags", () => {
   assert.equal((html.match(/<img /g) ?? []).length, 4);
   assert.doesNotMatch(html, /<\/?section|<\/?dl|<\/?dt|<\/?dd/i);
   assert.match(html, /<div align="center"/);
+});
+
+test("Qoo10 detail markup inserts localized images at learned section positions", () => {
+  const html = renderQoo10DetailDescription(
+    "<section><h2>Overview</h2>{{SELLERPILOT_IMAGE:detail-overview}}<h2>Use</h2>{{SELLERPILOT_IMAGE:detail-use}}</section>",
+    ["https://cdn.example.com/overview.jpg", "https://cdn.example.com/use.jpg"],
+    ["Product overview", "Product use context"],
+    ["detail-overview", "detail-use"],
+  );
+  assert.match(html, /Overview<\/h2><img src="https:\/\/cdn\.example\.com\/overview\.jpg" alt="Product overview"/);
+  assert.match(html, /Use<\/h2><img src="https:\/\/cdn\.example\.com\/use\.jpg" alt="Product use context"/);
+  assert.doesNotMatch(html, /SELLERPILOT_IMAGE/);
 });
 
 test("legacy jobs without four dedicated detail images are blocked before a channel write", async () => {

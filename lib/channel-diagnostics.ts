@@ -1,5 +1,6 @@
 import {
   coupangRequest,
+  elevenstRequest,
   ebayRequest,
   fetchNaverAccessToken,
   lazadaRequest,
@@ -93,6 +94,23 @@ async function testCoupang(payload: SecretPayload): Promise<ChannelDiagnostic> {
   return { status: "failed", message: `쿠팡 HMAC 연결 검사 실패${code ? ` · ${code}` : ` · HTTP ${remote.response.status}`}`, remoteRequestId: remoteRequestId(remote.data) };
 }
 
+async function testElevenst(payload: SecretPayload): Promise<ChannelDiagnostic> {
+  const apiKey = textValue(payload, "api_key");
+  if (!/^[A-Za-z0-9]{32}$/.test(apiKey)) {
+    return { status: "failed", message: "11번가에서 발급한 32자리 OPEN API Key가 필요합니다." };
+  }
+  const remote = await elevenstRequest({
+    payload,
+    apiCode: "ProductSearch",
+    params: { keyword: "생활용품", pageNum: "1", pageSize: "1" },
+  });
+  if (remote.response.ok && remote.data.accepted === true) {
+    return { status: "passed", message: "11번가 OPEN API Key와 등록 IP에서 상품 검색 읽기가 정상 응답했습니다." };
+  }
+  const errorCode = textValue(remote.data, "errorCode");
+  return { status: "failed", message: `11번가 OPEN API 연결 검사 실패${errorCode ? ` · ${errorCode}` : ` · HTTP ${remote.response.status}`}` };
+}
+
 async function testSmartstore(payload: SecretPayload): Promise<ChannelDiagnostic> {
   const tokenType = (textValue(payload, "token_type") || "SELF").toUpperCase();
   if (!["SELF", "SELLER"].includes(tokenType) || (tokenType === "SELLER" && !textValue(payload, "account_id"))) {
@@ -140,6 +158,7 @@ export async function runChannelDiagnostic(
     if (channel === "lazada") return await testLazada(payload);
     if (channel === "qoo10") return await testQoo10(payload);
     if (channel === "coupang") return await testCoupang(payload);
+    if (channel === "elevenst") return await testElevenst(payload);
     if (channel === "smartstore") return await testSmartstore(payload);
     if (channel === "ebay") return await testEbay(payload, environment);
     if (channel === "temu") return await testTemu(payload);

@@ -7,6 +7,7 @@ export const productCurrencies = [
 export const productConditions = ["NEW", "USED", "REFURBISHED"] as const;
 
 export const productIntakeSchema = z.object({
+  researchInput: z.string().trim().min(2, "상품 링크나 설명을 2자 이상 입력해 주세요.").max(12_000),
   productName: z.string().trim().min(2, "상품명을 2자 이상 입력해 주세요.").max(160),
   sellerSku: z.string().trim().min(2, "판매자 SKU를 입력해 주세요.").max(100)
     .regex(/^[A-Za-z0-9._-]+$/, "SKU는 영문, 숫자, ., _, -만 사용할 수 있습니다."),
@@ -27,8 +28,10 @@ export const productIntakeSchema = z.object({
   packageWidthCm: z.number().finite().positive("포장 세로를 입력해 주세요.").max(10_000),
   packageHeightCm: z.number().finite().positive("포장 높이를 입력해 주세요.").max(10_000),
   description: z.string().trim().min(20, "용도·특징을 포함해 상품 설명을 20자 이상 입력해 주세요.").max(4_000),
-  productUrl: z.string().trim().url("공개로 접근 가능한 http(s) 상품 링크를 입력해 주세요.").max(1_000)
-    .refine((value) => /^https?:\/\//i.test(value), "http(s) 상품 링크만 사용할 수 있습니다."),
+  productUrl: z.string().trim().max(1_000).refine(
+    (value) => value === "" || /^https?:\/\//i.test(value),
+    "상품 링크는 http(s) 주소만 사용할 수 있습니다.",
+  ),
   imageRightsConfirmed: z.literal(true, { error: "이미지·상품 자료 사용 권한을 확인해 주세요." }),
   productFactsConfirmed: z.literal(true, { error: "입력한 상품 정보가 실물과 일치함을 확인해 주세요." }),
 }).superRefine((value, context) => {
@@ -60,6 +63,7 @@ export type ProductIntakeDraft = Omit<ProductIntakeFields, "imageRightsConfirmed
 };
 
 export const emptyProductIntake: ProductIntakeDraft = {
+  researchInput: "",
   productName: "",
   sellerSku: "",
   categoryHint: "",

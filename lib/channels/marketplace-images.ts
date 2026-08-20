@@ -132,14 +132,45 @@ function uniqueStrings(values: string[]) {
   return [...new Set(values.filter(Boolean))];
 }
 
-export function renderMarketplaceDetailImages(urls: string[]) {
+function escapedAttribute(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function detailImageTag(url: string, altText: string, qoo10 = false) {
+  const safeUrl = escapedAttribute(url);
+  const safeAlt = escapedAttribute(altText);
+  return qoo10
+    ? `<img src="${safeUrl}" alt="${safeAlt}" width="860" border="0" style="display:block;width:100%;max-width:860px;height:auto;margin:0 auto 18px" /><br />`
+    : `<img src="${safeUrl}" alt="${safeAlt}" style="display:block;width:100%;height:auto;margin:0 auto 18px" />`;
+}
+
+export function renderMarketplaceDetailImages(urls: string[], altTexts: string[] = []) {
   if (!urls.length) return "";
   return `<section data-sellerpilot-detail-images="true" style="max-width:860px;margin:24px auto">${urls
-    .map((url, index) => `<img src="${url.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}" alt="상품 상세 이미지 ${index + 1}" style="display:block;width:100%;height:auto;margin:0 auto 18px" />`)
+    .map((url, index) => detailImageTag(url, altTexts[index] || `상품 상세 이미지 ${index + 1}`))
     .join("")}</section>`;
 }
 
-export function renderQoo10DetailDescription(value: unknown, urls: string[]) {
+function injectMarketplaceDetailImages(value: unknown, urls: string[], altTexts: string[], roles: string[], qoo10 = false) {
+  let source = typeof value === "string" ? value : "";
+  const used = new Set<number>();
+  roles.forEach((role, index) => {
+    if (!role || !urls[index]) return;
+    const token = `{{SELLERPILOT_IMAGE:${role}}}`;
+    if (!source.includes(token)) return;
+    source = source.replaceAll(token, detailImageTag(urls[index], altTexts[index] || `상품 상세 이미지 ${index + 1}`, qoo10));
+    used.add(index);
+  });
+  const remainingUrls = urls.filter((_, index) => !used.has(index));
+  const remainingAltTexts = altTexts.filter((_, index) => !used.has(index));
+  if (!remainingUrls.length) return source;
+  const images = remainingUrls.map((url, index) => detailImageTag(url, remainingAltTexts[index] || `상품 상세 이미지 ${index + 1}`, qoo10)).join("");
+  return qoo10
+    ? `${source}<div align="center" style="text-align:center;margin:24px auto">${images}</div>`
+    : `${source}<section data-sellerpilot-detail-images="true" style="max-width:860px;margin:24px auto">${images}</section>`;
+}
+
+export function renderQoo10DetailDescription(value: unknown, urls: string[], altTexts: string[] = [], roles: string[] = []) {
   const source = (typeof value === "string" ? value : "")
     .replace(/<\/?section(?:\s[^>]*)?>/gi, (tag) => tag.startsWith("</") ? "</div>" : "<div>")
     .replace(/<dl(?:\s[^>]*)?>/gi, "<div>")
@@ -149,16 +180,11 @@ export function renderQoo10DetailDescription(value: unknown, urls: string[]) {
     .replace(/<dd(?:\s[^>]*)?>/gi, "<p>")
     .replace(/<\/dd>/gi, "</p>");
   if (!urls.length) return source;
-  const images = urls.map((url, index) => {
-    const safeUrl = url.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
-    return `<img src="${safeUrl}" alt="상품 상세 이미지 ${index + 1}" width="860" border="0" style="display:block;width:100%;max-width:860px;height:auto;margin:0 auto 18px" /><br />`;
-  }).join("");
-  return `${source}<div align="center" style="text-align:center;margin:24px auto">${images}</div>`;
+  return injectMarketplaceDetailImages(source, urls, altTexts, roles, true);
 }
 
-function appendDetailImages(value: unknown, urls: string[]) {
-  const source = typeof value === "string" ? value : "";
-  return `${source}${renderMarketplaceDetailImages(urls)}`;
+function appendDetailImages(value: unknown, urls: string[], altTexts: string[], roles: string[]) {
+  return injectMarketplaceDetailImages(value, urls, altTexts, roles);
 }
 
 export async function prepareMarketplaceImages(serviceClient: SupabaseClient, channel: ActiveChannelKey, argumentsValue: Record<string, unknown>) {
@@ -184,13 +210,15 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   }
   const gallery = assets ? await normalizeList(assets.galleryImageUrls, 12) : [];
   const details = assets ? await normalizeList(assets.detailImageUrls, 8) : [];
+  const detailImageAltTexts = strings(assets?.detailImageAltTexts).slice(0, details.length);
+  const detailImageRoles = strings(assets?.detailImageRoles).slice(0, details.length);
 
   if (channel === "qoo10") {
     const params = record(next.params);
     const sourceUrl = gallery[0] ?? (typeof params?.StandardImage === "string" ? params.StandardImage.trim() : "");
     if (!params || !sourceUrl) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
     params.StandardImage = gallery[0] ?? await normalize(sourceUrl);
-    params.ItemDescription = renderQoo10DetailDescription(params.ItemDescription, details);
+    params.ItemDescription = renderQoo10DetailDescription(params.ItemDescription, details, detailImageAltTexts, detailImageRoles);
     return next;
   }
 
@@ -211,13 +239,13 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
         const sku = record(skuValue);
         if (sku) sku.Images = { Image: next.imageUrls };
       }
-      attributes.description = appendDetailImages(attributes.description, details);
+      attributes.description = appendDetailImages(attributes.description, details, detailImageAltTexts, detailImageRoles);
     }
     if (channel === "smartstore") {
       const body = record(next.body);
       const originProduct = record(body?.originProduct);
       if (!originProduct) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-      originProduct.detailContent = appendDetailImages(originProduct.detailContent, details);
+      originProduct.detailContent = appendDetailImages(originProduct.detailContent, details, detailImageAltTexts, detailImageRoles);
     }
     return next;
   }
@@ -225,6 +253,9 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   if (channel === "coupang") {
     const body = record(next.body);
     const items = Array.isArray(body?.items) ? body.items : [];
+    const localizedSections = Array.isArray(assets?.localizedDetailSections)
+      ? assets.localizedDetailSections.map(record).filter((section): section is Record<string, unknown> => Boolean(section))
+      : [];
     if (!items.length) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
     let count = 0;
     for (const itemValue of items) {
@@ -237,7 +268,16 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
           vendorPath: url,
         }));
         const currentContents = Array.isArray(item.contents) ? item.contents : [];
-        item.contents = [
+        const learnedContents = detailImageRoles.flatMap((role, index) => {
+          const section = localizedSections.find((candidate) => candidate.imageAsset === role);
+          const heading = typeof section?.heading === "string" ? section.heading.trim() : "";
+          const sectionBody = typeof section?.body === "string" ? section.body.trim() : "";
+          return [
+            ...(heading || sectionBody ? [{ contentsType: "TEXT", contentDetails: [{ content: `<h2>${escapedAttribute(heading)}</h2><p>${escapedAttribute(sectionBody)}</p>`, detailType: "TEXT" }] }] : []),
+            ...(details[index] ? [{ contentsType: "IMAGE", contentDetails: [{ content: details[index], detailType: "IMAGE" }] }] : []),
+          ];
+        });
+        item.contents = learnedContents.length ? learnedContents : [
           ...details.map((url) => ({ contentsType: "IMAGE", contentDetails: [{ content: url, detailType: "IMAGE" }] })),
           ...currentContents,
         ];
@@ -278,7 +318,8 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   if (!product) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
   const normalized = gallery.length ? uniqueStrings([...gallery, ...details]).slice(0, 12) : await normalizeList(product.imageUrls, 12);
   product.imageUrls = normalized;
+  product.description = appendDetailImages(product.description, details, detailImageAltTexts, detailImageRoles);
   const offer = record(next.offer);
-  if (offer) offer.listingDescription = appendDetailImages(offer.listingDescription, details);
+  if (offer) offer.listingDescription = appendDetailImages(offer.listingDescription, details, detailImageAltTexts, detailImageRoles);
   return next;
 }

@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../lib/supabase/client";
-import { userFacingErrorMessage } from "../lib/user-facing-errors";
 
 export type OperationProduct = {
   id: string;
@@ -20,14 +19,6 @@ export type OperationProduct = {
   sold30d: number;
   revenue30dKrw: number;
   listingChannels: string[];
-  listings?: Array<{
-    productId: string;
-    channelKey: string;
-    channelCode: string;
-    remoteId: string;
-    market: string;
-    targetId: string;
-  }>;
   demo: boolean;
   updatedAt: string;
 };
@@ -77,6 +68,16 @@ export type OperationMarginScenario = {
 
 export type OperationsSnapshot = {
   generatedAt: string;
+  syncStatus: Array<{
+    channel_key: string;
+    data_type: "orders" | "inquiries";
+    status: "never" | "queued" | "running" | "passed" | "failed" | "unsupported";
+    imported_count: number;
+    last_started_at: string | null;
+    last_succeeded_at: string | null;
+    last_error: string | null;
+    updated_at: string;
+  }>;
   channelMetrics: Array<{
     channelKey: string;
     channelCode: string;
@@ -120,15 +121,12 @@ export type OperationsSnapshot = {
   };
 };
 
-type LoadState = "loading" | "database" | "stale" | "unavailable";
+type LoadState = "loading" | "database" | "unavailable";
 
 export function useOperationsSnapshot() {
   const [data, setData] = useState<OperationsSnapshot | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [message, setMessage] = useState("");
-  const activeRequestRef = useRef<AbortController | null>(null);
-  const requestSequenceRef = useRef(0);
-  const hasDataRef = useRef(false);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data: sessionData } = await createClient().auth.getSession();
@@ -146,44 +144,26 @@ export function useOperationsSnapshot() {
   }, []);
 
   const load = useCallback(async () => {
-    const sequence = requestSequenceRef.current + 1;
-    requestSequenceRef.current = sequence;
-    activeRequestRef.current?.abort();
-    const controller = new AbortController();
-    activeRequestRef.current = controller;
     try {
-      const response = await authenticatedFetch("/api/operations/snapshot", { signal: controller.signal });
+      const response = await authenticatedFetch("/api/operations/snapshot");
       const payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "운영 데이터를 불러오지 못했습니다.");
-      if (controller.signal.aborted || sequence !== requestSequenceRef.current) return;
       setData(payload);
-      hasDataRef.current = true;
       setState("database");
-      setMessage("판매 정보가 최신 상태입니다.");
+      setMessage("Supabase 운영 DB · 실데이터만 표시");
     } catch (error) {
-      if (controller.signal.aborted || sequence !== requestSequenceRef.current) return;
-      setState(hasDataRef.current ? "stale" : "unavailable");
-      setMessage(userFacingErrorMessage(error, "판매 정보를 불러오지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요."));
-    } finally {
-      if (activeRequestRef.current === controller) activeRequestRef.current = null;
+      setData(null);
+      setState("unavailable");
+      setMessage(error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.");
     }
   }, [authenticatedFetch]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void load(), 0);
-    const refresh = window.setInterval(() => {
-      if (document.visibilityState === "visible" && navigator.onLine) void load();
-    }, 60_000);
-    const handleOnline = () => { if (document.visibilityState === "visible") void load(); };
-    const handleVisibility = () => { if (document.visibilityState === "visible" && navigator.onLine) void load(); };
-    window.addEventListener("online", handleOnline);
-    document.addEventListener("visibilitychange", handleVisibility);
+    const refresh = window.setInterval(() => void load(), 60_000);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(refresh);
-      window.removeEventListener("online", handleOnline);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      activeRequestRef.current?.abort();
     };
   }, [load]);
 

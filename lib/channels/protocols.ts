@@ -66,7 +66,10 @@ export async function coupangRequest(input: {
   const secretKey = textValue(input.payload, "secret_key");
   const vendorId = textValue(input.payload, "vendor_id");
   if (!accessKey || !secretKey || !vendorId) throw new Error("COUPANG_CREDENTIALS_MISSING");
-  const query = input.query?.toString() ?? "";
+  // Coupang's order APIs document the timezone suffix as
+  // `yyyy-MM-dd%2B09:00`. URLSearchParams also escapes the colon, but the
+  // provider's strict date parser expects that colon to remain literal.
+  const query = (input.query?.toString() ?? "").replace(/%3A/gi, ":");
   const url = new URL(`https://api-gateway.coupang.com${input.path}${query ? `?${query}` : ""}`);
   const response = await fetch(url, {
     method: input.method,
@@ -635,15 +638,7 @@ export function buildQoo10Url(input: {
   version?: string;
   params?: Record<string, string>;
 }) {
-  const url = new URL("https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi");
-  url.search = new URLSearchParams({
-    key: input.apiKey,
-    v: input.version ?? "1.0",
-    returnType: "json",
-    method: `${input.service}.${input.method}`,
-    ...(input.params ?? {}),
-  }).toString();
-  return url;
+  return new URL(`https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi/${encodeURIComponent(`${input.service}.${input.method}`)}`);
 }
 
 export async function qoo10Request(input: {
@@ -655,28 +650,86 @@ export async function qoo10Request(input: {
 }) {
   const apiKey = textValue(input.payload, "api_key");
   if (!apiKey) throw new Error("QOO10_CREDENTIALS_MISSING");
-  // Qoo10's create and dedicated detail-content methods can carry a complete
-  // HTML detail page. Sending those payloads in the query string can create or
-  // update an item while silently truncating the long HTML value. QAPI accepts
-  // form-encoded REST requests, so keep the gateway controls in the URL and
-  // send product/detail fields in a POST body for both write methods.
-  const useFormBody = ["SetNewGoods", "EditGoodsContents"].includes(input.method);
+  // The current QAPI developer console sends every method to the qualified
+  // method path and authenticates with headers. Query-string authentication is
+  // the retired OpenApiService shape and returns -90001 for current QAPI
+  // methods. A JSON body also keeps long product-detail HTML out of URLs.
   const response = await fetch(buildQoo10Url({
     ...input,
     apiKey,
-    params: useFormBody ? undefined : input.params,
   }), {
-    method: useFormBody ? "POST" : "GET",
-    body: useFormBody ? new URLSearchParams(input.params ?? {}) : undefined,
+    method: "POST",
+    body: JSON.stringify({ returnType: "json", ...(input.params ?? {}) }),
     cache: "no-store",
     signal: AbortSignal.timeout(15_000),
     headers: {
       accept: "application/json",
-      ...(useFormBody ? { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" } : {}),
+      "content-type": "application/json; charset=utf-8",
+      GiosisCertificationKey: apiKey,
+      QAPIVersion: input.version ?? "1.0",
       "user-agent": "SellerPilot-Qoo10-QAPI-Connector/1.0",
     },
   });
   return readRemoteResponse(response);
+}
+
+function elevenstXmlValue(xml: string, tag: string) {
+  const match = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return match?.[1]
+    ?.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .trim() ?? "";
+}
+
+export async function elevenstRequest(input: {
+  payload: SecretPayload;
+  apiCode: string;
+  params?: Record<string, string>;
+}) {
+  const apiKey = textValue(input.payload, "api_key");
+  if (!apiKey) throw new Error("ELEVENST_CREDENTIALS_MISSING");
+  const url = new URL("https://openapi.11st.co.kr/openapi/OpenApiService.tmall");
+  url.search = new URLSearchParams({
+    key: apiKey,
+    apiCode: input.apiCode,
+    ...(input.params ?? {}),
+  }).toString();
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
+      "user-agent": "SellerPilot-11st-OpenAPI-Connector/1.0",
+    },
+  });
+  const bytes = await response.arrayBuffer();
+  let xml = "";
+  try {
+    xml = new TextDecoder("euc-kr").decode(bytes);
+  } catch {
+    xml = new TextDecoder().decode(bytes);
+  }
+  const errorCode = elevenstXmlValue(xml, "ErrorCode") || elevenstXmlValue(xml, "ResultCode");
+  const errorMessage = elevenstXmlValue(xml, "ErrorMessage") || elevenstXmlValue(xml, "ResultMessage");
+  const totalCount = Number(elevenstXmlValue(xml, "TotalCount") || "0");
+  const hasProduct = /<Product(?:\s[^>]*)?>/i.test(xml);
+  const accepted = response.ok && !errorCode && !/<Errors?(?:\s[^>]*)?>/i.test(xml);
+  return {
+    response,
+    text: "",
+    data: {
+      accepted,
+      hasProduct,
+      totalCount: Number.isFinite(totalCount) ? totalCount : 0,
+      ...(errorCode ? { errorCode: errorCode.slice(0, 80) } : {}),
+      ...(errorMessage ? { errorMessage: errorMessage.slice(0, 240) } : {}),
+    },
+  } satisfies RemoteResponse;
 }
 
 export const ebayDefaultScopes = [

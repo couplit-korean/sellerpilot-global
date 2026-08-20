@@ -1,4 +1,4 @@
-export const activeChannelKeys = ["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"] as const;
+export const activeChannelKeys = ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"] as const;
 
 export type ActiveChannelKey = (typeof activeChannelKeys)[number];
 export type ChannelCapabilityKey =
@@ -37,6 +37,7 @@ export type CredentialField = {
 export type ChannelDefinition = {
   key: ActiveChannelKey;
   code: string;
+  mark: string;
   name: string;
   market: string;
   authType: "seller-key" | "hmac" | "oauth-client" | "oauth-user";
@@ -51,11 +52,13 @@ const api = (note: string): ChannelCapability => ({ mode: "api", note });
 const polling = (note: string): ChannelCapability => ({ mode: "polling", note });
 const webhook = (note: string): ChannelCapability => ({ mode: "webhook", note });
 const unsupported = (note: string): ChannelCapability => ({ mode: "unsupported", note });
+const vendorDocsRequired = (note: string): ChannelCapability => ({ mode: "vendor_docs_required", note });
 
 export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
   qoo10: {
     key: "qoo10",
     code: "Q",
+    mark: "큐텐",
     name: "Qoo10 Japan",
     market: "Japan · QAPI",
     authType: "seller-key",
@@ -87,6 +90,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
   shopee: {
     key: "shopee",
     code: "S",
+    mark: "쇼피",
     name: "Shopee Open Platform",
     market: "Global · Open Platform v2",
     authType: "oauth-user",
@@ -122,6 +126,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
   lazada: {
     key: "lazada",
     code: "L",
+    mark: "라자다",
     name: "Lazada Open Platform",
     market: "MY · SG · PH · TH · VN · ID",
     authType: "oauth-user",
@@ -156,6 +161,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
   coupang: {
     key: "coupang",
     code: "C",
+    mark: "쿠팡",
     name: "쿠팡 WING",
     market: "Korea · Open API",
     authType: "hmac",
@@ -190,9 +196,44 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       webhooks: unsupported("공개 판매자 API는 주문/CS 주기조회 중심으로 설계"),
     },
   },
+  elevenst: {
+    key: "elevenst",
+    code: "11",
+    mark: "11번가",
+    name: "11번가",
+    market: "Korea · OPEN API",
+    authType: "seller-key",
+    credentialPolicy: "32자리 OPEN API Key · 등록 IP에서만 호출 · 변경 시 즉시 재검사",
+    oauth: false,
+    fields: [
+      { key: "api_key", label: "OPEN API Key", secret: true, placeholder: "11번가에서 발급한 32자리 Key", help: "OPEN API → API 관리 → API KEY 관리에서 확인합니다." },
+      { key: "seller_id", label: "판매자 ID", optional: true, placeholder: "셀러오피스 판매자 ID" },
+    ],
+    officialDocs: [
+      { label: "OPEN API 관리", url: "https://openapi.11st.co.kr/openapi/OpenApiServiceRegister.tmall" },
+      { label: "개발 가이드", url: "https://openapi.11st.co.kr/openapi/OpenApiGuide.tmall" },
+    ],
+    capabilities: {
+      connection: api("고정 IP 작업자에서 ProductSearch 1건 읽기로 Key·IP 허용 상태 검사"),
+      categories: vendorDocsRequired("현재 공개 가이드는 검색용 카테고리만 제공하며 판매자 카테고리 API 승인이 필요"),
+      imageUpload: vendorDocsRequired("판매자 상품 API 문서와 업로드 권한 확인 필요"),
+      listingCreate: vendorDocsRequired("판매자 상품 등록 API 문서·서비스 권한 확인 전 실행 차단"),
+      listingUpdate: vendorDocsRequired("판매자 상품 수정 API 문서·서비스 권한 확인 전 실행 차단"),
+      listingStop: vendorDocsRequired("판매자 판매상태 API 문서·서비스 권한 확인 전 실행 차단"),
+      price: vendorDocsRequired("판매자 가격 API 문서·서비스 권한 확인 필요"),
+      inventory: vendorDocsRequired("판매자 재고 API 문서·서비스 권한 확인 필요"),
+      orders: vendorDocsRequired("OPEN API Key 외 주문 API 서비스 권한과 공식 엔드포인트 확인 필요"),
+      shipment: vendorDocsRequired("발주·송장 API 서비스 권한과 공식 엔드포인트 확인 필요"),
+      claims: vendorDocsRequired("취소·반품 API 서비스 권한과 공식 엔드포인트 확인 필요"),
+      inquiries: vendorDocsRequired("문의 API 서비스 권한과 공식 엔드포인트 확인 필요"),
+      settlements: vendorDocsRequired("정산 API 서비스 권한과 공식 엔드포인트 확인 필요"),
+      webhooks: unsupported("공개 OPEN API 가이드에 판매자 주문·문의 웹훅이 확인되지 않음"),
+    },
+  },
   temu: {
     key: "temu",
     code: "T",
+    mark: "테무",
     name: "Temu Korea",
     market: "Korea · Partner Open API",
     authType: "seller-key",
@@ -227,6 +268,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
   smartstore: {
     key: "smartstore",
     code: "N",
+    mark: "네이버",
     name: "네이버 스마트스토어",
     market: "Korea · Commerce API",
     authType: "oauth-client",
@@ -264,6 +306,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
   ebay: {
     key: "ebay",
     code: "E",
+    mark: "이베이",
     name: "eBay Global",
     market: "Global · Sell APIs",
     authType: "oauth-user",

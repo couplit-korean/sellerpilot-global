@@ -4,7 +4,6 @@
 -- duplicate (notably Shopee GlobalProduct's asynchronous publish flow).
 
 begin;
-
 update sellerpilot_private.product_listings l
    set remote_id = trim(a.remote_id),
        updated_at = now()
@@ -13,7 +12,6 @@ update sellerpilot_private.product_listings l
    and l.status = 'failed'
    and nullif(trim(coalesce(l.remote_id, '')), '') is null
    and nullif(trim(coalesce(a.remote_id, '')), '') is not null;
-
 create or replace function public.sellerpilot_service_complete_product_listing(
   p_listing_id uuid,
   p_attempt_id uuid,
@@ -105,10 +103,8 @@ begin
   return v_updated = 1;
 end;
 $$;
-
 revoke all on function public.sellerpilot_service_complete_product_listing(uuid, uuid, text, boolean, text, text)
   from public, anon, authenticated;
 grant execute on function public.sellerpilot_service_complete_product_listing(uuid, uuid, text, boolean, text, text)
   to service_role;
-
 commit;

@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
-  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "smartstore", "ebay", "temu"]),
+  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
 });
 
 export async function POST(request: NextRequest) {
@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
     parsed.data.channel === "shopee"
     || parsed.data.channel === "lazada"
     || parsed.data.channel === "coupang"
+    || parsed.data.channel === "elevenst"
     || parsed.data.channel === "smartstore"
     || parsed.data.channel === "temu"
   ) {
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
         shopee: "Shopee",
         lazada: "Lazada",
         coupang: "쿠팡",
+        elevenst: "11번가",
         smartstore: "네이버",
         temu: "Temu",
       }[parsed.data.channel];

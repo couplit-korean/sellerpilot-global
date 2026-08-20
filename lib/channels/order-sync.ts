@@ -1,0 +1,201 @@
+import "server-only";
+import type { ActiveChannelKey } from "./catalog";
+import type { ChannelOperationResult } from "./operations";
+
+export type NormalizedChannelOrder = {
+  externalOrderId: string;
+  customerName: string;
+  productName: string;
+  quantity: number;
+  amount: number;
+  currency: string;
+  amountKrw: number;
+  status: "paid" | "ready_to_ship" | "shipped" | "delivered" | "cancelled" | "refunded";
+  orderedAt: string;
+};
+
+const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
+  ? value as Record<string, unknown>
+  : {};
+const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
+  ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+  : [];
+const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
+const number = (...values: unknown[]) => {
+  const raw = values.find((value) => Number.isFinite(Number(value)));
+  return raw === undefined ? 0 : Math.max(0, Number(raw));
+};
+const iso = (...values: unknown[]) => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const time = value < 10_000_000_000 ? value * 1000 : value;
+      const parsed = new Date(time);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    }
+  }
+  return new Date().toISOString();
+};
+
+function status(value: unknown): NormalizedChannelOrder["status"] {
+  const remote = String(value ?? "").toUpperCase();
+  if (/REFUND|RETURN/.test(remote)) return "refunded";
+  if (/CANCEL|VOID|INACTIVE/.test(remote)) return "cancelled";
+  if (/DELIVERED|FINAL_DELIVERY|COMPLETED|COMPLETE/.test(remote)) return "delivered";
+  if (/SHIPPED|DEPARTURE|DELIVERING|IN_TRANSIT|PROCESSED/.test(remote)) return "shipped";
+  if (/READY|INSTRUCT|TO_SHIP|PENDING_SHIPMENT|PACKED/.test(remote)) return "ready_to_ship";
+  return "paid";
+}
+
+function compactProductNames(items: Record<string, unknown>[], fallback: string) {
+  const names = items.map((item) => text(item.vendorItemName, item.productName, item.itemName, item.name, item.title)).filter(Boolean);
+  const unique = [...new Set(names)];
+  if (!unique.length) return fallback;
+  return unique.length === 1 ? unique[0] : `${unique[0]} 외 ${unique.length - 1}개`;
+}
+
+function normalizeCoupang(data: Record<string, unknown>) {
+  const rows = list(data.data).length ? list(data.data) : list(object(data.data).orderSheets);
+  return rows.map((row): NormalizedChannelOrder | null => {
+    const items = list(row.orderItems);
+    const externalOrderId = text(row.orderId, row.shipmentBoxId);
+    if (!externalOrderId) return null;
+    const total = number(row.orderPrice, row.totalPrice, ...items.map((item) => number(item.orderPrice, item.salesPrice) * Math.max(1, number(item.shippingCount, item.quantity))));
+    return {
+      externalOrderId,
+      customerName: text(object(row.orderer).name, object(row.receiver).name, "쿠팡 구매자"),
+      productName: compactProductNames(items, "쿠팡 주문 상품"),
+      quantity: Math.max(1, Math.round(items.reduce((sum, item) => sum + number(item.shippingCount, item.quantity), 0))),
+      amount: total,
+      currency: "KRW",
+      amountKrw: total,
+      status: status(row.status),
+      orderedAt: iso(row.orderedAt, row.paidAt),
+    };
+  }).filter((row): row is NormalizedChannelOrder => Boolean(row));
+}
+
+function normalizeShopee(data: Record<string, unknown>) {
+  const rows = list(object(data.response).order_list);
+  return rows.map((row): NormalizedChannelOrder | null => {
+    const externalOrderId = text(row.order_sn, row.order_id);
+    if (!externalOrderId) return null;
+    const amount = number(row.total_amount);
+    const currency = text(row.currency, "KRW").toUpperCase();
+    return {
+      externalOrderId,
+      customerName: text(row.buyer_username, "Shopee 구매자"),
+      productName: text(row.item_name, "Shopee 주문 상품"),
+      quantity: Math.max(1, Math.round(number(row.quantity) || 1)),
+      amount,
+      currency,
+      amountKrw: currency === "KRW" ? amount : 0,
+      status: status(row.order_status),
+      orderedAt: iso(row.create_time, row.update_time),
+    };
+  }).filter((row): row is NormalizedChannelOrder => Boolean(row));
+}
+
+function normalizeLazada(data: Record<string, unknown>) {
+  const rows = list(object(data.data).orders);
+  return rows.map((row): NormalizedChannelOrder | null => {
+    const externalOrderId = text(row.order_id, row.order_number);
+    if (!externalOrderId) return null;
+    const amount = number(row.price, row.grand_total);
+    const currency = text(row.currency, "MYR").toUpperCase();
+    const statuses = Array.isArray(row.statuses) ? row.statuses.join(" ") : row.status;
+    return {
+      externalOrderId,
+      customerName: text([row.customer_first_name, row.customer_last_name].filter(Boolean).join(" "), "Lazada 구매자"),
+      productName: text(row.item_name, "Lazada 주문 상품"),
+      quantity: Math.max(1, Math.round(number(row.items_count) || 1)),
+      amount,
+      currency,
+      amountKrw: currency === "KRW" ? amount : 0,
+      status: status(statuses),
+      orderedAt: iso(row.created_at, row.updated_at),
+    };
+  }).filter((row): row is NormalizedChannelOrder => Boolean(row));
+}
+
+function normalizeSmartstore(data: Record<string, unknown>) {
+  const root = object(data.data);
+  const rows = list(root.lastChangeStatuses).length ? list(root.lastChangeStatuses) : list(root.contents);
+  return rows.map((row): NormalizedChannelOrder | null => {
+    const externalOrderId = text(row.orderId, row.productOrderId);
+    if (!externalOrderId) return null;
+    const amount = number(row.totalPaymentAmount, row.paymentAmount);
+    return {
+      externalOrderId,
+      customerName: text(row.ordererName, "네이버 구매자"),
+      productName: text(row.productName, "스마트스토어 주문 상품"),
+      quantity: Math.max(1, Math.round(number(row.quantity) || 1)),
+      amount,
+      currency: "KRW",
+      amountKrw: amount,
+      status: status(text(row.productOrderStatus, row.lastChangedType)),
+      orderedAt: iso(row.paymentDate, row.lastChangedDate),
+    };
+  }).filter((row): row is NormalizedChannelOrder => Boolean(row));
+}
+
+function normalizeEbay(data: Record<string, unknown>) {
+  return list(data.orders).map((row): NormalizedChannelOrder | null => {
+    const externalOrderId = text(row.orderId);
+    if (!externalOrderId) return null;
+    const pricing = object(object(row.pricingSummary).total);
+    const items = list(row.lineItems);
+    const amount = number(pricing.value);
+    const currency = text(pricing.currency, "USD").toUpperCase();
+    return {
+      externalOrderId,
+      customerName: text(object(row.buyer).username, "eBay 구매자"),
+      productName: compactProductNames(items, "eBay 주문 상품"),
+      quantity: Math.max(1, Math.round(items.reduce((sum, item) => sum + number(item.quantity), 0))),
+      amount,
+      currency,
+      amountKrw: currency === "KRW" ? amount : 0,
+      status: status(`${text(row.orderPaymentStatus)} ${text(row.orderFulfillmentStatus)}`),
+      orderedAt: iso(row.creationDate, row.lastModifiedDate),
+    };
+  }).filter((row): row is NormalizedChannelOrder => Boolean(row));
+}
+
+function normalizeQoo10(data: Record<string, unknown>) {
+  const value = data.ResultObject;
+  const rows = list(value).length ? list(value) : list(object(value).ShippingInfo);
+  return rows.map((row): NormalizedChannelOrder | null => {
+    const externalOrderId = text(row.OrderNo, row.PackNo);
+    if (!externalOrderId) return null;
+    const amount = number(row.OrderPrice, row.total);
+    const currency = text(row.Currency, "JPY").toUpperCase();
+    return {
+      externalOrderId,
+      customerName: text(row.BuyerName, row.Receiver, "Qoo10 구매자"),
+      productName: text(row.ItemTitle, row.ItemName, "Qoo10 주문 상품"),
+      quantity: Math.max(1, Math.round(number(row.OrderQty, row.Qty) || 1)),
+      amount,
+      currency,
+      amountKrw: currency === "KRW" ? amount : 0,
+      status: status(text(row.ShippingStatus, row.OrderStatus)),
+      orderedAt: iso(row.OrderDate, row.PaymentDate),
+    };
+  }).filter((row): row is NormalizedChannelOrder => Boolean(row));
+}
+
+export function normalizeChannelOrders(channel: ActiveChannelKey, result: ChannelOperationResult): NormalizedChannelOrder[] {
+  const data = result.steps.find((step) => step.name === "orders")?.data ?? result.steps.at(-1)?.data ?? {};
+  const normalized = channel === "coupang" ? normalizeCoupang(data)
+    : channel === "shopee" ? normalizeShopee(data)
+      : channel === "lazada" ? normalizeLazada(data)
+        : channel === "smartstore" ? normalizeSmartstore(data)
+          : channel === "ebay" ? normalizeEbay(data)
+            : channel === "qoo10" ? normalizeQoo10(data)
+              : [];
+  return [...new Map(normalized.map((order) => [order.externalOrderId, order])).values()];
+}
+
+export { orderSyncArguments, orderSyncRequests } from "./sync-arguments";

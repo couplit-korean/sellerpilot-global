@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { ebayDefaultScopes, ensureShopeeAccessToken, exchangeEbayOAuthToken } from "../../../../lib/channels/protocols";
 import { supabaseUrl } from "../../../../lib/supabase/config";
+import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -235,6 +236,7 @@ export async function GET(request: Request) {
       .remove(storagePaths);
     if (!removeError) storageRemoved = removed?.length ?? 0;
   }
+  const push = await dispatchPendingPushNotifications(serviceClient, 100).catch(() => ({ configured: true, claimed: 0, sent: 0, failed: 1 }));
 
   return NextResponse.json({
     ok: true,
@@ -245,6 +247,7 @@ export async function GET(request: Request) {
     shopeeToken: shopeeToken.status,
     lazadaToken: lazadaToken.status,
     ebayToken: ebayToken.status,
+    push: { configured: push.configured, sent: push.sent, failed: push.failed },
     completedAt: new Date().toISOString(),
   }, { headers: { "cache-control": "no-store, max-age=0" } });
 }
