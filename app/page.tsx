@@ -445,7 +445,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   const summary = operationSummary ?? { revenue30dKrw: 0, sold30d: 0, orderCount: 0, paidOrderCount: 0, readyToShipCount: 0, openTicketCount: 0, lowStockCount: 0, productCount: 0, registrationErrorCount: 0, registrationBlockedCount: 0, activeCredentialCount: 0, registeredCredentialCount: 0 };
   const livePipeline = pipeline ?? { aiRunning: 0, listingQueued: 0, listingPublished: 0, listingFailed: 0, listingBlocked: 0 };
   const totalTasks = summary.paidOrderCount + summary.readyToShipCount + summary.openTicketCount + summary.registrationErrorCount;
-  const totalListings = livePipeline.listingPublished + livePipeline.listingFailed;
+  const totalListings = livePipeline.listingPublished + livePipeline.listingFailed + livePipeline.listingBlocked;
   const successRate = totalListings > 0 ? (livePipeline.listingPublished / totalListings) * 100 : 0;
   const maxChannelRevenue = Math.max(1, ...activeMetrics.map((channel) => channel.revenue30dKrw));
   const currentDate = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "long" }).format(today);
