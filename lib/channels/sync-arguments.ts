@@ -1,5 +1,10 @@
 import type { ActiveChannelKey } from "./catalog";
 
+type PeriodicSyncRequest = {
+  periodicKey: string;
+  arguments: Record<string, unknown>;
+};
+
 function coupangDailyDate(value: Date) {
   // Coupang's v5 daily order query requires the market UTC offset after the
   // calendar date. A bare YYYY-MM-DD is rejected after the 2025 API
@@ -48,17 +53,18 @@ export function orderSyncArguments(channel: ActiveChannelKey, now = new Date()):
   return null;
 }
 
-export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()) {
+export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()): PeriodicSyncRequest[] {
   const base = orderSyncArguments(channel, now);
   if (!base) return [];
   if (channel === "coupang") {
     const query = base.query && typeof base.query === "object" && !Array.isArray(base.query)
       ? base.query as Record<string, unknown>
       : {};
-    return ["ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"].map((remoteStatus) => ({
+    const requests: PeriodicSyncRequest[] = ["ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"].map((remoteStatus) => ({
       periodicKey: `orders:${remoteStatus}`,
       arguments: { ...base, query: { ...query, status: remoteStatus } },
-    })).concat({
+    }));
+    requests.push({
       periodicKey: "orders:CANCEL",
       arguments: {
         kind: "cancelled",
@@ -70,6 +76,7 @@ export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()) {
         },
       },
     });
+    return requests;
   }
   if (channel === "qoo10") {
     const params = base.params && typeof base.params === "object" && !Array.isArray(base.params)
