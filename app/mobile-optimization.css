@@ -1387,9 +1387,8 @@
   .dashboard-cs-pair > button > svg:last-child { display: none; }
   .dashboard-cs-pair strong { font-size: 16px; }
   .channel-list { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 7px; }
-  .channel-list .channel-row { display: grid; min-height: 118px; grid-template-columns: auto minmax(0, 1fr) !important; align-content: start; gap: 7px; padding: 10px !important; }
+  .channel-list .channel-row { display: grid; min-height: 146px; grid-template-columns: auto minmax(0, 1fr) !important; align-content: start; gap: 7px; padding: 10px !important; }
   .channel-list .channel-row .channel-metric { grid-column: 1 / -1; display: grid !important; grid-template-columns: 1fr auto; gap: 4px; }
-  .channel-list .channel-row .channel-metric:nth-of-type(2) { display: none !important; }
   .inventory-channel-progress { grid-template-columns: minmax(0, 1fr); }
   .product-commerce-notes-grid { grid-template-columns: minmax(0, 1fr); }
   .competitor-query-row { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
