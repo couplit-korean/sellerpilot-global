@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { supabaseUrl } from "../../../../lib/supabase/config";
@@ -11,18 +12,18 @@ function plainText(value: unknown) {
   return String(value ?? "").replace(/<[^>]*>/g, "").replaceAll("&quot;", "\"").replaceAll("&amp;", "&").trim();
 }
 
-export async function GET(request: Request) {
-  const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
-  if (!cronSecret || request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ message: "경쟁가 조회 인증이 필요합니다." }, { status: 401 });
-  }
+function serverClient() {
   const serviceKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
+  if (!supabaseUrl || !serviceKey) return null;
+  return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
   const clientId = process.env.NAVER_SEARCH_CLIENT_ID?.trim() ?? "";
   const clientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET?.trim() ?? "";
-  if (!supabaseUrl || !serviceKey || !clientId || !clientSecret) {
+  if (!clientId || !clientSecret) {
     return NextResponse.json({ message: "Supabase 또는 네이버 쇼핑 검색 환경변수가 없습니다." }, { status: 503 });
   }
-  const serviceClient = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data, error } = await serviceClient.rpc("sellerpilot_service_due_competitor_products", { p_limit: 40 });
   if (error) return NextResponse.json({ message: "경쟁가 조회 대상 상품을 읽지 못했습니다." }, { status: 500 });
   const due = (Array.isArray(data) ? data : []).filter((item): item is DueProduct => Boolean(item) && typeof item === "object" && typeof item.product_id === "string" && typeof item.query === "string");
@@ -52,4 +53,29 @@ export async function GET(request: Request) {
     }
   }
   return NextResponse.json({ ok: results.every((item) => item.ok), checked: results.length, results }, { status: results.some((item) => !item.ok) ? 207 : 200, headers: { "cache-control": "no-store, max-age=0" } });
+}
+
+export async function GET(request: Request) {
+  const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
+  if (!cronSecret || request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ message: "경쟁가 조회 인증이 필요합니다." }, { status: 401 });
+  }
+  const serviceClient = serverClient();
+  if (!serviceClient) return NextResponse.json({ message: "Supabase 서버 설정이 없습니다." }, { status: 503 });
+  return runCompetitorPrices(serviceClient);
+}
+
+export async function POST(request: Request) {
+  const authorization = request.headers.get("authorization") ?? "";
+  const workerToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  const serviceClient = serverClient();
+  if (!workerToken.startsWith("spw_") || !serviceClient) {
+    return NextResponse.json({ message: "경쟁가 작업자 인증이 필요합니다." }, { status: 401 });
+  }
+  const { data, error } = await serviceClient.rpc("sellerpilot_service_validate_worker_token", {
+    p_token_hash: createHash("sha256").update(workerToken).digest("hex"),
+    p_worker_version: "competitor-price-scheduler",
+  });
+  if (error || data !== true) return NextResponse.json({ message: "경쟁가 작업자 인증이 유효하지 않습니다." }, { status: 401 });
+  return runCompetitorPrices(serviceClient);
 }

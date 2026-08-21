@@ -1614,6 +1614,16 @@ do {
         if (Number(syncResult.queued ?? 0) > 0) {
           console.log(`[자동 동기화] ${syncResult.queued}개 채널 조회 작업 예약`);
         }
+        const [competitorResponse, kakaoResponse] = await Promise.all([
+          api("/api/internal/competitor-prices", { method: "POST" }),
+          api("/api/internal/kakao-notifications", { method: "POST" }),
+        ]);
+        if (!competitorResponse.ok && competitorResponse.status !== 207) {
+          console.error(`경쟁가 자동 조회 실패 · HTTP ${competitorResponse.status}`);
+        }
+        if (!kakaoResponse.ok && kakaoResponse.status !== 207) {
+          console.error(`카카오 알림 자동 발송 실패 · HTTP ${kakaoResponse.status}`);
+        }
       } catch (syncError) {
         console.error(syncError instanceof Error ? syncError.message : "주문·문의 자동 동기화 예약 실패");
       }

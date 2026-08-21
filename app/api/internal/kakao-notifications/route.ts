@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { refreshKakaoToken, sendKakaoMemo } from "../../../../lib/kakao";
@@ -8,12 +9,13 @@ export const maxDuration = 60;
 
 type Delivery = { id: string; owner_id: string; title: string; body: string; link_path: string; secret_payload: Record<string, unknown>; expires_at: string | null; kakao_user_id: string; nickname: string };
 
-export async function GET(request: Request) {
-  const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
-  if (!cronSecret || request.headers.get("authorization") !== `Bearer ${cronSecret}`) return NextResponse.json({ message: "카카오 알림 작업 인증이 필요합니다." }, { status: 401 });
+function serverClient() {
   const serviceKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
-  if (!serviceKey || !supabaseUrl) return NextResponse.json({ message: "Supabase 서버 설정이 없습니다." }, { status: 503 });
-  const serviceClient = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  if (!serviceKey || !supabaseUrl) return null;
+  return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+async function runKakaoNotifications(request: Request, serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
   await serviceClient.rpc("sellerpilot_service_enqueue_kakao_summaries");
   const { data, error } = await serviceClient.rpc("sellerpilot_service_claim_kakao_notifications", { p_limit: 40 });
   if (error) return NextResponse.json({ message: "카카오 알림 작업을 가져오지 못했습니다." }, { status: 500 });
@@ -36,4 +38,25 @@ export async function GET(request: Request) {
     }
   }
   return NextResponse.json({ ok: failed === 0, claimed: rows.length, sent, failed }, { status: failed ? 207 : 200, headers: { "cache-control": "no-store, max-age=0" } });
+}
+
+export async function GET(request: Request) {
+  const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
+  if (!cronSecret || request.headers.get("authorization") !== `Bearer ${cronSecret}`) return NextResponse.json({ message: "카카오 알림 작업 인증이 필요합니다." }, { status: 401 });
+  const serviceClient = serverClient();
+  if (!serviceClient) return NextResponse.json({ message: "Supabase 서버 설정이 없습니다." }, { status: 503 });
+  return runKakaoNotifications(request, serviceClient);
+}
+
+export async function POST(request: Request) {
+  const authorization = request.headers.get("authorization") ?? "";
+  const workerToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  const serviceClient = serverClient();
+  if (!workerToken.startsWith("spw_") || !serviceClient) return NextResponse.json({ message: "카카오 작업자 인증이 필요합니다." }, { status: 401 });
+  const { data, error } = await serviceClient.rpc("sellerpilot_service_validate_worker_token", {
+    p_token_hash: createHash("sha256").update(workerToken).digest("hex"),
+    p_worker_version: "kakao-notification-scheduler",
+  });
+  if (error || data !== true) return NextResponse.json({ message: "카카오 작업자 인증이 유효하지 않습니다." }, { status: 401 });
+  return runKakaoNotifications(request, serviceClient);
 }
