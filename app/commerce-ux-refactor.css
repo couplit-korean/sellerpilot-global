@@ -1154,6 +1154,72 @@ button {
   font-size: 9px;
 }
 
+.photo-source-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.photo-source-actions > label {
+  display: flex;
+  min-width: 0;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #d7dee7;
+  border-radius: 9px;
+  padding: 7px 10px;
+  color: #40536b;
+  background: #fff;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.photo-source-actions > label:first-child {
+  border-color: color-mix(in srgb, var(--primary), white 66%);
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary-soft), white 30%);
+}
+
+.photo-source-actions > label:hover {
+  border-color: var(--primary);
+  background: #fff8f1;
+}
+
+.photo-source-actions > label > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.photo-source-actions b {
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.photo-source-actions small {
+  color: #7d8998;
+  font-size: 8px;
+  line-height: 1.2;
+}
+
+.photo-source-actions.compact {
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.photo-source-actions.compact > label {
+  min-height: 34px;
+  gap: 5px;
+  padding: 4px 6px;
+}
+
+.photo-source-actions.compact b {
+  font-size: 8px;
+}
+
 .product-context-section {
   margin-top: 5px;
   padding-top: 22px;
@@ -1884,6 +1950,27 @@ button {
 
   .option-photo-slot {
     min-height: 132px;
+  }
+
+  .photo-source-actions > label {
+    min-height: 50px;
+    padding: 8px;
+  }
+
+  .photo-source-actions b {
+    font-size: 11px;
+  }
+
+  .photo-source-actions small {
+    font-size: 8px;
+  }
+
+  .photo-source-actions.compact > label {
+    min-height: 38px;
+  }
+
+  .photo-source-actions.compact b {
+    font-size: 9px;
   }
 
   .manual-field-grid,

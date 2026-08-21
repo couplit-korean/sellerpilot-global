@@ -111,6 +111,11 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /id: "barcode"/);
   assert.match(page, /option-photo-\$\{slot\.id\}/);
   assert.match(page, /id="extra-product-photos"[^>]*multiple/);
+  assert.match(page, /id="main-product-photo-camera"[^>]*capture="environment"/);
+  assert.match(page, /id=\{`option-photo-\$\{slot\.id\}-camera`\}[^>]*capture="environment"/);
+  assert.match(page, /id="extra-product-photo-camera"[^>]*capture="environment"/);
+  assert.match(page, /사진 촬영/);
+  assert.match(page, /앨범에서 선택/);
   assert.match(page, /상품 사실 설명/);
   assert.doesNotMatch(page, /자료 출처·상품 링크/);
   assert.match(page, /상품 분석 시작/);

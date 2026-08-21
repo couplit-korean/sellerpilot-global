@@ -15,6 +15,7 @@ import {
   Box,
   CalendarDays,
   Calculator,
+  Camera,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -1374,11 +1375,16 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           <section className="main-photo-section">
             <div className="upload-section-heading"><div><b>대표사진</b><span className="required-chip">필수</span><small>검색 결과와 채널 목록에서 가장 먼저 보이는 이미지입니다.</small></div><em>{mainPhoto ? "1장 등록됨" : "미등록"}</em></div>
+            <input id="main-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={selectMainPhoto} />
             <label className={`drop-zone main-drop-zone ${mainPhoto ? "has-photo" : ""} ${running ? "running" : ""}`} htmlFor="main-product-photo">
               <input id="main-product-photo" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={selectMainPhoto} />
               {mainPhoto ? <><span className="main-photo-preview"><Image src={mainPhoto.url} alt="등록한 대표 상품 사진" fill sizes="700px" unoptimized /></span><span className="photo-preview-overlay"><ImagePlus size={17} />대표사진 교체</span><strong className="photo-file-name">{mainPhoto.name} · {mainPhoto.originalWidth}×{mainPhoto.originalHeight} → 1200×1200</strong></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>대표 상품 사진을 넣으세요</strong><p>JPG, PNG, WEBP · 최소 600×600px · 자동 1:1 여백 보정</p><em><ImagePlus size={15} />대표사진 선택</em></>}
               {running && <span className="analysis-overlay"><LoaderCircle className="spin" size={29} /><b>사진·설명·링크 통합 분석 중</b><small>OCR과 상품 정보 교차검증을 진행하고 있습니다.</small><i><span /></i></span>}
             </label>
+            <div className="photo-source-actions" aria-label="대표사진 입력 방식">
+              <label htmlFor="main-product-photo-camera"><Camera size={18} /><span><b>사진 촬영</b><small>후면 카메라 바로 열기</small></span></label>
+              <label htmlFor="main-product-photo"><ImagePlus size={18} /><span><b>앨범에서 선택</b><small>저장된 사진 첨부</small></span></label>
+            </div>
             <section className={`product-research-panel ${manualErrors.researchInput ? "field-error" : ""}`}>
               <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>1차 자동생성</em></span><small>판매페이지·제조사 링크, 모델명, 바코드, 카톡으로 받은 상품 설명을 그대로 넣으세요.</small></div>
               <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => void researchProductInformation()} disabled={intake.researchInput.trim().length < 2 || researchingProduct || running}>{researchingProduct ? <LoaderCircle className="spin" size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "1차 생성 중" : "1차 자동생성"}</button></div>
@@ -1403,14 +1409,19 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="option-photo-grid">
               {optionalPhotoSlots.map((slot) => {
                 const photo = slotPhotos[slot.id];
-                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>{photo.originalWidth}×{photo.originalHeight} · 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
+                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><input id={`option-photo-${slot.id}-camera`} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void selectSlotPhoto(slot.id, event)} /><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>{photo.originalWidth}×{photo.originalHeight} · 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label><div className="photo-source-actions compact" aria-label={`${slot.label} 사진 입력 방식`}><label htmlFor={`option-photo-${slot.id}-camera`}><Camera size={14} /><span><b>촬영</b></span></label><label htmlFor={`option-photo-${slot.id}`}><ImagePlus size={14} /><span><b>앨범</b></span></label></div>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
               })}
             </div>
           </section>
 
           <section className="extra-photo-section">
             <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>상세컷, 구성품, 포장 상태 등 필요한 만큼 한 번에 선택할 수 있습니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
+            <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void selectExtraPhotos(event)} />
             <label className="extra-photo-uploader" htmlFor="extra-product-photos"><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void selectExtraPhotos(event)} /><Plus size={17} /><span><b>추가 사진 더 넣기</b><small>분석용 최대 100장 · 채널 등록은 앞 8~9장 자동 선별</small></span></label>
+            <div className="photo-source-actions" aria-label="추가 사진 입력 방식">
+              <label htmlFor="extra-product-photo-camera"><Camera size={18} /><span><b>사진 촬영</b><small>한 장씩 바로 추가</small></span></label>
+              <label htmlFor="extra-product-photos"><ImagePlus size={18} /><span><b>앨범에서 선택</b><small>여러 장 한 번에 첨부</small></span></label>
+            </div>
             {extraPhotos.length > 0 && <div className="extra-photo-list">{extraPhotos.map((photo, index) => <div key={`${photo.name}-${index}`}><span><Image src={photo.url} alt={`추가 상품 사진 ${index + 1}`} fill sizes="100px" unoptimized /></span><small>{index + 1}</small><button type="button" aria-label={`추가 사진 ${index + 1} 삭제`} onClick={() => removeExtraPhoto(index)}><X size={12} /></button></div>)}</div>}
           </section>
 
