@@ -8,7 +8,7 @@ function coupangDailyDate(value: Date) {
 }
 
 function coupangTimeFrame(value: Date) {
-  return new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 16);
+  return `${new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 16)}+09:00`;
 }
 
 function qoo10DateTime(value: Date) {

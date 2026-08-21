@@ -855,9 +855,11 @@ async function executeLazada(input: ExecuteInput) {
     const rawSkus = Array.isArray(rawSkuValue)
       ? rawSkuValue.filter((sku): sku is Record<string, unknown> => Boolean(sku) && typeof sku === "object" && !Array.isArray(sku))
       : Object.keys(skuRoot).length ? [skuRoot] : [];
-    const sellerSkus = rawSkus.map((sku) => String(sku.SellerSku ?? sku.seller_sku ?? "").trim()).filter(Boolean);
-    if (!sellerSkus.length) throw new Error("CHANNEL_ARGUMENT_REQUIRED:sellerSku");
-    const request = { Request: { Product: { Skus: { Sku: sellerSkus.map((sellerSku) => ({ SellerSku: sellerSku, Quantity: quantity })) } } } };
+    const skuIds = rawSkus
+      .map((sku) => String(sku.SkuId ?? sku.SkuID ?? sku.sku_id ?? sku.skuId ?? "").trim())
+      .filter(Boolean);
+    if (!skuIds.length) throw new Error("CHANNEL_ARGUMENT_REQUIRED:skuId");
+    const request = { Request: { Product: { Skus: { Sku: skuIds.map((skuId) => ({ SkuId: skuId, Quantity: quantity })) } } } };
     const write = await lazadaRequest({ payload: input.payload, path: "/product/price_quantity/update", method: "POST", params: { ...query, payload: lazadaPayload({ request }) } });
     const writeStep = step("inventory.update", write);
     if (!writeStep.ok) return result(input, [readbackStep, writeStep], itemId);
@@ -876,7 +878,7 @@ async function executeLazada(input: ExecuteInput) {
         ? [verificationSkuValue as Record<string, unknown>]
         : [];
     const matchingQuantities = verificationSkus
-      .filter((sku) => sellerSkus.includes(String(sku.SellerSku ?? sku.seller_sku ?? "").trim()))
+      .filter((sku) => skuIds.includes(String(sku.SkuId ?? sku.SkuID ?? sku.sku_id ?? sku.skuId ?? "").trim()))
       .map((sku) => Number(sku.Quantity ?? sku.quantity));
     const verifiedQuantity = matchingQuantities.length > 0 && matchingQuantities.every((value) => value === quantity)
       ? quantity

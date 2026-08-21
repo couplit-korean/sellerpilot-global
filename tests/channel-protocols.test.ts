@@ -129,6 +129,20 @@ test("Qoo10 periodic order sync uses the documented Japan-time parameters for ev
   });
 });
 
+test("Coupang cancellation sync uses the documented minute range with the Korean UTC offset", () => {
+  const requests = orderSyncRequests("coupang", new Date("2026-08-20T07:00:00.000Z"));
+  const cancellation = requests.find((request) => request.periodicKey === "orders:cancellations");
+  assert.deepEqual(cancellation?.arguments, {
+    kind: "cancellations",
+    query: {
+      searchType: "timeFrame",
+      createdAtFrom: "2026-08-19T16:00+09:00",
+      createdAtTo: "2026-08-20T16:00+09:00",
+      cancelType: "CANCEL",
+    },
+  });
+});
+
 test("Qoo10 unanswered inquiry sync uses the current CSCenter parameter names", () => {
   assert.deepEqual(inquirySyncArguments("qoo10", new Date("2026-08-20T07:00:00.000Z")), [{
     params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" },
@@ -599,6 +613,41 @@ test("Lazada product create serializes the structured request as official XML an
     assert.match(xml, /<Skus><Sku><SellerSku>CUP-001<\/SellerSku>/);
     assert.match(xml, /<Status>inactive<\/Status><Images><Image>https:\/\/example\.com\/cup-1\.jpg<\/Image><\/Images>/);
     assert.match(calls[1].url, /\/product\/item\/get/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada inventory update uses SkuId and verifies the resulting quantity", async () => {
+  const originalFetch = globalThis.fetch;
+  let updatePayload = "";
+  let readbacks = 0;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("/product/item/get")) {
+      readbacks += 1;
+      return Response.json({
+        code: "0",
+        data: { item: { Skus: { Sku: [{ SkuId: "987654", SellerSku: "LEGACY-SKU", Quantity: readbacks > 1 ? 1 : 4 }] } } },
+      });
+    }
+    if (url.includes("/product/price_quantity/update")) {
+      updatePayload = new URLSearchParams(String(init?.body)).get("payload") ?? "";
+      return Response.json({ code: "0", data: {} });
+    }
+    throw new Error(`Unexpected Lazada URL: ${url}`);
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada",
+      operation: "inventory.update",
+      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      arguments: { itemId: "123456", quantity: 1 },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.match(updatePayload, /<SkuId>987654<\/SkuId>/);
+    assert.doesNotMatch(updatePayload, /<SellerSku>/);
   } finally {
     globalThis.fetch = originalFetch;
   }
