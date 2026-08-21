@@ -6,6 +6,8 @@ export type RemoteListingReference = {
   targetId?: string;
   remoteId?: string | null;
   publicUrl?: string | null;
+  publicPageStatus?: "unverified" | "active" | "unavailable";
+  publicPageCheckedAt?: string | null;
   status?: string;
   currency?: string;
   price?: number;
@@ -33,7 +35,9 @@ export function sellerCenterUrl(channel: string) {
 }
 
 export function marketplaceListingLinkLabel(reference: RemoteListingReference) {
-  return marketplaceListingUrl(reference) ? "판매 상품 페이지 열기" : "판매 상품 주소 확인 필요";
+  return marketplaceListingUrl(reference)
+    ? reference.publicPageStatus === "unavailable" ? "판매중지 상품 페이지 열기" : "판매 상품 페이지 열기"
+    : "판매 상품 주소 확인 필요";
 }
 
 function allowedPublicUrl(channel: AllChannelKey, value: string | null | undefined) {
@@ -42,8 +46,14 @@ function allowedPublicUrl(channel: AllChannelKey, value: string | null | undefin
     const url = new URL(value);
     if (url.protocol !== "https:") return null;
     const hosts: Partial<Record<AllChannelKey, string[]>> = {
+      qoo10: ["www.qoo10.jp", "qoo10.jp"],
+      shopee: Object.values(shopeeDomains),
+      lazada: ["www.lazada.com.my", "lazada.com.my"],
       coupang: ["www.coupang.com", "coupang.com"],
+      elevenst: ["www.11st.co.kr", "11st.co.kr"],
       smartstore: ["smartstore.naver.com"],
+      ebay: ["www.ebay.com", "ebay.com"],
+      temu: ["www.temu.com", "temu.com"],
     };
     return hosts[channel]?.includes(url.hostname.toLowerCase()) ? url.toString() : null;
   } catch {
@@ -58,7 +68,7 @@ function allowedPublicUrl(channel: AllChannelKey, value: string | null | undefin
 export function marketplaceListingUrl(reference: RemoteListingReference) {
   if (!isKnownChannelKey(reference.channel)) return null;
   const remoteId = reference.remoteId?.trim();
-  if (!remoteId || reference.status !== "published") return null;
+  if (!remoteId || !["published", "paused"].includes(reference.status ?? "")) return null;
   const storedPublicUrl = allowedPublicUrl(reference.channel, reference.publicUrl);
   if (storedPublicUrl) return storedPublicUrl;
 

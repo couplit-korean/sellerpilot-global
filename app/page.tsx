@@ -847,6 +847,8 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
             const destination = marketplaceListingUrl(listingReference);
             const stateCopy = remoteListingState === "loading"
               ? "원격 상품번호 확인 중"
+              : listing?.publicPageStatus === "unavailable"
+                ? `등록 완료 · 공개 판매페이지 비활성 · 원격 ID ${listing.remoteId ?? "확인 필요"}`
               : listing?.remoteId
                 ? `${listing.status === "published" ? "등록 완료" : listing.status ?? "상품 연결"} · 원격 ID ${listing.remoteId}`
                 : remoteListingState === "unavailable" ? "연결 정보 조회 실패" : listing?.status ? `${listing.status} · 판매 상품 주소 확인 필요` : "게시 이력 없음";
