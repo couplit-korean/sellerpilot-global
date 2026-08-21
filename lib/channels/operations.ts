@@ -80,6 +80,7 @@ export type ChannelOperationResult = {
   operation: ChannelOperationName;
   steps: ChannelOperationStep[];
   remoteId?: string;
+  publicUrl?: string;
   safeMessage: string;
 };
 
