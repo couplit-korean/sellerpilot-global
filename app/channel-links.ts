@@ -5,6 +5,7 @@ export type RemoteListingReference = {
   market?: string;
   targetId?: string;
   remoteId?: string | null;
+  publicUrl?: string | null;
   status?: string;
   currency?: string;
   price?: number;
@@ -32,7 +33,22 @@ export function sellerCenterUrl(channel: string) {
 }
 
 export function marketplaceListingLinkLabel(reference: RemoteListingReference) {
-  return reference.remoteId?.trim() ? "판매 상품 페이지 열기" : "판매 상품 주소 확인 필요";
+  return marketplaceListingUrl(reference) ? "판매 상품 페이지 열기" : "판매 상품 주소 확인 필요";
+}
+
+function allowedPublicUrl(channel: AllChannelKey, value: string | null | undefined) {
+  if (!value?.trim()) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return null;
+    const hosts: Partial<Record<AllChannelKey, string[]>> = {
+      coupang: ["www.coupang.com", "coupang.com"],
+      smartstore: ["smartstore.naver.com"],
+    };
+    return hosts[channel]?.includes(url.hostname.toLowerCase()) ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -43,6 +59,8 @@ export function marketplaceListingUrl(reference: RemoteListingReference) {
   if (!isKnownChannelKey(reference.channel)) return null;
   const remoteId = reference.remoteId?.trim();
   if (!remoteId || reference.status !== "published") return null;
+  const storedPublicUrl = allowedPublicUrl(reference.channel, reference.publicUrl);
+  if (storedPublicUrl) return storedPublicUrl;
 
   switch (reference.channel) {
     case "qoo10":

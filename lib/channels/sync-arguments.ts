@@ -58,7 +58,18 @@ export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()) {
     return ["ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"].map((remoteStatus) => ({
       periodicKey: `orders:${remoteStatus}`,
       arguments: { ...base, query: { ...query, status: remoteStatus } },
-    }));
+    })).concat({
+      periodicKey: "orders:CANCEL",
+      arguments: {
+        kind: "cancelled",
+        query: {
+          createdAtFrom: new Date(now.getTime() - 14 * 86_400_000).toISOString().slice(0, 10),
+          createdAtTo: now.toISOString().slice(0, 10),
+          cancelType: "CANCEL",
+          maxPerPage: 50,
+        },
+      },
+    });
   }
   if (channel === "qoo10") {
     const params = base.params && typeof base.params === "object" && !Array.isArray(base.params)

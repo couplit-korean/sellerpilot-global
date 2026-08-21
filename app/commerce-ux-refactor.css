@@ -2074,6 +2074,22 @@ button {
 .product-detail-channels small { color: #8b94a3; font-size: 9px; }
 .product-detail-channels em { overflow: hidden; color: #b54708; font-size: 8px; font-style: normal; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .product-detail-channels > div > svg { color: #16836e; }
+
+.listing-issue-list { display: grid; gap: 8px; margin-top: 16px; }
+.listing-issue-list > button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 11px; width: 100%; border: 1px solid #e7eaee; border-radius: 10px; padding: 11px 12px; background: #fff; text-align: left; }
+.listing-issue-list > button:hover { border-color: #b8c3d1; background: #fafbfc; }
+.listing-issue-list > button > span { display: grid; min-width: 0; gap: 3px; }
+.listing-issue-list b { overflow: hidden; color: #344054; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.listing-issue-list small { color: #667085; font-size: 9px; }
+.listing-issue-list em { overflow: hidden; color: #8b5d20; font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.listing-issue-list strong { border-radius: 999px; padding: 5px 8px; font-size: 9px; white-space: nowrap; }
+.listing-issue-list strong.retryable { background: #fee4e2; color: #b42318; }
+.listing-issue-list strong.external { background: #fff4e5; color: #b54708; }
+@media (max-width: 760px) {
+  .listing-issue-list > button { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .listing-issue-list > button > strong { grid-column: 2; justify-self: start; }
+  .listing-issue-list > button > svg:last-child { grid-column: 3; grid-row: 1 / span 2; }
+}
 .product-channel-link { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 5px; border: 1px solid #cfd7df; border-radius: 4px; padding: 0 9px; color: #23433b; background: #f8faf9; font-size: 9px; font-weight: 750; text-decoration: none; white-space: nowrap; }
 .product-channel-link:hover { border-color: var(--primary); color: var(--primary); background: #f0f8f5; }
 .product-channel-unavailable { max-width: 150px; color: #8a5c49; font-size: 9px; font-weight: 700; text-align: right; }

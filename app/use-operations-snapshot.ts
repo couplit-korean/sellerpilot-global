@@ -14,6 +14,7 @@ export type OperationProduct = {
   status: "draft" | "active" | "low_stock" | "out_of_stock" | "archived";
   onHand: number;
   reserved: number;
+  reorderPoint: number;
   available: number;
   costKrw: number;
   sold30d: number;
@@ -123,6 +124,16 @@ export type OperationsSnapshot = {
     listingFailed: number;
     listingBlocked: number;
   };
+  listingIssues: Array<{
+    id: string;
+    productId: string;
+    productName: string;
+    channelKey: string;
+    market: string;
+    failureClass: "retryable" | "external_action";
+    message: string;
+    updatedAt: string;
+  }>;
   summary: {
     revenue30dKrw: number;
     sold30d: number;

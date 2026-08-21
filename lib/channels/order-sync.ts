@@ -56,6 +56,25 @@ function compactProductNames(items: Record<string, unknown>[], fallback: string)
 }
 
 function normalizeCoupang(data: Record<string, unknown>) {
+  if (data.sellerpilotOrderKind === "cancelled") {
+    const cancellationRows = list(data.data).length ? list(data.data) : list(object(data.data).content);
+    return cancellationRows.map((row): NormalizedChannelOrder | null => {
+      const items = list(row.returnItems).length ? list(row.returnItems) : list(row.cancelItems);
+      const externalOrderId = text(row.orderId);
+      if (!externalOrderId) return null;
+      return {
+        externalOrderId,
+        customerName: text(row.requesterName, "쿠팡 구매자"),
+        productName: compactProductNames(items, "쿠팡 취소 상품"),
+        quantity: Math.max(1, Math.round(items.reduce((sum, item) => sum + number(item.cancelCount, item.returnCount, item.quantity), 0))),
+        amount: 0,
+        currency: "KRW",
+        amountKrw: 0,
+        status: String(row.receiptStatus ?? "").toUpperCase().includes("REFUND") ? "refunded" : "cancelled",
+        orderedAt: iso(row.createdAt, row.modifiedAt),
+      };
+    }).filter((row): row is NormalizedChannelOrder => Boolean(row));
+  }
   const rows = list(data.data).length ? list(data.data) : list(object(data.data).orderSheets);
   return rows.map((row): NormalizedChannelOrder | null => {
     const items = list(row.orderItems);

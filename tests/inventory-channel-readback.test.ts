@@ -28,6 +28,24 @@ test("Qoo10 inventory succeeds only after quantity readback", async () => {
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("Qoo10 inventory accepts quantity nested in the provider result object", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const method = new URL(String(input)).searchParams.get("method") ?? "";
+    return method.endsWith("GetItemDetailInfo")
+      ? Response.json({ ResultCode: 0, ResultObject: { Goods: { StockQty: "17" } } })
+      : Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "qoo10", operation: "inventory.update", environment: "production",
+      payload: { api_key: "test" },
+      arguments: { quantity: 17, params: { ItemCode: "123456789" } },
+    });
+    assert.equal(result.ok, true);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("Shopee inventory writes stock then verifies item base info", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];

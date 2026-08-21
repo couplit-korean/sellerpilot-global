@@ -211,7 +211,7 @@ export async function POST(request: NextRequest) {
     listingId = preparedListingId;
   }
 
-  const completeListing = async (input: { success: boolean; remoteId?: string; safeMessage: string }) => {
+  const completeListing = async (input: { success: boolean; remoteId?: string; publicUrl?: string; safeMessage: string }) => {
     if (!listingId) return true;
     const { data, error } = await serviceClient.rpc("sellerpilot_service_complete_product_listing", {
       p_listing_id: listingId,
@@ -221,7 +221,15 @@ export async function POST(request: NextRequest) {
       p_remote_id: input.remoteId ?? null,
       p_safe_message: input.safeMessage,
     });
-    return !error && data === true;
+    if (error || data !== true) return false;
+    if (input.success && input.publicUrl) {
+      const { data: publicUrlStored, error: publicUrlError } = await serviceClient.rpc("sellerpilot_service_set_listing_public_url", {
+        p_listing_id: listingId,
+        p_public_url: input.publicUrl,
+      });
+      if (publicUrlError || publicUrlStored !== true) return false;
+    }
+    return true;
   };
 
   const rejectBlockedCategory = async (code: string) => {
@@ -257,7 +265,7 @@ export async function POST(request: NextRequest) {
         p_remote_id: result.remoteId ?? null,
         p_safe_message: result.safeMessage,
       });
-      const listingRecorded = await completeListing({ success: result.ok, remoteId: result.remoteId, safeMessage: result.safeMessage });
+      const listingRecorded = await completeListing({ success: result.ok, remoteId: result.remoteId, publicUrl: result.publicUrl, safeMessage: result.safeMessage });
       if (!listingRecorded) {
         return NextResponse.json({
           message: "원격 작업은 완료됐지만 상품 원장 조정이 필요합니다. 같은 멱등키로 다시 요청하면 원격 재호출 없이 복구합니다.",
@@ -335,7 +343,7 @@ export async function POST(request: NextRequest) {
       p_remote_id: result.remoteId ?? null,
       p_safe_message: result.safeMessage,
     });
-    const listingRecorded = await completeListing({ success: result.ok, remoteId: result.remoteId, safeMessage: result.safeMessage });
+    const listingRecorded = await completeListing({ success: result.ok, remoteId: result.remoteId, publicUrl: result.publicUrl, safeMessage: result.safeMessage });
     if (!listingRecorded) {
       return NextResponse.json({
         message: "원격 작업은 완료됐지만 상품 원장 조정이 필요합니다. 같은 멱등키로 다시 요청하면 원격 재호출 없이 복구합니다.",

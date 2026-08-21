@@ -164,6 +164,20 @@ test("11st periodic order sync splits the last 14 days into provider-safe seven-
   ]);
 });
 
+test("Coupang periodic order sync includes paid, shipping, delivered, and cancellation feeds", () => {
+  const requests = orderSyncRequests("coupang", new Date("2026-08-21T03:00:00.000Z"));
+  assert.deepEqual(requests.map((request) => request.periodicKey), [
+    "orders:ACCEPT",
+    "orders:INSTRUCT",
+    "orders:DEPARTURE",
+    "orders:DELIVERING",
+    "orders:FINAL_DELIVERY",
+    "orders:CANCEL",
+  ]);
+  assert.equal(requests.at(-1)?.arguments.kind, "cancelled");
+  assert.equal((requests.at(-1)?.arguments.query as Record<string, unknown>)?.cancelType, "CANCEL");
+});
+
 test("Qoo10 periodic order sync uses the documented Japan-time parameters for every shipping state", () => {
   const requests = orderSyncRequests("qoo10", new Date("2026-08-20T07:00:00.000Z"));
   assert.deepEqual(requests.map((request) => request.periodicKey), ["orders:0", "orders:3", "orders:4", "orders:5"]);

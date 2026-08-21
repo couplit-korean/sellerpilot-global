@@ -31,6 +31,7 @@ const operationResultSchema = z.object({
     data: z.record(z.string(), z.unknown()),
   })).min(1).max(32),
   remoteId: z.string().max(240).optional(),
+  publicUrl: z.string().url().max(1_000).optional(),
   safeMessage: z.string().min(1).max(1_000),
 });
 

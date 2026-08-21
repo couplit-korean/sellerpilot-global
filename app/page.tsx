@@ -426,8 +426,9 @@ function ProductVisual({ src, size, alt = "상품 이미지" }: { src: string | 
     : <span className="product-image-missing" role="img" aria-label={`${alt} 없음`}><Package size={17} /><small>이미지 없음</small></span>;
 }
 
-function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMetrics, pipeline, operationsAvailable }: {
+function OverviewPage({ onNavigate, onOpenProduct, displayProducts, operationSummary, channelMetrics, pipeline, operationsAvailable }: {
   onNavigate: (view: View) => void;
+  onOpenProduct: (product: DisplayProduct) => void;
   displayProducts: DisplayProduct[];
   operationSummary: OperationsSnapshot["summary"] | null;
   channelMetrics: OperationsSnapshot["channelMetrics"];
@@ -512,7 +513,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
         <article className="panel top-ranking-card">
           <div className="panel-heading"><div><span className="panel-kicker">최근 30일 판매량 기준</span><h3>이번 달 판매 TOP 10</h3></div><span className="rank-crown">1–10</span></div>
           <div className="monthly-ranking-list">
-            {monthlyTopProducts.map((product, index) => <button className={`ranking-row ${index < 3 ? "podium" : ""}`} key={product.id} onClick={() => onNavigate("products")}>
+            {monthlyTopProducts.map((product, index) => <button className={`ranking-row ${index < 3 ? "podium" : ""}`} key={product.id} onClick={() => onOpenProduct(product)}>
               <span className="ranking-number">{index + 1}</span>
               <span className="ranking-thumb"><ProductVisual src={product.image} size="38px" /></span>
               <span className="ranking-product"><b>{product.name}</b><small>{product.channels.length}개 채널 판매중</small></span>
@@ -873,7 +874,7 @@ const optionalPhotoSlots = [
   { id: "barcode", label: "바코드", guide: "숫자까지 보이게" },
 ] as const;
 
-function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; initialProduct?: { id: string; name: string } | null }) {
+function PublishingPage({ notify, channelMetrics, pipeline, listingIssues, onOpenIssue, initialProduct }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; listingIssues: OperationsSnapshot["listingIssues"]; onOpenIssue: (productId: string) => void; initialProduct?: { id: string; name: string } | null }) {
   const [running, setRunning] = useState(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
@@ -1245,6 +1246,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, initialProduct }: { 
       />
       <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE QUEUE</span><h3>실제 등록 작업 현황</h3></div><button className="ghost-button" onClick={() => notify("채널 작업 이력은 API 운영 콘솔에서 확인할 수 있습니다.")}>작업 이력<ChevronRight size={15} /></button></div>
         <div className="queue-live-summary"><div><small>AI 실행 중</small><b>{pipeline?.aiRunning ?? 0}건</b></div><div><small>등록 대기</small><b>{pipeline?.listingQueued ?? 0}건</b></div><div><small>등록 완료</small><b>{pipeline?.listingPublished ?? 0}건</b></div><div><small>재시도 가능</small><b>{pipeline?.listingFailed ?? 0}건</b></div><div><small>외부 권한 대기</small><b>{pipeline?.listingBlocked ?? 0}건</b></div></div>
+        {listingIssues.length > 0 ? <div className="listing-issue-list">{listingIssues.map((issue) => {
+          const channel = channels[issue.channelKey as ChannelKey];
+          return <button type="button" key={issue.id} onClick={() => onOpenIssue(issue.productId)}><ChannelMark code={channel?.letter ?? issue.channelKey.slice(0, 2)} size="sm" /><span><b>{issue.productName}</b><small>{channel?.name ?? issue.channelKey} · {issue.market || "기본 마켓"}</small><em>{issue.message}</em></span><strong className={issue.failureClass === "retryable" ? "retryable" : "external"}>{issue.failureClass === "retryable" ? "재시도 가능" : "권한·인증 보완"}</strong><ChevronRight size={15} /></button>;
+        })}</div> : null}
         {!pipeline || pipeline.aiRunning + pipeline.listingQueued + pipeline.listingPublished + pipeline.listingFailed + pipeline.listingBlocked === 0 ? <div className="live-empty-state"><Upload size={26} /><b>실제 등록 작업이 아직 없습니다.</b><small>대표사진 분석과 카테고리 확정 후 채널 등록을 실행하면 여기에 표시됩니다.</small></div> : null}
       </section>
     </div>
@@ -1559,7 +1564,11 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     sales: product.sold30d,
     revenueKrw: product.revenue30dKrw,
     revenue: `₩${Math.round(product.revenue30dKrw).toLocaleString("ko-KR")}`,
-    status: productStatusLabel[product.status],
+    status: product.available <= 0
+      ? "품절"
+      : product.available <= product.reorderPoint
+        ? "재고주의"
+        : productStatusLabel[product.status],
     channels: product.listingChannels,
     updatedAt: product.updatedAt,
   })) ?? [], [operations.data]);
@@ -1817,10 +1826,10 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, [displayProducts, openProductDetails]);
 
   const content = (() => {
-    if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} operationsAvailable={operations.state === "database"} />;
+    if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenProduct={openProductDetails} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} />;
     if (view === "product-detail" && selectedProduct) return <ProductDetailPage product={selectedProduct} onBack={() => navigate("products")} authenticatedFetch={operations.authenticatedFetch} />;
-    if (view === "publishing") return <PublishingPage key={publishingProduct?.id ?? "new-product"} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} initialProduct={publishingProduct} />;
+    if (view === "publishing") return <PublishingPage key={publishingProduct?.id ?? "new-product"} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} listingIssues={operations.data?.listingIssues ?? []} onOpenIssue={(productId) => { const product = displayProducts.find((item) => item.sourceId === productId); if (product) openProductDetails(product); }} initialProduct={publishingProduct} />;
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;

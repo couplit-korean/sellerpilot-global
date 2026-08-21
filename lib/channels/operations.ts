@@ -80,6 +80,7 @@ export type ChannelOperationResult = {
   operation: ChannelOperationName;
   steps: ChannelOperationStep[];
   remoteId?: string;
+  publicUrl?: string;
   safeMessage: string;
 };
 
@@ -200,7 +201,7 @@ function naverOptionalCategoryMetadataStep(name: string, remote: RemoteResponse)
   };
 }
 
-function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: string): ChannelOperationResult {
+function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: string, publicUrl?: string): ChannelOperationResult {
   const ok = steps.length > 0 && steps.every((item) => item.ok);
   const providerMessage = steps
     .filter((item) => !item.ok)
@@ -215,10 +216,54 @@ function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: s
     operation: input.operation,
     steps,
     remoteId,
+    publicUrl,
     safeMessage: ok
       ? `${channelCatalog[input.channel].name} ${input.operation} 작업이 정상 응답했습니다.`
       : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.${providerMessage ? ` · ${providerMessage}` : ""}`,
   };
+}
+
+function firstQuantityValue(value: unknown, depth = 0): unknown {
+  if (depth > 7 || value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = firstQuantityValue(item, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  for (const key of ["ItemQty", "itemQty", "Qty", "qty", "Quantity", "quantity", "AvailableQty", "availableQty", "StockQty", "stockQty"]) {
+    const candidate = record[key];
+    if (candidate !== undefined && candidate !== null && String(candidate).trim()) return candidate;
+  }
+  for (const candidate of Object.values(record)) {
+    const found = firstQuantityValue(candidate, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function smartstorePublicUrl(channelProductNo: unknown) {
+  const value = typeof channelProductNo === "string" || typeof channelProductNo === "number"
+    ? String(channelProductNo).trim()
+    : "";
+  return /^\d+$/.test(value) ? `https://smartstore.naver.com/main/products/${value}` : undefined;
+}
+
+function coupangPublicUrl(data: Record<string, unknown>) {
+  const root = data.data && typeof data.data === "object" && !Array.isArray(data.data)
+    ? data.data as Record<string, unknown>
+    : data;
+  const productId = String(root.productId ?? "").trim();
+  const items = Array.isArray(root.items)
+    ? root.items.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+  const vendorItemId = String(items.find((item) => item.vendorItemId !== undefined)?.vendorItemId ?? "").trim();
+  return /^\d+$/.test(productId) && /^\d+$/.test(vendorItemId)
+    ? `https://www.coupang.com/vp/products/${productId}?vendorItemId=${vendorItemId}`
+    : undefined;
 }
 
 function safeProviderError(data: Record<string, unknown>) {
@@ -429,7 +474,7 @@ async function executeQoo10(input: ExecuteInput) {
       : {};
     return result(input, [
       createStep,
-      inventoryQuantityVerificationStep("GetItemDetailInfo", readback, inventoryQuantity ?? 0, readbackObject.ItemQty ?? readbackObject.Qty),
+      inventoryQuantityVerificationStep("GetItemDetailInfo", readback, inventoryQuantity ?? 0, firstQuantityValue(readbackObject)),
     ], itemCode || remoteId);
   }
   if (input.operation !== "listing.create" || !createStep.ok || !remoteId) {
@@ -854,9 +899,9 @@ async function executeLazada(input: ExecuteInput) {
     const rawSkus = Array.isArray(rawSkuValue)
       ? rawSkuValue.filter((sku): sku is Record<string, unknown> => Boolean(sku) && typeof sku === "object" && !Array.isArray(sku))
       : Object.keys(skuRoot).length ? [skuRoot] : [];
-    const sellerSkus = rawSkus.map((sku) => String(sku.SellerSku ?? sku.seller_sku ?? "").trim()).filter(Boolean);
-    if (!sellerSkus.length) throw new Error("CHANNEL_ARGUMENT_REQUIRED:sellerSku");
-    const request = { Request: { Product: { Skus: { Sku: sellerSkus.map((sellerSku) => ({ SellerSku: sellerSku, Quantity: quantity })) } } } };
+    const skuIds = rawSkus.map((sku) => String(sku.SkuId ?? sku.sku_id ?? sku.skuId ?? "").trim()).filter(Boolean);
+    if (!skuIds.length) throw new Error("CHANNEL_ARGUMENT_REQUIRED:skuId");
+    const request = { Request: { Product: { Skus: { Sku: skuIds.map((skuId) => ({ ItemId: itemId, SkuId: skuId, Quantity: quantity })) } } } };
     const write = await lazadaRequest({ payload: input.payload, path: "/product/price_quantity/update", method: "POST", params: { ...query, payload: lazadaPayload({ request }) } });
     const writeStep = step("inventory.update", write);
     if (!writeStep.ok) return result(input, [readbackStep, writeStep], itemId);
@@ -875,8 +920,8 @@ async function executeLazada(input: ExecuteInput) {
         ? [verificationSkuValue as Record<string, unknown>]
         : [];
     const matchingQuantities = verificationSkus
-      .filter((sku) => sellerSkus.includes(String(sku.SellerSku ?? sku.seller_sku ?? "").trim()))
-      .map((sku) => Number(sku.Quantity ?? sku.quantity));
+      .filter((sku) => skuIds.includes(String(sku.SkuId ?? sku.sku_id ?? sku.skuId ?? "").trim()))
+      .map((sku) => Number(sku.Quantity ?? sku.quantity ?? sku.totalQuantity ?? sku.sellableQuantity));
     const verifiedQuantity = matchingQuantities.length > 0 && matchingQuantities.every((value) => value === quantity)
       ? quantity
       : Number.NaN;
@@ -996,7 +1041,7 @@ async function executeCoupang(input: ExecuteInput) {
     let initialReadback = verifyReadback("listing-readback");
     if (body.requested !== true || initialReadback.approvalObserved) {
       initialReadback.readbackStep.ok = initialReadback.providerAndIdentityOk;
-      return result(input, [writeStep, initialReadback.readbackStep], remoteId);
+      return result(input, [writeStep, initialReadback.readbackStep], remoteId, coupangPublicUrl(readbackRemote.data));
     }
 
     // Coupang can return ID_GEN for several seconds after a successful create.
@@ -1014,7 +1059,7 @@ async function executeCoupang(input: ExecuteInput) {
     }
     if (initialReadback.approvalObserved) {
       initialReadback.readbackStep.ok = initialReadback.providerAndIdentityOk;
-      return result(input, [writeStep, initialReadback.readbackStep], remoteId);
+      return result(input, [writeStep, initialReadback.readbackStep], remoteId, coupangPublicUrl(readbackRemote.data));
     }
     initialReadback.readbackStep.ok = initialReadback.providerAndIdentityOk && initialReadback.saved;
     if (!initialReadback.readbackStep.ok) {
@@ -1045,7 +1090,7 @@ async function executeCoupang(input: ExecuteInput) {
       initialReadback.readbackStep.ok = true;
       approvalStep.ok = true;
     }
-    return result(input, [writeStep, initialReadback.readbackStep, approvalStep, approvalReadback.readbackStep], remoteId);
+    return result(input, [writeStep, initialReadback.readbackStep, approvalStep, approvalReadback.readbackStep], remoteId, coupangPublicUrl(readbackRemote.data));
   }
   if (input.operation === "listing.stop") {
     const vendorItemId = pathSegment(stringArgument(input.arguments, "vendorItemId"));
@@ -1091,7 +1136,10 @@ async function executeCoupang(input: ExecuteInput) {
       const verificationData = verificationRemote.data.data && typeof verificationRemote.data.data === "object" && !Array.isArray(verificationRemote.data.data)
         ? verificationRemote.data.data as Record<string, unknown>
         : verificationRemote.data;
-      steps.push(inventoryQuantityVerificationStep("inventory-readback", verificationRemote, quantity, verificationData.amountInStock ?? verificationData.quantity));
+      const inventoryData = verificationData.data && typeof verificationData.data === "object" && !Array.isArray(verificationData.data)
+        ? verificationData.data as Record<string, unknown>
+        : verificationData;
+      steps.push(inventoryQuantityVerificationStep("inventory-readback", verificationRemote, quantity, inventoryData.amountInStock ?? inventoryData.quantity));
     }
     return result(input, steps, sellerProductId || vendorItemIds[0]);
   }
@@ -1107,8 +1155,18 @@ async function executeCoupang(input: ExecuteInput) {
     return result(input, [inquiryStep]);
   }
   if (input.operation === "orders.list") {
-    const remote = await coupangRequest({ payload: input.payload, method: "GET", path: `${orderBase}/ordersheets`, query: queryParams(input.arguments) });
-    return result(input, [step("orders", remote)]);
+    const kind = stringArgument(input.arguments, "kind", false);
+    const remote = kind === "cancelled"
+      ? await coupangRequest({
+        payload: input.payload,
+        method: "GET",
+        path: `/v2/providers/openapi/apis/api/v6/vendors/${pathSegment(vendorId)}/returnRequests`,
+        query: queryParams(input.arguments),
+      })
+      : await coupangRequest({ payload: input.payload, method: "GET", path: `${orderBase}/ordersheets`, query: queryParams(input.arguments) });
+    const orderStep = step("orders", remote);
+    orderStep.data = { ...orderStep.data, sellerpilotOrderKind: kind || "ordersheets" };
+    return result(input, [orderStep]);
   }
   if (input.operation === "orders.get") {
     const shipmentBoxId = pathSegment(stringArgument(input.arguments, "shipmentBoxId"));
@@ -1206,6 +1264,12 @@ async function executeSmartstore(input: ExecuteInput) {
         return channelProducts.some((channelProduct: unknown) => channelProduct && typeof channelProduct === "object" && (channelProduct as Record<string, unknown>).sellerManagementCode === sellerManagementCode);
       });
       const existingOriginProductNo = existing && typeof existing === "object" ? (existing as Record<string, unknown>).originProductNo : undefined;
+      const existingChannelProductNo = existing && typeof existing === "object"
+        ? (Array.isArray((existing as Record<string, unknown>).channelProducts)
+          ? ((existing as Record<string, unknown>).channelProducts as Record<string, unknown>[])
+            .find((item) => item.sellerManagementCode === sellerManagementCode)?.channelProductNo
+          : undefined)
+        : undefined;
       if (existingOriginProductNo !== undefined) {
         const remoteId = String(existingOriginProductNo);
         const searchStep = step("product-reconcile", searchRemote);
@@ -1215,7 +1279,7 @@ async function executeSmartstore(input: ExecuteInput) {
         const readbackRemote = await request({ method: "GET", path: `/v2/products/origin-products/${pathSegment(remoteId)}` });
         const readbackStep = step("product-readback", readbackRemote);
         readbackStep.ok = readbackStep.ok && Boolean(readbackRemote.data.originProduct && typeof readbackRemote.data.originProduct === "object");
-        return result(input, [searchStep, updateStep, readbackStep], remoteId);
+        return result(input, [searchStep, updateStep, readbackStep], remoteId, smartstorePublicUrl(existingChannelProductNo ?? readbackRemote.data.smartstoreChannelProductNo));
       }
     }
     const createRemote = await request({ method: "POST", path: "/v2/products", body });
@@ -1226,7 +1290,7 @@ async function executeSmartstore(input: ExecuteInput) {
     const readbackStep = step("product-readback", readbackRemote);
     readbackStep.ok = readbackStep.ok && Boolean(readbackRemote.data.originProduct && typeof readbackRemote.data.originProduct === "object");
     steps.push(readbackStep);
-    return result(input, steps, remoteId);
+    return result(input, steps, remoteId, smartstorePublicUrl(createRemote.data.smartstoreChannelProductNo ?? readbackRemote.data.smartstoreChannelProductNo));
   }
   if (input.operation === "listing.update") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
