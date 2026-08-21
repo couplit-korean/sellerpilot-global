@@ -787,6 +787,7 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
       : null],
   ].filter((row): row is [string, string] => typeof row[1] === "string" && row[1].length > 0);
   const detailAssets = detailContext.generatedImages.length > 0 ? detailContext.generatedImages : detailContext.sourceImages;
+  const failedInventoryTasks = (inventorySync?.tasks ?? []).filter((task) => task.status === "failed");
 
   return (
     <div className="page-stack product-detail-page">
@@ -823,6 +824,10 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
         </div>
         <div className="inventory-sync-state"><span>최근 적용</span><b>{inventorySync?.status ? `${inventorySync.status} · 성공 ${inventorySync.succeededCount ?? 0}/${inventorySync.totalCount ?? 0}` : "적용 이력 없음"}</b>{inventorySync?.failedCount ? <em>{inventorySync.failedCount}개 채널 확인 필요</em> : null}</div>
         {inventoryMessage ? <p className="inventory-editor-message">{inventoryMessage}</p> : null}
+        {failedInventoryTasks.length > 0 ? <ul className="inventory-sync-errors" aria-label="재고 반영 실패 채널">{failedInventoryTasks.map((task) => {
+          const channel = channels[task.channel as ChannelKey];
+          return <li key={task.id}><b>{channel?.mark ?? task.channel}</b><span>{task.safeMessage || "판매채널의 재고 확인 응답을 받지 못했습니다."}</span></li>;
+        })}</ul> : null}
       </section>
 
       <section className="product-detail-grid">

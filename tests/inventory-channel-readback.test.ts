@@ -46,6 +46,46 @@ test("Qoo10 inventory accepts quantity nested in the provider result object", as
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("Qoo10 inventory accepts the provider list response shape", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const method = new URL(String(input)).searchParams.get("method") ?? "";
+    return method.endsWith("GetItemDetailInfo")
+      ? Response.json({ ResultCode: 0, ResultObject: [{ ItemCode: "123456789", ItemQty: "17" }] })
+      : Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "qoo10", operation: "inventory.update", environment: "production",
+      payload: { api_key: "test" },
+      arguments: { quantity: 17, params: { ItemCode: "123456789" } },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.steps.at(-1)?.data.actualQuantity, 17);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Qoo10 inventory retries an eventually consistent quantity readback", async () => {
+  const originalFetch = globalThis.fetch;
+  let readbackCount = 0;
+  globalThis.fetch = async (input) => {
+    const method = new URL(String(input)).searchParams.get("method") ?? "";
+    if (!method.endsWith("GetItemDetailInfo")) return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    readbackCount += 1;
+    return Response.json({ ResultCode: 0, ResultMsg: "Success", ResultObject: { ItemQty: readbackCount < 2 ? "9999" : "17" } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "qoo10", operation: "inventory.update", environment: "production",
+      payload: { api_key: "test" },
+      arguments: { quantity: 17, params: { ItemCode: "123456789" } },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(readbackCount, 2);
+    assert.equal(result.steps.at(-1)?.data.actualQuantity, 17);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("Shopee inventory writes stock then verifies item base info", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];

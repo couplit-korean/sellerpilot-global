@@ -166,6 +166,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260821123000_enable_elevenst_order_sync.sql",
       "20260821133000_marketplace_links_cancellations_and_stock_accuracy.sql",
       "20260821134500_public_listing_health.sql",
+      "20260821141500_preserve_terminal_order_state.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -687,6 +688,47 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
 
     await setClaims(db, "service_role");
+    const cancelledOrder = JSON.stringify([{
+      externalOrderId: "REAL-ORDER-1",
+      customerName: "실고객",
+      productName: "AI 생성 테스트 상품",
+      quantity: 1,
+      amount: 0,
+      amountKrw: 0,
+      currency: "KRW",
+      status: "cancelled",
+      orderedAt: new Date().toISOString(),
+    }]);
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_service_ingest_orders($1, 'qoo10', $2::jsonb)", [credentialId, cancelledOrder]),
+      1,
+    );
+    const stalePaidOrder = JSON.stringify([{
+      externalOrderId: "REAL-ORDER-1",
+      customerName: "마켓 구매자",
+      productName: "주문 상품",
+      quantity: 1,
+      amount: 0,
+      amountKrw: 0,
+      currency: "KRW",
+      status: "paid",
+      orderedAt: new Date().toISOString(),
+    }]);
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_service_ingest_orders($1, 'qoo10', $2::jsonb)", [credentialId, stalePaidOrder]),
+      1,
+    );
+    const terminalOrder = (await db.query(
+      "select id, status, product_name, amount_krw from sellerpilot_private.commerce_orders where owner_id=$1 and channel_key='qoo10' and external_order_id='REAL-ORDER-1'",
+      [ADMIN_ID],
+    )).rows[0];
+    assert.equal(terminalOrder.status, "cancelled");
+    assert.equal(terminalOrder.product_name, "AI 생성 테스트 상품");
+    assert.equal(terminalOrder.amount_krw, "32000.00");
+    await db.query(
+      "delete from sellerpilot_private.push_notification_outbox where event_key=$1",
+      [`order:${terminalOrder.id}:status:cancelled`],
+    );
     assert.equal(
       await scalar(db, "select public.sellerpilot_service_ingest_orders($1, 'qoo10', '[]'::jsonb)", [credentialId]),
       0,
@@ -713,6 +755,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(snapshot.orders.every((order) => order.demo === false), true);
     assert.equal(snapshot.tickets.every((ticket) => ticket.demo === false), true);
     assert.equal(snapshot.summary.orderCount, 2);
+    assert.equal(snapshot.summary.paidOrderCount, 1);
+    assert.equal(snapshot.summary.sold30d, 1);
     assert.equal(snapshot.summary.openTicketCount, 2);
     assert.equal(snapshot.channelMetrics.find((channel) => channel.channelKey === "qoo10").credentialStatus, "active");
     const aiProduct = snapshot.products.find((product) => product.id === aiProductId);

@@ -206,6 +206,17 @@ function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: s
   const providerMessage = steps
     .filter((item) => !item.ok)
     .map((item) => {
+      if (input.channel === "qoo10" && item.data.sellerpilotVerification === "INVENTORY_QUANTITY_MISMATCH") {
+        const expected = item.data.expectedQuantity === null || item.data.expectedQuantity === undefined
+          ? Number.NaN
+          : Number(item.data.expectedQuantity);
+        const actual = item.data.actualQuantity === null || item.data.actualQuantity === undefined
+          ? Number.NaN
+          : Number(item.data.actualQuantity);
+        const expectedCopy = Number.isFinite(expected) ? expected.toLocaleString("ko-KR") : "확인 불가";
+        const actualCopy = Number.isFinite(actual) ? actual.toLocaleString("ko-KR") : "확인 불가";
+        return `${item.name}: 재고 확인값 불일치 (요청 ${expectedCopy}, 조회 ${actualCopy})`;
+      }
       const message = input.channel === "qoo10" ? qoo10ResultMessage(item.data) : safeProviderError(item.data);
       return message ? `${item.name}: ${message}` : "";
     })
@@ -462,19 +473,38 @@ async function executeQoo10(input: ExecuteInput) {
       : undefined;
   if (input.operation === "inventory.update") {
     const itemCode = params.ItemCode;
-    const readback = await qoo10Request({
-      payload: input.payload,
-      service: "ItemsLookup",
-      method: "GetItemDetailInfo",
-      version: "1.2",
-      params: { ItemCode: itemCode, SellerCode: params.SellerCode ?? "" },
-    });
-    const readbackObject = readback.data.ResultObject && typeof readback.data.ResultObject === "object" && !Array.isArray(readback.data.ResultObject)
-      ? readback.data.ResultObject as Record<string, unknown>
-      : {};
+    if (!createStep.ok) return result(input, [createStep], itemCode || remoteId);
+    let verificationStep: ChannelOperationStep | null = null;
+    const verificationDelays = [0, 800, 1_800, 3_200];
+    for (const delay of verificationDelays) {
+      if (delay > 0) await operationDelay(delay);
+      const readback = await qoo10Request({
+        payload: input.payload,
+        service: "ItemsLookup",
+        method: "GetItemDetailInfo",
+        version: "1.2",
+        params: { ItemCode: itemCode, SellerCode: params.SellerCode ?? "" },
+      });
+      verificationStep = inventoryQuantityVerificationStep(
+        "GetItemDetailInfo",
+        readback,
+        inventoryQuantity ?? 0,
+        firstQuantityValue(readback.data.ResultObject),
+      );
+      if (verificationStep.ok) break;
+    }
     return result(input, [
       createStep,
-      inventoryQuantityVerificationStep("GetItemDetailInfo", readback, inventoryQuantity ?? 0, firstQuantityValue(readbackObject)),
+      verificationStep ?? {
+        name: "GetItemDetailInfo",
+        ok: false,
+        status: 504,
+        data: {
+          expectedQuantity: inventoryQuantity,
+          actualQuantity: null,
+          sellerpilotVerification: "INVENTORY_QUANTITY_MISMATCH",
+        },
+      },
     ], itemCode || remoteId);
   }
   if (input.operation !== "listing.create" || !createStep.ok || !remoteId) {
