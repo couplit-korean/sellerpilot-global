@@ -38,14 +38,26 @@ export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
 
-  const [{ data, error }, { data: marginScenarios }, { data: syncStatus }, { data: credentialRows, error: credentialError }, { data: aiRuntime }] = await Promise.all([
+  const url = new URL(request.url);
+  const today = new Date().toISOString().slice(0, 10);
+  const fallbackFrom = new Date(Date.now() - 29 * 86_400_000).toISOString().slice(0, 10);
+  const rangeSchema = z.object({
+    from: z.string().date().default(fallbackFrom),
+    to: z.string().date().default(today),
+  }).refine((value) => value.from <= value.to, { message: "invalid range" });
+  const range = rangeSchema.safeParse({ from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined });
+  if (!range.success) return NextResponse.json({ message: "매출 조회 기간을 확인해 주세요." }, { status: 400 });
+
+  const [{ data, error }, { data: marginScenarios }, { data: syncStatus }, { data: credentialRows, error: credentialError }, { data: aiRuntime }, { data: analytics, error: analyticsError }, { data: externalActions, error: externalActionsError }] = await Promise.all([
     admin.userClient.rpc("sellerpilot_get_operations_snapshot"),
     admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: 5 }),
     admin.userClient.rpc("sellerpilot_get_channel_sync_status"),
     admin.userClient.rpc("sellerpilot_list_credentials"),
     admin.userClient.rpc("sellerpilot_ai_runtime_status"),
+    admin.userClient.rpc("sellerpilot_get_sales_analytics", { p_from: range.data.from, p_to: range.data.to }),
+    admin.userClient.rpc("sellerpilot_list_external_listing_actions"),
   ]);
-  if (error || credentialError) {
+  if (error || credentialError || analyticsError || externalActionsError) {
     return NextResponse.json({ message: "운영 데이터를 불러오지 못했습니다." }, { status: 500 });
   }
   const payload = data && typeof data === "object" && !Array.isArray(data)
@@ -92,6 +104,10 @@ export async function GET(request: Request) {
   payload.marginScenarios = Array.isArray(marginScenarios) ? marginScenarios : [];
   payload.syncStatus = Array.isArray(syncStatus) ? syncStatus : [];
   payload.aiRuntime = aiRuntime && typeof aiRuntime === "object" && !Array.isArray(aiRuntime) ? aiRuntime : null;
+  payload.externalActions = Array.isArray(externalActions) ? externalActions : [];
+  payload.analytics = analytics && typeof analytics === "object" && !Array.isArray(analytics)
+    ? analytics
+    : { from: range.data.from, to: range.data.to, summary: { revenueKrw: 0, sold: 0, orderCount: 0 }, daily: [], channels: [], products: [] };
   if (Array.isArray(payload.products)) {
     const products = payload.products.filter((product): product is Record<string, unknown> => Boolean(product) && typeof product === "object" && !Array.isArray(product));
     const paths = products.map((product) => typeof product.aiHeroPath === "string" ? product.aiHeroPath : "").filter(Boolean);

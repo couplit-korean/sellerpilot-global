@@ -5,6 +5,12 @@ import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib
 export const runtime = "nodejs";
 
 const productIdSchema = z.string().uuid();
+const noteSchema = z.object({
+  supplierName: z.string().trim().max(240),
+  comparisonMemo: z.string().trim().max(4000),
+  competitorQuery: z.string().trim().max(500),
+  competitorMonitorEnabled: z.boolean(),
+});
 
 function stringList(value: unknown) {
   return Array.isArray(value)
@@ -25,9 +31,10 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const productId = productIdSchema.safeParse(params.id);
   if (!productId.success) return NextResponse.json({ message: "상품 ID 형식이 올바르지 않습니다." }, { status: 400 });
 
-  const { data, error } = await admin.userClient.rpc("sellerpilot_get_product_publish_context", {
-    p_product_id: productId.data,
-  });
+  const [{ data, error }, { data: commerceOperations, error: operationsError }] = await Promise.all([
+    admin.userClient.rpc("sellerpilot_get_product_publish_context", { p_product_id: productId.data }),
+    admin.userClient.rpc("sellerpilot_get_product_operations_v2", { p_product_id: productId.data }),
+  ]);
   if (error || !data || typeof data !== "object" || Array.isArray(data)) {
     return NextResponse.json({ message: "상품 등록 준비 정보를 불러오지 못했습니다." }, { status: 404 });
   }
@@ -53,7 +60,24 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   delete payload.ownerId;
   delete payload.sourceImagePaths;
   delete payload.generatedImagePaths;
-  return NextResponse.json({ ...payload, sourceImages, generatedImages }, {
+  return NextResponse.json({ ...payload, commerceOperations: operationsError ? null : commerceOperations, sourceImages, generatedImages }, {
     headers: { "cache-control": "no-store, max-age=0" },
   });
+}
+
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
+  const admin = await authenticateAdminRequest(request);
+  if (isAdminApiError(admin)) return admin;
+  const productId = productIdSchema.safeParse((await context.params).id);
+  const body = noteSchema.safeParse(await request.json().catch(() => null));
+  if (!productId.success || !body.success) return NextResponse.json({ message: "공급처·비교 메모 입력값을 확인해 주세요." }, { status: 400 });
+  const { data, error } = await admin.userClient.rpc("sellerpilot_update_product_commerce_notes", {
+    p_product_id: productId.data,
+    p_supplier_name: body.data.supplierName,
+    p_comparison_memo: body.data.comparisonMemo,
+    p_competitor_query: body.data.competitorQuery,
+    p_monitor_enabled: body.data.competitorMonitorEnabled,
+  });
+  if (error || data !== true) return NextResponse.json({ message: "공급처·비교 메모를 저장하지 못했습니다." }, { status: 500 });
+  return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store, max-age=0" } });
 }

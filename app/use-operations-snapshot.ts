@@ -14,7 +14,6 @@ export type OperationProduct = {
   status: "draft" | "active" | "low_stock" | "out_of_stock" | "archived";
   onHand: number;
   reserved: number;
-  reorderPoint: number;
   available: number;
   costKrw: number;
   sold30d: number;
@@ -22,6 +21,39 @@ export type OperationProduct = {
   listingChannels: string[];
   demo: boolean;
   updatedAt: string;
+};
+
+export type SalesRange = { from: string; to: string; preset: "day" | "week" | "month" | "year" | "custom" };
+
+export type SalesAnalytics = {
+  from: string;
+  to: string;
+  summary: { revenueKrw: number; sold: number; orderCount: number };
+  daily: Array<{
+    date: string;
+    revenueKrw: number;
+    sold: number;
+    orderCount: number;
+    domesticRevenueKrw: number;
+    overseasRevenueKrw: number;
+    channels: Record<string, number>;
+  }>;
+  channels: Array<{
+    channelKey: string;
+    channelCode: string;
+    name: string;
+    market: string;
+    color: string;
+    revenueKrw: number;
+    sold: number;
+    orderCount: number;
+  }>;
+  products: Array<{
+    productId: string;
+    sold: number;
+    revenueKrw: number;
+    channels: Array<{ channelKey: string; channelCode: string; sold: number; revenueKrw: number }>;
+  }>;
 };
 
 export type OperationOrder = {
@@ -37,6 +69,18 @@ export type OperationOrder = {
   amountKrw: number;
   status: "paid" | "ready_to_ship" | "shipped" | "delivered" | "cancelled" | "refunded";
   orderedAt: string;
+  shippedAt: string | null;
+  deliveredAt: string | null;
+  lastSeenAt: string;
+  carrierCode: string | null;
+  trackingNumber: string | null;
+  settlementStatus: "pending" | "expected" | "settled" | "held" | "disputed";
+  settlementAmount: number | null;
+  settlementCurrency: string | null;
+  settledAt: string | null;
+  settlementRateKrw: number | null;
+  referenceRateKrw: number | null;
+  exchangeLossPercent: number | null;
   updatedAt: string;
   demo: boolean;
 };
@@ -69,6 +113,7 @@ export type OperationMarginScenario = {
 
 export type OperationsSnapshot = {
   generatedAt: string;
+  analytics: SalesAnalytics;
   aiRuntime: {
     worker: {
       label: string;
@@ -117,6 +162,22 @@ export type OperationsSnapshot = {
   orders: OperationOrder[];
   tickets: OperationTicket[];
   marginScenarios: OperationMarginScenario[];
+  externalActions: Array<{
+    listingId: string;
+    productId: string;
+    productCode: string;
+    productName: string;
+    sku: string;
+    channel: string;
+    channelCode: string;
+    channelName: string;
+    market: string;
+    targetId: string;
+    message: string;
+    categoryId: string | null;
+    categoryPath: string[] | null;
+    updatedAt: string;
+  }>;
   pipeline: {
     aiRunning: number;
     listingQueued: number;
@@ -124,16 +185,6 @@ export type OperationsSnapshot = {
     listingFailed: number;
     listingBlocked: number;
   };
-  listingIssues: Array<{
-    id: string;
-    productId: string;
-    productName: string;
-    channelKey: string;
-    market: string;
-    failureClass: "retryable" | "external_action";
-    message: string;
-    updatedAt: string;
-  }>;
   summary: {
     revenue30dKrw: number;
     sold30d: number;
@@ -147,6 +198,7 @@ export type OperationsSnapshot = {
     registrationBlockedCount: number;
     activeCredentialCount: number;
     registeredCredentialCount: number;
+    settlementRiskCount: number;
   };
 };
 
@@ -156,6 +208,13 @@ export function useOperationsSnapshot() {
   const [data, setData] = useState<OperationsSnapshot | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [message, setMessage] = useState("");
+  const [range, setRange] = useState<SalesRange>(() => {
+    const now = new Date();
+    const to = new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const from = new Date(monthStart.getTime() - monthStart.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+    return { from, to, preset: "month" };
+  });
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data: sessionData } = await createClient().auth.getSession();
@@ -174,7 +233,8 @@ export function useOperationsSnapshot() {
 
   const load = useCallback(async () => {
     try {
-      const response = await authenticatedFetch("/api/operations/snapshot");
+      const params = new URLSearchParams({ from: range.from, to: range.to });
+      const response = await authenticatedFetch(`/api/operations/snapshot?${params}`);
       const payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "운영 데이터를 불러오지 못했습니다.");
       setData(payload);
@@ -185,16 +245,23 @@ export function useOperationsSnapshot() {
       setState("unavailable");
       setMessage(error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.");
     }
-  }, [authenticatedFetch]);
+  }, [authenticatedFetch, range.from, range.to]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void load(), 0);
-    const refresh = window.setInterval(() => void load(), 5 * 60_000);
+    const refresh = window.setInterval(() => void load(), 60_000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(refresh);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [load]);
 
-  return { data, state, message, reload: load, authenticatedFetch };
+  return { data, state, message, range, setRange, reload: load, authenticatedFetch };
 }

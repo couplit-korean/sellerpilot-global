@@ -69,16 +69,16 @@
     },
     "localizedListings": {
       "type": "array",
-      "minItems": 19,
-      "maxItems": 19,
+      "minItems": 26,
+      "maxItems": 26,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["channel", "market", "locale", "title", "shortDescription", "description", "keywords", "thumbnailAltText", "detailSections"],
         "properties": {
           "channel": { "type": "string", "enum": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"] },
-          "market": { "type": "string", "enum": ["JP", "SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID", "KR", "US"] },
-          "locale": { "type": "string", "enum": ["ja-JP", "en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID", "ko-KR", "en-US"] },
+          "market": { "type": "string", "enum": ["JP", "SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID", "KR", "US", "GB", "DE", "AU", "CA", "FR", "IT", "ES"] },
+          "locale": { "type": "string", "enum": ["ja-JP", "en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID", "ko-KR", "en-US", "en-GB", "de-DE", "en-AU", "en-CA", "fr-FR", "it-IT", "es-ES"] },
           "title": { "type": "string", "minLength": 1, "maxLength": 120 },
           "shortDescription": { "type": "string", "minLength": 1, "maxLength": 500 },
           "description": { "type": "string", "minLength": 1, "maxLength": 2000 },

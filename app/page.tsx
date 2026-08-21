@@ -49,6 +49,7 @@ import {
   PackageCheck,
   PackageSearch,
   PanelLeftClose,
+  PencilRuler,
   Plus,
   RefreshCw,
   Search,
@@ -80,7 +81,7 @@ import { MobilePushManager } from "./mobile-push-manager";
 import { marketplaceListingLinkLabel, marketplaceListingUrl, type RemoteListingReference } from "./channel-links";
 import { channels, type ChannelKey } from "./channel-config";
 import { activeChannelKeys } from "../lib/channels/catalog";
-import { useOperationsSnapshot, type OperationsSnapshot } from "./use-operations-snapshot";
+import { useOperationsSnapshot, type OperationsSnapshot, type SalesRange } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
@@ -91,11 +92,14 @@ type View =
   | "products"
   | "product-detail"
   | "publishing"
+  | "remediation"
   | "style-learning"
   | "margin"
   | "orders"
   | "cs"
   | "connections"
+  | "templates"
+  | "notifications"
   | "qoo10"
   | "shopee"
   | "lazada"
@@ -121,6 +125,8 @@ const navGroups = [
       { id: "orders" as View, label: "주문 · 판매", icon: ShoppingCart },
       { id: "cs" as View, label: "CS 통합함", icon: Headphones },
       { id: "connections" as View, label: "채널 연결 · 상태", icon: ShieldCheck },
+      { id: "templates" as View, label: "템플릿 설정", icon: FileText },
+      { id: "notifications" as View, label: "알림 설정", icon: Bell },
     ],
   },
   {
@@ -152,11 +158,14 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   products: { title: "상품 관리", description: "채널별 등록 상태, 재고와 판매 성과를 관리합니다." },
   "product-detail": { title: "상품 상세정보", description: "등록된 상품의 이미지, 기본 정보, 재고와 채널 상태를 확인합니다." },
   publishing: { title: "상품 등록 센터", description: "대표사진과 다양한 각도 사진, 설명과 링크를 함께 분석해 채널 등록을 자동화합니다." },
+  remediation: { title: "외부 권한 · 상품수정", description: "판매자센터에서 보완해야 할 상품만 한 건씩 확인하고 바로 수정합니다." },
   "style-learning": { title: "스타일 학습 검증", description: "6개 카테고리 1,200개 상품 범위와 8개 채널의 국가·언어별 제작 규칙을 확인합니다." },
   margin: { title: "마진 계산", description: "원가와 채널 비용을 반영해 순이익과 목표 마진 판매가를 계산합니다." },
   orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
   cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
   connections: { title: "채널 연결 · 상태", description: "판매채널 연결 상태, API 인증과 차단 요인을 한곳에서 관리합니다." },
+  templates: { title: "템플릿 설정", description: "자주 쓰는 배송비, 포장과 배송 규칙을 저장해 상품 등록에 즉시 적용합니다." },
+  notifications: { title: "알림 설정", description: "웹과 가입한 사용자 본인의 카카오톡 알림을 업무 유형별로 설정합니다." },
   qoo10: { title: "Qoo10 Japan", description: "일본 스토어의 상품, 매출, 주문, CS 성과입니다." },
   shopee: { title: "Shopee Global", description: "8개 국가 Shopee 숍의 상품, 매출, 주문, CS 성과입니다." },
   lazada: { title: "Lazada Malaysia", description: "말레이시아 스토어의 상품, 매출, 주문, CS 성과입니다." },
@@ -184,7 +193,7 @@ const ticketChannelCodes: Record<string, string> = {
 
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
 const enabledSalesChannelCount = Object.values(channels).filter((channel) => channel.enabled).length;
-const deepLinkViews = new Set<View>(["overview", "products", "publishing", "margin", "orders", "cs", "connections"]);
+const deepLinkViews = new Set<View>(["overview", "products", "publishing", "remediation", "margin", "orders", "cs", "connections", "templates", "notifications"]);
 type DisplayProduct = {
   id: string;
   sourceId: string;
@@ -202,6 +211,7 @@ type DisplayProduct = {
   revenue: string;
   status: string;
   channels: string[];
+  channelSales: Array<{ channelKey: string; channelCode: string; sold: number; revenueKrw: number }>;
   updatedAt: string;
 };
 
@@ -215,6 +225,14 @@ type DisplayOrder = {
   amount: string;
   status: string;
   time: string;
+  shippedAt: string | null;
+  deliveredAt: string | null;
+  carrierCode: string | null;
+  trackingNumber: string | null;
+  settlementStatus: string;
+  settlementAmount: number | null;
+  settlementCurrency: string | null;
+  exchangeLossPercent: number | null;
 };
 
 type DisplayTicket = {
@@ -232,6 +250,8 @@ type DisplayTicket = {
 };
 
 type SupportLocale = "ko-KR" | "en-US" | "ja-JP" | "zh-TW" | "th-TH" | "vi-VN" | "id-ID" | "ms-MY" | "pt-BR" | "es-MX";
+
+type CommerceTemplate = { id: string; name: string; kind: "shipping_fee" | "packaging_shipping"; values: Record<string, string | number | boolean | null>; is_default: boolean; updated_at: string };
 
 const supportLocaleLabels: Record<SupportLocale, string> = {
   "ko-KR": "한국어", "en-US": "영어", "ja-JP": "일본어", "zh-TW": "중국어(번체)", "th-TH": "태국어",
@@ -418,6 +438,26 @@ function formatCompactWon(value: number) {
   return `₩${Intl.NumberFormat("ko-KR", { notation: "compact", maximumFractionDigits: 1 }).format(value)}`;
 }
 
+function localDateString(value: Date) {
+  return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+}
+
+function salesRangeForPreset(preset: SalesRange["preset"]): SalesRange {
+  const now = new Date();
+  const to = localDateString(now);
+  if (preset === "day") return { preset, from: to, to };
+  if (preset === "week") return { preset, from: localDateString(new Date(now.getTime() - 6 * 86_400_000)), to };
+  if (preset === "year") return { preset, from: localDateString(new Date(now.getFullYear(), 0, 1)), to };
+  return { preset: preset === "custom" ? "custom" : "month", from: localDateString(new Date(now.getFullYear(), now.getMonth(), 1)), to };
+}
+
+function SalesRangeControl({ range, onChange, compact = false }: { range: SalesRange; onChange: (range: SalesRange) => void; compact?: boolean }) {
+  return <div className={`sales-range-control ${compact ? "compact" : ""}`}>
+    <div className="segmented-control" aria-label="매출 집계 기간">{(["day", "week", "month", "year", "custom"] as const).map((preset) => <button type="button" className={range.preset === preset ? "active" : ""} onClick={() => onChange(preset === "custom" ? { ...range, preset } : salesRangeForPreset(preset))} key={preset}>{{ day: "일", week: "주", month: "월", year: "연", custom: "맞춤" }[preset]}</button>)}</div>
+    {range.preset === "custom" ? <div className="custom-date-range"><label><span className="sr-only">시작일</span><input type="date" value={range.from} max={range.to} onChange={(event) => onChange({ ...range, from: event.target.value })} /></label><span>—</span><label><span className="sr-only">종료일</span><input type="date" value={range.to} min={range.from} onChange={(event) => onChange({ ...range, to: event.target.value })} /></label></div> : <span className="selected-date-range"><CalendarDays size={14} />{range.from} — {range.to}</span>}
+  </div>;
+}
+
 function ProductVisual({ src, size, alt = "상품 이미지" }: { src: string | null; size: string; alt?: string }) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
 
@@ -426,35 +466,45 @@ function ProductVisual({ src, size, alt = "상품 이미지" }: { src: string | 
     : <span className="product-image-missing" role="img" aria-label={`${alt} 없음`}><Package size={17} /><small>이미지 없음</small></span>;
 }
 
-function OverviewPage({ onNavigate, onOpenProduct, displayProducts, operationSummary, channelMetrics, pipeline, operationsAvailable }: {
+function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMetrics, pipeline, analytics, salesRange, onSalesRangeChange, resolvedCsCount, operationsAvailable }: {
   onNavigate: (view: View) => void;
-  onOpenProduct: (product: DisplayProduct) => void;
   displayProducts: DisplayProduct[];
   operationSummary: OperationsSnapshot["summary"] | null;
   channelMetrics: OperationsSnapshot["channelMetrics"];
   pipeline: OperationsSnapshot["pipeline"] | null;
+  analytics: OperationsSnapshot["analytics"] | null;
+  salesRange: SalesRange;
+  onSalesRangeChange: (range: SalesRange) => void;
+  resolvedCsCount: number;
   operationsAvailable: boolean;
 }) {
   const [exchangeRates, setExchangeRates] = useState(initialExchangeRates);
   const [rateUpdatedAt, setRateUpdatedAt] = useState("화면 기준값");
   const [rateSource, setRateSource] = useState("실데이터 확인 중");
   const [today] = useState(() => new Date());
-  const monthlyTopProducts = useMemo(() => [...displayProducts]
-    .filter((product) => product.sales > 0)
-    .sort((a, b) => b.sales - a.sales || b.revenueKrw - a.revenueKrw || a.name.localeCompare(b.name, "ko"))
-    .slice(0, 10), [displayProducts]);
-  const activeMetrics = useMemo(() => channelMetrics
-    .filter((channel) => activeChannelKeys.includes(channel.channelKey as (typeof activeChannelKeys)[number]))
-    .sort((left, right) => right.revenue30dKrw - left.revenue30dKrw || right.orderCount - left.orderCount || left.name.localeCompare(right.name, "ko")), [channelMetrics]);
-  const summary = operationSummary ?? { revenue30dKrw: 0, sold30d: 0, orderCount: 0, paidOrderCount: 0, readyToShipCount: 0, openTicketCount: 0, lowStockCount: 0, productCount: 0, registrationErrorCount: 0, registrationBlockedCount: 0, activeCredentialCount: 0, registeredCredentialCount: 0 };
+  const monthlyTopProducts = useMemo(() => [...displayProducts].sort((a, b) => b.sales - a.sales).slice(0, 10), [displayProducts]);
+  const activeMetrics = useMemo(() => {
+    const periodByChannel = new Map((analytics?.channels ?? []).map((channel) => [channel.channelKey, channel]));
+    return channelMetrics
+      .filter((channel) => activeChannelKeys.includes(channel.channelKey as (typeof activeChannelKeys)[number]))
+      .map((channel) => {
+        const period = periodByChannel.get(channel.channelKey);
+        return { ...channel, revenue30dKrw: period?.revenueKrw ?? 0, sold30d: period?.sold ?? 0, orderCount: period?.orderCount ?? 0 };
+      })
+      .sort((left, right) => right.revenue30dKrw - left.revenue30dKrw || right.orderCount - left.orderCount || left.name.localeCompare(right.name, "ko"));
+  }, [analytics, channelMetrics]);
+  const summary = operationSummary ?? { revenue30dKrw: 0, sold30d: 0, orderCount: 0, paidOrderCount: 0, readyToShipCount: 0, openTicketCount: 0, lowStockCount: 0, productCount: 0, registrationErrorCount: 0, registrationBlockedCount: 0, activeCredentialCount: 0, registeredCredentialCount: 0, settlementRiskCount: 0 };
   const livePipeline = pipeline ?? { aiRunning: 0, listingQueued: 0, listingPublished: 0, listingFailed: 0, listingBlocked: 0 };
   const totalTasks = summary.paidOrderCount + summary.readyToShipCount + summary.openTicketCount + summary.registrationErrorCount;
   const totalListings = livePipeline.listingPublished + livePipeline.listingFailed + livePipeline.listingBlocked;
   const successRate = totalListings > 0 ? (livePipeline.listingPublished / totalListings) * 100 : 0;
   const maxChannelRevenue = Math.max(1, ...activeMetrics.map((channel) => channel.revenue30dKrw));
   const currentDate = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "long" }).format(today);
-  const rangeStart = new Date(today.getTime() - 29 * 86_400_000).toISOString().slice(0, 10);
-  const rangeEnd = today.toISOString().slice(0, 10);
+  const periodRevenue = analytics?.summary.revenueKrw ?? 0;
+  const periodSold = analytics?.summary.sold ?? 0;
+  const periodOrders = analytics?.summary.orderCount ?? 0;
+  const calendarDays = analytics?.daily ?? [];
+  const calendarOffset = calendarDays.length ? new Date(`${calendarDays[0].date.slice(0, 10)}T12:00:00`).getDay() : 0;
 
   const refreshExchangeRates = useCallback(async () => {
     setRateSource("기준 환율 확인 중");
@@ -497,26 +547,37 @@ function OverviewPage({ onNavigate, onOpenProduct, displayProducts, operationSum
           <div className="exchange-rate-list">{exchangeRates.map((rate) => <div className="exchange-rate" key={rate.code}><small>{rate.code} {rate.unit}</small><strong>₩{rate.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong><em className={rate.change >= 0 ? "up" : "down"}>{rate.change >= 0 ? "▲" : "▼"} {Math.abs(rate.change).toFixed(2)}%</em></div>)}</div>
           <button type="button" className="exchange-refresh" aria-label="환율 새로고침" title="환율 새로고침" onClick={refreshExchangeRates}><RefreshCw size={14} /></button>
         </article>
-        <div className="overview-date-actions"><div className="period-control"><CalendarDays size={15} /><time dateTime={rangeStart}>{rangeStart}</time><span>—</span><time dateTime={rangeEnd}>{rangeEnd}</time></div><div className="segmented-control fixed-period" aria-label="집계 기간"><span>최근 30일 실데이터</span></div></div>
+        <div className="overview-date-actions"><SalesRangeControl range={salesRange} onChange={onSalesRangeChange} /></div>
       </section>
 
       <section className="metric-grid">
-        <MetricCard label="30일 매출" value={operationsAvailable ? formatCompactWon(summary.revenue30dKrw) : "—"} detail="실제 게시 상품 매출 집계" icon={CircleDollarSign} tone="violet" />
-        <MetricCard label="주문" value={operationsAvailable ? summary.orderCount.toLocaleString() : "—"} detail={`결제완료 ${summary.paidOrderCount} · 출고대기 ${summary.readyToShipCount}`} icon={ShoppingBag} tone="blue" />
-        <MetricCard label="관리 상품" value={operationsAvailable ? summary.productCount.toLocaleString() : "—"} detail={`최근 30일 ${summary.sold30d.toLocaleString()}개 판매`} icon={PackageCheck} tone="green" />
+        <MetricCard label="선택 기간 매출" value={operationsAvailable ? formatCompactWon(periodRevenue) : "—"} detail={`${salesRange.from} — ${salesRange.to}`} icon={CircleDollarSign} tone="violet" />
+        <MetricCard label="선택 기간 주문" value={operationsAvailable ? periodOrders.toLocaleString() : "—"} detail={`결제완료 ${summary.paidOrderCount} · 출고대기 ${summary.readyToShipCount}`} icon={ShoppingBag} tone="blue" />
+        <MetricCard label="관리 상품" value={operationsAvailable ? summary.productCount.toLocaleString() : "—"} detail={`선택 기간 ${periodSold.toLocaleString()}개 판매`} icon={PackageCheck} tone="green" />
         <MetricCard label="미처리 CS" value={operationsAvailable ? summary.openTicketCount.toLocaleString() : "—"} detail={`재고주의 ${summary.lowStockCount}건`} icon={MessageCircleMore} tone="orange" />
+      </section>
+
+      <section className="panel sales-calendar-panel">
+        <div className="panel-heading"><div><span className="panel-kicker">국내 · 해외 · 채널 통합</span><h3>날짜별 실매출 달력</h3></div><small>{salesRange.from} — {salesRange.to}</small></div>
+        <div className="sales-calendar-weekdays">{["일","월","화","수","목","금","토"].map((day) => <span key={day}>{day}</span>)}</div>
+        <div className="sales-calendar-grid">{Array.from({ length: calendarOffset }, (_, index) => <span className="calendar-blank" key={`blank-${index}`} />)}{calendarDays.map((day) => <article key={day.date}><time>{Number(day.date.slice(8,10))}</time><b>{formatCompactWon(day.revenueKrw)}</b><small>국내 {formatCompactWon(day.domesticRevenueKrw)}</small><small>해외 {formatCompactWon(day.overseasRevenueKrw)}</small></article>)}</div>
+      </section>
+
+      <section className="dashboard-cs-pair" aria-label="CS 처리 현황">
+        <button className="panel" onClick={() => onNavigate("cs")}><span className="metric-icon orange"><Inbox size={18} /></span><span><small>미처리 CS</small><strong>{summary.openTicketCount.toLocaleString()}건</strong><em>답변 대기 · 처리 중</em></span><ChevronRight size={16} /></button>
+        <button className="panel" onClick={() => onNavigate("cs")}><span className="metric-icon green"><CheckCircle2 size={18} /></span><span><small>완료 CS</small><strong>{resolvedCsCount.toLocaleString()}건</strong><em>처리 완료 원장</em></span><ChevronRight size={16} /></button>
       </section>
 
       <section className="dashboard-main-grid">
         <article className="panel revenue-panel">
-          <div className="panel-heading"><div><span className="panel-kicker">실매출 분석</span><h3>채널별 최근 30일 매출</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>상품 원장<ChevronRight size={15} /></button></div>
+          <div className="panel-heading"><div><span className="panel-kicker">실매출 분석</span><h3>채널별 선택 기간 매출</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>상품 원장<ChevronRight size={15} /></button></div>
           <div className="live-channel-bars">{activeMetrics.map((channel) => <button key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><span><i style={{ background: channel.color }} />{channel.name}</span><b>{formatCompactWon(channel.revenue30dKrw)}</b><em>{channel.orderCount.toLocaleString()}건</em><small><i style={{ width: `${Math.round((channel.revenue30dKrw / maxChannelRevenue) * 100)}%`, background: channel.color }} /></small></button>)}</div>
         </article>
 
         <article className="panel top-ranking-card">
-          <div className="panel-heading"><div><span className="panel-kicker">최근 30일 판매량 기준</span><h3>이번 달 판매 TOP 10</h3></div><span className="rank-crown">1–10</span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">선택 기간 판매량 기준</span><h3>판매 TOP 10</h3></div><span className="rank-crown">1–10</span></div>
           <div className="monthly-ranking-list">
-            {monthlyTopProducts.map((product, index) => <button className={`ranking-row ${index < 3 ? "podium" : ""}`} key={product.id} onClick={() => onOpenProduct(product)}>
+            {monthlyTopProducts.map((product, index) => <button className={`ranking-row ${index < 3 ? "podium" : ""}`} key={product.id} onClick={() => onNavigate("products")}>
               <span className="ranking-number">{index + 1}</span>
               <span className="ranking-thumb"><ProductVisual src={product.image} size="38px" /></span>
               <span className="ranking-product"><b>{product.name}</b><small>{product.channels.length}개 채널 판매중</small></span>
@@ -533,7 +594,7 @@ function OverviewPage({ onNavigate, onOpenProduct, displayProducts, operationSum
         <article className="panel channel-performance">
           <div className="panel-heading"><div><span className="panel-kicker">실계정 운영 상태</span><h3>채널별 실데이터</h3></div><span className="live-label"><i />LIVE</span></div>
           <div className="channel-list">
-            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus)}</span></div><div className="channel-metric"><small>30일 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
+            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus)}</span></div><div className="channel-metric"><small>선택 기간 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -541,7 +602,7 @@ function OverviewPage({ onNavigate, onOpenProduct, displayProducts, operationSum
           <div className="panel-heading"><div><span className="panel-kicker">오늘 자동 등록 작업</span><h3>상품 등록 현황</h3></div><button className="ghost-button" onClick={() => onNavigate("publishing")}>전체 보기<ChevronRight size={15} /></button></div>
           <div className="pipeline-summary"><div><strong>{totalListings}</strong><span>실제 등록 처리</span></div><i /><div><strong>{successRate.toFixed(1)}%</strong><span>등록 성공률</span></div></div>
           <div className="pipeline-list">
-            {[{ label: "AI 분석 중", value: livePipeline.aiRunning, tone: "violet", icon: WandSparkles }, { label: "채널 등록 대기", value: livePipeline.listingQueued, tone: "blue", icon: Upload }, { label: "등록 완료", value: livePipeline.listingPublished, tone: "green", icon: CheckCircle2 }, { label: "재시도 가능", value: livePipeline.listingFailed, tone: "red", icon: AlertCircle }, { label: "외부 권한 대기", value: livePipeline.listingBlocked, tone: "orange", icon: ShieldCheck }].map((item) => <div key={item.label}><span className={`pipeline-icon ${item.tone}`}><item.icon size={16} /></span><span>{item.label}</span><strong>{item.value}<small>건</small></strong></div>)}
+            {[{ label: "AI 분석 중", value: livePipeline.aiRunning, tone: "violet", icon: WandSparkles }, { label: "채널 등록 대기", value: livePipeline.listingQueued, tone: "blue", icon: Upload }, { label: "등록 완료", value: livePipeline.listingPublished, tone: "green", icon: CheckCircle2 }, { label: "재시도 가능", value: livePipeline.listingFailed, tone: "red", icon: AlertCircle }, { label: "외부 권한 대기", value: livePipeline.listingBlocked, tone: "orange", icon: ShieldCheck, view: "remediation" as View }].map((item) => <div className={item.view ? "interactive" : ""} role={item.view ? "button" : undefined} tabIndex={item.view ? 0 : undefined} onClick={() => item.view && onNavigate(item.view)} onKeyDown={(event) => { if (item.view && (event.key === "Enter" || event.key === " ")) onNavigate(item.view); }} key={item.label}><span className={`pipeline-icon ${item.tone}`}><item.icon size={16} /></span><span>{item.label}</span><strong>{item.value}<small>건</small></strong></div>)}
           </div>
         </article>
       </section>
@@ -552,7 +613,7 @@ function OverviewPage({ onNavigate, onOpenProduct, displayProducts, operationSum
           <div className="alert-list">
             <button onClick={() => onNavigate("products")}><span className="alert-icon danger"><Box size={16} /></span><span><b>재고주의 상품 {summary.lowStockCount}건</b><small>실재고와 재주문 기준으로 집계했습니다.</small></span><em>상품 보기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("publishing")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>채널 등록 실패 {summary.registrationErrorCount}건</b><small>카테고리·필수 속성·API 응답을 확인하세요.</small></span><em>오류 보기<ChevronRight size={14} /></em></button>
-            <button onClick={() => onNavigate("connections")}><span className="alert-icon warning"><ShieldCheck size={16} /></span><span><b>외부 판매 권한 대기 {summary.registrationBlockedCount}건</b><small>같은 요청을 반복하지 않고 판매자센터 권한·인증 보완을 기다립니다.</small></span><em>연결 보기<ChevronRight size={14} /></em></button>
+            <button onClick={() => onNavigate("remediation")}><span className="alert-icon warning"><ShieldCheck size={16} /></span><span><b>외부 판매 권한 대기 {summary.registrationBlockedCount}건</b><small>상품수정이 필요한 항목만 한 건씩 바로 처리합니다.</small></span><em>처리하기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("cs")}><span className="alert-icon blue"><MessageCircleMore size={16} /></span><span><b>미처리 CS {summary.openTicketCount}건</b><small>각 채널에서 동기화된 실제 문의입니다.</small></span><em>답변하기<ChevronRight size={14} /></em></button>
           </div>
         </article>
@@ -565,11 +626,13 @@ function OverviewPage({ onNavigate, onOpenProduct, displayProducts, operationSum
   );
 }
 
-function ProductsPage({ onNavigate, onOpenProduct, onRefresh, displayProducts }: {
+function ProductsPage({ onNavigate, onOpenProduct, onRefresh, displayProducts, salesRange, onSalesRangeChange }: {
   onNavigate: (view: View) => void;
   onOpenProduct: (product: DisplayProduct) => void;
   onRefresh: () => Promise<void>;
   displayProducts: DisplayProduct[];
+  salesRange: SalesRange;
+  onSalesRangeChange: (range: SalesRange) => void;
 }) {
   const [query, setQuery] = useState("");
   const [channelFilter, setChannelFilter] = useState("all");
@@ -607,8 +670,9 @@ function ProductsPage({ onNavigate, onOpenProduct, onRefresh, displayProducts }:
     <div className="page-stack">
       <section className="summary-strip"><div><Package size={18} /><span>전체 상품<strong>{displayProducts.length}</strong></span></div><div><CheckCircle2 size={18} /><span>정상 판매<strong>{activeCount}</strong></span></div><div><AlertCircle size={18} /><span>재고 주의<strong>{lowStockCount}</strong></span></div><div><Box size={18} /><span>품절<strong>{outOfStockCount}</strong></span></div><button className="primary-button" onClick={() => onNavigate("publishing")}><Plus size={16} />새 상품 등록</button></section>
       <section className="panel data-panel">
+        <div className="product-sales-range"><div><span className="panel-kicker">상품별 판매 · 매출</span><b>조회 기간</b></div><SalesRangeControl range={salesRange} onChange={onSalesRangeChange} compact /></div>
         <div className="data-toolbar"><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="상품명, SKU 검색" /></div><label className="filter-select"><Filter size={15} /><span className="sr-only">판매 채널 필터</span><select value={channelFilter} onChange={(event) => { setChannelFilter(event.target.value); setPage(1); }}><option value="all">전체 채널</option>{availableChannels.map((code) => <option value={code} key={code}>{channelByCode.get(code)?.mark ?? code}</option>)}</select><ChevronDown size={14} /></label><label className="filter-select"><ListFilter size={15} /><span className="sr-only">상품 상태 필터</span><select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}><option value="all">전체 상태</option>{availableStatuses.map((status) => <option value={status} key={status}>{status}</option>)}</select><ChevronDown size={14} /></label><span className="toolbar-spacer" /><button className="icon-text-button" type="button" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{refreshing ? "새로고침 중" : "목록 새로고침"}</button><div className="toolbar-menu"><button className="icon-only-button" type="button" aria-label="상품 추가 작업" aria-expanded={actionsOpen} onClick={() => setActionsOpen((open) => !open)}><MoreHorizontal size={18} /></button>{actionsOpen && <div className="toolbar-menu-popover" role="menu"><button type="button" role="menuitem" onClick={() => onNavigate("publishing")}>새 상품 등록</button><button type="button" role="menuitem" onClick={() => onNavigate("connections")}>채널 연결 관리</button></div>}</div></div>
-        <div className="table-wrap"><table className="data-table product-table"><thead><tr><th>상품</th><th>판매 채널</th><th>재고</th><th>30일 판매</th><th>30일 매출</th><th>상태</th></tr></thead><tbody>{pagedProducts.map((product) => <tr key={product.id}><td><button type="button" className="product-cell product-cell-button" aria-label={`${product.name} 상품 상세정보 보기`} onClick={() => onOpenProduct(product)}><div className="product-thumb"><ProductVisual src={product.image} size="52px" alt={product.name} /></div><span><b>{product.name}</b><small>{product.sku} · {product.id}</small></span></button></td><td><div className="channel-stack">{product.channels.map((code) => <ChannelMark key={code} code={code} size="sm" />)}</div></td><td><strong className={product.stock < 20 ? "stock-low" : ""}>{product.stock}</strong><small> 개</small></td><td><b>{product.sales}</b><small> 개</small></td><td><b>{product.revenue}</b></td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table className="data-table product-table"><thead><tr><th>상품</th><th>판매 채널 · 판매수</th><th>재고</th><th>기간 판매</th><th>기간 매출</th><th>상태</th></tr></thead><tbody>{pagedProducts.map((product) => <tr key={product.id}><td><button type="button" className="product-cell product-cell-button" aria-label={`${product.name} 상품 상세정보 보기`} onClick={() => onOpenProduct(product)}><div className="product-thumb"><ProductVisual src={product.image} size="52px" alt={product.name} /></div><span><b>{product.name}</b><small>{product.sku} · {product.id}</small></span></button></td><td><div className="channel-sales-stack">{product.channels.map((code) => { const sales = product.channelSales.find((item) => item.channelCode === code)?.sold ?? 0; return <span key={code}><ChannelMark code={code} size="sm" /><small>{sales.toLocaleString()}</small></span>; })}</div></td><td><strong className={product.stock < 20 ? "stock-low" : ""}>{product.stock}</strong><small> 개</small></td><td><b>{product.sales}</b><small> 개</small></td><td><b>{product.revenue}</b></td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div>
         {displayProducts.length === 0 ? <div className="live-empty-state table-empty"><PackageSearch size={28} /><b>실상품 데이터가 없습니다.</b><small>상품을 등록하거나 채널 동기화를 실행하면 이 목록에 표시됩니다.</small></div> : filtered.length === 0 ? <div className="live-empty-state table-empty"><Search size={28} /><b>검색 조건에 맞는 상품이 없습니다.</b><small>상품명 또는 SKU를 다시 확인해 주세요.</small></div> : null}
         <div className="table-footer"><span>총 {displayProducts.length}개 중 {filtered.length > 0 ? `${pageStart + 1}–${Math.min(pageStart + pageSize, filtered.length)}` : "0"}개 표시</span><div><button type="button" aria-label="이전 페이지" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronRight className="flip" size={15} /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(Math.max(0, currentPage - 3), Math.max(5, currentPage + 2)).map((pageNumber) => <button type="button" className={currentPage === pageNumber ? "active" : ""} onClick={() => setPage(pageNumber)} key={pageNumber}>{pageNumber}</button>)}<button type="button" aria-label="다음 페이지" disabled={currentPage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}><ChevronRight size={15} /></button></div></div>
       </section>
@@ -644,6 +708,22 @@ type ProductDetailContext = {
   localizedListings: ProductDetailLocalizedListing[];
 };
 
+type ProductCommerceOperations = {
+  aiJobId: string | null;
+  supplierName: string;
+  comparisonMemo: string;
+  competitorQuery: string;
+  competitorMonitorEnabled: boolean;
+  competitorCheckedAt: string | null;
+  listings: Array<{
+    id: string; channel: string; channelCode: string; market: string; targetId: string; status: string;
+    remoteId: string | null; marketplaceSku: string | null; inventoryQuantity: number | null; inventoryStatus: string;
+    inventoryError: string | null; inventorySyncedAt: string | null; categoryId: string | null; categoryPath: string[] | null;
+    categoryStatus: string | null; sold30d: number; revenue30dKrw: number;
+  }>;
+  competitorPrices: Array<{ id: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string; checkedAt: string }>;
+};
+
 type InventorySyncContext = {
   runId?: string;
   status?: string;
@@ -660,6 +740,10 @@ const emptyProductDetailContext: ProductDetailContext = {
   sourceImages: [],
   generatedImages: [],
   localizedListings: [],
+};
+
+const emptyProductCommerceOperations: ProductCommerceOperations = {
+  aiJobId: null, supplierName: "", comparisonMemo: "", competitorQuery: "", competitorMonitorEnabled: true, competitorCheckedAt: null, listings: [], competitorPrices: [],
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -685,6 +769,14 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
   const [inventorySaving, setInventorySaving] = useState(false);
   const [inventorySync, setInventorySync] = useState<InventorySyncContext | null>(null);
   const [inventoryMessage, setInventoryMessage] = useState("");
+  const [commerceOperations, setCommerceOperations] = useState<ProductCommerceOperations>(emptyProductCommerceOperations);
+  const [commerceNotesEditing, setCommerceNotesEditing] = useState(false);
+  const [commerceNotesSaving, setCommerceNotesSaving] = useState(false);
+  const [supplierName, setSupplierName] = useState("");
+  const [comparisonMemo, setComparisonMemo] = useState("");
+  const [competitorQuery, setCompetitorQuery] = useState("");
+  const [competitorMonitorEnabled, setCompetitorMonitorEnabled] = useState(true);
+  const [regeneratingDetailAsset, setRegeneratingDetailAsset] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -712,6 +804,9 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
             description: typeof item.description === "string" ? item.description : "",
           })).filter((item) => Boolean(item.channel && item.title))
           : [];
+        const nextCommerceOperations = isRecord(payload.commerceOperations)
+          ? payload.commerceOperations as unknown as ProductCommerceOperations
+          : emptyProductCommerceOperations;
         if (!cancelled) {
           setRemoteListings(listings);
           setDetailContext({
@@ -720,6 +815,11 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
             generatedImages: parseAssets(payload.generatedImages),
             localizedListings,
           });
+          setCommerceOperations({ ...emptyProductCommerceOperations, ...nextCommerceOperations, listings: Array.isArray(nextCommerceOperations.listings) ? nextCommerceOperations.listings : [], competitorPrices: Array.isArray(nextCommerceOperations.competitorPrices) ? nextCommerceOperations.competitorPrices : [] });
+          setSupplierName(nextCommerceOperations.supplierName ?? "");
+          setComparisonMemo(nextCommerceOperations.comparisonMemo ?? "");
+          setCompetitorQuery(nextCommerceOperations.competitorQuery ?? product.name);
+          setCompetitorMonitorEnabled(nextCommerceOperations.competitorMonitorEnabled !== false);
           setRemoteListingState("ready");
         }
       })
@@ -727,11 +827,77 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
         if (!cancelled) {
           setRemoteListings([]);
           setDetailContext(emptyProductDetailContext);
+          setCommerceOperations(emptyProductCommerceOperations);
           setRemoteListingState("unavailable");
         }
       });
     return () => { cancelled = true; };
-  }, [authenticatedFetch, product.sourceId]);
+  }, [authenticatedFetch, product.name, product.sourceId]);
+
+  useEffect(() => {
+    if (!inventorySaving) return;
+    const poll = window.setInterval(() => {
+      void authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`).then(async (response) => {
+        if (!response.ok) return;
+        const payload = await response.json() as { sync?: InventorySyncContext | null };
+        if (payload.sync) setInventorySync(payload.sync);
+      }).catch(() => null);
+    }, 1_000);
+    return () => window.clearInterval(poll);
+  }, [authenticatedFetch, inventorySaving, product.sourceId]);
+
+  const saveCommerceNotes = async () => {
+    if (commerceNotesSaving) return;
+    setCommerceNotesSaving(true);
+    try {
+      const response = await authenticatedFetch(`/api/admin/products/${product.sourceId}/publish-context`, { method: "POST", body: JSON.stringify({ supplierName, comparisonMemo, competitorQuery, competitorMonitorEnabled }) });
+      const payload = await response.json().catch(() => ({ message: "상품 운영 메모 응답을 읽지 못했습니다." })) as { message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "상품 운영 메모를 저장하지 못했습니다.");
+      setCommerceOperations((current) => ({ ...current, supplierName, comparisonMemo, competitorQuery, competitorMonitorEnabled }));
+      setCommerceNotesEditing(false);
+    } catch (error) {
+      setInventoryMessage(error instanceof Error ? error.message : "상품 운영 메모를 저장하지 못했습니다.");
+    } finally {
+      setCommerceNotesSaving(false);
+    }
+  };
+
+  const regenerateDetailAsset = async (assetId: string) => {
+    if (!commerceOperations.aiJobId || regeneratingDetailAsset) return;
+    setRegeneratingDetailAsset(assetId);
+    setInventoryMessage("");
+    try {
+      const jobId = crypto.randomUUID();
+      const response = await authenticatedFetch("/api/ai/product-studio/regenerate", {
+        method: "POST",
+        body: JSON.stringify({ jobId, sourceJobId: commerceOperations.aiJobId, sourceProductId: product.sourceId, assetId }),
+      });
+      const queued = await response.json().catch(() => ({ message: "재제작 작업 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
+      if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "이미지 재제작 작업을 등록하지 못했습니다.");
+      for (let attempt = 0; attempt < 600; attempt += 1) {
+        const statusResponse = await authenticatedFetch(`/api/ai/jobs/${queued.jobId}`);
+        const statusPayload = await statusResponse.json().catch(() => ({ message: "재제작 상태를 읽지 못했습니다." })) as {
+          status?: string; error?: string | null; message?: string;
+          result?: { mode?: string; assetId?: string; generatedImages?: Array<{ id: string; url: string | null }> } | null;
+        };
+        if (!statusResponse.ok) throw new Error(statusPayload.message ?? "재제작 상태를 확인하지 못했습니다.");
+        if (statusPayload.status === "succeeded" && statusPayload.result?.mode === "asset-regeneration") {
+          const nextUrl = statusPayload.result.generatedImages?.find((asset) => asset.id === assetId)?.url ?? null;
+          if (!nextUrl) throw new Error("재제작된 이미지 주소를 확인하지 못했습니다.");
+          setDetailContext((current) => ({ ...current, generatedImages: current.generatedImages.map((asset) => asset.id === assetId ? { ...asset, url: nextUrl } : asset) }));
+          setInventoryMessage(`${assetId.replaceAll("-", " ")} 이미지 1장만 교체했습니다.`);
+          return;
+        }
+        if (statusPayload.status === "failed" || statusPayload.status === "cancelled") throw new Error(statusPayload.error || "이미지 재제작이 완료되지 못했습니다.");
+        await new Promise((resolve) => window.setTimeout(resolve, 3_000));
+      }
+      throw new Error("이미지 재제작 대기시간이 30분을 초과했습니다.");
+    } catch (error) {
+      setInventoryMessage(error instanceof Error ? error.message : "이미지 재제작 중 오류가 발생했습니다.");
+    } finally {
+      setRegeneratingDetailAsset("");
+    }
+  };
 
   useEffect(() => {
     void authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`)
@@ -787,7 +953,6 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
       : null],
   ].filter((row): row is [string, string] => typeof row[1] === "string" && row[1].length > 0);
   const detailAssets = detailContext.generatedImages.length > 0 ? detailContext.generatedImages : detailContext.sourceImages;
-  const failedInventoryTasks = (inventorySync?.tasks ?? []).filter((task) => task.status === "failed");
 
   return (
     <div className="page-stack product-detail-page">
@@ -823,11 +988,19 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
           <div className="inventory-editor-actions">{inventoryEditing ? <><button type="button" className="credential-secondary" disabled={inventorySaving} onClick={() => { setInventoryOnHand(product.onHand); setInventoryEditing(false); setInventoryMessage(""); }}>취소</button><button type="button" className="publish-execute" disabled={inventorySaving || inventoryOnHand < product.reserved} onClick={() => void applyInventory()}>{inventorySaving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{inventorySaving ? "채널 적용 중" : "모든 판매채널에 적용"}</button></> : <button type="button" className="publish-execute" onClick={() => setInventoryEditing(true)}>재고 수정</button>}</div>
         </div>
         <div className="inventory-sync-state"><span>최근 적용</span><b>{inventorySync?.status ? `${inventorySync.status} · 성공 ${inventorySync.succeededCount ?? 0}/${inventorySync.totalCount ?? 0}` : "적용 이력 없음"}</b>{inventorySync?.failedCount ? <em>{inventorySync.failedCount}개 채널 확인 필요</em> : null}</div>
+        {inventorySync?.tasks?.length ? <div className="inventory-channel-progress">{inventorySync.tasks.map((task) => <div className={task.status} key={task.id}><ChannelMark code={channels[task.channel as ChannelKey]?.letter ?? task.channel} size="sm" /><span><b>{channelNameByKey[task.channel] ?? task.channel}</b><small>{task.safeMessage || (task.status === "succeeded" ? "원격 재고 확인 완료" : task.status === "failed" ? "원격 적용 확인 필요" : "원격 채널 적용 중")}</small></span>{task.status === "succeeded" ? <CheckCircle2 size={16} /> : task.status === "failed" ? <AlertCircle size={16} /> : <LoaderCircle className="spin" size={16} />}</div>)}</div> : null}
         {inventoryMessage ? <p className="inventory-editor-message">{inventoryMessage}</p> : null}
-        {failedInventoryTasks.length > 0 ? <ul className="inventory-sync-errors" aria-label="재고 반영 실패 채널">{failedInventoryTasks.map((task) => {
-          const channel = channels[task.channel as ChannelKey];
-          return <li key={task.id}><b>{channel?.mark ?? task.channel}</b><span>{task.safeMessage || "판매채널의 재고 확인 응답을 받지 못했습니다."}</span></li>;
-        })}</ul> : null}
+      </section>
+
+      <section className="panel product-commerce-notes">
+        <div className="panel-heading"><div><span className="panel-kicker">SUPPLIER · COMPARISON</span><h3>공급처 · 비교 메모</h3></div>{commerceNotesEditing ? <div><button type="button" className="credential-secondary" onClick={() => setCommerceNotesEditing(false)} disabled={commerceNotesSaving}>취소</button><button type="button" className="publish-execute" onClick={() => void saveCommerceNotes()} disabled={commerceNotesSaving}>{commerceNotesSaving ? <LoaderCircle className="spin" size={14} /> : <Check size={14} />}저장</button></div> : <button type="button" className="ghost-button" onClick={() => setCommerceNotesEditing(true)}>수정</button>}</div>
+        <div className="product-commerce-notes-grid"><label><span>공급처</span>{commerceNotesEditing ? <input value={supplierName} onChange={(event) => setSupplierName(event.target.value)} maxLength={240} placeholder="공급처명 또는 공급 링크 설명" /> : <strong>{commerceOperations.supplierName || "미입력"}</strong>}</label><label><span>비교 · 운영 메모</span>{commerceNotesEditing ? <textarea value={comparisonMemo} onChange={(event) => setComparisonMemo(event.target.value)} maxLength={4000} placeholder="가격, 구성, 공급 조건 비교 메모" /> : <p>{commerceOperations.comparisonMemo || "미입력"}</p>}</label></div>
+      </section>
+
+      <section className="panel competitor-price-panel">
+        <div className="panel-heading"><div><span className="panel-kicker">30분 자동 조회 · 최대 5개</span><h3>동일 상품 가격 비교</h3></div><span className={`live-label ${competitorMonitorEnabled ? "" : "paused"}`}><i />{competitorMonitorEnabled ? "자동 조회" : "조회 중지"}</span></div>
+        <div className="competitor-query-row"><label><span>검색어</span><input value={competitorQuery} disabled={!commerceNotesEditing} onChange={(event) => setCompetitorQuery(event.target.value)} placeholder={product.name} /></label><label className="monitor-toggle"><input type="checkbox" checked={competitorMonitorEnabled} disabled={!commerceNotesEditing} onChange={(event) => setCompetitorMonitorEnabled(event.target.checked)} /><span>상품 판매 중 30분마다 조회</span></label><small>최근 조회 {commerceOperations.competitorCheckedAt ? relativeTime(commerceOperations.competitorCheckedAt) : "대기"}</small></div>
+        {commerceOperations.competitorPrices.length ? <div className="competitor-price-grid">{commerceOperations.competitorPrices.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><span>{item.imageUrl ? <Image src={item.imageUrl} alt="" fill sizes="80px" unoptimized /> : <Package size={18} />}</span><div><small>{item.mallName || "판매처"}</small><b>{item.title}</b><strong>{new Intl.NumberFormat("ko-KR", { style: "currency", currency: item.currency, maximumFractionDigits: 0 }).format(item.price)}</strong></div><ExternalLink size={14} /></a>)}</div> : <div className="product-detail-empty compact"><Search size={24} /><b>아직 비교 가격이 없습니다.</b><small>네이버 쇼핑 검색 API 환경변수 연결 후 30분 작업에서 최대 5개가 표시됩니다.</small></div>}
       </section>
 
       <section className="product-detail-grid">
@@ -849,22 +1022,21 @@ function ProductDetailPage({ product, onBack, authenticatedFetch }: {
             const code = channel.letter;
             const listing = remoteListings.filter((item) => item.channel === channelKey).sort((a, b) => Number(Boolean(marketplaceListingUrl(b))) - Number(Boolean(marketplaceListingUrl(a))) || Number(b.status === "published") - Number(a.status === "published") || Number(Boolean(b.remoteId)) - Number(Boolean(a.remoteId)))[0];
             const listingReference = listing ?? { channel: channelKey };
+            const liveListing = commerceOperations.listings.find((item) => item.channel === channelKey && (!listing?.market || item.market === listing.market)) ?? commerceOperations.listings.find((item) => item.channel === channelKey);
             const destination = marketplaceListingUrl(listingReference);
             const stateCopy = remoteListingState === "loading"
               ? "원격 상품번호 확인 중"
-              : listing?.publicPageStatus === "unavailable"
-                ? `등록 완료 · 공개 판매페이지 비활성 · 원격 ID ${listing.remoteId ?? "확인 필요"}`
               : listing?.remoteId
                 ? `${listing.status === "published" ? "등록 완료" : listing.status ?? "상품 연결"} · 원격 ID ${listing.remoteId}`
                 : remoteListingState === "unavailable" ? "연결 정보 조회 실패" : listing?.status ? `${listing.status} · 판매 상품 주소 확인 필요` : "게시 이력 없음";
-            return <div key={channelKey}><ChannelMark code={code} /><span><b>{channel.name}</b><small>{stateCopy}</small>{listing?.lastError ? <em>{listing.lastError}</em> : null}</span>{destination ? <a className="product-channel-link" href={destination} target="_blank" rel="noreferrer">{marketplaceListingLinkLabel(listingReference)}<ExternalLink size={13} /></a> : <span className="product-channel-unavailable">판매 상품 주소 확인 필요</span>}</div>;
+            return <div key={channelKey}><ChannelMark code={code} /><span><b>{channel.name}{liveListing?.market ? ` · ${liveListing.market}` : ""}</b><small>{stateCopy}</small><small className="channel-live-facts">재고 {liveListing?.inventoryQuantity ?? "—"} · 30일 판매 {liveListing?.sold30d ?? 0} · 카테고리 {liveListing?.categoryId ?? "확인 필요"}</small>{liveListing?.categoryPath?.length ? <small>{liveListing.categoryPath.join(" › ")}</small> : null}{listing?.lastError || liveListing?.inventoryError ? <em>{listing?.lastError ?? liveListing?.inventoryError}</em> : null}</span>{destination ? <a className="product-channel-link" href={destination} target="_blank" rel="noreferrer">{marketplaceListingLinkLabel(listingReference)}<ExternalLink size={13} /></a> : <span className="product-channel-unavailable">판매 상품 주소 확인 필요</span>}</div>;
           })}</div> : remoteListingState === "loading" ? <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>상품 채널 연결을 확인하고 있습니다.</b><small>등록 시도·게시 완료·실패 이력을 함께 불러옵니다.</small></div> : <div className="product-detail-empty"><Store size={24} /><b>연결된 판매 채널이 없습니다.</b><small>현재 상품 정보만 등록되어 있으며 채널 게시 전 상태입니다.</small></div>}
         </article>
       </section>
 
       <section className="panel product-detail-assets">
         <div className="panel-heading"><div><span className="panel-kicker">GENERATED DETAIL PAGE</span><h3>등록 이미지 · 상세페이지 디자인</h3></div><ImagePlus size={18} /></div>
-        {remoteListingState === "loading" ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>상세페이지 결과를 불러오는 중입니다.</b></div> : detailAssets.length > 0 ? <div className="product-detail-asset-grid">{detailAssets.map((asset, index) => <figure key={`${asset.id ?? asset.path}-${index}`}><div><ProductVisual src={asset.url} size="(max-width: 760px) 88vw, 280px" alt={`${product.name} ${asset.id ?? `상품 이미지 ${index + 1}`}`} /></div><figcaption>{asset.id?.replaceAll("-", " ") ?? `원본 이미지 ${index + 1}`}</figcaption></figure>)}</div> : <div className="product-detail-empty compact"><ImagePlus size={24} /><b>저장된 상세 이미지가 없습니다.</b><small>기존 텍스트 상품이거나 이미지 생성 결과가 상품 원장에 연결되지 않은 상태입니다.</small></div>}
+        {remoteListingState === "loading" ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>상세페이지 결과를 불러오는 중입니다.</b></div> : detailAssets.length > 0 ? <div className="product-detail-asset-grid">{detailAssets.map((asset, index) => <figure key={`${asset.id ?? asset.path}-${index}`}><div><ProductVisual src={asset.url} size="(max-width: 760px) 88vw, 280px" alt={`${product.name} ${asset.id ?? `상품 이미지 ${index + 1}`}`} /></div><figcaption><span>{asset.id?.replaceAll("-", " ") ?? `원본 이미지 ${index + 1}`}</span>{asset.id && commerceOperations.aiJobId ? <button type="button" onClick={() => void regenerateDetailAsset(asset.id!)} disabled={Boolean(regeneratingDetailAsset)}>{regeneratingDetailAsset === asset.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button> : null}</figcaption></figure>)}</div> : <div className="product-detail-empty compact"><ImagePlus size={24} /><b>저장된 상세 이미지가 없습니다.</b><small>기존 텍스트 상품이거나 이미지 생성 결과가 상품 원장에 연결되지 않은 상태입니다.</small></div>}
       </section>
 
     </div>
@@ -884,7 +1056,31 @@ const optionalPhotoSlots = [
   { id: "barcode", label: "바코드", guide: "숫자까지 보이게" },
 ] as const;
 
-function PublishingPage({ notify, channelMetrics, pipeline, listingIssues, onOpenIssue, initialProduct }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; listingIssues: OperationsSnapshot["listingIssues"]; onOpenIssue: (productId: string) => void; initialProduct?: { id: string; name: string } | null }) {
+function ExternalActionsPage({ actions, onEdit, onConnections }: {
+  actions: OperationsSnapshot["externalActions"];
+  onEdit: (action: OperationsSnapshot["externalActions"][number]) => void;
+  onConnections: () => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const safeIndex = Math.min(index, Math.max(0, actions.length - 1));
+  const selected = actions[safeIndex] ?? null;
+  const selectedChannel = selected ? channels[selected.channel as ChannelKey] : null;
+  const guidance = selected?.message.match(/permission|authority|권한/i)
+    ? "판매자센터에서 해당 카테고리 판매 권한·브랜드 승인을 완료한 뒤 다시 등록하세요."
+    : selected?.message.match(/certificate|certification|인증/i)
+      ? "상품 인증정보와 증빙 파일을 판매자센터 기준에 맞게 보완하세요."
+      : "필수 속성·카테고리·현지어 문안을 상품수정 화면에서 확인하세요.";
+  return <div className="page-stack remediation-page">
+    <section className="panel remediation-summary"><div><span className="metric-icon orange"><ShieldCheck size={18} /></span><span><small>외부 조치 대기</small><strong>{actions.length.toLocaleString()}건</strong><em>재시도에서 제외된 안전 대기 목록</em></span></div><p>실패 상품 전체가 아니라 판매자센터 권한·인증·필수 상품수정이 필요한 항목만 표시합니다. 한 건을 수정한 뒤 다음 건으로 이동하세요.</p></section>
+    {selected ? <section className="panel remediation-workspace">
+      <header><div><span className="panel-kicker">ACTION {safeIndex + 1} / {actions.length}</span><h3>{selected.productName}</h3><p>{selected.productCode} · {selected.sku}</p></div><div className="remediation-pager"><button type="button" aria-label="이전 항목" disabled={safeIndex === 0} onClick={() => setIndex((current) => Math.max(0, Math.min(current, actions.length - 1) - 1))}><ArrowLeft size={15} />이전</button><button type="button" aria-label="다음 항목" disabled={safeIndex >= actions.length - 1} onClick={() => setIndex((current) => Math.min(actions.length - 1, current + 1))}>다음<ArrowRight size={15} /></button></div></header>
+      <div className="remediation-body"><aside><ChannelMark code={selected.channelCode} /><span><b>{selectedChannel?.name ?? selected.channelName}</b><small>{selected.market || "기본 마켓"} · {selected.targetId}</small></span></aside><article><span>판매채널 응답</span><p>{selected.message}</p><div><ShieldCheck size={17} /><span><b>처리 안내</b><small>{guidance}</small></span></div><dl><div><dt>카테고리</dt><dd>{selected.categoryPath?.join(" › ") || selected.categoryId || "다시 선택 필요"}</dd></div><div><dt>최근 확인</dt><dd>{relativeTime(selected.updatedAt)}</dd></div></dl></article></div>
+      <footer><button type="button" className="credential-secondary" onClick={onConnections}><KeyRound size={15} />채널 권한 설정</button><button type="button" className="publish-execute" onClick={() => onEdit(selected)}><PencilRuler size={15} />이 상품 수정 시작</button></footer>
+    </section> : <section className="panel remediation-empty"><CheckCircle2 size={32} /><h3>외부 조치 대기 상품이 없습니다.</h3><p>권한·인증·필수 상품수정 대기 목록을 모두 처리했습니다.</p></section>}
+  </div>;
+}
+
+function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, initialProduct }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; initialProduct?: { id: string; name: string } | null }) {
   const [running, setRunning] = useState(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
@@ -894,16 +1090,40 @@ function PublishingPage({ notify, channelMetrics, pipeline, listingIssues, onOpe
   const [uploadError, setUploadError] = useState("");
   const [researchingProduct, setResearchingProduct] = useState(false);
   const [researchResult, setResearchResult] = useState<ProductResearchResult | null>(null);
+  const [firstDraftGenerated, setFirstDraftGenerated] = useState(false);
   const [studioRequestId, setStudioRequestId] = useState(0);
   const [analyzedProductName, setAnalyzedProductName] = useState(initialProduct?.name ?? "");
   const [analyzedProductId, setAnalyzedProductId] = useState<string | null>(initialProduct?.id ?? null);
   const [categoryDraftRef] = useState(() => crypto.randomUUID());
   const [publishRefreshVersion, setPublishRefreshVersion] = useState(0);
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
+  const [commerceTemplates, setCommerceTemplates] = useState<CommerceTemplate[]>([]);
+  const [appliedTemplate, setAppliedTemplate] = useState("");
   const connectedChannelKeys = useMemo(() => channelMetrics
     .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
     .map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
+
+  useEffect(() => {
+    void authenticatedFetch("/api/admin/templates").then(async (response) => {
+      if (!response.ok) return;
+      const payload = await response.json() as { templates?: CommerceTemplate[] };
+      setCommerceTemplates(Array.isArray(payload.templates) ? payload.templates : []);
+    }).catch(() => null);
+  }, [authenticatedFetch]);
+
+  const applyCommerceTemplate = (template: CommerceTemplate) => {
+    const numeric = (key: string, fallback: number) => typeof template.values[key] === "number" ? Number(template.values[key]) : fallback;
+    const string = (key: string, fallback: string) => typeof template.values[key] === "string" ? String(template.values[key]) : fallback;
+    setIntake((current) => ({
+      ...current,
+      weightKg: numeric("weightKg", current.weightKg), packageLengthCm: numeric("packageLengthCm", current.packageLengthCm),
+      packageWidthCm: numeric("packageWidthCm", current.packageWidthCm), packageHeightCm: numeric("packageHeightCm", current.packageHeightCm),
+      shippingFeeKrw: numeric("shippingFeeKrw", current.shippingFeeKrw), shippingRule: string("shippingRule", current.shippingRule), packagingRule: string("packagingRule", current.packagingRule),
+    }));
+    setAppliedTemplate(template.name);
+    notify(`‘${template.name}’ 배송·포장 템플릿을 입력란에 적용했습니다.`);
+  };
 
   const setIntakeField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
     setIntake((current) => ({ ...current, [key]: value }));
@@ -999,20 +1219,31 @@ function PublishingPage({ notify, channelMetrics, pipeline, listingIssues, onOpe
       setIntake((current) => ({
         ...current,
         productName: current.productName.trim() || suggestion.productName || "",
+        sellerSku: current.sellerSku.trim() || `AUTO-${new Date().toISOString().slice(2, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
         categoryHint: current.categoryHint.trim() || suggestion.categoryHint || "",
-        brandName: current.brandName.trim() || suggestion.brandName || "",
-        manufacturer: current.manufacturer.trim() || suggestion.manufacturer || "",
-        countryOfOrigin: current.countryOfOrigin.trim() || suggestion.countryOfOrigin || "",
-        material: current.material.trim() || suggestion.material || "",
-        packageContents: current.packageContents.trim() || suggestion.packageContents || "",
-        description: current.description.trim() || suggestion.description || "",
+        brandName: current.brandName.trim() || suggestion.brandName || "No Brand · 확인 필요",
+        manufacturer: current.manufacturer.trim() || suggestion.manufacturer || "공급처 확인 필요",
+        countryOfOrigin: current.countryOfOrigin.trim() || suggestion.countryOfOrigin || "원산지 확인 필요",
+        material: current.material.trim() || suggestion.material || "소재 확인 필요",
+        packageContents: current.packageContents.trim() || suggestion.packageContents || "상품 1개 · 구성 확인 필요",
+        description: current.description.trim() || suggestion.description || `${suggestion.productName || "상품"}의 1차 자동생성 설명입니다. 용도, 소재, 구성품, 규격과 주의사항을 실물 기준으로 확인 후 수정해 주세요.`,
         productUrl: current.productUrl.trim() || firstReadableSource,
         gtinStatus: current.gtin || !suggestion.gtin ? current.gtinStatus : "HAS_GTIN",
         gtin: current.gtin || suggestion.gtin || "",
+        sellingPrice: current.sellingPrice > 0 ? current.sellingPrice : 5000,
+        stock: current.stock > 0 ? current.stock : 1,
+        weightKg: current.weightKg > 0 ? current.weightKg : 0.5,
+        packageLengthCm: current.packageLengthCm > 0 ? current.packageLengthCm : 20,
+        packageWidthCm: current.packageWidthCm > 0 ? current.packageWidthCm : 20,
+        packageHeightCm: current.packageHeightCm > 0 ? current.packageHeightCm : 10,
+        shippingFeeKrw: current.shippingFeeKrw,
+        shippingRule: current.shippingRule || "기본 배송 · 채널 정책 확인 필요",
+        packagingRule: current.packagingRule || "상품 파손 방지 포장 · 확인 필요",
       }));
       setResearchResult(result);
+      setFirstDraftGenerated(true);
       setManualErrors({});
-      notify("CLI가 확인한 상품 상세정보를 빈 입력란에 자동 반영했습니다. 불확실한 값은 비워 두었습니다.");
+      notify("1차 자동생성 초안을 만들었습니다. ‘확인 필요’ 값과 가격·재고·포장 규격을 검토한 뒤 사실 확인 체크를 완료해 주세요.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "CLI 상품정보 수집 중 오류가 발생했습니다.";
       setUploadError(message);
@@ -1130,11 +1361,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, listingIssues, onOpe
   return (
     <div className="page-stack publishing-page">
       <section className="publishing-workflow-header">
-        <div className="publishing-workflow-copy"><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>링크나 설명만 넣고 상품정보부터 불러오세요.</h2><p>ChatGPT CLI가 상품 상세정보를 먼저 조사하고, 대표사진·판매자 확인값과 교차검증한 뒤 한 상품씩 등록합니다.</p></div>
+        <div className="publishing-workflow-copy"><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>링크나 설명으로 1차 초안을 자동생성하세요.</h2><p>AI 초안을 사람이 사실 기준으로 확인·수정한 뒤 ‘상품 분석 시작’을 누르면 이미지 제작, 번역, 카테고리 검증과 업로드 준비가 이어집니다.</p></div>
         <ol className="publishing-steps" aria-label="상품 등록 단계">
-          <li className="active"><span>1</span><b>정보 불러오기</b><small>{intakeProgress}% 완료</small></li>
-          <li><span>2</span><b>AI 분석</b><small>이미지·사실 검증</small></li>
-          <li><span>3</span><b>채널 등록</b><small>{selectedChannels.length}개 채널 선택</small></li>
+          <li className="active"><span>1</span><b>1차 자동생성</b><small>{intakeProgress}% 완료</small></li>
+          <li><span>2</span><b>사람 확인 · 최종 분석</b><small>이미지·사실 검증</small></li>
+          <li><span>3</span><b>번역 · 채널 업로드</b><small>{selectedChannels.length}개 채널 선택</small></li>
         </ol>
       </section>
       <section className="publishing-layout">
@@ -1149,9 +1380,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, listingIssues, onOpe
               {running && <span className="analysis-overlay"><LoaderCircle className="spin" size={29} /><b>사진·설명·링크 통합 분석 중</b><small>OCR과 상품 정보 교차검증을 진행하고 있습니다.</small><i><span /></i></span>}
             </label>
             <section className={`product-research-panel ${manualErrors.researchInput ? "field-error" : ""}`}>
-              <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>CLI 자동 조사</em></span><small>판매페이지·제조사 링크, 모델명, 바코드, 카톡으로 받은 상품 설명을 그대로 넣으세요.</small></div>
-              <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => void researchProductInformation()} disabled={intake.researchInput.trim().length < 2 || researchingProduct || running}>{researchingProduct ? <LoaderCircle className="spin" size={15} /> : <Search size={15} />}{researchingProduct ? "CLI 조사 중" : "상세정보 불러오기"}</button></div>
-              <small className="product-research-help">CLI가 공개 페이지의 본문·상품 구조화 데이터와 입력 텍스트를 읽어 상품명, 브랜드, 제조사, 원산지, 소재, 구성, 특징, 사용법과 주의사항을 정리합니다.</small>
+              <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>1차 자동생성</em></span><small>판매페이지·제조사 링크, 모델명, 바코드, 카톡으로 받은 상품 설명을 그대로 넣으세요.</small></div>
+              <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => void researchProductInformation()} disabled={intake.researchInput.trim().length < 2 || researchingProduct || running}>{researchingProduct ? <LoaderCircle className="spin" size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "1차 생성 중" : "1차 자동생성"}</button></div>
+              <small className="product-research-help">공개 근거를 우선 사용하고, 확인되지 않은 가격·포장값은 검토용 임시값으로 채웁니다. 아래 입력란에서 반드시 확인·수정해야 최종 분석을 실행할 수 있습니다.</small>
               {manualErrors.researchInput && <small className="product-research-error">{manualErrors.researchInput}</small>}
               {researchResult && <div className="product-research-result">
                 <div><CheckCircle2 size={16} /><span><b>CLI 상세정보 반영 완료</b><small>{researchResult.summary}</small></span><em>특징 {researchResult.details.features.length} · 규격 {researchResult.details.specifications.length}</em></div>
@@ -1163,6 +1394,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, listingIssues, onOpe
                 {researchResult.warnings.length > 0 && <p><AlertTriangle size={13} />{researchResult.warnings.join(" · ")}</p>}
               </div>}
             </section>
+            {firstDraftGenerated && <div className="first-draft-review"><AlertTriangle size={15} /><span><b>1차 자동생성은 검토용 초안입니다.</b><small>‘확인 필요’ 문구, 판매가 5,000원, 재고 1개와 포장 규격 임시값을 실물·공급처 자료에 맞게 수정한 뒤 하단 사실 확인을 체크하세요.</small></span></div>}
             {uploadError && <p className="upload-error"><AlertCircle size={14} />{uploadError}</p>}
           </section>
 
@@ -1203,10 +1435,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, listingIssues, onOpe
               <label><span>통화 <i>필수</i></span><select value={intake.currency} onChange={(event) => setIntakeField("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
               <label className={manualErrors.stock ? "field-error" : ""}><span>재고 <i>필수</i></span><input type="number" required min="1" step="1" value={intake.stock || ""} onChange={(event) => setIntakeField("stock", Number(event.target.value))} placeholder="1" />{manualErrors.stock && <small>{manualErrors.stock}</small>}</label>
               <div className="intake-group-heading"><span>04</span><div><b>포장·배송 규격</b><small>운임 계산과 채널 배송 제한 검증에 사용합니다.</small></div></div>
+              {commerceTemplates.length > 0 && <div className="intake-template-picker"><span><FileText size={14} />저장한 템플릿{appliedTemplate ? <em>적용: {appliedTemplate}</em> : null}</span><div>{commerceTemplates.map((template) => <button type="button" key={template.id} onClick={() => applyCommerceTemplate(template)}>{template.name}{template.is_default ? <small>기본</small> : null}</button>)}</div></div>}
               <label className={manualErrors.weightKg ? "field-error" : ""}><span>포장 중량 kg <i>필수</i></span><input type="number" required min="0.01" step="0.01" value={intake.weightKg || ""} onChange={(event) => setIntakeField("weightKg", Number(event.target.value))} placeholder="0.35" />{manualErrors.weightKg && <small>{manualErrors.weightKg}</small>}</label>
               <label className={manualErrors.packageLengthCm ? "field-error" : ""}><span>포장 가로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageLengthCm || ""} onChange={(event) => setIntakeField("packageLengthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageLengthCm && <small>{manualErrors.packageLengthCm}</small>}</label>
               <label className={manualErrors.packageWidthCm ? "field-error" : ""}><span>포장 세로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageWidthCm || ""} onChange={(event) => setIntakeField("packageWidthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageWidthCm && <small>{manualErrors.packageWidthCm}</small>}</label>
               <label className={manualErrors.packageHeightCm ? "field-error" : ""}><span>포장 높이 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageHeightCm || ""} onChange={(event) => setIntakeField("packageHeightCm", Number(event.target.value))} placeholder="10" />{manualErrors.packageHeightCm && <small>{manualErrors.packageHeightCm}</small>}</label>
+              <label><span>기본 배송비 KRW</span><input type="number" min="0" step="100" value={intake.shippingFeeKrw} onChange={(event) => setIntakeField("shippingFeeKrw", Number(event.target.value))} placeholder="0" /></label>
+              <label><span>배송 규칙</span><input value={intake.shippingRule} maxLength={1000} onChange={(event) => setIntakeField("shippingRule", event.target.value)} placeholder="예: 결제 후 1–2영업일 내 출고" /></label>
+              <label><span>포장 규칙</span><input value={intake.packagingRule} maxLength={1000} onChange={(event) => setIntakeField("packagingRule", event.target.value)} placeholder="예: 완충재 이중 포장" /></label>
             </div>
             <label className={`context-field ${manualErrors.description ? "field-error" : ""}`}><span>상품 사실 설명 <i>필수</i></span><textarea required value={intake.description} onChange={(event) => setIntakeField("description", event.target.value)} maxLength={4000} placeholder="용도, 재질, 구성, 핵심 특징, 주의사항을 실물 기준으로 입력하세요." /><small>{manualErrors.description ?? `${intake.description.length} / 4,000자`}</small></label>
             <div className="intake-confirmations">
@@ -1256,10 +1492,6 @@ function PublishingPage({ notify, channelMetrics, pipeline, listingIssues, onOpe
       />
       <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE QUEUE</span><h3>실제 등록 작업 현황</h3></div><button className="ghost-button" onClick={() => notify("채널 작업 이력은 API 운영 콘솔에서 확인할 수 있습니다.")}>작업 이력<ChevronRight size={15} /></button></div>
         <div className="queue-live-summary"><div><small>AI 실행 중</small><b>{pipeline?.aiRunning ?? 0}건</b></div><div><small>등록 대기</small><b>{pipeline?.listingQueued ?? 0}건</b></div><div><small>등록 완료</small><b>{pipeline?.listingPublished ?? 0}건</b></div><div><small>재시도 가능</small><b>{pipeline?.listingFailed ?? 0}건</b></div><div><small>외부 권한 대기</small><b>{pipeline?.listingBlocked ?? 0}건</b></div></div>
-        {listingIssues.length > 0 ? <div className="listing-issue-list">{listingIssues.map((issue) => {
-          const channel = channels[issue.channelKey as ChannelKey];
-          return <button type="button" key={issue.id} onClick={() => onOpenIssue(issue.productId)}><ChannelMark code={channel?.letter ?? issue.channelKey.slice(0, 2)} size="sm" /><span><b>{issue.productName}</b><small>{channel?.name ?? issue.channelKey} · {issue.market || "기본 마켓"}</small><em>{issue.message}</em></span><strong className={issue.failureClass === "retryable" ? "retryable" : "external"}>{issue.failureClass === "retryable" ? "재시도 가능" : "권한·인증 보완"}</strong><ChevronRight size={15} /></button>;
-        })}</div> : null}
         {!pipeline || pipeline.aiRunning + pipeline.listingQueued + pipeline.listingPublished + pipeline.listingFailed + pipeline.listingBlocked === 0 ? <div className="live-empty-state"><Upload size={26} /><b>실제 등록 작업이 아직 없습니다.</b><small>대표사진 분석과 카테고리 확정 후 채널 등록을 실행하면 여기에 표시됩니다.</small></div> : null}
       </section>
     </div>
@@ -1288,6 +1520,9 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
   const paidCount = displayOrders.filter((order) => order.status === "결제완료").length;
   const readyCount = displayOrders.filter((order) => order.status === "출고대기").length;
   const shippingCount = displayOrders.filter((order) => order.status === "배송중").length;
+  const deliveredCount = displayOrders.filter((order) => order.status === "배송완료").length;
+  const settledCount = displayOrders.filter((order) => order.settlementStatus === "정산 완료").length;
+  const exchangeRiskCount = displayOrders.filter((order) => (order.exchangeLossPercent ?? 0) >= 2).length;
   const lastSuccess = syncStatus.filter((item) => item.data_type === "orders" && item.last_succeeded_at).sort((left, right) => Date.parse(right.last_succeeded_at ?? "") - Date.parse(left.last_succeeded_at ?? ""))[0]?.last_succeeded_at ?? null;
   const failedCount = syncStatus.filter((item) => item.data_type === "orders" && item.status === "failed").length;
   const filteredOrders = displayOrders.filter((order) => {
@@ -1369,13 +1604,13 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
   };
   return (
     <div className="page-stack">
-      <section className="order-summary-grid"><article><span className="metric-icon blue"><ShoppingCart size={19} /></span><div><small>통합 주문</small><strong>{displayOrders.length}</strong></div><em>운영 원장</em></article><article><span className="metric-icon orange"><Clock3 size={19} /></span><div><small>출고 대기</small><strong>{readyCount}</strong></div><em className="neutral">결제완료 {paidCount}건</em></article><article><span className="metric-icon violet"><Truck size={19} /></span><div><small>배송 중</small><strong>{shippingCount}</strong></div><em className="neutral">상태 변경 가능</em></article><article><span className={`metric-icon ${failedCount ? "orange" : "green"}`}><RefreshCw size={19} /></span><div><small>최근 동기화</small><strong>{lastSuccess ? relativeTime(lastSuccess) : "대기"}</strong></div><em className={failedCount ? "neutral" : ""}>{failedCount ? `${failedCount}개 채널 확인 필요` : "실제 채널 API"}</em></article></section>
+      <section className="order-summary-grid"><article><span className="metric-icon blue"><ShoppingCart size={19} /></span><div><small>통합 주문</small><strong>{displayOrders.length}</strong></div><em>운영 원장</em></article><article><span className="metric-icon orange"><Clock3 size={19} /></span><div><small>출고 대기</small><strong>{readyCount}</strong></div><em className="neutral">결제완료 {paidCount}건</em></article><article><span className="metric-icon violet"><Truck size={19} /></span><div><small>배송 중 · 완료</small><strong>{shippingCount} · {deliveredCount}</strong></div><em className="neutral">운송장 추적</em></article><article><span className={`metric-icon ${exchangeRiskCount ? "orange" : "green"}`}><CircleDollarSign size={19} /></span><div><small>정산 완료</small><strong>{settledCount}</strong></div><em className={exchangeRiskCount ? "negative" : "neutral"}>{exchangeRiskCount ? `환율 손실주의 ${exchangeRiskCount}건` : "환율 손실주의 없음"}</em></article><article><span className={`metric-icon ${failedCount ? "orange" : "green"}`}><RefreshCw size={19} /></span><div><small>최근 동기화</small><strong>{lastSuccess ? relativeTime(lastSuccess) : "대기"}</strong></div><em className={failedCount ? "neutral" : ""}>{failedCount ? `${failedCount}개 채널 확인 필요` : "실제 채널 API"}</em></article></section>
       <section className="panel data-panel"><div className="tab-toolbar"><div>{["전체 주문", "결제완료", "출고대기", "배송중", "완료 · 취소"].map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}{tab === "출고대기" && <span>{readyCount}</span>}</button>)}</div><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주문번호, 구매자, 상품 검색" aria-label="주문 검색" /></div><span className="automatic-sync-label"><RefreshCw size={14} />5분마다 자동 업데이트</span></div>
-        <div className="table-wrap"><table className="data-table order-table"><thead><tr><th><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} /></th><th>주문번호</th><th>채널</th><th>구매자</th><th>상품</th><th>결제금액</th><th>주문상태</th><th>주문시간</th><th /></tr></thead><tbody>{filteredOrders.map((order) => { const eligible = ["결제완료", "출고대기"].includes(order.status); return <tr key={order.sourceId} className={`${initialOrderId === order.id ? "search-target-row" : ""} ${selectedIds.has(order.sourceId) ? "selected-row" : ""}`.trim()}><td><input type="checkbox" aria-label={`${order.id} 출고 선택`} checked={selectedIds.has(order.sourceId)} disabled={!eligible} onChange={() => toggleOrder(order)} /></td><td><button type="button" className="order-detail-link mono" onClick={() => setDetailOrder(order)}>{order.id}</button></td><td><ChannelMark code={order.channel} size="sm" /></td><td><b>{order.customer}</b></td><td><button type="button" className="order-product-button truncate-product" onClick={() => setDetailOrder(order)}>{order.product}</button></td><td><b>{order.amount}</b></td><td><StatusBadge status={order.status} /></td><td><span className="muted-cell">{order.time}</span></td><td><button className="table-action" title="주문 상세정보 보기" aria-label={`${order.id} 주문 상세정보 보기`} onClick={() => setDetailOrder(order)}><ChevronRight size={16} /></button></td></tr>; })}</tbody></table></div>
+        <div className="table-wrap"><table className="data-table order-table"><thead><tr><th><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} /></th><th>주문번호</th><th>채널</th><th>구매자</th><th>상품</th><th>결제금액</th><th>주문 · 배송</th><th>정산</th><th>주문시간</th><th /></tr></thead><tbody>{filteredOrders.map((order) => { const eligible = ["결제완료", "출고대기"].includes(order.status); return <tr key={order.sourceId} className={`${initialOrderId === order.id ? "search-target-row" : ""} ${selectedIds.has(order.sourceId) ? "selected-row" : ""}`.trim()}><td><input type="checkbox" aria-label={`${order.id} 출고 선택`} checked={selectedIds.has(order.sourceId)} disabled={!eligible} onChange={() => toggleOrder(order)} /></td><td><button type="button" className="order-detail-link mono" onClick={() => setDetailOrder(order)}>{order.id}</button></td><td><ChannelMark code={order.channel} size="sm" /></td><td><b>{order.customer}</b></td><td><button type="button" className="order-product-button truncate-product" onClick={() => setDetailOrder(order)}>{order.product}</button></td><td><b>{order.amount}</b></td><td><StatusBadge status={order.status} />{order.trackingNumber ? <small className="tracking-fact">{order.carrierCode} · {order.trackingNumber}</small> : null}</td><td><StatusBadge status={order.settlementStatus} />{(order.exchangeLossPercent ?? 0) >= 2 ? <small className="exchange-loss-warning">환율 -{order.exchangeLossPercent}%</small> : null}</td><td><span className="muted-cell">{order.time}</span></td><td><button className="table-action" title="주문 상세정보 보기" aria-label={`${order.id} 주문 상세정보 보기`} onClick={() => setDetailOrder(order)}><ChevronRight size={16} /></button></td></tr>; })}</tbody></table></div>
         {displayOrders.length === 0 ? <div className="live-empty-state table-empty"><ShoppingCart size={28} /><b>동기화된 실제 주문이 없습니다.</b><small>채널 API 키 연결 후 주문 조회를 실행하면 표시됩니다.</small></div> : filteredOrders.length === 0 ? <div className="live-empty-state table-empty"><Search size={28} /><b>검색 조건에 맞는 주문이 없습니다.</b><small>주문번호, 구매자명 또는 상품명을 다시 확인해 주세요.</small></div> : null}
         <div className="bulk-order-bar"><span><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} />선택한 주문 <b>{selectedIds.size}</b>건</span><button type="button" disabled={!selectedIds.size || fulfilling} onClick={openFulfillment}><Truck size={15} />일괄 출고 처리</button><button type="button" disabled={fulfilling} onClick={() => invoiceInputRef.current?.click()}><Upload size={15} />송장 CSV 업로드</button><input ref={invoiceInputRef} className="sr-only" type="file" accept=".csv,text/csv" aria-label="송장 CSV 파일 선택" onChange={(event) => void importInvoices(event.target.files?.[0] ?? null)} /><span className="toolbar-spacer" /><small>{syncStatus.length ? "채널별 동기화 상태 기록 중 · 5분 자동 업데이트" : "채널 연결 상태 확인 중"}</small></div>
       </section>
-      {detailOrder && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDetailOrder(null); }}><section className="shipment-dialog order-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="order-detail-title"><header><div><span className="metric-icon blue"><ShoppingCart size={18} /></span><span><h3 id="order-detail-title">주문 상세정보</h3><small>조회만으로 주문·출고 상태는 변경되지 않습니다.</small></span></div><button className="icon-only-button" aria-label="주문 상세 닫기" onClick={() => setDetailOrder(null)}><X size={17} /></button></header><dl className="order-detail-ledger"><div><dt>주문번호</dt><dd>{detailOrder.id}</dd></div><div><dt>판매 채널</dt><dd><ChannelMark code={detailOrder.channel} size="sm" /></dd></div><div><dt>구매 상품</dt><dd>{detailOrder.product}</dd></div><div><dt>구매자</dt><dd>{detailOrder.customer}</dd></div><div><dt>결제금액</dt><dd>{detailOrder.amount}</dd></div><div><dt>주문상태</dt><dd><StatusBadge status={detailOrder.status} /></dd></div><div><dt>주문시간</dt><dd>{detailOrder.time}</dd></div></dl><footer><button type="button" className="credential-secondary" onClick={() => setDetailOrder(null)}>닫기</button>{["결제완료", "출고대기"].includes(detailOrder.status) ? <button type="button" className="publish-execute" onClick={() => { setSelectedIds(new Set([detailOrder.sourceId])); setShipmentDrafts({ [detailOrder.sourceId]: shipmentDrafts[detailOrder.sourceId] ?? { carrierCode: "", trackingNumber: "" } }); setDetailOrder(null); setFulfillmentOpen(true); }}><Truck size={15} />출고 정보 입력</button> : null}</footer></section></div>}
+      {detailOrder && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDetailOrder(null); }}><section className="shipment-dialog order-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="order-detail-title"><header><div><span className="metric-icon blue"><ShoppingCart size={18} /></span><span><h3 id="order-detail-title">주문 상세정보</h3><small>주문 · 배송 · 정산 원장을 한곳에서 확인합니다.</small></span></div><button className="icon-only-button" aria-label="주문 상세 닫기" onClick={() => setDetailOrder(null)}><X size={17} /></button></header><dl className="order-detail-ledger"><div><dt>주문번호</dt><dd>{detailOrder.id}</dd></div><div><dt>판매 채널</dt><dd><ChannelMark code={detailOrder.channel} size="sm" /></dd></div><div><dt>구매 상품</dt><dd>{detailOrder.product}</dd></div><div><dt>구매자</dt><dd>{detailOrder.customer}</dd></div><div><dt>결제금액</dt><dd>{detailOrder.amount}</dd></div><div><dt>주문상태</dt><dd><StatusBadge status={detailOrder.status} /></dd></div><div><dt>배송 추적</dt><dd>{detailOrder.trackingNumber ? `${detailOrder.carrierCode ?? "택배사"} · ${detailOrder.trackingNumber}` : "운송장 등록 전"}</dd></div><div><dt>배송 완료</dt><dd>{detailOrder.deliveredAt ? formatProductUpdatedAt(detailOrder.deliveredAt) : "완료 전"}</dd></div><div><dt>정산 상태</dt><dd><StatusBadge status={detailOrder.settlementStatus} /></dd></div><div><dt>정산 금액</dt><dd>{detailOrder.settlementAmount != null && detailOrder.settlementCurrency ? new Intl.NumberFormat("ko-KR", { style: "currency", currency: detailOrder.settlementCurrency }).format(detailOrder.settlementAmount) : "정산 데이터 대기"}</dd></div><div><dt>환율 손익 참고</dt><dd className={(detailOrder.exchangeLossPercent ?? 0) >= 2 ? "exchange-loss-warning" : ""}>{detailOrder.exchangeLossPercent == null ? "기준환율 데이터 대기" : `${detailOrder.exchangeLossPercent > 0 ? "손실 " : "이익 "}${Math.abs(detailOrder.exchangeLossPercent).toFixed(2)}%`}</dd></div><div><dt>주문시간</dt><dd>{detailOrder.time}</dd></div></dl><footer><button type="button" className="credential-secondary" onClick={() => setDetailOrder(null)}>닫기</button>{["결제완료", "출고대기"].includes(detailOrder.status) ? <button type="button" className="publish-execute" onClick={() => { setSelectedIds(new Set([detailOrder.sourceId])); setShipmentDrafts({ [detailOrder.sourceId]: shipmentDrafts[detailOrder.sourceId] ?? { carrierCode: "", trackingNumber: "" } }); setDetailOrder(null); setFulfillmentOpen(true); }}><Truck size={15} />출고 정보 입력</button> : null}</footer></section></div>}
       {fulfillmentOpen && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget && !fulfilling) setFulfillmentOpen(false); }}><section className="shipment-dialog" role="dialog" aria-modal="true" aria-labelledby="shipment-dialog-title"><header><div><span className="metric-icon violet"><Truck size={18} /></span><span><h3 id="shipment-dialog-title">판매채널 발송 처리</h3><small>선택한 {selectedOrders.length}건을 외부 판매채널에 실제 발송 처리합니다.</small></span></div><button className="icon-only-button" aria-label="출고 창 닫기" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}><X size={17} /></button></header><div className="shipment-warning"><AlertTriangle size={16} /><span><b>실제 판매 상태가 변경됩니다.</b><small>판매채널이 성공 응답한 주문만 SellerPilot에서 배송중으로 변경됩니다.</small></span></div><div className="shipment-draft-list">{selectedOrders.map((order) => <article key={order.sourceId}><div><ChannelMark code={order.channel} size="sm" /><span><b>{order.id}</b><small>{order.product}</small></span></div><label><span>택배사 코드</span><input value={shipmentDrafts[order.sourceId]?.carrierCode ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { trackingNumber: "" }), carrierCode: event.target.value } }))} placeholder="채널 공식 택배사 코드" /></label><label><span>운송장번호</span><input value={shipmentDrafts[order.sourceId]?.trackingNumber ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { carrierCode: "" }), trackingNumber: event.target.value } }))} placeholder="숫자·영문 운송장번호" /></label></article>)}</div><footer><button type="button" className="credential-secondary" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}>취소</button><button type="button" className="publish-execute" disabled={fulfilling || selectedOrders.some((order) => !shipmentDrafts[order.sourceId]?.carrierCode.trim() || !shipmentDrafts[order.sourceId]?.trackingNumber.trim())} onClick={() => void confirmFulfillment()}>{fulfilling ? <LoaderCircle className="spin" size={15} /> : <Truck size={15} />}{fulfilling ? "판매채널 처리 중" : "확인 후 실제 발송 처리"}</button></footer></section></div>}
     </div>
   );
@@ -1488,6 +1723,113 @@ function ChannelPage({ channelKey, onNavigate, metric, displayProducts }: {
   );
 }
 
+type NotificationPreferences = { kakao_enabled: boolean; order_paid: boolean; shipping_ready: boolean; shipping_completed: boolean; listing_published: boolean; listing_failed: boolean; low_stock: boolean; cs_waiting: boolean; settlement_rate_risk: boolean };
+const defaultNotificationPreferences: NotificationPreferences = { kakao_enabled: true, order_paid: true, shipping_ready: true, shipping_completed: true, listing_published: true, listing_failed: true, low_stock: true, cs_waiting: true, settlement_rate_risk: true };
+
+function NotificationsPage({ authenticatedFetch, notify }: { authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; notify: (message: string) => void }) {
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [kakao, setKakao] = useState<{ connected?: boolean; nickname?: string; kakaoUserId?: string; expiresAt?: string }>({ connected: false });
+  const [preferences, setPreferences] = useState(defaultNotificationPreferences);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await authenticatedFetch("/api/integrations/kakao/settings");
+      const payload = await response.json().catch(() => ({ message: "알림 설정 응답을 읽지 못했습니다." })) as { kakao?: typeof kakao; preferences?: Partial<NotificationPreferences>; message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "알림 설정을 불러오지 못했습니다.");
+      setKakao(payload.kakao ?? { connected: false });
+      setPreferences({ ...defaultNotificationPreferences, ...(payload.preferences ?? {}) });
+    } catch (error) { notify(error instanceof Error ? error.message : "알림 설정을 불러오지 못했습니다."); }
+    finally { setLoading(false); }
+  }, [authenticatedFetch, notify]);
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
+  const connect = async () => {
+    setWorking(true);
+    try {
+      const response = await authenticatedFetch("/api/integrations/kakao/connect", { method: "POST", body: "{}" });
+      const payload = await response.json().catch(() => ({ message: "카카오 연결 응답을 읽지 못했습니다." })) as { authorizationUrl?: string; message?: string };
+      if (!response.ok || !payload.authorizationUrl) throw new Error(payload.message ?? "카카오 연결을 시작하지 못했습니다.");
+      window.location.assign(payload.authorizationUrl);
+    } catch (error) { notify(error instanceof Error ? error.message : "카카오 연결을 시작하지 못했습니다."); setWorking(false); }
+  };
+  const save = async () => {
+    setWorking(true);
+    try {
+      const response = await authenticatedFetch("/api/integrations/kakao/settings", { method: "POST", body: JSON.stringify({ preferences }) });
+      const payload = await response.json().catch(() => ({ message: "알림 저장 응답을 읽지 못했습니다." })) as { message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "알림 설정을 저장하지 못했습니다.");
+      notify("웹·카카오 알림 세부 설정을 저장했습니다.");
+    } catch (error) { notify(error instanceof Error ? error.message : "알림 설정을 저장하지 못했습니다."); }
+    finally { setWorking(false); }
+  };
+  const test = async () => {
+    setWorking(true);
+    try {
+      const response = await authenticatedFetch("/api/integrations/kakao/settings", { method: "POST", body: JSON.stringify({ action: "test" }) });
+      const payload = await response.json().catch(() => ({ message: "테스트 알림 응답을 읽지 못했습니다." })) as { message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "테스트 알림을 보내지 못했습니다.");
+      notify("가입한 사용자 본인의 카카오톡 ‘나와의 채팅’으로 테스트 알림을 보냈습니다.");
+    } catch (error) { notify(error instanceof Error ? error.message : "테스트 알림을 보내지 못했습니다."); }
+    finally { setWorking(false); }
+  };
+  const options: Array<{ key: keyof NotificationPreferences; title: string; detail: string; icon: React.ComponentType<{ size?: number }> }> = [
+    { key: "order_paid", title: "새 주문 · 결제완료", detail: "채널에서 새 결제 주문이 동기화될 때", icon: ShoppingCart },
+    { key: "shipping_ready", title: "배송 준비 · 출고대기", detail: "운송장 등록과 발송 처리가 필요할 때", icon: PackageCheck },
+    { key: "shipping_completed", title: "배송 완료", detail: "채널 배송이 최종 완료 상태가 될 때", icon: Truck },
+    { key: "listing_published", title: "상품 등록 · 승인 완료", detail: "상품이 판매채널에 게시됐을 때", icon: CheckCircle2 },
+    { key: "listing_failed", title: "상품 등록 거절 · 보완", detail: "권한·카테고리·속성 수정이 필요할 때", icon: AlertCircle },
+    { key: "low_stock", title: "재고 부족", detail: "가용재고가 재주문 기준 이하가 될 때", icon: Box },
+    { key: "cs_waiting", title: "고객 문의 · CS", detail: "답변 대기 문의가 있을 때", icon: MessageCircleMore },
+    { key: "settlement_rate_risk", title: "환율 정산 손실 주의", detail: "기준환율보다 2% 이상 불리한 정산이 감지될 때", icon: CircleDollarSign },
+  ];
+  return <div className="page-stack notifications-settings-page">
+    <section className="panel kakao-connect-card"><div><span className="kakao-symbol">K</span><span><small>공식 Kakao Login · KakaoTalk Message API</small><h3>{kakao.connected ? `${kakao.nickname || "사용자"} 카카오톡 연결됨` : "가입한 사용자 카카오톡 연결"}</h3><p>이 컴퓨터의 카카오톡이 아니라 로그인한 사용자 본인의 카카오 계정을 OAuth로 연결합니다. 알림은 공식 API가 허용하는 본인 ‘나와의 채팅’으로 전송됩니다.</p></span></div><div>{kakao.connected ? <><span className="status-badge success"><i />연결 정상</span><button type="button" className="credential-secondary" onClick={() => void test()} disabled={working}>테스트 보내기</button></> : <button type="button" className="kakao-connect-button" onClick={() => void connect()} disabled={working}>{working ? <LoaderCircle className="spin" size={16} /> : <MessageCircleMore size={16} />}카카오 계정 연결</button>}</div></section>
+    <section className="panel notification-preferences"><div className="panel-heading"><div><span className="panel-kicker">DETAILED NOTIFICATIONS</span><h3>업무별 알림 세부 설정</h3></div><label className="master-notification-toggle"><input type="checkbox" aria-label="카카오 알림 전체 사용" checked={preferences.kakao_enabled} onChange={(event) => setPreferences((current) => ({ ...current, kakao_enabled: event.target.checked }))} /><span>카카오 알림 전체</span></label></div>{loading ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>알림 설정을 불러오는 중입니다.</b></div> : <div className="notification-preference-grid">{options.map((option) => <label key={option.key}><span className="metric-icon blue"><option.icon size={16} /></span><span><b>{option.title}</b><small>{option.detail}</small></span><input type="checkbox" aria-label={`${option.title} 알림`} checked={preferences[option.key]} onChange={(event) => setPreferences((current) => ({ ...current, [option.key]: event.target.checked }))} /></label>)}</div>}<footer><small>웹 종 알림은 개별·전체 닫기를 지원하며, 새로운 상태 변화가 생기면 다시 표시됩니다.</small><button type="button" className="publish-execute" disabled={working || loading} onClick={() => void save()}>{working ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}설정 저장</button></footer></section>
+  </div>;
+}
+
+function TemplatesPage({ authenticatedFetch, notify }: { authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; notify: (message: string) => void }) {
+  const [templates, setTemplates] = useState<CommerceTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState({ name: "", kind: "packaging_shipping" as CommerceTemplate["kind"], shippingFeeKrw: 0, shippingRule: "", packagingRule: "", weightKg: 0.5, packageLengthCm: 20, packageWidthCm: 20, packageHeightCm: 10, isDefault: false });
+  const loadTemplates = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await authenticatedFetch("/api/admin/templates");
+      const payload = await response.json().catch(() => ({ message: "템플릿 응답을 읽지 못했습니다." })) as { templates?: CommerceTemplate[]; message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "템플릿을 불러오지 못했습니다.");
+      setTemplates(Array.isArray(payload.templates) ? payload.templates : []);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "템플릿을 불러오지 못했습니다.");
+    } finally { setLoading(false); }
+  }, [authenticatedFetch, notify]);
+  useEffect(() => { const timer = window.setTimeout(() => void loadTemplates(), 0); return () => window.clearTimeout(timer); }, [loadTemplates]);
+  const save = async () => {
+    if (!draft.name.trim() || saving) return;
+    setSaving(true);
+    try {
+      const response = await authenticatedFetch("/api/admin/templates", { method: "POST", body: JSON.stringify({ name: draft.name, kind: draft.kind, isDefault: draft.isDefault, values: { shippingFeeKrw: draft.shippingFeeKrw, shippingRule: draft.shippingRule, packagingRule: draft.packagingRule, weightKg: draft.weightKg, packageLengthCm: draft.packageLengthCm, packageWidthCm: draft.packageWidthCm, packageHeightCm: draft.packageHeightCm } }) });
+      const payload = await response.json().catch(() => ({ message: "템플릿 저장 응답을 읽지 못했습니다." })) as { message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "템플릿을 저장하지 못했습니다.");
+      setDraft((current) => ({ ...current, name: "", isDefault: false }));
+      await loadTemplates();
+      notify("상품 등록에서 선택할 템플릿을 저장했습니다.");
+    } catch (error) { notify(error instanceof Error ? error.message : "템플릿을 저장하지 못했습니다."); }
+    finally { setSaving(false); }
+  };
+  const remove = async (id: string) => {
+    const response = await authenticatedFetch(`/api/admin/templates?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!response.ok) return notify("템플릿을 삭제하지 못했습니다.");
+    setTemplates((current) => current.filter((template) => template.id !== id));
+    notify("템플릿을 삭제했습니다.");
+  };
+  return <div className="page-stack templates-page">
+    <section className="panel template-editor"><div className="panel-heading"><div><span className="panel-kicker">REUSABLE RULES</span><h3>배송비 · 포장/배송규칙 템플릿</h3></div><FileText size={18} /></div><p>한 번 저장한 값은 상품 등록의 포장·배송 입력란 위에 버튼으로 나타납니다.</p><div className="template-form-grid"><label><span>템플릿 이름</span><input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="예: 국내 택배 기본" /></label><label><span>유형</span><select value={draft.kind} onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value as CommerceTemplate["kind"] }))}><option value="packaging_shipping">포장 · 배송</option><option value="shipping_fee">배송비</option></select></label><label><span>배송비 KRW</span><input type="number" min="0" value={draft.shippingFeeKrw} onChange={(event) => setDraft((current) => ({ ...current, shippingFeeKrw: Number(event.target.value) }))} /></label><label><span>중량 kg</span><input type="number" min="0.01" step="0.01" value={draft.weightKg} onChange={(event) => setDraft((current) => ({ ...current, weightKg: Number(event.target.value) }))} /></label><label><span>가로 cm</span><input type="number" min="0.1" value={draft.packageLengthCm} onChange={(event) => setDraft((current) => ({ ...current, packageLengthCm: Number(event.target.value) }))} /></label><label><span>세로 cm</span><input type="number" min="0.1" value={draft.packageWidthCm} onChange={(event) => setDraft((current) => ({ ...current, packageWidthCm: Number(event.target.value) }))} /></label><label><span>높이 cm</span><input type="number" min="0.1" value={draft.packageHeightCm} onChange={(event) => setDraft((current) => ({ ...current, packageHeightCm: Number(event.target.value) }))} /></label><label className="template-wide"><span>배송 규칙</span><textarea value={draft.shippingRule} onChange={(event) => setDraft((current) => ({ ...current, shippingRule: event.target.value }))} placeholder="출고일, 배송지역, 반품 배송 안내" /></label><label className="template-wide"><span>포장 규칙</span><textarea value={draft.packagingRule} onChange={(event) => setDraft((current) => ({ ...current, packagingRule: event.target.value }))} placeholder="완충재, 합포장, 파손 방지 규칙" /></label><label className="template-default"><input type="checkbox" checked={draft.isDefault} onChange={(event) => setDraft((current) => ({ ...current, isDefault: event.target.checked }))} /><span>이 유형의 기본 템플릿</span></label></div><button type="button" className="publish-execute" disabled={!draft.name.trim() || saving} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{saving ? "저장 중" : "템플릿 저장"}</button></section>
+    <section className="panel template-list-panel"><div className="panel-heading"><div><span className="panel-kicker">SAVED TEMPLATES</span><h3>저장된 템플릿</h3></div><span className="count-chip">{templates.length}</span></div>{loading ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>템플릿을 불러오는 중입니다.</b></div> : templates.length ? <div className="template-card-grid">{templates.map((template) => <article key={template.id}><div><FileText size={16} /><span><b>{template.name}</b><small>{template.kind === "shipping_fee" ? "배송비" : "포장 · 배송"}{template.is_default ? " · 기본" : ""}</small></span><button type="button" aria-label={`${template.name} 삭제`} onClick={() => void remove(template.id)}><Trash2 size={14} /></button></div><dl><div><dt>배송비</dt><dd>{Number(template.values.shippingFeeKrw ?? 0).toLocaleString()}원</dd></div><div><dt>포장</dt><dd>{String(template.values.packagingRule ?? "미입력")}</dd></div><div><dt>배송</dt><dd>{String(template.values.shippingRule ?? "미입력")}</dd></div></dl></article>)}</div> : <div className="product-detail-empty compact"><FileText size={24} /><b>저장된 템플릿이 없습니다.</b><small>위에서 자주 쓰는 배송비와 포장·배송 규칙을 먼저 저장하세요.</small></div>}</section>
+  </div>;
+}
+
 function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
   const scenes = [
     { no: "01", title: "관리자 로그인", desc: "ID·PW를 입력해 운영 데이터에 안전하게 접근", view: "overview" as View, icon: LockKeyhole, outcome: "권한별 대시보드 진입" },
@@ -1513,6 +1855,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const [view, setView] = useState<View>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
   const [accountOpen, setAccountOpen] = useState(false);
   const [credentialChanging, setCredentialChanging] = useState(false);
   const [credentialMessage, setCredentialMessage] = useState("");
@@ -1524,6 +1867,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [selectedProduct, setSelectedProduct] = useState<DisplayProduct | null>(null);
   const [publishingProduct, setPublishingProduct] = useState<{ id: string; name: string } | null>(null);
+  const displayProductsRef = useRef<DisplayProduct[]>([]);
   const [syncingOrders, setSyncingOrders] = useState(false);
   const operations = useOperationsSnapshot();
   const operationSummary = operations.data?.summary ?? null;
@@ -1559,7 +1903,11 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     }
   }, [credentialChanging, newAdminPassword, onLogout, operations]);
 
-  const displayProducts = useMemo<DisplayProduct[]>(() => operations.data?.products.map((product) => ({
+  const displayProducts = useMemo<DisplayProduct[]>(() => {
+    const periodProducts = new Map((operations.data?.analytics?.products ?? []).map((product) => [product.productId, product]));
+    return operations.data?.products.map((product) => {
+      const period = periodProducts.get(product.id);
+      return ({
     id: product.externalCode,
     sourceId: product.id,
     name: product.name,
@@ -1571,17 +1919,17 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     reserved: product.reserved,
     stock: product.available,
     costKrw: product.costKrw,
-    sales: product.sold30d,
-    revenueKrw: product.revenue30dKrw,
-    revenue: `₩${Math.round(product.revenue30dKrw).toLocaleString("ko-KR")}`,
-    status: product.available <= 0
-      ? "품절"
-      : product.available <= product.reorderPoint
-        ? "재고주의"
-        : productStatusLabel[product.status],
+    sales: period?.sold ?? 0,
+    revenueKrw: period?.revenueKrw ?? 0,
+    revenue: `₩${Math.round(period?.revenueKrw ?? 0).toLocaleString("ko-KR")}`,
+    status: productStatusLabel[product.status],
     channels: product.listingChannels,
+    channelSales: period?.channels ?? [],
     updatedAt: product.updatedAt,
-  })) ?? [], [operations.data]);
+  });
+    }) ?? [];
+  }, [operations.data]);
+  useEffect(() => { displayProductsRef.current = displayProducts; }, [displayProducts]);
 
   const displayOrders = useMemo<DisplayOrder[]>(() => operations.data?.orders.map((order) => ({
     sourceId: order.id,
@@ -1593,6 +1941,14 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     amount: new Intl.NumberFormat("ko-KR", { style: "currency", currency: order.currency, maximumFractionDigits: order.currency === "KRW" ? 0 : 2 }).format(order.amount),
     status: orderStatusLabel[order.status],
     time: relativeTime(order.orderedAt),
+    shippedAt: order.shippedAt,
+    deliveredAt: order.deliveredAt,
+    carrierCode: order.carrierCode,
+    trackingNumber: order.trackingNumber,
+    settlementStatus: { pending: "정산 대기", expected: "정산 예정", settled: "정산 완료", held: "정산 보류", disputed: "정산 이의" }[order.settlementStatus] ?? order.settlementStatus,
+    settlementAmount: order.settlementAmount,
+    settlementCurrency: order.settlementCurrency,
+    exchangeLossPercent: order.exchangeLossPercent,
   })) ?? [], [operations.data]);
 
   const displayTickets = useMemo<DisplayTicket[]>(() => operations.data?.tickets.map((ticket) => ({
@@ -1688,11 +2044,14 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       return false;
     }
     try {
-      const response = await operations.authenticatedFetch("/api/operations/snapshot", {
+      const response = await operations.authenticatedFetch(ticket.channelKey === "lazada" ? "/api/admin/cs/lazada-reply" : "/api/operations/snapshot", {
         method: "POST",
-        body: JSON.stringify({ action: "ticket_update", id: source.id, status: "resolved", replyDraft: reply }),
+        body: JSON.stringify(ticket.channelKey === "lazada"
+          ? { ticketId: source.id, reply }
+          : { action: "ticket_update", id: source.id, status: "resolved", replyDraft: reply }),
       });
-      if (!response.ok) throw new Error("CS 답변을 저장하지 못했습니다.");
+      const payload = await response.json().catch(() => ({ message: "CS 답변 응답을 읽지 못했습니다." })) as { message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "CS 답변을 저장하지 못했습니다.");
       await operations.reload();
       return true;
     } catch (error) {
@@ -1775,7 +2134,6 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, [notify, operations, syncingOrders]);
 
   useEffect(() => {
-    if (view !== "orders" && view !== "cs") return;
     const key = "sellerpilot-operation-sync-requested-at";
     const previous = Number(window.sessionStorage.getItem(key) ?? 0);
     const run = () => {
@@ -1788,14 +2146,41 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       if (timer !== null) window.clearTimeout(timer);
       window.clearInterval(interval);
     };
-  }, [syncOrders, view]);
+  }, [syncOrders]);
 
   const navigate = useCallback((next: View) => {
     setTargetedSearch(null);
     if (next === "publishing") setPublishingProduct(null);
     setView(next);
+    window.history.pushState({ view: next }, "", window.location.pathname);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const editExternalActionProduct = useCallback((action: OperationsSnapshot["externalActions"][number]) => {
+    setPublishingProduct({ id: action.productId, name: action.productName });
+    setView("publishing");
+    window.history.pushState({ view: "publishing", productId: action.productId }, "", window.location.pathname);
+    setSidebarOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    window.history.replaceState({ view: "overview" }, "", window.location.href);
+    const onPopState = (event: PopStateEvent) => {
+      const state = isRecord(event.state) ? event.state : {};
+      const nextView = typeof state.view === "string" ? state.view as View : "overview";
+      if (nextView === "product-detail" && typeof state.productId === "string") {
+        const product = displayProductsRef.current.find((item) => item.sourceId === state.productId);
+        if (product) setSelectedProduct(product);
+      }
+      setView(nextView in pageMeta ? nextView : "overview");
+      setSidebarOpen(false);
+      window.scrollTo({ top: 0, behavior: "auto" });
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  // Browser entries are app views; live product data is read through a ref.
   }, []);
 
   useEffect(() => {
@@ -1809,7 +2194,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
         const order = operations.data?.orders.find((item) => item.id === orderId);
         if (order) setTargetedSearch({ kind: "order", id: order.externalOrderId, query: order.externalOrderId });
       }
-      window.history.replaceState(null, "", window.location.pathname);
+      window.history.replaceState({ view: requestedView }, "", window.location.pathname);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [operations.data]);
@@ -1817,9 +2202,17 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const openProductDetails = useCallback((product: DisplayProduct) => {
     setSelectedProduct(product);
     setView("product-detail");
+    window.history.pushState({ view: "product-detail", productId: product.sourceId }, "", window.location.pathname);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
+
+  const notificationItems = useMemo(() => [
+    { key: `low-stock:${operationSummary?.lowStockCount ?? 0}`, title: `재고주의 상품 ${operationSummary?.lowStockCount ?? 0}건`, detail: "운영 원장 실재고 기준", view: "products" as View, tone: "danger", icon: Box },
+    { key: `listing-errors:${operationSummary?.registrationErrorCount ?? 0}`, title: `등록 재시도 ${operationSummary?.registrationErrorCount ?? 0}건`, detail: "채널 API 오류를 확인하세요.", view: "publishing" as View, tone: "warning", icon: AlertCircle },
+    { key: `external-actions:${operationSummary?.registrationBlockedCount ?? 0}`, title: `외부 권한·상품수정 ${operationSummary?.registrationBlockedCount ?? 0}건`, detail: "판매자센터에서 한 건씩 보완", view: "remediation" as View, tone: "warning", icon: ShieldCheck },
+    { key: `open-cs:${operationSummary?.openTicketCount ?? 0}`, title: `미처리 CS ${operationSummary?.openTicketCount ?? 0}건`, detail: "답변 대기와 처리 중 문의", view: "cs" as View, tone: "blue", icon: MessageCircleMore },
+  ].filter((item) => !dismissedNotifications.has(item.key) && !item.title.includes(" 0건")), [dismissedNotifications, operationSummary]);
 
   const selectUnifiedSearchResult = useCallback((result: UnifiedSearchResult) => {
     setSearchOpen(false);
@@ -1836,15 +2229,18 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, [displayProducts, openProductDetails]);
 
   const content = (() => {
-    if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenProduct={openProductDetails} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} operationsAvailable={operations.state === "database"} />;
-    if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} />;
-    if (view === "product-detail" && selectedProduct) return <ProductDetailPage product={selectedProduct} onBack={() => navigate("products")} authenticatedFetch={operations.authenticatedFetch} />;
-    if (view === "publishing") return <PublishingPage key={publishingProduct?.id ?? "new-product"} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} listingIssues={operations.data?.listingIssues ?? []} onOpenIssue={(productId) => { const product = displayProducts.find((item) => item.sourceId === productId); if (product) openProductDetails(product); }} initialProduct={publishingProduct} />;
+    if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
+    if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} />;
+    if (view === "product-detail" && selectedProduct) return <ProductDetailPage product={selectedProduct} onBack={() => window.history.back()} authenticatedFetch={operations.authenticatedFetch} />;
+    if (view === "remediation") return <ExternalActionsPage actions={operations.data?.externalActions ?? []} onEdit={editExternalActionProduct} onConnections={() => navigate("connections")} />;
+    if (view === "publishing") return <PublishingPage key={publishingProduct?.id ?? "new-product"} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} />;
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
     if (view === "cs") return <CsPage key={`cs-${targetedSearch?.kind === "inquiry" ? targetedSearch.id : "all"}`} notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={targetedSearch?.kind === "inquiry" ? targetedSearch.id : null} />;
     if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} />;
+    if (view === "templates") return <TemplatesPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;
+    if (view === "notifications") return <NotificationsPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;
     if (view === "acceptance") return <AcceptanceChecklistPage />;
     if (view === "storyboard") return <StoryboardPage onNavigate={navigate} />;
     const channelKey = view as ChannelKey;
@@ -1879,7 +2275,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
           </div>
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
-          <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={operations.message}><Activity size={13} /><b>{operations.state === "database" ? "실데이터" : operations.state === "loading" ? "연결 확인" : "연결 오류"}</b><small>{operations.state === "database" ? "Supabase 운영 원장" : operations.message}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap"><button className="top-icon-button" aria-label="알림" onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} />{Boolean((operationSummary?.lowStockCount ?? 0) + (operationSummary?.registrationErrorCount ?? 0)) && <i />}</button>{notificationsOpen && <div className="notification-popover"><div><h4>실시간 알림</h4><button onClick={() => setNotificationsOpen(false)}>닫기</button></div><button onClick={() => navigate("products")}><span className="alert-icon danger"><Box size={15} /></span><span><b>재고주의 상품 {operationSummary?.lowStockCount ?? 0}건</b><small>운영 원장 실재고 기준</small></span></button><button onClick={() => navigate("publishing")}><span className="alert-icon warning"><AlertCircle size={15} /></span><span><b>등록 실패 {operationSummary?.registrationErrorCount ?? 0}건</b><small>채널 API 작업 이력 기준</small></span></button></div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
+          <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={operations.message}><Activity size={13} /><b>{operations.state === "database" ? "실데이터" : operations.state === "loading" ? "연결 확인" : "연결 오류"}</b><small>{operations.state === "database" ? "Supabase 운영 원장" : operations.message}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap"><button className="top-icon-button" aria-label="알림" onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div className="notification-popover"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => setNotificationsOpen(false)}><X size={14} /></button></span></div>{notificationItems.map((item) => <div className="notification-item" role="button" tabIndex={0} key={item.key} onClick={() => { navigate(item.view); setNotificationsOpen(false); }} onKeyDown={(event) => { if (event.key === "Enter") { navigate(item.view); setNotificationsOpen(false); } }}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span><button type="button" aria-label={`${item.title} 알림 닫기`} onClick={(event) => { event.stopPropagation(); setDismissedNotifications((current) => new Set([...current, item.key])); }}><X size={13} /></button></div>)}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
           </header>
         </div>
         <div className="app-content">{content}</div>

@@ -26,6 +26,18 @@ type DetailComponents = {
     point3: string;
     accent: string;
   };
+  ImageStoryBlock: {
+    eyebrow: string;
+    title: string;
+    body: string;
+    points: string;
+    imageUrl: string;
+    imageAlt: string;
+    reverse: boolean;
+    primary: string;
+    accent: string;
+    surface: string;
+  };
   StoryBlock: {
     eyebrow: string;
     title: string;
@@ -48,7 +60,7 @@ export type ProductDetailData = Data<DetailComponents>;
 
 const detailConfig: Config<DetailComponents> = {
   categories: {
-    story: { title: "상세페이지 블록", components: ["HeroBlock", "BenefitBlock", "StoryBlock", "CtaBlock"], defaultExpanded: true },
+    story: { title: "상세페이지 블록", components: ["HeroBlock", "BenefitBlock", "ImageStoryBlock", "StoryBlock", "CtaBlock"], defaultExpanded: true },
   },
   components: {
     HeroBlock: {
@@ -82,6 +94,21 @@ const detailConfig: Config<DetailComponents> = {
         <section className="pdp-benefit-block" style={{ "--pdp-accent": accent } as React.CSSProperties}><span>{eyebrow}</span><h2>{title}</h2><p>{body}</p><div>{[point1, point2, point3].map((point, index) => <article key={`${point}-${index}`}><em>0{index + 1}</em><b>{point}</b></article>)}</div></section>
       ),
     },
+    ImageStoryBlock: {
+      label: "이미지 · 구매 근거",
+      fields: {
+        eyebrow: { type: "text", label: "상단 문구" }, title: { type: "textarea", label: "제목" }, body: { type: "textarea", label: "설명" }, points: { type: "textarea", label: "확인 포인트 (줄바꿈)" },
+        imageUrl: { type: "text", label: "상세 이미지 URL" }, imageAlt: { type: "text", label: "이미지 설명" }, reverse: { type: "radio", label: "배치", options: [{ label: "이미지 왼쪽", value: false }, { label: "이미지 오른쪽", value: true }] },
+        primary: { type: "text", label: "주 색상" }, accent: { type: "text", label: "강조 색상" }, surface: { type: "text", label: "배경 색상" },
+      },
+      defaultProps: { eyebrow: "WHY IT WORKS", title: "보이는 특징을 구체적으로", body: "구매 판단에 필요한 근거를 이미지와 함께 설명합니다.", points: "확인 포인트 1\n확인 포인트 2", imageUrl: "", imageAlt: "상품 특징 이미지", reverse: false, primary: "#25352d", accent: "#d9eeae", surface: "#f4f1e9" },
+      render: ({ eyebrow, title, body, points, imageUrl, imageAlt, reverse, primary, accent, surface }) => (
+        <section className={`pdp-image-story ${reverse ? "reverse" : ""}`} style={{ "--pdp-primary": primary, "--pdp-accent": accent, "--pdp-surface": surface } as React.CSSProperties}>
+          <div className="pdp-image-story-visual">{imageUrl ? <img src={imageUrl} alt={imageAlt} /> : <span>DETAIL IMAGE</span>}<i /></div>
+          <div className="pdp-image-story-copy"><span>{eyebrow}</span><h2>{title}</h2><p>{body}</p><ul>{points.split("\n").filter(Boolean).map((point) => <li key={point}><CheckMark />{point}</li>)}</ul></div>
+        </section>
+      ),
+    },
     StoryBlock: {
       label: "스토리 · 정보",
       fields: {
@@ -105,27 +132,42 @@ const detailConfig: Config<DetailComponents> = {
   },
 };
 
-function createDetailData(result: ProductStudioResult, imageUrl: string): ProductDetailData {
+function CheckMark() {
+  return <span aria-hidden="true">✓</span>;
+}
+
+function createDetailData(result: ProductStudioResult, imageUrl: string, assetUrls: Record<string, string>): ProductDetailData {
   const { product, design } = result;
   const first = design.sections[0];
+  const imageAssets = ["detail-overview", "detail-feature", "detail-use", "detail-package"];
   return {
     root: {},
     content: [
       { type: "HeroBlock", props: { id: "ai-hero", eyebrow: product.category.toUpperCase(), title: design.heroCopy, description: design.heroSubcopy, cta: design.cta, imageUrl, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface } },
       { type: "BenefitBlock", props: { id: "ai-benefits", eyebrow: first?.eyebrow ?? "KEY BENEFITS", title: first?.title ?? product.oneLine, body: first?.body ?? product.targetCustomer, point1: product.features[0] ?? "핵심 장점", point2: product.features[1] ?? "편리한 사용", point3: product.features[2] ?? "선명한 구성", accent: design.palette.accent } },
-      ...design.sections.slice(1).map((section, index) => ({ type: "StoryBlock" as const, props: { id: `ai-section-${index}`, eyebrow: section.eyebrow, title: section.title, body: section.body, points: section.points.join("\n"), tone: (section.type === "proof" ? "dark" : section.type === "caution" ? "accent" : "light") as "light" | "dark" | "accent", primary: design.palette.primary, accent: design.palette.accent } })),
+      ...design.sections.slice(1).map((section, index) => {
+        const assetId = imageAssets[index];
+        const sectionImage = assetId ? assetUrls[assetId] : "";
+        return sectionImage ? {
+          type: "ImageStoryBlock" as const,
+          props: { id: `ai-image-section-${index}`, eyebrow: section.eyebrow, title: section.title, body: section.body, points: section.points.join("\n"), imageUrl: sectionImage, imageAlt: `${product.name} ${section.title}`, reverse: index % 2 === 1, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface },
+        } : {
+          type: "StoryBlock" as const,
+          props: { id: `ai-section-${index}`, eyebrow: section.eyebrow, title: section.title, body: section.body, points: section.points.join("\n"), tone: (section.type === "proof" ? "dark" : section.type === "caution" ? "accent" : "light") as "light" | "dark" | "accent", primary: design.palette.primary, accent: design.palette.accent },
+        };
+      }),
       { type: "CtaBlock", props: { id: "ai-cta", title: product.oneLine, description: `${product.name}의 구성과 주의사항을 확인하고 알맞은 판매 채널에서 만나보세요.`, button: design.cta, primary: design.palette.primary, accent: design.palette.accent } },
     ],
   };
 }
 
-export function ProductDetailRender({ result, imageUrl, data }: { result: ProductStudioResult; imageUrl: string; data: ProductDetailData | null }) {
-  const renderData = useMemo(() => data ?? createDetailData(result, imageUrl), [data, imageUrl, result]);
+export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data }: { result: ProductStudioResult; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null }) {
+  const renderData = useMemo(() => data ?? createDetailData(result, imageUrl, assetUrls), [assetUrls, data, imageUrl, result]);
   return <Render config={detailConfig} data={renderData} />;
 }
 
-export function ProductDetailEditor({ result, imageUrl, data, onSave, onClose }: { result: ProductStudioResult; imageUrl: string; data: ProductDetailData | null; onSave: (next: ProductDetailData) => void; onClose: () => void }) {
-  const initialData = useMemo(() => data ?? createDetailData(result, imageUrl), [data, imageUrl, result]);
+export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, onSave, onClose }: { result: ProductStudioResult; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; onSave: (next: ProductDetailData) => void; onClose: () => void }) {
+  const initialData = useMemo(() => data ?? createDetailData(result, imageUrl, assetUrls), [assetUrls, data, imageUrl, result]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKeyDown);

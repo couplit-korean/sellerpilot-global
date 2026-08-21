@@ -6,6 +6,14 @@
     {
       "path": "/api/internal/maintenance",
       "schedule": "17 18 * * *"
+    },
+    {
+      "path": "/api/internal/competitor-prices",
+      "schedule": "*/30 * * * *"
+    },
+    {
+      "path": "/api/internal/kakao-notifications",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

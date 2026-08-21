@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cliStudioResultSchema, productResearchJobRequestSchema, productResearchResultSchema, studioJobRequestSchema, workerCompletionSchema } from "../lib/ai-cli-contract";
+import { cliStudioResultSchema, productResearchJobRequestSchema, productResearchResultSchema, studioJobRequestSchema, supportReplyJobRequestSchema, supportReplyResultSchema, workerCompletionSchema } from "../lib/ai-cli-contract";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 
 const localized = [
@@ -22,6 +22,13 @@ const localized = [
   ["coupang", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
   ["smartstore", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
   ["ebay", "US", "en-US", "White Ceramic Espresso Cup"],
+  ["ebay", "GB", "en-GB", "White Ceramic Espresso Cup"],
+  ["ebay", "DE", "de-DE", "Weiße Keramik-Espressotasse"],
+  ["ebay", "AU", "en-AU", "White Ceramic Espresso Cup"],
+  ["ebay", "CA", "en-CA", "White Ceramic Espresso Cup"],
+  ["ebay", "FR", "fr-FR", "Tasse à expresso en céramique blanche"],
+  ["ebay", "IT", "it-IT", "Tazzina da espresso in ceramica bianca"],
+  ["ebay", "ES", "es-ES", "Taza de espresso de cerámica blanca"],
   ["temu", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
 ] as const;
 
@@ -71,7 +78,7 @@ function validResult() {
   };
 }
 
-test("AI studio contract accepts all 19 exact channel-market locales", () => {
+test("AI studio contract accepts all 26 exact channel-market locales", () => {
   const parsed = cliStudioResultSchema.safeParse(validResult());
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
@@ -224,4 +231,34 @@ test("AI worker completion accepts a product research result without generated i
     result: validResearchResult(),
   });
   if (!complete.success) assert.fail(JSON.stringify(complete.error.issues, null, 2));
+});
+
+test("support reply CLI contract requires a supported locale and reviewable draft", () => {
+  const request = supportReplyJobRequestSchema.safeParse({
+    jobId: "44444444-4444-4444-8444-444444444444",
+    ticketId: "55555555-5555-4555-8555-555555555555",
+    targetLocale: "ja-JP",
+    tone: "polite",
+  });
+  assert.equal(request.success, true);
+  assert.equal(supportReplyJobRequestSchema.safeParse({
+    jobId: "44444444-4444-4444-8444-444444444444",
+    ticketId: "55555555-5555-4555-8555-555555555555",
+    targetLocale: "unsupported",
+    tone: "polite",
+  }).success, false);
+
+  const result = {
+    mode: "support-reply" as const,
+    targetLocale: "ja-JP" as const,
+    draft: "お問い合わせありがとうございます。注文状況を確認してご案内いたします。",
+    sourceSummary: "문의 원문과 주문 상태만 사용",
+    cautions: ["확정되지 않은 배송일은 단정하지 않음"],
+  };
+  assert.equal(supportReplyResultSchema.safeParse(result).success, true);
+  assert.equal(workerCompletionSchema.safeParse({
+    jobId: "44444444-4444-4444-8444-444444444444",
+    status: "succeeded",
+    result,
+  }).success, true);
 });

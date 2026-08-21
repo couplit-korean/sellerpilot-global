@@ -78,6 +78,18 @@ export async function POST(request: Request) {
         }
       }
       resultPayload.asset_storage_paths = completion.assetStoragePaths;
+    } else if (completion.result.mode === "asset-regeneration") {
+      if (!("assetStoragePaths" in completion)) {
+        return NextResponse.json({ message: "재제작 이미지 저장 경로가 없습니다." }, { status: 400 });
+      }
+      const regenerated = completion.result as { mode: "asset-regeneration"; assetId: string };
+      const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === regenerated.assetId);
+      const paths = Object.entries(completion.assetStoragePaths);
+      const expectedPath = asset ? aiGeneratedAssetPath(completion.jobId, asset) : "";
+      if (!asset || paths.length !== 1 || paths[0]?.[0] !== asset.id || paths[0]?.[1] !== expectedPath) {
+        return NextResponse.json({ message: "재제작 이미지 저장 경로가 작업과 일치하지 않습니다." }, { status: 403 });
+      }
+      resultPayload.asset_storage_paths = completion.assetStoragePaths;
     }
   }
 

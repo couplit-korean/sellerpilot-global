@@ -14,8 +14,8 @@ const localizedDetailSectionSchema = z.object({
 
 const localizedListingSchema = z.object({
   channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
-  market: z.enum(["JP", "SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID", "KR", "US"]),
-  locale: z.enum(["ja-JP", "en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID", "ko-KR", "en-US"]),
+  market: z.enum(["JP", "SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID", "KR", "US", "GB", "DE", "AU", "CA", "FR", "IT", "ES"]),
+  locale: z.enum(["ja-JP", "en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID", "ko-KR", "en-US", "en-GB", "de-DE", "en-AU", "en-CA", "fr-FR", "it-IT", "es-ES"]),
   title: z.string().min(1).max(120),
   shortDescription: z.string().min(1).max(500),
   description: z.string().min(1).max(2_000),
@@ -110,7 +110,7 @@ export const studioCoreSchema = z.object({
     subline: z.string().min(1).max(120),
     badge: z.string().min(1).max(60),
   }),
-  localizedListings: z.array(localizedListingSchema).length(19),
+  localizedListings: z.array(localizedListingSchema).length(26),
   warnings: z.array(z.string().min(1).max(400)).max(5),
 });
 
@@ -133,6 +133,13 @@ const requiredLocalizedMarkets = {
   "coupang:KR": "ko-KR",
   "smartstore:KR": "ko-KR",
   "ebay:US": "en-US",
+  "ebay:GB": "en-GB",
+  "ebay:DE": "de-DE",
+  "ebay:AU": "en-AU",
+  "ebay:CA": "en-CA",
+  "ebay:FR": "fr-FR",
+  "ebay:IT": "it-IT",
+  "ebay:ES": "es-ES",
   "temu:KR": "ko-KR",
 } as const;
 
@@ -227,6 +234,20 @@ export const workerCompletionSchema = z.union([
     jobId: z.string().uuid(),
     status: z.literal("succeeded"),
     result: supportReplyResultSchema,
+  }),
+  z.object({
+    jobId: z.string().uuid(),
+    status: z.literal("succeeded"),
+    result: z.object({
+      mode: z.literal("asset-regeneration"),
+      assetId: z.enum(aiGeneratedAssetIds),
+      sourceJobId: z.string().uuid(),
+      sourceProductId: z.string().uuid().nullable(),
+    }),
+    assetStoragePaths: z.record(
+      z.enum(aiGeneratedAssetIds),
+      z.string().min(1).max(400),
+    ),
   }),
   z.object({
     jobId: z.string().uuid(),

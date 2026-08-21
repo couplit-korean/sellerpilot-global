@@ -3,7 +3,7 @@
 
 import dynamic from "next/dynamic";
 import { CheckCircle2, Download, ExternalLink, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import { createClient } from "../lib/supabase/client";
 import { productIntakeSchema, type NormalizedProductImageSpec, type ProductIntakeDraft } from "../lib/product-intake";
@@ -17,13 +17,21 @@ const ProductDetailEditor = dynamic(() => import("./product-detail-puck").then((
 type StudioPhoto = { name: string; url: string; file: File; role: string; originalWidth: number; originalHeight: number };
 type AutoThumbnail = { id: string; label: string; ratio: string; width: number; height: number; dataUrl: string };
 type OptimizedPhoto = { name: string; mediaType: "image/jpeg"; blob: Blob; spec: NormalizedProductImageSpec };
+type RegeneratedAssetResult = {
+  mode: "asset-regeneration";
+  assetId: string;
+  sourceJobId: string;
+  sourceProductId: string | null;
+  generatedImages?: { id: string; url: string | null }[];
+};
+type CliStudioResult = (ProductStudioResult & {
+  heroUrl?: string | null;
+  generatedImages?: { id: string; url: string | null }[];
+}) | RegeneratedAssetResult;
 type CliJobPayload = {
   id: string;
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
-  result?: (ProductStudioResult & {
-    heroUrl?: string | null;
-    generatedImages?: { id: string; url: string | null }[];
-  }) | null;
+  result?: CliStudioResult | null;
   error?: string | null;
 };
 
@@ -162,6 +170,9 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
   const [editorOpen, setEditorOpen] = useState(false);
   const [savedDetailData, setSavedDetailData] = useState<ProductDetailData | null>(null);
   const [lastError, setLastError] = useState("");
+  const [sourceJobId, setSourceJobId] = useState("");
+  const [sourceProductId, setSourceProductId] = useState<string | null>(null);
+  const [regeneratingAssetId, setRegeneratingAssetId] = useState("");
   const handledRequest = useRef(0);
   const currentImageUrl = aiHero || mainPhoto?.url || "";
 
@@ -212,6 +223,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       const queued = await response.json().catch(() => ({ message: "CLI 작업 등록 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
       if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
       const cliResult = await waitForCliJob(queued.jobId, accessToken);
+      if (cliResult.mode !== "cli") throw new Error("상품 분석 결과 형식이 올바르지 않습니다.");
       const { heroUrl, generatedImages, ...nextResult } = cliResult;
       setResult(nextResult);
       setAiHero(heroUrl ?? "");
@@ -230,6 +242,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       });
       const productPayload = await productResponse.json().catch(() => ({})) as { id?: string | null };
       const productId = productResponse.ok && typeof productPayload.id === "string" ? productPayload.id : null;
+      setSourceJobId(queued.jobId);
+      setSourceProductId(productId);
       onResultReady?.(nextResult, productId);
       notify(productResponse.ok
         ? `ChatGPT CLI 분석, codex-image 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장 연결을 완료했습니다.`
@@ -244,6 +258,42 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       onRunningChange(false);
     }
   }, [generating, mainPhoto, manualFields, notify, onResultReady, onRunningChange, photos, waitForCliJob]);
+
+  const regenerateAsset = useCallback(async (assetId: string) => {
+    if (!sourceJobId || generating || regeneratingAssetId) return;
+    setRegeneratingAssetId(assetId);
+    setLastError("");
+    onRunningChange(true);
+    try {
+      const { data: sessionData } = await createClient().auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("이미지를 재제작하려면 관리자 로그인이 필요합니다.");
+      const jobId = crypto.randomUUID();
+      const response = await fetch("/api/ai/product-studio/regenerate", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ jobId, sourceJobId, sourceProductId, assetId }),
+      });
+      const queued = await response.json().catch(() => ({ message: "재제작 작업 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
+      if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "이미지 재제작 작업을 등록하지 못했습니다.");
+      const regenerated = await waitForCliJob(queued.jobId, accessToken);
+      if (regenerated.mode !== "asset-regeneration" || regenerated.assetId !== assetId) {
+        throw new Error("재제작 이미지 결과가 요청과 일치하지 않습니다.");
+      }
+      const nextUrl = regenerated.generatedImages?.find((asset) => asset.id === assetId)?.url ?? "";
+      if (!nextUrl) throw new Error("재제작 이미지 주소를 확인하지 못했습니다.");
+      if (assetId === "hero") setAiHero(nextUrl);
+      else setThumbnails((current) => current.map((asset) => asset.id === assetId ? { ...asset, dataUrl: nextUrl } : asset));
+      notify(`${aiGeneratedAssetSpecs.find((asset) => asset.id === assetId)?.label ?? "선택 이미지"} 1장만 다시 제작해 교체했습니다.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "이미지 재제작 중 오류가 발생했습니다.";
+      setLastError(message);
+      notify(message);
+    } finally {
+      setRegeneratingAssetId("");
+      onRunningChange(false);
+    }
+  }, [generating, notify, onRunningChange, regeneratingAssetId, sourceJobId, sourceProductId, waitForCliJob]);
 
   useEffect(() => {
     if (!requestId || handledRequest.current === requestId) return;
@@ -260,6 +310,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
 
   const creativeThumbnails = thumbnails.filter((thumbnail) => thumbnailPresets.some((preset) => preset.id === thumbnail.id));
   const detailThumbnails = thumbnails.filter((thumbnail) => detailPresets.some((preset) => preset.id === thumbnail.id));
+  const studioAssetUrls = useMemo(() => Object.fromEntries(thumbnails.map((thumbnail) => [thumbnail.id, thumbnail.dataUrl])), [thumbnails]);
 
   return (
     <section className="panel ai-product-studio" id="ai-product-studio">
@@ -276,25 +327,25 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       <div className="studio-workspace">
         <aside className="creative-rail">
           <div className="creative-rail-head"><span><b>자동 제작 썸네일</b><small>제품이 프레임의 70% 이상 보이는 마켓용 이미지</small></span><em>{creativeThumbnails.length || 3}종</em></div>
-          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" /><span>CODEX IMAGE</span></div><b>CLI 상품 연출컷</b><small>ChatGPT OAuth · 원본 충실도 높음</small></article>}
+          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" /><span>CODEX IMAGE</span></div><b>CLI 상품 연출컷</b><small>ChatGPT OAuth · 원본 충실도 높음</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset("hero")} disabled={Boolean(regeneratingAssetId) || generating}>{regeneratingAssetId === "hero" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button></article>}
           <div className="thumbnail-grid">
-            {creativeThumbnails.length ? creativeThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
+            {creativeThumbnails.length ? creativeThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
           <div className="creative-rail-head"><span><b>상세페이지 이미지</b><small>전체·특징·사용·구성 4장을 채널 상세 본문에 삽입</small></span><em>{detailThumbnails.length || 4}종</em></div>
           <div className="thumbnail-grid detail-assets">
-            {detailThumbnails.length ? detailThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 상세 이미지`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>) : detailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>상세 전용 이미지 생성 대기</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
+            {detailThumbnails.length ? detailThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 상세 이미지`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button></article>) : detailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>상세 전용 이미지 생성 대기</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
           {result ? <div className="creative-summary"><span>CREATIVE DIRECTION</span><b>{result.design.themeName}</b><p>{result.product.oneLine}</p><div>{Object.values(result.design.palette).map((color) => <i key={color} style={{ background: color }} title={color} />)}</div></div> : <div className="creative-summary empty"><span>CLI RESULT</span><b>실제 분석 결과 대기</b><p>대표사진을 등록하고 분석을 시작하면 결과만 표시합니다.</p></div>}
         </aside>
 
         <article className="detail-preview-panel">
           <div className="detail-preview-toolbar"><span><MonitorSmartphone size={16} /><b>상세페이지 라이브 미리보기</b><small>모바일 우선 · 블록형 구성</small></span><button type="button" onClick={() => setEditorOpen(true)} disabled={!result}><PencilRuler size={15} />Puck으로 직접 편집</button></div>
-          <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>실제 상세페이지 결과가 아직 없습니다.</b><small>대표사진과 상품 정보를 분석한 뒤 ChatGPT CLI 결과를 표시합니다.</small></div>}</div>
+          <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>실제 상세페이지 결과가 아직 없습니다.</b><small>대표사진과 상품 정보를 분석한 뒤 ChatGPT CLI 결과를 표시합니다.</small></div>}</div>
         </article>
       </div>
       {lastError && <div className="studio-warning error"><b>실제 AI 작업 실패</b><p>{lastError}</p><small>예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 CLI 작업자 상태를 확인해 주세요.</small></div>}
       {result && result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
-      {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} data={savedDetailData} onSave={(next) => { setSavedDetailData(next); notify("상세페이지 편집 내용을 현재 작업에 저장했습니다."); }} onClose={() => setEditorOpen(false)} />}
+      {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} onSave={(next) => { setSavedDetailData(next); notify("상세페이지 편집 내용을 현재 작업에 저장했습니다."); }} onClose={() => setEditorOpen(false)} />}
     </section>
   );
 }

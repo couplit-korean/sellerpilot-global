@@ -28,7 +28,7 @@ function taskArguments(task: InventoryTask, productSku: string) {
     case "lazada": return { itemId: task.remoteId, quantity: task.quantity, queryParams: {} };
     case "coupang": return { sellerProductId: task.remoteId, quantity: task.quantity };
     case "smartstore": return { originProductNo: task.remoteId, quantity: task.quantity };
-    case "ebay": return { sku: productSku, quantity: task.quantity };
+    case "ebay": return { sku: task.market ? `${productSku}-${task.market}`.slice(0, 100) : productSku, quantity: task.quantity };
     case "temu": return { goodsId: task.remoteId, quantity: task.quantity };
     default: return { remoteId: task.remoteId, quantity: task.quantity };
   }

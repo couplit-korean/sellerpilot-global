@@ -1,15 +1,14 @@
 import type { ActiveChannelKey } from "./catalog";
 
-type PeriodicSyncRequest = {
-  periodicKey: string;
-  arguments: Record<string, unknown>;
-};
-
 function coupangDailyDate(value: Date) {
   // Coupang's v5 daily order query requires the market UTC offset after the
   // calendar date. A bare YYYY-MM-DD is rejected after the 2025 API
   // internationalization change.
   return `${new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10)}+09:00`;
+}
+
+function coupangTimeFrame(value: Date) {
+  return new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 16);
 }
 
 function qoo10DateTime(value: Date) {
@@ -53,30 +52,33 @@ export function orderSyncArguments(channel: ActiveChannelKey, now = new Date()):
   return null;
 }
 
-export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()): PeriodicSyncRequest[] {
+export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()) {
   const base = orderSyncArguments(channel, now);
   if (!base) return [];
   if (channel === "coupang") {
     const query = base.query && typeof base.query === "object" && !Array.isArray(base.query)
       ? base.query as Record<string, unknown>
       : {};
-    const requests: PeriodicSyncRequest[] = ["ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"].map((remoteStatus) => ({
+    const orderSheets = ["ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"].map((remoteStatus) => ({
       periodicKey: `orders:${remoteStatus}`,
       arguments: { ...base, query: { ...query, status: remoteStatus } },
     }));
-    requests.push({
-      periodicKey: "orders:CANCEL",
-      arguments: {
-        kind: "cancelled",
-        query: {
-          createdAtFrom: new Date(now.getTime() - 14 * 86_400_000).toISOString().slice(0, 10),
-          createdAtTo: now.toISOString().slice(0, 10),
-          cancelType: "CANCEL",
-          maxPerPage: 50,
+    const cancellationFrom = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    return [
+      ...orderSheets,
+      {
+        periodicKey: "orders:cancellations",
+        arguments: {
+          kind: "cancellations",
+          query: {
+            searchType: "timeFrame",
+            createdAtFrom: coupangTimeFrame(cancellationFrom),
+            createdAtTo: coupangTimeFrame(now),
+            cancelType: "CANCEL",
+          },
         },
       },
-    });
-    return requests;
+    ];
   }
   if (channel === "qoo10") {
     const params = base.params && typeof base.params === "object" && !Array.isArray(base.params)

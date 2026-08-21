@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 
-export async function GET(request: Request, context: RouteContext<"/api/ai/jobs/[id]">) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
 

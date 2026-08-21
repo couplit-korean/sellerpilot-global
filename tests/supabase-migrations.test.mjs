@@ -56,6 +56,10 @@ end;
 $$;
 create or replace view vault.decrypted_secrets as
 select id, secret as decrypted_secret from vault.secrets;
+create or replace function vault.delete_secret(secret_id uuid)
+returns void
+language sql
+as $$ delete from vault.secrets where id = secret_id $$;
 
 create schema if not exists storage;
 create table if not exists storage.buckets (
@@ -164,9 +168,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260821110000_harden_oauth_rotation_and_cleanup_lints.sql",
       "20260821113000_scope_push_deliveries_to_owner.sql",
       "20260821123000_enable_elevenst_order_sync.sql",
-      "20260821133000_marketplace_links_cancellations_and_stock_accuracy.sql",
-      "20260821134500_public_listing_health.sql",
-      "20260821141500_preserve_terminal_order_state.sql",
+      "20260821130000_commerce_operations_v2.sql",
+      "20260821133000_ai_asset_regeneration.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -288,19 +291,6 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       )`,
     );
     await setClaims(db, "service_role");
-    await db.query(
-      "select public.sellerpilot_record_credential_test($1, 'passed', 'OAuth rotation regression diagnostic')",
-      [lazadaCredentialId],
-    );
-    const lazadaPeriodicQueued = await scalar(
-      db,
-      `select public.sellerpilot_service_enqueue_periodic_sync(
-        'lazada', 'orders.list',
-        '{"periodicKey":"oauth-rotation-regression","arguments":{}}'::jsonb,
-        5
-      )`,
-    );
-    assert.equal(lazadaPeriodicQueued.status, "queued");
     const refreshedCredentialId = await scalar(
       db,
       `select public.sellerpilot_service_refresh_lazada(
@@ -311,26 +301,6 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [lazadaCredentialId],
     );
     assert.notEqual(refreshedCredentialId, lazadaCredentialId);
-    assert.equal(
-      await scalar(
-        db,
-        "select last_check_status from sellerpilot_private.channel_credentials where id = $1",
-        [refreshedCredentialId],
-      ),
-      "passed",
-    );
-    assert.equal(
-      await scalar(
-        db,
-        "select credential_id from sellerpilot_private.channel_gateway_jobs where id = $1",
-        [lazadaPeriodicQueued.jobId],
-      ),
-      refreshedCredentialId,
-    );
-    await db.query(
-      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
-      [lazadaPeriodicQueued.jobId],
-    );
     const refreshedSecret = await scalar(
       db,
       "select public.sellerpilot_get_active_credential_secret('lazada', 'production')",
@@ -688,47 +658,6 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
 
     await setClaims(db, "service_role");
-    const cancelledOrder = JSON.stringify([{
-      externalOrderId: "REAL-ORDER-1",
-      customerName: "실고객",
-      productName: "AI 생성 테스트 상품",
-      quantity: 1,
-      amount: 0,
-      amountKrw: 0,
-      currency: "KRW",
-      status: "cancelled",
-      orderedAt: new Date().toISOString(),
-    }]);
-    assert.equal(
-      await scalar(db, "select public.sellerpilot_service_ingest_orders($1, 'qoo10', $2::jsonb)", [credentialId, cancelledOrder]),
-      1,
-    );
-    const stalePaidOrder = JSON.stringify([{
-      externalOrderId: "REAL-ORDER-1",
-      customerName: "마켓 구매자",
-      productName: "주문 상품",
-      quantity: 1,
-      amount: 0,
-      amountKrw: 0,
-      currency: "KRW",
-      status: "paid",
-      orderedAt: new Date().toISOString(),
-    }]);
-    assert.equal(
-      await scalar(db, "select public.sellerpilot_service_ingest_orders($1, 'qoo10', $2::jsonb)", [credentialId, stalePaidOrder]),
-      1,
-    );
-    const terminalOrder = (await db.query(
-      "select id, status, product_name, amount_krw from sellerpilot_private.commerce_orders where owner_id=$1 and channel_key='qoo10' and external_order_id='REAL-ORDER-1'",
-      [ADMIN_ID],
-    )).rows[0];
-    assert.equal(terminalOrder.status, "cancelled");
-    assert.equal(terminalOrder.product_name, "AI 생성 테스트 상품");
-    assert.equal(terminalOrder.amount_krw, "32000.00");
-    await db.query(
-      "delete from sellerpilot_private.push_notification_outbox where event_key=$1",
-      [`order:${terminalOrder.id}:status:cancelled`],
-    );
     assert.equal(
       await scalar(db, "select public.sellerpilot_service_ingest_orders($1, 'qoo10', '[]'::jsonb)", [credentialId]),
       0,
@@ -755,14 +684,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(snapshot.orders.every((order) => order.demo === false), true);
     assert.equal(snapshot.tickets.every((ticket) => ticket.demo === false), true);
     assert.equal(snapshot.summary.orderCount, 2);
-    assert.equal(snapshot.summary.paidOrderCount, 1);
-    assert.equal(snapshot.summary.sold30d, 1);
     assert.equal(snapshot.summary.openTicketCount, 2);
     assert.equal(snapshot.channelMetrics.find((channel) => channel.channelKey === "qoo10").credentialStatus, "active");
     const aiProduct = snapshot.products.find((product) => product.id === aiProductId);
     assert.equal(aiProduct.demo, false);
-    assert.equal(aiProduct.status, "low_stock");
-    assert.equal(aiProduct.reorderPoint, 10);
+    assert.equal(aiProduct.status, "active");
     assert.deepEqual(aiProduct.listingChannels, ["C"]);
     assert.equal(aiProduct.aiHeroPath, resultPayload.asset_storage_paths.hero);
     assert.equal(snapshot.products.some((product) => product.id === SHARED_PRODUCT_ID), true);

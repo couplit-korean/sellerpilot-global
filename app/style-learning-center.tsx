@@ -64,7 +64,7 @@ export function StyleLearningCenter() {
           </span>
           <h2>채널·국가별 상품 스타일 학습 검증</h2>
           <p>
-            6개 핵심 카테고리의 상품군을 200개씩 나누고, 7개 채널의 19개 국가·언어 조합에 맞춰
+            6개 핵심 카테고리의 상품군을 200개씩 나누고, 8개 채널의 26개 국가·언어 조합에 맞춰
             제목·설명·상세 배치·썸네일·촬영 지침을 업로드 프롬프트에 연결했습니다.
           </p>
         </div>
@@ -118,10 +118,10 @@ export function StyleLearningCenter() {
           <PackageSearch size={23} />
         </div>
         <div className="style-learning-impact-grid">
-          <article><b>SEO 상품명 · 19개</b><p>채널·국가별 핵심 검색어 순서와 제목 길이 규칙을 적용하고 실제 등록 제목 필드로 전달합니다.</p></article>
-          <article><b>상품 설명 · 19개</b><p>모바일 요약, 현지어 설명, 검색 키워드를 생성해 각 채널의 설명·검색 필드에 반영합니다.</p></article>
-          <article><b>상세 텍스트 · 76개</b><p>overview·feature·howto·spec 4개 섹션을 19개 프로필별로 생성해 텍스트와 상세 이미지를 교차 배치합니다.</p></article>
-          <article><b>이미지 SEO · 95개</b><p>대표 19개·상세 76개의 현지어 시각 의미를 사진 생성 프롬프트에 반영합니다. HTML alt 지원 채널에는 대체텍스트로, 미지원 채널에는 이미지 선택·순서 규칙으로 적용합니다.</p></article>
+          <article><b>SEO 상품명 · 26개</b><p>채널·국가별 핵심 검색어 순서와 제목 길이 규칙을 적용하고 실제 등록 제목 필드로 전달합니다.</p></article>
+          <article><b>상품 설명 · 26개</b><p>모바일 요약, 현지어 설명, 검색 키워드를 생성해 각 채널의 설명·검색 필드에 반영합니다.</p></article>
+          <article><b>상세 텍스트 · 104개</b><p>overview·feature·howto·spec 4개 섹션을 26개 프로필별로 생성해 텍스트와 상세 이미지를 교차 배치합니다.</p></article>
+          <article><b>이미지 SEO · 130개</b><p>대표 26개·상세 104개의 현지어 시각 의미를 사진 생성 프롬프트에 반영합니다. HTML alt 지원 채널에는 대체텍스트로, 미지원 채널에는 이미지 선택·순서 규칙으로 적용합니다.</p></article>
         </div>
       </section>
 

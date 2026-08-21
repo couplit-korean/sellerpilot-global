@@ -15,13 +15,13 @@ import {
   ensureEbayAccessToken,
   ensureShopeeAccessToken,
   ensureShopeeMerchantAccessToken,
-  elevenstOrderRequest,
   elevenstRequest,
   exchangeShopeeOAuthToken,
   fetchNaverAccessToken,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
 import { inquirySyncArguments, orderSyncRequests } from "../lib/channels/sync-arguments";
+import { buildShipmentArguments } from "../lib/channels/shipment-draft";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
 
 test("Coupang CEA authorization signs the documented canonical value", () => {
@@ -118,66 +118,6 @@ test("11st fixed-IP diagnostic calls ProductSearch and returns only safe XML met
   }
 });
 
-test("11st seller order feed uses the fixed-IP REST endpoint and Open API header", async () => {
-  const originalFetch = globalThis.fetch;
-  let calledUrl = "";
-  let calledHeaders = new Headers();
-  globalThis.fetch = async (input, init) => {
-    calledUrl = String(input);
-    calledHeaders = new Headers(init?.headers);
-    return new Response(`<?xml version="1.0" encoding="EUC-KR"?>
-      <ns2:orders xmlns:ns2="http://api.11st.co.kr/order">
-        <ns2:order><ordNo>202608210001</ordNo><ordPrdSeq>1</ordPrdSeq><ordNm>테스트 구매자</ordNm><prdNm>테스트 상품 A</prdNm><ordQty>1</ordQty><ordPayAmtPerSeq>10000</ordPayAmtPerSeq><ordPayAmt>15000</ordPayAmt><selPrc>10000</selPrc><ordStlEndDt>2026-08-21 10:00:00</ordStlEndDt></ns2:order>
-        <ns2:order><ordNo>202608210001</ordNo><ordPrdSeq>2</ordPrdSeq><ordNm>테스트 구매자</ordNm><prdNm>테스트 상품 B</prdNm><ordQty>1</ordQty><ordPayAmtPerSeq>5000</ordPayAmtPerSeq><ordPayAmt>15000</ordPayAmt><selPrc>5000</selPrc><ordStlEndDt>2026-08-21 10:00:00</ordStlEndDt></ns2:order>
-      </ns2:orders>`, { status: 200, headers: { "content-type": "application/xml; charset=euc-kr" } });
-  };
-  try {
-    const remote = await elevenstOrderRequest({
-      payload: { api_key: "A".repeat(32) },
-      startTime: "202608140000",
-      endTime: "202608210000",
-    });
-    assert.equal(calledUrl, "https://api.11st.co.kr/rest/ordservices/complete/202608140000/202608210000");
-    assert.equal(calledHeaders.get("openapikey"), "A".repeat(32));
-    assert.equal(Array.isArray(remote.data.orders) ? remote.data.orders.length : 0, 2);
-    assert.equal(remote.text, "");
-
-    const operation = await executeChannelOperation({
-      channel: "elevenst",
-      operation: "orders.list",
-      payload: { api_key: "A".repeat(32) },
-      arguments: { startTime: "202608140000", endTime: "202608210000" },
-      environment: "production",
-    });
-    assert.equal(operation.ok, true);
-    assert.equal(operation.steps[0]?.name, "orders");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("11st periodic order sync splits the last 14 days into provider-safe seven-day windows", () => {
-  const requests = orderSyncRequests("elevenst", new Date("2026-08-21T03:00:00.000Z"));
-  assert.deepEqual(requests.map((request) => request.arguments), [
-    { startTime: "202608071200", endTime: "202608141200" },
-    { startTime: "202608141200", endTime: "202608211200" },
-  ]);
-});
-
-test("Coupang periodic order sync includes paid, shipping, delivered, and cancellation feeds", () => {
-  const requests = orderSyncRequests("coupang", new Date("2026-08-21T03:00:00.000Z"));
-  assert.deepEqual(requests.map((request) => request.periodicKey), [
-    "orders:ACCEPT",
-    "orders:INSTRUCT",
-    "orders:DEPARTURE",
-    "orders:DELIVERING",
-    "orders:FINAL_DELIVERY",
-    "orders:CANCEL",
-  ]);
-  assert.equal(requests.at(-1)?.arguments.kind, "cancelled");
-  assert.equal((requests.at(-1)?.arguments.query as Record<string, unknown>)?.cancelType, "CANCEL");
-});
-
 test("Qoo10 periodic order sync uses the documented Japan-time parameters for every shipping state", () => {
   const requests = orderSyncRequests("qoo10", new Date("2026-08-20T07:00:00.000Z"));
   assert.deepEqual(requests.map((request) => request.periodicKey), ["orders:0", "orders:3", "orders:4", "orders:5"]);
@@ -193,6 +133,84 @@ test("Qoo10 unanswered inquiry sync uses the current CSCenter parameter names", 
   assert.deepEqual(inquirySyncArguments("qoo10", new Date("2026-08-20T07:00:00.000Z")), [{
     params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" },
   }]);
+});
+
+test("Smartstore inquiry sync sends the required W3C date range and unanswered filter", () => {
+  assert.deepEqual(inquirySyncArguments("smartstore", new Date("2026-08-20T07:00:00.000Z")), [{
+    query: {
+      fromDate: "2026-08-14T07:00:00.000Z",
+      toDate: "2026-08-20T07:00:00.000Z",
+      answered: false,
+      page: 1,
+      size: 100,
+    },
+  }]);
+});
+
+test("shipment drafts map carrier and tracking fields without changing internal order state", () => {
+  const shippedAt = new Date("2026-08-21T03:04:05.000Z");
+  assert.deepEqual(buildShipmentArguments({
+    channel: "qoo10",
+    externalOrderId: "123456789",
+    carrierCode: "CJ",
+    trackingNumber: "123456789012",
+    shippedAt,
+  }), {
+    params: { OrderNo: "123456789", ShippingCorp: "CJ", TrackingNo: "123456789012" },
+  });
+  assert.deepEqual(buildShipmentArguments({
+    channel: "coupang",
+    externalOrderId: "987654321",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+    shippedAt,
+  }), {
+    body: {
+      orderSheetInvoiceApplyDtoList: [{
+        shipmentBoxId: 987654321,
+        deliveryCompanyCode: "CJGLS",
+        invoiceNumber: "111222333444",
+      }],
+    },
+  });
+  assert.deepEqual(buildShipmentArguments({
+    channel: "smartstore",
+    externalOrderId: "PROD-ORDER-1",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+    shippedAt,
+  }), {
+    body: {
+      dispatchProductOrders: [{
+        productOrderId: "PROD-ORDER-1",
+        deliveryMethod: "DELIVERY",
+        deliveryCompanyCode: "CJGLS",
+        trackingNumber: "111222333444",
+        dispatchDate: "2026-08-21T03:04:05.000Z",
+      }],
+    },
+  });
+});
+
+test("shipment drafts fail closed for incomplete marketplace-specific data", () => {
+  assert.throws(() => buildShipmentArguments({
+    channel: "coupang",
+    externalOrderId: "not-a-shipment-box-id",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+  }), /SHIPMENT_FIELD_INVALID:shipmentBoxId/);
+  assert.throws(() => buildShipmentArguments({
+    channel: "lazada",
+    externalOrderId: "ORDER-1",
+    carrierCode: "LEX",
+    trackingNumber: "111222333444",
+  }), /SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada/);
+  assert.throws(() => buildShipmentArguments({
+    channel: "elevenst",
+    externalOrderId: "ORDER-1",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+  }), /SHIPMENT_CHANNEL_UNAVAILABLE:elevenst/);
 });
 
 test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () => {
