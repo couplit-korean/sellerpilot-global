@@ -7,6 +7,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 type DueProduct = { product_id: string; query: string };
+type ActiveCredential = { secret_payload?: unknown };
 
 function plainText(value: unknown) {
   return String(value ?? "").replace(/<[^>]*>/g, "").replaceAll("&quot;", "\"").replaceAll("&amp;", "&").trim();
@@ -18,11 +19,29 @@ function serverClient() {
   return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
+async function naverSearchCredentials(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
+  const environmentClientId = process.env.NAVER_SEARCH_CLIENT_ID?.trim() ?? "";
+  const environmentClientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET?.trim() ?? "";
+  if (environmentClientId && environmentClientSecret) {
+    return { clientId: environmentClientId, clientSecret: environmentClientSecret };
+  }
+  const { data, error } = await serviceClient.rpc("sellerpilot_get_active_credential_secret", {
+    p_channel: "smartstore",
+    p_environment: "production",
+  });
+  const active = data as ActiveCredential | null;
+  const secret = active?.secret_payload && typeof active.secret_payload === "object" && !Array.isArray(active.secret_payload)
+    ? active.secret_payload as Record<string, unknown>
+    : null;
+  const clientId = typeof secret?.client_id === "string" ? secret.client_id.trim() : "";
+  const clientSecret = typeof secret?.client_secret === "string" ? secret.client_secret.trim() : "";
+  return !error && clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
 async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
-  const clientId = process.env.NAVER_SEARCH_CLIENT_ID?.trim() ?? "";
-  const clientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET?.trim() ?? "";
-  if (!clientId || !clientSecret) {
-    return NextResponse.json({ message: "Supabase 또는 네이버 쇼핑 검색 환경변수가 없습니다." }, { status: 503 });
+  const credentials = await naverSearchCredentials(serviceClient);
+  if (!credentials) {
+    return NextResponse.json({ message: "네이버 쇼핑 검색 인증을 확인하지 못했습니다." }, { status: 503 });
   }
   const { data, error } = await serviceClient.rpc("sellerpilot_service_due_competitor_products", { p_limit: 40 });
   if (error) return NextResponse.json({ message: "경쟁가 조회 대상 상품을 읽지 못했습니다." }, { status: 500 });
@@ -34,7 +53,7 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
       url.searchParams.set("query", product.query);
       url.searchParams.set("display", "5");
       url.searchParams.set("sort", "sim");
-      const response = await fetch(url, { headers: { "X-Naver-Client-Id": clientId, "X-Naver-Client-Secret": clientSecret }, cache: "no-store", signal: AbortSignal.timeout(10_000) });
+      const response = await fetch(url, { headers: { "X-Naver-Client-Id": credentials.clientId, "X-Naver-Client-Secret": credentials.clientSecret }, cache: "no-store", signal: AbortSignal.timeout(10_000) });
       if (!response.ok) throw new Error("naver_search_failed");
       const payload = await response.json() as { items?: Array<Record<string, unknown>> };
       const items = (payload.items ?? []).slice(0, 5).map((item) => ({

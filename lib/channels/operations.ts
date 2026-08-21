@@ -357,6 +357,31 @@ function operationDelay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function qoo10InventoryQuantity(value: unknown, itemCode: string, depth = 0): unknown {
+  if (depth > 6 || value === null || value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    const records = value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item));
+    const matching = records.find((item) => String(item.ItemCode ?? item.GdNo ?? "") === itemCode);
+    if (matching) return qoo10InventoryQuantity(matching, itemCode, depth + 1);
+    for (const item of value) {
+      const found = qoo10InventoryQuantity(item, itemCode, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (typeof value !== "object") return undefined;
+  const recordValue = value as Record<string, unknown>;
+  for (const key of ["ItemQty", "Qty", "StockQty", "stockQty", "quantity"]) {
+    const quantity = recordValue[key];
+    if (typeof quantity === "string" || typeof quantity === "number") return quantity;
+  }
+  for (const nested of Object.values(recordValue)) {
+    const found = qoo10InventoryQuantity(nested, itemCode, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 async function executeQoo10(input: ExecuteInput) {
   const suppliedParams = stringMap(input.arguments, "params");
   const inventoryQuantity = input.operation === "inventory.update"
@@ -418,20 +443,26 @@ async function executeQoo10(input: ExecuteInput) {
       : undefined;
   if (input.operation === "inventory.update") {
     const itemCode = params.ItemCode;
-    const readback = await qoo10Request({
-      payload: input.payload,
-      service: "ItemsLookup",
-      method: "GetItemDetailInfo",
-      version: "1.2",
-      params: { ItemCode: itemCode, SellerCode: params.SellerCode ?? "" },
-    });
-    const readbackObject = readback.data.ResultObject && typeof readback.data.ResultObject === "object" && !Array.isArray(readback.data.ResultObject)
-      ? readback.data.ResultObject as Record<string, unknown>
-      : {};
-    return result(input, [
-      createStep,
-      inventoryQuantityVerificationStep("GetItemDetailInfo", readback, inventoryQuantity ?? 0, readbackObject.ItemQty ?? readbackObject.Qty),
-    ], itemCode || remoteId);
+    if (!createStep.ok) return result(input, [createStep], itemCode || remoteId);
+    let lastVerification: ChannelOperationStep | null = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt > 0) await operationDelay(750 * attempt);
+      const readback = await qoo10Request({
+        payload: input.payload,
+        service: "ItemsLookup",
+        method: "GetItemDetailInfo",
+        version: "1.2",
+        params: { ItemCode: itemCode, SellerCode: params.SellerCode ?? "" },
+      });
+      lastVerification = inventoryQuantityVerificationStep(
+        "GetItemDetailInfo",
+        readback,
+        inventoryQuantity ?? 0,
+        qoo10InventoryQuantity(readback.data.ResultObject, itemCode),
+      );
+      if (lastVerification.ok) return result(input, [createStep, lastVerification], itemCode || remoteId);
+    }
+    return result(input, [createStep, lastVerification!], itemCode || remoteId);
   }
   if (input.operation !== "listing.create" || !createStep.ok || !remoteId) {
     return result(input, [createStep], remoteId);
