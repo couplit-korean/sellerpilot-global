@@ -439,7 +439,10 @@ function OverviewPage({ onNavigate, onOpenProduct, displayProducts, operationSum
   const [rateUpdatedAt, setRateUpdatedAt] = useState("화면 기준값");
   const [rateSource, setRateSource] = useState("실데이터 확인 중");
   const [today] = useState(() => new Date());
-  const monthlyTopProducts = useMemo(() => [...displayProducts].sort((a, b) => b.sales - a.sales).slice(0, 10), [displayProducts]);
+  const monthlyTopProducts = useMemo(() => [...displayProducts]
+    .filter((product) => product.sales > 0)
+    .sort((a, b) => b.sales - a.sales || b.revenueKrw - a.revenueKrw || a.name.localeCompare(b.name, "ko"))
+    .slice(0, 10), [displayProducts]);
   const activeMetrics = useMemo(() => channelMetrics
     .filter((channel) => activeChannelKeys.includes(channel.channelKey as (typeof activeChannelKeys)[number]))
     .sort((left, right) => right.revenue30dKrw - left.revenue30dKrw || right.orderCount - left.orderCount || left.name.localeCompare(right.name, "ko")), [channelMetrics]);
