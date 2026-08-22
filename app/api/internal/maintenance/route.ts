@@ -211,7 +211,8 @@ export async function GET(request: Request) {
   }
   const retentionDays = 30;
   const completedBefore = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-  const [{ data, error }, { data: personalData, error: personalDataError }] = await Promise.all([
+  const runtimeCompletedBefore = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const [{ data, error }, { data: personalData, error: personalDataError }, { data: runtimeData, error: runtimeDataError }] = await Promise.all([
     serviceClient.rpc("sellerpilot_prune_ai_jobs", {
       p_completed_before: completedBefore,
       p_limit: 200,
@@ -219,8 +220,11 @@ export async function GET(request: Request) {
     serviceClient.rpc("sellerpilot_prune_personal_data", {
       p_completed_before: completedBefore,
     }),
+    serviceClient.rpc("sellerpilot_service_prune_runtime_noise", {
+      p_completed_before: runtimeCompletedBefore,
+    }),
   ]);
-  if (error || personalDataError) {
+  if (error || personalDataError || runtimeDataError) {
     return NextResponse.json({ message: "30일 보관기간 정리를 완료하지 못했습니다." }, { status: 500 });
   }
 
@@ -244,6 +248,7 @@ export async function GET(request: Request) {
     jobsPruned: rows.length,
     storageRemoved,
     personalData,
+    runtimeData,
     shopeeToken: shopeeToken.status,
     lazadaToken: lazadaToken.status,
     ebayToken: ebayToken.status,
