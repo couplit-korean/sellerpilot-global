@@ -190,6 +190,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(channelMapping, /Lazada Open Platform/);
   const credentialPage = await readFile(new URL("../app/api-credential-center.tsx", import.meta.url), "utf8");
   assert.match(credentialPage, /고객 문의 목록/);
+  assert.match(credentialPage, /배송·물류 API 연결/);
+  assert.match(credentialPage, /SmartShip 물류 API 실행 검수/);
   const credentialTestRoute = await readFile(new URL("../app/api/admin/channel-credentials/test/route.ts", import.meta.url), "utf8");
   const gatewayCompleteRoute = await readFile(new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url), "utf8");
   const gatewayContract = await readFile(new URL("../lib/channels/gateway-contract.ts", import.meta.url), "utf8");
@@ -214,6 +216,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(operationsMigration, /sellerpilot_seed_demo_operations/);
   assert.match(operationsRoute, /margin_save/);
   assert.match(operationsRoute, /ticket_update/);
+  assert.match(operationsRoute, /activeSalesChannels\.has\(channel\)/);
   assert.doesNotMatch(credentialPage, /Project API Key|OpenAI API/);
   assert.match(credentialPage, /키 수명 · 교체 일정/);
   assert.match(credentialPage, /연결 검사/);

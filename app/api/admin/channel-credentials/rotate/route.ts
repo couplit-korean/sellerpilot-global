@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid().optional(),
-  channel: z.enum(["qoo10", "coupang", "elevenst", "smartstore", "temu"]),
+  channel: z.enum(["qoo10", "coupang", "elevenst", "smartstore", "temu", "tracx"]),
   environment: z.enum(["sandbox", "production"]),
   secretPayload: z.record(z.string(), z.string().trim().max(8_000)),
   expiresAt: z.string().datetime().nullable(),
@@ -67,8 +67,14 @@ export async function POST(request: NextRequest) {
   }
   nextSecret = { ...nextSecret, ...parsed.data.secretPayload };
 
-  const missing = requiredCredentialKeys(parsed.data.channel as ActiveChannelKey).filter((key) => !hasText(nextSecret, key));
+  const requiredKeys = parsed.data.channel === "tracx"
+    ? ["api_key", "webhook_secret"]
+    : requiredCredentialKeys(parsed.data.channel as ActiveChannelKey);
+  const missing = requiredKeys.filter((key) => !hasText(nextSecret, key));
   if (missing.length) return NextResponse.json({ message: `필수 키 값이 누락됐습니다 · ${missing.join(", ")}` }, { status: 400 });
+  if (parsed.data.channel === "tracx" && String(nextSecret.webhook_secret).trim().length < 32) {
+    return NextResponse.json({ message: "SmartShip 배송 Webhook 보안 토큰은 32자 이상이어야 합니다." }, { status: 400 });
+  }
   if (parsed.data.channel === "smartstore") {
     const tokenType = typeof nextSecret.token_type === "string" ? nextSecret.token_type.trim().toUpperCase() : "SELF";
     if (!["SELF", "SELLER"].includes(tokenType) || (tokenType === "SELLER" && !hasText(nextSecret, "account_id"))) {

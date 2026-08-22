@@ -2,9 +2,12 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
+import { activeChannelKeys } from "../../../../lib/channels/catalog";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
 export const runtime = "nodejs";
+
+const activeSalesChannels = new Set<string>(activeChannelKeys);
 
 function imageVersionForPath(path: string) {
   return createHash("sha256").update(path).digest("hex").slice(0, 20);
@@ -76,7 +79,7 @@ export async function GET(request: Request) {
   const activeProductionByChannel = new Map<string, Record<string, unknown>>();
   for (const credential of credentials) {
     const channel = typeof credential.channel === "string" ? credential.channel : "";
-    if (!channel || credential.environment !== "production" || credential.status !== "active" || activeProductionByChannel.has(channel)) continue;
+    if (!activeSalesChannels.has(channel) || credential.environment !== "production" || credential.status !== "active" || activeProductionByChannel.has(channel)) continue;
     activeProductionByChannel.set(channel, credential);
   }
   const verifiedChannels = new Set([...activeProductionByChannel.entries()]

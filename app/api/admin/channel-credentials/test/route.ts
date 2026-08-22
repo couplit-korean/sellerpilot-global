@@ -4,13 +4,14 @@ import { z } from "zod";
 import { runChannelDiagnostic } from "../../../../../lib/channel-diagnostics";
 import { executeDiagnosticViaChannelGateway } from "../../../../../lib/channels/gateway";
 import { ensureEbayAccessToken } from "../../../../../lib/channels/protocols";
+import { runTracxDiagnostic } from "../../../../../lib/logistics/tracx";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
-  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
+  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu", "tracx"]),
 });
 
 export async function POST(request: NextRequest) {
@@ -98,6 +99,31 @@ export async function POST(request: NextRequest) {
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
   let diagnosticPayload = secretPayload as Record<string, unknown>;
   let diagnosticCredentialId = parsed.data.credentialId;
+  if (parsed.data.channel === "tracx") {
+    try {
+      const result = await runTracxDiagnostic(diagnosticPayload);
+      await serviceClient.rpc("sellerpilot_record_credential_test", {
+        p_credential_id: diagnosticCredentialId,
+        p_status: result.status,
+        p_safe_message: result.message,
+      });
+      return NextResponse.json(result, {
+        status: result.status === "failed" ? 422 : 200,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
+    } catch (error) {
+      const timeout = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+      const message = timeout
+        ? "SmartShip 응답 제한시간(15초)을 초과했습니다."
+        : "SmartShip TxAPI 연결 중 안전하게 처리된 오류가 발생했습니다.";
+      await serviceClient.rpc("sellerpilot_record_credential_test", {
+        p_credential_id: diagnosticCredentialId,
+        p_status: "failed",
+        p_safe_message: message,
+      });
+      return NextResponse.json({ status: "failed", message }, { status: 422 });
+    }
+  }
   if (parsed.data.channel === "ebay") {
     try {
       const ensured = await ensureEbayAccessToken(diagnosticPayload, environment);

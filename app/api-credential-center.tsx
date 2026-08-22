@@ -26,9 +26,16 @@ import { isSupabaseConfigured } from "../lib/supabase/config";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey, type ChannelDefinition } from "../lib/channels/catalog";
 import { AiCliRuntimeCard } from "./ai-cli-runtime-card";
 
+type CredentialKey = ActiveChannelKey | "tracx";
+
+type CredentialDefinition = Pick<
+  ChannelDefinition,
+  "code" | "mark" | "name" | "market" | "credentialPolicy" | "oauth" | "fields" | "officialDocs"
+> & { key: CredentialKey };
+
 type Credential = {
   id: string;
-  channel: ActiveChannelKey;
+  channel: CredentialKey;
   environment: "sandbox" | "production";
   version: number;
   fingerprint: string;
@@ -184,6 +191,24 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
 }
 
 const channelDefinitions: ChannelDefinition[] = activeChannelKeys.map((key) => channelCatalog[key]);
+const tracxCredentialDefinition: CredentialDefinition = {
+  key: "tracx",
+  code: "TX",
+  mark: "TX",
+  name: "SmartShip · TracX Logis",
+  market: "Global logistics · TxAPI",
+  credentialPolicy: "TxAPI Key는 Vault에만 저장 · 배송 Webhook은 32자 이상 비밀 토큰으로 검증",
+  oauth: false,
+  fields: [
+    { key: "api_key", label: "TxAPI Key", secret: true, placeholder: "SmartShip 나의 API 정보의 API Key" },
+    { key: "webhook_secret", label: "배송 Webhook 보안 토큰", secret: true, placeholder: "32자 이상 무작위 문자열", help: "Delivery WebHook URL의 token 값과 동일하게 설정합니다." },
+  ],
+  officialDocs: [
+    { label: "SmartShip API 정보", url: "https://smartship.tracxlogis.com/Customer/ApiInfo" },
+    { label: "TxAPI 가이드", url: "https://api.tracxlogis.com/GMKT.INC.GLPS.OpenApiService/Document/QAPIGuideIndex.aspx" },
+  ],
+};
+const credentialDefinitions: CredentialDefinition[] = [...channelDefinitions, tracxCredentialDefinition];
 
 const actionLabels: Record<string, string> = {
   created: "최초 등록", rotated: "키 교체", token_refreshed: "토큰 갱신", schedule_updated: "일정 변경", tested: "연결 검사", revoked: "폐기", restored: "복원",
@@ -211,12 +236,13 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
   const [audits, setAudits] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [editing, setEditing] = useState<ChannelDefinition | null>(null);
+  const [editing, setEditing] = useState<CredentialDefinition | null>(null);
   const [showAudit, setShowAudit] = useState(false);
   const [testingId, setTestingId] = useState("");
   const [oauthStartingId, setOauthStartingId] = useState("");
   const [pendingOAuth, setPendingOAuth] = useState<{ channelName: string; authorizationUrl: string } | null>(null);
   const [operationTarget, setOperationTarget] = useState<{ channel: ChannelDefinition; credential: Credential } | null>(null);
+  const [tracxOperationTarget, setTracxOperationTarget] = useState<Credential | null>(null);
 
   const load = useCallback(async () => {
     if (!isSupabaseConfigured) {
@@ -252,13 +278,15 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
 
   const activeByChannel = useMemo(() => {
     const result = new Map<Credential["channel"], Credential>();
-    for (const channel of channelDefinitions) {
+    for (const channel of credentialDefinitions) {
       const active = credentials.find((item) => item.channel === channel.key && item.environment === "production" && item.status === "active")
         ?? credentials.find((item) => item.channel === channel.key && item.status === "active");
       if (active) result.set(channel.key, active);
     }
     return result;
   }, [credentials]);
+  const activeSalesChannelCount = channelDefinitions.filter((channel) => activeByChannel.has(channel.key)).length;
+  const tracxCredential = activeByChannel.get("tracx");
   const expiringCount = [...activeByChannel.values()].filter((item) => {
     const days = remainingDays(item.expires_at);
     return days !== null && days <= item.warning_days;
@@ -279,6 +307,8 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
   };
 
   const startOAuth = async (credential: Credential) => {
+    if (credential.channel === "tracx") return;
+    const definition = channelCatalog[credential.channel];
     setOauthStartingId(credential.id);
     setPendingOAuth(null);
     try {
@@ -293,11 +323,11 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
           startOAuth: true,
         }),
       });
-      const payload = await response.json().catch(() => ({ message: `${channelCatalog[credential.channel].name} OAuth 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
+      const payload = await response.json().catch(() => ({ message: `${definition.name} OAuth 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
       if (!response.ok || !payload.authorizationUrl) throw new Error(payload.message);
       setError("");
-      setPendingOAuth({ channelName: channelCatalog[credential.channel].name, authorizationUrl: payload.authorizationUrl });
-      notify(`${channelCatalog[credential.channel].name} 판매자 승인 링크를 준비했습니다.`);
+      setPendingOAuth({ channelName: definition.name, authorizationUrl: payload.authorizationUrl });
+      notify(`${definition.name} 판매자 승인 링크를 준비했습니다.`);
     } catch (oauthError) {
       const message = oauthError instanceof Error ? oauthError.message : "판매 채널 OAuth를 시작하지 못했습니다.";
       setError(message);
@@ -319,7 +349,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
       <section className="credential-system-strip">
         <article><DatabaseZap size={18} /><span><small>비밀 저장소</small><b>Supabase Vault</b><em className={isSupabaseConfigured ? "ok" : "bad"}>{isSupabaseConfigured ? "환경 연결" : "미연결"}</em></span></article>
         <article><ServerCog size={18} /><span><small>운영 배포</small><b>sellerpilot-global</b><em className="ok">Vercel Production</em></span></article>
-        <article><KeyRound size={18} /><span><small>활성 API 키</small><b>{activeByChannel.size} / {channelDefinitions.length}</b><em>{loading ? "확인 중" : "Vault 메타데이터"}</em></span></article>
+        <article><KeyRound size={18} /><span><small>활성 판매채널 키</small><b>{activeSalesChannelCount} / {channelDefinitions.length}</b><em>{loading ? "확인 중" : "Vault 메타데이터"}</em></span></article>
         <article className={expiringCount ? "attention" : ""}><CalendarClock size={18} /><span><small>교체 경고</small><b>{expiringCount}건</b><em>{expiringCount ? "일정 확인 필요" : "현재 없음"}</em></span></article>
       </section>
 
@@ -351,15 +381,133 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
         })}
       </section>
 
+      <section className="panel credential-history-panel logistics-credential-panel">
+        <div className="panel-heading"><div><span className="panel-kicker">LOGISTICS CONNECTION</span><h3>배송·물류 API 연결</h3><p>판매채널 키와 분리해 SmartShip 주문·반품·배송추적·물류문의·배송 Webhook을 운영합니다.</p></div></div>
+        <article className="credential-card tracx">
+          <header><span className="credential-channel-code">{tracxCredentialDefinition.mark}</span><div><small>{tracxCredentialDefinition.market}</small><h3>{tracxCredentialDefinition.name}</h3></div><span className={`connection-state ${tracxCredential ? "connected" : "empty"}`}><i />{tracxCredential ? "키 등록됨" : "등록 필요"}</span></header>
+          <div className="credential-policy"><Clock3 size={13} />{tracxCredentialDefinition.credentialPolicy}</div>
+          <div className="credential-source-links">{tracxCredentialDefinition.officialDocs.map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}</a>)}</div>
+          <div className="credential-lifecycle">
+            <div><small>활성 버전</small><b>{tracxCredential ? `v${tracxCredential.version}` : "—"}</b><em>{tracxCredential ? `지문 ${tracxCredential.fingerprint}` : "Vault 대기"}</em></div>
+            <div><small>최근 연결 검사</small><b>{tracxCredential?.last_check_status === "passed" ? "정상" : tracxCredential?.last_check_status === "failed" ? "실패" : "미실행"}</b><em>{formatDate(tracxCredential?.last_checked_at ?? null, true)}</em></div>
+            <div><small>주문·반품</small><b>TxAPI</b><em>기간 조회 · 상세 · 취소</em></div>
+            <div><small>배송 상태</small><b>Webhook + 조회</b><em>중복 제거 · 원장 반영</em></div>
+          </div>
+          {tracxCredential?.last_check_message && <p className={`last-check ${tracxCredential.last_check_status}`}>{tracxCredential.last_check_status === "passed" ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}{tracxCredential.last_check_message}</p>}
+          <footer><button className="credential-secondary" onClick={() => tracxCredential && void testConnection(tracxCredential)} disabled={!tracxCredential || testingId === tracxCredential.id}>{testingId === tracxCredential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}TxAPI 읽기 검사</button><button className="credential-secondary" onClick={() => tracxCredential && setTracxOperationTarget(tracxCredential)} disabled={!tracxCredential}><Code2 size={14} />물류 API 검수</button><button className="credential-primary" onClick={() => setEditing(tracxCredentialDefinition)}><RotateCcw size={14} />{tracxCredential ? "키 교체" : "키 등록"}</button></footer>
+        </article>
+      </section>
+
       <section className="panel credential-history-panel">
         <div className="panel-heading"><div><span className="panel-kicker">ROTATION AUDIT</span><h3>최근 키 관리 기록</h3></div><button className="filter-button" onClick={() => setShowAudit((current) => !current)}><History size={14} />{showAudit ? "접기" : "전체 기록"}<ChevronDown size={13} /></button></div>
-        <div className="credential-history-list">{(showAudit ? audits : audits.slice(0, 5)).map((row) => <div key={row.id}><span className={`audit-action ${row.action}`}>{actionLabels[row.action] ?? row.action}</span><b>{channelDefinitions.find((channel) => channel.key === row.channel)?.name ?? row.channel}</b><small>{row.environment === "production" ? "운영" : "샌드박스"}</small><em>{formatDate(row.occurred_at, true)}</em></div>)}{!audits.length && <p>아직 키 관리 기록이 없습니다. 첫 키를 등록하면 모든 변경이 이곳에 남습니다.</p>}</div>
+        <div className="credential-history-list">{(showAudit ? audits : audits.slice(0, 5)).map((row) => <div key={row.id}><span className={`audit-action ${row.action}`}>{actionLabels[row.action] ?? row.action}</span><b>{credentialDefinitions.find((channel) => channel.key === row.channel)?.name ?? row.channel}</b><small>{row.environment === "production" ? "운영" : "샌드박스"}</small><em>{formatDate(row.occurred_at, true)}</em></div>)}{!audits.length && <p>아직 키 관리 기록이 없습니다. 첫 키를 등록하면 모든 변경이 이곳에 남습니다.</p>}</div>
       </section>
 
       {editing && <CredentialEditor channel={editing} current={activeByChannel.get(editing.key)} onClose={() => setEditing(null)} onSaved={async (message) => { setEditing(null); notify(message); await load(); }} />}
       {operationTarget && <ApiOperationConsole target={operationTarget} onClose={() => setOperationTarget(null)} onCredentialChanged={load} notify={notify} />}
+      {tracxOperationTarget && <TracxOperationConsole credential={tracxOperationTarget} onClose={() => setTracxOperationTarget(null)} notify={notify} />}
     </div>
   );
+}
+
+type TracxConsoleOperation = "orders.list" | "orders.get" | "orders.cancel" | "returns.list" | "tracking.get" | "shipping.get" | "inquiries.list" | "inquiries.get" | "inquiries.reply";
+
+const tracxConsoleOptions: { value: TracxConsoleOperation; label: string; write?: boolean }[] = [
+  { value: "orders.list", label: "배송 주문 목록" },
+  { value: "orders.get", label: "배송 주문 상세" },
+  { value: "orders.cancel", label: "배송 주문 취소", write: true },
+  { value: "returns.list", label: "반품 주문 목록" },
+  { value: "tracking.get", label: "배송 이력 조회" },
+  { value: "shipping.get", label: "입고·배송 정보 조회" },
+  { value: "inquiries.list", label: "물류 문의 목록" },
+  { value: "inquiries.get", label: "물류 문의 상세" },
+  { value: "inquiries.reply", label: "물류 문의 답글", write: true },
+];
+
+function tracxOperationTemplate(operation: TracxConsoleOperation): Record<string, unknown> {
+  const endDate = new Date().toISOString().slice(0, 10);
+  const startDate = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+  if (operation === "orders.list") return { startDate, endDate };
+  if (operation === "returns.list") return { startDate, endDate };
+  if (operation === "orders.get" || operation === "orders.cancel") return { shippingNo: "" };
+  if (operation === "tracking.get" || operation === "shipping.get") return { trackingNo: "" };
+  if (operation === "inquiries.list") return { start_dt: startDate, end_dt: endDate, status: "NEW" };
+  if (operation === "inquiries.get") return { ticketId: "" };
+  return { ticketId: "", content: "", attachFileList: "" };
+}
+
+function TracxOperationConsole({ credential, onClose, notify }: { credential: Credential; onClose: () => void; notify: (message: string) => void }) {
+  const [operation, setOperation] = useState<TracxConsoleOperation>("orders.list");
+  const [argumentsJson, setArgumentsJson] = useState(() => JSON.stringify(tracxOperationTemplate("orders.list"), null, 2));
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [confirmWrite, setConfirmWrite] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [resultJson, setResultJson] = useState("");
+  const isWrite = tracxConsoleOptions.find((item) => item.value === operation)?.write === true;
+
+  const changeOperation = (next: TracxConsoleOperation) => {
+    setOperation(next);
+    setArgumentsJson(JSON.stringify(tracxOperationTemplate(next), null, 2));
+    setIdempotencyKey(crypto.randomUUID());
+    setConfirmWrite(false);
+    setResultJson("");
+    setError("");
+  };
+
+  const execute = async (event: FormEvent) => {
+    event.preventDefault();
+    let args: Record<string, unknown>;
+    try {
+      const value = JSON.parse(argumentsJson) as unknown;
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("object required");
+      args = value as Record<string, unknown>;
+    } catch {
+      setError("작업 인자는 유효한 JSON 객체여야 합니다.");
+      return;
+    }
+    if (isWrite && !confirmWrite) {
+      setError("SmartShip 외부 데이터를 변경하는 작업입니다. 실행 확인에 동의해 주세요.");
+      return;
+    }
+    setRunning(true);
+    setError("");
+    setResultJson("");
+    try {
+      const { data: sessionData } = await createClient().auth.getSession();
+      const response = await fetch("/api/admin/logistics/tracx", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
+        body: JSON.stringify({ credentialId: credential.id, operation, idempotencyKey, confirmWrite, arguments: args }),
+      });
+      const payload = await response.json().catch(() => ({ message: "SmartShip 응답을 읽지 못했습니다." })) as Record<string, unknown>;
+      setResultJson(JSON.stringify(payload, null, 2));
+      const message = typeof payload.message === "string" ? payload.message : `SmartShip TxAPI · HTTP ${response.status}`;
+      if (!response.ok) setError(message);
+      else {
+        notify(message);
+        setIdempotencyKey(crypto.randomUUID());
+      }
+    } catch {
+      setError("SmartShip TxAPI 요청을 전송하지 못했습니다. 네트워크와 로그인 세션을 확인해 주세요.");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal operation-console" role="dialog" aria-modal="true" aria-label="SmartShip 물류 API 실행 검수" onSubmit={execute}>
+    <header><div><span>TX</span><div><small>PROTECTED LOGISTICS API CONSOLE</small><h3>SmartShip 물류 API 실행 검수</h3></div></div><button type="button" onClick={onClose} aria-label="닫기"><X size={18} /></button></header>
+    <div className="operation-console-warning"><ShieldCheck size={18} /><span><b>TxAPI Key를 브라우저에 노출하지 않고 서버에서만 호출합니다.</b><small>조회 결과에는 실제 주문·수취 정보가 포함될 수 있으므로 관리자 화면에서만 확인하세요.</small></span></div>
+    <div className="operation-console-body">
+      <div className="operation-console-controls"><label><span>실행 작업</span><select value={operation} onChange={(event) => changeOperation(event.target.value as TracxConsoleOperation)}>{tracxConsoleOptions.map((item) => <option value={item.value} key={item.value}>{item.label} · {item.value}</option>)}</select></label><label><span>중복 방지 키</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} minLength={16} maxLength={160} /></label></div>
+      <label className="operation-json-field"><span>SmartShip 작업 인자 JSON</span><textarea value={argumentsJson} onChange={(event) => setArgumentsJson(event.target.value)} spellCheck={false} rows={11} /></label>
+      <div className="operation-console-meta"><a href={tracxCredentialDefinition.officialDocs[1].url} target="_blank" rel="noreferrer">TxAPI 공식 가이드 열기</a><span>환경 · 운영 Production</span></div>
+      {isWrite && <div className="operation-write-confirm"><input id="confirm-tracx-write" type="checkbox" checked={confirmWrite} onChange={(event) => setConfirmWrite(event.target.checked)} /><label htmlFor="confirm-tracx-write"><b>실제 SmartShip 외부 데이터 변경을 확인했습니다.</b><small>동일한 중복 방지 키로는 다시 실행되지 않습니다.</small></label></div>}
+      {error && <p className="credential-form-error"><AlertTriangle size={14} />{error}</p>}
+      {resultJson && <pre className="operation-console-result" aria-label="SmartShip API 실행 결과">{resultJson}</pre>}
+    </div>
+    <footer><button type="button" className="credential-secondary" onClick={onClose}>닫기</button><button type="submit" className="credential-primary" disabled={running || !idempotencyKey}>{running ? <LoaderCircle className="spin" size={14} /> : <Play size={14} />}{isWrite ? "확인 후 실행" : "읽기 실행"}</button></footer>
+  </form></div>;
 }
 
 function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: { target: { channel: ChannelDefinition; credential: Credential }; onClose: () => void; onCredentialChanged: () => Promise<void>; notify: (message: string) => void }) {
@@ -445,7 +593,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
   </form></div>;
 }
 
-function CredentialEditor({ channel, current, onClose, onSaved }: { channel: ChannelDefinition; current?: Credential; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
+function CredentialEditor({ channel, current, onClose, onSaved }: { channel: CredentialDefinition; current?: Credential; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
   const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : "";
   const [form, setForm] = useState<Record<string, string>>({
     country: channel.key === "lazada" ? "my" : "",

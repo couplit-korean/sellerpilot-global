@@ -1847,6 +1847,7 @@ a:focus-visible,
 .credential-card.temu { --channel-accent: #ff5a00; }
 .credential-card.smartstore { --channel-accent: #03a85a; }
 .credential-card.ebay { --channel-accent: #2557a7; }
+.credential-card.tracx { --channel-accent: #1677ff; }
 .credential-card > header { display: grid; min-height: 74px; align-items: center; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 10px; padding: 14px 16px; }
 .credential-channel-code { display: grid; width: 36px; height: 36px; place-items: center; color: #fff; background: var(--channel-accent); font-size: 13px; font-weight: 900; }
 .credential-card header small, .credential-card header h3 { display: block; overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; }
@@ -1876,6 +1877,7 @@ a:focus-visible,
 .credential-grace span, .credential-grace b { display: block; }
 .credential-grace b { margin-bottom: 3px; font-size: 8px; }
 .credential-card > footer { display: grid; gap: 8px; padding: 13px 15px; grid-template-columns: .9fr 1.1fr; }
+.credential-card.tracx > footer { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .credential-secondary, .credential-primary { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; font-size: 9px; font-weight: 750; }
 .credential-secondary { border: 1px solid #9ca9a5; color: #314944; background: #fff; }
 .credential-primary { border: 1px solid #0b6d56; color: #fff; background: #0b745b; }
@@ -1883,6 +1885,9 @@ a:focus-visible,
 .credential-secondary:disabled, .credential-primary:disabled { cursor: not-allowed; opacity: .45; }
 
 .credential-history-panel .panel-heading { padding: 12px 16px; }
+.logistics-credential-panel { display: grid; gap: 0; }
+.logistics-credential-panel > .credential-card { margin: 0 16px 16px; }
+.logistics-credential-panel .panel-heading p { max-width: 760px; margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .credential-history-list > div { display: grid; min-height: 48px; align-items: center; grid-template-columns: 76px minmax(160px, 1fr) 90px 150px; gap: 12px; padding: 0 16px; border-bottom: 1px solid #eef0f2; font-size: 9px; }
 .credential-history-list > div:last-child { border-bottom: 0; }
 .credential-history-list b { color: #2d3f3a; }
@@ -1989,6 +1994,7 @@ a:focus-visible,
   .credential-lifecycle > div { border-right: 0; }
   .rotation-settings > div { grid-template-columns: 1fr; }
   .credential-modal > footer { display: grid; grid-template-columns: 1fr 1fr; }
+  .credential-card.tracx > footer { grid-template-columns: 1fr; }
   .password-card { padding: 24px 20px; }
   .cli-runtime-grid { grid-template-columns: 1fr; }.cli-runtime-grid article, .cli-runtime-grid article:nth-child(2) { border-right: 0; border-bottom: 1px solid #e3e9e7; }.cli-runtime-grid article:last-child { border-bottom: 0; }
   .cli-runtime-actions > div { align-items: stretch; flex-direction: column; }.cli-runtime-actions select { width: 100%; }.cli-runtime-actions .credential-primary { width: 100%; }

@@ -177,6 +177,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260822130000_enable_manual_inquiry_operations.sql",
       "20260822133000_reduce_runtime_sync_noise.sql",
       "20260822140000_harden_runtime_retention.sql",
+      "20260822153000_tracx_logistics_tracking.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -187,6 +188,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "utf8",
     );
     await db.exec(withoutUnavailableExtensions(temuFulfillmentMigration));
+    const tracxLogisticsMigration = await readFile(
+      new URL("20260822153000_tracx_logistics_tracking.sql", migrationUrl),
+      "utf8",
+    );
+    await db.exec(withoutUnavailableExtensions(tracxLogisticsMigration));
 
     const serviceOnlyFunctions = [
       "public.sellerpilot_decrypt_credential(uuid)",
@@ -219,6 +225,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_enqueue_periodic_sync(text,text,jsonb,integer)",
       "public.sellerpilot_service_validate_worker_token(text,text)",
       "public.sellerpilot_service_prune_runtime_noise(timestamp with time zone)",
+      "public.sellerpilot_service_complete_tracx_operation(uuid,boolean,text,text)",
+      "public.sellerpilot_service_ingest_tracx_delivery(uuid,jsonb)",
     ];
     for (const signature of serviceOnlyFunctions) {
       assert.equal(
@@ -645,6 +653,87 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ) values ($1, 'REAL-TICKET-1', 'qoo10', '실고객', '실제 문의', '배송 상태 확인', 'waiting', 2, now(), false)`,
       [ADMIN_ID],
     );
+    const tracxCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'tracx', 'production',
+        '{"api_key":"tracx-test-key","webhook_secret":"12345678901234567890123456789012"}'::jsonb,
+        null, 90, 30, 0
+      )`,
+    );
+    assert.match(tracxCredentialId, /^[0-9a-f-]{36}$/i);
+    const tracxClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_tracx_operation($1, 'tracking.get', 'tracx-tracking-read-0001', $2)",
+      [tracxCredentialId, "e".repeat(64)],
+    );
+    assert.equal(tracxClaim.duplicate, false);
+    const tracxDuplicate = await scalar(
+      db,
+      "select public.sellerpilot_claim_tracx_operation($1, 'tracking.get', 'tracx-tracking-read-0001', $2)",
+      [tracxCredentialId, "e".repeat(64)],
+    );
+    assert.equal(tracxDuplicate.duplicate, true);
+    await setClaims(db, "authenticated", SECOND_ADMIN_ID);
+    const sharedAdminTracxClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_tracx_operation($1, 'shipping.get', 'tracx-shared-admin-read-001', $2)",
+      [tracxCredentialId, "f".repeat(64)],
+    );
+    assert.equal(sharedAdminTracxClaim.duplicate, false);
+    await setClaims(db, "service_role");
+    const tracxSecret = await scalar(db, "select public.sellerpilot_get_active_credential_secret('tracx', 'production')");
+    assert.equal(tracxSecret.secret_payload.api_key, "tracx-test-key");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_tracx_operation($1, true, '0', 'SmartShip read passed')",
+        [tracxClaim.attempt_id],
+      ),
+      true,
+    );
+    const tracxDeliveryEvent = {
+      PackingNo: "PACK-1",
+      TrackingNo: "TRACK-1",
+      RefOrderNo: "REAL-ORDER-1",
+      DeliveryCompanyCode: "0002",
+      StatusCode: "D4",
+      StatusDesc: "Delivered",
+      Date: "2026-08-22 14:00:00+09",
+    };
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_tracx_delivery($1, $2::jsonb)",
+        [tracxCredentialId, JSON.stringify(tracxDeliveryEvent)],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_tracx_delivery($1, $2::jsonb)",
+        [tracxCredentialId, JSON.stringify(tracxDeliveryEvent)],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from sellerpilot_private.tracx_delivery_events where tracking_no = 'TRACK-1'"),
+      1,
+    );
+    assert.equal(
+      await scalar(db, "select status from sellerpilot_private.commerce_orders where external_order_id = 'REAL-ORDER-1'"),
+      "delivered",
+    );
+    await db.query(
+      `delete from sellerpilot_private.push_notification_outbox
+        where order_id = (
+          select id from sellerpilot_private.commerce_orders
+           where owner_id = $1 and external_order_id = 'REAL-ORDER-1'
+        ) and event_type = 'shipping'`,
+      [ADMIN_ID],
+    );
+    await setClaims(db);
     await db.query(
       `insert into sellerpilot_private.products (
         id, owner_id, external_code, sku, name, description, status,
