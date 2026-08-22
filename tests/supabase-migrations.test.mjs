@@ -182,6 +182,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(sql));
     }
+    const temuFulfillmentMigration = await readFile(
+      new URL("20260822050435_temu_orders_shipping_aftersales.sql", migrationUrl),
+      "utf8",
+    );
+    await db.exec(withoutUnavailableExtensions(temuFulfillmentMigration));
 
     const serviceOnlyFunctions = [
       "public.sellerpilot_decrypt_credential(uuid)",

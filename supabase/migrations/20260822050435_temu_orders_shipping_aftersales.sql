@@ -7,8 +7,16 @@ alter table sellerpilot_private.commerce_orders
   add column if not exists provider_context jsonb not null default '{}'::jsonb
     check (jsonb_typeof(provider_context) = 'object' and octet_length(provider_context::text) <= 32768);
 
-alter function public.sellerpilot_service_ingest_orders(uuid,text,jsonb)
-  rename to sellerpilot_service_ingest_orders_pre_temu_fulfillment;
+do $$
+begin
+  if to_regprocedure('public.sellerpilot_service_ingest_orders_pre_temu_fulfillment(uuid,text,jsonb)') is null then
+    if to_regprocedure('public.sellerpilot_service_ingest_orders(uuid,text,jsonb)') is null then
+      raise exception 'sellerpilot order ingest prerequisite is missing';
+    end if;
+    execute 'alter function public.sellerpilot_service_ingest_orders(uuid,text,jsonb) rename to sellerpilot_service_ingest_orders_pre_temu_fulfillment';
+  end if;
+end;
+$$;
 
 create or replace function public.sellerpilot_service_ingest_orders(
   p_credential_id uuid,
