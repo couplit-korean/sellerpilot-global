@@ -170,6 +170,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260821123000_enable_elevenst_order_sync.sql",
       "20260821130000_commerce_operations_v2.sql",
       "20260821133000_ai_asset_regeneration.sql",
+      "20260821133000_marketplace_links_cancellations_and_stock_accuracy.sql",
+      "20260821134500_public_listing_health.sql",
+      "20260821141500_preserve_terminal_order_state.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -688,7 +691,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(snapshot.channelMetrics.find((channel) => channel.channelKey === "qoo10").credentialStatus, "active");
     const aiProduct = snapshot.products.find((product) => product.id === aiProductId);
     assert.equal(aiProduct.demo, false);
-    assert.equal(aiProduct.status, "active");
+    assert.equal(aiProduct.status, "low_stock");
     assert.deepEqual(aiProduct.listingChannels, ["C"]);
     assert.equal(aiProduct.aiHeroPath, resultPayload.asset_storage_paths.hero);
     assert.equal(snapshot.products.some((product) => product.id === SHARED_PRODUCT_ID), true);

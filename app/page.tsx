@@ -576,7 +576,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
         </article>
 
         <article className="panel top-ranking-card">
-          <div className="panel-heading"><div><span className="panel-kicker">선택 기간 판매량 기준</span><h3>판매 TOP 10</h3></div><span className="rank-crown">1–10</span></div>
+          <div className="panel-heading"><div><span className="panel-kicker">선택 기간 판매량 기준</span><h3>이번 달 판매 TOP 10</h3></div><span className="rank-crown">1–10</span></div>
           <div className="monthly-ranking-list">
             {monthlyTopProducts.map((product, index) => <button className={`ranking-row ${index < 3 ? "podium" : ""}`} key={product.id} onClick={() => onNavigate("products")}>
               <span className="ranking-number">{index + 1}</span>

@@ -1,11 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { parseLazadaImPush } from "../../../../lib/channels/lazada-im";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
 
-const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
 
 function safeEqualHex(left: string, right: string) {
@@ -41,18 +41,13 @@ export async function POST(request: Request) {
   if (typeof payload.data === "string") {
     try { payload = { ...payload, data: JSON.parse(payload.data) as unknown }; } catch { /* keep raw data */ }
   }
-  const data = record(payload.data);
-  const message = record(data.message);
-  const content = record(message.content);
-  const sessionId = text(data.session_id, data.sessionId, message.session_id, payload.session_id);
-  const messageId = text(message.message_id, data.message_id, payload.message_id, payload.uuid);
-  const messageText = text(content.txt, content.text, message.txt, message.text, data.txt, data.content);
-  if (!sessionId || !messageText) return NextResponse.json({ ok: true, ignored: true });
+  const inquiry = parseLazadaImPush(payload);
+  if (!inquiry) return NextResponse.json({ ok: true, ignored: true });
   const credentialId = context && typeof context.credential_id === "string" ? context.credential_id : "";
   if (credentialId) await serviceClient.rpc("sellerpilot_service_ingest_inquiries", {
     p_credential_id: credentialId,
     p_channel: "lazada",
-    p_inquiries: [{ externalTicketId: `lazada-im:${sessionId}`, customerName: text(data.buyer_name, data.from_account_name, message.from_name, "Lazada 고객"), subject: text(data.product_name, data.title, "Lazada IM 문의"), message: messageText, status: "waiting", priority: 3, receivedAt: text(message.send_time, data.send_time, payload.timestamp, new Date().toISOString()), remoteMessageId: messageId }],
+    p_inquiries: [inquiry],
   });
   return NextResponse.json({ ok: true });
 }

@@ -1,7 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
+import {
+  mergeOperationProductImages,
+  type OperationProductImageCacheEntry,
+} from "../lib/operation-product-image-cache";
+
+const DATA_REFRESH_INTERVAL_MS = 5 * 60_000;
+const RETRY_INTERVAL_MS = 30_000;
+const PRODUCT_IMAGE_REFRESH_INTERVAL_MS = 45 * 60_000;
+const PRODUCT_IMAGE_CLIENT_CACHE_MS = 55 * 60_000;
 
 export type OperationProduct = {
   id: string;
@@ -11,6 +20,7 @@ export type OperationProduct = {
   description: string;
   sourceUrl: string | null;
   imageUrl: string | null;
+  imageVersion: string | null;
   status: "draft" | "active" | "low_stock" | "out_of_stock" | "archived";
   onHand: number;
   reserved: number;
@@ -203,11 +213,16 @@ export type OperationsSnapshot = {
 };
 
 type LoadState = "loading" | "database" | "unavailable";
+type LoadOptions = { force?: boolean; refreshProductImages?: boolean };
 
 export function useOperationsSnapshot() {
   const [data, setData] = useState<OperationsSnapshot | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [message, setMessage] = useState("");
+  const productImageCacheRef = useRef(new Map<string, OperationProductImageCacheEntry>());
+  const nextProductImageRefreshAtRef = useRef(0);
+  const nextDataRefreshAtRef = useRef(0);
+  const inFlightLoadRef = useRef<Promise<void> | null>(null);
   const [range, setRange] = useState<SalesRange>(() => {
     const now = new Date();
     const to = new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
@@ -231,25 +246,60 @@ export function useOperationsSnapshot() {
     });
   }, []);
 
-  const load = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({ from: range.from, to: range.to });
-      const response = await authenticatedFetch(`/api/operations/snapshot?${params}`);
-      const payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? "운영 데이터를 불러오지 못했습니다.");
-      setData(payload);
-      setState("database");
-      setMessage("Supabase 운영 DB · 실데이터만 표시");
-    } catch (error) {
-      setData(null);
-      setState("unavailable");
-      setMessage(error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.");
-    }
+  const load = useCallback((options: LoadOptions = {}) => {
+    if (inFlightLoadRef.current) return inFlightLoadRef.current;
+    const startedAt = Date.now();
+    if (!options.force && startedAt < nextDataRefreshAtRef.current) return Promise.resolve();
+
+    const request = (async () => {
+      try {
+        const refreshProductImages = options.refreshProductImages === true
+          || startedAt >= nextProductImageRefreshAtRef.current;
+        const params = new URLSearchParams({
+          from: range.from,
+          to: range.to,
+          includeProductImages: refreshProductImages ? "1" : "0",
+        });
+        const response = await authenticatedFetch(`/api/operations/snapshot?${params}`);
+        const payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
+        if (!response.ok) throw new Error(payload.message ?? "운영 데이터를 불러오지 못했습니다.");
+
+        const merged = mergeOperationProductImages(
+          payload.products,
+          productImageCacheRef.current,
+          startedAt,
+          PRODUCT_IMAGE_CLIENT_CACHE_MS,
+        );
+        if (refreshProductImages) {
+          nextProductImageRefreshAtRef.current = startedAt + PRODUCT_IMAGE_REFRESH_INTERVAL_MS;
+        } else if (merged.missingVersionedImage) {
+          nextProductImageRefreshAtRef.current = 0;
+        }
+
+        nextDataRefreshAtRef.current = startedAt + DATA_REFRESH_INTERVAL_MS;
+        setData({ ...payload, products: merged.products });
+        setState("database");
+        setMessage("Supabase 운영 DB · 실데이터만 표시 · 5분 자동 갱신");
+      } catch (error) {
+        nextDataRefreshAtRef.current = startedAt + RETRY_INTERVAL_MS;
+        setData(null);
+        setState("unavailable");
+        setMessage(error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.");
+      }
+    })();
+
+    inFlightLoadRef.current = request;
+    void request.finally(() => {
+      if (inFlightLoadRef.current === request) inFlightLoadRef.current = null;
+    });
+    return request;
   }, [authenticatedFetch, range.from, range.to]);
 
+  const reload = useCallback(() => load({ force: true, refreshProductImages: true }), [load]);
+
   useEffect(() => {
-    const initialLoad = window.setTimeout(() => void load(), 0);
-    const refresh = window.setInterval(() => void load(), 60_000);
+    const initialLoad = window.setTimeout(() => void load({ force: true, refreshProductImages: true }), 0);
+    const refresh = window.setInterval(() => void load({ force: true }), DATA_REFRESH_INTERVAL_MS);
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void load();
     };
@@ -263,5 +313,5 @@ export function useOperationsSnapshot() {
     };
   }, [load]);
 
-  return { data, state, message, range, setRange, reload: load, authenticatedFetch };
+  return { data, state, message, range, setRange, reload, authenticatedFetch };
 }

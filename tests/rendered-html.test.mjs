@@ -104,8 +104,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /공식 카테고리 확정/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
   assert.match(page, /상품 링크 또는 설명/);
-  assert.match(page, /상세정보 불러오기/);
-  assert.match(page, /CLI 자동 조사/);
+  assert.doesNotMatch(page, /상세정보 불러오기/);
+  assert.match(page, /1차 자동생성/);
   assert.doesNotMatch(page, /공개 이미지 URL|URL로 불러오기/);
   assert.match(page, /id: "front"/);
   assert.match(page, /id: "barcode"/);

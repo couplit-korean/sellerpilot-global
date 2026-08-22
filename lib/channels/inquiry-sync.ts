@@ -1,6 +1,7 @@
 import "server-only";
 import type { ActiveChannelKey } from "./catalog";
 import type { ChannelOperationResult } from "./operations";
+import { normalizeLazadaImHistory } from "./lazada-im";
 
 export type NormalizedChannelInquiry = {
   externalTicketId: string;
@@ -96,7 +97,8 @@ function normalizeQoo10(data: Record<string, unknown>) {
 
 export function normalizeChannelInquiries(channel: ActiveChannelKey, result: ChannelOperationResult): NormalizedChannelInquiry[] {
   const data = result.steps.find((step) => step.name === "inquiries")?.data ?? result.steps.at(-1)?.data ?? {};
-  const normalized = channel === "coupang" ? normalizeCoupang(data)
+  const normalized = channel === "lazada" ? normalizeLazadaImHistory(result.steps)
+    : channel === "coupang" ? normalizeCoupang(data)
     : channel === "smartstore" ? normalizeSmartstore(data)
       : channel === "qoo10" ? normalizeQoo10(data)
         : [];

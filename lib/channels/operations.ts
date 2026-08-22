@@ -857,6 +857,63 @@ async function executeLazada(input: ExecuteInput) {
     });
     return result(input, [step("order", remote)]);
   }
+  if (input.operation === "inquiries.list") {
+    if (input.arguments.bootstrap !== true) throw new Error("CHANNEL_ARGUMENT_REQUIRED:bootstrap");
+    const pageSize = input.arguments.pageSize === undefined
+      ? 20
+      : integerArgument(input.arguments, "pageSize", { min: 1, max: 20 });
+    const sessionLimit = input.arguments.sessionLimit === undefined
+      ? 100
+      : integerArgument(input.arguments, "sessionLimit", { min: 1, max: 100 });
+    const startTime = input.arguments.startTime === undefined
+      ? Date.now()
+      : integerArgument(input.arguments, "startTime", { min: 1 });
+    const steps: ChannelOperationStep[] = [];
+    const sessions: Record<string, unknown>[] = [];
+    let nextStartTime = String(startTime);
+    let lastSessionId = "";
+
+    while (sessions.length < sessionLimit) {
+      const params: Record<string, string> = {
+        start_time: nextStartTime,
+        page_size: String(Math.min(pageSize, sessionLimit - sessions.length)),
+      };
+      if (lastSessionId) params.last_session_id = lastSessionId;
+      const remote = await lazadaRequest({ payload: input.payload, path: "/im/session/list", params });
+      const sessionStep = step(`inquiries-session-list:${steps.length + 1}`, remote);
+      steps.push(sessionStep);
+      if (!sessionStep.ok) return result(input, steps);
+      const responseData = objectValue(remote.data, "data", false);
+      const pageSessions = Array.isArray(responseData.session_list)
+        ? responseData.session_list.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+        : [];
+      sessions.push(...pageSessions);
+      if (responseData.has_more !== true || pageSessions.length === 0) break;
+      nextStartTime = String(responseData.next_start_time ?? "").trim();
+      lastSessionId = String(responseData.last_session_id ?? "").trim();
+      if (!nextStartTime || !lastSessionId) break;
+    }
+
+    for (let offset = 0; offset < sessions.length; offset += 5) {
+      const batch = sessions.slice(offset, offset + 5);
+      const remotes = await Promise.all(batch.map(async (session) => {
+        const sessionId = String(session.session_id ?? "").trim();
+        if (!sessionId) return null;
+        const remote = await lazadaRequest({
+          payload: input.payload,
+          path: "/im/message/list",
+          params: { session_id: sessionId, start_time: String(startTime), page_size: "20" },
+        });
+        remote.data = { ...remote.data, sellerpilotSession: session };
+        return { sessionId, remote };
+      }));
+      for (const item of remotes) {
+        if (!item) continue;
+        steps.push(step(`inquiries-message:${item.sessionId}`, item.remote));
+      }
+    }
+    return result(input, steps);
+  }
   if (input.operation === "shipment.acknowledge") {
     const remote = await lazadaRequest({
       payload: input.payload,

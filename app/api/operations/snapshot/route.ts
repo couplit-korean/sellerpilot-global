@@ -1,9 +1,14 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
 export const runtime = "nodejs";
+
+function imageVersionForPath(path: string) {
+  return createHash("sha256").update(path).digest("hex").slice(0, 20);
+}
 
 const mutationSchema = z.discriminatedUnion("action", [
   z.object({
@@ -39,6 +44,7 @@ export async function GET(request: Request) {
   if (isAdminApiError(admin)) return admin;
 
   const url = new URL(request.url);
+  const includeProductImages = url.searchParams.get("includeProductImages") !== "0";
   const today = new Date().toISOString().slice(0, 10);
   const fallbackFrom = new Date(Date.now() - 29 * 86_400_000).toISOString().slice(0, 10);
   const rangeSchema = z.object({
@@ -110,16 +116,24 @@ export async function GET(request: Request) {
     : { from: range.data.from, to: range.data.to, summary: { revenueKrw: 0, sold: 0, orderCount: 0 }, daily: [], channels: [], products: [] };
   if (Array.isArray(payload.products)) {
     const products = payload.products.filter((product): product is Record<string, unknown> => Boolean(product) && typeof product === "object" && !Array.isArray(product));
-    const paths = products.map((product) => typeof product.aiHeroPath === "string" ? product.aiHeroPath : "").filter(Boolean);
+    const paths = includeProductImages
+      ? products.map((product) => typeof product.aiHeroPath === "string" ? product.aiHeroPath : "").filter(Boolean)
+      : [];
     const { data: signed } = paths.length
       ? await admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrls(paths, 60 * 60)
       : { data: [] };
     let signedIndex = 0;
     payload.products = products.map((product) => {
       const next = { ...product };
-      if (typeof next.aiHeroPath === "string" && next.aiHeroPath) {
-        next.imageUrl = signed?.[signedIndex]?.signedUrl ?? next.imageUrl ?? null;
-        signedIndex += 1;
+      const aiHeroPath = typeof next.aiHeroPath === "string" ? next.aiHeroPath : "";
+      next.imageVersion = aiHeroPath ? imageVersionForPath(aiHeroPath) : null;
+      if (aiHeroPath) {
+        if (includeProductImages) {
+          next.imageUrl = signed?.[signedIndex]?.signedUrl ?? next.imageUrl ?? null;
+          signedIndex += 1;
+        } else {
+          next.imageUrl = null;
+        }
       }
       delete next.aiHeroPath;
       return next;

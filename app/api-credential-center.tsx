@@ -134,6 +134,7 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
   if (operation === "inquiries.list") {
     if (channel === "qoo10") return { params: { search_start_dt: "", search_end_dt: "", proc_status: "S1" } };
     if (channel === "coupang") return { kind: "product", query: { inquiryStartAt: "", inquiryEndAt: "", answeredType: "NOANSWER", pageNum: 1, pageSize: 50 } };
+    if (channel === "lazada") return { bootstrap: true, startTime: Date.now(), pageSize: 20, sessionLimit: 100 };
     return { query: {} };
   }
   if (operation === "listing.create") {
@@ -372,7 +373,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
   const isWrite = writeOperations.has(operation);
   const availableOperations = channelOperationOptions.filter((item) => {
     if (target.channel.key === "ebay" && item.value === "shipment.acknowledge") return false;
-    if (item.value === "inquiries.list") return ["qoo10", "coupang", "smartstore", "temu"].includes(target.channel.key);
+    if (item.value === "inquiries.list") return ["qoo10", "lazada", "coupang", "smartstore", "temu"].includes(target.channel.key);
     return true;
   });
 
