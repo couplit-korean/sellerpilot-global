@@ -4,7 +4,6 @@ export const tracxOperationNames = [
   "orders.list",
   "orders.get",
   "orders.cancel",
-  "returns.list",
   "tracking.get",
   "shipping.get",
   "inquiries.list",
@@ -28,8 +27,7 @@ const methods: Record<TracxOperationName, TracxMethod> = {
   "orders.list": { service: "SmartShipService", method: "GetOrderList" },
   "orders.get": { service: "SmartShipService", method: "GetOrder" },
   "orders.cancel": { service: "SmartShipService", method: "CancelOrder" },
-  "returns.list": { service: "SmartShipService", method: "GetReturnOrderList" },
-  "tracking.get": { service: "SmartShipService", method: "GetShippingHistory" },
+  "tracking.get": { service: "SmartShipService", method: "Tracking" },
   "shipping.get": { service: "SmartShipService", method: "GetShippingInfo" },
   "inquiries.list": { service: "SmartShipInquiryService", method: "GetIssueList" },
   "inquiries.get": { service: "SmartShipInquiryService", method: "GetIssueDetail" },
@@ -90,10 +88,6 @@ export function tracxOperationArguments(operation: TracxOperationName, input: Re
       ...(shopNo !== undefined ? { shopNo } : {}),
       ...(optionalText(input.status, "status", 30) ? { status: optionalText(input.status, "status", 30) } : {}),
     };
-  }
-  if (operation === "returns.list") {
-    const { start, end } = dateRange(input, "startDate", "endDate");
-    return { startDate: start, endDate: end };
   }
   if (operation === "orders.get" || operation === "orders.cancel") {
     return { shippingNo: requiredText(input.shippingNo, "shippingNo", 100) };
@@ -176,12 +170,31 @@ export function tracxSucceeded(remote: TracxRemoteResponse) {
   return remote.response.ok && tracxResultCode(remote.data) === 0;
 }
 
+export function tracxNoData(remote: TracxRemoteResponse) {
+  const resultObject = remote.data.ResultObject ?? remote.data.resultObject;
+  return remote.response.ok
+    && tracxResultCode(remote.data) === 1
+    && tracxResultMessage(remote.data).toLowerCase() === "not found"
+    && Array.isArray(resultObject)
+    && resultObject.length === 0;
+}
+
+export function tracxOperationSucceeded(remote: TracxRemoteResponse, operation: TracxOperationName) {
+  if (tracxSucceeded(remote)) return true;
+  return (operation === "orders.list" || operation === "inquiries.list") && tracxNoData(remote);
+}
+
 export async function runTracxDiagnostic(payload: TracxSecretPayload, now = new Date()) {
   const endDate = now.toISOString().slice(0, 10);
   const startDate = new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10);
   const remote = await tracxRequest({ payload, operation: "orders.list", arguments: { startDate, endDate } });
-  if (tracxSucceeded(remote)) {
-    return { status: "passed" as const, message: "SmartShip TxAPI 주문 목록 읽기가 정상 응답했습니다." };
+  if (tracxOperationSucceeded(remote, "orders.list")) {
+    return {
+      status: "passed" as const,
+      message: tracxNoData(remote)
+        ? "SmartShip TxAPI 인증과 주문 목록 읽기가 정상입니다 · 현재 조회 주문 0건"
+        : "SmartShip TxAPI 주문 목록 읽기가 정상 응답했습니다.",
+    };
   }
   const code = tracxResultCode(remote.data);
   return {

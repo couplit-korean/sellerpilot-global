@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   runTracxDiagnostic,
+  tracxNoData,
   tracxOperationArguments,
+  tracxOperationSucceeded,
   tracxRequest,
   tracxResultCode,
   tracxSucceeded,
@@ -66,12 +68,28 @@ test("TracX request uses the official qualified TxAPI path and JSON body", async
   });
   const url = new URL(requestedUrl);
   assert.equal(url.origin, "https://api.tracxlogis.com");
-  assert.equal(url.pathname, "/GMKT.INC.GLPS.OpenApiService/SmartShipService.qapi/GetShippingHistory");
+  assert.equal(url.pathname, "/GMKT.INC.GLPS.OpenApiService/SmartShipService.qapi/Tracking");
   assert.equal(url.searchParams.get("returnType"), "json");
   assert.equal(url.searchParams.get("key"), "test-secret-key");
   assert.deepEqual(JSON.parse(requestedBody), { trackingNo: "QSP-123" });
   assert.equal(tracxResultCode(remote.data), 0);
   assert.equal(tracxSucceeded(remote), true);
+});
+
+test("TracX treats the provider's empty-list Not Found response as a successful read", async () => {
+  const remote = await tracxRequest({
+    payload: { api_key: "test-secret-key" },
+    operation: "orders.list",
+    arguments: { startDate: "2026-08-21", endDate: "2026-08-22" },
+    fetchImpl: (async () => new Response(JSON.stringify({
+      ResultCode: 1,
+      ResultMsg: "Not Found",
+      ResultObject: [],
+    }), { status: 200 })) as typeof fetch,
+  });
+  assert.equal(tracxNoData(remote), true);
+  assert.equal(tracxOperationSucceeded(remote, "orders.list"), true);
+  assert.equal(tracxOperationSucceeded(remote, "orders.get"), false);
 });
 
 test("TracX diagnostic performs a read-only one-day order query", async () => {

@@ -410,13 +410,12 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
   );
 }
 
-type TracxConsoleOperation = "orders.list" | "orders.get" | "orders.cancel" | "returns.list" | "tracking.get" | "shipping.get" | "inquiries.list" | "inquiries.get" | "inquiries.reply";
+type TracxConsoleOperation = "orders.list" | "orders.get" | "orders.cancel" | "tracking.get" | "shipping.get" | "inquiries.list" | "inquiries.get" | "inquiries.reply";
 
 const tracxConsoleOptions: { value: TracxConsoleOperation; label: string; write?: boolean }[] = [
   { value: "orders.list", label: "배송 주문 목록" },
   { value: "orders.get", label: "배송 주문 상세" },
   { value: "orders.cancel", label: "배송 주문 취소", write: true },
-  { value: "returns.list", label: "반품 주문 목록" },
   { value: "tracking.get", label: "배송 이력 조회" },
   { value: "shipping.get", label: "입고·배송 정보 조회" },
   { value: "inquiries.list", label: "물류 문의 목록" },
@@ -428,7 +427,6 @@ function tracxOperationTemplate(operation: TracxConsoleOperation): Record<string
   const endDate = new Date().toISOString().slice(0, 10);
   const startDate = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
   if (operation === "orders.list") return { startDate, endDate };
-  if (operation === "returns.list") return { startDate, endDate };
   if (operation === "orders.get" || operation === "orders.cancel") return { shippingNo: "" };
   if (operation === "tracking.get" || operation === "shipping.get") return { trackingNo: "" };
   if (operation === "inquiries.list") return { start_dt: startDate, end_dt: endDate, status: "NEW" };

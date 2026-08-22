@@ -4,10 +4,10 @@ import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 import {
   tracxOperationNames,
+  tracxOperationSucceeded,
   tracxRequest,
   tracxResultCode,
   tracxResultMessage,
-  tracxSucceeded,
   tracxWriteOperations,
 } from "../../../../../lib/logistics/tracx";
 
@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       operation: parsed.data.operation,
       arguments: parsed.data.arguments,
     });
-    const ok = tracxSucceeded(remote);
+    const ok = tracxOperationSucceeded(remote, parsed.data.operation);
     const code = tracxResultCode(remote.data);
     const providerMessage = tracxResultMessage(remote.data);
     const message = ok

@@ -1,21 +1,10 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { parseTracxDeliveryPayload } from "../../../../../lib/logistics/tracx-webhook";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
-
-const schema = z.object({
-  PackingNo: z.string().trim().max(100).optional().default(""),
-  TrackingNo: z.string().trim().max(100).optional().default(""),
-  DeliveryCompanyCode: z.string().trim().max(40).optional().default(""),
-  DeliveryCompanyName: z.string().trim().max(160).optional().default(""),
-  StatusCode: z.string().trim().min(1).max(20),
-  StatusDesc: z.string().trim().max(240).optional().default(""),
-  RefOrderNo: z.string().trim().max(240).optional().default(""),
-  Date: z.string().trim().max(40).optional().default(""),
-}).refine((value) => Boolean(value.TrackingNo || value.RefOrderNo), "tracking or reference required");
 
 function equalSecret(received: string, expected: string) {
   const left = createHash("sha256").update(received).digest();
@@ -51,11 +40,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false }, { status: 401, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
-  const parsed = schema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ ok: false }, { status: 400, headers: { "cache-control": "no-store, max-age=0" } });
+  const parsed = parseTracxDeliveryPayload(await request.json().catch(() => null));
+  if (!parsed) return NextResponse.json({ ok: false }, { status: 400, headers: { "cache-control": "no-store, max-age=0" } });
+  if (parsed.kind === "probe") {
+    return NextResponse.json({ ok: true, probe: true }, {
+      headers: { "cache-control": "no-store, max-age=0" },
+    });
+  }
   const { data: matched, error } = await serviceClient.rpc("sellerpilot_service_ingest_tracx_delivery", {
     p_credential_id: credentialId,
-    p_event: parsed.data,
+    p_event: parsed.event,
   });
   if (error) return NextResponse.json({ ok: false }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
   return NextResponse.json({ ok: true, matched: matched === true }, {
