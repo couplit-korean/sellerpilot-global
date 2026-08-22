@@ -60,13 +60,17 @@ const categoryFacts = {
   },
 };
 
-const categoryIndexes = new Map();
+const programCategories = ["cosmetics", "beauty-tools", "food", "clothing", "toys", "health-supplement"];
 
-export const testCatalogProgramProducts = testCatalogSources.map((source) => {
+const selectedTestCatalogSources = programCategories.map((category) => {
+  const source = testCatalogSources.find((candidate) => candidate.category === category);
+  if (!source) throw new Error(`테스트 카탈로그 이미지가 없습니다: ${category}`);
+  return source;
+});
+
+export const testCatalogProgramProducts = selectedTestCatalogSources.map((source) => {
   const facts = categoryFacts[source.category];
-  const index = categoryIndexes.get(source.category) ?? 0;
-  categoryIndexes.set(source.category, index + 1);
-  const name = facts.names[index];
+  const name = facts.names[0];
   return {
     ...source,
     imagePath: fileURLToPath(new URL(`../public/test-catalog/${source.file}`, import.meta.url)),
@@ -75,12 +79,12 @@ export const testCatalogProgramProducts = testCatalogSources.map((source) => {
     brandName: "No Brand",
     manufacturer: "공개 이미지 원문에 제조사 미기재",
     countryOfOrigin: "공개 이미지 원문에 원산지 미기재",
-    material: facts.materials[index],
+    material: facts.materials[0],
     packageContents: facts.packageContents,
     condition: "NEW",
     gtinStatus: "NO_GTIN",
     gtin: "",
-    sellingPrice: 10000,
+    sellingPrice: 5000,
     currency: "KRW",
     stock: 1,
     weightKg: facts.weightKg,
@@ -90,6 +94,7 @@ export const testCatalogProgramProducts = testCatalogSources.map((source) => {
     description: `[PROGRAM API TEST · NOT FOR SALE] ${name} 카테고리·이미지·채널 연동 검수용 자료입니다. 판매 목적의 상품 정보가 아니며, 제조사·원산지·상세 성분 또는 소재는 공개 이미지 원문에서 확인되지 않았습니다. 이미지 출처: ${source.creator}, 라이선스: ${source.license}.`,
     productUrl: source.source,
     imageRightsConfirmed: true,
-    productFactsConfirmed: true,
+    productFactsConfirmed: false,
+    requiresProductFacts: true,
   };
 });
