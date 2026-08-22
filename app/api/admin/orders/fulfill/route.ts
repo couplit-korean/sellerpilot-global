@@ -17,7 +17,13 @@ const schema = z.object({
   })).min(1).max(20),
 });
 
-type OrderContext = { id: string; external_order_id: string; channel_key: string; status: string };
+type OrderContext = {
+  id: string;
+  external_order_id: string;
+  channel_key: string;
+  status: string;
+  provider_context?: Record<string, unknown> | null;
+};
 type Credential = { id: string; channel: string; environment: string; status: string };
 
 function safeMessage(channel: string, status: number, fallback?: string) {
@@ -72,6 +78,9 @@ export async function POST(request: Request) {
         externalOrderId: order.external_order_id,
         carrierCode: shipment.carrierCode,
         trackingNumber: shipment.trackingNumber,
+        providerContext: order.provider_context && typeof order.provider_context === "object" && !Array.isArray(order.provider_context)
+          ? order.provider_context
+          : undefined,
       });
       const idempotencyKey = `shipment-${shipment.id}-${createHash("sha256").update(`${shipment.carrierCode}:${shipment.trackingNumber}`).digest("hex").slice(0, 24)}`;
       const remoteResponse = await fetch(operationUrl, {

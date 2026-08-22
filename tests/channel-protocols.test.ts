@@ -161,6 +161,26 @@ test("Smartstore inquiry sync sends the required W3C date range and unanswered f
   }]);
 });
 
+test("Temu order and after-sales sync use the documented update checkpoints", () => {
+  const now = new Date("2026-08-20T07:00:00.000Z");
+  assert.deepEqual(orderSyncRequests("temu", now), [{
+    periodicKey: "orders",
+    arguments: {
+      pageNumber: 1,
+      pageSize: 100,
+      updateAtStart: new Date("2026-08-06T07:00:00.000Z").getTime(),
+      updateAtEnd: now.getTime(),
+      sortby: "updateTime",
+    },
+  }]);
+  assert.deepEqual(inquirySyncArguments("temu", now), [{
+    pageNo: 1,
+    pageSize: 200,
+    updateAtStart: new Date("2026-08-06T07:00:00.000Z").getTime(),
+    updateAtEnd: now.getTime(),
+  }]);
+});
+
 test("shipment drafts map carrier and tracking fields without changing internal order state", () => {
   const shippedAt = new Date("2026-08-21T03:04:05.000Z");
   assert.deepEqual(buildShipmentArguments({
@@ -203,6 +223,24 @@ test("shipment drafts map carrier and tracking fields without changing internal 
         dispatchDate: "2026-08-21T03:04:05.000Z",
       }],
     },
+  });
+  const temuContext = {
+    parentOrderSn: "PO-100",
+    regionId: "211",
+    inventoryDeductionWarehouseId: "3001",
+    orderItems: [{ parentOrderSn: "PO-100", orderSn: "O-101", goodsId: "G-1", skuId: "S-1", quantity: 1 }],
+  };
+  assert.deepEqual(buildShipmentArguments({
+    channel: "temu",
+    externalOrderId: "PO-100",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+    providerContext: temuContext,
+  }), {
+    parentOrderSn: "PO-100",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+    providerContext: temuContext,
   });
 });
 
@@ -1414,6 +1452,104 @@ test("Temu signs compact request values in ASCII key order", () => {
   const ordered = `app_keyapp-keydata_typeJSONgoodsBasic${JSON.stringify(request.goodsBasic)}timestamp${request.timestamp}typetemu.local.goods.v3.add`;
   const expected = createHash("md5").update(`app-secret${ordered}app-secret`, "utf8").digest("hex").toUpperCase();
   assert.equal(buildTemuSignature("app-secret", request), expected);
+});
+
+test("Temu order and after-sales operations paginate provider result arrays", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    if (body.type === "bg.order.list.v2.get") {
+      const count = Number(body.pageNumber) === 1 ? 100 : 1;
+      return Response.json({ success: true, result: { pageItems: Array.from({ length: count }, (_, index) => ({ parentOrderMap: { parentOrderSn: `P-${body.pageNumber}-${index}` }, orderList: [] })) } });
+    }
+    return Response.json({ success: true, result: { data: [{ parentAfterSalesSn: "AS-1", parentOrderSn: "P-1", afterSalesStatusGroup: 1 }] } });
+  };
+  try {
+    const orders = await executeChannelOperation({
+      channel: "temu",
+      operation: "orders.list",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
+      arguments: { pageNumber: 1, pageSize: 100, updateAtStart: 1, updateAtEnd: 2, sortby: "updateTime" },
+      environment: "production",
+    });
+    const inquiries = await executeChannelOperation({
+      channel: "temu",
+      operation: "inquiries.list",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
+      arguments: { pageNo: 1, pageSize: 200, updateAtStart: 1, updateAtEnd: 2 },
+      environment: "production",
+    });
+    assert.equal(orders.ok, true);
+    assert.deepEqual(orders.steps.map((item) => item.name), ["orders", "orders:2"]);
+    assert.equal(inquiries.ok, true);
+    assert.deepEqual(inquiries.steps.map((item) => item.name), ["inquiries"]);
+    assert.deepEqual(calls.map((call) => call.type), [
+      "bg.order.list.v2.get",
+      "bg.order.list.v2.get",
+      "bg.aftersales.parentaftersales.list.get",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu shipment confirmation resolves warehouse and carrier then verifies tracking readback", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  let shipmentReads = 0;
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    if (body.type === "bg.logistics.shipment.v2.get") {
+      shipmentReads += 1;
+      return Response.json({ success: true, result: { shipmentInfoDTO: shipmentReads === 1 ? [] : [{ trackingNumber: "111222333444" }] } });
+    }
+    if (body.type === "bg.logistics.warehouse.list.get") {
+      return Response.json({ success: true, result: { warehouseList: [{ warehouseId: 3001, regionId1: 211, defaultWarehouse: true }] } });
+    }
+    if (body.type === "bg.logistics.companies.get") {
+      return Response.json({ success: true, result: [{ logisticsServiceProviderId: 88, logisticsServiceProviderName: "CJ대한통운", logisticsBrandName: "CJ Logistics" }] });
+    }
+    return Response.json({ success: true, result: { accepted: true } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "temu",
+      operation: "shipment.confirm",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
+      arguments: {
+        parentOrderSn: "PO-100",
+        carrierCode: "CJGLS",
+        trackingNumber: "111222333444",
+        providerContext: {
+          parentOrderSn: "PO-100",
+          regionId: "211",
+          inventoryDeductionWarehouseId: "3001",
+          orderItems: [{ parentOrderSn: "PO-100", orderSn: "O-101", goodsId: "G-1", skuId: "S-1", quantity: 1 }],
+        },
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.map((call) => call.type), [
+      "bg.logistics.shipment.v2.get",
+      "bg.logistics.warehouse.list.get",
+      "bg.logistics.companies.get",
+      "bg.logistics.shipment.v2.confirm",
+      "bg.logistics.shipment.v2.get",
+    ]);
+    assert.deepEqual(calls[3].sendRequestList, [{
+      carrierId: 88,
+      trackingNumber: "111222333444",
+      selfShippingWarehouseId: 3001,
+      orderSendInfoList: [{ parentOrderSn: "PO-100", orderSn: "O-101", goodsId: "G-1", skuId: "S-1", quantity: 1 }],
+    }]);
+    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "TRACKING_NUMBER_VERIFIED");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Temu V3 product creation requires an external-id readback match", async () => {

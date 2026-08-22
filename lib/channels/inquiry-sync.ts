@@ -95,7 +95,49 @@ function normalizeQoo10(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
 }
 
+function normalizeTemu(data: Record<string, unknown>) {
+  const rows = list(object(data.result).data);
+  const groupLabel: Record<string, string> = {
+    "1": "판매자 처리 대기",
+    "2": "요청 접수",
+    "3": "반품 발송",
+    "4": "플랫폼 검토",
+    "5": "환불 완료",
+    "6": "거절 완료",
+    "7": "요청 취소",
+  };
+  return rows.map((row): NormalizedChannelInquiry | null => {
+    const afterSalesSn = text(row.parentAfterSalesSn);
+    if (!afterSalesSn) return null;
+    const orderSn = text(row.parentOrderSn);
+    const group = text(row.afterSalesStatusGroup);
+    const typeLabel = Number(row.afterSalesType) === 2 ? "반품·환불" : "환불";
+    const deadlineValue = Number(row.operateExpireTimeMs);
+    const deadline = Number.isFinite(deadlineValue) && deadlineValue > 0 ? new Date(deadlineValue) : null;
+    const operations = Array.isArray(row.availableOperateList)
+      ? row.availableOperateList.map(String).map((value) => value.trim()).filter(Boolean).slice(0, 10)
+      : [];
+    const deadlineText = deadline && !Number.isNaN(deadline.getTime()) ? deadline.toISOString() : "없음";
+    const remaining = deadline && !Number.isNaN(deadline.getTime()) ? deadline.getTime() - Date.now() : Number.POSITIVE_INFINITY;
+    return {
+      externalTicketId: `aftersales:${afterSalesSn}`,
+      customerName: "Temu 구매자",
+      subject: `${typeLabel} 요청${orderSn ? ` · 주문 ${orderSn}` : ""}`,
+      message: `상태: ${groupLabel[group] ?? text(row.parentAfterSalesStatus, group, "확인 필요")} · 처리기한: ${deadlineText}${operations.length ? ` · 가능 작업: ${operations.join(", ")}` : ""}`,
+      status: ["5", "6", "7"].includes(group) ? "resolved" : "waiting",
+      priority: remaining <= 24 * 60 * 60 * 1000 ? 1 : remaining <= 72 * 60 * 60 * 1000 ? 2 : 3,
+      receivedAt: iso(row.updateAt, row.createAt),
+    };
+  }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
+}
+
 export function normalizeChannelInquiries(channel: ActiveChannelKey, result: ChannelOperationResult): NormalizedChannelInquiry[] {
+  if (channel === "temu") {
+    const normalized = result.steps
+      .filter((item) => /^inquiries(?::\d+)?$/.test(item.name))
+      .flatMap((item) => normalizeTemu(item.data));
+    return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
+  }
   const data = result.steps.find((step) => step.name === "inquiries")?.data ?? result.steps.at(-1)?.data ?? {};
   const normalized = channel === "lazada" ? normalizeLazadaImHistory(result.steps)
     : channel === "coupang" ? normalizeCoupang(data)

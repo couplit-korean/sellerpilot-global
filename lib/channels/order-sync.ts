@@ -13,6 +13,7 @@ export type NormalizedChannelOrder = {
   amountKrw: number;
   status: "paid" | "ready_to_ship" | "shipped" | "delivered" | "cancelled" | "refunded";
   orderedAt: string;
+  providerContext?: Record<string, unknown>;
 };
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
@@ -49,10 +50,60 @@ function status(value: unknown): NormalizedChannelOrder["status"] {
 }
 
 function compactProductNames(items: Record<string, unknown>[], fallback: string) {
-  const names = items.map((item) => text(item.vendorItemName, item.productName, item.itemName, item.name, item.title)).filter(Boolean);
+  const names = items.map((item) => text(item.vendorItemName, item.productName, item.itemName, item.goodsName, item.originalGoodsName, item.name, item.title)).filter(Boolean);
   const unique = [...new Set(names)];
   if (!unique.length) return fallback;
   return unique.length === 1 ? unique[0] : `${unique[0]} 외 ${unique.length - 1}개`;
+}
+
+function temuOrderStatus(value: unknown): NormalizedChannelOrder["status"] {
+  const numeric = Number(value);
+  if (numeric === 2 || numeric === 41) return "ready_to_ship";
+  if (numeric === 3) return "cancelled";
+  if (numeric === 4 || numeric === 51) return "shipped";
+  if (numeric === 5) return "delivered";
+  return status(value);
+}
+
+function normalizeTemu(data: Record<string, unknown>) {
+  const rows = list(object(data.result).pageItems);
+  return rows.map((row): NormalizedChannelOrder | null => {
+    const parent = object(row.parentOrderMap);
+    const items = list(row.orderList);
+    const externalOrderId = text(parent.parentOrderSn, row.parentOrderSn);
+    if (!externalOrderId) return null;
+    const activeQuantity = items.reduce((sum, item) => {
+      const ordered = Math.round(number(item.quantity));
+      const cancelled = Math.round(number(item.canceledQuantityBeforeShipment));
+      return sum + Math.max(0, ordered - cancelled);
+    }, 0);
+    const amount = number(parent.orderAmount, parent.totalAmount, row.orderAmount);
+    const currency = text(parent.currency, row.currency, "KRW").toUpperCase();
+    const orderItems = items.map((item) => ({
+      parentOrderSn: externalOrderId,
+      orderSn: text(item.orderSn),
+      goodsId: text(item.goodsId),
+      skuId: text(item.skuId),
+      quantity: Math.max(0, Math.round(number(item.quantity)) - Math.round(number(item.canceledQuantityBeforeShipment))),
+    })).filter((item) => item.orderSn && item.quantity > 0).slice(0, 100);
+    return {
+      externalOrderId,
+      customerName: "Temu 구매자",
+      productName: compactProductNames(items, "Temu 주문 상품"),
+      quantity: Math.max(1, activeQuantity || Math.round(number(parent.quantity)) || 1),
+      amount,
+      currency,
+      amountKrw: currency === "KRW" ? amount : 0,
+      status: temuOrderStatus(parent.parentOrderStatus),
+      orderedAt: iso(parent.parentOrderTime, parent.createTime, items[0]?.orderCreateTime, parent.updateTime),
+      providerContext: {
+        parentOrderSn: externalOrderId,
+        regionId: text(parent.regionId),
+        inventoryDeductionWarehouseId: text(items[0]?.inventoryDeductionWarehouseId),
+        orderItems,
+      },
+    };
+  }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
 function normalizeCoupang(data: Record<string, unknown>) {
@@ -226,6 +277,12 @@ function normalizeElevenst(data: Record<string, unknown>) {
 }
 
 export function normalizeChannelOrders(channel: ActiveChannelKey, result: ChannelOperationResult): NormalizedChannelOrder[] {
+  if (channel === "temu") {
+    const normalized = result.steps
+      .filter((item) => /^orders(?::\d+)?$/.test(item.name))
+      .flatMap((item) => normalizeTemu(item.data));
+    return [...new Map(normalized.map((order) => [order.externalOrderId, order])).values()];
+  }
   const data = result.steps.find((step) => step.name === "orders")?.data ?? result.steps.at(-1)?.data ?? {};
   const normalized = channel === "coupang" ? normalizeCoupang(data)
     : channel === "shopee" ? normalizeShopee(data)

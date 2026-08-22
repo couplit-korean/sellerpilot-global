@@ -49,6 +49,13 @@ export function orderSyncArguments(channel: ActiveChannelKey, now = new Date()):
     startTime: elevenstDateTime(new Date(now.getTime() - 7 * 86_400_000)),
     endTime: elevenstDateTime(now),
   };
+  if (channel === "temu") return {
+    pageNumber: 1,
+    pageSize: 100,
+    updateAtStart: from.getTime(),
+    updateAtEnd: now.getTime(),
+    sortby: "updateTime",
+  };
   return null;
 }
 
@@ -134,5 +141,14 @@ export function inquirySyncArguments(channel: ActiveChannelKey, now = new Date()
   if (channel === "qoo10") return [{
     params: { search_start_dt: qoo10Date(from), search_end_dt: qoo10Date(now), proc_status: "S1" },
   }];
+  if (channel === "temu") {
+    const temuFrom = new Date(now.getTime() - 14 * 86_400_000);
+    return [{
+      pageNo: 1,
+      pageSize: 200,
+      updateAtStart: temuFrom.getTime(),
+      updateAtEnd: now.getTime(),
+    }];
+  }
   return [];
 }

@@ -6,6 +6,7 @@ export type ShipmentDraft = {
   carrierCode: string;
   trackingNumber: string;
   shippedAt?: Date;
+  providerContext?: Record<string, unknown>;
 };
 
 function requiredText(value: string, field: string, max: number) {
@@ -50,6 +51,9 @@ export function buildShipmentArguments(input: ShipmentDraft): Record<string, unk
   }
   if (input.channel === "ebay") {
     return { orderId: externalOrderId, body: { shippingCarrierCode: carrierCode, trackingNumber, shippedDate: shippedAt } };
+  }
+  if (input.channel === "temu") {
+    return { parentOrderSn: externalOrderId, carrierCode, trackingNumber, providerContext: input.providerContext ?? {} };
   }
   if (input.channel === "lazada") throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada");
   throw new Error(`SHIPMENT_CHANNEL_UNAVAILABLE:${input.channel}`);
