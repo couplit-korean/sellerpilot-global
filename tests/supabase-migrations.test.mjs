@@ -211,6 +211,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_finish_push_delivery(uuid,text,text)",
       "public.sellerpilot_service_enqueue_periodic_sync(text,text,jsonb,integer)",
       "public.sellerpilot_service_validate_worker_token(text,text)",
+      "public.sellerpilot_service_prune_runtime_noise(timestamp with time zone)",
     ];
     for (const signature of serviceOnlyFunctions) {
       assert.equal(
