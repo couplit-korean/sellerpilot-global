@@ -59,6 +59,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /환율 새로고침/);
   assert.match(page, /3_600_000/);
   assert.doesNotMatch(page, /Math\.random/);
+  assert.doesNotMatch(page, /beforeunload|onbeforeunload/);
   assert.match(exchangeRoute, /api\.frankfurter\.dev\/v2\/rates/);
   assert.match(exchangeRoute, /daily-reference/);
   assert.match(page, /상품 관리/);
