@@ -175,6 +175,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260821141500_preserve_terminal_order_state.sql",
       "20260822130000_enable_manual_inquiry_operations.sql",
       "20260822133000_reduce_runtime_sync_noise.sql",
+      "20260822140000_harden_runtime_retention.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");

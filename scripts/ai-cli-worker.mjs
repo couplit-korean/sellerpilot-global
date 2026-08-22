@@ -10,6 +10,7 @@ import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
 import { cliStudioResultSchema, productResearchResultSchema } from "../lib/ai-cli-contract.ts";
 import { buildMarketplaceStyleLearningBrief, channelStyleProfiles, matchStyleCategory } from "../lib/marketplace-style-learning.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
+import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
 import {
   mergeShopeeRequiredAttributes,
   normalizeCoupangAttributeValue,
@@ -74,6 +75,7 @@ function loadTemuEgressAllowlist() {
 
 const temuEgressAllowlist = loadTemuEgressAllowlist();
 const pollMs = Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS ?? 5_000));
+const maxIdlePollMs = Math.max(pollMs, Number(process.env.SELLERPILOT_AI_WORKER_MAX_IDLE_POLL_MS ?? 30_000));
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
 const imageGenerationTimeoutMs = Math.max(6 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 10 * 60_000));
@@ -83,11 +85,12 @@ const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.js
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.12";
+const workerVersion = "sellerpilot-cli-worker/1.13";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
 let temuEgressCache = { checkedAt: 0, currentIp: "" };
+let idlePollMs = pollMs;
 
 class JobCancelledError extends Error {
   constructor() {
@@ -112,6 +115,16 @@ process.once("SIGTERM", () => { stopping = true; });
 
 function delay(ms) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+function markWorkerBusy() {
+  idlePollMs = pollMs;
+}
+
+async function waitForIdleWork() {
+  const waitMs = jitterWorkerPollMs(idlePollMs);
+  idlePollMs = nextWorkerIdlePollMs(idlePollMs, pollMs, maxIdlePollMs);
+  await delay(waitMs);
 }
 
 async function currentPublicIp() {
@@ -1612,6 +1625,7 @@ do {
         }
         const syncResult = await syncResponse.json();
         if (Number(syncResult.queued ?? 0) > 0) {
+          markWorkerBusy();
           console.log(`[자동 동기화] ${syncResult.queued}개 채널 조회 작업 예약`);
         }
         const [competitorResponse, kakaoResponse] = await Promise.all([
@@ -1633,6 +1647,7 @@ do {
       body: JSON.stringify({ version: workerVersion }),
     });
     if (gatewayResponse.ok && gatewayResponse.status !== 204) {
+      markWorkerBusy();
       await processGatewayJob(await gatewayResponse.json());
       continue;
     }
@@ -1651,10 +1666,11 @@ do {
     });
     if (response.status === 204) {
       if (once) break;
-      await delay(pollMs);
+      await waitForIdleWork();
       continue;
     }
     if (!response.ok) throw new Error(`작업 요청 실패 · HTTP ${response.status}`);
+    markWorkerBusy();
     const job = await response.json();
     if (once) {
       await processJob(job);
