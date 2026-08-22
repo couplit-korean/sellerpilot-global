@@ -66,9 +66,7 @@ begin
 end;
 $$;
 
-drop function public.sellerpilot_get_order_fulfillment_context(uuid[]);
-
-create function public.sellerpilot_get_order_fulfillment_context(p_ids uuid[])
+create or replace function public.sellerpilot_get_order_fulfillment_context_v2(p_ids uuid[])
 returns table (
   id uuid,
   external_order_id text,
@@ -91,8 +89,8 @@ as $$
 $$;
 
 revoke all on function public.sellerpilot_service_ingest_orders(uuid,text,jsonb) from public,anon,authenticated;
-revoke all on function public.sellerpilot_get_order_fulfillment_context(uuid[]) from public,anon;
+revoke all on function public.sellerpilot_get_order_fulfillment_context_v2(uuid[]) from public,anon;
 grant execute on function public.sellerpilot_service_ingest_orders(uuid,text,jsonb) to service_role;
-grant execute on function public.sellerpilot_get_order_fulfillment_context(uuid[]) to authenticated;
+grant execute on function public.sellerpilot_get_order_fulfillment_context_v2(uuid[]) to authenticated;
 
 commit;

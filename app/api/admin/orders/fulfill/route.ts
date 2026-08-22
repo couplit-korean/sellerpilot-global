@@ -41,7 +41,7 @@ export async function POST(request: Request) {
 
   const ids = parsed.data.shipments.map((shipment) => shipment.id);
   const [{ data: orderRows, error: orderError }, { data: credentialRows, error: credentialError }] = await Promise.all([
-    admin.userClient.rpc("sellerpilot_get_order_fulfillment_context", { p_ids: ids }),
+    admin.userClient.rpc("sellerpilot_get_order_fulfillment_context_v2", { p_ids: ids }),
     admin.userClient.rpc("sellerpilot_list_credentials"),
   ]);
   if (orderError || credentialError) return NextResponse.json({ message: "출고 대상 주문과 채널 연결을 확인하지 못했습니다." }, { status: 500 });
