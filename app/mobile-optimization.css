@@ -1864,6 +1864,18 @@
 /* Keep the global product/order/inquiry search reachable across every mobile width.
    Earlier visual layers hide it below 720px, so this final override must stay last. */
 @media (max-width: 720px) {
+  .alert-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 7px;
+  }
+
+  .alert-list > button {
+    min-width: 0;
+    min-height: 112px;
+    align-content: start;
+    padding: 10px;
+  }
+
   .topbar-actions .global-search {
     display: inline-flex;
     width: 44px;

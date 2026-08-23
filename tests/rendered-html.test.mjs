@@ -32,7 +32,7 @@ test("server-renders the SellerPilot login experience", async () => {
 });
 
 test("contains the complete multi-channel operating storyboard and 175-item acceptance baseline", async () => {
-  const [page, layout, styles, operationsStyles, packageJson, storyboard, channelConfig, channelLinks, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping, manifest, serviceWorker, pushManager] = await Promise.all([
+  const [page, layout, styles, operationsStyles, packageJson, storyboard, channelConfig, channelLinks, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping, manifest, serviceWorker, pushManager, mobileStyles] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -50,6 +50,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-push-manager.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /^"use client";/);
@@ -126,6 +127,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(categoryWorkbench, /현재 검색어로 다시 추천/);
   assert.match(categoryWorkbench, /sellerpilot:category-workbench:/);
   assert.match(categoryWorkbench, /restoreCategoryStates\(productId\)/);
+  assert.match(mobileStyles, /\.alert-list\s*\{\s*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\) !important/);
   assert.doesNotMatch(page, /<PublishingPage key=\{publishingProduct/);
   assert.match(page, /resolvedProductId = analyzedProductId \?\? initialProduct\?\.id \?\? null/);
   assert.match(page, /event === "INITIAL_SESSION" \|\| event === "SIGNED_IN"/);
