@@ -54,6 +54,35 @@ const initialState = (): ChannelState => ({
   manualCategoryPath: "",
 });
 
+const categoryStateStorageKey = (productId: string) => `sellerpilot:category-workbench:${productId}:v1`;
+
+function restoreCategoryStates(productId: string | null): Record<string, ChannelState> {
+  if (!productId || typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(categoryStateStorageKey(productId)) ?? "{}") as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(Object.entries(parsed).flatMap(([key, value]) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+      const state = value as Partial<ChannelState>;
+      const phase = state.phase === "suggesting" || state.phase === "inspecting" ? "error" : state.phase;
+      if (!phase || !["idle", "ready", "confirmed", "error"].includes(phase)) return [];
+      return [[key, {
+        ...initialState(),
+        ...state,
+        phase,
+        suggestions: Array.isArray(state.suggestions) ? state.suggestions : [],
+        attributes: Array.isArray(state.attributes) ? state.attributes : [],
+        values: state.values && typeof state.values === "object" && !Array.isArray(state.values) ? state.values : {},
+        error: state.phase === "suggesting" || state.phase === "inspecting"
+          ? "페이지 전환 중 중단된 조회입니다. 현재 검색어로 다시 조회해 주세요."
+          : state.error,
+      } satisfies ChannelState]];
+    }));
+  } catch {
+    return {};
+  }
+}
+
 function records(value: unknown, depth = 0): Record<string, unknown>[] {
   if (depth > 8 || value === null || value === undefined) return [];
   if (Array.isArray(value)) return value.flatMap((item) => records(item, depth + 1));
@@ -681,7 +710,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
 }) {
   const [query, setQuery] = useState(productName);
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
-  const [states, setStates] = useState<Record<string, ChannelState>>({});
+  const [states, setStates] = useState<Record<string, ChannelState>>(() => restoreCategoryStates(productId));
+  const [restoredProductId, setRestoredProductId] = useState(productId);
   const [targets, setTargets] = useState<Partial<Record<"shopee" | "lazada" | "ebay", ChannelTarget[]>>>({ ebay: ebayMarketplaceTargets });
   const [targetErrors, setTargetErrors] = useState<Partial<Record<"shopee" | "lazada" | "ebay", string>>>({});
   const [selectedMarkets, setSelectedMarkets] = useState<Partial<Record<"shopee" | "lazada" | "ebay", string>>>({ ebay: "US" });
@@ -690,6 +720,15 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   const [loadingCredentials, setLoadingCredentials] = useState(true);
 
   useEffect(() => setQuery(productName), [productName]);
+  useEffect(() => {
+    if (restoredProductId === productId) return;
+    setStates(restoreCategoryStates(productId));
+    setRestoredProductId(productId);
+  }, [productId, restoredProductId]);
+  useEffect(() => {
+    if (!productId || restoredProductId !== productId) return;
+    window.sessionStorage.setItem(categoryStateStorageKey(productId), JSON.stringify(states));
+  }, [productId, restoredProductId, states]);
   useEffect(() => {
     let mounted = true;
     setSourceImageUrl("");

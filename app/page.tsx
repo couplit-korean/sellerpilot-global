@@ -1105,18 +1105,20 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
     .map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
+  const resolvedProductId = analyzedProductId ?? initialProduct?.id ?? null;
+  const resolvedProductName = analyzedProductName || initialProduct?.name || `${intake.productName} ${intake.categoryHint}`.trim();
 
   const preservePublishingCaptureContext = useCallback(() => {
     const historyState = isRecord(window.history.state) ? window.history.state : {};
     const params = new URLSearchParams({ view: "publishing" });
-    if (initialProduct?.id) params.set("productId", initialProduct.id);
+    if (resolvedProductId) params.set("productId", resolvedProductId);
     window.sessionStorage.setItem("sellerpilot:last-view:v1", "publishing");
     window.history.replaceState(
-      { ...historyState, view: "publishing", ...(initialProduct?.id ? { productId: initialProduct.id } : {}) },
+      { ...historyState, view: "publishing", ...(resolvedProductId ? { productId: resolvedProductId } : {}) },
       "",
       `${window.location.pathname}?${params.toString()}`,
     );
-  }, [initialProduct?.id]);
+  }, [resolvedProductId]);
 
   useEffect(() => {
     void authenticatedFetch("/api/admin/templates").then(async (response) => {
@@ -1511,16 +1513,16 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         }}
       />
       <CategoryClassificationWorkbench
-        productId={analyzedProductId}
-        productName={analyzedProductName || `${intake.productName} ${intake.categoryHint}`.trim()}
+        productId={resolvedProductId}
+        productName={resolvedProductName}
         description={intake.description}
-        sourceRef={analyzedProductId ?? categoryDraftRef}
+        sourceRef={resolvedProductId ?? categoryDraftRef}
         enabledChannels={selectedChannels}
         notify={notify}
         onConfirmed={() => setPublishRefreshVersion((current) => current + 1)}
       />
       <ProductPublishWorkbench
-        productId={analyzedProductId}
+        productId={resolvedProductId}
         selectedChannels={selectedChannels}
         refreshVersion={publishRefreshVersion}
         notify={notify}
@@ -2233,7 +2235,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       "",
       `${window.location.pathname}?${initialParams.toString()}`,
     );
-    setView(initialView);
+    const initialViewTimer = window.setTimeout(() => setView(initialView), 0);
     const onPopState = (event: PopStateEvent) => {
       const state = isRecord(event.state) ? event.state : {};
       const params = new URLSearchParams(window.location.search);
@@ -2256,7 +2258,10 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       window.scrollTo({ top: 0, behavior: "auto" });
     };
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
+    return () => {
+      window.clearTimeout(initialViewTimer);
+      window.removeEventListener("popstate", onPopState);
+    };
   // Browser entries are app views; live product data is read through a ref.
   }, []);
 
@@ -2325,7 +2330,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} />;
     if (view === "product-detail" && selectedProduct) return <ProductDetailPage product={selectedProduct} onBack={() => window.history.back()} authenticatedFetch={operations.authenticatedFetch} />;
     if (view === "remediation") return <ExternalActionsPage actions={operations.data?.externalActions ?? []} onEdit={editExternalActionProduct} onConnections={() => navigate("connections")} />;
-    if (view === "publishing") return <PublishingPage key={publishingProduct?.id ?? "new-product"} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} />;
+    if (view === "publishing") return <PublishingPage notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} />;
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
