@@ -470,6 +470,34 @@ function smartstorePriorityScore(query: string, candidate: CategorySuggestion) {
   return 0;
 }
 
+function ebayCategoryCompatibility(query: string, candidate: CategorySuggestion) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  const normalizedCandidate = `${candidate.path.join(" ")} ${candidate.name}`.toLocaleLowerCase();
+  if (/(노트|수첩|notebook|notepad|journal)/u.test(normalizedQuery)) {
+    return /(notebook|notepad|diar|journal|office supplies)/u.test(normalizedCandidate)
+      && !/(cell phone|smartphone|computer|laptop|tablet)/u.test(normalizedCandidate);
+  }
+  if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber)/u.test(normalizedQuery)) {
+    return /(cleaning.*(?:towel|cloth|tool)|towels?.*dishcloth|household supplies)/u.test(normalizedCandidate)
+      && !/(diaper|clothing|fashion)/u.test(normalizedCandidate);
+  }
+  if (/(케이블|전선|cable|cord|wire)/u.test(normalizedQuery)) {
+    return /(?:cable|cord|wire).*(?:tie|organizer|connector)|cable ties & organizers/u.test(normalizedCandidate)
+      && !/(furniture|desk|table|cell phone)/u.test(normalizedCandidate);
+  }
+  return queryScore(query, normalizedCandidate) > 0;
+}
+
+function ebayPriorityScore(query: string, candidate: CategorySuggestion) {
+  const normalizedQuery = query.toLocaleLowerCase();
+  const value = `${candidate.path.join(" ")} ${candidate.name}`.toLocaleLowerCase();
+  const score = (terms: string[]) => terms.reduce((total, term, index) => value.includes(term) ? Math.max(total, terms.length - index) : total, 0);
+  if (/(노트|수첩|notebook|notepad|journal)/u.test(normalizedQuery)) return score(["blank diaries & journals", "notebooks", "notepads", "journals", "office supplies"]);
+  if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber)/u.test(normalizedQuery)) return score(["cleaning towels & cloths", "cleaning cloths", "towels & dishcloths", "cleaning tools", "household supplies"]);
+  if (/(케이블|전선|cable|cord|wire)/u.test(normalizedQuery)) return score(["cable ties & organizers", "cable organizers", "cord organizers", "computer cables & connectors"]);
+  return 0;
+}
+
 function lazadaTreeLeaves(value: unknown, parentPath: string[] = [], depth = 0): CategorySuggestion[] {
   if (depth > 10 || value === null || value === undefined) return [];
   if (Array.isArray(value)) return value.flatMap((item) => lazadaTreeLeaves(item, parentPath, depth + 1));
@@ -571,6 +599,7 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
     .filter((item) => channel !== "shopee" || shopeeCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
     .filter((item) => channel !== "lazada" || lazadaCategoryCompatibility(query, item))
     .filter((item) => channel !== "smartstore" || smartstoreCategoryCompatibility(query, `${item.path.join(" ")} ${item.name}`))
+    .filter((item) => channel !== "ebay" || ebayCategoryCompatibility(query, item))
     .sort((left, right) => {
       if (channel === "qoo10") {
         const leftPriority = qoo10PriorityScore(query, left);
@@ -590,6 +619,11 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
       if (channel === "lazada") {
         const leftPriority = lazadaPriorityScore(query, left);
         const rightPriority = lazadaPriorityScore(query, right);
+        if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+      }
+      if (channel === "ebay") {
+        const leftPriority = ebayPriorityScore(query, left);
+        const rightPriority = ebayPriorityScore(query, right);
         if (leftPriority !== rightPriority) return rightPriority - leftPriority;
       }
       return right.confidence - left.confidence;

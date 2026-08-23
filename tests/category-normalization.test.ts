@@ -394,3 +394,16 @@ test("Lazada normalization rejects power, beauty, and diaper noise for the three
   assert.equal(normalizeSuggestions("lazada", response, "Kain pembersih mikrofiber")[0]?.id, "CLOTH");
   assert.equal(normalizeSuggestions("lazada", response, "Klip kabel pelekat")[0]?.id, "CABLE");
 });
+
+test("eBay normalization blocks provider-score noise and prioritizes the three QA product families", () => {
+  const response = { ok: true, steps: [{ name: "category-suggestions", ok: true, status: 200, data: [
+    { categoryId: "PHONE", categoryName: "Cell Phones & Smartphones", leafCategoryTreeNode: true, confidence: 0.99 },
+    { categoryId: "NOTE", categoryName: "Blank Diaries & Journals", leafCategoryTreeNode: true, confidence: 0.45 },
+    { categoryId: "CLOTH", categoryName: "Cleaning Towels & Cloths", leafCategoryTreeNode: true, confidence: 0.45 },
+    { categoryId: "CABLE", categoryName: "Cable Ties & Organizers", leafCategoryTreeNode: true, confidence: 0.45 },
+    { categoryId: "DESK", categoryName: "Desks & Computer Furniture", leafCategoryTreeNode: true, confidence: 0.98 },
+  ] }] };
+  assert.deepEqual(normalizeSuggestions("ebay", response, "A5 kraft notebook notepad").map((item) => item.id), ["NOTE"]);
+  assert.deepEqual(normalizeSuggestions("ebay", response, "microfiber cleaning cloth").map((item) => item.id), ["CLOTH"]);
+  assert.deepEqual(normalizeSuggestions("ebay", response, "adhesive cable clips cord organizer").map((item) => item.id), ["CABLE"]);
+});
