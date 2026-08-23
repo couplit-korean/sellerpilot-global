@@ -212,6 +212,18 @@ test("Shopee normalization separates notebook, cleaning cloth, and cable organiz
   assert.equal(normalizeSuggestions("shopee", response, "adhesive cable organizer clips")[0]?.id, "5");
 });
 
+test("Shopee cable organizer query never falls through to generic storage organizers", () => {
+  const response = { ok: true, steps: [{ name: "global-categories", ok: true, status: 200, data: [
+    { category_id: 1, display_category_name: "Shoe Storage Boxes", leaf: true },
+    { category_id: 2, display_category_name: "Storage Boxes, Bags & Baskets", leaf: true },
+    { category_id: 3, display_category_name: "Cable Ties & Organizers", leaf: true },
+  ] }] };
+  assert.deepEqual(
+    normalizeSuggestions("shopee", response, "Adhesive cable clips cable ties cord organizer").map((item) => item.id),
+    ["3"],
+  );
+});
+
 const shopeeProgramCatalogCases = [
   ["흰쌀밥 식품 샘플", "100781"],
   ["노란색 자동차 완구", "100912"],
