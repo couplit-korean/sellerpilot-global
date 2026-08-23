@@ -119,9 +119,11 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /preservePublishingCaptureContext/);
   assert.match(page, /sellerpilot:last-view:v1", "publishing"/);
   const aiProductStudio = await readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8");
+  const categoryWorkbench = await readFile(new URL("../app/category-classification-workbench.tsx", import.meta.url), "utf8");
   assert.match(aiProductStudio, /sellerpilot:product-studio:active-job:v1/);
   assert.match(aiProductStudio, /새로고침 전에 시작한 상품 분석 작업을 다시 연결/);
   assert.match(aiProductStudio, /finishStudioJob\(activeJob\.jobId, accessToken, true\)/);
+  assert.match(categoryWorkbench, /현재 검색어로 다시 추천/);
   assert.match(page, /\?view=\$\{next\}/);
   assert.match(page, /사진 촬영/);
   assert.match(page, /앨범에서 선택/);
