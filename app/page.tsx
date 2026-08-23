@@ -1499,6 +1499,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         onResultReady={(studioResult, productId) => {
           setAnalyzedProductName(studioResult.product.name);
           setAnalyzedProductId(productId);
+          const koreanListing = studioResult.localizedListings.find((listing) => listing.channel === "coupang" && listing.market === "KR")
+            ?? studioResult.localizedListings.find((listing) => listing.channel === "smartstore" && listing.market === "KR");
+          setIntake((current) => ({
+            ...current,
+            productName: studioResult.product.name,
+            categoryHint: studioResult.product.category,
+            description: koreanListing?.description ?? studioResult.product.oneLine,
+          }));
           setPublishRefreshVersion((current) => current + 1);
         }}
       />

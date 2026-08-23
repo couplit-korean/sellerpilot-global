@@ -544,27 +544,38 @@ export async function lazadaRequest(input: {
   const country = (textValue(input.payload, "country") || "my").toLowerCase();
   const endpoint = lazadaApiEndpoints[country];
   if (!appKey || !appSecret || !accessToken || !endpoint) throw new Error("LAZADA_CREDENTIALS_MISSING");
-  const params: Record<string, string> = {
-    access_token: accessToken,
-    app_key: appKey,
-    sign_method: "sha256",
-    timestamp: Date.now().toString(),
-    ...(input.params ?? {}),
-  };
-  params.sign = signLazadaRequest(input.path, params, appSecret);
   const method = input.method ?? "GET";
-  const response = await fetch(`${endpoint}${input.path}${method === "GET" ? `?${new URLSearchParams(params)}` : ""}`, {
-    method,
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-    headers: {
-      accept: "application/json",
-      "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
-      "user-agent": "SellerPilot-Lazada-Connector/1.0",
-    },
-    body: method === "POST" ? new URLSearchParams(params) : undefined,
-  });
-  return readRemoteResponse(response);
+  const send = async () => {
+    const params: Record<string, string> = {
+      access_token: accessToken,
+      app_key: appKey,
+      sign_method: "sha256",
+      timestamp: Date.now().toString(),
+      ...(input.params ?? {}),
+    };
+    params.sign = signLazadaRequest(input.path, params, appSecret);
+    const response = await fetch(`${endpoint}${input.path}${method === "GET" ? `?${new URLSearchParams(params)}` : ""}`, {
+      method,
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+      headers: {
+        accept: "application/json",
+        "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "user-agent": "SellerPilot-Lazada-Connector/1.0",
+      },
+      body: method === "POST" ? new URLSearchParams(params) : undefined,
+    });
+    return readRemoteResponse(response);
+  };
+
+  const first = await send();
+  const errorText = `${first.text} ${JSON.stringify(first.data)}`;
+  if (!/api access frequency exceeds the limit/i.test(errorText)) return first;
+
+  const banSeconds = Number(errorText.match(/ban will last\s+(\d+)\s+seconds?/i)?.[1] ?? 1);
+  const retryDelayMs = Math.min(5_000, Math.max(100, banSeconds * 1_000 + 250));
+  await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+  return send();
 }
 
 export async function exchangeLazadaOAuthToken(input: {

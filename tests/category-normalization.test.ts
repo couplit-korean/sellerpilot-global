@@ -70,6 +70,19 @@ test("Qoo10 category normalization does not return an arbitrary leaf without a l
   assert.deepEqual(normalizeSuggestions("qoo10", qoo10Response, "분류 사전이 없는 임의 상품"), []);
 });
 
+test("Qoo10 normalization keeps notebook, cleaning-cloth, and cable-organizer products out of lookalike categories", () => {
+  const response = { ok: true, steps: [{ name: "categories", ok: true, status: 200, data: [
+    { CATE_L_NM: "パソコン", CATE_M_NM: "パソコン本体", CATE_S_CD: "LAPTOP", CATE_S_NM: "ノートパソコン" },
+    { CATE_L_NM: "文房具", CATE_M_NM: "ノート・紙製品", CATE_S_CD: "NOTE", CATE_S_NM: "リングノート" },
+    { CATE_L_NM: "日用品雑貨", CATE_M_NM: "清掃用品", CATE_S_CD: "CLOTH", CATE_S_NM: "マイクロファイバークロス" },
+    { CATE_L_NM: "家具・インテリア", CATE_M_NM: "デスク・テーブル", CATE_S_CD: "DESK", CATE_S_NM: "机・デスク" },
+    { CATE_L_NM: "パソコン", CATE_M_NM: "ケーブル用品", CATE_S_CD: "CABLE", CATE_S_NM: "ケーブルクリップ" },
+  ] }] };
+  assert.equal(normalizeSuggestions("qoo10", response, "A5 リングノート")[0]?.id, "NOTE");
+  assert.equal(normalizeSuggestions("qoo10", response, "マイクロファイバー 掃除クロス")[0]?.id, "CLOTH");
+  assert.equal(normalizeSuggestions("qoo10", response, "ケーブル整理クリップ")[0]?.id, "CABLE");
+});
+
 const qoo10RepresentativeCases = [
   ["면 반팔 티셔츠 의류", "300002252"],
   ["고체 세정 비누 soap bar", "TEST-FACE-SOAP"],
@@ -186,6 +199,19 @@ test("Shopee hanger normalization excludes laundry appliances", () => {
   assert.equal(normalizeSuggestions("shopee", response, "clothes hangers")[0]?.id, "2");
 });
 
+test("Shopee normalization separates notebook, cleaning cloth, and cable organizer from lookalikes", () => {
+  const response = { ok: true, steps: [{ name: "global-categories", ok: true, status: 200, data: { response: { category_list: [
+    { category_id: 1, display_category_name: "Computers > Laptops", has_children: false },
+    { category_id: 2, display_category_name: "Stationery > Notebooks & Notepads", has_children: false },
+    { category_id: 3, display_category_name: "Home Care > Cleaning Towels & Cloths", has_children: false },
+    { category_id: 4, display_category_name: "Furniture > Desks", has_children: false },
+    { category_id: 5, display_category_name: "Computer Accessories > Cable Ties & Organizers", has_children: false },
+  ] } } }] };
+  assert.equal(normalizeSuggestions("shopee", response, "A5 spiral notebook")[0]?.id, "2");
+  assert.equal(normalizeSuggestions("shopee", response, "microfiber cleaning cloth set")[0]?.id, "3");
+  assert.equal(normalizeSuggestions("shopee", response, "adhesive cable organizer clips")[0]?.id, "5");
+});
+
 const shopeeProgramCatalogCases = [
   ["흰쌀밥 식품 샘플", "100781"],
   ["노란색 자동차 완구", "100912"],
@@ -257,6 +283,18 @@ test("Smartstore category normalization ranks a storage-box leaf above unrelated
   const suggestions = normalizeSuggestions("smartstore", smartstoreCategoryResponse, "[API TEST] 수납 박스 이미지 샘플");
   assert.equal(suggestions[0]?.id, "500003");
   assert.equal(suggestions.some((item) => item.id === "500001"), false);
+});
+
+test("Smartstore normalization blocks 노트북 noise and maps the three QA product families", () => {
+  const response = { ok: true, steps: [{ name: "category-tree", ok: true, status: 200, data: { items: [
+    { id: "LAPTOP", name: "노트북", wholeCategoryName: "디지털>가전>노트북", last: true },
+    { id: "NOTE", name: "일반노트", wholeCategoryName: "생활/건강>문구>노트>일반노트", last: true },
+    { id: "CLOTH", name: "극세사걸레", wholeCategoryName: "생활/건강>청소용품>걸레>극세사걸레", last: true },
+    { id: "CABLE", name: "케이블타이/정리함", wholeCategoryName: "디지털>가전>PC액세서리>케이블타이/정리함", last: true },
+  ] } }] };
+  assert.equal(normalizeSuggestions("smartstore", response, "A5 크라프트 스프링 노트")[0]?.id, "NOTE");
+  assert.equal(normalizeSuggestions("smartstore", response, "극세사 다용도 청소천")[0]?.id, "CLOTH");
+  assert.equal(normalizeSuggestions("smartstore", response, "부착형 케이블 정리 클립")[0]?.id, "CABLE");
 });
 
 test("Smartstore category normalization rejects arbitrary leaves without a lexical match", () => {
@@ -341,4 +379,18 @@ test("Lazada omega matching falls back to a health-supplement leaf and excludes 
     ] } }],
   };
   assert.equal(normalizeSuggestions("lazada", response, "fish oil omega 3")[0]?.id, "HEALTH");
+});
+
+test("Lazada normalization rejects power, beauty, and diaper noise for the three QA product families", () => {
+  const response = { ok: true, steps: [{ name: "category-tree", ok: true, status: 200, data: { data: [
+    { category_id: "POWER", name: "Power Supply Units", leaf: true },
+    { category_id: "BEAUTY", name: "Eye Cream & Serum", leaf: true },
+    { category_id: "DIAPER", name: "Cloth Diapers", category_path: "Mother & Baby > Cloth Diapers", leaf: true },
+    { category_id: "NOTE", name: "Notebooks", category_path: "Stationery > Notebooks", leaf: true },
+    { category_id: "CLOTH", name: "Cleaning Cloths", category_path: "Home Care > Household Cleaning > Cleaning Cloths", leaf: true },
+    { category_id: "CABLE", name: "Cable Clips", category_path: "Computers > Accessories > Cable Clips", leaf: true },
+  ] } }] };
+  assert.equal(normalizeSuggestions("lazada", response, "Buku nota spiral A5")[0]?.id, "NOTE");
+  assert.equal(normalizeSuggestions("lazada", response, "Kain pembersih mikrofiber")[0]?.id, "CLOTH");
+  assert.equal(normalizeSuggestions("lazada", response, "Klip kabel pelekat")[0]?.id, "CABLE");
 });

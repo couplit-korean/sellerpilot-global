@@ -143,6 +143,9 @@ function qoo10SearchTerms(query: string) {
   if (/(수납.*박스|보관.*박스|storage\s?(?:box|bin)|organizer)/u.test(normalized)) aliases.push("収納ボックス", "収納ケース", "収納用品");
   if (/(옷걸이|행거|hanger|ハンガー)/u.test(normalized)) aliases.push("ハンガー", "衣類ハンガー", "衣類収納");
   if (/(우산|umbrella)/u.test(normalized)) aliases.push("傘", "雨具", "ファッション雑貨");
+  if (/(노트|수첩|notebook|notepad|ノート|メモ帳)/u.test(normalized)) aliases.push("リングノート", "ノート", "メモ帳", "文房具");
+  if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber|クロス|ふきん)/u.test(normalized)) aliases.push("掃除クロス", "マイクロファイバークロス", "ふきん", "清掃用品");
+  if (/(케이블|전선|cable|cord|ケーブル|コード|配線)/u.test(normalized)) aliases.push("ケーブルクリップ", "コードクリップ", "配線整理", "ケーブル整理");
   return aliases.join(" ");
 }
 
@@ -176,6 +179,9 @@ function qoo10PriorityTerms(query: string) {
   if (/(옷걸이|행거|hanger|ハンガー)/u.test(normalized)) return ["衣類ハンガー", "ハンガー"];
   if (/(컵|머그|cup|mug)/u.test(normalized)) return ["マグカップ・ティーカップ", "マグカップ"];
   if (/(우산|umbrella)/u.test(normalized)) return ["傘"];
+  if (/(노트|수첩|notebook|notepad|ノート|メモ帳)/u.test(normalized)) return ["リングノート", "ノート", "メモ帳"];
+  if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber|クロス|ふきん)/u.test(normalized)) return ["マイクロファイバークロス", "掃除クロス", "ふきん", "清掃用品"];
+  if (/(케이블|전선|cable|cord|ケーブル|コード|配線)/u.test(normalized)) return ["ケーブルクリップ", "コードクリップ", "配線整理", "ケーブル整理"];
   return [];
 }
 
@@ -196,8 +202,13 @@ function qoo10PriorityScore(query: string, candidate: CategorySuggestion) {
 
 function qoo10CategoryCompatibility(query: string, candidate: CategorySuggestion) {
   const path = candidate.path.join(" ").toLocaleLowerCase();
+  const value = `${path} ${candidate.name}`.toLocaleLowerCase();
+  const normalizedQuery = query.toLocaleLowerCase();
   if (!/(ふるさと納税|고향세)/u.test(query.toLocaleLowerCase()) && path.includes("ふるさと納税")) return false;
   if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(query.toLocaleLowerCase()) && /(犬用品|猫用品|ペット)/u.test(candidate.path.join(" "))) return false;
+  if (/(노트|수첩|notebook|notepad|ノート|メモ帳)/u.test(normalizedQuery)) return /(リングノート|ノート|メモ帳|文房具)/u.test(value) && !/(ノートパソコン|パソコン|コンピュータ)/u.test(value);
+  if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber|クロス|ふきん)/u.test(normalizedQuery)) return /(掃除.*クロス|マイクロファイバー|ふきん|雑巾|清掃用品)/u.test(value) && !/(デンタル|ホワイトニング|ブルーレイ)/u.test(value);
+  if (/(케이블|전선|cable|cord|ケーブル|コード|配線)/u.test(normalizedQuery)) return /(ケーブル|コード|配線).*(クリップ|整理|収納)|クリップ.*(ケーブル|コード)/u.test(value) && !/(机|テーブル|こたつ)/u.test(value);
   return queryScore(qoo10SearchTerms(query), `${candidate.path.join(" ")} ${candidate.name}`) > 0;
 }
 
@@ -225,6 +236,9 @@ function shopeeSearchTerms(query: string) {
   if (/(hanger|옷걸이|행거)/u.test(normalized)) aliases.push("clothes hangers laundry organization home living");
   if (/(bag|pouch|가방|백)/u.test(normalized)) aliases.push("bags luggage accessories");
   if (/(shoe|sneaker|sandal|신발|슈즈)/u.test(normalized)) aliases.push("shoes sneakers footwear sandals");
+  if (/(notebook|notepad|journal|노트|수첩)/u.test(normalized)) aliases.push("notebooks notepads journals stationery office supplies");
+  if (/(cleaning cloth|microfiber|microfibre|청소천|극세사|행주|걸레)/u.test(normalized)) aliases.push("cleaning towels cloths microfiber rags household cleaning");
+  if (/(cable|cord|wire|케이블|전선)/u.test(normalized)) aliases.push("cable clips ties organizers wire management computer accessories");
   return aliases.join(" ");
 }
 
@@ -292,6 +306,15 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
   if (/(tote|canvas|캔버스.*토트|토트백)/u.test(normalizedQuery)) {
     return /(fashion|bag|luggage|accessor)/u.test(normalizedCandidate);
   }
+  if (/(notebook|notepad|journal|노트|수첩)/u.test(normalizedQuery)) {
+    return /(notebooks?|notepads?|journals?|stationery)/u.test(normalizedCandidate) && !/(laptop|computer|rubber-metal)/u.test(normalizedCandidate);
+  }
+  if (/(cleaning cloth|microfiber|microfibre|청소천|극세사|행주|걸레)/u.test(normalizedQuery)) {
+    return /(cleaning.*(?:cloth|towel)|microfi(?:ber|bre)|dishcloth|household.*cleaning)/u.test(normalizedCandidate) && !/(diaper|baby|beauty)/u.test(normalizedCandidate);
+  }
+  if (/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) {
+    return /(cable|cord|wire).*(clip|tie|organizer|management)|(?:clip|tie|organizer).*(cable|cord|wire)/u.test(normalizedCandidate) && !/(table|desk|furniture)/u.test(normalizedCandidate);
+  }
   return queryScore(shopeeSearchTerms(query), candidate) > 0;
 }
 
@@ -315,6 +338,9 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(jacket|재킷)/u.test(normalizedQuery)) return score(["jackets", "outerwear"]);
   if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) return score(["storage boxes", "home organizers", "home & living"]);
   if (/(hanger|옷걸이|행거)/u.test(normalizedQuery)) return score(["clothes hangers", "clothing hangers", "coat hangers", "hangers"]);
+  if (/(notebook|notepad|journal|노트|수첩)/u.test(normalizedQuery)) return score(["notebooks & notepads", "notebooks", "notepads", "journals", "stationery"]);
+  if (/(cleaning cloth|microfiber|microfibre|청소천|극세사|행주|걸레)/u.test(normalizedQuery)) return score(["cleaning towels & cloths", "microfiber cloths", "cleaning cloths", "household cleaning"]);
+  if (/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) return score(["cable ties & organizers", "cable organizers", "cable clips", "wire management"]);
   return 0;
 }
 
@@ -339,6 +365,9 @@ function lazadaSearchTerms(query: string) {
   if (/(tote|kanvas|캔버스.*토트|토트백)/u.test(normalized)) aliases.push("tote bags fashion bags");
   if (/(kotak simpanan|storage\s?(?:box|bin)|수납.*박스)/u.test(normalized)) aliases.push("storage boxes organizers home organization");
   if (/(penyangkut|hanger|옷걸이|행거)/u.test(normalized)) aliases.push("clothes hangers laundry organization");
+  if (/(buku nota|notebook|notepad|journal|노트|수첩)/u.test(normalized)) aliases.push("notebooks notepads journals stationery office supplies");
+  if (/(kain|lap|cleaning cloth|microfiber|microfibre|청소천|극세사|행주|걸레)/u.test(normalized)) aliases.push("cleaning cloths microfiber towels household cleaning kain pembersih");
+  if (/(klip kabel|kabel|cable|cord|wire|케이블|전선)/u.test(normalized)) aliases.push("cable clips ties organizers wire management computer accessories");
   return aliases.join(" ");
 }
 
@@ -355,6 +384,9 @@ function lazadaCategoryCompatibility(query: string, candidate: CategorySuggestio
     && !/pet|animal feed|veterinary|mother|baby|infant|bayi|kanak|ibu/u.test(`${path} ${name}`);
   if (/(vitamin|비타민)/u.test(normalizedQuery)) return /vitamin|supplement/u.test(`${path} ${name}`);
   if (/(storage\s?(?:box|bin)|수납.*박스|kotak simpanan)/u.test(normalizedQuery)) return /storage|organizer|kotak|box/u.test(name);
+  if (/(buku nota|notebook|notepad|journal|노트|수첩)/u.test(normalizedQuery)) return /notebook|notepad|journal|diary|stationery|buku nota/u.test(`${path} ${name}`) && !/computer|laptop|power supply/u.test(`${path} ${name}`);
+  if (/(kain|lap|cleaning cloth|microfiber|microfibre|청소천|극세사|행주|걸레)/u.test(normalizedQuery)) return /cleaning.*(?:cloth|towel)|microfi(?:ber|bre)|kain pembersih|kain lap|household cleaning/u.test(`${path} ${name}`) && !/diaper|lampin|mother|baby|beauty/u.test(`${path} ${name}`);
+  if (/(klip kabel|kabel|cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) return /(cable|cord|wire|kabel).*(clip|tie|organizer|management|klip)|(?:clip|tie|organizer|klip).*(cable|cord|wire|kabel)/u.test(`${path} ${name}`) && !/furniture|table|desk/u.test(`${path} ${name}`);
   return lazadaQueryScore(lazadaSearchTerms(query), `${path} ${name}`) > 0;
 }
 
@@ -366,6 +398,9 @@ function lazadaPriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(pasta|penne|파스타|펜네)/u.test(normalizedQuery)) return score(["penne", "pasta", "noodles"]);
   if (/(flour|밀가루|tepung)/u.test(normalizedQuery)) return score(["wheat flour", "flour", "tepung"]);
   if (/(fish\s?oil|omega|오메가|어유|minyak ikan)/u.test(normalizedQuery)) return score(["fish oil", "omega 3", "omega", "dietary supplements", "vitamins & supplements", "health supplements"]);
+  if (/(buku nota|notebook|notepad|journal|노트|수첩)/u.test(normalizedQuery)) return score(["notebooks", "notepads", "journals", "stationery"]);
+  if (/(kain|lap|cleaning cloth|microfiber|microfibre|청소천|극세사|행주|걸레)/u.test(normalizedQuery)) return score(["cleaning cloths", "microfiber cloths", "cleaning towels", "household cleaning"]);
+  if (/(klip kabel|kabel|cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) return score(["cable clips", "cable ties", "cable organizers", "wire management"]);
   return 0;
 }
 
@@ -380,6 +415,9 @@ function smartstoreSearchTerms(query: string) {
   if (/(비타민|오메가|어유|건강식품|보충제|supplement|vitamin|omega)/u.test(normalized)) aliases.push("건강식품 건강기능식품 영양제 비타민 오메가3 어유");
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalized)) aliases.push("수납 박스 수납박스 리빙박스 수납함 정리함 정리 바구니");
   if (/(옷걸이|행거|hanger)/u.test(normalized)) aliases.push("옷걸이 행거 의류수납 세탁용품");
+  if (/(노트|수첩|notebook|notepad|journal)/u.test(normalized)) aliases.push("문구 노트 수첩 메모지 스프링노트 다이어리");
+  if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber)/u.test(normalized)) aliases.push("생활용품 청소용품 청소포 극세사 걸레 행주 타월 청소천");
+  if (/(케이블|전선|cable|cord|wire)/u.test(normalized)) aliases.push("PC액세서리 케이블타이 케이블정리 전선정리 정리클립 정리함");
   return aliases.join(" ");
 }
 
@@ -409,6 +447,9 @@ function smartstoreCategoryCompatibility(query: string, candidate: string) {
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return /(수납박스|리빙박스|수납함|정리함|정리 바구니)/u.test(normalizedCandidate);
   if (/(옷걸이|행거|hanger)/u.test(normalizedQuery)) return /(옷걸이|의류수납|세탁용품)/u.test(normalizedCandidate);
   if (/(캔버스.*토트|토트백|tote)/u.test(normalizedQuery)) return /(토트백|숄더백|에코백)/u.test(normalizedCandidate);
+  if (/(노트|수첩|notebook|notepad|journal)/u.test(normalizedQuery)) return /(노트|수첩|메모지|다이어리)/u.test(normalizedCandidate) && !/(노트북|컴퓨터|가전)/u.test(normalizedCandidate);
+  if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber)/u.test(normalizedQuery)) return /(청소천|청소포|극세사|걸레|행주|청소용품|다용도타월)/u.test(normalizedCandidate) && !/(유아|기저귀|패션|의류)/u.test(normalizedCandidate);
+  if (/(케이블|전선|cable|cord|wire)/u.test(normalizedQuery)) return /(케이블타이|케이블.*정리|전선.*정리|정리클립|PC액세서리)/u.test(normalizedCandidate) && !/(가구|테이블|책상)/u.test(normalizedCandidate);
   return queryScore(smartstoreSearchTerms(query), candidate) > 0;
 }
 
@@ -421,6 +462,9 @@ function smartstorePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(밀가루|flour)/u.test(normalizedQuery)) return score(["밀가루", "제빵용가루", "가루"]);
   if (/(스펀지|퍼프)/u.test(normalizedQuery)) return score(["메이크업스펀지", "메이크업퍼프", "스펀지", "퍼프"]);
   if (/(브러시)/u.test(normalizedQuery)) return score(["브러시세트", "메이크업브러시", "브러시"]);
+  if (/(노트|수첩|notebook|notepad|journal)/u.test(normalizedQuery)) return score(["스프링노트", "일반노트", "노트", "수첩", "메모지", "다이어리"]);
+  if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber)/u.test(normalizedQuery)) return score(["극세사걸레", "청소천", "청소포", "걸레", "행주", "청소용품"]);
+  if (/(케이블|전선|cable|cord|wire)/u.test(normalizedQuery)) return score(["케이블타이/정리함", "케이블정리", "전선정리", "정리클립", "PC액세서리"]);
   if (/(자동차.*완구|완구.*자동차|자동차.*장난감|장난감.*차|toy\s?car)/u.test(normalizedQuery)) return score(["미니카", "자동차완구", "장난감자동차", "작동완구", "탈것완구"]);
   if (/(수납.*박스|보관.*박스|리빙박스|정리함|storage\s?(?:box|bin)|organizer)/u.test(normalizedQuery)) return score(["리빙박스", "수납박스", "수납함", "정리함"]);
   return 0;
@@ -703,9 +747,16 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   }, [localizedListings, productName, query, selectedTarget]);
 
   const operation = useCallback(async (channel: ActiveChannelKey, name: "categories.suggest" | "categories.attributes" | "categories.validate", args: Record<string, unknown>) => {
-    const credential = activeCredential.get(channel);
+    const supabase = createClient();
+    const [{ data: sessionData }, { data: latestCredentialRows }] = await Promise.all([
+      supabase.auth.getSession(),
+      supabase.rpc("sellerpilot_list_credentials"),
+    ]);
+    const credential = (Array.isArray(latestCredentialRows) ? latestCredentialRows : []).find((row): row is CredentialRow => Boolean(
+      row && typeof row === "object" && "id" in row && "channel" in row && "status" in row
+      && row.channel === channel && row.status === "active",
+    )) ?? activeCredential.get(channel);
     if (!credential) throw new Error("실제 API 키 연결이 필요합니다.");
-    const { data: sessionData } = await createClient().auth.getSession();
     const response = await fetch("/api/admin/channel-operations", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },

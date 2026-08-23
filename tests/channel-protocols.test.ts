@@ -18,6 +18,7 @@ import {
   elevenstRequest,
   exchangeShopeeOAuthToken,
   fetchNaverAccessToken,
+  lazadaRequest,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
 import { inquirySyncArguments, orderSyncRequests } from "../lib/channels/sync-arguments";
@@ -651,6 +652,31 @@ test("Lazada product create serializes the structured request as official XML an
     assert.match(xml, /<Skus><Sku><SellerSku>CUP-001<\/SellerSku>/);
     assert.match(xml, /<Status>inactive<\/Status><Images><Image>https:\/\/example\.com\/cup-1\.jpg<\/Image><\/Images>/);
     assert.match(calls[1].url, /\/product\/item\/get/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada request retries once after the provider frequency-limit window", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    if (calls.length === 1) {
+      return Response.json({ code: "ApiCallLimit", message: "Api access frequency exceeds the limit. this ban will last 0 seconds" });
+    }
+    return Response.json({ code: "0", data: { orders: [] } });
+  };
+  try {
+    const remote = await lazadaRequest({
+      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      path: "/orders/get",
+      params: { created_after: "2026-08-23T00:00:00+09:00" },
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(remote.data.code, "0");
+    assert.notEqual(new URL(calls[0]).searchParams.get("timestamp"), new URL(calls[1]).searchParams.get("timestamp"));
+    assert.notEqual(new URL(calls[0]).searchParams.get("sign"), new URL(calls[1]).searchParams.get("sign"));
   } finally {
     globalThis.fetch = originalFetch;
   }

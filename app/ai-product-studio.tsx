@@ -35,6 +35,43 @@ type CliJobPayload = {
   error?: string | null;
 };
 
+const activeStudioJobStorageKey = "sellerpilot:product-studio:active-job:v1";
+const studioJobMaximumAgeMs = 2 * 60 * 60_000;
+
+type ActiveStudioJob = {
+  jobId: string;
+  startedAt: number;
+};
+
+function readActiveStudioJob(): ActiveStudioJob | null {
+  try {
+    const raw = window.sessionStorage.getItem(activeStudioJobStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ActiveStudioJob>;
+    if (typeof parsed.jobId !== "string" || !/^[0-9a-f-]{36}$/i.test(parsed.jobId) || typeof parsed.startedAt !== "number") {
+      window.sessionStorage.removeItem(activeStudioJobStorageKey);
+      return null;
+    }
+    if (Date.now() - parsed.startedAt > studioJobMaximumAgeMs) {
+      window.sessionStorage.removeItem(activeStudioJobStorageKey);
+      return null;
+    }
+    return { jobId: parsed.jobId, startedAt: parsed.startedAt };
+  } catch {
+    window.sessionStorage.removeItem(activeStudioJobStorageKey);
+    return null;
+  }
+}
+
+function persistActiveStudioJob(jobId: string) {
+  window.sessionStorage.setItem(activeStudioJobStorageKey, JSON.stringify({ jobId, startedAt: Date.now() } satisfies ActiveStudioJob));
+}
+
+function clearActiveStudioJob(jobId: string) {
+  const active = readActiveStudioJob();
+  if (active?.jobId === jobId) window.sessionStorage.removeItem(activeStudioJobStorageKey);
+}
+
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -174,6 +211,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
   const [sourceProductId, setSourceProductId] = useState<string | null>(null);
   const [regeneratingAssetId, setRegeneratingAssetId] = useState("");
   const handledRequest = useRef(0);
+  const recoveryStarted = useRef(false);
   const currentImageUrl = aiHero || mainPhoto?.url || "";
 
   const waitForCliJob = useCallback(async (jobId: string, accessToken: string) => {
@@ -194,6 +232,34 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
     }
     throw new Error("ChatGPT CLI 작업 대기시간이 30분을 초과했습니다. 작업자 연결 상태를 확인해 주세요.");
   }, []);
+
+  const finishStudioJob = useCallback(async (jobId: string, accessToken: string, recovered: boolean) => {
+    setSourceJobId(jobId);
+    const cliResult = await waitForCliJob(jobId, accessToken);
+    if (cliResult.mode !== "cli") throw new Error("상품 분석 결과 형식이 올바르지 않습니다.");
+    const { heroUrl, generatedImages, ...nextResult } = cliResult;
+    setResult(nextResult);
+    setAiHero(heroUrl ?? "");
+    setThumbnails(generatedPreviewPresets.map((preset) => ({
+      ...preset,
+      dataUrl: generatedImages?.find((image) => image.id === preset.id)?.url ?? "",
+    })).filter((thumbnail) => thumbnail.dataUrl));
+    setSavedDetailData(null);
+    const productResponse = await fetch("/api/operations/snapshot", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ action: "product_create", jobId }),
+    });
+    const productPayload = await productResponse.json().catch(() => ({})) as { id?: string | null; message?: string };
+    const productId = productResponse.ok && typeof productPayload.id === "string" ? productPayload.id : null;
+    if (!productId) throw new Error(productPayload.message || "이미지 제작은 완료됐지만 상품 원장 저장을 확인하지 못했습니다. 새로고침하면 완료 작업부터 다시 연결합니다.");
+    setSourceProductId(productId);
+    clearActiveStudioJob(jobId);
+    onResultReady?.(nextResult, productId);
+    notify(recovered
+      ? `새로고침 전 ChatGPT CLI 작업을 복구해 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장을 다시 연결했습니다.`
+      : `ChatGPT CLI 분석, codex-image 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장 연결을 완료했습니다.`);
+  }, [notify, onResultReady, waitForCliJob]);
 
   const generate = useCallback(async () => {
     if (!mainPhoto || generating) return;
@@ -222,32 +288,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       });
       const queued = await response.json().catch(() => ({ message: "CLI 작업 등록 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
       if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
-      const cliResult = await waitForCliJob(queued.jobId, accessToken);
-      if (cliResult.mode !== "cli") throw new Error("상품 분석 결과 형식이 올바르지 않습니다.");
-      const { heroUrl, generatedImages, ...nextResult } = cliResult;
-      setResult(nextResult);
-      setAiHero(heroUrl ?? "");
-      setThumbnails(generatedPreviewPresets.map((preset) => ({
-        ...preset,
-        dataUrl: generatedImages?.find((image) => image.id === preset.id)?.url ?? "",
-      })).filter((thumbnail) => thumbnail.dataUrl));
-      setSavedDetailData(null);
-      const productResponse = await fetch("/api/operations/snapshot", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({
-          action: "product_create",
-          jobId: queued.jobId,
-        }),
-      });
-      const productPayload = await productResponse.json().catch(() => ({})) as { id?: string | null };
-      const productId = productResponse.ok && typeof productPayload.id === "string" ? productPayload.id : null;
-      setSourceJobId(queued.jobId);
-      setSourceProductId(productId);
-      onResultReady?.(nextResult, productId);
-      notify(productResponse.ok
-        ? `ChatGPT CLI 분석, codex-image 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장 연결을 완료했습니다.`
-        : `이미지 ${aiGeneratedAssetSpecs.length}종 제작은 완료됐지만 상품 원장 저장을 확인해 주세요.`);
+      persistActiveStudioJob(queued.jobId);
+      await finishStudioJob(queued.jobId, accessToken, false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";
       setLastError(message);
@@ -257,7 +299,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       setCliPhase("idle");
       onRunningChange(false);
     }
-  }, [generating, mainPhoto, manualFields, notify, onResultReady, onRunningChange, photos, waitForCliJob]);
+  }, [finishStudioJob, generating, mainPhoto, manualFields, notify, onRunningChange, photos]);
 
   const regenerateAsset = useCallback(async (assetId: string) => {
     if (!sourceJobId || generating || regeneratingAssetId) return;
@@ -300,6 +342,34 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
     handledRequest.current = requestId;
     void generate();
   }, [generate, requestId]);
+
+  useEffect(() => {
+    if (recoveryStarted.current || requestId) return;
+    const activeJob = readActiveStudioJob();
+    if (!activeJob) return;
+    recoveryStarted.current = true;
+    setGenerating(true);
+    setCliPhase("queued");
+    setLastError("");
+    onRunningChange(true);
+    void (async () => {
+      try {
+        const { data: sessionData } = await createClient().auth.getSession();
+        const accessToken = sessionData.session?.access_token;
+        if (!accessToken) throw new Error("진행 중인 상품 분석을 복구하려면 관리자 로그인이 필요합니다.");
+        notify("새로고침 전에 시작한 상품 분석 작업을 다시 연결하고 있습니다.");
+        await finishStudioJob(activeJob.jobId, accessToken, true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "상품 분석 작업 복구 중 오류가 발생했습니다.";
+        setLastError(message);
+        notify(message);
+      } finally {
+        setGenerating(false);
+        setCliPhase("idle");
+        onRunningChange(false);
+      }
+    })();
+  }, [finishStudioJob, notify, onRunningChange, requestId]);
 
   const downloadImage = (thumbnail: AutoThumbnail) => {
     const anchor = document.createElement("a");
