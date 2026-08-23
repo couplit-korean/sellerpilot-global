@@ -84,6 +84,11 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(page, /id: "credentials"/);
   assert.match(page, /commerce-service-rail/);
   assert.match(page, /통합 판매관리/);
+  assert.match(page, /운영 키 확인 중/);
+  assert.match(page, /읽기 진단 확인 중/);
+  assert.match(page, /실상품 원장을 불러오는 중입니다/);
+  assert.match(page, /운영 DB 확인이 끝날 때까지 0개로 확정하지 않습니다/);
+  assert.match(page, /실상품 원장에 연결하지 못했습니다/);
   assert.match(page, /상품, 주문, 문의 검색/);
   assert.match(page, /value=\{searchQuery\}/);
   assert.match(page, /selectUnifiedSearchResult/);
