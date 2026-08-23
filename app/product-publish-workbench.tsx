@@ -372,7 +372,9 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
   }
   return {
     sellerpilotAssets,
-    sku: manual.sellerSku || product.sku,
+    // eBay Inventory Items and Offers must reference the exact same SKU.
+    // Keep it market-specific so a later country listing cannot collide with US.
+    sku: marketSku,
     inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: title.slice(0, 80), description: richDescription, imageUrls: galleryImageUrls, brand: manual.brandName, mpn: marketSku, aspects: normalizeEbayAspects({ ...(assignment?.providedAttributes ?? {}), Material: manual.material, "Country/Region of Manufacture": manual.countryOfOrigin }) } },
     offer: { sku: marketSku, marketplaceId: target?.targetId ?? "EBAY_US", format: "FIXED_PRICE", availableQuantity: quantity, categoryId: assignment?.categoryId ?? "", listingDescription: richDescription, listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" }, merchantLocationKey: "SERVER_MANAGED", pricingSummary: { price: { value: String(channelPrice), currency: target?.currency ?? "USD" } } },
     publish: true,

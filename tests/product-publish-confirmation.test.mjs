@@ -11,3 +11,11 @@ test("Qoo10 pause actions use controllable in-app confirmations", async () => {
   assert.match(source, /Qoo10 거래대기 전환 실행/);
   assert.match(source, /이전 상품 거래대기 실행/);
 });
+
+test("eBay market listings use one market-specific SKU for inventory and offer", async () => {
+  const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
+  const operations = await readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8");
+
+  assert.match(workbench, /sku: marketSku,[\s\S]*?offer: \{ sku: marketSku,/);
+  assert.match(operations, /const offer = structuredClone[\s\S]*?offer\.sku = sku;/);
+});

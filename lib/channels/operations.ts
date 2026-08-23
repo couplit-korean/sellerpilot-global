@@ -1800,6 +1800,10 @@ async function executeEbay(input: ExecuteInput) {
     const sku = pathSegment(stringArgument(input.arguments, "sku"));
     const inventoryItem = objectValue(input.arguments, "inventoryItem");
     const offer = structuredClone(objectValue(input.arguments, "offer"));
+    // eBay rejects an offer when its SKU differs from the Inventory Item URL
+    // even if both values are otherwise valid. Enforce this invariant at the
+    // channel boundary as a final guard for manually edited or legacy drafts.
+    offer.sku = sku;
     const steps: ChannelOperationStep[] = [];
     const inventoryProduct = inventoryItem.product && typeof inventoryItem.product === "object" && !Array.isArray(inventoryItem.product)
       ? inventoryItem.product as Record<string, unknown>
