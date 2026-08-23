@@ -78,6 +78,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /서비스 스토리보드/);
   assert.match(page, /개발 · 실검수/);
   assert.match(page, /채널 연결 · 상태/);
+  assert.ok(page.indexOf('label: "기획"') < page.indexOf('label: "스타일 학습 검증"'));
   assert.doesNotMatch(page, /id: "readiness"/);
   assert.doesNotMatch(page, /id: "credentials"/);
   assert.match(page, /commerce-service-rail/);
@@ -115,6 +116,9 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /id="main-product-photo-camera"[^>]*capture="environment"/);
   assert.match(page, /id=\{`option-photo-\$\{slot\.id\}-camera`\}[^>]*capture="environment"/);
   assert.match(page, /id="extra-product-photo-camera"[^>]*capture="environment"/);
+  assert.match(page, /preservePublishingCaptureContext/);
+  assert.match(page, /sellerpilot:last-view:v1", "publishing"/);
+  assert.match(page, /\?view=\$\{next\}/);
   assert.match(page, /사진 촬영/);
   assert.match(page, /앨범에서 선택/);
   assert.match(page, /상품 사실 설명/);
@@ -149,6 +153,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(pushManager, /Notification\.requestPermission/);
   assert.match(pushManager, /주문·배송 알림/);
   assert.match(page, /MobilePushManager/);
+  assert.match(page, /결제완료 Excel/);
+  assert.match(page, /buildPaidOrdersExcelWorkbook\(displayOrders\)/);
   assert.match(styles, /@media \(max-width: 1360px\)/);
   assert.match(styles, /@media \(max-width: 1180px\)/);
   assert.match(styles, /@media \(max-width: 900px\)/);

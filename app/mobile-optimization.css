@@ -580,6 +580,12 @@
     flex: 0 0 auto;
   }
 
+  .tab-toolbar > .paid-orders-export-button {
+    width: 100%;
+    min-height: 44px;
+    flex: 1 0 100%;
+  }
+
   .table-footer {
     align-items: flex-start;
     flex-direction: column;

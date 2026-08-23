@@ -25,6 +25,7 @@ import {
   CloudUpload,
   ClipboardCheck,
   Command,
+  Download,
   Eye,
   EyeOff,
   ExternalLink,
@@ -87,6 +88,7 @@ import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
 import { emptyProductIntake, productConditions, productCurrencies, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
+import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
 
 type View =
   | "overview"
@@ -121,7 +123,6 @@ const navGroups = [
       { id: "overview" as View, label: "통합 대시보드", icon: LayoutDashboard },
       { id: "products" as View, label: "상품 관리", icon: Package },
       { id: "publishing" as View, label: "상품 등록", icon: CloudUpload },
-      { id: "style-learning" as View, label: "스타일 학습 검증", icon: Sparkles },
       { id: "margin" as View, label: "마진 계산", icon: Calculator },
       { id: "orders" as View, label: "주문 · 판매", icon: ShoppingCart },
       { id: "cs" as View, label: "CS 통합함", icon: Headphones },
@@ -150,6 +151,7 @@ const navGroups = [
     items: [
       { id: "acceptance" as View, label: "개발 · 실검수", icon: ClipboardCheck },
       { id: "storyboard" as View, label: "서비스 스토리보드", icon: FileText },
+      { id: "style-learning" as View, label: "스타일 학습 검증", icon: Sparkles },
     ],
   },
 ];
@@ -194,7 +196,6 @@ const ticketChannelCodes: Record<string, string> = {
 
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
 const enabledSalesChannelCount = Object.values(channels).filter((channel) => channel.enabled).length;
-const deepLinkViews = new Set<View>(["overview", "products", "publishing", "remediation", "margin", "orders", "cs", "connections", "templates", "notifications"]);
 type DisplayProduct = {
   id: string;
   sourceId: string;
@@ -1105,6 +1106,18 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     .map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
 
+  const preservePublishingCaptureContext = useCallback(() => {
+    const historyState = isRecord(window.history.state) ? window.history.state : {};
+    const params = new URLSearchParams({ view: "publishing" });
+    if (initialProduct?.id) params.set("productId", initialProduct.id);
+    window.sessionStorage.setItem("sellerpilot:last-view:v1", "publishing");
+    window.history.replaceState(
+      { ...historyState, view: "publishing", ...(initialProduct?.id ? { productId: initialProduct.id } : {}) },
+      "",
+      `${window.location.pathname}?${params.toString()}`,
+    );
+  }, [initialProduct?.id]);
+
   useEffect(() => {
     void authenticatedFetch("/api/admin/templates").then(async (response) => {
       if (!response.ok) return;
@@ -1156,6 +1169,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const selectMainPhoto = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    preservePublishingCaptureContext();
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = "";
@@ -1255,6 +1269,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const selectSlotPhoto = async (slotId: string, event: React.ChangeEvent<HTMLInputElement>) => {
+    preservePublishingCaptureContext();
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = "";
@@ -1273,6 +1288,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const selectExtraPhotos = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    preservePublishingCaptureContext();
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
     event.target.value = "";
@@ -1375,7 +1391,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           <section className="main-photo-section">
             <div className="upload-section-heading"><div><b>대표사진</b><span className="required-chip">필수</span><small>검색 결과와 채널 목록에서 가장 먼저 보이는 이미지입니다.</small></div><em>{mainPhoto ? "1장 등록됨" : "미등록"}</em></div>
-            <input id="main-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={selectMainPhoto} />
+            <input id="main-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" onClick={preservePublishingCaptureContext} onChange={selectMainPhoto} />
             <label className={`drop-zone main-drop-zone ${mainPhoto ? "has-photo" : ""} ${running ? "running" : ""}`} htmlFor="main-product-photo">
               <input id="main-product-photo" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={selectMainPhoto} />
               {mainPhoto ? <><span className="main-photo-preview"><Image src={mainPhoto.url} alt="등록한 대표 상품 사진" fill sizes="700px" unoptimized /></span><span className="photo-preview-overlay"><ImagePlus size={17} />대표사진 교체</span><strong className="photo-file-name">{mainPhoto.name} · {mainPhoto.originalWidth}×{mainPhoto.originalHeight} → 1200×1200</strong></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>대표 상품 사진을 넣으세요</strong><p>JPG, PNG, WEBP · 최소 600×600px · 자동 1:1 여백 보정</p><em><ImagePlus size={15} />대표사진 선택</em></>}
@@ -1409,14 +1425,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="option-photo-grid">
               {optionalPhotoSlots.map((slot) => {
                 const photo = slotPhotos[slot.id];
-                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><input id={`option-photo-${slot.id}-camera`} className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void selectSlotPhoto(slot.id, event)} /><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>{photo.originalWidth}×{photo.originalHeight} · 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label><div className="photo-source-actions compact" aria-label={`${slot.label} 사진 입력 방식`}><label htmlFor={`option-photo-${slot.id}-camera`}><Camera size={14} /><span><b>촬영</b></span></label><label htmlFor={`option-photo-${slot.id}`}><ImagePlus size={14} /><span><b>앨범</b></span></label></div>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
+                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><input id={`option-photo-${slot.id}-camera`} className="visually-hidden" type="file" accept="image/*" capture="environment" onClick={preservePublishingCaptureContext} onChange={(event) => void selectSlotPhoto(slot.id, event)} /><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>{photo.originalWidth}×{photo.originalHeight} · 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label><div className="photo-source-actions compact" aria-label={`${slot.label} 사진 입력 방식`}><label htmlFor={`option-photo-${slot.id}-camera`}><Camera size={14} /><span><b>촬영</b></span></label><label htmlFor={`option-photo-${slot.id}`}><ImagePlus size={14} /><span><b>앨범</b></span></label></div>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
               })}
             </div>
           </section>
 
           <section className="extra-photo-section">
             <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>상세컷, 구성품, 포장 상태 등 필요한 만큼 한 번에 선택할 수 있습니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
-            <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(event) => void selectExtraPhotos(event)} />
+            <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
             <label className="extra-photo-uploader" htmlFor="extra-product-photos"><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void selectExtraPhotos(event)} /><Plus size={17} /><span><b>추가 사진 더 넣기</b><small>분석용 최대 100장 · 채널 등록은 앞 8~9장 자동 선별</small></span></label>
             <div className="photo-source-actions" aria-label="추가 사진 입력 방식">
               <label htmlFor="extra-product-photo-camera"><Camera size={18} /><span><b>사진 촬영</b><small>한 장씩 바로 추가</small></span></label>
@@ -1536,6 +1552,22 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
   const exchangeRiskCount = displayOrders.filter((order) => (order.exchangeLossPercent ?? 0) >= 2).length;
   const lastSuccess = syncStatus.filter((item) => item.data_type === "orders" && item.last_succeeded_at).sort((left, right) => Date.parse(right.last_succeeded_at ?? "") - Date.parse(left.last_succeeded_at ?? ""))[0]?.last_succeeded_at ?? null;
   const failedCount = syncStatus.filter((item) => item.data_type === "orders" && item.status === "failed").length;
+  const downloadPaidOrders = () => {
+    const workbook = buildPaidOrdersExcelWorkbook(displayOrders);
+    if (workbook.count === 0) {
+      notify("내려받을 결제완료 주문이 없습니다.");
+      return;
+    }
+    const url = URL.createObjectURL(new Blob(["\uFEFF", workbook.xml], { type: "application/vnd.ms-excel;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = paidOrdersExcelFilename();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    notify(`결제완료 주문 ${workbook.count}건을 Excel 파일로 내려받았습니다.`);
+  };
   const filteredOrders = displayOrders.filter((order) => {
     const matchesTab = active === "전체 주문"
       || active === "완료 · 취소" && ["배송완료", "취소완료", "환불완료"].includes(order.status)
@@ -1616,7 +1648,7 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
   return (
     <div className="page-stack">
       <section className="order-summary-grid"><article><span className="metric-icon blue"><ShoppingCart size={19} /></span><div><small>통합 주문</small><strong>{displayOrders.length}</strong></div><em>운영 원장</em></article><article><span className="metric-icon orange"><Clock3 size={19} /></span><div><small>출고 대기</small><strong>{readyCount}</strong></div><em className="neutral">결제완료 {paidCount}건</em></article><article><span className="metric-icon violet"><Truck size={19} /></span><div><small>배송 중 · 완료</small><strong>{shippingCount} · {deliveredCount}</strong></div><em className="neutral">운송장 추적</em></article><article><span className={`metric-icon ${exchangeRiskCount ? "orange" : "green"}`}><CircleDollarSign size={19} /></span><div><small>정산 완료</small><strong>{settledCount}</strong></div><em className={exchangeRiskCount ? "negative" : "neutral"}>{exchangeRiskCount ? `환율 손실주의 ${exchangeRiskCount}건` : "환율 손실주의 없음"}</em></article><article><span className={`metric-icon ${failedCount ? "orange" : "green"}`}><RefreshCw size={19} /></span><div><small>최근 동기화</small><strong>{lastSuccess ? relativeTime(lastSuccess) : "대기"}</strong></div><em className={failedCount ? "neutral" : ""}>{failedCount ? `${failedCount}개 채널 확인 필요` : "실제 채널 API"}</em></article></section>
-      <section className="panel data-panel"><div className="tab-toolbar"><div>{["전체 주문", "결제완료", "출고대기", "배송중", "완료 · 취소"].map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}{tab === "출고대기" && <span>{readyCount}</span>}</button>)}</div><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주문번호, 구매자, 상품 검색" aria-label="주문 검색" /></div><span className="automatic-sync-label"><RefreshCw size={14} />5분마다 자동 업데이트</span></div>
+      <section className="panel data-panel"><div className="tab-toolbar"><div>{["전체 주문", "결제완료", "출고대기", "배송중", "완료 · 취소"].map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}{tab === "출고대기" && <span>{readyCount}</span>}</button>)}</div><div className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주문번호, 구매자, 상품 검색" aria-label="주문 검색" /></div><button type="button" className="icon-text-button paid-orders-export-button" onClick={downloadPaidOrders} title="결제완료 상태의 주문만 Excel 파일로 내려받기"><Download size={15} />결제완료 Excel <b>{paidCount}</b>건</button><span className="automatic-sync-label"><RefreshCw size={14} />5분마다 자동 업데이트</span></div>
         <div className="table-wrap"><table className="data-table order-table"><thead><tr><th><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} /></th><th>주문번호</th><th>채널</th><th>구매자</th><th>상품</th><th>결제금액</th><th>주문 · 배송</th><th>정산</th><th>주문시간</th><th /></tr></thead><tbody>{filteredOrders.map((order) => { const eligible = ["결제완료", "출고대기"].includes(order.status); return <tr key={order.sourceId} className={`${initialOrderId === order.id ? "search-target-row" : ""} ${selectedIds.has(order.sourceId) ? "selected-row" : ""}`.trim()}><td><input type="checkbox" aria-label={`${order.id} 출고 선택`} checked={selectedIds.has(order.sourceId)} disabled={!eligible} onChange={() => toggleOrder(order)} /></td><td><button type="button" className="order-detail-link mono" onClick={() => setDetailOrder(order)}>{order.id}</button></td><td><ChannelMark code={order.channel} size="sm" /></td><td><b>{order.customer}</b></td><td><button type="button" className="order-product-button truncate-product" onClick={() => setDetailOrder(order)}>{order.product}</button></td><td><b>{order.amount}</b></td><td><StatusBadge status={order.status} />{order.trackingNumber ? <small className="tracking-fact">{order.carrierCode} · {order.trackingNumber}</small> : null}</td><td><StatusBadge status={order.settlementStatus} />{(order.exchangeLossPercent ?? 0) >= 2 ? <small className="exchange-loss-warning">환율 -{order.exchangeLossPercent}%</small> : null}</td><td><span className="muted-cell">{order.time}</span></td><td><button className="table-action" title="주문 상세정보 보기" aria-label={`${order.id} 주문 상세정보 보기`} onClick={() => setDetailOrder(order)}><ChevronRight size={16} /></button></td></tr>; })}</tbody></table></div>
         {displayOrders.length === 0 ? <div className="live-empty-state table-empty"><ShoppingCart size={28} /><b>동기화된 실제 주문이 없습니다.</b><small>채널 API 키 연결 후 주문 조회를 실행하면 표시됩니다.</small></div> : filteredOrders.length === 0 ? <div className="live-empty-state table-empty"><Search size={28} /><b>검색 조건에 맞는 주문이 없습니다.</b><small>주문번호, 구매자명 또는 상품명을 다시 확인해 주세요.</small></div> : null}
         <div className="bulk-order-bar"><span><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} />선택한 주문 <b>{selectedIds.size}</b>건</span><button type="button" disabled={!selectedIds.size || fulfilling} onClick={openFulfillment}><Truck size={15} />일괄 출고 처리</button><button type="button" disabled={fulfilling} onClick={() => invoiceInputRef.current?.click()}><Upload size={15} />송장 CSV 업로드</button><input ref={invoiceInputRef} className="sr-only" type="file" accept=".csv,text/csv" aria-label="송장 CSV 파일 선택" onChange={(event) => void importInvoices(event.target.files?.[0] ?? null)} /><span className="toolbar-spacer" /><small>{syncStatus.length ? "채널별 동기화 상태 기록 중 · 5분 자동 업데이트" : "채널 연결 상태 확인 중"}</small></div>
@@ -2163,7 +2195,8 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     setTargetedSearch(null);
     if (next === "publishing") setPublishingProduct(null);
     setView(next);
-    window.history.pushState({ view: next }, "", window.location.pathname);
+    window.sessionStorage.setItem("sellerpilot:last-view:v1", next);
+    window.history.pushState({ view: next }, "", `${window.location.pathname}?view=${next}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -2171,21 +2204,46 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const editExternalActionProduct = useCallback((action: OperationsSnapshot["externalActions"][number]) => {
     setPublishingProduct({ id: action.productId, name: action.productName });
     setView("publishing");
-    window.history.pushState({ view: "publishing", productId: action.productId }, "", window.location.pathname);
+    window.sessionStorage.setItem("sellerpilot:last-view:v1", "publishing");
+    window.history.pushState({ view: "publishing", productId: action.productId }, "", `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(action.productId)}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
   useEffect(() => {
-    window.history.replaceState({ view: "overview" }, "", window.location.href);
+    const initialParams = new URLSearchParams(window.location.search);
+    const initialState = isRecord(window.history.state) ? window.history.state : {};
+    const initialCandidate = typeof initialState.view === "string"
+      ? initialState.view
+      : initialParams.get("view") ?? window.sessionStorage.getItem("sellerpilot:last-view:v1") ?? "overview";
+    const initialView = initialCandidate in pageMeta ? initialCandidate as View : "overview";
+    const initialProductId = typeof initialState.productId === "string" ? initialState.productId : initialParams.get("productId");
+    if (!initialParams.has("view")) initialParams.set("view", initialView);
+    window.sessionStorage.setItem("sellerpilot:last-view:v1", initialView);
+    window.history.replaceState(
+      { ...initialState, view: initialView, ...(initialProductId ? { productId: initialProductId } : {}) },
+      "",
+      `${window.location.pathname}?${initialParams.toString()}`,
+    );
+    setView(initialView);
     const onPopState = (event: PopStateEvent) => {
       const state = isRecord(event.state) ? event.state : {};
-      const nextView = typeof state.view === "string" ? state.view as View : "overview";
-      if (nextView === "product-detail" && typeof state.productId === "string") {
-        const product = displayProductsRef.current.find((item) => item.sourceId === state.productId);
+      const params = new URLSearchParams(window.location.search);
+      const candidate = typeof state.view === "string"
+        ? state.view
+        : params.get("view") ?? window.sessionStorage.getItem("sellerpilot:last-view:v1") ?? "overview";
+      const nextView = candidate in pageMeta ? candidate as View : "overview";
+      const productId = typeof state.productId === "string" ? state.productId : params.get("productId");
+      if (nextView === "product-detail" && productId) {
+        const product = displayProductsRef.current.find((item) => item.sourceId === productId);
         if (product) setSelectedProduct(product);
       }
-      setView(nextView in pageMeta ? nextView : "overview");
+      if (nextView === "publishing" && productId) {
+        const product = displayProductsRef.current.find((item) => item.sourceId === productId);
+        if (product) setPublishingProduct({ id: product.sourceId, name: product.name });
+      }
+      window.sessionStorage.setItem("sellerpilot:last-view:v1", nextView);
+      setView(nextView);
       setSidebarOpen(false);
       window.scrollTo({ top: 0, behavior: "auto" });
     };
@@ -2197,15 +2255,29 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedView = params.get("view") as View | null;
-    if (!requestedView || !deepLinkViews.has(requestedView)) return;
+    if (!requestedView || !(requestedView in pageMeta)) return;
     const orderId = params.get("orderId");
+    const productId = params.get("productId");
     const timer = window.setTimeout(() => {
       setView(requestedView);
+      window.sessionStorage.setItem("sellerpilot:last-view:v1", requestedView);
       if (requestedView === "orders" && orderId) {
         const order = operations.data?.orders.find((item) => item.id === orderId);
         if (order) setTargetedSearch({ kind: "order", id: order.externalOrderId, query: order.externalOrderId });
       }
-      window.history.replaceState({ view: requestedView }, "", window.location.pathname);
+      if (requestedView === "product-detail" && productId) {
+        const product = displayProductsRef.current.find((item) => item.sourceId === productId);
+        if (product) setSelectedProduct(product);
+      }
+      if (requestedView === "publishing" && productId) {
+        const product = displayProductsRef.current.find((item) => item.sourceId === productId);
+        if (product) setPublishingProduct({ id: product.sourceId, name: product.name });
+      }
+      window.history.replaceState(
+        { view: requestedView, ...(productId ? { productId } : {}) },
+        "",
+        `${window.location.pathname}?${params.toString()}`,
+      );
     }, 0);
     return () => window.clearTimeout(timer);
   }, [operations.data]);
@@ -2213,7 +2285,8 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const openProductDetails = useCallback((product: DisplayProduct) => {
     setSelectedProduct(product);
     setView("product-detail");
-    window.history.pushState({ view: "product-detail", productId: product.sourceId }, "", window.location.pathname);
+    window.sessionStorage.setItem("sellerpilot:last-view:v1", "product-detail");
+    window.history.pushState({ view: "product-detail", productId: product.sourceId }, "", `${window.location.pathname}?view=product-detail&productId=${encodeURIComponent(product.sourceId)}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
