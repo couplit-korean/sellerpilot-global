@@ -16,6 +16,7 @@ import { ensureEbayAccessToken } from "../../../../lib/channels/protocols";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),

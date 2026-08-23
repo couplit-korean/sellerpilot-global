@@ -227,6 +227,7 @@ function safeProviderError(data: Record<string, unknown>) {
   const keys = new Set([
     "error", "errors", "errorcode", "error_code", "errormsg", "error_msg", "errormessage", "error_message",
     "message", "msg", "detail", "details", "reason", "failure_reason", "issue", "issues",
+    "invalidinputs", "invalid_inputs",
   ]);
   const visit = (value: unknown, depth: number, keyed = false) => {
     if (depth > 6 || values.length >= 16 || value === null || value === undefined) return;
@@ -1066,14 +1067,26 @@ async function executeCoupang(input: ExecuteInput) {
     });
     const verifyReadback = (name: string) => {
       const readbackStep = step(name, readbackRemote);
-      const readbackData = readbackRemote.data.data;
-      const readbackObject = readbackData && typeof readbackData === "object" && !Array.isArray(readbackData)
-        ? readbackData as Record<string, unknown>
-        : readbackRemote.data;
-      const readbackId = readbackObject.sellerProductId;
-      const requested = readbackObject.requested;
-      const stateIndicators = [readbackObject.mdId, readbackObject.status, readbackObject.statusName]
-        .filter((value): value is string => typeof value === "string" && value.length > 0)
+      const stateValues: unknown[] = [];
+      let readbackId: unknown;
+      let requested: unknown;
+      const inspect = (value: unknown, depth = 0) => {
+        if (depth > 5 || !value || typeof value !== "object") return;
+        if (Array.isArray(value)) {
+          value.forEach((item) => inspect(item, depth + 1));
+          return;
+        }
+        for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+          if (readbackId === undefined && key === "sellerProductId") readbackId = item;
+          if (requested === undefined && key === "requested") requested = item;
+          if (/^(?:mdId|status|statusName|requested|approvalStatus)$/i.test(key)) stateValues.push(item);
+          inspect(item, depth + 1);
+        }
+      };
+      inspect(readbackRemote.data);
+      const stateIndicators = stateValues
+        .filter((value) => value !== undefined && value !== null && String(value).length > 0)
+        .map(String)
         .join(" ")
         .toUpperCase();
       const identityMatches = readbackId !== undefined && String(readbackId) === remoteId;

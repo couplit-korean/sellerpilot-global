@@ -225,19 +225,24 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   if (channel === "shopee" || channel === "lazada" || channel === "smartstore") {
     const limit = channel === "smartstore" ? 10 : channel === "shopee" ? 9 : 8;
     const sourceGallery = gallery.length ? gallery : await normalizeList(next.imageUrls, limit);
-    next.imageUrls = uniqueStrings([...sourceGallery, ...details]).slice(0, limit);
+    const normalizedAssets = uniqueStrings([...sourceGallery, ...details]);
+    const listingImages = normalizedAssets.slice(0, limit);
+    // Lazada rejects any external URL left in description HTML. Keep every
+    // normalized detail asset in imageUrls so the local worker migrates all of
+    // them into Lazada media space, while the product gallery stays at 8.
+    next.imageUrls = channel === "lazada" ? normalizedAssets : listingImages;
     if (channel === "lazada") {
       const request = record(next.request);
       const requestRoot = record(request?.Request);
       const product = record(requestRoot?.Product);
       const attributes = record(product?.Attributes);
       if (!product || !attributes) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-      product.Images = { Image: next.imageUrls };
+      product.Images = { Image: listingImages };
       const skus = record(product.Skus);
       const skuList = Array.isArray(skus?.Sku) ? skus.Sku : [];
       for (const skuValue of skuList) {
         const sku = record(skuValue);
-        if (sku) sku.Images = { Image: next.imageUrls };
+        if (sku) sku.Images = { Image: listingImages };
       }
       attributes.description = appendDetailImages(attributes.description, details, detailImageAltTexts, detailImageRoles);
     }

@@ -169,15 +169,18 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260821113000_scope_push_deliveries_to_owner.sql",
       "20260821123000_enable_elevenst_order_sync.sql",
       "20260821130000_commerce_operations_v2.sql",
-      "20260821133000_ai_asset_regeneration.sql",
       "20260821133000_marketplace_links_cancellations_and_stock_accuracy.sql",
       "20260821134500_public_listing_health.sql",
       "20260821141500_preserve_terminal_order_state.sql",
       "20260822050435_temu_orders_shipping_aftersales.sql",
+      "20260822103042_close_untracked_inventory_failures.sql",
+      "20260822105620_unique_ai_asset_regeneration_history.sql",
       "20260822130000_enable_manual_inquiry_operations.sql",
       "20260822133000_reduce_runtime_sync_noise.sql",
       "20260822140000_harden_runtime_retention.sql",
       "20260822153000_tracx_logistics_tracking.sql",
+      "20260822210000_channel_catalog_inventory_mirror.sql",
+      "20260824024500_gateway_burst_priority_and_reconciliation.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");

@@ -1,15 +1,13 @@
--- Regenerate exactly one generated product asset while keeping the remaining
+-- Regenerate exactly one generated product asset under a unique migration
+-- history version while keeping the remaining
 -- studio result and the product's original AI job linkage intact.
 
 begin;
-
 alter table sellerpilot_private.ai_cli_jobs
   drop constraint if exists ai_cli_jobs_kind_check;
-
 alter table sellerpilot_private.ai_cli_jobs
   add constraint ai_cli_jobs_kind_check
   check (kind in ('product_studio', 'product_research', 'support_reply', 'product_asset_regeneration'));
-
 create or replace function public.sellerpilot_create_asset_regeneration_job(
   p_id uuid,
   p_source_job_id uuid,
@@ -68,7 +66,6 @@ begin
   return p_id;
 end;
 $$;
-
 create or replace function public.sellerpilot_complete_ai_job(
   p_token_hash text,
   p_job_id uuid,
@@ -155,10 +152,8 @@ begin
   return true;
 end;
 $$;
-
 revoke all on function public.sellerpilot_create_asset_regeneration_job(uuid, uuid, uuid, text) from public, anon;
 grant execute on function public.sellerpilot_create_asset_regeneration_job(uuid, uuid, uuid, text) to authenticated;
 revoke all on function public.sellerpilot_complete_ai_job(text, uuid, text, jsonb, text) from public, anon, authenticated;
 grant execute on function public.sellerpilot_complete_ai_job(text, uuid, text, jsonb, text) to service_role;
-
 commit;

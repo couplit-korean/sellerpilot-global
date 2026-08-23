@@ -52,7 +52,7 @@ export async function executeViaChannelGateway(input: {
   });
   if (enqueueError || typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
 
-  return await waitForGatewayJob(input.serviceClient, jobId, input.timeoutMs ?? 45_000) as ChannelOperationResult;
+  return await waitForGatewayJob(input.serviceClient, jobId, input.timeoutMs ?? 180_000) as ChannelOperationResult;
 }
 
 export async function executeDiagnosticViaChannelGateway(input: {

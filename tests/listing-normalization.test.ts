@@ -32,6 +32,7 @@ test("Coupang numeric attributes inherit the official category unit", () => {
   const metadata = { dataType: "NUMBER", basicUnit: "개", usableUnits: ["개", "박스", "세트"] };
   assert.equal(normalizeCoupangAttributeValue(metadata, "1"), "1개");
   assert.equal(normalizeCoupangAttributeValue(metadata, "2세트"), "2세트");
+  assert.equal(normalizeCoupangAttributeValue(metadata, "3장"), "3개");
 });
 
 test("Shopee local publish metadata fills mandatory enumerations missing from the global tree", () => {

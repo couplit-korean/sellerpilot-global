@@ -85,7 +85,7 @@ const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.js
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.13";
+const workerVersion = "sellerpilot-cli-worker/1.14";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
@@ -435,7 +435,7 @@ function xmlEscape(value) {
 }
 
 async function prepareLazadaListing(payload, argumentsValue) {
-  const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 8) : [];
+  const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 20) : [];
   if (!imageUrls.length) throw new Error("Lazada 등록 이미지가 없습니다.");
   const migrated = [];
   for (const imageUrl of imageUrls) {
@@ -452,9 +452,10 @@ async function prepareLazadaListing(payload, argumentsValue) {
   const replacements = new Map(imageUrls.map((source, index) => [source, migrated[index]]));
   const migratedProduct = replaceMarketplaceImageUrls(product, replacements);
   request.Request.Product = migratedProduct;
-  migratedProduct.Images = { Image: migrated };
+  const listingImages = migrated.slice(0, 8);
+  migratedProduct.Images = { Image: listingImages };
   const skus = Array.isArray(migratedProduct.Skus?.Sku) ? migratedProduct.Skus.Sku : [];
-  for (const sku of skus) if (sku && typeof sku === "object") sku.Images = { Image: migrated };
+  for (const sku of skus) if (sku && typeof sku === "object") sku.Images = { Image: listingImages };
   return { ...argumentsValue, request };
 }
 
@@ -1609,7 +1610,10 @@ console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · model
 console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 8);
 const maxAiConcurrency = Math.min(8, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 8));
+const configuredGatewayConcurrency = Number(process.env.SELLERPILOT_CHANNEL_WORKER_CONCURRENCY ?? 4);
+const maxGatewayConcurrency = Math.min(6, Math.max(1, Number.isFinite(configuredGatewayConcurrency) ? Math.trunc(configuredGatewayConcurrency) : 4));
 const activeAiJobs = new Set();
+const activeGatewayJobs = new Set();
 do {
   try {
     if (!once && Date.now() >= nextPeriodicSyncAt) {
@@ -1642,16 +1646,31 @@ do {
         console.error(syncError instanceof Error ? syncError.message : "주문·문의 자동 동기화 예약 실패");
       }
     }
-    const gatewayResponse = await api("/api/channel-gateway/worker/claim", {
-      method: "POST",
-      body: JSON.stringify({ version: workerVersion }),
-    });
-    if (gatewayResponse.ok && gatewayResponse.status !== 204) {
-      markWorkerBusy();
-      await processGatewayJob(await gatewayResponse.json());
+    if (activeGatewayJobs.size < maxGatewayConcurrency) {
+      const gatewayResponse = await api("/api/channel-gateway/worker/claim", {
+        method: "POST",
+        body: JSON.stringify({ version: workerVersion }),
+      });
+      if (gatewayResponse.ok && gatewayResponse.status !== 204) {
+        markWorkerBusy();
+        const gatewayJob = await gatewayResponse.json();
+        if (once) {
+          await processGatewayJob(gatewayJob);
+        } else {
+          const activeGatewayJob = processGatewayJob(gatewayJob).finally(() => {
+            activeGatewayJobs.delete(activeGatewayJob);
+          });
+          activeGatewayJobs.add(activeGatewayJob);
+        }
+        continue;
+      }
+      if (![204, 404].includes(gatewayResponse.status)) throw new Error(`채널 작업 요청 실패 · HTTP ${gatewayResponse.status}`);
+    }
+    if (activeGatewayJobs.size >= maxGatewayConcurrency) {
+      if (once) await Promise.allSettled([...activeGatewayJobs]);
+      else await Promise.race([...activeGatewayJobs]);
       continue;
     }
-    if (![204, 404].includes(gatewayResponse.status)) throw new Error(`채널 작업 요청 실패 · HTTP ${gatewayResponse.status}`);
     // 상세페이지 작업은 상품 단위로 최대 8건을 병렬 실행합니다. 각 상품의
     // 생성 이미지도 2장씩 병렬 처리하되, 짧은 채널 API 작업은 계속 우선
     // 수신해 게이트웨이 제한시간 안에 끝나도록 합니다.
@@ -1687,5 +1706,6 @@ do {
   }
 } while (!once && !stopping);
 
+if (activeGatewayJobs.size) await Promise.allSettled([...activeGatewayJobs]);
 if (activeAiJobs.size) await Promise.allSettled([...activeAiJobs]);
 console.log("SellerPilot ChatGPT CLI worker 종료");
