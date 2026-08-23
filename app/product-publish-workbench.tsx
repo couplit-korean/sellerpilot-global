@@ -128,6 +128,26 @@ function uniqueUrls(values: Array<string | null | undefined>) {
   return [...new Set(values.map((value) => value?.trim() ?? "").filter((value) => value.startsWith("https://")))];
 }
 
+function englishEbayMaterial(value: string) {
+  const normalized = value.trim();
+  const translations: Record<string, string> = {
+    "도자기": "Ceramic",
+    "세라믹": "Ceramic",
+    "유리": "Glass",
+    "스테인리스": "Stainless Steel",
+    "스테인리스 스틸": "Stainless Steel",
+    "플라스틱": "Plastic",
+    "실리콘": "Silicone",
+    "나무": "Wood",
+    "목재": "Wood",
+    "가죽": "Leather",
+    "합성가죽": "Faux Leather",
+    "면": "Cotton",
+    "폴리에스터": "Polyester",
+  };
+  return translations[normalized] ?? normalized;
+}
+
 function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number) {
   const channelPrice = marketplaceListingPrice(channel, price, { globalBaseUsdPrice, targetCurrency: target?.currency });
   const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
@@ -265,7 +285,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
             // selected values, then make the listing's verified core content
             // authoritative so an empty category field cannot blank the title.
             Attributes: { ...providedAttributes, name: title.slice(0, 255), description: richDescription, short_description: shortDescription.slice(0, 500), brand: manual.brandName },
-            Skus: { Sku: [{ SellerSku: marketSku, price: String(channelPrice), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: manual.packageContents.slice(0, 255), Status: "inactive", Images: { Image: galleryImageUrls } }] },
+            Skus: { Sku: [{ SellerSku: marketSku, price: String(channelPrice), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: title.slice(0, 255), Status: "active", Images: { Image: galleryImageUrls } }] },
           },
         },
       },
@@ -375,7 +395,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     // eBay Inventory Items and Offers must reference the exact same SKU.
     // Keep it market-specific so a later country listing cannot collide with US.
     sku: marketSku,
-    inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: title.slice(0, 80), description: richDescription, imageUrls: galleryImageUrls, brand: manual.brandName, mpn: marketSku, aspects: normalizeEbayAspects({ ...(assignment?.providedAttributes ?? {}), Material: manual.material, "Country/Region of Manufacture": manual.countryOfOrigin }) } },
+    inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: title.slice(0, 80), description: richDescription, imageUrls: galleryImageUrls, brand: manual.brandName, mpn: marketSku, aspects: normalizeEbayAspects({ ...(assignment?.providedAttributes ?? {}), Material: englishEbayMaterial(assignment?.providedAttributes.Material || manual.material), "Country/Region of Manufacture": manual.countryOfOrigin }) } },
     offer: { sku: marketSku, marketplaceId: target?.targetId ?? "EBAY_US", format: "FIXED_PRICE", availableQuantity: quantity, categoryId: assignment?.categoryId ?? "", listingDescription: richDescription, listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" }, merchantLocationKey: "SERVER_MANAGED", pricingSummary: { price: { value: String(channelPrice), currency: target?.currency ?? "USD" } } },
     publish: true,
   };

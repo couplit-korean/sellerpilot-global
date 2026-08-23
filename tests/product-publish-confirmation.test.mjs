@@ -19,3 +19,17 @@ test("eBay market listings use one market-specific SKU for inventory and offer",
   assert.match(workbench, /sku: marketSku,[\s\S]*?offer: \{ sku: marketSku,/);
   assert.match(operations, /const offer = structuredClone[\s\S]*?offer\.sku = sku;/);
 });
+
+test("Lazada listings publish active with localized package content", async () => {
+  const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
+
+  assert.match(workbench, /package_content: title\.slice\(0, 255\), Status: "active"/);
+  assert.doesNotMatch(workbench, /Status: "inactive"/);
+});
+
+test("eBay material aspects translate common Korean source values to English", async () => {
+  const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
+
+  assert.match(workbench, /"세라믹": "Ceramic"/);
+  assert.match(workbench, /Material: englishEbayMaterial\(assignment\?\.providedAttributes\.Material \|\| manual\.material\)/);
+});
