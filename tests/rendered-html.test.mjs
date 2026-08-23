@@ -128,6 +128,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(categoryWorkbench, /restoreCategoryStates\(productId\)/);
   assert.doesNotMatch(page, /<PublishingPage key=\{publishingProduct/);
   assert.match(page, /resolvedProductId = analyzedProductId \?\? initialProduct\?\.id \?\? null/);
+  assert.match(page, /event === "INITIAL_SESSION" \|\| event === "SIGNED_IN"/);
+  assert.doesNotMatch(page, /setAccessState\(session \? "checking" : "signed_out"\)/);
   assert.match(page, /\?view=\$\{next\}/);
   assert.match(page, /사진 촬영/);
   assert.match(page, /앨범에서 선택/);

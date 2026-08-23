@@ -2427,8 +2427,15 @@ export default function Home() {
       setAccessState(!error && isAdmin === true ? "admin" : "forbidden");
     };
     void supabase.auth.getSession().then(({ data }) => void verifyAdmin(data.session));
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAccessState(session ? "checking" : "signed_out");
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!session) {
+        setUserEmail("");
+        setAccessState("signed_out");
+        return;
+      }
+      if (event === "INITIAL_SESSION" || event === "SIGNED_IN") {
+        setAccessState((current) => current === "admin" ? current : "checking");
+      }
       window.setTimeout(() => void verifyAdmin(session), 0);
     });
     return () => data.subscription.unsubscribe();
