@@ -62,7 +62,7 @@ test("the four detail slots receive visibly distinct scene and camera contracts"
   assert.match(prompts[0], /environmental overview camera/);
   assert.match(prompts[1], /macro or close-focus/);
   assert.match(prompts[2], /medium environmental camera/);
-  assert.match(prompts[3], /true overhead flat-lay camera/);
+  assert.match(prompts[3], /high oblique 45–60-degree inspection camera/);
   assert.ok(prompts.every((prompt) => prompt.includes("중립적인 상업 사진")), "unknown categories must not fall back to skincare styling");
 });
 
@@ -115,6 +115,16 @@ test("catalog and factual inspection slots stay separate from setting-shot slots
     assert.match(prompt, /Inspection-shot assignment:/);
     assert.doesNotMatch(prompt, /^Mandatory product-specific setting:/m);
   }
+});
+
+test("package inspection cannot repeat the front-facing hero or square composition", () => {
+  const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-package");
+  assert.ok(preset);
+  const prompt = buildAssetImagePrompt(result, `/tmp/${preset.file}`, preset, ["main", "back", "top"]);
+  assert.match(prompt, /top closure, flap, lid or seal/);
+  assert.match(prompt, /straight-on front face must never be the dominant plane/);
+  assert.match(prompt, /never straight-on and never a front-face flat lay/);
+  assert.match(prompt, /cannot be confused with hero or square/);
 });
 
 test("failed order and inquiry reads are stored as failed gateway jobs", () => {

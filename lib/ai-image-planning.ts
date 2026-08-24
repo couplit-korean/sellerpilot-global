@@ -3,7 +3,7 @@ import { channelStyleProfiles, matchStyleCategory } from "./marketplace-style-le
 import { buildProductSettingShotPlan, formatProductSettingShot, settingShotAssetIds } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.24-r6";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.24-r7";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -63,7 +63,7 @@ function seriesExclusion(assetId: AiGeneratedAssetId) {
   if (assetId === "detail-overview") return "Do not turn this into a macro crop or overhead package flat lay. Show the whole product in its assigned storage or preparation environment, distinct from the active-use scene.";
   if (assetId === "detail-feature") return "Do not repeat the full-product front hero or overview composition; the visible feature must be the clear subject.";
   if (assetId === "detail-use") return "Do not use a seamless catalog backdrop, macro-only crop, or package flat lay; the environment must explain real use.";
-  if (assetId === "detail-package") return "Do not create a lifestyle scene or hero pedestal, and never duplicate one physical item to imply a set.";
+  if (assetId === "detail-package") return "Do not create a lifestyle scene or hero pedestal, never duplicate one physical item to imply a set, and never show the package as another straight-on front catalog shot. The top closure plus a verified side or rear plane must be visibly dominant so this cannot be confused with hero or square.";
   if (assetId === "square") return "Do not add lifestyle props, gradients, banners, badges, or promotional text.";
   if (assetId === "portrait") return "Do not reuse the centered square catalog layout or a colored studio wall; the vertical composition must be a real assigned environment.";
   if (assetId === "wide") return "Do not crop a square composition into a banner or use an abstract studio set; compose the assigned real environment natively for the horizontal frame.";
