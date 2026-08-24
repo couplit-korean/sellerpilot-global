@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { normalizeLazadaImHistory } from "../lib/channels/lazada-im";
 import { executeChannelOperation } from "../lib/channels/operations";
@@ -76,4 +77,10 @@ test("Lazada IM history cannot be turned into a periodic poll", async () => {
     }),
     /CHANNEL_ARGUMENT_REQUIRED:bootstrap/,
   );
+});
+
+test("Lazada manual IM bootstrap uses the fixed-egress channel gateway", async () => {
+  const route = await readFile(new URL("../app/api/operations/sync/route.ts", import.meta.url), "utf8");
+  assert.match(route, /channel === "coupang" \|\| channel === "smartstore" \|\| channel === "lazada"/);
+  assert.match(route, /p_operation: "inquiries\.list"/);
 });

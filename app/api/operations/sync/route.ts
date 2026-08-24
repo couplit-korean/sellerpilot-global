@@ -155,7 +155,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      if (channel === "coupang" || channel === "smartstore") {
+      if (channel === "coupang" || channel === "smartstore" || channel === "lazada") {
         await admin.serviceClient.rpc("sellerpilot_service_mark_channel_sync", {
           p_credential_id: credential.id,
           p_channel: channel,
