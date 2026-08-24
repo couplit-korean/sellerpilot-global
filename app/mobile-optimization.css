@@ -24,9 +24,40 @@
 /* At the first fixed-sidebar widths the page has less than 820px of usable
    content. Collapse wider workspaces and keep the status ledger reachable. */
 @media (min-width: 901px) and (max-width: 1080px) {
+  .page-stack > *,
+  .metric-grid,
+  .metric-card,
+  .dashboard-main-grid,
+  .dashboard-lower-grid,
+  .dashboard-bottom-grid,
+  .dashboard-cs-pair,
+  .dashboard-main-grid > *,
+  .dashboard-lower-grid > *,
+  .dashboard-bottom-grid > *,
+  .dashboard-cs-pair > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .daily-briefing,
   .studio-workspace {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .metric-grid,
+  .order-summary-grid,
+  .cs-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-main-grid,
+  .dashboard-lower-grid,
+  .dashboard-bottom-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .alert-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .briefing-copy,

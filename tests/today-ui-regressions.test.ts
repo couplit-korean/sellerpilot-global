@@ -186,7 +186,10 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.doesNotMatch(publishWorkbench, /판매 구성품[^\n]*<input/);
   assert.match(mobileStyles, /@media \(min-width: 901px\) and \(max-width: 1200px\)[\s\S]*?\.overview-toolbar[\s\S]*?flex-direction: column/);
   const narrowFixedSidebarMedia = cssMediaBody(mobileStyles, "(min-width: 901px) and (max-width: 1080px)");
+  assert.match(narrowFixedSidebarMedia, /\.page-stack > \*,[\s\S]*?min-width: 0;[\s\S]*?max-width: 100%/);
   assert.match(narrowFixedSidebarMedia, /\.daily-briefing,[\s\S]*?\.studio-workspace[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(narrowFixedSidebarMedia, /\.metric-grid,[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(narrowFixedSidebarMedia, /\.dashboard-main-grid,[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(narrowFixedSidebarMedia, /\.commerce-service-rail[\s\S]*?overflow-x: auto/);
   const fixedSidebarLayout = (viewport: number) => viewport <= 900 ? "mobile" : viewport <= 1080 ? "narrow" : "wide";
   assert.deepEqual([900, 901, 1048, 1097, 1200].map(fixedSidebarLayout), ["mobile", "narrow", "narrow", "wide", "wide"]);
