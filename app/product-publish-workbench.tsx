@@ -3,6 +3,7 @@
 import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
+import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
 import { marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10SellerCode } from "../lib/channels/qoo10";
@@ -349,6 +350,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
       { code: "23759100", name: manual.countryOfOrigin },
       { code: "23756033", name: "해당사항 없음" },
     ] : [];
+    const saleDateRange = elevenstSaleDateRange();
     return {
       sellerpilotAssets,
       verificationOnly,
@@ -378,6 +380,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
           { crtfGrpTypCd: "04", crtfGrpObjClfCd: "05", ProductCert: { certTypeCd: "131", certKey: "해당사항 없음" } },
         ] : [],
         selPrdClfCd: "3y:110",
+        ...saleDateRange,
         selPrc: String(Math.max(10, Math.round(channelPrice / 10) * 10)),
         prdSelQty: String(quantity),
         dlvCnAreaCd: "01",

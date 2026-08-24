@@ -115,6 +115,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "description", label: "상세 설명", source: "상품 정보", path: ["product", "htmlDetail"] },
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["product", "selPrc"]) },
     { key: "stock", label: "재고", source: "상품 정보", test: positive(["product", "prdSelQty"]) },
+    { key: "sale-period", label: "판매 시작·종료일", source: "상품 정보", test: (draft) => meaningful(valueAt(draft, ["product", "aplBgnDy"])) && meaningful(valueAt(draft, ["product", "aplEndDy"])) },
     { key: "notice", label: "상품정보제공고시", source: "카테고리", path: ["product", "ProductNotification", "type"] },
     { key: "certification", label: "인증·허가 정보", source: "카테고리", path: ["product", "ProductCertGroup"], help: "카테고리에 맞는 인증 대상 여부와 인증 정보를 확인해 주세요." },
     { key: "shipping", label: "배송·반품 설정", source: "판매자 계정", test: (draft) => meaningful(valueAt(draft, ["product", "dlvWyCd"])) && meaningful(valueAt(draft, ["product", "dlvCstInstBasiCd"])) && meaningful(valueAt(draft, ["product", "rtngExchDetail"])) },

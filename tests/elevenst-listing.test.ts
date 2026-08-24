@@ -3,6 +3,7 @@ import test from "node:test";
 import { inspectListingDraft } from "../lib/channels/listing-preflight";
 import { executeChannelOperation } from "../lib/channels/operations";
 import { elevenstCategoryRequest, elevenstSellerXmlRequest } from "../lib/channels/protocols";
+import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
 
 const apiKey = "A".repeat(32);
 const categoryXml = `<?xml version="1.0" encoding="euc-kr"?><ns2:categorys xmlns:ns2="urn:test">
@@ -159,6 +160,8 @@ test("11st verification listing creates, reads back, and stops the exact remote 
           dispCtgrNo: "1000000",
           prdImage01: "https://example.com/product.jpg",
           htmlDetail: "<p>detail</p>",
+          aplBgnDy: "2026/08/24",
+          aplEndDy: "2999/12/31",
           selPrc: "10000",
           prdSelQty: "1",
           ProductNotification: { type: "891045", item: [{ code: "11800", name: "QA" }] },
@@ -171,6 +174,8 @@ test("11st verification listing creates, reads back, and stops the exact remote 
     assert.deepEqual(result.steps.map((step) => step.name), ["product-create", "product-readback", "verification-stop-display"]);
     assert.deepEqual(calls.map((call) => call.method), ["POST", "POST", "PUT"]);
     assert.match(calls[0].body, /SellerPilot &lt;QA&gt;/);
+    assert.match(calls[0].body, /<aplBgnDy>2026\/08\/24<\/aplBgnDy>/);
+    assert.match(calls[0].body, /<aplEndDy>2999\/12\/31<\/aplEndDy>/);
     assert.match(calls[1].body, /<prdNo>123456789<\/prdNo>/);
     assert.match(calls[2].url, /stopdisplay\/123456789$/);
   } finally {
@@ -187,6 +192,8 @@ test("11st preflight blocks missing notice data and accepts a complete seller dr
       orgnNmVal: "대한민국",
       prdImage01: "https://example.com/product.jpg",
       htmlDetail: "<p>detail</p>",
+      aplBgnDy: "2026/08/24",
+      aplEndDy: "2999/12/31",
       selPrc: "10000",
       prdSelQty: "1",
       dlvWyCd: "01",
@@ -200,4 +207,11 @@ test("11st preflight blocks missing notice data and accepts a complete seller dr
   const missingNotice = structuredClone(complete);
   missingNotice.product.ProductNotification.type = "";
   assert.equal(inspectListingDraft("elevenst", missingNotice).find((item) => item.key === "notice")?.status, "manual");
+});
+
+test("11st sale period uses the official slash date format and maximum-period sentinel", () => {
+  assert.deepEqual(elevenstSaleDateRange(new Date("2026-08-23T15:30:00.000Z")), {
+    aplBgnDy: "2026/08/24",
+    aplEndDy: "2999/12/31",
+  });
 });
