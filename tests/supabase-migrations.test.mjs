@@ -9,6 +9,7 @@ const NON_ADMIN_ID = "9753c228-73b7-4e1f-8cad-b6635c32ba7f";
 const JOB_ID = "b231a1ac-7c2f-48bc-b2e4-8ad6db2902b7";
 const CANCEL_JOB_ID = "95303cb5-f3ba-49b6-9bd4-7c5e558f0b14";
 const RESEARCH_JOB_ID = "e659cfbc-0f80-44a5-94e8-f011ec53e67f";
+const REGEN_JOB_ID = "bc02b888-5531-426a-9a87-32a8c0e356e2";
 const SHARED_PRODUCT_ID = "4a346497-84c8-4ccd-bf14-8f06f990a2f7";
 const TOKEN_HASH = "a".repeat(64);
 
@@ -191,6 +192,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260824154500_enable_elevenst_listing_workflow.sql",
       "20260824180000_preserve_image_roles_for_regeneration.sql",
       "20260824190000_enforce_unique_generated_shots.sql",
+      "20260824191500_fix_asset_regeneration_audit_count.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -540,6 +542,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "running",
     );
     const resultPayload = {
+      mode: "cli",
       title: "AI 생성 테스트 상품",
       detail_copy: "상품 사실정보를 반영한 테스트 결과",
       asset_storage_paths: {
@@ -565,6 +568,30 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [JOB_ID],
     );
     assert.match(aiProductId, /^[0-9a-f-]{36}$/i);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_create_asset_regeneration_job($1, $2, $3, 'detail-use')",
+        [REGEN_JOB_ID, JOB_ID, aiProductId],
+      ),
+      REGEN_JOB_ID,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select case when request_payload->'comparison_asset_paths'->>'hero' = $2 then 1 else 0 end from sellerpilot_private.ai_cli_jobs where id = $1",
+        [REGEN_JOB_ID, resultPayload.asset_storage_paths.hero],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select (safe_detail->>'comparison_asset_count')::integer from sellerpilot_private.ai_cli_audit where job_id = $1 and action = 'job_queued' order by occurred_at desc limit 1",
+        [REGEN_JOB_ID],
+      ),
+      4,
+    );
     assert.equal(await scalar(db, "select sku from sellerpilot_private.products where id = $1", [aiProductId]), "AI-REQUIRED-001");
     await assert.rejects(
       db.query(
@@ -946,9 +973,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(await scalar(db, "select public.sellerpilot_cancel_ai_job($1)", [CANCEL_JOB_ID]), true);
     assert.equal(await scalar(db, "select public.sellerpilot_retry_ai_job($1)", [CANCEL_JOB_ID]), true);
     const jobs = await db.query("select * from public.sellerpilot_list_ai_jobs(10)");
-    assert.equal(jobs.rows.length, 3);
+    assert.equal(jobs.rows.length, 4);
     assert.equal(jobs.rows.some((job) => job.status === "succeeded" && job.has_hero), true);
     assert.equal(jobs.rows.some((job) => job.kind === "product_research"), true);
+    assert.equal(jobs.rows.some((job) => job.kind === "product_asset_regeneration"), true);
   } finally {
     await db.close();
   }
