@@ -4,6 +4,7 @@ import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 import { isActiveChannelKey } from "../../../../../lib/channels/catalog";
 import { buildShipmentArguments } from "../../../../../lib/channels/shipment-draft";
+import { shipmentWriteAvailability } from "../../../../../lib/channels/shipment-release";
 import {
   remoteShipmentSuccessResult,
   shipmentLedgerWriteSucceeded,
@@ -101,6 +102,12 @@ export async function POST(request: Request) {
     const order = orders.get(shipment.id);
     if (!order || !isActiveChannelKey(order.channel_key)) {
       results.push(failedShipmentResult({ id: shipment.id, channel: "unknown", message: "실주문 원장에서 주문을 찾지 못했습니다." }));
+      continue;
+    }
+    const shipmentAvailability = shipmentWriteAvailability(order.channel_key);
+    if (!shipmentAvailability.available) {
+      const message = `${shipmentAvailability.label} · ${shipmentAvailability.reason}`;
+      results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
       continue;
     }
     const credential = credentials.get(order.channel_key);

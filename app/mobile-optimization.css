@@ -2165,6 +2165,11 @@
     font-size: 12px;
   }
 
+  .pipeline-list > div.interactive {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
   .registration-card {
     gap: 9px;
     padding: 10px;
@@ -2335,6 +2340,12 @@
     font-size: 10px;
   }
 
+  .remove-photo-button,
+  .extra-photo-list > div > button {
+    width: 44px;
+    height: 44px;
+  }
+
   .product-edit-dialog { max-height: calc(100svh - max(8px, env(safe-area-inset-top))); }
   .product-edit-dialog > header { padding-block: 12px; }
   .product-edit-dialog > header h2 { font-size: 19px; }
@@ -2410,6 +2421,28 @@
   .category-suggestions small { font-size: 10px; }
   .category-suggestions em { font-size: 11px; }
 
+  .ticket-tabs {
+    height: auto;
+    min-height: 44px;
+  }
+
+  .ticket-tabs button,
+  .cs-workspace.mobile-conversation-open .mobile-back,
+  .ai-draft-head button,
+  .reply-tool-select {
+    min-height: 44px;
+  }
+
+  .cs-workspace.mobile-conversation-open .mobile-back {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .ai-draft-head button {
+    justify-content: center;
+  }
+
   .detail-preview-toolbar b { font-size: 12px; }
   .detail-preview-toolbar small { font-size: 10px; line-height: 1.45; }
   .detail-preview-canvas,
@@ -2446,8 +2479,8 @@
   .notification-popover > div:first-child h4 { font-size: 14px; }
   .notification-popover > div:first-child h4 small { font-size: 10px; }
   .notification-popover > div:first-child button {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .notification-popover .notification-item {

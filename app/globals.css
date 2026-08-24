@@ -588,6 +588,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .order-summary-grid strong { margin-top: 4px; font-family: var(--font-geist-mono), monospace; font-size: 17px; }
 .order-summary-grid em { color: var(--success); font-family: var(--font-geist-mono), monospace; font-size: 8px; font-style: normal; font-weight: 800; }
 .order-summary-grid em.neutral { color: #8e97a7; font-family: var(--font-geist-sans); font-weight: 600; }
+.shipment-release-status { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid #f3d4a8; border-radius: 10px; color: #934f0c; background: #fffaf2; }
+.shipment-release-status > svg { flex: 0 0 auto; margin-top: 1px; }
+.shipment-release-status span, .shipment-release-status b, .shipment-release-status small { display: block; }
+.shipment-release-status b { font-size: 10px; }
+.shipment-release-status small { margin-top: 4px; color: #9b6a38; font-size: 8px; line-height: 1.55; }
 .tab-toolbar { justify-content: space-between; }
 .tab-toolbar > div:first-child { display: flex; align-self: stretch; }
 .tab-toolbar > div:first-child button { position: relative; padding: 0 14px; color: #848d9e; background: transparent; font-size: 9px; font-weight: 750; }
@@ -1221,6 +1226,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .tab-toolbar .search-field { flex: 1; width: auto; margin: 0; }
   .bulk-order-bar { flex-wrap: wrap; padding: 10px 12px; }
   .bulk-order-bar small { display: none; }
+  .shipment-release-status { padding: 11px 12px; }
   .cs-workspace { grid-template-columns: 1fr; }
   .ticket-list { display: block; max-height: 360px; overflow-y: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .conversation { min-height: 590px; }

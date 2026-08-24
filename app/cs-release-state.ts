@@ -70,15 +70,31 @@ export type CsChannelVerification = {
   tone: "passed" | "failed" | "unsupported";
 };
 
-export function csChannelVerification(channelKey: ActiveChannelKey, status: CsInquirySyncStatus | null | undefined): CsChannelVerification {
+export function csChannelVerification(
+  channelKey: ActiveChannelKey,
+  status: CsInquirySyncStatus | null | undefined,
+  importedCount = 0,
+  lastError: string | null = null,
+): CsChannelVerification {
   const capability = channelReadCapabilities[channelKey];
-  if (status === "passed") return { readLabel: `${capability.subject} 수신 확인`, replyLabel: capability.replyLabel, badge: "수신 확인", tone: "passed" };
-  if (status === "failed") return { readLabel: `${capability.subject} 수신 오류`, replyLabel: capability.replyLabel, badge: "수신 오류", tone: "failed" };
-  if (status === "queued") return { readLabel: `${capability.subject} 동기화 대기`, replyLabel: capability.replyLabel, badge: "수신 대기", tone: "unsupported" };
-  if (status === "running") return { readLabel: `${capability.subject} 동기화 중`, replyLabel: capability.replyLabel, badge: "수신 중", tone: "unsupported" };
-  if (status === "unsupported") return { readLabel: `${capability.subject} 수신 API 미지원`, replyLabel: capability.replyLabel, badge: "수신 미지원", tone: "unsupported" };
+  if (!capability.integrated || status === "unsupported") {
+    return { readLabel: `${capability.subject} 수신 API 미연동`, replyLabel: capability.replyLabel, badge: "수신 미지원", tone: "unsupported" };
+  }
+  if (status === "passed") return { readLabel: `${capability.subject} 조회 성공 · 원장 ${Math.max(0, importedCount)}건`, replyLabel: capability.replyLabel, badge: "조회 성공", tone: "passed" };
+  if (status === "failed") {
+    const lazadaPermissionBlocked = channelKey === "lazada"
+      && /(?:does not have permission|permission[^\n]{0,80}(?:api|access)|api[^\n]{0,80}permission)/i.test(lastError ?? "");
+    return {
+      readLabel: lazadaPermissionBlocked ? "Lazada IM 조회 거절 · 운영 앱 Buyer IM 권한 필요" : `${capability.subject} 조회 실패`,
+      replyLabel: capability.replyLabel,
+      badge: lazadaPermissionBlocked ? "권한 필요" : "조회 실패",
+      tone: "failed",
+    };
+  }
+  if (status === "queued") return { readLabel: `${capability.subject} 조회 대기`, replyLabel: capability.replyLabel, badge: "조회 대기", tone: "unsupported" };
+  if (status === "running") return { readLabel: `${capability.subject} 조회 중`, replyLabel: capability.replyLabel, badge: "조회 중", tone: "unsupported" };
   return {
-    readLabel: capability.integrated ? `${capability.subject} 수신 검증 전` : `${capability.subject} 수신 API 미연동`,
+    readLabel: `${capability.subject} 조회 검증 전`,
     replyLabel: capability.replyLabel,
     badge: "검증 전",
     tone: "unsupported",

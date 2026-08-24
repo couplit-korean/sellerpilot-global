@@ -50,16 +50,23 @@ test("only Lazada uses remote reply while every other channel saves an in-progre
 });
 
 test("channel verification separates inquiry receiving from remote reply capability", () => {
-  assert.deepEqual(csChannelVerification("qoo10", "passed"), {
-    readLabel: "상품 문의 수신 확인",
+  assert.deepEqual(csChannelVerification("qoo10", "passed", 0), {
+    readLabel: "상품 문의 조회 성공 · 원장 0건",
     replyLabel: "답변: 내부 초안만 · 판매자센터 전송 필요",
-    badge: "수신 확인",
+    badge: "조회 성공",
     tone: "passed",
   });
-  assert.equal(csChannelVerification("qoo10", "queued").badge, "수신 대기");
+  assert.equal(csChannelVerification("qoo10", "queued").badge, "조회 대기");
   assert.equal(csChannelVerification("qoo10", "queued").tone, "unsupported");
   assert.match(csChannelVerification("shopee", null).readLabel, /API 미연동/);
   assert.match(csChannelVerification("lazada", "passed").replyLabel, /앱 권한 필요/);
   assert.match(csChannelVerification("temu", "passed").readLabel, /반품·환불 작업/);
   assert.match(csChannelVerification("elevenst", "unsupported").replyLabel, /API 미지원/);
+  assert.equal(csChannelVerification("elevenst", "passed", 3).badge, "수신 미지원");
+  assert.deepEqual(csChannelVerification("lazada", "failed", 0, "App does not have permission to access this api"), {
+    readLabel: "Lazada IM 조회 거절 · 운영 앱 Buyer IM 권한 필요",
+    replyLabel: "답변: 원격 전송 경로 있음 · 앱 권한 필요",
+    badge: "권한 필요",
+    tone: "failed",
+  });
 });

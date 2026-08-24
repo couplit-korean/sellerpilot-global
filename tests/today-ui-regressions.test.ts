@@ -247,3 +247,18 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(operationsSnapshotRoute, /mutationError\.code === "23505"/);
   assert.match(competitorScheduler, /searchNaverShoppingVariants\(product\.query, product\.aliases/);
 });
+
+test("390px registration, CS, preview, and notification surfaces keep their mobile contract", async () => {
+  const mobileStyles = await readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8");
+
+  assert.match(mobileStyles, /\.registration-card-grid\s*\{[\s\S]{0,120}?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(mobileStyles, /\.registration-filter-strip button\s*\{[\s\S]{0,120}?min-height:\s*56px/);
+  assert.match(mobileStyles, /\.pipeline-list > div\.interactive\s*\{[\s\S]{0,120}?min-height:\s*44px;[\s\S]{0,80}?touch-action:\s*manipulation/);
+  assert.match(mobileStyles, /\.remove-photo-button,[\s\S]{0,100}?\.extra-photo-list > div > button\s*\{[\s\S]{0,100}?width:\s*44px;[\s\S]{0,80}?height:\s*44px/);
+  assert.match(mobileStyles, /\.ticket-tabs\s*\{[\s\S]{0,100}?height:\s*auto;[\s\S]{0,80}?min-height:\s*44px/);
+  assert.match(mobileStyles, /\.cs-workspace\.mobile-conversation-open \.mobile-back\s*\{[\s\S]{0,120}?width:\s*44px;[\s\S]{0,80}?height:\s*44px/);
+  assert.match(mobileStyles, /\.detail-preview-scroll\s*\{[\s\S]{0,220}?overflow:\s*visible;[\s\S]{0,100}?touch-action:\s*pan-y/);
+  assert.match(mobileStyles, /\.detail-preview-canvas img\s*\{[\s\S]{0,120}?pointer-events:\s*none/);
+  assert.match(mobileStyles, /\.notification-popover > div:first-child button\s*\{[\s\S]{0,100}?min-width:\s*44px;[\s\S]{0,80}?min-height:\s*44px/);
+  assert.match(mobileStyles, /\.toast\s*\{[\s\S]{0,180}?right:\s*max\(10px,[\s\S]{0,180}?left:\s*max\(10px,[\s\S]{0,100}?width:\s*auto/);
+});

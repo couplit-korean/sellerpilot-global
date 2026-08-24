@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { channelOperationAvailable } from "../lib/channels/operation-availability";
+import { shipmentVerificationSummary, shipmentWriteAvailability } from "../lib/channels/shipment-release";
+
+test("11번가 성공 listing.create와 미검증 수정·발송 작업을 분리한다", () => {
+  assert.equal(channelOperationAvailable("elevenst", "listing.create"), true);
+  assert.equal(channelOperationAvailable("elevenst", "listing.stop"), true);
+  assert.equal(channelOperationAvailable("elevenst", "orders.list"), true);
+  assert.equal(channelOperationAvailable("elevenst", "listing.update"), false);
+  assert.equal(channelOperationAvailable("elevenst", "price.update"), false);
+  assert.equal(channelOperationAvailable("elevenst", "inventory.update"), false);
+  assert.equal(channelOperationAvailable("elevenst", "orders.get"), false);
+  assert.equal(channelOperationAvailable("elevenst", "shipment.confirm"), false);
+  assert.equal(channelOperationAvailable("elevenst", "inquiries.list"), false);
+});
+
+test("문의·배송 UI가 구현되지 않은 외부 쓰기를 실행 가능으로 노출하지 않는다", () => {
+  assert.equal(channelOperationAvailable("shopee", "inquiries.list"), false);
+  assert.equal(channelOperationAvailable("ebay", "shipment.acknowledge"), false);
+  assert.equal(shipmentWriteAvailability("elevenst").available, false);
+  assert.match(shipmentWriteAvailability("elevenst").reason, /권한|엔드포인트/);
+  assert.equal(shipmentWriteAvailability("lazada").available, true);
+});
+
+test("실발송 후보가 0건이면 검증 완료가 아니라 대상 부재로 표시한다", () => {
+  assert.deepEqual(shipmentVerificationSummary(0), {
+    title: "실발송 검증 대상 0건",
+    detail: "자동 발송이 검증된 채널에서 처리할 결제완료·출고대기 실주문이 없어, 현재 화면에서 외부 발송 쓰기를 실행·검증할 대상이 없습니다.",
+  });
+  assert.match(shipmentVerificationSummary(2).title, /후보 2건/);
+  assert.match(shipmentVerificationSummary(2).detail, /판매채널 응답과 내부 원장 기록/);
+});

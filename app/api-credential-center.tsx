@@ -24,6 +24,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey, type ChannelDefinition } from "../lib/channels/catalog";
+import { channelOperationAvailable } from "../lib/channels/operation-availability";
 import { AiCliRuntimeCard } from "./ai-cli-runtime-card";
 
 type CredentialKey = ActiveChannelKey | "tracx";
@@ -518,9 +519,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
   const [resultJson, setResultJson] = useState("");
   const isWrite = writeOperations.has(operation);
   const availableOperations = channelOperationOptions.filter((item) => {
-    if (target.channel.key === "ebay" && item.value === "shipment.acknowledge") return false;
-    if (item.value === "inquiries.list") return ["qoo10", "lazada", "coupang", "smartstore", "temu"].includes(target.channel.key);
-    return true;
+    return channelOperationAvailable(target.channel.key, item.value);
   });
 
   const changeOperation = (nextOperation: ChannelOperationName) => {
