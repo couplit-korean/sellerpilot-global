@@ -244,7 +244,7 @@ export const workerCompletionSchema = z.union([
       sourceJobId: z.string().uuid(),
       sourceProductId: z.string().uuid().nullable(),
     }),
-    assetStoragePaths: z.record(
+    assetStoragePaths: z.partialRecord(
       z.enum(aiGeneratedAssetIds),
       z.string().min(1).max(400),
     ),
