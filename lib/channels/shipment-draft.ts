@@ -18,7 +18,9 @@ function requiredText(value: string, field: string, max: number) {
 export function buildShipmentArguments(input: ShipmentDraft): Record<string, unknown> {
   const externalOrderId = requiredText(input.externalOrderId, "externalOrderId", 240);
   const carrierCode = requiredText(input.carrierCode, "carrierCode", 40);
-  const trackingNumber = requiredText(input.trackingNumber, "trackingNumber", 100);
+  const trackingNumber = input.channel === "lazada"
+    ? input.trackingNumber.trim().slice(0, 100)
+    : requiredText(input.trackingNumber, "trackingNumber", 100);
   const shippedAt = (input.shippedAt ?? new Date()).toISOString();
 
   if (input.channel === "qoo10") {
@@ -55,6 +57,17 @@ export function buildShipmentArguments(input: ShipmentDraft): Record<string, unk
   if (input.channel === "temu") {
     return { parentOrderSn: externalOrderId, carrierCode, trackingNumber, providerContext: input.providerContext ?? {} };
   }
-  if (input.channel === "lazada") throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada");
+  if (input.channel === "lazada") {
+    const providerContext = input.providerContext ?? {};
+    const orderId = String(providerContext.orderId ?? "").trim();
+    const orderItemIds = Array.isArray(providerContext.orderItemIds)
+      ? providerContext.orderItemIds.map((value) => String(value).trim()).filter(Boolean)
+      : [];
+    const deliveryType = String(providerContext.deliveryType ?? "").trim();
+    if (orderId !== externalOrderId) throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada.orderId");
+    if (!orderItemIds.length) throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada.orderItemIds");
+    if (!deliveryType) throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada.deliveryType");
+    return { orderId, carrierCode, trackingNumber, providerContext: { ...providerContext, orderId, orderItemIds, deliveryType } };
+  }
   throw new Error(`SHIPMENT_CHANNEL_UNAVAILABLE:${input.channel}`);
 }

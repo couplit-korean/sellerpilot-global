@@ -243,6 +243,19 @@ test("shipment drafts map carrier and tracking fields without changing internal 
     trackingNumber: "111222333444",
     providerContext: temuContext,
   });
+  const lazadaContext = { orderId: "ORDER-1", orderItemIds: ["ITEM-1", "ITEM-2"], deliveryType: "dropship" };
+  assert.deepEqual(buildShipmentArguments({
+    channel: "lazada",
+    externalOrderId: "ORDER-1",
+    carrierCode: "FM49",
+    trackingNumber: "",
+    providerContext: lazadaContext,
+  }), {
+    orderId: "ORDER-1",
+    carrierCode: "FM49",
+    trackingNumber: "",
+    providerContext: lazadaContext,
+  });
 });
 
 test("shipment drafts fail closed for incomplete marketplace-specific data", () => {
@@ -677,6 +690,107 @@ test("Lazada request retries once after the provider frequency-limit window", as
     assert.equal(remote.data.code, "0");
     assert.notEqual(new URL(calls[0]).searchParams.get("timestamp"), new URL(calls[1]).searchParams.get("timestamp"));
     assert.notEqual(new URL(calls[0]).searchParams.get("sign"), new URL(calls[1]).searchParams.get("sign"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada order sync enriches actionable orders with official order item details", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes("/order/items/get")) {
+      return Response.json({
+        code: "0",
+        data: [{ order_id: "9001", order_item_id: "9101", name: "Lazada product", shipping_type: "Dropshipping" }],
+      });
+    }
+    return Response.json({
+      code: "0",
+      data: {
+        orders: [{ order_id: "9001", statuses: ["pending"], items_count: 1, price: "19.90", currency: "MYR", created_at: "2026-08-24T00:00:00Z" }],
+      },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada",
+      operation: "orders.list",
+      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      arguments: { queryParams: { created_after: "2026-08-23T00:00:00+09:00" } },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.steps.map((item) => item.name), ["orders", "order-items:9001"]);
+    assert.equal(new URL(calls[1]).searchParams.get("order_id"), "9001");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada shipment confirmation uses Pack then ReadyToShip with the official JSON parameters", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; form: URLSearchParams }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const form = new URLSearchParams(String(init?.body ?? ""));
+    calls.push({ url, form });
+    if (url.includes("/order/shipment/providers/get")) {
+      return Response.json({
+        code: "0",
+        result: {
+          success: "true",
+          error_code: "0",
+          data: { shipment_providers: [{ name: "LEX", provider_code: "FM49" }], shipping_allocate_type: "TFS" },
+        },
+      });
+    }
+    if (url.includes("/order/fulfill/pack")) {
+      return Response.json({
+        code: "0",
+        result: { success: "true", error_code: "0", data: { packages: [{ package_id: "PK-100", tracking_number: "LEX-TRACK-100" }] } },
+      });
+    }
+    if (url.includes("/order/package/rts")) {
+      return Response.json({
+        code: "0",
+        result: { success: "true", error_code: "0", data: { packages: [{ package_id: "PK-100", retry: "false" }] } },
+      });
+    }
+    throw new Error(`Unexpected Lazada URL: ${url}`);
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada",
+      operation: "shipment.confirm",
+      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      arguments: {
+        orderId: "9001",
+        carrierCode: "FM49",
+        trackingNumber: "IGNORED-BY-LAZADA",
+        providerContext: { orderId: "9001", orderItemIds: ["9101"], deliveryType: "dropship" },
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "LEX-TRACK-100");
+    assert.deepEqual(result.steps.map((item) => item.name), ["shipment-providers", "pack", "ready-to-ship"]);
+    assert.equal(calls[0].form.has("payload"), false);
+    assert.deepEqual(JSON.parse(calls[0].form.get("getShipmentProvidersReq") ?? "{}"), {
+      orders: [{ order_id: "9001", order_item_ids: ["9101"] }],
+    });
+    assert.equal(calls[1].form.has("payload"), false);
+    assert.deepEqual(JSON.parse(calls[1].form.get("packReq") ?? "{}"), {
+      pack_order_list: [{ order_id: "9001", order_item_list: ["9101"] }],
+      delivery_type: "dropship",
+      shipment_provider_code: "FM49",
+      shipping_allocate_type: "TFS",
+    });
+    assert.deepEqual(JSON.parse(calls[2].form.get("readyToShipReq") ?? "{}"), {
+      packages: [{ package_id: "PK-100" }],
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }

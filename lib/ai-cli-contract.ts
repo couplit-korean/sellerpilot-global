@@ -25,6 +25,7 @@ const localizedListingSchema = z.object({
 });
 
 const nullableResearchText = (maximum: number) => z.string().trim().min(1).max(maximum).nullable();
+const researchSearchLocaleSchema = z.enum(["ko-KR", "en-US", "ja-JP", "ms-MY", "id-ID", "vi-VN", "th-TH"]);
 
 export const productResearchResultSchema = z.object({
   mode: z.literal("cli-research"),
@@ -39,6 +40,14 @@ export const productResearchResultSchema = z.object({
     packageContents: nullableResearchText(500),
     description: nullableResearchText(4_000),
     gtin: z.string().regex(/^\d{8,14}$/).nullable(),
+  }),
+  searchQueries: z.array(z.object({
+    locale: researchSearchLocaleSchema,
+    query: z.string().trim().min(2).max(160),
+  })).min(6).max(12).superRefine((queries, context) => {
+    if (new Set(queries.map((item) => item.locale)).size < 6) {
+      context.addIssue({ code: "custom", message: "동일 상품 검색어는 최소 6개 언어로 작성해야 합니다." });
+    }
   }),
   details: z.object({
     features: z.array(z.string().trim().min(1).max(300)).max(12),

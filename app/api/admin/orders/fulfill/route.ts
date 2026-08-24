@@ -13,7 +13,7 @@ const schema = z.object({
   shipments: z.array(z.object({
     id: z.string().uuid(),
     carrierCode: z.string().trim().min(1).max(40),
-    trackingNumber: z.string().trim().min(1).max(100),
+    trackingNumber: z.string().trim().max(100),
   })).min(1).max(20),
 });
 
@@ -71,6 +71,10 @@ export async function POST(request: Request) {
       results.push({ id: shipment.id, channel: order.channel_key, ok: false, message: "결제완료 또는 출고대기 주문만 발송할 수 있습니다." });
       continue;
     }
+    if (order.channel_key !== "lazada" && !shipment.trackingNumber) {
+      results.push({ id: shipment.id, channel: order.channel_key, ok: false, message: "이 채널의 실제 운송장번호를 입력해 주세요." });
+      continue;
+    }
 
     try {
       const operationArguments = buildShipmentArguments({
@@ -96,13 +100,16 @@ export async function POST(request: Request) {
         }),
         signal: AbortSignal.timeout(120_000),
       });
-      const remotePayload = await remoteResponse.json().catch(() => ({})) as { message?: string; safeMessage?: string };
+      const remotePayload = await remoteResponse.json().catch(() => ({})) as { message?: string; safeMessage?: string; remoteId?: string };
       const ok = remoteResponse.ok;
       const message = ok ? "판매채널 발송 처리와 원장 갱신이 완료됐습니다." : safeMessage(order.channel_key, remoteResponse.status, remotePayload.message ?? remotePayload.safeMessage);
+      const recordedTrackingNumber = order.channel_key === "lazada" && remotePayload.remoteId
+        ? remotePayload.remoteId
+        : shipment.trackingNumber;
       await admin.userClient.rpc("sellerpilot_record_order_shipment", {
         p_id: shipment.id,
         p_carrier: shipment.carrierCode,
-        p_tracking: shipment.trackingNumber,
+        p_tracking: recordedTrackingNumber,
         p_success: ok,
         p_error: ok ? null : message,
       });

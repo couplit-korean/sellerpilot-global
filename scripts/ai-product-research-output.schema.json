@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["mode", "summary", "suggestedFields", "details", "sources", "warnings"],
+  "required": ["mode", "summary", "suggestedFields", "searchQueries", "details", "sources", "warnings"],
   "properties": {
     "mode": { "type": "string", "const": "cli-research" },
     "summary": { "type": "string", "minLength": 20, "maxLength": 2000 },
@@ -20,6 +20,20 @@
         "packageContents": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
         "description": { "type": ["string", "null"], "minLength": 1, "maxLength": 4000 },
         "gtin": { "type": ["string", "null"], "pattern": "^[0-9]{8,14}$" }
+      }
+    },
+    "searchQueries": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["locale", "query"],
+        "properties": {
+          "locale": { "type": "string", "enum": ["ko-KR", "en-US", "ja-JP", "ms-MY", "id-ID", "vi-VN", "th-TH"] },
+          "query": { "type": "string", "minLength": 2, "maxLength": 160 }
+        }
       }
     },
     "details": {

@@ -9,7 +9,7 @@ export type DetailSection = {
 };
 
 export type LocalizedListing = {
-  channel: "qoo10" | "shopee" | "lazada" | "coupang" | "smartstore" | "ebay" | "temu";
+  channel: "qoo10" | "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "ebay" | "temu";
   market: string;
   locale: string;
   title: string;

@@ -64,16 +64,26 @@ export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInq
 }
 
 export function normalizeLazadaImHistory(steps: Array<{ name: string; data: Record<string, unknown> }>) {
-  return steps
-    .filter((step) => step.name.startsWith("inquiries-message:"))
-    .map((step): LazadaImInquiry | null => {
+  const sessions = new Map<string, { session: Record<string, unknown>; messages: Record<string, unknown>[] }>();
+  for (const step of steps.filter((item) => item.name.startsWith("inquiries-message:"))) {
       const root = record(step.data.data);
       const session = record(step.data.sellerpilotSession);
-      const sessionId = text(session.session_id, step.name.slice("inquiries-message:".length));
-      if (!sessionId) return null;
+      const nameSessionId = step.name.slice("inquiries-message:".length).split(":")[0];
+      const sessionId = text(session.session_id, nameSessionId);
+      if (!sessionId) continue;
       const messages = list(root.message_list).length ? list(root.message_list)
         : list(root.messages).length ? list(root.messages)
           : list(step.data.message_list);
+      const current = sessions.get(sessionId);
+      sessions.set(sessionId, {
+        session: Object.keys(session).length ? session : current?.session ?? {},
+        messages: [...(current?.messages ?? []), ...messages],
+      });
+  }
+
+  return [...sessions.entries()]
+    .map(([sessionId, history]): LazadaImInquiry | null => {
+      const { session, messages } = history;
       const buyerMessages = messages.filter((message) => Number(message.from_account_type ?? 1) === 1 && Number(message.status ?? 0) === 0);
       const latest = [...buyerMessages].sort((left, right) => Number(right.send_time ?? 0) - Number(left.send_time ?? 0))[0];
       const content = parsedRecord(latest?.content);

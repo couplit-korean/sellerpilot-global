@@ -155,24 +155,36 @@ function normalizeShopee(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeLazada(data: Record<string, unknown>) {
+function normalizeLazada(data: Record<string, unknown>, steps: ChannelOperationResult["steps"] = []) {
   const rows = list(object(data.data).orders);
+  const itemDetails = new Map(steps
+    .filter((item) => item.name.startsWith("order-items:") && item.ok)
+    .map((item) => [item.name.slice("order-items:".length), list(item.data.data)] as const));
   return rows.map((row): NormalizedChannelOrder | null => {
     const externalOrderId = text(row.order_id, row.order_number);
     if (!externalOrderId) return null;
     const amount = number(row.price, row.grand_total);
     const currency = text(row.currency, "MYR").toUpperCase();
     const statuses = Array.isArray(row.statuses) ? row.statuses.join(" ") : row.status;
+    const items = itemDetails.get(externalOrderId) ?? [];
+    const orderItemIds = [...new Set(items.map((item) => text(item.order_item_id)).filter(Boolean))].slice(0, 100);
+    const shippingType = text(items[0]?.shipping_type).toLowerCase();
+    const deliveryType = shippingType.includes("drop") ? "dropship" : shippingType;
     return {
       externalOrderId,
       customerName: text([row.customer_first_name, row.customer_last_name].filter(Boolean).join(" "), "Lazada 구매자"),
-      productName: text(row.item_name, "Lazada 주문 상품"),
-      quantity: Math.max(1, Math.round(number(row.items_count) || 1)),
+      productName: compactProductNames(items, text(row.item_name, "Lazada 주문 상품")),
+      quantity: Math.max(1, Math.round(items.length || number(row.items_count) || 1)),
       amount,
       currency,
       amountKrw: currency === "KRW" ? amount : 0,
       status: status(statuses),
       orderedAt: iso(row.created_at, row.updated_at),
+      providerContext: {
+        orderId: externalOrderId,
+        orderItemIds,
+        deliveryType,
+      },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
@@ -286,7 +298,7 @@ export function normalizeChannelOrders(channel: ActiveChannelKey, result: Channe
   const data = result.steps.find((step) => step.name === "orders")?.data ?? result.steps.at(-1)?.data ?? {};
   const normalized = channel === "coupang" ? normalizeCoupang(data)
     : channel === "shopee" ? normalizeShopee(data)
-      : channel === "lazada" ? normalizeLazada(data)
+      : channel === "lazada" ? normalizeLazada(data, result.steps)
         : channel === "smartstore" ? normalizeSmartstore(data)
           : channel === "ebay" ? normalizeEbay(data)
             : channel === "qoo10" ? normalizeQoo10(data)

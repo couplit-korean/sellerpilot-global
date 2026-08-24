@@ -96,14 +96,25 @@ test("cereal generation assigns four recognizably different real setting shots",
   assert.ok(prompts.every((prompt) => prompt.includes("30–45% of the frame")));
 });
 
-test("every learned category receives four different places and surface materials", () => {
-  const categories = ["beauty-skincare", "beauty-tools", "food-staples", "men-tops", "toys-games", "food-supplement", "general-commerce"];
-  for (const category of categories) {
-    const settingPlan = buildProductSettingShotPlan(category, category === "food-staples" ? "파스타 식품" : category);
+test("all nine production product groups receive four distinct setting-shot dimensions", () => {
+  const categories = [
+    ["스킨케어", "beauty-skincare", "보습 스킨케어 크림"],
+    ["뷰티도구", "beauty-tools", "메이크업 브러시 세트"],
+    ["일반식품", "food-staples", "펜네 파스타 식품"],
+    ["시리얼", "food-staples", "초콜릿 시리얼"],
+    ["커피·차", "food-staples", "드립 커피 원두"],
+    ["남성의류", "men-tops", "남성 후드 티셔츠"],
+    ["완구", "toys-games", "테디베어 완구"],
+    ["건강기능식품", "food-supplement", "오메가3 건강기능식품"],
+    ["일반상품", "general-commerce", "수납 정리 생활용품"],
+  ] as const;
+  for (const [label, category, productText] of categories) {
+    const settingPlan = buildProductSettingShotPlan(category, productText);
     const shots = Object.values(settingPlan);
     assert.equal(shots.length, 4);
-    assert.equal(new Set(shots.map((item) => item.location)).size, 4, `${category} must use four locations`);
-    assert.equal(new Set(shots.map((item) => item.surface)).size, 4, `${category} must use four surface treatments`);
+    for (const key of ["location", "moment", "surface", "supportingObjects", "staging"] as const) {
+      assert.equal(new Set(shots.map((item) => item[key])).size, 4, `${label} must use four different ${key} values`);
+    }
   }
 });
 

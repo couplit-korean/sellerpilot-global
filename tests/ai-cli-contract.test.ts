@@ -158,6 +158,14 @@ function validResearchResult() {
       description: "A white ceramic mug described by the supplied public product reference.",
       gtin: null,
     },
+    searchQueries: [
+      { locale: "ko-KR" as const, query: "화이트 세라믹 머그" },
+      { locale: "en-US" as const, query: "white ceramic mug" },
+      { locale: "ja-JP" as const, query: "白い セラミック マグカップ" },
+      { locale: "ms-MY" as const, query: "cawan seramik putih" },
+      { locale: "id-ID" as const, query: "mug keramik putih" },
+      { locale: "vi-VN" as const, query: "cốc gốm trắng" },
+    ],
     details: {
       features: ["White ceramic body"],
       specifications: [{ label: "Material", value: "Ceramic", evidence: "Public product description" }],

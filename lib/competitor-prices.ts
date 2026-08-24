@@ -45,9 +45,24 @@ export async function naverSearchCredentials(serviceClient: SupabaseClient) {
   const secret = active?.secret_payload && typeof active.secret_payload === "object" && !Array.isArray(active.secret_payload)
     ? active.secret_payload as Record<string, unknown>
     : null;
-  const clientId = typeof secret?.client_id === "string" ? secret.client_id.trim() : "";
-  const clientSecret = typeof secret?.client_secret === "string" ? secret.client_secret.trim() : "";
+  const clientId = typeof secret?.naver_search_client_id === "string" ? secret.naver_search_client_id.trim()
+    : typeof secret?.search_client_id === "string" ? secret.search_client_id.trim() : "";
+  const clientSecret = typeof secret?.naver_search_client_secret === "string" ? secret.naver_search_client_secret.trim()
+    : typeof secret?.search_client_secret === "string" ? secret.search_client_secret.trim() : "";
   return !error && clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+export function normalizedCompetitorQueries(primary: string, aliases: string[] = [], maximum = 8) {
+  const seen = new Set<string>();
+  return [primary, ...aliases]
+    .map((value) => value.replace(/\p{Cc}/gu, " ").replace(/\s+/g, " ").trim().slice(0, 160))
+    .filter((value) => {
+      const key = value.toLocaleLowerCase();
+      if (value.length < 2 || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, Math.max(1, Math.min(maximum, 12)));
 }
 
 export async function searchNaverShopping(query: string, credentials: { clientId: string; clientSecret: string }, display = 30): Promise<CompetitorPriceCandidate[]> {
@@ -75,6 +90,25 @@ export async function searchNaverShopping(query: string, credentials: { clientId
       price: Math.max(0, Number(item.lprice ?? 0)),
     };
   }).filter((item) => item.externalId && item.url && item.title && Number.isFinite(item.price));
+}
+
+export async function searchNaverShoppingVariants(
+  primary: string,
+  aliases: string[],
+  credentials: { clientId: string; clientSecret: string },
+  displayPerQuery = 30,
+) {
+  const queries = normalizedCompetitorQueries(primary, aliases);
+  const settled = await Promise.allSettled(queries.map((query) => searchNaverShopping(query, credentials, displayPerQuery)));
+  const fulfilled = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+  if (!fulfilled.length && settled.every((result) => result.status === "rejected")) throw new Error("NAVER_SHOPPING_SEARCH_FAILED");
+  const unique = new Map<string, CompetitorPriceCandidate>();
+  for (const item of fulfilled) {
+    const key = `${item.marketplace}:${item.externalId || item.url}`;
+    const current = unique.get(key);
+    if (!current || (item.imageUrl && !current.imageUrl) || item.price < current.price) unique.set(key, item);
+  }
+  return [...unique.values()];
 }
 
 export function groupCompetitorPrices(items: CompetitorPriceCandidate[], limitPerMarketplace = 3) {

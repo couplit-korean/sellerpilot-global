@@ -57,7 +57,7 @@
 
 ### Lazada
 
-상품·가격·재고·포장·RTS는 `arguments.request`에 Lazada `Request` 객체 또는 공식 XML/JSON 문자열을 넣고, 조회 조건은 `arguments.query`에 넣는다.
+상품·가격·재고는 `arguments.request`의 Lazada `Request` 객체를 공식 XML `payload`로 직렬화하고, 조회 조건은 `arguments.query`에 넣는다. 배송은 상품 XML과 섞지 않는다. 주문 동기화가 `/order/items/get`의 `order_item_id`와 배송 유형을 원장에 보존하고, 발송 시 `/order/shipment/providers/get`의 `getShipmentProvidersReq`로 배송사 코드를 검증한 뒤 `packReq`로 포장하고 응답 `package_id`를 `readyToShipReq`에 넘긴다. Lazada가 발급한 운송장번호를 원장에 기록한다.
 
 | 작업 | LazOP 경로 |
 |---|---|
@@ -68,6 +68,8 @@
 | 포장·배송준비 | `/order/fulfill/pack`, `/order/package/rts` |
 
 Lazada Push는 빠른 알림으로만 사용하고 `/orders/get` 누락 보정 조회를 유지한다. 운영 Vercel의 유동 송신 IP 때문에 현재 OAuth 토큰 교환은 고정 출구 IP가 준비될 때까지 차단 상태다.
+
+2026-08-24 공식 Fulfillment API 문서와 계약 테스트로 `GetShipmentProvider → Pack → ReadyToShip` 요청명·순서·오류 판정을 검증했다. 현재 운영 원장에는 `paid` 또는 `ready_to_ship` Lazada 실주문이 없어 외부 상태를 바꾸는 실제 발송 쓰기는 실행하지 않았다.
 
 ### 쿠팡
 
@@ -118,7 +120,7 @@ eBay는 별도 `shipment.acknowledge` 단계가 없어 이 작업을 미지원�
 
 ### 11번가
 
-공개 페이지에서 기능 범위는 확인되지만 판매자 상세 XML 운영 URL, 서비스 코드, 상태 코드표는 로그인 뒤 문서다. 확인 전에는 모든 실행 작업을 `vendor_docs_required`로 거부한다. Base URL만 임의로 입력해 우회하지 않는다.
+운영 OPEN API Key와 등록 IP로 상품 읽기와 `listing.create`를 실행하며, 2026-08-24 케이블 정리 상품 등록이 HTTP 200과 원격 상품번호로 완료됐다. 상품 생성 뒤 판매자 상품 검색으로 원격 번호를 대조하고 검증용 등록은 판매중지 단계까지 같은 작업 원장에 기록한다. 현재 Seller Office 로그인 세션이 만료돼 화면 대조가 남아 있고, 실주문이 없어 발주·송장 쓰기는 실행하지 않았다. 문의 조회는 공식 제공 범위를 확인하기 전 통합 CS에서 미지원으로 표시한다.
 
 ## 아직 실계정으로 확인해야 하는 항목
 
@@ -129,4 +131,4 @@ eBay는 별도 `shipment.acknowledge` 단계가 없어 이 작업을 미지원�
 5. 429·5xx·timeout·토큰 만료·부분 성공 재시도
 6. 30~100 SKU 제한 운영
 
-현재 실제 키가 없으므로 위 실계정 E2E는 통과로 표시하지 않는다.
+채널별 완료 범위는 운영 원장의 실제 성공 단계만 표시한다. 11번가는 상품 읽기·등록 성공까지 검증됐지만 실주문 기반 발주·송장과 문의 동기화는 통과로 표시하지 않는다.

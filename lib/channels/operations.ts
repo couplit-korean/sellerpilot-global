@@ -139,6 +139,47 @@ function pathSegment(value: string) {
   return encodeURIComponent(value);
 }
 
+function providerBoolean(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  return typeof value === "string" && ["true", "1", "yes"].includes(value.trim().toLowerCase());
+}
+
+function objectArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function lazadaResultData(data: Record<string, unknown>) {
+  const providerResult = objectValue(data, "result", false);
+  const nestedData = objectValue(providerResult, "data", false);
+  return Object.keys(nestedData).length ? nestedData : objectValue(data, "data", false);
+}
+
+function lazadaFulfillmentStep(name: string, remote: RemoteResponse, verification: string) {
+  const base = step(name, remote);
+  const providerResult = objectValue(remote.data, "result", false);
+  const providerErrorCode = String(providerResult.error_code ?? "").trim();
+  const packages = objectArray(lazadaResultData(remote.data).packages);
+  const packageErrors = packages.filter((item) => {
+    const itemErrorCode = String(item.item_err_code ?? item.error_code ?? "").trim();
+    return itemErrorCode !== "" && itemErrorCode !== "0";
+  });
+  const accepted = base.ok
+    && (providerResult.success === undefined || providerBoolean(providerResult.success))
+    && (!providerErrorCode || providerErrorCode === "0")
+    && packageErrors.length === 0;
+  return {
+    ...base,
+    ok: accepted,
+    data: {
+      ...base.data,
+      sellerpilotVerification: accepted ? verification : "LAZADA_FULFILLMENT_REJECTED",
+    },
+  };
+}
+
 function requestIdentifier(data: Record<string, unknown>) {
   for (const key of ["request_id", "requestId", "traceId", "rCode"]) {
     const value = data[key];
@@ -1065,9 +1106,28 @@ async function executeLazada(input: ExecuteInput) {
     "listing.stop": "/product/deactivate",
     "price.update": "/product/price_quantity/update",
     "inventory.update": "/product/price_quantity/update",
-    "orders.list": "/orders/get",
-    "shipment.confirm": "/order/package/rts",
   };
+  if (input.operation === "orders.list") {
+    const remote = await lazadaRequest({ payload: input.payload, path: "/orders/get", params: query });
+    const orderStep = step("orders", remote);
+    if (!orderStep.ok) return result(input, [orderStep]);
+    const orders = objectArray(objectValue(remote.data, "data", false).orders);
+    const actionableOrders = orders.filter((order) => {
+      const statusText = Array.isArray(order.statuses) ? order.statuses.join(" ") : String(order.status ?? "");
+      return !/cancel|refund|return|ship|deliver|complete/i.test(statusText) && stringArgument(order, "order_id", false);
+    }).slice(0, 100);
+    const detailSteps: ChannelOperationStep[] = [];
+    for (let offset = 0; offset < actionableOrders.length; offset += 5) {
+      const batch = actionableOrders.slice(offset, offset + 5);
+      const remotes = await Promise.all(batch.map(async (order) => {
+        const orderId = stringArgument(order, "order_id");
+        const detail = await lazadaRequest({ payload: input.payload, path: "/order/items/get", params: { order_id: orderId } });
+        return step(`order-items:${orderId}`, detail);
+      }));
+      detailSteps.push(...remotes);
+    }
+    return result(input, [orderStep, ...detailSteps]);
+  }
   if (input.operation === "orders.get") {
     const remote = await lazadaRequest({
       payload: input.payload,
@@ -1084,6 +1144,9 @@ async function executeLazada(input: ExecuteInput) {
     const sessionLimit = input.arguments.sessionLimit === undefined
       ? 100
       : integerArgument(input.arguments, "sessionLimit", { min: 1, max: 100 });
+    const messageLimit = input.arguments.messageLimit === undefined
+      ? 100
+      : integerArgument(input.arguments, "messageLimit", { min: 20, max: 100 });
     const startTime = input.arguments.startTime === undefined
       ? Date.now()
       : integerArgument(input.arguments, "startTime", { min: 1 });
@@ -1107,40 +1170,126 @@ async function executeLazada(input: ExecuteInput) {
         ? responseData.session_list.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
         : [];
       sessions.push(...pageSessions);
-      if (responseData.has_more !== true || pageSessions.length === 0) break;
-      nextStartTime = String(responseData.next_start_time ?? "").trim();
-      lastSessionId = String(responseData.last_session_id ?? "").trim();
-      if (!nextStartTime || !lastSessionId) break;
+      if (!providerBoolean(responseData.has_more) || pageSessions.length === 0) break;
+      const candidateStartTime = String(responseData.next_start_time ?? "").trim();
+      const candidateLastSessionId = String(responseData.last_session_id ?? "").trim();
+      if (!candidateStartTime || !candidateLastSessionId
+        || (candidateStartTime === nextStartTime && candidateLastSessionId === lastSessionId)) break;
+      nextStartTime = candidateStartTime;
+      lastSessionId = candidateLastSessionId;
     }
 
     for (let offset = 0; offset < sessions.length; offset += 5) {
       const batch = sessions.slice(offset, offset + 5);
       const remotes = await Promise.all(batch.map(async (session) => {
         const sessionId = String(session.session_id ?? "").trim();
-        if (!sessionId) return null;
-        const remote = await lazadaRequest({
-          payload: input.payload,
-          path: "/im/message/list",
-          params: { session_id: sessionId, start_time: String(startTime), page_size: "20" },
-        });
-        remote.data = { ...remote.data, sellerpilotSession: session };
-        return { sessionId, remote };
+        if (!sessionId) return [];
+        const sessionSteps: ChannelOperationStep[] = [];
+        let messageStartTime = String(startTime);
+        let lastMessageId = "";
+        let receivedMessages = 0;
+        while (receivedMessages < messageLimit) {
+          const params: Record<string, string> = {
+            session_id: sessionId,
+            start_time: messageStartTime,
+            page_size: String(Math.min(20, messageLimit - receivedMessages)),
+          };
+          if (lastMessageId) params.last_message_id = lastMessageId;
+          const remote = await lazadaRequest({ payload: input.payload, path: "/im/message/list", params });
+          remote.data = { ...remote.data, sellerpilotSession: session };
+          const messageStep = step(`inquiries-message:${sessionId}:${sessionSteps.length + 1}`, remote);
+          sessionSteps.push(messageStep);
+          if (!messageStep.ok) break;
+          const responseData = objectValue(remote.data, "data", false);
+          const pageMessages = Array.isArray(responseData.message_list) ? responseData.message_list : [];
+          receivedMessages += pageMessages.length;
+          if (!providerBoolean(responseData.has_more) || pageMessages.length === 0) break;
+          const candidateStartTime = String(responseData.next_start_time ?? "").trim();
+          const candidateLastMessageId = String(responseData.last_message_id ?? "").trim();
+          if (!candidateStartTime || !candidateLastMessageId
+            || (candidateStartTime === messageStartTime && candidateLastMessageId === lastMessageId)) break;
+          messageStartTime = candidateStartTime;
+          lastMessageId = candidateLastMessageId;
+        }
+        return sessionSteps;
       }));
-      for (const item of remotes) {
-        if (!item) continue;
-        steps.push(step(`inquiries-message:${item.sessionId}`, item.remote));
-      }
+      steps.push(...remotes.flat());
     }
     return result(input, steps);
   }
   if (input.operation === "shipment.acknowledge") {
+    const packRequest = objectValue(input.arguments, "packReq");
     const remote = await lazadaRequest({
       payload: input.payload,
       path: "/order/fulfill/pack",
       method: "POST",
-      params: { ...query, payload: lazadaPayload(input.arguments) },
+      params: { ...query, packReq: JSON.stringify(packRequest) },
     });
-    return result(input, [step("pack", remote)]);
+    return result(input, [lazadaFulfillmentStep("pack", remote, "LAZADA_PACKAGE_CREATED")]);
+  }
+  if (input.operation === "shipment.confirm") {
+    const orderId = stringArgument(input.arguments, "orderId");
+    const carrierCode = stringArgument(input.arguments, "carrierCode");
+    const providerContext = objectValue(input.arguments, "providerContext");
+    const contextOrderId = stringArgument(providerContext, "orderId");
+    if (contextOrderId !== orderId) throw new Error("CHANNEL_ARGUMENT_INVALID:providerContext.orderId");
+    const orderItemIds = Array.isArray(providerContext.orderItemIds)
+      ? [...new Set(providerContext.orderItemIds.map((value) => String(value).trim()).filter(Boolean))].slice(0, 100)
+      : [];
+    if (!orderItemIds.length) throw new Error("CHANNEL_ARGUMENT_REQUIRED:providerContext.orderItemIds");
+    const deliveryType = stringArgument(providerContext, "deliveryType");
+    const providerRemote = await lazadaRequest({
+      payload: input.payload,
+      path: "/order/shipment/providers/get",
+      method: "POST",
+      params: {
+        getShipmentProvidersReq: JSON.stringify({
+          orders: [{ order_id: orderId, order_item_ids: orderItemIds }],
+        }),
+      },
+    });
+    const providerStep = lazadaFulfillmentStep("shipment-providers", providerRemote, "LAZADA_SHIPMENT_PROVIDERS_VERIFIED");
+    if (!providerStep.ok) return result(input, [providerStep]);
+    const providerData = lazadaResultData(providerRemote.data);
+    const shipmentProviders = objectArray(providerData.shipment_providers);
+    const normalizedCarrierCode = carrierCode.toLowerCase();
+    const selectedProvider = shipmentProviders.find((provider) =>
+      [provider.provider_code, provider.name].some((value) => String(value ?? "").trim().toLowerCase() === normalizedCarrierCode));
+    if (!selectedProvider) throw new Error("CHANNEL_ARGUMENT_INVALID:carrierCode");
+    const shipmentProviderCode = stringArgument(selectedProvider, "provider_code");
+    const shippingAllocateType = stringArgument(providerData, "shipping_allocate_type");
+    const packReq = {
+      pack_order_list: [{ order_id: orderId, order_item_list: orderItemIds }],
+      delivery_type: deliveryType,
+      shipment_provider_code: shipmentProviderCode,
+      shipping_allocate_type: shippingAllocateType,
+    };
+    const packRemote = await lazadaRequest({
+      payload: input.payload,
+      path: "/order/fulfill/pack",
+      method: "POST",
+      params: { packReq: JSON.stringify(packReq) },
+    });
+    const packPackages = objectArray(lazadaResultData(packRemote.data).packages);
+    const packageIds = [...new Set(packPackages.map((item) => stringArgument(item, "package_id", false)).filter(Boolean))];
+    const basePackStep = lazadaFulfillmentStep("pack", packRemote, "LAZADA_PACKAGE_CREATED");
+    const packStep: ChannelOperationStep = packageIds.length
+      ? basePackStep
+      : {
+          ...basePackStep,
+          ok: false,
+          data: { ...basePackStep.data, sellerpilotVerification: "LAZADA_PACKAGE_ID_MISSING" },
+        };
+    if (!packStep.ok) return result(input, [providerStep, packStep]);
+    const readyRemote = await lazadaRequest({
+      payload: input.payload,
+      path: "/order/package/rts",
+      method: "POST",
+      params: { readyToShipReq: JSON.stringify({ packages: packageIds.map((package_id) => ({ package_id })) }) },
+    });
+    const readyStep = lazadaFulfillmentStep("ready-to-ship", readyRemote, "LAZADA_READY_TO_SHIP_CONFIRMED");
+    const trackingNumber = packPackages.map((item) => stringArgument(item, "tracking_number", false)).find(Boolean);
+    return result(input, [providerStep, packStep, readyStep], trackingNumber ?? packageIds[0]);
   }
   if (input.operation === "inventory.update" && !input.arguments.request) {
     const itemId = stringArgument(input.arguments, "itemId");
