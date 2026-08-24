@@ -165,7 +165,7 @@ test("11st verification listing creates, reads back, and stops the exact remote 
           prdImage01: "https://example.com/product.jpg",
           htmlDetail: "<p>detail</p>",
           aplBgnDy: "2026/08/24",
-          aplEndDy: "2999/12/31",
+          aplEndDy: "2029/08/23",
           selPrc: "10000",
           prdSelQty: "1",
           ProductNotification: { type: "891045", item: [{ code: "11800", name: "QA" }] },
@@ -180,7 +180,7 @@ test("11st verification listing creates, reads back, and stops the exact remote 
     assert.match(calls[0].url, /sellerprodcode\/QA-001$/);
     assert.match(calls[1].body, /SellerPilot &lt;QA&gt;/);
     assert.match(calls[1].body, /<aplBgnDy>2026\/08\/24<\/aplBgnDy>/);
-    assert.match(calls[1].body, /<aplEndDy>2999\/12\/31<\/aplEndDy>/);
+    assert.match(calls[1].body, /<aplEndDy>2029\/08\/23<\/aplEndDy>/);
     assert.match(calls[2].body, /<prdNo>123456789<\/prdNo>/);
     assert.match(calls[3].url, /stopdisplay\/123456789$/);
   } finally {
@@ -237,7 +237,7 @@ test("11st preflight blocks missing notice data and accepts a complete seller dr
       prdImage01: "https://example.com/product.jpg",
       htmlDetail: "<p>detail</p>",
       aplBgnDy: "2026/08/24",
-      aplEndDy: "2999/12/31",
+      aplEndDy: "2029/08/23",
       selPrc: "10000",
       prdSelQty: "1",
       dlvWyCd: "01",
@@ -253,9 +253,9 @@ test("11st preflight blocks missing notice data and accepts a complete seller dr
   assert.equal(inspectListingDraft("elevenst", missingNotice).find((item) => item.key === "notice")?.status, "manual");
 });
 
-test("11st sale period uses the official slash date format and maximum-period sentinel", () => {
+test("11st sale period uses the official inclusive three-year date range", () => {
   assert.deepEqual(elevenstSaleDateRange(new Date("2026-08-23T15:30:00.000Z")), {
     aplBgnDy: "2026/08/24",
-    aplEndDy: "2999/12/31",
+    aplEndDy: "2029/08/23",
   });
 });
