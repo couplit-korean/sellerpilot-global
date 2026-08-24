@@ -214,6 +214,7 @@ export type OperationsSnapshot = {
     }>;
     message: string;
   }>;
+  registrationActivityState?: "ready" | "unavailable";
   pipeline: {
     aiRunning: number;
     listingQueued: number;

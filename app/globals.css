@@ -639,6 +639,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .order-context > span { flex: 1; }
 .order-context small, .order-context b { display: block; }.order-context small { color: #9ba3b1; font-size: 7px; }.order-context b { margin-top: 3px; color: #596377; font-size: 8px; }
 .order-context em { display: flex; align-items: center; gap: 4px; color: #7a8496; font-family: var(--font-geist-mono), monospace; font-size: 7px; font-style: normal; }
+.order-context-meta { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 7px; }
+.order-context-meta small { color: #7a8496; overflow-wrap: anywhere; }
 .message-date { display: flex; align-items: center; justify-content: center; margin: 24px 0 15px; }
 .message-date span { padding: 4px 8px; border-radius: 99px; color: #989fad; background: #ebeef3; font-size: 7px; }
 .customer-message { display: flex; align-items: flex-start; gap: 8px; }

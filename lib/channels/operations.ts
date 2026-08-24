@@ -442,7 +442,8 @@ function elevenstCategoryScore(query: string, category: ElevenstCategory) {
     && /케이블\s*정리소품/u.test(category.categoryName)
     ? 400
     : 0;
-  return cableOrganizerBoost + cableClipLeafBoost + matched * 100 + (candidate.includes(normalizedQuery) ? 500 : 0) + category.depth;
+  const relevance = cableOrganizerBoost + cableClipLeafBoost + matched * 100 + (candidate.includes(normalizedQuery) ? 500 : 0);
+  return relevance > 0 ? relevance + category.depth : 0;
 }
 
 async function executeElevenst(input: ExecuteInput) {
@@ -1113,8 +1114,9 @@ async function executeLazada(input: ExecuteInput) {
     if (!orderStep.ok) return result(input, [orderStep]);
     const orders = objectArray(objectValue(remote.data, "data", false).orders);
     const actionableOrders = orders.filter((order) => {
-      const statusText = Array.isArray(order.statuses) ? order.statuses.join(" ") : String(order.status ?? "");
-      return !/cancel|refund|return|ship|deliver|complete/i.test(statusText) && stringArgument(order, "order_id", false);
+      const statusText = (Array.isArray(order.statuses) ? order.statuses.join(" ") : String(order.status ?? "")).toLocaleLowerCase();
+      const terminal = /(?:^|[\s_-])(?:cancelled?|refunded?|returned?|shipped|delivered|completed?)(?:$|[\s_-])/i.test(statusText);
+      return !terminal && stringArgument(order, "order_id", false);
     }).slice(0, 100);
     const detailSteps: ChannelOperationStep[] = [];
     for (let offset = 0; offset < actionableOrders.length; offset += 5) {

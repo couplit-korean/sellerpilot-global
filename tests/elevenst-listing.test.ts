@@ -73,6 +73,24 @@ test("11st category suggestion ranks the official cable-organizer leaf and rejec
   }
 });
 
+test("11st category suggestion does not accept unrelated leaves only because they are deep", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(categoryXml, { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } });
+  try {
+    const suggestion = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "categories.suggest",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: { query: "무관한 화장품 세럼" },
+    });
+    assert.equal(suggestion.ok, false);
+    assert.deepEqual(suggestion.steps[0].data.items, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("11st seller XML request keeps the key in the header and returns only safe metadata", async () => {
   const originalFetch = globalThis.fetch;
   let calledUrl = "";

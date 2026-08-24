@@ -13,7 +13,6 @@ import {
   Bell,
   Bot,
   Box,
-  CalendarDays,
   Calculator,
   Camera,
   Check,
@@ -87,11 +86,20 @@ import { useOperationsSnapshot, type OperationsSnapshot, type SalesRange } from 
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
-import { emptyProductIntake, productConditions, productCurrencies, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
+import { emptyProductIntake, productConditions, productCurrencies, productEditSchema, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
+import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
 import { nextAdminAccessState, type AdminAccessState } from "./_auth/admin-access-state";
 import { formatCompactWon } from "./_dashboard/format-compact-won";
 import { RevenueCalendar } from "./_dashboard/revenue-calendar";
+import { SalesRangeControl } from "./_dashboard/sales-range-control";
+import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
+import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
+import {
+  registrationActivityNotificationTransition,
+  registrationStatusMeta,
+  type RegistrationStatus,
+} from "./_registration/registration-status";
 
 type View =
   | "overview"
@@ -442,26 +450,6 @@ function MetricCard({ label, value, delta, detail, icon: Icon, tone, reverse }: 
   );
 }
 
-function localDateString(value: Date) {
-  return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
-}
-
-function salesRangeForPreset(preset: SalesRange["preset"]): SalesRange {
-  const now = new Date();
-  const to = localDateString(now);
-  if (preset === "day") return { preset, from: to, to };
-  if (preset === "week") return { preset, from: localDateString(new Date(now.getTime() - 6 * 86_400_000)), to };
-  if (preset === "year") return { preset, from: localDateString(new Date(now.getFullYear(), 0, 1)), to };
-  return { preset: preset === "custom" ? "custom" : "month", from: localDateString(new Date(now.getFullYear(), now.getMonth(), 1)), to };
-}
-
-function SalesRangeControl({ range, onChange, compact = false }: { range: SalesRange; onChange: (range: SalesRange) => void; compact?: boolean }) {
-  return <div className={`sales-range-control ${compact ? "compact" : ""}`}>
-    <div className="segmented-control" aria-label="매출 집계 기간">{(["day", "week", "month", "year", "custom"] as const).map((preset) => <button type="button" className={range.preset === preset ? "active" : ""} onClick={() => onChange(preset === "custom" ? { ...range, preset } : salesRangeForPreset(preset))} key={preset}>{{ day: "일", week: "주", month: "월", year: "연", custom: "맞춤" }[preset]}</button>)}</div>
-    {range.preset === "custom" ? <div className="custom-date-range"><label><span className="sr-only">시작일</span><input type="date" value={range.from} max={range.to} onChange={(event) => onChange({ ...range, from: event.target.value })} /></label><span>—</span><label><span className="sr-only">종료일</span><input type="date" value={range.to} min={range.from} onChange={(event) => onChange({ ...range, to: event.target.value })} /></label></div> : <span className="selected-date-range"><CalendarDays size={14} />{range.from} — {range.to}</span>}
-  </div>;
-}
-
 function ProductVisual({ src, size, alt = "상품 이미지" }: { src: string | null; size: string; alt?: string }) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
 
@@ -610,7 +598,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
           <div className="panel-heading"><div><span className="panel-kicker">운영 참고·조치</span><h3>재고·등록·CS 전체 현황</h3></div><span className="count-chip">{summary.lowStockCount + summary.registrationErrorCount + summary.registrationBlockedCount + summary.openTicketCount}</span></div>
           <div className="alert-list">
             <button onClick={() => onNavigate("products")}><span className="alert-icon danger"><Box size={16} /></span><span><b>재고주의 상품 {summary.lowStockCount}건</b><small>실재고와 재주문 기준으로 집계했습니다.</small></span><em>상품 보기<ChevronRight size={14} /></em></button>
-            <button onClick={() => onNavigate("publishing")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>채널 등록 실패 {summary.registrationErrorCount}건</b><small>카테고리·필수 속성·API 응답을 확인하세요.</small></span><em>오류 보기<ChevronRight size={14} /></em></button>
+            <button onClick={() => onNavigate("registration-activity")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>채널 등록 실패 {summary.registrationErrorCount}건</b><small>카테고리·필수 속성·API 응답을 확인하세요.</small></span><em>오류 보기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("remediation")}><span className="alert-icon warning"><ShieldCheck size={16} /></span><span><b>외부 판매 권한 대기 {summary.registrationBlockedCount}건</b><small>상품수정이 필요한 항목만 한 건씩 바로 처리합니다.</small></span><em>처리하기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("cs")}><span className="alert-icon blue"><MessageCircleMore size={16} /></span><span><b>미처리 CS {summary.openTicketCount}건</b><small>각 채널에서 동기화된 실제 문의입니다.</small></span><em>답변하기<ChevronRight size={14} /></em></button>
           </div>
@@ -787,9 +775,9 @@ function productEditDraft(product: DisplayProduct, fields: Record<string, unknow
     productName: text("productName", product.name), sellerSku: text("sellerSku", product.sku),
     categoryHint: text("categoryHint", "기존 등록 카테고리"), brandName: text("brandName", "No Brand"),
     manufacturer: text("manufacturer", "공급처 확인 필요"), countryOfOrigin: text("countryOfOrigin", "원산지 확인 필요"),
-    material: text("material", "소재 확인 필요"), packageContents: /1\s*\+\s*1/.test(text("packageContents")) ? "상품 1+1" : "상품 1개",
+    material: text("material", "소재 확인 필요"), packageContents: normalizeProductSaleConfiguration(text("packageContents")) || "상품 1개",
     condition: productConditions.includes(condition) ? condition : "NEW", gtinStatus: gtinStatus === "HAS_GTIN" ? "HAS_GTIN" : "NO_GTIN", gtin: text("gtin"),
-    sellingPrice: number("sellingPrice", Math.max(1, product.costKrw)), currency: productCurrencies.includes(currency) ? currency : "KRW", stock: number("stock", Math.max(1, product.onHand)),
+    sellingPrice: number("sellingPrice", 0), currency: productCurrencies.includes(currency) ? currency : "KRW", stock: product.onHand,
     weightKg: number("weightKg", 0.5), packageLengthCm: number("packageLengthCm", 20), packageWidthCm: number("packageWidthCm", 20), packageHeightCm: number("packageHeightCm", 10),
     shippingFeeKrw: number("shippingFeeKrw", 0), shippingRule: text("shippingRule", "기본 배송"), packagingRule: text("packagingRule", "파손 방지 포장"),
     description: text("description", product.description || `${product.name} 상품 설명`), productUrl: text("productUrl", product.sourceUrl || ""),
@@ -807,7 +795,7 @@ function ProductDetailEditDialog({ draft, errors, saving, onChange, onClose, onS
   onSave: () => void;
 }) {
   return <div className="product-edit-overlay"><section className="product-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="product-edit-title">
-    <header><div><span className="panel-kicker">FULL PRODUCT EDIT</span><h2 id="product-edit-title">등록 상품 전체 수정</h2><p>상품 등록 시 입력한 사실·가격·재고·포장·배송 정보를 모두 수정합니다.</p></div><button type="button" aria-label="상품 수정 닫기" onClick={onClose} disabled={saving}><X size={18} /></button></header>
+    <header><div><span className="panel-kicker">FULL PRODUCT EDIT</span><h2 id="product-edit-title">등록 상품 전체 수정</h2><p>수정값은 중앙 상품 원장에 저장되며, 재고 변경은 연결된 채널에도 동기화합니다.</p></div><button type="button" aria-label="상품 수정 닫기" onClick={onClose} disabled={saving}><X size={18} /></button></header>
     <div className="product-edit-form manual-field-grid">
       <div className="intake-group-heading"><span>01</span><div><b>기본 상품 정보</b><small>상품 식별·카테고리·공급 정보를 수정합니다.</small></div></div>
       <label className={errors.researchInput ? "field-error" : ""}><span>상품 링크 또는 설명</span><textarea value={draft.researchInput} maxLength={12_000} onChange={(event) => onChange("researchInput", event.target.value)} />{errors.researchInput && <small>{errors.researchInput}</small>}</label>
@@ -819,14 +807,14 @@ function ProductDetailEditDialog({ draft, errors, saving, onChange, onClose, onS
       <label><span>원산지</span><input value={draft.countryOfOrigin} onChange={(event) => onChange("countryOfOrigin", event.target.value)} /></label>
       <div className="intake-group-heading"><span>02</span><div><b>구성·표시 정보</b><small>실물과 표시사항 기준으로 수정합니다.</small></div></div>
       <label><span>소재·성분</span><input value={draft.material} onChange={(event) => onChange("material", event.target.value)} /></label>
-      <label><span>판매 구성</span><select value={draft.packageContents} onChange={(event) => onChange("packageContents", event.target.value)}><option value="상품 1개">1개</option><option value="상품 1+1">1+1</option></select></label>
+      <label><span>판매 구성</span><select value={draft.packageContents} onChange={(event) => onChange("packageContents", event.target.value)}>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select></label>
       <label><span>상품 상태</span><select value={draft.condition} onChange={(event) => onChange("condition", event.target.value as ProductIntakeDraft["condition"])}>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select></label>
       <label><span>바코드 상태</span><select value={draft.gtinStatus} onChange={(event) => onChange("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select></label>
       {draft.gtinStatus === "HAS_GTIN" && <label className={errors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC</span><input inputMode="numeric" value={draft.gtin} onChange={(event) => onChange("gtin", event.target.value.replace(/\D/g, ""))} />{errors.gtin && <small>{errors.gtin}</small>}</label>}
-      <div className="intake-group-heading"><span>03</span><div><b>가격·재고</b><small>중앙 원장과 게시 채널에 반영할 값입니다.</small></div></div>
+      <div className="intake-group-heading"><span>03</span><div><b>가격·재고</b><small>가격은 중앙 원장에, 변경된 실재고는 연결 채널에도 반영합니다.</small></div></div>
       <label><span>판매가</span><input type="number" min="0.01" step="0.01" value={draft.sellingPrice} onChange={(event) => onChange("sellingPrice", Number(event.target.value))} /></label>
       <label><span>통화</span><select value={draft.currency} onChange={(event) => onChange("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option key={value}>{value}</option>)}</select></label>
-      <label><span>실재고</span><input type="number" min="1" step="1" value={draft.stock} onChange={(event) => onChange("stock", Number(event.target.value))} /></label>
+      <label><span>실재고</span><input type="number" min="0" step="1" value={draft.stock} onChange={(event) => onChange("stock", Number(event.target.value))} /></label>
       <div className="intake-group-heading"><span>04</span><div><b>포장·배송</b><small>운임과 채널 제한 계산에 사용합니다.</small></div></div>
       <label><span>포장 중량 kg</span><input type="number" min="0.01" step="0.01" value={draft.weightKg} onChange={(event) => onChange("weightKg", Number(event.target.value))} /></label>
       <label><span>포장 가로 cm</span><input type="number" min="0.1" step="0.1" value={draft.packageLengthCm} onChange={(event) => onChange("packageLengthCm", Number(event.target.value))} /></label>
@@ -840,7 +828,7 @@ function ProductDetailEditDialog({ draft, errors, saving, onChange, onClose, onS
     </div>
     <div className="intake-confirmations"><label><input aria-label="이미지·상품 자료 사용 권한 확인" type="checkbox" checked={draft.imageRightsConfirmed} onChange={(event) => onChange("imageRightsConfirmed", event.target.checked)} /><span><b>이미지·상품 자료 사용 권한</b><small>사용 권한이 있는 자료임을 확인합니다.</small></span></label><label><input aria-label="상품 사실정보 확인" type="checkbox" checked={draft.productFactsConfirmed} onChange={(event) => onChange("productFactsConfirmed", event.target.checked)} /><span><b>상품 사실정보 확인</b><small>수정값이 실물과 일치함을 확인합니다.</small></span></label></div>
     {errors.form && <p className="inventory-editor-message">{errors.form}</p>}
-    <footer><button type="button" className="credential-secondary" onClick={onClose} disabled={saving}>취소</button><button type="button" className="publish-execute" onClick={onSave} disabled={saving}>{saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{saving ? "전체 정보 저장 중" : "전체 정보 저장"}</button></footer>
+    <footer><button type="button" className="credential-secondary" onClick={onClose} disabled={saving}>취소</button><button type="button" className="publish-execute" onClick={onSave} disabled={saving}>{saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{saving ? "등록정보 저장 중" : "등록정보 저장"}</button></footer>
   </section></div>;
 }
 
@@ -942,7 +930,7 @@ function ProductDetailPage({ product, onBack, authenticatedFetch, notify, onChan
 
   const saveProductDetails = async () => {
     if (!editDraft || editSaving) return;
-    const parsed = productIntakeSchema.safeParse(editDraft);
+    const parsed = productEditSchema.safeParse(editDraft);
     if (!parsed.success) {
       const nextErrors: Record<string, string> = {};
       for (const issue of parsed.error.issues) nextErrors[String(issue.path[0] ?? "form")] ??= issue.message;
@@ -957,18 +945,22 @@ function ProductDetailPage({ product, onBack, authenticatedFetch, notify, onChan
       const response = await authenticatedFetch(`/api/admin/products/${product.sourceId}/publish-context`, { method: "PATCH", body: JSON.stringify(parsed.data) });
       const payload = await response.json().catch(() => ({ message: "상품 수정 응답을 읽지 못했습니다." })) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "상품 전체 정보를 저장하지 못했습니다.");
-      if (parsed.data.stock !== product.onHand) {
+      let completionMessage = "상품 등록정보를 중앙 원장에 저장했습니다.";
+      if (parsed.data.stock !== inventoryOnHand) {
         const inventoryResponse = await authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`, { method: "POST", body: JSON.stringify({ onHand: parsed.data.stock, confirmWrite: true }) });
         const inventoryPayload = await inventoryResponse.json().catch(() => ({ message: "재고 적용 응답을 읽지 못했습니다." })) as { message?: string; sync?: InventorySyncContext };
-        if (!inventoryResponse.ok && inventoryResponse.status !== 207) throw new Error(inventoryPayload.message ?? "상품 정보는 저장됐지만 채널 재고 적용에 실패했습니다.");
+        if (!inventoryResponse.ok && inventoryResponse.status !== 207) throw new Error(inventoryPayload.message ?? "상품 등록정보는 저장됐지만 채널 재고 적용에 실패했습니다.");
         setInventoryOnHand(parsed.data.stock);
         setInventorySync(inventoryPayload.sync ?? null);
+        completionMessage = inventoryResponse.status === 207
+          ? inventoryPayload.message ?? "상품 등록정보와 중앙 재고는 저장됐지만 일부 채널 재고는 추가 확인이 필요합니다."
+          : "상품 등록정보를 저장했고 변경된 재고를 연결 채널에 반영했습니다.";
       }
       setDetailContext((current) => ({ ...current, manualFields: parsed.data }));
       setDisplayOverrides({ name: parsed.data.productName, sku: parsed.data.sellerSku, description: parsed.data.description, sourceUrl: parsed.data.productUrl || null });
       setEditDraft(parsed.data);
       setEditOpen(false);
-      notify("상품의 전체 등록정보와 변경된 재고를 저장했습니다.");
+      notify(completionMessage);
       await onChanged();
     } catch (error) {
       const message = error instanceof Error ? error.message : "상품 전체 정보를 저장하지 못했습니다.";
@@ -1227,15 +1219,6 @@ function ExternalActionsPage({ actions, onEdit, onConnections }: {
   </div>;
 }
 
-const registrationStatusMeta: Record<OperationsSnapshot["registrationActivities"][number]["status"], { label: string; detail: string }> = {
-  analyzing: { label: "AI 분석 중", detail: "사진과 상품 사실정보를 분석하고 있습니다." },
-  ready: { label: "채널 등록 준비", detail: "분석이 끝나 카테고리·채널 확인을 기다립니다." },
-  publishing: { label: "채널 등록 중", detail: "선택한 채널에 상품을 동시에 전송하고 있습니다." },
-  completed: { label: "등록 완료", detail: "선택 채널의 등록 처리가 완료되었습니다." },
-  failed: { label: "재시도 필요", detail: "채널 응답을 확인한 뒤 다시 실행할 수 있습니다." },
-  blocked: { label: "외부 권한 대기", detail: "판매자센터 권한 또는 필수 보완이 필요합니다." },
-};
-
 function formatRegistrationDuration(seconds: number) {
   const safeSeconds = Math.max(0, Math.round(seconds));
   if (safeSeconds < 60) return `${safeSeconds}초`;
@@ -1246,8 +1229,9 @@ function formatRegistrationDuration(seconds: number) {
   return `${hours}시간 ${minutes % 60}분`;
 }
 
-function RegistrationActivityPage({ activities, displayProducts, loading, onRefresh, onOpenProduct, onRetryProduct, onNewProduct, onExternalActions }: {
+function RegistrationActivityPage({ activities, activityState, displayProducts, loading, onRefresh, onOpenProduct, onRetryProduct, onNewProduct, onExternalActions }: {
   activities: OperationsSnapshot["registrationActivities"];
+  activityState: NonNullable<OperationsSnapshot["registrationActivityState"]>;
   displayProducts: DisplayProduct[];
   loading: boolean;
   onRefresh: () => Promise<void>;
@@ -1293,7 +1277,8 @@ function RegistrationActivityPage({ activities, displayProducts, loading, onRefr
         ["attention", "거절 · 확인 필요", counts.attention],
       ] as const).map(([value, label, count]) => <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><b>{count}</b></button>)}
     </section>
-    {loading && activities.length === 0 ? <section className="panel registration-empty"><LoaderCircle className="spin" size={28} /><b>등록 이력을 불러오는 중입니다.</b></section>
+    {activityState === "unavailable" ? <section className="panel registration-empty" role="alert"><AlertCircle size={28} /><b>등록 진행 이력을 불러오지 못했습니다.</b><small>다른 운영 데이터와 기존 알림 기준은 유지했습니다. 잠시 후 다시 확인하거나 직접 재시도해 주세요.</small><button type="button" className="credential-secondary" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{refreshing ? "다시 확인 중" : "등록 이력 다시 확인"}</button></section>
+      : loading && activities.length === 0 ? <section className="panel registration-empty"><LoaderCircle className="spin" size={28} /><b>등록 이력을 불러오는 중입니다.</b></section>
       : filtered.length > 0 ? <section className="registration-card-grid">{filtered.map((activity) => {
         const status = registrationStatusMeta[activity.status];
         const product = activity.productId ? productMap.get(activity.productId) : undefined;
@@ -1467,6 +1452,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       const response = await fetch("/api/ai/product-research", {
         method: "POST",
         cache: "no-store",
+        signal: AbortSignal.timeout(30_000),
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ jobId, researchInput }),
       });
@@ -1485,12 +1471,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         manufacturer: current.manufacturer.trim() || suggestion.manufacturer || "공급처 확인 필요",
         countryOfOrigin: current.countryOfOrigin.trim() || suggestion.countryOfOrigin || "원산지 확인 필요",
         material: current.material.trim() || suggestion.material || "소재 확인 필요",
-        packageContents: current.packageContents.trim() || (/1\s*\+\s*1/.test(suggestion.packageContents ?? "") ? "상품 1+1" : "상품 1개"),
+        packageContents: current.packageContents.trim() || normalizeProductSaleConfiguration(suggestion.packageContents) || "상품 1개",
         description: current.description.trim() || suggestion.description || `${suggestion.productName || "상품"}의 1차 자동생성 설명입니다. 용도, 소재, 구성품, 규격과 주의사항을 실물 기준으로 확인 후 수정해 주세요.`,
         productUrl: current.productUrl.trim() || firstReadableSource,
         gtinStatus: current.gtin || !suggestion.gtin ? current.gtinStatus : "HAS_GTIN",
         gtin: current.gtin || suggestion.gtin || "",
-        sellingPrice: current.sellingPrice > 0 ? current.sellingPrice : 5000,
+        sellingPrice: current.sellingPrice,
         stock: current.stock > 0 ? current.stock : 1,
         weightKg: current.weightKg > 0 ? current.weightKg : 0.5,
         packageLengthCm: current.packageLengthCm > 0 ? current.packageLengthCm : 20,
@@ -1580,6 +1566,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const startAutomation = () => {
+    if (queuedJobId) {
+      notify("이 상품은 이미 등록 큐에 있습니다. 진행상황을 확인하거나 ‘다른 상품 등록’을 눌러 새 작업을 시작해 주세요.");
+      return;
+    }
     const parsed = productIntakeSchema.safeParse(intake);
     if (!parsed.success) {
       const errors: Record<string, string> = {};
@@ -1713,7 +1703,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               <label className={manualErrors.countryOfOrigin ? "field-error" : ""}><span>원산지 <i>필수</i></span><input required value={intake.countryOfOrigin} maxLength={80} onChange={(event) => setIntakeField("countryOfOrigin", event.target.value)} placeholder="예: 대한민국" />{manualErrors.countryOfOrigin && <small>{manualErrors.countryOfOrigin}</small>}</label>
               <div className="intake-group-heading"><span>02</span><div><b>구성·표시 정보</b><small>라벨과 실물 기준으로 소재, 구성품, 바코드를 확인합니다.</small></div></div>
               <label className={manualErrors.material ? "field-error" : ""}><span>소재·성분 <i>필수</i></span><input required value={intake.material} maxLength={500} onChange={(event) => setIntakeField("material", event.target.value)} placeholder="예: 도자기 100%" />{manualErrors.material && <small>{manualErrors.material}</small>}</label>
-              <label className={manualErrors.packageContents ? "field-error" : ""}><span>판매 구성 <i>필수</i></span><select required value={intake.packageContents} onChange={(event) => setIntakeField("packageContents", event.target.value)}><option value="">구성을 선택하세요</option><option value="상품 1개">1개</option><option value="상품 1+1">1+1</option></select>{manualErrors.packageContents && <small>{manualErrors.packageContents}</small>}</label>
+              <label className={manualErrors.packageContents ? "field-error" : ""}><span>판매 구성 <i>필수</i></span><select required value={intake.packageContents} onChange={(event) => setIntakeField("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select>{manualErrors.packageContents && <small>{manualErrors.packageContents}</small>}</label>
               <label><span>상품 상태 <i>필수</i></span><select value={intake.condition} onChange={(event) => setIntakeField("condition", event.target.value as ProductIntakeDraft["condition"])}>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select></label>
               <label><span>바코드 상태 <i>필수</i></span><select value={intake.gtinStatus} onChange={(event) => setIntakeField("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select></label>
               {intake.gtinStatus === "HAS_GTIN" && <label className={manualErrors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC <i>필수</i></span><input inputMode="numeric" required value={intake.gtin} maxLength={14} onChange={(event) => setIntakeField("gtin", event.target.value.replace(/\D/g, ""))} placeholder="8~14자리 숫자" />{manualErrors.gtin && <small>{manualErrors.gtin}</small>}</label>}
@@ -1739,7 +1729,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·CLI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
           </section>
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 1200×1200 JPG 자동보정 · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}</span><button type="button" onClick={startAutomation} disabled={running}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 1200×1200 JPG 자동보정 · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}</span><button type="button" onClick={startAutomation} disabled={running || Boolean(queuedJobId)}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
@@ -1967,7 +1957,6 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
     ?? null;
   const sendReply = async () => {
     if (selected && await onSend(selected, reply)) {
-      notify(`${selected.customer} 고객 문의를 처리 완료로 저장했습니다.`);
       setReply("");
     }
   };
@@ -1986,7 +1975,7 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
   };
   const updateStatus = async (status: "waiting" | "in_progress" | "resolved") => {
     if (!selected) return;
-    if (await onStatus(selected, status)) notify("문의 처리 상태를 저장했습니다.");
+    await onStatus(selected, status);
   };
   const linkedOrder = selected ? displayOrders.find((order) => order.customer === selected.customer) ?? null : null;
   const unresolvedCount = displayTickets.filter((ticket) => ticket.status !== "처리 완료").length;
@@ -2006,7 +1995,7 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
       <section className={`cs-workspace panel ${mobileConversationOpen ? "mobile-conversation-open" : ""}`}>
         <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs">{(["미답변", "처리 중", "완료"] as const).map((tab) => <button key={tab} className={ticketTab === tab ? "active" : ""} onClick={() => { setTicketTab(tab); setSelectedId(null); setMobileConversationOpen(false); }}>{tab}{tab === "미답변" && <span>{displayTickets.filter((ticket) => ticket.status === "긴급" || ticket.status === "답변 대기").length}</span>}</button>)}</div>{filteredTickets.map((ticket) => <button key={ticket.id} className={`ticket-item ${selected.id === ticket.id ? "active" : ""}`} onClick={() => { setSelectedId(ticket.id); setReply(ticket.replyDraft ?? ""); setMobileConversationOpen(true); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.status} /></div></button>)}</aside>
         <article className="conversation"><header><div><button className="mobile-back" type="button" aria-label="문의 목록으로 돌아가기" onClick={() => setMobileConversationOpen(false)}><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div><label className="filter-select compact"><span className="sr-only">문의 처리 상태</span><select value={selected.status === "처리 완료" ? "resolved" : selected.status === "처리 중" ? "in_progress" : "waiting"} onChange={(event) => void updateStatus(event.target.value as "waiting" | "in_progress" | "resolved")}><option value="waiting">답변 대기</option><option value="in_progress">처리 중</option><option value="resolved">처리 완료</option></select><ChevronDown size={14} /></label></div></header>
-          <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b></span><em>{linkedOrder?.id ?? "-"}</em></div><div className="message-date"><span>실제 수신 문의</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.originalMessage}</p><span>채널 동기화 원문</span></div></div></div>
+          <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b></span><div className="order-context-meta"><em>{linkedOrder?.id ?? "-"}</em><StatusBadge status={linkedOrder?.status ?? "확인 필요"} /><small>{linkedOrder?.trackingNumber ? `${linkedOrder.carrierCode ?? "택배사"} · ${linkedOrder.trackingNumber}` : "운송장 등록 전"}</small></div></div><div className="message-date"><span>실제 수신 문의</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.originalMessage}</p><span>채널 동기화 원문</span></div></div></div>
           <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />주문 맥락과 문의 원문을 바탕으로 검토용 초안을 생성합니다.</span><button type="button" disabled={drafting} onClick={() => void createDraft()}>{drafting ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{drafting ? "CLI 작성 중" : "CLI 초안 생성"}</button></div><textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="실제 답변을 입력하거나 CLI 초안을 생성하세요." /><div><span><label className="reply-tool-select"><Languages size={15} /><span className="sr-only">답변 언어</span><select value={targetLocale} onChange={(event) => setTargetLocale(event.target.value as SupportLocale)}>{Object.entries(supportLocaleLabels).map(([locale, label]) => <option key={locale} value={locale}>{label}</option>)}</select><ChevronDown size={13} /></label><label className="reply-tool-select"><FileText size={15} /><span className="sr-only">답변 템플릿</span><select defaultValue="" onChange={(event) => { const template = supportReplyTemplates.find((item) => item.label === event.target.value); if (template) setReply(template.value); event.target.value = ""; }}><option value="">템플릿</option>{supportReplyTemplates.map((template) => <option value={template.label} key={template.label}>{template.label}</option>)}</select><ChevronDown size={13} /></label></span><button className="send-button" disabled={!reply.trim()} onClick={() => void sendReply()}>검토 답변 저장<Send size={15} /></button></div></footer>
         </article>
         <aside className="customer-panel"><div className="customer-profile"><div className="ticket-avatar xl">{selected.customer.charAt(0)}</div><h4>{selected.customer}</h4><span>{selected.channel} 구매자</span></div><div className="customer-facts"><div><small>총 주문</small><b>{displayOrders.filter((order) => order.customer === selected.customer).length}건</b></div><div><small>데이터 출처</small><b>실제 채널 API</b></div></div><div className="detail-section"><h5>현재 주문</h5><div className="mini-order"><span className="tiny-thumb"><Package size={17} /></span><span><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b><small>{linkedOrder?.amount ?? "-"}</small></span></div><dl><div><dt>주문번호</dt><dd>{linkedOrder?.id ?? "-"}</dd></div><div><dt>배송상태</dt><dd><StatusBadge status={linkedOrder?.status ?? "확인 필요"} /></dd></div><div><dt>운송장</dt><dd>배송 API 동기화 값</dd></div></dl></div><div className="detail-section"><h5>응대 원칙</h5><p className="ai-guide"><Bot size={16} />실제 주문·배송 상태를 확인한 뒤 답변을 저장하세요.</p></div></aside>
@@ -2175,14 +2164,15 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const [credentialChanging, setCredentialChanging] = useState(false);
   const [credentialMessage, setCredentialMessage] = useState("");
   const [newAdminPassword, setNewAdminPassword] = useState("");
-  const [toast, setToast] = useState("");
+  const { toast, notify, dismissToast } = useToastQueue();
+  const toastTone = toastToneForMessage(toast);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [targetedSearch, setTargetedSearch] = useState<{ kind: "order" | "inquiry"; id: string; query: string } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
-  const toastTimerRef = useRef<number | null>(null);
-  const activityStatusRef = useRef<Map<string, string> | null>(null);
+  const activityStatusRef = useRef<Map<string, RegistrationStatus> | null>(null);
+  const operationEventRef = useRef<OperationEventState | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<DisplayProduct | null>(null);
   const [publishingProduct, setPublishingProduct] = useState<{ id: string; name: string } | null>(null);
   const [publishingSession, setPublishingSession] = useState(0);
@@ -2198,16 +2188,6 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const workerConnected = Boolean(workerLastSeenAt && operations.data?.generatedAt
     && Date.parse(operations.data.generatedAt) - Date.parse(workerLastSeenAt) < 10 * 60_000);
   const meta = pageMeta[view];
-
-  const notify = useCallback((message: string) => {
-    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
-    setToast(message);
-    toastTimerRef.current = window.setTimeout(() => { setToast(""); toastTimerRef.current = null; }, 2_000);
-  }, []);
-
-  useEffect(() => () => {
-    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
-  }, []);
 
   useEffect(() => {
     if (!notificationsOpen) return;
@@ -2225,14 +2205,21 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 
   useEffect(() => {
     if (!operations.data) return;
-    const nextStatuses = new Map(registrationActivities.map((activity) => [activity.id, activity.status]));
-    const previousStatuses = activityStatusRef.current;
-    if (previousStatuses) {
-      const changed = registrationActivities.find((activity) => previousStatuses.has(activity.id) && previousStatuses.get(activity.id) !== activity.status);
-      if (changed) notify(`${changed.productName}: ${registrationStatusMeta[changed.status].label}`);
-    }
-    activityStatusRef.current = nextStatuses;
+    const transition = registrationActivityNotificationTransition(
+      activityStatusRef.current,
+      registrationActivities,
+      operations.data.registrationActivityState,
+    );
+    activityStatusRef.current = transition.statuses;
+    for (const message of transition.messages) notify(message);
   }, [notify, operations.data, registrationActivities]);
+
+  useEffect(() => {
+    if (!operations.data) return;
+    const messages = operationEventNotifications(operationEventRef.current, operations.data);
+    operationEventRef.current = operationEventState(operations.data);
+    for (const message of messages) notify(message);
+  }, [notify, operations.data]);
 
   useEffect(() => {
     if (!registrationActivities.some((activity) => ["analyzing", "ready", "publishing"].includes(activity.status))) return;
@@ -2287,6 +2274,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     }) ?? [];
   }, [operations.data]);
   useEffect(() => { displayProductsRef.current = displayProducts; }, [displayProducts]);
+  const activeSelectedProduct = selectedProduct
+    ? displayProducts.find((product) => product.sourceId === selectedProduct.sourceId) ?? selectedProduct
+    : null;
 
   const displayOrders = useMemo<DisplayOrder[]>(() => operations.data?.orders.map((order) => ({
     sourceId: order.id,
@@ -2646,9 +2636,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
-    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} displayProducts={displayProducts} loading={operations.state === "loading"} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
-    if (view === "product-detail") return selectedProduct
-      ? <ProductDetailPage product={selectedProduct} onBack={() => window.history.back()} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
+    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} displayProducts={displayProducts} loading={operations.state === "loading"} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
+    if (view === "product-detail") return activeSelectedProduct
+      ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} onBack={() => window.history.back()} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
       : <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>{operations.state === "loading" ? "상품 상세정보를 불러오는 중입니다." : "상품을 찾지 못했습니다."}</b><small>{operations.state === "loading" ? "운영 상품 원장을 확인하고 있습니다." : "상품 목록에서 다시 선택해 주세요."}</small>{operations.state !== "loading" ? <button type="button" className="ghost-button" onClick={() => navigate("products")}>상품 목록으로</button> : null}</div>;
     if (view === "remediation") return <ExternalActionsPage actions={operations.data?.externalActions ?? []} onEdit={editExternalActionProduct} onConnections={() => navigate("connections")} />;
     if (view === "publishing") return <PublishingPage key={`${publishingProduct?.id ?? "new-product"}-${publishingSession}`} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} onStartAnother={() => navigate("publishing")} onShowHistory={() => navigate("registration-activity")} />;
@@ -2703,7 +2693,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 
       {searchOpen && <div className="command-overlay"><div className="command-dialog" role="dialog" aria-modal="true" aria-label="통합 검색"><div className="command-input"><Search size={18} /><input ref={searchInputRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); return; } if (event.key !== "Enter") return; const first = unifiedSearchResults.products[0] ?? unifiedSearchResults.orders[0] ?? unifiedSearchResults.inquiries[0]; if (first) selectUnifiedSearchResult(first); }} placeholder="상품명, 주문번호, 고객명 또는 문의 내용 검색" aria-label="통합 검색어" /><button aria-label="검색창 닫기" onClick={() => setSearchOpen(false)}><X size={17} /></button></div>{searchQuery.trim() ? <div className="command-results" aria-live="polite">{unifiedSearchResultCount > 0 ? <>{([{ label: "상품", items: unifiedSearchResults.products, icon: Package }, { label: "주문", items: unifiedSearchResults.orders, icon: ShoppingCart }, { label: "문의", items: unifiedSearchResults.inquiries, icon: MessageCircleMore }] as const).map((group) => group.items.length > 0 && <section key={group.label}><span className="command-label">{group.label} <b>{group.items.length}</b></span>{group.items.map((result) => <button type="button" className="command-result" key={`${result.kind}-${result.id}`} onClick={() => selectUnifiedSearchResult(result)}><span className={`command-result-icon ${result.kind}`}><group.icon size={16} /></span><span><b>{result.title}</b><small>{result.subtitle}</small></span><em>{result.meta}</em><ArrowRight size={14} /></button>)}</section>)}</> : <div className="command-empty"><Search size={24} /><b>일치하는 상품·주문·문의가 없습니다.</b><small>상품명, SKU, 주문번호, 고객명 또는 문의 내용을 확인해 주세요.</small></div>}</div> : <><span className="command-label">빠른 이동</span>{navGroups[0].items.map((item) => { const Icon = "icon" in item ? item.icon : null; return Icon ? <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button> : null; })}</>}</div></div>}
       {accountOpen && <div className="account-security-overlay"><section className="account-security-dialog" role="dialog" aria-modal="true" aria-labelledby="account-security-title"><div className="account-security-head"><span><ShieldCheck size={18} /></span><div><h2 id="account-security-title">관리자 로그인 정보 변경</h2><p>현재 계정의 로그인 아이디를 admin으로 변경합니다.</p></div><button aria-label="계정 설정 닫기" onClick={() => setAccountOpen(false)} disabled={credentialChanging}><X size={17} /></button></div><div className="account-security-values"><div><small>새 아이디</small><strong>admin</strong></div><label><small>새 비밀번호</small><input type="password" value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} autoComplete="new-password" placeholder="보안 정책에 맞게 입력" /></label></div><p className="account-security-warning"><AlertTriangle size={16} />Supabase 보안 정책상 10자 이상이며 영문 대·소문자, 숫자, 특수문자를 모두 포함해야 합니다. 변경이 완료되면 현재 세션에서 로그아웃됩니다.</p>{credentialMessage && <p className="account-security-message">{credentialMessage}</p>}<button className="account-security-submit" type="button" onClick={() => void changeAdminCredentials()} disabled={credentialChanging || !newAdminPassword}>{credentialChanging ? <><LoaderCircle className="spin" size={17} />변경 중</> : <><KeyRound size={17} />admin 계정으로 변경</>}</button></section></div>}
-      {toast && <div className="toast"><CheckCircle2 size={18} /><span>{toast}</span><button onClick={() => setToast("")}><X size={14} /></button></div>}
+      {toast && <div className={`toast notice-${toastTone}`} role="status" aria-live="polite"><span className="toast-icon">{toastTone === "error" ? <AlertCircle size={18} /> : toastTone === "warning" ? <AlertTriangle size={18} /> : toastTone === "info" ? <Activity size={18} /> : <CheckCircle2 size={18} />}</span><span className="toast-copy"><b>{toastTone === "error" ? "처리 오류" : toastTone === "warning" ? "확인 필요" : toastTone === "info" ? "진행 알림" : "처리 완료"}</b><span>{toast}</span></span><button type="button" aria-label="알림 닫기" onClick={dismissToast}><X size={14} /></button></div>}
     </main>
   );
 }
@@ -2737,27 +2727,49 @@ export default function Home() {
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     const supabase = createSupabaseClient();
-    const verifyAdmin = async (session: Session | null) => {
+    let verificationGeneration = 0;
+    let verifiedAdminUserId = "";
+    const verifyAdmin = async (session: Session, generation: number) => {
+      const [{ data: isAdmin, error }, { data: latestSession }] = await Promise.all([
+        supabase.rpc("sellerpilot_is_admin"),
+        supabase.auth.getSession(),
+      ]);
+      if (generation !== verificationGeneration || latestSession.session?.user.id !== session.user.id) return;
+      setUserEmail(session.user.email ?? "");
+      if (!error && isAdmin === true) {
+        verifiedAdminUserId = session.user.id;
+        setAccessState("admin");
+      } else {
+        verifiedAdminUserId = "";
+        setAccessState("forbidden");
+      }
+    };
+    const startVerification = (session: Session | null) => {
+      const generation = ++verificationGeneration;
       if (!session) {
+        verifiedAdminUserId = "";
         setUserEmail("");
         setAccessState("signed_out");
         return;
       }
-      setUserEmail(session.user.email ?? "");
-      const { data: isAdmin, error } = await supabase.rpc("sellerpilot_is_admin");
-      setAccessState(!error && isAdmin === true ? "admin" : "forbidden");
+      void verifyAdmin(session, generation);
     };
-    void supabase.auth.getSession().then(({ data }) => void verifyAdmin(data.session));
+    void supabase.auth.getSession().then(({ data }) => startVerification(data.session));
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === "SIGNED_OUT") {
+        verificationGeneration += 1;
+        verifiedAdminUserId = "";
         setUserEmail("");
         setAccessState("signed_out");
         return;
       }
-      setAccessState((current) => nextAdminAccessState(current, event));
-      window.setTimeout(() => void verifyAdmin(session), 0);
+      setAccessState((current) => nextAdminAccessState(current, event, Boolean(session && session.user.id === verifiedAdminUserId)));
+      window.setTimeout(() => startVerification(session), 0);
     });
-    return () => data.subscription.unsubscribe();
+    return () => {
+      verificationGeneration += 1;
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {

@@ -1024,7 +1024,7 @@ async function downloadComparisonShots(job) {
   const shots = [];
   for (const image of images) {
     if (!image?.assetId || !image?.signedUrl) continue;
-    const response = await fetch(image.signedUrl);
+    const response = await fetch(image.signedUrl, { signal: AbortSignal.timeout(30_000) });
     if (!response.ok) throw new Error(`${image.assetId} 기존 이미지 중복 비교 자료를 받지 못했습니다.`);
     shots.push(await fingerprintGeneratedShot(image.assetId, Buffer.from(await response.arrayBuffer())));
   }

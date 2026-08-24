@@ -67,7 +67,7 @@ export async function GET(request: Request) {
     admin.userClient.rpc("sellerpilot_list_external_listing_actions"),
     admin.userClient.rpc("sellerpilot_list_registration_activity", { p_limit: 160 }),
   ]);
-  if (error || credentialError || analyticsError || externalActionsError || registrationActivitiesError) {
+  if (error || credentialError || analyticsError || externalActionsError) {
     return NextResponse.json({ message: "운영 데이터를 불러오지 못했습니다." }, { status: 500 });
   }
   const payload = data && typeof data === "object" && !Array.isArray(data)
@@ -116,6 +116,7 @@ export async function GET(request: Request) {
   payload.aiRuntime = aiRuntime && typeof aiRuntime === "object" && !Array.isArray(aiRuntime) ? aiRuntime : null;
   payload.externalActions = Array.isArray(externalActions) ? externalActions : [];
   payload.registrationActivities = Array.isArray(registrationActivities) ? registrationActivities : [];
+  payload.registrationActivityState = registrationActivitiesError ? "unavailable" : "ready";
   payload.analytics = analytics && typeof analytics === "object" && !Array.isArray(analytics)
     ? analytics
     : { from: range.data.from, to: range.data.to, summary: { revenueKrw: 0, sold: 0, orderCount: 0 }, daily: [], channels: [], products: [] };
@@ -156,7 +157,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "운영 데이터 변경 요청을 확인해 주세요." }, { status: 400 });
   }
 
-  let mutationError: { message: string } | null = null;
+  let mutationError: { message: string; code?: string } | null = null;
   let id: string | null = null;
   if (parsed.data.action === "order_status") {
     const { data, error } = await admin.userClient.rpc("sellerpilot_update_order_status", {
@@ -194,6 +195,12 @@ export async function POST(request: Request) {
   }
 
   if (mutationError) {
+    if (parsed.data.action === "product_create" && mutationError.code === "23505") {
+      return NextResponse.json({
+        code: "DUPLICATE_SELLER_SKU",
+        message: "AI 이미지 제작은 완료됐지만 동일한 판매자 SKU가 이미 있어 상품 원장을 새로 만들지 않았습니다. 기존 상품을 확인하거나 새 SKU로 다시 등록해 주세요.",
+      }, { status: 409 });
+    }
     return NextResponse.json({ message: "운영 데이터를 저장하지 못했습니다." }, { status: 500 });
   }
   if (parsed.data.action === "order_status") {

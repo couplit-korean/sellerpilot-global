@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
-import { productIntakeSchema } from "../../../../../../lib/product-intake";
+import { productEditSchema } from "../../../../../../lib/product-intake";
 
 export const runtime = "nodejs";
 
@@ -87,7 +87,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
   const productId = productIdSchema.safeParse((await context.params).id);
-  const fields = productIntakeSchema.safeParse(await request.json().catch(() => null));
+  const fields = productEditSchema.safeParse(await request.json().catch(() => null));
   if (!productId.success || !fields.success) {
     return NextResponse.json({ message: fields.success ? "상품 ID 형식이 올바르지 않습니다." : fields.error.issues[0]?.message ?? "상품 수정값을 확인해 주세요." }, { status: 400 });
   }

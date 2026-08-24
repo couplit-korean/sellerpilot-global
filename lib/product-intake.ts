@@ -6,7 +6,7 @@ export const productCurrencies = [
 
 export const productConditions = ["NEW", "USED", "REFURBISHED"] as const;
 
-export const productIntakeSchema = z.object({
+const productIntakeShape = {
   researchInput: z.string().trim().min(2, "상품 링크나 설명을 2자 이상 입력해 주세요.").max(12_000),
   productName: z.string().trim().min(2, "상품명을 2자 이상 입력해 주세요.").max(160),
   sellerSku: z.string().trim().min(2, "판매자 SKU를 입력해 주세요.").max(100)
@@ -37,14 +37,23 @@ export const productIntakeSchema = z.object({
   ),
   imageRightsConfirmed: z.literal(true, { error: "이미지·상품 자료 사용 권한을 확인해 주세요." }),
   productFactsConfirmed: z.literal(true, { error: "입력한 상품 정보가 실물과 일치함을 확인해 주세요." }),
-}).superRefine((value, context) => {
+};
+
+function refineProductIntake(value: z.infer<z.ZodObject<typeof productIntakeShape>>, context: z.RefinementCtx) {
   if (value.gtinStatus === "HAS_GTIN" && !/^\d{8,14}$/.test(value.gtin)) {
     context.addIssue({ code: "custom", path: ["gtin"], message: "GTIN/EAN/UPC를 8~14자리 숫자로 입력해 주세요." });
   }
   if (value.gtinStatus === "NO_GTIN" && value.gtin) {
     context.addIssue({ code: "custom", path: ["gtin"], message: "GTIN 없음을 선택한 경우 번호를 비워 주세요." });
   }
-});
+}
+
+export const productIntakeSchema = z.object(productIntakeShape).superRefine(refineProductIntake);
+
+export const productEditSchema = z.object({
+  ...productIntakeShape,
+  stock: z.number().int().min(0, "실재고는 0개 이상이어야 합니다.").max(999_999),
+}).superRefine(refineProductIntake);
 
 export const normalizedProductImageSpecSchema = z.object({
   name: z.string().trim().min(1).max(240),

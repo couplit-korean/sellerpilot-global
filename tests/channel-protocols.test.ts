@@ -730,6 +730,32 @@ test("Lazada order sync enriches actionable orders with official order item deta
   }
 });
 
+test("Lazada order sync also enriches ready-to-ship orders needed by fulfillment", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes("/order/items/get")) {
+      return Response.json({ code: "0", data: [{ order_id: "9002", order_item_id: "9102", shipping_type: "Dropshipping" }] });
+    }
+    return Response.json({ code: "0", data: { orders: [{ order_id: "9002", statuses: ["ready_to_ship"] }] } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada",
+      operation: "orders.list",
+      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      arguments: { queryParams: { created_after: "2026-08-23T00:00:00+09:00" } },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(calls.some((url) => url.includes("/order/items/get")), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Lazada shipment confirmation uses Pack then ReadyToShip with the official JSON parameters", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; form: URLSearchParams }> = [];

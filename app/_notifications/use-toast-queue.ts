@@ -1,0 +1,40 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+export const toastDurationMs = 2_000;
+export type ToastTone = "success" | "info" | "warning" | "error";
+
+export function toastToneForMessage(message: string): ToastTone {
+  if (/(실패|오류|못했습니다|거절|유효하지|초과했습니다)/.test(message)) return "error";
+  if (/(권한|차단|재시도|일부|확인 필요|찾지 못|없습니다)/.test(message)) return "warning";
+  if (/(중입니다|시작|대기|등록했습니다|불러왔습니다|다시 연결|상태 변경|새 주문|새 CS)/.test(message)) return "info";
+  return "success";
+}
+
+export function appendToast(queue: string[], message: string) {
+  const normalized = message.trim();
+  if (!normalized) return queue;
+  return [...queue, normalized];
+}
+
+export function useToastQueue(durationMs = toastDurationMs) {
+  const [queue, setQueue] = useState<string[]>([]);
+  const toast = queue[0] ?? "";
+
+  const notify = useCallback((message: string) => {
+    setQueue((current) => appendToast(current, message));
+  }, []);
+
+  const dismissToast = useCallback(() => {
+    setQueue((current) => current.slice(1));
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(dismissToast, durationMs);
+    return () => window.clearTimeout(timer);
+  }, [dismissToast, durationMs, toast]);
+
+  return { toast, notify, dismissToast };
+}

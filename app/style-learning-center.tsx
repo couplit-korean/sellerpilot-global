@@ -19,8 +19,6 @@ import {
   styleLearningSummary,
   styleTargetMarkets,
 } from "../lib/marketplace-style-learning";
-import "./style-learning-center.css";
-
 const channelMarks: Record<string, string> = {
   qoo10: "큐텐",
   shopee: "쇼피",

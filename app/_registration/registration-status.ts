@@ -1,0 +1,44 @@
+import type { OperationsSnapshot } from "../use-operations-snapshot";
+
+export type RegistrationActivity = OperationsSnapshot["registrationActivities"][number];
+export type RegistrationStatus = RegistrationActivity["status"];
+export type RegistrationActivityState = OperationsSnapshot["registrationActivityState"];
+
+export const registrationStatusMeta: Record<RegistrationStatus, { label: string; detail: string }> = {
+  analyzing: { label: "AI 분석 중", detail: "사진과 상품 사실정보를 분석하고 있습니다." },
+  ready: { label: "채널 등록 준비", detail: "분석이 끝나 카테고리·채널 확인을 기다립니다." },
+  publishing: { label: "채널 등록 중", detail: "선택한 채널에 상품을 동시에 전송하고 있습니다." },
+  completed: { label: "등록 완료", detail: "선택 채널의 등록 처리가 완료되었습니다." },
+  failed: { label: "재시도 필요", detail: "채널 응답을 확인한 뒤 다시 실행할 수 있습니다." },
+  blocked: { label: "외부 권한 대기", detail: "판매자센터 권한 또는 필수값 보완이 필요합니다." },
+};
+
+export function registrationActivityStatusMap(activities: RegistrationActivity[]) {
+  return new Map(activities.map((activity) => [activity.id, activity.status]));
+}
+
+export function registrationActivityNotifications(
+  previousStatuses: ReadonlyMap<string, RegistrationStatus> | null,
+  activities: RegistrationActivity[],
+) {
+  if (!previousStatuses) return [];
+  return activities.flatMap((activity) => {
+    const previous = previousStatuses.get(activity.id);
+    if (previous === activity.status) return [];
+    return [`${activity.productName}: ${registrationStatusMeta[activity.status].label}`];
+  });
+}
+
+export function registrationActivityNotificationTransition(
+  previousStatuses: Map<string, RegistrationStatus> | null,
+  activities: RegistrationActivity[],
+  state: RegistrationActivityState,
+) {
+  if (state === "unavailable") {
+    return { messages: [] as string[], statuses: previousStatuses };
+  }
+  return {
+    messages: registrationActivityNotifications(previousStatuses, activities),
+    statuses: registrationActivityStatusMap(activities),
+  };
+}

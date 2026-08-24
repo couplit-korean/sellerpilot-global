@@ -110,7 +110,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(channelLinks, /채널에서 상품 찾기/);
   assert.doesNotMatch(channelLinks, /#\/products\/origin-list/);
   assert.match(page, /publish-context/);
-  assert.match(page, /if \(view === "product-detail"\) return selectedProduct/);
+  assert.match(page, /if \(view === "product-detail"\) return activeSelectedProduct/);
   assert.match(page, /상품 상세정보를 불러오는 중입니다/);
   assert.match(page, /ChatGPT CLI가 문의와 주문 맥락을 확인/);
   assert.match(page, /공식 카테고리 확정/);
@@ -131,8 +131,10 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const aiProductStudio = await readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8");
   const categoryWorkbench = await readFile(new URL("../app/category-classification-workbench.tsx", import.meta.url), "utf8");
   assert.match(aiProductStudio, /sellerpilot:product-studio:active-job:v1/);
-  assert.match(aiProductStudio, /새로고침 전에 시작한 상품 분석 작업을 다시 연결/);
-  assert.match(aiProductStudio, /finishStudioJob\(activeJob\.jobId, accessToken, true\)/);
+  assert.match(aiProductStudio, /새로고침 전에 시작한 상품 분석.*백그라운드에서 다시 연결/);
+  assert.match(aiProductStudio, /if \(!displayJobId\.current && selectedRecoveryJobId\) displayJobId\.current = selectedRecoveryJobId/);
+  assert.match(aiProductStudio, /const shouldDisplayResult = displayJobId\.current === jobId/);
+  assert.match(aiProductStudio, /displayJobId\.current = "";[\s\S]*?displayJobId\.current = queued\.jobId/);
   assert.match(categoryWorkbench, /현재 검색어로 다시 추천/);
   assert.match(categoryWorkbench, /sellerpilot:category-workbench:/);
   assert.match(categoryWorkbench, /restoreCategoryStates\(productId\)/);
@@ -141,8 +143,9 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(mobileStyles, /\.registration-card dl\s*\{\s*display:\s*none;/);
   assert.doesNotMatch(page, /<PublishingPage key=\{publishingProduct/);
   assert.match(page, /resolvedProductId = analyzedProductId \?\? initialProduct\?\.id \?\? null/);
-  assert.match(page, /nextAdminAccessState\(current, event\)/);
-  assert.match(adminAccessState, /current === "admin" \? "admin" : "checking"/);
+  assert.match(page, /nextAdminAccessState\(current, event, Boolean\(session && session\.user\.id === verifiedAdminUserId\)\)/);
+  assert.match(adminAccessState, /current === "admin" && sameVerifiedUser \? "admin" : "checking"/);
+  assert.match(page, /generation !== verificationGeneration \|\| latestSession\.session\?\.user\.id !== session\.user\.id/);
   assert.doesNotMatch(page, /setAccessState\(session \? "checking" : "signed_out"\)/);
   assert.match(page, /<RevenueCalendar days=\{analytics\?\.daily \?\? \[\]\} range=\{salesRange\}/);
   assert.match(revenueCalendar, /domesticRevenueKrw/);

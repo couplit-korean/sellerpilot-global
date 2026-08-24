@@ -10,6 +10,7 @@ const JOB_ID = "b231a1ac-7c2f-48bc-b2e4-8ad6db2902b7";
 const CANCEL_JOB_ID = "95303cb5-f3ba-49b6-9bd4-7c5e558f0b14";
 const RESEARCH_JOB_ID = "e659cfbc-0f80-44a5-94e8-f011ec53e67f";
 const REGEN_JOB_ID = "bc02b888-5531-426a-9a87-32a8c0e356e2";
+const DUPLICATE_SKU_JOB_ID = "6c7f9651-f0dd-48f7-8fe4-51335c404aef";
 const SHARED_PRODUCT_ID = "4a346497-84c8-4ccd-bf14-8f06f990a2f7";
 const TOKEN_HASH = "a".repeat(64);
 
@@ -193,6 +194,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260824180000_preserve_image_roles_for_regeneration.sql",
       "20260824190000_enforce_unique_generated_shots.sql",
       "20260824191500_fix_asset_regeneration_audit_count.sql",
+      "20260825011500_preserve_authoritative_inventory.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -512,6 +514,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       packageLengthCm: 12,
       packageWidthCm: 12,
       packageHeightCm: 10,
+      shippingFeeKrw: 0,
+      shippingRule: "기본 배송",
+      packagingRule: "파손 방지 포장",
       description: "실제 사진과 입력값을 교차검증하는 흰색 도자기 머그컵입니다.",
       productUrl: "https://example.test/product/1",
       imageRightsConfirmed: true,
@@ -560,6 +565,54 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       true,
     );
+    const automaticallyReconciledProductId = await scalar(
+      db,
+      "select id from sellerpilot_private.products where ai_job_id = $1",
+      [JOB_ID],
+    );
+    assert.match(automaticallyReconciledProductId, /^[0-9a-f-]{36}$/i);
+
+    await setClaims(db);
+    const duplicateSkuRequest = {
+      ...requestPayload,
+      image_paths: [`${ADMIN_ID}/${DUPLICATE_SKU_JOB_ID}/input/hero.jpg`],
+    };
+    await db.query(
+      "select public.sellerpilot_create_ai_job($1, 'product_studio', $2::jsonb)",
+      [DUPLICATE_SKU_JOB_ID, JSON.stringify(duplicateSkuRequest)],
+    );
+    await setClaims(db, "service_role");
+    const duplicateSkuClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_ai_job($1, 'migration-test/duplicate-sku')",
+      [TOKEN_HASH],
+    );
+    assert.equal(duplicateSkuClaim.id, DUPLICATE_SKU_JOB_ID);
+    const duplicateSkuResult = {
+      ...resultPayload,
+      asset_storage_paths: Object.fromEntries(Object.entries(resultPayload.asset_storage_paths)
+        .map(([key, path]) => [key, path.replace(JOB_ID, DUPLICATE_SKU_JOB_ID)])),
+    };
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_complete_ai_job($1, $2, 'succeeded', $3::jsonb, null)",
+        [TOKEN_HASH, DUPLICATE_SKU_JOB_ID, JSON.stringify(duplicateSkuResult)],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select status from sellerpilot_private.ai_cli_jobs where id = $1", [DUPLICATE_SKU_JOB_ID]),
+      "succeeded",
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from sellerpilot_private.products where ai_job_id = $1", [DUPLICATE_SKU_JOB_ID]),
+      0,
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from sellerpilot_private.operation_audit where entity_id = $1 and action = 'product_reconciliation_blocked'", [DUPLICATE_SKU_JOB_ID]),
+      1,
+    );
 
     await setClaims(db);
     const aiProductId = await scalar(
@@ -568,6 +621,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [JOB_ID],
     );
     assert.match(aiProductId, /^[0-9a-f-]{36}$/i);
+    assert.equal(aiProductId, automaticallyReconciledProductId);
     assert.equal(
       await scalar(
         db,
@@ -593,6 +647,57 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       4,
     );
     assert.equal(await scalar(db, "select sku from sellerpilot_private.products where id = $1", [aiProductId]), "AI-REQUIRED-001");
+    const competitorMarketplaces = ["smartstore", "coupang", "elevenst", "qoo10", "shopee", "lazada", "ebay", "temu", "other"];
+    const competitorItems = Array.from({ length: 27 }, (_, index) => ({
+      externalId: `competitor-${index + 1}`,
+      title: `동일 상품 가격 후보 ${index + 1}`,
+      url: `https://marketplace.example.test/products/${index + 1}`,
+      imageUrl: `https://marketplace.example.test/images/${index + 1}.jpg`,
+      mallName: `테스트 판매처 ${index + 1}`,
+      marketplace: competitorMarketplaces[index % competitorMarketplaces.length],
+      price: 10_000 + index,
+    }));
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_record_competitor_prices($1, $2::jsonb)",
+        [aiProductId, JSON.stringify(competitorItems)],
+      ),
+      27,
+    );
+    const competitorMarketplaceCounts = await db.query(
+      `select marketplace, count(*)::integer as count
+         from sellerpilot_private.competitor_price_observations
+        where product_id = $1
+        group by marketplace
+        order by marketplace`,
+      [aiProductId],
+    );
+    assert.deepEqual(
+      competitorMarketplaceCounts.rows,
+      [...competitorMarketplaces].sort().map((marketplace) => ({ marketplace, count: 3 })),
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_record_competitor_prices(
+          $1,
+          '[{"externalId":"competitor-invalid-market","title":"잘못된 채널 후보","url":"https://marketplace.example.test/products/invalid","imageUrl":"","mallName":"알 수 없는 판매처","marketplace":"unknown-market","price":9999}]'::jsonb
+        )`,
+        [aiProductId],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select marketplace from sellerpilot_private.competitor_price_observations where product_id = $1 and external_id = 'competitor-invalid-market'",
+        [aiProductId],
+      ),
+      "other",
+    );
+    await setClaims(db);
     await assert.rejects(
       db.query(
         `select public.sellerpilot_save_product_category_assignment(
@@ -665,6 +770,28 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(publishContext.imageSpecs[0].width, 1200);
     assert.equal(publishContext.assignments.length, 2);
     assert.equal(publishContext.assignments.some((assignment) => assignment.channel === "elevenst" && assignment.categoryId === "1341821"), true);
+    await db.query(
+      "update sellerpilot_private.products set on_hand = 0, product_facts = jsonb_set(product_facts, '{stock}', '100'::jsonb, true) where id = $1",
+      [aiProductId],
+    );
+    const editedManualFields = {
+      ...requiredManualFields,
+      productName: "AI 생성 테스트 상품 설명 수정",
+      description: "현재 품절 재고를 유지하면서 상품 설명과 표시정보만 수정한 검증 데이터입니다.",
+      stock: 0,
+    };
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_update_product_details($1, $2::jsonb)", [aiProductId, JSON.stringify(editedManualFields)]),
+      true,
+    );
+    assert.equal(await scalar(db, "select on_hand from sellerpilot_private.products where id = $1", [aiProductId]), 0);
+    assert.equal(await scalar(db, "select (product_facts->>'stock')::integer from sellerpilot_private.products where id = $1", [aiProductId]), 0);
+    assert.equal(
+      await scalar(db, "select request_payload->'manual_fields'->>'productName' from sellerpilot_private.ai_cli_jobs where id = $1", [JOB_ID]),
+      requiredManualFields.productName,
+    );
+    await db.query("update sellerpilot_private.products set on_hand = 2 where id = $1", [aiProductId]);
+    assert.equal(await scalar(db, "select (product_facts->>'stock')::integer from sellerpilot_private.products where id = $1", [aiProductId]), 2);
     const coupangCredentialId = await scalar(
       db,
       "select id from public.sellerpilot_list_credentials() where channel = 'coupang' and status = 'active' limit 1",
@@ -698,6 +825,30 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       true,
     );
     await setClaims(db);
+    await db.query(
+      "update sellerpilot_private.product_listings set status = 'failed', failure_class = 'retryable', last_error = 'one channel failed', updated_at = now() where id = $1",
+      [preparedListingId],
+    );
+    const mixedRegistrationActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(20)");
+    const mixedRegistrationCard = mixedRegistrationActivity.find((activity) => activity.productId === aiProductId);
+    assert.equal(mixedRegistrationCard.status, "publishing");
+    assert.equal(mixedRegistrationCard.completedAt, null);
+    await db.query(
+      "update sellerpilot_private.product_listings set status = 'failed', failure_class = 'retryable', last_error = 'second channel failed', updated_at = now() where id = $1",
+      [elevenstPreparedListingId],
+    );
+    const terminalRegistrationActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(20)");
+    const terminalRegistrationCard = terminalRegistrationActivity.find((activity) => activity.productId === aiProductId);
+    assert.equal(terminalRegistrationCard.status, "failed");
+    assert.notEqual(terminalRegistrationCard.completedAt, null);
+    await db.query(
+      "update sellerpilot_private.product_listings set status = 'published', failure_class = null, last_error = null, updated_at = now() where id = $1",
+      [preparedListingId],
+    );
+    await db.query(
+      "update sellerpilot_private.product_listings set status = 'queued', failure_class = null, last_error = null, updated_at = now() where id = $1",
+      [elevenstPreparedListingId],
+    );
     await assert.rejects(
       db.query("select public.sellerpilot_seed_demo_operations()"),
       /demo data is disabled/,
@@ -973,7 +1124,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(await scalar(db, "select public.sellerpilot_cancel_ai_job($1)", [CANCEL_JOB_ID]), true);
     assert.equal(await scalar(db, "select public.sellerpilot_retry_ai_job($1)", [CANCEL_JOB_ID]), true);
     const jobs = await db.query("select * from public.sellerpilot_list_ai_jobs(10)");
-    assert.equal(jobs.rows.length, 4);
+    assert.equal(jobs.rows.length, 5);
+    assert.equal(jobs.rows.some((job) => job.id === DUPLICATE_SKU_JOB_ID && job.status === "succeeded"), true);
     assert.equal(jobs.rows.some((job) => job.status === "succeeded" && job.has_hero), true);
     assert.equal(jobs.rows.some((job) => job.kind === "product_research"), true);
     assert.equal(jobs.rows.some((job) => job.kind === "product_asset_regeneration"), true);

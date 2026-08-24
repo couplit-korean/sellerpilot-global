@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { CheckCircle2, Download, ExternalLink, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import { withPromiseTimeout } from "../lib/promise-timeout";
 import { createClient } from "../lib/supabase/client";
 import { productIntakeSchema, type NormalizedProductImageSpec, type ProductIntakeDraft } from "../lib/product-intake";
 import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
@@ -37,6 +38,9 @@ type CliJobPayload = {
 
 const activeStudioJobStorageKey = "sellerpilot:product-studio:active-job:v1";
 const studioJobMaximumAgeMs = 2 * 60 * 60_000;
+const studioUploadTimeoutMs = 45_000;
+
+class StudioJobTerminalError extends Error {}
 
 type ActiveStudioJob = {
   jobId: string;
@@ -105,8 +109,16 @@ async function canvasToJpeg(canvas: HTMLCanvasElement) {
 
 async function optimizePhoto(photo: StudioPhoto): Promise<OptimizedPhoto> {
   try {
-    const source = await blobToDataUrl(photo.file);
-    const image = await loadImage(source);
+    const source = await withPromiseTimeout(
+      blobToDataUrl(photo.file),
+      30_000,
+      `${photo.name} 파일을 30초 안에 읽지 못했습니다. 다른 사진으로 다시 시도해 주세요.`,
+    );
+    const image = await withPromiseTimeout(
+      loadImage(source),
+      30_000,
+      `${photo.name} 이미지를 30초 안에 해석하지 못했습니다. 지원되는 사진 형식인지 확인해 주세요.`,
+    );
     const canvas = document.createElement("canvas");
     canvas.width = 1200;
     canvas.height = 1200;
@@ -121,7 +133,11 @@ async function optimizePhoto(photo: StudioPhoto): Promise<OptimizedPhoto> {
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
     context.drawImage(image, Math.round((canvas.width - width) / 2), Math.round((canvas.height - height) / 2), width, height);
-    const blob = await canvasToJpeg(canvas);
+    const blob = await withPromiseTimeout(
+      canvasToJpeg(canvas),
+      30_000,
+      `${photo.name} 이미지 보정이 30초 안에 끝나지 않았습니다. 사진 크기를 줄여 다시 시도해 주세요.`,
+    );
     const name = photo.name.replace(/\.[^.]+$/, ".jpg");
     return {
       name,
@@ -139,7 +155,8 @@ async function optimizePhoto(photo: StudioPhoto): Promise<OptimizedPhoto> {
         fit: "contain",
       },
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error) throw error;
     throw new Error(`${photo.name} 이미지를 JPEG로 변환하지 못했습니다.`);
   }
 }
@@ -154,11 +171,15 @@ async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string,
       const results = await Promise.allSettled(batch.map(async (photo, offset) => {
         const index = start + offset;
         const path = `${userId}/${jobId}/input/${String(index + 1).padStart(3, "0")}.jpg`;
-        const { error } = await supabase.storage.from("sellerpilot-ai").upload(path, photo.blob, {
-          contentType: photo.mediaType,
-          cacheControl: "3600",
-          upsert: false,
-        });
+        const { error } = await withPromiseTimeout(
+          supabase.storage.from("sellerpilot-ai").upload(path, photo.blob, {
+            contentType: photo.mediaType,
+            cacheControl: "3600",
+            upsert: false,
+          }),
+          studioUploadTimeoutMs,
+          `${photo.name} 비공개 업로드가 45초 안에 끝나지 않았습니다. 모바일 연결을 확인한 뒤 다시 시도해 주세요.`,
+        );
         if (error) throw new Error(`${photo.name} 비공개 업로드에 실패했습니다.`);
         return { path, spec: photo.spec };
       }));
@@ -171,7 +192,13 @@ async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string,
     }
     return { uploadedPaths, imageSpecs };
   } catch (error) {
-    if (uploadedPaths.length) await supabase.storage.from("sellerpilot-ai").remove(uploadedPaths);
+    if (uploadedPaths.length) {
+      await withPromiseTimeout(
+        supabase.storage.from("sellerpilot-ai").remove(uploadedPaths),
+        15_000,
+        "업로드 임시파일 정리 제한시간을 초과했습니다.",
+      ).catch(() => null);
+    }
     throw error;
   }
 }
@@ -214,11 +241,11 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
   const [regeneratingAssetId, setRegeneratingAssetId] = useState("");
   const handledRequest = useRef(0);
   const recoveryStarted = useRef(false);
-  const latestQueuedJob = useRef("");
+  const displayJobId = useRef("");
   const currentImageUrl = aiHero || mainPhoto?.url || "";
 
   const waitForCliJob = useCallback(async (jobId: string, accessToken: string) => {
-    const deadline = Date.now() + 30 * 60_000;
+    const deadline = Date.now() + studioJobMaximumAgeMs;
     let consecutiveRequestFailures = 0;
     while (Date.now() < deadline) {
       let response: Response;
@@ -236,15 +263,18 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
         continue;
       }
       const payload = await response.json().catch(() => ({ message: "CLI 작업 상태 응답을 읽지 못했습니다." })) as CliJobPayload & { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? "CLI 작업 상태를 확인하지 못했습니다.");
+      if (!response.ok) {
+        if (response.status === 404) throw new StudioJobTerminalError(payload.message ?? "CLI 작업을 찾지 못했습니다.");
+        throw new Error(payload.message ?? "CLI 작업 상태를 확인하지 못했습니다.");
+      }
       if (payload.status === "succeeded" && payload.result) return payload.result;
       if (payload.status === "failed" || payload.status === "cancelled") {
-        throw new Error(payload.error || "ChatGPT CLI 작업이 완료되지 못했습니다.");
+        throw new StudioJobTerminalError(payload.error || "ChatGPT CLI 작업이 완료되지 못했습니다.");
       }
       setCliPhase(payload.status === "running" ? "running" : "queued");
       await delay(3_000);
     }
-    throw new Error("ChatGPT CLI 작업 대기시간이 30분을 초과했습니다. 작업자 연결 상태를 확인해 주세요.");
+    throw new Error("ChatGPT CLI 작업 대기시간이 2시간을 초과했습니다. 등록 이력과 작업자 연결 상태를 확인해 주세요.");
   }, []);
 
   const finishStudioJob = useCallback(async (jobId: string, accessToken: string, recovered: boolean) => {
@@ -252,12 +282,15 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
     try {
       cliResult = await waitForCliJob(jobId, accessToken);
     } catch (error) {
-      clearActiveStudioJob(jobId);
+      if (error instanceof StudioJobTerminalError) clearActiveStudioJob(jobId);
       throw error;
     }
-    if (cliResult.mode !== "cli") throw new Error("상품 분석 결과 형식이 올바르지 않습니다.");
+    if (cliResult.mode !== "cli") {
+      clearActiveStudioJob(jobId);
+      throw new Error("상품 분석 결과 형식이 올바르지 않습니다.");
+    }
     const { heroUrl, generatedImages, ...nextResult } = cliResult;
-    const shouldDisplayResult = recovered || latestQueuedJob.current === jobId;
+    const shouldDisplayResult = displayJobId.current === jobId;
     if (shouldDisplayResult) {
       setSourceJobId(jobId);
       setResult(nextResult);
@@ -272,10 +305,14 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ action: "product_create", jobId }),
+      signal: AbortSignal.timeout(30_000),
     });
-    const productPayload = await productResponse.json().catch(() => ({})) as { id?: string | null; message?: string };
+    const productPayload = await productResponse.json().catch(() => ({})) as { id?: string | null; code?: string; message?: string };
     const productId = productResponse.ok && typeof productPayload.id === "string" ? productPayload.id : null;
-    if (!productId) throw new Error(productPayload.message || "이미지 제작은 완료됐지만 상품 원장 저장을 확인하지 못했습니다. 새로고침하면 완료 작업부터 다시 연결합니다.");
+    if (!productId) {
+      if (productResponse.status === 409 && productPayload.code === "DUPLICATE_SELLER_SKU") clearActiveStudioJob(jobId);
+      throw new Error(productPayload.message || "이미지 제작은 완료됐지만 상품 원장 저장을 확인하지 못했습니다. 새로고침하면 완료 작업부터 다시 연결합니다.");
+    }
     if (shouldDisplayResult) setSourceProductId(productId);
     clearActiveStudioJob(jobId);
     if (shouldDisplayResult) onResultReady?.(nextResult, productId);
@@ -286,6 +323,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
 
   const generate = useCallback(async () => {
     if (!mainPhoto || generating) return;
+    displayJobId.current = "";
     setGenerating(true);
     onRunningChange(true);
     setAiHero("");
@@ -304,15 +342,21 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       if (photos.length > 100) throw new Error("한 작업에는 대표사진을 포함해 최대 100장까지 분석할 수 있습니다.");
       const jobId = crypto.randomUUID();
       const { uploadedPaths: imagePaths, imageSpecs } = await optimizeAndUploadInBatches(photos, userId, jobId);
+      persistActiveStudioJob(jobId);
       const response = await fetch("/api/ai/product-studio", {
         method: "POST",
         headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ jobId, manualFields: validatedIntake.data, imagePaths, imageSpecs }),
+        signal: AbortSignal.timeout(30_000),
       });
       const queued = await response.json().catch(() => ({ message: "CLI 작업 등록 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
-      if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
+      if (!response.ok || !queued.jobId) {
+        clearActiveStudioJob(jobId);
+        throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
+      }
+      if (queued.jobId !== jobId) clearActiveStudioJob(jobId);
       persistActiveStudioJob(queued.jobId);
-      latestQueuedJob.current = queued.jobId;
+      displayJobId.current = queued.jobId;
       onJobQueued?.(queued.jobId);
       notify("상품 분석 작업을 운영 큐에 등록했습니다. 처리되는 동안 다른 상품 등록을 바로 시작할 수 있습니다.");
       void finishStudioJob(queued.jobId, accessToken, false).catch((error) => {
@@ -345,6 +389,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ jobId, sourceJobId, sourceProductId, assetId }),
+        signal: AbortSignal.timeout(30_000),
       });
       const queued = await response.json().catch(() => ({ message: "재제작 작업 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
       if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "이미지 재제작 작업을 등록하지 못했습니다.");
@@ -379,32 +424,30 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
     if (!activeJobs.length) return;
     recoveryStarted.current = true;
     const recoveryTimer = window.setTimeout(() => {
-      setGenerating(true);
-      setCliPhase("queued");
-      setLastError("");
-      onRunningChange(true);
       void (async () => {
         try {
           const { data: sessionData } = await createClient().auth.getSession();
           const accessToken = sessionData.session?.access_token;
           if (!accessToken) throw new Error("진행 중인 상품 분석을 복구하려면 관리자 로그인이 필요합니다.");
-          notify(`새로고침 전에 시작한 상품 분석 작업을 다시 연결하고 있습니다. (${activeJobs.length}건)`);
-          const recovered = await Promise.allSettled(activeJobs.map((activeJob) => finishStudioJob(activeJob.jobId, accessToken, true)));
-          const failed = recovered.find((item): item is PromiseRejectedResult => item.status === "rejected");
-          if (failed) throw failed.reason;
+          notify(`새로고침 전에 시작한 상품 분석 ${activeJobs.length}건을 백그라운드에서 다시 연결합니다. 새 상품 등록은 바로 시작할 수 있습니다.`);
+          const selectedRecoveryJobId = activeJobs.at(-1)?.jobId;
+          if (!displayJobId.current && selectedRecoveryJobId) displayJobId.current = selectedRecoveryJobId;
+          for (const activeJob of activeJobs) {
+            void finishStudioJob(activeJob.jobId, accessToken, true).catch((error) => {
+              const message = error instanceof Error ? error.message : "상품 분석 작업 복구 중 오류가 발생했습니다.";
+              setLastError(message);
+              notify(message);
+            });
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : "상품 분석 작업 복구 중 오류가 발생했습니다.";
           setLastError(message);
           notify(message);
-        } finally {
-          setGenerating(false);
-          setCliPhase("idle");
-          onRunningChange(false);
         }
       })();
     }, 0);
     return () => window.clearTimeout(recoveryTimer);
-  }, [finishStudioJob, notify, onRunningChange, requestId]);
+  }, [finishStudioJob, notify, requestId]);
 
   const downloadImage = (thumbnail: AutoThumbnail) => {
     const anchor = document.createElement("a");

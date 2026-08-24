@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { naverSearchCredentials, searchNaverShopping } from "../../../../lib/competitor-prices";
+import { groupCompetitorPrices, naverSearchCredentials, searchNaverShoppingVariants } from "../../../../lib/competitor-prices";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-type DueProduct = { product_id: string; query: string };
+type DueProduct = { product_id: string; query: string; aliases: string[] };
 
 function serverClient() {
   const serviceKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
@@ -22,11 +22,15 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
   }
   const { data, error } = await serviceClient.rpc("sellerpilot_service_due_competitor_products", { p_limit: 40 });
   if (error) return NextResponse.json({ message: "경쟁가 조회 대상 상품을 읽지 못했습니다." }, { status: 500 });
-  const due = (Array.isArray(data) ? data : []).filter((item): item is DueProduct => Boolean(item) && typeof item === "object" && typeof item.product_id === "string" && typeof item.query === "string");
+  const due = (Array.isArray(data) ? data : []).flatMap((item) => {
+    if (!item || typeof item !== "object" || typeof item.product_id !== "string" || typeof item.query !== "string") return [];
+    const aliases = Array.isArray(item.aliases) ? item.aliases.filter((alias: unknown): alias is string => typeof alias === "string") : [];
+    return [{ product_id: item.product_id, query: item.query, aliases } satisfies DueProduct];
+  });
   const results = [] as Array<{ productId: string; ok: boolean; count: number }>;
   for (const product of due) {
     try {
-      const items = await searchNaverShopping(product.query, credentials, 30);
+      const items = groupCompetitorPrices(await searchNaverShoppingVariants(product.query, product.aliases, credentials, 30));
       const { data: saved, error: saveError } = await serviceClient.rpc("sellerpilot_service_record_competitor_prices", { p_product_id: product.product_id, p_items: items });
       if (saveError) throw new Error("competitor_price_save_failed");
       results.push({ productId: product.product_id, ok: true, count: Number(saved ?? items.length) });
