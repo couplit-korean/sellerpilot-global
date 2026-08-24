@@ -326,8 +326,10 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
   if (/(t[\s-]?shirt|tee|티셔츠|반팔)/u.test(normalizedQuery)) {
     return /(fashion|clothes|clothing|apparel|top|shirt|hoodie|sweatshirt|jacket|outerwear)/u.test(normalizedCandidate);
   }
-  if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)
-    && !/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) {
+  if (/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) {
+    return /(cable|cord|wire).*(clip|tie|organizer|management)|(?:clip|tie|organizer).*(cable|cord|wire)/u.test(normalizedCandidate) && !/(table|desk|furniture)/u.test(normalizedCandidate);
+  }
+  if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) {
     return /(home|living|organizer|organization|storage box|storage bin)/u.test(normalizedCandidate);
   }
   if (/(hanger|옷걸이|행거)/u.test(normalizedQuery)) {
@@ -341,9 +343,6 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
   }
   if (/(cleaning cloth|microfiber|microfibre|청소천|극세사|행주|걸레)/u.test(normalizedQuery)) {
     return /(cleaning.*(?:cloth|towel)|microfi(?:ber|bre)|dishcloth|household.*cleaning)/u.test(normalizedCandidate) && !/(diaper|baby|beauty)/u.test(normalizedCandidate);
-  }
-  if (/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) {
-    return /(cable|cord|wire).*(clip|tie|organizer|management)|(?:clip|tie|organizer).*(cable|cord|wire)/u.test(normalizedCandidate) && !/(table|desk|furniture)/u.test(normalizedCandidate);
   }
   return queryScore(shopeeSearchTerms(query), candidate) > 0;
 }
@@ -366,12 +365,11 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(cream|moistur|크림|보습)/u.test(normalizedQuery)) return score(["face moisturizers", "facial moisturizers", "face cream", "skin care"]);
   if (/(hoodie|hood|후드)/u.test(normalizedQuery)) return score(["hoodies", "hooded sweatshirts", "sweatshirts"]);
   if (/(jacket|재킷)/u.test(normalizedQuery)) return score(["jackets", "outerwear"]);
-  if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)
-    && !/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) return score(["storage boxes", "home organizers", "home & living"]);
+  if (/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) return score(["cable ties & organizers", "cable organizers", "cable clips", "wire management"]);
+  if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) return score(["storage boxes", "home organizers", "home & living"]);
   if (/(hanger|옷걸이|행거)/u.test(normalizedQuery)) return score(["clothes hangers", "clothing hangers", "coat hangers", "hangers"]);
   if (/(notebook|notepad|journal|노트|수첩)/u.test(normalizedQuery)) return score(["notebooks & notepads", "notebooks", "notepads", "journals", "stationery"]);
   if (/(cleaning cloth|microfiber|microfibre|청소천|극세사|행주|걸레)/u.test(normalizedQuery)) return score(["cleaning towels & cloths", "microfiber cloths", "cleaning cloths", "household cleaning"]);
-  if (/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) return score(["cable ties & organizers", "cable organizers", "cable clips", "wire management"]);
   return 0;
 }
 

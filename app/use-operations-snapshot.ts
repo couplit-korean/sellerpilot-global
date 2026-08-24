@@ -188,6 +188,32 @@ export type OperationsSnapshot = {
     categoryPath: string[] | null;
     updatedAt: string;
   }>;
+  registrationActivities: Array<{
+    id: string;
+    productId: string | null;
+    productName: string;
+    productCode: string;
+    sku: string;
+    status: "analyzing" | "ready" | "publishing" | "completed" | "failed" | "blocked";
+    startedAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+    elapsedSeconds: number;
+    channelCount: number;
+    publishedCount: number;
+    failedCount: number;
+    blockedCount: number;
+    channels: Array<{
+      channel: string;
+      channelCode: string;
+      channelName: string;
+      market: string;
+      status: string;
+      message: string;
+      updatedAt: string;
+    }>;
+    message: string;
+  }>;
   pipeline: {
     aiRunning: number;
     listingQueued: number;
@@ -296,6 +322,7 @@ export function useOperationsSnapshot() {
   }, [authenticatedFetch, range.from, range.to]);
 
   const reload = useCallback(() => load({ force: true, refreshProductImages: true }), [load]);
+  const refresh = useCallback(() => load({ force: true }), [load]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void load({ force: true, refreshProductImages: true }), 0);
@@ -313,5 +340,5 @@ export function useOperationsSnapshot() {
     };
   }, [load]);
 
-  return { data, state, message, range, setRange, reload, authenticatedFetch };
+  return { data, state, message, range, setRange, reload, refresh, authenticatedFetch };
 }

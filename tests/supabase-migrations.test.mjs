@@ -180,6 +180,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260822140000_harden_runtime_retention.sql",
       "20260822153000_tracx_logistics_tracking.sql",
       "20260822210000_channel_catalog_inventory_mirror.sql",
+      "20260824023835_registration_activity_and_product_edit.sql",
       "20260824024500_gateway_burst_priority_and_reconciliation.sql",
     ]);
     for (const name of migrationNames) {

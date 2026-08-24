@@ -2509,3 +2509,70 @@ button {
 .notification-preference-grid input { width: 17px; height: 17px; accent-color: #2f6fed; }
 .notification-preferences > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; border-top: 1px solid #edf0f3; padding-top: 14px; }
 .notification-preferences > footer small { color: #7b8797; font-size: 8px; }
+
+/* Product registration queue and complete product editor */
+.publishing-parallel-banner { display: flex; align-items: center; justify-content: space-between; gap: 18px; border-color: #bde5d8; padding: 15px 18px; background: linear-gradient(105deg, #effbf7, #fff); }
+.publishing-parallel-banner > span, .publishing-parallel-banner > div, .publishing-parallel-banner > span > span { display: flex; align-items: center; gap: 9px; }
+.publishing-parallel-banner > span > span { display: grid; gap: 3px; }
+.publishing-parallel-banner > span > svg { color: #16836e; }
+.publishing-parallel-banner b { color: #24594f; font-size: 11px; }
+.publishing-parallel-banner small { color: #608079; font-size: 8px; }
+
+.registration-activity-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; border-radius: 16px; padding: 26px 28px; color: #fff; background: linear-gradient(135deg, #172e2a, #214d45); }
+.registration-activity-hero h2 { margin: 10px 0 6px; font-size: clamp(22px, 2.8vw, 34px); letter-spacing: -.04em; }
+.registration-activity-hero p { max-width: 720px; margin: 0; color: #bdd2cd; font-size: 10px; line-height: 1.65; }
+.registration-activity-hero > span { display: flex; gap: 8px; }
+.registration-activity-hero .credential-secondary { color: #dcece8; border-color: #4a716a; background: #294d47; }
+.registration-filter-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.registration-filter-strip button { display: flex; min-height: 54px; align-items: center; justify-content: space-between; border: 1px solid #dfe5e3; border-radius: 11px; padding: 0 14px; color: #6c7774; background: #fff; font-size: 10px; font-weight: 800; }
+.registration-filter-strip button b { display: grid; min-width: 26px; height: 26px; place-items: center; border-radius: 8px; background: #f0f3f2; }
+.registration-filter-strip button.active { color: #0b6e60; border-color: #9fd2c7; background: #eef9f6; }
+.registration-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.registration-card { display: grid; align-content: start; gap: 12px; min-width: 0; padding: 15px; }
+.registration-card > header, .registration-card > footer, .registration-product, .registration-channel-summary { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
+.registration-card > header > small { color: #8d9795; font-size: 8px; }
+.registration-status { display: inline-flex; min-height: 26px; align-items: center; gap: 5px; border-radius: 999px; padding: 0 9px; font-size: 8px; font-weight: 900; }
+.registration-status.analyzing, .registration-status.publishing, .registration-status.ready { color: #3962b1; background: #edf3ff; }
+.registration-status.completed { color: #11715e; background: #e8f7f2; }
+.registration-status.failed { color: #b83d47; background: #fff0f1; }
+.registration-status.blocked { color: #a86108; background: #fff4df; }
+.registration-product { justify-content: flex-start; }
+.registration-product > div { position: relative; display: grid; width: 68px; height: 68px; flex: 0 0 auto; place-items: center; overflow: hidden; border-radius: 10px; color: #94a19e; background: #f1f4f3; }
+.registration-product > span { min-width: 0; }
+.registration-product h3 { overflow: hidden; margin: 0; color: #293532; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.registration-product p { overflow: hidden; margin: 5px 0 0; color: #84908d; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.registration-progress { display: grid; gap: 6px; }
+.registration-progress > span { height: 5px; overflow: hidden; border-radius: 999px; background: #edf0ef; }
+.registration-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2874dc, #23a687); transition: width .25s ease; }
+.registration-progress small { color: #6f7b78; font-size: 8px; line-height: 1.5; }
+.registration-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.registration-card dl > div { display: grid; gap: 3px; border-radius: 8px; padding: 8px; background: #f7f9f8; }
+.registration-card dt { color: #8c9694; font-size: 7px; }
+.registration-card dd { overflow: hidden; margin: 0; color: #45534f; font-size: 9px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.registration-channel-summary { justify-content: flex-start; border-top: 1px solid #edf0ef; padding-top: 10px; color: #7b8784; font-size: 8px; }
+.registration-channel-summary b { font-size: 8px; }
+.registration-channel-summary .success { color: #16836e; }.registration-channel-summary .danger { color: #c24e56; }.registration-channel-summary .warning { color: #b56e12; }
+.registration-channel-list { display: flex; gap: 5px; flex-wrap: wrap; }
+.registration-channel-list > span { position: relative; }.registration-channel-list i { position: absolute; right: -3px; bottom: -3px; border-radius: 4px; padding: 1px 3px; color: #fff; background: #6d7a77; font-size: 5px; font-style: normal; }
+.registration-message { margin: 0; border-radius: 7px; padding: 7px 8px; color: #8b5d30; background: #fff8eb; font-size: 8px; line-height: 1.45; }
+.registration-card > footer { margin-top: auto; }.registration-empty { display: grid; min-height: 260px; place-items: center; align-content: center; gap: 8px; padding: 30px; color: #81908c; text-align: center; }.registration-empty b { color: #42514d; font-size: 13px; }.registration-empty small { font-size: 9px; }
+
+.competitor-market-groups { display: grid; gap: 14px; margin-top: 14px; }
+.competitor-market-groups > section { border-top: 1px solid #edf0f3; padding-top: 11px; }
+.competitor-market-groups > section > header { display: flex; align-items: center; justify-content: space-between; }
+.competitor-market-groups > section > header b { color: #405064; font-size: 10px; }.competitor-market-groups > section > header small { color: #8a94a2; font-size: 8px; }
+.competitor-market-groups .competitor-price-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 8px; }
+.competitor-price-empty { display: grid; min-width: 0; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 8px; border: 1px dashed #dfe4e8; border-radius: 10px; padding: 8px; background: #fafbfb; }
+.competitor-price-empty > span { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 8px; color: #a2aaa8; background: #f0f2f2; }
+.competitor-price-empty > div { display: grid; gap: 3px; min-width: 0; }.competitor-price-empty small { color: #929c99; font-size: 7px; }.competitor-price-empty b { overflow: hidden; color: #74807d; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }.competitor-price-empty strong { color: #9aa4a1; font-size: 11px; }
+.competitor-loading, .competitor-unavailable { display: flex; align-items: center; gap: 7px; color: #667d98; font-size: 9px; }.competitor-unavailable { margin: 0; color: #a16217; }
+.competitor-market-groups.compact { border: 1px solid #e2e8ed; border-radius: 10px; padding: 10px; background: #fff; }
+
+.product-detail-actions > div { display: flex; align-items: center; gap: 10px; }.product-detail-actions > div > span { display: inline-flex; align-items: center; gap: 6px; color: #7a8494; font-size: 10px; }
+.product-edit-overlay { position: fixed; z-index: 160; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(16 29 27 / 62%); backdrop-filter: blur(4px); }
+.product-edit-dialog { display: grid; width: min(1040px, 100%); max-height: calc(100svh - 48px); grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden; border-radius: 16px; background: #fff; box-shadow: 0 30px 90px rgb(0 0 0 / 25%); }
+.product-edit-dialog > header, .product-edit-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 20px; }
+.product-edit-dialog > header { border-bottom: 1px solid #e7ebe9; }.product-edit-dialog > header h2 { margin: 5px 0 3px; color: #283430; font-size: 19px; }.product-edit-dialog > header p { margin: 0; color: #78837f; font-size: 9px; }.product-edit-dialog > header > button { display: grid; width: 40px; height: 40px; place-items: center; border-radius: 9px; color: #74807d; background: #f2f4f3; }
+.product-edit-form { overflow: auto; padding: 18px 20px; overscroll-behavior: contain; }
+.product-edit-form > label { display: grid; gap: 6px; }.product-edit-form > label > span { color: #596763; font-size: 9px; font-weight: 800; }.product-edit-form input, .product-edit-form select, .product-edit-form textarea { width: 100%; min-height: 40px; border: 1px solid #dce3e0; border-radius: 8px; padding: 8px 10px; color: #34423e; background: #fff; font-size: 10px; }.product-edit-form textarea { min-height: 76px; resize: vertical; }.product-edit-form .product-edit-description { grid-column: 1 / -1; }.product-edit-form .product-edit-description textarea { min-height: 120px; }
+.product-edit-dialog > .intake-confirmations { margin: 0; border-top: 1px solid #e7ebe9; padding: 12px 20px; }.product-edit-dialog > footer { border-top: 1px solid #e7ebe9; justify-content: flex-end; }

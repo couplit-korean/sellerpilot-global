@@ -13,6 +13,7 @@ export const maxDuration = 60;
 
 const schema = z.object({
   channels: z.array(z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"])).max(8).optional(),
+  includeImBootstrap: z.boolean().default(false),
 });
 
 type CredentialRow = {
@@ -127,8 +128,11 @@ export async function POST(request: Request) {
 
   const inquiryResults = await Promise.all(credentials.map(async (credential) => {
     const channel = credential.channel as ActiveChannelKey;
-    const requests = inquirySyncArguments(channel);
+    const requests = channel === "lazada" && parsed.data.includeImBootstrap
+      ? [{ bootstrap: true, startTime: Date.now(), pageSize: 20, sessionLimit: 100 }]
+      : inquirySyncArguments(channel);
     if (!requests.length) {
+      if (channel === "lazada") return { channel, status: "push_only" as const };
       await admin.serviceClient.rpc("sellerpilot_service_mark_channel_sync", {
         p_credential_id: credential.id,
         p_channel: channel,

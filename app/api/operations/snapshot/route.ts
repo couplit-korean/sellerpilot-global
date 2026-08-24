@@ -57,7 +57,7 @@ export async function GET(request: Request) {
   const range = rangeSchema.safeParse({ from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined });
   if (!range.success) return NextResponse.json({ message: "매출 조회 기간을 확인해 주세요." }, { status: 400 });
 
-  const [{ data, error }, { data: marginScenarios }, { data: syncStatus }, { data: credentialRows, error: credentialError }, { data: aiRuntime }, { data: analytics, error: analyticsError }, { data: externalActions, error: externalActionsError }] = await Promise.all([
+  const [{ data, error }, { data: marginScenarios }, { data: syncStatus }, { data: credentialRows, error: credentialError }, { data: aiRuntime }, { data: analytics, error: analyticsError }, { data: externalActions, error: externalActionsError }, { data: registrationActivities, error: registrationActivitiesError }] = await Promise.all([
     admin.userClient.rpc("sellerpilot_get_operations_snapshot"),
     admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: 5 }),
     admin.userClient.rpc("sellerpilot_get_channel_sync_status"),
@@ -65,8 +65,9 @@ export async function GET(request: Request) {
     admin.userClient.rpc("sellerpilot_ai_runtime_status"),
     admin.userClient.rpc("sellerpilot_get_sales_analytics", { p_from: range.data.from, p_to: range.data.to }),
     admin.userClient.rpc("sellerpilot_list_external_listing_actions"),
+    admin.userClient.rpc("sellerpilot_list_registration_activity", { p_limit: 160 }),
   ]);
-  if (error || credentialError || analyticsError || externalActionsError) {
+  if (error || credentialError || analyticsError || externalActionsError || registrationActivitiesError) {
     return NextResponse.json({ message: "운영 데이터를 불러오지 못했습니다." }, { status: 500 });
   }
   const payload = data && typeof data === "object" && !Array.isArray(data)
@@ -114,6 +115,7 @@ export async function GET(request: Request) {
   payload.syncStatus = Array.isArray(syncStatus) ? syncStatus : [];
   payload.aiRuntime = aiRuntime && typeof aiRuntime === "object" && !Array.isArray(aiRuntime) ? aiRuntime : null;
   payload.externalActions = Array.isArray(externalActions) ? externalActions : [];
+  payload.registrationActivities = Array.isArray(registrationActivities) ? registrationActivities : [];
   payload.analytics = analytics && typeof analytics === "object" && !Array.isArray(analytics)
     ? analytics
     : { from: range.data.from, to: range.data.to, summary: { revenueKrw: 0, sold: 0, orderCount: 0 }, daily: [], channels: [], products: [] };

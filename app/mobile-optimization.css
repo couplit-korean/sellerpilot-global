@@ -498,6 +498,10 @@
     display: none;
   }
 
+  .alert-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
   .alert-list > button {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -1300,8 +1304,12 @@
   }
 
   .detail-preview-scroll {
-    height: min(620px, 72svh);
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    overscroll-behavior: auto;
     padding: 7px;
+    touch-action: pan-y;
   }
 
   .puck-editor-modal {
@@ -1864,18 +1872,6 @@
 /* Keep the global product/order/inquiry search reachable across every mobile width.
    Earlier visual layers hide it below 720px, so this final override must stay last. */
 @media (max-width: 720px) {
-  .alert-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    gap: 7px;
-  }
-
-  .alert-list > button {
-    min-width: 0;
-    min-height: 112px;
-    align-content: start;
-    padding: 10px;
-  }
-
   .topbar-actions .global-search {
     display: inline-flex;
     width: 44px;
@@ -1888,4 +1884,108 @@
   .topbar-actions .global-search kbd {
     display: none;
   }
+
+  .publishing-parallel-banner,
+  .registration-activity-hero {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .publishing-parallel-banner > div,
+  .registration-activity-hero > span {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .registration-activity-hero {
+    padding: 19px 16px;
+  }
+
+  .registration-filter-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .registration-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .registration-card {
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .registration-card > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .registration-product {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .registration-product > div {
+    width: 100%;
+    height: auto;
+    min-height: 84px;
+    aspect-ratio: 1;
+  }
+
+  .registration-card dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .registration-channel-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .registration-card > footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .competitor-market-groups .competitor-price-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-detail-actions > div {
+    display: grid;
+    gap: 8px;
+  }
+
+  .product-detail-actions > div > span {
+    justify-content: center;
+    text-align: center;
+  }
+
+  .product-edit-overlay {
+    align-items: end;
+    padding: 0;
+  }
+
+  .product-edit-dialog {
+    width: 100%;
+    max-height: 96svh;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .product-edit-form {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 14px;
+  }
+
+  .product-edit-dialog > header,
+  .product-edit-dialog > footer,
+  .product-edit-dialog > .intake-confirmations {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+}
+
+@media (max-width: 390px) {
+  .registration-card { padding: 8px; }
+  .registration-product h3 { font-size: 10px; }
+  .registration-card dl { display: none; }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
+import { productIntakeSchema } from "../../../../../../lib/product-intake";
 
 export const runtime = "nodejs";
 
@@ -80,4 +81,26 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   });
   if (error || data !== true) return NextResponse.json({ message: "공급처·비교 메모를 저장하지 못했습니다." }, { status: 500 });
   return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store, max-age=0" } });
+}
+
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+  const admin = await authenticateAdminRequest(request);
+  if (isAdminApiError(admin)) return admin;
+  const productId = productIdSchema.safeParse((await context.params).id);
+  const fields = productIntakeSchema.safeParse(await request.json().catch(() => null));
+  if (!productId.success || !fields.success) {
+    return NextResponse.json({ message: fields.success ? "상품 ID 형식이 올바르지 않습니다." : fields.error.issues[0]?.message ?? "상품 수정값을 확인해 주세요." }, { status: 400 });
+  }
+  const { data, error } = await admin.userClient.rpc("sellerpilot_update_product_details", {
+    p_product_id: productId.data,
+    p_fields: fields.data,
+  });
+  if (error || data !== true) {
+    const duplicateSku = error?.code === "23505";
+    const reservedStock = error?.message?.includes("stock below reserved quantity");
+    return NextResponse.json({
+      message: duplicateSku ? "이미 사용 중인 판매자 SKU입니다." : reservedStock ? "재고는 예약 재고보다 적게 저장할 수 없습니다." : "상품 정보를 저장하지 못했습니다.",
+    }, { status: duplicateSku || reservedStock ? 409 : 500 });
+  }
+  return NextResponse.json({ ok: true, fields: fields.data }, { headers: { "cache-control": "no-store, max-age=0" } });
 }

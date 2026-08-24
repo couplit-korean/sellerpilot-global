@@ -1,41 +1,18 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { naverSearchCredentials, searchNaverShopping } from "../../../../lib/competitor-prices";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 type DueProduct = { product_id: string; query: string };
-type ActiveCredential = { secret_payload?: unknown };
-
-function plainText(value: unknown) {
-  return String(value ?? "").replace(/<[^>]*>/g, "").replaceAll("&quot;", "\"").replaceAll("&amp;", "&").trim();
-}
 
 function serverClient() {
   const serviceKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
   if (!supabaseUrl || !serviceKey) return null;
   return createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
-}
-
-async function naverSearchCredentials(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
-  const environmentClientId = process.env.NAVER_SEARCH_CLIENT_ID?.trim() ?? "";
-  const environmentClientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET?.trim() ?? "";
-  if (environmentClientId && environmentClientSecret) {
-    return { clientId: environmentClientId, clientSecret: environmentClientSecret };
-  }
-  const { data, error } = await serviceClient.rpc("sellerpilot_get_active_credential_secret", {
-    p_channel: "smartstore",
-    p_environment: "production",
-  });
-  const active = data as ActiveCredential | null;
-  const secret = active?.secret_payload && typeof active.secret_payload === "object" && !Array.isArray(active.secret_payload)
-    ? active.secret_payload as Record<string, unknown>
-    : null;
-  const clientId = typeof secret?.client_id === "string" ? secret.client_id.trim() : "";
-  const clientSecret = typeof secret?.client_secret === "string" ? secret.client_secret.trim() : "";
-  return !error && clientId && clientSecret ? { clientId, clientSecret } : null;
 }
 
 async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
@@ -49,21 +26,7 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
   const results = [] as Array<{ productId: string; ok: boolean; count: number }>;
   for (const product of due) {
     try {
-      const url = new URL("https://openapi.naver.com/v1/search/shop.json");
-      url.searchParams.set("query", product.query);
-      url.searchParams.set("display", "5");
-      url.searchParams.set("sort", "sim");
-      const response = await fetch(url, { headers: { "X-Naver-Client-Id": credentials.clientId, "X-Naver-Client-Secret": credentials.clientSecret }, cache: "no-store", signal: AbortSignal.timeout(10_000) });
-      if (!response.ok) throw new Error("naver_search_failed");
-      const payload = await response.json() as { items?: Array<Record<string, unknown>> };
-      const items = (payload.items ?? []).slice(0, 5).map((item) => ({
-        externalId: String(item.productId ?? item.link ?? "").slice(0, 500),
-        title: plainText(item.title).slice(0, 1000),
-        url: String(item.link ?? "").slice(0, 4000),
-        imageUrl: String(item.image ?? "").slice(0, 4000),
-        mallName: plainText(item.mallName).slice(0, 240),
-        price: Math.max(0, Number(item.lprice ?? 0)),
-      })).filter((item) => item.externalId && item.url && Number.isFinite(item.price));
+      const items = await searchNaverShopping(product.query, credentials, 30);
       const { data: saved, error: saveError } = await serviceClient.rpc("sellerpilot_service_record_competitor_prices", { p_product_id: product.product_id, p_items: items });
       if (saveError) throw new Error("competitor_price_save_failed");
       results.push({ productId: product.product_id, ok: true, count: Number(saved ?? items.length) });
