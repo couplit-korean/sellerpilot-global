@@ -1000,7 +1000,7 @@ export async function ensureEbayAccessToken(
 
 export async function elevenstSellerXmlRequest(input: {
   payload: SecretPayload;
-  method: "POST" | "PUT";
+  method: "GET" | "POST" | "PUT";
   path: string;
   body?: string;
 }) {

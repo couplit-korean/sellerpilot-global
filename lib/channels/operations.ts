@@ -442,14 +442,47 @@ async function executeElevenst(input: ExecuteInput) {
     )], categoryId);
   }
   if (input.operation === "listing.create") {
-    const createRemote = await elevenstSellerXmlRequest({
-      payload: input.payload,
-      method: "POST",
-      path: "/rest/prodservices/product",
-      body: elevenstProductPayload(input.arguments),
-    });
-    const productNo = String(createRemote.data.productNo ?? "").trim();
-    const createStep = elevenstVerifiedStep("product-create", createRemote, Boolean(productNo));
+    const sellerProductCode = String(objectValue(input.arguments, "product").sellerPrdCd ?? "").trim();
+    const findExistingProduct = async () => {
+      if (!sellerProductCode) return null;
+      const remote = await elevenstSellerXmlRequest({
+        payload: input.payload,
+        method: "GET",
+        path: `/rest/prodmarketservice/sellerprodcode/${pathSegment(sellerProductCode)}`,
+      });
+      const productNo = String(remote.data.productNo ?? "").trim();
+      return productNo ? { remote, productNo } : null;
+    };
+
+    let reconciled = await findExistingProduct();
+    let createRemote: RemoteResponse;
+    let productNo = "";
+    let createStep: ChannelOperationStep | null = null;
+    if (reconciled) {
+      createRemote = reconciled.remote;
+      productNo = reconciled.productNo;
+      createStep = elevenstVerifiedStep("product-create-reconcile", createRemote, true);
+    } else {
+      try {
+        createRemote = await elevenstSellerXmlRequest({
+          payload: input.payload,
+          method: "POST",
+          path: "/rest/prodservices/product",
+          body: elevenstProductPayload(input.arguments),
+        });
+      } catch (error) {
+        for (let attempt = 1; attempt <= 3 && !reconciled; attempt += 1) {
+          await operationDelay(800 * attempt);
+          reconciled = await findExistingProduct();
+        }
+        if (!reconciled) throw error;
+        createRemote = reconciled.remote;
+        productNo = reconciled.productNo;
+        createStep = elevenstVerifiedStep("product-create-reconcile", createRemote, true);
+      }
+      if (!productNo) productNo = String(createRemote.data.productNo ?? "").trim();
+      if (!createStep) createStep = elevenstVerifiedStep("product-create", createRemote, Boolean(productNo));
+    }
     if (!createStep.ok || !productNo) return result(input, [createStep]);
 
     let readbackRemote: RemoteResponse | null = null;

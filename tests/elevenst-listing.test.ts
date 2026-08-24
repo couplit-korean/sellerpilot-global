@@ -139,6 +139,9 @@ test("11st verification listing creates, reads back, and stops the exact remote 
   globalThis.fetch = async (input, init) => {
     const call = { url: String(input), method: String(init?.method ?? "GET"), body: String(init?.body ?? "") };
     calls.push(call);
+    if (call.url.includes("/rest/prodmarketservice/sellerprodcode/")) {
+      return new Response("<ClientMessage><message>not found</message><resultCode>404</resultCode></ClientMessage>", { status: 404 });
+    }
     if (call.url.endsWith("/rest/prodservices/product")) {
       return new Response("<ClientMessage><message>created</message><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
     }
@@ -157,6 +160,7 @@ test("11st verification listing creates, reads back, and stops the exact remote 
         verificationOnly: true,
         product: {
           prdNm: "SellerPilot <QA>",
+          sellerPrdCd: "QA-001",
           dispCtgrNo: "1000000",
           prdImage01: "https://example.com/product.jpg",
           htmlDetail: "<p>detail</p>",
@@ -172,12 +176,52 @@ test("11st verification listing creates, reads back, and stops the exact remote 
     assert.equal(result.remoteId, "123456789");
     assert.equal(result.publicUrl, "https://www.11st.co.kr/products/123456789");
     assert.deepEqual(result.steps.map((step) => step.name), ["product-create", "product-readback", "verification-stop-display"]);
-    assert.deepEqual(calls.map((call) => call.method), ["POST", "POST", "PUT"]);
-    assert.match(calls[0].body, /SellerPilot &lt;QA&gt;/);
-    assert.match(calls[0].body, /<aplBgnDy>2026\/08\/24<\/aplBgnDy>/);
-    assert.match(calls[0].body, /<aplEndDy>2999\/12\/31<\/aplEndDy>/);
-    assert.match(calls[1].body, /<prdNo>123456789<\/prdNo>/);
-    assert.match(calls[2].url, /stopdisplay\/123456789$/);
+    assert.deepEqual(calls.map((call) => call.method), ["GET", "POST", "POST", "PUT"]);
+    assert.match(calls[0].url, /sellerprodcode\/QA-001$/);
+    assert.match(calls[1].body, /SellerPilot &lt;QA&gt;/);
+    assert.match(calls[1].body, /<aplBgnDy>2026\/08\/24<\/aplBgnDy>/);
+    assert.match(calls[1].body, /<aplEndDy>2999\/12\/31<\/aplEndDy>/);
+    assert.match(calls[2].body, /<prdNo>123456789<\/prdNo>/);
+    assert.match(calls[3].url, /stopdisplay\/123456789$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st listing reconciles a timed-out create by seller product code without a duplicate write", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  let sellerLookupCount = 0;
+  globalThis.fetch = async (input, init) => {
+    const call = { url: String(input), method: String(init?.method ?? "GET") };
+    calls.push(call);
+    if (call.url.includes("/rest/prodmarketservice/sellerprodcode/")) {
+      sellerLookupCount += 1;
+      if (sellerLookupCount === 1) return new Response("<ClientMessage><resultCode>404</resultCode></ClientMessage>", { status: 404 });
+      return new Response("<Product><prdNo>987654321</prdNo><sellerPrdCd>QA-TIMEOUT-001</sellerPrdCd></Product>", { status: 200 });
+    }
+    if (call.url.endsWith("/rest/prodservices/product")) throw new DOMException("timed out", "TimeoutError");
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket")) {
+      return new Response("<ns2:products><ns2:product><prdNo>987654321</prdNo><sellerPrdCd>QA-TIMEOUT-001</sellerPrdCd><selStatCd>103</selStatCd></ns2:product></ns2:products>", { status: 200 });
+    }
+    return new Response("<ClientMessage><message>stopped</message><resultCode>200</resultCode></ClientMessage>", { status: 200 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.create",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: {
+        verificationOnly: true,
+        product: { sellerPrdCd: "QA-TIMEOUT-001", prdNm: "SellerPilot timeout QA" },
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "987654321");
+    assert.deepEqual(result.steps.map((item) => item.name), ["product-create-reconcile", "product-readback", "verification-stop-display"]);
+    assert.equal(calls.filter((call) => call.url.endsWith("/rest/prodservices/product")).length, 1);
+    assert.equal(calls.filter((call) => call.url.includes("/sellerprodcode/")).length, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }
