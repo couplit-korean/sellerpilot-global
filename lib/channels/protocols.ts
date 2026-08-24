@@ -940,6 +940,63 @@ export async function ensureEbayAccessToken(
   };
 }
 
+export async function elevenstSellerXmlRequest(input: {
+  payload: SecretPayload;
+  method: "POST" | "PUT";
+  path: string;
+  body?: string;
+}) {
+  const apiKey = textValue(input.payload, "api_key");
+  if (!apiKey) throw new Error("ELEVENST_CREDENTIALS_MISSING");
+  if (!input.path.startsWith("/rest/")) throw new Error("ELEVENST_PATH_INVALID");
+  const response = await fetch(`https://api.11st.co.kr${input.path}`, {
+    method: input.method,
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+    headers: {
+      accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
+      "content-type": "text/xml;charset=UTF-8",
+      openapikey: apiKey,
+      "user-agent": "SellerPilot-11st-SellerAPI-Connector/1.0",
+    },
+    body: input.body,
+  });
+  const bytes = await response.arrayBuffer();
+  let xml = "";
+  try {
+    xml = new TextDecoder("euc-kr").decode(bytes);
+  } catch {
+    xml = new TextDecoder().decode(bytes);
+  }
+  const resultCode = elevenstNamespacedXmlValue(xml, "resultCode")
+    || elevenstNamespacedXmlValue(xml, "ResultCode")
+    || elevenstNamespacedXmlValue(xml, "ErrorCode");
+  const resultMessage = elevenstNamespacedXmlValue(xml, "resultMessage")
+    || elevenstNamespacedXmlValue(xml, "ResultMessage")
+    || elevenstNamespacedXmlValue(xml, "ErrorMessage")
+    || elevenstNamespacedXmlValue(xml, "message")
+    || elevenstNamespacedXmlValue(xml, "AuthMessage");
+  const productNo = elevenstNamespacedXmlValue(xml, "productNo")
+    || elevenstNamespacedXmlValue(xml, "prdNo");
+  const products = elevenstXmlNodes(xml, "product").slice(0, 500).map((node) => ({
+    productNo: elevenstNamespacedXmlValue(node, "prdNo"),
+    sellerProductCode: elevenstNamespacedXmlValue(node, "sellerPrdCd"),
+    statusCode: elevenstNamespacedXmlValue(node, "selStatCd"),
+  }));
+  const acceptedCode = !resultCode || ["0", "200", "210"].includes(resultCode);
+  return {
+    response,
+    text: "",
+    data: {
+      accepted: response.ok && acceptedCode,
+      ...(resultCode ? { resultCode: resultCode.slice(0, 80) } : {}),
+      ...(resultMessage ? { resultMessage: resultMessage.slice(0, 300) } : {}),
+      ...(productNo ? { productNo: productNo.slice(0, 80) } : {}),
+      products,
+    },
+  } satisfies RemoteResponse;
+}
+
 export async function ebayRequest(input: {
   payload: SecretPayload;
   environment: "sandbox" | "production";

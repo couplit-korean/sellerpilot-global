@@ -302,6 +302,23 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     return next;
   }
 
+  if (channel === "elevenst") {
+    const product = record(next.product);
+    if (!product) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
+    const normalized = gallery.length ? uniqueStrings([...gallery, ...details]).slice(0, 4) : await normalizeList([
+      product.prdImage01,
+      product.prdImage02,
+      product.prdImage03,
+      product.prdImage04,
+    ], 4);
+    if (!normalized.length) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
+    normalized.forEach((url, index) => {
+      product[`prdImage0${index + 1}`] = url;
+    });
+    product.htmlDetail = appendDetailImages(product.htmlDetail, details, detailImageAltTexts, detailImageRoles);
+    return next;
+  }
+
   if (channel === "temu") {
     const body = record(next.body);
     const goodsBasic = record(body?.goodsBasic);

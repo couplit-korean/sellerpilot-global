@@ -2,6 +2,7 @@ import {
   coupangRequest,
   ebayRequest,
   elevenstOrderRequest,
+  elevenstSellerXmlRequest,
   fetchNaverAccessToken,
   lazadaRequest,
   naverRequest,
@@ -303,16 +304,114 @@ function ensureProviderSupport(channel: ActiveChannelKey, operation: ChannelOper
   if (capability.mode === "vendor_docs_required") throw new Error(`CHANNEL_VENDOR_SPEC_REQUIRED:${operation}`);
 }
 
-async function executeElevenst(input: ExecuteInput) {
-  if (input.operation !== "orders.list") {
-    throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
+function elevenstXmlEscape(value: string) {
+  return value.replace(/[<>&'"]/g, (character) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    "'": "&apos;",
+    '"': "&quot;",
+  })[character] ?? character);
+}
+
+function elevenstXmlNode(name: string, value: unknown): string {
+  if (value === null || value === undefined || value === "") return "";
+  if (!/^[A-Za-z][A-Za-z0-9_:-]*$/.test(name)) throw new Error("ELEVENST_PAYLOAD_TAG_INVALID");
+  if (Array.isArray(value)) return value.map((item) => elevenstXmlNode(name, item)).join("");
+  if (typeof value === "object") {
+    const children = Object.entries(value as Record<string, unknown>)
+      .map(([childName, childValue]) => elevenstXmlNode(childName, childValue))
+      .join("");
+    return `<${name}>${children}</${name}>`;
   }
-  const remote = await elevenstOrderRequest({
-    payload: input.payload,
-    startTime: stringArgument(input.arguments, "startTime"),
-    endTime: stringArgument(input.arguments, "endTime"),
-  });
-  return result(input, [step("orders", remote)]);
+  return `<${name}>${elevenstXmlEscape(String(value))}</${name}>`;
+}
+
+function elevenstProductPayload(argumentsValue: Record<string, unknown>) {
+  const product = objectValue(argumentsValue, "product");
+  return `<?xml version="1.0" encoding="UTF-8"?>${elevenstXmlNode("Product", product)}`;
+}
+
+function elevenstSearchPayload(productNo: string) {
+  return `<?xml version="1.0" encoding="UTF-8"?>${elevenstXmlNode("SearchProduct", {
+    prdNo: productNo,
+    limit: "1",
+    start: "1",
+    end: "1",
+  })}`;
+}
+
+function elevenstVerifiedStep(name: string, remote: RemoteResponse, verified = true) {
+  const remoteStep = step(name, remote);
+  const accepted = remote.data.accepted === true && verified;
+  return {
+    ...remoteStep,
+    ok: remoteStep.ok && accepted,
+    data: {
+      ...remoteStep.data,
+      sellerpilotVerification: accepted ? "ELEVENST_RESPONSE_VERIFIED" : "ELEVENST_RESPONSE_UNVERIFIED",
+    },
+  };
+}
+
+async function executeElevenst(input: ExecuteInput) {
+  if (input.operation === "listing.create") {
+    const createRemote = await elevenstSellerXmlRequest({
+      payload: input.payload,
+      method: "POST",
+      path: "/rest/prodservices/product",
+      body: elevenstProductPayload(input.arguments),
+    });
+    const productNo = String(createRemote.data.productNo ?? "").trim();
+    const createStep = elevenstVerifiedStep("product-create", createRemote, Boolean(productNo));
+    if (!createStep.ok || !productNo) return result(input, [createStep]);
+
+    let readbackRemote: RemoteResponse | null = null;
+    let readbackVerified = false;
+    for (let attempt = 0; attempt < 3 && !readbackVerified; attempt += 1) {
+      if (attempt > 0) await operationDelay(800 * attempt);
+      readbackRemote = await elevenstSellerXmlRequest({
+        payload: input.payload,
+        method: "POST",
+        path: "/rest/prodmarketservice/prodmarket",
+        body: elevenstSearchPayload(productNo),
+      });
+      const products = Array.isArray(readbackRemote.data.products) ? readbackRemote.data.products : [];
+      readbackVerified = products.some((item) => item && typeof item === "object" && String((item as Record<string, unknown>).productNo) === productNo);
+    }
+    if (!readbackRemote) throw new Error("ELEVENST_READBACK_MISSING");
+    const readbackStep = elevenstVerifiedStep("product-readback", readbackRemote, readbackVerified);
+    const steps: ChannelOperationStep[] = [createStep, readbackStep];
+    if (booleanArgument(input.arguments, "verificationOnly")) {
+      const stopRemote = await elevenstSellerXmlRequest({
+        payload: input.payload,
+        method: "PUT",
+        path: `/rest/prodstatservice/stat/stopdisplay/${pathSegment(productNo)}`,
+      });
+      steps.push(elevenstVerifiedStep("verification-stop-display", stopRemote));
+    }
+    const operationResult = result(input, steps, productNo);
+    operationResult.publicUrl = `https://www.11st.co.kr/products/${pathSegment(productNo)}`;
+    return operationResult;
+  }
+  if (input.operation === "listing.stop") {
+    const productNo = pathSegment(stringArgument(input.arguments, "productNo"));
+    const remote = await elevenstSellerXmlRequest({
+      payload: input.payload,
+      method: "PUT",
+      path: `/rest/prodstatservice/stat/stopdisplay/${productNo}`,
+    });
+    return result(input, [elevenstVerifiedStep("stop-display", remote)], decodeURIComponent(productNo));
+  }
+  if (input.operation === "orders.list") {
+    const remote = await elevenstOrderRequest({
+      payload: input.payload,
+      startTime: stringArgument(input.arguments, "startTime"),
+      endTime: stringArgument(input.arguments, "endTime"),
+    });
+    return result(input, [step("orders", remote)]);
+  }
+  throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
 }
 
 function qoo10DetailHtml(value: unknown, depth = 0): string {

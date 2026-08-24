@@ -335,6 +335,64 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
       },
     };
   }
+  if (channel === "elevenst") {
+    const providedAttributes = assignment?.providedAttributes ?? {};
+    const verificationOnly = (manual.sellerSku || product.sku).startsWith("QA-");
+    const notificationType = providedAttributes.notificationType || (verificationOnly ? "891045" : "");
+    const providedNoticeItems = Object.entries(providedAttributes)
+      .filter(([key, value]) => key.startsWith("notification:") && value.trim().length > 0)
+      .map(([key, value]) => ({ code: key.slice("notification:".length), name: value }));
+    const notificationItems = providedNoticeItems.length ? providedNoticeItems : verificationOnly ? [
+      { code: "11800", name: title.slice(0, 100) },
+      { code: "11905", name: manual.manufacturer || manual.brandName },
+      { code: "23760413", name: "11번가 판매자 문의 이용" },
+      { code: "23759100", name: manual.countryOfOrigin },
+      { code: "23756033", name: "해당사항 없음" },
+    ] : [];
+    return {
+      sellerpilotAssets,
+      verificationOnly,
+      product: {
+        selMthdCd: "01",
+        dispCtgrNo: assignment?.categoryId ?? "",
+        prdTypCd: "01",
+        prdNm: title.slice(0, 100),
+        brand: manual.brandName || "알수없음",
+        rmaterialTypCd: "04",
+        orgnTypCd: "03",
+        orgnNmVal: manual.countryOfOrigin,
+        sellerPrdCd: (manual.sellerSku || product.sku).slice(0, 50),
+        suplDtyfrPrdClfCd: "01",
+        forAbrdBuyClf: "01",
+        prdStatCd: manual.condition === "NEW" ? "01" : "02",
+        minorSelCnYn: "Y",
+        prdImage01: sourceImage,
+        prdImage02: galleryImageUrls[1] ?? "",
+        prdImage03: galleryImageUrls[2] ?? "",
+        prdImage04: galleryImageUrls[3] ?? "",
+        htmlDetail: richDescription,
+        ProductCertGroup: verificationOnly ? [
+          { crtfGrpTypCd: "01", crtfGrpObjClfCd: "03", ProductCert: { certTypeCd: "131", certKey: "해당사항 없음" } },
+          { crtfGrpTypCd: "02", crtfGrpObjClfCd: "03", ProductCert: { certTypeCd: "131", certKey: "해당사항 없음" } },
+          { crtfGrpTypCd: "03", crtfGrpObjClfCd: "03", ProductCert: { certTypeCd: "131", certKey: "해당사항 없음" } },
+          { crtfGrpTypCd: "04", crtfGrpObjClfCd: "05", ProductCert: { certTypeCd: "131", certKey: "해당사항 없음" } },
+        ] : [],
+        selPrdClfCd: "3y:110",
+        selPrc: String(Math.max(10, Math.round(channelPrice / 10) * 10)),
+        prdSelQty: String(quantity),
+        dlvCnAreaCd: "01",
+        dlvWyCd: "01",
+        dlvCstInstBasiCd: "01",
+        bndlDlvCnYn: "Y",
+        dlvCstPayTypCd: "03",
+        rtngdDlvCst: "0",
+        exchDlvCst: "0",
+        asDetail: "11번가 판매자 문의를 이용해 주세요.",
+        rtngExchDetail: "11번가 반품·교환 정책을 확인해 주세요.",
+        ProductNotification: { type: notificationType, item: notificationItems },
+      },
+    };
+  }
   if (channel === "smartstore") {
     return {
       sellerpilotAssets,
@@ -428,6 +486,7 @@ function missingNativeValues(channel: ActiveChannelKey, value: Record<string, un
   }
   if (channel === "lazada") return [...assetRequirements, !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", json.includes('"package_weight":"0"') || json.includes('"package_weight":""') ? "package size/weight" : ""].filter(Boolean);
   if (channel === "coupang") return [...assetRequirements, json.includes('"displayCategoryCode":0') ? "displayCategoryCode" : "", !json.includes('"vendorPath":"https://') ? "public product image" : ""].filter(Boolean);
+  if (channel === "elevenst") return [...assetRequirements, !json.includes('"prdImage01":"https://') ? "public product image" : "", json.includes('"dispCtgrNo":""') ? "dispCtgrNo" : "", !json.includes('"ProductNotification"') ? "ProductNotification" : ""].filter(Boolean);
   if (channel === "smartstore") return [...assetRequirements, !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", !json.includes('"originAreaCode":"04"') ? "originAreaInfo" : ""].filter(Boolean);
   if (channel === "temu") return [...assetRequirements, json.includes('"skuList":[]') ? "skuList" : "", json.includes('"images":[]') ? "images" : "", json.includes('"externalGoodsId":""') ? "externalGoodsId" : ""].filter(Boolean);
   return [...assetRequirements, json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
