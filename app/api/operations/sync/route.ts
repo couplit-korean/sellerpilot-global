@@ -26,6 +26,17 @@ type CredentialRow = {
 
 const gatewayChannels = new Set<ActiveChannelKey>(["shopee", "lazada", "coupang", "elevenst", "smartstore", "temu"]);
 
+function safeSyncFailure(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : "";
+  const sanitized = message
+    .replace(/https?:\/\/\S+/gi, "[URL]")
+    .replace(/\b(key|token|secret|authorization|signature)=\S+/gi, "$1=[redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 700);
+  return sanitized ? `${fallback} · ${sanitized}` : fallback;
+}
+
 export async function POST(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
@@ -114,13 +125,13 @@ export async function POST(request: Request) {
       });
       if (ingestError) throw new Error("order_ingest_failed");
       return { channel, status: "passed" as const, importedCount: orders.length };
-    } catch {
+    } catch (error) {
       await admin.serviceClient.rpc("sellerpilot_service_mark_channel_sync", {
         p_credential_id: credential.id,
         p_channel: channel,
         p_data_type: "orders",
         p_status: "failed",
-        p_error: "판매채널 주문 조회 또는 원장 저장을 완료하지 못했습니다.",
+        p_error: safeSyncFailure(error, "판매채널 주문 조회 또는 원장 저장을 완료하지 못했습니다."),
       });
       return { channel, status: "failed" as const };
     }
@@ -183,13 +194,13 @@ export async function POST(request: Request) {
       });
       if (ingestError) throw new Error("inquiry_ingest_failed");
       return { channel, status: "passed" as const, importedCount: inquiries.length };
-    } catch {
+    } catch (error) {
       await admin.serviceClient.rpc("sellerpilot_service_mark_channel_sync", {
         p_credential_id: credential.id,
         p_channel: channel,
         p_data_type: "inquiries",
         p_status: "failed",
-        p_error: "판매채널 문의 조회 또는 원장 저장을 완료하지 못했습니다.",
+        p_error: safeSyncFailure(error, "판매채널 문의 조회 또는 원장 저장을 완료하지 못했습니다."),
       });
       return { channel, status: "failed" as const };
     }
