@@ -1,8 +1,9 @@
 import { aiGeneratedAssetSpecs, type AiGeneratedAssetId } from "./ai-generated-assets";
 import { channelStyleProfiles, matchStyleCategory } from "./marketplace-style-learning";
+import { buildProductSettingShotPlan, formatProductSettingShot, settingShotAssetIds } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.24-r4";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.24-r5";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -59,13 +60,13 @@ function assetShot(categoryShots: string[], assetId: AiGeneratedAssetId) {
 }
 
 function seriesExclusion(assetId: AiGeneratedAssetId) {
-  if (assetId === "detail-overview") return "Do not turn this into a macro crop, overhead package flat lay, or lifestyle use scene.";
+  if (assetId === "detail-overview") return "Do not turn this into a macro crop or overhead package flat lay. Show the whole product in its assigned storage or preparation environment, distinct from the active-use scene.";
   if (assetId === "detail-feature") return "Do not repeat the full-product front hero or overview composition; the visible feature must be the clear subject.";
   if (assetId === "detail-use") return "Do not use a seamless catalog backdrop, macro-only crop, or package flat lay; the environment must explain real use.";
   if (assetId === "detail-package") return "Do not create a lifestyle scene or hero pedestal, and never duplicate one physical item to imply a set.";
   if (assetId === "square") return "Do not add lifestyle props, gradients, banners, badges, or promotional text.";
-  if (assetId === "portrait") return "Do not reuse the centered square catalog layout; the vertical composition must be visibly distinct.";
-  if (assetId === "wide") return "Do not crop a square composition into a banner; compose natively for the horizontal frame.";
+  if (assetId === "portrait") return "Do not reuse the centered square catalog layout or a colored studio wall; the vertical composition must be a real assigned environment.";
+  if (assetId === "wide") return "Do not crop a square composition into a banner or use an abstract studio set; compose the assigned real environment natively for the horizontal frame.";
   return "Do not reuse the exact framing intended for the square catalog thumbnail or any detail-page slot.";
 }
 
@@ -93,6 +94,11 @@ export function buildAssetImagePrompt(
   }))].join(" | ").slice(0, 2_400);
   const referenceRoles = inputRoles.length ? inputRoles.join(", ") : "main";
   const requiredShot = assetShot(categoryStyle.shotList, preset.id);
+  const productText = [result.product.category, result.product.name, ...result.product.features].join(" ");
+  const settingPlan = buildProductSettingShotPlan(categoryStyle.id, productText);
+  const settingShot = settingShotAssetIds.includes(preset.id as (typeof settingShotAssetIds)[number])
+    ? settingPlan[preset.id as keyof typeof settingPlan]
+    : null;
 
   return [
     "설치된 codex-image 스킬의 규칙을 사용하고 반드시 내장 image_gen 도구로 이미지를 제작하세요.",
@@ -101,8 +107,11 @@ export function buildAssetImagePrompt(
     `Asset type: ${preset.label} for a real marketplace listing`,
     `Series slot: ${preset.id}. This slot must have a recognizably different camera, crop, setting and purchase-information purpose from the other seven slots.`,
     "Uniqueness contract: no SellerPilot output may reuse another slot's camera position, crop, background layout, prop arrangement or subject placement. A merely recolored or lightly reframed version counts as a duplicate and must not be produced.",
+    "Series setting-shot contract: hero and square are the only catalog-background shots. Portrait, wide, detail-overview and detail-use are four mandatory real-world setting shots, each in a different physical location, moment, surface material, prop set and subject placement. A colored wall, geometric panel, gradient or pedestal is not a setting shot.",
     `Input references in order: ${referenceRoles}. Image 1 anchors product identity; later images are factual views for shape, label, material and package verification, not separate products.`,
     `Scene/backdrop: ${preset.scene}. Use ${result.design.palette.surface} and ${result.design.palette.accent} only as restrained palette guidance, not as the same repeated studio set.`,
+    settingShot ? `Mandatory product-specific setting: ${formatProductSettingShot(settingShot)}` : "Inspection-shot assignment: keep this factual catalog, macro or package view free from lifestyle staging so it cannot duplicate the four setting shots.",
+    settingShot ? "Setting-shot validity: the assigned place and use moment must be immediately recognizable without text through at least two physical environmental cues. Reserve roughly 30–45% of the frame for readable spatial context while keeping the real product dominant. Do not replace it with an abstract commercial background, colored blocks, a seamless sweep or a generic pedestal." : "",
     `Subject: ${result.product.name}; preserve package shape, label, logo, printed information, color, count and included items exactly as visible.`,
     `Composition/framing: ${preset.composition}; target aspect ratio ${preset.ratio}.`,
     `Camera: ${preset.camera}.`,
@@ -116,6 +125,7 @@ export function buildAssetImagePrompt(
     "Lighting/mood: commercially realistic lighting appropriate to this specific shot; crisp product identity and believable contact shadows.",
     "Constraints: the product must be the obvious dominant subject; no invented ingredients, certification, barcode, quantity, accessories, package text or extra product; no watermark; no floating copy; no decorative text.",
     "Avoid: distant product, tiny subject, scenic landscape dominating the frame, illegible altered label, duplicate product, cropped package, busy props, people or hands unless a supplied reference proves them, and logos not present in the reference.",
+    settingShot ? "Mandatory self-QA before finishing: inspect the generated PNG. If the assigned physical place is not instantly identifiable, if it looks like a studio background, or if its location/surface/props could be confused with another SellerPilot setting slot, regenerate it before saving the final file." : "",
     `생성 결과 PNG를 정확히 ${outputPath} 경로에 저장하세요. Python·SVG·Canvas로 대체 이미지를 만들지 마세요.`,
   ].filter(Boolean).join("\n");
 }

@@ -3,6 +3,7 @@ import test from "node:test";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import { AI_ASSET_PROMPT_VERSION, buildAssetImagePrompt, selectAssetReferenceIndexes } from "../lib/ai-image-planning";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
+import { buildProductSettingShotPlan, settingShotAssetIds } from "../lib/product-setting-shots";
 import {
   buildDuplicateRetryGuidance,
   findDuplicateShot,
@@ -58,7 +59,7 @@ test("the four detail slots receive visibly distinct scene and camera contracts"
   const prompts = detailPresets.map((preset) => buildAssetImagePrompt(result, `/tmp/${preset.file}`, preset, ["main", ...preset.referenceRoles]));
   assert.equal(new Set(prompts).size, 4);
   assert.ok(prompts.every((prompt) => prompt.includes(AI_ASSET_PROMPT_VERSION)));
-  assert.match(prompts[0], /three-quarter overview camera/);
+  assert.match(prompts[0], /environmental overview camera/);
   assert.match(prompts[1], /macro or close-focus/);
   assert.match(prompts[2], /medium environmental camera/);
   assert.match(prompts[3], /true overhead flat-lay camera/);
@@ -72,6 +73,46 @@ test("food use imagery selects a preparation or use shot instead of package quan
   const prompt = buildAssetImagePrompt(foodResult, "/tmp/detail-use.png", preset, ["main", "front"]);
   assert.match(prompt, /Required shot for this slot: 조리 완성/);
   assert.doesNotMatch(prompt, /Required shot for this slot: 구성 수량/);
+});
+
+test("cereal generation assigns four recognizably different real setting shots", () => {
+  const cerealResult = { ...result, product: { ...result.product, category: "식품", name: "첵스초코 초코 시리얼" } };
+  const prompts = settingShotAssetIds.map((assetId) => {
+    const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+    assert.ok(preset);
+    return buildAssetImagePrompt(cerealResult, `/tmp/${preset.file}`, preset, ["main", "front"]);
+  });
+  const assignments = prompts.map((prompt) => prompt.match(/^Mandatory product-specific setting: (.+)$/m)?.[1] ?? "");
+  assert.equal(new Set(assignments).size, 4);
+  assert.ok(assignments.every(Boolean));
+  assert.match(assignments[0], /아침 식탁/);
+  assert.match(assignments[1], /주방.*조리대/);
+  assert.match(assignments[2], /팬트리/);
+  assert.match(assignments[3], /다이닝 테이블/);
+  assert.ok(prompts.every((prompt) => prompt.includes("A colored wall, geometric panel, gradient or pedestal is not a setting shot.")));
+  assert.ok(prompts.every((prompt) => prompt.includes("Mandatory self-QA before finishing:")));
+  assert.ok(prompts.every((prompt) => prompt.includes("30–45% of the frame")));
+});
+
+test("every learned category receives four different places and surface materials", () => {
+  const categories = ["beauty-skincare", "beauty-tools", "food-staples", "men-tops", "toys-games", "food-supplement", "general-commerce"];
+  for (const category of categories) {
+    const settingPlan = buildProductSettingShotPlan(category, category === "food-staples" ? "파스타 식품" : category);
+    const shots = Object.values(settingPlan);
+    assert.equal(shots.length, 4);
+    assert.equal(new Set(shots.map((item) => item.location)).size, 4, `${category} must use four locations`);
+    assert.equal(new Set(shots.map((item) => item.surface)).size, 4, `${category} must use four surface treatments`);
+  }
+});
+
+test("catalog and factual inspection slots stay separate from setting-shot slots", () => {
+  for (const assetId of ["hero", "square", "detail-feature", "detail-package"] as const) {
+    const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+    assert.ok(preset);
+    const prompt = buildAssetImagePrompt(result, `/tmp/${preset.file}`, preset, ["main", "front"]);
+    assert.match(prompt, /Inspection-shot assignment:/);
+    assert.doesNotMatch(prompt, /^Mandatory product-specific setting:/m);
+  }
 });
 
 test("failed order and inquiry reads are stored as failed gateway jobs", () => {
