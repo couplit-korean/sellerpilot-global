@@ -374,10 +374,12 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         prdImage04: galleryImageUrls[3] ?? "",
         htmlDetail: richDescription,
         ProductCertGroup: verificationOnly ? [
-          { crtfGrpTypCd: "01", crtfGrpObjClfCd: "03", ProductCert: { certTypeCd: "131", certKey: "해당사항 없음" } },
-          { crtfGrpTypCd: "02", crtfGrpObjClfCd: "03", ProductCert: { certTypeCd: "131", certKey: "해당사항 없음" } },
-          { crtfGrpTypCd: "03", crtfGrpObjClfCd: "03", ProductCert: { certTypeCd: "131", certKey: "해당사항 없음" } },
-          { crtfGrpTypCd: "04", crtfGrpObjClfCd: "05", ProductCert: { certTypeCd: "131", certKey: "해당사항 없음" } },
+          // This non-regulated QA product has no certificate. Sending a made-up
+          // certTypeCd makes 11st validate it as a real certificate and reject it.
+          { crtfGrpTypCd: "01", crtfGrpObjClfCd: "03" },
+          { crtfGrpTypCd: "02", crtfGrpObjClfCd: "03" },
+          { crtfGrpTypCd: "03", crtfGrpObjClfCd: "03" },
+          { crtfGrpTypCd: "04", crtfGrpObjClfCd: "05" },
         ] : [],
         selPrdClfCd: "3y:110",
         ...saleDateRange,

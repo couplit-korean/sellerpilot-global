@@ -168,6 +168,10 @@ test("11st verification listing creates, reads back, and stops the exact remote 
           aplEndDy: "2029/08/23",
           selPrc: "10000",
           prdSelQty: "1",
+          ProductCertGroup: [
+            { crtfGrpTypCd: "01", crtfGrpObjClfCd: "03" },
+            { crtfGrpTypCd: "04", crtfGrpObjClfCd: "05" },
+          ],
           ProductNotification: { type: "891045", item: [{ code: "11800", name: "QA" }] },
         },
       },
@@ -181,6 +185,8 @@ test("11st verification listing creates, reads back, and stops the exact remote 
     assert.match(calls[1].body, /SellerPilot &lt;QA&gt;/);
     assert.match(calls[1].body, /<aplBgnDy>2026\/08\/24<\/aplBgnDy>/);
     assert.match(calls[1].body, /<aplEndDy>2029\/08\/23<\/aplEndDy>/);
+    assert.match(calls[1].body, /<ProductCertGroup><crtfGrpTypCd>01<\/crtfGrpTypCd><crtfGrpObjClfCd>03<\/crtfGrpObjClfCd><\/ProductCertGroup>/);
+    assert.doesNotMatch(calls[1].body, /<certTypeCd>|<certKey>/);
     assert.match(calls[2].body, /<prdNo>123456789<\/prdNo>/);
     assert.match(calls[3].url, /stopdisplay\/123456789$/);
   } finally {
