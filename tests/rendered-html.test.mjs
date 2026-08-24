@@ -135,6 +135,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(categoryWorkbench, /sellerpilot:category-workbench:/);
   assert.match(categoryWorkbench, /restoreCategoryStates\(productId\)/);
   assert.match(mobileStyles, /\.alert-list\s*\{\s*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\) !important/);
+  assert.match(mobileStyles, /\.registration-card dl\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.doesNotMatch(mobileStyles, /\.registration-card dl\s*\{\s*display:\s*none;/);
   assert.doesNotMatch(page, /<PublishingPage key=\{publishingProduct/);
   assert.match(page, /resolvedProductId = analyzedProductId \?\? initialProduct\?\.id \?\? null/);
   assert.match(page, /event === "INITIAL_SESSION" \|\| event === "SIGNED_IN"/);

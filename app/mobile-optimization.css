@@ -1987,5 +1987,12 @@
 @media (max-width: 390px) {
   .registration-card { padding: 8px; }
   .registration-product h3 { font-size: 10px; }
-  .registration-card dl { display: none; }
+  .registration-card dl {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 5px;
+  }
+  .registration-card dl > div { padding: 6px; }
+  .registration-card dt { font-size: 6px; }
+  .registration-card dd { font-size: 8px; }
 }
