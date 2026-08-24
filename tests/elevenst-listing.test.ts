@@ -110,6 +110,28 @@ test("11st seller XML request keeps the key in the header and returns only safe 
   }
 });
 
+test("11st listing failures preserve the provider result message without exposing credentials", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    "<?xml version=\"1.0\"?><ClientMessage><message>상품등록실패 : 판매가는 10원 단위로 입력해 주세요.</message><resultCode>500</resultCode></ClientMessage>",
+    { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } },
+  );
+  try {
+    const result = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.create",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: { product: { prdNm: "SellerPilot QA", selPrc: "10" } },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.safeMessage, /판매가는 10원 단위/);
+    assert.doesNotMatch(result.safeMessage, new RegExp(apiKey));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("11st verification listing creates, reads back, and stops the exact remote product", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string; body: string }> = [];

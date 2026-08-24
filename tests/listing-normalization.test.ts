@@ -15,6 +15,7 @@ test("KRW channels round positive prices up to the required ten-won unit", () =>
   assert.equal(normalizeTenWonAmount(99_999), 100_000);
   assert.equal(normalizeTenWonAmount("299"), "300");
   assert.equal(marketplaceListingPrice("coupang", 99_999), 100_000);
+  assert.equal(marketplaceListingPrice("elevenst", 99_999, { globalBaseUsdPrice: 12.9 }), 100_000);
   assert.equal(marketplaceListingPrice("smartstore", 99_999), 100_000);
   assert.equal(marketplaceListingPrice("lazada", 299), 299);
 });

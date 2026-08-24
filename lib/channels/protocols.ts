@@ -807,7 +807,8 @@ export async function elevenstRequest(input: {
   const bytes = await response.arrayBuffer();
   let xml = "";
   try {
-    xml = new TextDecoder("euc-kr").decode(bytes);
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    xml = new TextDecoder(/charset\s*=\s*["']?utf-?8/.test(contentType) ? "utf-8" : "euc-kr").decode(bytes);
   } catch {
     xml = new TextDecoder().decode(bytes);
   }
@@ -1021,7 +1022,8 @@ export async function elevenstSellerXmlRequest(input: {
   const bytes = await response.arrayBuffer();
   let xml = "";
   try {
-    xml = new TextDecoder("euc-kr").decode(bytes);
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    xml = new TextDecoder(/charset\s*=\s*["']?utf-?8/.test(contentType) ? "utf-8" : "euc-kr").decode(bytes);
   } catch {
     xml = new TextDecoder().decode(bytes);
   }

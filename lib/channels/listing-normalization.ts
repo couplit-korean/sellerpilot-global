@@ -39,8 +39,9 @@ export function marketplaceListingPrice(channel: ActiveChannelKey, price: number
   globalBaseUsdPrice?: number;
   targetCurrency?: string;
 }) {
-  if (channel === "coupang" || channel === "smartstore") return Number(normalizeTenWonAmount(price));
+  if (channel === "coupang" || channel === "elevenst" || channel === "smartstore") return Number(normalizeTenWonAmount(price));
   if (channel === "temu") return price;
+  if (channel !== "qoo10" && channel !== "shopee" && channel !== "lazada" && channel !== "ebay") return price;
   const usdPrice = Number(options?.globalBaseUsdPrice);
   if (!Number.isFinite(usdPrice) || usdPrice <= 0) return price;
   return globalMarketplacePrice(usdPrice, marketplaceListingCurrency(channel, options?.targetCurrency));

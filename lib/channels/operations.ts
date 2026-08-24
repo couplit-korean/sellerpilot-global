@@ -228,7 +228,7 @@ function safeProviderError(data: Record<string, unknown>) {
   const values: string[] = [];
   const keys = new Set([
     "error", "errors", "errorcode", "error_code", "errormsg", "error_msg", "errormessage", "error_message",
-    "message", "msg", "detail", "details", "reason", "failure_reason", "issue", "issues",
+    "message", "resultmessage", "authmessage", "msg", "detail", "details", "reason", "failure_reason", "issue", "issues",
     "invalidinputs", "invalid_inputs",
   ]);
   const visit = (value: unknown, depth: number, keyed = false) => {
