@@ -4,12 +4,6 @@
 
 begin;
 
-alter table sellerpilot_private.channel_operation_attempts
-  drop constraint if exists channel_operation_attempts_channel_check;
-alter table sellerpilot_private.channel_operation_attempts
-  add constraint channel_operation_attempts_channel_check
-  check (channel in ('qoo10', 'shopee', 'lazada', 'coupang', 'elevenst', 'smartstore', 'ebay', 'temu'));
-
 alter table sellerpilot_private.product_category_assignments
   drop constraint if exists product_category_assignments_channel_check;
 alter table sellerpilot_private.product_category_assignments

@@ -182,6 +182,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260822210000_channel_catalog_inventory_mirror.sql",
       "20260824023835_registration_activity_and_product_edit.sql",
       "20260824024500_gateway_burst_priority_and_reconciliation.sql",
+      "20260824141500_enable_elevenst_channel_operations.sql",
       "20260824154500_enable_elevenst_listing_workflow.sql",
     ]);
     for (const name of migrationNames) {
