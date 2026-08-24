@@ -243,7 +243,7 @@ export async function POST(request: NextRequest) {
     });
   };
 
-  if (channel === "shopee" || channel === "lazada" || channel === "coupang" || channel === "smartstore" || channel === "temu") {
+  if (channel === "shopee" || channel === "lazada" || channel === "coupang" || channel === "elevenst" || channel === "smartstore" || channel === "temu") {
     try {
       const gatewayArguments = operation === "listing.create" || operation === "listing.update"
         ? await prepareMarketplaceImages(serviceClient, channel, parsed.data.arguments)

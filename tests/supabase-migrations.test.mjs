@@ -182,6 +182,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260822210000_channel_catalog_inventory_mirror.sql",
       "20260824023835_registration_activity_and_product_edit.sql",
       "20260824024500_gateway_burst_priority_and_reconciliation.sql",
+      "20260824154500_enable_elevenst_listing_workflow.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -374,7 +375,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
 
     await setClaims(db);
-    for (const channel of ["coupang", "smartstore", "ebay", "temu"]) {
+    for (const channel of ["coupang", "elevenst", "smartstore", "ebay", "temu"]) {
       const id = await scalar(
         db,
         "select public.sellerpilot_rotate_credential($1, 'production', $2::jsonb, now() + interval '180 days', 90, 30, 0)",
@@ -586,11 +587,49 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(categoryAssignments.rows.length, 1);
     assert.equal(categoryAssignments.rows[0].status, "confirmed");
     assert.deepEqual(categoryAssignments.rows[0].missing_required_attributes, []);
+    const elevenstCategoryAssignmentId = await scalar(
+      db,
+      `select public.sellerpilot_save_product_category_assignment(
+        $1, 'elevenst-category-test', '부착형 케이블 정리 클립 6개 세트', 'elevenst', 'production', 'Korea · OPEN API',
+        '1341821', array['생활잡화','정리소품','케이블 정리소품'], true, 0.99,
+        'official_tree_search', '[]'::jsonb, '{}'::jsonb, '{"verifiedBy":"channel_api"}'::jsonb, true
+      )`,
+      [aiProductId],
+    );
+    assert.match(elevenstCategoryAssignmentId, /^[0-9a-f-]{36}$/i);
+    const elevenstCredentialId = await scalar(
+      db,
+      "select id from public.sellerpilot_list_credentials() where channel = 'elevenst' and status = 'active' limit 1",
+    );
+    const elevenstPreparedListingId = await scalar(
+      db,
+      "select public.sellerpilot_prepare_product_market_listing($1, 'elevenst', 'listing.create', '', '', 'KRW', 5000)",
+      [aiProductId],
+    );
+    assert.match(elevenstPreparedListingId, /^[0-9a-f-]{36}$/i);
+    const elevenstAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'elevenst', 'listing.create', 'elevenst-listing-migration-0001', $2)",
+      [elevenstCredentialId, "e".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    const elevenstGatewayJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_channel_gateway_job($1, $2, 'elevenst', 'listing.create', '{\"arguments\":{\"verificationOnly\":true}}'::jsonb)",
+      [elevenstCredentialId, elevenstAttempt.attempt_id],
+    );
+    assert.match(elevenstGatewayJobId, /^[0-9a-f-]{36}$/i);
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [elevenstGatewayJobId],
+    );
+    await setClaims(db);
     const publishContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [aiProductId]);
     assert.equal(publishContext.product.id, aiProductId);
     assert.equal(publishContext.manualFields.sellerSku, "AI-REQUIRED-001");
     assert.equal(publishContext.imageSpecs[0].width, 1200);
-    assert.equal(publishContext.assignments.length, 1);
+    assert.equal(publishContext.assignments.length, 2);
+    assert.equal(publishContext.assignments.some((assignment) => assignment.channel === "elevenst" && assignment.categoryId === "1341821"), true);
     const coupangCredentialId = await scalar(
       db,
       "select id from public.sellerpilot_list_credentials() where channel = 'coupang' and status = 'active' limit 1",
