@@ -32,7 +32,7 @@ test("server-renders the SellerPilot login experience", async () => {
 });
 
 test("contains the complete multi-channel operating storyboard and 175-item acceptance baseline", async () => {
-  const [page, layout, styles, operationsStyles, packageJson, storyboard, channelConfig, channelLinks, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping, manifest, serviceWorker, pushManager, mobileStyles] = await Promise.all([
+  const [page, layout, styles, operationsStyles, packageJson, storyboard, channelConfig, channelLinks, acceptanceData, acceptancePage, exchangeRoute, readinessData, readinessPage, channelMapping, manifest, serviceWorker, pushManager, mobileStyles, revenueCalendar, adminAccessState] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
@@ -51,6 +51,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-push-manager.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/_dashboard/revenue-calendar.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/_auth/admin-access-state.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /^"use client";/);
@@ -139,8 +141,18 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(mobileStyles, /\.registration-card dl\s*\{\s*display:\s*none;/);
   assert.doesNotMatch(page, /<PublishingPage key=\{publishingProduct/);
   assert.match(page, /resolvedProductId = analyzedProductId \?\? initialProduct\?\.id \?\? null/);
-  assert.match(page, /event === "INITIAL_SESSION" \|\| event === "SIGNED_IN"/);
+  assert.match(page, /nextAdminAccessState\(current, event\)/);
+  assert.match(adminAccessState, /current === "admin" \? "admin" : "checking"/);
   assert.doesNotMatch(page, /setAccessState\(session \? "checking" : "signed_out"\)/);
+  assert.match(page, /<RevenueCalendar days=\{analytics\?\.daily \?\? \[\]\} range=\{salesRange\}/);
+  assert.match(revenueCalendar, /domesticRevenueKrw/);
+  assert.match(revenueCalendar, /overseasRevenueKrw/);
+  assert.match(revenueCalendar, /국내 매출/);
+  assert.match(revenueCalendar, /해외 매출/);
+  assert.doesNotMatch(mobileStyles, /\.sales-calendar-grid small\s*\{\s*display:\s*none/);
+  assert.doesNotMatch(mobileStyles, /\.channel-list \.channel-row \.channel-metric:nth-of-type/);
+  assert.match(page, /channel-metric channel-revenue/);
+  assert.match(page, /channel-metric channel-orders/);
   assert.match(page, /\?view=\$\{next\}/);
   assert.match(page, /사진 촬영/);
   assert.match(page, /앨범에서 선택/);

@@ -89,6 +89,9 @@ import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
 import { emptyProductIntake, productConditions, productCurrencies, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
+import { nextAdminAccessState, type AdminAccessState } from "./_auth/admin-access-state";
+import { formatCompactWon } from "./_dashboard/format-compact-won";
+import { RevenueCalendar } from "./_dashboard/revenue-calendar";
 
 type View =
   | "overview"
@@ -439,10 +442,6 @@ function MetricCard({ label, value, delta, detail, icon: Icon, tone, reverse }: 
   );
 }
 
-function formatCompactWon(value: number) {
-  return `₩${Intl.NumberFormat("ko-KR", { notation: "compact", maximumFractionDigits: 1 }).format(value)}`;
-}
-
 function localDateString(value: Date) {
   return new Date(value.getTime() - value.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
 }
@@ -508,8 +507,6 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   const periodRevenue = analytics?.summary.revenueKrw ?? 0;
   const periodSold = analytics?.summary.sold ?? 0;
   const periodOrders = analytics?.summary.orderCount ?? 0;
-  const calendarDays = analytics?.daily ?? [];
-  const calendarOffset = calendarDays.length ? new Date(`${calendarDays[0].date.slice(0, 10)}T12:00:00`).getDay() : 0;
 
   const refreshExchangeRates = useCallback(async () => {
     setRateSource("기준 환율 확인 중");
@@ -562,11 +559,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
         <MetricCard label="미처리 CS" value={operationsAvailable ? summary.openTicketCount.toLocaleString() : "—"} detail={`재고주의 ${summary.lowStockCount}건`} icon={MessageCircleMore} tone="orange" />
       </section>
 
-      <section className="panel sales-calendar-panel">
-        <div className="panel-heading"><div><span className="panel-kicker">국내 · 해외 · 채널 통합</span><h3>날짜별 실매출 달력</h3></div><small>{salesRange.from} — {salesRange.to}</small></div>
-        <div className="sales-calendar-weekdays">{["일","월","화","수","목","금","토"].map((day) => <span key={day}>{day}</span>)}</div>
-        <div className="sales-calendar-grid">{Array.from({ length: calendarOffset }, (_, index) => <span className="calendar-blank" key={`blank-${index}`} />)}{calendarDays.map((day) => <article key={day.date}><time>{Number(day.date.slice(8,10))}</time><b>{formatCompactWon(day.revenueKrw)}</b><small>국내 {formatCompactWon(day.domesticRevenueKrw)}</small><small>해외 {formatCompactWon(day.overseasRevenueKrw)}</small></article>)}</div>
-      </section>
+      <RevenueCalendar days={analytics?.daily ?? []} range={salesRange} />
 
       <section className="dashboard-cs-pair" aria-label="CS 처리 현황">
         <button className="panel" onClick={() => onNavigate("cs")}><span className="metric-icon orange"><Inbox size={18} /></span><span><small>미처리 CS</small><strong>{summary.openTicketCount.toLocaleString()}건</strong><em>답변 대기 · 처리 중</em></span><ChevronRight size={16} /></button>
@@ -599,7 +592,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
         <article className="panel channel-performance">
           <div className="panel-heading"><div><span className="panel-kicker">실계정 운영 상태</span><h3>채널별 실데이터</h3></div><span className="live-label"><i />LIVE</span></div>
           <div className="channel-list">
-            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus)}</span></div><div className="channel-metric"><small>선택 기간 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
+            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus)}</span></div><div className="channel-metric channel-revenue"><small>선택 기간 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric channel-orders"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -2716,7 +2709,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 }
 
 export default function Home() {
-  const [accessState, setAccessState] = useState<"checking" | "signed_out" | "admin" | "forbidden">(isSupabaseConfigured ? "checking" : "signed_out");
+  const [accessState, setAccessState] = useState<AdminAccessState>(isSupabaseConfigured ? "checking" : "signed_out");
   const [userEmail, setUserEmail] = useState("");
   const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "shopee" | "lazada" | "ebay"; code: string; state: string; shopId?: string; mainAccountId?: string } | null>(null);
   const [oauthNotice, setOauthNotice] = useState("");
@@ -2761,7 +2754,7 @@ export default function Home() {
         setAccessState("signed_out");
         return;
       }
-      if (event === "INITIAL_SESSION" || event === "SIGNED_IN") setAccessState("checking");
+      setAccessState((current) => nextAdminAccessState(current, event));
       window.setTimeout(() => void verifyAdmin(session), 0);
     });
     return () => data.subscription.unsubscribe();

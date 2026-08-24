@@ -779,7 +779,6 @@
   .order-detail-ledger { grid-template-columns: minmax(0, 1fr); }
 
   .channel-list .channel-row { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .channel-list .channel-row .channel-metric:nth-of-type(2) { display: none; }
   .automatic-sync-label { width: 100%; justify-content: flex-end; }
   .order-detail-ledger { padding: 8px 16px 16px; }
 
@@ -1395,17 +1394,23 @@
   .data-toolbar .filter-select:nth-of-type(1), .data-toolbar .filter-select:nth-of-type(2) { display: grid; grid-template-columns: 18px minmax(0, 1fr) 14px; min-height: 44px; align-items: center; }
   .channel-sales-stack { min-width: 135px; }
   .sales-calendar-panel { padding: 14px 10px; }
-  .sales-calendar-grid article, .sales-calendar-grid .calendar-blank { min-height: 72px; padding: 5px; }
-  .sales-calendar-grid b { font-size: 8px; }
-  .sales-calendar-grid small { display: none; }
+  .sales-calendar-panel > .panel-heading { align-items: flex-start; }
+  .sales-calendar-meta { justify-items: end; }
+  .sales-calendar-meta > small { font-size: 8px; }
+  .sales-calendar-legend { gap: 6px; }
+  .sales-calendar-legend span { font-size: 7px; }
+  .sales-calendar-grid article, .sales-calendar-grid .calendar-blank { min-height: 94px; padding: 5px; }
+  .sales-calendar-grid .sales-calendar-total { font-size: 8px; }
+  .sales-calendar-breakdown { margin-top: 2px; }
+  .sales-calendar-breakdown small { display: grid; gap: 0; font-size: clamp(6px, 1.8vw, 8px); line-height: 1.25; }
+  .sales-calendar-breakdown em { overflow: visible; font-size: inherit; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
   .dashboard-cs-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .dashboard-cs-pair > button { min-height: 98px; grid-template-columns: auto minmax(0, 1fr); gap: 7px; padding: 11px; }
   .dashboard-cs-pair > button > svg:last-child { display: none; }
   .dashboard-cs-pair strong { font-size: 16px; }
   .channel-list { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 7px; }
-  .channel-list .channel-row { display: grid; min-height: 118px; grid-template-columns: auto minmax(0, 1fr) !important; align-content: start; gap: 7px; padding: 10px !important; }
+  .channel-list .channel-row { display: grid; min-height: 152px; grid-template-columns: auto minmax(0, 1fr) !important; align-content: start; gap: 7px; padding: 10px !important; }
   .channel-list .channel-row .channel-metric { grid-column: 1 / -1; display: grid !important; grid-template-columns: 1fr auto; gap: 4px; }
-  .channel-list .channel-row .channel-metric:nth-of-type(2) { display: none !important; }
   .inventory-channel-progress { grid-template-columns: minmax(0, 1fr); }
   .product-commerce-notes-grid { grid-template-columns: minmax(0, 1fr); }
   .competitor-query-row { grid-template-columns: minmax(0, 1fr); align-items: stretch; }

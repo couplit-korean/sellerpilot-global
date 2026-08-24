@@ -2399,15 +2399,23 @@ button {
 
 .sales-calendar-panel { overflow: hidden; padding: 18px; }
 .sales-calendar-panel > .panel-heading { margin-bottom: 14px; }
-.sales-calendar-panel > .panel-heading > small { color: #7c8797; font-size: 10px; }
+.sales-calendar-meta { display: grid; justify-items: end; gap: 7px; }
+.sales-calendar-meta > small { color: #7c8797; font-size: 10px; }
+.sales-calendar-legend { display: flex; align-items: center; gap: 10px; }
+.sales-calendar-legend span { display: inline-flex; align-items: center; gap: 5px; color: #667085; font-size: 8px; font-weight: 800; }
+.sales-calendar-legend span::before { width: 7px; height: 7px; border-radius: 999px; background: currentColor; content: ""; }
+.sales-calendar-legend .domestic, .sales-calendar-breakdown .domestic { color: #1769aa; }
+.sales-calendar-legend .overseas, .sales-calendar-breakdown .overseas { color: #9a5c00; }
 .sales-calendar-weekdays, .sales-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .sales-calendar-weekdays span { padding: 6px; color: #8b95a4; font-size: 9px; font-weight: 850; text-align: center; }
 .sales-calendar-grid { overflow: hidden; border: 1px solid #e8ecf1; border-radius: 10px; background: #e8ecf1; gap: 1px; }
 .sales-calendar-grid article, .sales-calendar-grid .calendar-blank { min-height: 88px; padding: 8px; background: #fff; }
 .sales-calendar-grid article { display: grid; align-content: start; gap: 3px; }
 .sales-calendar-grid time { width: 23px; height: 23px; border-radius: 7px; color: #667085; font-size: 9px; font-weight: 850; line-height: 23px; text-align: center; }
-.sales-calendar-grid b { margin-top: 2px; color: #29364a; font-size: 11px; }
-.sales-calendar-grid small { color: #7d8898; font-size: 8px; }
+.sales-calendar-grid .sales-calendar-total { margin-top: 2px; color: #29364a; font-size: 11px; }
+.sales-calendar-breakdown { display: grid; min-width: 0; gap: 2px; }
+.sales-calendar-breakdown small { display: flex; min-width: 0; justify-content: space-between; gap: 3px; font-size: 8px; font-weight: 750; }
+.sales-calendar-breakdown em { overflow: hidden; color: #667085; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .sales-calendar-grid article:nth-child(7n + 1) time { color: #d14343; background: #fff1f1; }
 .dashboard-cs-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .dashboard-cs-pair > button { display: grid; min-height: 82px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 15px; text-align: left; }
