@@ -3,9 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { salesRangeForPreset } from "../app/_dashboard/sales-range-control";
 import {
+  isRegistrationActivityRunning,
+  registrationActivityDisplayElapsedSeconds,
+  registrationActivityMatchesFilter,
   registrationActivityNotificationTransition,
   registrationActivityNotifications,
   registrationActivityStatusMap,
+  registrationChannelStatusLabel,
   type RegistrationActivity,
 } from "../app/_registration/registration-status";
 import { appendToast, toastDurationMs, toastToneForMessage } from "../app/_notifications/use-toast-queue";
@@ -13,6 +17,7 @@ import { operationEventNotifications, operationEventState, type OperationEventSn
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
 import { productEditSchema } from "../lib/product-intake";
 import { withPromiseTimeout } from "../lib/promise-timeout";
+import { safeRelativeReturnPath } from "../lib/safe-relative-return-path";
 
 function activity(id: string, productName: string, status: RegistrationActivity["status"]): RegistrationActivity {
   return {
@@ -100,6 +105,32 @@ test("registration history outage preserves its notification baseline across rec
   assert.deepEqual(changed.messages, ["상품 A: 등록 완료"]);
 });
 
+test("ready registration cards are completed analysis drafts, not running work", () => {
+  const ready = activity("ready", "분석 완료 상품", "ready");
+  ready.updatedAt = "2026-08-25T00:00:35.000Z";
+  ready.elapsedSeconds = 99_999;
+
+  assert.equal(isRegistrationActivityRunning("analyzing"), true);
+  assert.equal(isRegistrationActivityRunning("publishing"), true);
+  assert.equal(isRegistrationActivityRunning("ready"), false);
+  assert.equal(registrationActivityMatchesFilter(ready, "active"), false);
+  assert.equal(registrationActivityMatchesFilter(ready, "ready"), true);
+  assert.equal(registrationActivityDisplayElapsedSeconds(ready), 35);
+  assert.equal(registrationChannelStatusLabel("paused"), "중지");
+  assert.equal(registrationChannelStatusLabel("scope_excluded"), "제외");
+});
+
+test("relative return paths cannot escape the SellerPilot origin", () => {
+  assert.equal(safeRelativeReturnPath("/products?tab=active#one"), "/products?tab=active#one");
+  assert.equal(safeRelativeReturnPath("//evil.example/path"), "/");
+  assert.equal(safeRelativeReturnPath("/\\evil.example/path"), "/");
+  assert.equal(safeRelativeReturnPath("/%2F%2Fevil.example/path"), "/");
+  assert.equal(safeRelativeReturnPath("/%5Cevil.example/path"), "/");
+  assert.equal(safeRelativeReturnPath("https://evil.example/path"), "/");
+  assert.equal(safeRelativeReturnPath("/%E0%A4%A"), "/");
+  assert.equal(safeRelativeReturnPath("/callback", new Set(["/callback"])), "/");
+});
+
 test("toast queue preserves separate events for two seconds instead of replacing them", () => {
   const first = appendToast([], "첫 이벤트");
   const second = appendToast(first, "둘째 이벤트");
@@ -181,6 +212,11 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /activityState === "unavailable"[\s\S]*등록 진행 이력을 불러오지 못했습니다/);
   assert.match(page, /signal: AbortSignal\.timeout\(30_000\)/);
   assert.match(page, /withPromiseTimeout\(new Promise<\{ width: number; height: number \}>[\s\S]*?15_000[\s\S]*?모바일에서 이미지를 읽는 시간이 너무 오래 걸렸습니다/);
+  assert.match(page, /settleWithConcurrency\(selected, 3,/);
+  assert.match(page, /모바일 메모리를 보호하며 3장씩 처리/);
+  assert.match(page, /for \(const url of objectUrls\) URL\.revokeObjectURL\(url\)/);
+  assert.doesNotMatch(page, /Promise\.allSettled\(selected\.map/);
+  assert.match(page, /result\.failed === 0 && result\.reconciliationRequired === 0/);
   assert.doesNotMatch(page, /sellingPrice: current\.sellingPrice > 0 \? current\.sellingPrice : 5000/);
   assert.match(page, /수정값은 중앙 상품 원장에 저장되며, 재고 변경은 연결된 채널에도 동기화/);
   assert.match(publishWorkbench, /<select required value=\{context\.manualFields\.packageContents\}/);

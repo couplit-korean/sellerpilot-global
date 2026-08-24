@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { parseLazadaImPush } from "../../../../lib/channels/lazada-im";
+import { parseLazadaImWebhookBody, persistLazadaImInquiry } from "../../../../lib/channels/lazada-im-webhook";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -36,18 +37,16 @@ export async function POST(request: Request) {
   const signature = (request.headers.get("authorization") ?? "").replace(/^sha256[=\s]+/i, "").trim();
   const expected = createHmac("sha256", appSecret).update(`${appKey}${raw}`).digest("hex");
   if (!expected || !signature || !safeEqualHex(expected, signature)) return NextResponse.json({ message: "invalid signature" }, { status: 401 });
-  let payload: Record<string, unknown>;
-  try { payload = JSON.parse(raw) as Record<string, unknown>; } catch { return NextResponse.json({ message: "invalid payload" }, { status: 400 }); }
-  if (typeof payload.data === "string") {
-    try { payload = { ...payload, data: JSON.parse(payload.data) as unknown }; } catch { /* keep raw data */ }
-  }
+  const payload = parseLazadaImWebhookBody(raw);
+  if (!payload) return NextResponse.json({ message: "invalid payload" }, { status: 400 });
   const inquiry = parseLazadaImPush(payload);
   if (!inquiry) return NextResponse.json({ ok: true, ignored: true });
   const credentialId = context && typeof context.credential_id === "string" ? context.credential_id : "";
-  if (credentialId) await serviceClient.rpc("sellerpilot_service_ingest_inquiries", {
-    p_credential_id: credentialId,
-    p_channel: "lazada",
-    p_inquiries: [inquiry],
-  });
+  const ingestResult = await persistLazadaImInquiry(credentialId, inquiry, (arguments_) => (
+    serviceClient.rpc("sellerpilot_service_ingest_inquiries", arguments_)
+  ));
+  if (ingestResult.ok === false) {
+    return NextResponse.json({ message: "server unavailable" }, { status: ingestResult.status });
+  }
   return NextResponse.json({ ok: true });
 }

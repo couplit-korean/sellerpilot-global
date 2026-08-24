@@ -22,15 +22,19 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ message: "채널 작업 완료 형식이 올바르지 않습니다." }, { status: 400 });
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: snapshot, error: snapshotError } = await serviceClient.rpc("sellerpilot_get_channel_gateway_job", {
+  const tokenHash = createHash("sha256").update(workerToken).digest("hex");
+  const { data: snapshot, error: snapshotError } = await serviceClient.rpc("sellerpilot_service_begin_channel_gateway_completion", {
+    p_token_hash: tokenHash,
     p_job_id: parsed.data.jobId,
   });
   const job = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot) ? snapshot as Record<string, unknown> : null;
-  if (snapshotError || !job || job.status !== "running") {
+  if (snapshotError) {
+    return NextResponse.json({ message: "채널 작업자 인증을 확인하지 못했습니다." }, { status: 401 });
+  }
+  if (!job || job.status !== "running") {
     return NextResponse.json({ message: "실행 중인 채널 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
   }
 
-  const tokenHash = createHash("sha256").update(workerToken).digest("hex");
   let storedResponse: Record<string, unknown> | null = null;
   let refreshedCredentialId = "";
   if (parsed.data.status === "succeeded") {

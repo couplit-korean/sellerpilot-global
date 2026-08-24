@@ -59,6 +59,16 @@ export async function POST(request: Request) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
+  const { data: completionAuthorized, error: completionAuthorizationError } = await serviceClient.rpc(
+    "sellerpilot_service_begin_ai_job_completion",
+    { p_token_hash: tokenHash, p_job_id: completion.jobId },
+  );
+  if (completionAuthorizationError) {
+    return NextResponse.json({ message: "CLI 작업자 인증을 확인하지 못했습니다." }, { status: 401 });
+  }
+  if (completionAuthorized !== true) {
+    return NextResponse.json({ message: "실행 중인 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
+  }
   let resultPayload: Record<string, unknown> | null = null;
 
   if (completion.status === "succeeded") {
@@ -100,13 +110,7 @@ export async function POST(request: Request) {
     p_result_payload: resultPayload,
     p_error_message: completion.status === "failed" ? completion.error : null,
   });
-  const uploadedAssets = completion.status === "succeeded" && "assetStoragePaths" in completion
-    ? Object.values(completion.assetStoragePaths)
-    : [];
   if (error || data !== true) {
-    if (uploadedAssets.length) {
-      await serviceClient.storage.from("sellerpilot-ai").remove(uploadedAssets);
-    }
     if (error) return NextResponse.json({ message: "CLI 작업 완료 상태를 저장하지 못했습니다." }, { status: 401 });
     return NextResponse.json({ message: "실행 중인 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
   }

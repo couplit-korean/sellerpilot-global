@@ -112,7 +112,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /publish-context/);
   assert.match(page, /if \(view === "product-detail"\) return activeSelectedProduct/);
   assert.match(page, /상품 상세정보를 불러오는 중입니다/);
-  assert.match(page, /ChatGPT CLI가 문의와 주문 맥락을 확인/);
+  assert.match(page, /ChatGPT CLI가 문의 원문과 연결된 원장 정보가 있는지 확인/);
   assert.match(page, /공식 카테고리 확정/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
   assert.match(page, /상품 링크 또는 설명/);
@@ -238,6 +238,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(credentialPage, /SmartShip 물류 API 실행 검수/);
   const credentialTestRoute = await readFile(new URL("../app/api/admin/channel-credentials/test/route.ts", import.meta.url), "utf8");
   const gatewayCompleteRoute = await readFile(new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url), "utf8");
+  const aiCompleteRoute = await readFile(new URL("../app/api/ai/worker/complete/route.ts", import.meta.url), "utf8");
+  const authCallbackRoute = await readFile(new URL("../app/auth/callback/route.ts", import.meta.url), "utf8");
   const gatewayContract = await readFile(new URL("../lib/channels/gateway-contract.ts", import.meta.url), "utf8");
   const cliRuntimeCard = await readFile(new URL("../app/ai-cli-runtime-card.tsx", import.meta.url), "utf8");
   const cliWorker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
@@ -271,6 +273,20 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(gatewayCompleteRoute, /effectiveCredentialId/);
   assert.match(gatewayCompleteRoute, /sellerpilot_service_refresh_ebay/);
   assert.match(gatewayCompleteRoute, /sellerpilot_record_credential_test/);
+  assert.match(gatewayCompleteRoute, /sellerpilot_service_begin_channel_gateway_completion/);
+  assert.ok(
+    gatewayCompleteRoute.indexOf("sellerpilot_service_begin_channel_gateway_completion")
+      < gatewayCompleteRoute.indexOf("sellerpilot_service_refresh_ebay"),
+  );
+  assert.doesNotMatch(gatewayCompleteRoute, /sellerpilot_get_channel_gateway_job/);
+  assert.match(aiCompleteRoute, /sellerpilot_service_begin_ai_job_completion/);
+  assert.ok(
+    aiCompleteRoute.indexOf("sellerpilot_service_begin_ai_job_completion")
+      < aiCompleteRoute.indexOf("sellerpilot_complete_ai_job"),
+  );
+  assert.doesNotMatch(aiCompleteRoute, /storage\.from\("sellerpilot-ai"\)\.remove/);
+  assert.match(authCallbackRoute, /safeRelativeReturnPath/);
+  assert.doesNotMatch(authCallbackRoute, /startsWith\("\/"\)/);
   assert.match(gatewayContract, /"qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"/);
   assert.match(credentialPage, /API 실행 검수/);
   assert.match(credentialPage, /중복 방지 키/);

@@ -4,6 +4,12 @@ import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 import { isActiveChannelKey } from "../../../../../lib/channels/catalog";
 import { buildShipmentArguments } from "../../../../../lib/channels/shipment-draft";
+import {
+  remoteShipmentSuccessResult,
+  shipmentLedgerWriteSucceeded,
+  shipmentResultSummary,
+  type ShipmentFulfillmentResult,
+} from "../../../../../lib/order-shipment-integrity";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -25,6 +31,27 @@ type OrderContext = {
   provider_context?: Record<string, unknown> | null;
 };
 type Credential = { id: string; channel: string; environment: string; status: string };
+
+function failedShipmentResult(input: {
+  id: string;
+  channel: string;
+  message: string;
+  ledgerRecorded?: boolean;
+}): ShipmentFulfillmentResult {
+  const ledgerRecorded = input.ledgerRecorded === true;
+  return {
+    id: input.id,
+    channel: input.channel,
+    ok: false,
+    status: "failed",
+    remoteSucceeded: false,
+    ledgerRecorded,
+    reconciliationRequired: false,
+    message: ledgerRecorded
+      ? input.message
+      : `${input.message} 내부 실패 이력 저장도 확인되지 않아 운영 원장을 점검해 주세요.`,
+  };
+}
 
 function safeMessage(channel: string, status: number, fallback?: string) {
   if (status === 409 && fallback) return fallback;
@@ -54,25 +81,42 @@ export async function POST(request: Request) {
     .map((row) => [row.channel, row]));
   const authorization = request.headers.get("authorization") ?? "";
   const operationUrl = new URL("/api/admin/channel-operations", request.url);
-  const results: Array<{ id: string; channel: string; ok: boolean; message: string }> = [];
+  const results: ShipmentFulfillmentResult[] = [];
+
+  const recordFailure = async (input: { id: string; carrier: string; message: string }) => {
+    try {
+      const { data, error } = await admin.serviceClient.rpc("sellerpilot_service_record_order_shipment_failure", {
+        p_actor_id: admin.user.id,
+        p_id: input.id,
+        p_carrier: input.carrier,
+        p_error: input.message,
+      });
+      return shipmentLedgerWriteSucceeded(data, error);
+    } catch {
+      return false;
+    }
+  };
 
   for (const shipment of parsed.data.shipments) {
     const order = orders.get(shipment.id);
     if (!order || !isActiveChannelKey(order.channel_key)) {
-      results.push({ id: shipment.id, channel: "unknown", ok: false, message: "실주문 원장에서 주문을 찾지 못했습니다." });
+      results.push(failedShipmentResult({ id: shipment.id, channel: "unknown", message: "실주문 원장에서 주문을 찾지 못했습니다." }));
       continue;
     }
     const credential = credentials.get(order.channel_key);
     if (!credential) {
-      results.push({ id: shipment.id, channel: order.channel_key, ok: false, message: "활성 운영 채널 키가 없습니다." });
+      const message = "활성 운영 채널 키가 없습니다.";
+      results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
       continue;
     }
     if (!["paid", "ready_to_ship"].includes(order.status)) {
-      results.push({ id: shipment.id, channel: order.channel_key, ok: false, message: "결제완료 또는 출고대기 주문만 발송할 수 있습니다." });
+      const message = "결제완료 또는 출고대기 주문만 발송할 수 있습니다.";
+      results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
       continue;
     }
     if (order.channel_key !== "lazada" && !shipment.trackingNumber) {
-      results.push({ id: shipment.id, channel: order.channel_key, ok: false, message: "이 채널의 실제 운송장번호를 입력해 주세요." });
+      const message = "이 채널의 실제 운송장번호를 입력해 주세요.";
+      results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
       continue;
     }
 
@@ -101,19 +145,35 @@ export async function POST(request: Request) {
         signal: AbortSignal.timeout(120_000),
       });
       const remotePayload = await remoteResponse.json().catch(() => ({})) as { message?: string; safeMessage?: string; remoteId?: string };
-      const ok = remoteResponse.ok;
-      const message = ok ? "판매채널 발송 처리와 원장 갱신이 완료됐습니다." : safeMessage(order.channel_key, remoteResponse.status, remotePayload.message ?? remotePayload.safeMessage);
+      if (!remoteResponse.ok) {
+        const message = safeMessage(order.channel_key, remoteResponse.status, remotePayload.message ?? remotePayload.safeMessage);
+        results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
+        continue;
+      }
       const recordedTrackingNumber = order.channel_key === "lazada" && remotePayload.remoteId
         ? remotePayload.remoteId
         : shipment.trackingNumber;
-      await admin.userClient.rpc("sellerpilot_record_order_shipment", {
-        p_id: shipment.id,
-        p_carrier: shipment.carrierCode,
-        p_tracking: recordedTrackingNumber,
-        p_success: ok,
-        p_error: ok ? null : message,
-      });
-      results.push({ id: shipment.id, channel: order.channel_key, ok, message });
+      let ledgerData: unknown = null;
+      let ledgerError: unknown = null;
+      try {
+        const ledgerWrite = await admin.userClient.rpc("sellerpilot_record_order_shipment", {
+          p_id: shipment.id,
+          p_carrier: shipment.carrierCode,
+          p_tracking: recordedTrackingNumber,
+          p_success: true,
+          p_error: null,
+        });
+        ledgerData = ledgerWrite.data;
+        ledgerError = ledgerWrite.error;
+      } catch (error) {
+        ledgerError = error;
+      }
+      results.push(remoteShipmentSuccessResult({
+        id: shipment.id,
+        channel: order.channel_key,
+        ledgerData,
+        ledgerError,
+      }));
     } catch (error) {
       const raw = error instanceof Error ? error.message : "";
       const message = raw.startsWith("SHIPMENT_PACKAGE_DETAILS_REQUIRED")
@@ -121,23 +181,17 @@ export async function POST(request: Request) {
         : raw.startsWith("SHIPMENT_CHANNEL_UNAVAILABLE")
           ? "이 채널은 판매자 발송 API 권한이 아직 연결되지 않았습니다."
           : "판매채널 발송 요청 중 안전하게 처리된 오류가 발생했습니다.";
-      await admin.userClient.rpc("sellerpilot_record_order_shipment", {
-        p_id: shipment.id,
-        p_carrier: shipment.carrierCode,
-        p_tracking: shipment.trackingNumber,
-        p_success: false,
-        p_error: message,
-      });
-      results.push({ id: shipment.id, channel: order.channel_key, ok: false, message });
+      results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
     }
   }
 
-  const succeeded = results.filter((result) => result.ok).length;
+  const { succeeded, failed, reconciliationRequired } = shipmentResultSummary(results);
   return NextResponse.json({
-    ok: succeeded === results.length,
+    ok: succeeded === results.length && reconciliationRequired === 0,
     succeeded,
-    failed: results.length - succeeded,
+    failed,
+    reconciliationRequired,
     results,
-    message: `${results.length}건 중 ${succeeded}건의 판매채널 발송 처리를 완료했습니다.`,
-  }, { status: succeeded === results.length ? 200 : 207, headers: { "cache-control": "no-store, max-age=0" } });
+    message: `${results.length}건 중 ${succeeded}건 완료 · ${failed}건 실패 · ${reconciliationRequired}건 원장 조정 필요`,
+  }, { status: succeeded === results.length && reconciliationRequired === 0 ? 200 : 207, headers: { "cache-control": "no-store, max-age=0" } });
 }

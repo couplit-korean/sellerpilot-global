@@ -195,6 +195,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260824190000_enforce_unique_generated_shots.sql",
       "20260824191500_fix_asset_regeneration_audit_count.sql",
       "20260825011500_preserve_authoritative_inventory.sql",
+      "20260825070000_harden_worker_completion_and_registration_activity.sql",
+      "20260825071000_harden_order_shipment_ledger_integrity.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -241,9 +243,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_finish_push_delivery(uuid,text,text)",
       "public.sellerpilot_service_enqueue_periodic_sync(text,text,jsonb,integer)",
       "public.sellerpilot_service_validate_worker_token(text,text)",
+      "public.sellerpilot_service_begin_ai_job_completion(text,uuid)",
+      "public.sellerpilot_service_begin_channel_gateway_completion(text,uuid)",
       "public.sellerpilot_service_prune_runtime_noise(timestamp with time zone)",
       "public.sellerpilot_service_complete_tracx_operation(uuid,boolean,text,text)",
       "public.sellerpilot_service_ingest_tracx_delivery(uuid,jsonb)",
+      "public.sellerpilot_service_record_order_shipment_failure(uuid,uuid,text,text)",
     ];
     for (const signature of serviceOnlyFunctions) {
       assert.equal(
@@ -475,6 +480,21 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.equal(gatewayClaim.id, gatewayJobId);
     assert.equal(gatewayClaim.credential.partner_key, "test-partner-key-long");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_channel_gateway_completion($1, $2)",
+        ["b".repeat(64), gatewayJobId],
+      ),
+      null,
+    );
+    const ownedGatewayJob = await scalar(
+      db,
+      "select public.sellerpilot_service_begin_channel_gateway_completion($1, $2)",
+      [TOKEN_HASH, gatewayJobId],
+    );
+    assert.equal(ownedGatewayJob.id, gatewayJobId);
+    assert.equal(ownedGatewayJob.status, "running");
     const gatewayResponse = {
       ok: true,
       channel: "shopee",
@@ -543,6 +563,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.equal(claimed.id, JOB_ID);
     assert.equal(
+      await scalar(db, "select public.sellerpilot_service_begin_ai_job_completion($1, $2)", ["b".repeat(64), JOB_ID]),
+      false,
+    );
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_service_begin_ai_job_completion($1, $2)", [TOKEN_HASH, JOB_ID]),
+      true,
+    );
+    assert.equal(
       await scalar(db, "select public.sellerpilot_touch_ai_job($1, $2, 'migration-test/1.0')", [TOKEN_HASH, JOB_ID]),
       "running",
     );
@@ -573,6 +601,17 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.match(automaticallyReconciledProductId, /^[0-9a-f-]{36}$/i);
 
     await setClaims(db);
+    const readyRegistrationActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(20)");
+    const readyRegistrationCard = readyRegistrationActivity.find((activity) => activity.productId === automaticallyReconciledProductId);
+    const completedAnalysisSeconds = Number(await scalar(
+      db,
+      "select greatest(0, extract(epoch from (completed_at - created_at))::bigint) from sellerpilot_private.ai_cli_jobs where id = $1",
+      [JOB_ID],
+    ));
+    assert.equal(readyRegistrationCard.status, "ready");
+    assert.notEqual(readyRegistrationCard.completedAt, null);
+    assert.equal(readyRegistrationCard.elapsedSeconds, completedAnalysisSeconds);
+
     const duplicateSkuRequest = {
       ...requestPayload,
       image_paths: [`${ADMIN_ID}/${DUPLICATE_SKU_JOB_ID}/input/hero.jpg`],
@@ -842,6 +881,22 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(terminalRegistrationCard.status, "failed");
     assert.notEqual(terminalRegistrationCard.completedAt, null);
     await db.query(
+      "update sellerpilot_private.product_listings set status = 'paused', failure_class = null, last_error = null, updated_at = now() where id = $1",
+      [preparedListingId],
+    );
+    await db.query(
+      "update sellerpilot_private.product_listings set status = 'scope_excluded', failure_class = null, last_error = null, updated_at = now() where id = $1",
+      [elevenstPreparedListingId],
+    );
+    const intentionallyStoppedActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(20)");
+    const intentionallyStoppedCard = intentionallyStoppedActivity.find((activity) => activity.productId === aiProductId);
+    assert.equal(intentionallyStoppedCard.status, "completed");
+    assert.notEqual(intentionallyStoppedCard.completedAt, null);
+    assert.deepEqual(
+      new Set(intentionallyStoppedCard.channels.map((channel) => channel.status)),
+      new Set(["paused", "scope_excluded"]),
+    );
+    await db.query(
       "update sellerpilot_private.product_listings set status = 'published', failure_class = null, last_error = null, updated_at = now() where id = $1",
       [preparedListingId],
     );
@@ -882,6 +937,47 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ) values ($1, 'REAL-TICKET-1', 'qoo10', '실고객', '실제 문의', '배송 상태 확인', 'waiting', 2, now(), false)`,
       [ADMIN_ID],
     );
+    const shipmentFailureOrderId = await scalar(
+      db,
+      "select id from sellerpilot_private.commerce_orders where external_order_id = 'REAL-ORDER-1'",
+    );
+    await setClaims(db, "service_role");
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_record_order_shipment_failure($1, $2, 'LEX', 'safe shipment failure')",
+        [NON_ADMIN_ID, shipmentFailureOrderId],
+      ),
+      /invalid shipment failure record/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_record_order_shipment_failure($1, $2, 'LEX', 'safe shipment failure without tracking')",
+        [ADMIN_ID, shipmentFailureOrderId],
+      ),
+      true,
+    );
+    const persistedShipmentFailure = await db.query(
+      `select status, shipping_carrier, tracking_number, last_shipment_error
+         from sellerpilot_private.commerce_orders
+        where id = $1`,
+      [shipmentFailureOrderId],
+    );
+    assert.deepEqual(persistedShipmentFailure.rows[0], {
+      status: "paid",
+      shipping_carrier: "LEX",
+      tracking_number: null,
+      last_shipment_error: "safe shipment failure without tracking",
+    });
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*) from sellerpilot_private.operation_audit where owner_id = $1 and entity_id = $2 and action = 'shipment_failed'",
+        [ADMIN_ID, shipmentFailureOrderId],
+      ),
+      1,
+    );
+    await setClaims(db);
     const tracxCredentialId = await scalar(
       db,
       `select public.sellerpilot_rotate_credential(

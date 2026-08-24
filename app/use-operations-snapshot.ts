@@ -1,11 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import {
   mergeOperationProductImages,
   type OperationProductImageCacheEntry,
 } from "../lib/operation-product-image-cache";
+import {
+  OperationsSnapshotRequestCoordinator,
+  operationsSnapshotRangeKey,
+  unavailableOperationsSnapshot,
+} from "./operations-snapshot-request-coordinator";
 
 const DATA_REFRESH_INTERVAL_MS = 5 * 60_000;
 const RETRY_INTERVAL_MS = 30_000;
@@ -242,14 +247,22 @@ export type OperationsSnapshot = {
 type LoadState = "loading" | "database" | "unavailable";
 type LoadOptions = { force?: boolean; refreshProductImages?: boolean };
 
+class OperationsSnapshotLoadError extends Error {
+  constructor(message: string, readonly retainLastGood: boolean) {
+    super(message);
+  }
+}
+
 export function useOperationsSnapshot() {
   const [data, setData] = useState<OperationsSnapshot | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [message, setMessage] = useState("");
   const productImageCacheRef = useRef(new Map<string, OperationProductImageCacheEntry>());
   const nextProductImageRefreshAtRef = useRef(0);
-  const nextDataRefreshAtRef = useRef(0);
-  const inFlightLoadRef = useRef<Promise<void> | null>(null);
+  const nextDataRefreshAtRef = useRef(new Map<string, number>());
+  const requestCoordinatorRef = useRef(new OperationsSnapshotRequestCoordinator());
+  const lastSuccessfulRangeKeyRef = useRef("");
+  const lastGoodDataRef = useRef<OperationsSnapshot | null>(null);
   const [range, setRange] = useState<SalesRange>(() => {
     const now = new Date();
     const to = new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
@@ -257,11 +270,18 @@ export function useOperationsSnapshot() {
     const from = new Date(monthStart.getTime() - monthStart.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
     return { from, to, preset: "month" };
   });
+  const rangeKey = operationsSnapshotRangeKey(range);
+  const selectedRangeKeyRef = useRef(rangeKey);
+
+  useLayoutEffect(() => {
+    selectedRangeKeyRef.current = rangeKey;
+    requestCoordinatorRef.current.abortCurrent();
+  }, [rangeKey]);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data: sessionData } = await createClient().auth.getSession();
     const accessToken = sessionData.session?.access_token;
-    if (!accessToken) throw new Error("운영 데이터를 보려면 다시 로그인해 주세요.");
+    if (!accessToken) throw new OperationsSnapshotLoadError("운영 데이터를 보려면 다시 로그인해 주세요.", false);
     return fetch(input, {
       ...init,
       cache: "no-store",
@@ -274,11 +294,21 @@ export function useOperationsSnapshot() {
   }, []);
 
   const load = useCallback((options: LoadOptions = {}) => {
-    if (inFlightLoadRef.current) return inFlightLoadRef.current;
     const startedAt = Date.now();
-    if (!options.force && startedAt < nextDataRefreshAtRef.current) return Promise.resolve();
+    const nextRefreshAt = nextDataRefreshAtRef.current.get(rangeKey) ?? 0;
+    if (!options.force && startedAt < nextRefreshAt) return Promise.resolve();
 
-    const request = (async () => {
+    return requestCoordinatorRef.current.run(rangeKey, async (request) => {
+      const coordinator = requestCoordinatorRef.current;
+      const isSelectedRequest = () => coordinator.isCurrent(request, selectedRangeKeyRef.current);
+      if (lastSuccessfulRangeKeyRef.current !== request.key) {
+        coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
+          setState("loading");
+          setMessage(lastSuccessfulRangeKeyRef.current
+            ? "선택한 기간의 실데이터를 불러오는 중입니다. 이전 정상 데이터를 잠시 유지합니다."
+            : "Supabase 운영 DB 연결을 확인하고 있습니다.");
+        });
+      }
       try {
         const refreshProductImages = options.refreshProductImages === true
           || startedAt >= nextProductImageRefreshAtRef.current;
@@ -287,9 +317,18 @@ export function useOperationsSnapshot() {
           to: range.to,
           includeProductImages: refreshProductImages ? "1" : "0",
         });
-        const response = await authenticatedFetch(`/api/operations/snapshot?${params}`);
+        const response = await authenticatedFetch(`/api/operations/snapshot?${params}`, {
+          signal: request.signal,
+        });
         const payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
-        if (!response.ok) throw new Error(payload.message ?? "운영 데이터를 불러오지 못했습니다.");
+        if (!isSelectedRequest()) return;
+        if (!response.ok) {
+          const isTransient = response.status === 408
+            || response.status === 425
+            || response.status === 429
+            || response.status >= 500;
+          throw new OperationsSnapshotLoadError(payload.message ?? "운영 데이터를 불러오지 못했습니다.", isTransient);
+        }
 
         const merged = mergeOperationProductImages(
           payload.products,
@@ -297,35 +336,45 @@ export function useOperationsSnapshot() {
           startedAt,
           PRODUCT_IMAGE_CLIENT_CACHE_MS,
         );
-        if (refreshProductImages) {
-          nextProductImageRefreshAtRef.current = startedAt + PRODUCT_IMAGE_REFRESH_INTERVAL_MS;
-        } else if (merged.missingVersionedImage) {
-          nextProductImageRefreshAtRef.current = 0;
-        }
+        coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
+          if (refreshProductImages) {
+            nextProductImageRefreshAtRef.current = startedAt + PRODUCT_IMAGE_REFRESH_INTERVAL_MS;
+          } else if (merged.missingVersionedImage) {
+            nextProductImageRefreshAtRef.current = 0;
+          }
 
-        nextDataRefreshAtRef.current = startedAt + DATA_REFRESH_INTERVAL_MS;
-        setData({ ...payload, products: merged.products });
-        setState("database");
-        setMessage("Supabase 운영 DB · 실데이터만 표시 · 5분 자동 갱신");
+          nextDataRefreshAtRef.current.set(request.key, startedAt + DATA_REFRESH_INTERVAL_MS);
+          lastSuccessfulRangeKeyRef.current = request.key;
+          const nextData = { ...payload, products: merged.products };
+          lastGoodDataRef.current = nextData;
+          setData(nextData);
+          setState("database");
+          setMessage("Supabase 운영 DB · 실데이터만 표시 · 5분 자동 갱신");
+        });
       } catch (error) {
-        nextDataRefreshAtRef.current = startedAt + RETRY_INTERVAL_MS;
-        setData(null);
-        setState("unavailable");
-        setMessage(error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.");
+        if (!isSelectedRequest()) return;
+        const failureMessage = error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.";
+        const retainLastGood = !(error instanceof OperationsSnapshotLoadError) || error.retainLastGood;
+        coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
+          nextDataRefreshAtRef.current.set(request.key, startedAt + RETRY_INTERVAL_MS);
+          const unavailable = unavailableOperationsSnapshot(lastGoodDataRef.current, failureMessage, retainLastGood);
+          if (!retainLastGood) {
+            lastGoodDataRef.current = null;
+            lastSuccessfulRangeKeyRef.current = "";
+          }
+          setData(unavailable.data);
+          setState(unavailable.state);
+          setMessage(unavailable.message);
+        });
       }
-    })();
-
-    inFlightLoadRef.current = request;
-    void request.finally(() => {
-      if (inFlightLoadRef.current === request) inFlightLoadRef.current = null;
     });
-    return request;
-  }, [authenticatedFetch, range.from, range.to]);
+  }, [authenticatedFetch, range.from, range.to, rangeKey]);
 
   const reload = useCallback(() => load({ force: true, refreshProductImages: true }), [load]);
   const refresh = useCallback(() => load({ force: true }), [load]);
 
   useEffect(() => {
+    const requestCoordinator = requestCoordinatorRef.current;
     const initialLoad = window.setTimeout(() => void load({ force: true, refreshProductImages: true }), 0);
     const refresh = window.setInterval(() => void load({ force: true }), DATA_REFRESH_INTERVAL_MS);
     const refreshWhenVisible = () => {
@@ -334,6 +383,7 @@ export function useOperationsSnapshot() {
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
+      requestCoordinator.abortCurrent();
       window.clearTimeout(initialLoad);
       window.clearInterval(refresh);
       window.removeEventListener("focus", refreshWhenVisible);

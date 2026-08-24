@@ -88,17 +88,24 @@ import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
 import { emptyProductIntake, productConditions, productCurrencies, productEditSchema, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
+import { settleWithConcurrency } from "../lib/promise-pool";
 import { withPromiseTimeout } from "../lib/promise-timeout";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
 import { nextAdminAccessState, type AdminAccessState } from "./_auth/admin-access-state";
 import { formatCompactWon } from "./_dashboard/format-compact-won";
 import { RevenueCalendar } from "./_dashboard/revenue-calendar";
 import { SalesRangeControl } from "./_dashboard/sales-range-control";
+import { csChannelVerification, csReplyDraftValue, csReplySavePlan, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
 import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
 import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
+  isRegistrationActivityRunning,
+  registrationActivityDisplayElapsedSeconds,
+  registrationActivityMatchesFilter,
   registrationActivityNotificationTransition,
+  registrationChannelStatusLabel,
   registrationStatusMeta,
+  type RegistrationActivityFilter,
   type RegistrationStatus,
 } from "./_registration/registration-status";
 
@@ -1241,23 +1248,22 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
   onNewProduct: () => void;
   onExternalActions: () => void;
 }) {
-  const [filter, setFilter] = useState<"all" | "active" | "completed" | "attention">("all");
+  const [filter, setFilter] = useState<RegistrationActivityFilter>("all");
   const [refreshing, setRefreshing] = useState(false);
   const productMap = useMemo(() => new Map(displayProducts.map((product) => [product.sourceId, product])), [displayProducts]);
-  const filtered = activities.filter((activity) => filter === "all"
-    || (filter === "active" && ["analyzing", "ready", "publishing"].includes(activity.status))
-    || (filter === "completed" && activity.status === "completed")
-    || (filter === "attention" && ["failed", "blocked"].includes(activity.status)));
+  const filtered = activities.filter((activity) => registrationActivityMatchesFilter(activity, filter));
   const counts = {
-    active: activities.filter((item) => ["analyzing", "ready", "publishing"].includes(item.status)).length,
+    active: activities.filter((item) => isRegistrationActivityRunning(item.status)).length,
+    ready: activities.filter((item) => item.status === "ready").length,
     completed: activities.filter((item) => item.status === "completed").length,
     attention: activities.filter((item) => ["failed", "blocked"].includes(item.status)).length,
   };
 
   useEffect(() => {
+    if (!activities.some((activity) => isRegistrationActivityRunning(activity.status))) return;
     const interval = window.setInterval(() => void onRefresh(), 10_000);
     return () => window.clearInterval(interval);
-  }, [onRefresh]);
+  }, [activities, onRefresh]);
 
   const refresh = async () => {
     if (refreshing) return;
@@ -1273,7 +1279,8 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
     <section className="registration-filter-strip" aria-label="등록 상태 필터">
       {([
         ["all", "전체", activities.length],
-        ["active", "현재 등록 중", counts.active],
+        ["active", "현재 처리 중", counts.active],
+        ["ready", "등록 준비", counts.ready],
         ["completed", "완료", counts.completed],
         ["attention", "거절 · 확인 필요", counts.attention],
       ] as const).map(([value, label, count]) => <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><b>{count}</b></button>)}
@@ -1283,14 +1290,20 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
       : filtered.length > 0 ? <section className="registration-card-grid">{filtered.map((activity) => {
         const status = registrationStatusMeta[activity.status];
         const product = activity.productId ? productMap.get(activity.productId) : undefined;
-        const isActive = ["analyzing", "ready", "publishing"].includes(activity.status);
+        const isActive = isRegistrationActivityRunning(activity.status);
+        const elapsedLabel = isActive ? "현재 경과시간" : activity.status === "ready" ? "총 분석시간" : "총 등록시간";
+        const progress = activity.status === "completed"
+          ? 100
+          : activity.channelCount > 0
+            ? Math.round(((activity.publishedCount + activity.failedCount + activity.blockedCount) / activity.channelCount) * 100)
+            : 18;
         return <article className={`panel registration-card ${activity.status}`} key={activity.id}>
-          <header><span className={`registration-status ${activity.status}`}>{isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}{status.label}</span><small>{relativeTime(activity.updatedAt)}</small></header>
+          <header><span className={`registration-status ${activity.status}`}>{isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}{status.label}</span><small>{relativeTime(activity.updatedAt)}</small></header>
           <div className="registration-product"><div>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</div><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></div>
-          <div className="registration-progress"><span><i style={{ width: `${activity.channelCount > 0 ? Math.round(((activity.publishedCount + activity.failedCount + activity.blockedCount) / activity.channelCount) * 100) : activity.status === "completed" ? 100 : 18}%` }} /></span><small>{status.detail}</small></div>
-          <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{activity.completedAt ? "총 등록시간" : "현재 경과시간"}</dt><dd>{formatRegistrationDuration(activity.elapsedSeconds)}</dd></div></dl>
+          <div className="registration-progress"><span><i style={{ width: `${progress}%` }} /></span><small>{status.detail}</small></div>
+          <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
           <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">권한 {activity.blockedCount}</b></div>
-          {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{channel.status === "published" ? "완료" : channel.status === "failed" ? "오류" : channel.status === "blocked" ? "권한" : "진행"}</i></span>)}</div>}
+          {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
           <footer>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>상품 상세<ChevronRight size={14} /></button> : <span />}</footer>
         </article>;
@@ -1303,6 +1316,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
   const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
+  const [extraPhotosProcessing, setExtraPhotosProcessing] = useState(false);
+  const photoObjectUrlsRef = useRef(new Set<string>());
+  const publishingMountedRef = useRef(true);
+  const extraPhotoBatchRef = useRef(false);
   const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
   const [uploadError, setUploadError] = useState("");
@@ -1325,6 +1342,21 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
     .map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
+
+  const releasePhotoUrl = useCallback((url: string) => {
+    if (!photoObjectUrlsRef.current.delete(url)) return;
+    URL.revokeObjectURL(url);
+  }, []);
+
+  useEffect(() => {
+    publishingMountedRef.current = true;
+    const objectUrls = photoObjectUrlsRef.current;
+    return () => {
+      publishingMountedRef.current = false;
+      for (const url of objectUrls) URL.revokeObjectURL(url);
+      objectUrls.clear();
+    };
+  }, []);
 
   const preservePublishingCaptureContext = useCallback(() => {
     const historyState = isRecord(window.history.state) ? window.history.state : {};
@@ -1373,6 +1405,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("JPG, PNG, WEBP 이미지만 등록할 수 있습니다.");
     if (file.size > 20 * 1024 * 1024) throw new Error("원본 이미지는 20MB 이하로 등록해 주세요.");
     const url = URL.createObjectURL(file);
+    photoObjectUrlsRef.current.add(url);
     try {
       const image = new window.Image();
       const dimensions = await withPromiseTimeout(new Promise<{ width: number; height: number }>((resolve, reject) => {
@@ -1384,9 +1417,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         image.onerror = null;
       });
       if (dimensions.width < 600 || dimensions.height < 600) throw new Error("이미지는 최소 600×600px 이상이어야 합니다.");
+      if (!publishingMountedRef.current) throw new Error("상품 등록 화면이 닫혀 이미지 처리를 중단했습니다.");
       return { name: file.name, url, file, role, originalWidth: dimensions.width, originalHeight: dimensions.height };
     } catch (error) {
-      URL.revokeObjectURL(url);
+      releasePhotoUrl(url);
       throw error;
     }
   };
@@ -1398,7 +1432,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     event.target.value = "";
     try {
       const photo = await toPhoto(file, "main");
-      if (mainPhoto) URL.revokeObjectURL(mainPhoto.url);
+      if (mainPhoto) releasePhotoUrl(mainPhoto.url);
       setMainPhoto(photo);
       setUploadError("");
     } catch (error) {
@@ -1523,7 +1557,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     try {
       const photo = await toPhoto(file, slotId);
       setSlotPhotos((current) => {
-        if (current[slotId]) URL.revokeObjectURL(current[slotId].url);
+        if (current[slotId]) releasePhotoUrl(current[slotId].url);
         return { ...current, [slotId]: photo };
       });
       setUploadError("");
@@ -1539,24 +1573,45 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
     event.target.value = "";
+    if (extraPhotoBatchRef.current) {
+      notify("선택한 사진을 확인하고 있습니다. 완료된 뒤 다음 사진을 추가해 주세요.");
+      return;
+    }
     const remaining = Math.max(0, 100 - ((mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length));
     if (!remaining) return notify("한 상품은 분석용 사진을 최대 100장까지 등록할 수 있습니다.");
     const selected = files.slice(0, remaining);
-    const settled = await Promise.allSettled(selected.map((file, index) => toPhoto(file, `extra-${extraPhotos.length + index + 1}`)));
-    const accepted = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-    const firstFailure = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (accepted.length) setExtraPhotos((current) => [...current, ...accepted]);
-    if (firstFailure) {
-      const message = firstFailure.reason instanceof Error ? firstFailure.reason.message : "일부 추가 사진을 확인해 주세요.";
-      setUploadError(message);
-      notify(`${accepted.length}장 등록 · ${message}`);
+    extraPhotoBatchRef.current = true;
+    setExtraPhotosProcessing(true);
+    try {
+      const settled = await settleWithConcurrency(selected, 3, (file, index) => toPhoto(file, `extra-${extraPhotos.length + index + 1}`));
+      const accepted = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
+      const firstFailure = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (!publishingMountedRef.current) {
+        for (const photo of accepted) releasePhotoUrl(photo.url);
+        return;
+      }
+      if (accepted.length) setExtraPhotos((current) => {
+        const next = [...current, ...accepted];
+        const kept = next.slice(0, 100);
+        const keptUrls = new Set(kept.map((photo) => photo.url));
+        for (const photo of accepted) if (!keptUrls.has(photo.url)) releasePhotoUrl(photo.url);
+        return kept;
+      });
+      if (firstFailure) {
+        const message = firstFailure.reason instanceof Error ? firstFailure.reason.message : "일부 추가 사진을 확인해 주세요.";
+        setUploadError(message);
+        notify(`${accepted.length}장 등록 · ${message}`);
+      }
+    } finally {
+      extraPhotoBatchRef.current = false;
+      if (publishingMountedRef.current) setExtraPhotosProcessing(false);
     }
   };
 
   const removeSlotPhoto = (slotId: string) => {
     setSlotPhotos((current) => {
       const next = { ...current };
-      if (next[slotId]) URL.revokeObjectURL(next[slotId].url);
+      if (next[slotId]) releasePhotoUrl(next[slotId].url);
       delete next[slotId];
       return next;
     });
@@ -1564,7 +1619,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const removeExtraPhoto = (index: number) => {
     setExtraPhotos((current) => {
-      URL.revokeObjectURL(current[index].url);
+      if (current[index]) releasePhotoUrl(current[index].url);
       return current.filter((_, photoIndex) => photoIndex !== index);
     });
   };
@@ -1668,8 +1723,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           <section className="extra-photo-section">
             <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>상세컷, 구성품, 포장 상태 등 필요한 만큼 한 번에 선택할 수 있습니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
-            <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
-            <label className="extra-photo-uploader" htmlFor="extra-product-photos"><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void selectExtraPhotos(event)} /><Plus size={17} /><span><b>추가 사진 더 넣기</b><small>분석용 최대 100장 · 채널 등록은 앞 8~9장 자동 선별</small></span></label>
+            <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" disabled={extraPhotosProcessing} onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
+            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotosProcessing}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotosProcessing} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotosProcessing ? "선택한 사진 확인 중" : "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : "분석용 최대 100장 · 채널 등록은 앞 8~9장 자동 선별"}</small></span></label>
             <div className="photo-source-actions" aria-label="추가 사진 입력 방식">
               <label htmlFor="extra-product-photo-camera"><Camera size={18} /><span><b>사진 촬영</b><small>한 장씩 바로 추가</small></span></label>
               <label htmlFor="extra-product-photos"><ImagePlus size={18} /><span><b>앨범에서 선택</b><small>여러 장 한 번에 첨부</small></span></label>
@@ -1789,7 +1844,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 }
 
 type ShipmentInput = { id: string; carrierCode: string; trackingNumber: string };
-type ShipmentResult = { succeeded: number; failed: number; results: Array<{ id: string; channel: string; ok: boolean; message: string }> };
+type ShipmentResult = {
+  succeeded: number;
+  failed: number;
+  reconciliationRequired: number;
+  results: Array<{ id: string; channel: string; ok: boolean; message: string; reconciliationRequired?: boolean }>;
+};
 
 function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery = "", initialOrderId = null }: {
   notify: (message: string) => void;
@@ -1906,7 +1966,7 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
         result.results.filter((item) => item.ok).forEach((item) => next.delete(item.id));
         return next;
       });
-      if (result.failed === 0) setFulfillmentOpen(false);
+      if (result.failed === 0 && result.reconciliationRequired === 0) setFulfillmentOpen(false);
     } finally {
       setFulfilling(false);
     }
@@ -1938,13 +1998,14 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
   initialQuery?: string;
   initialTicketId?: string | null;
 }) {
-  const [selectedId, setSelectedId] = useState<string | null>(initialTicketId);
+  const initialTicket = displayTickets.find((ticket) => ticket.id === initialTicketId) ?? null;
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(initialTicket?.sourceId ?? null);
   const [query, setQuery] = useState(initialQuery);
   const [ticketTab, setTicketTab] = useState<"미답변" | "처리 중" | "완료">(() => {
-    const initialStatus = displayTickets.find((ticket) => ticket.id === initialTicketId)?.status;
+    const initialStatus = initialTicket?.status;
     return initialStatus === "처리 완료" ? "완료" : initialStatus === "처리 중" ? "처리 중" : "미답변";
   });
-  const [reply, setReply] = useState("");
+  const [replyDrafts, setReplyDrafts] = useState<CsReplyDrafts>({});
   const [targetLocale, setTargetLocale] = useState<SupportLocale>("ko-KR");
   const [drafting, setDrafting] = useState(false);
   const [mobileConversationOpen, setMobileConversationOpen] = useState(Boolean(initialTicketId));
@@ -1956,12 +2017,15 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
         : ticket.status === "처리 완료";
     return matchesTab && (!query.trim() || matchesSearch(`${ticket.id} ${ticket.customer} ${ticket.channel} ${ticket.subject} ${ticket.preview}`, query));
   });
-  const selected = filteredTickets.find((ticket) => ticket.id === selectedId)
-    ?? filteredTickets[0]
-    ?? null;
+  const selected = selectedCsTicket(filteredTickets, selectedSourceId);
+  const reply = csReplyDraftValue(replyDrafts, selected);
+  const setSelectedReply = (value: string) => {
+    if (!selected) return;
+    setReplyDrafts((current) => withCsReplyDraft(current, selected, value));
+  };
   const sendReply = async () => {
     if (selected && await onSend(selected, reply)) {
-      setReply("");
+      setReplyDrafts((current) => withCsReplyDraft(current, selected, ""));
     }
   };
   const createDraft = async () => {
@@ -1970,8 +2034,8 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
     try {
       const draft = await onDraft(selected, targetLocale);
       if (draft) {
-        setReply(draft);
-        notify(`${supportLocaleLabels[targetLocale]} CLI 답변 초안을 불러왔습니다. 전송 전 내용을 확인해 주세요.`);
+        setReplyDrafts((current) => withCsReplyDraft(current, selected, draft));
+        notify(`${supportLocaleLabels[targetLocale]} CLI 답변 초안을 불러왔습니다. 외부 전송 여부를 확인해 주세요.`);
       }
     } finally {
       setDrafting(false);
@@ -1981,7 +2045,6 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
     if (!selected) return;
     await onStatus(selected, status);
   };
-  const linkedOrder = selected ? displayOrders.find((order) => order.customer === selected.customer) ?? null : null;
   const unresolvedCount = displayTickets.filter((ticket) => ticket.status !== "처리 완료").length;
   const lastSuccess = syncStatus.filter((item) => item.data_type === "inquiries" && item.last_succeeded_at).sort((left, right) => Date.parse(right.last_succeeded_at ?? "") - Date.parse(left.last_succeeded_at ?? ""))[0]?.last_succeeded_at ?? null;
   const failedCount = syncStatus.filter((item) => item.data_type === "inquiries" && item.status === "failed").length;
@@ -1992,17 +2055,17 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
   });
   return (
     <div className="page-stack cs-page">
-      <section className="cs-summary"><div><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{unresolvedCount}</strong></span></div><div><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{displayTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></div><div><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>연결 주문</small><strong>{displayOrders.length}</strong></span></div><div><span className="metric-icon blue"><Bot size={18} /></span><span><small>AI 답변</small><strong>CLI</strong></span></div></section>
+      <section className="cs-summary"><div><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{unresolvedCount}</strong></span></div><div><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{displayTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></div><div><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>동기화 주문</small><strong>{displayOrders.length}</strong></span></div><div><span className="metric-icon blue"><Bot size={18} /></span><span><small>AI 답변</small><strong>CLI</strong></span></div></section>
       <section className="panel-heading table-title"><div><span className="panel-kicker">LIVE INQUIRIES</span><h3>{lastSuccess ? `최근 동기화 ${relativeTime(lastSuccess)}` : "채널 문의 동기화 대기"}{failedCount ? ` · ${failedCount}개 채널 확인 필요` : ""}</h3></div><button className="filter-button" type="button" onClick={() => void onSync()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{syncing ? "요청 중" : "문의 새로고침"}</button></section>
-      <section className="panel cs-channel-verification"><div className="panel-heading"><div><span className="panel-kicker">CHANNEL VERIFICATION</span><h3>채널별 CS 실제 동작 상태</h3></div><ShieldCheck size={18} /></div><div className="cs-channel-verification-grid">{inquiryChannelStates.map(({ channelKey, state }) => { const supported = state?.status !== "unsupported" && Boolean(state); const passed = state?.status === "passed"; return <article key={channelKey}><ChannelMark code={channels[channelKey].letter} /><span><b>{channels[channelKey].name}</b><small>{passed ? `정상 · ${state?.last_succeeded_at ? relativeTime(state.last_succeeded_at) : "동기화 완료"}` : state?.status === "failed" ? "연결 오류" : state?.status === "unsupported" ? "현재 API 미지원" : "검증 이력 없음"}</small></span><em className={passed ? "passed" : supported ? "failed" : "unsupported"}>{passed ? "동작" : supported ? "오류" : "미지원"}</em></article>; })}</div></section>
-      {!selected ? <section className="panel live-empty-state large"><Inbox size={32} /><b>{displayTickets.length === 0 ? "동기화된 실제 문의가 없습니다." : "검색 조건에 맞는 문의가 없습니다."}</b><small>{displayTickets.length === 0 ? "채널 API 연결 후 문의를 동기화하면 고객 정보와 주문 맥락이 표시됩니다." : "고객명, 문의번호 또는 문의 내용을 다시 확인해 주세요."}</small>{displayTickets.length === 0 && <button className="ghost-button" type="button" onClick={() => void onSync()} disabled={syncing}>지금 확인</button>}</section> :
+      <section className="panel cs-channel-verification"><div className="panel-heading"><div><span className="panel-kicker">CHANNEL VERIFICATION</span><h3>채널별 문의 수신 · 답변 범위</h3></div><ShieldCheck size={18} /></div><div className="cs-channel-verification-grid">{inquiryChannelStates.map(({ channelKey, state }) => { const verification = csChannelVerification(channelKey, state?.status); return <article key={channelKey}><ChannelMark code={channels[channelKey].letter} /><span><b>{channels[channelKey].name}</b><small>{verification.readLabel}{state?.status === "passed" && state.last_succeeded_at ? ` · ${relativeTime(state.last_succeeded_at)}` : ""}</small><small>{verification.replyLabel}</small></span><em className={verification.tone}>{verification.badge}</em></article>; })}</div></section>
+      {!selected ? <section className="panel live-empty-state large"><Inbox size={32} /><b>{displayTickets.length === 0 ? "동기화된 실제 문의가 없습니다." : "검색 조건에 맞는 문의가 없습니다."}</b><small>{displayTickets.length === 0 ? "채널 API 연결 후 문의를 동기화하면 고객 정보와 문의 원문이 표시됩니다." : "고객명, 문의번호 또는 문의 내용을 다시 확인해 주세요."}</small>{displayTickets.length === 0 && <button className="ghost-button" type="button" onClick={() => void onSync()} disabled={syncing}>지금 확인</button>}</section> :
       <section className={`cs-workspace panel ${mobileConversationOpen ? "mobile-conversation-open" : ""}`}>
-        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs">{(["미답변", "처리 중", "완료"] as const).map((tab) => <button key={tab} className={ticketTab === tab ? "active" : ""} onClick={() => { setTicketTab(tab); setSelectedId(null); setMobileConversationOpen(false); }}>{tab}{tab === "미답변" && <span>{displayTickets.filter((ticket) => ticket.status === "긴급" || ticket.status === "답변 대기").length}</span>}</button>)}</div>{filteredTickets.map((ticket) => <button key={ticket.id} className={`ticket-item ${selected.id === ticket.id ? "active" : ""}`} onClick={() => { setSelectedId(ticket.id); setReply(ticket.replyDraft ?? ""); setMobileConversationOpen(true); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.status} /></div></button>)}</aside>
+        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs">{(["미답변", "처리 중", "완료"] as const).map((tab) => <button key={tab} className={ticketTab === tab ? "active" : ""} onClick={() => { setTicketTab(tab); setSelectedSourceId(null); setMobileConversationOpen(false); }}>{tab}{tab === "미답변" && <span>{displayTickets.filter((ticket) => ticket.status === "긴급" || ticket.status === "답변 대기").length}</span>}</button>)}</div>{filteredTickets.map((ticket) => <button key={ticket.sourceId} className={`ticket-item ${selected.sourceId === ticket.sourceId ? "active" : ""}`} onClick={() => { setSelectedSourceId(ticket.sourceId); setMobileConversationOpen(true); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.status} /></div></button>)}</aside>
         <article className="conversation"><header><div><button className="mobile-back" type="button" aria-label="문의 목록으로 돌아가기" onClick={() => setMobileConversationOpen(false)}><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div><label className="filter-select compact"><span className="sr-only">문의 처리 상태</span><select value={selected.status === "처리 완료" ? "resolved" : selected.status === "처리 중" ? "in_progress" : "waiting"} onChange={(event) => void updateStatus(event.target.value as "waiting" | "in_progress" | "resolved")}><option value="waiting">답변 대기</option><option value="in_progress">처리 중</option><option value="resolved">처리 완료</option></select><ChevronDown size={14} /></label></div></header>
-          <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b></span><div className="order-context-meta"><em>{linkedOrder?.id ?? "-"}</em><StatusBadge status={linkedOrder?.status ?? "확인 필요"} /><small>{linkedOrder?.trackingNumber ? `${linkedOrder.carrierCode ?? "택배사"} · ${linkedOrder.trackingNumber}` : "운송장 등록 전"}</small></div></div><div className="message-date"><span>실제 수신 문의</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.originalMessage}</p><span>채널 동기화 원문</span></div></div></div>
-          <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />주문 맥락과 문의 원문을 바탕으로 검토용 초안을 생성합니다.</span><button type="button" disabled={drafting} onClick={() => void createDraft()}>{drafting ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{drafting ? "CLI 작성 중" : "CLI 초안 생성"}</button></div><textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder="실제 답변을 입력하거나 CLI 초안을 생성하세요." /><div><span><label className="reply-tool-select"><Languages size={15} /><span className="sr-only">답변 언어</span><select value={targetLocale} onChange={(event) => setTargetLocale(event.target.value as SupportLocale)}>{Object.entries(supportLocaleLabels).map(([locale, label]) => <option key={locale} value={locale}>{label}</option>)}</select><ChevronDown size={13} /></label><label className="reply-tool-select"><FileText size={15} /><span className="sr-only">답변 템플릿</span><select defaultValue="" onChange={(event) => { const template = supportReplyTemplates.find((item) => item.label === event.target.value); if (template) setReply(template.value); event.target.value = ""; }}><option value="">템플릿</option>{supportReplyTemplates.map((template) => <option value={template.label} key={template.label}>{template.label}</option>)}</select><ChevronDown size={13} /></label></span><button className="send-button" disabled={!reply.trim()} onClick={() => void sendReply()}>검토 답변 저장<Send size={15} /></button></div></footer>
+          <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>안정된 주문 연결 정보 없음</b></span><div className="order-context-meta"><em>-</em><StatusBadge status="확인 필요" /><small>고객명만으로 주문을 추정하지 않습니다.</small></div></div><div className="message-date"><span>실제 수신 문의</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.originalMessage}</p><span>채널 동기화 원문</span></div></div></div>
+          <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />문의 원문을 바탕으로 검토용 초안을 생성합니다.</span><button type="button" disabled={drafting} onClick={() => void createDraft()}>{drafting ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{drafting ? "CLI 작성 중" : "CLI 초안 생성"}</button></div><textarea value={reply} onChange={(event) => setSelectedReply(event.target.value)} placeholder={selected.channelKey === "lazada" ? "Lazada IM으로 전송할 실제 답변을 입력하세요." : "판매자센터 전송 전 검토할 내부 초안을 입력하세요."} /><div><span><label className="reply-tool-select"><Languages size={15} /><span className="sr-only">답변 언어</span><select value={targetLocale} onChange={(event) => setTargetLocale(event.target.value as SupportLocale)}>{Object.entries(supportLocaleLabels).map(([locale, label]) => <option key={locale} value={locale}>{label}</option>)}</select><ChevronDown size={13} /></label><label className="reply-tool-select"><FileText size={15} /><span className="sr-only">답변 템플릿</span><select defaultValue="" onChange={(event) => { const template = supportReplyTemplates.find((item) => item.label === event.target.value); if (template) setSelectedReply(template.value); event.target.value = ""; }}><option value="">템플릿</option>{supportReplyTemplates.map((template) => <option value={template.label} key={template.label}>{template.label}</option>)}</select><ChevronDown size={13} /></label></span><button className="send-button" disabled={!reply.trim()} onClick={() => void sendReply()}>{selected.channelKey === "lazada" ? "Lazada IM 답변 전송" : "내부 초안 저장"}<Send size={15} /></button></div></footer>
         </article>
-        <aside className="customer-panel"><div className="customer-profile"><div className="ticket-avatar xl">{selected.customer.charAt(0)}</div><h4>{selected.customer}</h4><span>{selected.channel} 구매자</span></div><div className="customer-facts"><div><small>총 주문</small><b>{displayOrders.filter((order) => order.customer === selected.customer).length}건</b></div><div><small>데이터 출처</small><b>실제 채널 API</b></div></div><div className="detail-section"><h5>현재 주문</h5><div className="mini-order"><span className="tiny-thumb"><Package size={17} /></span><span><b>{linkedOrder?.product ?? "연결된 주문 없음"}</b><small>{linkedOrder?.amount ?? "-"}</small></span></div><dl><div><dt>주문번호</dt><dd>{linkedOrder?.id ?? "-"}</dd></div><div><dt>배송상태</dt><dd><StatusBadge status={linkedOrder?.status ?? "확인 필요"} /></dd></div><div><dt>운송장</dt><dd>배송 API 동기화 값</dd></div></dl></div><div className="detail-section"><h5>응대 원칙</h5><p className="ai-guide"><Bot size={16} />실제 주문·배송 상태를 확인한 뒤 답변을 저장하세요.</p></div></aside>
+        <aside className="customer-panel"><div className="customer-profile"><div className="ticket-avatar xl">{selected.customer.charAt(0)}</div><h4>{selected.customer}</h4><span>{selected.channel} 구매자</span></div><div className="customer-facts"><div><small>문의 연결 주문</small><b>미연결</b></div><div><small>데이터 출처</small><b>실제 채널 API</b></div></div><div className="detail-section"><h5>연결 주문</h5><div className="mini-order"><span className="tiny-thumb"><Package size={17} /></span><span><b>안정된 주문 식별자 없음</b><small>-</small></span></div><dl><div><dt>주문번호</dt><dd>-</dd></div><div><dt>배송상태</dt><dd><StatusBadge status="확인 필요" /></dd></div><div><dt>운송장</dt><dd>-</dd></div></dl></div><div className="detail-section"><h5>응대 원칙</h5><p className="ai-guide"><Bot size={16} />판매자센터에서 주문·배송 상태를 확인한 뒤 처리하세요. 고객명만으로 주문을 자동 연결하지 않습니다.</p></div></aside>
       </section>}
     </div>
   );
@@ -2226,7 +2289,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, [notify, operations.data]);
 
   useEffect(() => {
-    if (!registrationActivities.some((activity) => ["analyzing", "ready", "publishing"].includes(activity.status))) return;
+    if (!registrationActivities.some((activity) => isRegistrationActivityRunning(activity.status))) return;
     const interval = window.setInterval(() => void refreshOperations(), 10_000);
     return () => window.clearInterval(interval);
   }, [refreshOperations, registrationActivities]);
@@ -2379,12 +2442,13 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       return {
         succeeded: Number(payload.succeeded ?? 0),
         failed: Number(payload.failed ?? shipments.length),
+        reconciliationRequired: Number(payload.reconciliationRequired ?? 0),
         results: Array.isArray(payload.results) ? payload.results : [],
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "판매채널 발송 처리를 완료하지 못했습니다.";
       notify(message);
-      return { succeeded: 0, failed: shipments.length, results: shipments.map((shipment) => ({ id: shipment.id, channel: "unknown", ok: false, message })) };
+      return { succeeded: 0, failed: shipments.length, reconciliationRequired: 0, results: shipments.map((shipment) => ({ id: shipment.id, channel: "unknown", ok: false, message })) };
     }
   }, [notify, operations]);
 
@@ -2395,15 +2459,15 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       return false;
     }
     try {
-      const response = await operations.authenticatedFetch(ticket.channelKey === "lazada" ? "/api/admin/cs/lazada-reply" : "/api/operations/snapshot", {
+      const plan = csReplySavePlan(source.id, ticket.channelKey, reply);
+      const response = await operations.authenticatedFetch(plan.endpoint, {
         method: "POST",
-        body: JSON.stringify(ticket.channelKey === "lazada"
-          ? { ticketId: source.id, reply }
-          : { action: "ticket_update", id: source.id, status: "resolved", replyDraft: reply }),
+        body: JSON.stringify(plan.body),
       });
       const payload = await response.json().catch(() => ({ message: "CS 답변 응답을 읽지 못했습니다." })) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "CS 답변을 저장하지 못했습니다.");
       await operations.reload();
+      notify(plan.completionMessage);
       return true;
     } catch (error) {
       notify(error instanceof Error ? error.message : "CS 답변을 저장하지 못했습니다.");
@@ -2437,7 +2501,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       });
       const queuedPayload = await queued.json().catch(() => ({ message: "CLI 작업 응답을 읽지 못했습니다." })) as { message?: string };
       if (!queued.ok) throw new Error(queuedPayload.message ?? "CLI 답변 작업을 시작하지 못했습니다.");
-      notify("ChatGPT CLI가 문의와 주문 맥락을 확인하고 있습니다.");
+      notify("ChatGPT CLI가 문의 원문과 연결된 원장 정보가 있는지 확인하고 있습니다.");
 
       for (let attempt = 0; attempt < 120; attempt += 1) {
         await new Promise((resolveDelay) => window.setTimeout(resolveDelay, 2_000));
