@@ -108,6 +108,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(channelLinks, /채널에서 상품 찾기/);
   assert.doesNotMatch(channelLinks, /#\/products\/origin-list/);
   assert.match(page, /publish-context/);
+  assert.match(page, /if \(view === "product-detail"\) return selectedProduct/);
+  assert.match(page, /상품 상세정보를 불러오는 중입니다/);
   assert.match(page, /ChatGPT CLI가 문의와 주문 맥락을 확인/);
   assert.match(page, /공식 카테고리 확정/);
   assert.match(page, /대표사진 1장이 반드시 필요/);
