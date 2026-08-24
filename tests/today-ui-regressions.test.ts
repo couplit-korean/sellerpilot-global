@@ -180,6 +180,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /onNavigate\("registration-activity"\)[^\n]*채널 등록 실패/);
   assert.match(page, /activityState === "unavailable"[\s\S]*등록 진행 이력을 불러오지 못했습니다/);
   assert.match(page, /signal: AbortSignal\.timeout\(30_000\)/);
+  assert.match(page, /withPromiseTimeout\(new Promise<\{ width: number; height: number \}>[\s\S]*?15_000[\s\S]*?모바일에서 이미지를 읽는 시간이 너무 오래 걸렸습니다/);
   assert.doesNotMatch(page, /sellingPrice: current\.sellingPrice > 0 \? current\.sellingPrice : 5000/);
   assert.match(page, /수정값은 중앙 상품 원장에 저장되며, 재고 변경은 연결된 채널에도 동기화/);
   assert.match(publishWorkbench, /<select required value=\{context\.manualFields\.packageContents\}/);

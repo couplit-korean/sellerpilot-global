@@ -88,6 +88,7 @@ import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
 import { emptyProductIntake, productConditions, productCurrencies, productEditSchema, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
+import { withPromiseTimeout } from "../lib/promise-timeout";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
 import { nextAdminAccessState, type AdminAccessState } from "./_auth/admin-access-state";
 import { formatCompactWon } from "./_dashboard/format-compact-won";
@@ -1373,11 +1374,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     if (file.size > 20 * 1024 * 1024) throw new Error("원본 이미지는 20MB 이하로 등록해 주세요.");
     const url = URL.createObjectURL(file);
     try {
-      const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-        const image = new window.Image();
+      const image = new window.Image();
+      const dimensions = await withPromiseTimeout(new Promise<{ width: number; height: number }>((resolve, reject) => {
         image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
         image.onerror = () => reject(new Error("이미지를 읽지 못했습니다."));
         image.src = url;
+      }), 15_000, "모바일에서 이미지를 읽는 시간이 너무 오래 걸렸습니다. 사진을 다시 선택해 주세요.").finally(() => {
+        image.onload = null;
+        image.onerror = null;
       });
       if (dimensions.width < 600 || dimensions.height < 600) throw new Error("이미지는 최소 600×600px 이상이어야 합니다.");
       return { name: file.name, url, file, role, originalWidth: dimensions.width, originalHeight: dimensions.height };
