@@ -88,7 +88,9 @@ test("cereal generation assigns four recognizably different real setting shots",
   assert.match(assignments[0], /아침 식탁/);
   assert.match(assignments[1], /주방.*조리대/);
   assert.match(assignments[2], /팬트리/);
-  assert.match(assignments[3], /다이닝 테이블/);
+  assert.match(assignments[3], /거실 소파/);
+  assert.match(assignments[3], /창문·주방·다이닝 가구가 보이지 않는/);
+  assert.match(assignments[3], /저녁/);
   assert.ok(prompts.every((prompt) => prompt.includes("A colored wall, geometric panel, gradient or pedestal is not a setting shot.")));
   assert.ok(prompts.every((prompt) => prompt.includes("Mandatory self-QA before finishing:")));
   assert.ok(prompts.every((prompt) => prompt.includes("30–45% of the frame")));

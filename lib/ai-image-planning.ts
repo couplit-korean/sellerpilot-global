@@ -3,7 +3,7 @@ import { channelStyleProfiles, matchStyleCategory } from "./marketplace-style-le
 import { buildProductSettingShotPlan, formatProductSettingShot, settingShotAssetIds } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.24-r5";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.24-r6";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
