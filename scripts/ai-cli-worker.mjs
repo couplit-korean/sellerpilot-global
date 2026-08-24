@@ -1,9 +1,10 @@
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
@@ -12,6 +13,11 @@ import { cliStudioResultSchema, productResearchResultSchema } from "../lib/ai-cl
 import { buildMarketplaceStyleLearningBrief } from "../lib/marketplace-style-learning.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
+import {
+  buildDuplicateRetryGuidance,
+  findDuplicateShot,
+  MAXIMUM_SHOT_GENERATION_ATTEMPTS,
+} from "../lib/image-shot-uniqueness.ts";
 import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
 import {
   mergeShopeeRequiredAttributes,
@@ -87,7 +93,7 @@ const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.js
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.15";
+const workerVersion = "sellerpilot-cli-worker/1.16";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
@@ -989,6 +995,69 @@ async function normalizeGeneratedAsset(outputFile, preset) {
   return normalized;
 }
 
+async function fingerprintGeneratedShot(assetId, buffer) {
+  const pixels = await sharp(buffer, { failOn: "warning", limitInputPixels: 64_000_000 })
+    .resize(17, 16, { fit: "fill" })
+    .greyscale()
+    .raw()
+    .toBuffer();
+  const visualHash = Buffer.alloc(32);
+  for (let row = 0; row < 16; row += 1) {
+    for (let column = 0; column < 16; column += 1) {
+      const bitIndex = row * 16 + column;
+      if (pixels[row * 17 + column] > pixels[row * 17 + column + 1]) {
+        visualHash[Math.floor(bitIndex / 8)] |= 1 << (7 - (bitIndex % 8));
+      }
+    }
+  }
+  return {
+    assetId,
+    digest: createHash("sha256").update(buffer).digest("hex"),
+    visualHash,
+  };
+}
+
+async function downloadComparisonShots(job) {
+  const images = Array.isArray(job.request?.comparisonImages) ? job.request.comparisonImages : [];
+  const shots = [];
+  for (const image of images) {
+    if (!image?.assetId || !image?.signedUrl) continue;
+    const response = await fetch(image.signedUrl);
+    if (!response.ok) throw new Error(`${image.assetId} 기존 이미지 중복 비교 자료를 받지 못했습니다.`);
+    shots.push(await fingerprintGeneratedShot(image.assetId, Buffer.from(await response.arrayBuffer())));
+  }
+  return shots;
+}
+
+async function generateDistinctAsset({ result, outputFile, preset, imageFiles, jobId, existingShots }) {
+  const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
+  let noveltyGuidance = "";
+  for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1) {
+    const imageArgs = [
+      "exec",
+      "--model", model,
+      "--enable", "image_generation",
+      "--sandbox", "workspace-write",
+      "--skip-git-repo-check",
+      "--ephemeral",
+      "--cd", dirname(outputFile),
+      ...referenceIndexes.map((index) => `--image=${imageFiles[index].file}`),
+      buildAssetImagePrompt(result, outputFile, preset, referenceIndexes.map((index) => imageFiles[index].role), noveltyGuidance),
+    ];
+    await runCodex(imageArgs, imageGenerationTimeoutMs, jobId);
+    const normalized = await normalizeGeneratedAsset(outputFile, preset);
+    const fingerprint = await fingerprintGeneratedShot(preset.id, normalized);
+    const duplicate = findDuplicateShot(fingerprint, existingShots);
+    if (!duplicate) return { normalized, fingerprint, attempts: attempt };
+    if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
+      throw new Error(`${preset.id} 이미지가 ${duplicate.assetId}와 반복되어 완료하지 않았습니다.`);
+    }
+    noveltyGuidance = buildDuplicateRetryGuidance(preset.id, duplicate.assetId, attempt + 1);
+    console.log(`[이미지 중복 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · distance=${duplicate.distance}`);
+  }
+  throw new Error(`${preset.id} 이미지 중복 검증을 완료하지 못했습니다.`);
+}
+
 function summarizeStudioIssues(issues) {
   return issues
     .slice(0, 12)
@@ -1056,22 +1125,18 @@ async function processJob(job) {
         auth: { persistSession: false, autoRefreshToken: false },
       });
       const outputFile = join(jobDir, preset.file);
-      const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
-      await runCodex([
-        "exec",
-        "--model", model,
-        "--enable", "image_generation",
-        "--sandbox", "workspace-write",
-        "--skip-git-repo-check",
-        "--ephemeral",
-        "--cd", jobDir,
-        ...referenceIndexes.map((index) => `--image=${imageFiles[index].file}`),
-        buildAssetImagePrompt(parsedSource.data, outputFile, preset, referenceIndexes.map((index) => imageFiles[index].role)),
-      ], imageGenerationTimeoutMs, job.id);
-      const normalized = await normalizeGeneratedAsset(outputFile, preset);
+      const existingShots = await downloadComparisonShots(job);
+      const generated = await generateDistinctAsset({
+        result: parsedSource.data,
+        outputFile,
+        preset,
+        imageFiles,
+        jobId: job.id,
+        existingShots,
+      });
       const { error: uploadError } = await resultStorageClient.storage
         .from(upload.bucket)
-        .uploadToSignedUrl(upload.path, upload.token, normalized, {
+        .uploadToSignedUrl(upload.path, upload.token, generated.normalized, {
           contentType: "image/png",
           cacheControl: "3600",
         });
@@ -1129,39 +1194,22 @@ async function processJob(job) {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     const assetStoragePaths = {};
-    const imageGenerationConcurrency = 2;
-    for (let start = 0; start < imagePresets.length; start += imageGenerationConcurrency) {
-      const batch = imagePresets.slice(start, start + imageGenerationConcurrency);
-      const generated = await Promise.allSettled(batch.map(async (preset) => {
-        const outputFile = join(jobDir, preset.file);
-        const imageArgs = [
-          "exec",
-          "--model", model,
-          "--enable", "image_generation",
-          "--sandbox", "workspace-write",
-          "--skip-git-repo-check",
-          "--ephemeral",
-          "--cd", jobDir,
-        ];
-        const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
-        for (const index of referenceIndexes) imageArgs.push(`--image=${imageFiles[index].file}`);
-        imageArgs.push(buildAssetImagePrompt(result, outputFile, preset, referenceIndexes.map((index) => imageFiles[index].role)));
-        await runCodex(imageArgs, imageGenerationTimeoutMs, job.id);
-        const upload = uploads.find((item) => item?.id === preset.id);
-        if (!upload?.bucket || !upload?.path || !upload?.token) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
-        const normalized = await normalizeGeneratedAsset(outputFile, preset);
-        const { error: uploadError } = await resultStorageClient.storage
-          .from(upload.bucket)
-          .uploadToSignedUrl(upload.path, upload.token, normalized, {
-            contentType: "image/png",
-            cacheControl: "3600",
-          });
-        if (uploadError) throw new Error(`${preset.id} 이미지 업로드 실패: ${uploadError.message}`);
-        assetStoragePaths[preset.id] = upload.path;
-        uploadedResultPaths.push(upload.path);
-      }));
-      const failed = generated.find((item) => item.status === "rejected");
-      if (failed?.status === "rejected") throw failed.reason;
+    const existingShots = [];
+    for (const preset of imagePresets) {
+      const outputFile = join(jobDir, preset.file);
+      const upload = uploads.find((item) => item?.id === preset.id);
+      if (!upload?.bucket || !upload?.path || !upload?.token) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
+      const generated = await generateDistinctAsset({ result, outputFile, preset, imageFiles, jobId: job.id, existingShots });
+      const { error: uploadError } = await resultStorageClient.storage
+        .from(upload.bucket)
+        .uploadToSignedUrl(upload.path, upload.token, generated.normalized, {
+          contentType: "image/png",
+          cacheControl: "3600",
+        });
+      if (uploadError) throw new Error(`${preset.id} 이미지 업로드 실패: ${uploadError.message}`);
+      existingShots.push(generated.fingerprint);
+      assetStoragePaths[preset.id] = upload.path;
+      uploadedResultPaths.push(upload.path);
     }
 
     const response = await api("/api/ai/worker/complete", {

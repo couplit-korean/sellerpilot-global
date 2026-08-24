@@ -2,7 +2,7 @@ import { aiGeneratedAssetSpecs, type AiGeneratedAssetId } from "./ai-generated-a
 import { channelStyleProfiles, matchStyleCategory } from "./marketplace-style-learning";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.24-r3";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.24-r4";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -39,17 +39,23 @@ export function selectAssetReferenceIndexes(
 }
 
 function assetShot(categoryShots: string[], assetId: AiGeneratedAssetId) {
-  const indexes: Record<AiGeneratedAssetId, number> = {
-    hero: 0,
-    square: 0,
-    portrait: 1,
-    wide: 4,
-    "detail-overview": 1,
-    "detail-feature": 2,
-    "detail-use": 4,
-    "detail-package": 3,
+  const semanticPatterns: Partial<Record<AiGeneratedAssetId, RegExp>> = {
+    hero: /정면|대표|히어로|전체/,
+    square: /정면|대표|히어로|전체/,
+    portrait: /45도|입체|측면|세로/,
+    wide: /사용|활용|맥락|완성|조리|섭취|착용|놀이/,
+    "detail-overview": /45도|입체|전체|완성/,
+    "detail-feature": /근접|디테일|재질|텍스처|입자|기능/,
+    "detail-use": /사용|활용|맥락|완성|조리|섭취|착용|놀이|루틴/,
+    "detail-package": /구성|패키지|라벨|표시|수량|용량/,
   };
-  return categoryShots[indexes[assetId]] ?? categoryShots[0] ?? "상품 전체와 확인 가능한 구성";
+  const semanticMatch = categoryShots.find((shot) => semanticPatterns[assetId]?.test(shot));
+  if (semanticMatch) return semanticMatch;
+  const fallbackIndexes: Record<AiGeneratedAssetId, number> = {
+    hero: 0, square: 0, portrait: 1, wide: 4,
+    "detail-overview": 1, "detail-feature": 2, "detail-use": 4, "detail-package": 3,
+  };
+  return categoryShots[fallbackIndexes[assetId]] ?? categoryShots[0] ?? "상품 전체와 확인 가능한 구성";
 }
 
 function seriesExclusion(assetId: AiGeneratedAssetId) {
@@ -68,6 +74,7 @@ export function buildAssetImagePrompt(
   outputPath: string,
   preset: AssetSpec,
   inputRoles: string[] = [],
+  noveltyGuidance = "",
 ) {
   const categoryStyle = matchStyleCategory([
     result.product.category,
@@ -93,6 +100,7 @@ export function buildAssetImagePrompt(
     "Use case: product-mockup",
     `Asset type: ${preset.label} for a real marketplace listing`,
     `Series slot: ${preset.id}. This slot must have a recognizably different camera, crop, setting and purchase-information purpose from the other seven slots.`,
+    "Uniqueness contract: no SellerPilot output may reuse another slot's camera position, crop, background layout, prop arrangement or subject placement. A merely recolored or lightly reframed version counts as a duplicate and must not be produced.",
     `Input references in order: ${referenceRoles}. Image 1 anchors product identity; later images are factual views for shape, label, material and package verification, not separate products.`,
     `Scene/backdrop: ${preset.scene}. Use ${result.design.palette.surface} and ${result.design.palette.accent} only as restrained palette guidance, not as the same repeated studio set.`,
     `Subject: ${result.product.name}; preserve package shape, label, logo, printed information, color, count and included items exactly as visible.`,
@@ -101,6 +109,7 @@ export function buildAssetImagePrompt(
     `Category direction: ${categoryStyle.thumbnailStyle}`,
     `Required shot for this slot: ${requiredShot}.`,
     `Series differentiation: ${seriesExclusion(preset.id)}`,
+    noveltyGuidance,
     `Marketplace adaptation references: ${channelVisuals}`,
     "Image SEO intent: make the product type, silhouette, material, count and use context visually unambiguous so the same factual master can receive accurate locale-specific alt text. Do not render SEO keywords as visible text.",
     localizedVisualSignals ? `Cross-market localized visual semantics (meaning only; never render this text in the image): ${localizedVisualSignals}` : "",

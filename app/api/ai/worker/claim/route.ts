@@ -59,6 +59,20 @@ export async function POST(request: Request) {
     const assetId = typeof jobRequest.asset_id === "string" ? jobRequest.asset_id : "";
     const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
     if (!asset) return NextResponse.json({ message: "재제작할 이미지 종류를 확인하지 못했습니다." }, { status: 500 });
+    const comparisonMap = jobRequest.comparison_asset_paths && typeof jobRequest.comparison_asset_paths === "object" && !Array.isArray(jobRequest.comparison_asset_paths)
+      ? jobRequest.comparison_asset_paths as Record<string, unknown>
+      : {};
+    const comparisonEntries = Object.entries(comparisonMap).filter(([candidateId, path]) => (
+      candidateId !== assetId
+      && aiGeneratedAssetSpecs.some((candidate) => candidate.id === candidateId)
+      && typeof path === "string"
+    )) as [string, string][];
+    const { data: signedComparisons, error: comparisonError } = comparisonEntries.length
+      ? await serviceClient.storage.from("sellerpilot-ai").createSignedUrls(comparisonEntries.map(([, path]) => path), 10 * 60)
+      : { data: [], error: null };
+    if (comparisonError) {
+      return NextResponse.json({ message: "기존 이미지 중복 비교 URL을 만들지 못했습니다." }, { status: 500 });
+    }
     const assetPath = aiGeneratedAssetPath(String(job.id), asset);
     const { data: upload, error: uploadError } = await serviceClient.storage
       .from("sellerpilot-ai")
@@ -77,6 +91,10 @@ export async function POST(request: Request) {
           : null,
         imageSpecs,
         images: (signedFiles ?? []).map((file, index) => ({ path: paths[index], signedUrl: file.signedUrl })),
+        comparisonImages: comparisonEntries.map(([comparisonAssetId], index) => ({
+          assetId: comparisonAssetId,
+          signedUrl: signedComparisons?.[index]?.signedUrl,
+        })).filter((item): item is { assetId: string; signedUrl: string } => typeof item.signedUrl === "string"),
       },
       resultUploads: [{
         id: asset.id,
