@@ -1996,3 +1996,370 @@
   .registration-card dt { font-size: 6px; }
   .registration-card dd { font-size: 8px; }
 }
+
+/* 2026-08-24 mobile completion pass for the registration, pricing, edit,
+   notification, category suggestion, and AI-detail surfaces changed today. */
+@media (max-width: 720px) {
+  .registration-activity-hero {
+    gap: 18px;
+    padding: 20px 16px;
+  }
+
+  .registration-activity-hero h2 {
+    margin-top: 8px;
+    font-size: clamp(23px, 7.2vw, 30px);
+    line-height: 1.12;
+  }
+
+  .registration-activity-hero p {
+    font-size: 12px;
+    line-height: 1.65;
+  }
+
+  .publishing-parallel-banner {
+    gap: 14px;
+    padding: 15px 14px;
+  }
+
+  .publishing-parallel-banner b { font-size: 12px; }
+  .publishing-parallel-banner small { font-size: 10px; line-height: 1.5; }
+
+  .publishing-parallel-banner > div > button,
+  .registration-activity-hero > span > button {
+    min-width: 0;
+    min-height: 44px;
+    justify-content: center;
+    padding-inline: 8px;
+    font-size: 11px;
+  }
+
+  .registration-filter-strip { gap: 8px; }
+  .registration-filter-strip button {
+    min-height: 56px;
+    padding-inline: 12px;
+    font-size: 12px;
+  }
+
+  .registration-card {
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .registration-card > header {
+    min-height: 30px;
+    align-items: center;
+    flex-flow: row wrap;
+  }
+
+  .registration-card > header > small {
+    margin-left: auto;
+    font-size: 9px;
+  }
+
+  .registration-status {
+    min-height: 28px;
+    padding-inline: 8px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .registration-product { gap: 8px; }
+  .registration-product > div {
+    min-height: 92px;
+    aspect-ratio: 4 / 3;
+  }
+
+  .registration-product > span { width: 100%; }
+  .registration-product h3 {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.35;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .registration-product p {
+    margin-top: 4px;
+    font-size: 10px;
+  }
+
+  .registration-progress small {
+    font-size: 9px;
+    line-height: 1.45;
+  }
+
+  .registration-card dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .registration-card dl > div { min-width: 0; padding: 7px; }
+  .registration-card dt { font-size: 9px; }
+  .registration-card dd {
+    font-size: 10px;
+    line-height: 1.35;
+    white-space: normal;
+  }
+
+  .registration-channel-summary {
+    align-items: center;
+    flex-flow: row wrap;
+    gap: 4px 8px;
+    padding-top: 8px;
+    font-size: 9px;
+  }
+
+  .registration-channel-summary b { font-size: 9px; }
+  .registration-channel-list { gap: 5px; }
+  .registration-channel-list > span { min-height: 30px; }
+  .registration-channel-list i { font-size: 8px; }
+
+  .registration-message {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 10px;
+    line-height: 1.5;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  .registration-card > footer {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .registration-card > footer > button {
+    min-width: 0;
+    min-height: 44px;
+    justify-content: center;
+    padding-inline: 7px;
+    font-size: 10px;
+  }
+
+  .registration-card > footer > button:only-child { grid-column: 1 / -1; }
+
+  .competitor-market-groups > section > header b { font-size: 12px; }
+  .competitor-market-groups > section > header small { font-size: 10px; }
+  .competitor-market-groups .competitor-price-grid {
+    display: grid;
+    grid-auto-columns: minmax(250px, 84vw);
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    gap: 8px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    padding: 1px 1px 8px;
+    scroll-padding-inline: 1px;
+    scroll-snap-type: inline proximity;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .competitor-market-groups.compact .competitor-price-grid {
+    grid-auto-columns: minmax(238px, 78vw);
+  }
+
+  .competitor-market-groups .competitor-price-grid > a,
+  .competitor-market-groups .competitor-price-empty {
+    min-height: 72px;
+    scroll-snap-align: start;
+  }
+
+  .competitor-market-groups .competitor-price-grid > a {
+    grid-template-columns: 52px minmax(0, 1fr) auto;
+  }
+
+  .competitor-market-groups .competitor-price-grid > a > span,
+  .competitor-market-groups .competitor-price-empty > span {
+    width: 52px;
+    height: 52px;
+  }
+
+  .competitor-market-groups .competitor-price-grid small,
+  .competitor-market-groups .competitor-price-empty small { font-size: 10px; }
+  .competitor-market-groups .competitor-price-grid b,
+  .competitor-market-groups .competitor-price-empty b { font-size: 11px; }
+  .competitor-market-groups .competitor-price-grid strong,
+  .competitor-market-groups .competitor-price-empty strong { font-size: 13px; }
+
+  .product-detail-asset-grid { gap: 8px; }
+  .product-detail-asset-grid figure > div,
+  .product-detail-asset-grid .product-image-missing {
+    min-height: 0;
+    aspect-ratio: 4 / 5;
+  }
+
+  .product-detail-asset-grid figcaption {
+    min-height: 92px;
+    gap: 7px;
+    padding: 8px;
+    font-size: 10px;
+  }
+
+  .product-detail-asset-grid figcaption > span {
+    min-height: 14px;
+    white-space: normal;
+  }
+
+  .product-detail-asset-grid figcaption button {
+    min-height: 44px;
+    padding-inline: 7px;
+    font-size: 10px;
+  }
+
+  .product-edit-dialog { max-height: calc(100svh - max(8px, env(safe-area-inset-top))); }
+  .product-edit-dialog > header { padding-block: 12px; }
+  .product-edit-dialog > header h2 { font-size: 19px; }
+  .product-edit-dialog > header p { font-size: 11px; line-height: 1.45; }
+  .product-edit-dialog > header > button {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+  }
+
+  .product-edit-form {
+    gap: 12px;
+    padding-block: 14px;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .product-edit-form > label > span { font-size: 11px; }
+  .product-edit-form input,
+  .product-edit-form select,
+  .product-edit-form textarea { min-height: 44px; }
+
+  .product-edit-dialog > .intake-confirmations {
+    display: grid;
+    gap: 7px;
+    max-height: 128px;
+    overflow-y: auto;
+  }
+
+  .product-edit-dialog > .intake-confirmations label {
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .product-edit-dialog > footer {
+    display: grid;
+    grid-template-columns: minmax(96px, .7fr) minmax(0, 1.3fr);
+    gap: 8px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  .product-edit-dialog > footer > button {
+    width: 100%;
+    min-height: 48px;
+    justify-content: center;
+    font-size: 11px;
+  }
+
+  .category-suggestions .category-suggestions-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    padding: 7px 4px 10px;
+  }
+
+  .category-suggestions .category-suggestions-toolbar small {
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .category-suggestions .category-suggestions-toolbar button {
+    width: 100%;
+    min-height: 44px;
+    font-size: 11px;
+  }
+
+  .category-suggestions > button {
+    min-height: 58px;
+    padding-block: 9px;
+  }
+
+  .category-suggestions b { font-size: 12px; }
+  .category-suggestions small { font-size: 10px; }
+  .category-suggestions em { font-size: 11px; }
+
+  .detail-preview-toolbar b { font-size: 12px; }
+  .detail-preview-toolbar small { font-size: 10px; line-height: 1.45; }
+  .detail-preview-canvas,
+  .detail-preview-canvas img,
+  .pdp-hero-visual,
+  .pdp-image-story-visual { touch-action: pan-y; }
+
+  .detail-preview-canvas img {
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  .asset-regenerate {
+    min-height: 44px;
+    font-size: 10px;
+  }
+
+  .thumbnail-card b { font-size: 11px; }
+  .thumbnail-card small { font-size: 9px; line-height: 1.45; }
+  .first-draft-review b { font-size: 12px; }
+  .first-draft-review small { font-size: 10px; line-height: 1.55; }
+
+  .notification-popover {
+    right: 10px;
+    left: 10px;
+    width: auto;
+    max-height: calc(100svh - 112px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .notification-popover > div:first-child { min-height: 52px; }
+  .notification-popover > div:first-child h4 { font-size: 14px; }
+  .notification-popover > div:first-child h4 small { font-size: 10px; }
+  .notification-popover > div:first-child button {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .notification-popover .notification-item {
+    min-height: 72px;
+    grid-template-columns: auto minmax(0, 1fr) 44px;
+  }
+
+  .notification-popover .notification-item b { font-size: 12px; }
+  .notification-popover .notification-item small { font-size: 10px; line-height: 1.45; }
+  .notification-popover .notification-item > button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .toast {
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    left: max(10px, env(safe-area-inset-left));
+    width: auto;
+    max-width: none;
+    min-height: 56px;
+    padding: 8px 8px 8px 12px;
+  }
+
+  .toast-copy > b { font-size: 12px; }
+  .toast-copy > span { font-size: 10px; line-height: 1.4; }
+  .toast > button {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 390px) {
+  .registration-card { padding: 9px; }
+  .registration-product h3 { font-size: 11px; }
+  .registration-card dt { font-size: 8px; }
+  .registration-card dd { font-size: 9px; }
+  .competitor-market-groups .competitor-price-grid { grid-auto-columns: minmax(244px, 84vw); }
+}
