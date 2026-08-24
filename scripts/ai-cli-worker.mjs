@@ -7,9 +7,11 @@ import { basename, extname, join, resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
+import { buildAssetImagePrompt, selectAssetReferenceIndexes } from "../lib/ai-image-planning.ts";
 import { cliStudioResultSchema, productResearchResultSchema } from "../lib/ai-cli-contract.ts";
-import { buildMarketplaceStyleLearningBrief, channelStyleProfiles, matchStyleCategory } from "../lib/marketplace-style-learning.ts";
+import { buildMarketplaceStyleLearningBrief } from "../lib/marketplace-style-learning.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
+import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
 import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
 import {
   mergeShopeeRequiredAttributes,
@@ -85,7 +87,7 @@ const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.js
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.14";
+const workerVersion = "sellerpilot-cli-worker/1.15";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
@@ -232,6 +234,7 @@ if (!`${loginStatus.stdout}\n${loginStatus.stderr}`.includes("Logged in using Ch
 
 async function downloadInputs(job, jobDir) {
   const images = Array.isArray(job.request?.images) ? job.request.images : [];
+  const imageSpecs = Array.isArray(job.request?.imageSpecs) ? job.request.imageSpecs : [];
   const files = [];
   for (const [index, image] of images.entries()) {
     if (!image?.signedUrl) continue;
@@ -240,7 +243,11 @@ async function downloadInputs(job, jobDir) {
     const extension = extname(String(image.path || "")) || ".jpg";
     const file = join(jobDir, `input-${String(index + 1).padStart(2, "0")}${extension}`);
     await writeFile(file, Buffer.from(await response.arrayBuffer()));
-    files.push(file);
+    const sourceSpec = imageSpecs[index] && typeof imageSpecs[index] === "object" ? imageSpecs[index] : {};
+    files.push({
+      file,
+      role: typeof sourceSpec.role === "string" ? sourceSpec.role : index === 0 ? "main" : "extra",
+    });
   }
   if (!files.length) throw new Error("CLI 작업에 사용할 상품 이미지가 없습니다.");
   return files;
@@ -967,38 +974,6 @@ async function researchProduct(job, jobDir) {
   return productResearchResultSchema.parse(result);
 }
 
-function buildImagePrompt(result, outputPath, preset) {
-  const categoryStyle = matchStyleCategory(result.product.category);
-  const channelVisuals = channelStyleProfiles.map((profile) => `${profile.label}: ${profile.thumbnailStyle}`).join(" | ");
-  const localizedVisualSignals = [...new Set((Array.isArray(result.localizedListings) ? result.localizedListings : []).flatMap((listing) => {
-    if (preset.id.startsWith("detail-")) {
-      const detail = Array.isArray(listing.detailSections)
-        ? listing.detailSections.find((section) => section.imageAsset === preset.id)
-        : null;
-      return detail?.imageAltText ? [`${listing.channel}:${listing.market} ${detail.imageAltText}`] : [];
-    }
-    return listing.thumbnailAltText ? [`${listing.channel}:${listing.market} ${listing.thumbnailAltText}`] : [];
-  }))].join(" | ").slice(0, 2_400);
-  return [
-    "설치된 codex-image 스킬의 규칙을 사용하고 반드시 내장 image_gen 도구로 이미지를 제작하세요.",
-    "Use case: product-mockup",
-    `Asset type: ${preset.label} for a real marketplace listing`,
-    "Input images: Image 1 is the edit target and factual product reference; preserve the same product identity.",
-    `Scene/backdrop: restrained premium ecommerce studio using ${result.design.palette.surface} and ${result.design.palette.accent}; simple surface; realistic soft shadow.`,
-    `Subject: ${result.product.name}; preserve package shape, label, logo, printed information, color, count and included items exactly as visible.`,
-    `Composition/framing: ${preset.composition}; target aspect ratio ${preset.ratio}.`,
-    `Category visual direction: ${categoryStyle.thumbnailStyle}`,
-    `Required shot vocabulary: ${categoryStyle.shotList.join(", ")}. Choose the best match for this asset without inventing unseen product facts.`,
-    `Marketplace adaptation references: ${channelVisuals}`,
-    "Image SEO intent: make the product type, silhouette, material, count and use context visually unambiguous so the same factual master can receive accurate locale-specific alt text. Do not render SEO keywords as visible text.",
-    localizedVisualSignals ? `Cross-market localized visual semantics (meaning only; never render this text in the image): ${localizedVisualSignals}` : "",
-    "Lighting/mood: clean soft directional studio lighting, crisp product edges, commercial catalog clarity.",
-    "Constraints: the product must be the obvious dominant subject; no invented ingredients, certification, barcode, quantity, accessories, package text or extra product; no watermark; no floating copy; no decorative text.",
-    "Avoid: distant product, tiny subject, scenic landscape dominating the frame, illegible altered label, duplicate product, cropped package, busy props, people, hands, logos not present in the reference.",
-    `생성 결과 PNG를 정확히 ${outputPath} 경로에 저장하세요. Python·SVG·Canvas로 대체 이미지를 만들지 마세요.`,
-  ].join("\n");
-}
-
 async function normalizeGeneratedAsset(outputFile, preset) {
   const source = await readFile(outputFile);
   const normalized = await sharp(source, { failOn: "warning", limitInputPixels: 64_000_000 })
@@ -1081,6 +1056,7 @@ async function processJob(job) {
         auth: { persistSession: false, autoRefreshToken: false },
       });
       const outputFile = join(jobDir, preset.file);
+      const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
       await runCodex([
         "exec",
         "--model", model,
@@ -1089,8 +1065,8 @@ async function processJob(job) {
         "--skip-git-repo-check",
         "--ephemeral",
         "--cd", jobDir,
-        `--image=${imageFiles[0]}`,
-        buildImagePrompt(parsedSource.data, outputFile, preset),
+        ...referenceIndexes.map((index) => `--image=${imageFiles[index].file}`),
+        buildAssetImagePrompt(parsedSource.data, outputFile, preset, referenceIndexes.map((index) => imageFiles[index].role)),
       ], imageGenerationTimeoutMs, job.id);
       const normalized = await normalizeGeneratedAsset(outputFile, preset);
       const { error: uploadError } = await resultStorageClient.storage
@@ -1138,7 +1114,7 @@ async function processJob(job) {
       "--output-last-message", resultFile,
       "--cd", jobDir,
     ];
-    for (const file of imageFiles) analysisArgs.push(`--image=${file}`);
+    for (const image of imageFiles) analysisArgs.push(`--image=${image.file}`);
     analysisArgs.push(buildAnalysisPrompt(job, referenceText));
     await runCodex(analysisArgs, analysisTimeoutMs, job.id);
 
@@ -1166,9 +1142,10 @@ async function processJob(job) {
           "--skip-git-repo-check",
           "--ephemeral",
           "--cd", jobDir,
-          `--image=${imageFiles[0]}`,
-          buildImagePrompt(result, outputFile, preset),
         ];
+        const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
+        for (const index of referenceIndexes) imageArgs.push(`--image=${imageFiles[index].file}`);
+        imageArgs.push(buildAssetImagePrompt(result, outputFile, preset, referenceIndexes.map((index) => imageFiles[index].role)));
         await runCodex(imageArgs, imageGenerationTimeoutMs, job.id);
         const upload = uploads.find((item) => item?.id === preset.id);
         if (!upload?.bucket || !upload?.path || !upload?.token) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
@@ -1589,9 +1566,12 @@ async function processGatewayJob(job) {
           : "Shopee 글로벌 상품은 발행됐지만 로컬 상품·재고 재검증이 필요합니다.";
       }
     }
+    const completionStatus = gatewayJobCompletionStatus(result.operation, result.ok);
     const response = await api("/api/channel-gateway/worker/complete", {
       method: "POST",
-      body: JSON.stringify({ jobId: job.id, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}) }),
+      body: JSON.stringify(completionStatus === "failed"
+        ? { jobId: job.id, status: "failed", error: result.safeMessage }
+        : { jobId: job.id, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}) }),
     });
     if (!response.ok) throw new Error(`채널 작업 결과 저장 실패 · HTTP ${response.status}`);
     if (result.ok) console.log(`[채널 완료] ${job.channel} · ${job.operation} · ${job.id}`);

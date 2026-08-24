@@ -91,3 +91,8 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
 
 export type GatewayClaim = z.infer<typeof gatewayClaimSchema>;
 export type GatewayWorkerCompletion = z.infer<typeof gatewayWorkerCompletionSchema>;
+
+export function gatewayJobCompletionStatus(operation: string, ok: boolean): "succeeded" | "failed" {
+  if (!ok && (operation === "orders.list" || operation === "inquiries.list")) return "failed";
+  return "succeeded";
+}

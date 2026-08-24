@@ -27,7 +27,7 @@ export type ChannelReadiness = {
  * 실제 콘솔에서 확인된 사실과 공식 개발자 문서로 확인한 구현 준비 상태를
  * 분리합니다. 앱 키, 시크릿, 판매자 식별자와 일회성 코드는 포함하지 않습니다.
  */
-export const channelReadinessObservedAt = "2026.08.21";
+export const channelReadinessObservedAt = "2026.08.24";
 
 export const channelReadiness: ChannelReadiness[] = [
   {
@@ -88,25 +88,25 @@ export const channelReadiness: ChannelReadiness[] = [
     name: "Lazada Open Platform",
     market: "MY · PH · SG · TH · VN · ID",
     console: "Lazada Service Provider Center",
-    appState: "Couplit Commerce Online · 2026-08-20 MY 판매자 읽기 정상",
+    appState: "Couplit Commerce Online · 판매자 읽기 정상 · IM 권한 거절 확인",
     overall: "partial",
     consoleVerified: true,
     apiReadPassed: true,
-    summary: "Lazada 판매자센터에서 실주문과 채팅 문의가 모두 0건임을 대조했고, SellerPilot의 MY seller/get 운영 읽기 진단도 오늘 정상 통과했습니다. 국가별 주문·문의 범위와 쓰기 검수는 별도 단계입니다.",
+    summary: "Lazada MY seller/get과 주문 읽기는 정상입니다. 다만 운영 앱의 IM 세션 호출은 현재 Lazada가 App permission 부족으로 거절하므로 실제 채팅을 가져오지 못합니다. 개발자센터에는 IM API가 존재하지만 앱별 권한 승인이 별도로 필요합니다.",
     checks: [
       { label: "개발자 앱 상태", state: "verified", evidence: "Couplit Commerce · Seller In-house APP · Online" },
-      { label: "API 권한 그룹", state: "verified", evidence: "상품·가격재고·주문·물류·카탈로그·재무 등 Active" },
+      { label: "API 권한 그룹", state: "partial", evidence: "판매자·주문 읽기 정상 · IM 세션 API는 App permission 거절" },
       { label: "판매자 허용 범위", state: "partial", evidence: "MY·PH·SG·TH·VN 5개 허용목록 확인 · ID 실스토어 미확보" },
       { label: "OAuth 콜백", state: "verified", evidence: "https://sellerpilot-global.vercel.app/ 로 운영 콜백 변경" },
-      { label: "판매자센터 대조", state: "verified", evidence: "실주문 0 · 채팅 문의 0" },
+      { label: "판매자센터 대조", state: "partial", evidence: "과거 대조 이력 있음 · 현재 채팅 수치는 IM 권한 차단으로 재검증 불가" },
       { label: "운영 앱 키", state: "verified", evidence: "App Key·Secret과 콜백 URL을 실제 콘솔에서 확인" },
       { label: "현재 읽기 진단", state: "verified", evidence: "2026-08-20 Lazada MY 판매자 읽기 API 정상" },
       { label: "토큰 교환", state: "verified", evidence: "운영 Vault v2 토큰으로 seller/get 성공" },
       { label: "Push Mechanism", state: "not_configured", evidence: "콜백 URL 비어 있음 · 6개 이벤트 그룹 미선택" },
       { label: "토큰 정책", state: "verified", evidence: "Access 30일 · Refresh 180일 정책 확인" },
     ],
-    blockers: ["ID 실셀러 스토어 확보", "Push Mechanism 이벤트 구독", "6개 국가 주문·문의 수집 범위 실검증"],
-    nextAction: "MY 주문 폴링 대조 → 국가별 카테고리·필수속성 조회 → Push 이벤트 검수",
+    blockers: ["운영 앱 Buyer IM 권한 승인", "ID 실셀러 스토어 확보", "Push Mechanism 이벤트 구독", "6개 국가 주문·문의 수집 범위 실검증"],
+    nextAction: "개발자센터 Buyer IM 권한 승인 확인 → MY 채팅 재동기화 → Push 이벤트 검수",
   },
   {
     key: "coupang",

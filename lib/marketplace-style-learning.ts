@@ -1,6 +1,6 @@
 import type { ActiveChannelKey } from "./channels/catalog";
 
-export const STYLE_LEARNING_VERSION = "2026.08.19-r2";
+export const STYLE_LEARNING_VERSION = "2026.08.24-r3";
 export const STYLE_LEARNING_RESEARCH_DATE = "2026-08-19";
 
 export type StyleLocale =
@@ -548,10 +548,23 @@ export const styleLearningSummary = {
   observationSources: channelStyleProfiles.flatMap((profile) => profile.evidence).filter((item) => item.type === "market-observation").length,
 };
 
+export const generalCommerceStyleProfile = {
+  id: "general-commerce",
+  label: "일반 상품 · 미분류 안전 모드",
+  aliases: [],
+  families: [],
+  textStyle: "상품 유형, 형태, 재질, 실제 구성과 사용 맥락을 확인된 사실 중심으로 설명한다.",
+  detailLayout: ["상품 전체", "형태·재질", "보이는 특징", "사용 맥락", "구성·패키지", "규격", "주의사항"],
+  thumbnailStyle: "제품 유형이 즉시 구분되는 중립적인 상업 사진. 임의의 뷰티 소품이나 식품 연출을 적용하지 않는다.",
+  shotList: ["정면 전체", "45도 전체", "형태·재질 근접", "구성품 플랫레이", "실제 사용 맥락", "크기·치수", "패키지·표시사항"],
+  requiredFacts: ["상품 유형", "재질", "구성", "규격", "사용 맥락", "주의사항"],
+  guardrails: ["카테고리가 일치하지 않는 소품·제형·섭취·착용 장면 생성 금지", "보이지 않는 구성품이나 수량 생성 금지", "분류가 불명확하면 중립적인 상품 촬영으로 제한"],
+} as const;
+
 export function matchStyleCategory(value: string) {
   const normalized = value.toLocaleLowerCase();
   return categoryStyleProfiles.find((category) => category.aliases.some((alias) => normalized.includes(alias.toLocaleLowerCase())))
-    ?? categoryStyleProfiles[0];
+    ?? generalCommerceStyleProfile;
 }
 
 export function buildMarketplaceStyleLearningBrief(categoryHint: string) {
@@ -569,8 +582,10 @@ export function buildMarketplaceStyleLearningBrief(categoryHint: string) {
   return [
     `<sellerpilot_style_learning version="${STYLE_LEARNING_VERSION}" researched_at="${STYLE_LEARNING_RESEARCH_DATE}">`,
     `선택 카테고리: ${category.label} (${category.id})`,
-    `학습 커버리지: 이 카테고리 상품 유형 20개 × 제작 변형 10개 = ${examples.length}개. 7개 채널, ${styleTargetMarkets.length}개 국가·언어 프로필에 순환 검증한다.`,
-    `학습 상품 유형: ${category.families.join(", ")}`,
+    examples.length
+      ? `학습 커버리지: 이 카테고리 상품 유형 20개 × 제작 변형 10개 = ${examples.length}개. 7개 채널, ${styleTargetMarkets.length}개 국가·언어 프로필에 순환 검증한다.`
+      : "학습 커버리지: 등록된 6개 학습 카테고리와 일치하지 않아 일반 상품 안전 모드를 적용한다. 특정 카테고리 연출을 추측하지 않는다.",
+    `학습 상품 유형: ${category.families.length ? category.families.join(", ") : "미분류 · 실제 상품 사진과 판매자 확정 정보 우선"}`,
     `학습 제작 변형: ${variantTerms["ko-KR"].join(", ")}`,
     `카테고리 문안: ${category.textStyle}`,
     `카테고리 상세 배치: ${category.detailLayout.join(" → ")}`,

@@ -48,6 +48,9 @@ export async function POST(request: Request) {
   const paths = Array.isArray(jobRequest.image_paths)
     ? jobRequest.image_paths.filter((path): path is string => typeof path === "string")
     : [];
+  const imageSpecs = Array.isArray(jobRequest.image_specs)
+    ? jobRequest.image_specs.filter((spec): spec is Record<string, unknown> => Boolean(spec) && typeof spec === "object" && !Array.isArray(spec))
+    : [];
   const { data: signedFiles, error: signedError } = await serviceClient.storage
     .from("sellerpilot-ai")
     .createSignedUrls(paths, 10 * 60);
@@ -72,6 +75,7 @@ export async function POST(request: Request) {
         sourceResult: jobRequest.source_result && typeof jobRequest.source_result === "object" && !Array.isArray(jobRequest.source_result)
           ? jobRequest.source_result
           : null,
+        imageSpecs,
         images: (signedFiles ?? []).map((file, index) => ({ path: paths[index], signedUrl: file.signedUrl })),
       },
       resultUploads: [{
@@ -107,6 +111,7 @@ export async function POST(request: Request) {
       manualFields: jobRequest.manual_fields && typeof jobRequest.manual_fields === "object" && !Array.isArray(jobRequest.manual_fields)
         ? jobRequest.manual_fields
         : {},
+      imageSpecs,
       images: (signedFiles ?? []).map((file, index) => ({
         path: paths[index],
         signedUrl: file.signedUrl,
