@@ -1,6 +1,7 @@
 import {
   coupangRequest,
   ebayRequest,
+  elevenstCategoryRequest,
   elevenstOrderRequest,
   elevenstSellerXmlRequest,
   fetchNaverAccessToken,
@@ -354,7 +355,92 @@ function elevenstVerifiedStep(name: string, remote: RemoteResponse, verified = t
   };
 }
 
+type ElevenstCategory = {
+  categoryId: string;
+  categoryName: string;
+  parentCategoryId: string;
+  depth: number;
+  leaf: boolean;
+  categoryPath: string;
+};
+
+function elevenstCategories(remote: RemoteResponse) {
+  return Array.isArray(remote.data.items)
+    ? remote.data.items.filter((item): item is ElevenstCategory => Boolean(
+      item && typeof item === "object" && !Array.isArray(item)
+      && typeof (item as ElevenstCategory).categoryId === "string"
+      && typeof (item as ElevenstCategory).categoryName === "string",
+    ))
+    : [];
+}
+
+function elevenstCategoryResult(remote: RemoteResponse, items: ElevenstCategory[], accepted = remote.data.accepted === true): RemoteResponse {
+  return {
+    response: remote.response,
+    text: "",
+    data: {
+      accepted,
+      items,
+      totalCount: items.length,
+      ...(!accepted ? { errorMessage: "11번가 공식 말단 카테고리로 확인되지 않았습니다." } : {}),
+    },
+  };
+}
+
+function elevenstCategoryScore(query: string, category: ElevenstCategory) {
+  const normalizedQuery = query.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const candidate = `${category.categoryPath} ${category.categoryName}`.toLocaleLowerCase();
+  const words = [...new Set(normalizedQuery.split(/\s+/).filter((word) => word.length > 1))];
+  const matched = words.filter((word) => candidate.includes(word)).length;
+  const cableOrganizerBoost = /(케이블|전선|cable|cord)/u.test(normalizedQuery)
+    && /(정리|클립|홀더|organizer|clip)/u.test(normalizedQuery)
+    && /(케이블|전선).*(정리|클립|홀더)|(?:정리|클립|홀더).*(?:케이블|전선)/u.test(candidate)
+    ? 1_000
+    : 0;
+  const cableClipLeafBoost = /(클립|clip|holder)/u.test(normalizedQuery)
+    && /케이블\s*정리소품/u.test(category.categoryName)
+    ? 400
+    : 0;
+  return cableOrganizerBoost + cableClipLeafBoost + matched * 100 + (candidate.includes(normalizedQuery) ? 500 : 0) + category.depth;
+}
+
 async function executeElevenst(input: ExecuteInput) {
+  if (input.operation === "categories.list") {
+    const parentCategoryId = stringArgument(input.arguments, "categoryId", false);
+    const remote = await elevenstCategoryRequest();
+    const categories = elevenstCategories(remote);
+    const items = parentCategoryId
+      ? categories.filter((item) => item.parentCategoryId === parentCategoryId)
+      : categories.filter((item) => item.parentCategoryId === "0");
+    const narrowed = elevenstCategoryResult(remote, items);
+    return result(input, [elevenstVerifiedStep("category-list", narrowed)], parentCategoryId || undefined);
+  }
+  if (input.operation === "categories.suggest") {
+    const query = stringArgument(input.arguments, "query");
+    const remote = await elevenstCategoryRequest();
+    const items = elevenstCategories(remote)
+      .filter((item) => item.leaf)
+      .map((item) => ({ item, score: elevenstCategoryScore(query, item) }))
+      .filter(({ score }) => score > 0)
+      .sort((left, right) => right.score - left.score || right.item.depth - left.item.depth)
+      .slice(0, 25)
+      .map(({ item, score }) => ({ ...item, confidence: Math.min(0.99, 0.45 + score / 2_000) }));
+    const narrowed = elevenstCategoryResult(remote, items, remote.data.accepted === true && items.length > 0);
+    return result(input, [elevenstVerifiedStep("category-suggestions", narrowed)]);
+  }
+  if (input.operation === "categories.attributes" || input.operation === "categories.validate") {
+    const categoryId = stringArgument(input.arguments, "categoryId");
+    const remote = await elevenstCategoryRequest();
+    const category = elevenstCategories(remote).find((item) => item.categoryId === categoryId);
+    const validLeaf = Boolean(category?.leaf);
+    const narrowed = elevenstCategoryResult(remote, category ? [category] : [], remote.data.accepted === true && validLeaf);
+    narrowed.data.attributes = [];
+    return result(input, [elevenstVerifiedStep(
+      input.operation === "categories.attributes" ? "category-attributes" : "category-validation",
+      narrowed,
+      validLeaf,
+    )], categoryId);
+  }
   if (input.operation === "listing.create") {
     const createRemote = await elevenstSellerXmlRequest({
       payload: input.payload,

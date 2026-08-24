@@ -725,6 +725,63 @@ function elevenstNamespacedXmlValue(xml: string, tag: string) {
     .trim();
 }
 
+export async function elevenstCategoryRequest() {
+  const response = await fetch("https://api.11st.co.kr/rest/cateservice/category", {
+    method: "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+    headers: {
+      accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
+      "user-agent": "SellerPilot-11st-Category-Connector/1.0",
+    },
+  });
+  const bytes = await response.arrayBuffer();
+  let xml = "";
+  try {
+    const contentType = response.headers.get("content-type")?.toLocaleLowerCase() ?? "";
+    xml = new TextDecoder(contentType.includes("utf-8") ? "utf-8" : "euc-kr").decode(bytes);
+  } catch {
+    xml = new TextDecoder().decode(bytes);
+  }
+  const flatItems = elevenstXmlNodes(xml, "category").slice(0, 30_000).flatMap((node) => {
+    const categoryId = elevenstNamespacedXmlValue(node, "dispNo");
+    const categoryName = elevenstNamespacedXmlValue(node, "dispNm");
+    if (!categoryId || !categoryName) return [];
+    const parentCategoryId = elevenstNamespacedXmlValue(node, "parentDispNo") || "0";
+    const depth = Number(elevenstNamespacedXmlValue(node, "depth") || "0");
+    return [{
+      categoryId: categoryId.slice(0, 80),
+      categoryName: categoryName.slice(0, 300),
+      parentCategoryId: parentCategoryId.slice(0, 80),
+      depth: Number.isFinite(depth) ? depth : 0,
+      leaf: elevenstNamespacedXmlValue(node, "leafYn").toUpperCase() === "Y",
+    }];
+  });
+  const byId = new Map(flatItems.map((item) => [item.categoryId, item]));
+  const items = flatItems.map((item) => {
+    const path: string[] = [];
+    const visited = new Set<string>();
+    let current: (typeof flatItems)[number] | undefined = item;
+    while (current && !visited.has(current.categoryId) && path.length < 12) {
+      visited.add(current.categoryId);
+      path.unshift(current.categoryName);
+      current = current.parentCategoryId === "0" ? undefined : byId.get(current.parentCategoryId);
+    }
+    return { ...item, categoryPath: path.join(" > ") };
+  });
+  const accepted = response.ok && items.length > 0;
+  return {
+    response,
+    text: "",
+    data: {
+      accepted,
+      items,
+      totalCount: items.length,
+      ...(!accepted ? { errorMessage: "11번가 공식 카테고리 목록을 확인하지 못했습니다." } : {}),
+    },
+  } satisfies RemoteResponse;
+}
+
 export async function elevenstRequest(input: {
   payload: SecretPayload;
   apiCode: string;

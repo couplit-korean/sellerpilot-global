@@ -2,9 +2,75 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { inspectListingDraft } from "../lib/channels/listing-preflight";
 import { executeChannelOperation } from "../lib/channels/operations";
-import { elevenstSellerXmlRequest } from "../lib/channels/protocols";
+import { elevenstCategoryRequest, elevenstSellerXmlRequest } from "../lib/channels/protocols";
 
 const apiKey = "A".repeat(32);
+const categoryXml = `<?xml version="1.0" encoding="euc-kr"?><ns2:categorys xmlns:ns2="urn:test">
+  <ns2:category><depth>1</depth><dispNm>생활잡화</dispNm><dispNo>1001387</dispNo><leafYn>N</leafYn><parentDispNo>0</parentDispNo></ns2:category>
+  <ns2:category><depth>2</depth><dispNm>정리소품</dispNm><dispNo>1340388</dispNo><leafYn>N</leafYn><parentDispNo>1001387</parentDispNo></ns2:category>
+  <ns2:category><depth>3</depth><dispNm>케이블 정리소품</dispNm><dispNo>1341821</dispNo><leafYn>Y</leafYn><parentDispNo>1340388</parentDispNo></ns2:category>
+  <ns2:category><depth>3</depth><dispNm>케이블타이</dispNm><dispNo>1341822</dispNo><leafYn>Y</leafYn><parentDispNo>1340388</parentDispNo></ns2:category>
+</ns2:categorys>`;
+
+test("11st public category request reconstructs official leaf paths without a credential", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestHeaders = new Headers();
+  globalThis.fetch = async (_input, init) => {
+    requestHeaders = new Headers(init?.headers);
+    return new Response(categoryXml, { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } });
+  };
+  try {
+    const remote = await elevenstCategoryRequest();
+    const items = remote.data.items as Array<Record<string, unknown>>;
+    assert.equal(requestHeaders.has("openapikey"), false);
+    assert.deepEqual(items.find((item) => item.categoryId === "1341821"), {
+      categoryId: "1341821",
+      categoryName: "케이블 정리소품",
+      parentCategoryId: "1340388",
+      depth: 3,
+      leaf: true,
+      categoryPath: "생활잡화 > 정리소품 > 케이블 정리소품",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st category suggestion ranks the official cable-organizer leaf and rejects a parent", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(categoryXml, { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } });
+  try {
+    const suggestion = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "categories.suggest",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: { query: "부착형 케이블 정리 클립 6개 세트" },
+    });
+    const suggestions = suggestion.steps[0].data.items as Array<Record<string, unknown>>;
+    assert.equal(suggestion.ok, true);
+    assert.equal(suggestions[0].categoryId, "1341821");
+
+    const leaf = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "categories.validate",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: { categoryId: "1341821" },
+    });
+    const parent = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "categories.validate",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: { categoryId: "1340388" },
+    });
+    assert.equal(leaf.ok, true);
+    assert.equal(parent.ok, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("11st seller XML request keeps the key in the header and returns only safe metadata", async () => {
   const originalFetch = globalThis.fetch;
