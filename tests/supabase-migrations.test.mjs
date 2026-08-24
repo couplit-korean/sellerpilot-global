@@ -180,8 +180,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260822140000_harden_runtime_retention.sql",
       "20260822153000_tracx_logistics_tracking.sql",
       "20260822210000_channel_catalog_inventory_mirror.sql",
+      "20260823232744_show_domestic_listing_categories.sql",
       "20260824023835_registration_activity_and_product_edit.sql",
       "20260824024500_gateway_burst_priority_and_reconciliation.sql",
+      "20260824052000_deduplicate_manual_periodic_sync.sql",
+      "20260824053000_verified_listing_price_sync.sql",
+      "20260824054000_fix_kakao_notification_database_lints.sql",
+      "20260824055000_remove_inventory_sync_unused_variable.sql",
       "20260824141500_enable_elevenst_channel_operations.sql",
       "20260824154500_enable_elevenst_listing_workflow.sql",
     ]);
