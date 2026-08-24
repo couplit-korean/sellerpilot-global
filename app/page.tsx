@@ -1253,12 +1253,13 @@ function formatRegistrationDuration(seconds: number) {
   return `${hours}시간 ${minutes % 60}분`;
 }
 
-function RegistrationActivityPage({ activities, displayProducts, loading, onRefresh, onOpenProduct, onNewProduct, onExternalActions }: {
+function RegistrationActivityPage({ activities, displayProducts, loading, onRefresh, onOpenProduct, onRetryProduct, onNewProduct, onExternalActions }: {
   activities: OperationsSnapshot["registrationActivities"];
   displayProducts: DisplayProduct[];
   loading: boolean;
   onRefresh: () => Promise<void>;
   onOpenProduct: (product: DisplayProduct) => void;
+  onRetryProduct: (product: DisplayProduct) => void;
   onNewProduct: () => void;
   onExternalActions: () => void;
 }) {
@@ -1312,7 +1313,7 @@ function RegistrationActivityPage({ activities, displayProducts, loading, onRefr
           <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">권한 {activity.blockedCount}</b></div>
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{channel.status === "published" ? "완료" : channel.status === "failed" ? "오류" : channel.status === "blocked" ? "권한" : "진행"}</i></span>)}</div>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>상품 상세<ChevronRight size={14} /></button> : <span />}</footer>
+          <footer>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>상품 상세<ChevronRight size={14} /></button> : <span />}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;
@@ -2529,6 +2530,16 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
+  const retryProductPublishing = useCallback((product: DisplayProduct) => {
+    setPublishingProduct({ id: product.sourceId, name: product.name });
+    setPublishingSession((current) => current + 1);
+    setView("publishing");
+    window.sessionStorage.setItem("sellerpilot:last-view:v1", "publishing");
+    window.history.pushState({ view: "publishing", productId: product.sourceId }, "", `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(product.sourceId)}`);
+    setSidebarOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
   useEffect(() => {
     const initialParams = new URLSearchParams(window.location.search);
     const initialState = isRecord(window.history.state) ? window.history.state : {};
@@ -2637,7 +2648,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
-    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} displayProducts={displayProducts} loading={operations.state === "loading"} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
+    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} displayProducts={displayProducts} loading={operations.state === "loading"} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
     if (view === "product-detail" && selectedProduct) return <ProductDetailPage product={selectedProduct} onBack={() => window.history.back()} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />;
     if (view === "remediation") return <ExternalActionsPage actions={operations.data?.externalActions ?? []} onEdit={editExternalActionProduct} onConnections={() => navigate("connections")} />;
     if (view === "publishing") return <PublishingPage key={`${publishingProduct?.id ?? "new-product"}-${publishingSession}`} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} onStartAnother={() => navigate("publishing")} onShowHistory={() => navigate("registration-activity")} />;
