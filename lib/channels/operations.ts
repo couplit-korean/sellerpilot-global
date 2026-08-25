@@ -694,7 +694,7 @@ async function executeQoo10(input: ExecuteInput) {
   const remote = await qoo10Request({ payload: input.payload, ...definition, params });
   const createStep = step(definition.method, remote);
   const resultObject = remote.data.ResultObject;
-  const remoteId = typeof resultObject === "string" || typeof resultObject === "number"
+  const responseRemoteId = typeof resultObject === "string" || typeof resultObject === "number"
     ? String(resultObject)
     : resultObject && typeof resultObject === "object" && !Array.isArray(resultObject)
       ? ["GdNo", "ItemCode", "itemCode"]
@@ -702,6 +702,8 @@ async function executeQoo10(input: ExecuteInput) {
         .find((value): value is string | number => typeof value === "string" || typeof value === "number")
         ?.toString()
       : undefined;
+  const remoteId = responseRemoteId
+    ?? (input.operation === "listing.update" ? params.ItemCode : undefined);
   if (input.operation === "inventory.update") {
     const itemCode = params.ItemCode;
     if (!createStep.ok) return result(input, [createStep], itemCode || remoteId);
@@ -725,7 +727,7 @@ async function executeQoo10(input: ExecuteInput) {
     }
     return result(input, [createStep, lastVerification!], itemCode || remoteId);
   }
-  if (input.operation !== "listing.create" || !createStep.ok || !remoteId) {
+  if ((input.operation !== "listing.create" && input.operation !== "listing.update") || !createStep.ok || !remoteId) {
     return result(input, [createStep], remoteId);
   }
 
@@ -759,6 +761,14 @@ async function executeQoo10(input: ExecuteInput) {
     if (readbackStep.ok && expectedDetailImages >= 4 && readbackImageCount >= expectedDetailImages) {
       return result(input, [createStep, detailUpdateStep, qoo10VerificationStep(true, readbackStatus, readbackImageCount)], remoteId);
     }
+  }
+
+  if (input.operation === "listing.update") {
+    return result(input, [
+      createStep,
+      detailUpdateStep,
+      qoo10VerificationStep(false, readbackStatus, readbackImageCount),
+    ], remoteId);
   }
 
   // A create response is not sufficient: Qoo10 can accept the item while
@@ -1037,9 +1047,13 @@ async function executeShopee(input: ExecuteInput) {
       path: writePath,
       body: objectValue(input.arguments, "body"),
     });
-    const remoteId = shopeeResponseId(remote.data, input.operation === "listing.create" ? "item_id" : "request_id");
+    const responseRemoteId = shopeeResponseId(remote.data, input.operation === "listing.create" ? "item_id" : "request_id");
+    const requestedItemId = input.operation === "listing.update"
+      ? stringArgument(input.arguments, "itemId", false)
+      : "";
+    const remoteId = requestedItemId || responseRemoteId;
     const writeStep = step(input.operation, remote);
-    if (input.operation === "listing.create" && writeStep.ok && remoteId) {
+    if ((input.operation === "listing.create" || input.operation === "listing.update") && writeStep.ok && remoteId) {
       const readback = await shopeeRequest({
         payload: input.payload,
         environment: input.environment,
@@ -1047,7 +1061,11 @@ async function executeShopee(input: ExecuteInput) {
         path: "/api/v2/product/get_item_base_info",
         query: new URLSearchParams({ item_id_list: remoteId }),
       });
-      return result(input, [writeStep, step("listing-readback", readback)], remoteId);
+      const readbackStep = step("listing-readback", readback);
+      const response = objectValue(readback.data, "response", false);
+      const itemList = Array.isArray(response.item_list) ? response.item_list as Array<Record<string, unknown>> : [];
+      readbackStep.ok = readbackStep.ok && itemList.some((item) => String(item.item_id ?? "") === remoteId);
+      return result(input, [writeStep, readbackStep], remoteId);
     }
     return result(input, [writeStep], remoteId);
   }
@@ -1350,17 +1368,26 @@ async function executeLazada(input: ExecuteInput) {
   const params = write ? { ...query, payload: lazadaPayload(input.arguments) } : query;
   const remote = await lazadaRequest({ payload: input.payload, path, method: write ? "POST" : "GET", params });
   const dataValue = remote.data.data;
-  const remoteId = dataValue && typeof dataValue === "object" && !Array.isArray(dataValue) && "item_id" in dataValue
+  const responseRemoteId = dataValue && typeof dataValue === "object" && !Array.isArray(dataValue) && "item_id" in dataValue
     ? String((dataValue as Record<string, unknown>).item_id)
     : undefined;
+  const requestedItemId = input.operation === "listing.update"
+    ? stringArgument(input.arguments, "itemId", false)
+    : "";
+  const remoteId = requestedItemId || responseRemoteId;
   const writeStep = step(path, remote);
-  if (input.operation === "listing.create" && writeStep.ok && remoteId) {
+  if ((input.operation === "listing.create" || input.operation === "listing.update") && writeStep.ok && remoteId) {
     const readback = await lazadaRequest({
       payload: input.payload,
       path: "/product/item/get",
       params: { item_id: remoteId },
     });
-    return result(input, [writeStep, step("listing-readback", readback)], remoteId);
+    const readbackStep = step("listing-readback", readback);
+    const readbackData = objectValue(readback.data, "data", false);
+    const readbackItem = objectValue(readbackData, "item", false);
+    const readbackId = readbackItem.item_id ?? readbackItem.itemId ?? readbackData.item_id ?? readbackData.itemId;
+    readbackStep.ok = readbackStep.ok && String(readbackId ?? "") === remoteId;
+    return result(input, [writeStep, readbackStep], remoteId);
   }
   return result(input, [writeStep], remoteId);
 }
@@ -1712,7 +1739,12 @@ async function executeSmartstore(input: ExecuteInput) {
   if (input.operation === "listing.update") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
     const remote = await request({ method: "PUT", path: `/v2/products/origin-products/${originProductNo}`, body: objectValue(input.arguments, "body") });
-    return result(input, [step("product-update", remote)], originProductNo);
+    const updateStep = step("product-update", remote);
+    if (!updateStep.ok) return result(input, [updateStep], originProductNo);
+    const readbackRemote = await request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
+    const readbackStep = step("product-readback", readbackRemote);
+    readbackStep.ok = readbackStep.ok && Boolean(readbackRemote.data.originProduct && typeof readbackRemote.data.originProduct === "object");
+    return result(input, [updateStep, readbackStep], originProductNo);
   }
   if (input.operation === "listing.stop") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));

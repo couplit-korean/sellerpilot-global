@@ -753,16 +753,19 @@ function detailFieldValue(value: unknown) {
 }
 
 type CompetitorDisplayItem = { id: string; marketplace?: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string };
+type CompetitorProviderDisplayStatus = { provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse"; status: "searched" | "unavailable" | "failed"; count: number };
 
-function CompetitorPriceSlots({ items, state = "ready", compact = false }: { items: CompetitorDisplayItem[]; state?: "loading" | "ready" | "unavailable"; compact?: boolean }) {
+function CompetitorPriceSlots({ items, providers = [], state = "ready", compact = false }: { items: CompetitorDisplayItem[]; providers?: CompetitorProviderDisplayStatus[]; state?: "loading" | "ready" | "unavailable"; compact?: boolean }) {
   const marketplaceOrder: string[] = [...activeChannelKeys];
   const marketplaceLabels: Record<string, string> = Object.fromEntries(Object.entries(channels).map(([key, channel]) => [key, channel.name]));
+  const providerLabels: Record<CompetitorProviderDisplayStatus["provider"], string> = { naver_shopping: "네이버 쇼핑 검색", elevenst_product_search: "11번가 상품검색", ebay_browse: "eBay Browse" };
   marketplaceLabels.other = "기타 판매처";
   const groups = marketplaceOrder.map((marketplace) => ({ marketplace, items: items.filter((item) => (item.marketplace || "other") === marketplace).slice(0, 3) }));
   const otherItems = items.filter((item) => !marketplaceOrder.includes(item.marketplace || "other")).slice(0, 3);
   if (otherItems.length) groups.push({ marketplace: "other", items: otherItems });
   return <div className={`competitor-market-groups ${compact ? "compact" : ""}`}>
     {state === "loading" && <div className="competitor-loading"><LoaderCircle className="spin" size={17} />동일 상품 가격을 채널별로 찾고 있습니다.</div>}
+    {providers.length > 0 && <div className="competitor-provider-summary" aria-label="가격 검색 공급자 상태">{providers.map((provider) => <span className={provider.status} key={provider.provider}><b>{providerLabels[provider.provider]}</b>{provider.status === "searched" ? `조회 완료 · 일치 ${provider.count}건` : provider.status === "failed" ? "응답 실패" : "미연결"}</span>)}</div>}
     {groups.map((group) => <section key={group.marketplace}><header><b>{marketplaceLabels[group.marketplace] ?? group.marketplace}</b><small>최대 3개</small></header><div className="competitor-price-grid">{Array.from({ length: 3 }, (_, index) => {
       const item = group.items[index];
       return item ? <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><span>{item.imageUrl ? <Image src={item.imageUrl} alt="" fill sizes="80px" unoptimized /> : <Package size={18} />}</span><div><small>{item.mallName || marketplaceLabels[group.marketplace] || "판매처"}</small><b>{item.title}</b><strong>{new Intl.NumberFormat("ko-KR", { style: "currency", currency: item.currency || "KRW", maximumFractionDigits: 0 }).format(item.price)}</strong></div><ExternalLink size={14} /></a>
@@ -804,7 +807,7 @@ function ProductDetailEditDialog({ draft, errors, saving, onChange, onClose, onS
   onSave: () => void;
 }) {
   return <div className="product-edit-overlay"><section className="product-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="product-edit-title">
-    <header><div><span className="panel-kicker">FULL PRODUCT EDIT</span><h2 id="product-edit-title">등록 상품 전체 수정</h2><p>수정값은 중앙 상품 원장에 저장되며, 재고 변경은 연결된 채널에도 동기화합니다.</p></div><button type="button" aria-label="상품 수정 닫기" onClick={onClose} disabled={saving}><X size={18} /></button></header>
+    <header><div><span className="panel-kicker">FULL PRODUCT EDIT</span><h2 id="product-edit-title">등록 상품 전체 수정</h2><p>수정값은 중앙 상품 원장에 저장되며, 재고 변경은 연결된 채널에도 동기화합니다. 나머지 변경은 저장 후 검증된 채널에만 최종 확인을 거쳐 적용합니다.</p></div><button type="button" aria-label="상품 수정 닫기" onClick={onClose} disabled={saving}><X size={18} /></button></header>
     <div className="product-edit-form manual-field-grid">
       <div className="intake-group-heading"><span>01</span><div><b>기본 상품 정보</b><small>상품 식별·카테고리·공급 정보를 수정합니다.</small></div></div>
       <label className={errors.researchInput ? "field-error" : ""}><span>상품 링크 또는 설명</span><textarea value={draft.researchInput} maxLength={12_000} onChange={(event) => onChange("researchInput", event.target.value)} />{errors.researchInput && <small>{errors.researchInput}</small>}</label>
@@ -841,9 +844,10 @@ function ProductDetailEditDialog({ draft, errors, saving, onChange, onClose, onS
   </section></div>;
 }
 
-function ProductDetailPage({ product, onBack, authenticatedFetch, notify, onChanged }: {
+function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch, notify, onChanged }: {
   product: DisplayProduct;
   onBack: () => void;
+  onEditChannels: () => void;
   authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>;
   notify: (message: string) => void;
   onChanged: () => Promise<void>;
@@ -954,7 +958,7 @@ function ProductDetailPage({ product, onBack, authenticatedFetch, notify, onChan
       const response = await authenticatedFetch(`/api/admin/products/${product.sourceId}/publish-context`, { method: "PATCH", body: JSON.stringify(parsed.data) });
       const payload = await response.json().catch(() => ({ message: "상품 수정 응답을 읽지 못했습니다." })) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "상품 전체 정보를 저장하지 못했습니다.");
-      let completionMessage = "상품 등록정보를 중앙 원장에 저장했습니다.";
+      let completionMessage = "상품 등록정보를 중앙 원장에 저장했습니다. ‘채널 상품 수정’에서 지원 채널의 실제 상품에도 적용할 수 있습니다.";
       if (parsed.data.stock !== inventoryOnHand) {
         const inventoryResponse = await authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`, { method: "POST", body: JSON.stringify({ onHand: parsed.data.stock, confirmWrite: true }) });
         const inventoryPayload = await inventoryResponse.json().catch(() => ({ message: "재고 적용 응답을 읽지 못했습니다." })) as { message?: string; sync?: InventorySyncContext };
@@ -963,7 +967,7 @@ function ProductDetailPage({ product, onBack, authenticatedFetch, notify, onChan
         setInventorySync(inventoryPayload.sync ?? null);
         completionMessage = inventoryResponse.status === 207
           ? inventoryPayload.message ?? "상품 등록정보와 중앙 재고는 저장됐지만 일부 채널 재고는 추가 확인이 필요합니다."
-          : "상품 등록정보를 저장했고 변경된 재고를 연결 채널에 반영했습니다.";
+          : "상품 등록정보를 저장했고 변경된 재고를 연결 채널에 반영했습니다. 나머지 변경은 ‘채널 상품 수정’에서 최종 확인 후 적용하세요.";
       }
       setDetailContext((current) => ({ ...current, manualFields: parsed.data }));
       setDisplayOverrides({ name: parsed.data.productName, sku: parsed.data.sellerSku, description: parsed.data.description, sourceUrl: parsed.data.productUrl || null });
@@ -1104,7 +1108,7 @@ function ProductDetailPage({ product, onBack, authenticatedFetch, notify, onChan
     <div className="page-stack product-detail-page">
       <div className="product-detail-actions">
         <button type="button" className="product-detail-back" onClick={onBack}><ArrowLeft size={16} />상품 목록으로</button>
-        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="publish-execute" onClick={() => { setEditErrors({}); setEditDraft((current) => current ?? productEditDraft(product, detailContext.manualFields)); setEditOpen(true); }}><PencilRuler size={15} />상품 전체 수정</button></div>
+        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="credential-secondary" onClick={onEditChannels}><RefreshCw size={15} />채널 상품 수정</button><button type="button" className="publish-execute" onClick={() => { setEditErrors({}); setEditDraft((current) => current ?? productEditDraft(product, detailContext.manualFields)); setEditOpen(true); }}><PencilRuler size={15} />상품 전체 수정</button></div>
       </div>
 
       <section className="panel product-detail-hero">
@@ -1327,6 +1331,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [researchingProduct, setResearchingProduct] = useState(false);
   const [researchResult, setResearchResult] = useState<ProductResearchResult | null>(null);
   const [researchCompetitors, setResearchCompetitors] = useState<Array<{ id: string; marketplace: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string }>>([]);
+  const [competitorProviders, setCompetitorProviders] = useState<CompetitorProviderDisplayStatus[]>([]);
   const [competitorResearchState, setCompetitorResearchState] = useState<"idle" | "loading" | "ready" | "unavailable">("idle");
   const [firstDraftGenerated, setFirstDraftGenerated] = useState(false);
   const [queuedJobId, setQueuedJobId] = useState("");
@@ -1532,12 +1537,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       for (const searchQuery of result.searchQueries) competitorParams.append("alias", searchQuery.query.slice(0, 160));
       void authenticatedFetch(`/api/admin/competitor-prices?${competitorParams.toString()}`)
         .then(async (competitorResponse) => {
-          const competitorPayload = await competitorResponse.json().catch(() => ({})) as { items?: typeof researchCompetitors };
-          if (!competitorResponse.ok) throw new Error("비교 상품을 조회하지 못했습니다.");
+          const competitorPayload = await competitorResponse.json().catch(() => ({})) as { items?: typeof researchCompetitors; providers?: CompetitorProviderDisplayStatus[] };
+          setCompetitorProviders(Array.isArray(competitorPayload.providers) ? competitorPayload.providers : []);
+          if (!competitorResponse.ok) {
+            setResearchCompetitors([]);
+            setCompetitorResearchState("unavailable");
+            return;
+          }
           setResearchCompetitors(Array.isArray(competitorPayload.items) ? competitorPayload.items : []);
           setCompetitorResearchState("ready");
         })
-        .catch(() => { setResearchCompetitors([]); setCompetitorResearchState("unavailable"); });
+        .catch(() => { setResearchCompetitors([]); setCompetitorProviders([]); setCompetitorResearchState("unavailable"); });
       setFirstDraftGenerated(true);
       setManualErrors({});
       notify("1차 자동생성 초안을 만들었습니다. ‘확인 필요’ 값과 가격·재고·포장 규격을 검토한 뒤 사실 확인 체크를 완료해 주세요.");
@@ -1747,7 +1757,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               {researchResult.sources.length > 0 && <nav aria-label="CLI가 확인한 상품 출처">{researchResult.sources.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={source.url} className={source.status}><ExternalLink size={12} />{source.title}</a>)}</nav>}
               {researchResult.warnings.length > 0 && <p><AlertTriangle size={13} />{researchResult.warnings.join(" · ")}</p>}
             </div>}
-            {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} state={competitorResearchState} compact />}
+            {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} compact />}
           </section>
           {firstDraftGenerated && <div className="first-draft-review"><AlertTriangle size={15} /><span><b>1차 자동생성은 검토용 초안입니다.</b><small>‘확인 필요’ 문구, 가격·재고와 포장 규격 임시값을 실물·공급처 자료 및 위 비교 가격에 맞게 수정한 뒤 사실 확인을 체크하세요.</small></span></div>}
 
@@ -2722,7 +2732,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
     if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} displayProducts={displayProducts} loading={operations.state === "loading"} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
     if (view === "product-detail") return activeSelectedProduct
-      ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} onBack={() => window.history.back()} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
+      ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} onBack={() => window.history.back()} onEditChannels={() => retryProductPublishing(activeSelectedProduct)} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
       : <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>{operations.state === "loading" ? "상품 상세정보를 불러오는 중입니다." : "상품을 찾지 못했습니다."}</b><small>{operations.state === "loading" ? "운영 상품 원장을 확인하고 있습니다." : "상품 목록에서 다시 선택해 주세요."}</small>{operations.state !== "loading" ? <button type="button" className="ghost-button" onClick={() => navigate("products")}>상품 목록으로</button> : null}</div>;
     if (view === "remediation") return <ExternalActionsPage actions={operations.data?.externalActions ?? []} onEdit={editExternalActionProduct} onConnections={() => navigate("connections")} />;
     if (view === "publishing") return <PublishingPage key={`${publishingProduct?.id ?? "new-product"}-${publishingSession}`} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} onStartAnother={() => navigate("publishing")} onShowHistory={() => navigate("registration-activity")} />;
@@ -2785,6 +2795,8 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 export default function Home() {
   const [accessState, setAccessState] = useState<AdminAccessState>(isSupabaseConfigured ? "checking" : "signed_out");
   const [userEmail, setUserEmail] = useState("");
+  const [accessErrorMessage, setAccessErrorMessage] = useState("");
+  const [accessRetryKey, setAccessRetryKey] = useState(0);
   const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "shopee" | "lazada" | "ebay"; code: string; state: string; shopId?: string; mainAccountId?: string } | null>(null);
   const [oauthNotice, setOauthNotice] = useState("");
   const oauthHandled = useRef(false);
@@ -2811,39 +2823,80 @@ export default function Home() {
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     const supabase = createSupabaseClient();
+    let active = true;
     let verificationGeneration = 0;
     let verifiedAdminUserId = "";
+    const failVerification = (generation: number) => {
+      if (!active || generation !== verificationGeneration) return;
+      verifiedAdminUserId = "";
+      setAccessErrorMessage("인증 서버 응답이 지연되고 있습니다. 로그인 상태는 변경하지 않았습니다.");
+      setAccessState("error");
+    };
     const verifyAdmin = async (session: Session, generation: number) => {
-      const [{ data: isAdmin, error }, { data: latestSession }] = await Promise.all([
-        supabase.rpc("sellerpilot_is_admin"),
-        supabase.auth.getSession(),
-      ]);
-      if (generation !== verificationGeneration || latestSession.session?.user.id !== session.user.id) return;
-      setUserEmail(session.user.email ?? "");
-      if (!error && isAdmin === true) {
-        verifiedAdminUserId = session.user.id;
-        setAccessState("admin");
-      } else {
-        verifiedAdminUserId = "";
-        setAccessState("forbidden");
+      try {
+        const [{ data: isAdmin, error }, { data: latestSession, error: sessionError }] = await withPromiseTimeout(Promise.all([
+          supabase.rpc("sellerpilot_is_admin"),
+          supabase.auth.getSession(),
+        ]), 12_000, "관리자 권한 확인 시간이 초과되었습니다.");
+        if (!active || generation !== verificationGeneration) return;
+        if (sessionError) {
+          failVerification(generation);
+          return;
+        }
+        if (!latestSession.session) {
+          verifiedAdminUserId = "";
+          setUserEmail("");
+          setAccessErrorMessage("");
+          setAccessState("signed_out");
+          return;
+        }
+        if (latestSession.session.user.id !== session.user.id) {
+          startVerification(latestSession.session);
+          return;
+        }
+        setUserEmail(session.user.email ?? "");
+        setAccessErrorMessage("");
+        if (!error && isAdmin === true) {
+          verifiedAdminUserId = session.user.id;
+          setAccessState("admin");
+        } else {
+          verifiedAdminUserId = "";
+          setAccessState("forbidden");
+        }
+      } catch {
+        failVerification(generation);
       }
     };
     const startVerification = (session: Session | null) => {
+      if (!active) return;
       const generation = ++verificationGeneration;
       if (!session) {
         verifiedAdminUserId = "";
         setUserEmail("");
+        setAccessErrorMessage("");
         setAccessState("signed_out");
         return;
       }
       void verifyAdmin(session, generation);
     };
-    void supabase.auth.getSession().then(({ data }) => startVerification(data.session));
+    const initialGeneration = ++verificationGeneration;
+    void withPromiseTimeout(supabase.auth.getSession(), 12_000, "로그인 세션 확인 시간이 초과되었습니다.")
+      .then(({ data, error }) => {
+        if (!active || initialGeneration !== verificationGeneration) return;
+        if (error) {
+          failVerification(initialGeneration);
+          return;
+        }
+        startVerification(data.session);
+      })
+      .catch(() => failVerification(initialGeneration));
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return;
       if (event === "SIGNED_OUT") {
         verificationGeneration += 1;
         verifiedAdminUserId = "";
         setUserEmail("");
+        setAccessErrorMessage("");
         setAccessState("signed_out");
         return;
       }
@@ -2851,10 +2904,11 @@ export default function Home() {
       window.setTimeout(() => startVerification(session), 0);
     });
     return () => {
+      active = false;
       verificationGeneration += 1;
       data.subscription.unsubscribe();
     };
-  }, []);
+  }, [accessRetryKey]);
 
   useEffect(() => {
     if (accessState !== "admin" || !pendingChannelOAuth || oauthHandled.current) return;
@@ -2915,6 +2969,9 @@ export default function Home() {
 
   if (accessState === "checking") {
     return <main className="login-shell"><section className="login-form-panel"><div className="login-card"><LoaderCircle className="spin" size={24} /><h2>관리자 권한 확인 중</h2><p>로그인 세션과 운영 데이터 접근 권한을 안전하게 확인하고 있습니다.</p></div></section></main>;
+  }
+  if (accessState === "error") {
+    return <main className="login-shell"><section className="login-form-panel"><div className="login-card"><AlertTriangle size={26} /><h2>관리자 권한 확인이 지연되고 있습니다.</h2><p>{accessErrorMessage || "인증 서버 응답을 받지 못했습니다."} 잠시 후 현재 세션으로 다시 확인해 주세요.</p><button type="button" className="login-submit" onClick={() => { setAccessErrorMessage(""); setAccessState("checking"); setAccessRetryKey((current) => current + 1); }}><RefreshCw size={16} />현재 세션 다시 확인</button></div></section></main>;
   }
   if (accessState === "forbidden") {
     return <main className="login-shell"><section className="login-form-panel"><div className="login-card"><AlertTriangle size={26} /><h2>관리자 권한이 필요합니다.</h2><p>{userEmail || "현재 계정"}은 SellerPilot 관리자 명단에 없습니다. Supabase의 <b>sellerpilot_private.admin_users</b> 승인 후 접근할 수 있습니다.</p><button type="button" className="login-submit" onClick={() => void logout()}><LogOut size={16} />다른 계정으로 로그인</button></div></section></main>;

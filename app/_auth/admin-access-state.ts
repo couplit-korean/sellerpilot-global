@@ -1,4 +1,4 @@
-export type AdminAccessState = "checking" | "signed_out" | "admin" | "forbidden";
+export type AdminAccessState = "checking" | "signed_out" | "admin" | "forbidden" | "error";
 
 type RelevantAuthEvent = "INITIAL_SESSION" | "SIGNED_IN" | "SIGNED_OUT" | string;
 

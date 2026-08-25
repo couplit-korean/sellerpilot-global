@@ -10,6 +10,8 @@ import {
 } from "../../../../lib/channels/operations";
 import { channelCatalog } from "../../../../lib/channels/catalog";
 import { executeViaChannelGateway } from "../../../../lib/channels/gateway";
+import { channelOperationAvailable } from "../../../../lib/channels/operation-availability";
+import { listingUpdateRemoteIdentity, listingWriteOperation } from "../../../../lib/channels/listing-update";
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
 import { ensureEbayAccessToken } from "../../../../lib/channels/protocols";
@@ -85,6 +87,12 @@ export async function POST(request: NextRequest) {
   if (capability.mode === "vendor_docs_required") {
     return NextResponse.json({ message: capability.note, mode: "vendor_docs_required" }, { status: 409 });
   }
+  if (!channelOperationAvailable(channel, operation)) {
+    return NextResponse.json({
+      message: "현재 원격 식별값과 응답 재검증까지 완료된 채널 작업만 실행할 수 있습니다.",
+      mode: "release_verification_required",
+    }, { status: 409 });
+  }
   if (writeChannelOperations.has(operation) && !parsed.data.confirmWrite) {
     return NextResponse.json({ message: "외부 판매채널을 변경하는 작업은 실행 확인이 필요합니다." }, { status: 428 });
   }
@@ -107,6 +115,44 @@ export async function POST(request: NextRequest) {
     : null;
   if (!credentialMetadata || !("channel" in credentialMetadata) || credentialMetadata.channel !== channel || !("status" in credentialMetadata) || credentialMetadata.status !== "active") {
     return NextResponse.json({ message: "활성 키와 채널 정보가 일치하지 않습니다." }, { status: 409 });
+  }
+
+  if (operation === "listing.update") {
+    if (!parsed.data.productId) {
+      return NextResponse.json({ message: "상품 원장 ID가 없는 원격 수정은 실행할 수 없습니다." }, { status: 409 });
+    }
+    let requestedRemoteId = "";
+    try {
+      requestedRemoteId = listingUpdateRemoteIdentity(channel, parsed.data.arguments);
+    } catch {
+      return NextResponse.json({ message: "원격 상품 식별값이 누락됐거나 서로 일치하지 않습니다." }, { status: 409 });
+    }
+    const { data: publishContext, error: contextError } = await userClient.rpc("sellerpilot_get_product_publish_context", {
+      p_product_id: parsed.data.productId,
+    });
+    const contextRecord = publishContext && typeof publishContext === "object" && !Array.isArray(publishContext)
+      ? publishContext as Record<string, unknown>
+      : {};
+    const listings = Array.isArray(contextRecord.listings)
+      ? contextRecord.listings.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+      : [];
+    const identityMatchesLedger = !contextError && listings.some((listing) =>
+      listing.channel === channel
+      && listingWriteOperation({
+        status: String(listing.status ?? ""),
+        remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+        publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+      }) === "listing.update"
+      && String(listing.remoteId ?? "") === requestedRemoteId
+      && (!parsed.data.market || String(listing.market ?? "") === parsed.data.market)
+      && (!parsed.data.targetId || String(listing.targetId ?? "") === parsed.data.targetId),
+    );
+    if (!identityMatchesLedger) {
+      return NextResponse.json({
+        message: "요청한 원격 상품 ID가 이 상품의 게시 원장과 일치하지 않아 수정을 차단했습니다.",
+        mode: "listing_identity_mismatch",
+      }, { status: 409 });
+    }
   }
 
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";

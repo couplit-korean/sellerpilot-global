@@ -197,6 +197,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260825011500_preserve_authoritative_inventory.sql",
       "20260825070000_harden_worker_completion_and_registration_activity.sql",
       "20260825071000_harden_order_shipment_ledger_integrity.sql",
+      "20260825080000_competitor_price_provider_provenance.sql",
+      "20260825084500_product_listing_published_identity.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -688,6 +690,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(await scalar(db, "select sku from sellerpilot_private.products where id = $1", [aiProductId]), "AI-REQUIRED-001");
     const competitorMarketplaces = ["smartstore", "coupang", "elevenst", "qoo10", "shopee", "lazada", "ebay", "temu", "other"];
     const competitorItems = Array.from({ length: 27 }, (_, index) => ({
+      provider: "naver_shopping",
       externalId: `competitor-${index + 1}`,
       title: `동일 상품 가격 후보 ${index + 1}`,
       url: `https://marketplace.example.test/products/${index + 1}`,
@@ -695,6 +698,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       mallName: `테스트 판매처 ${index + 1}`,
       marketplace: competitorMarketplaces[index % competitorMarketplaces.length],
       price: 10_000 + index,
+      currency: "KRW",
     }));
     await setClaims(db, "service_role");
     assert.equal(
@@ -735,6 +739,37 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [aiProductId],
       ),
       "other",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_record_competitor_prices(
+          $1,
+          '[{"provider":"ebay_browse","externalId":"competitor-1","title":"Kellogg Choco Chex 570g","url":"https://www.ebay.com/itm/competitor-1","imageUrl":"","mallName":"eBay","marketplace":"ebay","price":12.5,"currency":"USD"}]'::jsonb
+        )`,
+        [aiProductId],
+      ),
+      1,
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select provider,currency,price::text from sellerpilot_private.competitor_price_observations where product_id=$1 and external_id='competitor-1' order by provider",
+        [aiProductId],
+      )).rows,
+      [
+        { provider: "ebay_browse", currency: "USD", price: "12.50" },
+        { provider: "naver_shopping", currency: "KRW", price: "10000.00" },
+      ],
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_record_competitor_prices(
+          $1,
+          '[{"provider":"unknown_provider","externalId":"invalid-provider","title":"잘못된 공급자","url":"https://example.test/invalid","mallName":"invalid","marketplace":"other","price":1,"currency":"KRW"}]'::jsonb
+        )`,
+        [aiProductId],
+      ),
+      /invalid competitor provider/,
     );
     await setClaims(db);
     await assert.rejects(
@@ -798,9 +833,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [elevenstCredentialId, elevenstAttempt.attempt_id],
     );
     assert.match(elevenstGatewayJobId, /^[0-9a-f-]{36}$/i);
+    const elevenstCompetitorJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_channel_gateway_job($1, null, 'elevenst', 'competitor.search', '{\"primary\":\"첵스초코 570g\",\"aliases\":[\"Kellogg Choco Chex 570g\"],\"displayPerQuery\":30}'::jsonb)",
+      [elevenstCredentialId],
+    );
+    assert.match(elevenstCompetitorJobId, /^[0-9a-f-]{36}$/i);
     await db.query(
-      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
-      [elevenstGatewayJobId],
+      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id in ($1,$2)",
+      [elevenstGatewayJobId, elevenstCompetitorJobId],
     );
     await setClaims(db);
     const publishContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [aiProductId]);
@@ -864,10 +905,40 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       true,
     );
     await setClaims(db);
-    await db.query(
-      "update sellerpilot_private.product_listings set status = 'failed', failure_class = 'retryable', last_error = 'one channel failed', updated_at = now() where id = $1",
-      [preparedListingId],
+    const updatePreparedListingId = await scalar(
+      db,
+      "select public.sellerpilot_prepare_product_listing($1, 'coupang', 'listing.update', 'KRW', 26000)",
+      [aiProductId],
     );
+    assert.equal(updatePreparedListingId, preparedListingId);
+    const failedUpdateAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'coupang', 'listing.update', 'listing-ai-product-coupang-update-failure-0001', $2)",
+      [coupangCredentialId, "f".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_channel_operation($1, 'failed', 422, null, 'one channel failed')",
+        [failedUpdateAttempt.attempt_id],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_product_listing($1, $2, 'listing.update', false, null, 'one channel failed')",
+        [updatePreparedListingId, failedUpdateAttempt.attempt_id],
+      ),
+      true,
+    );
+    await setClaims(db);
+    const failedUpdateContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [aiProductId]);
+    const failedPublishedListing = failedUpdateContext.listings.find((listing) => listing.id === preparedListingId);
+    assert.equal(failedPublishedListing.status, "failed");
+    assert.equal(failedPublishedListing.remoteId, "remote-product-1");
+    assert.match(failedPublishedListing.publishedAt, /^\d{4}-\d{2}-\d{2}T/);
     const mixedRegistrationActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(20)");
     const mixedRegistrationCard = mixedRegistrationActivity.find((activity) => activity.productId === aiProductId);
     assert.equal(mixedRegistrationCard.status, "publishing");

@@ -12,7 +12,7 @@ export const gatewayClaimSchema = z.object({
   id: z.string().uuid(),
   credential_id: z.string().uuid(),
   channel: gatewayChannelSchema,
-  operation: z.union([z.literal("oauth.exchange"), z.literal("shops.get"), z.literal("diagnostic.test"), z.enum(channelOperationNames)]),
+  operation: z.union([z.literal("oauth.exchange"), z.literal("shops.get"), z.literal("diagnostic.test"), z.literal("competitor.search"), z.enum(channelOperationNames)]),
   environment: z.enum(["sandbox", "production"]),
   request: z.record(z.string(), z.unknown()),
   credential: credentialPayloadSchema,
@@ -52,6 +52,24 @@ const diagnosticResultSchema = z.object({
   safeMessage: z.string().min(1).max(1_000),
 });
 
+const competitorSearchResultSchema = z.object({
+  ok: z.literal(true),
+  channel: z.literal("elevenst"),
+  operation: z.literal("competitor.search"),
+  items: z.array(z.object({
+    provider: z.literal("elevenst_product_search"),
+    externalId: z.string().min(1).max(500),
+    title: z.string().min(1).max(1_000),
+    url: z.string().url().max(4_000),
+    imageUrl: z.string().url().max(4_000).or(z.literal("")),
+    mallName: z.string().max(240),
+    marketplace: z.literal("elevenst"),
+    price: z.number().nonnegative().max(999_999_999),
+    currency: z.literal("KRW"),
+  })).max(1_000),
+  safeMessage: z.string().min(1).max(1_000),
+});
+
 export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
   z.object({
     jobId: z.string().uuid(),
@@ -59,6 +77,7 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
     result: z.union([
       operationResultSchema,
       diagnosticResultSchema,
+      competitorSearchResultSchema,
       z.object({
         ok: z.literal(true),
         channel: z.enum(["shopee", "lazada"]),

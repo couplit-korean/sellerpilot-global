@@ -2575,6 +2575,9 @@ button {
 .competitor-price-empty > span { display: grid; width: 44px; height: 44px; place-items: center; border-radius: 8px; color: #a2aaa8; background: #f0f2f2; }
 .competitor-price-empty > div { display: grid; gap: 3px; min-width: 0; }.competitor-price-empty small { color: #929c99; font-size: 7px; }.competitor-price-empty b { overflow: hidden; color: #74807d; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }.competitor-price-empty strong { color: #9aa4a1; font-size: 11px; }
 .competitor-loading, .competitor-unavailable { display: flex; align-items: center; gap: 7px; color: #667d98; font-size: 9px; }.competitor-unavailable { margin: 0; color: #a16217; }
+.competitor-provider-summary { display: flex; flex-wrap: wrap; gap: 6px; }
+.competitor-provider-summary > span { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; border: 1px solid #dfe5eb; border-radius: 999px; padding: 4px 8px; color: #657386; background: #f8fafb; font-size: 9px; }
+.competitor-provider-summary > span b { color: #3f4e63; font-size: inherit; }.competitor-provider-summary > span.searched { border-color: #cbe8d5; color: #287747; background: #f2fbf5; }.competitor-provider-summary > span.failed { border-color: #f1d3c8; color: #a34a2d; background: #fff7f3; }
 .competitor-market-groups.compact { border: 1px solid #e2e8ed; border-radius: 10px; padding: 10px; background: #fff; }
 
 .product-detail-actions > div { display: flex; align-items: center; gap: 10px; }.product-detail-actions > div > span { display: inline-flex; align-items: center; gap: 6px; color: #7a8494; font-size: 10px; }

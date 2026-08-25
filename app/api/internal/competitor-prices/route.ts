@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { groupCompetitorPrices, naverSearchCredentials, searchNaverShoppingVariants } from "../../../../lib/competitor-prices";
+import { executeCompetitorSearchViaChannelGateway } from "../../../../lib/channels/gateway";
+import { competitorProviderRegistry, searchCompetitorProviders } from "../../../../lib/competitor-prices";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -16,10 +17,10 @@ function serverClient() {
 }
 
 async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
-  const credentials = await naverSearchCredentials(serviceClient);
-  if (!credentials) {
-    return NextResponse.json({ message: "네이버 쇼핑 검색 인증을 확인하지 못했습니다." }, { status: 503 });
-  }
+  const registry = await competitorProviderRegistry(serviceClient, {
+    searchElevenstViaGateway: executeCompetitorSearchViaChannelGateway,
+  });
+  if (!registry.configured.length) return NextResponse.json({ message: "공식 가격 검색 공급자를 확인하지 못했습니다.", providers: registry.unavailable }, { status: 503 });
   const { data, error } = await serviceClient.rpc("sellerpilot_service_due_competitor_products", { p_limit: 40 });
   if (error) return NextResponse.json({ message: "경쟁가 조회 대상 상품을 읽지 못했습니다." }, { status: 500 });
   const due = (Array.isArray(data) ? data : []).flatMap((item) => {
@@ -27,15 +28,20 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
     const aliases = Array.isArray(item.aliases) ? item.aliases.filter((alias: unknown): alias is string => typeof alias === "string") : [];
     return [{ product_id: item.product_id, query: item.query, aliases } satisfies DueProduct];
   });
-  const results = [] as Array<{ productId: string; ok: boolean; count: number }>;
+  const results = [] as Array<{ productId: string; ok: boolean; count: number; providers: Awaited<ReturnType<typeof searchCompetitorProviders>>["providers"] }>;
   for (const product of due) {
     try {
-      const items = groupCompetitorPrices(await searchNaverShoppingVariants(product.query, product.aliases, credentials, 30));
+      const searched = await searchCompetitorProviders(registry, product.query, product.aliases, 30);
+      if (!searched.available) {
+        results.push({ productId: product.product_id, ok: false, count: 0, providers: searched.providers });
+        continue;
+      }
+      const items = searched.items;
       const { data: saved, error: saveError } = await serviceClient.rpc("sellerpilot_service_record_competitor_prices", { p_product_id: product.product_id, p_items: items });
       if (saveError) throw new Error("competitor_price_save_failed");
-      results.push({ productId: product.product_id, ok: true, count: Number(saved ?? items.length) });
+      results.push({ productId: product.product_id, ok: true, count: Number(saved ?? items.length), providers: searched.providers });
     } catch {
-      results.push({ productId: product.product_id, ok: false, count: 0 });
+      results.push({ productId: product.product_id, ok: false, count: 0, providers: registry.unavailable });
     }
   }
   return NextResponse.json({ ok: results.every((item) => item.ok), checked: results.length, results }, { status: results.some((item) => !item.ok) ? 207 : 200, headers: { "cache-control": "no-store, max-age=0" } });

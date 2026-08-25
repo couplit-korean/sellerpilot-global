@@ -4,6 +4,7 @@ import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin
 import { isActiveChannelKey, type ActiveChannelKey } from "../../../../lib/channels/catalog";
 import { executeChannelOperation } from "../../../../lib/channels/operations";
 import { inquirySyncArguments, normalizeChannelInquiries } from "../../../../lib/channels/inquiry-sync";
+import { shouldBootstrapLazadaIm } from "../../../../lib/channels/lazada-im-bootstrap";
 import { normalizeChannelOrders, orderSyncRequests } from "../../../../lib/channels/order-sync";
 import { ensureEbayAccessToken } from "../../../../lib/channels/protocols";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
@@ -22,6 +23,16 @@ type CredentialRow = {
   environment: "sandbox" | "production";
   status: string;
   expires_at?: string | null;
+  created_at?: string | null;
+  last_rotated_at?: string | null;
+};
+
+type SyncStatusRow = {
+  channel_key: string;
+  data_type: string;
+  status: string;
+  last_started_at?: string | null;
+  last_succeeded_at?: string | null;
 };
 
 const gatewayChannels = new Set<ActiveChannelKey>(["shopee", "lazada", "coupang", "elevenst", "smartstore", "temu"]);
@@ -44,14 +55,24 @@ export async function POST(request: Request) {
   const parsed = schema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ message: "동기화 채널 요청을 확인해 주세요." }, { status: 400 });
 
-  const { data: credentialRows, error: credentialError } = await admin.userClient.rpc("sellerpilot_list_credentials");
-  if (credentialError) return NextResponse.json({ message: "활성 채널 연결 정보를 읽지 못했습니다." }, { status: 500 });
+  const [credentialResult, syncStatusResult] = await Promise.all([
+    admin.userClient.rpc("sellerpilot_list_credentials"),
+    admin.userClient.rpc("sellerpilot_get_channel_sync_status"),
+  ]);
+  const { data: credentialRows, error: credentialError } = credentialResult;
+  if (credentialError || syncStatusResult.error) {
+    return NextResponse.json({ message: "활성 채널 연결과 동기화 이력을 읽지 못했습니다." }, { status: 500 });
+  }
 
   const requested = new Set<ActiveChannelKey>((parsed.data.channels ?? ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]) as ActiveChannelKey[]);
   const credentials = (Array.isArray(credentialRows) ? credentialRows : [])
     .filter((row): row is CredentialRow => Boolean(row) && typeof row === "object" && typeof row.id === "string" && typeof row.channel === "string")
     .filter((row) => row.status === "active" && row.environment === "production" && isActiveChannelKey(row.channel) && requested.has(row.channel))
     .filter((row, index, rows) => rows.findIndex((candidate) => candidate.channel === row.channel) === index);
+  const inquirySyncStatus = new Map((Array.isArray(syncStatusResult.data) ? syncStatusResult.data : [])
+    .filter((row): row is SyncStatusRow => Boolean(row) && typeof row === "object"
+      && typeof row.channel_key === "string" && row.data_type === "inquiries")
+    .map((row) => [row.channel_key, row]));
 
   const results = await Promise.all(credentials.map(async (credential) => {
     const channel = credential.channel as ActiveChannelKey;
@@ -139,7 +160,14 @@ export async function POST(request: Request) {
 
   const inquiryResults = await Promise.all(credentials.map(async (credential) => {
     const channel = credential.channel as ActiveChannelKey;
-    const requests = channel === "lazada" && parsed.data.includeImBootstrap
+    const syncStatus = inquirySyncStatus.get(channel);
+    const allowLazadaBootstrap = channel === "lazada" && shouldBootstrapLazadaIm({
+      requested: parsed.data.includeImBootstrap,
+      credentialChangedAt: credential.last_rotated_at ?? credential.created_at,
+      lastStartedAt: syncStatus?.last_started_at,
+      lastSucceededAt: syncStatus?.last_succeeded_at,
+    });
+    const requests = allowLazadaBootstrap
       ? [{ bootstrap: true, startTime: Date.now(), pageSize: 20, sessionLimit: 100 }]
       : inquirySyncArguments(channel);
     if (!requests.length) {

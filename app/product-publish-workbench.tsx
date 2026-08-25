@@ -4,8 +4,10 @@ import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, Pa
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
+import { listingCoreContentForOperation, listingWriteOperation, prepareListingUpdateArguments } from "../lib/channels/listing-update";
 import { marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
+import { channelOperationAvailable } from "../lib/channels/operation-availability";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10SellerCode } from "../lib/channels/qoo10";
 import {
   buildLocalizedPlainDetail,
@@ -45,6 +47,7 @@ type Listing = {
   remoteId: string | null;
   status: string;
   lastError: string | null;
+  publishedAt?: string | null;
 };
 
 type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
@@ -62,6 +65,7 @@ type LocalizedListing = { channel: ActiveChannelKey; market: string; locale: str
 type PackageFields = { weight: number; length: number; width: number; height: number };
 type ManualFields = {
   productName: string;
+  description: string;
   sellerSku: string;
   categoryHint: string;
   brandName: string;
@@ -106,6 +110,7 @@ function normalizeManualFields(context: PublishContext): ManualFields {
   const value = context.manualFields ?? {} as ManualFields;
   return {
     productName: value.productName || context.product.name,
+    description: value.description || context.product.description,
     sellerSku: value.sellerSku || context.product.sku,
     categoryHint: value.categoryHint || context.product.name,
     brandName: value.brandName || "No Brand",
@@ -118,7 +123,7 @@ function normalizeManualFields(context: PublishContext): ManualFields {
     gtin: value.gtin || "",
     sellingPrice: Number(value.sellingPrice) || 2500,
     currency: value.currency || "JPY",
-    stock: Math.max(1, Number(value.stock) || 1),
+    stock: Number.isInteger(Number(value.stock)) && Number(value.stock) >= 0 ? Number(value.stock) : 1,
     weightKg: Number(value.weightKg) || 0.35,
     packageLengthCm: Number(value.packageLengthCm) || 12,
     packageWidthCm: Number(value.packageWidthCm) || 12,
@@ -157,6 +162,15 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
   const product = context.product;
   const listingMarket = target?.marketCode ?? ({ qoo10: "JP", coupang: "KR", elevenst: "KR", smartstore: "KR", ebay: "US", temu: "KR", shopee: "SG", lazada: "MY" } as const)[channel];
   const localized = context.localizedListings?.find((item) => item.channel === channel && item.market === listingMarket);
+  const operation = listingWriteOperation(existingListing);
+  const coreContent = listingCoreContentForOperation({
+    operation,
+    central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
+    localized,
+  });
+  const writeListing: LocalizedListing | undefined = operation === "listing.update"
+    ? { ...(localized ?? { channel, market: listingMarket, locale: target?.locale ?? "", keywords: [], title: "", shortDescription: "", description: "" }), ...coreContent }
+    : localized;
   const generatedImage = (id: string) => context.generatedImages.find((item) => item.id === id)?.url;
   const galleryAssetIds = galleryAssetOrderForChannel(channel);
   const galleryImageUrls = uniqueUrls([
@@ -164,7 +178,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     ...context.sourceImages.map((item) => item.url),
     ...galleryAssetIds.slice(1).map(generatedImage),
   ]);
-  const imageSeo = localizedImageSeo(localized, channel, product.name);
+  const imageSeo = localizedImageSeo(writeListing, channel, coreContent.title);
   const dedicatedDetailImageRoles = detailAssetOrderForChannel(channel);
   const dedicatedDetailImageUrls = dedicatedDetailImageRoles.map(generatedImage);
   const dedicatedDetailReady = uniqueUrls(dedicatedDetailImageUrls).length >= 4;
@@ -178,17 +192,15 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     detailImageRoles: dedicatedDetailReady ? imageSeo.detailImageRoles : [],
     detailImageAltTexts: dedicatedDetailReady ? imageSeo.detailImageAltTexts : [],
     thumbnailAltText: imageSeo.thumbnailAltText,
-    localizedDetailSections: localized?.detailSections ?? [],
+    localizedDetailSections: writeListing?.detailSections ?? [],
     detailAssetMode: dedicatedDetailReady ? "dedicated" : "legacy_fallback",
     integrationRevision: "marketplace-write-v3-localized-seo",
   };
   const manual = context.manualFields;
-  const title = localized?.title || product.name;
-  const description = localized?.description || product.description;
-  const shortDescription = localized?.shortDescription || product.description.slice(0, 500);
-  const richDescription = buildLocalizedRichDetail(localized, product.name, product.description);
-  const plainDescription = buildLocalizedPlainDetail(localized, product.name, product.description);
-  const seoKeywords = localizedSeoKeywords(localized);
+  const { title, description, shortDescription } = coreContent;
+  const richDescription = buildLocalizedRichDetail(writeListing, title, description);
+  const plainDescription = buildLocalizedPlainDetail(writeListing, title, description);
+  const seoKeywords = localizedSeoKeywords(writeListing);
   const marketSku = target ? `${manual.sellerSku || product.sku}-${target.marketCode}`.slice(0, 100) : manual.sellerSku || product.sku;
   if (channel === "qoo10") {
     return {
@@ -434,7 +446,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
           goodsCarouselImage: galleryImageUrls.slice(0, 10),
           detailImage: detailImageUrls.slice(0, 10),
           productType: 1,
-          bulletPoints: [...(localized?.detailSections ?? []).map((section) => section.body), `[PROGRAM TEST · NOT FOR SALE] ${description}`].filter(Boolean).slice(0, 10),
+          bulletPoints: [...(writeListing?.detailSections ?? []).map((section) => section.body), `[PROGRAM TEST · NOT FOR SALE] ${description}`].filter(Boolean).slice(0, 10),
         },
         attributes: [
           { name: "Brand", value: [manual.brandName] },
@@ -635,8 +647,14 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     const credential = activeCredentials.get(channel);
     const target = selectedTargets[channel];
     const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
+    const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
+    const operation = listingWriteOperation(listing);
     if (!credential || !assignment) {
       notify(`${channelCatalog[channel].name} 활성 키와 확정 카테고리를 확인해 주세요.`);
+      return false;
+    }
+    if (!channelOperationAvailable(channel, operation)) {
+      notify(`${channelCatalog[channel].name} ${operation === "listing.update" ? "상품 전체 수정" : "상품 등록"}은 원격 식별값과 조회 검증이 완료되기 전까지 실행할 수 없습니다.`);
       return false;
     }
     let channelArguments: Record<string, unknown>;
@@ -654,6 +672,15 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       notify(`${channelCatalog[channel].name} 필수값 보완: ${missing.join(", ")}`);
       return false;
     }
+    if (operation === "listing.update") {
+      if (!listing) return false;
+      try {
+        channelArguments = prepareListingUpdateArguments(channel, channelArguments, listing);
+      } catch {
+        notify(`${channelCatalog[channel].name} 게시 상품의 원격 ID를 확인하지 못해 수정을 차단했습니다.`);
+        return false;
+      }
+    }
     const listingCurrency = marketplaceListingCurrency(channel, target?.currency);
     const operationPrice = marketplaceListingPrice(channel, price, { globalBaseUsdPrice, targetCurrency: target?.currency });
     if (!options.skipConfirm) {
@@ -666,14 +693,14 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     try {
       const accessToken = options.accessToken ?? (await createClient().auth.getSession()).data.session?.access_token;
       if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
-      const idempotencyKey = `listing:${productId}:${channel}:${target?.marketCode ?? "default"}:${await fingerprint({ channelArguments, listingCurrency, price: operationPrice })}`;
+      const idempotencyKey = `${operation}:${productId}:${channel}:${target?.marketCode ?? "default"}:${await fingerprint({ channelArguments, listingCurrency, price: operationPrice })}`;
       const response = await fetch("/api/admin/channel-operations", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
           credentialId: credential.id,
           channel,
-          operation: "listing.create",
+          operation,
           idempotencyKey,
           confirmWrite: true,
           productId,
@@ -685,9 +712,9 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
         }),
       });
       const payload = await response.json().catch(() => ({ message: "채널 응답을 읽지 못했습니다." })) as { ok?: boolean; message?: string; safeMessage?: string; remoteId?: string; attemptId?: string };
-      if (!response.ok || payload.ok !== true) throw Object.assign(new Error(payload.message ?? payload.safeMessage ?? "상품 등록이 실패했습니다."), { attemptId: payload.attemptId });
+      if (!response.ok || payload.ok !== true) throw Object.assign(new Error(payload.message ?? payload.safeMessage ?? `상품 ${operation === "listing.update" ? "수정" : "등록"}이 실패했습니다.`), { attemptId: payload.attemptId });
       setResults((current) => ({ ...current, [channel]: { phase: "succeeded", message: payload.safeMessage, remoteId: payload.remoteId, attemptId: payload.attemptId } }));
-      notify(`${channelCatalog[channel].name} 상품 등록 성공 · 원격 ID ${payload.remoteId ?? "응답 확인 필요"}`);
+      notify(`${channelCatalog[channel].name} 상품 ${operation === "listing.update" ? "수정" : "등록"} 성공 · 원격 ID ${payload.remoteId ?? listing?.remoteId ?? "응답 확인 필요"}`);
       if (!options.deferRefresh) {
         await load();
         onChanged?.();
@@ -695,7 +722,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       return true;
     } catch (error) {
       const attemptId = error && typeof error === "object" && "attemptId" in error && typeof error.attemptId === "string" ? error.attemptId : undefined;
-      const message = error instanceof Error ? error.message : "상품 등록이 실패했습니다.";
+      const message = error instanceof Error ? error.message : `상품 ${operation === "listing.update" ? "수정" : "등록"}이 실패했습니다.`;
       setResults((current) => ({ ...current, [channel]: { phase: "failed", message, attemptId } }));
       notify(`${channelCatalog[channel].name}: ${message}`);
       return false;
@@ -705,16 +732,17 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const executeReadyChannels = async (confirmed = false) => {
     if (!context || !productId || bulkRunning) return;
     const readyChannels = visibleChannels.filter((channel) => {
-      if (channelCatalog[channel].capabilities.listingCreate.mode === "vendor_docs_required") return false;
       const credential = activeCredentials.get(channel);
       const target = selectedTargets[channel];
       const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
       const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
+      const operation = listingWriteOperation(listing);
       const parsedDraft = parseDraft(drafts[channel]);
       const hasMissingRequired = !parsedDraft || blockingListingRequirements(channel, parsedDraft).length > 0 || missingNativeValues(channel, parsedDraft).length > 0;
-      return Boolean(credential && assignment && !hasMissingRequired && listing?.status !== "published" && results[channel]?.phase !== "running");
+      const remoteIdentityReady = operation === "listing.create" || Boolean(listing?.remoteId);
+      return Boolean(channelOperationAvailable(channel, operation) && credential && assignment && remoteIdentityReady && !hasMissingRequired && results[channel]?.phase !== "running");
     }).slice(0, 8);
-    if (!readyChannels.length) return notify("활성 키와 확정 카테고리가 모두 준비된 미등록 채널이 없습니다.");
+    if (!readyChannels.length) return notify("활성 키·확정 카테고리·검증된 원격 ID가 모두 준비된 등록·수정 대상 채널이 없습니다.");
     if (!confirmed) {
       setBulkConfirming(true);
       return;
@@ -729,7 +757,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const succeeded = completed.filter(Boolean).length;
       await load();
       onChanged?.();
-      notify(`동시 등록 완료 · 성공 ${succeeded}개 / 확인 필요 ${readyChannels.length - succeeded}개`);
+      notify(`채널 등록·수정 동시 처리 완료 · 성공 ${succeeded}개 / 확인 필요 ${readyChannels.length - succeeded}개`);
     } catch (error) {
       notify(error instanceof Error ? error.message : "동시 채널 등록을 완료하지 못했습니다.");
     } finally {
@@ -826,13 +854,13 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const imagePackageReady = marketplaceThumbnailCount >= 1 && dedicatedDetailImageCount >= 4;
 
   return <section className="panel product-publish-workbench">
-    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 실행</h3><p>현재 상품 1건의 공식 카테고리, 원본 대표사진, 가격·재고와 채널 필수값을 마지막으로 검증한 뒤 준비된 선택 채널에 등록합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 등록 중" : bulkConfirming ? "최종 확인 열림" : "선택 채널에 등록"}</button></div></div>
-    {bulkConfirming && <div className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 최종 확인"><AlertTriangle size={18} /><div><b>준비된 모든 채널에 실제 상품을 등록합니다.</b><small>채널별 payload와 가격·재고를 최종 확인한 뒤 실행하세요.</small></div><button type="button" className="credential-secondary" onClick={() => setBulkConfirming(false)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeReadyChannels(true)}>확인 후 동시 등록 실행</button></div>}
+    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 수정 실행</h3><p>신규 채널은 등록하고, 이미 게시된 채널은 검증된 원격 ID를 유지한 채 상품명·설명·가격·구성·이미지를 수정합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 처리 중" : bulkConfirming ? "최종 확인 열림" : "선택 채널 등록·수정"}</button></div></div>
+    {bulkConfirming && <div className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·수정을 동시에 실행합니다.</b><small>채널별 payload, 원격 상품 ID, 가격·재고를 최종 확인한 뒤 실행하세요.</small></div><button type="button" className="credential-secondary" onClick={() => setBulkConfirming(false)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeReadyChannels(true)}>확인 후 동시 실행</button></div>}
     <div className="publish-common-fields">
       <label><span>국내 기준 판매가 KRW <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); }} /></label>
       <label><span>판매 통화 <i>필수</i></span><input required value={currency} maxLength={3} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
       <label><span>글로벌 채널 기준가 USD <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={globalBaseUsdPrice} onChange={(event) => { const value = Number(event.target.value); globalBaseUsdPriceRef.current = value; setGlobalBaseUsdPrice(value); }} /></label>
-      <label><span>재고 <i>필수</i></span><input required type="number" min="1" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); }} /></label>
+      <label><span>재고 <i>필수</i></span><input required type="number" min="0" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); }} /></label>
       <label><span>중량 kg <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={packageFields.weight} onChange={(event) => { const next = { ...packageFields, weight: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
       <label><span>가로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.length} onChange={(event) => { const next = { ...packageFields, length: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
       <label><span>세로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.width} onChange={(event) => { const next = { ...packageFields, width: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
@@ -854,7 +882,10 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
       const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
       const result = results[channel] ?? { phase: "idle" as const };
-      const capability = definition.capabilities.listingCreate;
+      const operation = listingWriteOperation(listing);
+      const remoteUpdate = operation === "listing.update";
+      const operationAvailable = channelOperationAvailable(channel, operation);
+      const capability = remoteUpdate ? definition.capabilities.listingUpdate : definition.capabilities.listingCreate;
       const draftObject = parseDraft(drafts[channel]);
       const requirements = draftObject ? inspectListingDraft(channel, draftObject) : [];
       const blockingRequirements = requirements.filter((item) => item.status === "manual");
@@ -862,12 +893,12 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const blockingCount = blockingRequirements.length + nativeMissing.length;
       const invalidDraft = !draftObject;
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
-        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{listing?.status === "published" ? "등록 완료" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "실행 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
+        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{remoteUpdate ? operationAvailable ? listing?.remoteId ? "전체 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target?.marketCode ?? ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => item.marketCode === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
-        {capability.mode === "vendor_docs_required" ? <div className="publish-blocked"><AlertTriangle size={18} /><b>판매자 상세 명세 승인 필요</b><small>{capability.note}</small></div> : <>
+        {!operationAvailable ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "상품 전체 수정 검증 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${capability.note} · 원격 상품 식별값과 수정 후 조회 검증이 완료되기 전에는 외부 쓰기를 실행하지 않습니다.` : capability.note}</small></div> : <>
           <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}대표+상세 4장</span></div>
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
-          {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>등록 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
+          {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
           {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>채널 JSON 형식 확인 필요</b><small>아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다.</small></div> : <div className="publish-required-fields">
             <div className="publish-required-head"><b>채널 필수 입력 체크</b><small>{blockingRequirements.length ? `${blockingRequirements.length}개 수동 입력 필요` : "모든 입력값 준비"}</small></div>
             <div className="publish-required-list">{requirements.map((item) => <div key={item.key} className={`publish-required-item ${item.status}`} title={item.help}>
@@ -885,9 +916,9 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
           <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
-          {confirmingChannel === channel && <div className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 등록 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정에 실제 상품 1건을 등록합니다.</b><small>가격 {price.toLocaleString()} {target?.currency || currency} · 재고 {quantity}개</small></div><button type="button" className="credential-secondary" onClick={() => setConfirmingChannel(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 등록 실행</button></div>}
+          {confirmingChannel === channel && <div className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "수정" : "등록"}합니다.</b><small>{remoteUpdate ? `원격 ID ${listing?.remoteId ?? "확인 필요"} · ` : ""}가격 {price.toLocaleString()} {target?.currency || currency} · 재고 {quantity}개</small></div><button type="button" className="credential-secondary" onClick={() => setConfirmingChannel(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "수정" : "등록"} 실행</button></div>}
           {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={() => setQoo10StopConfirming(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
-          <button type="button" className="publish-execute" disabled={!credential || !assignment || invalidDraft || blockingCount > 0 || result.phase === "running" || listing?.status === "published" || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : listing?.status === "published" ? <Check size={15} /> : <Rocket size={15} />}{listing?.status === "published" ? "등록 완료" : blockingCount ? `필수 보완 ${blockingCount}개 후 등록` : confirmingChannel === channel ? "최종 확인 열림" : "검증 후 실제 1건 등록"}</button>
+          <button type="button" className="publish-execute" disabled={!credential || !assignment || invalidDraft || blockingCount > 0 || result.phase === "running" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "수정" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? "검증 후 실제 상품 전체 수정" : "검증 후 실제 1건 등록"}</button>
           {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={result.phase === "running" || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => setQoo10StopConfirming(listing)}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
           {channel === "qoo10" && listing?.status === "published" && <label className="qoo10-remote-cleanup"><span>이전 Qoo10 상품 정리</span><input aria-label="정리할 이전 Qoo10 상품번호" inputMode="numeric" value={qoo10CleanupId} onChange={(event) => setQoo10CleanupId(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="9~10자리 상품번호" /><button type="button" className="credential-secondary" disabled={result.phase === "running" || !/^\d{9,10}$/.test(qoo10CleanupId)} onClick={requestPausePreviousQoo10Remote}><CirclePause size={15} />이전 상품 거래대기</button></label>}
           {channel === "qoo10" && qoo10CleanupConfirming && <div className="publish-write-confirmation channel" role="alertdialog" aria-label="이전 Qoo10 상품 거래대기 최종 확인"><AlertTriangle size={18} /><div><b>이전 Qoo10 원격 상품 {qoo10CleanupConfirming}를 거래대기로 전환합니다.</b><small>현재 새 상품은 판매중 상태를 그대로 유지합니다.</small></div><button type="button" className="credential-secondary" onClick={() => setQoo10CleanupConfirming(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void pausePreviousQoo10Remote(qoo10CleanupConfirming)}>이전 상품 거래대기 실행</button></div>}

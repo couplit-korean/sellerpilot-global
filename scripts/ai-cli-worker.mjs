@@ -13,6 +13,7 @@ import { cliStudioResultSchema, productResearchResultSchema } from "../lib/ai-cl
 import { buildMarketplaceStyleLearningBrief } from "../lib/marketplace-style-learning.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
+import { searchElevenstProductVariants } from "../lib/competitor-prices.ts";
 import {
   buildDuplicateRetryGuidance,
   findDuplicateShot,
@@ -1450,6 +1451,16 @@ async function processGatewayJob(job) {
         steps: [{ name: job.channel === "shopee" ? "shop-info" : "seller-info", ok, status: remote.response.status, data: remote.data }],
         safeMessage: ok ? `${job.channel} 판매자 대상 정보를 확인했습니다.` : `${job.channel} 판매자 대상 조회가 원격 오류로 종료됐습니다.`,
       };
+    } else if (job.operation === "competitor.search") {
+      if (job.channel !== "elevenst") throw new Error("이 채널은 경쟁가 검색 작업을 지원하지 않습니다.");
+      const primary = String(job.request?.primary ?? "").replace(/\p{Cc}/gu, " ").trim().slice(0, 160);
+      const aliases = Array.isArray(job.request?.aliases)
+        ? job.request.aliases.filter((alias) => typeof alias === "string").map((alias) => alias.replace(/\p{Cc}/gu, " ").trim().slice(0, 160)).filter((alias) => alias.length >= 2).slice(0, 12)
+        : [];
+      const displayPerQuery = Math.max(1, Math.min(30, Number(job.request?.displayPerQuery ?? 30) || 30));
+      if (primary.length < 2) throw new Error("경쟁가 검색어가 올바르지 않습니다.");
+      const items = await searchElevenstProductVariants(primary, aliases, { apiKey: textValue(job.credential, "api_key") }, displayPerQuery);
+      result = { ok: true, channel: "elevenst", operation: "competitor.search", items, safeMessage: `11번가 공식 상품검색에서 후보 ${items.length}건을 확인했습니다.` };
     } else if (job.operation === "diagnostic.test") {
       let diagnosticCredential = job.credential;
       if (job.channel === "shopee") {

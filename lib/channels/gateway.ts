@@ -5,6 +5,18 @@ import type { ChannelOperationName, ChannelOperationResult } from "./operations"
 
 export type ChannelGatewayChannel = "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "temu";
 
+type GatewayCompetitorCandidate = {
+  provider: "elevenst_product_search";
+  externalId: string;
+  title: string;
+  url: string;
+  imageUrl: string;
+  mallName: string;
+  marketplace: "elevenst";
+  price: number;
+  currency: "KRW";
+};
+
 type GatewayJobSnapshot = {
   status?: unknown;
   response?: unknown;
@@ -77,6 +89,30 @@ export async function executeDiagnosticViaChannelGateway(input: {
     throw new Error("CHANNEL_GATEWAY_RESPONSE_INVALID");
   }
   return diagnostic as ChannelDiagnostic;
+}
+
+export async function executeCompetitorSearchViaChannelGateway(input: {
+  serviceClient: SupabaseClient;
+  credentialId: string;
+  primary: string;
+  aliases: string[];
+  displayPerQuery: number;
+  timeoutMs?: number;
+}) {
+  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+    p_credential_id: input.credentialId,
+    p_attempt_id: null,
+    p_channel: "elevenst",
+    p_operation: "competitor.search",
+    p_request_payload: { primary: input.primary, aliases: input.aliases, displayPerQuery: input.displayPerQuery },
+  });
+  if (enqueueError || typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+  const response = await waitForGatewayJob(input.serviceClient, jobId, input.timeoutMs ?? 45_000);
+  const result = response as Record<string, unknown>;
+  if (result.operation !== "competitor.search" || result.channel !== "elevenst" || result.ok !== true || !Array.isArray(result.items)) {
+    throw new Error("CHANNEL_GATEWAY_RESPONSE_INVALID");
+  }
+  return result.items as GatewayCompetitorCandidate[];
 }
 
 export async function exchangeOAuthViaChannelGateway(input: {

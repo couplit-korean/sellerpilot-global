@@ -145,8 +145,14 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /resolvedProductId = analyzedProductId \?\? initialProduct\?\.id \?\? null/);
   assert.match(page, /nextAdminAccessState\(current, event, Boolean\(session && session\.user\.id === verifiedAdminUserId\)\)/);
   assert.match(adminAccessState, /current === "admin" && sameVerifiedUser \? "admin" : "checking"/);
-  assert.match(page, /generation !== verificationGeneration \|\| latestSession\.session\?\.user\.id !== session\.user\.id/);
+  assert.match(page, /!active \|\| generation !== verificationGeneration/);
+  assert.match(page, /latestSession\.session\.user\.id !== session\.user\.id/);
   assert.doesNotMatch(page, /setAccessState\(session \? "checking" : "signed_out"\)/);
+  assert.match(page, /withPromiseTimeout\(Promise\.all\(\[/);
+  assert.match(page, /12_000, "관리자 권한 확인 시간이 초과되었습니다\."/);
+  assert.match(page, /12_000, "로그인 세션 확인 시간이 초과되었습니다\."/);
+  assert.match(page, /setAccessState\("error"\)/);
+  assert.match(page, /현재 세션 다시 확인/);
   assert.match(page, /<RevenueCalendar days=\{analytics\?\.daily \?\? \[\]\} range=\{salesRange\}/);
   assert.match(revenueCalendar, /domesticRevenueKrw/);
   assert.match(revenueCalendar, /overseasRevenueKrw/);

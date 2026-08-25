@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
-import { groupCompetitorPrices, naverSearchCredentials, searchNaverShoppingVariants } from "../../../../lib/competitor-prices";
+import { executeCompetitorSearchViaChannelGateway } from "../../../../lib/channels/gateway";
+import { competitorProviderRegistry, searchCompetitorProviders } from "../../../../lib/competitor-prices";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -17,21 +18,35 @@ export async function GET(request: Request) {
   if (!query.success) return NextResponse.json({ message: "가격 비교 검색어를 2자 이상 입력해 주세요." }, { status: 400 });
   const aliases = aliasesSchema.safeParse(requestUrl.searchParams.getAll("alias"));
   if (!aliases.success) return NextResponse.json({ message: "다국어 검색어 형식을 확인해 주세요." }, { status: 400 });
-  const credentials = await naverSearchCredentials(admin.serviceClient);
-  if (!credentials) return NextResponse.json({ message: "네이버 쇼핑 검색 인증이 연결되지 않았습니다.", items: [] }, { status: 503 });
   try {
-    const items = groupCompetitorPrices(await searchNaverShoppingVariants(query.data, aliases.data, credentials, 30)).map((item) => ({
+    const registry = await competitorProviderRegistry(admin.serviceClient, {
+      searchElevenstViaGateway: executeCompetitorSearchViaChannelGateway,
+    });
+    const result = await searchCompetitorProviders(registry, query.data, aliases.data, 30);
+    const items = result.items.map((item) => ({
       id: item.externalId,
+      provider: item.provider,
       marketplace: item.marketplace,
       title: item.title,
       url: item.url,
       imageUrl: item.imageUrl || null,
       mallName: item.mallName,
       price: item.price,
-      currency: "KRW",
+      currency: item.currency,
     }));
-    return NextResponse.json({ query: query.data, aliases: aliases.data, items }, { headers: { "cache-control": "no-store, max-age=0" } });
+    if (!result.available) {
+      return NextResponse.json({
+        message: result.configured
+          ? "연결된 공식 가격 검색 공급자가 응답하지 않았습니다."
+          : "공식 가격 검색 공급자가 연결되지 않았습니다.",
+        query: query.data,
+        aliases: aliases.data,
+        items,
+        providers: result.providers,
+      }, { status: result.configured ? 502 : 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    return NextResponse.json({ query: query.data, aliases: aliases.data, items, providers: result.providers }, { headers: { "cache-control": "no-store, max-age=0" } });
   } catch {
-    return NextResponse.json({ message: "동일 상품 가격 정보를 불러오지 못했습니다.", items: [] }, { status: 502 });
+    return NextResponse.json({ message: "동일 상품 가격 정보를 불러오지 못했습니다.", items: [], providers: [] }, { status: 502 });
   }
 }

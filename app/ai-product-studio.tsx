@@ -239,6 +239,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
   const [sourceJobId, setSourceJobId] = useState("");
   const [sourceProductId, setSourceProductId] = useState<string | null>(null);
   const [regeneratingAssetId, setRegeneratingAssetId] = useState("");
+  const [queuedOwnJobId, setQueuedOwnJobId] = useState("");
   const handledRequest = useRef(0);
   const recoveryStarted = useRef(false);
   const displayJobId = useRef("");
@@ -322,7 +323,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
   }, [notify, onResultReady, waitForCliJob]);
 
   const generate = useCallback(async () => {
-    if (!mainPhoto || generating) return;
+    if (!mainPhoto || generating || queuedOwnJobId) return;
     displayJobId.current = "";
     setGenerating(true);
     onRunningChange(true);
@@ -357,12 +358,15 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       if (queued.jobId !== jobId) clearActiveStudioJob(jobId);
       persistActiveStudioJob(queued.jobId);
       displayJobId.current = queued.jobId;
+      setQueuedOwnJobId(queued.jobId);
       onJobQueued?.(queued.jobId);
       notify("상품 분석 작업을 운영 큐에 등록했습니다. 처리되는 동안 다른 상품 등록을 바로 시작할 수 있습니다.");
       void finishStudioJob(queued.jobId, accessToken, false).catch((error) => {
         const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";
         setLastError(message);
         notify(message);
+      }).finally(() => {
+        setQueuedOwnJobId((current) => current === queued.jobId ? "" : current);
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";
@@ -373,7 +377,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       setCliPhase("idle");
       onRunningChange(false);
     }
-  }, [finishStudioJob, generating, mainPhoto, manualFields, notify, onJobQueued, onRunningChange, photos]);
+  }, [finishStudioJob, generating, mainPhoto, manualFields, notify, onJobQueued, onRunningChange, photos, queuedOwnJobId]);
 
   const regenerateAsset = useCallback(async (assetId: string) => {
     if (!sourceJobId || generating || regeneratingAssetId) return;
@@ -464,7 +468,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
         <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>로컬 ChatGPT CLI가 사진과 설명을 분석하고, codex-image와 Puck 편집 흐름으로 결과를 만듭니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result ? "CLI 실데이터" : "실행 대기"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating}>{generating ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}다시 생성</button></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result ? "CLI 실데이터" : queuedOwnJobId ? "서버 처리 중" : "실행 대기"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating || Boolean(queuedOwnJobId)}>{generating || queuedOwnJobId ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{queuedOwnJobId ? "이 상품 처리 중" : "다시 생성"}</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>

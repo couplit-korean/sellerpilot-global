@@ -245,7 +245,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.doesNotMatch(studio, /recovered \? displayRecoveredResult/);
   assert.match(studio, /productResponse\.status === 409 && productPayload\.code === "DUPLICATE_SELLER_SKU"/);
   assert.match(operationsSnapshotRoute, /mutationError\.code === "23505"/);
-  assert.match(competitorScheduler, /searchNaverShoppingVariants\(product\.query, product\.aliases/);
+  assert.match(competitorScheduler, /searchCompetitorProviders\(registry, product\.query, product\.aliases/);
+  assert.match(competitorScheduler, /sellerpilot_service_record_competitor_prices/);
 });
 
 test("390px registration, CS, preview, and notification surfaces keep their mobile contract", async () => {
