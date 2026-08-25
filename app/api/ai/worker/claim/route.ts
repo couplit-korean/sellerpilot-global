@@ -201,11 +201,11 @@ export async function POST(request: Request) {
       const comparisonMap = jobRequest.comparison_asset_paths && typeof jobRequest.comparison_asset_paths === "object" && !Array.isArray(jobRequest.comparison_asset_paths)
         ? jobRequest.comparison_asset_paths as Record<string, unknown>
         : {};
-      const comparisonEntries = Object.entries(comparisonMap).filter(([candidateId, path]) => (
-        candidateId !== assetId
-        && aiGeneratedAssetSpecs.some((candidate) => candidate.id === candidateId)
-        && typeof path === "string"
-      )) as [string, string][];
+      const comparisonEntries = aiGeneratedAssetSpecs.flatMap((candidate) => {
+        const path = comparisonMap[candidate.id];
+        if (typeof path !== "string") return [];
+        return [[candidate.id === assetId ? `previous:${candidate.id}` : candidate.id, path] as [string, string]];
+      });
       const { data: signedComparisons, error: comparisonError } = comparisonEntries.length
         ? await serviceClient.storage.from("sellerpilot-ai").createSignedUrls(comparisonEntries.map(([, path]) => path), 10 * 60)
         : { data: [], error: null };

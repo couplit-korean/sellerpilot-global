@@ -1218,12 +1218,13 @@ async function downloadComparisonShots(job, targetAssetId) {
   const expectedAssetIds = aiGeneratedAssetSpecs
     .map((asset) => asset.id)
     .filter((assetId) => assetId !== targetAssetId);
+  const previousAssetId = `previous:${targetAssetId}`;
   const missingAssetIds = expectedAssetIds.filter((assetId) => !comparisonById.has(assetId));
-  if (missingAssetIds.length || comparisonById.size !== expectedAssetIds.length) {
+  if (missingAssetIds.length || !comparisonById.has(previousAssetId) || comparisonById.size !== expectedAssetIds.length + 1) {
     throw new Error(`재제작 중복 비교 이미지가 완전하지 않습니다: ${missingAssetIds.join(", ") || "unexpected asset"}`);
   }
   const shots = [];
-  for (const assetId of expectedAssetIds) {
+  for (const assetId of [...expectedAssetIds, previousAssetId]) {
     const image = comparisonById.get(assetId);
     const response = await fetch(image.signedUrl, { signal: AbortSignal.timeout(30_000) });
     if (!response.ok) throw new Error(`${assetId} 기존 이미지 중복 비교 자료를 받지 못했습니다.`);

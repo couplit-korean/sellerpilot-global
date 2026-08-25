@@ -130,8 +130,35 @@ test("the exact SHA-256 and 256-bit dHash gate use three materially different at
   assert.match(thirdAttempt, /opposite permitted camera height/);
 });
 
+test("individual regeneration rejects exact and near duplicates of the pre-replacement target", () => {
+  const previousTarget = {
+    assetId: "previous:detail-use",
+    digest: "old-target-digest",
+    visualHash: new Uint8Array(SHOT_DHASH_BYTES),
+  };
+  const exact = findDuplicateShot({
+    assetId: "detail-use",
+    digest: "old-target-digest",
+    visualHash: new Uint8Array(SHOT_DHASH_BYTES).fill(255),
+  }, [previousTarget]);
+  assert.equal(exact?.assetId, "previous:detail-use");
+  assert.equal(exact?.exact, true);
+
+  const nearHash = new Uint8Array(SHOT_DHASH_BYTES);
+  nearHash[0] = 1;
+  const near = findDuplicateShot({
+    assetId: "detail-use",
+    digest: "new-target-digest",
+    visualHash: nearHash,
+  }, [previousTarget]);
+  assert.equal(near?.assetId, "previous:detail-use");
+  assert.equal(near?.exact, false);
+  assert.equal(near?.distance, 1);
+});
+
 test("both full-series and individual-regeneration worker paths use the same hash gate and three-attempt loop", async () => {
   const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const claimRoute = await readFile(new URL("../app/api/ai/worker/claim/route.ts", import.meta.url), "utf8");
   assert.equal(worker.match(/await generateDistinctAsset\(\{/g)?.length, 2);
   assert.match(worker, /for \(let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt \+= 1\)/);
   assert.match(worker, /await rm\(outputFile, \{ force: true \}\)/);
@@ -142,6 +169,10 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /findDuplicateShot\(fingerprint, existingShots\)/);
   assert.match(worker, /downloadComparisonShots\(job, preset\.id\)/);
   assert.match(worker, /expectedAssetIds[\s\S]*assetId !== targetAssetId/);
+  assert.match(worker, /const previousAssetId = `previous:\$\{targetAssetId\}`/);
+  assert.match(worker, /comparisonById\.size !== expectedAssetIds\.length \+ 1/);
+  assert.match(worker, /\[\.\.\.expectedAssetIds, previousAssetId\]/);
+  assert.match(claimRoute, /candidate\.id === assetId \? `previous:\$\{candidate\.id\}` : candidate\.id/);
   assert.match(worker, /existingShots\.length !== imagePresets\.length/);
   assert.match(worker, /match=\$\{duplicate\.exact \? "sha256" : "dhash"\}/);
 });
