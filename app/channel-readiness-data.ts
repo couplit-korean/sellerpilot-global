@@ -194,8 +194,8 @@ export const channelReadiness: ChannelReadiness[] = [
       { label: "프로그램 재조회", state: "verified", evidence: "외부 상품코드로 temu.local.goods.list.retrieve 재검증 구현" },
       { label: "실계정 E2E", state: "not_configured", evidence: "Partner App Key·Secret·판매자 Access Token 미연결" },
     ],
-    blockers: ["실제 처리지 한국·싱가포르·미국과 공급사 정보를 컴플라이언스 설문에 정확히 반영", "재심사 승인 후 앱 발행", "한국 판매자 승인 Access Token 발급", "기본 배송 템플릿 설정"],
-    nextAction: "컴플라이언스 2개 항목 보완·재제출 → 승인·발행 → 판매자 승인 → Vault 연결 → 상품 목록 읽기",
+    blockers: ["실제 처리지 한국·싱가포르·미국과 공급사 정보를 컴플라이언스 설문에 정확히 반영", "컴플라이언스 재심사 승인 후 앱 Online 전환·App Key/Secret 노출 확인", "한국 판매자 승인 Access Token 발급", "기본 배송 템플릿 설정"],
+    nextAction: "컴플라이언스 2개 항목 보완·재제출 → 승인·앱 Online 전환 및 App Key·Secret 확인 → 한국 Seller Center 수동 승인 → Access Token 발급 → Vault 연결 → 상품 목록 읽기 진단",
   },
   {
     key: "smartstore",

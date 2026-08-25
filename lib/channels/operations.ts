@@ -2286,7 +2286,7 @@ async function executeTemu(input: ExecuteInput) {
     let body = input.arguments.body ? objectValue(input.arguments, "body") : null;
     const steps: ChannelOperationStep[] = [];
     if (!body && goodsId) {
-      const detail = await temuRequest({ payload: input.payload, type: "temu.local.goods.detail.query", arguments: { goodsId: Number(goodsId), versionQueryType: 1 } });
+      const detail = await temuRequest({ payload: input.payload, type: "bg.local.goods.detail.query", arguments: { goodsId: Number(goodsId), versionQueryType: 1 } });
       const detailStep = step("inventory-item-readback", detail);
       steps.push(detailStep);
       if (!detailStep.ok) return result(input, steps, goodsId);
@@ -2303,7 +2303,7 @@ async function executeTemu(input: ExecuteInput) {
     if (!writeStep.ok || !goodsId) return result(input, steps, responseGoodsId === undefined ? goodsId || undefined : String(responseGoodsId));
     const verificationRemote = await temuRequest({
       payload: input.payload,
-      type: "temu.local.goods.detail.query",
+      type: "bg.local.goods.detail.query",
       arguments: { goodsId: Number(goodsId), versionQueryType: 1 },
     });
     const verificationData = temuResultObject(verificationRemote.data);

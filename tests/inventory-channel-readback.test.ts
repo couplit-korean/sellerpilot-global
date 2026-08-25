@@ -200,6 +200,32 @@ test("Temu inventory verifies quantity through goods detail", async () => {
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("Temu inventory uses the official goods-detail method before and after stock edit", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    return body.type === "bg.local.goods.stock.edit"
+      ? Response.json({ success: true, result: { goodsId: 123456789 } })
+      : Response.json({ success: true, result: { goodsId: 123456789, skuList: [{ skuId: 9001, stockQuantity: 17 }] } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "temu", operation: "inventory.update", environment: "production",
+      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+      arguments: { goodsId: 123456789, quantity: 17 },
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.map((call) => call.type), [
+      "bg.local.goods.detail.query",
+      "bg.local.goods.stock.edit",
+      "bg.local.goods.detail.query",
+    ]);
+    assert.deepEqual(calls[1].skuStockList, [{ skuId: 9001, stockQuantity: 17 }]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("eBay uses safe bulk quantity update instead of overwriting the inventory item", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ method?: string; path: string; body?: string }> = [];
