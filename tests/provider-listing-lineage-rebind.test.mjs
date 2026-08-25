@@ -343,8 +343,8 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
     await setClaims(db);
     await db.query(
       `insert into sellerpilot_private.ai_cli_worker_tokens(
-         id,label,token_hash,fingerprint,status,expires_at,created_by
-       ) values($1,'Lineage worker',$2,'ABCDEF000001','active',now() + interval '1 day',$3)`,
+         id,label,token_hash,fingerprint,scope,status,expires_at,created_by
+       ) values($1,'Lineage worker',$2,'ABCDEF000001','gateway','active',now() + interval '1 day',$3)`,
       [TOKEN_ID, TOKEN_HASH, ADMIN_ID],
     );
 

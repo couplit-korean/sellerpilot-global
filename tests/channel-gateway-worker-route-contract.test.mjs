@@ -15,6 +15,10 @@ const credentialRefreshMigrationUrl = new URL(
   "../supabase/migrations/20260825104500_prepare_gateway_credential_refresh.sql",
   import.meta.url,
 );
+const atomicCompletionMigrationUrl = new URL(
+  "../supabase/migrations/20260826090400_atomic_gateway_completion_side_effects.sql",
+  import.meta.url,
+);
 
 test("gateway claim distinguishes malformed credentials from unavailable server configuration", async () => {
   const source = await readFile(claimRouteUrl, "utf8");
@@ -33,12 +37,12 @@ test("gateway claim distinguishes malformed credentials from unavailable server 
 test("gateway completion bounds Supabase calls and classifies only authorization boundary RPC errors", async () => {
   const source = await readFile(completeRouteUrl, "utf8");
   const snapshotFailure = source.indexOf("if (snapshotError)");
-  const domainConflict = source.indexOf('if (!job || job.status !== "running")');
-  const intermediateIngestion = source.indexOf('serviceClient.rpc("sellerpilot_service_ingest_orders"');
-  const lineageTerminal = source.indexOf('if (job.operation === "listing.lineage.verify")', intermediateIngestion);
-  const finalRpc = source.lastIndexOf('serviceClient.rpc("sellerpilot_complete_channel_gateway_job"');
+  const domainConflict = source.indexOf('if (!job || (job.status !== "running" && job.status !== "completed_replay"))');
+  const normalization = source.indexOf("normalizedOrders = normalizeChannelOrders");
+  const lineageTerminal = source.indexOf('if (job.operation === "listing.lineage.verify")', normalization);
+  const finalRpc = source.lastIndexOf('serviceClient.rpc("sellerpilot_service_complete_gateway_transaction"');
   const finalFailure = source.indexOf("if (error) {", finalRpc);
-  const finalConflict = source.indexOf("if (data !== true)");
+  const finalConflict = source.indexOf('if (completion?.status !== "completed")');
 
   assert.match(source, /workerToken\.length < 24[\s\S]*status: 401/);
   assert.match(source, /if \(!supabaseUrl \|\| !secretKey\)[\s\S]*workerRpcErrorMessage\(503\)[\s\S]*status: 503/);
@@ -46,18 +50,17 @@ test("gateway completion bounds Supabase calls and classifies only authorization
   assert.equal(snapshotFailure >= 0 && snapshotFailure < domainConflict, true);
   assert.match(source.slice(snapshotFailure, domainConflict), /workerRpcErrorStatus\(snapshotError\)/);
   assert.match(source.slice(snapshotFailure, domainConflict), /workerRpcErrorMessage\(status\)/);
-  assert.match(source.slice(domainConflict, intermediateIngestion), /status: 409/);
+  assert.match(source.slice(domainConflict, normalization), /status: 409/);
   assert.equal(finalFailure >= 0 && finalFailure < finalConflict, true);
   assert.match(source.slice(finalFailure, finalConflict), /workerRpcErrorStatus\(error\)/);
   assert.match(source.slice(finalFailure, finalConflict), /workerRpcErrorMessage\(status\)/);
   assert.match(source.slice(finalConflict), /status: 409/);
   assert.ok((source.match(/p_claim_token: parsed\.data\.claimToken/g) ?? []).length >= 3);
-  assert.equal(lineageTerminal > intermediateIngestion && lineageTerminal < finalRpc, true);
-
-  const intermediateSection = source.slice(intermediateIngestion, lineageTerminal);
-  assert.match(intermediateSection, /message: "채널 주문을 운영 원장에 저장하지 못했습니다\." \}, \{ status: 500 \}/);
-  assert.match(intermediateSection, /message: "Lazada 문의 초기 동기화 완료 상태를 저장하지 못했습니다\." \}, \{ status: 500 \}/);
-  assert.doesNotMatch(intermediateSection, /workerRpcErrorStatus/);
+  assert.equal(lineageTerminal > normalization && lineageTerminal < finalRpc, true);
+  assert.doesNotMatch(source, /serviceClient\.rpc\("sellerpilot_service_(?:ingest_orders|ingest_inquiries|mark_channel_sync|prepare_gateway_credential_refresh)"/);
+  assert.match(source.slice(finalRpc), /p_normalized_orders: normalizedOrders/);
+  assert.match(source.slice(finalRpc), /p_normalized_inquiries: normalizedInquiries/);
+  assert.match(source.slice(finalRpc), /p_credential_refresh: credentialRefresh \?\? null/);
 });
 
 test("gateway heartbeat separates auth and configuration failures and rejects lost ownership", async () => {
@@ -78,7 +81,7 @@ test("gateway heartbeat separates auth and configuration failures and rejects lo
   assert.match(source, /data !== "running"[\s\S]*status: 409/);
   assert.match(source, /claimToken: z\.string\(\)\.uuid\(\)/);
   assert.match(source, /p_claim_token: parsed\.data\.claimToken/);
-  assert.match(source, /sellerpilot-cli-worker\/1\.18/);
+  assert.match(source, /sellerpilot-cli-worker\/1\.24/);
 });
 
 test("gateway completion accepts a terminal reconciliation state without disguising it as failure", async () => {
@@ -117,27 +120,27 @@ test("listing media mutations are fenced before upload and preserved in structur
 });
 
 test("gateway credential refresh preparation is ownership-bound and never forces a provider-success job to failed", async () => {
-  const source = await readFile(completeRouteUrl, "utf8");
+  const [source, migration] = await Promise.all([
+    readFile(completeRouteUrl, "utf8"),
+    readFile(atomicCompletionMigrationUrl, "utf8"),
+  ]);
   const refreshSelection = source.indexOf("const credentialRefresh = oauthResult");
-  const preparationStart = source.indexOf('"sellerpilot_service_prepare_gateway_credential_refresh"');
-  const effectiveCredential = source.indexOf("const effectiveCredentialId", preparationStart);
-  const preparationSection = source.slice(preparationStart, effectiveCredential);
+  const atomicCompletion = source.indexOf('"sellerpilot_service_complete_gateway_transaction"');
 
   assert.notEqual(refreshSelection, -1);
-  assert.notEqual(preparationStart, -1);
-  assert.notEqual(effectiveCredential, -1);
-  assert.equal(refreshSelection < preparationStart, true);
-  assert.match(source.slice(refreshSelection, preparationStart), /parsed\.data\.credentialRefresh/);
-  assert.match(preparationSection, /p_token_hash: tokenHash/);
-  assert.match(preparationSection, /p_job_id: parsed\.data\.jobId/);
-  assert.match(preparationSection, /p_claim_token: parsed\.data\.claimToken/);
-  assert.match(preparationSection, /workerRpcErrorStatus\(preparationError\)/);
-  assert.match(preparationSection, /prepared\?\.status === "conflict" \|\| prepared\?\.status === "invalid"/);
-  assert.match(preparationSection, /status: 409/);
-  assert.match(preparationSection, /workerRpcErrorMessage\(503\)[\s\S]*status: 503/);
+  assert.notEqual(atomicCompletion, -1);
+  assert.equal(refreshSelection < atomicCompletion, true);
+  assert.match(source.slice(refreshSelection, atomicCompletion), /parsed\.data\.credentialRefresh/);
+  assert.match(source.slice(atomicCompletion), /p_token_hash: tokenHash/);
+  assert.match(source.slice(atomicCompletion), /p_job_id: parsed\.data\.jobId/);
+  assert.match(source.slice(atomicCompletion), /p_claim_token: parsed\.data\.claimToken/);
+  assert.match(source.slice(atomicCompletion), /p_credential_refresh: credentialRefresh \?\? null/);
   assert.doesNotMatch(source, /sellerpilot_service_refresh_(?:shopee|lazada|ebay)/);
-  assert.equal((source.match(/sellerpilot_complete_channel_gateway_job/g) ?? []).length, 1);
-  assert.match(source.slice(effectiveCredential), /p_credential_id: effectiveCredentialId/);
+  assert.doesNotMatch(source, /sellerpilot_service_prepare_gateway_credential_refresh/);
+  assert.match(migration, /sellerpilot_service_prepare_gateway_credential_refresh\([\s\S]*v_preparation_status/);
+  assert.match(migration, /sellerpilot_service_ingest_orders\([\s\S]*sellerpilot_service_ingest_inquiries\([\s\S]*sellerpilot_complete_channel_gateway_job\(/);
+  assert.match(migration, /gateway_completion_receipts/);
+  assert.match(migration, /gateway completion replay mismatch/);
 });
 
 test("all OAuth callbacks use the durable gateway and keep one-time grants out of ordinary job payloads", async () => {
@@ -183,8 +186,7 @@ test("gateway stages every received OAuth token under the exact live claim befor
   assert.match(stageSource, /p_recovery_only: refresh\.recoveryOnly === true/);
   assert.match(stageSource, /p_oauth_complete: refresh\.oauthComplete === true/);
   assert.match(stageSource, /createBoundedSupabaseFetch\(\)/);
-  assert.match(completeSource, /p_recovery_only: credentialRefresh\.recoveryOnly === true/);
-  assert.match(completeSource, /p_oauth_complete: credentialRefresh\.oauthComplete === true/);
+  assert.match(completeSource, /p_credential_refresh: credentialRefresh \?\? null/);
   assert.match(migrationSource, /j\.claim_token = p_claim_token[\s\S]*j\.lease_expires_at > now\(\)[\s\S]*for update/);
   assert.match(migrationSource, /credential_refresh_recovery_vault_id/);
   assert.match(migrationSource, /credential_refresh_in_flight/);

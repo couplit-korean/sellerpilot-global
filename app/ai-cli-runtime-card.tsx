@@ -4,24 +4,31 @@ import { AlertTriangle, Ban, CheckCircle2, Clock3, Copy, Cpu, DatabaseZap, Histo
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 
+type WorkerScope = "ai" | "gateway" | "scheduler";
+
+type WorkerSnapshot = {
+  label: string;
+  fingerprint: string;
+  expires_at: string;
+  last_seen_at: string | null;
+  last_version: string | null;
+  scope?: WorkerScope | "legacy_combined";
+};
+
 type WorkerStatus = {
-  worker: {
-    label: string;
-    fingerprint: string;
-    expires_at: string;
-    last_seen_at: string | null;
-    last_version: string | null;
-  } | null;
+  worker: WorkerSnapshot | null;
+  workers?: Partial<Record<WorkerScope | "legacy_combined", WorkerSnapshot>>;
   queued: number;
   running: number;
   succeeded_today: number;
   failed_today: number;
 };
 
-type IssuedToken = {
-  token: string;
-  fingerprint: string;
+type IssuedTokenSet = {
+  tokenSetId: string;
+  activationExpiresAt: string;
   expiresAt: string;
+  tokens: Record<WorkerScope, { token: string; fingerprint: string }>;
   message: string;
 };
 
@@ -56,6 +63,54 @@ const jobKindLabel: Record<string, string> = {
   support_reply: "고객 문의 답변 초안",
 };
 
+const workerScopeDefinitions: ReadonlyArray<{
+  scope: WorkerScope;
+  label: string;
+  shortLabel: string;
+  purpose: string;
+  tokenLabel: string;
+  keychainService: string;
+  rotateFlag: string;
+}> = [
+  {
+    scope: "ai",
+    label: "AI 작업",
+    shortLabel: "AI",
+    purpose: "상품 분석·이미지·답변 초안 큐만 처리합니다.",
+    tokenLabel: "SellerPilot Mac · AI Worker",
+    keychainService: "SellerPilot AI Worker",
+    rotateFlag: "--rotate-ai-token",
+  },
+  {
+    scope: "gateway",
+    label: "판매채널 게이트웨이",
+    shortLabel: "게이트웨이",
+    purpose: "판매채널 쓰기 작업과 채널 자격증명 사용만 허용합니다.",
+    tokenLabel: "SellerPilot Mac · Gateway Worker",
+    keychainService: "SellerPilot Gateway Worker",
+    rotateFlag: "--rotate-gateway-token",
+  },
+  {
+    scope: "scheduler",
+    label: "스케줄러",
+    shortLabel: "스케줄러",
+    purpose: "운영 동기화·유지보수 예약 작업만 호출합니다.",
+    tokenLabel: "SellerPilot Mac · Scheduler Worker",
+    keychainService: "SellerPilot Scheduler Worker",
+    rotateFlag: "--rotate-scheduler-token",
+  },
+];
+
+function workerForScope(status: WorkerStatus | null, scope: WorkerScope) {
+  if (!status) return null;
+  if (status.workers) {
+    return status.workers[scope]
+      ?? status.workers.legacy_combined
+      ?? (scope === "ai" ? status.worker : null);
+  }
+  return status.worker;
+}
+
 function formatDate(value: string | null) {
   if (!value) return "아직 접속 없음";
   return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
@@ -67,7 +122,8 @@ function isOnline(lastSeenAt: string | null) {
 
 export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void }) {
   const [status, setStatus] = useState<WorkerStatus | null>(null);
-  const [issued, setIssued] = useState<IssuedToken | null>(null);
+  const [issued, setIssued] = useState<IssuedTokenSet | null>(null);
+  const [selectedScope, setSelectedScope] = useState<WorkerScope>("ai");
   const [expiresInDays, setExpiresInDays] = useState(90);
   const [loading, setLoading] = useState(true);
   const [issuing, setIssuing] = useState(false);
@@ -157,19 +213,32 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     return () => { window.clearTimeout(initialLoad); window.clearInterval(interval); };
   }, [load]);
 
+  const selectedScopeDefinition = workerScopeDefinitions.find((definition) => definition.scope === selectedScope) ?? workerScopeDefinitions[0];
+  const selectedWorker = workerForScope(status, selectedScope);
+
   const issueToken = async () => {
-    if (status?.worker && !window.confirm("기존 CLI 작업자 토큰은 즉시 폐기됩니다. 새 토큰으로 교체할까요?")) return;
+    if (status?.worker && !window.confirm("AI·게이트웨이·스케줄러 토큰 세트를 새로 발급할까요? 기존 작업자는 새 런타임 설치가 성공할 때까지 계속 동작합니다.")) return;
     setIssuing(true);
     setError("");
     try {
       const response = await authenticatedFetch("/api/admin/ai-worker-token", {
         method: "POST",
-        body: JSON.stringify({ label: "SellerPilot Mac · ChatGPT CLI", expiresInDays }),
+        body: JSON.stringify({ label: "SellerPilot Mac Worker", expiresInDays }),
       });
-      const payload = await response.json().catch(() => ({ message: "토큰 발급 응답을 읽지 못했습니다." })) as IssuedToken;
-      if (!response.ok || !payload.token) throw new Error(payload.message ?? "CLI 작업자 토큰을 발급하지 못했습니다.");
-      setIssued(payload);
-      notify("CLI 작업자 토큰을 발급했습니다. 지금 한 번만 복사할 수 있습니다.");
+      const payload = await response.json().catch(() => ({ message: "토큰 발급 응답을 읽지 못했습니다." })) as Partial<IssuedTokenSet>;
+      const completeTokenSet = payload.tokens
+        && workerScopeDefinitions.every((definition) => payload.tokens?.[definition.scope]?.token.startsWith("spw_"));
+      if (!response.ok || !payload.tokenSetId || !completeTokenSet) {
+        throw new Error(payload.message ?? "CLI 작업자 토큰 세트를 발급하지 못했습니다.");
+      }
+      setIssued({
+        tokenSetId: payload.tokenSetId,
+        activationExpiresAt: payload.activationExpiresAt ?? "",
+        expiresAt: payload.expiresAt ?? "",
+        message: payload.message ?? "새 CLI 작업자 토큰 세트가 대기 상태로 발급됐습니다.",
+        tokens: payload.tokens as IssuedTokenSet["tokens"],
+      });
+      notify("세 범위 전용 토큰을 대기 상태로 발급했습니다. 설치 성공 전까지 기존 토큰은 유지됩니다.");
       await load();
     } catch (issueError) {
       setError(issueError instanceof Error ? issueError.message : "CLI 작업자 토큰을 발급하지 못했습니다.");
@@ -187,24 +256,44 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     }
   };
 
-  const online = Number(status?.running ?? 0) > 0 || isOnline(status?.worker?.last_seen_at ?? null);
+  const online = isOnline(selectedWorker?.last_seen_at ?? null);
+  const issuedInstallCommand = issued
+    ? `npm run ai:worker:install -- --rotate-token --token-set ${issued.tokenSetId}`
+    : "";
 
   return <section className="cli-runtime-card">
     <header>
       <div className="cli-runtime-title"><span><SquareTerminal size={18} /></span><div><small>CHATGPT CLI RUNTIME</small><h3>로컬 Codex AI 작업자</h3><p>ChatGPT OAuth는 Mac에만 남고, Vercel은 암호화된 작업 큐만 전달합니다.</p></div></div>
-      <span className={`cli-runtime-state ${online ? "online" : "offline"}`}><i />{online ? "실시간 연결" : status?.worker ? "작업자 대기" : "토큰 미발급"}</span>
+      <span className={`cli-runtime-state ${online ? "online" : "offline"}`}><i />{online ? `${selectedScopeDefinition.shortLabel} 연결` : selectedWorker ? `${selectedScopeDefinition.shortLabel} 대기` : `${selectedScopeDefinition.shortLabel} 토큰 미발급`}</span>
     </header>
 
+    <div className="cli-worker-scopes" role="group" aria-label="CLI 작업자 권한 선택">
+      {workerScopeDefinitions.map((definition) => {
+        const scopeWorker = workerForScope(status, definition.scope);
+        const scopeOnline = isOnline(scopeWorker?.last_seen_at ?? null);
+        return <button
+          type="button"
+          key={definition.scope}
+          className={selectedScope === definition.scope ? "selected" : ""}
+          aria-pressed={selectedScope === definition.scope}
+          onClick={() => setSelectedScope(definition.scope)}
+        >
+          <span><i className={scopeOnline ? "online" : scopeWorker ? "ready" : "missing"} />{definition.label}</span>
+          <small>{scopeOnline ? "실시간 연결" : scopeWorker ? `대기 · ${scopeWorker.fingerprint}` : "전용 토큰 필요"}</small>
+        </button>;
+      })}
+    </div>
+
     <div className="cli-runtime-grid">
-      <article><Cpu size={16} /><span><small>작업자</small><b>{status?.worker?.label ?? "연결 필요"}</b><em>{status?.worker?.last_version ?? "Codex CLI 로그인 후 실행"}</em></span></article>
-      <article><Clock3 size={16} /><span><small>마지막 신호</small><b>{formatDate(status?.worker?.last_seen_at ?? null)}</b><em>{status?.worker ? `토큰 ${status.worker.fingerprint} · 만료 ${formatDate(status.worker.expires_at)}` : "토큰을 먼저 발급하세요"}</em></span></article>
+      <article><Cpu size={16} /><span><small>{selectedScopeDefinition.label} 작업자</small><b>{selectedWorker?.label ?? "연결 필요"}</b><em>{selectedWorker?.last_version ?? "전용 토큰 저장 후 실행"}</em></span></article>
+      <article><Clock3 size={16} /><span><small>마지막 신호</small><b>{formatDate(selectedWorker?.last_seen_at ?? null)}</b><em>{selectedWorker ? `토큰 ${selectedWorker.fingerprint} · 만료 ${formatDate(selectedWorker.expires_at)}` : `${selectedScopeDefinition.label} 토큰을 먼저 발급하세요`}</em></span></article>
       <article><RefreshCw size={16} /><span><small>현재 작업</small><b>{Number(status?.running ?? 0)} 실행 · {Number(status?.queued ?? 0)} 대기</b><em>15초마다 자동 갱신</em></span></article>
       <article><CheckCircle2 size={16} /><span><small>오늘 처리</small><b>{Number(status?.succeeded_today ?? 0)} 성공 · {Number(status?.failed_today ?? 0)} 실패</b><em>상세페이지 분석 + codex-image</em></span></article>
     </div>
 
     <div className="cli-runtime-actions">
-      <div><label><span>토큰 유효기간</span><select value={expiresInDays} onChange={(event) => setExpiresInDays(Number(event.target.value))}><option value={30}>30일</option><option value={90}>90일</option><option value={180}>180일</option><option value={365}>365일</option></select></label><button type="button" className="credential-primary" onClick={() => void issueToken()} disabled={issuing}>{issuing ? <LoaderCircle className="spin" size={14} /> : status?.worker ? <RotateCcw size={14} /> : <KeyRound size={14} />}{status?.worker ? "작업자 토큰 교체" : "작업자 토큰 발급"}</button></div>
-      <aside><ShieldCheck size={15} /><span><b>API Key 불필요</b><small>`codex login`의 ChatGPT 계정 인증과 codex-image 스킬을 사용합니다.</small></span></aside>
+      <div><label><span>토큰 유효기간</span><select value={expiresInDays} onChange={(event) => setExpiresInDays(Number(event.target.value))}><option value={30}>30일</option><option value={90}>90일</option><option value={180}>180일</option><option value={365}>365일</option></select></label><button type="button" className="credential-primary" onClick={() => void issueToken()} disabled={issuing}>{issuing ? <LoaderCircle className="spin" size={14} /> : status?.worker ? <RotateCcw size={14} /> : <KeyRound size={14} />}{status?.worker ? "3개 토큰 안전 교체" : "3개 전용 토큰 발급"}</button></div>
+      <aside><ShieldCheck size={15} /><span><b>{selectedScopeDefinition.label} 전용 권한</b><small>{selectedScopeDefinition.purpose}</small></span></aside>
     </div>
 
     <div className="cli-job-history">
@@ -226,10 +315,13 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     </div>
 
     {issued && <div className="cli-token-reveal">
-      <div><AlertTriangle size={16} /><span><b>일회성 토큰 — 창을 닫기 전에 복사하세요.</b><small>토큰 원문은 서버에도 저장되지 않으며 SHA-256 지문만 보관됩니다.</small></span></div>
-      <code>{issued.token}</code>
-      <button type="button" onClick={() => void copy(issued.token, "CLI 작업자 토큰을 복사했습니다.")}><Copy size={14} />토큰 복사</button>
-      <p><b>Mac 자동실행 설치</b><code>npm run ai:worker:install</code><button type="button" onClick={() => void copy("npm run ai:worker:install", "CLI 작업자 설치 명령을 복사했습니다.")}><Copy size={13} />명령 복사</button><small>명령 실행 후 뜨는 보안 입력창에 위 토큰을 붙여 넣으면 키체인에 저장되고 로그인 시 자동 실행됩니다.</small></p>
+      <div><AlertTriangle size={16} /><span><b>세 범위 일회성 토큰 — 설치 완료 전 창을 닫지 마세요.</b><small>서버에는 SHA-256 지문만 저장되며, 세 토큰이 모두 검증돼야 기존 토큰과 원자적으로 교체됩니다.</small></span></div>
+      {workerScopeDefinitions.map((definition) => <p key={definition.scope}>
+        <b>{definition.label}</b><code>{issued.tokens[definition.scope].token}</code>
+        <button type="button" onClick={() => void copy(issued.tokens[definition.scope].token, `${definition.label} 전용 토큰을 복사했습니다.`)}><Copy size={13} />토큰 복사</button>
+        <small>Keychain: {definition.keychainService} · 지문 {issued.tokens[definition.scope].fingerprint}</small>
+      </p>)}
+      <p><b>안전 설치·교체</b><code>{issuedInstallCommand}</code><button type="button" onClick={() => void copy(issuedInstallCommand, "CLI 작업자 안전 교체 명령을 복사했습니다.")}><Copy size={13} />명령 복사</button><small>{formatDate(issued.activationExpiresAt)} 전까지 실행하세요. 설치 실패 시 대기 토큰만 폐기되고 기존 작업자는 유지됩니다.</small></p>
     </div>}
     {error && <p className="cli-runtime-error"><AlertTriangle size={14} />{error}</p>}
     {loading && !status && <div className="cli-runtime-loading"><LoaderCircle className="spin" size={15} />CLI 작업자 상태 확인 중</div>}

@@ -1,7 +1,45 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { prepareMarketplaceImages, renderMarketplaceDetailImages, renderQoo10DetailDescription } from "../lib/channels/marketplace-images";
+import {
+  collectBoundedMarketplaceImage,
+  downloadMarketplaceImage,
+  isPrivateMarketplaceAddress,
+  prepareMarketplaceImages,
+  renderMarketplaceDetailImages,
+  renderQoo10DetailDescription,
+} from "../lib/channels/marketplace-images";
+
+test("marketplace image guard rejects private targets and stops oversized streams", async () => {
+  for (const address of [
+    "127.0.0.1",
+    "10.0.0.1",
+    "100.64.0.1",
+    "169.254.169.254",
+    "192.168.0.1",
+    "::1",
+    "fc00::1",
+    "ff02::1",
+    "::ffff:7f00:1",
+    "::ffff:a00:1",
+    "::ffff:a9fe:a9fe",
+    "::ffff:c0a8:1",
+    "64:ff9b::a9fe:a9fe",
+  ]) {
+    assert.equal(isPrivateMarketplaceAddress(address), true, address);
+  }
+  assert.equal(isPrivateMarketplaceAddress("1.1.1.1"), false);
+  assert.equal(isPrivateMarketplaceAddress("::ffff:101:101"), false);
+  await assert.rejects(
+    downloadMarketplaceImage("https://[::ffff:7f00:1]/private.png"),
+    /MARKETPLACE_IMAGE_URL_PRIVATE/,
+  );
+  async function* oversized() {
+    yield new Uint8Array(6);
+    yield new Uint8Array(6);
+  }
+  await assert.rejects(collectBoundedMarketplaceImage(oversized(), 10), /MARKETPLACE_IMAGE_SIZE_INVALID/);
+});
 
 test("marketplace detail markup renders every verified panel with safe public URLs", () => {
   const urls = [

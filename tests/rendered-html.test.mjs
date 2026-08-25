@@ -248,6 +248,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(credentialPage, /SmartShip 물류 API 실행 검수/);
   const credentialTestRoute = await readFile(new URL("../app/api/admin/channel-credentials/test/route.ts", import.meta.url), "utf8");
   const gatewayCompleteRoute = await readFile(new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url), "utf8");
+  const atomicGatewayCompletionMigration = await readFile(new URL("../supabase/migrations/20260826090400_atomic_gateway_completion_side_effects.sql", import.meta.url), "utf8");
   const aiCompleteRoute = await readFile(new URL("../app/api/ai/worker/complete/route.ts", import.meta.url), "utf8");
   const authCallbackRoute = await readFile(new URL("../app/auth/callback/route.ts", import.meta.url), "utf8");
   const gatewayContract = await readFile(new URL("../lib/channels/gateway-contract.ts", import.meta.url), "utf8");
@@ -279,16 +280,21 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(credentialTestRoute, /parsed\.data\.channel === "shopee"/);
   assert.match(credentialTestRoute, /parsed\.data\.channel === "lazada"/);
   assert.match(credentialTestRoute, /parsed\.data\.channel === "elevenst"/);
-  assert.match(gatewayCompleteRoute, /refreshedCredentialId/);
-  assert.match(gatewayCompleteRoute, /effectiveCredentialId/);
-  assert.match(gatewayCompleteRoute, /sellerpilot_service_prepare_gateway_credential_refresh/);
+  assert.match(gatewayCompleteRoute, /sellerpilot_service_gateway_completion_context/);
+  assert.match(gatewayCompleteRoute, /sellerpilot_service_complete_gateway_transaction/);
+  assert.match(gatewayCompleteRoute, /p_credential_refresh: credentialRefresh \?\? null/);
   assert.doesNotMatch(gatewayCompleteRoute, /sellerpilot_service_refresh_(?:shopee|lazada|ebay)/);
-  assert.match(gatewayCompleteRoute, /sellerpilot_record_credential_test/);
-  assert.match(gatewayCompleteRoute, /sellerpilot_service_begin_channel_gateway_completion/);
+  assert.doesNotMatch(gatewayCompleteRoute, /sellerpilot_record_credential_test/);
+  assert.doesNotMatch(gatewayCompleteRoute, /sellerpilot_service_prepare_gateway_credential_refresh/);
   assert.ok(
-    gatewayCompleteRoute.indexOf("sellerpilot_service_begin_channel_gateway_completion")
-      < gatewayCompleteRoute.indexOf("sellerpilot_service_prepare_gateway_credential_refresh"),
+    gatewayCompleteRoute.indexOf("sellerpilot_service_gateway_completion_context")
+      < gatewayCompleteRoute.indexOf("sellerpilot_service_complete_gateway_transaction"),
   );
+  assert.match(atomicGatewayCompletionMigration, /sellerpilot_private\.gateway_completion_receipts/);
+  assert.match(atomicGatewayCompletionMigration, /sellerpilot_service_prepare_gateway_credential_refresh/);
+  assert.match(atomicGatewayCompletionMigration, /sellerpilot_service_ingest_orders/);
+  assert.match(atomicGatewayCompletionMigration, /sellerpilot_service_ingest_inquiries/);
+  assert.match(atomicGatewayCompletionMigration, /sellerpilot_record_credential_test/);
   assert.doesNotMatch(gatewayCompleteRoute, /sellerpilot_get_channel_gateway_job/);
   assert.match(aiCompleteRoute, /sellerpilot_service_begin_ai_job_completion/);
   assert.ok(
@@ -336,7 +342,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(periodicSyncRoute, /createBoundedSupabaseFetch/);
   assert.match(periodicSyncRoute, /mapWithConcurrency\(queueRequests, 8/);
   assert.match(gatewayClaimRoute, /workerRpcErrorStatus/);
-  assert.match(cliWorker, /workerAuthBackoffUntil/);
+  assert.match(cliWorker, /authBackoffUntil/);
   assert.match(cliWorker, /gatewayClaimBackoffUntil/);
   assert.equal((manualSyncRoute.match(/gatewayChannels\.has\(channel\)/g) ?? []).length, 2);
   assert.doesNotMatch(manualSyncRoute, /channel === "coupang" \|\| channel === "smartstore" \|\| channel === "lazada"/);
@@ -351,7 +357,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(vercelConfig, /"schedule": "\*\/5 \* \* \* \*"/);
   assert.match(cliWorker, /SELLERPILOT_CHANNEL_SYNC_MS/);
   assert.match(cliWorker, /\/api\/internal\/channel-sync/);
-  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.23/);
+  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.24/);
   assert.match(cliWorker, /ensureEbayAccessToken/);
   assert.match(rotationHardeningMigration, /diagnostic_preserved/);
   assert.match(rotationHardeningMigration, /status = 'queued' and attempt_id is null/);

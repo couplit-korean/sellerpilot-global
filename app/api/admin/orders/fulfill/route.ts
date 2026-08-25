@@ -26,7 +26,13 @@ const schema = z.object({
     id: z.string().uuid(),
     carrierCode: z.string().trim().min(1).max(40),
     trackingNumber: z.string().trim().max(100),
-  })).min(1).max(20),
+    tracxReferenceKind: z.enum(["packing_no", "reference_order_no"]).optional().default("packing_no"),
+    tracxReference: z.string().trim().max(240).optional().default(""),
+  // A paid order can require acknowledge, readback, and confirm in sequence.
+  // Keep each server request to one three-order concurrency wave so the
+  // documented 300 second function limit cannot be exceeded. The browser
+  // batches larger selections into multiple independently resumable calls.
+  })).min(1).max(3),
 });
 
 type OrderContext = {
@@ -37,6 +43,7 @@ type OrderContext = {
   provider_context?: Record<string, unknown> | null;
 };
 type Credential = { id: string; channel: string; environment: string; status: string };
+type ShipmentInput = z.infer<typeof schema>["shipments"][number];
 type ShipmentOperation = "orders.get" | "shipment.acknowledge" | "shipment.confirm";
 type ChannelOperationPayload = {
   ok?: boolean;
@@ -121,6 +128,9 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ message: "출고 주문·택배사·운송장 정보를 확인해 주세요." }, { status: 400 });
 
   const ids = parsed.data.shipments.map((shipment) => shipment.id);
+  if (new Set(ids).size !== ids.length) {
+    return NextResponse.json({ message: "같은 주문을 한 요청에서 중복 출고할 수 없습니다." }, { status: 400 });
+  }
   const [{ data: orderRows, error: orderError }, { data: credentialRows, error: credentialError }] = await Promise.all([
     admin.userClient.rpc("sellerpilot_get_order_fulfillment_context_v2", { p_ids: ids }),
     admin.userClient.rpc("sellerpilot_list_credentials"),
@@ -210,33 +220,67 @@ export async function POST(request: Request) {
     }
   };
 
-  for (const shipment of parsed.data.shipments) {
+  const processShipment = async (shipment: ShipmentInput) => {
     const order = orders.get(shipment.id);
     if (!order || !isActiveChannelKey(order.channel_key)) {
       results.push(failedShipmentResult({ id: shipment.id, channel: "unknown", message: "실주문 원장에서 주문을 찾지 못했습니다." }));
-      continue;
+      return;
     }
     const shipmentAvailability = shipmentWriteAvailability(order.channel_key);
     if (!shipmentAvailability.available) {
       const message = `${shipmentAvailability.label} · ${shipmentAvailability.reason}`;
       results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
-      continue;
+      return;
     }
     const credential = credentials.get(order.channel_key);
     if (!credential) {
       const message = "활성 운영 채널 키가 없습니다.";
       results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
-      continue;
+      return;
     }
     if (!["paid", "ready_to_ship"].includes(order.status)) {
       const message = "결제완료 또는 출고대기 주문만 발송할 수 있습니다.";
       results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
-      continue;
+      return;
     }
     if (order.channel_key !== "lazada" && !shipment.trackingNumber) {
       const message = "이 채널의 실제 운송장번호를 입력해 주세요.";
       results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
-      continue;
+      return;
+    }
+    if (shipment.tracxReference) {
+      const maxReferenceLength = shipment.tracxReferenceKind === "packing_no" ? 100 : 240;
+      if (shipment.tracxReference.length > maxReferenceLength) {
+        const message = "TracX 참조번호 형식을 확인해 주세요.";
+        results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
+        return;
+      }
+      if (!credentials.has("tracx")) {
+        const message = "활성 운영 TracX 키가 없어 배송 참조번호를 연결하지 않았습니다.";
+        results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
+        return;
+      }
+      let bindingData: unknown = null;
+      let bindingError: unknown = null;
+      try {
+        const bindingResult = await admin.userClient.rpc("sellerpilot_bind_tracx_order", {
+          p_order_id: shipment.id,
+          p_reference_kind: shipment.tracxReferenceKind,
+          p_reference_value: shipment.tracxReference,
+        });
+        bindingData = bindingResult.data;
+        bindingError = bindingResult.error;
+      } catch {
+        bindingError = true;
+      }
+      const binding = bindingData && typeof bindingData === "object" && !Array.isArray(bindingData)
+        ? bindingData as Record<string, unknown>
+        : null;
+      if (bindingError || binding?.orderId !== shipment.id || binding.referenceValue !== shipment.tracxReference) {
+        const message = "TracX 참조번호가 다른 주문과 충돌하거나 저장되지 않아 판매채널 발송을 시작하지 않았습니다.";
+        results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
+        return;
+      }
     }
 
     const shipmentDraft: ShipmentDraft = {
@@ -266,7 +310,7 @@ export async function POST(request: Request) {
         message,
         ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }),
       }));
-      continue;
+      return;
     }
 
     const idempotencyRoot = `shipment-${shipment.id}-${createHash("sha256").update(`${shipment.carrierCode}:${shipment.trackingNumber}`).digest("hex").slice(0, 24)}`;
@@ -306,7 +350,7 @@ export async function POST(request: Request) {
       });
       if (preflightOutcome.kind !== "succeeded") {
         await stopForOutcome(preflightOutcome);
-        continue;
+        return;
       }
       try {
         confirmArguments = buildShipmentArguments({
@@ -322,7 +366,7 @@ export async function POST(request: Request) {
           message,
           ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }),
         }));
-        continue;
+        return;
       }
     }
 
@@ -336,7 +380,7 @@ export async function POST(request: Request) {
         idempotencyKey: `${idempotencyRoot}-ack`,
         providerMutation: true,
       });
-      if (await stopForOutcome(acknowledgeOutcome)) continue;
+      if (await stopForOutcome(acknowledgeOutcome)) return;
     }
 
     if (readbackArguments) {
@@ -349,7 +393,7 @@ export async function POST(request: Request) {
         idempotencyKey: `${idempotencyRoot}-receiver-readback`,
         providerMutation: false,
       });
-      if (await stopForOutcome(readbackOutcome)) continue;
+      if (await stopForOutcome(readbackOutcome)) return;
     }
 
     if (!confirmArguments) {
@@ -360,7 +404,7 @@ export async function POST(request: Request) {
         message,
         ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }),
       }));
-      continue;
+      return;
     }
 
     const confirmOutcome = await executeShipmentOperation({
@@ -372,7 +416,7 @@ export async function POST(request: Request) {
       idempotencyKey: `${idempotencyRoot}-confirm`,
       providerMutation: true,
     });
-    if (await stopForOutcome(confirmOutcome)) continue;
+    if (await stopForOutcome(confirmOutcome)) return;
     results.push({
       id: shipment.id,
       channel: order.channel_key,
@@ -383,7 +427,29 @@ export async function POST(request: Request) {
       reconciliationRequired: false,
       message: "판매채널 발송 처리와 원장 갱신이 완료됐습니다.",
     });
+  };
+
+  // Each order retains its own sequential preflight/ack/readback/confirm fence.
+  // The request schema limits this to a single three-order concurrency wave.
+  const processShipmentSafely = async (shipment: ShipmentInput) => {
+    try {
+      await processShipment(shipment);
+    } catch {
+      const order = orders.get(shipment.id);
+      results.push(deferredShipmentResult({
+        id: shipment.id,
+        channel: order?.channel_key ?? "unknown",
+        reconciliationRequired: true,
+        message: "출고 처리 중 예상하지 못한 응답이 발생했습니다. 외부 반영 여부를 확인하기 전에는 같은 요청을 다시 보내지 마세요.",
+      }));
+    }
+  };
+  const shipmentConcurrency = 3;
+  for (let offset = 0; offset < parsed.data.shipments.length; offset += shipmentConcurrency) {
+    await Promise.all(parsed.data.shipments.slice(offset, offset + shipmentConcurrency).map(processShipmentSafely));
   }
+  const inputOrder = new Map(ids.map((id, index) => [id, index]));
+  results.sort((left, right) => (inputOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (inputOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER));
 
   const { succeeded, failed, inProgress, reconciliationRequired } = shipmentResultSummary(results);
   return NextResponse.json({

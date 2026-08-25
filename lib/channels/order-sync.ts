@@ -2,6 +2,7 @@ import "server-only";
 import type { ActiveChannelKey } from "./catalog";
 import type { ChannelOperationResult } from "./operations";
 import { firstFiniteNonNegative } from "./normalize-value";
+import { createTimestampNormalizer } from "./normalization-time";
 
 export type NormalizedChannelOrder = {
   externalOrderId: string;
@@ -24,20 +25,7 @@ const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
   : [];
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
 const number = (...values: unknown[]) => firstFiniteNonNegative(values);
-const iso = (...values: unknown[]) => {
-  for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      const time = value < 10_000_000_000 ? value * 1000 : value;
-      const parsed = new Date(time);
-      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-    }
-    if (typeof value === "string" && value.trim()) {
-      const parsed = new Date(value);
-      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-    }
-  }
-  return new Date().toISOString();
-};
+type TimestampNormalizer = ReturnType<typeof createTimestampNormalizer>;
 
 function status(value: unknown): NormalizedChannelOrder["status"] {
   const remote = String(value ?? "").toUpperCase();
@@ -83,7 +71,7 @@ function smartstoreOrderStatus(...values: unknown[]): NormalizedChannelOrder["st
   return status(remote);
 }
 
-function normalizeTemu(data: Record<string, unknown>) {
+function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const rows = list(object(data.result).pageItems);
   return rows.map((row): NormalizedChannelOrder | null => {
     const parent = object(row.parentOrderMap);
@@ -124,7 +112,7 @@ function normalizeTemu(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeCoupang(data: Record<string, unknown>) {
+function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const rows = list(data.data).length ? list(data.data) : list(object(data.data).orderSheets);
   return rows.map((row): NormalizedChannelOrder | null => {
     const cancellation = text(row.receiptType).toUpperCase() === "CANCEL" || Array.isArray(row.returnItems);
@@ -159,7 +147,7 @@ function normalizeCoupang(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeShopee(data: Record<string, unknown>) {
+function normalizeShopee(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const response = object(data.response);
   const rows = list(response.order_list);
   return rows.map((row): NormalizedChannelOrder | null => {
@@ -186,7 +174,7 @@ function normalizeShopee(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeLazada(data: Record<string, unknown>, steps: ChannelOperationResult["steps"] = []) {
+function normalizeLazada(data: Record<string, unknown>, iso: TimestampNormalizer, steps: ChannelOperationResult["steps"] = []) {
   const rows = list(object(data.data).orders);
   const itemDetails = new Map(steps
     .filter((item) => item.name.startsWith("order-items:") && item.ok)
@@ -220,8 +208,9 @@ function normalizeLazada(data: Record<string, unknown>, steps: ChannelOperationR
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeSmartstore(data: Record<string, unknown>) {
-  const root = object(data.data);
+function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormalizer) {
+  const nested = object(data.data);
+  const root = Object.keys(nested).length ? nested : data;
   const rows = list(root.lastChangeStatuses).length ? list(root.lastChangeStatuses) : list(root.contents);
   return rows.map((row): NormalizedChannelOrder | null => {
     // Confirm, detail, and dispatch are product-order scoped. The parent
@@ -247,7 +236,7 @@ function normalizeSmartstore(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeEbay(data: Record<string, unknown>) {
+function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) {
   return list(data.orders).map((row): NormalizedChannelOrder | null => {
     const externalOrderId = text(row.orderId);
     if (!externalOrderId) return null;
@@ -269,7 +258,7 @@ function normalizeEbay(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeQoo10(data: Record<string, unknown>) {
+function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const value = data.ResultObject;
   const rows = list(value).length ? list(value) : list(object(value).ShippingInfo);
   return rows.map((row): NormalizedChannelOrder | null => {
@@ -291,7 +280,7 @@ function normalizeQoo10(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
-function normalizeElevenst(data: Record<string, unknown>) {
+function normalizeElevenst(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const grouped = new Map<string, Record<string, unknown>[]>();
   for (const row of list(data.orders)) {
     const orderNo = text(row.orderNo);
@@ -325,22 +314,25 @@ function normalizeElevenst(data: Record<string, unknown>) {
   });
 }
 
-export function normalizeChannelOrders(channel: ActiveChannelKey, result: ChannelOperationResult): NormalizedChannelOrder[] {
-  if (channel === "temu") {
-    const normalized = result.steps
-      .filter((item) => /^orders(?::\d+)?$/.test(item.name))
-      .flatMap((item) => normalizeTemu(item.data));
-    return [...new Map(normalized.map((order) => [order.externalOrderId, order])).values()];
-  }
-  const data = result.steps.find((step) => step.name === "orders")?.data ?? result.steps.at(-1)?.data ?? {};
-  const normalized = channel === "coupang" ? normalizeCoupang(data)
-    : channel === "shopee" ? normalizeShopee(data)
-      : channel === "lazada" ? normalizeLazada(data, result.steps)
-        : channel === "smartstore" ? normalizeSmartstore(data)
-          : channel === "ebay" ? normalizeEbay(data)
-            : channel === "qoo10" ? normalizeQoo10(data)
-              : channel === "elevenst" ? normalizeElevenst(data)
-                : [];
+export function normalizeChannelOrders(
+  channel: ActiveChannelKey,
+  result: ChannelOperationResult,
+  normalizationTimestamp: string,
+): NormalizedChannelOrder[] {
+  const iso = createTimestampNormalizer(normalizationTimestamp);
+  const orderSteps = result.steps.filter((item) => item.ok && /^orders(?::\d+)?$/.test(item.name));
+  const pageData = orderSteps.length
+    ? orderSteps.map((item) => item.data)
+    : [result.steps.at(-1)?.data ?? {}];
+  const normalized = pageData.flatMap((data) => channel === "temu" ? normalizeTemu(data, iso)
+    : channel === "coupang" ? normalizeCoupang(data, iso)
+      : channel === "shopee" ? normalizeShopee(data, iso)
+        : channel === "lazada" ? normalizeLazada(data, iso, result.steps)
+          : channel === "smartstore" ? normalizeSmartstore(data, iso)
+            : channel === "ebay" ? normalizeEbay(data, iso)
+              : channel === "qoo10" ? normalizeQoo10(data, iso)
+                : channel === "elevenst" ? normalizeElevenst(data, iso)
+                  : []);
   return [...new Map(normalized.map((order) => [order.externalOrderId, order])).values()];
 }
 

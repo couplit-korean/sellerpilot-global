@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { parseTracxDeliveryPayload } from "../../../../../lib/logistics/tracx-webhook";
+import { verifyTracxWebhookSignature } from "../../../../../lib/logistics/tracx-core";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
 import { createBoundedSupabaseFetch, workerRpcErrorStatus } from "../../../../../lib/worker-rpc";
 
@@ -27,10 +28,12 @@ function rpcErrorResponse(context: string, error: unknown) {
 export async function POST(request: Request) {
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
   if (!supabaseUrl || !secretKey) return NextResponse.json({ ok: false }, { status: 503, headers: noStoreHeaders });
-  const receivedToken = new URL(request.url).searchParams.get("token")?.trim() ?? "";
-  if (receivedToken.length < 32 || receivedToken.length > 256) {
-    return NextResponse.json({ ok: false }, { status: 401, headers: noStoreHeaders });
+  const declaredLength = Number(request.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > 32_000) {
+    return NextResponse.json({ ok: false }, { status: 413, headers: noStoreHeaders });
   }
+  const rawBody = await request.text().catch(() => "");
+  if (!rawBody || rawBody.length > 32_000) return NextResponse.json({ ok: false }, { status: 400, headers: noStoreHeaders });
 
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -58,11 +61,35 @@ export async function POST(request: Request) {
     : {};
   const expectedToken = typeof payload.webhook_secret === "string" ? payload.webhook_secret.trim() : "";
   const credentialId = typeof record.credential_id === "string" ? record.credential_id : "";
-  if (!credentialId || expectedToken.length < 32 || !equalSecret(receivedToken, expectedToken)) {
+  const timestamp = request.headers.get("x-tracx-timestamp")?.trim()
+    || request.headers.get("x-sellerpilot-tracx-timestamp")?.trim()
+    || "";
+  const signature = request.headers.get("x-tracx-signature")?.trim()
+    || request.headers.get("x-sellerpilot-tracx-signature")?.trim()
+    || "";
+  const hmacAuthenticated = verifyTracxWebhookSignature({
+    secret: expectedToken,
+    body: rawBody,
+    timestamp,
+    signature,
+  });
+  const receivedToken = new URL(request.url).searchParams.get("token")?.trim() ?? "";
+  const legacyAuthenticated = process.env.TRACX_ALLOW_LEGACY_QUERY_TOKEN === "true"
+    && receivedToken.length >= 32
+    && receivedToken.length <= 256
+    && expectedToken.length >= 32
+    && equalSecret(receivedToken, expectedToken);
+  if (!credentialId || (!hmacAuthenticated && !legacyAuthenticated)) {
     return NextResponse.json({ ok: false }, { status: 401, headers: noStoreHeaders });
   }
 
-  const parsed = parseTracxDeliveryPayload(await request.json().catch(() => null));
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(rawBody) as unknown;
+  } catch {
+    return NextResponse.json({ ok: false }, { status: 400, headers: noStoreHeaders });
+  }
+  const parsed = parseTracxDeliveryPayload(parsedBody);
   if (!parsed) return NextResponse.json({ ok: false }, { status: 400, headers: noStoreHeaders });
   if (parsed.kind === "probe") {
     return NextResponse.json({ ok: true, probe: true }, {
@@ -82,7 +109,13 @@ export async function POST(request: Request) {
     return rpcErrorResponse("ingest", error);
   }
   if (ingestError) return rpcErrorResponse("ingest", ingestError);
-  return NextResponse.json({ ok: true, matched: matched === true }, {
+  if (matched !== true) {
+    return NextResponse.json({ ok: false, matched: false, reconciliationRequired: true }, {
+      status: 202,
+      headers: noStoreHeaders,
+    });
+  }
+  return NextResponse.json({ ok: true, matched: true }, {
     headers: noStoreHeaders,
   });
 }

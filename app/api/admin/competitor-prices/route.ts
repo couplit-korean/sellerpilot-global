@@ -30,6 +30,7 @@ export async function GET(request: Request) {
     const result = await searchCompetitorProviders(registry, query.data, aliases.data, 30, COMPETITOR_PROVIDER_BUDGET_MS);
     const items = result.items.map((item) => ({
       id: item.externalId,
+      externalId: item.externalId,
       provider: item.provider,
       marketplace: item.marketplace,
       title: item.title,
@@ -38,6 +39,7 @@ export async function GET(request: Request) {
       mallName: item.mallName,
       price: item.price,
       currency: item.currency,
+      verifiedSameProduct: true as const,
     }));
     if (!result.available) {
       return NextResponse.json({

@@ -195,7 +195,7 @@ const tracxCredentialDefinition: CredentialDefinition = {
   oauth: false,
   fields: [
     { key: "api_key", label: "TxAPI Key", secret: true, placeholder: "SmartShip 나의 API 정보의 API Key" },
-    { key: "webhook_secret", label: "배송 Webhook 보안 토큰", secret: true, placeholder: "32자 이상 무작위 문자열", help: "Delivery WebHook URL의 token 값과 동일하게 설정합니다." },
+    { key: "webhook_secret", label: "배송 Webhook 서명 키", secret: true, placeholder: "32자 이상 무작위 문자열", help: "원문 본문과 전송시각을 HMAC-SHA256으로 서명하는 키입니다. URL에는 넣지 않습니다." },
   ],
   officialDocs: [
     { label: "SmartShip API 정보", url: "https://smartship.tracxlogis.com/Customer/ApiInfo" },
@@ -245,24 +245,28 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
       return;
     }
     setLoading(true);
-    const supabase = createClient();
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData.user) {
-      setError("로그인 세션을 확인하지 못했습니다. 다시 로그인해 주세요.");
+    try {
+      const supabase = createClient();
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        setError("로그인 세션을 확인하지 못했습니다. 다시 로그인해 주세요.");
+        return;
+      }
+      const [{ data, error: listError }, { data: auditData, error: auditError }] = await Promise.all([
+        supabase.rpc("sellerpilot_list_credentials"),
+        supabase.rpc("sellerpilot_list_credential_audit", { p_limit: 80 }),
+      ]);
+      if (listError) setError(listError.message.includes("administrator") ? "이 계정에 키 관리 관리자 권한이 없습니다." : "키 메타데이터를 불러오지 못했습니다.");
+      else {
+        setCredentials((data ?? []) as Credential[]);
+        setError("");
+      }
+      if (!auditError) setAudits((auditData ?? []) as AuditRow[]);
+    } catch {
+      setError("키 메타데이터 요청을 전송하지 못했습니다. 네트워크와 로그인 세션을 확인해 주세요.");
+    } finally {
       setLoading(false);
-      return;
     }
-    const [{ data, error: listError }, { data: auditData, error: auditError }] = await Promise.all([
-      supabase.rpc("sellerpilot_list_credentials"),
-      supabase.rpc("sellerpilot_list_credential_audit", { p_limit: 80 }),
-    ]);
-    if (listError) setError(listError.message.includes("administrator") ? "이 계정에 키 관리 관리자 권한이 없습니다." : "키 메타데이터를 불러오지 못했습니다.");
-    else {
-      setCredentials((data ?? []) as Credential[]);
-      setError("");
-    }
-    if (!auditError) setAudits((auditData ?? []) as AuditRow[]);
-    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -288,16 +292,21 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
 
   const testConnection = async (credential: Credential) => {
     setTestingId(credential.id);
-    const { data: sessionData } = await createClient().auth.getSession();
-    const response = await fetch("/api/admin/channel-credentials/test", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
-      body: JSON.stringify({ credentialId: credential.id, channel: credential.channel }),
-    });
-    const payload = await response.json().catch(() => ({ message: "연결 검사 응답을 읽지 못했습니다." })) as { message: string };
-    notify(payload.message);
-    setTestingId("");
-    await load();
+    try {
+      const { data: sessionData } = await createClient().auth.getSession();
+      const response = await fetch("/api/admin/channel-credentials/test", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
+        body: JSON.stringify({ credentialId: credential.id, channel: credential.channel }),
+      });
+      const payload = await response.json().catch(() => ({ message: "연결 검사 응답을 읽지 못했습니다." })) as { message: string };
+      notify(payload.message);
+      await load();
+    } catch {
+      notify("연결 검사 요청을 전송하지 못했습니다. 네트워크와 로그인 세션을 확인해 주세요.");
+    } finally {
+      setTestingId("");
+    }
   };
 
   const startOAuth = async (credential: Credential) => {
@@ -616,27 +625,30 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cre
     }
     setSaving(true);
     setError("");
-    const secretPayload = Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
-    const expiryIso = expiresAt ? new Date(`${expiresAt}T23:59:59+09:00`).toISOString() : null;
-    let rotateError: { message: string } | null = null;
-    const { data: sessionData } = await createClient().auth.getSession();
-    const endpoint = channel.oauth
-      ? `/api/admin/channel-credentials/${channel.key}/authorize`
-      : "/api/admin/channel-credentials/rotate";
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
-      body: JSON.stringify({ credentialId: current?.id, channel: channel.key, environment, secretPayload, expiresAt: expiryIso, rotationDays: Number(rotationDays), warningDays: Number(warningDays), graceDays: current ? Number(graceDays) : 0, startOAuth: channel.oauth && !current }),
-    });
-    const payload = await response.json().catch(() => ({ message: `${channel.name} 인증 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
-    if (!response.ok) rotateError = { message: payload.message };
-    setSaving(false);
-    if (rotateError) {
-      setError(rotateError.message.includes("administrator") ? "관리자 권한이 필요합니다." : "키를 저장하지 못했습니다. 입력값과 Vault 연결을 확인해 주세요.");
-      return;
+    try {
+      const secretPayload = Object.fromEntries(Object.entries(form).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()]));
+      const expiryIso = expiresAt ? new Date(`${expiresAt}T23:59:59+09:00`).toISOString() : null;
+      const { data: sessionData } = await createClient().auth.getSession();
+      const endpoint = channel.oauth
+        ? `/api/admin/channel-credentials/${channel.key}/authorize`
+        : "/api/admin/channel-credentials/rotate";
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
+        body: JSON.stringify({ credentialId: current?.id, channel: channel.key, environment, secretPayload, expiresAt: expiryIso, rotationDays: Number(rotationDays), warningDays: Number(warningDays), graceDays: current ? Number(graceDays) : 0, startOAuth: channel.oauth && !current }),
+      });
+      const payload = await response.json().catch(() => ({ message: `${channel.name} 인증 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
+      if (!response.ok) {
+        setError(payload.message.includes("administrator") ? "관리자 권한이 필요합니다." : "키를 저장하지 못했습니다. 입력값과 Vault 연결을 확인해 주세요.");
+        return;
+      }
+      await onSaved(`${channel.name} ${current ? "키 교체" : "키 연결 준비"}가 완료됐습니다. 원문은 Vault에만 보관됩니다.`);
+      if (payload.authorizationUrl) window.location.assign(payload.authorizationUrl);
+    } catch {
+      setError("키 저장 요청을 전송하지 못했습니다. 네트워크와 로그인 세션을 확인해 주세요.");
+    } finally {
+      setSaving(false);
     }
-    await onSaved(`${channel.name} ${current ? "키 교체" : "키 연결 준비"}가 완료됐습니다. 원문은 Vault에만 보관됩니다.`);
-    if (payload.authorizationUrl) window.location.assign(payload.authorizationUrl);
   };
 
   return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal" role="dialog" aria-modal="true" aria-label={`${channel.name} 키 ${current ? "교체" : "등록"}`} onSubmit={submit}>

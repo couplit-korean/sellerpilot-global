@@ -2,7 +2,8 @@ export const SHOT_DHASH_COLUMNS = 16;
 export const SHOT_DHASH_ROWS = 16;
 export const SHOT_DHASH_BYTES = (SHOT_DHASH_COLUMNS * SHOT_DHASH_ROWS) / 8;
 export const MINIMUM_SHOT_HASH_DISTANCE = 64;
-export const MAXIMUM_SHOT_GENERATION_ATTEMPTS = 3;
+export const MAXIMUM_SHOT_GENERATION_RETRIES = 3;
+export const MAXIMUM_SHOT_GENERATION_ATTEMPTS = MAXIMUM_SHOT_GENERATION_RETRIES + 1;
 
 export type ShotFingerprint = {
   assetId: string;
@@ -63,9 +64,10 @@ export function findDuplicateShot(
     .sort((left, right) => Number(right.exact) - Number(left.exact) || left.distance - right.distance)[0] ?? null;
 }
 
-export function buildDuplicateRetryGuidance(assetId: string, conflictingAssetId: string, attempt: number) {
-  const strategy = attempt >= MAXIMUM_SHOT_GENERATION_ATTEMPTS
+export function buildDuplicateRetryGuidance(assetId: string, conflictingAssetId: string, retry: number) {
+  const boundedRetry = Math.max(1, Math.min(Math.trunc(retry), MAXIMUM_SHOT_GENERATION_RETRIES));
+  const strategy = boundedRetry >= MAXIMUM_SHOT_GENERATION_RETRIES
     ? "Use the slot's opposite permitted camera height and a clearly different azimuth, move the subject to the opposite frame third or depth plane, reverse the foreground/background hierarchy, and replace every non-product prop and surface layout allowed by the slot."
     : "Use a substantially different camera height and angle by changing azimuth at least 45 degrees within this slot's role, move the subject away from the previous frame zone, switch foreground depth and negative-space direction, and rebuild the allowed prop and surface arrangement from scratch.";
-  return `Anti-duplicate retry ${attempt} of ${MAXIMUM_SHOT_GENERATION_ATTEMPTS} for ${assetId}: the previous draft was visually too similar to ${conflictingAssetId}. ${strategy} Preserve the hard shot class and factual product identity, but do not create a recolor, mirrored copy, small crop, background swap with the same layout, or another slot's role.`;
+  return `Anti-duplicate retry ${boundedRetry} of ${MAXIMUM_SHOT_GENERATION_RETRIES} for ${assetId}: the previous draft was visually too similar to ${conflictingAssetId}. ${strategy} Preserve the hard shot class and factual product identity, but do not create a recolor, mirrored copy, small crop, background swap with the same layout, or another slot's role.`;
 }

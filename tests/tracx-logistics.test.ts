@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 import {
   runTracxDiagnostic,
@@ -8,6 +9,7 @@ import {
   tracxRequest,
   tracxResultCode,
   tracxSucceeded,
+  verifyTracxWebhookSignature,
 } from "../lib/logistics/tracx-core";
 
 test("TracX order list keeps the official date fields and optional filters", () => {
@@ -106,4 +108,16 @@ test("TracX diagnostic performs a read-only one-day order query", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("TracX webhook signatures bind the raw body to a fresh timestamp", () => {
+  const secret = "webhook-secret-value-that-is-long-enough";
+  const body = JSON.stringify({ TrackingNo: "TRACK-1", StatusCode: "D4" });
+  const now = Date.parse("2026-08-26T00:00:00.000Z");
+  const timestamp = String(Math.floor(now / 1000));
+  const signature = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
+  assert.equal(verifyTracxWebhookSignature({ secret, body, timestamp, signature, now }), true);
+  assert.equal(verifyTracxWebhookSignature({ secret, body: `${body} `, timestamp, signature, now }), false);
+  assert.equal(verifyTracxWebhookSignature({ secret, body, timestamp, signature, now: now + 5 * 60_000 + 1 }), false);
+  assert.equal(verifyTracxWebhookSignature({ secret, body, timestamp, signature: "invalid", now }), false);
 });

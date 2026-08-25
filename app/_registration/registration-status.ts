@@ -40,6 +40,28 @@ export function registrationActivityDisplayElapsedSeconds(activity: Registration
   return Math.max(0, Math.floor((updatedAt - startedAt) / 1_000));
 }
 
+export function registrationActivityProgress(activity: RegistrationActivity) {
+  if (activity.status === "completed") {
+    return { percent: 100, label: "모든 선택 채널의 처리가 끝났습니다." } as const;
+  }
+  if (activity.channelCount <= 0) {
+    return {
+      percent: null,
+      label: activity.status === "analyzing"
+        ? "AI 분석 단계입니다. 채널 대상이 확정되면 실제 완료 비율을 표시합니다."
+        : "채널 대상 확정을 기다리고 있어 비율을 추정하지 않습니다.",
+    } as const;
+  }
+  const terminalCount = Math.min(
+    activity.channelCount,
+    Math.max(0, activity.publishedCount + activity.failedCount + activity.blockedCount),
+  );
+  return {
+    percent: Math.round((terminalCount / activity.channelCount) * 100),
+    label: `${activity.channelCount}개 채널 중 ${terminalCount}개 처리 결과를 확인했습니다.`,
+  } as const;
+}
+
 export function registrationChannelStatusLabel(status: string) {
   if (status === "published") return "완료";
   if (status === "failed") return "오류";

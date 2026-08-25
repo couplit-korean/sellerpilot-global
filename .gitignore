@@ -39,7 +39,8 @@ yarn-error.log*
 /.local/
 *.tsbuildinfo
 /work/
-/tmp/verification/
+/tmp/
+/outputs/
 /supabase/.temp/
 *.icloud-placeholder
 

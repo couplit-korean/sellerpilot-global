@@ -12,6 +12,19 @@ const noteSchema = z.object({
   competitorQuery: z.string().trim().max(500),
   competitorMonitorEnabled: z.boolean(),
 });
+const detailPageBlockTypes = ["HeroBlock", "BenefitBlock", "ImageStoryBlock", "StoryBlock", "CtaBlock"] as const;
+const detailPageDataSchema = z.object({
+  root: z.record(z.string(), z.unknown()),
+  content: z.array(z.object({
+    type: z.enum(detailPageBlockTypes),
+    props: z.record(z.string(), z.unknown()),
+  }).passthrough()).max(64),
+}).passthrough();
+const detailPageSaveSchema = z.object({
+  data: detailPageDataSchema,
+  expectedVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+}).strict();
+const maximumDetailPagePayloadBytes = 256 * 1024;
 
 function stringList(value: unknown) {
   return Array.isArray(value)
@@ -81,6 +94,48 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   });
   if (error || data !== true) return NextResponse.json({ message: "공급처·비교 메모를 저장하지 못했습니다." }, { status: 500 });
   return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store, max-age=0" } });
+}
+
+export async function PUT(request: Request, context: { params: Promise<{ id: string }> }) {
+  const admin = await authenticateAdminRequest(request);
+  if (isAdminApiError(admin)) return admin;
+  const productId = productIdSchema.safeParse((await context.params).id);
+  const rawBody = await request.text();
+  if (new TextEncoder().encode(rawBody).byteLength > maximumDetailPagePayloadBytes) {
+    return NextResponse.json({ message: "상세페이지 편집 결과는 256KB 이하로 저장해 주세요." }, { status: 413 });
+  }
+  let input: unknown = null;
+  try {
+    input = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ message: "상세페이지 저장 요청 형식이 올바르지 않습니다." }, { status: 400 });
+  }
+  const body = detailPageSaveSchema.safeParse(input);
+  if (!productId.success || !body.success) {
+    return NextResponse.json({
+      message: productId.success
+        ? body.success ? "상세페이지 블록 구성을 확인해 주세요." : body.error.issues[0]?.message ?? "상세페이지 블록 구성을 확인해 주세요."
+        : "상품 ID 형식이 올바르지 않습니다.",
+    }, { status: 400 });
+  }
+  const { data, error } = await admin.userClient.rpc("sellerpilot_save_product_detail_page", {
+    p_product_id: productId.data,
+    p_data: body.data.data,
+    p_expected_version: body.data.expectedVersion,
+  });
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+    const versionConflict = error?.message?.includes("DETAIL_PAGE_VERSION_CONFLICT");
+    const rejectedPayload = error?.message?.includes("DETAIL_PAGE_INVALID");
+    return NextResponse.json({
+      code: versionConflict ? "DETAIL_PAGE_VERSION_CONFLICT" : rejectedPayload ? "DETAIL_PAGE_INVALID" : "DETAIL_PAGE_SAVE_FAILED",
+      message: versionConflict
+        ? "다른 화면에서 상세페이지가 먼저 수정됐습니다. 최신 저장본을 다시 불러왔습니다."
+        : rejectedPayload ? "상세페이지 블록 구성이나 크기 제한을 확인해 주세요." : "상세페이지 편집 내용을 저장하지 못했습니다.",
+    }, { status: versionConflict ? 409 : rejectedPayload ? 400 : 500 });
+  }
+  return NextResponse.json({ detailPage: data }, {
+    headers: { "cache-control": "no-store, max-age=0" },
+  });
 }
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {

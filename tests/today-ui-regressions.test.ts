@@ -8,6 +8,7 @@ import {
   registrationActivityMatchesFilter,
   registrationActivityNotificationTransition,
   registrationActivityNotifications,
+  registrationActivityProgress,
   registrationActivityStatusMap,
   registrationChannelStatusLabel,
   type RegistrationActivity,
@@ -138,6 +139,26 @@ test("ready registration cards are completed analysis drafts, not running work",
   assert.equal(registrationActivityDisplayElapsedSeconds(ready), 35);
   assert.equal(registrationChannelStatusLabel("paused"), "중지");
   assert.equal(registrationChannelStatusLabel("scope_excluded"), "제외");
+});
+
+test("registration progress uses terminal channel results and never invents an AI percentage", () => {
+  const analyzing = activity("analysis", "분석 상품", "analyzing");
+  analyzing.channelCount = 0;
+  assert.deepEqual(registrationActivityProgress(analyzing), {
+    percent: null,
+    label: "AI 분석 단계입니다. 채널 대상이 확정되면 실제 완료 비율을 표시합니다.",
+  });
+
+  const publishing = activity("publish", "등록 상품", "publishing");
+  publishing.channelCount = 8;
+  publishing.publishedCount = 2;
+  publishing.failedCount = 1;
+  publishing.blockedCount = 1;
+  assert.deepEqual(registrationActivityProgress(publishing), {
+    percent: 50,
+    label: "8개 채널 중 4개 처리 결과를 확인했습니다.",
+  });
+  assert.equal(registrationActivityProgress(activity("done", "완료 상품", "completed")).percent, 100);
 });
 
 test("relative return paths cannot escape the SellerPilot origin", () => {
@@ -292,6 +313,11 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /가격 다시 확인/);
   assert.match(page, /PRODUCT_RESEARCH_PENDING_KEY/);
   assert.match(page, /productResearchControllerRef\.current\?\.abort\(\)/);
+  assert.match(page, /detailRegenerationControllerRef = useRef<AbortController \| null>\(null\)/);
+  assert.match(page, /detailRegenerationControllerRef\.current\?\.abort\(new DOMException\("상품 상세 화면이 닫혔습니다\.", "AbortError"\)\)/);
+  assert.match(page, /authenticatedFetch\(`\/api\/ai\/jobs\/\$\{queued\.jobId\}`, \{ signal: controller\.signal \}\)/);
+  assert.match(page, /await abortableBrowserDelay\(3_000, controller\.signal\)/);
+  assert.doesNotMatch(page, /await new Promise\(\(resolve\) => window\.setTimeout\(resolve, 3_000\)\)/);
   assert.match(page, /AbortSignal\.any\(\[productResearchController\.signal, AbortSignal\.timeout\(30_000\)\]\)/);
   assert.match(page, /waitForAbortablePromise\(createSupabaseClient\(\)\.auth\.getSession\(\), sessionSignal\)/);
   assert.match(page, /if \(researchingProduct\)[\s\S]{0,160}1차 상품정보 확인을 마치거나 중단/);

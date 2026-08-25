@@ -203,7 +203,7 @@ async function issueWorkerToken(db) {
   await scalar(
     db,
     `select public.sellerpilot_issue_ai_worker_token(
-      'CS dynamic worker', $1, '999999999999', now() + interval '30 days'
+      'CS dynamic worker', $1, '999999999999', now() + interval '30 days', 'gateway'
     )`,
     [TOKEN_HASH],
   );

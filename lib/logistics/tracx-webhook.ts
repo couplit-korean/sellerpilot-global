@@ -29,6 +29,6 @@ export function parseTracxDeliveryPayload(input: unknown):
     && !event.StatusDesc
     && !event.RefOrderNo;
   if (isProbe) return { kind: "probe", event };
-  if (!event.StatusCode || (!event.TrackingNo && !event.RefOrderNo)) return null;
+  if (!event.StatusCode || (!event.PackingNo && !event.TrackingNo && !event.RefOrderNo)) return null;
   return { kind: "event", event };
 }

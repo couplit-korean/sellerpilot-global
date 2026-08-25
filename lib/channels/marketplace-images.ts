@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import sharp from "sharp";
@@ -11,24 +12,63 @@ const maxInputBytes = 10 * 1024 * 1024;
 const maxOutputBytes = 3 * 1024 * 1024;
 const outputSize = 1200;
 
-function isPrivateAddress(address: string) {
+function embeddedIpv4Address(address: string) {
+  let normalized = address.toLowerCase().split("%", 1)[0];
+  if (!normalized.includes(":")) return null;
+
+  const dottedTail = normalized.slice(normalized.lastIndexOf(":") + 1);
+  if (dottedTail.includes(".")) {
+    const octets = dottedTail.split(".").map(Number);
+    if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+      return null;
+    }
+    normalized = `${normalized.slice(0, normalized.lastIndexOf(":") + 1)}${((octets[0] << 8) | octets[1]).toString(16)}:${((octets[2] << 8) | octets[3]).toString(16)}`;
+  }
+
+  const halves = normalized.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const missing = halves.length === 2 ? 8 - left.length - right.length : 0;
+  if (missing < 0 || (halves.length === 1 && left.length !== 8)) return null;
+  const textGroups = [...left, ...Array.from({ length: missing }, () => "0"), ...right];
+  if (textGroups.length !== 8 || textGroups.some((group) => !/^[0-9a-f]{1,4}$/.test(group))) return null;
+  const groups = textGroups.map((group) => Number.parseInt(group, 16));
+
+  const ipv4Mapped = groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff;
+  const ipv4Compatible = groups.slice(0, 6).every((group) => group === 0);
+  const wellKnownNat64 = groups[0] === 0x64
+    && groups[1] === 0xff9b
+    && groups.slice(2, 6).every((group) => group === 0);
+  if (!ipv4Mapped && !ipv4Compatible && !wellKnownNat64) return null;
+
+  const value = groups[6] * 65_536 + groups[7];
+  return [value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255].join(".");
+}
+
+export function isPrivateMarketplaceAddress(address: string) {
   const normalized = address.toLowerCase();
+  const embeddedIpv4 = embeddedIpv4Address(normalized);
+  if (embeddedIpv4) return isPrivateMarketplaceAddress(embeddedIpv4);
   if (
-    normalized === "::1"
+    normalized === "::"
+    || normalized === "::1"
     || normalized === "0.0.0.0"
     || normalized.startsWith("fc")
     || normalized.startsWith("fd")
     || /^fe[89ab]/.test(normalized)
+    || normalized.startsWith("ff")
   ) return true;
-  if (normalized.startsWith("::ffff:")) return isPrivateAddress(normalized.slice(7));
   if (isIP(normalized) !== 4) return false;
   const parts = normalized.split(".").map(Number);
   return parts[0] === 10
     || parts[0] === 127
     || parts[0] === 0
+    || (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127)
     || (parts[0] === 169 && parts[1] === 254)
     || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
     || (parts[0] === 192 && parts[1] === 168)
+    || (parts[0] === 198 && (parts[1] === 18 || parts[1] === 19))
     || parts[0] >= 224;
 }
 
@@ -39,14 +79,17 @@ async function assertPublicImageUrl(sourceUrl: string) {
   } catch {
     throw new Error("MARKETPLACE_IMAGE_URL_INVALID");
   }
-  if (url.protocol !== "https:" || url.username || url.password) {
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
     throw new Error("MARKETPLACE_IMAGE_URL_INVALID");
   }
-  const records = await lookup(url.hostname, { all: true });
-  if (!records.length || records.some((record) => isPrivateAddress(record.address))) {
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const records = isIP(hostname)
+    ? [{ address: hostname, family: isIP(hostname) }]
+    : await lookup(hostname, { all: true });
+  if (!records.length || records.some((record) => isPrivateMarketplaceAddress(record.address))) {
     throw new Error("MARKETPLACE_IMAGE_URL_PRIVATE");
   }
-  return url;
+  return { url, hostname, address: records[0].address, family: records[0].family };
 }
 
 async function ensureMarketplaceImageBucket(serviceClient: SupabaseClient) {
@@ -68,16 +111,76 @@ async function ensureMarketplaceImageBucket(serviceClient: SupabaseClient) {
   }
 }
 
+export async function collectBoundedMarketplaceImage(
+  source: AsyncIterable<Uint8Array>,
+  maximumBytes = maxInputBytes,
+) {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of source) {
+    const bytes = Buffer.from(chunk);
+    total += bytes.length;
+    if (total > maximumBytes) throw new Error("MARKETPLACE_IMAGE_SIZE_INVALID");
+    chunks.push(bytes);
+  }
+  if (!total) throw new Error("MARKETPLACE_IMAGE_SIZE_INVALID");
+  return Buffer.concat(chunks, total);
+}
+
+export async function downloadMarketplaceImage(sourceUrl: string) {
+  const target = await assertPublicImageUrl(sourceUrl);
+  return new Promise<{ bytes: Buffer; contentType: string }>((resolveDownload, rejectDownload) => {
+    let settled = false;
+    const finish = (error: Error | null, result?: { bytes: Buffer; contentType: string }) => {
+      if (settled) return;
+      settled = true;
+      if (error) rejectDownload(error);
+      else resolveDownload(result!);
+    };
+    const request = httpsRequest({
+      protocol: "https:",
+      hostname: target.address,
+      family: target.family,
+      port: 443,
+      method: "GET",
+      path: `${target.url.pathname}${target.url.search}`,
+      headers: {
+        accept: inputMimeTypes.join(","),
+        "accept-encoding": "identity",
+        host: target.url.host,
+        "user-agent": "SellerPilot-Marketplace-Image/1.0",
+      },
+      agent: false,
+      servername: isIP(target.hostname) ? undefined : target.hostname,
+      signal: AbortSignal.timeout(20_000),
+    }, (response) => {
+      const status = response.statusCode ?? 0;
+      const contentType = String(response.headers["content-type"] ?? "").split(";", 1)[0].toLowerCase();
+      const declaredLength = Number(response.headers["content-length"] ?? 0);
+      if (status < 200 || status >= 300 || !inputMimeTypes.includes(contentType)) {
+        response.destroy();
+        finish(new Error("MARKETPLACE_IMAGE_DOWNLOAD_FAILED"));
+        return;
+      }
+      if (Number.isFinite(declaredLength) && declaredLength > maxInputBytes) {
+        response.destroy();
+        finish(new Error("MARKETPLACE_IMAGE_SIZE_INVALID"));
+        return;
+      }
+      void collectBoundedMarketplaceImage(response)
+        .then((bytes) => finish(null, { bytes, contentType }))
+        .catch((error) => {
+          response.destroy();
+          finish(error instanceof Error ? error : new Error("MARKETPLACE_IMAGE_DOWNLOAD_FAILED"));
+        });
+    });
+    request.once("error", (error) => finish(error instanceof Error ? error : new Error("MARKETPLACE_IMAGE_DOWNLOAD_FAILED")));
+    request.end();
+  });
+}
+
 async function downloadImage(sourceUrl: string) {
-  const url = await assertPublicImageUrl(sourceUrl);
-  const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(20_000) });
-  const contentType = (response.headers.get("content-type") ?? "").split(";", 1)[0].toLowerCase();
-  if (!response.ok || !inputMimeTypes.includes(contentType)) throw new Error("MARKETPLACE_IMAGE_DOWNLOAD_FAILED");
-  const declaredLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > maxInputBytes) throw new Error("MARKETPLACE_IMAGE_SIZE_INVALID");
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (!bytes.length || bytes.length > maxInputBytes) throw new Error("MARKETPLACE_IMAGE_SIZE_INVALID");
-  return bytes;
+  return (await downloadMarketplaceImage(sourceUrl)).bytes;
 }
 
 async function normalizedJpeg(source: Buffer) {

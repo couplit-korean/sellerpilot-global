@@ -91,6 +91,54 @@ export const supportReplyResultSchema = z.object({
   cautions: z.array(z.string().trim().min(1).max(300)).max(5),
 });
 
+export const supportReplyWorkerRequestSchema = z.object({
+  ticket_id: z.string().uuid(),
+  channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
+  target_locale: supportReplyLocaleSchema,
+  tone: z.enum(["polite", "concise", "apologetic"]),
+  subject: z.string().trim().max(500),
+  message: z.string().trim().min(1).max(12_000),
+  order: z.object({
+    external_order_id: z.string().trim().max(240),
+    product_name: z.string().trim().max(500),
+    quantity: z.number().int().min(0).max(1_000_000),
+    status: z.string().trim().max(80),
+    ordered_at: z.string().datetime({ offset: true }).nullable(),
+    shipped_at: z.string().datetime({ offset: true }).nullable(),
+  }).strict().nullable(),
+}).strict();
+
+const competitorProviderSchema = z.enum(["naver_shopping", "elevenst_product_search", "ebay_browse"]);
+const competitorMarketplaceSchema = z.enum([
+  "smartstore", "coupang", "elevenst", "qoo10", "shopee", "lazada", "ebay", "temu", "other",
+]);
+const competitorEvidenceText = (maximum: number) => z.string()
+  .trim()
+  .min(1)
+  .max(maximum)
+  .refine((value) => !/[<>]/u.test(value), "경쟁가 근거에는 HTML을 포함할 수 없습니다.");
+
+export const studioCompetitorContextSchema = z.object({
+  query: competitorEvidenceText(160),
+  providerStatuses: z.array(z.object({
+    provider: competitorProviderSchema,
+    status: z.enum(["searched", "unavailable", "failed", "pending"]),
+    count: z.number().int().min(0).max(100_000),
+    marketplaces: z.array(competitorMarketplaceSchema).max(9),
+  }).strict()).max(3),
+  candidates: z.array(z.object({
+    provider: competitorProviderSchema,
+    marketplace: competitorMarketplaceSchema,
+    externalId: competitorEvidenceText(500),
+    title: competitorEvidenceText(1_000),
+    url: z.string().url().max(1_000).refine((value) => value.startsWith("https://"), "경쟁 상품 링크는 HTTPS여야 합니다."),
+    mallName: competitorEvidenceText(240),
+    price: z.number().finite().positive().max(1_000_000_000_000),
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    verifiedSameProduct: z.literal(true),
+  }).strict()).max(24),
+}).strict();
+
 export const studioCoreSchema = z.object({
   product: z.object({
     name: z.string().min(1).max(160),
@@ -119,7 +167,7 @@ export const studioCoreSchema = z.object({
     subline: z.string().min(1).max(120),
     badge: z.string().min(1).max(60),
   }),
-  localizedListings: z.array(localizedListingSchema).length(26),
+  localizedListings: z.array(localizedListingSchema).length(27),
   warnings: z.array(z.string().min(1).max(400)).max(5),
 });
 
@@ -140,6 +188,7 @@ const requiredLocalizedMarkets = {
   "lazada:VN": "vi-VN",
   "lazada:ID": "id-ID",
   "coupang:KR": "ko-KR",
+  "elevenst:KR": "ko-KR",
   "smartstore:KR": "ko-KR",
   "ebay:US": "en-US",
   "ebay:GB": "en-GB",
@@ -215,6 +264,7 @@ export const studioJobRequestSchema = z.object({
   manualFields: productIntakeSchema,
   imagePaths: z.array(z.string().min(1).max(400)).min(1).max(100),
   imageSpecs: z.array(normalizedProductImageSpecSchema).min(1).max(100),
+  competitorContext: studioCompetitorContextSchema.optional(),
 }).superRefine((value, context) => {
   if (value.imagePaths.length !== value.imageSpecs.length) {
     context.addIssue({ code: "custom", path: ["imageSpecs"], message: "이미지 경로와 규격 정보 수가 일치해야 합니다." });

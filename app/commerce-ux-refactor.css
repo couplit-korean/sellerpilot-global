@@ -2183,6 +2183,9 @@ button {
 .product-detail-asset-grid figcaption button { display: inline-flex; min-height: 30px; flex: 0 0 auto; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid #dfe3e8; border-radius: 7px; color: #5e6878; background: #fff; font-size: 7px; font-weight: 800; text-transform: none; }
 .product-detail-asset-grid figcaption button:hover:not(:disabled) { color: var(--primary); border-color: #c8c9f4; background: #f8f8ff; }
 .product-detail-asset-grid figcaption button:disabled { cursor: not-allowed; opacity: .55; }
+.saved-product-detail-page .detail-preview-scroll { margin-top: 18px; border-top: 1px solid #e2e4e9; border-radius: 10px; }
+.saved-detail-meta { display: flex; align-items: center; gap: 6px; margin: 10px 2px 0; color: #7c8796; font-size: 9px; line-height: 1.5; }
+.puck-editor-body[aria-busy="true"] { pointer-events: none; opacity: .72; }
 
 .remediation-summary { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; border-color: #eedfbe; background: linear-gradient(105deg, #fffaf0, #fff); }
 .remediation-summary > div { display: flex; align-items: center; gap: 12px; }
@@ -2553,6 +2556,9 @@ button {
 .registration-progress { display: grid; gap: 6px; }
 .registration-progress > span { height: 5px; overflow: hidden; border-radius: 999px; background: #edf0ef; }
 .registration-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #2874dc, #23a687); transition: width .25s ease; }
+.registration-progress.indeterminate i { width: 34%; animation: registration-progress-indeterminate 1.25s ease-in-out infinite; }
+@keyframes registration-progress-indeterminate { from { transform: translateX(-105%); } to { transform: translateX(295%); } }
+@media (prefers-reduced-motion: reduce) { .registration-progress.indeterminate i { width: 100%; animation: none; opacity: .55; } }
 .registration-progress small { color: #6f7b78; font-size: 8px; line-height: 1.5; }
 .registration-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
 .registration-card dl > div { display: grid; gap: 3px; border-radius: 8px; padding: 8px; background: #f7f9f8; }

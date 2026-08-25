@@ -12,6 +12,66 @@ type PrunedJob = {
   result_paths: string[] | null;
 };
 
+type AiStorageCleanupClaim = {
+  claimToken: string;
+  bucket: "sellerpilot-ai";
+  paths: string[];
+};
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function aiStorageCleanupClaim(value: unknown): AiStorageCleanupClaim | null {
+  if (value == null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_storage_cleanup_claim");
+  const candidate = value as Record<string, unknown>;
+  if (!UUID_PATTERN.test(String(candidate.claimToken ?? "")) || candidate.bucket !== "sellerpilot-ai") {
+    throw new Error("invalid_storage_cleanup_claim");
+  }
+  if (!Array.isArray(candidate.paths) || candidate.paths.length < 1 || candidate.paths.length > 500) {
+    throw new Error("invalid_storage_cleanup_claim");
+  }
+  const paths = candidate.paths.filter((path): path is string => typeof path === "string");
+  if (paths.length !== candidate.paths.length
+      || new Set(paths).size !== paths.length
+      || paths.some((path) => path.length > 1_000
+        || path.startsWith("/")
+        || path.split("/").some((segment) => segment === "." || segment === ".."))) {
+    throw new Error("invalid_storage_cleanup_claim");
+  }
+  return { claimToken: String(candidate.claimToken), bucket: "sellerpilot-ai", paths };
+}
+
+async function cleanupPrunedAiStorage(serviceClient: SupabaseClient) {
+  const { data, error } = await serviceClient.rpc("sellerpilot_service_claim_ai_storage_cleanup", {
+    p_limit: 200,
+    p_lease_seconds: 120,
+  });
+  if (error) throw new Error("storage_cleanup_claim_failed");
+  const claim = aiStorageCleanupClaim(data);
+  if (!claim) return { claimed: 0, removed: 0, requeued: 0, failed: false };
+
+  const { error: removeError } = await serviceClient.storage.from(claim.bucket).remove(claim.paths);
+  const removedPaths = removeError ? [] : claim.paths;
+  const { data: completion, error: completionError } = await serviceClient.rpc(
+    "sellerpilot_service_complete_ai_storage_cleanup",
+    {
+      p_claim_token: claim.claimToken,
+      p_removed_paths: removedPaths,
+      p_error: removeError ? "storage_remove_failed" : null,
+    },
+  );
+  if (completionError || !completion || typeof completion !== "object" || Array.isArray(completion)) {
+    throw new Error("storage_cleanup_completion_failed");
+  }
+  const outcome = completion as Record<string, unknown>;
+  const removed = Number(outcome.removed ?? 0);
+  const requeued = Number(outcome.requeued ?? 0);
+  if (!Number.isInteger(removed) || removed < 0 || !Number.isInteger(requeued) || requeued < 0) {
+    throw new Error("storage_cleanup_completion_invalid");
+  }
+  return { claimed: claim.paths.length, removed, requeued, failed: Boolean(removeError) };
+}
+
 type ActiveCredential = {
   credential_id?: unknown;
   secret_payload?: unknown;
@@ -133,6 +193,7 @@ export async function GET(request: Request) {
     { data: kakaoOauthReconciliationRequired, error: kakaoOauthSweepError },
     { data: tracxReconciliationRequired, error: tracxSweepError },
     { data: lazadaReplyReconciliationRequired, error: lazadaReplySweepError },
+    { data: pendingWorkerTokensExpired, error: pendingWorkerTokenExpiryError },
   ] = await Promise.all([
     serviceClient.rpc("sellerpilot_prune_ai_jobs", {
       p_completed_before: completedBefore,
@@ -148,6 +209,7 @@ export async function GET(request: Request) {
     serviceClient.rpc("sellerpilot_service_sweep_kakao_oauth_callbacks"),
     serviceClient.rpc("sellerpilot_service_sweep_stale_tracx_mutations"),
     serviceClient.rpc("sellerpilot_service_sweep_stale_lazada_replies"),
+    serviceClient.rpc("sellerpilot_service_expire_pending_worker_token_sets"),
   ]);
   if (error
       || personalDataError
@@ -155,7 +217,8 @@ export async function GET(request: Request) {
       || kakaoSweepError
       || kakaoOauthSweepError
       || tracxSweepError
-      || lazadaReplySweepError) {
+      || lazadaReplySweepError
+      || pendingWorkerTokenExpiryError) {
     return NextResponse.json({ message: "30일 보관기간 정리를 완료하지 못했습니다." }, { status: 500 });
   }
 
@@ -164,12 +227,27 @@ export async function GET(request: Request) {
     ...(Array.isArray(row.input_paths) ? row.input_paths : []),
     ...(Array.isArray(row.result_paths) ? row.result_paths : []),
   ]);
-  let storageRemoved = 0;
-  if (storagePaths.length) {
-    const { data: removed, error: removeError } = await serviceClient.storage
-      .from("sellerpilot-ai")
-      .remove(storagePaths);
-    if (!removeError) storageRemoved = removed?.length ?? 0;
+  let storageCleanup: Awaited<ReturnType<typeof cleanupPrunedAiStorage>>;
+  try {
+    storageCleanup = await cleanupPrunedAiStorage(serviceClient);
+  } catch {
+    return NextResponse.json({
+      message: "AI 이미지 보관기간 정리 대기열을 완료하지 못했습니다. 삭제 대상은 재시도용으로 보존됩니다.",
+      retentionDays,
+      jobsPruned: rows.length,
+      storageQueued: storagePaths.length,
+    }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  if (storageCleanup.failed) {
+    return NextResponse.json({
+      message: "AI 이미지 저장소 정리가 지연되어 삭제 대상을 다시 대기열에 넣었습니다.",
+      retentionDays,
+      jobsPruned: rows.length,
+      storageQueued: storagePaths.length,
+      storageClaimed: storageCleanup.claimed,
+      storageRemoved: storageCleanup.removed,
+      storageRequeued: storageCleanup.requeued,
+    }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
   }
   const push = await dispatchPendingPushNotifications(serviceClient, 100).catch(() => ({ configured: true, claimed: 0, sent: 0, failed: 1 }));
 
@@ -177,13 +255,17 @@ export async function GET(request: Request) {
     ok: true,
     retentionDays,
     jobsPruned: rows.length,
-    storageRemoved,
+    storageQueued: storagePaths.length,
+    storageClaimed: storageCleanup.claimed,
+    storageRemoved: storageCleanup.removed,
+    storageRequeued: storageCleanup.requeued,
     personalData,
     runtimeData,
     kakaoReconciliationRequired,
     kakaoOauthReconciliationRequired,
     tracxReconciliationRequired,
     lazadaReplyReconciliationRequired,
+    pendingWorkerTokensExpired,
     shopeeToken: shopeeToken.status,
     lazadaToken: lazadaToken.status,
     ebayToken: ebayToken.status,

@@ -5,14 +5,15 @@ import test from "node:test";
 test("periodic competitor work does not block the worker that must claim its 11st gateway job", async () => {
   const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
   const periodicSection = worker.slice(
-    worker.indexOf("if (!once && Date.now() >= nextPeriodicSyncAt)"),
-    worker.indexOf("if (Date.now() < workerAuthBackoffUntil) continue;", worker.indexOf("if (!once && Date.now() >= nextPeriodicSyncAt)")),
+    worker.indexOf("if (!once && Date.now() >= nextPeriodicSyncAt"),
+    worker.indexOf("if (activeGatewayJobs.size < maxGatewayConcurrency", worker.indexOf("if (!once && Date.now() >= nextPeriodicSyncAt")),
   );
 
   assert.match(worker, /let periodicCompetitorRequest = null/);
   assert.match(worker, /function startPeriodicCompetitorRefresh\(\)/);
   assert.match(worker, /periodicCompetitorRequest = api\([\s\S]{0,180}58_000/);
   assert.match(worker, /if \(periodicCompetitorRequest\) return/);
+  assert.match(periodicSection, /Date\.now\(\) >= authBackoffUntil\.scheduler/);
   assert.match(periodicSection, /startPeriodicCompetitorRefresh\(\);/);
   assert.doesNotMatch(periodicSection, /await startPeriodicCompetitorRefresh/);
   assert.doesNotMatch(periodicSection, /Promise\.all\([\s\S]*competitor-prices/);

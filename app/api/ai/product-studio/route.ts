@@ -70,6 +70,7 @@ export async function POST(request: Request) {
         product_url: parsed.data.manualFields.productUrl.trim(),
         research_input: parsed.data.manualFields.researchInput.trim(),
         manual_fields: parsed.data.manualFields,
+        competitor_context: parsed.data.competitorContext,
         image_paths: uploadedPaths,
         image_specs: parsed.data.imageSpecs,
       },

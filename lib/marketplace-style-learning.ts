@@ -1,7 +1,7 @@
 import type { ActiveChannelKey } from "./channels/catalog";
 
-export const STYLE_LEARNING_VERSION = "2026.08.24-r3";
-export const STYLE_LEARNING_RESEARCH_DATE = "2026-08-19";
+export const STYLE_LEARNING_VERSION = "2026.08.26-r4";
+export const STYLE_LEARNING_RESEARCH_DATE = "2026-08-26";
 
 export type StyleLocale =
   | "ko-KR"
@@ -91,6 +91,7 @@ export const styleTargetMarkets: StyleTargetMarket[] = [
   { channel: "lazada", market: "VN", country: "베트남", locale: "vi-VN", language: "Tiếng Việt" },
   { channel: "lazada", market: "ID", country: "인도네시아", locale: "id-ID", language: "Bahasa Indonesia" },
   { channel: "coupang", market: "KR", country: "대한민국", locale: "ko-KR", language: "한국어" },
+  { channel: "elevenst", market: "KR", country: "대한민국", locale: "ko-KR", language: "한국어" },
   { channel: "smartstore", market: "KR", country: "대한민국", locale: "ko-KR", language: "한국어" },
   { channel: "ebay", market: "US", country: "미국", locale: "en-US", language: "English" },
   { channel: "temu", market: "KR", country: "대한민국", locale: "ko-KR", language: "한국어" },
@@ -151,6 +152,20 @@ export const channelStyleProfiles: ChannelStyleProfile[] = [
     evidence: [
       { type: "official", label: "쿠팡 상품 생성 가이드", url: "https://developers.coupang.com/ko/getting-started/guide-to-creating-product-listings", note: "카테고리별 필수 구매옵션과 허용 단위" },
       { type: "market-observation", label: "쿠팡 스킨케어", url: "https://www.coupang.com/np/categories/522058", note: "상품유형·용량·개수 중심 제목과 단위 가격 표현" },
+    ],
+  },
+  {
+    channel: "elevenst",
+    label: "11번가",
+    titleFormula: "브랜드 + 상품유형 + 모델/핵심 속성 + 용량·수량 + 옵션. 검색 정확도를 위해 확인된 브랜드·모델과 규격을 구조화 필드와 일치시키고 프로모션 문구는 제외한다.",
+    descriptionStyle: "모바일에서 먼저 읽히는 핵심 구성·규격·사용법을 짧은 블록으로 배치하고, 상품정보 제공고시와 원산지·배송 조건은 확인된 구조화 값으로 분리한다.",
+    detailLayout: ["상품·구성 즉시 인지", "핵심 특징", "규격·옵션", "실물 디테일", "사용 방법", "구성·패키지", "상품정보 제공고시"],
+    thumbnailStyle: "최소 600×600 이상의 선명한 정사각 이미지에서 실제 상품 전체와 구성 수량을 우선한다. 가격·할인·배송·랭킹 문구를 이미지에 고정하지 않는다.",
+    shotList: ["정면 대표", "45도 전체", "구성품", "재질·내용물 근접", "크기 비교", "사용 장면", "후면 표시"],
+    guardrails: ["브랜드·모델·옵션을 상품 사실과 다르게 생성하지 않음", "랭킹·최저가·쿠폰·판매량·공식 표시는 실데이터와 권한 없이는 삽입 금지", "동일 상품 중복 등록과 무관 검색어 나열 금지"],
+    evidence: [
+      { type: "official", label: "11번가 모바일 상품등록 정책", url: "https://www.11st.co.kr/tpost/FrontTPostAction.tmall?NtceNo=856123&method=getNoticeView&type=so", note: "대표·추가·목록 이미지 최소 600×600 및 모바일 상품정보 정책" },
+      { type: "market-observation", label: "11번가 식품 검색", url: "https://www.11st.co.kr/category/DisplayCategory.tmall?dispCtgrNo=1148829&method=getDisplayCategory2Depth", note: "브랜드·상품유형·중량·수량 중심 제목과 정사각 제품 이미지" },
     ],
   },
   {
@@ -502,6 +517,7 @@ function marketplaceSearchUrl(target: StyleTargetMarket, query: string) {
     return `https://www.${domains[target.market]}/catalog/?q=${keyword}`;
   }
   if (target.channel === "coupang") return `https://www.coupang.com/np/search?q=${keyword}`;
+  if (target.channel === "elevenst") return `https://search.11st.co.kr/Search.tmall?kwd=${keyword}`;
   if (target.channel === "smartstore") return `https://search.shopping.naver.com/search/all?query=${keyword}`;
   if (target.channel === "ebay") return `https://www.ebay.com/sch/i.html?_nkw=${keyword}`;
   return `https://www.temu.com/kr/search_result.html?search_key=${keyword}`;
@@ -540,6 +556,7 @@ export const learnedProductExamples: LearnedProductExample[] = categoryStyleProf
 
 export const styleLearningSummary = {
   categories: categoryStyleProfiles.length,
+  settingShotGroups: 9,
   examples: learnedProductExamples.length,
   channels: channelStyleProfiles.length,
   markets: styleTargetMarkets.length,
@@ -583,7 +600,7 @@ export function buildMarketplaceStyleLearningBrief(categoryHint: string) {
     `<sellerpilot_style_learning version="${STYLE_LEARNING_VERSION}" researched_at="${STYLE_LEARNING_RESEARCH_DATE}">`,
     `선택 카테고리: ${category.label} (${category.id})`,
     examples.length
-      ? `학습 커버리지: 이 카테고리 상품 유형 20개 × 제작 변형 10개 = ${examples.length}개. 7개 채널, ${styleTargetMarkets.length}개 국가·언어 프로필에 순환 검증한다.`
+      ? `학습 커버리지: 이 카테고리 상품 유형 20개 × 제작 변형 10개 = ${examples.length}개. ${channelStyleProfiles.length}개 채널, ${styleTargetMarkets.length}개 국가·언어 프로필에 순환 검증한다.`
       : "학습 커버리지: 등록된 6개 학습 카테고리와 일치하지 않아 일반 상품 안전 모드를 적용한다. 특정 카테고리 연출을 추측하지 않는다.",
     `학습 상품 유형: ${category.families.length ? category.families.join(", ") : "미분류 · 실제 상품 사진과 판매자 확정 정보 우선"}`,
     `학습 제작 변형: ${variantTerms["ko-KR"].join(", ")}`,

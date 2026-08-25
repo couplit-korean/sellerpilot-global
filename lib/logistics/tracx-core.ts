@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 export type TracxSecretPayload = Record<string, unknown>;
 
 export const tracxOperationNames = [
@@ -17,6 +19,28 @@ export const tracxWriteOperations = new Set<TracxOperationName>([
   "orders.cancel",
   "inquiries.reply",
 ]);
+
+export function verifyTracxWebhookSignature(input: {
+  secret: string;
+  body: string;
+  timestamp: string;
+  signature: string;
+  now?: number;
+  toleranceMs?: number;
+}) {
+  if (input.secret.length < 32 || input.secret.length > 256 || input.body.length > 32_000) return false;
+  if (!/^\d{10,13}$/.test(input.timestamp)) return false;
+  const numericTimestamp = Number(input.timestamp);
+  if (!Number.isSafeInteger(numericTimestamp)) return false;
+  const timestampMs = input.timestamp.length <= 10 ? numericTimestamp * 1000 : numericTimestamp;
+  if (Math.abs((input.now ?? Date.now()) - timestampMs) > (input.toleranceMs ?? 5 * 60_000)) return false;
+  const normalizedSignature = input.signature.trim().replace(/^sha256=/i, "").toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalizedSignature)) return false;
+  const expected = createHmac("sha256", input.secret)
+    .update(`${input.timestamp}.${input.body}`)
+    .digest();
+  return timingSafeEqual(Buffer.from(normalizedSignature, "hex"), expected);
+}
 
 type TracxMethod = {
   service: "SmartShipService" | "SmartShipInquiryService";

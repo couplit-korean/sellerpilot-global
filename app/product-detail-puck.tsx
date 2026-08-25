@@ -4,6 +4,7 @@
 import { Puck, Render, type Config, type Data } from "@puckeditor/core";
 import { X } from "lucide-react";
 import { useEffect, useMemo } from "react";
+import { resolveProductDetailAssets } from "./_publishing/product-detail-persistence";
 import type { ProductStudioResult } from "./product-studio-types";
 
 type DetailComponents = {
@@ -57,6 +58,7 @@ type DetailComponents = {
 };
 
 export type ProductDetailData = Data<DetailComponents>;
+export type ProductDetailSource = Pick<ProductStudioResult, "product" | "design">;
 
 const detailConfig: Config<DetailComponents> = {
   categories: {
@@ -136,7 +138,7 @@ function CheckMark() {
   return <span aria-hidden="true">✓</span>;
 }
 
-function createDetailData(result: ProductStudioResult, imageUrl: string, assetUrls: Record<string, string>): ProductDetailData {
+function createDetailData(result: ProductDetailSource, imageUrl: string, assetUrls: Record<string, string>): ProductDetailData {
   const { product, design } = result;
   const first = design.sections[0];
   const imageAssets = ["detail-overview", "detail-feature", "detail-use", "detail-package"];
@@ -161,23 +163,28 @@ function createDetailData(result: ProductStudioResult, imageUrl: string, assetUr
   };
 }
 
-export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data }: { result: ProductStudioResult; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null }) {
-  const renderData = useMemo(() => data ?? createDetailData(result, imageUrl, assetUrls), [assetUrls, data, imageUrl, result]);
+export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null }) {
+  const renderData = useMemo(() => {
+    if (data) return resolveProductDetailAssets(data, assetUrls);
+    return result ? createDetailData(result, imageUrl, assetUrls) : null;
+  }, [assetUrls, data, imageUrl, result]);
+  if (!renderData) return null;
   return <Render config={detailConfig} data={renderData} />;
 }
 
-export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, onSave, onClose }: { result: ProductStudioResult; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; onSave: (next: ProductDetailData) => void; onClose: () => void }) {
-  const initialData = useMemo(() => data ?? createDetailData(result, imageUrl, assetUrls), [assetUrls, data, imageUrl, result]);
+export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, saving = false, onSave, onClose }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; saving?: boolean; onSave: (next: ProductDetailData) => void | Promise<void>; onClose: () => void }) {
+  const initialData = useMemo(() => data ? resolveProductDetailAssets(data, assetUrls) : result ? createDetailData(result, imageUrl, assetUrls) : null, [assetUrls, data, imageUrl, result]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
+  if (!initialData) return null;
   return (
     <div className="puck-editor-modal" role="dialog" aria-modal="true" aria-label="상세페이지 시각 편집기">
-      <div className="puck-editor-top"><span><b>Puck 상세페이지 편집기</b><small>블록을 드래그하고 오른쪽 속성에서 문구·색상을 수정하세요.</small></span><button type="button" aria-label="편집기 닫기" onClick={onClose}><X size={18} /></button></div>
-      <div className="puck-editor-body"><Puck config={detailConfig} data={initialData} onPublish={(next) => { onSave(next); onClose(); }} /></div>
+      <div className="puck-editor-top"><span><b>Puck 상세페이지 편집기</b><small>{saving ? "운영 원장에 저장 중입니다." : "블록을 드래그하고 오른쪽 속성에서 문구·색상을 수정하세요."}</small></span><button type="button" aria-label="편집기 닫기" disabled={saving} onClick={onClose}><X size={18} /></button></div>
+      <div className="puck-editor-body" aria-busy={saving}><Puck config={detailConfig} data={initialData} onPublish={(next) => { if (!saving) void onSave(next); }} /></div>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import type { ActiveChannelKey } from "./catalog";
 import type { ChannelOperationResult } from "./operations";
 import { normalizeLazadaImHistory } from "./lazada-im";
 import { coupangContactCenterParentAnswerId } from "./inquiry-reply";
+import { canonicalNormalizationTimestamp, createTimestampNormalizer } from "./normalization-time";
 
 export type NormalizedChannelInquiry = {
   externalTicketId: string;
@@ -22,16 +23,9 @@ const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
   ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
   : [];
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
-const iso = (...values: unknown[]) => {
-  for (const value of values) {
-    if (typeof value !== "string" && typeof value !== "number") continue;
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-  }
-  return new Date().toISOString();
-};
+type TimestampNormalizer = ReturnType<typeof createTimestampNormalizer>;
 
-function normalizeCoupang(data: Record<string, unknown>) {
+function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const root = object(data.data);
   const rows = list(root.content).length ? list(root.content) : list(data.data);
   return rows.map((row): NormalizedChannelInquiry | null => {
@@ -58,8 +52,9 @@ function normalizeCoupang(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
 }
 
-function normalizeSmartstore(data: Record<string, unknown>) {
-  const root = object(data.data);
+function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormalizer) {
+  const nested = object(data.data);
+  const root = Object.keys(nested).length ? nested : data;
   const rows = list(root.contents).length ? list(root.contents)
     : list(root.content).length ? list(root.content)
       : list(data.data).length ? list(data.data)
@@ -80,7 +75,7 @@ function normalizeSmartstore(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
 }
 
-function normalizeQoo10(data: Record<string, unknown>) {
+function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const result = data.ResultObject;
   const rows = list(result).length ? list(result)
     : list(object(result).InquiryInfo).length ? list(object(result).InquiryInfo)
@@ -103,7 +98,7 @@ function normalizeQoo10(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
 }
 
-function normalizeTemu(data: Record<string, unknown>) {
+function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, referenceTimeMs: number) {
   const rows = list(object(data.result).data);
   const groupLabel: Record<string, string> = {
     "1": "판매자 처리 대기",
@@ -126,7 +121,7 @@ function normalizeTemu(data: Record<string, unknown>) {
       ? row.availableOperateList.map(String).map((value) => value.trim()).filter(Boolean).slice(0, 10)
       : [];
     const deadlineText = deadline && !Number.isNaN(deadline.getTime()) ? deadline.toISOString() : "없음";
-    const remaining = deadline && !Number.isNaN(deadline.getTime()) ? deadline.getTime() - Date.now() : Number.POSITIVE_INFINITY;
+    const remaining = deadline && !Number.isNaN(deadline.getTime()) ? deadline.getTime() - referenceTimeMs : Number.POSITIVE_INFINITY;
     return {
       externalTicketId: `aftersales:${afterSalesSn}`,
       customerName: "Temu 구매자",
@@ -139,19 +134,27 @@ function normalizeTemu(data: Record<string, unknown>) {
   }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
 }
 
-export function normalizeChannelInquiries(channel: ActiveChannelKey, result: ChannelOperationResult): NormalizedChannelInquiry[] {
-  if (channel === "temu") {
-    const normalized = result.steps
-      .filter((item) => /^inquiries(?::\d+)?$/.test(item.name))
-      .flatMap((item) => normalizeTemu(item.data));
+export function normalizeChannelInquiries(
+  channel: ActiveChannelKey,
+  result: ChannelOperationResult,
+  normalizationTimestamp: string,
+): NormalizedChannelInquiry[] {
+  const referenceTimestamp = canonicalNormalizationTimestamp(normalizationTimestamp);
+  const referenceTimeMs = new Date(referenceTimestamp).getTime();
+  const iso = createTimestampNormalizer(referenceTimestamp);
+  if (channel === "lazada") {
+    const normalized = normalizeLazadaImHistory(result.steps, referenceTimestamp);
     return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
   }
-  const data = result.steps.find((step) => step.name === "inquiries")?.data ?? result.steps.at(-1)?.data ?? {};
-  const normalized = channel === "lazada" ? normalizeLazadaImHistory(result.steps)
-    : channel === "coupang" ? normalizeCoupang(data)
-    : channel === "smartstore" ? normalizeSmartstore(data)
-      : channel === "qoo10" ? normalizeQoo10(data)
-        : [];
+  const inquirySteps = result.steps.filter((item) => item.ok && /^inquiries(?::\d+)?$/.test(item.name));
+  const pageData = inquirySteps.length
+    ? inquirySteps.map((item) => item.data)
+    : [result.steps.at(-1)?.data ?? {}];
+  const normalized = pageData.flatMap((data) => channel === "coupang" ? normalizeCoupang(data, iso)
+    : channel === "smartstore" ? normalizeSmartstore(data, iso)
+      : channel === "qoo10" ? normalizeQoo10(data, iso)
+        : channel === "temu" ? normalizeTemu(data, iso, referenceTimeMs)
+          : []);
   return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
 }
 

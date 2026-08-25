@@ -8,6 +8,7 @@ import {
   buildDuplicateRetryGuidance,
   findDuplicateShot,
   MAXIMUM_SHOT_GENERATION_ATTEMPTS,
+  MAXIMUM_SHOT_GENERATION_RETRIES,
   MINIMUM_SHOT_HASH_DISTANCE,
   SHOT_DHASH_BYTES,
   visualHashDistance,
@@ -102,7 +103,7 @@ test("hero, square, feature and package have mutually exclusive purpose, crop, p
   assert.match(packagePrompt, /상단 봉합·뚜껑과 측면 또는 후면/);
 });
 
-test("the exact SHA-256 and 256-bit dHash gate use three materially different attempts", () => {
+test("the exact SHA-256 and 256-bit dHash gate allows an initial image plus three materially different retries", () => {
   const tinyHash = buildDifferenceHash(Uint8Array.from([
     3, 2, 1,
     1, 2, 3,
@@ -111,7 +112,8 @@ test("the exact SHA-256 and 256-bit dHash gate use three materially different at
   assert.throws(() => buildDifferenceHash(new Uint8Array(5), 3, 2), /dHash 픽셀이 부족/);
   assert.equal(SHOT_DHASH_BYTES, 32);
   assert.ok(MINIMUM_SHOT_HASH_DISTANCE >= 64);
-  assert.equal(MAXIMUM_SHOT_GENERATION_ATTEMPTS, 3);
+  assert.equal(MAXIMUM_SHOT_GENERATION_RETRIES, 3);
+  assert.equal(MAXIMUM_SHOT_GENERATION_ATTEMPTS, 4);
 
   const base = { assetId: "hero", digest: "sha", visualHash: new Uint8Array(SHOT_DHASH_BYTES) };
   const exact = findDuplicateShot({ assetId: "square", digest: "sha", visualHash: new Uint8Array(SHOT_DHASH_BYTES).fill(255) }, [base]);
@@ -123,11 +125,13 @@ test("the exact SHA-256 and 256-bit dHash gate use three materially different at
   assert.equal(close?.distance, 1);
   assert.equal(visualHashDistance(base.visualHash, closeHash), 1);
 
-  const secondAttempt = buildDuplicateRetryGuidance("wide", "portrait", 2);
-  const thirdAttempt = buildDuplicateRetryGuidance("wide", "portrait", 3);
-  assert.notEqual(secondAttempt, thirdAttempt);
-  assert.match(secondAttempt, /azimuth at least 45 degrees/);
-  assert.match(thirdAttempt, /opposite permitted camera height/);
+  const firstRetry = buildDuplicateRetryGuidance("wide", "portrait", 1);
+  const thirdRetry = buildDuplicateRetryGuidance("wide", "portrait", 3);
+  assert.notEqual(firstRetry, thirdRetry);
+  assert.match(firstRetry, /retry 1 of 3/);
+  assert.match(firstRetry, /azimuth at least 45 degrees/);
+  assert.match(thirdRetry, /retry 3 of 3/);
+  assert.match(thirdRetry, /opposite permitted camera height/);
 });
 
 test("individual regeneration rejects exact and near duplicates of the pre-replacement target", () => {
@@ -156,7 +160,7 @@ test("individual regeneration rejects exact and near duplicates of the pre-repla
   assert.equal(near?.distance, 1);
 });
 
-test("both full-series and individual-regeneration worker paths use the same hash gate and three-attempt loop", async () => {
+test("both full-series and individual-regeneration worker paths use the same hash gate and initial-plus-three-retry loop", async () => {
   const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
   const claimRoute = await readFile(new URL("../app/api/ai/worker/claim/route.ts", import.meta.url), "utf8");
   assert.equal(worker.match(/await generateDistinctAsset\(\{/g)?.length, 2);

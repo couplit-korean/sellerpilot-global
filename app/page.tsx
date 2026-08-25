@@ -71,11 +71,17 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { AiProductStudio } from "./ai-product-studio";
+import { AiProductStudio, type StudioCompetitorContext } from "./ai-product-studio";
 import { AcceptanceChecklistPage } from "./acceptance-checklist";
 import { ChannelConnectionsPage } from "./channel-connections";
 import { CategoryClassificationWorkbench } from "./category-classification-workbench";
 import { ProductPublishWorkbench } from "./product-publish-workbench";
+import {
+  parseProductDetailPageEnvelope,
+  parseProductDetailSource,
+  SavedProductDetailPage,
+  type ProductDetailPageEnvelope,
+} from "./saved-product-detail-page";
 import { StyleLearningCenter } from "./style-learning-center";
 import { MarginCalculatorPage } from "./margin-calculator";
 import { MobilePushManager } from "./mobile-push-manager";
@@ -112,12 +118,13 @@ import {
 } from "./_publishing/product-research-lifecycle";
 import { csChannelVerification, csReplyDraftValue, csReplySavePlan, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
 import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
-import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
+import { toastDurationMs, toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
   isRegistrationActivityRunning,
   registrationActivityDisplayElapsedSeconds,
   registrationActivityMatchesFilter,
   registrationActivityNotificationTransition,
+  registrationActivityProgress,
   registrationChannelStatusLabel,
   registrationStatusMeta,
   type RegistrationActivityEventState,
@@ -219,7 +226,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   publishing: { title: "상품 등록 센터", description: "대표사진과 다양한 각도 사진, 설명과 링크를 함께 분석해 채널 등록을 자동화합니다." },
   "registration-activity": { title: "등록 진행 · 히스토리", description: "상품별 분석·채널 등록 상태와 실제 소요 시간을 한곳에서 확인합니다." },
   remediation: { title: "외부 권한 · 상품수정", description: "판매자센터에서 보완해야 할 상품만 한 건씩 확인하고 바로 수정합니다." },
-  "style-learning": { title: "스타일 학습 검증", description: "6개 카테고리 1,200개 상품 범위와 8개 채널의 국가·언어별 제작 규칙을 확인합니다." },
+  "style-learning": { title: "스타일 학습 검증", description: "6개 문안 카테고리, 9개 설정샷 상품군, 8개 채널의 국가·언어별 제작 규칙을 확인합니다." },
   margin: { title: "마진 계산", description: "원가와 채널 비용을 반영해 순이익과 목표 마진 판매가를 계산합니다." },
   orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
   cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
@@ -806,7 +813,10 @@ function detailFieldValue(value: unknown) {
 }
 
 type CompetitorDisplayItem = { id: string; marketplace?: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string };
-type CompetitorProviderDisplayStatus = { provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse"; status: "searched" | "unavailable" | "failed" | "pending"; count: number };
+type CompetitorMarketplace = "smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other";
+type CompetitorProvider = "naver_shopping" | "elevenst_product_search" | "ebay_browse";
+type CompetitorResearchItem = CompetitorDisplayItem & { provider: CompetitorProvider; marketplace: CompetitorMarketplace; externalId: string; verifiedSameProduct: true };
+type CompetitorProviderDisplayStatus = { provider: CompetitorProvider; status: "searched" | "unavailable" | "failed" | "pending"; count: number; marketplaces: CompetitorMarketplace[] };
 
 function CompetitorPriceSlots({ items, providers = [], state = "ready", compact = false, retryAvailable = false, onRetry }: { items: CompetitorDisplayItem[]; providers?: CompetitorProviderDisplayStatus[]; state?: "loading" | "ready" | "pending" | "unavailable"; compact?: boolean; retryAvailable?: boolean; onRetry?: () => void }) {
   const marketplaceOrder: string[] = [...activeChannelKeys];
@@ -909,6 +919,8 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
 }) {
   const [remoteListings, setRemoteListings] = useState<RemoteListingReference[]>([]);
   const [detailContext, setDetailContext] = useState<ProductDetailContext>(emptyProductDetailContext);
+  const [savedDetailPage, setSavedDetailPage] = useState<ProductDetailPageEnvelope | null>(null);
+  const [detailPageSource, setDetailPageSource] = useState<ReturnType<typeof parseProductDetailSource>>(null);
   const [remoteListingState, setRemoteListingState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [inventoryEditing, setInventoryEditing] = useState(false);
   const [inventoryOnHand, setInventoryOnHand] = useState(product.onHand);
@@ -928,6 +940,12 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
   const [editSaving, setEditSaving] = useState(false);
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
   const [displayOverrides, setDisplayOverrides] = useState({ name: product.name, sku: product.sku, description: product.description, sourceUrl: product.sourceUrl });
+  const detailRegenerationControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => {
+    detailRegenerationControllerRef.current?.abort(new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError"));
+    detailRegenerationControllerRef.current = null;
+  }, [product.sourceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -966,6 +984,8 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
             generatedImages: parseAssets(payload.generatedImages),
             localizedListings,
           });
+          setSavedDetailPage(parseProductDetailPageEnvelope(payload.detailPage));
+          setDetailPageSource(parseProductDetailSource(payload.studioResult));
           setEditDraft(productEditDraft(product, isRecord(payload.manualFields) ? payload.manualFields : {}));
           setCommerceOperations({ ...emptyProductCommerceOperations, ...nextCommerceOperations, listings: Array.isArray(nextCommerceOperations.listings) ? nextCommerceOperations.listings : [], competitorPrices: Array.isArray(nextCommerceOperations.competitorPrices) ? nextCommerceOperations.competitorPrices : [] });
           setSupplierName(nextCommerceOperations.supplierName ?? "");
@@ -979,6 +999,8 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
         if (!cancelled) {
           setRemoteListings([]);
           setDetailContext(emptyProductDetailContext);
+          setSavedDetailPage(null);
+          setDetailPageSource(null);
           setCommerceOperations(emptyProductCommerceOperations);
           setRemoteListingState("unavailable");
         }
@@ -994,6 +1016,37 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
       delete next[key];
       return next;
     });
+  };
+
+  const applyInventoryAcrossSafeBatches = async (onHand: number) => {
+    const idempotencyKey = `inventory-ui-${crypto.randomUUID()}`;
+    let latestSync: InventorySyncContext | null = null;
+    const combinedResults: Array<{ ok: boolean }> = [];
+    let latestMessage = "";
+    for (let batchIndex = 0; batchIndex < 16; batchIndex += 1) {
+      const response = await authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`, {
+        method: "POST",
+        headers: { "idempotency-key": idempotencyKey },
+        body: JSON.stringify({ onHand, confirmWrite: true }),
+      });
+      const payload = await response.json().catch(() => ({ message: "재고 적용 응답을 읽지 못했습니다." })) as {
+        sync?: InventorySyncContext;
+        results?: Array<{ ok: boolean }>;
+        continuationRequired?: boolean;
+        remainingPendingCount?: number;
+        message?: string;
+      };
+      if (!response.ok && response.status !== 207) {
+        throw new Error(payload.message ?? "채널 재고 적용에 실패했습니다.");
+      }
+      if (payload.sync) latestSync = payload.sync;
+      if (Array.isArray(payload.results)) combinedResults.push(...payload.results);
+      latestMessage = payload.message ?? latestMessage;
+      if (!payload.continuationRequired) {
+        return { sync: latestSync, results: combinedResults, message: latestMessage };
+      }
+    }
+    throw new Error("안전 배치 한도를 초과해 남은 채널 재고를 자동 재전송하지 않았습니다. 등록 진행 화면에서 기존 작업을 확인해 주세요.");
   };
 
   const saveProductDetails = async () => {
@@ -1015,13 +1068,12 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
       if (!response.ok) throw new Error(payload.message ?? "상품 전체 정보를 저장하지 못했습니다.");
       let completionMessage = "상품 등록정보를 중앙 원장에 저장했습니다. ‘채널 상품 수정’에서 지원 채널의 실제 상품에도 적용할 수 있습니다.";
       if (parsed.data.stock !== inventoryOnHand) {
-        const inventoryResponse = await authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`, { method: "POST", body: JSON.stringify({ onHand: parsed.data.stock, confirmWrite: true }) });
-        const inventoryPayload = await inventoryResponse.json().catch(() => ({ message: "재고 적용 응답을 읽지 못했습니다." })) as { message?: string; sync?: InventorySyncContext };
-        if (!inventoryResponse.ok && inventoryResponse.status !== 207) throw new Error(inventoryPayload.message ?? "상품 등록정보는 저장됐지만 채널 재고 적용에 실패했습니다.");
+        const inventoryPayload = await applyInventoryAcrossSafeBatches(parsed.data.stock);
         setInventoryOnHand(parsed.data.stock);
         setInventorySync(inventoryPayload.sync ?? null);
-        completionMessage = inventoryResponse.status === 207
-          ? inventoryPayload.message ?? "상품 등록정보와 중앙 재고는 저장됐지만 일부 채널 재고는 추가 확인이 필요합니다."
+        const failed = inventoryPayload.results.filter((item) => !item.ok).length;
+        completionMessage = failed > 0
+          ? `상품 등록정보와 중앙 재고는 저장됐지만 ${failed}개 채널 재고는 추가 확인이 필요합니다.`
           : "상품 등록정보를 저장했고 변경된 재고를 연결 채널에 반영했습니다. 나머지 변경은 ‘채널 상품 수정’에서 최종 확인 후 적용하세요.";
       }
       setDetailContext((current) => ({ ...current, manualFields: parsed.data }));
@@ -1069,6 +1121,9 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
 
   const regenerateDetailAsset = async (assetId: string) => {
     if (!commerceOperations.aiJobId || regeneratingDetailAsset) return;
+    detailRegenerationControllerRef.current?.abort(new DOMException("새 이미지 재제작 요청으로 교체됐습니다.", "AbortError"));
+    const controller = new AbortController();
+    detailRegenerationControllerRef.current = controller;
     setRegeneratingDetailAsset(assetId);
     setInventoryMessage("");
     try {
@@ -1076,11 +1131,12 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
       const response = await authenticatedFetch("/api/ai/product-studio/regenerate", {
         method: "POST",
         body: JSON.stringify({ jobId, sourceJobId: commerceOperations.aiJobId, sourceProductId: product.sourceId, assetId }),
+        signal: controller.signal,
       });
       const queued = await response.json().catch(() => ({ message: "재제작 작업 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
       if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "이미지 재제작 작업을 등록하지 못했습니다.");
       for (let attempt = 0; attempt < 600; attempt += 1) {
-        const statusResponse = await authenticatedFetch(`/api/ai/jobs/${queued.jobId}`);
+        const statusResponse = await authenticatedFetch(`/api/ai/jobs/${queued.jobId}`, { signal: controller.signal });
         const statusPayload = await statusResponse.json().catch(() => ({ message: "재제작 상태를 읽지 못했습니다." })) as {
           status?: string; error?: string | null; message?: string;
           result?: { mode?: string; assetId?: string; generatedImages?: Array<{ id: string; url: string | null }> } | null;
@@ -1089,18 +1145,24 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
         if (statusPayload.status === "succeeded" && statusPayload.result?.mode === "asset-regeneration") {
           const nextUrl = statusPayload.result.generatedImages?.find((asset) => asset.id === assetId)?.url ?? null;
           if (!nextUrl) throw new Error("재제작된 이미지 주소를 확인하지 못했습니다.");
+          if (controller.signal.aborted) return;
           setDetailContext((current) => ({ ...current, generatedImages: current.generatedImages.map((asset) => asset.id === assetId ? { ...asset, url: nextUrl } : asset) }));
           setInventoryMessage(`${assetId.replaceAll("-", " ")} 이미지 1장만 교체했습니다.`);
           return;
         }
         if (statusPayload.status === "failed" || statusPayload.status === "cancelled") throw new Error(statusPayload.error || "이미지 재제작이 완료되지 못했습니다.");
-        await new Promise((resolve) => window.setTimeout(resolve, 3_000));
+        await abortableBrowserDelay(3_000, controller.signal);
       }
       throw new Error("이미지 재제작 대기시간이 30분을 초과했습니다.");
     } catch (error) {
-      setInventoryMessage(error instanceof Error ? error.message : "이미지 재제작 중 오류가 발생했습니다.");
+      if (!controller.signal.aborted) {
+        setInventoryMessage(error instanceof Error ? error.message : "이미지 재제작 중 오류가 발생했습니다.");
+      }
     } finally {
-      setRegeneratingDetailAsset("");
+      if (detailRegenerationControllerRef.current === controller) {
+        detailRegenerationControllerRef.current = null;
+        if (!controller.signal.aborted) setRegeneratingDetailAsset("");
+      }
     }
   };
 
@@ -1122,14 +1184,9 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
     setInventorySaving(true);
     setInventoryMessage("");
     try {
-      const response = await authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`, {
-        method: "POST",
-        body: JSON.stringify({ onHand: inventoryOnHand, confirmWrite: true }),
-      });
-      const payload = await response.json().catch(() => ({ message: "통합 재고 결과를 읽지 못했습니다." })) as { sync?: InventorySyncContext; results?: Array<{ ok: boolean }>; message?: string };
-      if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "통합 재고 적용에 실패했습니다.");
+      const payload = await applyInventoryAcrossSafeBatches(inventoryOnHand);
       setInventorySync(payload.sync ?? null);
-      const failed = payload.results?.filter((item) => !item.ok).length ?? 0;
+      const failed = payload.results.filter((item) => !item.ok).length;
       setInventoryMessage(failed ? `중앙 재고는 저장됐고 ${failed}개 채널은 확인이 필요합니다.` : "중앙 재고와 게시된 판매채널 재고를 적용했습니다.");
       setInventoryEditing(false);
     } catch (error) {
@@ -1158,6 +1215,17 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
       : null],
   ].filter((row): row is [string, string] => typeof row[1] === "string" && row[1].length > 0);
   const detailAssets = detailContext.generatedImages.length > 0 ? detailContext.generatedImages : detailContext.sourceImages;
+  const savedDetailAssetUrls = useMemo(() => {
+    const generated = Object.fromEntries(detailContext.generatedImages
+      .filter((asset): asset is ProductDetailAsset & { id: string; url: string } => Boolean(asset.id && asset.url))
+      .map((asset) => [asset.id, asset.url]));
+    const firstSource = detailContext.sourceImages.find((asset) => asset.url)?.url ?? "";
+    return {
+      ...(firstSource ? { "source-primary": firstSource } : {}),
+      ...generated,
+      ...(!generated.hero && firstSource ? { hero: firstSource } : {}),
+    };
+  }, [detailContext.generatedImages, detailContext.sourceImages]);
 
   return (
     <div className="page-stack product-detail-page">
@@ -1243,6 +1311,8 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
         <div className="panel-heading"><div><span className="panel-kicker">GENERATED DETAIL PAGE</span><h3>등록 이미지 · 상세페이지 디자인</h3></div><ImagePlus size={18} /></div>
         {remoteListingState === "loading" ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>상세페이지 결과를 불러오는 중입니다.</b></div> : detailAssets.length > 0 ? <div className="product-detail-asset-grid">{detailAssets.map((asset, index) => <figure key={`${asset.id ?? asset.path}-${index}`}><div><ProductVisual src={asset.url} size="(max-width: 720px) 44vw, 280px" alt={`${product.name} ${asset.id ?? `상품 이미지 ${index + 1}`}`} /></div><figcaption><span>{asset.id?.replaceAll("-", " ") ?? `원본 이미지 ${index + 1}`}</span>{asset.id && commerceOperations.aiJobId ? <button type="button" onClick={() => void regenerateDetailAsset(asset.id!)} disabled={Boolean(regeneratingDetailAsset)}>{regeneratingDetailAsset === asset.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button> : null}</figcaption></figure>)}</div> : <div className="product-detail-empty compact"><ImagePlus size={24} /><b>저장된 상세 이미지가 없습니다.</b><small>기존 텍스트 상품이거나 이미지 생성 결과가 상품 원장에 연결되지 않은 상태입니다.</small></div>}
       </section>
+
+      {remoteListingState === "ready" ? <SavedProductDetailPage key={product.sourceId} productId={product.sourceId} source={detailPageSource} initialDetailPage={savedDetailPage} assetUrls={savedDetailAssetUrls} authenticatedFetch={authenticatedFetch} notify={notify} /> : null}
 
       {editOpen && editDraft && <ProductDetailEditDialog draft={editDraft} errors={editErrors} saving={editSaving} onChange={setEditField} onClose={() => { if (!editSaving) setEditOpen(false); }} onSave={() => void saveProductDetails()} />}
 
@@ -1352,15 +1422,11 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
         const product = activity.productId ? productMap.get(activity.productId) : undefined;
         const isActive = isRegistrationActivityRunning(activity.status);
         const elapsedLabel = isActive ? "현재 경과시간" : activity.status === "ready" ? "총 분석시간" : "총 등록시간";
-        const progress = activity.status === "completed"
-          ? 100
-          : activity.channelCount > 0
-            ? Math.round(((activity.publishedCount + activity.failedCount + activity.blockedCount) / activity.channelCount) * 100)
-            : 18;
+        const progress = registrationActivityProgress(activity);
         return <article className={`panel registration-card ${activity.status}`} key={activity.id}>
           <header><span className={`registration-status ${activity.status}`}>{isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}{status.label}</span><small>{relativeTime(activity.updatedAt)}</small></header>
           <div className="registration-product"><div>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</div><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></div>
-          <div className="registration-progress"><span><i style={{ width: `${progress}%` }} /></span><small>{status.detail}</small></div>
+          <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{status.detail} {progress.label}</small></div>
           <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
           <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">권한 {activity.blockedCount}</b></div>
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
@@ -1388,7 +1454,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [uploadError, setUploadError] = useState("");
   const [researchingProduct, setResearchingProduct] = useState(false);
   const [researchResult, setResearchResult] = useState<ProductResearchResult | null>(null);
-  const [researchCompetitors, setResearchCompetitors] = useState<Array<{ id: string; marketplace: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string }>>([]);
+  const [researchCompetitors, setResearchCompetitors] = useState<CompetitorResearchItem[]>([]);
   const [competitorProviders, setCompetitorProviders] = useState<CompetitorProviderDisplayStatus[]>([]);
   const [competitorResearchState, setCompetitorResearchState] = useState<"idle" | "loading" | "ready" | "pending" | "unavailable">("idle");
   const [competitorResearchRetryInput, setCompetitorResearchRetryInput] = useState("");
@@ -1408,6 +1474,26 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
     .map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
+  const studioCompetitorContext = useMemo<StudioCompetitorContext>(() => ({
+    query: (competitorResearchRetryInput || intake.productName || intake.researchInput).trim().slice(0, 160),
+    providerStatuses: competitorProviders.slice(0, 3).map((provider) => ({
+      provider: provider.provider,
+      status: provider.status,
+      count: provider.count,
+      marketplaces: provider.marketplaces,
+    })),
+    candidates: researchCompetitors.filter((item) => item.verifiedSameProduct).slice(0, 24).map((item) => ({
+      provider: item.provider,
+      marketplace: item.marketplace,
+      externalId: item.externalId,
+      title: item.title,
+      url: item.url,
+      mallName: item.mallName,
+      price: item.price,
+      currency: item.currency,
+      verifiedSameProduct: true,
+    })),
+  }), [competitorProviders, competitorResearchRetryInput, intake.productName, intake.researchInput, researchCompetitors]);
 
   const releasePhotoUrl = useCallback((url: string) => {
     if (!photoObjectUrlsRef.current.delete(url)) return;
@@ -1991,6 +2077,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         mainPhoto={mainPhoto}
         photos={mainPhoto ? [mainPhoto, ...Object.values(slotPhotos), ...extraPhotos] : []}
         manualFields={intake}
+        competitorContext={studioCompetitorContext}
         requestId={studioRequestId}
         onRunningChange={setRunning}
         notify={notify}
@@ -2032,13 +2119,22 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   );
 }
 
-type ShipmentInput = { id: string; carrierCode: string; trackingNumber: string };
+type ShipmentInput = {
+  id: string;
+  carrierCode: string;
+  trackingNumber: string;
+  tracxReferenceKind?: "packing_no" | "reference_order_no";
+  tracxReference?: string;
+};
+type ShipmentDraftInput = Omit<ShipmentInput, "id">;
 type ShipmentResult = {
   succeeded: number;
   failed: number;
   reconciliationRequired: number;
   results: Array<{ id: string; channel: string; ok: boolean; message: string; reconciliationRequired?: boolean }>;
 };
+
+const fulfillmentRequestBatchSize = 3;
 
 function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery = "", initialOrderId = null }: {
   notify: (message: string) => void;
@@ -2051,7 +2147,7 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
   const [active, setActive] = useState("전체 주문");
   const [query, setQuery] = useState(initialQuery);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [shipmentDrafts, setShipmentDrafts] = useState<Record<string, { carrierCode: string; trackingNumber: string }>>({});
+  const [shipmentDrafts, setShipmentDrafts] = useState<Record<string, ShipmentDraftInput>>({});
   const [fulfillmentOpen, setFulfillmentOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<DisplayOrder | null>(() => displayOrders.find((order) => order.id === initialOrderId) ?? null);
   const [fulfilling, setFulfilling] = useState(false);
@@ -2132,14 +2228,20 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
       const header = rows[0].map((value) => normalizeSearchText(value));
       const hasHeader = header.some((value) => ["orderid", "주문번호", "tracking", "운송장번호"].includes(value.replace(/\s/g, "")));
       const dataRows = hasHeader ? rows.slice(1) : rows;
-      const nextDrafts: Record<string, { carrierCode: string; trackingNumber: string }> = {};
+      const nextDrafts: Record<string, ShipmentDraftInput> = {};
       const nextSelected = new Set<string>();
       for (const row of dataRows) {
-        const [externalOrderId, carrierCode, trackingNumber] = row;
-        const order = displayOrders.find((candidate) => candidate.id === externalOrderId);
+        const [externalOrderId, carrierCode, trackingNumber, tracxReference = "", rawTracxReferenceKind = "packing_no"] = row;
+        const matchingOrders = displayOrders.filter((candidate) => candidate.id === externalOrderId);
+        const order = matchingOrders.length === 1 ? matchingOrders[0] : null;
         if (!order || !carrierCode || !trackingNumber || !isActiveChannelKey(order.channelKey) || !shipmentWriteAvailability(order.channelKey).available) continue;
         nextSelected.add(order.sourceId);
-        nextDrafts[order.sourceId] = { carrierCode, trackingNumber };
+        nextDrafts[order.sourceId] = {
+          carrierCode,
+          trackingNumber,
+          tracxReference,
+          tracxReferenceKind: rawTracxReferenceKind === "reference_order_no" ? "reference_order_no" : "packing_no",
+        };
       }
       if (!nextSelected.size) throw new Error("unmatched");
       setSelectedIds(nextSelected);
@@ -2147,7 +2249,7 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
       setFulfillmentOpen(true);
       notify(`${nextSelected.size}건의 송장 정보를 불러왔습니다.`);
     } catch {
-      notify("CSV를 ‘주문번호,택배사코드,운송장번호’ 순서로 확인해 주세요.");
+      notify("CSV를 ‘주문번호,택배사코드,운송장번호[,TracX참조번호,참조종류]’ 순서로 확인해 주세요.");
     } finally {
       if (invoiceInputRef.current) invoiceInputRef.current.value = "";
     }
@@ -2184,7 +2286,20 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
         <div className="bulk-order-bar"><span><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} />선택한 주문 <b>{selectedIds.size}</b>건</span><button type="button" disabled={!selectedIds.size || fulfilling} onClick={openFulfillment}><Truck size={15} />일괄 출고 처리</button><button type="button" disabled={fulfilling} onClick={() => invoiceInputRef.current?.click()}><Upload size={15} />송장 CSV 업로드</button><input ref={invoiceInputRef} className="sr-only" type="file" accept=".csv,text/csv" aria-label="송장 CSV 파일 선택" onChange={(event) => void importInvoices(event.target.files?.[0] ?? null)} /><span className="toolbar-spacer" /><small>{syncStatus.length ? "채널별 동기화 상태 기록 중 · 5분 자동 업데이트" : "채널 연결 상태 확인 중"}</small></div>
       </section>
       {detailOrder && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDetailOrder(null); }}><section className="shipment-dialog order-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="order-detail-title"><header><div><span className="metric-icon blue"><ShoppingCart size={18} /></span><span><h3 id="order-detail-title">주문 상세정보</h3><small>주문 · 배송 · 정산 원장을 한곳에서 확인합니다.</small></span></div><button className="icon-only-button" aria-label="주문 상세 닫기" onClick={() => setDetailOrder(null)}><X size={17} /></button></header><dl className="order-detail-ledger"><div><dt>주문번호</dt><dd>{detailOrder.id}</dd></div><div><dt>판매 채널</dt><dd><ChannelMark code={detailOrder.channel} size="sm" /></dd></div><div><dt>구매 상품</dt><dd>{detailOrder.product}</dd></div><div><dt>구매자</dt><dd>{detailOrder.customer}</dd></div><div><dt>결제금액</dt><dd>{detailOrder.amount}</dd></div><div><dt>주문상태</dt><dd><StatusBadge status={detailOrder.status} /></dd></div><div><dt>배송 추적</dt><dd>{detailOrder.trackingNumber ? `${detailOrder.carrierCode ?? "택배사"} · ${detailOrder.trackingNumber}` : "운송장 등록 전"}</dd></div><div><dt>배송 완료</dt><dd>{detailOrder.deliveredAt ? formatProductUpdatedAt(detailOrder.deliveredAt) : "완료 전"}</dd></div><div><dt>정산 상태</dt><dd><StatusBadge status={detailOrder.settlementStatus} /></dd></div><div><dt>정산 금액</dt><dd>{detailOrder.settlementAmount != null && detailOrder.settlementCurrency ? new Intl.NumberFormat("ko-KR", { style: "currency", currency: detailOrder.settlementCurrency }).format(detailOrder.settlementAmount) : "정산 데이터 대기"}</dd></div><div><dt>환율 손익 참고</dt><dd className={(detailOrder.exchangeLossPercent ?? 0) >= 2 ? "exchange-loss-warning" : ""}>{detailOrder.exchangeLossPercent == null ? "기준환율 데이터 대기" : `${detailOrder.exchangeLossPercent > 0 ? "손실 " : "이익 "}${Math.abs(detailOrder.exchangeLossPercent).toFixed(2)}%`}</dd></div><div><dt>주문시간</dt><dd>{detailOrder.time}</dd></div></dl><footer><button type="button" className="credential-secondary" onClick={() => setDetailOrder(null)}>닫기</button>{["결제완료", "출고대기"].includes(detailOrder.status) && isActiveChannelKey(detailOrder.channelKey) && shipmentWriteAvailability(detailOrder.channelKey).available ? <button type="button" className="publish-execute" onClick={() => { setSelectedIds(new Set([detailOrder.sourceId])); setShipmentDrafts({ [detailOrder.sourceId]: shipmentDrafts[detailOrder.sourceId] ?? { carrierCode: "", trackingNumber: "" } }); setDetailOrder(null); setFulfillmentOpen(true); }}><Truck size={15} />출고 정보 입력</button> : null}</footer></section></div>}
-      {fulfillmentOpen && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget && !fulfilling) setFulfillmentOpen(false); }}><section className="shipment-dialog" role="dialog" aria-modal="true" aria-labelledby="shipment-dialog-title"><header><div><span className="metric-icon violet"><Truck size={18} /></span><span><h3 id="shipment-dialog-title">판매채널 발송 처리</h3><small>선택한 {selectedOrders.length}건을 외부 판매채널에 실제 발송 처리합니다.</small></span></div><button className="icon-only-button" aria-label="출고 창 닫기" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}><X size={17} /></button></header><div className="shipment-warning"><AlertTriangle size={16} /><span><b>실제 판매 상태가 변경됩니다.</b><small>판매채널이 성공 응답한 주문만 SellerPilot에서 배송중으로 변경됩니다.</small></span></div><div className="shipment-draft-list">{selectedOrders.map((order) => <article key={order.sourceId}><div><ChannelMark code={order.channel} size="sm" /><span><b>{order.id}</b><small>{order.product}</small></span></div><label><span>택배사 코드</span><input value={shipmentDrafts[order.sourceId]?.carrierCode ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { trackingNumber: "" }), carrierCode: event.target.value } }))} placeholder="채널 공식 택배사 코드" /></label><label><span>{order.channelKey === "lazada" ? "운송장번호 · 자동 발급" : "운송장번호"}</span><input disabled={order.channelKey === "lazada"} value={order.channelKey === "lazada" ? "Pack 완료 후 Lazada 발급" : shipmentDrafts[order.sourceId]?.trackingNumber ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { carrierCode: "" }), trackingNumber: event.target.value } }))} placeholder="숫자·영문 운송장번호" /></label></article>)}</div><footer><button type="button" className="credential-secondary" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}>취소</button><button type="button" className="publish-execute" disabled={fulfilling || selectedOrders.some((order) => !shipmentDrafts[order.sourceId]?.carrierCode.trim() || order.channelKey !== "lazada" && !shipmentDrafts[order.sourceId]?.trackingNumber.trim())} onClick={() => void confirmFulfillment()}>{fulfilling ? <LoaderCircle className="spin" size={15} /> : <Truck size={15} />}{fulfilling ? "판매채널 처리 중" : "확인 후 실제 발송 처리"}</button></footer></section></div>}
+      {fulfillmentOpen && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget && !fulfilling) setFulfillmentOpen(false); }}>
+        <section className="shipment-dialog" role="dialog" aria-modal="true" aria-labelledby="shipment-dialog-title">
+          <header><div><span className="metric-icon violet"><Truck size={18} /></span><span><h3 id="shipment-dialog-title">판매채널 발송 처리</h3><small>선택한 {selectedOrders.length}건을 외부 판매채널에 실제 발송 처리합니다.</small></span></div><button className="icon-only-button" aria-label="출고 창 닫기" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}><X size={17} /></button></header>
+          <div className="shipment-warning"><AlertTriangle size={16} /><span><b>실제 판매 상태가 변경됩니다.</b><small>판매채널이 성공 응답한 주문만 SellerPilot에서 배송중으로 변경됩니다. TracX 참조번호는 운송장이나 마켓 주문번호 대신 SmartShip 원문 값을 입력해야 합니다.</small></span></div>
+          <div className="shipment-draft-list">{selectedOrders.map((order) => <article key={order.sourceId}>
+            <div><ChannelMark code={order.channel} size="sm" /><span><b>{order.id}</b><small>{order.product}</small></span></div>
+            <label><span>택배사 코드</span><input value={shipmentDrafts[order.sourceId]?.carrierCode ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { trackingNumber: "" }), carrierCode: event.target.value } }))} placeholder="채널 공식 택배사 코드" /></label>
+            <label><span>{order.channelKey === "lazada" ? "운송장번호 · 자동 발급" : "운송장번호"}</span><input disabled={order.channelKey === "lazada"} value={order.channelKey === "lazada" ? "Pack 완료 후 Lazada 발급" : shipmentDrafts[order.sourceId]?.trackingNumber ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { carrierCode: "" }), trackingNumber: event.target.value } }))} placeholder="숫자·영문 운송장번호" /></label>
+            <label><span>TracX 참조 종류 · 선택</span><select value={shipmentDrafts[order.sourceId]?.tracxReferenceKind ?? "packing_no"} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { carrierCode: "", trackingNumber: "" }), tracxReferenceKind: event.target.value as "packing_no" | "reference_order_no" } }))}><option value="packing_no">PackingNo</option><option value="reference_order_no">RefOrderNo</option></select></label>
+            <label><span>TracX 정확한 참조번호 · 선택</span><input value={shipmentDrafts[order.sourceId]?.tracxReference ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { carrierCode: "", trackingNumber: "" }), tracxReference: event.target.value } }))} placeholder="SmartShip 원문 그대로 입력" /></label>
+          </article>)}</div>
+          <footer><button type="button" className="credential-secondary" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}>취소</button><button type="button" className="publish-execute" disabled={fulfilling || selectedOrders.some((order) => !shipmentDrafts[order.sourceId]?.carrierCode.trim() || order.channelKey !== "lazada" && !shipmentDrafts[order.sourceId]?.trackingNumber.trim())} onClick={() => void confirmFulfillment()}>{fulfilling ? <LoaderCircle className="spin" size={15} /> : <Truck size={15} />}{fulfilling ? "판매채널 처리 중" : "확인 후 실제 발송 처리"}</button></footer>
+        </section>
+      </div>}
     </div>
   );
 }
@@ -2468,6 +2583,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const [syncingOrders, setSyncingOrders] = useState(false);
   const operations = useOperationsSnapshot();
   const refreshOperations = operations.refresh;
+  const authenticatedOperationsFetch = operations.authenticatedFetch;
+  const reloadOperations = operations.reload;
+  const syncingOrdersRef = useRef(false);
   const operationSummary = operations.data?.summary ?? null;
   const channelMetrics = useMemo(() => operations.data?.channelMetrics ?? [], [operations.data]);
   const pipeline = operations.data?.pipeline ?? null;
@@ -2653,26 +2771,36 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, [openSearch]);
 
   const fulfillOrders = useCallback(async (shipments: ShipmentInput[]): Promise<ShipmentResult> => {
-    try {
-      const response = await operations.authenticatedFetch("/api/admin/orders/fulfill", {
-        method: "POST",
-        body: JSON.stringify({ confirmWrite: true, shipments }),
-      });
-      const payload = await response.json().catch(() => ({ message: "판매채널 발송 처리 응답을 읽지 못했습니다." })) as ShipmentResult & { message?: string };
-      if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "판매채널 발송 처리를 완료하지 못했습니다.");
-      await operations.reload();
-      notify(payload.message ?? `${payload.succeeded}건 발송 완료 · ${payload.failed}건 확인 필요`);
-      return {
-        succeeded: Number(payload.succeeded ?? 0),
-        failed: Number(payload.failed ?? shipments.length),
-        reconciliationRequired: Number(payload.reconciliationRequired ?? 0),
-        results: Array.isArray(payload.results) ? payload.results : [],
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "판매채널 발송 처리를 완료하지 못했습니다.";
-      notify(message);
-      return { succeeded: 0, failed: shipments.length, reconciliationRequired: 0, results: shipments.map((shipment) => ({ id: shipment.id, channel: "unknown", ok: false, message })) };
+    const aggregate: ShipmentResult = { succeeded: 0, failed: 0, reconciliationRequired: 0, results: [] };
+    for (let offset = 0; offset < shipments.length; offset += fulfillmentRequestBatchSize) {
+      const batch = shipments.slice(offset, offset + fulfillmentRequestBatchSize);
+      try {
+        const response = await operations.authenticatedFetch("/api/admin/orders/fulfill", {
+          method: "POST",
+          body: JSON.stringify({ confirmWrite: true, shipments: batch }),
+        });
+        const payload = await response.json().catch(() => ({ message: "판매채널 발송 처리 응답을 읽지 못했습니다." })) as ShipmentResult & { message?: string };
+        if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "판매채널 발송 처리를 완료하지 못했습니다.");
+        aggregate.succeeded += Number(payload.succeeded ?? 0);
+        aggregate.failed += Number(payload.failed ?? batch.length);
+        aggregate.reconciliationRequired += Number(payload.reconciliationRequired ?? 0);
+        aggregate.results.push(...(Array.isArray(payload.results) ? payload.results : []));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "판매채널 발송 처리 응답을 확인하지 못했습니다.";
+        aggregate.failed += batch.length;
+        aggregate.reconciliationRequired += batch.length;
+        aggregate.results.push(...batch.map((shipment) => ({
+          id: shipment.id,
+          channel: "unknown",
+          ok: false,
+          reconciliationRequired: true,
+          message: `${message} 서버 접수 여부를 확인하기 전에는 같은 출고를 다시 보내지 마세요.`,
+        })));
+      }
     }
+    await operations.reload();
+    notify(`${shipments.length}건 중 ${aggregate.succeeded}건 발송 완료 · ${aggregate.failed}건 확인 필요 · ${aggregate.reconciliationRequired}건 원장 조정 필요`);
+    return aggregate;
   }, [notify, operations]);
 
   const saveTicketReply = useCallback(async (ticket: DisplayTicket, reply: string) => {
@@ -2751,25 +2879,27 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, [notify, operations]);
 
   const syncOrders = useCallback(async (silent = false) => {
-    if (syncingOrders) return;
+    if (syncingOrdersRef.current) return;
+    syncingOrdersRef.current = true;
     setSyncingOrders(true);
     try {
-      const response = await operations.authenticatedFetch("/api/operations/sync", {
+      const response = await authenticatedOperationsFetch("/api/operations/sync", {
         method: "POST",
         body: JSON.stringify({ includeImBootstrap: !silent }),
       });
       const payload = await response.json().catch(() => ({ message: "주문 동기화 응답을 읽지 못했습니다." })) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "판매채널 주문 동기화를 시작하지 못했습니다.");
       if (!silent) notify("연결된 판매채널의 실제 주문·고객 문의 조회를 시작했습니다. 결과는 자동 반영됩니다.");
-      window.setTimeout(() => void operations.reload(), 3_000);
-      window.setTimeout(() => void operations.reload(), 12_000);
-      window.setTimeout(() => void operations.reload(), 30_000);
+      window.setTimeout(() => void reloadOperations(), 3_000);
+      window.setTimeout(() => void reloadOperations(), 12_000);
+      window.setTimeout(() => void reloadOperations(), 30_000);
     } catch (error) {
       if (!silent) notify(error instanceof Error ? error.message : "판매채널 주문·문의 동기화를 시작하지 못했습니다.");
     } finally {
+      syncingOrdersRef.current = false;
       setSyncingOrders(false);
     }
-  }, [notify, operations, syncingOrders]);
+  }, [authenticatedOperationsFetch, notify, reloadOperations]);
 
   useEffect(() => {
     const key = "sellerpilot-operation-sync-requested-at";
@@ -3001,6 +3131,12 @@ export default function Home() {
   const accountSwitchingRef = useRef(false);
 
   useEffect(() => {
+    if (!oauthNotice) return;
+    const timer = window.setTimeout(() => setOauthNotice(""), toastDurationMs);
+    return () => window.clearTimeout(timer);
+  }, [oauthNotice]);
+
+  useEffect(() => {
     const captureCallback = window.setTimeout(() => {
       const params = new URLSearchParams(window.location.search);
       const code = params.get("code") ?? "";
@@ -3140,7 +3276,6 @@ export default function Home() {
         setOauthNotice(oauthError instanceof Error ? oauthError.message : "채널 OAuth 연결을 완료하지 못했습니다.");
       } finally {
         setPendingChannelOAuth(null);
-        window.setTimeout(() => setOauthNotice(""), 6_000);
       }
     };
     void completeChannelOAuth();

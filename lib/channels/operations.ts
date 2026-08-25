@@ -94,6 +94,10 @@ export type ChannelOperationResult = {
   steps: ChannelOperationStep[];
   remoteId?: string;
   publicUrl?: string;
+  continuation?: {
+    reason: "page_cap_reached";
+    arguments: Record<string, unknown>;
+  };
   safeMessage: string;
 };
 
@@ -104,6 +108,42 @@ type ExecuteInput = {
   arguments: Record<string, unknown>;
   environment: "sandbox" | "production";
 };
+
+const MAX_PROVIDER_SYNC_PAGES = 20;
+const MAX_PROVIDER_SYNC_CONTINUATIONS = 50;
+
+function boundedPageSize(value: unknown, fallback: number, max: number) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
+}
+
+function finiteCount(value: unknown) {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function nestedObject(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function providerRecordCount(data: Record<string, unknown>, keys: string[]) {
+  for (const value of [data.data, data.response, data.result]) {
+    if (Array.isArray(value)) return value.length;
+  }
+  const roots = [data, nestedObject(data.data), nestedObject(data.response), nestedObject(data.result)];
+  for (const root of roots) {
+    for (const key of keys) {
+      if (Array.isArray(root[key])) return root[key].length;
+    }
+    const content = nestedObject(root.content);
+    for (const key of keys) {
+      if (Array.isArray(content[key])) return content[key].length;
+    }
+  }
+  return 0;
+}
 
 function objectValue(source: Record<string, unknown>, key: string, required = true) {
   const value = source[key];
@@ -272,7 +312,12 @@ function naverOptionalCategoryMetadataStep(name: string, remote: RemoteResponse)
   };
 }
 
-function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: string): ChannelOperationResult {
+function result(
+  input: ExecuteInput,
+  steps: ChannelOperationStep[],
+  remoteId?: string,
+  continuation?: ChannelOperationResult["continuation"],
+): ChannelOperationResult {
   const providerStepsSucceeded = steps.length > 0 && steps.every((item) => item.ok);
   // A create response is not a durable success until the provider identity is
   // known. Some marketplace APIs can acknowledge the mutation while omitting
@@ -295,12 +340,53 @@ function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: s
     operation: input.operation,
     steps,
     remoteId,
+    ...(ok && continuation ? { continuation } : {}),
     safeMessage: ok
-      ? `${channelCatalog[input.channel].name} ${input.operation} 작업이 정상 응답했습니다.`
+      ? continuation
+        ? `${channelCatalog[input.channel].name} ${input.operation} 현재 구간이 정상 응답했고 다음 페이지 구간을 이어서 처리합니다.`
+        : `${channelCatalog[input.channel].name} ${input.operation} 작업이 정상 응답했습니다.`
       : createIdentityMissing && providerStepsSucceeded
         ? `${channelCatalog[input.channel].name} 상품 생성 응답은 수신했지만 원격 상품 식별값을 확인할 수 없습니다. 판매자센터 수동 확인이 필요합니다.`
         : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.${providerMessage ? ` · ${providerMessage}` : ""}`,
   };
+}
+
+function paginationResult(
+  input: ExecuteInput,
+  steps: ChannelOperationStep[],
+  nextArguments: Record<string, unknown>,
+) {
+  const depth = finiteCount(input.arguments.sellerpilotPaginationDepth) ?? 0;
+  if (depth >= MAX_PROVIDER_SYNC_CONTINUATIONS) {
+    return result(input, [...steps, {
+      name: "pagination-safety-stop",
+      ok: false,
+      status: 409,
+      data: {
+        code: "PROVIDER_PAGINATION_DEPTH_EXCEEDED",
+        sellerpilotVerification: "PAGINATION_STOPPED_WITH_REMAINDER",
+      },
+    }]);
+  }
+  return result(input, steps, undefined, {
+    reason: "page_cap_reached",
+    arguments: {
+      ...nextArguments,
+      sellerpilotPaginationDepth: depth + 1,
+    },
+  });
+}
+
+function paginationSafetyStop(input: ExecuteInput) {
+  return result(input, [{
+    name: "pagination-safety-stop",
+    ok: false,
+    status: 409,
+    data: {
+      code: "PROVIDER_PAGINATION_DEPTH_EXCEEDED",
+      sellerpilotVerification: "PAGINATION_STOPPED_WITH_REMAINDER",
+    },
+  }]);
 }
 
 function safeProviderError(data: Record<string, unknown>) {
@@ -1257,14 +1343,36 @@ async function executeShopee(input: ExecuteInput) {
     return result(input, [writeStep], remoteId);
   }
   if (input.operation === "orders.list") {
-    const remote = await shopeeRequest({
-      payload: input.payload,
-      environment: input.environment,
-      method: "GET",
-      path: "/api/v2/order/get_order_list",
-      query: queryParams(input.arguments),
-    });
-    return result(input, [step("orders", remote)]);
+    const baseQuery = queryParams(input.arguments);
+    const steps: ChannelOperationStep[] = [];
+    let cursor = baseQuery.get("cursor")?.trim() ?? "";
+    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
+      const query = new URLSearchParams(baseQuery);
+      if (cursor) query.set("cursor", cursor);
+      else query.delete("cursor");
+      const remote = await shopeeRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/order/get_order_list",
+        query,
+      });
+      const pageStep = step(pageIndex === 0 ? "orders" : `orders:${pageIndex + 1}`, remote);
+      steps.push(pageStep);
+      if (!pageStep.ok) break;
+      const responseData = nestedObject(remote.data.response);
+      const pageOrders = objectArray(responseData.order_list);
+      const nextCursor = String(responseData.next_cursor ?? "").trim();
+      if (!providerBoolean(responseData.more) || pageOrders.length === 0 || !nextCursor || nextCursor === cursor) break;
+      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+        return paginationResult(input, steps, {
+          ...input.arguments,
+          query: { ...stringMap(input.arguments, "query"), cursor: nextCursor },
+        });
+      }
+      cursor = nextCursor;
+    }
+    return result(input, steps);
   }
   if (input.operation === "orders.get") {
     const query = queryParams(input.arguments);
@@ -1314,15 +1422,22 @@ async function executeLazada(input: ExecuteInput) {
     "inventory.update": "/product/price_quantity/update",
   };
   if (input.operation === "orders.list") {
-    const remote = await lazadaRequest({ payload: input.payload, path: "/orders/get", params: query });
+    const limit = boundedPageSize(query.limit, 50, 100);
+    const offset = Math.max(0, finiteCount(query.offset) ?? 0);
+    const remote = await lazadaRequest({
+      payload: input.payload,
+      path: "/orders/get",
+      params: { ...query, limit: String(limit), offset: String(offset) },
+    });
     const orderStep = step("orders", remote);
     if (!orderStep.ok) return result(input, [orderStep]);
-    const orders = objectArray(objectValue(remote.data, "data", false).orders);
+    const responseData = objectValue(remote.data, "data", false);
+    const orders = objectArray(responseData.orders);
     const actionableOrders = orders.filter((order) => {
       const statusText = (Array.isArray(order.statuses) ? order.statuses.join(" ") : String(order.status ?? "")).toLocaleLowerCase();
       const terminal = /(?:^|[\s_-])(?:cancelled?|refunded?|returned?|shipped|delivered|completed?)(?:$|[\s_-])/i.test(statusText);
       return !terminal && stringArgument(order, "order_id", false);
-    }).slice(0, 100);
+    });
     const detailSteps: ChannelOperationStep[] = [];
     for (let offset = 0; offset < actionableOrders.length; offset += 5) {
       const batch = actionableOrders.slice(offset, offset + 5);
@@ -1333,7 +1448,18 @@ async function executeLazada(input: ExecuteInput) {
       }));
       detailSteps.push(...remotes);
     }
-    return result(input, [orderStep, ...detailSteps]);
+    const completedSteps = [orderStep, ...detailSteps];
+    const total = finiteCount(responseData.countTotal ?? responseData.total_count ?? responseData.totalCount);
+    const nextOffset = offset + orders.length;
+    const hasMore = orders.length > 0 && (
+      total !== null ? nextOffset < total : orders.length === limit
+    );
+    return hasMore
+      ? paginationResult(input, completedSteps, {
+          ...input.arguments,
+          queryParams: { ...query, limit: String(limit), offset: String(nextOffset) },
+        })
+      : result(input, completedSteps);
   }
   if (input.operation === "orders.get") {
     const remote = await lazadaRequest({
@@ -1831,14 +1957,37 @@ async function executeCoupang(input: ExecuteInput) {
   }
   const orderBase = `/v2/providers/openapi/apis/api/v5/vendors/${pathSegment(vendorId)}`;
   if (input.operation === "inquiries.list") {
-    const query = queryParams(input.arguments);
-    query.set("vendorId", vendorId);
+    const baseQuery = queryParams(input.arguments);
+    baseQuery.set("vendorId", vendorId);
     const kind = stringArgument(input.arguments, "kind", false);
     const path = kind === "call-center" ? `${orderBase}/callCenterInquiries` : `${orderBase}/onlineInquiries`;
-    const remote = await coupangRequest({ payload: input.payload, method: "GET", path, query });
-    const inquiryStep = step("inquiries", remote);
-    inquiryStep.data = { ...inquiryStep.data, sellerpilotInquiryKind: kind || "product" };
-    return result(input, [inquiryStep]);
+    const pageSize = boundedPageSize(baseQuery.get("pageSize"), kind === "call-center" ? 30 : 50, 50);
+    let pageNum = Math.max(1, finiteCount(baseQuery.get("pageNum")) ?? 1);
+    const steps: ChannelOperationStep[] = [];
+    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
+      const query = new URLSearchParams(baseQuery);
+      query.set("pageNum", String(pageNum));
+      query.set("pageSize", String(pageSize));
+      const remote = await coupangRequest({ payload: input.payload, method: "GET", path, query });
+      const inquiryStep = step(pageIndex === 0 ? "inquiries" : `inquiries:${pageNum}`, remote);
+      inquiryStep.data = { ...inquiryStep.data, sellerpilotInquiryKind: kind || "product" };
+      steps.push(inquiryStep);
+      if (!inquiryStep.ok) break;
+      const count = providerRecordCount(remote.data, ["content", "inquiries", "onlineInquiries", "callCenterInquiries"]);
+      const data = nestedObject(remote.data.data);
+      const pagination = nestedObject(data.pagination);
+      const totalPages = finiteCount(pagination.totalPages ?? data.totalPages ?? remote.data.totalPages);
+      if (count === 0 || count < pageSize || (totalPages !== null && pageNum >= totalPages)) break;
+      const nextPageNum = pageNum + 1;
+      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+        return paginationResult(input, steps, {
+          ...input.arguments,
+          query: { ...stringMap(input.arguments, "query"), pageNum: nextPageNum, pageSize },
+        });
+      }
+      pageNum = nextPageNum;
+    }
+    return result(input, steps);
   }
   if (input.operation === "inquiries.reply") {
     const inquiryId = pathSegment(stringArgument(input.arguments, "inquiryId"));
@@ -1866,15 +2015,32 @@ async function executeCoupang(input: ExecuteInput) {
   }
   if (input.operation === "orders.list") {
     const kind = stringArgument(input.arguments, "kind", false);
-    const remote = await coupangRequest({
-      payload: input.payload,
-      method: "GET",
-      path: kind === "cancellations"
-        ? `/v2/providers/openapi/apis/api/v6/vendors/${pathSegment(vendorId)}/returnRequests`
-        : `${orderBase}/ordersheets`,
-      query: queryParams(input.arguments),
-    });
-    return result(input, [step("orders", remote)]);
+    const path = kind === "cancellations"
+      ? `/v2/providers/openapi/apis/api/v6/vendors/${pathSegment(vendorId)}/returnRequests`
+      : `${orderBase}/ordersheets`;
+    const baseQuery = queryParams(input.arguments);
+    const steps: ChannelOperationStep[] = [];
+    let nextToken = baseQuery.get("nextToken")?.trim() ?? "";
+    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
+      const query = new URLSearchParams(baseQuery);
+      if (nextToken) query.set("nextToken", nextToken);
+      else query.delete("nextToken");
+      const remote = await coupangRequest({ payload: input.payload, method: "GET", path, query });
+      const orderStep = step(pageIndex === 0 ? "orders" : `orders:${pageIndex + 1}`, remote);
+      steps.push(orderStep);
+      if (!orderStep.ok) break;
+      const responseData = nestedObject(remote.data.data);
+      const candidate = String(remote.data.nextToken ?? responseData.nextToken ?? "").trim();
+      if (!candidate || candidate === nextToken) break;
+      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+        return paginationResult(input, steps, {
+          ...input.arguments,
+          query: { ...stringMap(input.arguments, "query"), nextToken: candidate },
+        });
+      }
+      nextToken = candidate;
+    }
+    return result(input, steps);
   }
   if (input.operation === "orders.get") {
     const shipmentBoxId = pathSegment(stringArgument(input.arguments, "shipmentBoxId"));
@@ -2065,12 +2231,65 @@ async function executeSmartstore(input: ExecuteInput) {
     return result(input, [step("option-stock", remote)], decodeURIComponent(originProductNo));
   }
   if (input.operation === "orders.list") {
-    const remote = await request({ method: "GET", path: "/v1/pay-order/seller/product-orders/last-changed-statuses", query: queryParams(input.arguments) });
-    return result(input, [step("orders", remote)]);
+    const baseQuery = queryParams(input.arguments);
+    const steps: ChannelOperationStep[] = [];
+    let moreFrom = baseQuery.get("lastChangedFrom")?.trim() ?? "";
+    let moreSequence = baseQuery.get("moreSequence")?.trim() ?? "";
+    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
+      const query = new URLSearchParams(baseQuery);
+      if (moreFrom) query.set("lastChangedFrom", moreFrom);
+      if (moreSequence) query.set("moreSequence", moreSequence);
+      const remote = await request({ method: "GET", path: "/v1/pay-order/seller/product-orders/last-changed-statuses", query });
+      const orderStep = step(pageIndex === 0 ? "orders" : `orders:${pageIndex + 1}`, remote);
+      steps.push(orderStep);
+      if (!orderStep.ok) break;
+      const root = Object.keys(nestedObject(remote.data.data)).length ? nestedObject(remote.data.data) : remote.data;
+      const more = nestedObject(root.more);
+      const nextFrom = String(more.moreFrom ?? root.moreFrom ?? "").trim();
+      const nextSequence = String(more.moreSequence ?? root.moreSequence ?? "").trim();
+      if (!nextFrom || !nextSequence || (nextFrom === moreFrom && nextSequence === moreSequence)) break;
+      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+        return paginationResult(input, steps, {
+          ...input.arguments,
+          query: {
+            ...stringMap(input.arguments, "query"),
+            lastChangedFrom: nextFrom,
+            moreSequence: nextSequence,
+          },
+        });
+      }
+      moreFrom = nextFrom;
+      moreSequence = nextSequence;
+    }
+    return result(input, steps);
   }
   if (input.operation === "inquiries.list") {
-    const remote = await request({ method: "GET", path: "/v1/contents/qnas", query: queryParams(input.arguments) });
-    return result(input, [step("inquiries", remote)]);
+    const baseQuery = queryParams(input.arguments);
+    const pageSize = boundedPageSize(baseQuery.get("size"), 100, 100);
+    let page = Math.max(1, finiteCount(baseQuery.get("page")) ?? 1);
+    const steps: ChannelOperationStep[] = [];
+    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
+      const query = new URLSearchParams(baseQuery);
+      query.set("page", String(page));
+      query.set("size", String(pageSize));
+      const remote = await request({ method: "GET", path: "/v1/contents/qnas", query });
+      const inquiryStep = step(pageIndex === 0 ? "inquiries" : `inquiries:${page}`, remote);
+      steps.push(inquiryStep);
+      if (!inquiryStep.ok) break;
+      const count = providerRecordCount(remote.data, ["contents", "content", "qnas"]);
+      const root = Object.keys(nestedObject(remote.data.data)).length ? nestedObject(remote.data.data) : remote.data;
+      const totalPages = finiteCount(root.totalPages);
+      if (count === 0 || count < pageSize || (totalPages !== null && page >= totalPages)) break;
+      const nextPage = page + 1;
+      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+        return paginationResult(input, steps, {
+          ...input.arguments,
+          query: { ...stringMap(input.arguments, "query"), page: nextPage, size: pageSize },
+        });
+      }
+      page = nextPage;
+    }
+    return result(input, steps);
   }
   if (input.operation === "inquiries.reply") {
     const questionId = pathSegment(stringArgument(input.arguments, "questionId"));
@@ -2318,17 +2537,24 @@ async function executeTemu(input: ExecuteInput) {
   if (input.operation === "orders.list") {
     const pageSize = Math.max(1, Math.min(100, Number(input.arguments.pageSize) || 100));
     let pageNumber = Math.max(1, Number(input.arguments.pageNumber) || 1);
+    const providerArguments = Object.fromEntries(
+      Object.entries(input.arguments).filter(([key]) => key !== "sellerpilotPaginationDepth"),
+    );
     const steps: ChannelOperationStep[] = [];
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
       const remote = await temuRequest({
         payload: input.payload,
         type: "bg.order.list.v2.get",
-        arguments: { ...input.arguments, pageNumber, pageSize },
+        arguments: { ...providerArguments, pageNumber, pageSize },
       });
       const pageStep = step(pageIndex === 0 ? "orders" : `orders:${pageNumber}`, remote);
       steps.push(pageStep);
       if (!pageStep.ok || temuResultRecords(remote.data, "pageItems").length < pageSize) break;
-      pageNumber += 1;
+      const nextPageNumber = pageNumber + 1;
+      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+        return paginationResult(input, steps, { ...input.arguments, pageNumber: nextPageNumber, pageSize });
+      }
+      pageNumber = nextPageNumber;
     }
     return result(input, steps);
   }
@@ -2345,17 +2571,24 @@ async function executeTemu(input: ExecuteInput) {
   if (input.operation === "inquiries.list") {
     const pageSize = Math.max(1, Math.min(200, Number(input.arguments.pageSize) || 200));
     let pageNo = Math.max(1, Number(input.arguments.pageNo) || 1);
+    const providerArguments = Object.fromEntries(
+      Object.entries(input.arguments).filter(([key]) => key !== "sellerpilotPaginationDepth"),
+    );
     const steps: ChannelOperationStep[] = [];
-    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
       const remote = await temuRequest({
         payload: input.payload,
         type: "bg.aftersales.parentaftersales.list.get",
-        arguments: { ...input.arguments, pageNo, pageSize },
+        arguments: { ...providerArguments, pageNo, pageSize },
       });
       const pageStep = step(pageIndex === 0 ? "inquiries" : `inquiries:${pageNo}`, remote);
       steps.push(pageStep);
       if (!pageStep.ok || temuResultRecords(remote.data, "data").length < pageSize) break;
-      pageNo += 1;
+      const nextPageNo = pageNo + 1;
+      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+        return paginationResult(input, steps, { ...input.arguments, pageNo: nextPageNo, pageSize });
+      }
+      pageNo = nextPageNo;
     }
     return result(input, steps);
   }
@@ -2744,8 +2977,40 @@ async function executeEbay(input: ExecuteInput) {
     ], decodedSku);
   }
   if (input.operation === "orders.list") {
-    const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: "/sell/fulfillment/v1/order", query: queryParams(input.arguments) });
-    return result(input, [step("orders", remote)]);
+    const baseQuery = queryParams(input.arguments);
+    const limit = boundedPageSize(baseQuery.get("limit"), 50, 200);
+    let offset = Math.max(0, finiteCount(baseQuery.get("offset")) ?? 0);
+    const steps: ChannelOperationStep[] = [];
+    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
+      const query = new URLSearchParams(baseQuery);
+      query.set("limit", String(limit));
+      query.set("offset", String(offset));
+      const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: "/sell/fulfillment/v1/order", query });
+      const orderStep = step(pageIndex === 0 ? "orders" : `orders:${pageIndex + 1}`, remote);
+      steps.push(orderStep);
+      if (!orderStep.ok) break;
+      const pageOrders = objectArray(remote.data.orders);
+      const total = finiteCount(remote.data.total);
+      const nextUrl = typeof remote.data.next === "string" ? remote.data.next : "";
+      if (pageOrders.length === 0 || pageOrders.length < limit || (total !== null && offset + pageOrders.length >= total)) break;
+      let nextOffset = offset + pageOrders.length;
+      if (nextUrl) {
+        try {
+          nextOffset = finiteCount(new URL(nextUrl).searchParams.get("offset")) ?? nextOffset;
+        } catch {
+          // Provider links are advisory; the documented numeric offset remains authoritative.
+        }
+      }
+      if (nextOffset <= offset) break;
+      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+        return paginationResult(input, steps, {
+          ...input.arguments,
+          query: { ...stringMap(input.arguments, "query"), limit, offset: nextOffset },
+        });
+      }
+      offset = nextOffset;
+    }
+    return result(input, steps);
   }
   if (input.operation === "orders.get") {
     const orderId = pathSegment(stringArgument(input.arguments, "orderId"));
@@ -2768,6 +3033,11 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
       }),
     }
     : input;
+  const safeArguments: Record<string, unknown> = safeInput.arguments;
+  if ((safeInput.operation === "orders.list" || safeInput.operation === "inquiries.list")
+      && (finiteCount(safeArguments.sellerpilotPaginationDepth) ?? 0) >= MAX_PROVIDER_SYNC_CONTINUATIONS) {
+    return paginationSafetyStop(safeInput);
+  }
   if (safeInput.channel === "qoo10") return executeQoo10(safeInput);
   if (safeInput.channel === "shopee") return executeShopee(safeInput);
   if (safeInput.channel === "lazada") return executeLazada(safeInput);

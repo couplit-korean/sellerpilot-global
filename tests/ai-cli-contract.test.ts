@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cliStudioResultSchema, productResearchJobRequestSchema, productResearchResultSchema, studioJobRequestSchema, supportReplyJobRequestSchema, supportReplyResultSchema, workerCompletionSchema } from "../lib/ai-cli-contract";
+import {
+  cliStudioResultSchema,
+  productResearchJobRequestSchema,
+  productResearchResultSchema,
+  studioJobRequestSchema,
+  supportReplyJobRequestSchema,
+  supportReplyResultSchema,
+  supportReplyWorkerRequestSchema,
+  workerCompletionSchema,
+} from "../lib/ai-cli-contract";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 
 const CLAIM_TOKEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -22,6 +31,7 @@ const localized = [
   ["lazada", "VN", "vi-VN", "Tách espresso gốm trắng"],
   ["lazada", "ID", "id-ID", "Cangkir espresso keramik putih"],
   ["coupang", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
+  ["elevenst", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
   ["smartstore", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
   ["ebay", "US", "en-US", "White Ceramic Espresso Cup"],
   ["ebay", "GB", "en-GB", "White Ceramic Espresso Cup"],
@@ -80,7 +90,7 @@ function validResult() {
   };
 }
 
-test("AI studio contract accepts all 26 exact channel-market locales", () => {
+test("AI studio contract accepts all 27 exact channel-market locales", () => {
   const parsed = cliStudioResultSchema.safeParse(validResult());
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
@@ -197,6 +207,42 @@ test("AI studio request requires seller facts and normalized listing images", ()
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
 
+test("AI studio request accepts only bounded verified same-product price evidence", () => {
+  const base = {
+    jobId: "11111111-1111-4111-8111-111111111111",
+    manualFields: validRequiredIntake(),
+    imagePaths: ["user/job/input/001.jpg"],
+    imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1200, height: 1200, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],
+  };
+  const competitorContext = {
+    query: "화이트 도자기 에스프레소 컵",
+    providerStatuses: [{ provider: "elevenst_product_search", status: "searched", count: 1, marketplaces: ["elevenst"] }],
+    candidates: [{
+      provider: "elevenst_product_search",
+      marketplace: "elevenst",
+      externalId: "12345",
+      title: "화이트 도자기 에스프레소 컵 1개",
+      url: "https://www.11st.co.kr/products/12345",
+      mallName: "11번가 판매자",
+      price: 12_900,
+      currency: "KRW",
+      verifiedSameProduct: true,
+    }],
+  } as const;
+  assert.equal(studioJobRequestSchema.safeParse({ ...base, competitorContext }).success, true);
+  assert.equal(studioJobRequestSchema.safeParse({
+    ...base,
+    competitorContext: {
+      ...competitorContext,
+      candidates: [{ ...competitorContext.candidates[0], verifiedSameProduct: false }],
+    },
+  }).success, false);
+  assert.equal(studioJobRequestSchema.safeParse({
+    ...base,
+    competitorContext: { ...competitorContext, query: "<script>not evidence</script>" },
+  }).success, false);
+});
+
 test("AI studio request accepts free-text research without a source URL", () => {
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "33333333-3333-4333-8333-333333333333",
@@ -271,6 +317,22 @@ test("support reply CLI contract requires a supported locale and reviewable draf
     tone: "polite",
   });
   assert.equal(request.success, true);
+  assert.equal(supportReplyWorkerRequestSchema.safeParse({
+    ticket_id: "55555555-5555-4555-8555-555555555555",
+    channel: "lazada",
+    target_locale: "ja-JP",
+    tone: "polite",
+    subject: "Delivery status",
+    message: "Please confirm the current delivery status.",
+    order: {
+      external_order_id: "ORDER-1",
+      product_name: "Test product",
+      quantity: 1,
+      status: "paid",
+      ordered_at: "2026-08-25T10:00:00+00:00",
+      shipped_at: null,
+    },
+  }).success, true);
   assert.equal(supportReplyJobRequestSchema.safeParse({
     jobId: "44444444-4444-4444-8444-444444444444",
     ticketId: "55555555-5555-4555-8555-555555555555",

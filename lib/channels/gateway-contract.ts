@@ -27,6 +27,19 @@ export const gatewayClaimSchema = z.object({
   attempt_count: z.number().int().min(1).max(6),
 });
 
+const paginationContinuationSchema = z.object({
+  reason: z.literal("page_cap_reached"),
+  arguments: z.record(z.string(), z.unknown()).superRefine((value, context) => {
+    if (JSON.stringify(value).length > 64_000) {
+      context.addIssue({ code: "custom", message: "pagination continuation too large" });
+    }
+    const depth = value.sellerpilotPaginationDepth;
+    if (!Number.isInteger(depth) || Number(depth) < 1 || Number(depth) > 50) {
+      context.addIssue({ code: "custom", message: "invalid pagination continuation depth" });
+    }
+  }),
+}).strict();
+
 const operationResultSchema = z.object({
   ok: z.boolean(),
   channel: gatewayChannelSchema,
@@ -37,10 +50,47 @@ const operationResultSchema = z.object({
     status: z.number().int().min(0).max(999),
     requestId: z.string().max(160).optional(),
     data: z.record(z.string(), z.unknown()),
-  })).min(1).max(32),
+  })).min(1).max(128),
   remoteId: z.string().max(240).optional(),
   publicUrl: z.string().url().max(1_000).optional(),
+  continuation: paginationContinuationSchema.optional(),
   safeMessage: z.string().min(1).max(1_000),
+}).superRefine((value, context) => {
+  if (!value.continuation) return;
+  if (value.ok !== true || (value.operation !== "orders.list" && value.operation !== "inquiries.list")) {
+    context.addIssue({ code: "custom", message: "pagination continuation requires a successful sync page" });
+    return;
+  }
+  const next = value.continuation.arguments;
+  const query = next.query && typeof next.query === "object" && !Array.isArray(next.query)
+    ? next.query as Record<string, unknown>
+    : {};
+  const queryParams = next.queryParams && typeof next.queryParams === "object" && !Array.isArray(next.queryParams)
+    ? next.queryParams as Record<string, unknown>
+    : {};
+  const positiveInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 1;
+  const nonNegativeInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 0;
+  const nonEmpty = (item: unknown) => typeof item === "string" && item.trim().length > 0;
+  const valid = value.channel === "shopee" && value.operation === "orders.list"
+    ? nonEmpty(query.cursor)
+    : value.channel === "lazada" && value.operation === "orders.list"
+      ? nonNegativeInteger(queryParams.offset)
+      : value.channel === "coupang" && value.operation === "orders.list"
+        ? nonEmpty(query.nextToken)
+        : value.channel === "coupang" && value.operation === "inquiries.list"
+          ? positiveInteger(query.pageNum)
+          : value.channel === "smartstore" && value.operation === "orders.list"
+            ? nonEmpty(query.lastChangedFrom) && nonEmpty(query.moreSequence)
+            : value.channel === "smartstore" && value.operation === "inquiries.list"
+              ? positiveInteger(query.page)
+              : value.channel === "ebay" && value.operation === "orders.list"
+                ? nonNegativeInteger(query.offset)
+                : value.channel === "temu" && value.operation === "orders.list"
+                  ? positiveInteger(next.pageNumber)
+                  : value.channel === "temu" && value.operation === "inquiries.list"
+                    ? positiveInteger(next.pageNo)
+                    : false;
+  if (!valid) context.addIssue({ code: "custom", message: "invalid provider pagination continuation" });
 });
 
 const credentialRefreshSchema = z.object({

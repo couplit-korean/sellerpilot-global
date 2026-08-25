@@ -26,7 +26,7 @@ function parsedRecord(value: unknown) {
   }
 }
 
-function iso(value: unknown) {
+function iso(value: unknown, fallbackTimestamp: string) {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric > 0) {
     const parsed = new Date(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
@@ -36,10 +36,11 @@ function iso(value: unknown) {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
-  return new Date().toISOString();
+  return fallbackTimestamp;
 }
 
 export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInquiry | null {
+  const receivedAt = new Date().toISOString();
   const data = parsedRecord(payload.data);
   const nestedMessage = record(data.message);
   const message = Object.keys(nestedMessage).length ? nestedMessage : data;
@@ -58,12 +59,15 @@ export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInq
     message: messageText,
     status: "waiting",
     priority: 3,
-    receivedAt: iso(message.send_time ?? data.send_time ?? payload.timestamp),
+    receivedAt: iso(message.send_time ?? data.send_time ?? payload.timestamp, receivedAt),
     remoteMessageId: messageId,
   };
 }
 
-export function normalizeLazadaImHistory(steps: Array<{ name: string; data: Record<string, unknown> }>) {
+export function normalizeLazadaImHistory(
+  steps: Array<{ name: string; data: Record<string, unknown> }>,
+  fallbackTimestamp = new Date().toISOString(),
+) {
   const sessions = new Map<string, { session: Record<string, unknown>; messages: Record<string, unknown>[] }>();
   for (const step of steps.filter((item) => item.name.startsWith("inquiries-message:"))) {
       const root = record(step.data.data);
@@ -97,7 +101,7 @@ export function normalizeLazadaImHistory(steps: Array<{ name: string; data: Reco
         message,
         status: unreadCount > 0 ? "waiting" : "resolved",
         priority: unreadCount > 0 ? 2 : 3,
-        receivedAt: iso(latest?.send_time ?? session.last_message_time),
+        receivedAt: iso(latest?.send_time ?? session.last_message_time, fallbackTimestamp),
         remoteMessageId: text(latest?.message_id),
       };
     })

@@ -20,7 +20,8 @@ test("AI worker claim applies the shared backoff without reducing the daemon del
 
   assert.match(worker, /let aiClaimBackoffUntil = 0/);
   assert.match(worker, /const backoffMs = workerClaimBackoffMs\(response\.status\)/);
-  assert.match(worker, /workerAuthBackoffUntil = aiClaimBackoffUntil/);
+  assert.match(worker, /if \(response\.status === 401\) deferWorkerScope\("ai", response\.status\)/);
+  assert.match(worker, /Date\.now\(\) < authBackoffUntil\.ai/);
   assert.match(worker, /Date\.now\(\) < aiClaimBackoffUntil/);
 });
 
@@ -44,7 +45,8 @@ test("AI claim route compensates every post-claim preparation failure", async ()
   assert.match(route, /sellerpilot_complete_ai_job/);
   assert.match(route, /p_status: "failed"/);
   assert.match(route, /catch \(preparationError\)[\s\S]*?safeReason: "claim_preparation_exception"/);
-  assert.equal(route.match(/return preparationFailure\(\{/g)?.length, 8);
+  assert.equal(route.match(/return preparationFailure\(\{/g)?.length, 10);
+  assert.match(route, /safeReason: "invalid_competitor_context"/);
   assert.match(route, /safeReason: "source_image_signing_incomplete"/);
   assert.match(route, /safeReason: "comparison_image_signing_incomplete"/);
   assert.ok(

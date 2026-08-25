@@ -45,6 +45,7 @@ export async function POST(request: Request) {
 
   const parsed = schema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ message: "동기화 채널 요청을 확인해 주세요." }, { status: 400 });
+  const syncNormalizationTimestamp = new Date().toISOString();
 
   const { data: credentialRows, error: credentialError } = await admin.userClient.rpc("sellerpilot_list_credentials");
   if (credentialError) {
@@ -105,7 +106,11 @@ export async function POST(request: Request) {
         throw new Error(operationResults.find((operationResult) => !operationResult.ok)?.safeMessage);
       }
       const orders = [...new Map(
-        operationResults.flatMap((operationResult) => normalizeChannelOrders(channel, operationResult))
+        operationResults.flatMap((operationResult) => normalizeChannelOrders(
+          channel,
+          operationResult,
+          syncNormalizationTimestamp,
+        ))
           .map((order) => [order.externalOrderId, order] as const),
       ).values()];
       const { error: ingestError } = await admin.serviceClient.rpc("sellerpilot_service_ingest_orders", {
@@ -189,7 +194,7 @@ export async function POST(request: Request) {
         environment: "production",
       });
       if (!operationResult.ok) throw new Error(operationResult.safeMessage);
-      const inquiries = normalizeChannelInquiries(channel, operationResult);
+      const inquiries = normalizeChannelInquiries(channel, operationResult, syncNormalizationTimestamp);
       const { error: ingestError } = await admin.serviceClient.rpc("sellerpilot_service_ingest_inquiries", {
         p_credential_id: credential.id,
         p_channel: channel,

@@ -65,8 +65,9 @@ test("reconciliation-required shipments are never counted as full success or rem
 });
 
 test("fulfillment route preserves a stable resource-bound gateway write and defers 202 without false failure", async () => {
-  const [route, orderSync, failureMigration, resourceMigration] = await Promise.all([
+  const [route, page, orderSync, failureMigration, resourceMigration] = await Promise.all([
     readFile(new URL("../app/api/admin/orders/fulfill/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/order-sync.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260825071000_harden_order_shipment_ledger_integrity.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260825104900_resource_bound_gateway_writes.sql", import.meta.url), "utf8"),
@@ -90,6 +91,13 @@ test("fulfillment route preserves a stable resource-bound gateway write and defe
   assert.match(route, /SHOPEE_SHIPPING_MODE_SELECTION_REQUIRED/);
   assert.match(route, /shippingParameter: preflightOutcome\.payload/);
   assert.match(route, /preflight-\$\{randomUUID\(\)\.slice\(0, 8\)\}/);
+  assert.match(route, /const shipmentConcurrency = 3/);
+  assert.match(route, /\.min\(1\)\.max\(3\)/);
+  assert.match(route, /Promise\.all\(parsed\.data\.shipments\.slice\(offset, offset \+ shipmentConcurrency\)\.map\(processShipmentSafely\)\)/);
+  assert.match(page, /const fulfillmentRequestBatchSize = 3/);
+  assert.match(page, /shipments\.slice\(offset, offset \+ fulfillmentRequestBatchSize\)/);
+  assert.match(route, /출고 처리 중 예상하지 못한 응답/);
+  assert.match(route, /new Set\(ids\)\.size !== ids\.length/);
   assert.doesNotMatch(route, /sellerpilot_record_order_shipment/);
   assert.match(route, /sellerpilot_service_record_order_shipment_failure/);
   assert.match(orderSync, /const externalOrderId = text\(row\.shipmentBoxId\)/);
@@ -119,4 +127,7 @@ test("TracX delivery webhook bounds Supabase calls and classifies RPC auth separ
   assert.match(route, /try \{[\s\S]*sellerpilot_service_ingest_tracx_delivery[\s\S]*\} catch \(error\) \{/);
   assert.match(route, /console\.error\(`TracX delivery \$\{context\} RPC failed`, \{ code: code \?\? "unknown", status \}\)/);
   assert.doesNotMatch(route, /console\.error\([^\n]*(webhook_secret|secret_payload|receivedToken|expectedToken)/);
+  assert.match(route, /verifyTracxWebhookSignature/);
+  assert.match(route, /TRACX_ALLOW_LEGACY_QUERY_TOKEN === "true"/);
+  assert.match(route, /reconciliationRequired: true/);
 });

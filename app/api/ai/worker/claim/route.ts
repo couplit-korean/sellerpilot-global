@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
+import { studioCompetitorContextSchema } from "../../../../../lib/ai-cli-contract";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 import {
   createBoundedSupabaseFetch,
@@ -139,6 +140,23 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ message }, { status: mode === "requeue" ? 503 : 500 });
   };
+  const stageResultUploads = async (resultPaths: string[]) => {
+    const { data: staged, error: stagingError } = await serviceClient.rpc(
+      "sellerpilot_service_stage_ai_result_uploads",
+      {
+        p_token_hash: tokenHash,
+        p_job_id: jobId,
+        p_claim_token: claimToken,
+        p_paths: resultPaths,
+      },
+    );
+    if (!stagingError && staged === true) return null;
+    return preparationFailure({
+      message: "생성 이미지 정리 경로를 안전하게 준비하지 못했습니다.",
+      safeReason: "result_upload_staging_failed",
+      error: stagingError,
+    });
+  };
   const jobRequest = job.request && typeof job.request === "object" && !Array.isArray(job.request)
     ? job.request as Record<string, unknown>
     : {};
@@ -155,6 +173,17 @@ export async function POST(request: Request) {
         researchOnly: true,
       },
     }, { headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  const rawCompetitorContext = jobRequest.competitor_context;
+  const parsedCompetitorContext = rawCompetitorContext == null
+    ? null
+    : studioCompetitorContextSchema.safeParse(rawCompetitorContext);
+  if (parsedCompetitorContext && !parsedCompetitorContext.success) {
+    return preparationFailure({
+      message: "동일 상품 경쟁가 근거 형식을 확인하지 못했습니다.",
+      safeReason: "invalid_competitor_context",
+      mode: "fail",
+    });
   }
   const paths = Array.isArray(jobRequest.image_paths)
     ? jobRequest.image_paths.filter((path): path is string => typeof path === "string")
@@ -239,6 +268,8 @@ export async function POST(request: Request) {
           error: uploadError,
         });
       }
+      const stagingFailure = await stageResultUploads([assetPath]);
+      if (stagingFailure) return stagingFailure;
       return NextResponse.json({
         ...job,
         request: {
@@ -278,6 +309,8 @@ export async function POST(request: Request) {
         safeReason: "result_upload_signing_failed",
       });
     }
+    const stagingFailure = await stageResultUploads(assetPaths.map((asset) => asset.path));
+    if (stagingFailure) return stagingFailure;
 
     return NextResponse.json({
       ...job,
@@ -290,6 +323,7 @@ export async function POST(request: Request) {
           : {},
         imageSpecs,
         images: signedSourceImages,
+        ...(parsedCompetitorContext?.success ? { competitorContext: parsedCompetitorContext.data } : {}),
       },
       resultUploads: assetUploads.map((upload) => ({
         ...upload,

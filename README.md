@@ -26,11 +26,11 @@ Qoo10 Japan, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBa
 
 ## ChatGPT CLI AI 작업자
 
-SellerPilot은 OpenAI API Key를 사용하지 않습니다. 관리자가 `API 관리` 화면에서 일회성 작업자 토큰을 발급한 뒤, ChatGPT에 로그인된 Mac에서 자동실행 작업자를 설치합니다. 설치기는 토큰을 macOS 키체인에만 저장합니다.
+SellerPilot은 OpenAI API Key를 사용하지 않습니다. 관리자가 `API 관리` 화면에서 AI·판매채널 게이트웨이·스케줄러용 일회성 토큰 세트를 발급한 뒤, 화면에 표시된 `--token-set` 설치 명령으로 ChatGPT에 로그인된 Mac의 자동실행 작업자를 교체합니다. 새 세트는 설치와 기동이 확인될 때까지 대기 상태이며, 성공할 때만 기존 세 토큰을 원자적으로 폐기합니다. 설치기는 토큰 원문을 macOS 키체인에만 저장합니다.
 
 ```bash
 codex login status
-npm run ai:worker:install
+npm run ai:worker:install -- --rotate-token --token-set <API 관리 화면의 세트 ID>
 npm run ai:worker:status
 npm run ai:worker:temu-egress
 ```

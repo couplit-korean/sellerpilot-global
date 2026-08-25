@@ -24,6 +24,7 @@ const channelMarks: Record<string, string> = {
   shopee: "쇼피",
   lazada: "라자다",
   coupang: "쿠팡",
+  elevenst: "11번가",
   smartstore: "네이버",
   ebay: "이베이",
   temu: "테무",
@@ -62,8 +63,9 @@ export function StyleLearningCenter() {
           </span>
           <h2>채널·국가별 상품 스타일 학습 검증</h2>
           <p>
-            6개 핵심 카테고리의 상품군을 200개씩 나누고, 8개 채널의 26개 국가·언어 조합에 맞춰
-            제목·설명·상세 배치·썸네일·촬영 지침을 업로드 프롬프트에 연결했습니다.
+            6개 문안 카테고리의 상품군을 200개씩 나누고, 9개 설정샷 상품군과 8개 채널의
+            20개 스타일 검증 프로필을 제목·설명·상세 배치·썸네일·촬영 지침에 연결했습니다.
+            실제 AI 등록 문안은 별도의 27개 채널·국가 현지화 계약으로 생성합니다.
           </p>
         </div>
         <div className="style-learning-version">
@@ -75,6 +77,7 @@ export function StyleLearningCenter() {
 
       <section className="style-learning-metrics" aria-label="학습 범위 요약">
         <article><Store size={20} /><span><strong>{styleLearningSummary.categories}</strong><small>대분류</small></span></article>
+        <article><ImageIcon size={20} /><span><strong>{styleLearningSummary.settingShotGroups}</strong><small>설정샷 상품군</small></span></article>
         <article><PackageSearch size={20} /><span><strong>{styleLearningSummary.examples}</strong><small>상품 검증 항목</small></span></article>
         <article><Globe2 size={20} /><span><strong>{styleLearningSummary.channels}</strong><small>판매 채널</small></span></article>
         <article><ImageIcon size={20} /><span><strong>{styleLearningSummary.markets}</strong><small>국가·언어 프로필</small></span></article>
@@ -116,16 +119,16 @@ export function StyleLearningCenter() {
           <PackageSearch size={23} />
         </div>
         <div className="style-learning-impact-grid">
-          <article><b>SEO 상품명 · 26개</b><p>채널·국가별 핵심 검색어 순서와 제목 길이 규칙을 적용하고 실제 등록 제목 필드로 전달합니다.</p></article>
-          <article><b>상품 설명 · 26개</b><p>모바일 요약, 현지어 설명, 검색 키워드를 생성해 각 채널의 설명·검색 필드에 반영합니다.</p></article>
-          <article><b>상세 텍스트 · 104개</b><p>overview·feature·howto·spec 4개 섹션을 26개 프로필별로 생성해 텍스트와 상세 이미지를 교차 배치합니다.</p></article>
-          <article><b>이미지 SEO · 130개</b><p>대표 26개·상세 104개의 현지어 시각 의미를 사진 생성 프롬프트에 반영합니다. HTML alt 지원 채널에는 대체텍스트로, 미지원 채널에는 이미지 선택·순서 규칙으로 적용합니다.</p></article>
+          <article><b>SEO 상품명 · 27개</b><p>채널·국가별 핵심 검색어 순서와 제목 길이 규칙을 적용하고 실제 등록 제목 필드로 전달합니다.</p></article>
+          <article><b>상품 설명 · 27개</b><p>모바일 요약, 현지어 설명, 검색 키워드를 생성해 각 채널의 설명·검색 필드에 반영합니다.</p></article>
+          <article><b>상세 텍스트 · 108개</b><p>overview·feature·howto·spec 4개 섹션을 27개 프로필별로 생성해 텍스트와 상세 이미지를 교차 배치합니다.</p></article>
+          <article><b>이미지 SEO · 135개</b><p>대표 27개·상세 108개의 현지어 시각 의미를 사진 생성 프롬프트에 반영합니다. HTML alt 지원 채널에는 대체텍스트로, 미지원 채널에는 이미지 선택·순서 규칙으로 적용합니다.</p></article>
         </div>
       </section>
 
       <section className="style-learning-section">
         <div className="style-learning-section-heading">
-          <div><span>CHANNEL RULES</span><h3>7개 채널 제작 스타일</h3></div>
+          <div><span>CHANNEL RULES</span><h3>{styleLearningSummary.channels}개 채널 제작 스타일</h3></div>
           <Store size={23} />
         </div>
         <div className="style-channel-grid">

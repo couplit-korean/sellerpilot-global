@@ -12,10 +12,11 @@ import {
 
 test("style registry contains 6 categories and 1,200 unique coverage records", () => {
   assert.equal(categoryStyleProfiles.length, 6);
-  assert.equal(channelStyleProfiles.length, 7);
-  assert.equal(styleTargetMarkets.length, 19);
+  assert.equal(channelStyleProfiles.length, 8);
+  assert.equal(styleTargetMarkets.length, 20);
   assert.equal(learnedProductExamples.length, 1_200);
-  assert.equal(styleLearningSummary.promptProfiles, 114);
+  assert.equal(styleLearningSummary.settingShotGroups, 9);
+  assert.equal(styleLearningSummary.promptProfiles, 120);
   for (const category of categoryStyleProfiles) {
     const examples = learnedProductExamples.filter((item) => item.categoryId === category.id);
     assert.equal(examples.length, 200, category.label);

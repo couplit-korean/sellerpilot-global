@@ -15,7 +15,7 @@ test("lineage completions use the dedicated atomic RPC before generic gateway co
   const source = await readFile(completeRouteUrl, "utf8");
   const branch = source.indexOf('job.operation === "listing.lineage.verify"');
   const dedicated = source.indexOf('"sellerpilot_complete_listing_lineage_verification"', branch);
-  const generic = source.indexOf('"sellerpilot_complete_channel_gateway_job"', dedicated);
+  const generic = source.indexOf('"sellerpilot_service_complete_gateway_transaction"', dedicated);
 
   assert.ok(branch > 0 && dedicated > branch && generic > dedicated);
   assert.match(source.slice(branch, generic), /p_token_hash: tokenHash/);

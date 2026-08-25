@@ -9,6 +9,7 @@ import { withPromiseTimeout } from "../lib/promise-timeout";
 import { createClient } from "../lib/supabase/client";
 import { productIntakeSchema, type NormalizedProductImageSpec, type ProductIntakeDraft } from "../lib/product-intake";
 import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
+import { makeProductDetailPersistable, parsePersistedProductDetailPage } from "./_publishing/product-detail-persistence";
 import type { ProductDetailData } from "./product-detail-puck";
 import type { ProductStudioResult } from "./product-studio-types";
 import { waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
@@ -27,6 +28,26 @@ const ProductDetailRender = dynamic(() => import("./product-detail-puck").then((
 const ProductDetailEditor = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailEditor), { ssr: false });
 
 type StudioPhoto = { name: string; url: string; file: File; role: string; originalWidth: number; originalHeight: number };
+export type StudioCompetitorContext = {
+  query: string;
+  providerStatuses: Array<{
+    provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse";
+    status: "searched" | "pending" | "failed" | "unavailable";
+    count: number;
+    marketplaces: Array<"smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other">;
+  }>;
+  candidates: Array<{
+    provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse";
+    marketplace: "smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other";
+    externalId: string;
+    title: string;
+    url: string;
+    mallName: string;
+    price: number;
+    currency: string;
+    verifiedSameProduct: true;
+  }>;
+};
 type AutoThumbnail = { id: string; label: string; ratio: string; width: number; height: number; dataUrl: string };
 type OptimizedPhoto = { name: string; mediaType: "image/jpeg"; blob: Blob; spec: NormalizedProductImageSpec };
 type RegeneratedAssetResult = {
@@ -267,10 +288,11 @@ const detailPresets = [
 
 const generatedPreviewPresets = [...thumbnailPresets, ...detailPresets];
 
-export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, onRunningChange, notify, onJobQueued, onResultReady }: {
+export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, onRunningChange, notify, onJobQueued, onResultReady }: {
   mainPhoto: StudioPhoto | null;
   photos: StudioPhoto[];
   manualFields: ProductIntakeDraft;
+  competitorContext: StudioCompetitorContext;
   requestId: number;
   onRunningChange: (running: boolean) => void;
   notify: (message: string) => void;
@@ -284,6 +306,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
   const [cliPhase, setCliPhase] = useState<"idle" | "queued" | "running">("idle");
   const [editorOpen, setEditorOpen] = useState(false);
   const [savedDetailData, setSavedDetailData] = useState<ProductDetailData | null>(null);
+  const [detailPageVersion, setDetailPageVersion] = useState<number | null>(null);
+  const [detailSaving, setDetailSaving] = useState(false);
   const [lastError, setLastError] = useState("");
   const [sourceJobId, setSourceJobId] = useState("");
   const [sourceProductId, setSourceProductId] = useState<string | null>(null);
@@ -297,6 +321,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
   const displayJobId = useRef("");
   const queuedOwnJobIdRef = useRef("");
   const generateInFlightRef = useRef(false);
+  const detailSaveInFlightRef = useRef(false);
   const announcedJobIdsRef = useRef(new Set<string>());
   const studioMountedRef = useRef(true);
   const lifecycleControllerRef = useRef<AbortController | null>(null);
@@ -402,6 +427,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
           dataUrl: generatedImages?.find((image) => image.id === preset.id)?.url ?? "",
         })).filter((thumbnail) => thumbnail.dataUrl));
         setSavedDetailData(null);
+        setDetailPageVersion(null);
       }
       const { response: productResponse, payload: productPayload } = await fetchJsonWithStudioJobTimeout("/api/operations/snapshot", {
         method: "POST",
@@ -491,6 +517,12 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
     onRunningChange(true);
     setAiHero("");
     setThumbnails([]);
+    setResult(null);
+    setSavedDetailData(null);
+    setDetailPageVersion(null);
+    setSourceJobId("");
+    setSourceProductId(null);
+    setEditorOpen(false);
     setLastError("");
     setCliPhase("queued");
     try {
@@ -517,7 +549,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
         ({ response, payload: queued } = await fetchJsonWithStudioJobTimeout("/api/ai/product-studio", {
           method: "POST",
           headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({ jobId, manualFields: validatedIntake.data, imagePaths, imageSpecs }),
+          body: JSON.stringify({ jobId, manualFields: validatedIntake.data, competitorContext, imagePaths, imageSpecs }),
         }, lifecycleController.signal, 30_000, { message: "CLI 작업 등록 응답을 읽지 못했습니다." } as { jobId?: string; message?: string }));
       } catch (error) {
         if (isStudioJobAbort(error) || !studioMountedRef.current) throw error;
@@ -565,7 +597,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
         onRunningChange(false);
       }
     }
-  }, [announceOwnJob, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, studioSessionId]);
+  }, [announceOwnJob, competitorContext, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, studioSessionId]);
 
   const retryOwnJobStatus = useCallback(async () => {
     const jobId = queuedOwnJobIdRef.current;
@@ -699,7 +731,86 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
 
   const creativeThumbnails = thumbnails.filter((thumbnail) => thumbnailPresets.some((preset) => preset.id === thumbnail.id));
   const detailThumbnails = thumbnails.filter((thumbnail) => detailPresets.some((preset) => preset.id === thumbnail.id));
-  const studioAssetUrls = useMemo(() => Object.fromEntries(thumbnails.map((thumbnail) => [thumbnail.id, thumbnail.dataUrl])), [thumbnails]);
+  const studioAssetUrls = useMemo(() => ({
+    ...(currentImageUrl ? { hero: currentImageUrl } : {}),
+    ...Object.fromEntries(thumbnails.map((thumbnail) => [thumbnail.id, thumbnail.dataUrl])),
+  }), [currentImageUrl, thumbnails]);
+
+  useEffect(() => {
+    if (!sourceProductId) return;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const { data: sessionData } = await createClient().auth.getSession();
+        const accessToken = sessionData.session?.access_token;
+        if (!accessToken || controller.signal.aborted) return;
+        const response = await fetch(`/api/admin/products/${sourceProductId}/publish-context`, {
+          headers: { authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok || controller.signal.aborted) return;
+        const payload = await response.json() as { detailPage?: unknown };
+        const detailPage = parsePersistedProductDetailPage<ProductDetailData>(payload.detailPage);
+        if (!detailPage || controller.signal.aborted) return;
+        setSavedDetailData(detailPage.data);
+        setDetailPageVersion(detailPage.version);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          notify("저장된 상세페이지 편집본은 불러오지 못했지만 AI 생성 결과는 유지했습니다.");
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [notify, sourceProductId]);
+
+  const saveDetailPage = useCallback(async (next: ProductDetailData) => {
+    if (!sourceProductId || detailSaving || detailSaveInFlightRef.current) return;
+    const lifecycleController = lifecycleControllerRef.current;
+    if (!lifecycleController || lifecycleController.signal.aborted || !studioMountedRef.current) return;
+    detailSaveInFlightRef.current = true;
+    setDetailSaving(true);
+    try {
+      const { data: sessionData } = await createClient().auth.getSession();
+      throwIfStudioJobAborted(lifecycleController.signal);
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error("상세페이지를 저장하려면 관리자 로그인이 필요합니다.");
+      const response = await fetch(`/api/admin/products/${sourceProductId}/publish-context`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        signal: lifecycleController.signal,
+        body: JSON.stringify({
+          data: makeProductDetailPersistable(next, studioAssetUrls),
+          expectedVersion: detailPageVersion,
+        }),
+      });
+      const payload = await response.json().catch(() => ({ message: "상세페이지 저장 응답을 읽지 못했습니다." })) as { detailPage?: unknown; code?: string; message?: string };
+      if (!response.ok) {
+        if (response.status === 409 && payload.code === "DETAIL_PAGE_VERSION_CONFLICT") {
+          const latestResponse = await fetch(`/api/admin/products/${sourceProductId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store", signal: lifecycleController.signal });
+          const latestPayload = latestResponse.ok ? await latestResponse.json() as { detailPage?: unknown } : null;
+          const latest = parsePersistedProductDetailPage<ProductDetailData>(latestPayload?.detailPage);
+          if (latest) {
+            setSavedDetailData(latest.data);
+            setDetailPageVersion(latest.version);
+          }
+        }
+        throw new Error(payload.message ?? "상세페이지 편집 내용을 저장하지 못했습니다.");
+      }
+      const saved = parsePersistedProductDetailPage<ProductDetailData>(payload.detailPage);
+      if (!saved) throw new Error("저장된 상세페이지 버전을 확인하지 못했습니다.");
+      setSavedDetailData(saved.data);
+      setDetailPageVersion(saved.version);
+      setEditorOpen(false);
+      notify("상세페이지 편집 내용을 운영 원장에 저장했습니다.");
+    } catch (error) {
+      if (isStudioJobAbort(error) || !studioMountedRef.current) return;
+      notify(error instanceof Error ? error.message : "상세페이지 편집 내용을 저장하지 못했습니다.");
+    } finally {
+      detailSaveInFlightRef.current = false;
+      if (studioMountedRef.current) setDetailSaving(false);
+    }
+  }, [detailPageVersion, detailSaving, notify, sourceProductId, studioAssetUrls]);
 
   return (
     <section className="panel ai-product-studio" id="ai-product-studio">
@@ -728,13 +839,13 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
         </aside>
 
         <article className="detail-preview-panel">
-          <div className="detail-preview-toolbar"><span><MonitorSmartphone size={16} /><b>상세페이지 라이브 미리보기</b><small>모바일 우선 · 블록형 구성</small></span><button type="button" onClick={() => setEditorOpen(true)} disabled={!result}><PencilRuler size={15} />Puck으로 직접 편집</button></div>
+          <div className="detail-preview-toolbar"><span><MonitorSmartphone size={16} /><b>상세페이지 라이브 미리보기</b><small>모바일 우선 · 블록형 구성</small></span><button type="button" onClick={() => setEditorOpen(true)} disabled={!result || !sourceProductId || detailSaving}><PencilRuler size={15} />{sourceProductId ? "Puck으로 직접 편집" : "상품 원장 연결 중"}</button></div>
           <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>실제 상세페이지 결과가 아직 없습니다.</b><small>대표사진과 상품 정보를 분석한 뒤 ChatGPT CLI 결과를 표시합니다.</small></div>}</div>
         </article>
       </div>
       {lastError && <div className="studio-warning error"><b>{submissionPhase === "uncertain" ? "접수 상태 확인 필요" : "실제 AI 작업 실패"}</b><p>{lastError}</p><small>{submissionPhase === "uncertain" ? `새 작업을 만들지 않고 기존 작업 ID ${queuedOwnJobId}를 잠근 상태입니다.` : "예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 CLI 작업자 상태를 확인해 주세요."}</small>{submissionPhase === "uncertain" && queuedOwnJobId && <button type="button" className="asset-regenerate" onClick={() => void retryOwnJobStatus()} disabled={generating}><RefreshCw size={13} />기존 작업 상태 다시 확인</button>}</div>}
       {result && result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
-      {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} onSave={(next) => { setSavedDetailData(next); notify("상세페이지 편집 내용을 현재 작업에 저장했습니다."); }} onClose={() => setEditorOpen(false)} />}
+      {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} saving={detailSaving} onSave={saveDetailPage} onClose={() => { if (!detailSaving) setEditorOpen(false); }} />}
     </section>
   );
 }
