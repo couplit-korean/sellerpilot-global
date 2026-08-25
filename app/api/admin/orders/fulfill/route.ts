@@ -6,7 +6,6 @@ import { isActiveChannelKey } from "../../../../../lib/channels/catalog";
 import { buildShipmentArguments } from "../../../../../lib/channels/shipment-draft";
 import { shipmentWriteAvailability } from "../../../../../lib/channels/shipment-release";
 import {
-  remoteShipmentSuccessResult,
   shipmentLedgerWriteSucceeded,
   shipmentResultSummary,
   type ShipmentFulfillmentResult,
@@ -51,6 +50,19 @@ function failedShipmentResult(input: {
     message: ledgerRecorded
       ? input.message
       : `${input.message} 내부 실패 이력 저장도 확인되지 않아 운영 원장을 점검해 주세요.`,
+  };
+}
+
+function deferredShipmentResult(input: { id: string; channel: string; reconciliationRequired: boolean; message: string }): ShipmentFulfillmentResult {
+  return {
+    id: input.id,
+    channel: input.channel,
+    ok: false,
+    status: input.reconciliationRequired ? "reconciliation_required" : "in_progress",
+    remoteSucceeded: false,
+    ledgerRecorded: false,
+    reconciliationRequired: input.reconciliationRequired,
+    message: input.message,
   };
 }
 
@@ -147,40 +159,44 @@ export async function POST(request: Request) {
           operation: "shipment.confirm",
           idempotencyKey,
           confirmWrite: true,
+          orderId: shipment.id,
+          shipmentCarrier: shipment.carrierCode,
+          shipmentTracking: shipment.trackingNumber,
           arguments: operationArguments,
         }),
         signal: AbortSignal.timeout(120_000),
       });
-      const remotePayload = await remoteResponse.json().catch(() => ({})) as { message?: string; safeMessage?: string; remoteId?: string };
+      const remotePayload = await remoteResponse.json().catch(() => ({})) as {
+        message?: string;
+        safeMessage?: string;
+        remoteId?: string;
+        inProgress?: boolean;
+        reconciliationRequired?: boolean;
+        manualRequired?: boolean;
+      };
       if (!remoteResponse.ok) {
         const message = safeMessage(order.channel_key, remoteResponse.status, remotePayload.message ?? remotePayload.safeMessage);
+        if (remoteResponse.status === 202 && remotePayload.inProgress === true) {
+          results.push(deferredShipmentResult({ id: shipment.id, channel: order.channel_key, reconciliationRequired: false, message }));
+          continue;
+        }
+        if (remotePayload.reconciliationRequired === true || remotePayload.manualRequired === true) {
+          results.push(deferredShipmentResult({ id: shipment.id, channel: order.channel_key, reconciliationRequired: true, message }));
+          continue;
+        }
         results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
         continue;
       }
-      const recordedTrackingNumber = order.channel_key === "lazada" && remotePayload.remoteId
-        ? remotePayload.remoteId
-        : shipment.trackingNumber;
-      let ledgerData: unknown = null;
-      let ledgerError: unknown = null;
-      try {
-        const ledgerWrite = await admin.userClient.rpc("sellerpilot_record_order_shipment", {
-          p_id: shipment.id,
-          p_carrier: shipment.carrierCode,
-          p_tracking: recordedTrackingNumber,
-          p_success: true,
-          p_error: null,
-        });
-        ledgerData = ledgerWrite.data;
-        ledgerError = ledgerWrite.error;
-      } catch (error) {
-        ledgerError = error;
-      }
-      results.push(remoteShipmentSuccessResult({
+      results.push({
         id: shipment.id,
         channel: order.channel_key,
-        ledgerData,
-        ledgerError,
-      }));
+        ok: true,
+        status: "succeeded",
+        remoteSucceeded: true,
+        ledgerRecorded: true,
+        reconciliationRequired: false,
+        message: "판매채널 발송 처리와 원장 갱신이 완료됐습니다.",
+      });
     } catch (error) {
       const raw = error instanceof Error ? error.message : "";
       const message = raw.startsWith("SHIPMENT_PACKAGE_DETAILS_REQUIRED")
@@ -188,17 +204,23 @@ export async function POST(request: Request) {
         : raw.startsWith("SHIPMENT_CHANNEL_UNAVAILABLE")
           ? "이 채널은 판매자 발송 API 권한이 아직 연결되지 않았습니다."
           : "판매채널 발송 요청 중 안전하게 처리된 오류가 발생했습니다.";
-      results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
+      results.push(deferredShipmentResult({
+        id: shipment.id,
+        channel: order.channel_key,
+        reconciliationRequired: true,
+        message: `${message} 요청 접수 여부를 확정할 수 없어 재전송을 차단하고 원장 확인이 필요합니다.`,
+      }));
     }
   }
 
-  const { succeeded, failed, reconciliationRequired } = shipmentResultSummary(results);
+  const { succeeded, failed, inProgress, reconciliationRequired } = shipmentResultSummary(results);
   return NextResponse.json({
     ok: succeeded === results.length && reconciliationRequired === 0,
     succeeded,
     failed,
+    inProgress,
     reconciliationRequired,
     results,
-    message: `${results.length}건 중 ${succeeded}건 완료 · ${failed}건 실패 · ${reconciliationRequired}건 원장 조정 필요`,
+    message: `${results.length}건 중 ${succeeded}건 완료 · ${inProgress}건 진행 중 · ${failed}건 실패 · ${reconciliationRequired}건 원장 조정 필요`,
   }, { status: succeeded === results.length && reconciliationRequired === 0 ? 200 : 207, headers: { "cache-control": "no-store, max-age=0" } });
 }

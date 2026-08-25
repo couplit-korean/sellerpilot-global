@@ -269,7 +269,15 @@ function naverOptionalCategoryMetadataStep(name: string, remote: RemoteResponse)
 }
 
 function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: string): ChannelOperationResult {
-  const ok = steps.length > 0 && steps.every((item) => item.ok);
+  const providerStepsSucceeded = steps.length > 0 && steps.every((item) => item.ok);
+  // A create response is not a durable success until the provider identity is
+  // known. Some marketplace APIs can acknowledge the mutation while omitting
+  // the identifier from a malformed/delayed response. Treating that response
+  // as successful would publish a listing that cannot be updated and, after a
+  // retry, can create a duplicate remote product.
+  const createIdentityMissing = input.operation === "listing.create"
+    && !remoteId?.trim();
+  const ok = providerStepsSucceeded && !createIdentityMissing;
   const providerMessage = steps
     .filter((item) => !item.ok)
     .map((item) => {
@@ -285,7 +293,9 @@ function result(input: ExecuteInput, steps: ChannelOperationStep[], remoteId?: s
     remoteId,
     safeMessage: ok
       ? `${channelCatalog[input.channel].name} ${input.operation} 작업이 정상 응답했습니다.`
-      : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.${providerMessage ? ` · ${providerMessage}` : ""}`,
+      : createIdentityMissing && providerStepsSucceeded
+        ? `${channelCatalog[input.channel].name} 상품 생성 응답은 수신했지만 원격 상품 식별값을 확인할 수 없습니다. 판매자센터 수동 확인이 필요합니다.`
+        : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.${providerMessage ? ` · ${providerMessage}` : ""}`,
   };
 }
 
@@ -524,6 +534,7 @@ async function executeElevenst(input: ExecuteInput) {
     let createRemote: RemoteResponse;
     let productNo = "";
     let createStep: ChannelOperationStep | null = null;
+    let providerCreateAcceptedStep: ChannelOperationStep | null = null;
     if (reconciled) {
       createRemote = reconciled.remote;
       productNo = reconciled.productNo;
@@ -547,9 +558,19 @@ async function executeElevenst(input: ExecuteInput) {
         createStep = elevenstVerifiedStep("product-create-reconcile", createRemote, true);
       }
       if (!productNo) productNo = String(createRemote.data.productNo ?? "").trim();
-      if (!createStep) createStep = elevenstVerifiedStep("product-create", createRemote, Boolean(productNo));
+      if (!createStep) {
+        providerCreateAcceptedStep = elevenstVerifiedStep("product-create-accepted", createRemote);
+        createStep = elevenstVerifiedStep("product-create", createRemote, Boolean(productNo));
+      }
     }
-    if (!createStep.ok || !productNo) return result(input, [createStep]);
+    if (!createStep.ok || !productNo) {
+      return result(
+        input,
+        providerCreateAcceptedStep?.ok && !productNo
+          ? [providerCreateAcceptedStep, createStep]
+          : [createStep],
+      );
+    }
 
     let readbackRemote: RemoteResponse | null = null;
     let readbackVerified = false;
@@ -2021,6 +2042,10 @@ async function executeTemu(input: ExecuteInput) {
     if (createStep.ok && remoteId) {
       steps.push(createStep);
     } else {
+      // Preserve a provider-accepted create marker even if the response omitted
+      // goodsId. If lookup recovery also misses, the gateway must quarantine
+      // this create instead of treating it as safely retryable.
+      if (createStep.ok) steps.push(createStep);
       // A successful Temu create can outlive a gateway timeout. Retrying the same
       // external ID would otherwise fail as a duplicate, so recover the existing
       // product and continue the same status/image verification path.
@@ -2465,8 +2490,11 @@ async function executeEbay(input: ExecuteInput) {
     if (!inventoryImageStep.ok) return result(input, steps, sku);
     const offerRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "POST", path: "/sell/inventory/v1/offer", body: offer });
     let offerId = offerRemote.data.offerId === undefined ? undefined : String(offerRemote.data.offerId);
-    if (offerRemote.response.ok && offerId) {
-      steps.push(step("offer", offerRemote));
+    const offerStep = step("offer", offerRemote);
+    if (offerStep.ok) steps.push(offerStep);
+    if (offerStep.ok && offerId) {
+      // The accepted provider step was recorded above together with its durable
+      // offer identity.
     } else {
       // A timed-out create call may still have persisted the offer remotely. eBay
       // also rejects a second offer for the same SKU, so reconcile by SKU before
@@ -2495,7 +2523,12 @@ async function executeEbay(input: ExecuteInput) {
         sellerpilotVerification: offerId ? "EXISTING_OFFER_RECOVERED" : "EBAY_OFFER_RECONCILE_MISSING",
       };
       steps.push(reconcileStep);
-      if (!reconcileStep.ok || !offerId) return result(input, steps, sku);
+      if (!reconcileStep.ok || !offerId) {
+        // A locally known SKU is not an eBay offer/listing identity. In the
+        // accepted-without-offerId case, leave remoteId empty so completion
+        // records an unresolved external action rather than a false identity.
+        return result(input, steps, offerStep.ok ? undefined : sku);
+      }
       const updateRemote = await ebayRequest({
         payload: input.payload,
         environment: input.environment,

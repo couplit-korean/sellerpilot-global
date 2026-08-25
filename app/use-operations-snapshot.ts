@@ -110,6 +110,9 @@ export type OperationTicket = {
   message: string;
   translatedMessage: string | null;
   replyDraft: string | null;
+  replyDeliveryStatus: "never" | "preparing" | "sending" | "succeeded" | "failed" | "reconciliation_required";
+  replyDeliveryError: string | null;
+  replyOperationAttemptId: string | null;
   status: "urgent" | "waiting" | "in_progress" | "resolved";
   priority: number;
   receivedAt: string;

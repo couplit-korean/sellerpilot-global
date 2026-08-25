@@ -14,6 +14,11 @@ const listing = { status: "published", remoteId: "123456789" };
 test("a failed update keeps using update when an earlier publication is proven", () => {
   const failedUpdate = { status: "failed", remoteId: "123456789", publishedAt: "2026-08-24T10:00:00.000Z" };
   assert.equal(listingWriteOperation(failedUpdate), "listing.update");
+  assert.equal(listingWriteOperation({
+    status: "failed",
+    remoteId: "unverified-remote-create-123",
+    publishedAt: "2026-08-25T10:00:00.000Z",
+  }), "listing.update");
   assert.equal(listingWriteOperation({ status: "failed", remoteId: "123456789", publishedAt: null }), "listing.create");
   assert.equal(listingWriteOperation({ status: "published", remoteId: "123456789", publishedAt: null }), "listing.update");
   assert.deepEqual(

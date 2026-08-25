@@ -145,6 +145,46 @@ test("failed order and inquiry reads are stored as failed gateway jobs", () => {
   assert.equal(gatewayJobCompletionStatus("diagnostic.test", false), "succeeded");
 });
 
+test("a trusted provider mutation followed by failed verification requires reconciliation", () => {
+  const cases = [
+    ["listing.create", "product-create"],
+    ["listing.update", "listing.update"],
+    ["listing.stop", "goods-off-shelf"],
+    ["price.update", "bulk-price"],
+    ["inventory.update", "bulk-inventory"],
+    ["shipment.acknowledge", "pack"],
+    ["shipment.confirm", "shipment-confirm"],
+  ] as const;
+  for (const [operation, mutation] of cases) {
+    assert.equal(gatewayJobCompletionStatus(operation, false, [
+      { name: mutation, ok: true },
+      { name: "inventory-readback", ok: false },
+    ]), "reconciliation_required", operation);
+  }
+
+  assert.equal(gatewayJobCompletionStatus("inventory.update", false, [
+    { name: "inventory-item-readback", ok: true },
+    { name: "inventory.update", ok: false },
+  ]), "succeeded", "an explicit provider rejection before mutation remains a structured failure");
+  assert.equal(gatewayJobCompletionStatus("inventory.update", false, [
+    { name: "inventory-readback", ok: true },
+    { name: "inventory.update", ok: false },
+  ]), "succeeded", "successful readback/preflight steps are not mutations");
+  assert.equal(gatewayJobCompletionStatus("shipment.confirm", false, [
+    { name: "shipping-fulfillment", ok: false, status: 503 },
+  ]), "reconciliation_required", "a provider 5xx on the exact mutation request is an ambiguous write outcome");
+  assert.equal(gatewayJobCompletionStatus("listing.update", false, [
+    { name: "listing.update", ok: false, status: 408 },
+  ]), "reconciliation_required", "a timeout response on the exact mutation request is ambiguous");
+  assert.equal(gatewayJobCompletionStatus("listing.update", false, [
+    { name: "listing.update", ok: false, status: 429 },
+  ]), "succeeded", "a non-ambiguous provider rejection remains a structured failure");
+  assert.equal(gatewayJobCompletionStatus("inventory.update", false, [
+    { name: "inventory.update", ok: false, status: 409 },
+    { name: "inventory-readback", ok: false, status: 503 },
+  ]), "succeeded", "a readback 5xx cannot turn an explicitly rejected mutation into an observed write");
+});
+
 test("generated shots reject exact and perceptually close duplicates", () => {
   const base = { assetId: "hero", digest: "same", visualHash: Uint8Array.from([0, 0, 0, 0]) };
   const exact = findDuplicateShot({ assetId: "wide", digest: "same", visualHash: Uint8Array.from([255, 255, 255, 255]) }, [base]);

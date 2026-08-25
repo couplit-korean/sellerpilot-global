@@ -12,7 +12,7 @@ export function workerRpcErrorStatus(error: RpcErrorLike | null | undefined): 40
 
 export function workerRpcErrorMessage(status: 401 | 503) {
   return status === 401
-    ? "채널 작업자 토큰이 유효하지 않습니다."
+    ? "작업자 토큰이 유효하지 않습니다."
     : "운영 데이터베이스 응답이 지연되고 있습니다. 잠시 후 다시 시도해 주세요.";
 }
 

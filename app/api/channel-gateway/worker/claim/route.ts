@@ -15,8 +15,15 @@ export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const workerToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
-  if (!workerToken.startsWith("spw_") || !supabaseUrl || !secretKey) {
+  if (!workerToken.startsWith("spw_") || workerToken.length < 24) {
     return NextResponse.json({ message: "채널 작업자 인증이 필요합니다." }, { status: 401 });
+  }
+  if (!supabaseUrl || !secretKey) {
+    console.error("channel gateway claim server configuration is unavailable", {
+      hasSupabaseUrl: Boolean(supabaseUrl),
+      hasSupabaseSecretKey: Boolean(secretKey),
+    });
+    return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
   }
   const body = await request.json().catch(() => ({})) as { version?: unknown };
   const serviceClient = createClient(supabaseUrl, secretKey, {

@@ -3,6 +3,15 @@ import { hashSync as bcryptHashSync } from "bcryptjs";
 
 export type SecretPayload = Record<string, unknown>;
 
+export type CredentialRefreshSnapshot = {
+  payload: SecretPayload;
+  expiresAt: string | null;
+  oauthComplete?: boolean;
+};
+
+type CredentialRefreshHandler = (refresh: CredentialRefreshSnapshot) => void | Promise<void>;
+type ExternalMutationStartHandler = () => void | Promise<void>;
+
 export type RemoteResponse = {
   response: Response;
   data: Record<string, unknown>;
@@ -21,6 +30,14 @@ export const lazadaApiEndpoints: Record<string, string> = {
 export function textValue(payload: SecretPayload, key: string) {
   const value = payload[key];
   return typeof value === "string" ? value.trim() : "";
+}
+
+function safeFutureIso(value: unknown, fallbackSeconds: number) {
+  const parsed = Number(value);
+  const seconds = Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, 10 * 365 * 86_400)
+    : fallbackSeconds;
+  return new Date(Date.now() + seconds * 1000).toISOString();
 }
 
 export async function readRemoteResponse(response: Response): Promise<RemoteResponse> {
@@ -351,6 +368,8 @@ async function ensureShopeeTargetAccessToken(
   bufferMs: number,
   targetType: "shop" | "merchant",
   requestedTargetId = "",
+  onExternalMutationStart?: ExternalMutationStartHandler,
+  onCredentialRefresh?: CredentialRefreshHandler,
 ) {
   const targets = shopeeStoredTargets(payload);
   const targetKey = targetType === "shop" ? "shop_id" : "merchant_id";
@@ -375,6 +394,7 @@ async function ensureShopeeTargetAccessToken(
   if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) throw new Error("SHOPEE_REFRESH_TOKEN_EXPIRED");
   if (Number.isFinite(authorizationExpiresAt) && authorizationExpiresAt <= Date.now()) throw new Error("SHOPEE_AUTHORIZATION_EXPIRED");
 
+  await onExternalMutationStart?.();
   const remote = await exchangeShopeeOAuthToken({
     environment,
     partnerId,
@@ -386,7 +406,7 @@ async function ensureShopeeTargetAccessToken(
   const nextRefreshToken = textValue(remote.data, "refresh_token");
   const errorCode = textValue(remote.data, "error");
   if (!remote.response.ok || errorCode || !nextAccessToken || !nextRefreshToken) throw new Error("SHOPEE_TOKEN_REFRESH_FAILED");
-  const nextAccessExpiry = new Date(Date.now() + Number(remote.data.expire_in ?? 14_400) * 1000).toISOString();
+  const nextAccessExpiry = safeFutureIso(remote.data.expire_in, 14_400);
   const nextRefreshExpiry = new Date(Date.now() + 30 * 86_400_000).toISOString();
   const nextTarget: ShopeeStoredTarget | null = selectedTarget ? {
     ...selectedTarget,
@@ -399,7 +419,7 @@ async function ensureShopeeTargetAccessToken(
     ...payload,
     shopee_targets: targets.map((target) => target.type === nextTarget.type && target.id === nextTarget.id ? nextTarget : target),
   } : payload;
-  return {
+  const refresh = {
     payload: {
       ...storedPayload,
       [targetKey]: targetId,
@@ -411,6 +431,8 @@ async function ensureShopeeTargetAccessToken(
     refreshed: true as const,
     credentialExpiresAt: Number.isFinite(authorizationExpiresAt) ? new Date(authorizationExpiresAt).toISOString() : null,
   };
+  await onCredentialRefresh?.({ payload: refresh.payload, expiresAt: refresh.credentialExpiresAt });
+  return refresh;
 }
 
 export async function ensureShopeeAccessToken(
@@ -418,8 +440,10 @@ export async function ensureShopeeAccessToken(
   environment: "sandbox" | "production",
   bufferMs = 10 * 60 * 1000,
   requestedShopId = "",
+  onExternalMutationStart?: ExternalMutationStartHandler,
+  onCredentialRefresh?: CredentialRefreshHandler,
 ) {
-  return ensureShopeeTargetAccessToken(payload, environment, bufferMs, "shop", requestedShopId);
+  return ensureShopeeTargetAccessToken(payload, environment, bufferMs, "shop", requestedShopId, onExternalMutationStart, onCredentialRefresh);
 }
 
 export async function ensureShopeeMerchantAccessToken(
@@ -427,8 +451,10 @@ export async function ensureShopeeMerchantAccessToken(
   environment: "sandbox" | "production",
   bufferMs = 10 * 60 * 1000,
   requestedMerchantId = "",
+  onExternalMutationStart?: ExternalMutationStartHandler,
+  onCredentialRefresh?: CredentialRefreshHandler,
 ) {
-  return ensureShopeeTargetAccessToken(payload, environment, bufferMs, "merchant", requestedMerchantId);
+  return ensureShopeeTargetAccessToken(payload, environment, bufferMs, "merchant", requestedMerchantId, onExternalMutationStart, onCredentialRefresh);
 }
 
 export async function shopeeRequest(input: {
@@ -607,6 +633,8 @@ export async function exchangeLazadaOAuthToken(input: {
 export async function ensureLazadaAccessToken(
   payload: SecretPayload,
   bufferMs = 72 * 60 * 60 * 1000,
+  onExternalMutationStart?: ExternalMutationStartHandler,
+  onCredentialRefresh?: CredentialRefreshHandler,
 ) {
   const accessToken = textValue(payload, "access_token");
   const accessExpiresAt = Date.parse(textValue(payload, "access_token_expires_at"));
@@ -621,15 +649,16 @@ export async function ensureLazadaAccessToken(
   if (!appKey || !appSecret || !refreshToken) throw new Error("LAZADA_REFRESH_CREDENTIALS_MISSING");
   if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) throw new Error("LAZADA_REFRESH_TOKEN_EXPIRED");
 
+  await onExternalMutationStart?.();
   const remote = await exchangeLazadaOAuthToken({ appKey, appSecret, refreshToken });
   const nextAccessToken = textValue(remote.data, "access_token");
   const nextRefreshToken = textValue(remote.data, "refresh_token") || refreshToken;
   const responseCode = String(remote.data.code ?? "");
   if (!remote.response.ok || !nextAccessToken || (responseCode && responseCode !== "0")) throw new Error("LAZADA_TOKEN_REFRESH_FAILED");
 
-  const nextAccessExpiry = new Date(Date.now() + Number(remote.data.expires_in ?? 2_592_000) * 1000).toISOString();
-  const nextRefreshExpiry = new Date(Date.now() + Number(remote.data.refresh_expires_in ?? 15_552_000) * 1000).toISOString();
-  return {
+  const nextAccessExpiry = safeFutureIso(remote.data.expires_in, 2_592_000);
+  const nextRefreshExpiry = safeFutureIso(remote.data.refresh_expires_in, 15_552_000);
+  const refresh = {
     payload: {
       ...payload,
       access_token: nextAccessToken,
@@ -640,6 +669,8 @@ export async function ensureLazadaAccessToken(
     refreshed: true as const,
     credentialExpiresAt: nextRefreshExpiry,
   };
+  await onCredentialRefresh?.({ payload: refresh.payload, expiresAt: refresh.credentialExpiresAt });
+  return refresh;
 }
 
 export function buildQoo10Url(input: {
@@ -962,6 +993,8 @@ export async function ensureEbayAccessToken(
   payload: SecretPayload,
   environment: "sandbox" | "production",
   bufferMs = 5 * 60 * 1000,
+  onExternalMutationStart?: ExternalMutationStartHandler,
+  onCredentialRefresh?: CredentialRefreshHandler,
 ) {
   const accessToken = textValue(payload, "access_token");
   const accessExpiresAt = Date.parse(textValue(payload, "access_token_expires_at"));
@@ -977,6 +1010,7 @@ export async function ensureEbayAccessToken(
   if (!clientId || !clientSecret || !ruName || !refreshToken) throw new Error("EBAY_REFRESH_CREDENTIALS_MISSING");
   if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) throw new Error("EBAY_REFRESH_TOKEN_EXPIRED");
 
+  await onExternalMutationStart?.();
   const remote = await exchangeEbayOAuthToken({
     environment,
     clientId,
@@ -987,15 +1021,17 @@ export async function ensureEbayAccessToken(
   });
   const nextAccessToken = textValue(remote.data, "access_token");
   if (!remote.response.ok || !nextAccessToken) throw new Error("EBAY_TOKEN_REFRESH_FAILED");
-  const nextAccessExpiry = new Date(Date.now() + Number(remote.data.expires_in ?? 7_200) * 1000).toISOString();
+  const nextAccessExpiry = safeFutureIso(remote.data.expires_in, 7_200);
   const credentialExpiresAt = Number.isFinite(refreshExpiresAt)
     ? new Date(refreshExpiresAt).toISOString()
     : new Date(Date.now() + 47_304_000 * 1000).toISOString();
-  return {
+  const refresh = {
     payload: { ...payload, access_token: nextAccessToken, access_token_expires_at: nextAccessExpiry },
     refreshed: true as const,
     credentialExpiresAt,
   };
+  await onCredentialRefresh?.({ payload: refresh.payload, expiresAt: refresh.credentialExpiresAt });
+  return refresh;
 }
 
 export async function elevenstSellerXmlRequest(input: {

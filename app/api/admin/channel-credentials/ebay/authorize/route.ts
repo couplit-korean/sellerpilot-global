@@ -5,9 +5,13 @@ import { z } from "zod";
 import {
   buildEbayConsentUrl,
   ebayDefaultScopes,
-  exchangeEbayOAuthToken,
   textValue,
 } from "../../../../../../lib/channels/protocols";
+import {
+  ChannelGatewayInProgressError,
+  ChannelGatewayReconciliationRequiredError,
+  exchangeOAuthViaChannelGateway,
+} from "../../../../../../lib/channels/gateway";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -97,6 +101,30 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  if (oauthCode) {
+    try {
+      await exchangeOAuthViaChannelGateway({
+        serviceClient,
+        credentialId: credentialId ?? "",
+        channel: "ebay",
+        request: { code: oauthCode },
+      });
+    } catch (error) {
+      if (error instanceof ChannelGatewayInProgressError) {
+        return NextResponse.json({ message: "eBay OAuth 토큰 교환이 안전하게 진행 중입니다." }, { status: 202 });
+      }
+      if (error instanceof ChannelGatewayReconciliationRequiredError) {
+        const response = NextResponse.json({ message: "eBay OAuth 결과를 수동으로 확인해야 합니다. 같은 승인 코드를 다시 제출하지 마세요." }, { status: 409 });
+        response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
+        return response;
+      }
+      return NextResponse.json({ message: "eBay OAuth 토큰 교환을 허용 IP 작업자에서 완료하지 못했습니다. 작업 상태를 확인해 주세요." }, { status: 422 });
+    }
+    const response = NextResponse.json({ message: "eBay OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
+    response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
+    return response;
+  }
+
   const metadata = credentialId && Array.isArray(credentialRows)
     ? credentialRows.find((row) => row && typeof row === "object" && "id" in row && row.id === credentialId)
     : null;
@@ -129,28 +157,7 @@ export async function POST(request: NextRequest) {
     scopes: ebayDefaultScopes.join(" "),
   };
   delete nextSecret.authorization_code;
-  let expiresAt = parsed.data.expiresAt;
-
-  if (oauthCode) {
-    const remote = await exchangeEbayOAuthToken({
-      environment: credentialEnvironment,
-      clientId,
-      clientSecret,
-      ruName,
-      code: oauthCode,
-      scopes: ebayDefaultScopes,
-    });
-    const accessToken = textValue(remote.data, "access_token");
-    const refreshToken = textValue(remote.data, "refresh_token");
-    if (!remote.response.ok || !accessToken || !refreshToken) {
-      return NextResponse.json({ message: "eBay OAuth 토큰 교환에 실패했습니다. RuName·환경·승인 유효시간을 확인해 주세요." }, { status: 422 });
-    }
-    nextSecret.access_token = accessToken;
-    nextSecret.refresh_token = refreshToken;
-    nextSecret.access_token_expires_at = new Date(Date.now() + Number(remote.data.expires_in ?? 7_200) * 1000).toISOString();
-    nextSecret.refresh_token_expires_at = new Date(Date.now() + Number(remote.data.refresh_token_expires_in ?? 47_304_000) * 1000).toISOString();
-    expiresAt = nextSecret.refresh_token_expires_at as string;
-  }
+  const expiresAt = parsed.data.expiresAt;
 
   if (!oauthCode && parsed.data.startOAuth && credentialId) {
     return oauthStartResponse(request, { clientId, ruName, credentialId, environment: credentialEnvironment });
@@ -172,7 +179,5 @@ export async function POST(request: NextRequest) {
   if (!oauthCode && parsed.data.startOAuth) {
     return oauthStartResponse(request, { clientId, ruName, credentialId: String(nextCredentialId), environment: credentialEnvironment });
   }
-  const response = NextResponse.json({ message: "eBay OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
-  if (oauthCode) response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
-  return response;
+  return NextResponse.json({ message: "eBay OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
 }

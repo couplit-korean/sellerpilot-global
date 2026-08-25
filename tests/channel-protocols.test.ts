@@ -341,6 +341,42 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
   }
 });
 
+test("listing create never succeeds when the provider omits the remote identity", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+  try {
+    const operation = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.create",
+      payload: { api_key: "test-key" },
+      arguments: {
+        params: {
+          SecondSubCat: "320002604",
+          ItemTitle: "Test",
+          StandardImage: "https://example.test/item.jpg",
+          ItemDescription: "<p>Test</p>",
+          RetailPrice: "0",
+          ItemPrice: "2500",
+          ItemQty: "1",
+          ExpireDate: "2027-12-31",
+          ShippingNo: "0",
+          AvailableDateType: "0",
+          AvailableDateValue: "3",
+          AudultYN: "N",
+        },
+      },
+      environment: "production",
+    });
+    assert.equal(operation.ok, false);
+    assert.equal(operation.remoteId, undefined);
+    assert.equal(operation.steps[0]?.name, "SetNewGoods");
+    assert.equal(operation.steps[0]?.ok, true);
+    assert.match(operation.safeMessage, /원격 상품 식별값/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Qoo10 pauses a created item when detail-image readback is incomplete", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ method: string; body: string; status: string | null }> = [];
@@ -1491,6 +1527,51 @@ test("eBay listing provisions and verifies a reusable inventory location when th
   }
 });
 
+test("eBay preserves an accepted offer marker when create omits offerId and reconciliation misses", async () => {
+  const originalFetch = globalThis.fetch;
+  const imageUrls = ["https://cdn.example.com/item.jpg"];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/inventory_item/") && method === "GET") {
+      return Response.json({ product: { imageUrls } });
+    }
+    if (url.endsWith("/offer") && method === "POST") {
+      return Response.json({}, { status: 201 });
+    }
+    if (url.includes("/offer?sku=") && method === "GET") {
+      return Response.json({ offers: [] });
+    }
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.create",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: {
+        sku: "SELLERPILOT-NO-OFFER-ID",
+        inventoryItem: { product: { title: "Test", imageUrls } },
+        offer: {
+          sku: "SELLERPILOT-NO-OFFER-ID",
+          marketplaceId: "EBAY_US",
+          format: "FIXED_PRICE",
+          listingPolicies: { fulfillmentPolicyId: "f-1", paymentPolicyId: "p-1", returnPolicyId: "r-1" },
+          merchantLocationKey: "warehouse-1",
+        },
+        publish: false,
+      },
+      environment: "production",
+    });
+    assert.equal(operation.ok, false);
+    assert.equal(operation.remoteId, undefined);
+    assert.equal(operation.steps.find((item) => item.name === "offer")?.ok, true);
+    assert.equal(operation.steps.find((item) => item.name === "offer-reconcile")?.ok, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("provider listing errors expose a sanitized actionable message", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => Response.json({
@@ -1788,6 +1869,42 @@ test("Temu V3 product creation requires an external-id readback match", async ()
   }
 });
 
+test("Temu preserves an accepted create marker when goodsId and reconciliation are both missing", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    if (body.type === "temu.local.goods.v3.add") {
+      return Response.json({ success: true, result: {} });
+    }
+    return Response.json({ success: true, result: { goodsList: [] } });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "temu",
+      operation: "listing.create",
+      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
+      arguments: {
+        body: {
+          goodsBasic: {
+            externalGoodsId: "TEST-TEMU-NO-ID",
+            goodsName: "Missing ID test",
+            goodsCarouselImage: ["https://cdn.example.com/hero.jpg"],
+            detailImage: ["https://cdn.example.com/detail.jpg"],
+          },
+          skuList: [{ externalSkuId: "TEST-TEMU-NO-ID" }],
+        },
+      },
+      environment: "production",
+    });
+    assert.equal(operation.ok, false);
+    assert.equal(operation.remoteId, undefined);
+    assert.equal(operation.steps.find((item) => item.name === "goods-v3-add")?.ok, true);
+    assert.equal(operation.steps.find((item) => item.name === "goods-reconcile")?.ok, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Temu listing retry reconciles an existing external ID and still verifies images", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<Record<string, unknown>> = [];
@@ -1893,7 +2010,9 @@ test("eBay does not invent a domestic-style order acknowledgement step", async (
 test("eBay refreshes an expired two-hour access token before a live operation", async () => {
   const originalFetch = globalThis.fetch;
   let tokenBody = "";
+  const lifecycle: string[] = [];
   globalThis.fetch = async (_input, init) => {
+    lifecycle.push("fetch");
     tokenBody = String(init?.body ?? "");
     return new Response(JSON.stringify({ access_token: "fresh-access-token", expires_in: 7200 }), {
       status: 200,
@@ -1909,10 +2028,15 @@ test("eBay refreshes an expired two-hour access token before a live operation", 
       access_token_expires_at: "2000-01-01T00:00:00.000Z",
       refresh_token: "refresh-token",
       refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
-    }, "sandbox");
+    }, "sandbox", undefined, () => {
+      lifecycle.push("mutation-start");
+    }, async (refresh) => {
+      lifecycle.push(`stage:${String(refresh.payload.access_token)}`);
+    });
     assert.equal(ensured.refreshed, true);
     assert.equal(ensured.payload.access_token, "fresh-access-token");
     assert.match(tokenBody, /grant_type=refresh_token/);
+    assert.deepEqual(lifecycle, ["mutation-start", "fetch", "stage:fresh-access-token"]);
   } finally {
     globalThis.fetch = originalFetch;
   }

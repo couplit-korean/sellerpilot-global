@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ChannelDiagnostic } from "../channel-diagnostics";
 import type { ChannelOperationName, ChannelOperationResult } from "./operations";
 
-export type ChannelGatewayChannel = "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "temu";
+export type ChannelGatewayChannel = "qoo10" | "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "ebay" | "temu";
 
 type GatewayCompetitorCandidate = {
   provider: "elevenst_product_search";
@@ -23,23 +23,72 @@ type GatewayJobSnapshot = {
   error?: unknown;
 };
 
+type ListingGatewayEnqueue = {
+  status?: unknown;
+  job_id?: unknown;
+  attempt_id?: unknown;
+  reused?: unknown;
+};
+
+export type GatewayWriteResource = {
+  kind: "listing_mutation" | "order_shipment";
+  key: string;
+  requestFingerprint: string;
+  listingId?: string;
+  inventoryItemId?: string;
+  orderId?: string;
+  carrierCode?: string;
+  trackingNumber?: string;
+};
+
+export class ChannelGatewayInProgressError extends Error {
+  readonly jobId: string;
+  readonly attemptId: string | null;
+
+  constructor(jobId: string, attemptId: string | null, message = "CHANNEL_GATEWAY_IN_PROGRESS") {
+    super(message);
+    this.name = "ChannelGatewayInProgressError";
+    this.jobId = jobId;
+    this.attemptId = attemptId;
+  }
+}
+
+export class ChannelGatewayReconciliationRequiredError extends Error {
+  readonly jobId: string;
+  readonly attemptId: string | null;
+
+  constructor(jobId: string, attemptId: string | null) {
+    super("CHANNEL_GATEWAY_RECONCILIATION_REQUIRED");
+    this.name = "ChannelGatewayReconciliationRequiredError";
+    this.jobId = jobId;
+    this.attemptId = attemptId;
+  }
+}
+
 async function waitForGatewayJob(
   serviceClient: SupabaseClient,
   jobId: string,
   timeoutMs: number,
+  attemptId: string | null = null,
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const { data, error } = await serviceClient.rpc("sellerpilot_get_channel_gateway_job", { p_job_id: jobId });
-    if (error) throw new Error("CHANNEL_GATEWAY_STATUS_FAILED");
+    // Enqueue already committed. Losing the subsequent status read is never
+    // proof of provider failure; preserve the active job/upper ledger and let
+    // exact worker completion settle it.
+    if (error) throw new ChannelGatewayInProgressError(jobId, attemptId, "CHANNEL_GATEWAY_STATUS_UNAVAILABLE");
     const job = data && typeof data === "object" && !Array.isArray(data) ? data as GatewayJobSnapshot : null;
     if (job?.status === "succeeded" && job.response && typeof job.response === "object" && !Array.isArray(job.response)) return job.response;
+    if (job?.status === "reconciliation_required") {
+      throw new ChannelGatewayReconciliationRequiredError(jobId, attemptId);
+    }
     if (job?.status === "failed" || job?.status === "cancelled") {
       throw new Error(`CHANNEL_GATEWAY_REMOTE_FAILED:${typeof job.error === "string" ? job.error : "worker_failed"}`);
     }
     await delay(500);
   }
-  throw new Error("CHANNEL_GATEWAY_TIMEOUT");
+  throw new ChannelGatewayInProgressError(jobId, attemptId, "CHANNEL_GATEWAY_TIMEOUT");
 }
 
 function delay(ms: number) {
@@ -53,18 +102,94 @@ export async function executeViaChannelGateway(input: {
   channel: ChannelGatewayChannel;
   operation: ChannelOperationName;
   arguments: Record<string, unknown>;
+  listingId?: string;
+  writeResource?: GatewayWriteResource;
   timeoutMs?: number;
 }) {
-  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
-    p_credential_id: input.credentialId,
-    p_attempt_id: input.attemptId,
-    p_channel: input.channel,
-    p_operation: input.operation,
-    p_request_payload: { arguments: input.arguments },
-  });
-  if (enqueueError || typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+  let jobId = "";
+  let effectiveAttemptId = input.attemptId;
+  if (input.listingId) {
+    if (!input.attemptId || !["listing.create", "listing.update", "listing.stop"].includes(input.operation)) {
+      throw new Error("CHANNEL_GATEWAY_LISTING_BINDING_INVALID");
+    }
+    const { data, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_service_enqueue_listing_gateway_job", {
+      p_listing_id: input.listingId,
+      p_credential_id: input.credentialId,
+      p_attempt_id: input.attemptId,
+      p_channel: input.channel,
+      p_operation: input.operation,
+      p_request_payload: { arguments: input.arguments },
+    });
+    const enqueue = data && typeof data === "object" && !Array.isArray(data)
+      ? data as ListingGatewayEnqueue
+      : null;
+    if (enqueueError
+        || !enqueue
+        || typeof enqueue.job_id !== "string"
+        || typeof enqueue.attempt_id !== "string"
+        || !["queued", "in_progress", "reconciliation_required"].includes(String(enqueue.status))) {
+      throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+    }
+    jobId = enqueue.job_id;
+    effectiveAttemptId = enqueue.attempt_id;
+    if (enqueue.status === "reconciliation_required") {
+      throw new ChannelGatewayReconciliationRequiredError(jobId, effectiveAttemptId);
+    }
+    if (enqueue.status === "in_progress") {
+      throw new ChannelGatewayInProgressError(jobId, effectiveAttemptId);
+    }
+  } else if (input.writeResource) {
+    const { data, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_service_enqueue_resource_gateway_job", {
+      p_credential_id: input.credentialId,
+      p_attempt_id: input.attemptId,
+      p_channel: input.channel,
+      p_operation: input.operation,
+      p_request_payload: { arguments: input.arguments },
+      p_resource_kind: input.writeResource.kind,
+      p_resource_key: input.writeResource.key,
+      p_request_fingerprint: input.writeResource.requestFingerprint,
+      p_listing_id: input.writeResource.listingId ?? null,
+      p_inventory_item_id: input.writeResource.inventoryItemId ?? null,
+      p_order_id: input.writeResource.orderId ?? null,
+      p_shipment_carrier: input.writeResource.carrierCode ?? null,
+      p_shipment_tracking: input.writeResource.trackingNumber ?? null,
+    });
+    const enqueue = data && typeof data === "object" && !Array.isArray(data)
+      ? data as ListingGatewayEnqueue
+      : null;
+    if (enqueueError
+        || !enqueue
+        || typeof enqueue.job_id !== "string"
+        || typeof enqueue.attempt_id !== "string"
+        || !["queued", "in_progress", "reconciliation_required"].includes(String(enqueue.status))) {
+      throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+    }
+    jobId = enqueue.job_id;
+    effectiveAttemptId = enqueue.attempt_id;
+    if (enqueue.status === "reconciliation_required") {
+      throw new ChannelGatewayReconciliationRequiredError(jobId, effectiveAttemptId);
+    }
+    if (enqueue.status === "in_progress") {
+      throw new ChannelGatewayInProgressError(jobId, effectiveAttemptId);
+    }
+  } else {
+    const { data, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+      p_credential_id: input.credentialId,
+      p_attempt_id: input.attemptId,
+      p_channel: input.channel,
+      p_operation: input.operation,
+      p_request_payload: { arguments: input.arguments },
+    });
+    if (enqueueError || typeof data !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+    jobId = data;
+  }
 
-  return await waitForGatewayJob(input.serviceClient, jobId, input.timeoutMs ?? 180_000) as ChannelOperationResult;
+  return await waitForGatewayJob(
+    input.serviceClient,
+    jobId,
+    input.timeoutMs ?? 180_000,
+    effectiveAttemptId,
+  ) as ChannelOperationResult;
 }
 
 export async function executeDiagnosticViaChannelGateway(input: {
@@ -118,7 +243,7 @@ export async function executeCompetitorSearchViaChannelGateway(input: {
 export async function exchangeOAuthViaChannelGateway(input: {
   serviceClient: SupabaseClient;
   credentialId: string;
-  channel: "shopee" | "lazada";
+  channel: "shopee" | "lazada" | "ebay";
   request: Record<string, unknown>;
   timeoutMs?: number;
 }) {

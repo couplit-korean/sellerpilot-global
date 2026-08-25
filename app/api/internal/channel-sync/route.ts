@@ -9,7 +9,6 @@ import { supabaseUrl } from "../../../../lib/supabase/config";
 import {
   createBoundedSupabaseFetch,
   workerRpcErrorMessage,
-  workerRpcErrorStatus,
 } from "../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
@@ -20,6 +19,13 @@ type QueueResult = {
   operation?: unknown;
   status?: unknown;
   jobId?: unknown;
+};
+
+type PeriodicSyncResult = {
+  channel: ActiveChannelKey;
+  operation: "orders.list" | "inquiries.list";
+  status: "queued" | "already_pending" | "not_connected" | "failed";
+  infrastructureFailure?: true;
 };
 
 function periodicInquiryRequests(channel: ActiveChannelKey, now: Date) {
@@ -63,20 +69,24 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
     ...periodicInquiryRequests(channel, now).map((payload) => ({ channel, operation: "inquiries.list" as const, payload })),
   ]);
 
-  const results = await mapWithConcurrency(queueRequests, 8, async ({ channel, operation, payload }) => {
-    const { data, error } = await serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
-      p_channel: channel,
-      p_operation: operation,
-      p_request_payload: payload,
-      p_min_interval_minutes: 5,
-    });
-    if (error) return { channel, operation, status: "failed" as const };
-    const result = data && typeof data === "object" && !Array.isArray(data) ? data as QueueResult : {};
-    return {
-      channel,
-      operation,
-      status: typeof result.status === "string" ? result.status : "failed",
-    };
+  const results = await mapWithConcurrency(queueRequests, 8, async ({ channel, operation, payload }): Promise<PeriodicSyncResult> => {
+    try {
+      const { data, error } = await serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
+        p_channel: channel,
+        p_operation: operation,
+        p_request_payload: payload,
+        p_min_interval_minutes: 5,
+      });
+      if (error) return { channel, operation, status: "failed", infrastructureFailure: true };
+      const result = data && typeof data === "object" && !Array.isArray(data) ? data as QueueResult : {};
+      const status = result.status;
+      if (status !== "queued" && status !== "already_pending" && status !== "not_connected") {
+        return { channel, operation, status: "failed", infrastructureFailure: true };
+      }
+      return { channel, operation, status };
+    } catch {
+      return { channel, operation, status: "failed", infrastructureFailure: true };
+    }
   });
 
   const push = await dispatchPendingPushNotifications(serviceClient, 100)
@@ -84,6 +94,14 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   const queued = results.filter((result) => result.status === "queued").length;
   const pending = results.filter((result) => result.status === "already_pending").length;
   const failed = results.filter((result) => result.status === "failed").length;
+  const infrastructureFailures = results.filter((result) => result.infrastructureFailure).length;
+  const databaseWideFailure = results.length > 0 && infrastructureFailures === results.length;
+  if (infrastructureFailures > 0) {
+    console.error("periodic channel sync enqueue RPC failures", {
+      failed: infrastructureFailures,
+      total: results.length,
+    });
+  }
 
   return NextResponse.json({
     ok: failed === 0,
@@ -91,9 +109,13 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
     queued,
     pending,
     failed,
+    infrastructureFailures,
     results,
     push: { configured: push.configured, sent: push.sent, failed: push.failed },
-  }, { headers: { "cache-control": "no-store, max-age=0" } });
+  }, {
+    status: databaseWideFailure ? 503 : infrastructureFailures > 0 ? 207 : 200,
+    headers: { "cache-control": "no-store, max-age=0" },
+  });
 }
 
 export async function GET(request: Request) {
@@ -115,22 +137,31 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const workerToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
-  const serviceClient = serverClient();
-  if (!workerToken.startsWith("spw_") || !serviceClient) {
+  if (!workerToken.startsWith("spw_") || workerToken.length < 24) {
     return NextResponse.json({ message: "채널 작업자 인증이 필요합니다." }, { status: 401 });
+  }
+  const serviceClient = serverClient();
+  if (!serviceClient) {
+    return NextResponse.json({ message: "Supabase 서버 연결이 완료되지 않았습니다." }, { status: 503 });
   }
   const body = await request.json().catch(() => ({})) as { version?: unknown };
   const version = typeof body.version === "string" ? body.version.slice(0, 80) : "sellerpilot-cli-worker";
-  const { data, error } = await serviceClient.rpc("sellerpilot_service_validate_worker_token", {
-    p_token_hash: createHash("sha256").update(workerToken).digest("hex"),
-    p_worker_version: version,
-  });
-  if (error) {
-    const status = workerRpcErrorStatus(error);
-    console.error("periodic channel sync authentication RPC failed", { code: error.code ?? "unknown", status });
-    return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+  let validationData: unknown;
+  try {
+    const { data, error } = await serviceClient.rpc("sellerpilot_service_validate_worker_token", {
+      p_token_hash: createHash("sha256").update(workerToken).digest("hex"),
+      p_worker_version: version,
+    });
+    if (error) {
+      console.error("periodic channel sync authentication RPC failed", { code: error.code ?? "unknown", status: 503 });
+      return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
+    }
+    validationData = data;
+  } catch {
+    console.error("periodic channel sync authentication RPC threw", { status: 503 });
+    return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
   }
-  if (data !== true) {
+  if (validationData !== true) {
     return NextResponse.json({ message: workerRpcErrorMessage(401) }, { status: 401 });
   }
   return runPeriodicSync(serviceClient);

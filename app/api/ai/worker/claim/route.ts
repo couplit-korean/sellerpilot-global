@@ -3,19 +3,52 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
+import {
+  createBoundedSupabaseFetch,
+  workerRpcErrorMessage,
+  workerRpcErrorStatus,
+} from "../../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
+
+type ClaimCompensationMode = "requeue" | "fail";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function safeErrorMetadata(error: unknown) {
+  if (!error || typeof error !== "object") return { code: "unknown", status: "unknown" };
+  const candidate = error as { code?: unknown; status?: unknown; statusCode?: unknown; name?: unknown };
+  return {
+    code: typeof candidate.code === "string"
+      ? candidate.code
+      : typeof candidate.statusCode === "string"
+        ? candidate.statusCode
+        : typeof candidate.name === "string"
+          ? candidate.name
+          : "unknown",
+    status: typeof candidate.status === "number" || typeof candidate.status === "string"
+      ? String(candidate.status)
+      : "unknown",
+  };
+}
 
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const workerToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
-  if (!workerToken.startsWith("spw_") || !supabaseUrl || !secretKey) {
+  if (!workerToken.startsWith("spw_") || workerToken.length < 24) {
     return NextResponse.json({ message: "CLI 작업자 인증이 필요합니다." }, { status: 401 });
+  }
+  if (!supabaseUrl || !secretKey) {
+    console.error("AI worker claim server configuration is unavailable", {
+      hasSupabaseUrl: Boolean(supabaseUrl),
+      hasSupabaseSecretKey: Boolean(secretKey),
+    });
+    return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: createBoundedSupabaseFetch() },
   });
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
   const body = await request.json().catch(() => ({})) as { version?: unknown };
@@ -24,10 +57,88 @@ export async function POST(request: Request) {
     p_token_hash: tokenHash,
     p_worker_version: version,
   });
-  if (error) return NextResponse.json({ message: "CLI 작업자 토큰이 유효하지 않습니다." }, { status: 401 });
+  if (error) {
+    const status = workerRpcErrorStatus(error);
+    console.error("AI worker claim RPC failed", { code: error.code ?? "unknown", status });
+    return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+  }
   if (!data || typeof data !== "object" || Array.isArray(data)) return new NextResponse(null, { status: 204 });
 
   const job = data as Record<string, unknown>;
+  const jobId = typeof job.id === "string" ? job.id : "";
+  const claimToken = typeof job.claim_token === "string" ? job.claim_token : "";
+  if (!UUID_PATTERN.test(jobId) || !UUID_PATTERN.test(claimToken)) {
+    console.error("AI worker claim RPC returned an invalid claim identity", {
+      hasJobId: Boolean(jobId),
+      hasClaimToken: Boolean(claimToken),
+    });
+    return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
+  }
+  const compensateClaim = async (mode: ClaimCompensationMode, safeReason: string) => {
+    if (!jobId) {
+      console.error("AI worker claim compensation cannot identify the claimed job", { mode });
+      return false;
+    }
+    try {
+      const { data: compensated, error: compensationError } = mode === "requeue"
+        ? await serviceClient.rpc("sellerpilot_service_release_ai_job_claim", {
+          p_token_hash: tokenHash,
+          p_job_id: jobId,
+          p_claim_token: claimToken,
+          p_safe_reason: safeReason,
+          p_retry_after_seconds: 60,
+        })
+        : await serviceClient.rpc("sellerpilot_complete_ai_job", {
+          p_token_hash: tokenHash,
+          p_job_id: jobId,
+          p_claim_token: claimToken,
+          p_status: "failed",
+          p_result_payload: null,
+          p_error_message: safeReason,
+        });
+      if (compensationError || compensated !== true) {
+        console.error("AI worker claim compensation failed", {
+          jobId,
+          mode,
+          ...safeErrorMetadata(compensationError),
+        });
+        return false;
+      }
+      return true;
+    } catch (compensationError) {
+      console.error("AI worker claim compensation threw", {
+        jobId,
+        mode,
+        ...safeErrorMetadata(compensationError),
+      });
+      return false;
+    }
+  };
+  const preparationFailure = async ({
+    message,
+    safeReason,
+    mode = "requeue",
+    error,
+  }: {
+    message: string;
+    safeReason: string;
+    mode?: ClaimCompensationMode;
+    error?: unknown;
+  }) => {
+    console.error("AI worker claim preparation failed", {
+      jobId: jobId || "unknown",
+      mode,
+      reason: safeReason,
+      ...safeErrorMetadata(error),
+    });
+    const compensated = await compensateClaim(mode, safeReason);
+    if (!compensated) {
+      return NextResponse.json({
+        message: "작업 준비와 상태 복구에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+      }, { status: 503 });
+    }
+    return NextResponse.json({ message }, { status: mode === "requeue" ? 503 : 500 });
+  };
   const jobRequest = job.request && typeof job.request === "object" && !Array.isArray(job.request)
     ? job.request as Record<string, unknown>
     : {};
@@ -51,95 +162,147 @@ export async function POST(request: Request) {
   const imageSpecs = Array.isArray(jobRequest.image_specs)
     ? jobRequest.image_specs.filter((spec): spec is Record<string, unknown> => Boolean(spec) && typeof spec === "object" && !Array.isArray(spec))
     : [];
-  const { data: signedFiles, error: signedError } = await serviceClient.storage
-    .from("sellerpilot-ai")
-    .createSignedUrls(paths, 10 * 60);
-  if (signedError) return NextResponse.json({ message: "작업 이미지 URL을 만들지 못했습니다." }, { status: 500 });
-  if (job.kind === "product_asset_regeneration") {
-    const assetId = typeof jobRequest.asset_id === "string" ? jobRequest.asset_id : "";
-    const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
-    if (!asset) return NextResponse.json({ message: "재제작할 이미지 종류를 확인하지 못했습니다." }, { status: 500 });
-    const comparisonMap = jobRequest.comparison_asset_paths && typeof jobRequest.comparison_asset_paths === "object" && !Array.isArray(jobRequest.comparison_asset_paths)
-      ? jobRequest.comparison_asset_paths as Record<string, unknown>
-      : {};
-    const comparisonEntries = Object.entries(comparisonMap).filter(([candidateId, path]) => (
-      candidateId !== assetId
-      && aiGeneratedAssetSpecs.some((candidate) => candidate.id === candidateId)
-      && typeof path === "string"
-    )) as [string, string][];
-    const { data: signedComparisons, error: comparisonError } = comparisonEntries.length
-      ? await serviceClient.storage.from("sellerpilot-ai").createSignedUrls(comparisonEntries.map(([, path]) => path), 10 * 60)
-      : { data: [], error: null };
-    if (comparisonError) {
-      return NextResponse.json({ message: "기존 이미지 중복 비교 URL을 만들지 못했습니다." }, { status: 500 });
-    }
-    const assetPath = aiGeneratedAssetPath(String(job.id), asset);
-    const { data: upload, error: uploadError } = await serviceClient.storage
+  const regenerationAssetId = typeof jobRequest.asset_id === "string" ? jobRequest.asset_id : "";
+  const regenerationAsset = job.kind === "product_asset_regeneration"
+    ? aiGeneratedAssetSpecs.find((candidate) => candidate.id === regenerationAssetId)
+    : undefined;
+  if (job.kind === "product_asset_regeneration" && !regenerationAsset) {
+    return preparationFailure({
+      message: "재제작할 이미지 종류를 확인하지 못했습니다.",
+      safeReason: "invalid_asset_regeneration_payload",
+      mode: "fail",
+    });
+  }
+  try {
+    const { data: signedFiles, error: signedError } = await serviceClient.storage
       .from("sellerpilot-ai")
-      .createSignedUploadUrl(assetPath, { upsert: true });
-    if (uploadError || !upload?.token) {
-      return NextResponse.json({ message: "재제작 이미지 업로드 URL을 만들지 못했습니다." }, { status: 500 });
+      .createSignedUrls(paths, 10 * 60);
+    if (signedError) {
+      return preparationFailure({
+        message: "작업 이미지 URL을 만들지 못했습니다.",
+        safeReason: "source_image_signing_failed",
+        error: signedError,
+      });
     }
+    const signedSourceImages = (signedFiles ?? []).flatMap((file, index) => (
+      typeof file.signedUrl === "string" && !file.error
+        ? [{ path: paths[index], signedUrl: file.signedUrl }]
+        : []
+    ));
+    if (signedSourceImages.length !== paths.length) {
+      return preparationFailure({
+        message: "일부 작업 이미지 URL을 만들지 못했습니다.",
+        safeReason: "source_image_signing_incomplete",
+      });
+    }
+    if (job.kind === "product_asset_regeneration") {
+      const assetId = regenerationAssetId;
+      const asset = regenerationAsset!;
+      const comparisonMap = jobRequest.comparison_asset_paths && typeof jobRequest.comparison_asset_paths === "object" && !Array.isArray(jobRequest.comparison_asset_paths)
+        ? jobRequest.comparison_asset_paths as Record<string, unknown>
+        : {};
+      const comparisonEntries = Object.entries(comparisonMap).filter(([candidateId, path]) => (
+        candidateId !== assetId
+        && aiGeneratedAssetSpecs.some((candidate) => candidate.id === candidateId)
+        && typeof path === "string"
+      )) as [string, string][];
+      const { data: signedComparisons, error: comparisonError } = comparisonEntries.length
+        ? await serviceClient.storage.from("sellerpilot-ai").createSignedUrls(comparisonEntries.map(([, path]) => path), 10 * 60)
+        : { data: [], error: null };
+      if (comparisonError) {
+        return preparationFailure({
+          message: "기존 이미지 중복 비교 URL을 만들지 못했습니다.",
+          safeReason: "comparison_image_signing_failed",
+          error: comparisonError,
+        });
+      }
+      const signedComparisonImages = comparisonEntries.flatMap(([comparisonAssetId], index) => {
+        const signedComparison = signedComparisons?.[index];
+        return signedComparison && typeof signedComparison.signedUrl === "string" && !signedComparison.error
+          ? [{ assetId: comparisonAssetId, signedUrl: signedComparison.signedUrl }]
+          : [];
+      });
+      if (signedComparisonImages.length !== comparisonEntries.length) {
+        return preparationFailure({
+          message: "일부 기존 이미지 중복 비교 URL을 만들지 못했습니다.",
+          safeReason: "comparison_image_signing_incomplete",
+        });
+      }
+      const assetPath = aiGeneratedAssetPath(jobId, asset, claimToken);
+      const { data: upload, error: uploadError } = await serviceClient.storage
+        .from("sellerpilot-ai")
+        .createSignedUploadUrl(assetPath, { upsert: true });
+      if (uploadError || !upload?.token) {
+        return preparationFailure({
+          message: "재제작 이미지 업로드 URL을 만들지 못했습니다.",
+          safeReason: "regeneration_upload_signing_failed",
+          error: uploadError,
+        });
+      }
+      return NextResponse.json({
+        ...job,
+        request: {
+          sourceJobId: typeof jobRequest.source_job_id === "string" ? jobRequest.source_job_id : "",
+          sourceProductId: typeof jobRequest.source_product_id === "string" ? jobRequest.source_product_id : null,
+          assetId,
+          sourceResult: jobRequest.source_result && typeof jobRequest.source_result === "object" && !Array.isArray(jobRequest.source_result)
+            ? jobRequest.source_result
+            : null,
+          imageSpecs,
+          images: signedSourceImages,
+          comparisonImages: signedComparisonImages,
+        },
+        resultUploads: [{
+          id: asset.id,
+          path: assetPath,
+          token: upload.token,
+          supabaseUrl,
+          publishableKey: supabasePublishableKey,
+          bucket: "sellerpilot-ai",
+        }],
+      }, { headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const assetPaths = aiGeneratedAssetSpecs.map((asset) => ({
+      id: asset.id,
+      path: aiGeneratedAssetPath(jobId, asset, claimToken),
+    }));
+    const assetUploads = await Promise.all(assetPaths.map(async (asset) => {
+      const { data: upload, error: uploadError } = await serviceClient.storage
+        .from("sellerpilot-ai")
+        .createSignedUploadUrl(asset.path, { upsert: true });
+      return uploadError || !upload?.token ? null : { ...asset, token: upload.token };
+    }));
+    if (assetUploads.some((upload) => !upload)) {
+      return preparationFailure({
+        message: "생성 이미지 업로드 URL을 만들지 못했습니다.",
+        safeReason: "result_upload_signing_failed",
+      });
+    }
+
     return NextResponse.json({
       ...job,
       request: {
-        sourceJobId: typeof jobRequest.source_job_id === "string" ? jobRequest.source_job_id : "",
-        sourceProductId: typeof jobRequest.source_product_id === "string" ? jobRequest.source_product_id : null,
-        assetId,
-        sourceResult: jobRequest.source_result && typeof jobRequest.source_result === "object" && !Array.isArray(jobRequest.source_result)
-          ? jobRequest.source_result
-          : null,
+        description: typeof jobRequest.description === "string" ? jobRequest.description : "",
+        productUrl: typeof jobRequest.product_url === "string" ? jobRequest.product_url : "",
+        researchInput: typeof jobRequest.research_input === "string" ? jobRequest.research_input : "",
+        manualFields: jobRequest.manual_fields && typeof jobRequest.manual_fields === "object" && !Array.isArray(jobRequest.manual_fields)
+          ? jobRequest.manual_fields
+          : {},
         imageSpecs,
-        images: (signedFiles ?? []).map((file, index) => ({ path: paths[index], signedUrl: file.signedUrl })),
-        comparisonImages: comparisonEntries.map(([comparisonAssetId], index) => ({
-          assetId: comparisonAssetId,
-          signedUrl: signedComparisons?.[index]?.signedUrl,
-        })).filter((item): item is { assetId: string; signedUrl: string } => typeof item.signedUrl === "string"),
+        images: signedSourceImages,
       },
-      resultUploads: [{
-        id: asset.id,
-        path: assetPath,
-        token: upload.token,
+      resultUploads: assetUploads.map((upload) => ({
+        ...upload,
         supabaseUrl,
         publishableKey: supabasePublishableKey,
         bucket: "sellerpilot-ai",
-      }],
-    }, { headers: { "cache-control": "no-store, max-age=0" } });
-  }
-  const assetPaths = aiGeneratedAssetSpecs.map((asset) => ({
-    id: asset.id,
-    path: aiGeneratedAssetPath(String(job.id), asset),
-  }));
-  const assetUploads = await Promise.all(assetPaths.map(async (asset) => {
-    const { data: upload, error: uploadError } = await serviceClient.storage
-      .from("sellerpilot-ai")
-      .createSignedUploadUrl(asset.path, { upsert: true });
-    return uploadError || !upload?.token ? null : { ...asset, token: upload.token };
-  }));
-  if (assetUploads.some((upload) => !upload)) {
-    return NextResponse.json({ message: "생성 이미지 업로드 URL을 만들지 못했습니다." }, { status: 500 });
-  }
-
-  return NextResponse.json({
-    ...job,
-    request: {
-      description: typeof jobRequest.description === "string" ? jobRequest.description : "",
-      productUrl: typeof jobRequest.product_url === "string" ? jobRequest.product_url : "",
-      researchInput: typeof jobRequest.research_input === "string" ? jobRequest.research_input : "",
-      manualFields: jobRequest.manual_fields && typeof jobRequest.manual_fields === "object" && !Array.isArray(jobRequest.manual_fields)
-        ? jobRequest.manual_fields
-        : {},
-      imageSpecs,
-      images: (signedFiles ?? []).map((file, index) => ({
-        path: paths[index],
-        signedUrl: file.signedUrl,
       })),
-    },
-    resultUploads: assetUploads.map((upload) => ({
-      ...upload,
-      supabaseUrl,
-      publishableKey: supabasePublishableKey,
-      bucket: "sellerpilot-ai",
-    })),
-  }, { headers: { "cache-control": "no-store, max-age=0" } });
+    }, { headers: { "cache-control": "no-store, max-age=0" } });
+  } catch (preparationError) {
+    return preparationFailure({
+      message: "작업 준비 중 일시적인 오류가 발생했습니다.",
+      safeReason: "claim_preparation_exception",
+      error: preparationError,
+    });
+  }
 }

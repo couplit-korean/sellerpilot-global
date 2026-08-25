@@ -1775,6 +1775,8 @@ a:focus-visible,
 .publish-channel-card { display: grid; align-content: start; gap: 12px; border: 1px solid var(--border); border-radius: 12px; padding: 15px; background: var(--surface); }
 .publish-channel-card.succeeded { border-color: #8fd0b1; }
 .publish-channel-card.failed { border-color: #e4afa7; }
+.publish-channel-card.queued { border-color: #8cb8dd; }
+.publish-channel-card.blocked { border-color: #d7aa5f; }
 .publish-channel-card > header { display: flex; align-items: center; gap: 10px; }
 .publish-channel-card > header > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 8px; color: #fff; font-size: 12px; font-weight: 800; }
 .publish-channel-card > header div { min-width: 0; flex: 1; }
@@ -1825,6 +1827,8 @@ a:focus-visible,
 .publish-result { display: grid; gap: 3px; margin: 0; border-radius: 7px; padding: 8px 9px; font-size: 11px; }
 .publish-result.succeeded { background: #edf8f2; color: #176848; }
 .publish-result.failed { background: #fff1ef; color: #9f3628; }
+.publish-result.queued { background: #eef6fd; color: #245d8b; }
+.publish-result.blocked { background: #fff8e7; color: #76530f; }
 .publish-result small { opacity: .75; }
 .publish-blocked { display: grid; justify-items: start; gap: 5px; border-radius: 8px; background: #fff7e9; padding: 12px; color: #8b5a13; }
 .publish-blocked small { line-height: 1.5; }

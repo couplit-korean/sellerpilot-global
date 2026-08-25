@@ -14,6 +14,7 @@ const mutationSchema = z.object({
 
 type InventoryTask = {
   id: string;
+  listingId: string;
   channel: ActiveChannelKey;
   market: string;
   targetId: string;
@@ -71,7 +72,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const runId = typeof run.runId === "string" ? run.runId : "";
   const tasks = Array.isArray(run.tasks)
     ? run.tasks.filter((item): item is InventoryTask => Boolean(item) && typeof item === "object" && !Array.isArray(item)
-      && typeof (item as InventoryTask).id === "string" && typeof (item as InventoryTask).channel === "string")
+      && typeof (item as InventoryTask).id === "string"
+      && typeof (item as InventoryTask).listingId === "string"
+      && typeof (item as InventoryTask).channel === "string")
     : [];
   const product = contextData && typeof contextData === "object" && !Array.isArray(contextData)
     && contextData.product && typeof contextData.product === "object" && !Array.isArray(contextData.product)
@@ -80,12 +83,25 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const productSku = typeof product.sku === "string" ? product.sku : "";
   const credentialRows = Array.isArray(credentials) ? credentials.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : [];
   const authorization = request.headers.get("authorization") ?? "";
-  const results = [] as Array<{ id: string; channel: string; ok: boolean; message: string }>;
+  const results = [] as Array<{ id: string; channel: string; ok: boolean; message: string; inProgress?: boolean; reconciliationRequired?: boolean }>;
+
+  const recordPrewriteFailure = async (task: InventoryTask, attemptId: string | null, safeMessage: string) => {
+    if (!runId) return false;
+    const { data, error } = await admin.serviceClient.rpc("sellerpilot_service_fail_inventory_sync_item_prewrite", {
+      p_run_id: runId,
+      p_item_id: task.id,
+      p_attempt_id: attemptId,
+      p_safe_message: safeMessage,
+    });
+    return !error && data === true;
+  };
 
   for (const task of tasks) {
     const credential = credentialRows.find((row) => row.channel === task.channel && row.environment === "production" && row.status === "active");
     if (!credential || typeof credential.id !== "string") {
-      results.push({ id: task.id, channel: task.channel, ok: false, message: "활성 운영 키가 없습니다." });
+      const message = "활성 운영 키가 없습니다.";
+      await recordPrewriteFailure(task, null, message);
+      results.push({ id: task.id, channel: task.channel, ok: false, message });
       continue;
     }
     const response = await fetch(new URL("/api/admin/channel-operations", request.url), {
@@ -97,6 +113,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         operation: "inventory.update",
         idempotencyKey: `${idempotencyKey}-${task.id}`.slice(0, 160),
         confirmWrite: true,
+        resourceListingId: task.listingId,
+        inventoryItemId: task.id,
         market: task.market,
         targetId: task.targetId,
         arguments: taskArguments(task, productSku),
@@ -107,20 +125,22 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const payload = response ? await response.json().catch(() => ({})) as Record<string, unknown> : {};
     const ok = Boolean(response?.ok && payload.ok === true);
     const attemptId = typeof payload.attemptId === "string" ? payload.attemptId : null;
+    const inProgress = response?.status === 202 && payload.inProgress === true;
+    const reconciliationRequired = payload.reconciliationRequired === true || payload.manualRequired === true;
     const safeMessage = typeof payload.safeMessage === "string"
       ? payload.safeMessage
       : typeof payload.message === "string" ? payload.message : "판매채널 재고 응답을 확인하지 못했습니다.";
-    if (runId && attemptId) {
-      await admin.serviceClient.rpc("sellerpilot_service_complete_inventory_sync_item", {
-        p_run_id: runId,
-        p_item_id: task.id,
-        p_attempt_id: attemptId,
-        p_success: ok,
-        p_verified_quantity: ok ? task.quantity : null,
-        p_safe_message: safeMessage,
-      });
+    if (!ok && !inProgress && !reconciliationRequired) {
+      await recordPrewriteFailure(task, attemptId, safeMessage);
     }
-    results.push({ id: task.id, channel: task.channel, ok, message: safeMessage });
+    results.push({
+      id: task.id,
+      channel: task.channel,
+      ok,
+      message: safeMessage,
+      ...(inProgress ? { inProgress: true } : {}),
+      ...(reconciliationRequired ? { reconciliationRequired: true } : {}),
+    });
   }
 
   const { data: latest } = await admin.userClient.rpc("sellerpilot_get_inventory_sync", { p_product_id: parsedId.data });

@@ -6,7 +6,6 @@ import { executeChannelOperation } from "../../../../lib/channels/operations";
 import { inquirySyncArguments, normalizeChannelInquiries } from "../../../../lib/channels/inquiry-sync";
 import { shouldBootstrapLazadaIm } from "../../../../lib/channels/lazada-im-bootstrap";
 import { normalizeChannelOrders, orderSyncRequests } from "../../../../lib/channels/order-sync";
-import { ensureEbayAccessToken } from "../../../../lib/channels/protocols";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
 export const runtime = "nodejs";
@@ -27,7 +26,7 @@ type CredentialRow = {
   last_rotated_at?: string | null;
 };
 
-const gatewayChannels = new Set<ActiveChannelKey>(["shopee", "lazada", "coupang", "elevenst", "smartstore", "temu"]);
+const gatewayChannels = new Set<ActiveChannelKey>(["shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]);
 
 function safeSyncFailure(error: unknown, fallback: string) {
   const message = error instanceof Error ? error.message : "";
@@ -95,23 +94,10 @@ export async function POST(request: Request) {
         p_credential_id: credential.id,
       });
       if (secretError || !secretPayload || typeof secretPayload !== "object" || Array.isArray(secretPayload)) throw new Error("credential_unavailable");
-      let payload = secretPayload as Record<string, unknown>;
-      if (channel === "ebay") {
-        const ensured = await ensureEbayAccessToken(payload, "production");
-        payload = ensured.payload;
-        if (ensured.refreshed) {
-          const { error } = await admin.serviceClient.rpc("sellerpilot_service_refresh_ebay", {
-            p_credential_id: credential.id,
-            p_secret_payload: ensured.payload,
-            p_expires_at: ensured.credentialExpiresAt,
-          });
-          if (error) throw new Error("credential_refresh_store_failed");
-        }
-      }
       const operationResults = await Promise.all(requests.map(({ arguments: argumentsValue }) => executeChannelOperation({
         channel,
         operation: "orders.list",
-        payload,
+        payload: secretPayload as Record<string, unknown>,
         arguments: argumentsValue,
         environment: "production",
       })));

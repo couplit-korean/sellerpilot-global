@@ -2,7 +2,7 @@ export type ShipmentFulfillmentResult = {
   id: string;
   channel: string;
   ok: boolean;
-  status: "succeeded" | "failed" | "reconciliation_required";
+  status: "succeeded" | "failed" | "in_progress" | "reconciliation_required";
   remoteSucceeded: boolean;
   ledgerRecorded: boolean;
   reconciliationRequired: boolean;
@@ -45,10 +45,12 @@ export function remoteShipmentSuccessResult(input: {
 
 export function shipmentResultSummary(results: ShipmentFulfillmentResult[]) {
   const succeeded = results.filter((result) => result.status === "succeeded").length;
+  const inProgress = results.filter((result) => result.status === "in_progress").length;
   const reconciliationRequired = results.filter((result) => result.status === "reconciliation_required").length;
   return {
     succeeded,
+    inProgress,
     reconciliationRequired,
-    failed: results.length - succeeded - reconciliationRequired,
+    failed: results.length - succeeded - inProgress - reconciliationRequired,
   };
 }

@@ -149,7 +149,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(adminAccessState, /current === "admin" && sameVerifiedUser \? "admin" : "checking"/);
   assert.match(page, /const verificationState = adminVerificationState\(isAdmin, error\)/);
   assert.match(adminAccessState, /if \(rpcError\) return "error";[\s\S]*?if \(isAdmin === false\) return "forbidden"/);
-  assert.match(page, /!active \|\| generation !== verificationGeneration/);
+  assert.match(page, /!active \|\| accountSwitchingRef\.current \|\| generation !== verificationGeneration/);
   assert.match(page, /latestSession\.session\.user\.id !== session\.user\.id/);
   assert.doesNotMatch(page, /setAccessState\(session \? "checking" : "signed_out"\)/);
   assert.match(page, /withPromiseTimeout\(Promise\.all\(\[/);
@@ -281,12 +281,13 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(credentialTestRoute, /parsed\.data\.channel === "elevenst"/);
   assert.match(gatewayCompleteRoute, /refreshedCredentialId/);
   assert.match(gatewayCompleteRoute, /effectiveCredentialId/);
-  assert.match(gatewayCompleteRoute, /sellerpilot_service_refresh_ebay/);
+  assert.match(gatewayCompleteRoute, /sellerpilot_service_prepare_gateway_credential_refresh/);
+  assert.doesNotMatch(gatewayCompleteRoute, /sellerpilot_service_refresh_(?:shopee|lazada|ebay)/);
   assert.match(gatewayCompleteRoute, /sellerpilot_record_credential_test/);
   assert.match(gatewayCompleteRoute, /sellerpilot_service_begin_channel_gateway_completion/);
   assert.ok(
     gatewayCompleteRoute.indexOf("sellerpilot_service_begin_channel_gateway_completion")
-      < gatewayCompleteRoute.indexOf("sellerpilot_service_refresh_ebay"),
+      < gatewayCompleteRoute.indexOf("sellerpilot_service_prepare_gateway_credential_refresh"),
   );
   assert.doesNotMatch(gatewayCompleteRoute, /sellerpilot_get_channel_gateway_job/);
   assert.match(aiCompleteRoute, /sellerpilot_service_begin_ai_job_completion/);
@@ -328,7 +329,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(lazadaAuthorizeRoute, /timingSafeEqual/);
   assert.match(lazadaAuthorizeRoute, /response\.cookies\.set/);
   assert.match(lazadaAuthorizeRoute, /p_environment: credentialEnvironment/);
-  assert.match(maintenanceRoute, /sellerpilot_service_refresh_lazada/);
+  assert.match(maintenanceRoute, /sellerpilot_enqueue_channel_gateway_job/);
+  assert.doesNotMatch(maintenanceRoute, /sellerpilot_service_refresh_(?:shopee|lazada|ebay)/);
   assert.match(periodicSyncRoute, /sellerpilot_service_enqueue_periodic_sync/);
   assert.match(periodicSyncRoute, /sellerpilot_service_validate_worker_token/);
   assert.match(periodicSyncRoute, /createBoundedSupabaseFetch/);
@@ -349,7 +351,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(vercelConfig, /"schedule": "\*\/5 \* \* \* \*"/);
   assert.match(cliWorker, /SELLERPILOT_CHANNEL_SYNC_MS/);
   assert.match(cliWorker, /\/api\/internal\/channel-sync/);
-  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.16/);
+  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.18/);
   assert.match(cliWorker, /ensureEbayAccessToken/);
   assert.match(rotationHardeningMigration, /diagnostic_preserved/);
   assert.match(rotationHardeningMigration, /status = 'queued' and attempt_id is null/);
@@ -374,7 +376,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(channelOperationsRoute, /confirmWrite/);
   assert.match(channelOperationsRoute, /idempotencyKey/);
   assert.match(channelOperationsRoute, /sellerpilot_claim_channel_operation/);
-  assert.match(channelOperationsRoute, /ensureEbayAccessToken/);
+  assert.match(channelOperationsRoute, /executeViaChannelGateway/);
+  assert.doesNotMatch(channelOperationsRoute, /ensureEbayAccessToken/);
   assert.match(channelTargetClient, /cached\.status === 401/);
   assert.match(channelTargetClient, /request\("POST"\)/);
   assert.match(channelTargetClient, /pendingTargetRequests/);

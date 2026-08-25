@@ -227,6 +227,7 @@ export const studioJobRequestSchema = z.object({
 export const workerCompletionSchema = z.union([
   z.object({
     jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
     status: z.literal("succeeded"),
     result: cliStudioResultSchema,
     assetStoragePaths: z.record(
@@ -236,16 +237,19 @@ export const workerCompletionSchema = z.union([
   }),
   z.object({
     jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
     status: z.literal("succeeded"),
     result: productResearchResultSchema,
   }),
   z.object({
     jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
     status: z.literal("succeeded"),
     result: supportReplyResultSchema,
   }),
   z.object({
     jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
     status: z.literal("succeeded"),
     result: z.object({
       mode: z.literal("asset-regeneration"),
@@ -260,6 +264,7 @@ export const workerCompletionSchema = z.union([
   }),
   z.object({
     jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
     status: z.literal("failed"),
     error: z.string().min(1).max(500),
   }),

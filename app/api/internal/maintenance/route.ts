@@ -1,7 +1,5 @@
-import { createHmac } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { ebayDefaultScopes, ensureShopeeAccessToken, exchangeEbayOAuthToken } from "../../../../lib/channels/protocols";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
@@ -24,159 +22,74 @@ function textValue(payload: Record<string, unknown>, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-async function refreshLazadaIfNeeded(projectUrl: string, secretKey: string) {
-  const serviceClient = createClient(projectUrl, secretKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
+type RefreshChannel = "shopee" | "lazada" | "ebay";
+
+const refreshBufferMs: Record<RefreshChannel, number> = {
+  shopee: 60 * 60 * 1000,
+  lazada: 72 * 60 * 60 * 1000,
+  ebay: 30 * 60 * 1000,
+};
+
+function refreshPrerequisiteStatus(channel: RefreshChannel, secret: Record<string, unknown>) {
+  const refreshToken = textValue(secret, "refresh_token");
+  const refreshExpiresAt = Date.parse(textValue(secret, "refresh_token_expires_at"));
+  if (!refreshToken) return "awaiting_oauth" as const;
+  if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) return "refresh_expired" as const;
+  if (channel === "shopee") {
+    if (!textValue(secret, "partner_id") || !textValue(secret, "partner_key") || !textValue(secret, "shop_id")) {
+      return "awaiting_oauth" as const;
+    }
+    const authorizationExpiresAt = Date.parse(textValue(secret, "authorization_expires_at"));
+    if (Number.isFinite(authorizationExpiresAt) && authorizationExpiresAt <= Date.now()) return "authorization_expired" as const;
+  }
+  if (channel === "lazada" && (!textValue(secret, "app_key") || !textValue(secret, "app_secret"))) {
+    return "awaiting_oauth" as const;
+  }
+  if (channel === "ebay" && (
+    !textValue(secret, "client_id")
+    || !textValue(secret, "client_secret")
+    || !textValue(secret, "ru_name")
+  )) {
+    return "awaiting_oauth" as const;
+  }
+  return null;
+}
+
+async function queueRefreshIfNeeded(serviceClient: SupabaseClient, channel: RefreshChannel) {
   const { data, error } = await serviceClient.rpc("sellerpilot_get_active_credential_secret", {
-    p_channel: "lazada",
+    p_channel: channel,
     p_environment: "production",
   });
   if (error) throw new Error("credential_read_failed");
   const active = data as ActiveCredential | null;
-  if (!active?.credential_id || typeof active.credential_id !== "string" || !active.secret_payload || typeof active.secret_payload !== "object" || Array.isArray(active.secret_payload)) {
+  if (!active?.credential_id
+      || typeof active.credential_id !== "string"
+      || !active.secret_payload
+      || typeof active.secret_payload !== "object"
+      || Array.isArray(active.secret_payload)) {
     return { status: "not_connected" as const };
   }
 
   const secret = active.secret_payload as Record<string, unknown>;
   const accessExpiresAt = Date.parse(textValue(secret, "access_token_expires_at"));
-  if (Number.isFinite(accessExpiresAt) && accessExpiresAt > Date.now() + 72 * 60 * 60 * 1000) {
+  if (Number.isFinite(accessExpiresAt) && accessExpiresAt > Date.now() + refreshBufferMs[channel]) {
     return { status: "current" as const };
   }
+  const prerequisiteStatus = refreshPrerequisiteStatus(channel, secret);
+  if (prerequisiteStatus) return { status: prerequisiteStatus };
 
-  const appKey = textValue(secret, "app_key");
-  const appSecret = textValue(secret, "app_secret");
-  const refreshToken = textValue(secret, "refresh_token");
-  const refreshExpiresAt = Date.parse(textValue(secret, "refresh_token_expires_at"));
-  if (!appKey || !appSecret || !refreshToken) return { status: "awaiting_oauth" as const };
-  if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) return { status: "refresh_expired" as const };
-
-  const path = "/auth/token/refresh";
-  const params: Record<string, string> = {
-    app_key: appKey,
-    refresh_token: refreshToken,
-    sign_method: "sha256",
-    timestamp: Date.now().toString(),
-  };
-  const signingInput = path + Object.keys(params).sort().map((key) => `${key}${params[key]}`).join("");
-  params.sign = createHmac("sha256", appSecret).update(signingInput).digest("hex").toUpperCase();
-  const url = new URL(`https://auth.lazada.com/rest${path}`);
-  url.search = new URLSearchParams(params).toString();
-  const response = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-    signal: AbortSignal.timeout(12_000),
-    headers: { accept: "application/json", "user-agent": "SellerPilot-Lazada-Token-Refresh/1.0" },
-  });
-  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-  const accessToken = textValue(payload, "access_token");
-  const nextRefreshToken = textValue(payload, "refresh_token") || refreshToken;
-  const responseCode = String(payload.code ?? "");
-  if (!response.ok || !accessToken || (responseCode && responseCode !== "0")) throw new Error("token_refresh_failed");
-
-  const nextAccessExpiry = new Date(Date.now() + Number(payload.expires_in ?? 2_592_000) * 1000).toISOString();
-  const nextRefreshExpiry = new Date(Date.now() + Number(payload.refresh_expires_in ?? 15_552_000) * 1000).toISOString();
-  const nextSecret = {
-    ...secret,
-    access_token: accessToken,
-    refresh_token: nextRefreshToken,
-    access_token_expires_at: nextAccessExpiry,
-    refresh_token_expires_at: nextRefreshExpiry,
-  };
-  const { error: rotateError } = await serviceClient.rpc("sellerpilot_service_refresh_lazada", {
+  // Token exchange is a provider mutation. Queue an exact-claim gateway job so
+  // the worker stages every received token in Vault before any later work and
+  // leaves a lost response in reconciliation instead of retrying the exchange.
+  const { data: jobId, error: enqueueError } = await serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
     p_credential_id: active.credential_id,
-    p_secret_payload: nextSecret,
-    p_expires_at: nextRefreshExpiry,
+    p_attempt_id: null,
+    p_channel: channel,
+    p_operation: "diagnostic.test",
+    p_request_payload: {},
   });
-  if (rotateError) throw new Error("credential_rotate_failed");
-  return { status: "refreshed" as const };
-}
-
-async function refreshEbayIfNeeded(projectUrl: string, secretKey: string) {
-  const serviceClient = createClient(projectUrl, secretKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { data, error } = await serviceClient.rpc("sellerpilot_get_active_credential_secret", {
-    p_channel: "ebay",
-    p_environment: "production",
-  });
-  if (error) throw new Error("credential_read_failed");
-  const active = data as ActiveCredential | null;
-  if (!active?.credential_id || typeof active.credential_id !== "string" || !active.secret_payload || typeof active.secret_payload !== "object" || Array.isArray(active.secret_payload)) {
-    return { status: "not_connected" as const };
-  }
-
-  const secret = active.secret_payload as Record<string, unknown>;
-  const accessExpiresAt = Date.parse(textValue(secret, "access_token_expires_at"));
-  if (Number.isFinite(accessExpiresAt) && accessExpiresAt > Date.now() + 30 * 60 * 1000) {
-    return { status: "current" as const };
-  }
-  const clientId = textValue(secret, "client_id");
-  const clientSecret = textValue(secret, "client_secret");
-  const ruName = textValue(secret, "ru_name");
-  const refreshToken = textValue(secret, "refresh_token");
-  const refreshExpiresAt = Date.parse(textValue(secret, "refresh_token_expires_at"));
-  if (!clientId || !clientSecret || !ruName || !refreshToken) return { status: "awaiting_oauth" as const };
-  if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) return { status: "refresh_expired" as const };
-
-  const remote = await exchangeEbayOAuthToken({
-    environment: "production",
-    clientId,
-    clientSecret,
-    ruName,
-    refreshToken,
-    scopes: ebayDefaultScopes,
-  });
-  const accessToken = textValue(remote.data, "access_token");
-  if (!remote.response.ok || !accessToken) throw new Error("token_refresh_failed");
-  const nextAccessExpiry = new Date(Date.now() + Number(remote.data.expires_in ?? 7_200) * 1000).toISOString();
-  const nextRefreshExpiry = Number.isFinite(refreshExpiresAt)
-    ? new Date(refreshExpiresAt).toISOString()
-    : new Date(Date.now() + 47_304_000 * 1000).toISOString();
-  const nextSecret = {
-    ...secret,
-    access_token: accessToken,
-    access_token_expires_at: nextAccessExpiry,
-  };
-  const { error: rotateError } = await serviceClient.rpc("sellerpilot_service_refresh_ebay", {
-    p_credential_id: active.credential_id,
-    p_secret_payload: nextSecret,
-    p_expires_at: nextRefreshExpiry,
-  });
-  if (rotateError) throw new Error("credential_rotate_failed");
-  return { status: "refreshed" as const };
-}
-
-async function refreshShopeeIfNeeded(projectUrl: string, secretKey: string) {
-  const serviceClient = createClient(projectUrl, secretKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { data, error } = await serviceClient.rpc("sellerpilot_get_active_credential_secret", {
-    p_channel: "shopee",
-    p_environment: "production",
-  });
-  if (error) throw new Error("credential_read_failed");
-  const active = data as ActiveCredential | null;
-  if (!active?.credential_id || typeof active.credential_id !== "string" || !active.secret_payload || typeof active.secret_payload !== "object" || Array.isArray(active.secret_payload)) {
-    return { status: "not_connected" as const };
-  }
-  try {
-    const ensured = await ensureShopeeAccessToken(active.secret_payload as Record<string, unknown>, "production", 60 * 60 * 1000);
-    if (!ensured.refreshed) return { status: "current" as const };
-    const { error: rotateError } = await serviceClient.rpc("sellerpilot_service_refresh_shopee", {
-      p_credential_id: active.credential_id,
-      p_secret_payload: ensured.payload,
-      p_expires_at: ensured.credentialExpiresAt,
-    });
-    if (rotateError) throw new Error("credential_rotate_failed");
-    return { status: "refreshed" as const };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (message.includes("REFRESH_TOKEN_EXPIRED")) return { status: "refresh_expired" as const };
-    if (message.includes("AUTHORIZATION_EXPIRED")) return { status: "authorization_expired" as const };
-    if (message.includes("REFRESH_CREDENTIALS_MISSING")) return { status: "awaiting_oauth" as const };
-    throw error;
-  }
+  if (enqueueError || typeof jobId !== "string") throw new Error("credential_refresh_enqueue_failed");
+  return { status: "queued" as const };
 }
 
 export async function GET(request: Request) {
@@ -197,14 +110,14 @@ export async function GET(request: Request) {
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  let lazadaToken: Awaited<ReturnType<typeof refreshLazadaIfNeeded>>;
-  let ebayToken: Awaited<ReturnType<typeof refreshEbayIfNeeded>>;
-  let shopeeToken: Awaited<ReturnType<typeof refreshShopeeIfNeeded>>;
+  let lazadaToken: Awaited<ReturnType<typeof queueRefreshIfNeeded>>;
+  let ebayToken: Awaited<ReturnType<typeof queueRefreshIfNeeded>>;
+  let shopeeToken: Awaited<ReturnType<typeof queueRefreshIfNeeded>>;
   try {
     [shopeeToken, lazadaToken, ebayToken] = await Promise.all([
-      refreshShopeeIfNeeded(supabaseUrl, secretKey),
-      refreshLazadaIfNeeded(supabaseUrl, secretKey),
-      refreshEbayIfNeeded(supabaseUrl, secretKey),
+      queueRefreshIfNeeded(serviceClient, "shopee"),
+      queueRefreshIfNeeded(serviceClient, "lazada"),
+      queueRefreshIfNeeded(serviceClient, "ebay"),
     ]);
   } catch {
     return NextResponse.json({ message: "채널 OAuth 토큰 자동 갱신을 완료하지 못했습니다." }, { status: 502 });
@@ -212,7 +125,15 @@ export async function GET(request: Request) {
   const retentionDays = 30;
   const completedBefore = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
   const runtimeCompletedBefore = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
-  const [{ data, error }, { data: personalData, error: personalDataError }, { data: runtimeData, error: runtimeDataError }] = await Promise.all([
+  const [
+    { data, error },
+    { data: personalData, error: personalDataError },
+    { data: runtimeData, error: runtimeDataError },
+    { data: kakaoReconciliationRequired, error: kakaoSweepError },
+    { data: kakaoOauthReconciliationRequired, error: kakaoOauthSweepError },
+    { data: tracxReconciliationRequired, error: tracxSweepError },
+    { data: lazadaReplyReconciliationRequired, error: lazadaReplySweepError },
+  ] = await Promise.all([
     serviceClient.rpc("sellerpilot_prune_ai_jobs", {
       p_completed_before: completedBefore,
       p_limit: 200,
@@ -223,8 +144,18 @@ export async function GET(request: Request) {
     serviceClient.rpc("sellerpilot_service_prune_runtime_noise", {
       p_completed_before: runtimeCompletedBefore,
     }),
+    serviceClient.rpc("sellerpilot_service_sweep_stale_kakao_notifications"),
+    serviceClient.rpc("sellerpilot_service_sweep_kakao_oauth_callbacks"),
+    serviceClient.rpc("sellerpilot_service_sweep_stale_tracx_mutations"),
+    serviceClient.rpc("sellerpilot_service_sweep_stale_lazada_replies"),
   ]);
-  if (error || personalDataError || runtimeDataError) {
+  if (error
+      || personalDataError
+      || runtimeDataError
+      || kakaoSweepError
+      || kakaoOauthSweepError
+      || tracxSweepError
+      || lazadaReplySweepError) {
     return NextResponse.json({ message: "30일 보관기간 정리를 완료하지 못했습니다." }, { status: 500 });
   }
 
@@ -249,6 +180,10 @@ export async function GET(request: Request) {
     storageRemoved,
     personalData,
     runtimeData,
+    kakaoReconciliationRequired,
+    kakaoOauthReconciliationRequired,
+    tracxReconciliationRequired,
+    lazadaReplyReconciliationRequired,
     shopeeToken: shopeeToken.status,
     lazadaToken: lazadaToken.status,
     ebayToken: ebayToken.status,

@@ -58,23 +58,27 @@ test("reconciliation-required shipments are never counted as full success or rem
 
   assert.deepEqual(shipmentResultSummary([succeeded, partial, failed]), {
     succeeded: 1,
+    inProgress: 0,
     reconciliationRequired: 1,
     failed: 1,
   });
 });
 
-test("fulfillment route preserves the stable remote idempotency key and uses the failure-only service RPC", async () => {
-  const [route, migration] = await Promise.all([
+test("fulfillment route preserves a stable resource-bound gateway write and defers 202 without false failure", async () => {
+  const [route, failureMigration, resourceMigration] = await Promise.all([
     readFile(new URL("../app/api/admin/orders/fulfill/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260825071000_harden_order_shipment_ledger_integrity.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260825104900_resource_bound_gateway_writes.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(route, /idempotencyKey = `shipment-\$\{shipment\.id\}-\$\{createHash\("sha256"\)/);
-  assert.match(route, /const ledgerWrite = await admin\.userClient\.rpc\("sellerpilot_record_order_shipment"/);
-  assert.match(route, /ledgerData = ledgerWrite\.data;[\s\S]*ledgerError = ledgerWrite\.error/);
+  assert.match(route, /orderId: shipment\.id/);
+  assert.match(route, /remoteResponse\.status === 202 && remotePayload\.inProgress === true/);
+  assert.doesNotMatch(route, /sellerpilot_record_order_shipment/);
   assert.match(route, /sellerpilot_service_record_order_shipment_failure/);
-  assert.match(migration, /grant execute on function public\.sellerpilot_service_record_order_shipment_failure\(uuid, uuid, text, text\)[\s\S]*to service_role/);
-  assert.match(migration, /from public, anon, authenticated/);
-  assert.doesNotMatch(migration, /tracking_number\s*=/);
-  assert.doesNotMatch(migration, /status\s*=\s*'shipped'/);
+  assert.match(failureMigration, /grant execute on function public\.sellerpilot_service_record_order_shipment_failure\(uuid, uuid, text, text\)[\s\S]*to service_role/);
+  assert.match(failureMigration, /from public, anon, authenticated/);
+  assert.match(resourceMigration, /sellerpilot_service_enqueue_resource_gateway_job/);
+  assert.match(resourceMigration, /new\.operation = 'shipment\.confirm'/);
+  assert.doesNotMatch(resourceMigration, /when v_provider_ok then 'shipped'/);
 });

@@ -3,6 +3,8 @@ import test from "node:test";
 import { cliStudioResultSchema, productResearchJobRequestSchema, productResearchResultSchema, studioJobRequestSchema, supportReplyJobRequestSchema, supportReplyResultSchema, workerCompletionSchema } from "../lib/ai-cli-contract";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 
+const CLAIM_TOKEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
 const localized = [
   ["qoo10", "JP", "ja-JP", "白い陶器のエスプレッソカップ"],
   ["shopee", "SG", "en-SG", "White ceramic espresso cup"],
@@ -222,19 +224,20 @@ test("AI studio request rejects missing rights confirmation and non-square outpu
 
 test("AI worker completion requires the full thumbnail and detail-image set", () => {
   const jobId = "11111111-1111-4111-8111-111111111111";
-  const assetStoragePaths = Object.fromEntries(aiGeneratedAssetSpecs.map((asset) => [asset.id, aiGeneratedAssetPath(jobId, asset)]));
-  const complete = workerCompletionSchema.safeParse({ jobId, status: "succeeded", result: validResult(), assetStoragePaths });
+  const assetStoragePaths = Object.fromEntries(aiGeneratedAssetSpecs.map((asset) => [asset.id, aiGeneratedAssetPath(jobId, asset, CLAIM_TOKEN)]));
+  const complete = workerCompletionSchema.safeParse({ jobId, claimToken: CLAIM_TOKEN, status: "succeeded", result: validResult(), assetStoragePaths });
   if (!complete.success) assert.fail(JSON.stringify(complete.error.issues, null, 2));
 
   const incompletePaths = { ...assetStoragePaths };
   delete incompletePaths["detail-package"];
-  assert.equal(workerCompletionSchema.safeParse({ jobId, status: "succeeded", result: validResult(), assetStoragePaths: incompletePaths }).success, false);
+  assert.equal(workerCompletionSchema.safeParse({ jobId, claimToken: CLAIM_TOKEN, status: "succeeded", result: validResult(), assetStoragePaths: incompletePaths }).success, false);
   assert.equal(aiGeneratedAssetSpecs.filter((asset) => asset.role === "detail").length, 4);
 });
 
 test("AI worker completion accepts a product research result without generated images", () => {
   const complete = workerCompletionSchema.safeParse({
     jobId: "22222222-2222-4222-8222-222222222222",
+    claimToken: CLAIM_TOKEN,
     status: "succeeded",
     result: validResearchResult(),
   });
@@ -245,6 +248,7 @@ test("AI worker completion accepts exactly the regenerated image path", () => {
   const jobId = "33333333-3333-4333-8333-333333333333";
   const completion = workerCompletionSchema.safeParse({
     jobId,
+    claimToken: CLAIM_TOKEN,
     status: "succeeded",
     result: {
       mode: "asset-regeneration",
@@ -253,7 +257,7 @@ test("AI worker completion accepts exactly the regenerated image path", () => {
       sourceProductId: "22222222-2222-4222-8222-222222222222",
     },
     assetStoragePaths: {
-      "detail-use": aiGeneratedAssetPath(jobId, aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-use")!),
+      "detail-use": aiGeneratedAssetPath(jobId, aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-use")!, CLAIM_TOKEN),
     },
   });
   if (!completion.success) assert.fail(JSON.stringify(completion.error.issues, null, 2));
@@ -284,6 +288,7 @@ test("support reply CLI contract requires a supported locale and reviewable draf
   assert.equal(supportReplyResultSchema.safeParse(result).success, true);
   assert.equal(workerCompletionSchema.safeParse({
     jobId: "44444444-4444-4444-8444-444444444444",
+    claimToken: CLAIM_TOKEN,
     status: "succeeded",
     result,
   }).success, true);

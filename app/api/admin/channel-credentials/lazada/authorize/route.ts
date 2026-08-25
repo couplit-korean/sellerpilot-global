@@ -2,7 +2,11 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { exchangeOAuthViaChannelGateway } from "../../../../../../lib/channels/gateway";
+import {
+  ChannelGatewayInProgressError,
+  ChannelGatewayReconciliationRequiredError,
+  exchangeOAuthViaChannelGateway,
+} from "../../../../../../lib/channels/gateway";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -118,6 +122,31 @@ export async function POST(request: NextRequest) {
     credentialId = persistedCredentialId || cookieCredentialId;
   }
 
+  if (oauthCode) {
+    const requestedCountry = textValue(parsed.data.secretPayload, "country").toLowerCase();
+    try {
+      await exchangeOAuthViaChannelGateway({
+        serviceClient,
+        credentialId: credentialId ?? "",
+        channel: "lazada",
+        request: { code: oauthCode, ...(requestedCountry ? { country: requestedCountry } : {}) },
+      });
+    } catch (error) {
+      if (error instanceof ChannelGatewayInProgressError) {
+        return NextResponse.json({ message: "Lazada OAuth 토큰 교환이 안전하게 진행 중입니다." }, { status: 202 });
+      }
+      if (error instanceof ChannelGatewayReconciliationRequiredError) {
+        const response = NextResponse.json({ message: "Lazada OAuth 결과를 수동으로 확인해야 합니다. 같은 승인 코드를 다시 제출하지 마세요." }, { status: 409 });
+        response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
+        return response;
+      }
+      return NextResponse.json({ message: "Lazada OAuth 토큰 교환을 허용 IP 작업자에서 완료하지 못했습니다. 작업 상태를 확인해 주세요." }, { status: 422 });
+    }
+    const response = NextResponse.json({ message: "Lazada OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
+    response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
+    return response;
+  }
+
   let previousSecret: Record<string, unknown> = {};
   let credentialEnvironment = parsed.data.environment;
   const metadata = credentialId && Array.isArray(credentialRows)
@@ -141,22 +170,6 @@ export async function POST(request: NextRequest) {
   const nextSecret: Record<string, unknown> = { ...previousSecret, ...incoming, app_key: appKey, app_secret: appSecret, country };
   delete nextSecret.authorization_code;
   const credentialExpiresAt = parsed.data.expiresAt;
-  if (code) {
-    try {
-      await exchangeOAuthViaChannelGateway({
-        serviceClient,
-        credentialId: credentialId ?? "",
-        channel: "lazada",
-        request: { code, country },
-      });
-    } catch {
-      return NextResponse.json({ message: "Lazada OAuth 토큰 교환을 허용 IP 작업자에서 완료하지 못했습니다. 작업자 연결을 확인하고 다시 승인해 주세요." }, { status: 422 });
-    }
-    const response = NextResponse.json({ message: "Lazada OAuth 연결과 Vault 저장이 완료됐습니다." }, { headers: { "cache-control": "no-store, max-age=0" } });
-    response.cookies.set(oauthCookieName, "", { path: "/", maxAge: 0 });
-    return response;
-  }
-
   if (!code && parsed.data.startOAuth && credentialId) {
     return oauthStartResponse(request, appKey, credentialId, async (state) => {
       const { data, error } = await serviceClient.rpc("sellerpilot_service_store_channel_oauth_state", {

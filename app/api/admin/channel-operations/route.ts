@@ -9,12 +9,16 @@ import {
   writeChannelOperations,
 } from "../../../../lib/channels/operations";
 import { channelCatalog } from "../../../../lib/channels/catalog";
-import { executeViaChannelGateway } from "../../../../lib/channels/gateway";
+import {
+  ChannelGatewayInProgressError,
+  ChannelGatewayReconciliationRequiredError,
+  executeViaChannelGateway,
+} from "../../../../lib/channels/gateway";
 import { channelOperationAvailable } from "../../../../lib/channels/operation-availability";
 import { listingUpdateRemoteIdentity, listingWriteOperation } from "../../../../lib/channels/listing-update";
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
-import { ensureEbayAccessToken } from "../../../../lib/channels/protocols";
+import { channelWriteResource } from "../../../../lib/channels/write-resource";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -27,6 +31,11 @@ const requestSchema = z.object({
   idempotencyKey: z.string().trim().min(16).max(160),
   confirmWrite: z.boolean().default(false),
   productId: z.string().uuid().optional(),
+  resourceListingId: z.string().uuid().optional(),
+  inventoryItemId: z.string().uuid().optional(),
+  orderId: z.string().uuid().optional(),
+  shipmentCarrier: z.string().trim().min(1).max(40).optional(),
+  shipmentTracking: z.string().trim().max(100).optional(),
   currency: z.string().trim().length(3).transform((value) => value.toUpperCase()).optional(),
   price: z.number().nonnegative().max(999_999_999).optional(),
   market: z.string().trim().max(80).optional().default(""),
@@ -62,6 +71,7 @@ function errorMessage(error: unknown) {
   if (message.includes("EBAY_BUSINESS_POLICIES_MISSING")) return "eBay 계정에 해당 마켓의 배송·결제·반품 Business Policy가 없습니다. Seller Hub에서 정책을 만들거나 필수 입력란에 실제 정책 ID를 입력해 주세요.";
   if (message.includes("EBAY_INVENTORY_LOCATION_MISSING")) return "eBay 계정에 사용할 Inventory Location이 없습니다. Seller Hub에서 재고 위치를 만들거나 필수 입력란에 실제 위치 키를 입력해 주세요.";
   if (message.startsWith("CHANNEL_GATEWAY_TIMEOUT")) return "허용 IP 채널 작업자의 응답 제한시간을 초과했습니다. 작업자 상태를 확인해 주세요.";
+  if (message.startsWith("CHANNEL_WRITE_RESOURCE_")) return "가격·재고·발송 작업의 원격 대상 식별값을 확인하지 못해 실행을 차단했습니다.";
   if (message.startsWith("CHANNEL_GATEWAY_")) return "허용 IP 채널 작업 경로에서 안전하게 처리된 오류가 발생했습니다.";
   if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) return "판매채널 응답 제한시간(15초)을 초과했습니다.";
   return "판매채널 작업 중 안전하게 처리된 오류가 발생했습니다.";
@@ -95,6 +105,11 @@ export async function POST(request: NextRequest) {
   }
   if (writeChannelOperations.has(operation) && !parsed.data.confirmWrite) {
     return NextResponse.json({ message: "외부 판매채널을 변경하는 작업은 실행 확인이 필요합니다." }, { status: 428 });
+  }
+  if (["listing.create", "listing.update", "listing.stop"].includes(operation) && !parsed.data.productId) {
+    return NextResponse.json({
+      message: "상품 원장 ID가 없는 상품 등록·수정·판매 중지는 중복 방지를 위해 실행할 수 없습니다.",
+    }, { status: 409 });
   }
 
   const userClient = createClient(supabaseUrl, supabasePublishableKey, {
@@ -162,6 +177,11 @@ export async function POST(request: NextRequest) {
       operation,
       environment,
       productId: parsed.data.productId ?? null,
+      resourceListingId: parsed.data.resourceListingId ?? null,
+      inventoryItemId: parsed.data.inventoryItemId ?? null,
+      orderId: parsed.data.orderId ?? null,
+      shipmentCarrier: parsed.data.shipmentCarrier ?? null,
+      shipmentTracking: parsed.data.shipmentTracking ?? null,
       currency: parsed.data.currency ?? null,
       price: parsed.data.price ?? null,
       market: parsed.data.market,
@@ -223,6 +243,27 @@ export async function POST(request: NextRequest) {
         attemptId,
         listingId: duplicateListingId || undefined,
       }, { headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (claim.status === "running") {
+      return NextResponse.json({
+        ok: false,
+        inProgress: true,
+        reconciliationRequired: false,
+        attemptId,
+        message: "같은 판매채널 작업이 이미 진행 중입니다. 기존 작업 결과가 확정될 때까지 새 원격 호출을 실행하지 않았습니다.",
+      }, { status: 202, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (claim.status === "manual_required") {
+      const reconciliationRequired = duplicateMessage.includes("수동 확인")
+        || duplicateMessage.includes("provider outcome requires reconciliation");
+      return NextResponse.json({
+        ok: false,
+        inProgress: false,
+        manualRequired: true,
+        reconciliationRequired,
+        attemptId,
+        message: duplicateMessage,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     return NextResponse.json({
       message: "같은 작업이 이미 접수됐습니다. 외부 상품·주문 중복 처리를 막기 위해 다시 실행하지 않았습니다.",
@@ -289,11 +330,37 @@ export async function POST(request: NextRequest) {
     });
   };
 
-  if (channel === "shopee" || channel === "lazada" || channel === "coupang" || channel === "elevenst" || channel === "smartstore" || channel === "temu") {
+  const listingGatewayOperation = ["listing.create", "listing.update", "listing.stop"].includes(operation);
+  const usesChannelGateway = channel === "ebay"
+    || channel === "shopee"
+    || channel === "lazada"
+    || channel === "coupang"
+    || channel === "elevenst"
+    || channel === "smartstore"
+    || channel === "temu"
+    || ((listingGatewayOperation || writeChannelOperations.has(operation)) && channel === "qoo10");
+  if (usesChannelGateway) {
     try {
       const gatewayArguments = operation === "listing.create" || operation === "listing.update"
         ? await prepareMarketplaceImages(serviceClient, channel, parsed.data.arguments)
         : parsed.data.arguments;
+      const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
+        ? {
+            ...channelWriteResource({
+              channel,
+              operation,
+              arguments: gatewayArguments,
+              context: {
+                listingId: parsed.data.resourceListingId,
+                inventoryItemId: parsed.data.inventoryItemId,
+                orderId: parsed.data.orderId,
+                carrierCode: parsed.data.shipmentCarrier,
+                trackingNumber: parsed.data.shipmentTracking,
+              },
+            }),
+            requestFingerprint,
+          }
+        : undefined;
       const rawResult = await executeViaChannelGateway({
         serviceClient,
         credentialId: parsed.data.credentialId,
@@ -301,31 +368,50 @@ export async function POST(request: NextRequest) {
         channel,
         operation,
         arguments: gatewayArguments,
+        listingId: listingId || undefined,
+        writeResource,
+        timeoutMs: writeChannelOperations.has(operation) ? 45_000 : undefined,
       });
       const { result, remediation } = applyListingRemediation(rawResult);
       if (remediation?.rejectCategory) await rejectBlockedCategory(remediation.code);
-      const remoteStatus = result.steps.find((item) => !item.ok)?.status ?? result.steps.at(-1)?.status ?? 200;
-      await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
-        p_attempt_id: attemptId,
-        p_status: result.ok ? "succeeded" : "failed",
-        p_http_status: remoteStatus,
-        p_remote_id: result.remoteId ?? null,
-        p_safe_message: result.safeMessage,
-      });
-      const listingRecorded = await completeListing({ success: result.ok, remoteId: result.remoteId, publicUrl: result.publicUrl, safeMessage: result.safeMessage });
-      if (!listingRecorded) {
-        return NextResponse.json({
-          message: "원격 작업은 완료됐지만 상품 원장 조정이 필요합니다. 같은 멱등키로 다시 요청하면 원격 재호출 없이 복구합니다.",
-          attemptId,
-          remoteId: result.remoteId,
-          reconciliationRequired: true,
-        }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
-      }
+      // Listing gateway completion is the single transaction that owns both
+      // the attempt and listing ledgers. Replaying the legacy completion RPCs
+      // here can overwrite a worker-recorded external_action/manual_required
+      // outcome after a remote create whose readback could not be verified.
       return NextResponse.json({ ...result, attemptId, listingId: listingId || undefined, gateway: "allowlisted-local-worker" }, {
         status: result.ok ? 200 : 422,
         headers: { "cache-control": "no-store, max-age=0" },
       });
     } catch (error) {
+      if (error instanceof ChannelGatewayReconciliationRequiredError) {
+        return NextResponse.json({
+          ok: false,
+          inProgress: false,
+          manualRequired: true,
+          reconciliationRequired: true,
+          jobId: error.jobId,
+          attemptId: error.attemptId ?? attemptId,
+          message: "판매채널이 작업을 수락했는지 확정할 수 없습니다. 원격 판매자센터와 진행 현황을 수동 확인하기 전에는 다시 실행할 수 없습니다.",
+        }, {
+          status: 409,
+          headers: { "cache-control": "no-store, max-age=0" },
+        });
+      }
+      if (error instanceof ChannelGatewayInProgressError) {
+        return NextResponse.json({
+          ok: false,
+          inProgress: true,
+          reconciliationRequired: false,
+          jobId: error.jobId,
+          attemptId: error.attemptId ?? attemptId,
+          message: error.message === "CHANNEL_GATEWAY_TIMEOUT"
+            ? "판매채널 작업이 계속 진행 중입니다. 원격 결과가 확인될 때까지 재등록하지 않고 진행 현황에서 자동 반영을 기다립니다."
+            : "동일 상품·채널 작업이 이미 진행 중입니다. 기존 작업이 끝날 때까지 새 원격 등록을 실행하지 않았습니다.",
+        }, {
+          status: 202,
+          headers: { "cache-control": "no-store, max-age=0" },
+        });
+      }
       const message = errorMessage(error);
       await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
         p_attempt_id: attemptId,
@@ -355,21 +441,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    let executionPayload = secretPayload as Record<string, unknown>;
-    let credentialRefreshed = false;
-    if (channel === "ebay") {
-      const ensured = await ensureEbayAccessToken(executionPayload, environment);
-      executionPayload = ensured.payload;
-      if (ensured.refreshed) {
-        const { error: refreshStoreError } = await serviceClient.rpc("sellerpilot_service_refresh_ebay", {
-          p_credential_id: parsed.data.credentialId,
-          p_secret_payload: ensured.payload,
-          p_expires_at: ensured.credentialExpiresAt,
-        });
-        if (refreshStoreError) throw new Error("EBAY_CREDENTIAL_REFRESH_STORE_FAILED");
-        credentialRefreshed = true;
-      }
-    }
+    const executionPayload = secretPayload as Record<string, unknown>;
     const operationArguments = operation === "listing.create" || operation === "listing.update"
       ? await prepareMarketplaceImages(serviceClient, channel, parsed.data.arguments)
       : parsed.data.arguments;
@@ -399,7 +471,7 @@ export async function POST(request: NextRequest) {
         reconciliationRequired: true,
       }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    return NextResponse.json({ ...result, attemptId, listingId: listingId || undefined, credentialRefreshed }, {
+    return NextResponse.json({ ...result, attemptId, listingId: listingId || undefined }, {
       status: result.ok ? 200 : 422,
       headers: { "cache-control": "no-store, max-age=0" },
     });

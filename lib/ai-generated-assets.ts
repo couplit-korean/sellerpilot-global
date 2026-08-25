@@ -17,6 +17,12 @@ export const aiDetailAssetIds = aiGeneratedAssetSpecs
   .filter((asset) => asset.role === "detail")
   .map((asset) => asset.id) as AiGeneratedAssetId[];
 
-export function aiGeneratedAssetPath(jobId: string, asset: (typeof aiGeneratedAssetSpecs)[number]) {
-  return `results/${jobId}/${asset.file}`;
+export function aiGeneratedAssetPath(
+  jobId: string,
+  asset: (typeof aiGeneratedAssetSpecs)[number],
+  claimToken?: string,
+) {
+  return claimToken
+    ? `results/${jobId}/claims/${claimToken}/${asset.file}`
+    : `results/${jobId}/${asset.file}`;
 }

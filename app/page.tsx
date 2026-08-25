@@ -83,7 +83,7 @@ import { marketplaceListingLinkLabel, marketplaceListingUrl, type RemoteListingR
 import { channels, type ChannelKey } from "./channel-config";
 import { activeChannelKeys, isActiveChannelKey } from "../lib/channels/catalog";
 import { shipmentVerificationSummary, shipmentWriteAvailability } from "../lib/channels/shipment-release";
-import { useOperationsSnapshot, type OperationsSnapshot, type SalesRange } from "./use-operations-snapshot";
+import { useOperationsSnapshot, type OperationsSnapshot, type OperationTicket, type SalesRange } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
@@ -92,7 +92,13 @@ import { normalizeProductSaleConfiguration, productSaleConfigurations } from "..
 import { settleWithConcurrency } from "../lib/promise-pool";
 import { withPromiseTimeout } from "../lib/promise-timeout";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
-import { adminVerificationState, nextAdminAccessState, type AdminAccessState } from "./_auth/admin-access-state";
+import {
+  adminVerificationState,
+  nextAdminAccessState,
+  switchAccountWithLocalSessionCleanup,
+  type AccountSwitchCleanupState,
+  type AdminAccessState,
+} from "./_auth/admin-access-state";
 import { formatCompactWon } from "./_dashboard/format-compact-won";
 import { RevenueCalendar } from "./_dashboard/revenue-calendar";
 import { SalesRangeControl } from "./_dashboard/sales-range-control";
@@ -270,6 +276,8 @@ type DisplayTicket = {
   originalMessage: string;
   preview: string;
   replyDraft: string | null;
+  replyDeliveryStatus: OperationTicket["replyDeliveryStatus"];
+  replyDeliveryError: string | null;
   time: string;
   status: "긴급" | "답변 대기" | "처리 중" | "처리 완료";
 };
@@ -374,15 +382,27 @@ function credentialConnectionLabel(status: string | undefined) {
   return "API 키 등록 필요";
 }
 
-function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, password: string) => Promise<string | null>; onPasswordReset: (email: string) => Promise<string | null> }) {
+function LoginScreen({
+  onLogin,
+  onPasswordReset,
+  sessionCleanupState,
+  onRetrySessionCleanup,
+}: {
+  onLogin: (email: string, password: string) => Promise<string | null>;
+  onPasswordReset: (email: string) => Promise<string | null>;
+  sessionCleanupState: AccountSwitchCleanupState;
+  onRetrySessionCleanup: () => void;
+}) {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const sessionCleanupPending = sessionCleanupState !== "idle";
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (sessionCleanupPending) return;
     if (!email.trim() || !password.trim()) {
       setError("아이디와 비밀번호를 모두 입력해 주세요.");
       return;
@@ -395,6 +415,7 @@ function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, pa
   };
 
   const requestPasswordReset = async () => {
+    if (sessionCleanupPending) return;
     if (!email.trim()) {
       setError("비밀번호를 재설정할 관리자 이메일을 먼저 입력해 주세요.");
       return;
@@ -435,12 +456,16 @@ function LoginScreen({ onLogin, onPasswordReset }: { onLogin: (email: string, pa
             <p>관리자 계정으로 통합 대시보드에 접속하세요.</p>
           </div>
           <label className="field-label" htmlFor="email">아이디</label>
-          <div className="input-wrap"><UserRound size={17} /><input id="email" type="text" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" placeholder="관리자 아이디 또는 이메일" /></div>
-          <div className="field-row"><label className="field-label" htmlFor="password">비밀번호</label><button type="button" className="text-button" onClick={() => void requestPasswordReset()}>비밀번호 찾기</button></div>
-          <div className="input-wrap"><LockKeyhole size={17} /><input id="password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" /><button type="button" className="password-toggle" aria-label={showPassword ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowPassword((current) => !current)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+          <div className="input-wrap"><UserRound size={17} /><input id="email" type="text" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" placeholder="관리자 아이디 또는 이메일" disabled={sessionCleanupPending} /></div>
+          <div className="field-row"><label className="field-label" htmlFor="password">비밀번호</label><button type="button" className="text-button" onClick={() => void requestPasswordReset()} disabled={sessionCleanupPending}>비밀번호 찾기</button></div>
+          <div className="input-wrap"><LockKeyhole size={17} /><input id="password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={sessionCleanupPending} /><button type="button" className="password-toggle" aria-label={showPassword ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowPassword((current) => !current)} disabled={sessionCleanupPending}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
           <div className="remember-row"><span><Check size={12} /></span>이 브라우저에서 로그인 세션 유지</div>
+          {sessionCleanupState === "clearing" && <p className="login-error" role="status" aria-live="polite"><LoaderCircle className="spin" size={14} />이전 계정의 로컬 세션을 안전하게 정리하고 있습니다.</p>}
+          {sessionCleanupState === "failed" && <p className="login-error" role="alert"><AlertCircle size={14} />이전 계정 세션을 정리하지 못했습니다. 다시 시도해 주세요.</p>}
           {error && <p className="login-error"><AlertCircle size={14} />{error}</p>}
-          <button className="login-button" type="submit" disabled={loading}>{loading ? <><LoaderCircle className="spin" size={18} />접속 중...</> : <>대시보드 접속<ArrowRight size={18} /></>}</button>
+          {sessionCleanupState === "failed"
+            ? <button className="login-button" type="button" onClick={onRetrySessionCleanup}><RefreshCw size={18} />세션 정리 다시 시도</button>
+            : <button className="login-button" type="submit" disabled={loading || sessionCleanupPending}>{sessionCleanupState === "clearing" ? <><LoaderCircle className="spin" size={18} />이전 계정 정리 중...</> : loading ? <><LoaderCircle className="spin" size={18} />접속 중...</> : <>대시보드 접속<ArrowRight size={18} /></>}</button>}
           <div className="demo-account"><ShieldCheck size={15} /><span>Supabase Auth로 인증하며 채널 키 원문은 로그인 후에도 표시하지 않습니다.<br /><b>관리자 초대 메일에서 비밀번호를 설정해 주세요.</b></span></div>
         </form>
         <div className="login-support"><HelpCircle size={15} />접속에 문제가 있나요? <a href="mailto:couplit.official@gmail.com?subject=SellerPilot%20운영%20지원%20문의">운영 지원팀 문의</a></div>
@@ -2081,12 +2106,12 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
   });
   return (
     <div className="page-stack cs-page">
-      <section className="cs-summary"><div><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{unresolvedCount}</strong></span></div><div><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{displayTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></div><div><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>동기화 주문</small><strong>{displayOrders.length}</strong></span></div><div><span className="metric-icon blue"><Bot size={18} /></span><span><small>AI 답변</small><strong>CLI</strong></span></div></section>
+      <section className="cs-summary"><div><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{unresolvedCount}</strong></span></div><div><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{displayTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></div><div><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>동기화 주문</small><strong>{displayOrders.length}</strong></span></div><div><span className="metric-icon blue"><Bot size={18} /></span><span><small>원장 확인 필요</small><strong>{displayTickets.filter((ticket) => ticket.replyDeliveryStatus === "reconciliation_required").length}</strong></span></div></section>
       <section className="panel-heading table-title"><div><span className="panel-kicker">LIVE INQUIRIES</span><h3>{lastSuccess ? `최근 동기화 ${relativeTime(lastSuccess)}` : "채널 문의 동기화 대기"}{failedCount ? ` · ${failedCount}개 채널 확인 필요` : ""}</h3></div><button className="filter-button" type="button" onClick={() => void onSync()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{syncing ? "요청 중" : "문의 새로고침"}</button></section>
       <section className="panel cs-channel-verification"><div className="panel-heading"><div><span className="panel-kicker">CHANNEL VERIFICATION</span><h3>채널별 문의 조회 · 답변 범위</h3></div><ShieldCheck size={18} /></div><div className="cs-channel-verification-grid">{inquiryChannelStates.map(({ channelKey, state }) => { const verification = csChannelVerification(channelKey, state?.status, state?.imported_count ?? 0, state?.last_error ?? null); return <article key={channelKey}><ChannelMark code={channels[channelKey].letter} /><span><b>{channels[channelKey].name}</b><small>{verification.readLabel}{state?.status === "passed" && state.last_succeeded_at ? ` · ${relativeTime(state.last_succeeded_at)}` : ""}</small><small>{verification.replyLabel}</small></span><em className={verification.tone}>{verification.badge}</em></article>; })}</div></section>
       {!selected ? <section className="panel live-empty-state large"><Inbox size={32} /><b>{displayTickets.length === 0 ? "운영 원장에 실제 문의가 0건입니다." : "검색 조건에 맞는 문의가 없습니다."}</b><small>{displayTickets.length === 0 ? "지원·승인된 채널의 문의 조회가 성공하고 실제 문의가 있으면 고객 정보와 원문이 표시됩니다." : "고객명, 문의번호 또는 문의 내용을 다시 확인해 주세요."}</small>{displayTickets.length === 0 && <button className="ghost-button" type="button" onClick={() => void onSync()} disabled={syncing}>지금 확인</button>}</section> :
       <section className={`cs-workspace panel ${mobileConversationOpen ? "mobile-conversation-open" : ""}`}>
-        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs">{(["미답변", "처리 중", "완료"] as const).map((tab) => <button key={tab} className={ticketTab === tab ? "active" : ""} onClick={() => { setTicketTab(tab); setSelectedSourceId(null); setMobileConversationOpen(false); }}>{tab}{tab === "미답변" && <span>{displayTickets.filter((ticket) => ticket.status === "긴급" || ticket.status === "답변 대기").length}</span>}</button>)}</div>{filteredTickets.map((ticket) => <button key={ticket.sourceId} className={`ticket-item ${selected.sourceId === ticket.sourceId ? "active" : ""}`} onClick={() => { setSelectedSourceId(ticket.sourceId); setMobileConversationOpen(true); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.status} /></div></button>)}</aside>
+        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs">{(["미답변", "처리 중", "완료"] as const).map((tab) => <button key={tab} className={ticketTab === tab ? "active" : ""} onClick={() => { setTicketTab(tab); setSelectedSourceId(null); setMobileConversationOpen(false); }}>{tab}{tab === "미답변" && <span>{displayTickets.filter((ticket) => ticket.status === "긴급" || ticket.status === "답변 대기").length}</span>}</button>)}</div>{filteredTickets.map((ticket) => <button key={ticket.sourceId} className={`ticket-item ${selected.sourceId === ticket.sourceId ? "active" : ""}`} onClick={() => { setSelectedSourceId(ticket.sourceId); setMobileConversationOpen(true); }}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.replyDeliveryStatus === "reconciliation_required" ? "원장 확인 필요" : ticket.status} /></div></button>)}</aside>
         <article className="conversation"><header><div><button className="mobile-back" type="button" aria-label="문의 목록으로 돌아가기" onClick={() => setMobileConversationOpen(false)}><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div><label className="filter-select compact"><span className="sr-only">문의 처리 상태</span><select value={selected.status === "처리 완료" ? "resolved" : selected.status === "처리 중" ? "in_progress" : "waiting"} onChange={(event) => void updateStatus(event.target.value as "waiting" | "in_progress" | "resolved")}><option value="waiting">답변 대기</option><option value="in_progress">처리 중</option><option value="resolved">처리 완료</option></select><ChevronDown size={14} /></label></div></header>
           <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>안정된 주문 연결 정보 없음</b></span><div className="order-context-meta"><em>-</em><StatusBadge status="확인 필요" /><small>고객명만으로 주문을 추정하지 않습니다.</small></div></div><div className="message-date"><span>실제 수신 문의</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.originalMessage}</p><span>채널 동기화 원문</span></div></div></div>
           <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />문의 원문을 바탕으로 검토용 초안을 생성합니다.</span><button type="button" disabled={drafting} onClick={() => void createDraft()}>{drafting ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{drafting ? "CLI 작성 중" : "CLI 초안 생성"}</button></div><textarea value={reply} onChange={(event) => setSelectedReply(event.target.value)} placeholder={selected.channelKey === "lazada" ? "Lazada IM으로 전송할 실제 답변을 입력하세요." : "판매자센터 전송 전 검토할 내부 초안을 입력하세요."} /><div><span><label className="reply-tool-select"><Languages size={15} /><span className="sr-only">답변 언어</span><select value={targetLocale} onChange={(event) => setTargetLocale(event.target.value as SupportLocale)}>{Object.entries(supportLocaleLabels).map(([locale, label]) => <option key={locale} value={locale}>{label}</option>)}</select><ChevronDown size={13} /></label><label className="reply-tool-select"><FileText size={15} /><span className="sr-only">답변 템플릿</span><select defaultValue="" onChange={(event) => { const template = supportReplyTemplates.find((item) => item.label === event.target.value); if (template) setSelectedReply(template.value); event.target.value = ""; }}><option value="">템플릿</option>{supportReplyTemplates.map((template) => <option value={template.label} key={template.label}>{template.label}</option>)}</select><ChevronDown size={13} /></label></span><button className="send-button" disabled={!reply.trim()} onClick={() => void sendReply()}>{selected.channelKey === "lazada" ? "Lazada IM 답변 전송" : "내부 초안 저장"}<Send size={15} /></button></div></footer>
@@ -2126,6 +2151,7 @@ const defaultNotificationPreferences: NotificationPreferences = { kakao_enabled:
 function NotificationsPage({ authenticatedFetch, notify }: { authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; notify: (message: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const kakaoTestRequestIdRef = useRef<string | null>(null);
   const [kakao, setKakao] = useState<{ connected?: boolean; nickname?: string; kakaoUserId?: string; expiresAt?: string }>({ connected: false });
   const [preferences, setPreferences] = useState(defaultNotificationPreferences);
   const load = useCallback(async () => {
@@ -2161,12 +2187,20 @@ function NotificationsPage({ authenticatedFetch, notify }: { authenticatedFetch:
   };
   const test = async () => {
     setWorking(true);
+    const requestId = kakaoTestRequestIdRef.current ?? crypto.randomUUID();
+    kakaoTestRequestIdRef.current = requestId;
     try {
-      const response = await authenticatedFetch("/api/integrations/kakao/settings", { method: "POST", body: JSON.stringify({ action: "test" }) });
-      const payload = await response.json().catch(() => ({ message: "테스트 알림 응답을 읽지 못했습니다." })) as { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? "테스트 알림을 보내지 못했습니다.");
+      const response = await authenticatedFetch("/api/integrations/kakao/settings", { method: "POST", body: JSON.stringify({ action: "test", requestId }) });
+      const payload = await response.json().catch(() => ({ message: "테스트 알림 응답을 읽지 못했습니다." })) as { message?: string; outcome?: string; terminal?: boolean };
+      if (!response.ok) {
+        if (payload.terminal && payload.outcome === "failed") kakaoTestRequestIdRef.current = null;
+        throw new Error(payload.message ?? "테스트 알림을 보내지 못했습니다.");
+      }
+      kakaoTestRequestIdRef.current = null;
       notify("가입한 사용자 본인의 카카오톡 ‘나와의 채팅’으로 테스트 알림을 보냈습니다.");
-    } catch (error) { notify(error instanceof Error ? error.message : "테스트 알림을 보내지 못했습니다."); }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "테스트 알림을 보내지 못했습니다.");
+    }
     finally { setWorking(false); }
   };
   const options: Array<{ key: keyof NotificationPreferences; title: string; detail: string; icon: React.ComponentType<{ size?: number }> }> = [
@@ -2401,6 +2435,8 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     originalMessage: ticket.message,
     preview: ticket.translatedMessage ?? ticket.message,
     replyDraft: ticket.replyDraft,
+    replyDeliveryStatus: ticket.replyDeliveryStatus,
+    replyDeliveryError: ticket.replyDeliveryError,
     time: relativeTime(ticket.receivedAt),
     status: ticketStatusLabel[ticket.status],
   })) ?? [], [operations.data]);
@@ -2797,9 +2833,11 @@ export default function Home() {
   const [userEmail, setUserEmail] = useState("");
   const [accessErrorMessage, setAccessErrorMessage] = useState("");
   const [accessRetryKey, setAccessRetryKey] = useState(0);
+  const [accountSwitchCleanup, setAccountSwitchCleanup] = useState<AccountSwitchCleanupState>("idle");
   const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "shopee" | "lazada" | "ebay"; code: string; state: string; shopId?: string; mainAccountId?: string } | null>(null);
   const [oauthNotice, setOauthNotice] = useState("");
   const oauthHandled = useRef(false);
+  const accountSwitchingRef = useRef(false);
 
   useEffect(() => {
     const captureCallback = window.setTimeout(() => {
@@ -2827,7 +2865,7 @@ export default function Home() {
     let verificationGeneration = 0;
     let verifiedAdminUserId = "";
     const failVerification = (generation: number) => {
-      if (!active || generation !== verificationGeneration) return;
+      if (!active || accountSwitchingRef.current || generation !== verificationGeneration) return;
       verifiedAdminUserId = "";
       setAccessErrorMessage("인증 서버 응답이 지연되고 있습니다. 로그인 상태는 변경하지 않았습니다.");
       setAccessState("error");
@@ -2838,7 +2876,7 @@ export default function Home() {
           supabase.rpc("sellerpilot_is_admin"),
           supabase.auth.getSession(),
         ]), 12_000, "관리자 권한 확인 시간이 초과되었습니다.");
-        if (!active || generation !== verificationGeneration) return;
+        if (!active || accountSwitchingRef.current || generation !== verificationGeneration) return;
         if (sessionError) {
           failVerification(generation);
           return;
@@ -2873,7 +2911,7 @@ export default function Home() {
       }
     };
     const startVerification = (session: Session | null) => {
-      if (!active) return;
+      if (!active || accountSwitchingRef.current) return;
       const generation = ++verificationGeneration;
       if (!session) {
         verifiedAdminUserId = "";
@@ -2905,6 +2943,7 @@ export default function Home() {
         setAccessState("signed_out");
         return;
       }
+      if (accountSwitchingRef.current) return;
       setAccessState((current) => nextAdminAccessState(current, event, Boolean(session && session.user.id === verifiedAdminUserId)));
       window.setTimeout(() => startVerification(session), 0);
     });
@@ -2948,6 +2987,7 @@ export default function Home() {
 
   const login = async (email: string, password: string) => {
     if (!isSupabaseConfigured) return "운영 인증 서버가 아직 연결되지 않았습니다.";
+    if (accountSwitchingRef.current) return "이전 계정 세션을 정리한 뒤 로그인해 주세요.";
     const loginId = email.trim().toLowerCase();
     const normalizedEmail = loginId === "admin"
       ? "admin@couplit-official.test"
@@ -2961,15 +3001,41 @@ export default function Home() {
 
   const resetPassword = async (email: string) => {
     if (!isSupabaseConfigured) return "운영 인증 서버가 아직 연결되지 않았습니다.";
+    if (accountSwitchingRef.current) return "이전 계정 세션을 정리한 뒤 다시 시도해 주세요.";
     const redirectTo = `${window.location.origin}/auth/callback?next=/update-password`;
     const { error } = await createSupabaseClient().auth.resetPasswordForEmail(email, { redirectTo });
     return error ? "재설정 메일을 보내지 못했습니다. 관리자에게 문의해 주세요." : null;
   };
 
   const logout = async () => {
-    if (isSupabaseConfigured) await createSupabaseClient().auth.signOut();
-    setAccessState("signed_out");
-    setUserEmail("");
+    if (accountSwitchingRef.current) return;
+    accountSwitchingRef.current = true;
+    setAccountSwitchCleanup("clearing");
+    const showSignedOutImmediately = () => {
+      setAccessErrorMessage("");
+      setAccessState("signed_out");
+      setUserEmail("");
+    };
+    if (!isSupabaseConfigured) {
+      showSignedOutImmediately();
+      accountSwitchingRef.current = false;
+      setAccountSwitchCleanup("idle");
+      return;
+    }
+    try {
+      // Await the singleton client's cleanup before enabling login. A detached
+      // signOut could otherwise finish later and erase the newly signed-in account.
+      await switchAccountWithLocalSessionCleanup(createSupabaseClient().auth, showSignedOutImmediately);
+      accountSwitchingRef.current = false;
+      setAccountSwitchCleanup("idle");
+    } catch {
+      setAccountSwitchCleanup("failed");
+    }
+  };
+
+  const retryAccountSwitchCleanup = () => {
+    accountSwitchingRef.current = false;
+    void logout();
   };
 
   if (accessState === "checking") {
@@ -2983,5 +3049,5 @@ export default function Home() {
   }
   return accessState === "admin"
     ? <><DashboardShell onLogout={logout} userEmail={userEmail} />{oauthNotice && <div className="toast"><KeyRound size={18} /><span>{oauthNotice}</span><button onClick={() => setOauthNotice("")}><X size={14} /></button></div>}</>
-    : <LoginScreen onLogin={login} onPasswordReset={resetPassword} />;
+    : <LoginScreen onLogin={login} onPasswordReset={resetPassword} sessionCleanupState={accountSwitchCleanup} onRetrySessionCleanup={retryAccountSwitchCleanup} />;
 }

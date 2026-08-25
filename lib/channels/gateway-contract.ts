@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { channelOperationNames } from "./operations";
+import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operations";
 
 const gatewayChannelSchema = z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]);
 
@@ -10,6 +10,7 @@ const credentialPayloadSchema = z.record(z.string(), z.unknown()).refine(
 
 export const gatewayClaimSchema = z.object({
   id: z.string().uuid(),
+  claim_token: z.string().uuid(),
   credential_id: z.string().uuid(),
   channel: gatewayChannelSchema,
   operation: z.union([z.literal("oauth.exchange"), z.literal("shops.get"), z.literal("diagnostic.test"), z.literal("competitor.search"), z.enum(channelOperationNames)]),
@@ -38,7 +39,25 @@ const operationResultSchema = z.object({
 const credentialRefreshSchema = z.object({
   payload: credentialPayloadSchema,
   expiresAt: z.string().datetime().nullable(),
+  recoveryOnly: z.boolean().optional(),
+  oauthComplete: z.boolean().optional(),
 });
+
+export const gatewayCredentialRefreshStageSchema = z.object({
+  action: z.literal("stage"),
+  jobId: z.string().uuid(),
+  claimToken: z.string().uuid(),
+  credentialRefresh: credentialRefreshSchema,
+});
+
+export const gatewayCredentialRefreshLifecycleSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("begin"),
+    jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
+  }),
+  gatewayCredentialRefreshStageSchema,
+]);
 
 const diagnosticResultSchema = z.object({
   ok: z.boolean(),
@@ -73,6 +92,7 @@ const competitorSearchResultSchema = z.object({
 export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
   z.object({
     jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
     status: z.literal("succeeded"),
     result: z.union([
       operationResultSchema,
@@ -80,7 +100,7 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
       competitorSearchResultSchema,
       z.object({
         ok: z.literal(true),
-        channel: z.enum(["shopee", "lazada"]),
+        channel: z.enum(["shopee", "lazada", "ebay"]),
         operation: z.literal("oauth.exchange"),
         credentialPayload: credentialPayloadSchema,
         expiresAt: z.string().datetime().nullable(),
@@ -103,15 +123,80 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
   }),
   z.object({
     jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
     status: z.literal("failed"),
     error: z.string().min(1).max(500),
+    credentialRefresh: credentialRefreshSchema.optional(),
+  }),
+  z.object({
+    jobId: z.string().uuid(),
+    claimToken: z.string().uuid(),
+    status: z.literal("reconciliation_required"),
+    error: z.string().min(1).max(500),
+    result: operationResultSchema.optional(),
+    credentialRefresh: credentialRefreshSchema.optional(),
   }),
 ]);
 
 export type GatewayClaim = z.infer<typeof gatewayClaimSchema>;
 export type GatewayWorkerCompletion = z.infer<typeof gatewayWorkerCompletionSchema>;
 
-export function gatewayJobCompletionStatus(operation: string, ok: boolean): "succeeded" | "failed" {
+const trustedMutationSteps: Readonly<Record<string, ReadonlySet<string>>> = {
+  "listing.create": new Set([
+    "product-create", "product-create-accepted", "product-create-reconcile",
+    "global-item-create", "global-item-readback", "publish-task-create",
+    "published-item-readback", "listing.create", "/product/create", "listing.resume",
+    "product-reconcile", "goods-v3-add", "goods-reconcile", "setnewgoods",
+    "offer", "offer-reconcile", "publish", "listing-image-upload",
+  ]),
+  "listing.update": new Set([
+    "updategoods", "editgoodscontents", "listing.update", "/product/update",
+    "product-update", "offer-update", "listing-image-upload",
+  ]),
+  "listing.stop": new Set([
+    "stop-display", "editgoodsstatus", "listing.stop", "/product/deactivate",
+    "sales-stop", "status-stop", "goods-off-shelf", "offer-withdraw",
+  ]),
+  "price.update": new Set([
+    "setgoodspriceqty", "price.update", "/product/price_quantity/update",
+    "price", "bulk-price", "offer-price",
+  ]),
+  "inventory.update": new Set([
+    "setgoodspriceqty", "inventory.update", "/product/price_quantity/update",
+    "quantity", "origin-product-stock", "option-stock", "goods-stock", "bulk-inventory",
+  ]),
+  "shipment.acknowledge": new Set(["seller-check", "pack", "acknowledgement", "confirm"]),
+  "shipment.confirm": new Set([
+    "setsendinginfo", "shipment.confirm", "pack", "ready-to-ship", "invoice",
+    "dispatch", "shipment-confirm", "shipping-fulfillment",
+  ]),
+};
+
+export function gatewayResultHasObservedMutation(
+  operation: string,
+  ok: boolean,
+  steps: ReadonlyArray<{ name: string; ok: boolean; status?: number }>,
+): boolean {
+  if (ok || !writeChannelOperations.has(operation as ChannelOperationName)) return false;
+  const trusted = trustedMutationSteps[operation];
+  if (!trusted) return false;
+  return steps.some((step) => {
+    const providerOutcomeUncertain = step.ok
+      || step.status === 408
+      || (typeof step.status === "number" && step.status >= 500 && step.status <= 599);
+    if (!providerOutcomeUncertain) return false;
+    const name = step.name.trim().toLowerCase();
+    return trusted.has(name)
+      || (operation === "listing.create" && name.startsWith("published-item-readback-"));
+  });
+}
+
+export function gatewayJobCompletionStatus(
+  operation: string,
+  ok: boolean,
+  steps: ReadonlyArray<{ name: string; ok: boolean; status?: number }> = [],
+): "succeeded" | "failed" | "reconciliation_required" {
+  if (gatewayResultHasObservedMutation(operation, ok, steps)) return "reconciliation_required";
   if (!ok && (operation === "orders.list" || operation === "inquiries.list")) return "failed";
   return "succeeded";
 }

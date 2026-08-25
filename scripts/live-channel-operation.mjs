@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { ensureShopeeAccessToken, ensureShopeeMerchantAccessToken, exchangeShopeeOAuthToken, shopeeMerchantRequest, shopeeRequest } from "../lib/channels/protocols.ts";
+import { shopeeMerchantRequest, shopeeRequest } from "../lib/channels/protocols.ts";
 
 const projectRef = process.env.SUPABASE_PROJECT_REF?.trim() || "sqaoqucxakebqkiygdxb";
 const siteUrl = (process.env.SELLERPILOT_URL?.trim() || "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
@@ -14,6 +14,26 @@ const secretKey = keys.find((item) => item?.type === "legacy" && item?.name === 
   || keys.find((item) => item?.type === "secret")?.api_key;
 if (!publishableKey || !secretKey) throw new Error("Supabase publishable/secret key input is missing.");
 if (!channel || !operation) throw new Error("LIVE_CHANNEL and LIVE_OPERATION are required.");
+
+function liveShopeeReadPayload(payload, targetType, requestedId = "") {
+  const targets = Array.isArray(payload?.shopee_targets) ? payload.shopee_targets : [];
+  const target = targets.find((candidate) => candidate?.type === targetType
+    && (!requestedId || String(candidate?.id ?? "") === requestedId));
+  const projected = target ? {
+    ...payload,
+    ...(targetType === "shop" ? { shop_id: String(target.id) } : { merchant_id: String(target.id) }),
+    access_token: target.access_token,
+    refresh_token: target.refresh_token,
+    access_token_expires_at: target.access_token_expires_at,
+    refresh_token_expires_at: target.refresh_token_expires_at,
+  } : payload;
+  const accessToken = typeof projected?.access_token === "string" ? projected.access_token.trim() : "";
+  const expiresAt = Date.parse(String(projected?.access_token_expires_at ?? ""));
+  if (!accessToken || !Number.isFinite(expiresAt) || expiresAt <= Date.now() + 60_000) {
+    throw new Error("Direct QA reads never rotate OAuth tokens. Run the channel gateway diagnostic first, then retry.");
+  }
+  return projected;
+}
 
 const supabaseUrl = `https://${projectRef}.supabase.co`;
 const service = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -80,9 +100,9 @@ if (process.env.LIVE_SHOPEE_ITEM_ID) {
   const { data: secretPayload, error: secretError } = await service.rpc("sellerpilot_decrypt_credential", { p_credential_id: credential.id });
   if (secretError) throw secretError;
   const shopId = process.env.LIVE_TARGET_ID || "1719148844";
-  const ensured = await ensureShopeeAccessToken(secretPayload, credential.environment === "sandbox" ? "sandbox" : "production", 10 * 60 * 1_000, shopId);
+  const readPayload = liveShopeeReadPayload(secretPayload, "shop", shopId);
   const remote = await shopeeRequest({
-    payload: ensured.payload,
+    payload: readPayload,
     environment: credential.environment === "sandbox" ? "sandbox" : "production",
     method: "GET",
     path: "/api/v2/product/get_item_base_info",
@@ -94,7 +114,7 @@ if (process.env.LIVE_SHOPEE_ITEM_ID) {
 if (process.env.LIVE_SHOPEE_GLOBAL_RELATION_ID) {
   const { data: secretPayload, error: secretError } = await service.rpc("sellerpilot_decrypt_credential", { p_credential_id: credential.id });
   if (secretError) throw secretError;
-  const ensured = await ensureShopeeMerchantAccessToken(secretPayload, credential.environment === "sandbox" ? "sandbox" : "production");
+  const readPayload = liveShopeeReadPayload(secretPayload, "merchant");
   const globalItemId = process.env.LIVE_SHOPEE_GLOBAL_RELATION_ID;
   const endpoints = [
     ["publishable", "/api/v2/global_product/get_publishable_shop", new URLSearchParams({ global_item_id: globalItemId })],
@@ -103,149 +123,17 @@ if (process.env.LIVE_SHOPEE_GLOBAL_RELATION_ID) {
   ];
   const results = {};
   for (const [name, path, query] of endpoints) {
-    const remote = await shopeeMerchantRequest({ payload: ensured.payload, environment: credential.environment === "sandbox" ? "sandbox" : "production", method: "GET", path, query });
+    const remote = await shopeeMerchantRequest({ payload: readPayload, environment: credential.environment === "sandbox" ? "sandbox" : "production", method: "GET", path, query });
     results[name] = { status: remote.response.status, data: remote.data };
   }
   console.log(JSON.stringify(results, null, 2));
   process.exit(0);
 }
 if (process.env.LIVE_EXCHANGE_SHOPEE_CODE) {
-  const { data: secretPayload, error: secretError } = await service.rpc("sellerpilot_decrypt_credential", { p_credential_id: credential.id });
-  if (secretError) throw secretError;
-  const mainAccountId = String(secretPayload?.main_account_id ?? "").trim();
-  const remote = await exchangeShopeeOAuthToken({
-    environment: credential.environment === "sandbox" ? "sandbox" : "production",
-    partnerId: String(secretPayload.partner_id ?? ""),
-    partnerKey: String(secretPayload.partner_key ?? ""),
-    code: process.env.LIVE_EXCHANGE_SHOPEE_CODE,
-    mainAccountId,
-  });
-  const mainAccessToken = typeof remote.data.access_token === "string" ? remote.data.access_token : "";
-  const mainRefreshToken = typeof remote.data.refresh_token === "string" ? remote.data.refresh_token : "";
-  if (!remote.response.ok || remote.data.error || !mainAccessToken || !mainRefreshToken) throw new Error(`Shopee main-account token exchange failed: ${String(remote.data.error ?? remote.response.status)}`);
-  const collectIds = (value, keys, depth = 0) => {
-    if (depth > 8 || value == null) return [];
-    if (Array.isArray(value)) return [...new Set(value.flatMap((item) => collectIds(item, keys, depth + 1)))];
-    if (typeof value !== "object") return [];
-    const direct = Object.entries(value).filter(([key]) => keys.includes(key)).flatMap(([, item]) => {
-      const list = Array.isArray(item) ? item : [item];
-      return list.map(String).filter((candidate) => /^\d+$/.test(candidate));
-    });
-    return [...new Set([...direct, ...Object.values(value).flatMap((item) => collectIds(item, keys, depth + 1))])];
-  };
-  const shopIds = collectIds(remote.data, ["shop_id", "shopId", "shop_id_list"]);
-  if (!shopIds.length && Array.isArray(secretPayload.shop_ids)) shopIds.push(...secretPayload.shop_ids.map(String).filter((item) => /^\d+$/.test(item)));
-  const merchantIds = collectIds(remote.data, ["merchant_id", "merchantId", "merchant_id_list"]);
-  const refreshExpiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
-  const targets = [];
-  const priorTargets = Array.isArray(secretPayload.shopee_targets) ? secretPayload.shopee_targets : [];
-  for (const shopId of [...new Set(shopIds)]) {
-    const targetRemote = await exchangeShopeeOAuthToken({
-      environment: credential.environment === "sandbox" ? "sandbox" : "production",
-      partnerId: String(secretPayload.partner_id ?? ""),
-      partnerKey: String(secretPayload.partner_key ?? ""),
-      refreshToken: mainRefreshToken,
-      shopId,
-    });
-    if (!targetRemote.response.ok || targetRemote.data.error || !targetRemote.data.access_token || !targetRemote.data.refresh_token) {
-      const prior = priorTargets.find((target) => target?.type === "shop" && String(target?.id) === shopId && target?.access_token && target?.refresh_token);
-      if (!prior) throw new Error(`Shopee shop token exchange failed: ${shopId}`);
-      targets.push(prior);
-      continue;
-    }
-    targets.push({
-      type: "shop",
-      id: shopId,
-      access_token: targetRemote.data.access_token,
-      refresh_token: targetRemote.data.refresh_token,
-      access_token_expires_at: new Date(Date.now() + Number(targetRemote.data.expire_in ?? 14_400) * 1_000).toISOString(),
-      refresh_token_expires_at: refreshExpiresAt,
-    });
-  }
-  for (const merchantId of merchantIds) {
-    const targetRemote = await exchangeShopeeOAuthToken({
-      environment: credential.environment === "sandbox" ? "sandbox" : "production",
-      partnerId: String(secretPayload.partner_id ?? ""),
-      partnerKey: String(secretPayload.partner_key ?? ""),
-      refreshToken: mainRefreshToken,
-      merchantId,
-    });
-    if (!targetRemote.response.ok || targetRemote.data.error || !targetRemote.data.access_token || !targetRemote.data.refresh_token) throw new Error(`Shopee merchant token exchange failed: ${merchantId}`);
-    targets.push({
-      type: "merchant",
-      id: merchantId,
-      access_token: targetRemote.data.access_token,
-      refresh_token: targetRemote.data.refresh_token,
-      access_token_expires_at: new Date(Date.now() + Number(targetRemote.data.expire_in ?? 14_400) * 1_000).toISOString(),
-      refresh_token_expires_at: refreshExpiresAt,
-    });
-  }
-  const primaryShop = targets.find((target) => target.type === "shop");
-  if (!primaryShop || !merchantIds.length) throw new Error("Shopee authorization did not return both shop and merchant targets.");
-  const nextPayload = {
-    ...secretPayload,
-    main_account_access_token: mainAccessToken,
-    main_account_refresh_token: mainRefreshToken,
-    shop_ids: [...new Set(shopIds)],
-    merchant_ids: merchantIds,
-    shopee_targets: targets,
-    shop_id: primaryShop.id,
-    access_token: primaryShop.access_token,
-    refresh_token: primaryShop.refresh_token,
-    access_token_expires_at: primaryShop.access_token_expires_at,
-    refresh_token_expires_at: primaryShop.refresh_token_expires_at,
-  };
-  const { data: stored, error: storeError } = await service.rpc("sellerpilot_service_refresh_shopee", {
-    p_credential_id: credential.id,
-    p_secret_payload: nextPayload,
-    p_expires_at: secretPayload.authorization_expires_at ?? new Date(Date.now() + 365 * 86_400_000).toISOString(),
-  });
-  if (storeError || !stored) throw storeError ?? new Error("Shopee authorization targets could not be stored.");
-  console.log(JSON.stringify({ ok: true, shopIds: [...new Set(shopIds)], merchantIds, stored: true }, null, 2));
-  process.exit(0);
+  throw new Error("Direct OAuth code exchange is disabled. Complete Shopee OAuth through the SellerPilot dashboard.");
 }
 if (process.env.LIVE_BOOTSTRAP_SHOPEE_MERCHANT === "true") {
-  const { data: secretPayload, error: secretError } = await service.rpc("sellerpilot_decrypt_credential", { p_credential_id: credential.id });
-  if (secretError) throw secretError;
-  const merchantId = String(process.env.LIVE_SHOPEE_MERCHANT_ID ?? secretPayload?.main_account_id ?? "").trim();
-  const refreshToken = String(secretPayload?.main_account_refresh_token ?? "").trim();
-  if (!merchantId || !refreshToken) throw new Error("Shopee main account refresh input is missing.");
-  const remote = await exchangeShopeeOAuthToken({
-    environment: credential.environment === "sandbox" ? "sandbox" : "production",
-    partnerId: String(secretPayload.partner_id ?? ""),
-    partnerKey: String(secretPayload.partner_key ?? ""),
-    refreshToken,
-    merchantId,
-  });
-  const accessToken = typeof remote.data.access_token === "string" ? remote.data.access_token : "";
-  const nextRefreshToken = typeof remote.data.refresh_token === "string" ? remote.data.refresh_token : "";
-  if (!remote.response.ok || remote.data.error || !accessToken || !nextRefreshToken) {
-    console.log(JSON.stringify({ ok: false, status: remote.response.status, error: remote.data.error ?? null, message: remote.data.message ?? remote.data.message_detail ?? null }, null, 2));
-    process.exit(1);
-  }
-  const now = Date.now();
-  const target = {
-    type: "merchant",
-    id: merchantId,
-    access_token: accessToken,
-    refresh_token: nextRefreshToken,
-    access_token_expires_at: new Date(now + Number(remote.data.expire_in ?? 14_400) * 1_000).toISOString(),
-    refresh_token_expires_at: new Date(now + 30 * 86_400_000).toISOString(),
-  };
-  const priorTargets = Array.isArray(secretPayload.shopee_targets) ? secretPayload.shopee_targets : [];
-  const nextPayload = {
-    ...secretPayload,
-    merchant_ids: [...new Set([...(Array.isArray(secretPayload.merchant_ids) ? secretPayload.merchant_ids.map(String) : []), merchantId])],
-    shopee_targets: [...priorTargets.filter((item) => item?.type !== "merchant" || String(item?.id) !== merchantId), target],
-  };
-  const { data: stored, error: storeError } = await service.rpc("sellerpilot_service_refresh_shopee", {
-    p_credential_id: credential.id,
-    p_secret_payload: nextPayload,
-    p_expires_at: secretPayload.authorization_expires_at ?? null,
-  });
-  if (storeError || !stored) throw storeError ?? new Error("Shopee merchant target could not be stored.");
-  console.log(JSON.stringify({ ok: true, merchantId, stored: true }, null, 2));
-  process.exit(0);
+  throw new Error("Direct merchant token bootstrap is disabled. Use the claim-fenced channel gateway flow.");
 }
 if (process.env.LIVE_CREDENTIAL_DIAGNOSTICS === "true") {
   const { data: secretPayload, error: secretError } = await service.rpc("sellerpilot_decrypt_credential", { p_credential_id: credential.id });

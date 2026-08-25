@@ -3,7 +3,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { runChannelDiagnostic } from "../../../../../lib/channel-diagnostics";
 import { executeDiagnosticViaChannelGateway } from "../../../../../lib/channels/gateway";
-import { ensureEbayAccessToken } from "../../../../../lib/channels/protocols";
 import { runTracxDiagnostic } from "../../../../../lib/logistics/tracx";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
@@ -54,6 +53,7 @@ export async function POST(request: NextRequest) {
     || parsed.data.channel === "coupang"
     || parsed.data.channel === "elevenst"
     || parsed.data.channel === "smartstore"
+    || parsed.data.channel === "ebay"
     || parsed.data.channel === "temu"
   ) {
     try {
@@ -78,6 +78,7 @@ export async function POST(request: NextRequest) {
         coupang: "쿠팡",
         elevenst: "11번가",
         smartstore: "네이버",
+        ebay: "eBay",
         temu: "Temu",
       }[parsed.data.channel];
       const message = `${channelName} 고정 IP 채널 워커에서 연결 검사를 완료하지 못했습니다. 워커 상태와 채널 인증값을 확인해 주세요.`;
@@ -97,8 +98,8 @@ export async function POST(request: NextRequest) {
   }
 
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
-  let diagnosticPayload = secretPayload as Record<string, unknown>;
-  let diagnosticCredentialId = parsed.data.credentialId;
+  const diagnosticPayload = secretPayload as Record<string, unknown>;
+  const diagnosticCredentialId = parsed.data.credentialId;
   if (parsed.data.channel === "tracx") {
     try {
       const result = await runTracxDiagnostic(diagnosticPayload);
@@ -122,23 +123,6 @@ export async function POST(request: NextRequest) {
         p_safe_message: message,
       });
       return NextResponse.json({ status: "failed", message }, { status: 422 });
-    }
-  }
-  if (parsed.data.channel === "ebay") {
-    try {
-      const ensured = await ensureEbayAccessToken(diagnosticPayload, environment);
-      diagnosticPayload = ensured.payload;
-      if (ensured.refreshed) {
-        const { data: nextCredentialId, error: refreshError } = await serviceClient.rpc("sellerpilot_service_refresh_ebay", {
-          p_credential_id: parsed.data.credentialId,
-          p_secret_payload: ensured.payload,
-          p_expires_at: ensured.credentialExpiresAt,
-        });
-        if (refreshError || typeof nextCredentialId !== "string") throw new Error("refresh_store_failed");
-        diagnosticCredentialId = nextCredentialId;
-      }
-    } catch {
-      return NextResponse.json({ status: "failed", message: "eBay OAuth 토큰을 갱신하지 못했습니다. 판매자 동의를 다시 확인해 주세요." }, { status: 422 });
     }
   }
   const result = await runChannelDiagnostic(parsed.data.channel, diagnosticPayload, environment);

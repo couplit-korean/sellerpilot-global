@@ -20,13 +20,22 @@ import {
   MAXIMUM_SHOT_GENERATION_ATTEMPTS,
 } from "../lib/image-shot-uniqueness.ts";
 import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
+import { workerClaimBackoffMs } from "./worker-claim-backoff.mjs";
+import {
+  AI_HEARTBEAT_INTERVAL_MS,
+  AI_HEARTBEAT_TRANSIENT_GRACE_MS,
+  GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
+  requestWithTransientRetry,
+  WORKER_COMPLETION_TRANSIENT_GRACE_MS,
+  WorkerRequestTerminalError,
+} from "./worker-lifecycle-retry.mjs";
 import {
   mergeShopeeRequiredAttributes,
   normalizeCoupangAttributeValue,
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
 } from "../lib/channels/listing-normalization.ts";
-import { executeChannelOperation } from "../lib/channels/operations.ts";
+import { executeChannelOperation, writeChannelOperations } from "../lib/channels/operations.ts";
 import { evaluateTemuEgressIp, parseTemuEgressAllowlist } from "../lib/channels/temu-egress-policy.ts";
 import {
   ensureEbayAccessToken,
@@ -35,6 +44,7 @@ import {
   ensureShopeeMerchantAccessToken,
   buildShopeeSignature,
   coupangRequest,
+  exchangeEbayOAuthToken,
   exchangeLazadaOAuthToken,
   exchangeShopeeOAuthToken,
   fetchNaverAccessToken,
@@ -94,7 +104,7 @@ const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.js
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.16";
+const workerVersion = "sellerpilot-cli-worker/1.18";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
@@ -102,7 +112,10 @@ let temuEgressCache = { checkedAt: 0, currentIp: "" };
 let idlePollMs = pollMs;
 let gatewayClaimBackoffUntil = 0;
 let gatewayClaimBackoffStatus = 0;
+let aiClaimBackoffUntil = 0;
+let aiClaimBackoffStatus = 0;
 let workerAuthBackoffUntil = 0;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class JobCancelledError extends Error {
   constructor() {
@@ -179,18 +192,169 @@ async function api(path, init = {}) {
   });
 }
 
-async function touchJob(jobId) {
-  const response = await api("/api/ai/worker/heartbeat", {
-    method: "POST",
-    body: JSON.stringify({ jobId, version: workerVersion }),
-  });
-  if (!response.ok) throw new Error(`CLI 작업자 신호 실패 · HTTP ${response.status}`);
+async function touchJob(jobId, claimToken) {
+  let response;
+  try {
+    response = await requestWithTransientRetry({
+      request: () => api("/api/ai/worker/heartbeat", {
+        method: "POST",
+        body: JSON.stringify({ jobId, claimToken, version: workerVersion }),
+      }),
+      delay,
+      graceMs: AI_HEARTBEAT_TRANSIENT_GRACE_MS,
+      terminalStatuses: [401, 404, 409],
+      label: "CLI 작업자 신호 실패",
+      onTransient: ({ attempt, status, waitMs }) => {
+        if (attempt === 1) console.error(`CLI 작업자 신호가 일시 지연됐습니다 · HTTP ${status} · ${waitMs}ms 뒤 재시도`);
+      },
+    });
+  } catch (error) {
+    if (error instanceof WorkerRequestTerminalError && error.status === 404) throw new JobCancelledError();
+    if (error instanceof WorkerRequestTerminalError && error.status === 401) {
+      workerAuthBackoffUntil = Math.max(workerAuthBackoffUntil, Date.now() + workerClaimBackoffMs(401));
+    }
+    throw error;
+  }
   const payload = await response.json();
   if (payload.status !== "running") throw new JobCancelledError();
 }
 
-async function runCodex(args, timeoutMs, jobId) {
-  if (jobId) await touchJob(jobId);
+function createAiJobHeartbeat(jobId, claimToken) {
+  let heartbeatError = null;
+  let heartbeatPromise = null;
+  let heartbeatTimer = null;
+  const leaseAbortController = new AbortController();
+
+  const scheduleTouch = () => {
+    if (heartbeatPromise || heartbeatError) return;
+    heartbeatPromise = touchJob(jobId, claimToken)
+      .catch((error) => {
+        heartbeatError = error;
+        leaseAbortController.abort(error);
+      })
+      .finally(() => {
+        heartbeatPromise = null;
+      });
+  };
+
+  return {
+    signal: leaseAbortController.signal,
+    async start() {
+      await touchJob(jobId, claimToken);
+      heartbeatTimer = setInterval(scheduleTouch, AI_HEARTBEAT_INTERVAL_MS);
+    },
+    async assertHealthy() {
+      if (heartbeatPromise) await heartbeatPromise;
+      if (heartbeatError) throw heartbeatError;
+    },
+    async stop() {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+      if (heartbeatPromise) await heartbeatPromise;
+      if (heartbeatError) throw heartbeatError;
+    },
+  };
+}
+
+function createLeaseBoundedStorageFetch(leaseSignal) {
+  return (input, init = {}) => fetch(input, {
+    ...init,
+    signal: AbortSignal.any([
+      leaseSignal,
+      AbortSignal.timeout(60_000),
+      ...(init.signal ? [init.signal] : []),
+    ]),
+  });
+}
+
+async function touchGatewayJob(jobId, claimToken) {
+  let response;
+  try {
+    response = await requestWithTransientRetry({
+      request: () => api("/api/channel-gateway/worker/heartbeat", {
+        method: "POST",
+        body: JSON.stringify({ jobId, claimToken, version: workerVersion }),
+      }),
+      delay,
+      graceMs: AI_HEARTBEAT_TRANSIENT_GRACE_MS,
+      terminalStatuses: [401, 404, 409],
+      label: "채널 작업자 신호 실패",
+      onTransient: ({ attempt, status, waitMs }) => {
+        if (attempt === 1) console.error(`채널 작업자 신호가 일시 지연됐습니다 · HTTP ${status} · ${waitMs}ms 뒤 재시도`);
+      },
+    });
+  } catch (error) {
+    if (error instanceof WorkerRequestTerminalError && error.status === 401) {
+      workerAuthBackoffUntil = Math.max(workerAuthBackoffUntil, Date.now() + workerClaimBackoffMs(401));
+    }
+    throw error;
+  }
+  const payload = await response.json();
+  if (payload.status !== "running") {
+    throw new WorkerRequestTerminalError("채널 작업 실행 권한 또는 lease가 만료됐습니다.", {
+      status: 409,
+      reconciliation: true,
+    });
+  }
+}
+
+function createGatewayHeartbeat(jobId, claimToken) {
+  let heartbeatError = null;
+  let heartbeatPromise = null;
+  let heartbeatTimer = null;
+
+  const scheduleTouch = () => {
+    if (heartbeatPromise || heartbeatError) return;
+    heartbeatPromise = touchGatewayJob(jobId, claimToken)
+      .catch((error) => {
+        heartbeatError = error;
+      })
+      .finally(() => {
+        heartbeatPromise = null;
+      });
+  };
+
+  return {
+    async start() {
+      await touchGatewayJob(jobId, claimToken);
+      heartbeatTimer = setInterval(scheduleTouch, AI_HEARTBEAT_INTERVAL_MS);
+    },
+    async assertHealthy() {
+      if (heartbeatPromise) await heartbeatPromise;
+      if (heartbeatError) throw heartbeatError;
+    },
+    async stop() {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+      if (heartbeatPromise) await heartbeatPromise;
+      if (heartbeatError) throw heartbeatError;
+    },
+  };
+}
+
+async function persistWorkerCompletion(path, payload, label, graceMs = WORKER_COMPLETION_TRANSIENT_GRACE_MS) {
+  const requestBody = JSON.stringify(payload);
+  try {
+    return await requestWithTransientRetry({
+      request: () => api(path, { method: "POST", body: requestBody }),
+      delay,
+      graceMs,
+      terminalStatuses: [401, 409],
+      label,
+      onTransient: ({ attempt, status, waitMs }) => {
+        if (attempt === 1) console.error(`${label} 응답이 일시 지연됐습니다 · HTTP ${status} · ${waitMs}ms 뒤 동일 결과 재시도`);
+      },
+    });
+  } catch (error) {
+    if (error instanceof WorkerRequestTerminalError && error.status === 401) {
+      workerAuthBackoffUntil = Math.max(workerAuthBackoffUntil, Date.now() + workerClaimBackoffMs(401));
+    }
+    throw error;
+  }
+}
+
+async function runCodex(args, timeoutMs, jobId, claimToken) {
+  if (jobId) await touchJob(jobId, claimToken);
   return new Promise((resolveRun, rejectRun) => {
     const codexEnv = { ...process.env };
     delete codexEnv.OPENAI_API_KEY;
@@ -203,19 +367,18 @@ async function runCodex(args, timeoutMs, jobId) {
     let stdout = "";
     let stderr = "";
     let heartbeatError = null;
-    let heartbeatInFlight = false;
-    const heartbeatTimer = jobId ? setInterval(async () => {
-      if (heartbeatInFlight || heartbeatError) return;
-      heartbeatInFlight = true;
-      try {
-        await touchJob(jobId);
-      } catch (error) {
-        heartbeatError = error;
-        child.kill("SIGTERM");
-      } finally {
-        heartbeatInFlight = false;
-      }
-    }, 20_000) : null;
+    let heartbeatPromise = null;
+    const heartbeatTimer = jobId ? setInterval(() => {
+      if (heartbeatPromise || heartbeatError) return;
+      heartbeatPromise = touchJob(jobId, claimToken)
+        .catch((error) => {
+          heartbeatError = error;
+          child.kill("SIGTERM");
+        })
+        .finally(() => {
+          heartbeatPromise = null;
+        });
+    }, AI_HEARTBEAT_INTERVAL_MS) : null;
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       rejectRun(new Error("Codex CLI 실행 제한시간을 초과했습니다."));
@@ -227,9 +390,10 @@ async function runCodex(args, timeoutMs, jobId) {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       rejectRun(error);
     });
-    child.once("close", (code) => {
+    child.once("close", async (code) => {
       clearTimeout(timer);
       if (heartbeatTimer) clearInterval(heartbeatTimer);
+      if (heartbeatPromise) await heartbeatPromise;
       if (heartbeatError) rejectRun(heartbeatError);
       else if (code === 0) resolveRun({ stdout, stderr });
       else rejectRun(new Error((stderr || stdout || `Codex CLI exit ${code}`).slice(-800)));
@@ -301,7 +465,7 @@ async function publicImage(urlValue) {
   return { bytes, contentType };
 }
 
-async function uploadShopeeImage(payload, environment, imageUrl) {
+async function uploadShopeeImage(payload, environment, imageUrl, assertLeaseHealthy, markExternalWriteStarted) {
   const partnerId = textValue(payload, "partner_id");
   const partnerKey = textValue(payload, "partner_key");
   const shopId = textValue(payload, "shop_id");
@@ -311,6 +475,7 @@ async function uploadShopeeImage(payload, environment, imageUrl) {
   const targetKey = merchantId ? "merchant_id" : "shop_id";
   if (!partnerId || !partnerKey || !targetId || !accessToken) throw new Error("SHOPEE_CREDENTIALS_MISSING");
   const path = "/api/v2/media_space/upload_image";
+  await assertLeaseHealthy();
   const image = await publicImage(imageUrl);
   const extension = image.contentType === "image/png" ? "png" : image.contentType === "image/webp" ? "webp" : "jpg";
   const upload = async (scope) => {
@@ -337,6 +502,8 @@ async function uploadShopeeImage(payload, environment, imageUrl) {
         });
     const form = new FormData();
     form.append("image", new Blob([image.bytes], { type: image.contentType }), `sellerpilot.${extension}`);
+    await assertLeaseHealthy();
+    await markExternalWriteStarted();
     const response = await fetch(`${shopeeEnvironment(environment)}${path}?${query}`, {
       method: "POST",
       body: form,
@@ -345,15 +512,20 @@ async function uploadShopeeImage(payload, environment, imageUrl) {
     });
     return { response, data: await response.json().catch(() => ({})) };
   };
+  await assertLeaseHealthy();
   let remote = await upload("target");
-  if (remote.data?.error === "error_sign") remote = await upload("partner");
+  if (remote.data?.error === "error_sign") {
+    await assertLeaseHealthy();
+    remote = await upload("partner");
+  }
   const { response, data } = remote;
   const imageId = String(data?.response?.image_info?.image_id ?? data?.response?.image_id ?? "").trim();
   if (!response.ok || data?.error || !imageId) throw new Error(`Shopee 이미지 업로드 실패${data?.error ? ` · ${data.error}` : ""}`);
   return imageId;
 }
 
-async function activeShopeeLogistics(payload, environment) {
+async function activeShopeeLogistics(payload, environment, assertLeaseHealthy) {
+  await assertLeaseHealthy();
   const logisticsRemote = await shopeeRequest({
     payload,
     environment,
@@ -373,13 +545,16 @@ async function activeShopeeLogistics(payload, environment) {
   return logistics;
 }
 
-async function prepareShopeeListing(payload, environment, argumentsValue) {
+async function prepareShopeeListing(payload, environment, argumentsValue, assertLeaseHealthy, markExternalWriteStarted) {
   const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 9) : [];
   if (!imageUrls.length) throw new Error("Shopee 등록 이미지가 없습니다.");
   const imageIds = [];
-  for (const imageUrl of imageUrls) imageIds.push(await uploadShopeeImage(payload, environment, imageUrl));
+  for (const imageUrl of imageUrls) {
+    await assertLeaseHealthy();
+    imageIds.push(await uploadShopeeImage(payload, environment, imageUrl, assertLeaseHealthy, markExternalWriteStarted));
+  }
 
-  const logistics = await activeShopeeLogistics(payload, environment);
+  const logistics = await activeShopeeLogistics(payload, environment, assertLeaseHealthy);
   return {
     ...argumentsValue,
     body: {
@@ -390,18 +565,22 @@ async function prepareShopeeListing(payload, environment, argumentsValue) {
   };
 }
 
-async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environment, argumentsValue) {
+async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environment, argumentsValue, assertLeaseHealthy, markExternalWriteStarted) {
   const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 9) : [];
   if (!imageUrls.length) throw new Error("Shopee 등록 이미지가 없습니다.");
   const imageIds = [];
   // Media Space is authorized at shop dimension; the resulting IDs are accepted by GlobalProduct.
-  for (const imageUrl of imageUrls) imageIds.push(await uploadShopeeImage(shopPayload, environment, imageUrl));
-  const logistics = await activeShopeeLogistics(shopPayload, environment);
+  for (const imageUrl of imageUrls) {
+    await assertLeaseHealthy();
+    imageIds.push(await uploadShopeeImage(shopPayload, environment, imageUrl, assertLeaseHealthy, markExternalWriteStarted));
+  }
+  const logistics = await activeShopeeLogistics(shopPayload, environment, assertLeaseHealthy);
   const body = argumentsValue.body && typeof argumentsValue.body === "object" ? argumentsValue.body : {};
   const publish = argumentsValue.publish && typeof argumentsValue.publish === "object" ? structuredClone(argumentsValue.publish) : {};
   const publishItem = publish.item && typeof publish.item === "object" ? publish.item : {};
   const categoryId = Number(publishItem.category_id ?? body.category_id);
   if (!Number.isSafeInteger(categoryId) || categoryId <= 0) throw new Error("Shopee 현지 숍 카테고리가 없습니다.");
+  await assertLeaseHealthy();
   let attributeRemote = await shopeeRequest({
     payload: shopPayload,
     environment,
@@ -410,6 +589,7 @@ async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environm
     query: new URLSearchParams({ category_id_list: String(categoryId), language: "en" }),
   });
   if (!attributeRemote.response.ok || attributeRemote.data.error) {
+    await assertLeaseHealthy();
     attributeRemote = await shopeeRequest({
       payload: shopPayload,
       environment,
@@ -451,13 +631,15 @@ function xmlEscape(value) {
   return String(value).replace(/[<>&'"]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[character]);
 }
 
-async function prepareLazadaListing(payload, argumentsValue) {
+async function prepareLazadaListing(payload, argumentsValue, assertLeaseHealthy, markExternalWriteStarted) {
   const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 20) : [];
   if (!imageUrls.length) throw new Error("Lazada 등록 이미지가 없습니다.");
   const migrated = [];
   for (const imageUrl of imageUrls) {
+    await assertLeaseHealthy();
     await assertPublicUrl(new URL(imageUrl));
     const xml = `<?xml version="1.0" encoding="UTF-8"?><Request><Image><Url>${xmlEscape(imageUrl)}</Url></Image></Request>`;
+    await markExternalWriteStarted();
     const remote = await lazadaRequest({ payload, path: "/image/migrate", method: "POST", params: { payload: xml } });
     const url = String(remote.data?.data?.image?.url ?? "").trim();
     if (!remote.response.ok || String(remote.data?.code ?? "") !== "0" || !url) throw new Error(`Lazada 이미지 이관 실패${remote.data?.message ? ` · ${remote.data.message}` : ""}`);
@@ -476,12 +658,14 @@ async function prepareLazadaListing(payload, argumentsValue) {
   return { ...argumentsValue, request };
 }
 
-async function prepareSmartstoreListing(payload, argumentsValue) {
+async function prepareSmartstoreListing(payload, argumentsValue, assertLeaseHealthy, markExternalWriteStarted) {
   const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 10) : [];
   if (!imageUrls.length) throw new Error("네이버 등록 이미지가 없습니다.");
+  await assertLeaseHealthy();
   const token = await fetchNaverAccessToken(payload);
   let phone = textValue(payload, "after_service_phone");
   if (!phone) {
+    await assertLeaseHealthy();
     const addressRemote = await naverRequest({
       accessToken: token.accessToken,
       method: "GET",
@@ -497,10 +681,13 @@ async function prepareSmartstoreListing(payload, argumentsValue) {
   }
   const form = new FormData();
   for (let index = 0; index < imageUrls.length; index += 1) {
+    await assertLeaseHealthy();
     const image = await publicImage(imageUrls[index]);
     const extension = image.contentType === "image/png" ? "png" : image.contentType === "image/webp" ? "webp" : "jpg";
     form.append("imageFiles", new Blob([image.bytes], { type: image.contentType }), `sellerpilot-${index + 1}.${extension}`);
   }
+  await assertLeaseHealthy();
+  await markExternalWriteStarted();
   const uploadResponse = await fetch("https://api.commerce.naver.com/external/v1/product-images/upload", {
     method: "POST",
     body: form,
@@ -690,13 +877,14 @@ function prepareCoupangItem(itemValue, metadata, facts) {
   return item;
 }
 
-async function prepareCoupangListing(payload, argumentsValue) {
+async function prepareCoupangListing(payload, argumentsValue, assertLeaseHealthy) {
   const requestedBy = textValue(payload, "requested_by");
   if (!requestedBy) throw new Error("COUPANG_WING_USER_ID_MISSING");
   const body = argumentsValue.body && typeof argumentsValue.body === "object" ? structuredClone(argumentsValue.body) : {};
   const categoryCode = Number(body.displayCategoryCode);
   if (!Number.isSafeInteger(categoryCode) || categoryCode <= 0) throw new Error("COUPANG_DISPLAY_CATEGORY_REQUIRED");
   const vendorId = textValue(payload, "vendor_id");
+  await assertLeaseHealthy();
   const [outboundRemote, returnRemote, metadataRemote] = await Promise.all([
     coupangRequest({ payload, method: "GET", path: "/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound", query: new URLSearchParams({ pageSize: "50", pageNum: "1" }) }),
     coupangRequest({ payload, method: "GET", path: `/v2/providers/openapi/apis/api/v5/vendors/${encodeURIComponent(vendorId)}/returnShippingCenters`, query: new URLSearchParams({ pageNum: "1", pageSize: "50" }) }),
@@ -939,7 +1127,7 @@ async function researchProduct(job, jobDir) {
     "--output-last-message", resultFile,
     "--cd", jobDir,
     buildProductResearchPrompt(researchInput, references),
-  ], analysisTimeoutMs, job.id);
+  ], analysisTimeoutMs, job.id, job.claim_token);
   const parsed = productResearchResultSchema.safeParse(JSON.parse(await readFile(resultFile, "utf8")));
   if (!parsed.success) {
     throw new Error(`CLI 상품정보 결과 검증 실패 · ${summarizeStudioIssues(parsed.error.issues)}`.slice(0, 500));
@@ -1008,7 +1196,7 @@ async function downloadComparisonShots(job) {
   return shots;
 }
 
-async function generateDistinctAsset({ result, outputFile, preset, imageFiles, jobId, existingShots }) {
+async function generateDistinctAsset({ result, outputFile, preset, imageFiles, jobId, claimToken, existingShots }) {
   const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
   let noveltyGuidance = "";
   for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1) {
@@ -1023,7 +1211,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, j
       ...referenceIndexes.map((index) => `--image=${imageFiles[index].file}`),
       buildAssetImagePrompt(result, outputFile, preset, referenceIndexes.map((index) => imageFiles[index].role), noveltyGuidance),
     ];
-    await runCodex(imageArgs, imageGenerationTimeoutMs, jobId);
+    await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken);
     const normalized = await normalizeGeneratedAsset(outputFile, preset);
     const fingerprint = await fingerprintGeneratedShot(preset.id, normalized);
     const duplicate = findDuplicateShot(fingerprint, existingShots);
@@ -1044,7 +1232,7 @@ function summarizeStudioIssues(issues) {
     .join("\n");
 }
 
-async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId) {
+async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, claimToken) {
   const initial = cliStudioResultSchema.safeParse(result);
   if (initial.success) return initial.data;
 
@@ -1067,7 +1255,7 @@ async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId) {
     "--output-last-message", resultFile,
     "--cd", jobDir,
     repairPrompt,
-  ], analysisTimeoutMs, jobId);
+  ], analysisTimeoutMs, jobId, claimToken);
 
   const repaired = cliStudioResultSchema.safeParse(JSON.parse(await readFile(resultFile, "utf8")));
   if (!repaired.success) {
@@ -1077,17 +1265,39 @@ async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId) {
 }
 
 async function processJob(job) {
+  if (!UUID_PATTERN.test(String(job?.claim_token ?? ""))) {
+    throw new Error("AI 작업 claim 식별자가 없습니다.");
+  }
+  const claimToken = job.claim_token;
   const jobDir = await mkdtemp(join(tmpdir(), `sellerpilot-${job.id}-`));
   let resultStorageClient = null;
   const uploadedResultPaths = [];
+  const jobHeartbeat = createAiJobHeartbeat(job.id, claimToken);
+  let jobHeartbeatStopped = false;
+  let leaseStateUncertain = false;
+  const assertJobLeaseHealthy = () => jobHeartbeat.assertHealthy();
+  const stopJobHeartbeat = async () => {
+    if (jobHeartbeatStopped) return;
+    jobHeartbeatStopped = true;
+    try {
+      await jobHeartbeat.stop();
+    } catch (error) {
+      leaseStateUncertain = true;
+      throw error;
+    }
+  };
   try {
+    await jobHeartbeat.start();
+    await assertJobLeaseHealthy();
     if (job.kind === "product_research" || job.request?.researchOnly === true) {
       const result = await researchProduct(job, jobDir);
-      const response = await api("/api/ai/worker/complete", {
-        method: "POST",
-        body: JSON.stringify({ jobId: job.id, status: "succeeded", result }),
-      });
-      if (!response.ok) throw new Error(`상품정보 조사 결과 저장 실패 · HTTP ${response.status}`);
+      await assertJobLeaseHealthy();
+      await stopJobHeartbeat();
+      await persistWorkerCompletion(
+        "/api/ai/worker/complete",
+        { jobId: job.id, claimToken, status: "succeeded", result },
+        "상품정보 조사 결과 저장 실패",
+      );
       console.log(`[상품정보 완료] ${job.id} · ${basename(jobDir)}`);
       return;
     }
@@ -1102,6 +1312,7 @@ async function processJob(job) {
       }
       resultStorageClient = createClient(upload.supabaseUrl, upload.publishableKey, {
         auth: { persistSession: false, autoRefreshToken: false },
+        global: { fetch: createLeaseBoundedStorageFetch(jobHeartbeat.signal) },
       });
       const outputFile = join(jobDir, preset.file);
       const existingShots = await downloadComparisonShots(job);
@@ -1111,8 +1322,10 @@ async function processJob(job) {
         preset,
         imageFiles,
         jobId: job.id,
+        claimToken,
         existingShots,
       });
+      await assertJobLeaseHealthy();
       const { error: uploadError } = await resultStorageClient.storage
         .from(upload.bucket)
         .uploadToSignedUrl(upload.path, upload.token, generated.normalized, {
@@ -1121,8 +1334,10 @@ async function processJob(job) {
         });
       if (uploadError) throw new Error(`${preset.id} 이미지 업로드 실패: ${uploadError.message}`);
       uploadedResultPaths.push(upload.path);
+      await assertJobLeaseHealthy();
       const completion = {
         jobId: job.id,
+        claimToken,
         status: "succeeded",
         result: {
           mode: "asset-regeneration",
@@ -1132,8 +1347,8 @@ async function processJob(job) {
         },
         assetStoragePaths: { [preset.id]: upload.path },
       };
-      const response = await api("/api/ai/worker/complete", { method: "POST", body: JSON.stringify(completion) });
-      if (!response.ok) throw new Error(`재제작 결과 저장 실패 · HTTP ${response.status}`);
+      await stopJobHeartbeat();
+      await persistWorkerCompletion("/api/ai/worker/complete", completion, "재제작 결과 저장 실패");
       console.log(`[개별 이미지 완료] ${job.id} · ${preset.id}`);
       return;
     }
@@ -1160,17 +1375,18 @@ async function processJob(job) {
     ];
     for (const image of imageFiles) analysisArgs.push(`--image=${image.file}`);
     analysisArgs.push(buildAnalysisPrompt(job, referenceText));
-    await runCodex(analysisArgs, analysisTimeoutMs, job.id);
+    await runCodex(analysisArgs, analysisTimeoutMs, job.id, claimToken);
 
     let result = JSON.parse(await readFile(resultFile, "utf8"));
     const referenceWarnings = references.flatMap((reference) => reference.warning ? [reference.warning] : []);
     if (referenceWarnings.length) result.warnings = [...(Array.isArray(result.warnings) ? result.warnings : []), ...referenceWarnings].slice(0, 5);
-    result = await validateOrRepairStudioResult(result, resultFile, jobDir, job.id);
+    result = await validateOrRepairStudioResult(result, resultFile, jobDir, job.id, claimToken);
     const imagePresets = aiGeneratedAssetSpecs;
     const uploads = Array.isArray(job.resultUploads) ? job.resultUploads : [];
     if (uploads.length !== imagePresets.length) throw new Error("대표·썸네일·상세 이미지 8종 업로드 정보가 없습니다.");
     resultStorageClient = createClient(uploads[0].supabaseUrl, uploads[0].publishableKey, {
       auth: { persistSession: false, autoRefreshToken: false },
+      global: { fetch: createLeaseBoundedStorageFetch(jobHeartbeat.signal) },
     });
     const assetStoragePaths = {};
     const existingShots = [];
@@ -1178,7 +1394,16 @@ async function processJob(job) {
       const outputFile = join(jobDir, preset.file);
       const upload = uploads.find((item) => item?.id === preset.id);
       if (!upload?.bucket || !upload?.path || !upload?.token) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
-      const generated = await generateDistinctAsset({ result, outputFile, preset, imageFiles, jobId: job.id, existingShots });
+      const generated = await generateDistinctAsset({
+        result,
+        outputFile,
+        preset,
+        imageFiles,
+        jobId: job.id,
+        claimToken,
+        existingShots,
+      });
+      await assertJobLeaseHealthy();
       const { error: uploadError } = await resultStorageClient.storage
         .from(upload.bucket)
         .uploadToSignedUrl(upload.path, upload.token, generated.normalized, {
@@ -1186,29 +1411,50 @@ async function processJob(job) {
           cacheControl: "3600",
         });
       if (uploadError) throw new Error(`${preset.id} 이미지 업로드 실패: ${uploadError.message}`);
+      await assertJobLeaseHealthy();
       existingShots.push(generated.fingerprint);
       assetStoragePaths[preset.id] = upload.path;
       uploadedResultPaths.push(upload.path);
     }
 
-    const response = await api("/api/ai/worker/complete", {
-      method: "POST",
-      body: JSON.stringify({ jobId: job.id, status: "succeeded", result, assetStoragePaths }),
-    });
-    if (!response.ok) throw new Error(`작업 결과 저장 실패 · HTTP ${response.status}`);
+    await assertJobLeaseHealthy();
+    await stopJobHeartbeat();
+    await persistWorkerCompletion(
+      "/api/ai/worker/complete",
+      { jobId: job.id, claimToken, status: "succeeded", result, assetStoragePaths },
+      "작업 결과 저장 실패",
+    );
     console.log(`[완료] ${job.id} · ${basename(jobDir)}`);
   } catch (error) {
-    const message = error instanceof Error ? error.message.slice(0, 500) : "CLI 작업 처리 오류";
-    if (resultStorageClient && uploadedResultPaths.length) {
+    let effectiveError = error;
+    if (!jobHeartbeatStopped) {
+      try {
+        await stopJobHeartbeat();
+      } catch (heartbeatError) {
+        effectiveError = heartbeatError;
+        leaseStateUncertain = true;
+      }
+    }
+    const message = effectiveError instanceof Error ? effectiveError.message.slice(0, 500) : "CLI 작업 처리 오류";
+    const preserveRemoteState = leaseStateUncertain
+      || effectiveError instanceof WorkerRequestTerminalError
+      || effectiveError instanceof JobCancelledError;
+    if (!preserveRemoteState && resultStorageClient && uploadedResultPaths.length) {
       await resultStorageClient.storage.from("sellerpilot-ai").remove(uploadedResultPaths).catch(() => undefined);
     }
-    if (error instanceof JobCancelledError) {
+    if (effectiveError instanceof JobCancelledError) {
       console.log(`[취소] ${job.id} · 관리자 요청`);
+    } else if (preserveRemoteState) {
+      console.error(`[상태 보존] ${job.id} · ${message}`);
     } else {
-      await api("/api/ai/worker/complete", {
-        method: "POST",
-        body: JSON.stringify({ jobId: job.id, status: "failed", error: message }),
-      }).catch(() => undefined);
+      await persistWorkerCompletion(
+        "/api/ai/worker/complete",
+        { jobId: job.id, claimToken, status: "failed", error: message },
+        "AI 작업 실패 상태 저장 실패",
+      ).catch((completionError) => {
+        const completionMessage = completionError instanceof Error ? completionError.message : "완료 상태 저장 오류";
+        console.error(`[상태 저장 보류] ${job.id} · ${completionMessage}`);
+      });
       console.error(`[실패] ${job.id} · ${message}`);
     }
   } finally {
@@ -1236,17 +1482,26 @@ function collectNumericIds(value, keys, depth = 0) {
   return [...new Set([...direct, ...Object.values(row).flatMap((item) => collectNumericIds(item, keys, depth + 1))])];
 }
 
-function tokenExpiry(data, fallbackSeconds) {
-  return new Date(Date.now() + Number(data.expire_in ?? fallbackSeconds) * 1000).toISOString();
+function futureExpiry(value, fallbackSeconds) {
+  const parsed = Number(value);
+  const seconds = Number.isFinite(parsed) && parsed > 0
+    ? Math.min(parsed, 10 * 365 * 86_400)
+    : fallbackSeconds;
+  return new Date(Date.now() + seconds * 1000).toISOString();
 }
 
-async function shopeeOAuthResult(job) {
+function tokenExpiry(data, fallbackSeconds) {
+  return futureExpiry(data.expire_in ?? data.expires_in, fallbackSeconds);
+}
+
+async function shopeeOAuthResult(job, onExternalMutationStart, onCredentialRefresh) {
   const partnerId = textValue(job.credential, "partner_id");
   const partnerKey = textValue(job.credential, "partner_key");
   const code = String(job.request?.code ?? "").trim();
   const mainAccountId = String(job.request?.mainAccountId ?? "").trim();
   const shopId = String(job.request?.shopId ?? "").trim();
   if (!partnerId || !partnerKey || !code || (!mainAccountId && !shopId)) throw new Error("Shopee OAuth 입력값이 부족합니다.");
+  await onExternalMutationStart();
   const remote = await exchangeShopeeOAuthToken({
     environment: job.environment,
     partnerId,
@@ -1259,9 +1514,22 @@ async function shopeeOAuthResult(job) {
   const errorCode = textValue(remote.data, "error");
   if (!remote.response.ok || errorCode || !accessToken || !refreshToken) throw new Error(`Shopee OAuth 토큰 교환 실패${errorCode ? ` · ${errorCode}` : ""}`);
   const refreshTokenExpiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
+  const authorizationExpiresAt = String(job.request?.authorizationExpiresAt ?? "").trim()
+    || new Date(Date.now() + 365 * 86_400_000).toISOString();
   const nextSecret = { ...job.credential };
 
   if (mainAccountId) {
+    Object.assign(nextSecret, {
+      main_account_id: mainAccountId,
+      main_account_access_token: accessToken,
+      main_account_refresh_token: refreshToken,
+      authorization_expires_at: authorizationExpiresAt,
+    });
+    await onCredentialRefresh({
+      payload: { ...nextSecret },
+      expiresAt: authorizationExpiresAt,
+      recoveryOnly: true,
+    });
     let shopIds = collectNumericIds(remote.data, ["shop_id", "shopId", "shop_id_list"]);
     const merchantIds = collectNumericIds(remote.data, ["merchant_id", "merchantId", "merchant_id_list"]);
     if (!shopIds.length) {
@@ -1277,6 +1545,7 @@ async function shopeeOAuthResult(job) {
     if (!shopIds.length) throw new Error("Shopee 승인 계정의 Shop ID 목록이 없습니다.");
     const targets = [];
     for (const targetShopId of shopIds) {
+      await onExternalMutationStart();
       const targetRemote = await exchangeShopeeOAuthToken({
         environment: job.environment,
         partnerId,
@@ -1295,8 +1564,29 @@ async function shopeeOAuthResult(job) {
         access_token_expires_at: tokenExpiry(targetRemote.data, 14_400),
         refresh_token_expires_at: refreshTokenExpiresAt,
       });
+      const primaryShop = targets.find((target) => target.type === "shop");
+      const partialSecret = {
+        ...nextSecret,
+        main_account_id: mainAccountId,
+        main_account_access_token: accessToken,
+        main_account_refresh_token: refreshToken,
+        authorization_expires_at: authorizationExpiresAt,
+        shop_ids: shopIds,
+        merchant_ids: merchantIds,
+        shopee_targets: [...targets],
+        ...(primaryShop ? {
+          shop_id: primaryShop.id,
+          access_token: primaryShop.access_token,
+          refresh_token: primaryShop.refresh_token,
+          access_token_expires_at: primaryShop.access_token_expires_at,
+          refresh_token_expires_at: primaryShop.refresh_token_expires_at,
+        } : {}),
+      };
+      Object.assign(nextSecret, partialSecret);
+      await onCredentialRefresh({ payload: partialSecret, expiresAt: authorizationExpiresAt });
     }
     for (const merchantId of merchantIds) {
+      await onExternalMutationStart();
       const targetRemote = await exchangeShopeeOAuthToken({
         environment: job.environment,
         partnerId,
@@ -1315,6 +1605,18 @@ async function shopeeOAuthResult(job) {
         access_token_expires_at: tokenExpiry(targetRemote.data, 14_400),
         refresh_token_expires_at: refreshTokenExpiresAt,
       });
+      const partialSecret = {
+        ...nextSecret,
+        main_account_id: mainAccountId,
+        main_account_access_token: accessToken,
+        main_account_refresh_token: refreshToken,
+        authorization_expires_at: authorizationExpiresAt,
+        shop_ids: shopIds,
+        merchant_ids: merchantIds,
+        shopee_targets: [...targets],
+      };
+      Object.assign(nextSecret, partialSecret);
+      await onCredentialRefresh({ payload: partialSecret, expiresAt: authorizationExpiresAt });
     }
     const primaryShop = targets.find((target) => target.type === "shop");
     Object.assign(nextSecret, {
@@ -1348,9 +1650,12 @@ async function shopeeOAuthResult(job) {
       }],
     });
   }
-  const authorizationExpiresAt = String(job.request?.authorizationExpiresAt ?? "").trim()
-    || new Date(Date.now() + 365 * 86_400_000).toISOString();
   nextSecret.authorization_expires_at = authorizationExpiresAt;
+  await onCredentialRefresh({
+    payload: { ...nextSecret },
+    expiresAt: authorizationExpiresAt,
+    oauthComplete: true,
+  });
   return {
     ok: true,
     channel: "shopee",
@@ -1361,19 +1666,20 @@ async function shopeeOAuthResult(job) {
   };
 }
 
-async function lazadaOAuthResult(job) {
+async function lazadaOAuthResult(job, onExternalMutationStart, onCredentialRefresh) {
   const appKey = textValue(job.credential, "app_key");
   const appSecret = textValue(job.credential, "app_secret");
   const code = String(job.request?.code ?? "").trim();
   if (!appKey || !appSecret || !code) throw new Error("Lazada OAuth 입력값이 부족합니다.");
+  await onExternalMutationStart();
   const remote = await exchangeLazadaOAuthToken({ appKey, appSecret, code });
   const accessToken = textValue(remote.data, "access_token");
   const refreshToken = textValue(remote.data, "refresh_token");
   const responseCode = String(remote.data.code ?? "");
   if (!remote.response.ok || !accessToken || !refreshToken || (responseCode && responseCode !== "0")) throw new Error(`Lazada OAuth 토큰 교환 실패${responseCode ? ` · ${responseCode}` : ""}`);
   const accessExpiresAt = tokenExpiry(remote.data, 2_592_000);
-  const refreshExpiresAt = new Date(Date.now() + Number(remote.data.refresh_expires_in ?? 15_552_000) * 1000).toISOString();
-  return {
+  const refreshExpiresAt = futureExpiry(remote.data.refresh_expires_in, 15_552_000);
+  const result = {
     ok: true,
     channel: "lazada",
     operation: "oauth.exchange",
@@ -1388,22 +1694,113 @@ async function lazadaOAuthResult(job) {
     expiresAt: refreshExpiresAt,
     safeMessage: "Lazada OAuth 토큰 교환을 완료했습니다.",
   };
+  await onCredentialRefresh({ payload: result.credentialPayload, expiresAt: result.expiresAt, oauthComplete: true });
+  return result;
+}
+
+async function ebayOAuthResult(job, onExternalMutationStart, onCredentialRefresh) {
+  const clientId = textValue(job.credential, "client_id");
+  const clientSecret = textValue(job.credential, "client_secret");
+  const ruName = textValue(job.credential, "ru_name");
+  const code = String(job.request?.code ?? "").trim();
+  if (!clientId || !clientSecret || !ruName || !code) throw new Error("eBay OAuth 입력값이 부족합니다.");
+
+  await onExternalMutationStart();
+  const remote = await exchangeEbayOAuthToken({
+    environment: job.environment,
+    clientId,
+    clientSecret,
+    ruName,
+    code,
+  });
+  const accessToken = textValue(remote.data, "access_token");
+  const refreshToken = textValue(remote.data, "refresh_token");
+  if (!remote.response.ok || !accessToken || !refreshToken) {
+    throw new Error("eBay OAuth 토큰 교환 실패");
+  }
+
+  const accessExpiresAt = futureExpiry(remote.data.expires_in, 7_200);
+  const refreshExpiresAt = futureExpiry(remote.data.refresh_token_expires_in, 47_304_000);
+  const credentialPayload = {
+    ...job.credential,
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    access_token_expires_at: accessExpiresAt,
+    refresh_token_expires_at: refreshExpiresAt,
+  };
+  await onCredentialRefresh({ payload: credentialPayload, expiresAt: refreshExpiresAt, oauthComplete: true });
+  return {
+    ok: true,
+    channel: "ebay",
+    operation: "oauth.exchange",
+    credentialPayload,
+    expiresAt: refreshExpiresAt,
+    safeMessage: "eBay OAuth 토큰 교환을 완료했습니다.",
+  };
 }
 
 async function processGatewayJob(job) {
+  const claimToken = String(job?.claim_token ?? "");
+  if (!UUID_PATTERN.test(claimToken)) {
+    throw new Error("채널 작업 claim 식별자가 없습니다.");
+  }
+  const gatewayHeartbeat = createGatewayHeartbeat(job.id, claimToken);
+  let gatewayHeartbeatStopped = false;
+  let externalWriteStarted = false;
+  let listingMediaWriteObserved = false;
+  let credentialMutationInFlight = false;
+  let credentialRefresh;
+  const assertGatewayLeaseHealthy = () => gatewayHeartbeat.assertHealthy();
+  const markExternalWriteStarted = async () => {
+    await assertGatewayLeaseHealthy();
+    externalWriteStarted = true;
+  };
+  const markExternalMutationStarted = async () => {
+    externalWriteStarted = true;
+    credentialMutationInFlight = true;
+    await assertGatewayLeaseHealthy();
+    await persistWorkerCompletion(
+      "/api/channel-gateway/worker/credential-refresh",
+      { action: "begin", jobId: job.id, claimToken },
+      "채널 인증 갱신 불확실성 경계 저장 실패",
+      GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
+    );
+    await assertGatewayLeaseHealthy();
+  };
+  const rememberCredentialRefresh = async (refresh) => {
+    credentialRefresh = refresh;
+    await assertGatewayLeaseHealthy();
+    await persistWorkerCompletion(
+      "/api/channel-gateway/worker/credential-refresh",
+      { action: "stage", jobId: job.id, claimToken, credentialRefresh: refresh },
+      "채널 인증 갱신 즉시 보존 실패",
+      GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
+    );
+    await assertGatewayLeaseHealthy();
+    credentialMutationInFlight = false;
+  };
+  const stopGatewayHeartbeat = async () => {
+    if (gatewayHeartbeatStopped) return;
+    gatewayHeartbeatStopped = true;
+    await gatewayHeartbeat.stop();
+  };
   try {
+    await gatewayHeartbeat.start();
+    await assertGatewayLeaseHealthy();
     if (job.channel === "temu") await assertTemuEgressAllowed();
     let result;
-    let credentialRefresh;
+    await assertGatewayLeaseHealthy();
     if (job.operation === "oauth.exchange") {
-      if (job.channel === "shopee") result = await shopeeOAuthResult(job);
-      else if (job.channel === "lazada") result = await lazadaOAuthResult(job);
+      if (job.channel === "shopee") result = await shopeeOAuthResult(job, markExternalMutationStarted, rememberCredentialRefresh);
+      else if (job.channel === "lazada") result = await lazadaOAuthResult(job, markExternalMutationStarted, rememberCredentialRefresh);
+      else if (job.channel === "ebay") result = await ebayOAuthResult(job, markExternalMutationStarted, rememberCredentialRefresh);
       else throw new Error("이 채널은 OAuth 교환 작업을 지원하지 않습니다.");
     } else if (job.operation === "shops.get") {
       let remote;
       if (job.channel === "shopee") {
+        await assertGatewayLeaseHealthy();
         const shopId = String(job.request?.shopId ?? "").trim();
-        const ensured = await ensureShopeeAccessToken(job.credential, job.environment, 10 * 60 * 1000, shopId);
+        const ensured = await ensureShopeeAccessToken(job.credential, job.environment, 10 * 60 * 1000, shopId, markExternalMutationStarted, rememberCredentialRefresh);
         remote = await shopeeRequest({
           payload: ensured.payload,
           environment: job.environment,
@@ -1412,7 +1809,8 @@ async function processGatewayJob(job) {
         });
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "lazada") {
-        const ensured = await ensureLazadaAccessToken(job.credential);
+        await assertGatewayLeaseHealthy();
+        const ensured = await ensureLazadaAccessToken(job.credential, undefined, markExternalMutationStarted, rememberCredentialRefresh);
         const country = String(job.request?.country || textValue(ensured.payload, "country") || "my").toLowerCase();
         remote = await lazadaRequest({ payload: { ...ensured.payload, country }, path: "/seller/get" });
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
@@ -1435,23 +1833,28 @@ async function processGatewayJob(job) {
         : [];
       const displayPerQuery = Math.max(1, Math.min(30, Number(job.request?.displayPerQuery ?? 30) || 30));
       if (primary.length < 2) throw new Error("경쟁가 검색어가 올바르지 않습니다.");
+      await assertGatewayLeaseHealthy();
       const items = await searchElevenstProductVariants(primary, aliases, { apiKey: textValue(job.credential, "api_key") }, displayPerQuery);
       result = { ok: true, channel: "elevenst", operation: "competitor.search", items, safeMessage: `11번가 공식 상품검색에서 후보 ${items.length}건을 확인했습니다.` };
     } else if (job.operation === "diagnostic.test") {
       let diagnosticCredential = job.credential;
       if (job.channel === "shopee") {
-        const ensured = await ensureShopeeAccessToken(diagnosticCredential, job.environment);
+        await assertGatewayLeaseHealthy();
+        const ensured = await ensureShopeeAccessToken(diagnosticCredential, job.environment, undefined, "", markExternalMutationStarted, rememberCredentialRefresh);
         diagnosticCredential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "lazada") {
-        const ensured = await ensureLazadaAccessToken(diagnosticCredential);
+        await assertGatewayLeaseHealthy();
+        const ensured = await ensureLazadaAccessToken(diagnosticCredential, undefined, markExternalMutationStarted, rememberCredentialRefresh);
         diagnosticCredential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "ebay") {
-        const ensured = await ensureEbayAccessToken(diagnosticCredential, job.environment);
+        await assertGatewayLeaseHealthy();
+        const ensured = await ensureEbayAccessToken(diagnosticCredential, job.environment, undefined, markExternalMutationStarted, rememberCredentialRefresh);
         diagnosticCredential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       }
+      await assertGatewayLeaseHealthy();
       const diagnostic = await runChannelDiagnostic(job.channel, diagnosticCredential, job.environment);
       result = {
         ok: diagnostic.status !== "failed",
@@ -1470,32 +1873,45 @@ async function processGatewayJob(job) {
           if (job.operation === "listing.create") {
             const publish = operationArguments.publish && typeof operationArguments.publish === "object" ? operationArguments.publish : {};
             const shopId = String(publish.shop_id ?? operationArguments.shopId ?? operationArguments.shop_id ?? "").trim();
-            const shopEnsured = await ensureShopeeAccessToken(credential, job.environment, 10 * 60 * 1000, shopId);
+            await assertGatewayLeaseHealthy();
+            const shopEnsured = await ensureShopeeAccessToken(credential, job.environment, 10 * 60 * 1000, shopId, markExternalMutationStarted, rememberCredentialRefresh);
             credential = shopEnsured.payload;
             shopeeShopCredential = shopEnsured.payload;
             if (shopEnsured.refreshed) credentialRefresh = { payload: shopEnsured.payload, expiresAt: shopEnsured.credentialExpiresAt };
           }
           const merchantId = String(operationArguments.merchantId ?? operationArguments.merchant_id ?? "").trim();
-          const merchantEnsured = await ensureShopeeMerchantAccessToken(credential, job.environment, 10 * 60 * 1000, merchantId);
+          await assertGatewayLeaseHealthy();
+          const merchantEnsured = await ensureShopeeMerchantAccessToken(credential, job.environment, 10 * 60 * 1000, merchantId, markExternalMutationStarted, rememberCredentialRefresh);
           credential = merchantEnsured.payload;
           if (merchantEnsured.refreshed || credentialRefresh) credentialRefresh = { payload: merchantEnsured.payload, expiresAt: merchantEnsured.credentialExpiresAt };
           if (job.operation === "listing.create" && operationArguments.resumeOnly !== true) {
-            operationArguments = await prepareShopeeGlobalListing(credential, shopeeShopCredential, job.environment, operationArguments);
+            operationArguments = await prepareShopeeGlobalListing(
+              credential,
+              shopeeShopCredential,
+              job.environment,
+              operationArguments,
+              assertGatewayLeaseHealthy,
+              markExternalWriteStarted,
+            );
+            listingMediaWriteObserved = true;
           }
         } else {
           const shopId = String(operationArguments.shopId ?? operationArguments.shop_id ?? "").trim();
-          const ensured = await ensureShopeeAccessToken(credential, job.environment, 10 * 60 * 1000, shopId);
+          await assertGatewayLeaseHealthy();
+          const ensured = await ensureShopeeAccessToken(credential, job.environment, 10 * 60 * 1000, shopId, markExternalMutationStarted, rememberCredentialRefresh);
           credential = ensured.payload;
           if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
         }
       } else if (job.channel === "lazada") {
         const country = String(operationArguments.country || textValue(credential, "country") || "my").toLowerCase();
         credential = { ...credential, country };
-        const ensured = await ensureLazadaAccessToken(credential);
+        await assertGatewayLeaseHealthy();
+        const ensured = await ensureLazadaAccessToken(credential, undefined, markExternalMutationStarted, rememberCredentialRefresh);
         credential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "ebay") {
-        const ensured = await ensureEbayAccessToken(credential, job.environment);
+        await assertGatewayLeaseHealthy();
+        const ensured = await ensureEbayAccessToken(credential, job.environment, undefined, markExternalMutationStarted, rememberCredentialRefresh);
         credential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       }
@@ -1503,18 +1919,23 @@ async function processGatewayJob(job) {
         if (job.channel === "shopee") {
           operationArguments = operationArguments.globalProduct === true
             ? operationArguments
-            : await prepareShopeeListing(credential, job.environment, operationArguments);
+            : await prepareShopeeListing(credential, job.environment, operationArguments, assertGatewayLeaseHealthy, markExternalWriteStarted);
+          if (operationArguments.globalProduct !== true) listingMediaWriteObserved = true;
         } else if (job.channel === "lazada") {
-          operationArguments = await prepareLazadaListing(credential, operationArguments);
+          operationArguments = await prepareLazadaListing(credential, operationArguments, assertGatewayLeaseHealthy, markExternalWriteStarted);
+          listingMediaWriteObserved = true;
         } else if (job.channel === "smartstore") {
-          operationArguments = await prepareSmartstoreListing(credential, operationArguments);
+          operationArguments = await prepareSmartstoreListing(credential, operationArguments, assertGatewayLeaseHealthy, markExternalWriteStarted);
+          listingMediaWriteObserved = true;
         } else if (job.channel === "coupang" && job.operation === "listing.create") {
-          operationArguments = await prepareCoupangListing(credential, operationArguments);
+          operationArguments = await prepareCoupangListing(credential, operationArguments, assertGatewayLeaseHealthy);
         }
       }
       if (job.channel === "lazada" && job.operation === "categories.suggest") {
         console.log(`[Lazada category debug] query=${String(operationArguments.query || "").slice(0, 160)}`);
       }
+      await assertGatewayLeaseHealthy();
+      externalWriteStarted ||= writeChannelOperations.has(job.operation);
       result = await executeChannelOperation({
         channel: job.channel,
         operation: job.operation,
@@ -1522,21 +1943,29 @@ async function processGatewayJob(job) {
         arguments: operationArguments,
         environment: job.environment,
       });
+      if (listingMediaWriteObserved) {
+        result.steps.unshift({
+          name: "listing-image-upload",
+          ok: true,
+          status: 200,
+          data: { sellerpilotMutation: "accepted" },
+        });
+      }
       if (job.channel === "lazada" && job.operation === "categories.suggest") {
         const names = result.steps.flatMap((entry) => entry?.data?.data?.categorySuggestions ?? []).map((entry) => entry.categoryName).slice(0, 10);
         console.log(`[Lazada category debug] candidates=${names.join(" | ")}`);
       }
-      if (job.channel === "lazada" && job.operation === "listing.create" && !result.ok) {
-        console.log(`[Lazada listing debug] ${JSON.stringify(result.steps.map((entry) => entry.data)).slice(0, 4000)}`);
-      }
       if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true && result.ok && result.remoteId && shopeeShopCredential) {
-        const readLocalItem = () => shopeeRequest({
-          payload: shopeeShopCredential,
-          environment: job.environment,
-          method: "GET",
-          path: "/api/v2/product/get_item_base_info",
-          query: new URLSearchParams({ item_id_list: result.remoteId }),
-        });
+        const readLocalItem = async () => {
+          await assertGatewayLeaseHealthy();
+          return shopeeRequest({
+            payload: shopeeShopCredential,
+            environment: job.environment,
+            method: "GET",
+            path: "/api/v2/product/get_item_base_info",
+            query: new URLSearchParams({ item_id_list: result.remoteId }),
+          });
+        };
         const availableStock = (remote) => {
           const items = remote.data?.response?.item_list;
           const value = Array.isArray(items) ? items[0]?.stock_info_v2?.summary_info?.total_available_stock : undefined;
@@ -1558,6 +1987,7 @@ async function processGatewayJob(job) {
           data: localReadback.data,
         });
         if (localOk && Number.isFinite(requestedStock) && requestedStock >= 0 && availableStock(localReadback) !== requestedStock) {
+          await assertGatewayLeaseHealthy();
           const stockRemote = await shopeeRequest({
             payload: shopeeShopCredential,
             environment: job.environment,
@@ -1572,6 +2002,7 @@ async function processGatewayJob(job) {
           if (!stockOk && cbscGlobalStockOnly) {
             const globalItemId = String(operationArguments.globalItemId ?? "").trim();
             if (globalItemId) {
+              await assertGatewayLeaseHealthy();
               const globalStockRemote = await shopeeMerchantRequest({
                 payload: credential,
                 environment: job.environment,
@@ -1603,23 +2034,68 @@ async function processGatewayJob(job) {
           : "Shopee 글로벌 상품은 발행됐지만 로컬 상품·재고 재검증이 필요합니다.";
       }
     }
-    const completionStatus = gatewayJobCompletionStatus(result.operation, result.ok);
-    const response = await api("/api/channel-gateway/worker/complete", {
-      method: "POST",
-      body: JSON.stringify(completionStatus === "failed"
-        ? { jobId: job.id, status: "failed", error: result.safeMessage }
-        : { jobId: job.id, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}) }),
-    });
-    if (!response.ok) throw new Error(`채널 작업 결과 저장 실패 · HTTP ${response.status}`);
+    const completionStatus = gatewayJobCompletionStatus(result.operation, result.ok, result.steps ?? []);
+    const completionPayload = completionStatus === "failed"
+      ? { jobId: job.id, claimToken, status: "failed", error: result.safeMessage, ...(credentialRefresh ? { credentialRefresh } : {}) }
+      : completionStatus === "reconciliation_required"
+        ? { jobId: job.id, claimToken, status: "reconciliation_required", error: result.safeMessage, result, ...(credentialRefresh ? { credentialRefresh } : {}) }
+        : { jobId: job.id, claimToken, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}) };
+    // Stop new heartbeats and await any in-flight renewal before persisting a
+    // terminal result. A lost lease must preserve remote state for reconciliation.
+    await assertGatewayLeaseHealthy();
+    await stopGatewayHeartbeat();
+    await persistWorkerCompletion(
+      "/api/channel-gateway/worker/complete",
+      completionPayload,
+      "채널 작업 결과 저장 실패",
+      GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
+    );
     if (result.ok) console.log(`[채널 완료] ${job.channel} · ${job.operation} · ${job.id}`);
     else console.error(`[채널 원격 실패] ${job.channel} · ${job.operation} · ${job.id} · ${result.safeMessage}`);
   } catch (error) {
-    const message = error instanceof Error ? error.message.slice(0, 500) : "채널 작업 처리 오류";
-    await api("/api/channel-gateway/worker/complete", {
-      method: "POST",
-      body: JSON.stringify({ jobId: job.id, status: "failed", error: message }),
-    }).catch(() => undefined);
-    console.error(`[채널 실패] ${job.channel} · ${job.operation} · ${message}`);
+    let effectiveError = error;
+    if (!gatewayHeartbeatStopped) {
+      try {
+        await stopGatewayHeartbeat();
+      } catch (heartbeatError) {
+        effectiveError = heartbeatError;
+      }
+    }
+    const message = effectiveError instanceof Error ? effectiveError.message.slice(0, 500) : "채널 작업 처리 오류";
+    const terminalOwnershipLoss = effectiveError instanceof WorkerRequestTerminalError
+      && [401, 404, 409].includes(effectiveError.status);
+    if (externalWriteStarted) {
+      if (!terminalOwnershipLoss) {
+        await persistWorkerCompletion(
+          "/api/channel-gateway/worker/complete",
+          {
+            jobId: job.id,
+            claimToken,
+            status: "reconciliation_required",
+            error: message,
+            ...(!credentialMutationInFlight && credentialRefresh ? { credentialRefresh } : {}),
+          },
+          "채널 작업 수동 확인 상태 저장 실패",
+          GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
+        ).catch((completionError) => {
+          const completionMessage = completionError instanceof Error ? completionError.message : "수동 확인 상태 저장 오류";
+          console.error(`[채널 상태 저장 보류] ${job.id} · ${completionMessage}`);
+        });
+      }
+      console.error(`[채널 수동 확인 필요] ${job.channel} · ${job.operation} · ${job.id} · ${message}`);
+    } else if (effectiveError instanceof WorkerRequestTerminalError) {
+      console.error(`[채널 상태 보존] ${job.channel} · ${job.operation} · ${job.id} · ${message}`);
+    } else {
+      await persistWorkerCompletion(
+        "/api/channel-gateway/worker/complete",
+        { jobId: job.id, claimToken, status: "failed", error: message },
+        "채널 작업 실패 상태 저장 실패",
+      ).catch((completionError) => {
+        const completionMessage = completionError instanceof Error ? completionError.message : "완료 상태 저장 오류";
+        console.error(`[채널 상태 저장 보류] ${job.id} · ${completionMessage}`);
+      });
+      console.error(`[채널 실패] ${job.channel} · ${job.operation} · ${message}`);
+    }
   }
 }
 
@@ -1647,7 +2123,7 @@ do {
         if (!syncResponse.ok) {
           nextPeriodicSyncAt = Date.now() + 60_000;
           if (syncResponse.status === 401) {
-            workerAuthBackoffUntil = Date.now() + 5 * 60_000;
+            workerAuthBackoffUntil = Date.now() + workerClaimBackoffMs(syncResponse.status);
           }
           throw new Error(`주문·문의 자동 동기화 예약 실패 · HTTP ${syncResponse.status}`);
         }
@@ -1691,7 +2167,7 @@ do {
         continue;
       }
       if (gatewayResponse.status === 401 || gatewayResponse.status === 503) {
-        const backoffMs = gatewayResponse.status === 401 ? 5 * 60_000 : 60_000;
+        const backoffMs = workerClaimBackoffMs(gatewayResponse.status);
         gatewayClaimBackoffUntil = Date.now() + backoffMs;
         if (gatewayResponse.status === 401) workerAuthBackoffUntil = gatewayClaimBackoffUntil;
         if (gatewayClaimBackoffStatus !== gatewayResponse.status) {
@@ -1710,6 +2186,11 @@ do {
       else await Promise.race([...activeGatewayJobs]);
       continue;
     }
+    if (Date.now() < aiClaimBackoffUntil) {
+      if (once) break;
+      await delay(Math.min(pollMs, aiClaimBackoffUntil - Date.now()));
+      continue;
+    }
     // 상세페이지 작업은 상품 단위로 최대 8건을 병렬 실행합니다. 각 상품의
     // 생성 이미지도 2장씩 병렬 처리하되, 짧은 채널 API 작업은 계속 우선
     // 수신해 게이트웨이 제한시간 안에 끝나도록 합니다.
@@ -1722,6 +2203,20 @@ do {
       method: "POST",
       body: JSON.stringify({ version: workerVersion }),
     });
+    if (response.status === 401 || response.status === 503) {
+      const backoffMs = workerClaimBackoffMs(response.status);
+      aiClaimBackoffUntil = Date.now() + backoffMs;
+      if (response.status === 401) workerAuthBackoffUntil = aiClaimBackoffUntil;
+      if (aiClaimBackoffStatus !== response.status) {
+        console.error(response.status === 401
+          ? "AI 작업자 인증이 거절됐습니다. 관리자 화면에서 토큰 상태를 확인해 주세요."
+          : "운영 데이터베이스가 지연되어 AI 작업 수신을 1분 뒤 재시도합니다.");
+        aiClaimBackoffStatus = response.status;
+      }
+      if (once) throw new Error(`작업 요청 실패 · HTTP ${response.status}`);
+      continue;
+    }
+    aiClaimBackoffStatus = 0;
     if (response.status === 204) {
       if (once) break;
       await waitForIdleWork();
