@@ -7,15 +7,18 @@ import {
   type OperationProductImageCacheEntry,
 } from "../lib/operation-product-image-cache";
 import {
+  createBoundedRequestSignal,
   OperationsSnapshotRequestCoordinator,
   operationsSnapshotRangeKey,
   unavailableOperationsSnapshot,
+  waitForAbortablePromise,
 } from "./operations-snapshot-request-coordinator";
 
 const DATA_REFRESH_INTERVAL_MS = 5 * 60_000;
 const RETRY_INTERVAL_MS = 30_000;
 const PRODUCT_IMAGE_REFRESH_INTERVAL_MS = 45 * 60_000;
 const PRODUCT_IMAGE_CLIENT_CACHE_MS = 55 * 60_000;
+export const operationsSnapshotRequestTimeoutMs = 30_000;
 
 export type OperationProduct = {
   id: string;
@@ -282,18 +285,24 @@ export function useOperationsSnapshot() {
   }, [rangeKey]);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
-    const { data: sessionData } = await createClient().auth.getSession();
+    const sessionPromise = createClient().auth.getSession();
+    const { data: sessionData } = init?.signal
+      ? await waitForAbortablePromise(sessionPromise, init.signal)
+      : await sessionPromise;
+    if (init?.signal?.aborted) {
+      throw init.signal.reason ?? new DOMException("운영 데이터 요청이 취소되었습니다.", "AbortError");
+    }
     const accessToken = sessionData.session?.access_token;
     if (!accessToken) throw new OperationsSnapshotLoadError("운영 데이터를 보려면 다시 로그인해 주세요.", false);
-    return fetch(input, {
+    const headers = new Headers(init?.headers);
+    if (!headers.has("content-type")) headers.set("content-type", "application/json");
+    headers.set("authorization", `Bearer ${accessToken}`);
+    const request = fetch(input, {
       ...init,
       cache: "no-store",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${accessToken}`,
-        ...(init?.headers ?? {}),
-      },
+      headers,
     });
+    return init?.signal ? waitForAbortablePromise(request, init.signal) : request;
   }, []);
 
   const load = useCallback((options: LoadOptions = {}) => {
@@ -304,6 +313,11 @@ export function useOperationsSnapshot() {
     return requestCoordinatorRef.current.run(rangeKey, async (request) => {
       const coordinator = requestCoordinatorRef.current;
       const isSelectedRequest = () => coordinator.isCurrent(request, selectedRangeKeyRef.current);
+      const bounded = createBoundedRequestSignal(
+        request.signal,
+        operationsSnapshotRequestTimeoutMs,
+        "운영 데이터 조회가 30초를 초과했습니다. 다시 시도해 주세요.",
+      );
       if (lastSuccessfulRangeKeyRef.current !== request.key) {
         coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
           setState("loading");
@@ -321,9 +335,15 @@ export function useOperationsSnapshot() {
           includeProductImages: refreshProductImages ? "1" : "0",
         });
         const response = await authenticatedFetch(`/api/operations/snapshot?${params}`, {
-          signal: request.signal,
+          signal: bounded.signal,
         });
-        const payload = await response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })) as OperationsSnapshot & { message?: string };
+        const payload = await waitForAbortablePromise(
+          response.json().catch(() => ({ message: "운영 데이터 응답을 읽지 못했습니다." })),
+          bounded.signal,
+        ) as OperationsSnapshot & { message?: string };
+        if (bounded.signal.aborted) {
+          throw bounded.signal.reason ?? new DOMException("운영 데이터 요청이 취소되었습니다.", "AbortError");
+        }
         if (!isSelectedRequest()) return;
         if (!response.ok) {
           const isTransient = response.status === 408
@@ -369,6 +389,8 @@ export function useOperationsSnapshot() {
           setState(unavailable.state);
           setMessage(unavailable.message);
         });
+      } finally {
+        bounded.dispose();
       }
     });
   }, [authenticatedFetch, range.from, range.to, rangeKey]);

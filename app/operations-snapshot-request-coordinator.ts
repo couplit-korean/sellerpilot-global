@@ -4,11 +4,62 @@ export type OperationsSnapshotRequest = {
   signal: AbortSignal;
 };
 
+export type BoundedRequestSignal = {
+  signal: AbortSignal;
+  dispose: () => void;
+};
+
 type ActiveRequest = {
   request: OperationsSnapshotRequest;
   controller: AbortController;
   promise: Promise<void>;
 };
+
+function abortReason(signal: AbortSignal, fallbackMessage: string) {
+  return signal.reason ?? new DOMException(fallbackMessage, "AbortError");
+}
+
+export function createBoundedRequestSignal(
+  parentSignal: AbortSignal,
+  timeoutMs: number,
+  timeoutMessage: string,
+): BoundedRequestSignal {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(abortReason(parentSignal, "요청이 취소되었습니다."));
+  if (parentSignal.aborted) abortFromParent();
+  else parentSignal.addEventListener("abort", abortFromParent, { once: true });
+  const timer = globalThis.setTimeout(() => {
+    controller.abort(new DOMException(timeoutMessage, "TimeoutError"));
+  }, timeoutMs);
+  let disposed = false;
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      globalThis.clearTimeout(timer);
+      parentSignal.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
+
+export function waitForAbortablePromise<T>(promise: PromiseLike<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortReason(signal, "요청이 취소되었습니다."));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal, "요청이 취소되었습니다."));
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(promise).then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
 
 export function operationsSnapshotRangeKey(range: { from: string; to: string }) {
   return JSON.stringify([range.from, range.to]);

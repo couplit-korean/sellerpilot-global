@@ -22,6 +22,7 @@ import { normalizeProductSaleConfiguration, productSaleConfigurations } from "..
 import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
 import { channels } from "./channel-config";
+import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 
 type CredentialRow = {
   id: string;
@@ -66,6 +67,7 @@ const ebayMarketplaceTargets: ChannelTarget[] = [
 ];
 type LocalizedListing = { channel: ActiveChannelKey; market: string; locale: string; title: string; shortDescription: string; description: string; keywords: string[]; thumbnailAltText?: string; detailSections?: LocalizedDetailSection[] };
 type PackageFields = { weight: number; length: number; width: number; height: number };
+const publishContextRequestTimeoutMs = 30_000;
 type ManualFields = {
   productName: string;
   description: string;
@@ -588,7 +590,19 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const packageFieldsRef = useRef(packageFields);
   const confirmationDialogRef = useRef<HTMLDivElement | null>(null);
   const confirmationOpenerRef = useRef<HTMLElement | null>(null);
+  const loadGenerationRef = useRef(0);
+  const loadRequestRef = useRef<{ generation: number; controller: AbortController } | null>(null);
+  const mountedRef = useRef(true);
   const confirmationOpen = bulkConfirming || confirmingChannel !== null || qoo10StopConfirming !== null || qoo10CleanupConfirming !== null;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      loadRequestRef.current?.controller.abort(new DOMException("상품 등록 준비 화면이 닫혔습니다.", "AbortError"));
+      loadRequestRef.current = null;
+    };
+  }, []);
 
   const closeConfirmation = useCallback(() => {
     setBulkConfirming(false);
@@ -631,27 +645,46 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   }, [closeConfirmation, confirmationOpen]);
 
   const load = useCallback(async () => {
+    loadRequestRef.current?.controller.abort(new DOMException("더 최신 상품 등록 준비 요청으로 교체되었습니다.", "AbortError"));
     if (!productId) {
+      loadRequestRef.current = null;
       setContext(null);
+      setLoading(false);
       return;
     }
+    const generation = loadGenerationRef.current + 1;
+    loadGenerationRef.current = generation;
+    const controller = new AbortController();
+    loadRequestRef.current = { generation, controller };
+    const bounded = createBoundedRequestSignal(
+      controller.signal,
+      publishContextRequestTimeoutMs,
+      "상품 등록 준비 정보 조회가 30초를 초과했습니다. 다시 확인해 주세요.",
+    );
+    const isLatestRequest = () => mountedRef.current
+      && loadRequestRef.current?.generation === generation;
     setLoading(true);
     try {
       const supabase = createClient();
-      const { data: sessionData } = await supabase.auth.getSession();
+      const { data: sessionData } = await waitForAbortablePromise(supabase.auth.getSession(), bounded.signal);
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("상품 등록 준비 정보를 보려면 다시 로그인해 주세요.");
       const [contextResponse, credentialsResponse, shopeeTargetsResponse, lazadaTargetsResponse] = await Promise.all([
-        fetch(`/api/admin/products/${productId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }),
-        supabase.rpc("sellerpilot_list_credentials"),
-        fetchChannelTargets("shopee", accessToken),
-        fetchChannelTargets("lazada", accessToken),
+        waitForAbortablePromise(fetch(`/api/admin/products/${productId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store", signal: bounded.signal }), bounded.signal),
+        waitForAbortablePromise(supabase.rpc("sellerpilot_list_credentials").abortSignal(bounded.signal), bounded.signal),
+        fetchChannelTargets("shopee", accessToken, { signal: bounded.signal }),
+        fetchChannelTargets("lazada", accessToken, { signal: bounded.signal }),
       ]);
-      const payload = await contextResponse.json().catch(() => ({ message: "상품 준비 응답을 읽지 못했습니다." })) as PublishContext & { message?: string };
+      const payload = await waitForAbortablePromise(
+        contextResponse.json().catch(() => ({ message: "상품 준비 응답을 읽지 못했습니다." })),
+        bounded.signal,
+      ) as PublishContext & { message?: string };
       if (!contextResponse.ok) throw new Error(payload.message ?? "상품 등록 준비 정보를 불러오지 못했습니다.");
       const nextPayload = { ...payload, manualFields: normalizeManualFields(payload), imageSpecs: Array.isArray(payload.imageSpecs) ? payload.imageSpecs : [] };
-      const shopeePayload = await shopeeTargetsResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[] };
-      const lazadaPayload = await lazadaTargetsResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[] };
+      const [shopeePayload, lazadaPayload] = await Promise.all([
+        waitForAbortablePromise(shopeeTargetsResponse.json().catch(() => ({ targets: [] })), bounded.signal),
+        waitForAbortablePromise(lazadaTargetsResponse.json().catch(() => ({ targets: [] })), bounded.signal),
+      ]) as [{ targets?: ChannelTarget[] }, { targets?: ChannelTarget[] }];
       const shopeeTargets = shopeeTargetsResponse.ok && Array.isArray(shopeePayload.targets) ? shopeePayload.targets : [];
       const lazadaTargets = lazadaTargetsResponse.ok && Array.isArray(lazadaPayload.targets) ? lazadaPayload.targets : [];
       const initialTargets: Partial<Record<ActiveChannelKey, ChannelTarget>> = { shopee: shopeeTargets[0], lazada: lazadaTargets[0], ebay: ebayMarketplaceTargets[0] };
@@ -659,6 +692,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const initialPrice = manual.sellingPrice;
       const initialQuantity = manual.stock;
       const initialPackage = { weight: manual.weightKg, length: manual.packageLengthCm, width: manual.packageWidthCm, height: manual.packageHeightCm };
+      if (!isLatestRequest() || bounded.signal.aborted) return;
       priceRef.current = initialPrice;
       quantityRef.current = initialQuantity;
       packageFieldsRef.current = initialPackage;
@@ -676,9 +710,14 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       setSelectedTargets(initialTargets);
       setDrafts(buildDraftMap(nextPayload, initialPrice, initialQuantity, initialTargets, initialPackage, manual.currency === "USD" ? initialPrice : globalBaseUsdPriceRef.current));
     } catch (error) {
+      if (!isLatestRequest() || controller.signal.aborted) return;
       notify(error instanceof Error ? error.message : "상품 등록 준비 정보를 불러오지 못했습니다.");
     } finally {
-      setLoading(false);
+      bounded.dispose();
+      if (isLatestRequest()) {
+        loadRequestRef.current = null;
+        setLoading(false);
+      }
     }
   }, [notify, productId]);
 

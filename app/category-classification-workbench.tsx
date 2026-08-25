@@ -1,11 +1,12 @@
 "use client";
 
 import { AlertTriangle, BadgeCheck, Check, ChevronRight, LoaderCircle, RefreshCw, Search, ShieldCheck, Tags } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { channelMarket } from "../lib/channels/markets";
 import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
+import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 
 type CredentialRow = {
   id: string;
@@ -30,6 +31,7 @@ const ebayMarketplaceTargets: ChannelTarget[] = [
   { targetId: "EBAY_ES", displayName: "España", marketCode: "ES", locale: "es-ES", language: "Español", currency: "EUR" },
 ];
 type LocalizedListing = { channel: ActiveChannelKey; market: string; locale: string; title: string; shortDescription: string; description: string; keywords: string[] };
+const categoryBootstrapRequestTimeoutMs = 30_000;
 type ChannelState = {
   phase: "idle" | "suggesting" | "inspecting" | "ready" | "confirmed" | "error";
   suggestions: CategorySuggestion[];
@@ -716,6 +718,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   const [localizedListings, setLocalizedListings] = useState<LocalizedListing[]>([]);
   const [sourceImageUrl, setSourceImageUrl] = useState("");
   const [loadingCredentials, setLoadingCredentials] = useState(true);
+  const [bootstrapVersion, setBootstrapVersion] = useState(0);
+  const bootstrapGenerationRef = useRef(0);
 
   useEffect(() => setQuery(productName), [productName]);
   useEffect(() => {
@@ -728,55 +732,107 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     window.sessionStorage.setItem(categoryStateStorageKey(productId), JSON.stringify(states));
   }, [productId, restoredProductId, states]);
   useEffect(() => {
-    let mounted = true;
+    let active = true;
+    const generation = bootstrapGenerationRef.current + 1;
+    bootstrapGenerationRef.current = generation;
+    const controller = new AbortController();
+    const bounded = createBoundedRequestSignal(
+      controller.signal,
+      categoryBootstrapRequestTimeoutMs,
+      "채널 등록 준비 조회가 30초를 초과했습니다. 다시 확인해 주세요.",
+    );
+    const isLatestRequest = () => active && bootstrapGenerationRef.current === generation;
+    setLoadingCredentials(true);
     setSourceImageUrl("");
     void (async () => {
-      const supabase = createClient();
-      const [{ data, error }, { data: sessionData }] = await Promise.all([
-        supabase.rpc("sellerpilot_list_credentials"),
-        supabase.auth.getSession(),
-      ]);
-      if (!mounted) return;
-      setCredentials(error || !Array.isArray(data) ? [] : data.filter((row): row is CredentialRow => Boolean(row && typeof row === "object" && "id" in row && "channel" in row && "environment" in row && "status" in row)));
-      const accessToken = sessionData.session?.access_token;
-      if (accessToken) {
-        const [shopeeResponse, lazadaResponse, contextResponse] = await Promise.all([
-          fetchChannelTargets("shopee", accessToken),
-          fetchChannelTargets("lazada", accessToken),
-          productId ? fetch(`/api/admin/products/${productId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" }) : null,
+      try {
+        const supabase = createClient();
+        const [{ data, error }, { data: sessionData }] = await Promise.all([
+          waitForAbortablePromise(supabase.rpc("sellerpilot_list_credentials").abortSignal(bounded.signal), bounded.signal),
+          waitForAbortablePromise(supabase.auth.getSession(), bounded.signal),
         ]);
-        const shopeePayload = await shopeeResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[]; message?: string };
-        const lazadaPayload = await lazadaResponse.json().catch(() => ({ targets: [] })) as { targets?: ChannelTarget[]; message?: string };
-        const contextPayload = contextResponse ? await contextResponse.json().catch(() => ({ localizedListings: [] })) as {
+        if (!isLatestRequest()) return;
+        if (bounded.signal.aborted) throw bounded.signal.reason ?? new DOMException("채널 등록 준비 조회가 중단되었습니다.", "AbortError");
+        setCredentials(error || !Array.isArray(data) ? [] : data.filter((row): row is CredentialRow => Boolean(row && typeof row === "object" && "id" in row && "channel" in row && "environment" in row && "status" in row)));
+        const accessToken = sessionData.session?.access_token;
+        if (!accessToken) {
+          const message = "채널 등록 대상을 보려면 다시 로그인해 주세요.";
+          setTargets({ ebay: ebayMarketplaceTargets });
+          setTargetErrors({ shopee: message, lazada: message });
+          setLocalizedListings([]);
+          return;
+        }
+        const [shopeeResult, lazadaResult, contextResult] = await Promise.allSettled([
+          fetchChannelTargets("shopee", accessToken, { signal: bounded.signal }),
+          fetchChannelTargets("lazada", accessToken, { signal: bounded.signal }),
+          productId
+            ? waitForAbortablePromise(fetch(`/api/admin/products/${productId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store", signal: bounded.signal }), bounded.signal)
+            : Promise.resolve(null),
+        ]);
+        if (!isLatestRequest()) return;
+        if (bounded.signal.aborted) throw bounded.signal.reason ?? new DOMException("채널 등록 준비 조회가 중단되었습니다.", "AbortError");
+        const readTargets = async (result: PromiseSettledResult<Response>, label: string) => {
+          if (result.status === "rejected") {
+            return { targets: [] as ChannelTarget[], error: result.reason instanceof Error ? result.reason.message : `${label} 등록 대상 정보를 불러오지 못했습니다.` };
+          }
+          const payload = await waitForAbortablePromise(
+            result.value.json().catch(() => ({ targets: [] })),
+            bounded.signal,
+          ) as { targets?: ChannelTarget[]; message?: string };
+          return {
+            targets: result.value.ok && Array.isArray(payload.targets) ? payload.targets : [],
+            error: result.value.ok ? "" : payload.message ?? `${label} 등록 대상 정보를 불러오지 못했습니다.`,
+          };
+        };
+        const [shopee, lazada] = await Promise.all([
+          readTargets(shopeeResult, "Shopee"),
+          readTargets(lazadaResult, "Lazada"),
+        ]);
+        let contextPayload: {
           localizedListings?: LocalizedListing[];
           sourceImages?: Array<{ url?: string | null }>;
           generatedImages?: Array<{ url?: string | null }>;
-        } : { localizedListings: [] };
-        if (mounted) {
-          const shopeeTargets = shopeeResponse.ok && Array.isArray(shopeePayload.targets) ? shopeePayload.targets : [];
-          const lazadaTargets = lazadaResponse.ok && Array.isArray(lazadaPayload.targets) ? lazadaPayload.targets : [];
-          setTargets({ shopee: shopeeTargets, lazada: lazadaTargets, ebay: ebayMarketplaceTargets });
-          setTargetErrors({
-            shopee: shopeeResponse.ok ? "" : shopeePayload.message ?? "Shopee 등록 대상 정보를 불러오지 못했습니다.",
-            lazada: lazadaResponse.ok ? "" : lazadaPayload.message ?? "Lazada 등록 대상 정보를 불러오지 못했습니다.",
-          });
-          setSelectedMarkets((current) => ({
-            shopee: current.shopee ?? shopeeTargets[0]?.marketCode,
-            lazada: current.lazada ?? lazadaTargets[0]?.marketCode,
-            ebay: current.ebay ?? ebayMarketplaceTargets[0].marketCode,
-          }));
-          setLocalizedListings(Array.isArray(contextPayload.localizedListings) ? contextPayload.localizedListings : []);
-          setSourceImageUrl(
-            contextPayload.sourceImages?.find((image) => image.url)?.url
-            ?? contextPayload.generatedImages?.find((image) => image.url)?.url
-            ?? "",
+        } = { localizedListings: [] };
+        if (contextResult.status === "fulfilled" && contextResult.value?.ok) {
+          contextPayload = await waitForAbortablePromise(
+            contextResult.value.json().catch(() => ({ localizedListings: [] })),
+            bounded.signal,
           );
         }
+        if (!isLatestRequest()) return;
+        if (bounded.signal.aborted) throw bounded.signal.reason ?? new DOMException("채널 등록 준비 조회가 중단되었습니다.", "AbortError");
+        setTargets({ shopee: shopee.targets, lazada: lazada.targets, ebay: ebayMarketplaceTargets });
+        setTargetErrors({ shopee: shopee.error, lazada: lazada.error });
+        setSelectedMarkets((current) => ({
+          shopee: shopee.targets.some((target) => target.marketCode === current.shopee) ? current.shopee : shopee.targets[0]?.marketCode,
+          lazada: lazada.targets.some((target) => target.marketCode === current.lazada) ? current.lazada : lazada.targets[0]?.marketCode,
+          ebay: current.ebay ?? ebayMarketplaceTargets[0].marketCode,
+        }));
+        setLocalizedListings(Array.isArray(contextPayload.localizedListings) ? contextPayload.localizedListings : []);
+        setSourceImageUrl(
+          contextPayload.sourceImages?.find((image) => image.url)?.url
+          ?? contextPayload.generatedImages?.find((image) => image.url)?.url
+          ?? "",
+        );
+      } catch (error) {
+        if (!isLatestRequest() || controller.signal.aborted) return;
+        const message = error instanceof Error ? error.message : "채널 등록 준비 정보를 불러오지 못했습니다.";
+        setCredentials([]);
+        setTargets({ ebay: ebayMarketplaceTargets });
+        setTargetErrors({ shopee: message, lazada: message });
+        setLocalizedListings([]);
+        setSourceImageUrl("");
+      } finally {
+        bounded.dispose();
+        if (isLatestRequest()) setLoadingCredentials(false);
       }
-      setLoadingCredentials(false);
     })();
-    return () => { mounted = false; };
-  }, [productId]);
+    return () => {
+      active = false;
+      controller.abort(new DOMException("채널 등록 준비 화면이 변경되었습니다.", "AbortError"));
+      bounded.dispose();
+    };
+  }, [bootstrapVersion, productId]);
 
   const activeCredential = useMemo(() => new Map(credentials.filter((row) => row.status === "active").map((row) => [row.channel, row])), [credentials]);
   const visibleChannels = useMemo(() => {
@@ -983,7 +1039,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       return <article className={`category-channel-card ${state.phase}`} key={channel}>
         <header><span>{definition.mark}</span><div><small>{target ? `${target.marketCode} · ${target.language}` : definition.market}</small><h4>{definition.name}</h4></div><em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "실키 연결" : "키 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (targets[channel]?.length ?? 0) > 0 && <label className="category-market-select"><span>등록 국가·언어</span><select value={target?.marketCode ?? ""} onChange={(event) => setSelectedMarkets((current) => ({ ...current, [channel]: event.target.value }))}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select>{channel === "ebay" ? <small>선택 국가의 공식 category tree를 조회합니다.</small> : null}</label>}
-        {requiresTarget && targetErrors[channel] && <p className="category-error"><AlertTriangle size={14} />{targetErrors[channel]}</p>}
+        {requiresTarget && targetErrors[channel] && <p className="category-error"><AlertTriangle size={14} /><span>{targetErrors[channel]}</span><button type="button" disabled={loadingCredentials} onClick={() => setBootstrapVersion((current) => current + 1)}><RefreshCw className={loadingCredentials ? "spin" : undefined} size={13} />다시 확인</button></p>}
         {!state.suggestions.length && !state.selected && <div className="category-empty"><Tags size={21} /><b>{!targetReady ? "등록 대상 동기화 필요" : credential ? productId ? "공식 카테고리 추천 대기" : "상품 원장 연결 대기" : "API 키 연결 후 사용"}</b><small>{!targetReady ? "OAuth 재승인 후 국가·언어 정보를 다시 동기화하세요." : credential ? productId ? "상품명으로 채널 원본 분류를 조회합니다." : "AI 분석을 완료해 상품 UUID를 먼저 생성하세요." : "API 키 관리에서 운영 키를 먼저 연결하세요."}</small><button type="button" disabled={!credential || !productId || !targetReady || busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{!targetReady ? "OAuth 재승인 필요" : "공식 API 추천"}</button>{credential && productId && targetReady && <div className="category-manual-fallback"><b>공식 ID 수동 검증</b><small>추천 결과가 없을 때 판매자센터에서 확인한 실제 말단 카테고리를 입력합니다. 저장 전 공식 속성·유효성 API를 다시 통과해야 합니다.</small><label><span>카테고리 ID <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리 ID`} value={state.manualCategoryId} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryId: event.target.value } }))} placeholder="공식 말단 카테고리 ID" /></label><label><span>카테고리명 <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리명`} value={state.manualCategoryName} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryName: event.target.value } }))} placeholder="공식 카테고리명" /></label><label><span>전체 경로</span><input aria-label={`${definition.name} 수동 카테고리 경로`} value={state.manualCategoryPath} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryPath: event.target.value } }))} placeholder="상위 › 하위 › 말단" /></label><button type="button" className="category-manual-verify" disabled={busy || !state.manualCategoryId.trim() || !state.manualCategoryName.trim()} onClick={() => void inspectManualCategory(channel)}><ShieldCheck size={14} />공식 API로 검증</button></div>}</div>}
         {state.suggestions.length > 0 && !state.selected && <div className="category-suggestions"><div className="category-suggestions-toolbar"><small>후보가 맞지 않으면 위 검색어를 고친 뒤 이 채널만 다시 조회하세요.</small><button type="button" disabled={busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}현재 검색어로 다시 추천</button></div>{state.suggestions.map((suggestion, index) => <button type="button" onClick={() => void inspect(channel, suggestion)} key={`${suggestion.id}-${suggestion.name}`}><span><b>{index + 1}. {suggestion.name}</b><small>{categoryPathLabel(suggestion)}</small></span><em>{Math.round(suggestion.confidence * 100)}%</em><ChevronRight size={14} /></button>)}</div>}
         {state.selected && <div className="category-inspection"><div className="selected-category"><BadgeCheck size={18} /><span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · ID {state.selected.id}</small></span><button type="button" onClick={() => setStates((current) => ({ ...current, [key]: { ...initialState(), suggestions: state.suggestions } }))}>다시 선택</button></div>{state.phase === "inspecting" ? <p className="category-loading"><LoaderCircle className="spin" size={16} />공식 속성·유효성 동시 확인 중</p> : <><div className="category-proof"><span className={state.verifiedLeaf ? "passed" : "failed"}><ShieldCheck size={14} />{state.verifiedLeaf ? "말단 카테고리 확인" : "유효성 확인 필요"}</span><span className={completedRequired === required.length ? "passed" : "failed"}><Check size={14} />필수 속성 {completedRequired}/{required.length}</span></div>{required.length > 0 && <div className="category-attribute-list">{required.map((attribute) => <label key={attribute.id}><span>{attribute.name}<em>필수</em></span>{attribute.values.length ? <select value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))}><option value="">값 선택</option>{attribute.values.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select> : <input value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))} placeholder={`${attribute.name} 입력`} />}</label>)}</div>}<button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || completedRequired !== required.length || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리 저장됨</> : "카테고리·속성 저장"}</button></>}</div>}
