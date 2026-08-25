@@ -100,8 +100,8 @@ function withoutUnavailableExtensions(sql) {
     .replace(/^create extension if not exists supabase_vault with schema vault;\s*$/gim, "");
 }
 
-async function setClaims(db, role = "authenticated") {
-  await db.query("select set_config('request.jwt.claim.sub', $1, false)", [ADMIN_ID]);
+async function setClaims(db, role = "authenticated", userId = ADMIN_ID) {
+  await db.query("select set_config('request.jwt.claim.sub', $1, false)", [userId]);
   await db.query("select set_config('request.jwt.claim.role', $1, false)", [role]);
 }
 
@@ -227,11 +227,22 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260825105000_external_mutation_delivery_fences.sql",
       "20260825105100_harden_kakao_oauth_and_test_delivery.sql",
       "20260825105200_durable_competitor_price_refresh.sql",
+      "20260825110100_fix_registration_activity_running_state.sql",
+      "20260825110200_refresh_competitor_price_snapshots.sql",
+      "20260825110300_fence_tracx_delivery_matching.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(sql));
     }
+    assert.equal(
+      await scalar(db, "select to_regclass('sellerpilot_private.commerce_orders_tracx_reference_idx') is not null"),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select to_regclass('sellerpilot_private.commerce_orders_tracx_tracking_idx') is not null"),
+      true,
+    );
     const temuFulfillmentMigration = await readFile(
       new URL("20260822050435_temu_orders_shipping_aftersales.sql", migrationUrl),
       "utf8",
@@ -242,6 +253,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "utf8",
     );
     await db.exec(withoutUnavailableExtensions(tracxLogisticsMigration));
+    const tracxDeliveryFenceMigration = await readFile(
+      new URL("20260825110300_fence_tracx_delivery_matching.sql", migrationUrl),
+      "utf8",
+    );
+    await db.exec(withoutUnavailableExtensions(tracxDeliveryFenceMigration));
 
     const serviceOnlyFunctions = [
       "public.sellerpilot_decrypt_credential(uuid)",
@@ -303,10 +319,17 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_begin_lazada_reply(uuid,text)",
       "public.sellerpilot_service_complete_lazada_reply(uuid,text,text,text,text)",
       "public.sellerpilot_service_claim_due_competitor_products(integer,integer)",
-      "public.sellerpilot_service_complete_competitor_price_refresh(uuid,uuid,jsonb)",
+      "public.sellerpilot_service_complete_competitor_price_refresh(uuid,uuid,jsonb,jsonb)",
       "public.sellerpilot_service_release_competitor_price_refresh(uuid,uuid)",
       "public.sellerpilot_enqueue_competitor_search_job(uuid,text,jsonb,integer,uuid,uuid)",
     ];
+    assert.equal(
+      await scalar(
+        db,
+        "select to_regprocedure('public.sellerpilot_service_complete_competitor_price_refresh(uuid,uuid,jsonb)') is null",
+      ),
+      true,
+    );
     for (const signature of serviceOnlyFunctions) {
       assert.equal(
         await scalar(db, "select has_function_privilege('authenticated', $1, 'EXECUTE')", [signature]),
@@ -1865,14 +1888,45 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [afterMalformedCompetitorJobId],
     );
 
+    await db.query(
+      `insert into sellerpilot_private.competitor_price_observations (
+         product_id, provider, external_id, title, product_url, image_url,
+         mall_name, marketplace, price, currency, checked_at
+       ) values
+         ($1, 'elevenst_product_search', 'obsolete-elevenst', '이전 11번가 결과',
+          'https://www.11st.co.kr/products/111', null, '11번가', 'elevenst', 8900, 'KRW', now() - interval '1 day'),
+         ($1, 'ebay_browse', 'obsolete-ebay', '오래된 eBay 결과',
+          'https://www.ebay.com/itm/obsolete-ebay', null, 'eBay', 'ebay', 14, 'USD', now() - interval '8 days'),
+         ($1, 'manual', 'manual-reference', '수동 기준 가격',
+          'https://manual.example.test/products/reference', null, '수동 확인', 'other', 12345, 'KRW', now() - interval '30 days')`,
+      [aiProductId],
+    );
+
     assert.equal(
       await scalar(
         db,
         `select public.sellerpilot_service_complete_competitor_price_refresh(
           $1, $2,
-          '[{"provider":"elevenst_product_search","externalId":"durable-competitor-1","title":"첵스초코 570g","url":"https://www.11st.co.kr/products/123","imageUrl":"","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW"}]'::jsonb
+          '[{"provider":"elevenst_product_search","externalId":"durable-competitor-1","title":"첵스초코 570g","url":"https://www.11st.co.kr/products/123","imageUrl":"","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW"}]'::jsonb,
+          '[{"provider":"naver_shopping","status":"unavailable","count":0,"marketplaces":["smartstore"]},{"provider":"elevenst_product_search","status":"searched","count":1,"marketplaces":["elevenst"]},{"provider":"ebay_browse","status":"failed","count":0,"marketplaces":["ebay"]}]'::jsonb
         )`,
         [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.competitor_price_observations where product_id = $1 and external_id in ('obsolete-elevenst', 'obsolete-ebay')",
+        [aiProductId],
+      ),
+      0,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.competitor_price_observations where product_id = $1 and external_id = 'manual-reference'",
+        [aiProductId],
       ),
       1,
     );
@@ -1895,10 +1949,19 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(db, "select competitor_checked_at is not null from sellerpilot_private.products where id = $1", [aiProductId]),
       true,
     );
+    await setClaims(db);
+    const freshCompetitorOperations = await scalar(
+      db,
+      "select public.sellerpilot_get_product_operations_v2($1)",
+      [aiProductId],
+    );
+    assert.equal(freshCompetitorOperations.competitorPrices.some((item) => item.title === "수동 기준 가격"), true);
+    assert.equal(freshCompetitorOperations.competitorPrices.some((item) => item.title === "오래된 eBay 결과"), false);
+    await setClaims(db, "service_role");
     assert.equal(
       await scalar(
         db,
-        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb)",
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb, '[]'::jsonb)",
         [aiProductId, competitorClaimToken],
       ),
       -1,
@@ -1980,7 +2043,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(
       await scalar(
         db,
-        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb)",
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb, '[]'::jsonb)",
         [aiProductId, expiringCompetitorClaim.claim_token],
       ),
       -1,
@@ -2008,6 +2071,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [aiProductId],
     );
     assert.match(elevenstPreparedListingId, /^[0-9a-f-]{36}$/i);
+    const preparedRegistrationActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(20)");
+    const preparedRegistrationCard = preparedRegistrationActivity.find((activity) => activity.productId === aiProductId);
+    assert.equal(preparedRegistrationCard.status, "ready");
+    assert.notEqual(preparedRegistrationCard.completedAt, null);
+    assert.equal(preparedRegistrationCard.channels[0].status, "draft");
     const elevenstAttempt = await scalar(
       db,
       "select public.sellerpilot_claim_channel_operation($1, 'elevenst', 'listing.create', 'elevenst-listing-migration-0001', $2)",
@@ -2465,6 +2533,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.equal(fencedTracxMutation.status, "reconciliation_required");
     assert.equal(fencedTracxMutation.attempt_id, tracxMutation.attempt_id);
+    await db.query(
+      `update sellerpilot_private.commerce_orders
+          set logistics_provider = 'tracx', logistics_reference = 'PACK-1', tracking_number = 'TRACK-1'
+        where owner_id = $1 and external_order_id = 'REAL-ORDER-1'`,
+      [ADMIN_ID],
+    );
     const tracxDeliveryEvent = {
       PackingNo: "PACK-1",
       TrackingNo: "TRACK-1",
@@ -2497,6 +2571,67 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(
       await scalar(db, "select status from sellerpilot_private.commerce_orders where external_order_id = 'REAL-ORDER-1'"),
       "delivered",
+    );
+    const tracxAmbiguousOrderId = await scalar(
+      db,
+      `insert into sellerpilot_private.commerce_orders (
+         owner_id, external_order_id, channel_key, customer_name, product_id, product_name,
+         quantity, amount, currency, amount_krw, status, ordered_at, demo,
+         logistics_provider, logistics_reference, tracking_number
+       ) values (
+         $1, 'TRACX-AMBIGUOUS-2', 'shopee', 'TracX 테스트 고객', $2, 'TracX 매칭 테스트 상품',
+         1, 10000, 'KRW', 10000, 'shipped', now(), false,
+         'tracx', 'PACK-2', 'AMBIG-TRACK'
+       ) returning id`,
+      [SECOND_ADMIN_ID, aiProductId],
+    );
+    await db.query(
+      "update sellerpilot_private.commerce_orders set tracking_number = 'AMBIG-TRACK' where owner_id = $1 and external_order_id = 'REAL-ORDER-1'",
+      [ADMIN_ID],
+    );
+    const ambiguousTracxCandidates = await db.query(
+      `select external_order_id
+         from sellerpilot_private.commerce_orders
+        where logistics_provider = 'tracx' and tracking_number = 'AMBIG-TRACK'
+        order by external_order_id`,
+    );
+    assert.deepEqual(
+      ambiguousTracxCandidates.rows.map((row) => row.external_order_id),
+      ["REAL-ORDER-1", "TRACX-AMBIGUOUS-2"],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_ingest_tracx_delivery(
+          $1,
+          '{"TrackingNo":"AMBIG-TRACK","StatusCode":"D3","StatusDesc":"Out for delivery","Date":"2026-08-22 15:00:00+09"}'::jsonb
+        )`,
+        [tracxCredentialId],
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select delivery_status_code is null from sellerpilot_private.commerce_orders where id = $1",
+        [tracxAmbiguousOrderId],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_ingest_tracx_delivery(
+          $1,
+          '{"RefOrderNo":"TRACX-AMBIGUOUS-2","StatusCode":"D4","StatusDesc":"Delivered","Date":"2026-08-22 16:00:00+09"}'::jsonb
+        )`,
+        [tracxCredentialId],
+      ),
+      false,
+    );
+    await db.query(
+      "delete from sellerpilot_private.commerce_orders where id = $1",
+      [tracxAmbiguousOrderId],
     );
     await db.query(
       `delete from sellerpilot_private.push_notification_outbox
@@ -2617,6 +2752,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [RESEARCH_JOB_ID, JSON.stringify({ research_input: "https://example.test/product/1 또는 흰색 도자기 머그컵 설명" })],
     );
     assert.equal(await scalar(db, "select kind from sellerpilot_private.ai_cli_jobs where id = $1", [RESEARCH_JOB_ID]), "product_research");
+    const activityWithoutResearchDraft = await scalar(db, "select public.sellerpilot_list_registration_activity(300)");
+    assert.equal(activityWithoutResearchDraft.some((activity) => activity.id === `job:${RESEARCH_JOB_ID}`), false);
 
     const firstOrderId = snapshot.orders.find((order) => order.externalOrderId === "SHARED-ORDER-1").id;
     const firstTicketId = snapshot.tickets.find((ticket) => ticket.externalTicketId === "SHARED-TICKET-1").id;

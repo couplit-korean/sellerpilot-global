@@ -76,7 +76,7 @@ export function registrationActivityNotifications(
     if (previous !== activity.status) {
       messages.push(`${activity.productName}: ${registrationStatusMeta[activity.status].label}`);
     }
-    if (previous !== "publishing" || activity.status !== "publishing" || !previousChannelStatuses) return messages;
+    if (previous === undefined || !previousChannelStatuses) return messages;
     for (const channel of activity.channels) {
       const channelKey = `${activity.id}:${channel.channel}:${channel.market}`;
       if (previousChannelStatuses.get(channelKey) === channel.status) continue;

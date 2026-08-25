@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { activeChannelKeys } from "../lib/channels/catalog";
+import { remoteEditMutationId } from "../app/product-publish-workbench";
 import {
   centralProductEditFieldSupport,
   channelProductEditFieldSupport,
@@ -142,8 +143,20 @@ test("같은 mutationId 재시도는 동일한 원격 멱등키를 사용한다"
   assert.ok(first.length >= 16 && first.length <= 160);
 });
 
+test("동일한 편집 계약은 안정적인 UUID mutationId를 만들고 변경된 계약은 분리한다", async () => {
+  const contract = { listingId: "listing-1", title: "수정 상품", retryGeneration: "attempt-1" };
+  const first = await remoteEditMutationId(contract);
+  const second = await remoteEditMutationId({ ...contract });
+  const changed = await remoteEditMutationId({ ...contract, title: "다른 상품" });
+
+  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(second, first);
+  assert.notEqual(changed, first);
+});
+
 test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic gateway에 전달한다", () => {
   const source = readFileSync(new URL("../app/api/admin/products/[id]/remote-edit/route.ts", import.meta.url), "utf8");
+  const workbench = readFileSync(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
   assert.match(source, /context: \{ params: Promise<\{ id: string \}> \}/);
   assert.match(source, /listingRecords\(loaded\.context\.listings\)\.find\(\(item\) => item\.id === body\.data\.listingId\)/);
   assert.match(source, /remoteProductEditIdempotencyKey/);
@@ -151,4 +164,8 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(source, /AbortSignal\.timeout\(58_000\)/);
   assert.doesNotMatch(source, /randomUUID/);
   assert.doesNotMatch(source, /operation:\s*"price\.update" as const/);
+  assert.match(workbench, /fetch\(`\/api\/admin\/products\/\$\{productId\}\/remote-edit`/);
+  assert.match(workbench, /listingId: listing\.id/);
+  assert.match(workbench, /mutationId: await remoteEditMutationId\(mutationContract\)/);
+  assert.match(workbench, /className="remote-edit-support"/);
 });

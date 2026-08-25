@@ -239,7 +239,9 @@ test("gateway timeout, reconciliation, API, and workbench states stay distinct",
   assert.match(workbench, /\["queued", "publishing"\]\.includes\(listing\.status\)/);
   assert.match(workbench, /retryGeneration = previousResult\?\.phase === "failed"/);
   assert.match(workbench, /listing\?\.operationAttemptId \?\? "initial"/);
-  assert.match(workbench, /idempotencyKey = `listing:\$\{productId\}:\$\{channel\}:/);
+  assert.match(workbench, /idempotencyKey: `listing:\$\{productId\}:\$\{channel\}:\$\{await fingerprint\(mutationContract\)\}`/);
+  assert.match(workbench, /fetch\(`\/api\/admin\/products\/\$\{productId\}\/remote-edit`/);
+  assert.match(workbench, /mutationId: await remoteEditMutationId\(mutationContract\)/);
 
   assert.match(migration, /for update;[\s\S]*sellerpilot_private\.channel_gateway_jobs/);
   assert.match(migration, /status in \('queued', 'running', 'reconciliation_required'\)/);

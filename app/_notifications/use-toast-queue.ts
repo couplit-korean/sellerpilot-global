@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export const toastDurationMs = 2_000;
 export type ToastTone = "success" | "info" | "warning" | "error";
@@ -12,18 +12,24 @@ export function toastToneForMessage(message: string): ToastTone {
   return "success";
 }
 
-export function appendToast(queue: string[], message: string) {
+export type ToastItem = { id: number; message: string };
+
+export function appendToast(queue: ToastItem[], message: string, id: number) {
   const normalized = message.trim();
   if (!normalized) return queue;
-  return [...queue, normalized];
+  return [...queue, { id, message: normalized }];
 }
 
 export function useToastQueue(durationMs = toastDurationMs) {
-  const [queue, setQueue] = useState<string[]>([]);
-  const toast = queue[0] ?? "";
+  const [queue, setQueue] = useState<ToastItem[]>([]);
+  const nextToastIdRef = useRef(0);
+  const currentToast = queue[0] ?? null;
+  const toast = currentToast?.message ?? "";
 
   const notify = useCallback((message: string) => {
-    setQueue((current) => appendToast(current, message));
+    nextToastIdRef.current += 1;
+    const id = nextToastIdRef.current;
+    setQueue((current) => appendToast(current, message, id));
   }, []);
 
   const dismissToast = useCallback(() => {
@@ -31,10 +37,10 @@ export function useToastQueue(durationMs = toastDurationMs) {
   }, []);
 
   useEffect(() => {
-    if (!toast) return;
+    if (!currentToast) return;
     const timer = window.setTimeout(dismissToast, durationMs);
     return () => window.clearTimeout(timer);
-  }, [dismissToast, durationMs, toast]);
+  }, [currentToast, dismissToast, durationMs]);
 
   return { toast, notify, dismissToast };
 }

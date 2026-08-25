@@ -184,6 +184,7 @@ test("channel transitions notify while the aggregate remains publishing without 
   const aggregateCompleted = activity("completed", "published");
   assert.deepEqual(registrationActivityNotifications(previous, [aggregateCompleted]), [
     "상품 A: 등록 완료",
+    "상품 A · 11번가 · KR: 완료",
   ]);
 
   const unavailable = registrationActivityNotificationTransition(previous, [], "unavailable");
@@ -202,4 +203,15 @@ test("the scheduler sends provider-level outcomes to the snapshot completion RPC
   );
   assert.match(completion, /p_items: items/);
   assert.match(completion, /p_providers: searched\.providers/);
+});
+
+test("the provider snapshot migration removes the ambiguous three-argument completion RPC", async () => {
+  const migration = await readFile(
+    new URL("../supabase/migrations/20260825110200_refresh_competitor_price_snapshots.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(migration, /sellerpilot_service_complete_competitor_price_refresh\(\s*p_product_id uuid,\s*p_claim_token uuid,\s*p_items jsonb,\s*p_providers jsonb\s*\)/);
+  assert.match(migration, /revoke all on function public\.sellerpilot_service_complete_competitor_price_refresh\(uuid, uuid, jsonb\)[\s\S]*from public, anon, authenticated, service_role/);
+  assert.match(migration, /drop function if exists public\.sellerpilot_service_complete_competitor_price_refresh\(uuid, uuid, jsonb\)/);
+  assert.match(migration, /revoke all on function public\.sellerpilot_service_complete_competitor_price_refresh\(uuid, uuid, jsonb, jsonb\)[\s\S]*from public, anon, authenticated, service_role[\s\S]*grant execute[\s\S]*to service_role/);
 });

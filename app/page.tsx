@@ -100,9 +100,16 @@ import {
   type AdminAccessState,
 } from "./_auth/admin-access-state";
 import { formatCompactWon } from "./_dashboard/format-compact-won";
+import { waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 import { RevenueCalendar } from "./_dashboard/revenue-calendar";
 import { SalesRangeControl } from "./_dashboard/sales-range-control";
 import { pollCompetitorResearch } from "./_publishing/competitor-research-polling";
+import {
+  confirmedProductResearchValue,
+  ProductResearchNotFoundError,
+  ProductResearchTerminalError,
+  shouldClearPendingProductResearch,
+} from "./_publishing/product-research-lifecycle";
 import { csChannelVerification, csReplyDraftValue, csReplySavePlan, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
 import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
 import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
@@ -113,9 +120,29 @@ import {
   registrationActivityNotificationTransition,
   registrationChannelStatusLabel,
   registrationStatusMeta,
+  type RegistrationActivityEventState,
   type RegistrationActivityFilter,
-  type RegistrationStatus,
 } from "./_registration/registration-status";
+
+const PRODUCT_RESEARCH_PENDING_KEY = "sellerpilot:product-research-pending:v1";
+const PRODUCT_RESEARCH_JOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type PendingProductResearch = { jobId: string; researchInput: string };
+
+function abortableBrowserDelay(ms: number, signal: AbortSignal) {
+  if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("요청이 취소되었습니다.", "AbortError"));
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(signal.reason ?? new DOMException("요청이 취소되었습니다.", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 type View =
   | "overview"
@@ -781,7 +808,7 @@ function detailFieldValue(value: unknown) {
 type CompetitorDisplayItem = { id: string; marketplace?: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string };
 type CompetitorProviderDisplayStatus = { provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse"; status: "searched" | "unavailable" | "failed" | "pending"; count: number };
 
-function CompetitorPriceSlots({ items, providers = [], state = "ready", compact = false }: { items: CompetitorDisplayItem[]; providers?: CompetitorProviderDisplayStatus[]; state?: "loading" | "ready" | "pending" | "unavailable"; compact?: boolean }) {
+function CompetitorPriceSlots({ items, providers = [], state = "ready", compact = false, retryAvailable = false, onRetry }: { items: CompetitorDisplayItem[]; providers?: CompetitorProviderDisplayStatus[]; state?: "loading" | "ready" | "pending" | "unavailable"; compact?: boolean; retryAvailable?: boolean; onRetry?: () => void }) {
   const marketplaceOrder: string[] = [...activeChannelKeys];
   const marketplaceLabels: Record<string, string> = Object.fromEntries(Object.entries(channels).map(([key, channel]) => [key, channel.name]));
   const providerLabels: Record<CompetitorProviderDisplayStatus["provider"], string> = { naver_shopping: "네이버 쇼핑 검색", elevenst_product_search: "11번가 상품검색", ebay_browse: "eBay Browse" };
@@ -791,14 +818,15 @@ function CompetitorPriceSlots({ items, providers = [], state = "ready", compact 
   if (otherItems.length) groups.push({ marketplace: "other", items: otherItems });
   return <div className={`competitor-market-groups ${compact ? "compact" : ""}`}>
     {state === "loading" && <div className="competitor-loading"><LoaderCircle className="spin" size={17} />동일 상품 가격을 채널별로 찾고 있습니다.</div>}
-    {state === "pending" && <div className="competitor-loading pending"><Clock3 size={17} />공식 채널 조회가 계속 진행 중입니다. 확인된 결과부터 표시합니다.</div>}
+    {state === "pending" && !retryAvailable && <div className="competitor-loading pending"><Clock3 size={17} />공식 채널 조회가 계속 진행 중입니다. 확인된 결과부터 표시합니다.</div>}
+    {retryAvailable && onRetry && <div className="competitor-retry" role="status"><span><Clock3 size={17} /><span><b>자동 확인을 마쳤습니다.</b><small>서버 작업이 늦게 끝날 수 있습니다. 같은 검색 조건으로 다시 확인해 주세요.</small></span></span><button type="button" onClick={onRetry}><RefreshCw size={15} />가격 다시 확인</button></div>}
     {providers.length > 0 && <div className="competitor-provider-summary" aria-label="가격 검색 공급자 상태">{providers.map((provider) => <span className={provider.status} key={provider.provider}><b>{providerLabels[provider.provider]}</b>{provider.status === "searched" ? `조회 완료 · 일치 ${provider.count}건` : provider.status === "pending" ? "조회 진행 중" : provider.status === "failed" ? "응답 실패" : "미연결"}</span>)}</div>}
     {groups.map((group) => <section key={group.marketplace}><header><b>{marketplaceLabels[group.marketplace] ?? group.marketplace}</b><small>최대 3개</small></header><div className="competitor-price-grid">{Array.from({ length: 3 }, (_, index) => {
       const item = group.items[index];
       return item ? <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><span>{item.imageUrl ? <Image src={item.imageUrl} alt="" fill sizes="80px" unoptimized /> : <Package size={18} />}</span><div><small>{item.mallName || marketplaceLabels[group.marketplace] || "판매처"}</small><b>{item.title}</b><strong>{new Intl.NumberFormat("ko-KR", { style: "currency", currency: item.currency || "KRW", maximumFractionDigits: 0 }).format(item.price)}</strong></div><ExternalLink size={14} /></a>
         : <div className="competitor-price-empty" key={`${group.marketplace}-empty-${index}`}><span><Search size={16} /></span><div><small>{marketplaceLabels[group.marketplace] ?? "판매처"}</small><b>동일 상품을 찾지 못함</b><strong>—</strong></div></div>;
     })}</div></section>)}
-    {state === "unavailable" && <p className="competitor-unavailable"><AlertCircle size={14} />가격 조회 연결을 확인하지 못했습니다. 상품 등록은 계속할 수 있으며 값은 공란으로 유지됩니다.</p>}
+    {state === "unavailable" && <p className="competitor-unavailable"><AlertCircle size={14} />{items.length > 0 ? "새 응답을 확인하지 못해 이전에 확인된 가격을 유지했습니다." : "가격 조회 연결을 확인하지 못했습니다. 상품 등록은 계속할 수 있으며 값은 공란으로 유지됩니다."}</p>}
   </div>;
 }
 
@@ -812,16 +840,16 @@ function productEditDraft(product: DisplayProduct, fields: Record<string, unknow
     ...emptyProductIntake,
     researchInput: text("researchInput", product.sourceUrl || product.description || product.name),
     productName: text("productName", product.name), sellerSku: text("sellerSku", product.sku),
-    categoryHint: text("categoryHint", "기존 등록 카테고리"), brandName: text("brandName", "No Brand"),
-    manufacturer: text("manufacturer", "공급처 확인 필요"), countryOfOrigin: text("countryOfOrigin", "원산지 확인 필요"),
-    material: text("material", "소재 확인 필요"), packageContents: normalizeProductSaleConfiguration(text("packageContents")) || "상품 1개",
+    categoryHint: text("categoryHint", product.name), brandName: text("brandName"),
+    manufacturer: text("manufacturer"), countryOfOrigin: text("countryOfOrigin"),
+    material: text("material"), packageContents: normalizeProductSaleConfiguration(text("packageContents")),
     condition: productConditions.includes(condition) ? condition : "NEW", gtinStatus: gtinStatus === "HAS_GTIN" ? "HAS_GTIN" : "NO_GTIN", gtin: text("gtin"),
     sellingPrice: number("sellingPrice", 0), currency: productCurrencies.includes(currency) ? currency : "KRW", stock: product.onHand,
-    weightKg: number("weightKg", 0.5), packageLengthCm: number("packageLengthCm", 20), packageWidthCm: number("packageWidthCm", 20), packageHeightCm: number("packageHeightCm", 10),
-    shippingFeeKrw: number("shippingFeeKrw", 0), shippingRule: text("shippingRule", "기본 배송"), packagingRule: text("packagingRule", "파손 방지 포장"),
-    description: text("description", product.description || `${product.name} 상품 설명`), productUrl: text("productUrl", product.sourceUrl || ""),
-    imageRightsConfirmed: typeof fields.imageRightsConfirmed === "boolean" ? fields.imageRightsConfirmed : true,
-    productFactsConfirmed: typeof fields.productFactsConfirmed === "boolean" ? fields.productFactsConfirmed : true,
+    weightKg: number("weightKg"), packageLengthCm: number("packageLengthCm"), packageWidthCm: number("packageWidthCm"), packageHeightCm: number("packageHeightCm"),
+    shippingFeeKrw: number("shippingFeeKrw"), shippingRule: text("shippingRule"), packagingRule: text("packagingRule"),
+    description: text("description", product.description), productUrl: text("productUrl", product.sourceUrl || ""),
+    imageRightsConfirmed: typeof fields.imageRightsConfirmed === "boolean" ? fields.imageRightsConfirmed : false,
+    productFactsConfirmed: typeof fields.productFactsConfirmed === "boolean" ? fields.productFactsConfirmed : false,
   };
 }
 
@@ -846,7 +874,7 @@ function ProductDetailEditDialog({ draft, errors, saving, onChange, onClose, onS
       <label><span>원산지</span><input value={draft.countryOfOrigin} onChange={(event) => onChange("countryOfOrigin", event.target.value)} /></label>
       <div className="intake-group-heading"><span>02</span><div><b>구성·표시 정보</b><small>실물과 표시사항 기준으로 수정합니다.</small></div></div>
       <label><span>소재·성분</span><input value={draft.material} onChange={(event) => onChange("material", event.target.value)} /></label>
-      <label><span>판매 구성</span><select value={draft.packageContents} onChange={(event) => onChange("packageContents", event.target.value)}>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select></label>
+      <label><span>판매 구성</span><select value={draft.packageContents} onChange={(event) => onChange("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select></label>
       <label><span>상품 상태</span><select value={draft.condition} onChange={(event) => onChange("condition", event.target.value as ProductIntakeDraft["condition"])}>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select></label>
       <label><span>바코드 상태</span><select value={draft.gtinStatus} onChange={(event) => onChange("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select></label>
       {draft.gtinStatus === "HAS_GTIN" && <label className={errors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC</span><input inputMode="numeric" value={draft.gtin} onChange={(event) => onChange("gtin", event.target.value.replace(/\D/g, ""))} />{errors.gtin && <small>{errors.gtin}</small>}</label>}
@@ -1353,6 +1381,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const publishingMountedRef = useRef(true);
   const extraPhotoBatchRef = useRef(false);
   const competitorResearchControllerRef = useRef<AbortController | null>(null);
+  const productResearchControllerRef = useRef<AbortController | null>(null);
+  const productResearchGenerationRef = useRef(0);
   const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
   const [uploadError, setUploadError] = useState("");
@@ -1361,6 +1391,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [researchCompetitors, setResearchCompetitors] = useState<Array<{ id: string; marketplace: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string }>>([]);
   const [competitorProviders, setCompetitorProviders] = useState<CompetitorProviderDisplayStatus[]>([]);
   const [competitorResearchState, setCompetitorResearchState] = useState<"idle" | "loading" | "ready" | "pending" | "unavailable">("idle");
+  const [competitorResearchRetryInput, setCompetitorResearchRetryInput] = useState("");
+  const [competitorResearchRetryAvailable, setCompetitorResearchRetryAvailable] = useState(false);
   const [firstDraftGenerated, setFirstDraftGenerated] = useState(false);
   const [queuedJobId, setQueuedJobId] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
@@ -1388,6 +1420,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     return () => {
       publishingMountedRef.current = false;
       competitorResearchControllerRef.current?.abort();
+      productResearchControllerRef.current?.abort();
+      productResearchGenerationRef.current += 1;
       for (const url of objectUrls) URL.revokeObjectURL(url);
       objectUrls.clear();
     };
@@ -1477,22 +1511,24 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     }
   };
 
-  const waitForProductResearch = async (jobId: string, accessToken: string) => {
+  const waitForProductResearch = async (jobId: string, accessToken: string, signal: AbortSignal) => {
     const deadline = Date.now() + 20 * 60_000;
     let consecutiveFailures = 0;
     while (Date.now() < deadline) {
+      if (signal.aborted) throw signal.reason ?? new DOMException("상품정보 확인이 취소되었습니다.", "AbortError");
       let response: Response;
       try {
         response = await fetch(`/api/ai/jobs/${jobId}`, {
           headers: { authorization: `Bearer ${accessToken}` },
           cache: "no-store",
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
         });
         consecutiveFailures = 0;
       } catch {
+        if (signal.aborted) throw signal.reason ?? new DOMException("상품정보 확인이 취소되었습니다.", "AbortError");
         consecutiveFailures += 1;
-        if (consecutiveFailures >= 5) throw new Error("모바일 네트워크에서 상품정보 상태를 5회 연속 확인하지 못했습니다. 등록 이력에서 서버 작업 상태를 확인해 주세요.");
-        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+        if (consecutiveFailures >= 5) throw new Error("모바일 네트워크에서 상품정보 상태를 5회 연속 확인하지 못했습니다. 같은 입력으로 ‘1차 자동생성’을 다시 눌러 기존 작업을 확인해 주세요.");
+        await abortableBrowserDelay(2_000, signal);
         continue;
       }
       const payload = await response.json().catch(() => ({ message: "CLI 상품정보 상태를 읽지 못했습니다." })) as {
@@ -1501,12 +1537,75 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         error?: string | null;
         message?: string;
       };
+      if (response.status === 404) throw new ProductResearchNotFoundError();
       if (!response.ok) throw new Error(payload.message ?? "CLI 상품정보 작업 상태를 확인하지 못했습니다.");
-      if (payload.status === "succeeded" && payload.result?.mode === "cli-research") return payload.result;
-      if (payload.status === "failed" || payload.status === "cancelled") throw new Error(payload.error || "CLI 상품정보 수집이 완료되지 못했습니다.");
-      await new Promise((resolve) => window.setTimeout(resolve, 3_000));
+      if (payload.status === "succeeded") {
+        if (payload.result?.mode === "cli-research") return payload.result;
+        throw new ProductResearchTerminalError("완료된 상품정보 작업의 결과 형식을 확인하지 못했습니다. 새 작업으로 다시 시도해 주세요.");
+      }
+      if (payload.status === "failed" || payload.status === "cancelled") {
+        throw new ProductResearchTerminalError(payload.error);
+      }
+      await abortableBrowserDelay(3_000, signal);
     }
     throw new Error("CLI 상품정보 수집 대기시간이 20분을 초과했습니다.");
+  };
+
+  const runCompetitorResearchPolling = (
+    input: string,
+    initialSnapshot: { items: typeof researchCompetitors; providers: CompetitorProviderDisplayStatus[] },
+  ) => {
+    if (!publishingMountedRef.current) return;
+    competitorResearchControllerRef.current?.abort();
+    const competitorController = new AbortController();
+    competitorResearchControllerRef.current = competitorController;
+    setCompetitorResearchRetryInput(input);
+    setCompetitorResearchRetryAvailable(false);
+    setCompetitorResearchState("loading");
+    void pollCompetitorResearch<(typeof researchCompetitors)[number], CompetitorProviderDisplayStatus>({
+      fetcher: authenticatedFetch,
+      input,
+      signal: competitorController.signal,
+      initialSnapshot,
+      maxAttempts: 3,
+      delayMs: 1_500,
+      onSnapshot: (snapshot) => {
+        if (!publishingMountedRef.current
+            || competitorController.signal.aborted
+            || competitorResearchControllerRef.current !== competitorController) return;
+        setResearchCompetitors(snapshot.items);
+        setCompetitorProviders(snapshot.providers);
+        setCompetitorResearchState(snapshot.state);
+        setCompetitorResearchRetryAvailable(snapshot.retryAvailable);
+      },
+    }).catch((error) => {
+      if (competitorController.signal.aborted
+          || !publishingMountedRef.current
+          || competitorResearchControllerRef.current !== competitorController
+          || (error instanceof Error && error.name === "AbortError")) return;
+      setCompetitorResearchState("unavailable");
+      setCompetitorResearchRetryAvailable(true);
+    }).finally(() => {
+      if (competitorResearchControllerRef.current === competitorController) competitorResearchControllerRef.current = null;
+    });
+  };
+
+  const retryCompetitorResearch = () => {
+    if (!competitorResearchRetryInput) return;
+    notify("같은 검색 조건으로 동일 상품 가격을 다시 확인합니다.");
+    runCompetitorResearchPolling(competitorResearchRetryInput, {
+      items: researchCompetitors,
+      providers: competitorProviders,
+    });
+  };
+
+  const cancelProductResearch = () => {
+    if (!productResearchControllerRef.current) return;
+    productResearchGenerationRef.current += 1;
+    productResearchControllerRef.current.abort(new DOMException("사용자가 상품정보 확인을 중단했습니다.", "AbortError"));
+    productResearchControllerRef.current = null;
+    setResearchingProduct(false);
+    notify("화면의 상품정보 확인을 중단했습니다. 서버 작업은 유지되며 같은 입력으로 다시 확인할 수 있습니다.");
   };
 
   const researchProductInformation = async () => {
@@ -1515,29 +1614,69 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (!researchingProduct) notify("상품 판매페이지 링크, 모델명 또는 설명을 입력해 주세요.");
       return;
     }
+    productResearchControllerRef.current?.abort();
+    const productResearchController = new AbortController();
+    const productResearchGeneration = productResearchGenerationRef.current + 1;
+    productResearchGenerationRef.current = productResearchGeneration;
+    productResearchControllerRef.current = productResearchController;
     competitorResearchControllerRef.current?.abort();
     competitorResearchControllerRef.current = null;
     setResearchCompetitors([]);
     setCompetitorProviders([]);
     setCompetitorResearchState("idle");
+    setCompetitorResearchRetryInput("");
+    setCompetitorResearchRetryAvailable(false);
     setResearchingProduct(true);
     setUploadError("");
     try {
-      const { data: sessionData } = await createSupabaseClient().auth.getSession();
+      const sessionSignal = AbortSignal.any([productResearchController.signal, AbortSignal.timeout(15_000)]);
+      const { data: sessionData } = await waitForAbortablePromise(createSupabaseClient().auth.getSession(), sessionSignal);
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("CLI 상품정보 수집을 실행하려면 관리자 로그인이 필요합니다.");
-      const jobId = crypto.randomUUID();
-      const response = await fetch("/api/ai/product-research", {
-        method: "POST",
-        cache: "no-store",
-        signal: AbortSignal.timeout(30_000),
-        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ jobId, researchInput }),
-      });
-      const queued = await response.json().catch(() => ({ message: "CLI 상품정보 요청 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
-      if (!response.ok || !queued.jobId) throw new Error(queued.message || "CLI 상품정보 수집 작업을 등록하지 못했습니다.");
-      notify("ChatGPT CLI가 링크 본문과 입력 텍스트에서 상세 상품정보를 조사하고 있습니다.");
-      const result = await waitForProductResearch(queued.jobId, accessToken);
+      if (productResearchController.signal.aborted) throw productResearchController.signal.reason;
+      let pendingResearch: PendingProductResearch | null = null;
+      try {
+        const stored = JSON.parse(window.sessionStorage.getItem(PRODUCT_RESEARCH_PENDING_KEY) ?? "null") as unknown;
+        if (isRecord(stored)
+            && typeof stored.jobId === "string"
+            && PRODUCT_RESEARCH_JOB_ID_PATTERN.test(stored.jobId)
+            && stored.researchInput === researchInput) {
+          pendingResearch = { jobId: stored.jobId, researchInput };
+        }
+      } catch {
+        window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
+      }
+      const jobId = pendingResearch?.jobId ?? crypto.randomUUID();
+      window.sessionStorage.setItem(PRODUCT_RESEARCH_PENDING_KEY, JSON.stringify({ jobId, researchInput } satisfies PendingProductResearch));
+      if (pendingResearch) {
+        notify("이전에 접수한 상품정보 작업 상태를 다시 확인합니다.");
+      } else {
+        let response: Response | null = null;
+        try {
+          response = await fetch("/api/ai/product-research", {
+            method: "POST",
+            cache: "no-store",
+            signal: AbortSignal.any([productResearchController.signal, AbortSignal.timeout(30_000)]),
+            headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+            body: JSON.stringify({ jobId, researchInput }),
+          });
+        } catch {
+          if (productResearchController.signal.aborted) throw productResearchController.signal.reason;
+        }
+        if (response) {
+          const queued = await response.json().catch(() => ({ message: "CLI 상품정보 요청 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
+          if (response.status < 500 && (!response.ok || queued.jobId !== jobId)) {
+            window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
+            throw new Error(queued.message || "CLI 상품정보 수집 작업을 등록하지 못했습니다.");
+          }
+        }
+        notify("ChatGPT CLI가 링크 본문과 입력 텍스트에서 상세 상품정보를 조사하고 있습니다.");
+      }
+      const result = await waitForProductResearch(jobId, accessToken, productResearchController.signal);
+      window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
+      if (!publishingMountedRef.current
+          || productResearchController.signal.aborted
+          || productResearchGenerationRef.current !== productResearchGeneration) return;
       const suggestion = result.suggestedFields;
       const firstReadableSource = result.sources.find((source) => source.status === "read")?.url ?? "";
       setIntake((current) => ({
@@ -1545,61 +1684,53 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         productName: current.productName.trim() || suggestion.productName || "",
         sellerSku: current.sellerSku.trim() || `AUTO-${new Date().toISOString().slice(2, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
         categoryHint: current.categoryHint.trim() || suggestion.categoryHint || "",
-        brandName: current.brandName.trim() || suggestion.brandName || "No Brand · 확인 필요",
-        manufacturer: current.manufacturer.trim() || suggestion.manufacturer || "공급처 확인 필요",
-        countryOfOrigin: current.countryOfOrigin.trim() || suggestion.countryOfOrigin || "원산지 확인 필요",
-        material: current.material.trim() || suggestion.material || "소재 확인 필요",
-        packageContents: current.packageContents.trim() || normalizeProductSaleConfiguration(suggestion.packageContents) || "상품 1개",
-        description: current.description.trim() || suggestion.description || `${suggestion.productName || "상품"}의 1차 자동생성 설명입니다. 용도, 소재, 구성품, 규격과 주의사항을 실물 기준으로 확인 후 수정해 주세요.`,
+        brandName: current.brandName.trim() || confirmedProductResearchValue(suggestion.brandName),
+        manufacturer: current.manufacturer.trim() || confirmedProductResearchValue(suggestion.manufacturer),
+        countryOfOrigin: current.countryOfOrigin.trim() || confirmedProductResearchValue(suggestion.countryOfOrigin),
+        material: current.material.trim() || confirmedProductResearchValue(suggestion.material),
+        packageContents: current.packageContents.trim() || normalizeProductSaleConfiguration(suggestion.packageContents),
+        description: current.description.trim() || confirmedProductResearchValue(suggestion.description),
         productUrl: current.productUrl.trim() || firstReadableSource,
         gtinStatus: current.gtin || !suggestion.gtin ? current.gtinStatus : "HAS_GTIN",
         gtin: current.gtin || suggestion.gtin || "",
         sellingPrice: current.sellingPrice,
-        stock: current.stock > 0 ? current.stock : 1,
-        weightKg: current.weightKg > 0 ? current.weightKg : 0.5,
-        packageLengthCm: current.packageLengthCm > 0 ? current.packageLengthCm : 20,
-        packageWidthCm: current.packageWidthCm > 0 ? current.packageWidthCm : 20,
-        packageHeightCm: current.packageHeightCm > 0 ? current.packageHeightCm : 10,
+        stock: current.stock,
+        weightKg: current.weightKg,
+        packageLengthCm: current.packageLengthCm,
+        packageWidthCm: current.packageWidthCm,
+        packageHeightCm: current.packageHeightCm,
         shippingFeeKrw: current.shippingFeeKrw,
-        shippingRule: current.shippingRule || "기본 배송 · 채널 정책 확인 필요",
-        packagingRule: current.packagingRule || "상품 파손 방지 포장 · 확인 필요",
+        shippingRule: current.shippingRule,
+        packagingRule: current.packagingRule,
       }));
       setResearchResult(result);
-      setCompetitorResearchState("loading");
       const competitorQuery = suggestion.productName || intake.productName || researchInput;
       const competitorParams = new URLSearchParams({ query: competitorQuery.slice(0, 500) });
       for (const searchQuery of result.searchQueries) competitorParams.append("alias", searchQuery.query.slice(0, 160));
-      const competitorController = new AbortController();
-      competitorResearchControllerRef.current = competitorController;
-      void pollCompetitorResearch<(typeof researchCompetitors)[number], CompetitorProviderDisplayStatus>({
-        fetcher: authenticatedFetch,
-        input: `/api/admin/competitor-prices?${competitorParams.toString()}`,
-        signal: competitorController.signal,
-        maxAttempts: 3,
-        delayMs: 1_500,
-        onSnapshot: (snapshot) => {
-          if (!publishingMountedRef.current || competitorController.signal.aborted) return;
-          setResearchCompetitors(snapshot.items);
-          setCompetitorProviders(snapshot.providers);
-          setCompetitorResearchState(snapshot.state);
-        },
-      }).catch((error) => {
-        if (competitorController.signal.aborted || !publishingMountedRef.current || (error instanceof Error && error.name === "AbortError")) return;
-        setResearchCompetitors([]);
-        setCompetitorProviders([]);
-        setCompetitorResearchState("unavailable");
-      }).finally(() => {
-        if (competitorResearchControllerRef.current === competitorController) competitorResearchControllerRef.current = null;
-      });
+      runCompetitorResearchPolling(
+        `/api/admin/competitor-prices?${competitorParams.toString()}`,
+        { items: [], providers: [] },
+      );
       setFirstDraftGenerated(true);
       setManualErrors({});
-      notify("1차 자동생성 초안을 만들었습니다. ‘확인 필요’ 값과 가격·재고·포장 규격을 검토한 뒤 사실 확인 체크를 완료해 주세요.");
+      notify("1차 자동생성 초안을 만들었습니다. 확인되지 않은 값은 공란으로 유지했습니다. 실물 기준 필수값을 입력해 주세요.");
     } catch (error) {
+      if (shouldClearPendingProductResearch(error)) {
+        window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
+      }
+      if (productResearchController.signal.aborted
+          || productResearchGenerationRef.current !== productResearchGeneration
+          || !publishingMountedRef.current) return;
       const message = error instanceof Error ? error.message : "CLI 상품정보 수집 중 오류가 발생했습니다.";
       setUploadError(message);
       notify(message);
     } finally {
-      setResearchingProduct(false);
+      if (productResearchControllerRef.current === productResearchController) {
+        productResearchControllerRef.current = null;
+      }
+      if (publishingMountedRef.current && productResearchGenerationRef.current === productResearchGeneration) {
+        setResearchingProduct(false);
+      }
     }
   };
 
@@ -1679,6 +1810,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const startAutomation = () => {
+    if (researchingProduct) {
+      notify("1차 상품정보 확인을 마치거나 중단한 뒤 최종 상품 분석을 시작해 주세요.");
+      return;
+    }
     if (queuedJobId) {
       notify("이 상품은 이미 등록 큐에 있습니다. 진행상황을 확인하거나 ‘다른 상품 등록’을 눌러 새 작업을 시작해 주세요.");
       return;
@@ -1788,7 +1923,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           <section className={`product-research-panel ${manualErrors.researchInput ? "field-error" : ""}`}>
             <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>1차 자동생성</em></span><small>판매페이지·제조사 링크, 모델명, 바코드, 카톡으로 받은 상품 설명을 그대로 넣으세요.</small></div>
-            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => void researchProductInformation()} disabled={intake.researchInput.trim().length < 2 || researchingProduct || running}>{researchingProduct ? <LoaderCircle className="spin" size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "1차 생성 중" : "1차 자동생성"}</button></div>
+            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : intake.researchInput.trim().length < 2 || running}>{researchingProduct ? <X size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "확인 중단" : "1차 자동생성"}</button></div>
             <small className="product-research-help">공개 근거를 우선 사용하고, 동일 상품 가격은 채널별 최대 3개를 함께 조회해 판매가 검토에 사용합니다.</small>
             {manualErrors.researchInput && <small className="product-research-error">{manualErrors.researchInput}</small>}
             {researchResult && <div className="product-research-result">
@@ -1800,9 +1935,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               {researchResult.sources.length > 0 && <nav aria-label="CLI가 확인한 상품 출처">{researchResult.sources.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={source.url} className={source.status}><ExternalLink size={12} />{source.title}</a>)}</nav>}
               {researchResult.warnings.length > 0 && <p><AlertTriangle size={13} />{researchResult.warnings.join(" · ")}</p>}
             </div>}
-            {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} compact />}
+            {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} compact />}
           </section>
-          {firstDraftGenerated && <div className="first-draft-review"><AlertTriangle size={15} /><span><b>1차 자동생성은 검토용 초안입니다.</b><small>‘확인 필요’ 문구, 가격·재고와 포장 규격 임시값을 실물·공급처 자료 및 위 비교 가격에 맞게 수정한 뒤 사실 확인을 체크하세요.</small></span></div>}
+          {firstDraftGenerated && <div className="first-draft-review"><AlertTriangle size={15} /><span><b>1차 자동생성은 검토용 초안입니다.</b><small>확인되지 않은 항목은 공란으로 남습니다. 가격·재고와 포장 규격을 실물·공급처 자료 및 위 비교 가격에 맞게 입력한 뒤 사실 확인을 체크하세요.</small></span></div>}
 
           <section className="product-context-section required-product-intake">
             <div className="upload-section-heading"><div><b>판매자 필수 입력</b><span className="required-chip">전부 필수</span><small>AI가 추측하면 안 되는 실물·포장·책임 정보입니다. 사진과 함께 입력해야 다음 단계로 갈 수 있습니다.</small></div><em>{intakeReady ? "입력 완료" : "확인 필요"}</em></div>
@@ -1842,7 +1977,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·CLI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
           </section>
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 1200×1200 JPG 자동보정 · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}</span><button type="button" onClick={startAutomation} disabled={running || Boolean(queuedJobId)}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && !researchingProduct ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 1200×1200 JPG 자동보정 · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}</span><button type="button" onClick={startAutomation} disabled={running || researchingProduct || Boolean(queuedJobId)}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
@@ -2316,7 +2451,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const [targetedSearch, setTargetedSearch] = useState<{ kind: "order" | "inquiry"; id: string; query: string } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
-  const activityStatusRef = useRef<Map<string, RegistrationStatus> | null>(null);
+  const activityStatusRef = useRef<RegistrationActivityEventState | null>(null);
   const operationEventRef = useRef<OperationEventState | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<DisplayProduct | null>(null);
   const [publishingProduct, setPublishingProduct] = useState<{ id: string; name: string } | null>(null);

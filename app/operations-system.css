@@ -1788,6 +1788,13 @@ a:focus-visible,
 .publish-readiness span { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 5px 7px; font-size: 10px; font-weight: 800; }
 .publish-readiness .ok { background: #edf8f2; color: #176848; }
 .publish-readiness .missing { background: #fff4ec; color: #a05221; }
+.remote-edit-support { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.remote-edit-support > span { display: grid; min-width: 0; gap: 2px; border: 1px solid var(--border); border-radius: 7px; padding: 7px 8px; background: var(--surface-subtle); }
+.remote-edit-support b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.remote-edit-support small { color: var(--text-tertiary); font-size: 9px; }
+.remote-edit-support .supported { border-color: #c8e5d7; background: #f1faf6; color: #176848; }
+.remote-edit-support .partial { border-color: #c8d8eb; background: #f2f7fc; color: #255b8d; }
+.remote-edit-support .blocked { border-color: #ead8b7; background: #fff9ed; color: #8b5a13; }
 .publish-required-fields { display: grid; gap: 9px; border: 1px solid var(--border); border-radius: 9px; padding: 10px; background: var(--surface-subtle); }
 .publish-required-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .publish-required-head b { font-size: 12px; }
@@ -1837,6 +1844,11 @@ a:focus-visible,
   .publish-channel-cards { grid-template-columns: 1fr; }
   .publish-common-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .publish-common-fields button { grid-column: 1 / -1; }
+}
+
+@media (max-width: 560px) {
+  .remote-edit-support { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .remote-edit-support > span { min-height: 48px; }
 }
 
 @media (max-width: 600px) {

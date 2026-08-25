@@ -40,6 +40,12 @@ const productIntakeShape = {
 };
 
 function refineProductIntake(value: z.infer<z.ZodObject<typeof productIntakeShape>>, context: z.RefinementCtx) {
+  const unresolvedFact = /(?:확인\s*필요|미확인|알\s*수\s*없|unknown|not\s+provided|n\/?a)/i;
+  for (const field of ["brandName", "manufacturer", "countryOfOrigin", "material", "packageContents"] as const) {
+    if (unresolvedFact.test(value[field])) {
+      context.addIssue({ code: "custom", path: [field], message: "확인 필요 문구 대신 실물·공급처 기준 값을 입력해 주세요." });
+    }
+  }
   if (value.gtinStatus === "HAS_GTIN" && !/^\d{8,14}$/.test(value.gtin)) {
     context.addIssue({ code: "custom", path: ["gtin"], message: "GTIN/EAN/UPC를 8~14자리 숫자로 입력해 주세요." });
   }

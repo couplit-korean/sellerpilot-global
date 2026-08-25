@@ -222,6 +222,7 @@ test("workbench advances retry generations but keeps queued and external-action 
   assert.match(workbench, /listing\?\.failureClass === "external_action"/);
   assert.match(workbench, /previousResult\?\.phase === "failed"[\s\S]*previousResult\.attemptId \?\? crypto\.randomUUID\(\)/);
   assert.match(workbench, /listing\?\.operationAttemptId \?\? "initial"/);
-  assert.match(workbench, /idempotencyKey = `listing:\$\{productId\}:\$\{channel\}:\$\{await fingerprint/);
+  assert.match(workbench, /idempotencyKey: `listing:\$\{productId\}:\$\{channel\}:\$\{await fingerprint\(mutationContract\)\}`/);
+  assert.match(workbench, /mutationId: await remoteEditMutationId\(mutationContract\)/);
   assert.match(workbench, /if \(!options\.deferRefresh\) \{[\s\S]*await load\(\);[\s\S]*onChanged\?\.\(\);/);
 });

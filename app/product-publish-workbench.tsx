@@ -4,7 +4,13 @@ import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, Pa
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
-import { listingCoreContentForOperation, listingWriteOperation, prepareListingUpdateArguments } from "../lib/channels/listing-update";
+import {
+  channelProductEditFieldSupport,
+  listingCoreContentForOperation,
+  listingWriteOperation,
+  prepareListingUpdateArguments,
+  productEditFieldKeys,
+} from "../lib/channels/listing-update";
 import { marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
 import { channelOperationAvailable } from "../lib/channels/operation-availability";
@@ -132,6 +138,17 @@ type ConfirmationRequest =
   | { kind: "channel"; channel: ActiveChannelKey }
   | { kind: "qoo10-stop"; listing: Listing }
   | { kind: "qoo10-cleanup"; remoteId: string };
+
+const productEditFieldLabels = {
+  productName: "상품명",
+  description: "설명",
+  options: "옵션",
+  saleConfiguration: "판매 구성",
+  requiredInformation: "필수정보",
+  images: "이미지",
+  price: "가격",
+  inventory: "재고",
+} as const;
 
 export function normalizeManualFields(context: PublishContext): ManualFields {
   const value = context.manualFields ?? {} as ManualFields;
@@ -549,6 +566,14 @@ async function fingerprint(value: unknown) {
   return Array.from(new Uint8Array(digest)).slice(0, 12).map((item) => item.toString(16).padStart(2, "0")).join("");
 }
 
+export async function remoteEditMutationId(value: unknown) {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value)))).slice(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (item) => item.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function buildDraftMap(context: PublishContext, price: number, quantity: number, targets: Partial<Record<ActiveChannelKey, ChannelTarget>>, packageFields: PackageFields, globalBaseUsdPrice: number) {
   return Object.fromEntries(activeChannelKeys.map((channel) => [
     channel,
@@ -896,7 +921,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const retryGeneration = previousResult?.phase === "failed"
         ? previousResult.attemptId ?? crypto.randomUUID()
         : listing?.operationAttemptId ?? "initial";
-      const idempotencyKey = `listing:${productId}:${channel}:${await fingerprint({
+      const mutationContract = {
         operation,
         market: target?.marketCode ?? "default",
         targetId: target?.targetId ?? "",
@@ -904,24 +929,37 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
         listingCurrency,
         price: operationPrice,
         retryGeneration,
-      })}`;
-      const response = await fetch("/api/admin/channel-operations", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({
-          credentialId: credential.id,
-          channel,
-          operation,
-          idempotencyKey,
-          confirmWrite: true,
-          productId,
-          currency: listingCurrency,
-          price: operationPrice,
-          market: target?.marketCode ?? "",
-          targetId: target?.targetId ?? "",
-          arguments: channelArguments,
-        }),
-      });
+      };
+      const response = operation === "listing.update" && listing
+        ? await fetch(`/api/admin/products/${productId}/remote-edit`, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+            body: JSON.stringify({
+              credentialId: credential.id,
+              listingId: listing.id,
+              mutationId: await remoteEditMutationId(mutationContract),
+              operation,
+              confirmWrite: true,
+              arguments: channelArguments,
+            }),
+          })
+        : await fetch("/api/admin/channel-operations", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+            body: JSON.stringify({
+              credentialId: credential.id,
+              channel,
+              operation,
+              idempotencyKey: `listing:${productId}:${channel}:${await fingerprint(mutationContract)}`,
+              confirmWrite: true,
+              productId,
+              currency: listingCurrency,
+              price: operationPrice,
+              market: target?.marketCode ?? "",
+              targetId: target?.targetId ?? "",
+              arguments: channelArguments,
+            }),
+          });
       const payload = await response.json().catch(() => ({ message: "채널 응답을 읽지 못했습니다." })) as ChannelOperationResponse;
       if (response.status === 202 && payload.inProgress === true) {
         const message = payload.message ?? "판매채널 작업이 계속 진행 중입니다. 완료 상태를 확인할 때까지 같은 원격 작업을 다시 실행하지 않습니다.";
@@ -1141,6 +1179,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const remoteUpdate = operation === "listing.update";
       const operationAvailable = channelOperationAvailable(channel, operation);
       const capability = remoteUpdate ? definition.capabilities.listingUpdate : definition.capabilities.listingCreate;
+      const editFieldSupport = remoteUpdate ? channelProductEditFieldSupport(channel) : null;
       const draftObject = parseDraft(drafts[channel]);
       const requirements = draftObject ? inspectListingDraft(channel, draftObject) : [];
       const blockingRequirements = requirements.filter((item) => item.status === "manual");
@@ -1152,6 +1191,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target?.marketCode ?? ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => item.marketCode === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
         {!operationAvailable ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "상품 콘텐츠 수정 검증 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${capability.note} · 원격 상품 식별값과 수정 후 조회 검증이 완료되기 전에는 외부 쓰기를 실행하지 않습니다.` : capability.note}</small></div> : <>
           <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}대표+상세 4장</span></div>
+          {editFieldSupport && <div className="remote-edit-support" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>{productEditFieldKeys.map((field) => <span className={editFieldSupport[field].state} title={editFieldSupport[field].reason} key={field}><b>{productEditFieldLabels[field]}</b><small>{editFieldSupport[field].state === "supported" ? "수정 가능" : editFieldSupport[field].state === "partial" ? "일부 가능" : "중앙만"}</small></span>)}</div>}
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
           {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
           {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>채널 JSON 형식 확인 필요</b><small>아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다.</small></div> : <div className="publish-required-fields">

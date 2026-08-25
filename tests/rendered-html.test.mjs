@@ -135,7 +135,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(aiProductStudio, /selectedRecoveryJobId|displayJobId\.current = selectedRecoveryJobId/);
   assert.match(aiProductStudio, /shouldDisplayStudioJob\(\{/);
   assert.match(aiProductStudio, /jobMonitors\.abortAll\(\)/);
-  assert.match(aiProductStudio, /persistActiveStudioJob\(queued\.jobId, studioSessionId\)/);
+  assert.match(aiProductStudio, /persistActiveStudioJob\(jobId, studioSessionId\)/);
   assert.match(aiProductStudio, /displayJobId\.current = "";[\s\S]*?displayJobId\.current = queued\.jobId/);
   assert.match(categoryWorkbench, /현재 검색어로 다시 추천/);
   assert.match(categoryWorkbench, /sellerpilot:category-workbench:/);

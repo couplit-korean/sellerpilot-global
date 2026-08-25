@@ -87,6 +87,26 @@ test("every new or changed registration event is queued once after initial hydra
   ]);
 });
 
+test("every per-channel registration transition is notified while the aggregate stays publishing", () => {
+  const initial = activity("one", "상품 A", "publishing");
+  initial.channels = [{
+    channel: "elevenst",
+    channelCode: "11",
+    channelName: "11번가",
+    market: "KR",
+    status: "queued",
+    message: "",
+    updatedAt: initial.updatedAt,
+  }];
+  const previous = registrationActivityStatusMap([initial]);
+  const next = structuredClone(initial);
+  next.channels[0]!.status = "published";
+
+  assert.deepEqual(registrationActivityNotifications(previous, [next]), [
+    "상품 A · 11번가 · KR: 완료",
+  ]);
+});
+
 test("registration history outage preserves its notification baseline across recovery", () => {
   const initial = [activity("one", "상품 A", "publishing"), activity("two", "상품 B", "ready")];
   const hydrated = registrationActivityNotificationTransition(null, initial, "ready");
@@ -132,10 +152,14 @@ test("relative return paths cannot escape the SellerPilot origin", () => {
 });
 
 test("toast queue preserves separate events for two seconds instead of replacing them", () => {
-  const first = appendToast([], "첫 이벤트");
-  const second = appendToast(first, "둘째 이벤트");
-  assert.deepEqual(second, ["첫 이벤트", "둘째 이벤트"]);
-  assert.deepEqual(appendToast(second, "둘째 이벤트"), ["첫 이벤트", "둘째 이벤트", "둘째 이벤트"]);
+  const first = appendToast([], "첫 이벤트", 1);
+  const second = appendToast(first, "둘째 이벤트", 2);
+  assert.deepEqual(second, [{ id: 1, message: "첫 이벤트" }, { id: 2, message: "둘째 이벤트" }]);
+  assert.deepEqual(appendToast(second, "둘째 이벤트", 3), [
+    { id: 1, message: "첫 이벤트" },
+    { id: 2, message: "둘째 이벤트" },
+    { id: 3, message: "둘째 이벤트" },
+  ]);
   assert.equal(toastDurationMs, 2_000);
   assert.equal(toastToneForMessage("채널 등록 오류"), "error");
   assert.equal(toastToneForMessage("외부 권한 확인 필요"), "warning");
@@ -195,14 +219,20 @@ test("product edit preserves sold-out stock and bounded promises cannot hang for
     productFactsConfirmed: true,
   });
   assert.equal(soldOut.success, true);
+  const unresolved = productEditSchema.safeParse({
+    ...soldOut.data!,
+    manufacturer: "공급처 확인 필요",
+  });
+  assert.equal(unresolved.success, false);
   await assert.rejects(withPromiseTimeout(new Promise(() => undefined), 1, "제한시간"), /제한시간/);
 });
 
 test("today dashboard routes and tablet overflow fix remain wired", async () => {
-  const [page, publishWorkbench, mobileStyles, studio, competitorScheduler, operationsSnapshotRoute, mobilePushManager] = await Promise.all([
+  const [page, publishWorkbench, mobileStyles, commerceStyles, studio, competitorScheduler, operationsSnapshotRoute, mobilePushManager] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/commerce-ux-refactor.css", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/internal/competitor-prices/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8"),
@@ -210,7 +240,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   ]);
   assert.match(page, /onNavigate\("registration-activity"\)[^\n]*채널 등록 실패/);
   assert.match(page, /activityState === "unavailable"[\s\S]*등록 진행 이력을 불러오지 못했습니다/);
-  assert.match(page, /signal: AbortSignal\.timeout\(30_000\)/);
+  assert.match(page, /signal: AbortSignal\.any\(\[productResearchController\.signal, AbortSignal\.timeout\(30_000\)\]\)/);
   assert.match(page, /withPromiseTimeout\(new Promise<\{ width: number; height: number \}>[\s\S]*?15_000[\s\S]*?모바일에서 이미지를 읽는 시간이 너무 오래 걸렸습니다/);
   assert.match(page, /settleWithConcurrency\(selected, 3,/);
   assert.match(page, /모바일 메모리를 보호하며 3장씩 처리/);
@@ -218,6 +248,10 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.doesNotMatch(page, /Promise\.allSettled\(selected\.map/);
   assert.match(page, /result\.failed === 0 && result\.reconciliationRequired === 0/);
   assert.doesNotMatch(page, /sellingPrice: current\.sellingPrice > 0 \? current\.sellingPrice : 5000/);
+  assert.doesNotMatch(page, /brandName: text\("brandName", "No Brand"\)/);
+  assert.doesNotMatch(page, /manufacturer: text\("manufacturer", "공급처 확인 필요"\)/);
+  assert.match(page, /imageRightsConfirmed: typeof fields\.imageRightsConfirmed === "boolean" \? fields\.imageRightsConfirmed : false/);
+  assert.match(page, /stock: current\.stock,[\s\S]{0,180}weightKg: current\.weightKg/);
   assert.match(page, /수정값은 중앙 상품 원장에 저장되며, 재고 변경은 연결된 채널에도 동기화/);
   assert.match(publishWorkbench, /<select required value=\{context\.manualFields\.packageContents\}/);
   assert.doesNotMatch(publishWorkbench, /판매 구성품[^\n]*<input/);
@@ -253,6 +287,21 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /competitorResearchControllerRef\.current\?\.abort\(\)/);
   assert.match(page, /pollCompetitorResearch/);
   assert.match(page, /maxAttempts: 3/);
+  assert.match(page, /runCompetitorResearchPolling\(competitorResearchRetryInput/);
+  assert.match(page, /competitorResearchControllerRef\.current !== competitorController/);
+  assert.match(page, /가격 다시 확인/);
+  assert.match(page, /PRODUCT_RESEARCH_PENDING_KEY/);
+  assert.match(page, /productResearchControllerRef\.current\?\.abort\(\)/);
+  assert.match(page, /AbortSignal\.any\(\[productResearchController\.signal, AbortSignal\.timeout\(30_000\)\]\)/);
+  assert.match(page, /waitForAbortablePromise\(createSupabaseClient\(\)\.auth\.getSession\(\), sessionSignal\)/);
+  assert.match(page, /if \(researchingProduct\)[\s\S]{0,160}1차 상품정보 확인을 마치거나 중단/);
+  assert.match(page, /disabled=\{running \|\| researchingProduct \|\| Boolean\(queuedJobId\)\}/);
+  assert.match(page, /payload\.status === "succeeded"[\s\S]{0,220}throw new ProductResearchTerminalError/);
+  assert.match(page, /throw new ProductResearchTerminalError\(payload\.error\)/);
+  assert.match(page, /shouldClearPendingProductResearch\(error\)/);
+  assert.match(page, /확인 중단/);
+  assert.match(commerceStyles, /\.competitor-retry button \{[^}]*min-height: 44px/);
+  assert.match(commerceStyles, /@media \(max-width: 560px\)[\s\S]*?\.competitor-retry button \{ width: 100%; \}/);
 });
 
 test("390px registration, CS, preview, and notification surfaces keep their mobile contract", async () => {

@@ -67,6 +67,7 @@ test("competitor scheduler bounds one durable claim and preserves pending gatewa
   assert.match(source, /p_limit: COMPETITOR_CLAIM_BATCH_SIZE/);
   assert.doesNotMatch(source, /p_limit:\s*(?:[2-9]|[1-9][0-9]+)/);
   assert.match(source, /sellerpilot_service_complete_competitor_price_refresh/);
+  assert.match(source, /p_providers: searched\.providers/);
   assert.match(source, /sellerpilot_service_release_competitor_price_refresh/);
   assert.doesNotMatch(source, /sellerpilot_service_due_competitor_products/);
   assert.doesNotMatch(source, /sellerpilot_service_record_competitor_prices/);
