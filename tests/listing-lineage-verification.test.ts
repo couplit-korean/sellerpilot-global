@@ -369,6 +369,35 @@ test("gateway contracts accept only normalized listing lineage claims and comple
   assert.equal(completion.status, "succeeded");
   assert.doesNotMatch(JSON.stringify(completion), /raw-secret|safeMessage/);
 
+  const legacyQoo10Completion = gatewayWorkerCompletionSchema.parse({
+    jobId: JOB_ID,
+    claimToken: CLAIM_TOKEN,
+    status: "succeeded",
+    result: {
+      ok: true,
+      channel: "qoo10",
+      operation: "listing.lineage.verify",
+      verificationStatus: "verified",
+      evidence: {
+        expectedRemoteId: "1234567890",
+        verifiedRemoteId: "1234567890",
+        market: "",
+        targetId: "",
+        evidenceVersion: "provider_listing_readback_rebind_v1",
+      },
+      steps: [{
+        name: "listing-lineage-readback",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotVerification: "QOO10_ITEM_CODE_VERIFIED",
+          verifiedRemoteId: "1234567890",
+        },
+      }],
+    },
+  });
+  assert.equal(legacyQoo10Completion.status, "succeeded");
+
   assert.equal(gatewayWorkerCompletionSchema.safeParse({
     jobId: JOB_ID,
     claimToken: CLAIM_TOKEN,
@@ -490,5 +519,5 @@ test("the worker routes lineage verification through the read-only normalized ve
   assert.match(branch, /onCredentialRefresh: rememberCredentialRefresh/);
   assert.doesNotMatch(branch, /markExternalWriteStarted|externalWriteStarted\s*=\s*true/);
   assert.match(worker, /retryableLineageReadback[\s\S]*LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR/);
-  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.22"/);
+  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.23"/);
 });

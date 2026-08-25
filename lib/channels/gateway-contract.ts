@@ -98,7 +98,7 @@ const competitorSearchResultSchema = z.object({
 
 const listingLineageEvidenceBaseSchema = z.object({
   expectedRemoteId: z.string().min(1).max(240),
-  market: z.string().min(1).max(40),
+  market: z.string().max(40),
   targetId: z.string().max(160),
   evidenceVersion: z.literal("provider_listing_readback_rebind_v1"),
   marketplaceSku: z.string().min(1).max(160).optional(),
@@ -156,6 +156,14 @@ const listingLineageVerificationResultSchema = z.discriminatedUnion("verificatio
     })).max(2),
   }),
 ]).superRefine((value, context) => {
+  const market = value.evidence.market.trim().toUpperCase();
+  if (value.channel === "qoo10") {
+    if (market && market !== "JP") {
+      context.addIssue({ code: "custom", message: "verified qoo10 lineage has an invalid market snapshot" });
+    }
+  } else if (!market) {
+    context.addIssue({ code: "custom", message: "verified provider lineage requires a market" });
+  }
   if (value.verificationStatus !== "verified") return;
   if (value.evidence.expectedRemoteId !== value.evidence.verifiedRemoteId) {
     context.addIssue({ code: "custom", message: "lineage remote identity mismatch" });
