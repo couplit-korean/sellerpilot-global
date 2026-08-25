@@ -60,6 +60,7 @@ const supportedProductFields = new Set([
 
 const supportedNoticeCodes = new Set(["11800", "11905", "23760413", "23759100", "23756033"]);
 const supportedCertificationGroups = new Set(["01:03", "02:03", "03:03", "04:05"]);
+const verifiedSimpleListingCategoryId = "1341821";
 const placeholderValue = /^(?:알\s*수\s*없음|모름|미정|unknown|n\/?a|none|null|undefined|-+)$/iu;
 
 function object(value: unknown, field: string): Record<string, unknown> {
@@ -178,9 +179,10 @@ function validateProductNotification(product: Record<string, unknown>) {
 
 /**
  * Validate only the 11st simple, non-regulated general-product contract that
- * has an observed successful create/readback path. Category-specific options,
- * certifications, notices, and delivery modes stay blocked until their exact
- * provider metadata is supplied; this function never fills those values in.
+ * has an observed successful create/readback path for official leaf 1341821.
+ * Category-specific options, certifications, notices, and delivery modes stay
+ * blocked until their exact provider metadata is supplied; this function never
+ * fills those values in or reuses this leaf's no-certification declaration.
  */
 export function validateElevenstListingProduct(value: unknown): Record<string, unknown> {
   const product = object(value, "product");
@@ -190,6 +192,9 @@ export function validateElevenstListingProduct(value: unknown): Record<string, u
   exactCode(product, "selMthdCd", ["01"]);
   const categoryId = text(product, "dispCtgrNo", 20);
   if (!/^\d{7,12}$/u.test(categoryId)) throw new Error("ELEVENST_CONTRACT_FIELD_INVALID:dispCtgrNo");
+  if (categoryId !== verifiedSimpleListingCategoryId) {
+    throw new Error("ELEVENST_CATEGORY_CONTRACT_UNVERIFIED");
+  }
   exactCode(product, "prdTypCd", ["01"]);
   knownText(product, "prdNm", 100);
   knownText(product, "brand", 100);

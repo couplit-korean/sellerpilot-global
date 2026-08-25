@@ -120,7 +120,7 @@ test("11st categories other than 1341821 cannot inherit guessed notice or certif
   assert.deepEqual(draft.product.ProductNotification, { type: "", item: [] });
   assert.equal(requirements.find((item) => item.key === "notice")?.status, "manual");
   assert.equal(requirements.find((item) => item.key === "certification")?.status, "manual");
-  assert.throws(() => validateElevenstListingProduct(draft.product), /ELEVENST_CERTIFICATION_CONTRACT_UNVERIFIED/);
+  assert.throws(() => validateElevenstListingProduct(draft.product), /ELEVENST_CATEGORY_CONTRACT_UNVERIFIED/);
 });
 
 test("11st missing brand stays empty and is blocked by local preflight instead of receiving a placeholder", () => {

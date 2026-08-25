@@ -337,6 +337,41 @@ test("11st listing contract fails closed for guessed category, certification, no
   }
 });
 
+test("11st server contract rejects copied no-certification metadata for another official numeric leaf before any provider request", async () => {
+  const copiedContract = completeProduct({
+    dispCtgrNo: "1341822",
+    sellerPrdCd: "CABLE-TIE-001",
+    prdNm: "케이블타이",
+  });
+  assert.throws(
+    () => validateElevenstListingProduct(copiedContract),
+    /ELEVENST_CATEGORY_CONTRACT_UNVERIFIED/,
+  );
+
+  const originalFetch = globalThis.fetch;
+  let providerRequests = 0;
+  globalThis.fetch = async () => {
+    providerRequests += 1;
+    throw new Error("provider must not be called");
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.create",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: { product: copiedContract },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.steps[0]?.name, "product-contract-validation");
+    assert.equal(result.steps[0]?.status, 422);
+    assert.equal(result.steps[0]?.data.error, "ELEVENST_CATEGORY_CONTRACT_UNVERIFIED");
+    assert.equal(providerRequests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("11st listing rejects an invalid local contract before any provider request", async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
@@ -364,11 +399,15 @@ test("11st listing rejects an invalid local contract before any provider request
 test("11st listing verifies the exact official leaf category before seller lookup or create", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
+  const nonLeafCategoryXml = categoryXml.replace(
+    "<dispNo>1341821</dispNo><leafYn>Y</leafYn>",
+    "<dispNo>1341821</dispNo><leafYn>N</leafYn>",
+  );
   globalThis.fetch = async (input) => {
     const url = String(input);
     calls.push(url);
     if (url.includes("/rest/cateservice/category")) {
-      return new Response(categoryXml, { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } });
+      return new Response(nonLeafCategoryXml, { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } });
     }
     throw new Error("seller endpoint must not be called");
   };
@@ -378,7 +417,7 @@ test("11st listing verifies the exact official leaf category before seller looku
       operation: "listing.create",
       payload: { api_key: apiKey },
       environment: "production",
-      arguments: { product: completeProduct({ dispCtgrNo: "9999999" }) },
+      arguments: { product: completeProduct() },
     });
     assert.equal(result.ok, false);
     assert.equal(result.steps[0]?.name, "category-validation");
