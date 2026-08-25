@@ -1,4 +1,7 @@
-export const MINIMUM_SHOT_HASH_DISTANCE = 48;
+export const SHOT_DHASH_COLUMNS = 16;
+export const SHOT_DHASH_ROWS = 16;
+export const SHOT_DHASH_BYTES = (SHOT_DHASH_COLUMNS * SHOT_DHASH_ROWS) / 8;
+export const MINIMUM_SHOT_HASH_DISTANCE = 64;
 export const MAXIMUM_SHOT_GENERATION_ATTEMPTS = 3;
 
 export type ShotFingerprint = {
@@ -6,6 +9,31 @@ export type ShotFingerprint = {
   digest: string;
   visualHash: Uint8Array;
 };
+
+export function buildDifferenceHash(
+  grayscalePixels: Uint8Array,
+  rowStride = SHOT_DHASH_COLUMNS + 1,
+  rows = SHOT_DHASH_ROWS,
+) {
+  if (!Number.isInteger(rowStride) || rowStride < 2 || !Number.isInteger(rows) || rows < 1) {
+    throw new Error("dHash 픽셀 격자 크기가 올바르지 않습니다.");
+  }
+  const requiredPixels = rowStride * rows;
+  if (grayscalePixels.length < requiredPixels) {
+    throw new Error(`dHash 픽셀이 부족합니다. expected=${requiredPixels} actual=${grayscalePixels.length}`);
+  }
+  const columns = rowStride - 1;
+  const visualHash = new Uint8Array(Math.ceil((columns * rows) / 8));
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const bitIndex = row * columns + column;
+      if (grayscalePixels[row * rowStride + column] > grayscalePixels[row * rowStride + column + 1]) {
+        visualHash[Math.floor(bitIndex / 8)] |= 1 << (7 - (bitIndex % 8));
+      }
+    }
+  }
+  return visualHash;
+}
 
 export function visualHashDistance(left: Uint8Array, right: Uint8Array) {
   if (left.length !== right.length) return Number.POSITIVE_INFINITY;
@@ -36,5 +64,8 @@ export function findDuplicateShot(
 }
 
 export function buildDuplicateRetryGuidance(assetId: string, conflictingAssetId: string, attempt: number) {
-  return `Anti-duplicate retry ${attempt} for ${assetId}: the previous draft was visually too similar to ${conflictingAssetId}. Recompose from a substantially different camera height and angle, move the subject to a different frame position, replace the background layout and prop arrangement, and preserve only the factual product identity. Do not create a recolor, small crop change or mirrored copy.`;
+  const strategy = attempt >= MAXIMUM_SHOT_GENERATION_ATTEMPTS
+    ? "Use the slot's opposite permitted camera height and a clearly different azimuth, move the subject to the opposite frame third or depth plane, reverse the foreground/background hierarchy, and replace every non-product prop and surface layout allowed by the slot."
+    : "Use a substantially different camera height and angle by changing azimuth at least 45 degrees within this slot's role, move the subject away from the previous frame zone, switch foreground depth and negative-space direction, and rebuild the allowed prop and surface arrangement from scratch.";
+  return `Anti-duplicate retry ${attempt} of ${MAXIMUM_SHOT_GENERATION_ATTEMPTS} for ${assetId}: the previous draft was visually too similar to ${conflictingAssetId}. ${strategy} Preserve the hard shot class and factual product identity, but do not create a recolor, mirrored copy, small crop, background swap with the same layout, or another slot's role.`;
 }

@@ -15,9 +15,13 @@ import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
 import { searchElevenstProductVariants } from "../lib/competitor-prices.ts";
 import {
+  buildDifferenceHash,
   buildDuplicateRetryGuidance,
   findDuplicateShot,
   MAXIMUM_SHOT_GENERATION_ATTEMPTS,
+  SHOT_DHASH_BYTES,
+  SHOT_DHASH_COLUMNS,
+  SHOT_DHASH_ROWS,
 } from "../lib/image-shot-uniqueness.ts";
 import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
 import { workerClaimBackoffMs } from "./worker-claim-backoff.mjs";
@@ -1185,19 +1189,16 @@ async function normalizeGeneratedAsset(outputFile, preset) {
 
 async function fingerprintGeneratedShot(assetId, buffer) {
   const pixels = await sharp(buffer, { failOn: "warning", limitInputPixels: 64_000_000 })
-    .resize(17, 16, { fit: "fill" })
+    .resize(SHOT_DHASH_COLUMNS + 1, SHOT_DHASH_ROWS, { fit: "fill" })
+    .flatten({ background: "#ffffff" })
     .greyscale()
     .raw()
     .toBuffer();
-  const visualHash = Buffer.alloc(32);
-  for (let row = 0; row < 16; row += 1) {
-    for (let column = 0; column < 16; column += 1) {
-      const bitIndex = row * 16 + column;
-      if (pixels[row * 17 + column] > pixels[row * 17 + column + 1]) {
-        visualHash[Math.floor(bitIndex / 8)] |= 1 << (7 - (bitIndex % 8));
-      }
-    }
+  if (pixels.length !== (SHOT_DHASH_COLUMNS + 1) * SHOT_DHASH_ROWS) {
+    throw new Error(`${assetId} 이미지 dHash 픽셀 검증 실패`);
   }
+  const visualHash = Buffer.from(buildDifferenceHash(pixels));
+  if (visualHash.length !== SHOT_DHASH_BYTES) throw new Error(`${assetId} 이미지 dHash 규격 검증 실패`);
   return {
     assetId,
     digest: createHash("sha256").update(buffer).digest("hex"),
@@ -1205,14 +1206,28 @@ async function fingerprintGeneratedShot(assetId, buffer) {
   };
 }
 
-async function downloadComparisonShots(job) {
+async function downloadComparisonShots(job, targetAssetId) {
   const images = Array.isArray(job.request?.comparisonImages) ? job.request.comparisonImages : [];
-  const shots = [];
+  const comparisonById = new Map();
   for (const image of images) {
-    if (!image?.assetId || !image?.signedUrl) continue;
+    if (!image?.assetId || !image?.signedUrl || comparisonById.has(image.assetId)) {
+      throw new Error("재제작 이미지의 중복 비교 자료가 올바르지 않습니다.");
+    }
+    comparisonById.set(image.assetId, image);
+  }
+  const expectedAssetIds = aiGeneratedAssetSpecs
+    .map((asset) => asset.id)
+    .filter((assetId) => assetId !== targetAssetId);
+  const missingAssetIds = expectedAssetIds.filter((assetId) => !comparisonById.has(assetId));
+  if (missingAssetIds.length || comparisonById.size !== expectedAssetIds.length) {
+    throw new Error(`재제작 중복 비교 이미지가 완전하지 않습니다: ${missingAssetIds.join(", ") || "unexpected asset"}`);
+  }
+  const shots = [];
+  for (const assetId of expectedAssetIds) {
+    const image = comparisonById.get(assetId);
     const response = await fetch(image.signedUrl, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) throw new Error(`${image.assetId} 기존 이미지 중복 비교 자료를 받지 못했습니다.`);
-    shots.push(await fingerprintGeneratedShot(image.assetId, Buffer.from(await response.arrayBuffer())));
+    if (!response.ok) throw new Error(`${assetId} 기존 이미지 중복 비교 자료를 받지 못했습니다.`);
+    shots.push(await fingerprintGeneratedShot(assetId, Buffer.from(await response.arrayBuffer())));
   }
   return shots;
 }
@@ -1221,6 +1236,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, j
   const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
   let noveltyGuidance = "";
   for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1) {
+    await rm(outputFile, { force: true });
     const imageArgs = [
       "exec",
       "--model", model,
@@ -1241,7 +1257,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, j
       throw new Error(`${preset.id} 이미지가 ${duplicate.assetId}와 반복되어 완료하지 않았습니다.`);
     }
     noveltyGuidance = buildDuplicateRetryGuidance(preset.id, duplicate.assetId, attempt + 1);
-    console.log(`[이미지 중복 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · distance=${duplicate.distance}`);
+    console.log(`[이미지 중복 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · match=${duplicate.exact ? "sha256" : "dhash"} · distance=${duplicate.distance}`);
   }
   throw new Error(`${preset.id} 이미지 중복 검증을 완료하지 못했습니다.`);
 }
@@ -1336,7 +1352,7 @@ async function processJob(job) {
         global: { fetch: createLeaseBoundedStorageFetch(jobHeartbeat.signal) },
       });
       const outputFile = join(jobDir, preset.file);
-      const existingShots = await downloadComparisonShots(job);
+      const existingShots = await downloadComparisonShots(job, preset.id);
       const generated = await generateDistinctAsset({
         result: parsedSource.data,
         outputFile,
@@ -1437,6 +1453,7 @@ async function processJob(job) {
       assetStoragePaths[preset.id] = upload.path;
       uploadedResultPaths.push(upload.path);
     }
+    if (existingShots.length !== imagePresets.length) throw new Error("생성 이미지 8종의 중복 검증 지문이 완전하지 않습니다.");
 
     await assertJobLeaseHealthy();
     await stopJobHeartbeat();

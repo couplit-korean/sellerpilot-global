@@ -1,8 +1,11 @@
 import type { AiGeneratedAssetId } from "./ai-generated-assets";
 
 export const settingShotAssetIds = ["portrait", "wide", "detail-overview", "detail-use"] as const satisfies readonly AiGeneratedAssetId[];
+export const settingShotDimensions = ["location", "moment", "surface", "supportingObjects", "staging", "camera"] as const;
 
 export type SettingShotAssetId = (typeof settingShotAssetIds)[number];
+export type SettingShotDimension = (typeof settingShotDimensions)[number];
+export type SettingShotSeparation = Record<SettingShotDimension, string>;
 
 export type ProductSettingShot = {
   label: string;
@@ -11,115 +14,161 @@ export type ProductSettingShot = {
   surface: string;
   supportingObjects: string;
   staging: string;
+  camera: string;
+  separation: SettingShotSeparation;
 };
 
 export type ProductSettingShotPlan = Record<SettingShotAssetId, ProductSettingShot>;
 
-type SceneParts = [location: string, moment: string, surface: string, supportingObjects: string, staging: string];
+type SceneDescriptions = [location: string, moment: string, surface: string, supportingObjects: string, staging: string];
+type SceneSeparation = [location: string, moment: string, surface: string, supportingObjects: string, staging: string];
+type CameraContract = [key: string, description: string];
+type SceneParts = { descriptions: SceneDescriptions; separation: SceneSeparation; camera: CameraContract };
 
-function shot(label: string, parts: SceneParts): ProductSettingShot {
-  const [location, moment, surface, supportingObjects, staging] = parts;
-  return { label, location, moment, surface, supportingObjects, staging };
+const cameras = {
+  portrait: ["low-right-vertical-35mm", "상품보다 약간 낮은 오른쪽 35mm 세로 3/4 시점으로 공간의 앞뒤 층을 함께 보여준다"],
+  wide: ["high-left-lateral-28mm", "왼쪽 위에서 내려보는 28mm 가로 시점으로 상품과 활동 영역 사이의 긴 동선을 만든다"],
+  overview: ["high-rear-overview-50mm", "상품 뒤쪽 위 50mm 사선 시점으로 전체 형태와 보관·준비 공간의 관계를 읽게 한다"],
+  use: ["table-level-opposite-65mm", "표면 높이의 반대편 65mm 시점으로 기능 결과를 전경에 두고 상품을 다른 깊이에 분리한다"],
+} as const satisfies Record<"portrait" | "wide" | "overview" | "use", CameraContract>;
+
+function scene(separation: SceneSeparation, descriptions: SceneDescriptions, camera: CameraContract): SceneParts {
+  return { separation, descriptions, camera };
 }
 
-function plan(parts: Record<SettingShotAssetId, SceneParts>): ProductSettingShotPlan {
+function shot(label: string, parts: SceneParts): ProductSettingShot {
+  const [location, moment, surface, supportingObjects, staging] = parts.descriptions;
+  const [locationKey, momentKey, surfaceKey, supportingObjectsKey, stagingKey] = parts.separation;
   return {
+    label,
+    location,
+    moment,
+    surface,
+    supportingObjects,
+    staging,
+    camera: parts.camera[1],
+    separation: {
+      location: locationKey,
+      moment: momentKey,
+      surface: surfaceKey,
+      supportingObjects: supportingObjectsKey,
+      staging: stagingKey,
+      camera: parts.camera[0],
+    },
+  };
+}
+
+export function assertDistinctSettingShotPlan(plan: ProductSettingShotPlan, planLabel = "product") {
+  const shots = Object.values(plan);
+  for (const dimension of settingShotDimensions) {
+    const values = shots.map((item) => item.separation[dimension].trim());
+    if (values.some((value) => !value) || new Set(values).size !== settingShotAssetIds.length) {
+      throw new Error(`${planLabel} 설정샷의 ${dimension} 의미 분리 계약이 중복되었습니다.`);
+    }
+    const descriptions = shots.map((item) => item[dimension].trim());
+    if (descriptions.some((value) => !value) || new Set(descriptions).size !== settingShotAssetIds.length) {
+      throw new Error(`${planLabel} 설정샷의 ${dimension} 촬영 지시가 중복되었습니다.`);
+    }
+  }
+  return plan;
+}
+
+function plan(planLabel: string, parts: Record<SettingShotAssetId, SceneParts>): ProductSettingShotPlan {
+  return assertDistinctSettingShotPlan({
     portrait: shot("설정샷 1", parts.portrait),
     wide: shot("설정샷 2", parts.wide),
     "detail-overview": shot("설정샷 3", parts["detail-overview"]),
     "detail-use": shot("설정샷 4", parts["detail-use"]),
-  };
+  }, planLabel);
 }
 
 function cerealPlan() {
-  return plan({
-    portrait: [
-      "아침 햇빛이 옆창으로 들어오는 작은 원목 아침 식탁",
-      "등교·출근 전 식사를 막 준비한 이른 아침",
-      "밝은 참나무 테이블과 세로로 보이는 창가 벽",
-      "실제 섭취를 설명하는 시리얼 한 그릇과 단정한 흰 냅킨만 사용",
-      "패키지는 세워 두고 그릇은 앞쪽 아래에 배치해 세로 장면의 깊이를 만든다",
-    ],
-    wide: [
-      "정돈된 현대식 주방의 넓은 조리대",
-      "시리얼을 그릇에 담기 직전의 준비 순간",
-      "차가운 회색 석재 조리대와 수평으로 이어지는 주방 배경",
-      "빈 그릇과 스푼만 기능성 소품으로 사용하고 아침 식탁 소품은 반복하지 않는다",
-      "패키지는 화면 한쪽, 그릇은 반대쪽에 두어 가로 방향 동선을 만든다",
-    ],
-    "detail-overview": [
-      "열린 팬트리 선반 앞의 식품 보관 공간",
-      "보관 위치에서 꺼내 식사를 준비하기 직전",
-      "무광 크림색 선반과 깊이감 있는 수납 배경",
-      "같은 식품군의 다른 브랜드나 추가 제품 없이 보관 용기 하나만 배경에 둔다",
-      "패키지 전체와 실제 크기가 읽히도록 선반 가장자리에서 30도 각도로 보여준다",
-    ],
-    "detail-use": [
-      "창문·주방·다이닝 가구가 보이지 않는 따뜻한 조명의 거실 소파 옆",
-      "저녁에 시리얼을 간식으로 바로 먹기 직전",
-      "낮은 짙은 월넛 커피 테이블과 배경의 중립색 패브릭 소파",
-      "완성된 시리얼 한 그릇과 스푼, 소파 위의 접힌 무지 담요만 사용하며 과일·토핑은 넣지 않는다",
-      "그릇을 낮은 전경의 주인공으로, 패키지를 옆쪽 후경에 두고 따뜻한 스탠드 조명으로 아침 장면과 분리한다",
-    ],
+  return plan("cereal", {
+    portrait: scene(
+      ["breakfast-nook", "dawn-breakfast", "light-oak", "cereal-bowl-linen", "package-right-bowl-low-left"],
+      ["주방과 분리된 창가의 작은 원목 아침 식탁", "등교·출근 전 첫 식사를 막 차리는 이른 아침", "결이 선명한 밝은 참나무 식탁", "실제 섭취를 설명하는 투명 시리얼 볼과 접힌 흰 리넨만 사용", "패키지는 오른쪽 뒤에 세우고 볼은 왼쪽 낮은 전경에 두어 비대칭 세로 깊이를 만든다"],
+      cameras.portrait,
+    ),
+    wide: scene(
+      ["modern-kitchen-island", "late-morning-portioning", "brushed-stainless", "portion-cup-serving-tray", "package-left-prep-right"],
+      ["정돈된 현대식 주방의 넓은 독립 조리대", "늦은 오전에 1회분을 덜어 이동 간식을 준비하는 순간", "빛을 차갑게 반사하는 브러시드 스테인리스 상판", "빈 1회분 컵과 낮은 서빙 트레이만 사용하며 아침 식탁 소품은 반복하지 않는다", "패키지는 왼쪽 가장자리, 준비 영역은 오른쪽에 길게 두어 가로 동선을 만든다"],
+      cameras.wide,
+    ),
+    "detail-overview": scene(
+      ["walk-in-pantry", "midday-restock", "matte-cream-shelf", "single-storage-basket", "package-rear-center-shelf-edge"],
+      ["문이 열린 독립 팬트리의 상온 식품 선반", "낮에 장을 본 뒤 보관 위치를 정리하는 순간", "빛 반사가 없는 크림색 도장 선반", "다른 브랜드나 추가 제품 없이 낮은 수납 바구니 하나만 배경에 둔다", "패키지를 선반 뒤 중앙에 두고 앞 가장자리를 비워 실제 크기와 수납 깊이를 보여준다"],
+      cameras.overview,
+    ),
+    "detail-use": scene(
+      ["living-room-sofa-side", "evening-snack", "dark-walnut-table", "snack-cup-closed-book", "snack-front-package-back-left"],
+      ["창문·주방·다이닝 가구가 보이지 않는 거실 소파 옆", "따뜻한 스탠드 조명 아래 저녁 간식을 먹기 직전", "낮고 짙은 월넛 사이드 테이블", "완성된 시리얼 스낵컵과 닫힌 무지 책 한 권만 사용하며 앞 장면의 볼·리넨·트레이는 쓰지 않는다", "스낵컵을 중앙 전경의 주인공으로, 패키지를 왼쪽 후경에 낮춰 아침 장면과 반대 배치로 만든다"],
+      cameras.use,
+    ),
+  });
+}
+
+function coffeeTeaPlan() {
+  return plan("coffee-tea", {
+    portrait: scene(["bedroom-balcony-ledge", "sunrise-first-cup", "warm-terracotta", "cup-single-brewer", "package-upper-right-cup-lower-left"], ["침실과 연결된 작은 발코니의 음료 선반", "해가 막 오른 뒤 첫 잔을 준비하는 아침", "따뜻한 무광 테라코타 선반", "깨끗한 컵과 상품에 맞는 추출 도구 하나만 사용", "제품은 오른쪽 위, 컵은 왼쪽 아래에 두어 세로 대각선을 만든다"], cameras.portrait),
+    wide: scene(["office-breakroom", "midmorning-refill", "brushed-steel-counter", "travel-tumbler-filter", "package-far-left-tools-right"], ["업무 공간과 분리된 오피스 브레이크룸", "오전 업무 중 텀블러를 채우기 직전", "긴 브러시드 스틸 음료 조리대", "텀블러와 확인된 필터·티 인퓨저 중 맞는 도구만 사용", "제품은 먼 왼쪽, 준비 도구는 오른쪽에 두어 긴 가로 이동을 만든다"], cameras.wide),
+    "detail-overview": scene(["dry-goods-cabinet", "afternoon-restock", "powder-coated-wire-shelf", "single-airtight-jar", "package-back-right-door-frame"], ["주방 밖 건식 식품 수납장의 안쪽 선반", "오후에 보관 상태와 잔량을 확인하는 순간", "흰색 분체도장 철망 선반", "다른 브랜드 없이 비어 있는 밀폐 용기 하나만 배경에 둔다", "패키지를 뒤 오른쪽에 두고 열린 문틀과 선반 깊이가 함께 보이게 한다"], cameras.overview),
+    "detail-use": scene(["living-room-reading-corner", "late-evening-drink", "black-leather-top", "finished-drink-reading-glasses", "drink-front-product-rear-right"], ["거실의 독립된 독서 코너", "늦은 저녁 완성 음료를 마시기 직전", "검은 가죽 상판의 작은 독서 테이블", "완성 음료 한 잔과 접힌 독서 안경만 사용", "음료를 왼쪽 전경, 제품을 오른쪽 후경에 두어 다른 세 장면과 반대 깊이를 만든다"], cameras.use),
+  });
+}
+
+function generalFoodPlan() {
+  return plan("general-food", {
+    portrait: scene(["grocery-unpacking-island", "morning-unpack", "butcher-block-maple", "single-prep-bowl", "package-right-contents-low-center"], ["현관과 가까운 식료품 정리용 키친 아일랜드", "아침 장바구니에서 상품을 꺼낸 직후", "두꺼운 메이플 부처블록 상판", "상품 사실에 맞는 빈 준비 볼 하나만 사용", "제품은 오른쪽에 세우고 확인된 내용물은 낮은 중앙에만 둔다"], cameras.portrait),
+    wide: scene(["covered-patio-prep-cart", "noon-cooking-prep", "galvanized-metal-cart", "single-cooking-tool", "package-left-work-zone-right"], ["비를 피할 수 있는 야외 테라스의 이동식 준비 카트", "한낮 조리를 시작하기 직전", "아연도금 금속 카트 상판", "실제 조리에 필요한 도구 하나와 확인된 내용물만 사용", "패키지는 왼쪽 끝, 조리 준비 영역은 오른쪽에 넓게 분리한다"], cameras.wide),
+    "detail-overview": scene(["deep-pantry-alcove", "afternoon-storage-check", "matte-laminate-shelf", "single-wire-basket", "package-back-center-empty-front"], ["주방과 떨어진 깊은 팬트리 벽감", "오후에 보관 조건을 확인하는 순간", "회백색 무광 라미네이트 선반", "다른 식품 없이 철제 수납 바구니 하나만 둔다", "패키지를 뒤 중앙에 두고 앞쪽 선반을 비워 전체와 보관 맥락을 보여준다"], cameras.overview),
+    "detail-use": scene(["formal-dining-table", "evening-serving", "woven-mat-dark-wood", "finished-dish-cutlery", "dish-front-package-far-back"], ["주방이 보이지 않는 독립 다이닝 공간", "저녁 식사를 내기 직전", "직조 매트가 놓인 짙은 체리우드 테이블", "상품 정보로 뒷받침되는 완성 음식과 식기만 사용", "완성 음식은 크게 전경, 제품은 먼 후경에 두어 결과와 원재료 역할을 분리한다"], cameras.use),
   });
 }
 
 function foodPlan(productText: string) {
   if (/시리얼|cereal|오트밀|oatmeal|granola|그래놀라/i.test(productText)) return cerealPlan();
-  if (/커피|coffee|원두|tea|티백|차\b/i.test(productText)) {
-    return plan({
-      portrait: ["창가의 아침 커피 코너", "첫 잔을 준비하는 아침", "따뜻한 원목 선반", "깨끗한 컵과 제품에 맞는 추출 도구만 사용", "제품을 세우고 컵은 낮은 전경에 둔다"],
-      wide: ["넓은 홈카페 조리대", "추출 도구를 정돈한 준비 순간", "밝은 석재 상판", "컵과 실제 사용에 필요한 도구만 사용", "제품과 도구를 좌우로 분리해 가로 동선을 만든다"],
-      "detail-overview": ["주방의 원두·차 보관 선반", "보관 상태를 보여주는 낮 시간", "무광 금속 선반", "다른 브랜드 제품 없이 밀폐 용기 하나만 배경에 둔다", "패키지 전체가 보이도록 30도 위에서 촬영한다"],
-      "detail-use": ["조용한 오후 독서 테이블", "완성된 음료를 마시기 직전", "짙은 나무 테이블", "완성 음료 한 잔과 접힌 책 한 권만 사용", "음료와 제품을 서로 다른 깊이에 배치한다"],
-    });
-  }
-  return plan({
-    portrait: ["자연광이 드는 주방 식재료 코너", "조리를 시작하기 전", "밝은 원목 작업대", "해당 상품의 실제 조리에 필요한 그릇 하나만 사용", "제품을 세우고 재료 상태는 낮은 전경에 둔다"],
-    wide: ["넓고 정돈된 주방 조리대", "조리 과정의 준비 단계", "회색 석재 상판", "조리 도구 하나와 제품 사실에 맞는 내용물만 사용", "제품과 조리 영역을 좌우로 나눠 보여준다"],
-    "detail-overview": ["팬트리 또는 상온 식품 보관 선반", "보관 위치에서 꺼낸 순간", "무광 크림색 선반", "다른 브랜드·추가 식품 없이 보관 용기 하나만 배경에 둔다", "패키지 전체와 보관 맥락을 30도 위에서 보여준다"],
-    "detail-use": ["완성 음식을 차린 다이닝 테이블", "섭취 직전", "직물 매트가 있는 짙은 나무 테이블", "상품 정보로 뒷받침되는 완성 음식과 식기만 사용", "완성 음식은 전경, 제품은 후경에 두어 사용 결과를 설명한다"],
-  });
+  if (/커피|coffee|원두|tea|티백|차\b/i.test(productText)) return coffeeTeaPlan();
+  return generalFoodPlan();
 }
 
 const categoryPlans: Record<string, ProductSettingShotPlan> = {
-  "beauty-skincare": plan({
-    portrait: ["아침 자연광의 욕실 세면대 옆", "세안 후 루틴을 준비하는 아침", "밝은 석재 세면대", "깨끗한 접힌 수건 하나만 사용", "용기를 거울 옆에 세워 세로 깊이를 만든다"],
-    wide: ["침실 화장대의 저녁 루틴 공간", "취침 전 관리 준비", "짙은 목재 화장대", "작은 무광 트레이만 사용", "제품을 한쪽에 두고 비어 있는 루틴 공간을 가로로 보여준다"],
-    "detail-overview": ["창이 있는 욕실 수납 선반", "낮 시간의 보관 상태", "반투명 유리 선반", "다른 화장품 없이 수건과 물컵만 배경에 둔다", "용기 전체와 펌프·캡 관계가 보이게 30도 각도로 배치한다"],
-    "detail-use": ["거울 앞의 실제 사용 준비 공간", "한 번의 사용 직전", "무광 아이보리 세면대", "제품에 포함되지 않은 도구 없이 캡·펌프 상태만 사실대로 보여준다", "제품을 전경에 두고 거울 반사는 배경 깊이로만 쓴다"],
+  "beauty-skincare": plan("beauty-skincare", {
+    portrait: scene(["bathroom-vanity", "morning-post-cleanse", "pale-limestone", "single-folded-towel", "product-right-mirror-left-depth"], ["아침 자연광이 드는 욕실 세면대", "세안 직후 첫 스킨케어 단계를 준비하는 아침", "미세한 결의 밝은 석회석 세면대", "깨끗하게 접은 수건 하나만 사용", "용기를 오른쪽에 세우고 왼쪽 거울 반사는 빈 공간 깊이로만 쓴다"], cameras.portrait),
+    wide: scene(["bedroom-nightstand", "bedtime-final-step", "smoked-walnut", "ceramic-tray-sleep-mask", "product-left-routine-space-right"], ["욕실과 분리된 침실의 낮은 나이트스탠드", "취침 전 마지막 관리 단계를 준비하는 밤", "연기색 짙은 월넛 상판", "작은 세라믹 트레이와 접힌 무지 수면안대만 사용", "제품은 왼쪽 끝에 두고 오른쪽 루틴 공간을 길게 비운다"], cameras.wide),
+    "detail-overview": scene(["hallway-linen-cabinet", "midday-storage", "frosted-glass-shelf", "single-cotton-basket", "product-rear-center-cap-visible"], ["복도의 리넨 수납장 안쪽", "낮 시간에 보관 상태를 확인하는 순간", "반투명 서리 유리 선반", "다른 화장품 없이 낮은 면 수납 바구니 하나만 둔다", "용기를 뒤 중앙에 놓고 캡·펌프와 선반 깊이가 함께 보이게 한다"], cameras.overview),
+    "detail-use": scene(["gym-locker-vanity", "after-workout-refresh", "brushed-stainless-vanity", "plain-toiletry-pouch", "product-front-left-pouch-back-right"], ["사람이 없는 체육관 탈의실의 세면 코너", "운동 후 간단한 관리를 시작하기 직전", "물기 없는 브러시드 스테인리스 세면 상판", "닫힌 무지 세면 파우치만 사용하고 다른 제품은 두지 않는다", "제품은 왼쪽 전경, 파우치는 오른쪽 후경에 두어 욕실 장면과 반대 구도를 만든다"], cameras.use),
   }),
-  "beauty-tools": plan({
-    portrait: ["창가의 개인 화장대", "아침 메이크업 준비", "밝은 원목 화장대", "거울과 실제 용도를 설명하는 빈 팔레트 공간만 사용", "도구를 세로 방향으로 펼쳐 헤드가 겹치지 않게 한다"],
-    wide: ["정돈된 메이크업 작업 테이블", "여러 도구를 순서대로 고르는 순간", "차가운 회색 작업대", "무광 트레이 하나만 사용", "도구를 좌우 작업 흐름으로 배열한다"],
-    "detail-overview": ["여행 가방을 준비하는 침실 벤치", "파우치에 넣기 직전", "직물 벤치", "포함이 확인된 케이스만 사용하고 다른 화장품은 넣지 않는다", "실제 구성 전체와 수납 관계를 위쪽 30도에서 보여준다"],
-    "detail-use": ["욕실 세면대의 세척·건조 공간", "사용 후 관리 단계", "흰 세라믹 세면대 옆 건조 매트", "물방울과 포함이 확인된 세척 도구만 사용", "도구 헤드와 손잡이가 모두 보이도록 사선으로 배치한다"],
+  "beauty-tools": plan("beauty-tools", {
+    portrait: scene(["bedroom-dressing-table", "morning-makeup", "whitewashed-oak", "standing-mirror", "tools-vertical-right-heads-high"], ["침실 창가의 개인 화장대", "아침 메이크업을 시작하기 전", "백색 워시드 오크 화장대", "단순한 스탠드 거울 하나만 사용", "도구를 오른쪽 세로축에 펼쳐 모든 헤드가 위쪽에서 겹치지 않게 한다"], cameras.portrait),
+    wide: scene(["home-office-craft-desk", "afternoon-sorting", "blue-grey-linoleum", "single-section-tray", "tools-left-to-right-workflow"], ["생활 공간과 분리된 홈오피스 취미 책상", "오후에 도구 용도를 나눠 정리하는 순간", "청회색 리놀륨 작업 상판", "칸이 하나인 무광 분류 트레이만 사용", "도구를 왼쪽에서 오른쪽 사용 순서로 길게 배열한다"], cameras.wide),
+    "detail-overview": scene(["entry-luggage-bench", "pre-travel-packing", "woven-canvas-bench", "verified-case-only", "tools-center-case-rear"], ["현관 옆 여행 짐 전용 벤치", "외출용 파우치에 넣기 직전", "촘촘한 캔버스 직물 벤치", "포함이 확인된 케이스가 있을 때만 사용", "실제 구성은 중앙에 완전히 펼치고 케이스는 뒤쪽에만 둔다"], cameras.overview),
+    "detail-use": scene(["laundry-utility-sink", "post-use-cleaning", "ribbed-silicone-mat", "verified-cleaning-piece", "heads-front-handles-back-diagonal"], ["욕실과 떨어진 세탁실의 유틸리티 싱크", "사용 후 세척·건조를 시작하는 단계", "골이 있는 단색 실리콘 건조 매트", "물방울과 포함이 확인된 세척 부품만 사용", "도구 헤드는 전경, 손잡이는 후경으로 향하는 긴 사선에 둔다"], cameras.use),
   }),
-  "men-tops": plan({
-    portrait: ["자연광이 드는 침실 옷장 앞", "외출복을 고르는 아침", "무광 목재 옷장과 행거", "옷걸이 하나만 사용하고 다른 의류는 흐릿한 배경으로 제한", "의류 전체 실루엣이 세로로 보이게 건다"],
-    wide: ["현관의 낮은 벤치와 코트 훅", "외출 직전 스타일링", "짙은 목재 벤치", "확인되지 않은 액세서리 없이 제품만 펼친다", "의류를 벤치와 훅 사이 가로 동선으로 배치한다"],
-    "detail-overview": ["정돈된 드레스룸 선반", "접어 보관한 상태", "밝은 리넨 선반", "포장이나 추가 의류 없이 제품 한 벌만 사용", "전체 형태와 접힘·두께를 30도 위에서 보여준다"],
-    "detail-use": ["여행 짐을 준비하는 침실", "캐리어에 넣기 직전", "중립색 침대 커버", "열린 빈 캐리어만 환경 소품으로 사용", "제품을 완전히 펼쳐 실제 길이와 형태를 유지한다"],
+  "men-tops": plan("men-tops", {
+    portrait: scene(["bedroom-wardrobe", "morning-outfit-choice", "matte-ash-wood", "single-hanger", "garment-full-height-center-right"], ["자연광이 드는 침실 옷장 앞", "외출복을 고르는 아침", "무광 애시우드 옷장 문", "옷걸이 하나만 사용하고 다른 의류는 두지 않는다", "의류 전체 실루엣을 중앙보다 오른쪽 세로축에 완전히 보이게 건다"], cameras.portrait),
+    wide: scene(["entryway-foyer", "pre-departure-styling", "dark-slate-bench", "single-clothes-brush", "garment-left-bench-empty-right"], ["침실과 분리된 현관 포이어", "문을 나서기 직전 최종 상태를 보는 순간", "짙은 슬레이트 상판 벤치", "단순한 옷솔 하나만 환경 소품으로 사용", "의류는 왼쪽에 길게 놓고 오른쪽 벤치는 비워 가로 실루엣을 만든다"], cameras.wide),
+    "detail-overview": scene(["laundry-folding-station", "afternoon-folding", "white-quartz-counter", "single-folding-board", "garment-center-folded-label-up"], ["세탁실의 독립 접이 작업대", "오후에 세탁·건조 후 접어 보관하기 직전", "밝은 흰색 쿼츠 상판", "무지 접이 보드 하나만 사용", "한 벌을 중앙에 접되 확인 가능한 라벨·두께와 전체 폭이 읽히게 한다"], cameras.overview),
+    "detail-use": scene(["guest-room-luggage-area", "evening-trip-pack", "neutral-wool-cover", "empty-open-suitcase", "garment-front-suitcase-back-left"], ["손님방의 여행 가방 정리 공간", "저녁에 다음 날 여행 짐을 꾸리기 직전", "중립색 울 침대 커버", "완전히 빈 열린 캐리어만 사용", "의류는 전경에 완전히 펼치고 캐리어는 왼쪽 후경으로 밀어 길이와 형태를 유지한다"], cameras.use),
   }),
-  "toys-games": plan({
-    portrait: ["햇빛이 드는 놀이방 책장 옆", "놀이를 시작하기 전", "밝은 코르크 놀이 매트", "연령을 특정하는 인물 없이 낮은 수납 바구니만 사용", "완성 상태를 세로로 높이감 있게 배치한다"],
-    wide: ["넓은 거실 바닥 놀이 공간", "구성품을 펼쳐 놀이 규칙을 확인하는 순간", "단색 패브릭 러그", "상품에 포함된 구성품만 사용", "구성품을 좌우 놀이 흐름으로 분리한다"],
-    "detail-overview": ["놀이방 수납 큐브 앞", "놀이 후 정리하기 직전", "무광 목재 선반", "포함된 수납함이 있을 때만 사용", "제품 전체와 실제 구성 수량을 30도 위에서 보여준다"],
-    "detail-use": ["낮은 어린이 활동 테이블", "제품의 대표 놀이를 진행하는 중간 상태", "밝은 단색 테이블", "사람·손 없이 포함된 부품만 사용", "놀이 결과와 남은 구성품을 서로 다른 깊이에 배치한다"],
+  "toys-games": plan("toys-games", {
+    portrait: scene(["child-bedroom-reading-nook", "morning-play-start", "light-cork-platform", "single-book-bin", "product-upper-right-parts-low-left"], ["햇빛이 드는 어린이 방의 독서 벽감", "아침 놀이를 시작하기 직전", "밝은 코르크 단차 플랫폼", "인물 없이 낮은 책 수납함 하나만 둔다", "완성 제품은 오른쪽 위, 확인된 부품은 왼쪽 낮은 전경에 분리한다"], cameras.portrait),
+    wide: scene(["living-room-floor", "afternoon-rule-layout", "solid-wool-rug", "included-parts-only", "parts-left-result-right"], ["가구를 치운 넓은 거실 바닥", "오후에 놀이 규칙과 구성품을 펼쳐 보는 순간", "단색 짙은 울 러그", "상품에 실제 포함된 구성품만 사용", "남은 구성품은 왼쪽, 놀이 결과는 오른쪽으로 나눠 긴 흐름을 만든다"], cameras.wide),
+    "detail-overview": scene(["hall-storage-closet", "evening-cleanup", "matte-birch-shelf", "verified-storage-box", "product-rear-box-front-open"], ["놀이방 밖 복도의 수납장", "저녁 놀이 후 정리하기 직전", "무광 자작나무 선반", "포함이 확인된 수납함이 있을 때만 사용", "제품 전체를 뒤쪽에 두고 앞쪽 수납 관계와 실제 수량을 위에서 읽게 한다"], cameras.overview),
+    "detail-use": scene(["covered-balcony-activity-table", "weekend-active-play", "mint-powder-coated-table", "included-active-pieces", "result-front-pieces-back-right"], ["비를 피할 수 있는 발코니의 낮은 활동 테이블", "주말 낮 대표 놀이가 진행되는 중간 상태", "민트색 분체도장 금속 테이블", "사람·손 없이 포함된 작동 부품만 사용", "놀이 결과는 왼쪽 전경, 남은 부품은 오른쪽 후경에 분리한다"], cameras.use),
   }),
-  "food-supplement": plan({
-    portrait: ["아침 햇빛의 주방 선반", "하루 섭취 준비 전", "밝은 원목 선반", "맑은 물 한 잔만 사용", "패키지를 세우고 물잔은 낮은 전경에 둔다"],
-    wide: ["정돈된 업무용 책상", "외출 또는 업무 중 섭취를 준비하는 낮", "무광 회색 책상", "물병과 빈 메모장만 환경 소품으로 사용", "제품과 물을 좌우로 분리한다"],
-    "detail-overview": ["주방의 건조 식품 보관장", "라벨과 보관 상태를 확인하는 순간", "크림색 수납 선반", "다른 의약품·보충제 없이 보관함 하나만 배경에 둔다", "패키지 전체와 뚜껑·라벨을 30도 위에서 보여준다"],
-    "detail-use": ["식사 후의 다이닝 테이블", "확인된 섭취법에 따른 섭취 직전", "짙은 나무 테이블", "물 한 잔과 확인된 1회 섭취분만 사용", "제품과 1회분이 중복 수량으로 오해되지 않게 분리한다"],
+  "food-supplement": plan("food-supplement", {
+    portrait: scene(["kitchen-breakfast-shelf", "sunrise-daily-portion", "pale-bamboo", "single-water-glass", "package-upper-left-water-lower-right"], ["아침 햇빛이 드는 주방의 작은 식사 선반", "하루 섭취분을 준비하기 전", "밝은 대나무 집성 선반", "맑은 물 한 잔만 사용", "패키지는 왼쪽 위에 세우고 물잔은 오른쪽 낮은 전경에 둔다"], cameras.portrait),
+    wide: scene(["office-focus-desk", "midday-work-break", "charcoal-felt-desk", "water-bottle-blank-note", "product-left-water-right"], ["주방과 떨어진 조용한 업무용 책상", "낮 업무 중 섭취 시간을 확인하는 순간", "차콜색 펠트 데스크 매트", "물병과 아무 글자 없는 메모 카드만 사용", "제품은 왼쪽, 물은 오른쪽 끝에 두어 넓게 분리한다"], cameras.wide),
+    "detail-overview": scene(["gym-locker-shelf", "late-afternoon-storage", "perforated-steel-shelf", "single-zip-pouch", "package-back-center-lid-visible"], ["사람이 없는 체육관 개인 사물함", "늦은 오후 보관 상태를 확인하는 순간", "구멍이 난 회색 철제 선반", "닫힌 단색 지퍼 파우치 하나만 배경에 둔다", "패키지를 뒤 중앙에 두고 뚜껑·라벨과 선반 깊이를 함께 보여준다"], cameras.overview),
+    "detail-use": scene(["dining-sideboard", "evening-post-meal", "dark-green-marble", "verified-serving-water", "serving-front-package-rear-right"], ["식탁 옆 독립 다이닝 사이드보드", "저녁 식사 후 확인된 섭취법에 따라 먹기 직전", "짙은 녹색 대리석 상판", "물 한 잔과 확인된 1회 섭취분만 사용", "1회분은 왼쪽 전경, 제품은 오른쪽 후경에 두어 추가 수량으로 오해되지 않게 한다"], cameras.use),
   }),
 };
 
-const generalPlan = plan({
-  portrait: ["상품 용도에 맞는 실제 생활 공간의 창가", "사용을 준비하는 낮 시간", "상품과 대비되는 자연 소재 표면", "상품 기능을 설명하는 최소한의 환경 소품 하나만 사용", "상품 전체를 세로 방향의 공간 깊이 속에 배치한다"],
-  wide: ["첫 장면과 다른 방 또는 야외의 실제 사용 장소", "사용 과정의 직전 또는 중간 순간", "첫 장면과 재질이 다른 넓은 작업 표면", "첫 장면과 겹치지 않는 기능성 소품 하나만 사용", "상품과 사용 영역을 좌우로 분리해 가로 동선을 만든다"],
-  "detail-overview": ["상품이 실제로 보관되는 수납 공간", "보관 위치에서 꺼낸 순간", "앞 장면들과 다른 무광 선반", "다른 판매 상품 없이 보관 맥락만 설명하는 소품 하나를 둔다", "상품 전체와 수납 관계를 30도 위에서 보여준다"],
-  "detail-use": ["상품의 핵심 기능이 실제로 수행되는 장소", "사용 중 가장 이해하기 쉬운 순간", "앞 세 장면과 색·재질이 겹치지 않는 표면", "상품 사실로 뒷받침되는 사용 대상만 두고 장식 소품은 배제", "기능 결과는 전경, 상품은 다른 깊이에 두어 사용법을 설명한다"],
+const generalPlan = plan("general-commerce", {
+  portrait: scene(["entryway-console", "morning-ready-to-use", "natural-rattan", "single-function-cue", "product-upper-right-cue-lower-left"], ["상품 크기와 용도에 맞춘 현관 콘솔 주변", "아침에 처음 사용하려는 직전", "상품과 대비되는 천연 라탄 표면", "기능을 설명하는 검증 가능한 환경 소품 하나만 사용", "상품은 오른쪽 위, 기능 단서는 왼쪽 낮은 전경에 둔다"], cameras.portrait),
+  wide: scene(["home-office-workbench", "midday-task-setup", "blue-rubber-worktop", "different-function-cue", "product-left-task-zone-right"], ["첫 장면과 분리된 홈오피스 작업대", "한낮 실제 작업을 준비하는 순간", "파란 무광 고무 작업 상판", "첫 장면과 겹치지 않는 기능성 소품 하나만 사용", "상품은 왼쪽 끝, 실제 작업 영역은 오른쪽에 길게 둔다"], cameras.wide),
+  "detail-overview": scene(["utility-closet", "afternoon-storage", "white-wire-shelf", "single-storage-divider", "product-rear-center-empty-front"], ["상품이 실제로 보관되는 독립 유틸리티 수납장", "오후에 보관 위치에서 꺼내기 직전", "흰색 철망 선반", "다른 판매 상품 없이 수납 칸막이 하나만 둔다", "상품은 뒤 중앙에 두고 앞 선반을 비워 전체 크기와 보관 관계를 보여준다"], cameras.overview),
+  "detail-use": scene(["covered-balcony-table", "evening-core-use", "dark-composite-slab", "verified-use-target", "result-front-product-back-right"], ["앞 세 장소와 겹치지 않는 지붕 있는 발코니 작업 테이블", "저녁에 핵심 기능이 가장 분명하게 수행되는 순간", "짙은 복합소재 슬래브 표면", "상품 사실로 뒷받침되는 사용 대상만 두고 장식 소품은 배제", "기능 결과는 왼쪽 전경, 상품은 오른쪽 후경에 두어 사용법을 설명한다"], cameras.use),
 });
 
 export function buildProductSettingShotPlan(categoryId: string, productText: string): ProductSettingShotPlan {
@@ -128,5 +177,6 @@ export function buildProductSettingShotPlan(categoryId: string, productText: str
 }
 
 export function formatProductSettingShot(setting: ProductSettingShot) {
-  return `${setting.label} · 장소=${setting.location} · 순간=${setting.moment} · 표면=${setting.surface} · 허용 소품=${setting.supportingObjects} · 배치=${setting.staging}`;
+  const separation = settingShotDimensions.map((dimension) => setting.separation[dimension]).join("/");
+  return `${setting.label} · 장소=${setting.location} · 시간대·순간=${setting.moment} · 표면=${setting.surface} · 허용 소품=${setting.supportingObjects} · 상품 위치=${setting.staging} · 카메라=${setting.camera} · 장면 분리키=${separation}`;
 }
