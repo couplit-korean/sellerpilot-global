@@ -72,6 +72,32 @@ test("Qoo10 lineage verification requires one exact account-scoped item code", a
   assert.doesNotMatch(JSON.stringify(result), /private title|secret-key/);
 });
 
+test("Qoo10 lineage verification preserves an empty legacy market snapshot", async () => {
+  const result = await executeProviderListingLineageVerification({
+    channel: "qoo10",
+    payload: { api_key: "secret-key" },
+    environment: "production",
+    arguments: {
+      expectedRemoteId: "1234567890",
+      market: "",
+      targetId: "",
+    },
+  }, dependencies({
+    qoo10Request: async ({ params }) => {
+      assert.equal(params.ItemCode, "1234567890");
+      return remote({
+        ResultCode: 0,
+        ResultObject: { ItemCode: "1234567890" },
+      });
+    },
+  }));
+
+  assert.equal(result.verificationStatus, "verified");
+  assert.equal(result.evidence.market, "");
+  assert.equal(result.evidence.targetId, "");
+  assert.equal(result.evidence.verifiedRemoteId, "1234567890");
+});
+
 test("Qoo10 lineage verification rejects mixed or mismatched item identities", async () => {
   await assert.rejects(
     executeProviderListingLineageVerification({
@@ -464,5 +490,5 @@ test("the worker routes lineage verification through the read-only normalized ve
   assert.match(branch, /onCredentialRefresh: rememberCredentialRefresh/);
   assert.doesNotMatch(branch, /markExternalWriteStarted|externalWriteStarted\s*=\s*true/);
   assert.match(worker, /retryableLineageReadback[\s\S]*LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR/);
-  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.21"/);
+  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.22"/);
 });

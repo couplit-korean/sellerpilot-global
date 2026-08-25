@@ -101,7 +101,14 @@ function optionalIdentifier(source: Record<string, unknown>, key: string, maxLen
 
 function parseArguments(channel: ProviderListingLineageChannel, source: Record<string, unknown>) {
   const expectedRemoteId = requiredIdentifier(source, "expectedRemoteId");
-  const market = requiredIdentifier(source, "market", 40);
+  // The legacy Qoo10 ledger predates market normalization and can contain an
+  // empty market. Qoo10's account-scoped item lookup does not use a market or
+  // target parameter, so preserve that exact empty snapshot for the DB
+  // attestation instead of inventing "JP". Every other provider still
+  // requires an explicit market identity.
+  const market = channel === "qoo10"
+    ? optionalIdentifier(source, "market", 40)
+    : requiredIdentifier(source, "market", 40);
   // Legacy Qoo10/eBay listings can legitimately have no channel target. Keep
   // the exact ledger snapshot (including an empty string) in the evidence;
   // Shopee is the only verifier that requires targetId as its account identity.
@@ -118,7 +125,7 @@ function parseArguments(channel: ProviderListingLineageChannel, source: Record<s
   if (channel === "ebay" && !/^(?:EBAY_)?[A-Z0-9_]+$/.test(market.toUpperCase())) {
     throw new Error("LISTING_LINEAGE_ARGUMENT_INVALID:ebayMarket");
   }
-  if (channel === "qoo10" && market.toUpperCase() !== "JP") {
+  if (channel === "qoo10" && market && market.toUpperCase() !== "JP") {
     throw new Error("LISTING_LINEAGE_ARGUMENT_INVALID:qoo10Market");
   }
 

@@ -123,7 +123,7 @@ test("continuous transient failures stop inside the configured grace window", as
 test("worker uses lifecycle retry for heartbeat and both completion endpoints", async () => {
   const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.21"/);
+  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.22"/);
   assert.match(source, /if \(jobId\) await touchJob\(jobId, claimToken\)/);
   assert.match(source, /graceMs: AI_HEARTBEAT_TRANSIENT_GRACE_MS/);
   assert.match(source, /terminalStatuses: \[401, 404, 409\]/);
