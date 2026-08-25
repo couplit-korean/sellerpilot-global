@@ -156,13 +156,19 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
   const candidateText = `${candidate.title} ${candidate.mallName}`;
   const normalizedCandidate = normalizedSearchText(candidateText);
   const compactCandidate = compactSearchText(candidateText);
+  const candidateMeasurements = measurementTokens(candidate.title);
+  const queryMeasurements = queries.map(measurementTokens);
+  const primaryMeasurements = queryMeasurements[0] ?? [];
+  if (primaryMeasurements.length > 0 && !primaryMeasurements.every((measurement) => (
+    candidateMeasurements.some((candidateMeasurement) => sameMeasurement(measurement, candidateMeasurement))
+  ))) return 0;
   let best = 0;
 
-  for (const query of queries) {
+  for (let index = 0; index < queries.length; index += 1) {
+    const query = queries[index];
     const identifiers = identifierTokens(query);
     if (identifiers.length && !identifiers.some((identifier) => compactCandidate.includes(identifier))) continue;
-    const measurements = measurementTokens(query);
-    const candidateMeasurements = measurementTokens(candidate.title);
+    const measurements = queryMeasurements[index] ?? [];
     if (measurements.length && !measurements.every((measurement) => candidateMeasurements.some((candidateMeasurement) => sameMeasurement(measurement, candidateMeasurement)))) continue;
     const tokens = meaningfulSearchTokens(query);
     if (!tokens.length) continue;

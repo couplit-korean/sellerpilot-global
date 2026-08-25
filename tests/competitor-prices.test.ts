@@ -66,7 +66,11 @@ test("competitor relevance requires the requested package size and enough identi
 });
 
 test("competitor relevance requires every requested measurement while accepting equivalent pack counters", () => {
-  const queries = ["사조 살코기플러스 참치 95g x 8개"];
+  const queries = [
+    "사조 살코기플러스 참치 95g x 8개",
+    "Sajo lean tuna 95g",
+    "Sajo lean tuna 3.35oz (95g) 8 pack",
+  ];
   const sameProduct = candidate({ title: "사조참치 살코기 플러스 95g x 8캔" });
   const sameProductWithBareMultiplier = candidate({ title: "사조참치 살코기 플러스 95g × 8" });
   const wrongPack = candidate({ title: "사조 살코기 플러스 참치 95g x 40개", mallName: "8개마켓" });
@@ -143,7 +147,7 @@ test("11st variant search adds a pack-neutral retrieval query without relaxing s
       configured: [{ id: "elevenst_product_search", marketplaces: ["elevenst"], search: async () => candidates }],
       unavailable: [],
     };
-    const result = await searchCompetitorProviders(registry, "사조 살코기플러스 참치 95g x 8개", []);
+    const result = await searchCompetitorProviders(registry, "사조 살코기플러스 참치 95g x 8개", ["Sajo lean tuna 95g"]);
     assert.deepEqual(result.items.map((item) => item.externalId), ["same-8"]);
     assert.equal(result.providers[0]?.count, 1);
   } finally {
