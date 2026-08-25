@@ -133,14 +133,14 @@ type ConfirmationRequest =
   | { kind: "qoo10-stop"; listing: Listing }
   | { kind: "qoo10-cleanup"; remoteId: string };
 
-function normalizeManualFields(context: PublishContext): ManualFields {
+export function normalizeManualFields(context: PublishContext): ManualFields {
   const value = context.manualFields ?? {} as ManualFields;
   return {
     productName: value.productName || context.product.name,
     description: value.description || context.product.description,
     sellerSku: value.sellerSku || context.product.sku,
     categoryHint: value.categoryHint || context.product.name,
-    brandName: value.brandName || "No Brand",
+    brandName: value.brandName?.trim() ?? "",
     manufacturer: value.manufacturer || "",
     countryOfOrigin: value.countryOfOrigin || "",
     material: value.material || "",
@@ -182,7 +182,7 @@ function englishEbayMaterial(value: string) {
   return translations[normalized] ?? normalized;
 }
 
-function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number) {
+export function buildChannelArguments(channel: ActiveChannelKey, context: PublishContext, price: number, quantity: number, target: ChannelTarget | undefined, packageFields: PackageFields, globalBaseUsdPrice: number) {
   const channelPrice = marketplaceListingPrice(channel, price, { globalBaseUsdPrice, targetCurrency: target?.currency });
   const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
   const existingListing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
@@ -377,15 +377,13 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     };
   }
   if (channel === "elevenst") {
-    const providedAttributes = assignment?.providedAttributes ?? {};
-    const verificationOnly = (manual.sellerSku || product.sku).startsWith("QA-");
-    const notificationType = providedAttributes.notificationType || (verificationOnly ? "891045" : "");
-    const providedNoticeItems = Object.entries(providedAttributes)
-      .filter(([key, value]) => key.startsWith("notification:") && value.trim().length > 0)
-      .map(([key, value]) => ({ code: key.slice("notification:".length), name: value }));
-    const notificationItems = providedNoticeItems.length ? providedNoticeItems : verificationOnly ? [
+    // This exact non-regulated contract has a successful create/readback for
+    // the official cable-organizer leaf. Other categories remain intentionally
+    // incomplete until their own category metadata is verified.
+    const verifiedCableOrganizerContract = assignment?.categoryId === "1341821";
+    const notificationItems = verifiedCableOrganizerContract ? [
       { code: "11800", name: title.slice(0, 100) },
-      { code: "11905", name: manual.manufacturer || manual.brandName },
+      { code: "11905", name: manual.manufacturer },
       { code: "23760413", name: "11번가 판매자 문의 이용" },
       { code: "23759100", name: manual.countryOfOrigin },
       { code: "23756033", name: "해당사항 없음" },
@@ -393,13 +391,12 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
     const saleDateRange = elevenstSaleDateRange();
     return {
       sellerpilotAssets,
-      verificationOnly,
       product: {
         selMthdCd: "01",
         dispCtgrNo: assignment?.categoryId ?? "",
         prdTypCd: "01",
         prdNm: title.slice(0, 100),
-        brand: manual.brandName || "알수없음",
+        brand: manual.brandName.trim(),
         rmaterialTypCd: "04",
         orgnTypCd: "03",
         orgnNmVal: manual.countryOfOrigin,
@@ -413,8 +410,8 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         prdImage03: galleryImageUrls[2] ?? "",
         prdImage04: galleryImageUrls[3] ?? "",
         htmlDetail: richDescription,
-        ProductCertGroup: verificationOnly ? [
-          // This non-regulated QA product has no certificate. Sending a made-up
+        ProductCertGroup: verifiedCableOrganizerContract ? [
+          // This verified non-regulated category has no certificate. Sending a made-up
           // certTypeCd makes 11st validate it as a real certificate and reject it.
           { crtfGrpTypCd: "01", crtfGrpObjClfCd: "03" },
           { crtfGrpTypCd: "02", crtfGrpObjClfCd: "03" },
@@ -434,7 +431,7 @@ function buildChannelArguments(channel: ActiveChannelKey, context: PublishContex
         exchDlvCst: "0",
         asDetail: "11번가 판매자 문의를 이용해 주세요.",
         rtngExchDetail: "11번가 반품·교환 정책을 확인해 주세요.",
-        ProductNotification: { type: notificationType, item: notificationItems },
+        ProductNotification: { type: verifiedCableOrganizerContract ? "891045" : "", item: notificationItems },
       },
     };
   }
