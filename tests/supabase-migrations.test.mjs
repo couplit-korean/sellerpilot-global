@@ -226,6 +226,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260825104900_resource_bound_gateway_writes.sql",
       "20260825105000_external_mutation_delivery_fences.sql",
       "20260825105100_harden_kakao_oauth_and_test_delivery.sql",
+      "20260825105200_durable_competitor_price_refresh.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -301,6 +302,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_claim_lazada_reply(uuid,uuid,text)",
       "public.sellerpilot_service_begin_lazada_reply(uuid,text)",
       "public.sellerpilot_service_complete_lazada_reply(uuid,text,text,text,text)",
+      "public.sellerpilot_service_claim_due_competitor_products(integer,integer)",
+      "public.sellerpilot_service_complete_competitor_price_refresh(uuid,uuid,jsonb)",
+      "public.sellerpilot_service_release_competitor_price_refresh(uuid,uuid)",
+      "public.sellerpilot_enqueue_competitor_search_job(uuid,text,jsonb,integer,uuid,uuid)",
     ];
     for (const signature of serviceOnlyFunctions) {
       assert.equal(
@@ -1719,6 +1724,284 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       "select id from public.sellerpilot_list_credentials() where channel = 'elevenst' and status = 'active' limit 1",
     );
+    await setClaims(db, "service_role");
+    await db.query(
+      "update sellerpilot_private.products set competitor_checked_at = null where id = $1",
+      [aiProductId],
+    );
+    const firstCompetitorClaims = await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    );
+    assert.equal(firstCompetitorClaims.rows.length, 1);
+    assert.equal(firstCompetitorClaims.rows[0].product_id, aiProductId);
+    assert.match(firstCompetitorClaims.rows[0].claim_token, /^[0-9a-f-]{36}$/i);
+    const competitorClaimToken = firstCompetitorClaims.rows[0].claim_token;
+    assert.equal(
+      (await db.query("select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)")).rows.length,
+      0,
+    );
+
+    const competitorGatewayJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 570g', '[\"Kellogg Choco Chex 570g\"]'::jsonb, 30, $2, $3)",
+      [elevenstCredentialId, aiProductId, competitorClaimToken],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 570g', '[\"Kellogg Choco Chex 570g\"]'::jsonb, 30, $2, $3)",
+        [elevenstCredentialId, aiProductId, competitorClaimToken],
+      ),
+      competitorGatewayJobId,
+    );
+    const linkedCompetitorGateway = (await db.query(
+      "select gateway_job_id, gateway_periodic_key from sellerpilot_private.competitor_price_refresh_claims where product_id = $1",
+      [aiProductId],
+    )).rows[0];
+    assert.equal(linkedCompetitorGateway.gateway_job_id, competitorGatewayJobId);
+    assert.match(linkedCompetitorGateway.gateway_periodic_key, /^competitor:v1:[0-9a-f]{64}$/);
+    await assert.rejects(
+      db.query(
+        "update sellerpilot_private.competitor_price_refresh_claims set gateway_periodic_key = null where product_id = $1",
+        [aiProductId],
+      ),
+      /competitor_price_refresh_claims_gateway_check/,
+    );
+    await assert.rejects(
+      db.query(
+        "update sellerpilot_private.competitor_price_refresh_claims set gateway_periodic_key = 'malformed-key' where product_id = $1",
+        [aiProductId],
+      ),
+      /competitor_price_refresh_claims_gateway_check/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where credential_id = $1 and operation = 'competitor.search' and request_payload->>'periodicKey' is not null",
+        [elevenstCredentialId],
+      ),
+      1,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded',
+              response_payload = '{"ok":true,"channel":"elevenst","operation":"competitor.search","items":[]}'::jsonb,
+              completed_at = now(),
+              updated_at = now()
+        where id = $1`,
+      [competitorGatewayJobId],
+    );
+    await db.query(
+      "update sellerpilot_private.competitor_price_refresh_claims set claimed_at = now() - interval '91 seconds', lease_expires_at = now() - interval '1 second' where product_id = $1",
+      [aiProductId],
+    );
+    const resumedCompetitorClaim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    )).rows[0];
+    assert.equal(resumedCompetitorClaim.product_id, aiProductId);
+    assert.notEqual(resumedCompetitorClaim.claim_token, competitorClaimToken);
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 570g', '[\"Kellogg Choco Chex 570g\"]'::jsonb, 30, $2, $3)",
+        [elevenstCredentialId, aiProductId, competitorClaimToken],
+      ),
+      /active competitor refresh claim required/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 570g', '[\"Kellogg Choco Chex 570g\"]'::jsonb, 30, $2, $3)",
+        [elevenstCredentialId, aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      competitorGatewayJobId,
+    );
+    const differentCompetitorJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 570g 1+1', '[\"Kellogg Choco Chex 570g twin pack\"]'::jsonb, 30)",
+      [elevenstCredentialId],
+    );
+    assert.notEqual(differentCompetitorJobId, competitorGatewayJobId);
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [differentCompetitorJobId],
+    );
+    const staleCompetitorJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 오래된 응답 검증', '[]'::jsonb, 30)",
+      [elevenstCredentialId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded',
+              response_payload = '{"ok":true,"channel":"elevenst","operation":"competitor.search","items":[]}'::jsonb,
+              completed_at = now() - interval '31 minutes',
+              updated_at = now()
+        where id = $1`,
+      [staleCompetitorJobId],
+    );
+    const afterStaleCompetitorJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 오래된 응답 검증', '[]'::jsonb, 30)",
+      [elevenstCredentialId],
+    );
+    assert.notEqual(afterStaleCompetitorJobId, staleCompetitorJobId);
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded',
+              response_payload = '{"ok":true,"channel":"elevenst","operation":"competitor.search"}'::jsonb,
+              completed_at = now(),
+              updated_at = now()
+        where id = $1`,
+      [afterStaleCompetitorJobId],
+    );
+    const afterMalformedCompetitorJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 오래된 응답 검증', '[]'::jsonb, 30)",
+      [elevenstCredentialId],
+    );
+    assert.notEqual(afterMalformedCompetitorJobId, afterStaleCompetitorJobId);
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [afterMalformedCompetitorJobId],
+    );
+
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2,
+          '[{"provider":"elevenst_product_search","externalId":"durable-competitor-1","title":"첵스초코 570g","url":"https://www.11st.co.kr/products/123","imageUrl":"","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW"}]'::jsonb
+        )`,
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.competitor_price_refresh_claims where product_id = $1 and claim_token is not null", [aiProductId]),
+      0,
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select gateway_job_id, gateway_periodic_key from sellerpilot_private.competitor_price_refresh_claims where product_id = $1",
+        [aiProductId],
+      )).rows[0],
+      { gateway_job_id: null, gateway_periodic_key: null },
+    );
+    assert.equal(
+      await scalar(db, "select last_attempted_at is not null from sellerpilot_private.competitor_price_refresh_claims where product_id = $1", [aiProductId]),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select competitor_checked_at is not null from sellerpilot_private.products where id = $1", [aiProductId]),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb)",
+        [aiProductId, competitorClaimToken],
+      ),
+      -1,
+    );
+
+    await db.query("update sellerpilot_private.products set competitor_checked_at = null where id = $1", [aiProductId]);
+    const retentionCompetitorClaim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    )).rows[0];
+    const retentionGatewayJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 보존 정리', '[]'::jsonb, 30, $2, $3)",
+      [elevenstCredentialId, aiProductId, retentionCompetitorClaim.claim_token],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded',
+              response_payload = '{"ok":true,"channel":"elevenst","operation":"competitor.search","items":[]}'::jsonb,
+              completed_at = now() - interval '31 days',
+              updated_at = now() - interval '31 days'
+        where id = $1`,
+      [retentionGatewayJobId],
+    );
+    await db.query("delete from sellerpilot_private.channel_gateway_jobs where id = $1", [retentionGatewayJobId]);
+    const retainedRefreshLink = (await db.query(
+      "select gateway_job_id, gateway_periodic_key from sellerpilot_private.competitor_price_refresh_claims where product_id = $1",
+      [aiProductId],
+    )).rows[0];
+    assert.equal(retainedRefreshLink.gateway_job_id, null);
+    assert.match(retainedRefreshLink.gateway_periodic_key, /^competitor:v1:[0-9a-f]{64}$/);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_release_competitor_price_refresh($1, $2)",
+        [aiProductId, retentionCompetitorClaim.claim_token],
+      ),
+      true,
+    );
+
+    await db.query("update sellerpilot_private.products set competitor_checked_at = null where id = $1", [aiProductId]);
+    const fairnessProductId = await scalar(
+      db,
+      `insert into sellerpilot_private.products (
+         owner_id, external_code, sku, name, description, status, on_hand, reserved,
+         reorder_point, cost_krw, demo, competitor_monitor_enabled, competitor_checked_at
+       ) values (
+         $1, 'COMPETITOR-FAIRNESS-001', 'COMPETITOR-FAIRNESS-001', '경쟁가 공정성 테스트 상품',
+         '실패한 첫 상품 뒤의 다음 상품도 선택되는지 검증합니다.', 'draft', 1, 0, 0, 1,
+         false, true, null
+       ) returning id`,
+      [ADMIN_ID],
+    );
+    const fairCompetitorClaim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    )).rows[0];
+    assert.equal(fairCompetitorClaim.product_id, fairnessProductId);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_release_competitor_price_refresh($1, $2)",
+        [fairnessProductId, fairCompetitorClaim.claim_token],
+      ),
+      true,
+    );
+    await db.query("delete from sellerpilot_private.products where id = $1", [fairnessProductId]);
+
+    const expiringCompetitorClaim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 30)",
+    )).rows[0];
+    await db.query(
+      "update sellerpilot_private.competitor_price_refresh_claims set claimed_at = now() - interval '31 seconds', lease_expires_at = now() - interval '1 second' where product_id = $1",
+      [aiProductId],
+    );
+    const reclaimedCompetitorClaim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    )).rows[0];
+    assert.equal(reclaimedCompetitorClaim.product_id, aiProductId);
+    assert.notEqual(reclaimedCompetitorClaim.claim_token, expiringCompetitorClaim.claim_token);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb)",
+        [aiProductId, expiringCompetitorClaim.claim_token],
+      ),
+      -1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_release_competitor_price_refresh($1, $2)",
+        [aiProductId, expiringCompetitorClaim.claim_token],
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_release_competitor_price_refresh($1, $2)",
+        [aiProductId, reclaimedCompetitorClaim.claim_token],
+      ),
+      true,
+    );
+    await setClaims(db);
     const elevenstPreparedListingId = await scalar(
       db,
       "select public.sellerpilot_prepare_product_market_listing($1, 'elevenst', 'listing.create', '', '', 'KRW', 5000)",

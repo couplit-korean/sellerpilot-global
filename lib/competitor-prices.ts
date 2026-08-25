@@ -18,7 +18,7 @@ export type CompetitorPriceCandidate = {
 
 export type CompetitorProviderStatus = {
   provider: CompetitorSearchProvider;
-  status: "searched" | "unavailable" | "failed";
+  status: "searched" | "unavailable" | "failed" | "pending";
   count: number;
   marketplaces: CompetitorMarketplace[];
 };
@@ -28,10 +28,11 @@ type CredentialSecret = Record<string, unknown>;
 type NaverSearchCredentials = { clientId: string; clientSecret: string };
 type ElevenstSearchCredentials = { apiKey: string; credentialId?: string };
 type EbayBrowseCredentials = { clientId: string; clientSecret: string; marketplaceId: string; environment: "production" | "sandbox" };
+export type CompetitorRefreshContext = { productId: string; claimToken: string };
 type SearchProvider = {
   id: CompetitorSearchProvider;
   marketplaces: CompetitorMarketplace[];
-  search: (primary: string, aliases: string[], displayPerQuery: number) => Promise<CompetitorPriceCandidate[]>;
+  search: (primary: string, aliases: string[], displayPerQuery: number, context?: CompetitorRefreshContext) => Promise<CompetitorPriceCandidate[]>;
 };
 
 export type CompetitorProviderRegistry = {
@@ -46,7 +47,11 @@ export type CompetitorProviderRegistryOptions = {
     primary: string;
     aliases: string[];
     displayPerQuery: number;
+    productId?: string;
+    claimToken?: string;
+    timeoutMs?: number;
   }) => Promise<CompetitorPriceCandidate[]>;
+  elevenstTimeoutMs?: number;
 };
 
 const providerMarketplaces: Record<CompetitorSearchProvider, CompetitorMarketplace[]> = {
@@ -350,8 +355,17 @@ export async function competitorProviderRegistry(
   if (elevenst) configured.push({
     id: "elevenst_product_search",
     marketplaces: providerMarketplaces.elevenst_product_search,
-    search: (primary, aliases, display) => elevenst.credentialId
-      ? options.searchElevenstViaGateway({ serviceClient, credentialId: elevenst.credentialId, primary, aliases, displayPerQuery: display })
+    search: (primary, aliases, display, context) => elevenst.credentialId
+      ? options.searchElevenstViaGateway({
+          serviceClient,
+          credentialId: elevenst.credentialId,
+          primary,
+          aliases,
+          displayPerQuery: display,
+          productId: context?.productId,
+          claimToken: context?.claimToken,
+          timeoutMs: options.elevenstTimeoutMs,
+        })
       : searchElevenstProductVariants(primary, aliases, elevenst, display),
   });
   else unavailable.push({ provider: "elevenst_product_search", status: "unavailable", count: 0, marketplaces: providerMarketplaces.elevenst_product_search });
@@ -378,10 +392,34 @@ function marketplaceIdentity(item: CompetitorPriceCandidate) {
   }
 }
 
-export async function searchCompetitorProviders(registry: CompetitorProviderRegistry, primary: string, aliases: string[], displayPerQuery = 30) {
+async function withProviderTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("COMPETITOR_PROVIDER_TIMEOUT")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+export async function searchCompetitorProviders(
+  registry: CompetitorProviderRegistry,
+  primary: string,
+  aliases: string[],
+  displayPerQuery = 30,
+  providerTimeoutMs = 0,
+  context?: CompetitorRefreshContext,
+) {
   const queries = normalizedCompetitorQueries(primary, aliases);
+  const effectivePrimary = queries[0] ?? primary.replace(/\p{Cc}/gu, " ").trim().slice(0, 160);
+  const effectiveAliases = queries.slice(1);
   const settled = await Promise.allSettled(registry.configured.map(async (provider) => {
-    const items = await provider.search(primary, aliases, displayPerQuery);
+    const items = await withProviderTimeout(provider.search(effectivePrimary, effectiveAliases, displayPerQuery, context), providerTimeoutMs);
     const ranked = items
       .map((item) => ({ item, score: competitorCandidateRelevance(item, queries) }))
       .filter(({ score }) => score > 0)
@@ -398,7 +436,11 @@ export async function searchCompetitorProviders(registry: CompetitorProviderRegi
       providers.push({ provider: provider.id, status: "searched", count: result.value.items.length, marketplaces: provider.marketplaces });
       candidates.push(...result.value.items);
     } else {
-      providers.push({ provider: provider.id, status: "failed", count: 0, marketplaces: provider.marketplaces });
+      const pending = result.reason instanceof Error && (
+        result.reason.name === "ChannelGatewayInProgressError"
+        || result.reason.message === "COMPETITOR_PROVIDER_TIMEOUT"
+      );
+      providers.push({ provider: provider.id, status: pending ? "pending" : "failed", count: 0, marketplaces: provider.marketplaces });
     }
   }
   const unique = new Map<string, CompetitorPriceCandidate>();
@@ -412,6 +454,7 @@ export async function searchCompetitorProviders(registry: CompetitorProviderRegi
     items: groupCompetitorPrices([...unique.values()]),
     providers: providers.sort((left, right) => order.indexOf(left.provider) - order.indexOf(right.provider)),
     available: providers.some((provider) => provider.status === "searched"),
+    pending: providers.some((provider) => provider.status === "pending"),
     configured: registry.configured.length > 0,
   };
 }

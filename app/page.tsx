@@ -102,6 +102,7 @@ import {
 import { formatCompactWon } from "./_dashboard/format-compact-won";
 import { RevenueCalendar } from "./_dashboard/revenue-calendar";
 import { SalesRangeControl } from "./_dashboard/sales-range-control";
+import { pollCompetitorResearch } from "./_publishing/competitor-research-polling";
 import { csChannelVerification, csReplyDraftValue, csReplySavePlan, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
 import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
 import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
@@ -778,9 +779,9 @@ function detailFieldValue(value: unknown) {
 }
 
 type CompetitorDisplayItem = { id: string; marketplace?: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string };
-type CompetitorProviderDisplayStatus = { provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse"; status: "searched" | "unavailable" | "failed"; count: number };
+type CompetitorProviderDisplayStatus = { provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse"; status: "searched" | "unavailable" | "failed" | "pending"; count: number };
 
-function CompetitorPriceSlots({ items, providers = [], state = "ready", compact = false }: { items: CompetitorDisplayItem[]; providers?: CompetitorProviderDisplayStatus[]; state?: "loading" | "ready" | "unavailable"; compact?: boolean }) {
+function CompetitorPriceSlots({ items, providers = [], state = "ready", compact = false }: { items: CompetitorDisplayItem[]; providers?: CompetitorProviderDisplayStatus[]; state?: "loading" | "ready" | "pending" | "unavailable"; compact?: boolean }) {
   const marketplaceOrder: string[] = [...activeChannelKeys];
   const marketplaceLabels: Record<string, string> = Object.fromEntries(Object.entries(channels).map(([key, channel]) => [key, channel.name]));
   const providerLabels: Record<CompetitorProviderDisplayStatus["provider"], string> = { naver_shopping: "네이버 쇼핑 검색", elevenst_product_search: "11번가 상품검색", ebay_browse: "eBay Browse" };
@@ -790,7 +791,8 @@ function CompetitorPriceSlots({ items, providers = [], state = "ready", compact 
   if (otherItems.length) groups.push({ marketplace: "other", items: otherItems });
   return <div className={`competitor-market-groups ${compact ? "compact" : ""}`}>
     {state === "loading" && <div className="competitor-loading"><LoaderCircle className="spin" size={17} />동일 상품 가격을 채널별로 찾고 있습니다.</div>}
-    {providers.length > 0 && <div className="competitor-provider-summary" aria-label="가격 검색 공급자 상태">{providers.map((provider) => <span className={provider.status} key={provider.provider}><b>{providerLabels[provider.provider]}</b>{provider.status === "searched" ? `조회 완료 · 일치 ${provider.count}건` : provider.status === "failed" ? "응답 실패" : "미연결"}</span>)}</div>}
+    {state === "pending" && <div className="competitor-loading pending"><Clock3 size={17} />공식 채널 조회가 계속 진행 중입니다. 확인된 결과부터 표시합니다.</div>}
+    {providers.length > 0 && <div className="competitor-provider-summary" aria-label="가격 검색 공급자 상태">{providers.map((provider) => <span className={provider.status} key={provider.provider}><b>{providerLabels[provider.provider]}</b>{provider.status === "searched" ? `조회 완료 · 일치 ${provider.count}건` : provider.status === "pending" ? "조회 진행 중" : provider.status === "failed" ? "응답 실패" : "미연결"}</span>)}</div>}
     {groups.map((group) => <section key={group.marketplace}><header><b>{marketplaceLabels[group.marketplace] ?? group.marketplace}</b><small>최대 3개</small></header><div className="competitor-price-grid">{Array.from({ length: 3 }, (_, index) => {
       const item = group.items[index];
       return item ? <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><span>{item.imageUrl ? <Image src={item.imageUrl} alt="" fill sizes="80px" unoptimized /> : <Package size={18} />}</span><div><small>{item.mallName || marketplaceLabels[group.marketplace] || "판매처"}</small><b>{item.title}</b><strong>{new Intl.NumberFormat("ko-KR", { style: "currency", currency: item.currency || "KRW", maximumFractionDigits: 0 }).format(item.price)}</strong></div><ExternalLink size={14} /></a>
@@ -1350,6 +1352,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const photoObjectUrlsRef = useRef(new Set<string>());
   const publishingMountedRef = useRef(true);
   const extraPhotoBatchRef = useRef(false);
+  const competitorResearchControllerRef = useRef<AbortController | null>(null);
   const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
   const [uploadError, setUploadError] = useState("");
@@ -1357,7 +1360,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [researchResult, setResearchResult] = useState<ProductResearchResult | null>(null);
   const [researchCompetitors, setResearchCompetitors] = useState<Array<{ id: string; marketplace: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string }>>([]);
   const [competitorProviders, setCompetitorProviders] = useState<CompetitorProviderDisplayStatus[]>([]);
-  const [competitorResearchState, setCompetitorResearchState] = useState<"idle" | "loading" | "ready" | "unavailable">("idle");
+  const [competitorResearchState, setCompetitorResearchState] = useState<"idle" | "loading" | "ready" | "pending" | "unavailable">("idle");
   const [firstDraftGenerated, setFirstDraftGenerated] = useState(false);
   const [queuedJobId, setQueuedJobId] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
@@ -1384,6 +1387,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const objectUrls = photoObjectUrlsRef.current;
     return () => {
       publishingMountedRef.current = false;
+      competitorResearchControllerRef.current?.abort();
       for (const url of objectUrls) URL.revokeObjectURL(url);
       objectUrls.clear();
     };
@@ -1511,6 +1515,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (!researchingProduct) notify("상품 판매페이지 링크, 모델명 또는 설명을 입력해 주세요.");
       return;
     }
+    competitorResearchControllerRef.current?.abort();
+    competitorResearchControllerRef.current = null;
+    setResearchCompetitors([]);
+    setCompetitorProviders([]);
+    setCompetitorResearchState("idle");
     setResearchingProduct(true);
     setUploadError("");
     try {
@@ -1560,19 +1569,28 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       const competitorQuery = suggestion.productName || intake.productName || researchInput;
       const competitorParams = new URLSearchParams({ query: competitorQuery.slice(0, 500) });
       for (const searchQuery of result.searchQueries) competitorParams.append("alias", searchQuery.query.slice(0, 160));
-      void authenticatedFetch(`/api/admin/competitor-prices?${competitorParams.toString()}`)
-        .then(async (competitorResponse) => {
-          const competitorPayload = await competitorResponse.json().catch(() => ({})) as { items?: typeof researchCompetitors; providers?: CompetitorProviderDisplayStatus[] };
-          setCompetitorProviders(Array.isArray(competitorPayload.providers) ? competitorPayload.providers : []);
-          if (!competitorResponse.ok) {
-            setResearchCompetitors([]);
-            setCompetitorResearchState("unavailable");
-            return;
-          }
-          setResearchCompetitors(Array.isArray(competitorPayload.items) ? competitorPayload.items : []);
-          setCompetitorResearchState("ready");
-        })
-        .catch(() => { setResearchCompetitors([]); setCompetitorProviders([]); setCompetitorResearchState("unavailable"); });
+      const competitorController = new AbortController();
+      competitorResearchControllerRef.current = competitorController;
+      void pollCompetitorResearch<(typeof researchCompetitors)[number], CompetitorProviderDisplayStatus>({
+        fetcher: authenticatedFetch,
+        input: `/api/admin/competitor-prices?${competitorParams.toString()}`,
+        signal: competitorController.signal,
+        maxAttempts: 3,
+        delayMs: 1_500,
+        onSnapshot: (snapshot) => {
+          if (!publishingMountedRef.current || competitorController.signal.aborted) return;
+          setResearchCompetitors(snapshot.items);
+          setCompetitorProviders(snapshot.providers);
+          setCompetitorResearchState(snapshot.state);
+        },
+      }).catch((error) => {
+        if (competitorController.signal.aborted || !publishingMountedRef.current || (error instanceof Error && error.name === "AbortError")) return;
+        setResearchCompetitors([]);
+        setCompetitorProviders([]);
+        setCompetitorResearchState("unavailable");
+      }).finally(() => {
+        if (competitorResearchControllerRef.current === competitorController) competitorResearchControllerRef.current = null;
+      });
       setFirstDraftGenerated(true);
       setManualErrors({});
       notify("1차 자동생성 초안을 만들었습니다. ‘확인 필요’ 값과 가격·재고·포장 규격을 검토한 뒤 사실 확인 체크를 완료해 주세요.");

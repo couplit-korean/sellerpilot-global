@@ -56,15 +56,25 @@ test("periodic channel sync preserves idempotent partial results and surfaces da
   assert.match(source, /status: databaseWideFailure \? 503 : infrastructureFailures > 0 \? 207 : 200/);
 });
 
-test("competitor scheduler distinguishes provider failures from database infrastructure failures", async () => {
+test("competitor scheduler bounds one durable claim and preserves pending gateway work", async () => {
   const source = await readFile(routeUrls.competitorPrices, "utf8");
   assertBoundedSupabaseAndSeparatedAuth(source);
 
-  assert.match(source, /sellerpilot_service_due_competitor_products/);
+  assert.match(source, /const COMPETITOR_RPC_TIMEOUT_MS = 5_000/);
+  assert.match(source, /const COMPETITOR_CLAIM_BATCH_SIZE = 1/);
+  assert.match(source, /const COMPETITOR_PROVIDER_BUDGET_MS = 32_000/);
+  assert.match(source, /sellerpilot_service_claim_due_competitor_products/);
+  assert.match(source, /p_limit: COMPETITOR_CLAIM_BATCH_SIZE/);
+  assert.doesNotMatch(source, /p_limit:\s*(?:[2-9]|[1-9][0-9]+)/);
+  assert.match(source, /sellerpilot_service_complete_competitor_price_refresh/);
+  assert.match(source, /sellerpilot_service_release_competitor_price_refresh/);
+  assert.doesNotMatch(source, /sellerpilot_service_due_competitor_products/);
+  assert.doesNotMatch(source, /sellerpilot_service_record_competitor_prices/);
   assert.match(source, /competitor due-products RPC failed[\s\S]{0,240}status: 503/);
   assert.match(source, /if \(!Array\.isArray\(dueData\)\)[\s\S]{0,260}status: 503/);
   assert.match(source, /saveError \|\| !Number\.isFinite\(savedCount\) \|\| savedCount < 0/);
-  assert.match(source, /status: infrastructureFailures > 0 \? 503 : results\.some\(\(item\) => !item\.ok\) \? 207 : 200/);
+  assert.match(source, /if \(searched\.pending\)[\s\S]{0,260}pending: true/);
+  assert.match(source, /status: infrastructureFailures > 0 \? 503 : pending \? 202 : results\.some\(\(item\) => !item\.ok\) \? 207 : 200/);
 });
 
 test("Kakao scheduler owns each delivery through a non-repeating send and reconciliation lifecycle", async () => {

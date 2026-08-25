@@ -107,6 +107,7 @@ let stopping = false;
 const workerVersion = "sellerpilot-cli-worker/1.18";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
+let periodicCompetitorRequest = null;
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
 let temuEgressCache = { checkedAt: 0, currentIp: "" };
 let idlePollMs = pollMs;
@@ -180,7 +181,7 @@ async function assertTemuEgressAllowed() {
   if (!decision.ok) throw new Error(`${decision.code}: ${decision.message}`);
 }
 
-async function api(path, init = {}) {
+async function api(path, init = {}, timeoutMs = 30_000) {
   return fetch(`${sellerpilotUrl}${path}`, {
     ...init,
     headers: {
@@ -188,7 +189,27 @@ async function api(path, init = {}) {
       "content-type": "application/json",
       ...(init.headers ?? {}),
     },
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+}
+
+function startPeriodicCompetitorRefresh() {
+  if (periodicCompetitorRequest) return;
+  periodicCompetitorRequest = api(
+    "/api/internal/competitor-prices",
+    { method: "POST" },
+    58_000,
+  ).then((response) => {
+    if (!response.ok && response.status !== 207) {
+      if (response.status === 401) {
+        workerAuthBackoffUntil = Math.max(workerAuthBackoffUntil, Date.now() + workerClaimBackoffMs(401));
+      }
+      console.error(`경쟁가 자동 조회 실패 · HTTP ${response.status}`);
+    }
+  }).catch((error) => {
+    console.error(error instanceof Error ? error.message : "경쟁가 자동 조회 실패");
+  }).finally(() => {
+    periodicCompetitorRequest = null;
   });
 }
 
@@ -2132,13 +2153,11 @@ do {
           markWorkerBusy();
           console.log(`[자동 동기화] ${syncResult.queued}개 채널 조회 작업 예약`);
         }
-        const [competitorResponse, kakaoResponse] = await Promise.all([
-          api("/api/internal/competitor-prices", { method: "POST" }),
-          api("/api/internal/kakao-notifications", { method: "POST" }),
-        ]);
-        if (!competitorResponse.ok && competitorResponse.status !== 207) {
-          console.error(`경쟁가 자동 조회 실패 · HTTP ${competitorResponse.status}`);
-        }
+        // Do not wait here: the competitor route can enqueue an 11st read that
+        // this same process must claim. Single-flight background execution lets
+        // the gateway loop receive that job without creating a circular wait.
+        startPeriodicCompetitorRefresh();
+        const kakaoResponse = await api("/api/internal/kakao-notifications", { method: "POST" });
         if (!kakaoResponse.ok && kakaoResponse.status !== 207) {
           console.error(`카카오 알림 자동 발송 실패 · HTTP ${kakaoResponse.status}`);
         }
@@ -2242,4 +2261,5 @@ do {
 
 if (activeGatewayJobs.size) await Promise.allSettled([...activeGatewayJobs]);
 if (activeAiJobs.size) await Promise.allSettled([...activeAiJobs]);
+if (periodicCompetitorRequest) await Promise.allSettled([periodicCompetitorRequest]);
 console.log("SellerPilot ChatGPT CLI worker 종료");

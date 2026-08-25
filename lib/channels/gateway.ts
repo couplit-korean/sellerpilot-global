@@ -222,14 +222,17 @@ export async function executeCompetitorSearchViaChannelGateway(input: {
   primary: string;
   aliases: string[];
   displayPerQuery: number;
+  productId?: string;
+  claimToken?: string;
   timeoutMs?: number;
 }) {
-  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_competitor_search_job", {
     p_credential_id: input.credentialId,
-    p_attempt_id: null,
-    p_channel: "elevenst",
-    p_operation: "competitor.search",
-    p_request_payload: { primary: input.primary, aliases: input.aliases, displayPerQuery: input.displayPerQuery },
+    p_primary: input.primary,
+    p_aliases: input.aliases,
+    p_display_per_query: input.displayPerQuery,
+    p_product_id: input.productId ?? null,
+    p_claim_token: input.claimToken ?? null,
   });
   if (enqueueError || typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
   const response = await waitForGatewayJob(input.serviceClient, jobId, input.timeoutMs ?? 45_000);

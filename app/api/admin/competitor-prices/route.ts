@@ -5,13 +5,17 @@ import { executeCompetitorSearchViaChannelGateway } from "../../../../lib/channe
 import { competitorProviderRegistry, searchCompetitorProviders } from "../../../../lib/competitor-prices";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+const COMPETITOR_ELEVENST_WAIT_MS = 20_000;
+const COMPETITOR_PROVIDER_BUDGET_MS = 32_000;
+const COMPETITOR_RPC_TIMEOUT_MS = 5_000;
 
 const querySchema = z.string().trim().min(2).max(500);
 const aliasesSchema = z.array(z.string().trim().min(2).max(160)).max(12);
 
 export async function GET(request: Request) {
-  const admin = await authenticateAdminRequest(request);
+  const admin = await authenticateAdminRequest(request, { timeoutMs: COMPETITOR_RPC_TIMEOUT_MS });
   if (isAdminApiError(admin)) return admin;
   const requestUrl = new URL(request.url);
   const query = querySchema.safeParse(requestUrl.searchParams.get("query") ?? "");
@@ -20,9 +24,10 @@ export async function GET(request: Request) {
   if (!aliases.success) return NextResponse.json({ message: "다국어 검색어 형식을 확인해 주세요." }, { status: 400 });
   try {
     const registry = await competitorProviderRegistry(admin.serviceClient, {
+      elevenstTimeoutMs: COMPETITOR_ELEVENST_WAIT_MS,
       searchElevenstViaGateway: executeCompetitorSearchViaChannelGateway,
     });
-    const result = await searchCompetitorProviders(registry, query.data, aliases.data, 30);
+    const result = await searchCompetitorProviders(registry, query.data, aliases.data, 30, COMPETITOR_PROVIDER_BUDGET_MS);
     const items = result.items.map((item) => ({
       id: item.externalId,
       provider: item.provider,
@@ -36,14 +41,16 @@ export async function GET(request: Request) {
     }));
     if (!result.available) {
       return NextResponse.json({
-        message: result.configured
+        message: result.pending
+          ? "연결된 공식 가격 검색 공급자의 조회가 진행 중입니다."
+          : result.configured
           ? "연결된 공식 가격 검색 공급자가 응답하지 않았습니다."
           : "공식 가격 검색 공급자가 연결되지 않았습니다.",
         query: query.data,
         aliases: aliases.data,
         items,
         providers: result.providers,
-      }, { status: result.configured ? 502 : 503, headers: { "cache-control": "no-store, max-age=0" } });
+      }, { status: result.pending ? 202 : result.configured ? 502 : 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
     return NextResponse.json({ query: query.data, aliases: aliases.data, items, providers: result.providers }, { headers: { "cache-control": "no-store, max-age=0" } });
   } catch {

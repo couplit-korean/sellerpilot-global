@@ -35,6 +35,28 @@ test("competitor queries keep distinct multilingual product names and discard du
   ]), ["첵스초코 570g", "Kellogg's Choco Chex 570g", "ケロッグ チョコチェックス 570g"]);
 });
 
+test("provider calls receive the same bounded query contract as the gateway enqueue RPC", async () => {
+  let receivedPrimary = "";
+  let receivedContext: unknown;
+  const registry: CompetitorProviderRegistry = {
+    configured: [{
+      id: "elevenst_product_search",
+      marketplaces: ["elevenst"],
+      search: async (primary, _aliases, _display, context) => {
+        receivedPrimary = primary;
+        receivedContext = context;
+        return [];
+      },
+    }],
+    unavailable: [],
+  };
+
+  const context = { productId: "019d2a88-ec56-7ce7-933a-2f9cdfa0501f", claimToken: "019d2a88-ec56-7ce7-933a-2f9cdfa05020" };
+  await searchCompetitorProviders(registry, `첵스초코 ${"긴상품명".repeat(100)}`, [], 30, 0, context);
+  assert.equal(receivedPrimary.length, 160);
+  assert.deepEqual(receivedContext, context);
+});
+
 test("competitor relevance requires the requested package size and enough identity tokens", () => {
   const queries = ["켈로그 첵스초코 570g", "Kellogg's Choco Chex 570g"];
   assert.ok(competitorCandidateRelevance(candidate(), queries) > 0);
@@ -137,6 +159,61 @@ test("provider registry keeps missing providers explicit and deduplicates the sa
     { provider: "elevenst_product_search", status: "searched", count: 1 },
     { provider: "ebay_browse", status: "unavailable", count: 0 },
   ]);
+});
+
+test("an unfinished local gateway search remains pending instead of being treated as a completed empty search", async () => {
+  const pendingError = new Error("CHANNEL_GATEWAY_TIMEOUT");
+  pendingError.name = "ChannelGatewayInProgressError";
+  const registry: CompetitorProviderRegistry = {
+    configured: [{
+      id: "elevenst_product_search",
+      marketplaces: ["elevenst"],
+      search: async () => { throw pendingError; },
+    }],
+    unavailable: [],
+  };
+
+  const result = await searchCompetitorProviders(registry, "첵스초코 570g", [], 30, 50);
+  assert.equal(result.available, false);
+  assert.equal(result.pending, true);
+  assert.deepEqual(result.providers, [{
+    provider: "elevenst_product_search",
+    status: "pending",
+    count: 0,
+    marketplaces: ["elevenst"],
+  }]);
+});
+
+test("the scheduler budget expiring around an 11st gateway poll also remains resumable", async () => {
+  const registry: CompetitorProviderRegistry = {
+    configured: [{
+      id: "elevenst_product_search",
+      marketplaces: ["elevenst"],
+      search: async () => await new Promise<never>(() => undefined),
+    }],
+    unavailable: [],
+  };
+
+  const result = await searchCompetitorProviders(registry, "첵스초코 570g", [], 30, 5);
+  assert.equal(result.available, false);
+  assert.equal(result.pending, true);
+  assert.equal(result.providers[0]?.status, "pending");
+});
+
+test("a direct provider crossing the shared budget cannot be silently dropped from a completed refresh", async () => {
+  const registry: CompetitorProviderRegistry = {
+    configured: [{
+      id: "ebay_browse",
+      marketplaces: ["ebay"],
+      search: async () => await new Promise<never>(() => undefined),
+    }],
+    unavailable: [],
+  };
+
+  const result = await searchCompetitorProviders(registry, "Kellogg Choco Chex 570g", [], 30, 5);
+  assert.equal(result.available, false);
+  assert.equal(result.pending, true);
+  assert.equal(result.providers[0]?.status, "pending");
 });
 
 test("multilingual Naver searches merge duplicate products and keep up to three per marketplace", async () => {

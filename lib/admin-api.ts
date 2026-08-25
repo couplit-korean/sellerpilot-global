@@ -8,7 +8,17 @@ export type AdminApiContext = {
   serviceClient: SupabaseClient;
 };
 
-export async function authenticateAdminRequest(request: Request): Promise<AdminApiContext | NextResponse> {
+type AdminApiOptions = { timeoutMs?: number };
+
+function boundedAdminFetch(timeoutMs: number) {
+  return (input: RequestInfo | URL, init?: RequestInit) => {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal = init?.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
+    return fetch(input, { ...init, signal });
+  };
+}
+
+export async function authenticateAdminRequest(request: Request, options: AdminApiOptions = {}): Promise<AdminApiContext | NextResponse> {
   const authorization = request.headers.get("authorization") ?? "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
@@ -19,7 +29,10 @@ export async function authenticateAdminRequest(request: Request): Promise<AdminA
   }
 
   const userClient = createClient(supabaseUrl, supabasePublishableKey, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
+    global: {
+      headers: { Authorization: `Bearer ${token}` },
+      ...(options.timeoutMs ? { fetch: boundedAdminFetch(options.timeoutMs) } : {}),
+    },
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const [{ data: userData, error: userError }, { data: isAdmin, error: adminError }] = await Promise.all([
@@ -32,6 +45,7 @@ export async function authenticateAdminRequest(request: Request): Promise<AdminA
 
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    ...(options.timeoutMs ? { global: { fetch: boundedAdminFetch(options.timeoutMs) } } : {}),
   });
   return { user: userData.user, userClient, serviceClient };
 }
