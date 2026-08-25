@@ -6,6 +6,7 @@ import {
   normalizedCompetitorQueries,
   searchCompetitorProviders,
   searchEbayBrowseVariants,
+  searchElevenstProductVariants,
   searchElevenstProducts,
   searchNaverShoppingVariants,
   type CompetitorPriceCandidate,
@@ -64,6 +65,17 @@ test("competitor relevance requires the requested package size and enough identi
   assert.equal(competitorCandidateRelevance(candidate({ title: "초코 시리얼 570g" }), queries), 0);
 });
 
+test("competitor relevance requires every requested measurement while accepting equivalent pack counters", () => {
+  const queries = ["사조 살코기플러스 참치 95g x 8개"];
+  const sameProduct = candidate({ title: "사조참치 살코기 플러스 95g x 8캔" });
+  const sameProductWithBareMultiplier = candidate({ title: "사조참치 살코기 플러스 95g × 8" });
+  const wrongPack = candidate({ title: "사조 살코기 플러스 참치 95g x 40개", mallName: "8개마켓" });
+
+  assert.ok(competitorCandidateRelevance(sameProduct, queries) > 0);
+  assert.ok(competitorCandidateRelevance(sameProductWithBareMultiplier, queries) > 0);
+  assert.equal(competitorCandidateRelevance(wrongPack, queries), 0);
+});
+
 test("11st official ProductSearch parses only catalog fields and uses English search mode for an English alias", async () => {
   const originalFetch = globalThis.fetch;
   let calledUrl = "";
@@ -74,7 +86,7 @@ test("11st official ProductSearch parses only catalog fields and uses English se
         <ProductCode>123456789</ProductCode><ProductName><![CDATA[Kellogg's Choco Chex 570g]]></ProductName>
         <ProductPrice>9900</ProductPrice><SalePrice>7900</SalePrice>
         <ProductImage>https://image.11st.co.kr/example.jpg</ProductImage><Seller>official-store</Seller>
-        <DetailPageUrl>https://www.11st.co.kr/products/123456789</DetailPageUrl>
+        <DetailPageUrl>http://www.11st.co.kr/products/123456789</DetailPageUrl>
       </Product></Products></ProductSearchResponse>`, { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } });
   };
   try {
@@ -92,6 +104,77 @@ test("11st official ProductSearch parses only catalog fields and uses English se
       mallName: "official-store",
     })]);
     assert.equal(JSON.stringify(items).includes("A".repeat(32)), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st variant search adds a pack-neutral retrieval query without relaxing same-product filtering", async () => {
+  const originalFetch = globalThis.fetch;
+  const searches: string[] = [];
+  globalThis.fetch = async (input) => {
+    const query = new URL(String(input)).searchParams.get("keyword") ?? "";
+    searches.push(query);
+    const products = query === "사조 살코기플러스 참치 95g"
+      ? `<Product><ProductCode>same-8</ProductCode><ProductName><![CDATA[사조참치 살코기 플러스 95g x 8캔]]></ProductName><SalePrice>15990</SalePrice><DetailPageUrl>https://www.11st.co.kr/products/800</DetailPageUrl></Product>
+         <Product><ProductCode>wrong-40</ProductCode><ProductName><![CDATA[사조 살코기 플러스 참치 95g x 40개]]></ProductName><SalePrice>83000</SalePrice><DetailPageUrl>https://www.11st.co.kr/products/4000</DetailPageUrl></Product>`
+      : "";
+    return new Response(`<ProductSearchResponse><Products>${products}</Products></ProductSearchResponse>`, {
+      status: 200,
+      headers: { "content-type": "text/xml; charset=utf-8" },
+    });
+  };
+
+  try {
+    const candidates = await searchElevenstProductVariants(
+      "사조 살코기플러스 참치 95g x 8개",
+      ["Sajo lean tuna 95g 8 pack"],
+      { apiKey: "A".repeat(32) },
+      30,
+    );
+    assert.deepEqual(searches, [
+      "사조 살코기플러스 참치 95g x 8개",
+      "Sajo lean tuna 95g 8 pack",
+      "사조 살코기플러스 참치 95g",
+      "Sajo lean tuna 95g",
+    ]);
+
+    const registry: CompetitorProviderRegistry = {
+      configured: [{ id: "elevenst_product_search", marketplaces: ["elevenst"], search: async () => candidates }],
+      unavailable: [],
+    };
+    const result = await searchCompetitorProviders(registry, "사조 살코기플러스 참치 95g x 8개", []);
+    assert.deepEqual(result.items.map((item) => item.externalId), ["same-8"]);
+    assert.equal(result.providers[0]?.count, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st variant search reserves room for pack-neutral queries when AI supplies the maximum aliases", async () => {
+  const originalFetch = globalThis.fetch;
+  const searches: string[] = [];
+  globalThis.fetch = async (input) => {
+    searches.push(new URL(String(input)).searchParams.get("keyword") ?? "");
+    return new Response("<ProductSearchResponse><Products /></ProductSearchResponse>", {
+      status: 200,
+      headers: { "content-type": "text/xml; charset=utf-8" },
+    });
+  };
+
+  try {
+    await searchElevenstProductVariants(
+      "사조 살코기플러스 참치 95g x 8개",
+      Array.from({ length: 11 }, (_, index) => `Sajo tuna 95g ${index + 9} pack`),
+      { apiKey: "A".repeat(32) },
+      30,
+    );
+    assert.ok(searches.length > 8 && searches.length <= 12);
+    assert.deepEqual(searches.slice(0, 8), [
+      "사조 살코기플러스 참치 95g x 8개",
+      ...Array.from({ length: 7 }, (_, index) => `Sajo tuna 95g ${index + 9} pack`),
+    ]);
+    assert.ok(searches.includes("사조 살코기플러스 참치 95g"));
   } finally {
     globalThis.fetch = originalFetch;
   }

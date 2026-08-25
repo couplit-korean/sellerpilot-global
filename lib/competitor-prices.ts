@@ -96,8 +96,56 @@ function meaningfulSearchTokens(value: string) {
   return [...new Set(normalizedSearchText(value).split(" ").filter((token) => token.length >= 2 && !ignored.has(token)))];
 }
 
+type SearchMeasurement = {
+  kind: "mass" | "volume" | "length" | "count" | "ounce" | "pound";
+  value: number;
+};
+
+const COUNT_UNIT_PATTERN = "개입|세트|pieces?|bottles?|packs?|cans?|pcs?|bags?|개|입|팩|캔|병|봉|매|정|ea";
+
 function measurementTokens(value: string) {
-  return [...compactSearchText(value).matchAll(/\d+(?:\.\d+)?(?:kg|mg|g|ml|l|cm|mm|m|oz|lb|개입|개|팩|매|정)/gu)].map((match) => match[0]);
+  const compact = compactSearchText(value);
+  const multiplicative = value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, "");
+  const measurements: SearchMeasurement[] = [];
+  const pattern = new RegExp(`(\\d+(?:\\.\\d+)?)(kg|mg|ml|cm|mm|oz|lb|${COUNT_UNIT_PATTERN}|g|l|m)`, "giu");
+  for (const match of compact.matchAll(pattern)) {
+    const amount = Number(match[1]);
+    const unit = (match[2] ?? "").toLocaleLowerCase();
+    if (!Number.isFinite(amount) || amount < 0) continue;
+    if (unit === "kg") measurements.push({ kind: "mass", value: amount * 1_000_000 });
+    else if (unit === "g") measurements.push({ kind: "mass", value: amount * 1_000 });
+    else if (unit === "mg") measurements.push({ kind: "mass", value: amount });
+    else if (unit === "l") measurements.push({ kind: "volume", value: amount * 1_000 });
+    else if (unit === "ml") measurements.push({ kind: "volume", value: amount });
+    else if (unit === "m") measurements.push({ kind: "length", value: amount * 1_000 });
+    else if (unit === "cm") measurements.push({ kind: "length", value: amount * 10 });
+    else if (unit === "mm") measurements.push({ kind: "length", value: amount });
+    else if (unit === "oz") measurements.push({ kind: "ounce", value: amount });
+    else if (unit === "lb") measurements.push({ kind: "pound", value: amount });
+    else measurements.push({ kind: "count", value: amount });
+  }
+  for (const match of multiplicative.matchAll(/\d+(?:\.\d+)?(?:kg|mg|g|ml|l|oz|lb)[x×*](\d+(?:\.\d+)?)(?![\p{L}\p{N}])/giu)) {
+    const amount = Number(match[1]);
+    if (Number.isFinite(amount) && amount >= 0) measurements.push({ kind: "count", value: amount });
+  }
+  return measurements;
+}
+
+function sameMeasurement(left: SearchMeasurement, right: SearchMeasurement) {
+  return left.kind === right.kind && Math.abs(left.value - right.value) <= Math.max(0.000_001, Math.abs(left.value) * 0.000_001);
+}
+
+function packNeutralSearchQuery(value: string) {
+  const countSuffix = new RegExp(`(?:\\s*(?:x|×|\\*)\\s*)?\\d+(?:\\.\\d+)?\\s*(?:${COUNT_UNIT_PATTERN})(?=$|[\\s,;/()])`, "giu");
+  const neutral = value.replace(countSuffix, " ").replace(/\s+/g, " ").trim();
+  if (neutral === value.trim() || measurementTokens(neutral).every((measurement) => measurement.kind === "count")) return "";
+  return neutral;
+}
+
+function elevenstRetrievalQueries(primary: string, aliases: string[]) {
+  const base = normalizedCompetitorQueries(primary, aliases);
+  const neutral = base.map(packNeutralSearchQuery).filter(Boolean);
+  return normalizedCompetitorQueries(base[0] ?? primary, [...base.slice(1), ...neutral], 12);
 }
 
 function identifierTokens(value: string) {
@@ -114,7 +162,8 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
     const identifiers = identifierTokens(query);
     if (identifiers.length && !identifiers.some((identifier) => compactCandidate.includes(identifier))) continue;
     const measurements = measurementTokens(query);
-    if (measurements.length && !measurements.some((measurement) => compactCandidate.includes(measurement))) continue;
+    const candidateMeasurements = measurementTokens(candidate.title);
+    if (measurements.length && !measurements.every((measurement) => candidateMeasurements.some((candidateMeasurement) => sameMeasurement(measurement, candidateMeasurement)))) continue;
     const tokens = meaningfulSearchTokens(query);
     if (!tokens.length) continue;
     const matched = tokens.filter((token) => normalizedCandidate.includes(token) || compactCandidate.includes(token.replaceAll(" ", "")));
@@ -275,15 +324,17 @@ export async function searchElevenstProducts(query: string, credentials: Elevens
     const externalId = elevenstXmlValue(product, "ProductCode").slice(0, 500);
     const title = elevenstXmlValue(product, "ProductName").slice(0, 1000);
     const price = Number(elevenstXmlValue(product, "SalePrice") || elevenstXmlValue(product, "ProductPrice") || "0");
-    const detailUrl = validHttpUrl(elevenstXmlValue(product, "DetailPageUrl"), /(^|\.)11st\.co\.kr$/i)
-      || (/^\d+$/.test(externalId) ? `https://www.11st.co.kr/products/${externalId}` : "");
+    const rawDetailUrl = validHttpUrl(elevenstXmlValue(product, "DetailPageUrl"), /(^|\.)11st\.co\.kr$/i);
+    const detailUrl = rawDetailUrl
+      ? rawDetailUrl.replace(/^http:/i, "https:")
+      : (/^\d+$/.test(externalId) ? `https://www.11st.co.kr/products/${externalId}` : "");
     if (!externalId || !title || !detailUrl || !Number.isFinite(price) || price < 0) return [];
     return [{ provider: "elevenst_product_search" as const, externalId, title, url: detailUrl, imageUrl: validHttpUrl(elevenstXmlValue(product, "ProductImage")), mallName: elevenstXmlValue(product, "Seller").slice(0, 240) || "11번가", marketplace: "elevenst" as const, price, currency: "KRW" }];
   });
 }
 
 export async function searchElevenstProductVariants(primary: string, aliases: string[], credentials: ElevenstSearchCredentials, displayPerQuery = 30) {
-  const queries = normalizedCompetitorQueries(primary, aliases);
+  const queries = elevenstRetrievalQueries(primary, aliases);
   return successfulVariantSearches(queries, (query) => searchElevenstProducts(query, credentials, displayPerQuery), "ELEVENST_PRODUCT_SEARCH_FAILED");
 }
 

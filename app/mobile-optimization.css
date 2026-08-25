@@ -2125,6 +2125,58 @@
 /* 2026-08-24 mobile completion pass for the registration, pricing, edit,
    notification, category suggestion, and AI-detail surfaces changed today. */
 @media (max-width: 720px) {
+  .upload-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .upload-panel > *,
+  .product-research-panel,
+  .product-research-input,
+  .product-research-result,
+  .product-research-detail-grid,
+  .competitor-market-groups,
+  .competitor-market-groups > section {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .option-photo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .option-slot-wrap {
+    min-height: 0;
+    aspect-ratio: auto;
+  }
+
+  .option-photo-slot {
+    min-height: 124px;
+    aspect-ratio: 1;
+  }
+
+  .photo-source-actions.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .photo-source-actions.compact > label {
+    min-width: 0;
+    min-height: 44px;
+  }
+
+  .product-research-input textarea {
+    min-width: 0;
+  }
+
+  .product-research-input button {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .product-research-detail-grid dd,
+  .product-research-detail-grid dd small {
+    overflow-wrap: anywhere;
+  }
+
   .registration-activity-hero {
     gap: 18px;
     padding: 20px 16px;

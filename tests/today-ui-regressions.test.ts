@@ -333,6 +333,9 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
 test("390px registration, CS, preview, and notification surfaces keep their mobile contract", async () => {
   const mobileStyles = await readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8");
 
+  assert.match(mobileStyles, /\.upload-panel\s*\{[\s\S]{0,120}?grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(mobileStyles, /\.option-photo-grid\s*\{[\s\S]{0,120}?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(mobileStyles, /\.product-research-input button\s*\{[\s\S]{0,120}?width:\s*100%;[\s\S]{0,80}?max-width:\s*100%/);
   assert.match(mobileStyles, /\.registration-card-grid\s*\{[\s\S]{0,120}?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(mobileStyles, /\.registration-filter-strip button\s*\{[\s\S]{0,120}?min-height:\s*56px/);
   assert.match(mobileStyles, /\.pipeline-list > div\.interactive\s*\{[\s\S]{0,120}?min-height:\s*44px;[\s\S]{0,80}?touch-action:\s*manipulation/);

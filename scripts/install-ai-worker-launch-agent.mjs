@@ -311,6 +311,10 @@ async function install() {
   const tokenSetId = commandLineValue("--token-set");
   const rotateAll = process.argv.includes("--rotate-token");
   const rotatesOne = workerTokenScopes.some((definition) => process.argv.includes(definition.rotateFlag));
+  const runtimeOnly = process.argv.includes("--runtime-only");
+  if (runtimeOnly && (tokenSetId || rotateAll || rotatesOne)) {
+    throw new Error("런타임 전용 업그레이드와 토큰 교체 옵션은 함께 사용할 수 없습니다.");
+  }
   if ((rotateAll || rotatesOne) && !tokenSetId) {
     throw new Error("토큰 교체에는 웹에서 발급한 3개 범위의 --token-set ID가 필요합니다.");
   }
@@ -332,15 +336,17 @@ async function install() {
   let wasInstalled = false;
 
   try {
-    for (const definition of workerTokenScopes) {
-      const previousToken = keychainToken(definition.service);
-      const token = rotateAll || !previousToken.startsWith("spw_")
-        ? promptForToken(definition.label)
-        : previousToken;
-      if (!token.startsWith("spw_") || token.length < 24) {
-        throw new Error(`${definition.label}에 spw_로 시작하는 올바른 전용 토큰이 필요합니다.`);
+    if (!runtimeOnly) {
+      for (const definition of workerTokenScopes) {
+        const previousToken = keychainToken(definition.service);
+        const token = rotateAll || !previousToken.startsWith("spw_")
+          ? promptForToken(definition.label)
+          : previousToken;
+        if (!token.startsWith("spw_") || token.length < 24) {
+          throw new Error(`${definition.label}에 spw_로 시작하는 올바른 전용 토큰이 필요합니다.`);
+        }
+        tokenChanges.push({ ...definition, previousToken, token });
       }
-      tokenChanges.push({ ...definition, previousToken, token });
     }
     if (tokenSetId) proof = tokenSetProof(tokenSetId, tokenChanges);
 

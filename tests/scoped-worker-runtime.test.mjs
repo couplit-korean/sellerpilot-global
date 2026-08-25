@@ -59,6 +59,9 @@ test("macOS installer atomically activates the pending set only after staged lau
 
   assert.match(installer, /workerTokenScopes\.map\(\(definition\) => \(\{/);
   assert.match(installer, /tokenStatuses\.some\(\(token\) => !token\.present\)/);
+  assert.match(installer, /const runtimeOnly = process\.argv\.includes\("--runtime-only"\)/);
+  assert.match(installer, /if \(runtimeOnly && \(tokenSetId \|\| rotateAll \|\| rotatesOne\)\)/);
+  assert.match(installer, /if \(!runtimeOnly\) \{[\s\S]*?for \(const definition of workerTokenScopes\)/);
   assert.match(installer, /for \(const definition of workerTokenScopes\)/);
   assert.match(installer, /process\.argv\.includes\(definition\.rotateFlag\)/);
   assert.match(installer, /commandLineValue\("--token-set"\)/);
