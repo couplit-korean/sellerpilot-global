@@ -220,9 +220,10 @@ test("workbench advances retry generations but keeps queued and external-action 
 
   assert.match(workbench, /\["queued", "publishing"\]\.includes\(listing\.status\)/);
   assert.match(workbench, /listing\?\.failureClass === "external_action"/);
-  assert.match(workbench, /previousResult\?\.phase === "failed"[\s\S]*previousResult\.attemptId \?\? crypto\.randomUUID\(\)/);
-  assert.match(workbench, /listing\?\.operationAttemptId \?\? "initial"/);
-  assert.match(workbench, /idempotencyKey: `listing:\$\{productId\}:\$\{channel\}:\$\{await fingerprint\(mutationContract\)\}`/);
+  assert.match(workbench, /listingMutationGeneration\(listing, mutationGenerationRef\.current\.get\(mutationScope\)\)/);
+  assert.doesNotMatch(workbench, /retryGeneration[\s\S]{0,160}crypto\.randomUUID\(\)/);
+  assert.match(workbench, /idempotencyKey: `listing:\$\{requestedProductId\}:\$\{channel\}:\$\{await fingerprint\(mutationContract\)\}`/);
   assert.match(workbench, /mutationId: await remoteEditMutationId\(mutationContract\)/);
-  assert.match(workbench, /if \(!options\.deferRefresh\) \{[\s\S]*await load\(\);[\s\S]*onChanged\?\.\(\);/);
+  assert.match(workbench, /if \(!options\.deferRefresh && isCurrentProduct\(\)\) \{[\s\S]*await load\(\);[\s\S]*onChanged\?\.\(\);/);
+  assert.match(workbench, /createBoundedRequestSignal\([\s\S]*writeController\.signal[\s\S]*65_000/);
 });

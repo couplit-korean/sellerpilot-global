@@ -85,7 +85,7 @@ export async function POST(request: Request) {
   const staged = data && typeof data === "object" && !Array.isArray(data)
     ? data as Record<string, unknown>
     : null;
-  if (!staged || staged.status === "conflict" || staged.status === "invalid") {
+  if (!staged || staged.status === "conflict" || staged.status === "invalid" || staged.status === "identity_mismatch") {
     return NextResponse.json({ message: "실행 중인 채널 작업과 인증 갱신 요청이 일치하지 않습니다." }, { status: 409 });
   }
   const prepared = staged.status === "prepared"

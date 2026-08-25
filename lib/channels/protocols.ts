@@ -1,5 +1,16 @@
 import { createHash, createHmac } from "node:crypto";
 import { hashSync as bcryptHashSync } from "bcryptjs";
+import {
+  assertProviderAccountIdentity,
+  assertShopeeShopProfileTarget,
+  normalizeLazadaProviderAccountIdentity,
+  parseEbayTradingGetUserIdentity,
+  readProviderAccountIdentity,
+  shopeeProviderAccountIdentityFromPayload,
+  withLazadaProviderAccountIdentity,
+  withProviderAccountIdentity,
+  withoutProviderAccountIdentity,
+} from "./provider-account-identity";
 
 export type SecretPayload = Record<string, unknown>;
 
@@ -7,6 +18,7 @@ export type CredentialRefreshSnapshot = {
   payload: SecretPayload;
   expiresAt: string | null;
   oauthComplete?: boolean;
+  recoveryOnly?: boolean;
 };
 
 type CredentialRefreshHandler = (refresh: CredentialRefreshSnapshot) => void | Promise<void>;
@@ -370,7 +382,17 @@ async function ensureShopeeTargetAccessToken(
   requestedTargetId = "",
   onExternalMutationStart?: ExternalMutationStartHandler,
   onCredentialRefresh?: CredentialRefreshHandler,
+  requireProviderIdentity = false,
 ) {
+  const storedAccountIdentity = readProviderAccountIdentity(payload, "shopee");
+  const expectedAccountIdentity = shopeeProviderAccountIdentityFromPayload(payload);
+  if (storedAccountIdentity) {
+    assertProviderAccountIdentity(payload, expectedAccountIdentity);
+  }
+  const accountAttestationRequired = !storedAccountIdentity && requireProviderIdentity;
+  if (accountAttestationRequired && expectedAccountIdentity.subject.startsWith("shopee:main:")) {
+    throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISSING");
+  }
   const targets = shopeeStoredTargets(payload);
   const targetKey = targetType === "shop" ? "shop_id" : "merchant_id";
   const selectedTarget = requestedTargetId
@@ -379,20 +401,50 @@ async function ensureShopeeTargetAccessToken(
       ?? targets.find((target) => target.type === targetType);
   if (requestedTargetId && !selectedTarget) throw new Error(targetType === "shop" ? "SHOPEE_SHOP_NOT_AUTHORIZED" : "SHOPEE_MERCHANT_NOT_AUTHORIZED");
   const selectedPayload = selectedTarget ? projectShopeeTarget(payload, selectedTarget) : payload;
+  const selectedTargetId = textValue(selectedPayload, targetKey);
+  if ((storedAccountIdentity || requireProviderIdentity)
+      && expectedAccountIdentity.subject.startsWith("shopee:shop:")
+      && (targetType !== "shop"
+        || expectedAccountIdentity.subject !== `shopee:shop:${selectedTargetId}`)) {
+    throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISMATCH");
+  }
   const accessToken = textValue(selectedPayload, "access_token");
   const accessExpiresAt = Date.parse(textValue(selectedPayload, "access_token_expires_at"));
   if (accessToken && Number.isFinite(accessExpiresAt) && accessExpiresAt > Date.now() + bufferMs) {
+    if (accountAttestationRequired) {
+      const profile = await shopeeRequest({
+        payload: selectedPayload,
+        environment,
+        method: "GET",
+        path: "/api/v2/shop/get_shop_info",
+      });
+      if (!profile.response.ok || textValue(profile.data, "error")) {
+        throw new Error("SHOPEE_ACCOUNT_IDENTITY_VERIFICATION_FAILED");
+      }
+      assertShopeeShopProfileTarget(profile.data, selectedTargetId);
+      if (!onExternalMutationStart || !onCredentialRefresh) {
+        throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
+      }
+      const attestedPayload = withProviderAccountIdentity(selectedPayload, expectedAccountIdentity);
+      await onExternalMutationStart?.();
+      const credentialExpiresAt = textValue(payload, "authorization_expires_at") || null;
+      await onCredentialRefresh({ payload: attestedPayload, expiresAt: credentialExpiresAt });
+      return { payload: attestedPayload, refreshed: true as const, credentialExpiresAt };
+    }
     return { payload: selectedPayload, refreshed: false as const, credentialExpiresAt: textValue(payload, "authorization_expires_at") || null };
   }
   const partnerId = textValue(selectedPayload, "partner_id");
   const partnerKey = textValue(selectedPayload, "partner_key");
-  const targetId = textValue(selectedPayload, targetKey);
+  const targetId = selectedTargetId;
   const refreshToken = textValue(selectedPayload, "refresh_token");
   const refreshExpiresAt = Date.parse(textValue(selectedPayload, "refresh_token_expires_at"));
   const authorizationExpiresAt = Date.parse(textValue(payload, "authorization_expires_at"));
   if (!partnerId || !partnerKey || !targetId || !refreshToken) throw new Error("SHOPEE_REFRESH_CREDENTIALS_MISSING");
   if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) throw new Error("SHOPEE_REFRESH_TOKEN_EXPIRED");
   if (Number.isFinite(authorizationExpiresAt) && authorizationExpiresAt <= Date.now()) throw new Error("SHOPEE_AUTHORIZATION_EXPIRED");
+  if (accountAttestationRequired && (!onExternalMutationStart || !onCredentialRefresh)) {
+    throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
+  }
 
   await onExternalMutationStart?.();
   const remote = await exchangeShopeeOAuthToken({
@@ -419,17 +471,44 @@ async function ensureShopeeTargetAccessToken(
     ...payload,
     shopee_targets: targets.map((target) => target.type === nextTarget.type && target.id === nextTarget.id ? nextTarget : target),
   } : payload;
+  const refreshedTokenPayload = {
+    ...storedPayload,
+    [targetKey]: targetId,
+    access_token: nextAccessToken,
+    refresh_token: nextRefreshToken,
+    access_token_expires_at: nextAccessExpiry,
+    refresh_token_expires_at: nextRefreshExpiry,
+  };
+  const credentialExpiresAt = Number.isFinite(authorizationExpiresAt)
+    ? new Date(authorizationExpiresAt).toISOString()
+    : null;
+  if (onExternalMutationStart && onCredentialRefresh) {
+    await onCredentialRefresh({
+      payload: withoutProviderAccountIdentity(refreshedTokenPayload),
+      expiresAt: credentialExpiresAt,
+      recoveryOnly: true,
+    });
+  }
+  if ((storedAccountIdentity || requireProviderIdentity) && targetType === "shop") {
+    const profile = await shopeeRequest({
+      payload: refreshedTokenPayload,
+      environment,
+      method: "GET",
+      path: "/api/v2/shop/get_shop_info",
+    });
+    if (!profile.response.ok || textValue(profile.data, "error")) {
+      throw new Error("SHOPEE_ACCOUNT_IDENTITY_VERIFICATION_FAILED");
+    }
+    assertShopeeShopProfileTarget(profile.data, targetId);
+  }
+  if (onExternalMutationStart && onCredentialRefresh) {
+    await onExternalMutationStart();
+  }
+  const refreshPayload = withProviderAccountIdentity(refreshedTokenPayload, expectedAccountIdentity);
   const refresh = {
-    payload: {
-      ...storedPayload,
-      [targetKey]: targetId,
-      access_token: nextAccessToken,
-      refresh_token: nextRefreshToken,
-      access_token_expires_at: nextAccessExpiry,
-      refresh_token_expires_at: nextRefreshExpiry,
-    },
+    payload: refreshPayload,
     refreshed: true as const,
-    credentialExpiresAt: Number.isFinite(authorizationExpiresAt) ? new Date(authorizationExpiresAt).toISOString() : null,
+    credentialExpiresAt,
   };
   await onCredentialRefresh?.({ payload: refresh.payload, expiresAt: refresh.credentialExpiresAt });
   return refresh;
@@ -442,8 +521,9 @@ export async function ensureShopeeAccessToken(
   requestedShopId = "",
   onExternalMutationStart?: ExternalMutationStartHandler,
   onCredentialRefresh?: CredentialRefreshHandler,
+  requireProviderIdentity = false,
 ) {
-  return ensureShopeeTargetAccessToken(payload, environment, bufferMs, "shop", requestedShopId, onExternalMutationStart, onCredentialRefresh);
+  return ensureShopeeTargetAccessToken(payload, environment, bufferMs, "shop", requestedShopId, onExternalMutationStart, onCredentialRefresh, requireProviderIdentity);
 }
 
 export async function ensureShopeeMerchantAccessToken(
@@ -453,8 +533,9 @@ export async function ensureShopeeMerchantAccessToken(
   requestedMerchantId = "",
   onExternalMutationStart?: ExternalMutationStartHandler,
   onCredentialRefresh?: CredentialRefreshHandler,
+  requireProviderIdentity = false,
 ) {
-  return ensureShopeeTargetAccessToken(payload, environment, bufferMs, "merchant", requestedMerchantId, onExternalMutationStart, onCredentialRefresh);
+  return ensureShopeeTargetAccessToken(payload, environment, bufferMs, "merchant", requestedMerchantId, onExternalMutationStart, onCredentialRefresh, requireProviderIdentity);
 }
 
 export async function shopeeRequest(input: {
@@ -635,10 +716,20 @@ export async function ensureLazadaAccessToken(
   bufferMs = 72 * 60 * 60 * 1000,
   onExternalMutationStart?: ExternalMutationStartHandler,
   onCredentialRefresh?: CredentialRefreshHandler,
+  requireProviderIdentity = false,
 ) {
+  const storedAccountIdentity = readProviderAccountIdentity(payload, "lazada");
+  const accountAttestationRequired = !storedAccountIdentity && requireProviderIdentity;
+  if (storedAccountIdentity) {
+    const current = normalizeLazadaProviderAccountIdentity(payload);
+    assertProviderAccountIdentity(payload, current.identity);
+  }
   const accessToken = textValue(payload, "access_token");
   const accessExpiresAt = Date.parse(textValue(payload, "access_token_expires_at"));
-  if (accessToken && Number.isFinite(accessExpiresAt) && accessExpiresAt > Date.now() + bufferMs) {
+  if (!accountAttestationRequired
+      && accessToken
+      && Number.isFinite(accessExpiresAt)
+      && accessExpiresAt > Date.now() + bufferMs) {
     return { payload, refreshed: false as const, credentialExpiresAt: textValue(payload, "refresh_token_expires_at") || null };
   }
 
@@ -648,6 +739,9 @@ export async function ensureLazadaAccessToken(
   const refreshExpiresAt = Date.parse(textValue(payload, "refresh_token_expires_at"));
   if (!appKey || !appSecret || !refreshToken) throw new Error("LAZADA_REFRESH_CREDENTIALS_MISSING");
   if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) throw new Error("LAZADA_REFRESH_TOKEN_EXPIRED");
+  if (accountAttestationRequired && (!onExternalMutationStart || !onCredentialRefresh)) {
+    throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
+  }
 
   await onExternalMutationStart?.();
   const remote = await exchangeLazadaOAuthToken({ appKey, appSecret, refreshToken });
@@ -658,14 +752,38 @@ export async function ensureLazadaAccessToken(
 
   const nextAccessExpiry = safeFutureIso(remote.data.expires_in, 2_592_000);
   const nextRefreshExpiry = safeFutureIso(remote.data.refresh_expires_in, 15_552_000);
+  const recoveryPayload: SecretPayload = {
+    ...payload,
+    access_token: nextAccessToken,
+    refresh_token: nextRefreshToken,
+    access_token_expires_at: nextAccessExpiry,
+    refresh_token_expires_at: nextRefreshExpiry,
+    ...(remote.data.account_platform !== undefined
+      ? { account_platform: remote.data.account_platform }
+      : {}),
+    ...(remote.data.country_user_info !== undefined
+      ? { country_user_info: remote.data.country_user_info }
+      : {}),
+  };
+  if (onExternalMutationStart && onCredentialRefresh) {
+    await onCredentialRefresh({
+      payload: withoutProviderAccountIdentity(recoveryPayload),
+      expiresAt: nextRefreshExpiry,
+      recoveryOnly: true,
+    });
+  }
+  const providerAccount = normalizeLazadaProviderAccountIdentity(remote.data);
+  if (storedAccountIdentity) {
+    assertProviderAccountIdentity(payload, providerAccount.identity);
+  }
+  if (onExternalMutationStart && onCredentialRefresh) {
+    await onExternalMutationStart();
+  }
+  const nextPayload = withLazadaProviderAccountIdentity({
+    ...recoveryPayload,
+  }, remote.data).payload;
   const refresh = {
-    payload: {
-      ...payload,
-      access_token: nextAccessToken,
-      refresh_token: nextRefreshToken,
-      access_token_expires_at: nextAccessExpiry,
-      refresh_token_expires_at: nextRefreshExpiry,
-    },
+    payload: nextPayload,
     refreshed: true as const,
     credentialExpiresAt: nextRefreshExpiry,
   };
@@ -989,16 +1107,61 @@ export async function exchangeEbayOAuthToken(input: {
   return readRemoteResponse(response);
 }
 
+export async function fetchEbayTradingUserIdentity(input: {
+  environment: "sandbox" | "production";
+  accessToken: string;
+}) {
+  if (!input.accessToken.trim()) throw new Error("EBAY_ACCOUNT_IDENTITY_VERIFICATION_FAILED");
+  const response = await fetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
+    method: "POST",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "text/xml",
+      "content-type": "text/xml;charset=UTF-8",
+      "x-ebay-api-call-name": "GetUser",
+      "x-ebay-api-compatibility-level": "1475",
+      "x-ebay-api-siteid": "0",
+      "x-ebay-api-iaf-token": input.accessToken,
+      "user-agent": "SellerPilot-eBay-Account-Identity/1.0",
+    },
+    body: "<?xml version=\"1.0\" encoding=\"utf-8\"?><GetUserRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\"><DetailLevel>ReturnSummary</DetailLevel></GetUserRequest>",
+  });
+  const xml = await response.text();
+  if (!response.ok) throw new Error("EBAY_ACCOUNT_IDENTITY_VERIFICATION_FAILED");
+  return parseEbayTradingGetUserIdentity(xml);
+}
+
 export async function ensureEbayAccessToken(
   payload: SecretPayload,
   environment: "sandbox" | "production",
   bufferMs = 5 * 60 * 1000,
   onExternalMutationStart?: ExternalMutationStartHandler,
   onCredentialRefresh?: CredentialRefreshHandler,
+  requireProviderIdentity = false,
 ) {
+  const storedAccountIdentity = readProviderAccountIdentity(payload, "ebay");
+  const accountAttestationRequired = !storedAccountIdentity && requireProviderIdentity;
   const accessToken = textValue(payload, "access_token");
   const accessExpiresAt = Date.parse(textValue(payload, "access_token_expires_at"));
   if (accessToken && (!Number.isFinite(accessExpiresAt) || accessExpiresAt > Date.now() + bufferMs)) {
+    if (accountAttestationRequired) {
+      const providerAccount = await fetchEbayTradingUserIdentity({ environment, accessToken });
+      if (!onExternalMutationStart || !onCredentialRefresh) {
+        throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
+      }
+      const credentialExpiresAtValue = Date.parse(textValue(payload, "refresh_token_expires_at"));
+      const credentialExpiresAt = Number.isFinite(credentialExpiresAtValue)
+        ? new Date(credentialExpiresAtValue).toISOString()
+        : new Date(Date.now() + 47_304_000 * 1000).toISOString();
+      const attestedPayload = withProviderAccountIdentity({
+        ...payload,
+        ...(providerAccount.userId ? { ebay_user_id: providerAccount.userId } : {}),
+      }, providerAccount.identity);
+      await onExternalMutationStart?.();
+      await onCredentialRefresh({ payload: attestedPayload, expiresAt: credentialExpiresAt });
+      return { payload: attestedPayload, refreshed: true as const, credentialExpiresAt };
+    }
     return { payload, refreshed: false as const, credentialExpiresAt: textValue(payload, "refresh_token_expires_at") || null };
   }
 
@@ -1009,6 +1172,9 @@ export async function ensureEbayAccessToken(
   const refreshExpiresAt = Date.parse(textValue(payload, "refresh_token_expires_at"));
   if (!clientId || !clientSecret || !ruName || !refreshToken) throw new Error("EBAY_REFRESH_CREDENTIALS_MISSING");
   if (Number.isFinite(refreshExpiresAt) && refreshExpiresAt <= Date.now()) throw new Error("EBAY_REFRESH_TOKEN_EXPIRED");
+  if (accountAttestationRequired && (!onExternalMutationStart || !onCredentialRefresh)) {
+    throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
+  }
 
   await onExternalMutationStart?.();
   const remote = await exchangeEbayOAuthToken({
@@ -1025,8 +1191,24 @@ export async function ensureEbayAccessToken(
   const credentialExpiresAt = Number.isFinite(refreshExpiresAt)
     ? new Date(refreshExpiresAt).toISOString()
     : new Date(Date.now() + 47_304_000 * 1000).toISOString();
+  let refreshedPayload: SecretPayload = {
+    ...payload,
+    access_token: nextAccessToken,
+    access_token_expires_at: nextAccessExpiry,
+  };
+  if (storedAccountIdentity || requireProviderIdentity) {
+    const providerAccount = await fetchEbayTradingUserIdentity({
+      environment,
+      accessToken: nextAccessToken,
+    });
+    if (storedAccountIdentity) assertProviderAccountIdentity(payload, providerAccount.identity);
+    refreshedPayload = withProviderAccountIdentity({
+      ...refreshedPayload,
+      ...(providerAccount.userId ? { ebay_user_id: providerAccount.userId } : {}),
+    }, providerAccount.identity);
+  }
   const refresh = {
-    payload: { ...payload, access_token: nextAccessToken, access_token_expires_at: nextAccessExpiry },
+    payload: refreshedPayload,
     refreshed: true as const,
     credentialExpiresAt,
   };

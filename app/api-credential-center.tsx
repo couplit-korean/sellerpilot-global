@@ -82,16 +82,9 @@ const channelOperationOptions: { value: ChannelOperationName; label: string }[] 
   { value: "categories.suggest", label: "상품명 카테고리 추천" },
   { value: "categories.attributes", label: "필수 속성 조회" },
   { value: "categories.validate", label: "카테고리 유효성 검사" },
-  { value: "listing.create", label: "상품 등록" },
-  { value: "listing.update", label: "상품 수정" },
-  { value: "listing.stop", label: "판매 중지" },
-  { value: "price.update", label: "가격 변경" },
-  { value: "inventory.update", label: "재고 변경" },
   { value: "orders.list", label: "주문 목록" },
   { value: "orders.get", label: "주문 상세" },
   { value: "inquiries.list", label: "고객 문의 목록" },
-  { value: "shipment.acknowledge", label: "발주 확인" },
-  { value: "shipment.confirm", label: "송장·발송 처리" },
 ];
 
 const writeOperations = new Set<ChannelOperationName>([
@@ -577,7 +570,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
 
   return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal operation-console" role="dialog" aria-modal="true" aria-label={`${target.channel.name} API 실행 검수`} onSubmit={execute}>
     <header><div><span>{target.channel.mark}</span><div><small>PROTECTED LIVE API CONSOLE</small><h3>{target.channel.name} API 실행 검수</h3></div></div><button type="button" onClick={onClose} aria-label="닫기"><X size={18} /></button></header>
-    <div className="operation-console-warning"><ShieldCheck size={18} /><span><b>Vault 키를 브라우저에 노출하지 않고 서버에서만 호출합니다.</b><small>상품·주문 실데이터가 변경될 수 있습니다. 비밀키는 아래 JSON에 입력하지 마세요.</small></span></div>
+    <div className="operation-console-warning"><ShieldCheck size={18} /><span><b>Vault 키를 브라우저에 노출하지 않고 서버에서 조회 API만 호출합니다.</b><small>상품·재고·발송 쓰기는 정확한 상품·주문 원장을 선택하는 전용 화면에서만 실행합니다. 비밀키는 아래 JSON에 입력하지 마세요.</small></span></div>
     <div className="operation-console-body">
       <div className="operation-console-controls"><label><span>실행 작업</span><select value={operation} onChange={(event) => changeOperation(event.target.value as ChannelOperationName)}>{availableOperations.map((item) => <option value={item.value} key={item.value}>{item.label} · {item.value}</option>)}</select></label><label><span>중복 방지 키</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} minLength={16} maxLength={160} /></label></div>
       <label className="operation-json-field"><span>채널별 작업 인자 JSON</span><textarea value={argumentsJson} onChange={(event) => setArgumentsJson(event.target.value)} spellCheck={false} rows={13} /></label>

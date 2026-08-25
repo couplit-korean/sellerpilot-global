@@ -227,9 +227,17 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260825105000_external_mutation_delivery_fences.sql",
       "20260825105100_harden_kakao_oauth_and_test_delivery.sql",
       "20260825105200_durable_competitor_price_refresh.sql",
+      "20260825110000_enable_channel_inquiry_replies.sql",
       "20260825110100_fix_registration_activity_running_state.sql",
       "20260825110200_refresh_competitor_price_snapshots.sql",
       "20260825110300_fence_tracx_delivery_matching.sql",
+      "20260825111757_harden_inquiry_reply_delivery_fence.sql",
+      "20260825111800_bind_listing_seller_accounts.sql",
+      "20260825111810_harden_inquiry_reply_account_lineage.sql",
+      "20260825111820_serialize_gateway_ledger_transactions.sql",
+      "20260825111830_backfill_verified_static_listing_lineage.sql",
+      "20260825111840_provider_listing_readback_rebind.sql",
+      "20260825111850_preserve_succeeded_inquiry_reply_sync.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -309,15 +317,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_ingest_tracx_delivery(uuid,jsonb)",
       "public.sellerpilot_service_record_order_shipment_failure(uuid,uuid,text,text)",
       "public.sellerpilot_service_enqueue_resource_gateway_job(uuid,uuid,text,text,jsonb,text,text,text,uuid,uuid,uuid,text,text)",
+      "public.sellerpilot_service_reserve_and_enqueue_listing_create(uuid,uuid,uuid,text,text,text,text,numeric,text,jsonb)",
       "public.sellerpilot_service_fail_inventory_sync_item_prewrite(uuid,uuid,uuid,text)",
       "public.sellerpilot_service_sweep_stale_tracx_mutations()",
       "public.sellerpilot_service_claim_tracx_mutation(uuid,uuid,text,text,text,text)",
       "public.sellerpilot_service_begin_tracx_mutation(uuid,text)",
       "public.sellerpilot_service_complete_tracx_mutation(uuid,text,text,text,text)",
       "public.sellerpilot_service_sweep_stale_lazada_replies()",
-      "public.sellerpilot_service_claim_lazada_reply(uuid,uuid,text)",
-      "public.sellerpilot_service_begin_lazada_reply(uuid,text)",
-      "public.sellerpilot_service_complete_lazada_reply(uuid,text,text,text,text)",
       "public.sellerpilot_service_claim_due_competitor_products(integer,integer)",
       "public.sellerpilot_service_complete_competitor_price_refresh(uuid,uuid,jsonb,jsonb)",
       "public.sellerpilot_service_release_competitor_price_refresh(uuid,uuid)",
@@ -341,6 +347,22 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       );
       const definition = await scalar(db, "select pg_get_functiondef($1::regprocedure)", [signature]);
       assert.doesNotMatch(definition, /request\.jwt\.claim\.role/);
+    }
+    for (const signature of [
+      "public.sellerpilot_service_claim_lazada_reply(uuid,uuid,text)",
+      "public.sellerpilot_service_begin_lazada_reply(uuid,text)",
+      "public.sellerpilot_service_complete_lazada_reply(uuid,text,text,text,text)",
+      "public.sellerpilot_prepare_product_market_listing(uuid,text,text,text,text,text,numeric)",
+      "public.sellerpilot_prepare_product_listing(uuid,text,text,text,numeric)",
+    ]) {
+      assert.equal(
+        await scalar(db, "select has_function_privilege('authenticated', $1, 'EXECUTE')", [signature]),
+        false,
+      );
+      assert.equal(
+        await scalar(db, "select has_function_privilege('service_role', $1, 'EXECUTE')", [signature]),
+        false,
+      );
     }
 
     await db.query("insert into auth.users (id, email) values ($1, 'admin@example.test')", [ADMIN_ID]);
@@ -618,9 +640,16 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       `select public.sellerpilot_rotate_credential(
         'shopee', 'production',
-        '{"partner_id":"2031489","partner_key":"test-partner-key-long","shop_id":"123456789","access_token":"test-access-token","refresh_token":"test-refresh-token"}'::jsonb,
+        '{"partner_id":"2031489","partner_key":"test-partner-key-long","shop_id":"123456789","access_token":"test-access-token","refresh_token":"test-refresh-token","provider_account_identity_version":"v1","provider_account_subject":"shopee:shop:123456789"}'::jsonb,
         now() + interval '365 days', 90, 30, 0
       )`,
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select seller_account_key, seller_account_key_source from sellerpilot_private.channel_credentials where id = $1",
+        [shopeeCredentialId],
+      )).rows,
+      [{ seller_account_key: null, seller_account_key_source: "legacy_unattested" }],
     );
     const shopeeAttempt = await scalar(
       db,
@@ -800,6 +829,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       shop_id: "123456789",
       access_token: "prepared-access-token",
       refresh_token: "prepared-refresh-token",
+      provider_account_identity_version: "v1",
+      provider_account_subject: "shopee:shop:123456789",
     };
     const refreshExpiresAt = "2099-01-01T00:00:00.000Z";
     assert.equal(
@@ -1035,20 +1066,51 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       null,
     );
     await setClaims(db);
+    const uncertainWriteProductId = await scalar(
+      db,
+      `insert into sellerpilot_private.products (
+         owner_id, external_code, sku, name, description, status, on_hand, reserved,
+         reorder_point, cost_krw, demo
+       ) values (
+         $1, 'UNCERTAIN-WRITE-001', 'UNCERTAIN-WRITE-001', '전송 결과 확인 테스트 상품',
+         '외부 등록 응답이 끊긴 경우 재전송하지 않는지 검증합니다.', 'draft', 4, 0, 0, 1, false
+       ) returning id`,
+      [ADMIN_ID],
+    );
+    await setClaims(db, "service_role");
+    await scalar(
+      db,
+      "select public.sellerpilot_service_upsert_channel_market_target($1,$2,'shopee','test-shop-uncertain','Uncertain test shop','KR','ko-KR','Korean','KRW','NORMAL')",
+      [ADMIN_ID, progressivePreparation.credential_id],
+    );
+    await setClaims(db);
+    await scalar(
+      db,
+      `select public.sellerpilot_save_product_category_assignment(
+        $1, 'shopee-uncertain-category', '전송 결과 확인 테스트 상품',
+        'shopee', 'production', 'KR', '100001', array['테스트'], true, 1,
+        'seller_selected', '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, true
+      )`,
+      [uncertainWriteProductId],
+    );
     const uncertainWriteAttempt = await scalar(
       db,
-      "select public.sellerpilot_claim_channel_operation($1, 'shopee', 'inventory.update', 'shopee-uncertain-inventory-0001', $2)",
+      "select public.sellerpilot_claim_channel_operation($1, 'shopee', 'listing.create', 'shopee-uncertain-listing-0001', $2)",
       [progressivePreparation.credential_id, "7".repeat(64)],
     );
     await setClaims(db, "service_role");
     const uncertainWriteEnqueue = await scalar(
       db,
-      `select public.sellerpilot_service_enqueue_resource_gateway_job(
-        $1, $2, 'shopee', 'inventory.update',
-        '{"arguments":{"itemId":123,"stock":4}}'::jsonb,
-        'listing_mutation', $3, $4
+      `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
+        $1, $2, $3, 'shopee', 'KR', 'test-shop-uncertain', 'KRW', 1000, $4,
+        '{"arguments":{"shopId":"test-shop-uncertain","merchantSku":"UNCERTAIN-1","stock":4}}'::jsonb
       )`,
-      [progressivePreparation.credential_id, uncertainWriteAttempt.attempt_id, "6".repeat(64), "7".repeat(64)],
+      [
+        uncertainWriteProductId,
+        progressivePreparation.credential_id,
+        uncertainWriteAttempt.attempt_id,
+        "7".repeat(64),
+      ],
     );
     const uncertainWriteJobId = uncertainWriteEnqueue.job_id;
     const uncertainWriteClaim = await scalar(
@@ -1057,6 +1119,37 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [TOKEN_HASH],
     );
     assert.equal(uncertainWriteClaim.id, uncertainWriteJobId);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_gateway_credential_refresh($1, $2, $3)",
+        [TOKEN_HASH, uncertainWriteJobId, uncertainWriteClaim.claim_token],
+      ),
+      true,
+    );
+    const foreignSellerRefreshPayload = {
+      ...progressiveRefreshPayload,
+      access_token: "foreign-seller-access-token",
+      refresh_token: "foreign-seller-refresh-token",
+      provider_account_subject: "shopee:shop:987654321",
+    };
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_prepare_gateway_credential_refresh($1, $2, $3, $4::jsonb, $5::timestamptz)",
+        [TOKEN_HASH, uncertainWriteJobId, uncertainWriteClaim.claim_token, JSON.stringify(foreignSellerRefreshPayload), refreshExpiresAt],
+      ),
+      { status: "identity_mismatch" },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.channel_credentials c
+          join vault.decrypted_secrets s on s.id = c.vault_secret_id
+         where s.decrypted_secret::jsonb->>'provider_account_subject' = 'shopee:shop:987654321'`,
+      ),
+      0,
+    );
     assert.equal(
       await scalar(
         db,
@@ -1093,6 +1186,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [TOKEN_HASH, uncertainWriteJobId, uncertainWriteClaim.claim_token],
       ),
       "ownership_lost",
+    );
+    await db.query("delete from sellerpilot_private.channel_gateway_jobs where id = $1", [uncertainWriteJobId]);
+    await db.query("delete from sellerpilot_private.products where id = $1", [uncertainWriteProductId]);
+    await db.query("delete from sellerpilot_private.channel_operation_attempts where id = $1", [uncertainWriteAttempt.attempt_id]);
+    await db.query(
+      "delete from sellerpilot_private.channel_market_targets where credential_id = $1 and target_id = 'test-shop-uncertain'",
+      [progressivePreparation.credential_id],
     );
 
     const refreshCrashJobId = await scalar(
@@ -2065,17 +2165,6 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       true,
     );
     await setClaims(db);
-    const elevenstPreparedListingId = await scalar(
-      db,
-      "select public.sellerpilot_prepare_product_market_listing($1, 'elevenst', 'listing.create', '', '', 'KRW', 5000)",
-      [aiProductId],
-    );
-    assert.match(elevenstPreparedListingId, /^[0-9a-f-]{36}$/i);
-    const preparedRegistrationActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(20)");
-    const preparedRegistrationCard = preparedRegistrationActivity.find((activity) => activity.productId === aiProductId);
-    assert.equal(preparedRegistrationCard.status, "ready");
-    assert.notEqual(preparedRegistrationCard.completedAt, null);
-    assert.equal(preparedRegistrationCard.channels[0].status, "draft");
     const elevenstAttempt = await scalar(
       db,
       "select public.sellerpilot_claim_channel_operation($1, 'elevenst', 'listing.create', 'elevenst-listing-migration-0001', $2)",
@@ -2084,13 +2173,25 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await setClaims(db, "service_role");
     const elevenstGatewayEnqueue = await scalar(
       db,
-      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'elevenst', 'listing.create', '{\"arguments\":{\"verificationOnly\":true}}'::jsonb)",
-      [elevenstPreparedListingId, elevenstCredentialId, elevenstAttempt.attempt_id],
+      `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
+        $1, $2, $3, 'elevenst', '', '', 'KRW', 5000, $4,
+        '{"arguments":{"verificationOnly":true}}'::jsonb
+      )`,
+      [aiProductId, elevenstCredentialId, elevenstAttempt.attempt_id, "e".repeat(64)],
     );
+    const elevenstPreparedListingId = elevenstGatewayEnqueue.listing_id;
+    assert.match(elevenstPreparedListingId, /^[0-9a-f-]{36}$/i);
     const elevenstGatewayJobId = elevenstGatewayEnqueue.job_id;
     assert.equal(elevenstGatewayEnqueue.status, "queued");
     assert.equal(elevenstGatewayEnqueue.reused, false);
     assert.match(elevenstGatewayJobId, /^[0-9a-f-]{36}$/i);
+    await setClaims(db);
+    const preparedRegistrationActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(20)");
+    const preparedRegistrationCard = preparedRegistrationActivity.find((activity) => activity.productId === aiProductId);
+    assert.equal(preparedRegistrationCard.status, "publishing");
+    assert.equal(preparedRegistrationCard.completedAt, null);
+    assert.equal(preparedRegistrationCard.channels[0].status, "queued");
+    await setClaims(db, "service_role");
     await db.query(
       `update sellerpilot_private.channel_gateway_jobs
           set status = 'running',
@@ -2212,25 +2313,39 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       "select id from public.sellerpilot_list_credentials() where channel = 'coupang' and status = 'active' limit 1",
     );
-    const preparedListingId = await scalar(
-      db,
-      "select public.sellerpilot_prepare_product_listing($1, 'coupang', 'listing.create', 'KRW', 25000)",
-      [aiProductId],
-    );
-    assert.match(preparedListingId, /^[0-9a-f-]{36}$/i);
     const listingAttempt = await scalar(
       db,
       "select public.sellerpilot_claim_channel_operation($1, 'coupang', 'listing.create', 'listing-ai-product-coupang-0001', $2)",
       [coupangCredentialId, "c".repeat(64)],
     );
     await setClaims(db, "service_role");
-    assert.equal(
-      await scalar(
-        db,
-        "select public.sellerpilot_service_complete_channel_operation($1, 'succeeded', 200, 'remote-product-1', 'listing completed')",
-        [listingAttempt.attempt_id],
-      ),
-      true,
+    const listingGatewayEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
+        $1, $2, $3, 'coupang', '', '', 'KRW', 25000, $4, '{}'::jsonb
+      )`,
+      [aiProductId, coupangCredentialId, listingAttempt.attempt_id, "c".repeat(64)],
+    );
+    const preparedListingId = listingGatewayEnqueue.listing_id;
+    assert.match(preparedListingId, /^[0-9a-f-]{36}$/i);
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded',
+              response_payload = $2::jsonb,
+              completed_at = now()
+        where id = $1`,
+      [listingGatewayEnqueue.job_id, JSON.stringify({
+        ok: true,
+        channel: "coupang",
+        operation: "listing.create",
+        remoteId: "remote-product-1",
+        safeMessage: "listing completed",
+        steps: [{ name: "listing-readback", ok: true, status: 200, data: {} }],
+      })],
+    );
+    await db.query(
+      "update sellerpilot_private.channel_operation_attempts set status='succeeded', http_status=200, remote_id='remote-product-1', safe_message='listing completed', completed_at=now() where id=$1",
+      [listingAttempt.attempt_id],
     );
     assert.equal(
       await scalar(
@@ -2241,25 +2356,59 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       true,
     );
     await setClaims(db);
-    const updatePreparedListingId = await scalar(
+    const otherCoupangCredentialId = await scalar(
       db,
-      "select public.sellerpilot_prepare_product_listing($1, 'coupang', 'listing.update', 'KRW', 26000)",
-      [aiProductId],
+      "select public.sellerpilot_rotate_credential('coupang', 'sandbox', $1::jsonb, now() + interval '180 days', 90, 30, 0)",
+      [JSON.stringify({ key: "other-coupang-test-key" })],
     );
-    assert.equal(updatePreparedListingId, preparedListingId);
+    await setClaims(db, "service_role");
+    await scalar(
+      db,
+      "select public.sellerpilot_enqueue_channel_gateway_job($1, null, 'coupang', 'diagnostic.test', '{}'::jsonb)",
+      [otherCoupangCredentialId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_validate_listing_write_lineage($1,$2,$3,'coupang','listing.update','','')",
+        [preparedListingId, otherCoupangCredentialId, aiProductId],
+      ),
+      "seller_account_mismatch",
+    );
+    await setClaims(db);
+    const crossAccountAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'coupang', 'listing.update', 'listing-ai-product-coupang-cross-account-0001', $2)",
+      [otherCoupangCredentialId, "7".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.update', '{}'::jsonb)",
+        [preparedListingId, otherCoupangCredentialId, crossAccountAttempt.attempt_id],
+      ),
+      /product listing seller account mismatch|gateway listing seller account mismatch/,
+    );
+    await setClaims(db);
+    const updatePreparedListingId = preparedListingId;
     const failedUpdateAttempt = await scalar(
       db,
       "select public.sellerpilot_claim_channel_operation($1, 'coupang', 'listing.update', 'listing-ai-product-coupang-update-failure-0001', $2)",
       [coupangCredentialId, "f".repeat(64)],
     );
     await setClaims(db, "service_role");
-    assert.equal(
-      await scalar(
-        db,
-        "select public.sellerpilot_service_complete_channel_operation($1, 'failed', 422, null, 'one channel failed')",
-        [failedUpdateAttempt.attempt_id],
-      ),
-      true,
+    const failedUpdateGatewayEnqueue = await scalar(
+      db,
+      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.update', '{}'::jsonb)",
+      [updatePreparedListingId, coupangCredentialId, failedUpdateAttempt.attempt_id],
+    );
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status='failed', error_message='one channel failed', completed_at=now() where id=$1",
+      [failedUpdateGatewayEnqueue.job_id],
+    );
+    await db.query(
+      "update sellerpilot_private.channel_operation_attempts set status='failed', http_status=422, safe_message='one channel failed', completed_at=now() where id=$1",
+      [failedUpdateAttempt.attempt_id],
     );
     assert.equal(
       await scalar(
@@ -2287,10 +2436,42 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     const terminalRegistrationCard = terminalRegistrationActivity.find((activity) => activity.productId === aiProductId);
     assert.equal(terminalRegistrationCard.status, "failed");
     assert.notEqual(terminalRegistrationCard.completedAt, null);
+    await setClaims(db);
+    const stopListingAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'coupang', 'listing.stop', 'listing-ai-product-coupang-stop-0001', $2)",
+      [coupangCredentialId, "9".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    const stopListingGatewayEnqueue = await scalar(
+      db,
+      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.stop', '{}'::jsonb)",
+      [preparedListingId, coupangCredentialId, stopListingAttempt.attempt_id],
+    );
     await db.query(
-      "update sellerpilot_private.product_listings set status = 'paused', failure_class = null, last_error = null, updated_at = now() where id = $1",
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='succeeded',
+              response_payload=$2::jsonb,
+              completed_at=now()
+        where id=$1`,
+      [stopListingGatewayEnqueue.job_id, JSON.stringify({
+        ok: true,
+        channel: "coupang",
+        operation: "listing.stop",
+        remoteId: "remote-product-1",
+        safeMessage: "listing stopped",
+        steps: [{ name: "listing.stop", ok: true, status: 200, data: {} }],
+      })],
+    );
+    await db.query(
+      "update sellerpilot_private.channel_operation_attempts set status='succeeded', http_status=200, remote_id='remote-product-1', safe_message='listing stopped', completed_at=now() where id=$1",
+      [stopListingAttempt.attempt_id],
+    );
+    await db.query(
+      "update sellerpilot_private.product_listings set status='paused', failure_class=null, last_error=null, updated_at=now() where id=$1",
       [preparedListingId],
     );
+    await setClaims(db);
     await db.query(
       "update sellerpilot_private.product_listings set status = 'scope_excluded', failure_class = null, last_error = null, updated_at = now() where id = $1",
       [elevenstPreparedListingId],
@@ -2303,10 +2484,42 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       new Set(intentionallyStoppedCard.channels.map((channel) => channel.status)),
       new Set(["paused", "scope_excluded"]),
     );
+    await setClaims(db);
+    const resumeListingAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'coupang', 'listing.update', 'listing-ai-product-coupang-resume-0001', $2)",
+      [coupangCredentialId, "8".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    const resumeListingGatewayEnqueue = await scalar(
+      db,
+      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.update', '{}'::jsonb)",
+      [preparedListingId, coupangCredentialId, resumeListingAttempt.attempt_id],
+    );
     await db.query(
-      "update sellerpilot_private.product_listings set status = 'published', failure_class = null, last_error = null, updated_at = now() where id = $1",
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='succeeded',
+              response_payload=$2::jsonb,
+              completed_at=now()
+        where id=$1`,
+      [resumeListingGatewayEnqueue.job_id, JSON.stringify({
+        ok: true,
+        channel: "coupang",
+        operation: "listing.update",
+        remoteId: "remote-product-1",
+        safeMessage: "listing resumed",
+        steps: [{ name: "listing-readback", ok: true, status: 200, data: {} }],
+      })],
+    );
+    await db.query(
+      "update sellerpilot_private.channel_operation_attempts set status='succeeded', http_status=200, remote_id='remote-product-1', safe_message='listing resumed', completed_at=now() where id=$1",
+      [resumeListingAttempt.attempt_id],
+    );
+    await db.query(
+      "update sellerpilot_private.product_listings set status='published', failure_class=null, last_error=null, updated_at=now() where id=$1",
       [preparedListingId],
     );
+    await setClaims(db);
     await db.query(
       "update sellerpilot_private.product_listings set status = 'queued', failure_class = null, last_error = null, updated_at = now() where id = $1",
       [elevenstPreparedListingId],
@@ -2406,7 +2619,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     const resourceInventoryEnqueue = await scalar(
       db,
       `select public.sellerpilot_service_enqueue_resource_gateway_job(
-        $1, $2, 'coupang', 'inventory.update', '{"arguments":{"remoteId":"SAFE-1","quantity":7}}'::jsonb,
+        $1, $2, 'coupang', 'inventory.update', '{"arguments":{"vendorItemId":"remote-product-1","quantity":7}}'::jsonb,
         'listing_mutation', $3, $4, $5
       )`,
       [coupangCredentialId, resumableInventoryClaim.attempt_id, "2".repeat(64), "1".repeat(64), preparedListingId],
@@ -2720,16 +2933,31 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(db, "select owner_id from sellerpilot_private.product_category_assignments where id = $1", [sharedCategoryAssignmentId]),
       SECOND_ADMIN_ID,
     );
-    const sharedListingId = await scalar(
+    const sharedListingAttempt = await scalar(
       db,
-      "select public.sellerpilot_prepare_product_listing($1, 'qoo10', 'listing.create', 'JPY', 1800)",
-      [SHARED_PRODUCT_ID],
+      "select public.sellerpilot_claim_channel_operation($1, 'qoo10', 'listing.create', 'shared-listing-create-0001', $2)",
+      [credentialId, "b".repeat(64)],
     );
+    await setClaims(db, "service_role");
+    const sharedListingEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
+        $1, $2, $3, 'qoo10', '', '', 'JPY', 1800, $4,
+        '{"arguments":{"verificationOnly":true}}'::jsonb
+      )`,
+      [SHARED_PRODUCT_ID, credentialId, sharedListingAttempt.attempt_id, "b".repeat(64)],
+    );
+    const sharedListingId = sharedListingEnqueue.listing_id;
     assert.match(sharedListingId, /^[0-9a-f-]{36}$/i);
     assert.equal(
       await scalar(db, "select owner_id from sellerpilot_private.product_listings where id = $1", [sharedListingId]),
       SECOND_ADMIN_ID,
     );
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [sharedListingEnqueue.job_id],
+    );
+    await setClaims(db);
 
     const sharedOperation = await scalar(
       db,
@@ -3739,7 +3967,7 @@ test("OAuth grants are Vault-backed, exact-replayable, and scrubbed after termin
       db,
       `select public.sellerpilot_service_prepare_gateway_credential_refresh(
         $1, $2, $3,
-        '{"client_id":"oauth-client","client_secret":"oauth-secret","ru_name":"oauth-redirect","access_token":"new-access-token","refresh_token":"new-refresh-token"}'::jsonb,
+        '{"client_id":"oauth-client","client_secret":"oauth-secret","ru_name":"oauth-redirect","access_token":"new-access-token","refresh_token":"new-refresh-token","provider_account_identity_version":"v1","provider_account_subject":"ebay:eias:immutable-test-eias-token"}'::jsonb,
         '2099-01-01T00:00:00.000Z'::timestamptz,
         false,
         true
@@ -3818,6 +4046,42 @@ test("OAuth grants are Vault-backed, exact-replayable, and scrubbed after termin
       "select public.sellerpilot_service_begin_gateway_credential_refresh($1, $2, $3)",
       [TOKEN_HASH, inFlightJobId, inFlightClaim.claim_token],
     ), true);
+    assert.deepEqual(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_prepare_gateway_credential_refresh(
+          $1, $2, $3,
+          '{"client_id":"sandbox-client","client_secret":"sandbox-secret","ru_name":"sandbox-redirect","access_token":"recovered-access-token","refresh_token":"recovered-refresh-token","provider_account_identity_version":"v1","provider_account_subject":"ebay:eias:unverified-stale-subject"}'::jsonb,
+          '2099-01-01T00:00:00.000Z'::timestamptz,
+          true,
+          false
+        )`,
+        [TOKEN_HASH, inFlightJobId, inFlightClaim.claim_token],
+      ),
+      { status: "invalid" },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select credential_refresh_recovery_vault_id is null from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [inFlightJobId],
+      ),
+      true,
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_prepare_gateway_credential_refresh(
+          $1, $2, $3,
+          '{"client_id":"sandbox-client","client_secret":"sandbox-secret","ru_name":"sandbox-redirect","access_token":"recovered-access-token","refresh_token":"recovered-refresh-token"}'::jsonb,
+          '2099-01-01T00:00:00.000Z'::timestamptz,
+          true,
+          false
+        )`,
+        [TOKEN_HASH, inFlightJobId, inFlightClaim.claim_token],
+      ),
+      { status: "recovery_preserved", reused: false },
+    );
     await db.query(
       "update sellerpilot_private.channel_gateway_jobs set lease_expires_at = now() - interval '1 second' where id = $1",
       [inFlightJobId],
@@ -3828,10 +4092,16 @@ test("OAuth grants are Vault-backed, exact-replayable, and scrubbed after termin
     );
     assert.deepEqual((await db.query(
       `select status, credential_refresh_in_flight,
+              credential_refresh_recovery_vault_id is not null as recovery_preserved,
               oauth_request_vault_id is null as grant_scrubbed
          from sellerpilot_private.channel_gateway_jobs where id = $1`,
       [inFlightJobId],
-    )).rows, [{ status: "reconciliation_required", credential_refresh_in_flight: true, grant_scrubbed: true }]);
+    )).rows, [{
+      status: "reconciliation_required",
+      credential_refresh_in_flight: false,
+      recovery_preserved: true,
+      grant_scrubbed: true,
+    }]);
 
     const partialJobId = await scalar(
       db,
@@ -3855,7 +4125,7 @@ test("OAuth grants are Vault-backed, exact-replayable, and scrubbed after termin
       db,
       `select public.sellerpilot_service_prepare_gateway_credential_refresh(
         $1, $2, $3,
-        '{"client_id":"oauth-client","client_secret":"oauth-secret","ru_name":"oauth-redirect","access_token":"partial-access-token","refresh_token":"partial-refresh-token"}'::jsonb,
+        '{"client_id":"oauth-client","client_secret":"oauth-secret","ru_name":"oauth-redirect","access_token":"partial-access-token","refresh_token":"partial-refresh-token","provider_account_identity_version":"v1","provider_account_subject":"ebay:eias:immutable-test-eias-token"}'::jsonb,
         '2099-01-01T00:00:00.000Z'::timestamptz,
         false,
         false
@@ -3901,6 +4171,33 @@ test("OAuth grants are Vault-backed, exact-replayable, and scrubbed after termin
       [TOKEN_HASH],
     );
     assert.equal(unrelatedClaim.id, unrelatedLazadaJobId);
+    assert.equal(await scalar(
+      db,
+      "select public.sellerpilot_service_begin_gateway_credential_refresh($1, $2, $3)",
+      [TOKEN_HASH, unrelatedLazadaJobId, unrelatedClaim.claim_token],
+    ), true);
+    assert.deepEqual(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_prepare_gateway_credential_refresh(
+          $1, $2, $3,
+          '{"app_key":"test-app","app_secret":"test-secret","access_token":"lazada-recovered-access","refresh_token":"lazada-recovered-refresh","country_user_info":[{"country":"my","seller_id":"1001","user_id":"2001"}],"account_platform":"seller_center"}'::jsonb,
+          '2099-01-01T00:00:00.000Z'::timestamptz,
+          true,
+          false
+        )`,
+        [TOKEN_HASH, unrelatedLazadaJobId, unrelatedClaim.claim_token],
+      ),
+      { status: "recovery_preserved", reused: false },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select credential_refresh_recovery_vault_id is not null from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [unrelatedLazadaJobId],
+      ),
+      true,
+    );
     assert.deepEqual((await db.query(
       "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
       [blockedEbayJobId],

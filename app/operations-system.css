@@ -1789,9 +1789,11 @@ a:focus-visible,
 .publish-readiness .ok { background: #edf8f2; color: #176848; }
 .publish-readiness .missing { background: #fff4ec; color: #a05221; }
 .remote-edit-support { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.remote-edit-support > span { display: grid; min-width: 0; gap: 2px; border: 1px solid var(--border); border-radius: 7px; padding: 7px 8px; background: var(--surface-subtle); }
+.remote-edit-support > span { display: grid; min-width: 0; gap: 3px; border: 1px solid var(--border); border-radius: 7px; padding: 7px 8px; background: var(--surface-subtle); }
 .remote-edit-support b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .remote-edit-support small { color: var(--text-tertiary); font-size: 9px; }
+.remote-edit-support-state { font-weight: 800; }
+.remote-edit-support-reason { display: -webkit-box; overflow: hidden; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .remote-edit-support .supported { border-color: #c8e5d7; background: #f1faf6; color: #176848; }
 .remote-edit-support .partial { border-color: #c8d8eb; background: #f2f7fc; color: #255b8d; }
 .remote-edit-support .blocked { border-color: #ead8b7; background: #fff9ed; color: #8b5a13; }
@@ -1848,7 +1850,8 @@ a:focus-visible,
 
 @media (max-width: 560px) {
   .remote-edit-support { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .remote-edit-support > span { min-height: 48px; }
+  .remote-edit-support > span { min-height: 86px; }
+  .remote-edit-support-reason { -webkit-line-clamp: 4; }
 }
 
 @media (max-width: 600px) {

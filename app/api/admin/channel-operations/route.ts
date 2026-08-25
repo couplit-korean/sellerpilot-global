@@ -11,14 +11,18 @@ import {
 import { channelCatalog } from "../../../../lib/channels/catalog";
 import {
   ChannelGatewayInProgressError,
+  ChannelGatewayCredentialUnattestedError,
+  ChannelGatewayListingAlreadyPublishedError,
+  ChannelGatewayListingBlockedError,
   ChannelGatewayReconciliationRequiredError,
+  ChannelGatewayRemoteFailedError,
   executeViaChannelGateway,
 } from "../../../../lib/channels/gateway";
 import { channelOperationAvailable } from "../../../../lib/channels/operation-availability";
 import { listingUpdateRemoteIdentity, listingWriteOperation } from "../../../../lib/channels/listing-update";
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
-import { channelWriteResource } from "../../../../lib/channels/write-resource";
+import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -111,6 +115,19 @@ export async function POST(request: NextRequest) {
       message: "상품 원장 ID가 없는 상품 등록·수정·판매 중지는 중복 방지를 위해 실행할 수 없습니다.",
     }, { status: 409 });
   }
+  if (operation === "listing.create" && (parsed.data.currency === undefined || parsed.data.price === undefined)) {
+    return NextResponse.json({
+      message: "상품 등록 가격과 통화를 확인하지 못해 임의 값으로 판매채널에 전송하지 않았습니다.",
+      mode: "listing_commerce_values_required",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  const listingBoundOperation = ["listing.update", "listing.stop", "price.update", "inventory.update"].includes(operation);
+  if (listingBoundOperation && (!parsed.data.productId || !parsed.data.resourceListingId)) {
+    return NextResponse.json({
+      message: "정확한 상품 게시 원장 ID가 없는 원격 상품 변경은 실행할 수 없습니다.",
+      mode: "listing_identity_mismatch",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
 
   const userClient = createClient(supabaseUrl, supabasePublishableKey, {
     global: { headers: { Authorization: `Bearer ${token}` } },
@@ -132,18 +149,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "활성 키와 채널 정보가 일치하지 않습니다." }, { status: 409 });
   }
 
-  if (operation === "listing.update") {
-    if (!parsed.data.productId) {
-      return NextResponse.json({ message: "상품 원장 ID가 없는 원격 수정은 실행할 수 없습니다." }, { status: 409 });
-    }
+  const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const findProductListingId = async (remoteId?: string) => {
+    if (!parsed.data.productId) return "";
+    const { data, error } = await userClient.rpc("sellerpilot_get_product_publish_context", {
+      p_product_id: parsed.data.productId,
+    });
+    if (error || !data || typeof data !== "object" || Array.isArray(data)) return "";
+    const listings = Array.isArray((data as Record<string, unknown>).listings)
+      ? ((data as Record<string, unknown>).listings as unknown[])
+      : [];
+    const exact = listings.find((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+      const listing = item as Record<string, unknown>;
+      return listing.channel === channel
+        && String(listing.market ?? "") === parsed.data.market
+        && String(listing.targetId ?? "") === parsed.data.targetId
+        && (!remoteId || listing.remoteId === remoteId);
+    });
+    return exact && typeof (exact as Record<string, unknown>).id === "string"
+      ? String((exact as Record<string, unknown>).id)
+      : "";
+  };
+  let boundListingCurrency: string | undefined;
+  let boundListingPrice: number | undefined;
+  if (listingBoundOperation) {
+    const productId = parsed.data.productId!;
+    const resourceListingId = parsed.data.resourceListingId!;
     let requestedRemoteId = "";
     try {
-      requestedRemoteId = listingUpdateRemoteIdentity(channel, parsed.data.arguments);
+      requestedRemoteId = operation === "listing.update"
+        ? listingUpdateRemoteIdentity(channel, parsed.data.arguments)
+        : channelListingRemoteIdentity(channel, operation, parsed.data.arguments);
     } catch {
       return NextResponse.json({ message: "원격 상품 식별값이 누락됐거나 서로 일치하지 않습니다." }, { status: 409 });
     }
     const { data: publishContext, error: contextError } = await userClient.rpc("sellerpilot_get_product_publish_context", {
-      p_product_id: parsed.data.productId,
+      p_product_id: productId,
     });
     const contextRecord = publishContext && typeof publishContext === "object" && !Array.isArray(publishContext)
       ? publishContext as Record<string, unknown>
@@ -151,26 +193,76 @@ export async function POST(request: NextRequest) {
     const listings = Array.isArray(contextRecord.listings)
       ? contextRecord.listings.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
       : [];
-    const identityMatchesLedger = !contextError && listings.some((listing) =>
-      listing.channel === channel
-      && listingWriteOperation({
-        status: String(listing.status ?? ""),
-        remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
-        publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
-      }) === "listing.update"
-      && String(listing.remoteId ?? "") === requestedRemoteId
-      && (!parsed.data.market || String(listing.market ?? "") === parsed.data.market)
-      && (!parsed.data.targetId || String(listing.targetId ?? "") === parsed.data.targetId),
-    );
-    if (!identityMatchesLedger) {
+    const exactListing = !contextError ? listings.find((listing) => {
+      const ledgerRemoteIdentity = listingLedgerRemoteIdentity(channel, operation, listing);
+      return String(listing.id ?? "") === resourceListingId
+        && listing.channel === channel
+        && (operation === "listing.update"
+          ? listingWriteOperation({
+              status: String(listing.status ?? ""),
+              remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+              publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+            }) === "listing.update"
+          : ["published", "paused"].includes(String(listing.status ?? "")))
+        && ledgerRemoteIdentity === requestedRemoteId
+        && String(listing.market ?? "") === parsed.data.market
+        && String(listing.targetId ?? "") === parsed.data.targetId;
+    }) : null;
+    if (!exactListing) {
       return NextResponse.json({
         message: "요청한 원격 상품 ID가 이 상품의 게시 원장과 일치하지 않아 수정을 차단했습니다.",
         mode: "listing_identity_mismatch",
-      }, { status: 409 });
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (operation === "listing.update" || operation === "listing.stop") {
+      const ledgerCurrency = String(exactListing.currency ?? "").trim().toUpperCase();
+      const ledgerPrice = Number(exactListing.price);
+      if (!/^[A-Z]{3}$/.test(ledgerCurrency) || !Number.isFinite(ledgerPrice) || ledgerPrice < 0) {
+        return NextResponse.json({
+          message: "게시 원장의 통화·가격을 확인하지 못해 임의 값으로 상품 상태를 변경하지 않았습니다.",
+          mode: "listing_commerce_values_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundListingCurrency = ledgerCurrency;
+      boundListingPrice = ledgerPrice;
+    }
+
+    const { data: lineageStatus, error: lineageError } = await serviceClient.rpc(
+      "sellerpilot_service_validate_listing_write_lineage",
+      {
+        p_listing_id: resourceListingId,
+        p_credential_id: parsed.data.credentialId,
+        p_product_id: productId,
+        p_channel: channel,
+        p_operation: operation,
+        p_market: parsed.data.market,
+        p_target_id: parsed.data.targetId,
+      },
+    );
+    if (lineageError || typeof lineageStatus !== "string") {
+      return NextResponse.json({
+        message: "판매자 계정과 상품 게시 원장의 결속 상태를 확인하지 못했습니다.",
+        mode: "lineage_check_unavailable",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (lineageStatus !== "allowed") {
+      const message = lineageStatus === "credential_unverified"
+        ? "현재 인증정보의 판매자 계보가 아직 검증되지 않아 기존 원격 상품 변경을 차단했습니다."
+        : lineageStatus === "legacy_listing_unbound"
+          ? "이 기존 상품은 등록 계정 계보가 확인되지 않아 원격 수정·판매 중지를 차단했습니다. 판매자센터에서 먼저 소유권을 조정해 주세요."
+          : lineageStatus === "seller_account_mismatch"
+            ? "이 상품을 등록한 판매자 계정과 현재 인증정보가 달라 원격 변경을 차단했습니다."
+            : "요청한 상품·마켓·상점 원장이 현재 인증정보와 정확히 일치하지 않습니다.";
+      return NextResponse.json({ message, mode: lineageStatus }, {
+        status: 409,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
     }
   }
 
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
+  const effectiveCurrency = boundListingCurrency ?? parsed.data.currency;
+  const effectivePrice = boundListingPrice ?? parsed.data.price;
   const requestFingerprint = createHash("sha256")
     .update(canonicalJson({
       channel,
@@ -182,14 +274,13 @@ export async function POST(request: NextRequest) {
       orderId: parsed.data.orderId ?? null,
       shipmentCarrier: parsed.data.shipmentCarrier ?? null,
       shipmentTracking: parsed.data.shipmentTracking ?? null,
-      currency: parsed.data.currency ?? null,
-      price: parsed.data.price ?? null,
+      currency: effectiveCurrency ?? null,
+      price: effectivePrice ?? null,
       market: parsed.data.market,
       targetId: parsed.data.targetId,
       arguments: parsed.data.arguments,
     }))
     .digest("hex");
-  const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: claimData, error: claimError } = await userClient.rpc("sellerpilot_claim_channel_operation", {
     p_credential_id: parsed.data.credentialId,
     p_channel: channel,
@@ -207,33 +298,11 @@ export async function POST(request: NextRequest) {
     const duplicateRemoteId = typeof claim.remote_id === "string" ? claim.remote_id : undefined;
     const duplicateMessage = typeof claim.safe_message === "string" ? claim.safe_message : "같은 작업이 이미 완료됐습니다.";
     if (claim.status === "succeeded") {
-      let duplicateListingId = "";
-      if (parsed.data.productId && ["listing.create", "listing.update", "listing.stop"].includes(operation)) {
-        const { data: preparedListingId, error: prepareError } = await userClient.rpc("sellerpilot_prepare_product_market_listing", {
-          p_product_id: parsed.data.productId,
-          p_channel: channel,
-          p_operation: operation,
-          p_market: parsed.data.market,
-          p_target_id: parsed.data.targetId,
-          p_currency: parsed.data.currency ?? "KRW",
-          p_price: parsed.data.price ?? 0,
-        });
-        if (prepareError || typeof preparedListingId !== "string") {
-          return NextResponse.json({ message: "완료된 원격 작업을 상품 원장과 다시 연결하지 못했습니다.", attemptId, remoteId: duplicateRemoteId }, { status: 409 });
-        }
-        duplicateListingId = preparedListingId;
-        const { data: reconciled, error: reconcileError } = await serviceClient.rpc("sellerpilot_service_complete_product_listing", {
-          p_listing_id: duplicateListingId,
-          p_attempt_id: attemptId,
-          p_operation: operation,
-          p_success: true,
-          p_remote_id: duplicateRemoteId ?? null,
-          p_safe_message: duplicateMessage,
-        });
-        if (reconcileError || reconciled !== true) {
-          return NextResponse.json({ message: "원격 성공 이력을 상품 원장과 조정하지 못했습니다.", attemptId, remoteId: duplicateRemoteId }, { status: 500 });
-        }
-      }
+      // Gateway completion already owns the attempt + listing transaction.
+      // Replaying a legacy listing completion here could overwrite a newer
+      // active attempt (for example, an update replay while stop is running).
+      const duplicateListingId = parsed.data.resourceListingId
+        ?? await findProductListingId(duplicateRemoteId);
       return NextResponse.json({
         ok: true,
         duplicate: true,
@@ -245,11 +314,13 @@ export async function POST(request: NextRequest) {
       }, { headers: { "cache-control": "no-store, max-age=0" } });
     }
     if (claim.status === "running") {
+      const activeListingId = parsed.data.resourceListingId ?? await findProductListingId();
       return NextResponse.json({
         ok: false,
         inProgress: true,
         reconciliationRequired: false,
         attemptId,
+        listingId: activeListingId || undefined,
         message: "같은 판매채널 작업이 이미 진행 중입니다. 기존 작업 결과가 확정될 때까지 새 원격 호출을 실행하지 않았습니다.",
       }, { status: 202, headers: { "cache-control": "no-store, max-age=0" } });
     }
@@ -274,29 +345,9 @@ export async function POST(request: NextRequest) {
 
   let listingId = "";
   if (parsed.data.productId && ["listing.create", "listing.update", "listing.stop"].includes(operation)) {
-    const { data: preparedListingId, error: prepareError } = await userClient.rpc("sellerpilot_prepare_product_market_listing", {
-      p_product_id: parsed.data.productId,
-      p_channel: channel,
-      p_operation: operation,
-      p_market: parsed.data.market,
-      p_target_id: parsed.data.targetId,
-      p_currency: parsed.data.currency ?? "KRW",
-      p_price: parsed.data.price ?? 0,
-    });
-    if (prepareError || typeof preparedListingId !== "string") {
-      await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
-        p_attempt_id: attemptId,
-        p_status: "failed",
-        p_http_status: 409,
-        p_remote_id: null,
-        p_safe_message: "상품·카테고리·채널 연결 사전조건을 충족하지 못했습니다.",
-      });
-      return NextResponse.json({
-        message: "상품 원장과 확정된 채널 카테고리, 활성 API 키를 먼저 확인해 주세요.",
-        attemptId,
-      }, { status: 409 });
+    if (operation !== "listing.create") {
+      listingId = parsed.data.resourceListingId!;
     }
-    listingId = preparedListingId;
   }
 
   const completeListing = async (input: { success: boolean; remoteId?: string; publicUrl?: string; safeMessage: string }) => {
@@ -361,29 +412,47 @@ export async function POST(request: NextRequest) {
             requestFingerprint,
           }
         : undefined;
-      const rawResult = await executeViaChannelGateway({
+      const gatewayExecution = await executeViaChannelGateway({
         serviceClient,
         credentialId: parsed.data.credentialId,
         attemptId,
         channel,
         operation,
         arguments: gatewayArguments,
-        listingId: listingId || undefined,
+        listingId: operation === "listing.create" ? undefined : listingId || undefined,
+        listingCreate: operation === "listing.create" && parsed.data.productId
+          ? {
+              productId: parsed.data.productId,
+              market: parsed.data.market,
+              targetId: parsed.data.targetId,
+              currency: effectiveCurrency ?? "KRW",
+              price: effectivePrice ?? 0,
+              requestFingerprint,
+            }
+          : undefined,
         writeResource,
         timeoutMs: writeChannelOperations.has(operation) ? 45_000 : undefined,
       });
+      const rawResult = gatewayExecution.result;
+      if (gatewayExecution.listingId) listingId = gatewayExecution.listingId;
       const { result, remediation } = applyListingRemediation(rawResult);
       if (remediation?.rejectCategory) await rejectBlockedCategory(remediation.code);
       // Listing gateway completion is the single transaction that owns both
       // the attempt and listing ledgers. Replaying the legacy completion RPCs
       // here can overwrite a worker-recorded external_action/manual_required
       // outcome after a remote create whose readback could not be verified.
-      return NextResponse.json({ ...result, attemptId, listingId: listingId || undefined, gateway: "allowlisted-local-worker" }, {
+      return NextResponse.json({
+        ...result,
+        attemptId,
+        listingId: listingId || parsed.data.resourceListingId || undefined,
+        gateway: "allowlisted-local-worker",
+      }, {
         status: result.ok ? 200 : 422,
         headers: { "cache-control": "no-store, max-age=0" },
       });
     } catch (error) {
       if (error instanceof ChannelGatewayReconciliationRequiredError) {
+        const errorListingId = error.listingId || listingId || parsed.data.resourceListingId || undefined;
         return NextResponse.json({
           ok: false,
           inProgress: false,
@@ -391,6 +460,7 @@ export async function POST(request: NextRequest) {
           reconciliationRequired: true,
           jobId: error.jobId,
           attemptId: error.attemptId ?? attemptId,
+          listingId: errorListingId,
           message: "판매채널이 작업을 수락했는지 확정할 수 없습니다. 원격 판매자센터와 진행 현황을 수동 확인하기 전에는 다시 실행할 수 없습니다.",
         }, {
           status: 409,
@@ -398,17 +468,74 @@ export async function POST(request: NextRequest) {
         });
       }
       if (error instanceof ChannelGatewayInProgressError) {
+        const errorListingId = error.listingId || listingId || parsed.data.resourceListingId || undefined;
         return NextResponse.json({
           ok: false,
           inProgress: true,
           reconciliationRequired: false,
           jobId: error.jobId,
           attemptId: error.attemptId ?? attemptId,
+          listingId: errorListingId,
           message: error.message === "CHANNEL_GATEWAY_TIMEOUT"
             ? "판매채널 작업이 계속 진행 중입니다. 원격 결과가 확인될 때까지 재등록하지 않고 진행 현황에서 자동 반영을 기다립니다."
             : "동일 상품·채널 작업이 이미 진행 중입니다. 기존 작업이 끝날 때까지 새 원격 등록을 실행하지 않았습니다.",
         }, {
           status: 202,
+          headers: { "cache-control": "no-store, max-age=0" },
+        });
+      }
+      if (error instanceof ChannelGatewayListingAlreadyPublishedError) {
+        return NextResponse.json({
+          ok: false,
+          alreadyPublished: true,
+          attemptId: error.attemptId,
+          listingId: error.listingId,
+          message: "이미 게시된 원격 상품이 있어 기존 원장을 변경하거나 새 등록을 호출하지 않았습니다.",
+        }, {
+          status: 409,
+          headers: { "cache-control": "no-store, max-age=0" },
+        });
+      }
+      if (error instanceof ChannelGatewayListingBlockedError) {
+        return NextResponse.json({
+          ok: false,
+          manualRequired: true,
+          reconciliationRequired: true,
+          attemptId: error.attemptId,
+          listingId: error.listingId,
+          message: "이전 원격 등록 결과를 판매자센터에서 수동 확인하기 전에는 재등록할 수 없습니다.",
+        }, {
+          status: 409,
+          headers: { "cache-control": "no-store, max-age=0" },
+        });
+      }
+      if (error instanceof ChannelGatewayRemoteFailedError) {
+        return NextResponse.json({
+          ok: false,
+          attemptId: error.attemptId ?? attemptId,
+          listingId: error.listingId || listingId || parsed.data.resourceListingId || undefined,
+          message: errorMessage(error),
+        }, {
+          status: 422,
+          headers: { "cache-control": "no-store, max-age=0" },
+        });
+      }
+      if (error instanceof ChannelGatewayCredentialUnattestedError) {
+        const message = "현재 OAuth 인증정보의 판매자 계정 식별자가 공식 API로 아직 검증되지 않았습니다. 해당 채널을 다시 연결한 뒤 등록해 주세요.";
+        await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
+          p_attempt_id: attemptId,
+          p_status: "failed",
+          p_http_status: 409,
+          p_remote_id: null,
+          p_safe_message: message,
+        });
+        return NextResponse.json({
+          ok: false,
+          attemptId,
+          message,
+          mode: "credential_unverified",
+        }, {
+          status: 409,
           headers: { "cache-control": "no-store, max-age=0" },
         });
       }
@@ -468,10 +595,15 @@ export async function POST(request: NextRequest) {
         message: "원격 작업은 완료됐지만 상품 원장 조정이 필요합니다. 같은 멱등키로 다시 요청하면 원격 재호출 없이 복구합니다.",
         attemptId,
         remoteId: result.remoteId,
+        listingId: listingId || parsed.data.resourceListingId || undefined,
         reconciliationRequired: true,
       }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    return NextResponse.json({ ...result, attemptId, listingId: listingId || undefined }, {
+    return NextResponse.json({
+      ...result,
+      attemptId,
+      listingId: listingId || parsed.data.resourceListingId || undefined,
+    }, {
       status: result.ok ? 200 : 422,
       headers: { "cache-control": "no-store, max-age=0" },
     });

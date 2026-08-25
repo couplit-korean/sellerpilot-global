@@ -25,7 +25,7 @@ export function withCsReplyDraft(drafts: CsReplyDrafts, ticket: CsReplyTicket, v
 }
 
 export type CsReplySavePlan = {
-  endpoint: "/api/admin/cs/lazada-reply" | "/api/operations/snapshot";
+  endpoint: "/api/admin/cs/reply" | "/api/operations/snapshot";
   body:
     | { ticketId: string; reply: string }
     | { action: "ticket_update"; id: string; status: "in_progress"; replyDraft: string };
@@ -34,11 +34,11 @@ export type CsReplySavePlan = {
 };
 
 export function csReplySavePlan(ticketId: string, channelKey: string, reply: string): CsReplySavePlan {
-  if (channelKey === "lazada") {
+  if (["qoo10", "lazada", "coupang", "smartstore"].includes(channelKey)) {
     return {
-      endpoint: "/api/admin/cs/lazada-reply",
+      endpoint: "/api/admin/cs/reply",
       body: { ticketId, reply },
-      completionMessage: "Lazada IM에 답변을 전송하고 처리 완료로 기록했습니다.",
+      completionMessage: "판매채널에 답변을 전송하고 처리 완료로 기록했습니다.",
       remote: true,
     };
   }
@@ -53,12 +53,12 @@ export function csReplySavePlan(ticketId: string, channelKey: string, reply: str
 type CsInquirySyncStatus = "never" | "queued" | "running" | "passed" | "failed" | "unsupported";
 
 const channelReadCapabilities: Record<ActiveChannelKey, { subject: string; integrated: boolean; replyLabel: string }> = {
-  qoo10: { subject: "상품 문의", integrated: true, replyLabel: "답변: 내부 초안만 · 판매자센터 전송 필요" },
+  qoo10: { subject: "상품 문의", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
   shopee: { subject: "구매자 채팅", integrated: false, replyLabel: "답변: 내부 초안만 · Chat API 미연동" },
-  lazada: { subject: "Lazada IM", integrated: true, replyLabel: "답변: 원격 전송 경로 있음 · 앱 권한 필요" },
-  coupang: { subject: "상품·콜센터 문의", integrated: true, replyLabel: "답변: 내부 초안만 · 판매자센터 전송 필요" },
+  lazada: { subject: "Lazada IM", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
+  coupang: { subject: "상품·콜센터 문의", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
   elevenst: { subject: "판매자 문의", integrated: false, replyLabel: "답변: 현재 API 미지원 · 판매자센터 처리" },
-  smartstore: { subject: "상품·고객 문의", integrated: true, replyLabel: "답변: 내부 초안만 · 판매자센터 전송 필요" },
+  smartstore: { subject: "상품·고객 문의", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
   ebay: { subject: "Seller Hub 문의", integrated: false, replyLabel: "답변: 현재 API 미지원 · Seller Hub 처리" },
   temu: { subject: "반품·환불 작업", integrated: true, replyLabel: "답변: 내부 초안만 · 구매자 채팅 미연동" },
 };

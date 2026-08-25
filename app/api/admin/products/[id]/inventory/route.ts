@@ -22,14 +22,18 @@ type InventoryTask = {
   quantity: number;
 };
 
-function taskArguments(task: InventoryTask, productSku: string) {
+function taskArguments(task: InventoryTask, marketplaceSku?: string) {
   switch (task.channel) {
     case "qoo10": return { remoteId: task.remoteId, quantity: task.quantity };
     case "shopee": return { itemId: task.remoteId, shopId: task.targetId, quantity: task.quantity };
-    case "lazada": return { itemId: task.remoteId, quantity: task.quantity, queryParams: {} };
+    case "lazada": return { itemId: task.remoteId, country: task.market.toLowerCase(), quantity: task.quantity, queryParams: {} };
     case "coupang": return { sellerProductId: task.remoteId, quantity: task.quantity };
     case "smartstore": return { originProductNo: task.remoteId, quantity: task.quantity };
-    case "ebay": return { sku: task.market ? `${productSku}-${task.market}`.slice(0, 100) : productSku, quantity: task.quantity };
+    case "ebay": {
+      const sku = marketplaceSku?.trim() ?? "";
+      if (!sku) throw new Error("EBAY_MARKETPLACE_SKU_UNBOUND");
+      return { sku, quantity: task.quantity };
+    }
     case "temu": return { goodsId: task.remoteId, quantity: task.quantity };
     default: return { remoteId: task.remoteId, quantity: task.quantity };
   }
@@ -76,11 +80,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       && typeof (item as InventoryTask).listingId === "string"
       && typeof (item as InventoryTask).channel === "string")
     : [];
-  const product = contextData && typeof contextData === "object" && !Array.isArray(contextData)
-    && contextData.product && typeof contextData.product === "object" && !Array.isArray(contextData.product)
-    ? contextData.product as Record<string, unknown>
-    : {};
-  const productSku = typeof product.sku === "string" ? product.sku : "";
+  const contextListings = contextData && typeof contextData === "object" && !Array.isArray(contextData)
+    && Array.isArray(contextData.listings)
+    ? contextData.listings.filter((item: unknown): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
   const credentialRows = Array.isArray(credentials) ? credentials.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : [];
   const authorization = request.headers.get("authorization") ?? "";
   const results = [] as Array<{ id: string; channel: string; ok: boolean; message: string; inProgress?: boolean; reconciliationRequired?: boolean }>;
@@ -104,6 +107,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       results.push({ id: task.id, channel: task.channel, ok: false, message });
       continue;
     }
+    const listingContext = contextListings.find((listing: Record<string, unknown>) => listing.id === task.listingId);
+    let argumentsValue: Record<string, unknown>;
+    try {
+      argumentsValue = taskArguments(
+        task,
+        typeof listingContext?.marketplaceSku === "string" ? listingContext.marketplaceSku : undefined,
+      );
+    } catch {
+      const message = "eBay 게시 원장에 실제 등록 SKU가 없어 추정값으로 재고를 변경하지 않았습니다. 해당 상품의 판매자센터 SKU를 먼저 원장과 조정해 주세요.";
+      await recordPrewriteFailure(task, null, message);
+      results.push({ id: task.id, channel: task.channel, ok: false, message });
+      continue;
+    }
     const response = await fetch(new URL("/api/admin/channel-operations", request.url), {
       method: "POST",
       headers: { authorization, "content-type": "application/json" },
@@ -113,11 +129,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         operation: "inventory.update",
         idempotencyKey: `${idempotencyKey}-${task.id}`.slice(0, 160),
         confirmWrite: true,
+        productId: parsedId.data,
         resourceListingId: task.listingId,
         inventoryItemId: task.id,
         market: task.market,
         targetId: task.targetId,
-        arguments: taskArguments(task, productSku),
+        arguments: argumentsValue,
       }),
       cache: "no-store",
       signal: AbortSignal.timeout(90_000),

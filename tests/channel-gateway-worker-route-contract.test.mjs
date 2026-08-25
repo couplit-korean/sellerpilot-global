@@ -35,6 +35,7 @@ test("gateway completion bounds Supabase calls and classifies only authorization
   const snapshotFailure = source.indexOf("if (snapshotError)");
   const domainConflict = source.indexOf('if (!job || job.status !== "running")');
   const intermediateIngestion = source.indexOf('serviceClient.rpc("sellerpilot_service_ingest_orders"');
+  const lineageTerminal = source.indexOf('if (job.operation === "listing.lineage.verify")', intermediateIngestion);
   const finalRpc = source.lastIndexOf('serviceClient.rpc("sellerpilot_complete_channel_gateway_job"');
   const finalFailure = source.indexOf("if (error) {", finalRpc);
   const finalConflict = source.indexOf("if (data !== true)");
@@ -51,8 +52,9 @@ test("gateway completion bounds Supabase calls and classifies only authorization
   assert.match(source.slice(finalFailure, finalConflict), /workerRpcErrorMessage\(status\)/);
   assert.match(source.slice(finalConflict), /status: 409/);
   assert.ok((source.match(/p_claim_token: parsed\.data\.claimToken/g) ?? []).length >= 3);
+  assert.equal(lineageTerminal > intermediateIngestion && lineageTerminal < finalRpc, true);
 
-  const intermediateSection = source.slice(intermediateIngestion, finalFailure);
+  const intermediateSection = source.slice(intermediateIngestion, lineageTerminal);
   assert.match(intermediateSection, /message: "채널 주문을 운영 원장에 저장하지 못했습니다\." \}, \{ status: 500 \}/);
   assert.match(intermediateSection, /message: "Lazada 문의 초기 동기화 완료 상태를 저장하지 못했습니다\." \}, \{ status: 500 \}/);
   assert.doesNotMatch(intermediateSection, /workerRpcErrorStatus/);

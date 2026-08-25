@@ -533,7 +533,7 @@ test("gateway credential staging is claim-bound, crash-durable, and supports pro
 
 test("gateway listing success path does not replay legacy attempt or listing completion RPCs", async () => {
   const route = await readFile(adminRouteUrl, "utf8");
-  const successStart = route.indexOf("const rawResult = await executeViaChannelGateway");
+  const successStart = route.indexOf("const gatewayExecution = await executeViaChannelGateway");
   const catchStart = route.indexOf("} catch (error) {", successStart);
   assert.notEqual(successStart, -1);
   assert.notEqual(catchStart, -1);

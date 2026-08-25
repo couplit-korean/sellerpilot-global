@@ -51,6 +51,8 @@ test("가격 readback이 없는 채널은 API 구현 유무와 무관하게 출�
   assert.match(channelOperationRelease("qoo10", "price.update").reason, /가격|readback/);
   assert.equal(channelOperationRelease("temu", "listing.update").mode, "release_verification_required");
   assert.match(channelOperationRelease("ebay", "listing.update").reason, /offer ID|SKU/);
+  assert.equal(channelOperationAvailable("ebay", "listing.stop"), false);
+  assert.match(channelOperationRelease("ebay", "listing.stop").reason, /offer ID|listing ID/);
 });
 
 test("상품 수정 payload는 원격 identity를 원장에서 고정하고 가격·재고·옵션을 제거한다", () => {
@@ -164,8 +166,10 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(source, /AbortSignal\.timeout\(58_000\)/);
   assert.doesNotMatch(source, /randomUUID/);
   assert.doesNotMatch(source, /operation:\s*"price\.update" as const/);
-  assert.match(workbench, /fetch\(`\/api\/admin\/products\/\$\{productId\}\/remote-edit`/);
+  assert.match(workbench, /fetch\(`\/api\/admin\/products\/\$\{requestedProductId\}\/remote-edit`/);
   assert.match(workbench, /listingId: listing\.id/);
   assert.match(workbench, /mutationId: await remoteEditMutationId\(mutationContract\)/);
   assert.match(workbench, /className="remote-edit-support"/);
+  assert.match(workbench, /remote-edit-support-reason/);
+  assert.match(workbench, /channelTargetOptionValue\(item\)/);
 });

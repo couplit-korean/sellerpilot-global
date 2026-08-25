@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { gatewayWorkerCompletionSchema } from "../../../../../lib/channels/gateway-contract";
 import { normalizeChannelInquiries } from "../../../../../lib/channels/inquiry-sync";
 import { normalizeChannelOrders } from "../../../../../lib/channels/order-sync";
@@ -17,6 +18,75 @@ import {
 export const runtime = "nodejs";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const listingLineageChannels = new Set(["qoo10", "shopee", "lazada", "ebay"]);
+const listingLineageCompletionSchema = z.object({
+  status: z.enum(["bound", "queued", "manual_required", "lease_lost"]),
+  job_id: z.string().uuid(),
+  listing_id: z.string().uuid().optional(),
+  reused: z.boolean().optional(),
+  reason: z.string().max(80).optional(),
+}).strip();
+
+type ListingLineageWorkerResult = {
+  ok: true;
+  channel: "qoo10" | "shopee" | "lazada" | "ebay";
+  operation: "listing.lineage.verify";
+  verificationStatus: "verified" | "manual_required";
+  evidence: {
+    expectedRemoteId: string;
+    verifiedRemoteId: string | null;
+    market: string;
+    targetId: string;
+    evidenceVersion: "provider_listing_readback_rebind_v1";
+    marketplaceSku?: string;
+    providerResourceId?: string;
+    reasonCode?: "EBAY_MARKETPLACE_SKU_MISSING" | "EBAY_OFFER_AMBIGUOUS";
+  };
+};
+
+function listingLineageFailureReason(message: string) {
+  if (message.includes("PROVIDER_ACCOUNT_IDENTITY_MISSING")) return "legacy_main_reconnect_required";
+  if (/PROVIDER_ACCOUNT_IDENTITY_MISMATCH|ACCOUNT_IDENTITY_VERIFICATION_FAILED/.test(message)) return "provider_identity_mismatch";
+  if (/SHOP_NOT_AUTHORIZED|TARGET_MISMATCH/.test(message)) return "target_mismatch";
+  if (message.includes("MARKET_MISMATCH")) return "market_mismatch";
+  if (message.includes("MARKETPLACE_SKU_MISSING")) return "marketplace_sku_missing";
+  if (message.includes("PROVIDER_RESOURCE_MISSING")) return "provider_resource_missing";
+  if (message.includes("OFFER_AMBIGUOUS")) return "provider_resource_ambiguous";
+  if (message.includes("REMOTE_ID_MISMATCH")) return "remote_id_mismatch";
+  if (/NOT_FOUND|404/.test(message)) return "provider_not_found";
+  return "provider_readback_rejected";
+}
+
+function listingLineageFailurePayload(channel: string, reason: string) {
+  return {
+    ok: false,
+    channel,
+    operation: "listing.lineage.verify",
+    evidenceVersion: "provider_listing_readback_v1",
+    reason,
+  };
+}
+
+function listingLineageSuccessPayload(result: ListingLineageWorkerResult) {
+  const evidence = result.evidence;
+  return {
+    ok: true,
+    channel: result.channel,
+    operation: result.operation,
+    evidenceVersion: "provider_listing_readback_v1",
+    expectedRemoteId: evidence.expectedRemoteId,
+    verifiedRemoteId: evidence.verifiedRemoteId,
+    market: evidence.market,
+    targetId: evidence.targetId,
+    verification: "exact_provider_readback",
+    ...(result.channel === "ebay" && evidence.marketplaceSku && evidence.providerResourceId
+      ? {
+        marketplaceSku: evidence.marketplaceSku,
+        providerResourceId: evidence.providerResourceId,
+      }
+      : {}),
+  };
+}
 
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
@@ -105,7 +175,7 @@ export async function POST(request: Request) {
     const prepared = typeof preparation === "object" && !Array.isArray(preparation)
       ? preparation as Record<string, unknown>
       : null;
-    if (prepared?.status === "conflict" || prepared?.status === "invalid") {
+    if (prepared?.status === "conflict" || prepared?.status === "invalid" || prepared?.status === "identity_mismatch") {
       return NextResponse.json({ message: "채널 인증 갱신 요청이 현재 작업 상태와 일치하지 않습니다." }, { status: 409 });
     }
     const recoveryPreserved = prepared?.status === "recovery_preserved"
@@ -233,6 +303,75 @@ export async function POST(request: Request) {
       p_data_type: dataType,
       p_status: "failed",
       p_error: parsed.data.error,
+    });
+  }
+
+  if (job.operation === "listing.lineage.verify") {
+    if (!listingLineageChannels.has(String(job.channel))) {
+      return NextResponse.json({ message: "상품 계보 검증 채널이 현재 작업과 일치하지 않습니다." }, { status: 409 });
+    }
+
+    let lineageStatus: "succeeded" | "failed" | "retryable";
+    let lineagePayload: Record<string, unknown> | null;
+    let lineageError: string | null = null;
+    if (parsed.data.status === "succeeded") {
+      const lineageResult = parsed.data.result as ListingLineageWorkerResult;
+      if (lineageResult.operation !== "listing.lineage.verify"
+          || lineageResult.channel !== job.channel) {
+        return NextResponse.json({ message: "상품 계보 검증 결과가 현재 작업과 일치하지 않습니다." }, { status: 409 });
+      }
+      if (lineageResult.verificationStatus === "verified") {
+        lineageStatus = "succeeded";
+        lineagePayload = listingLineageSuccessPayload(lineageResult);
+      } else {
+        const reason = lineageResult.evidence.reasonCode === "EBAY_MARKETPLACE_SKU_MISSING"
+          ? "marketplace_sku_missing"
+          : "provider_resource_ambiguous";
+        lineageStatus = "failed";
+        lineagePayload = listingLineageFailurePayload(String(job.channel), reason);
+        lineageError = reason;
+      }
+    } else if (parsed.data.status === "reconciliation_required") {
+      lineageStatus = "retryable";
+      lineagePayload = null;
+      lineageError = "provider_readback_retryable";
+    } else {
+      const reason = listingLineageFailureReason(parsed.data.error);
+      lineageStatus = "failed";
+      lineagePayload = listingLineageFailurePayload(String(job.channel), reason);
+      lineageError = reason;
+    }
+
+    const { data: lineageData, error: lineageCompletionError } = await serviceClient.rpc(
+      "sellerpilot_complete_listing_lineage_verification",
+      {
+        p_token_hash: tokenHash,
+        p_job_id: parsed.data.jobId,
+        p_claim_token: parsed.data.claimToken,
+        p_status: lineageStatus,
+        p_response_payload: lineagePayload,
+        p_error_message: lineageError,
+      },
+    );
+    const lineageCompletion = listingLineageCompletionSchema.safeParse(lineageData);
+    if (lineageCompletionError || !lineageCompletion.success
+        || lineageCompletion.data.job_id !== parsed.data.jobId) {
+      const status = lineageCompletionError ? workerRpcErrorStatus(lineageCompletionError) : 503;
+      console.error("listing lineage verification completion RPC failed", {
+        code: lineageCompletionError?.code ?? "invalid_contract",
+        status,
+      });
+      return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+    }
+    if (lineageCompletion.data.status === "lease_lost") {
+      return NextResponse.json({ message: "실행 중인 상품 계보 검증 claim이 만료됐습니다." }, { status: 409 });
+    }
+    return NextResponse.json({
+      message: lineageCompletion.data.status === "bound"
+        ? "원격 상품과 판매자 계정 계보를 정확히 확인해 결속했습니다."
+        : lineageCompletion.data.status === "queued"
+          ? "읽기 전용 상품 계보 검증을 안전하게 다시 대기열에 등록했습니다."
+          : "원격 상품 계보를 자동 확정하지 않고 수동 확인 상태로 보존했습니다.",
     });
   }
 

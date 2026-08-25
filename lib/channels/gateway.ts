@@ -27,7 +27,17 @@ type ListingGatewayEnqueue = {
   status?: unknown;
   job_id?: unknown;
   attempt_id?: unknown;
+  listing_id?: unknown;
   reused?: unknown;
+};
+
+type ListingCreateReservation = {
+  productId: string;
+  market: string;
+  targetId: string;
+  currency: string;
+  price: number;
+  requestFingerprint: string;
 };
 
 export type GatewayWriteResource = {
@@ -44,25 +54,86 @@ export type GatewayWriteResource = {
 export class ChannelGatewayInProgressError extends Error {
   readonly jobId: string;
   readonly attemptId: string | null;
+  readonly listingId: string | null;
 
-  constructor(jobId: string, attemptId: string | null, message = "CHANNEL_GATEWAY_IN_PROGRESS") {
+  constructor(
+    jobId: string,
+    attemptId: string | null,
+    message = "CHANNEL_GATEWAY_IN_PROGRESS",
+    listingId: string | null = null,
+  ) {
     super(message);
     this.name = "ChannelGatewayInProgressError";
     this.jobId = jobId;
     this.attemptId = attemptId;
+    this.listingId = listingId;
   }
 }
 
 export class ChannelGatewayReconciliationRequiredError extends Error {
   readonly jobId: string;
   readonly attemptId: string | null;
+  readonly listingId: string | null;
 
-  constructor(jobId: string, attemptId: string | null) {
+  constructor(jobId: string, attemptId: string | null, listingId: string | null = null) {
     super("CHANNEL_GATEWAY_RECONCILIATION_REQUIRED");
     this.name = "ChannelGatewayReconciliationRequiredError";
     this.jobId = jobId;
     this.attemptId = attemptId;
+    this.listingId = listingId;
   }
+}
+
+export class ChannelGatewayListingAlreadyPublishedError extends Error {
+  readonly listingId: string;
+  readonly attemptId: string;
+
+  constructor(listingId: string, attemptId: string) {
+    super("CHANNEL_GATEWAY_LISTING_ALREADY_PUBLISHED");
+    this.name = "ChannelGatewayListingAlreadyPublishedError";
+    this.listingId = listingId;
+    this.attemptId = attemptId;
+  }
+}
+
+export class ChannelGatewayListingBlockedError extends Error {
+  readonly listingId: string;
+  readonly attemptId: string;
+
+  constructor(listingId: string, attemptId: string) {
+    super("CHANNEL_GATEWAY_LISTING_MANUAL_RECONCILIATION_REQUIRED");
+    this.name = "ChannelGatewayListingBlockedError";
+    this.listingId = listingId;
+    this.attemptId = attemptId;
+  }
+}
+
+export class ChannelGatewayRemoteFailedError extends Error {
+  readonly jobId: string;
+  readonly attemptId: string | null;
+  readonly listingId: string | null;
+
+  constructor(jobId: string, attemptId: string | null, listingId: string | null, safeError: string) {
+    super(`CHANNEL_GATEWAY_REMOTE_FAILED:${safeError}`);
+    this.name = "ChannelGatewayRemoteFailedError";
+    this.jobId = jobId;
+    this.attemptId = attemptId;
+    this.listingId = listingId;
+  }
+}
+
+export class ChannelGatewayCredentialUnattestedError extends Error {
+  constructor() {
+    super("CHANNEL_GATEWAY_CREDENTIAL_UNATTESTED");
+    this.name = "ChannelGatewayCredentialUnattestedError";
+  }
+}
+
+function throwGatewayEnqueueError(error: { message?: string } | null) {
+  if (error?.message?.includes("provider-certified seller identity required")) {
+    throw new ChannelGatewayCredentialUnattestedError();
+  }
+  throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
 }
 
 async function waitForGatewayJob(
@@ -70,6 +141,7 @@ async function waitForGatewayJob(
   jobId: string,
   timeoutMs: number,
   attemptId: string | null = null,
+  listingId: string | null = null,
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -77,18 +149,23 @@ async function waitForGatewayJob(
     // Enqueue already committed. Losing the subsequent status read is never
     // proof of provider failure; preserve the active job/upper ledger and let
     // exact worker completion settle it.
-    if (error) throw new ChannelGatewayInProgressError(jobId, attemptId, "CHANNEL_GATEWAY_STATUS_UNAVAILABLE");
+    if (error) throw new ChannelGatewayInProgressError(jobId, attemptId, "CHANNEL_GATEWAY_STATUS_UNAVAILABLE", listingId);
     const job = data && typeof data === "object" && !Array.isArray(data) ? data as GatewayJobSnapshot : null;
     if (job?.status === "succeeded" && job.response && typeof job.response === "object" && !Array.isArray(job.response)) return job.response;
     if (job?.status === "reconciliation_required") {
-      throw new ChannelGatewayReconciliationRequiredError(jobId, attemptId);
+      throw new ChannelGatewayReconciliationRequiredError(jobId, attemptId, listingId);
     }
     if (job?.status === "failed" || job?.status === "cancelled") {
-      throw new Error(`CHANNEL_GATEWAY_REMOTE_FAILED:${typeof job.error === "string" ? job.error : "worker_failed"}`);
+      throw new ChannelGatewayRemoteFailedError(
+        jobId,
+        attemptId,
+        listingId,
+        typeof job.error === "string" ? job.error : "worker_failed",
+      );
     }
     await delay(500);
   }
-  throw new ChannelGatewayInProgressError(jobId, attemptId, "CHANNEL_GATEWAY_TIMEOUT");
+  throw new ChannelGatewayInProgressError(jobId, attemptId, "CHANNEL_GATEWAY_TIMEOUT", listingId);
 }
 
 function delay(ms: number) {
@@ -103,12 +180,59 @@ export async function executeViaChannelGateway(input: {
   operation: ChannelOperationName;
   arguments: Record<string, unknown>;
   listingId?: string;
+  listingCreate?: ListingCreateReservation;
   writeResource?: GatewayWriteResource;
   timeoutMs?: number;
 }) {
   let jobId = "";
   let effectiveAttemptId = input.attemptId;
-  if (input.listingId) {
+  let effectiveListingId = input.listingId ?? null;
+  if (input.listingCreate) {
+    if (!input.attemptId || input.operation !== "listing.create" || input.listingId) {
+      throw new Error("CHANNEL_GATEWAY_LISTING_BINDING_INVALID");
+    }
+    const { data, error: enqueueError } = await input.serviceClient.rpc(
+      "sellerpilot_service_reserve_and_enqueue_listing_create",
+      {
+        p_product_id: input.listingCreate.productId,
+        p_credential_id: input.credentialId,
+        p_attempt_id: input.attemptId,
+        p_channel: input.channel,
+        p_market: input.listingCreate.market,
+        p_target_id: input.listingCreate.targetId,
+        p_currency: input.listingCreate.currency,
+        p_price: input.listingCreate.price,
+        p_request_fingerprint: input.listingCreate.requestFingerprint,
+        p_request_payload: { arguments: input.arguments },
+      },
+    );
+    const enqueue = data && typeof data === "object" && !Array.isArray(data)
+      ? data as ListingGatewayEnqueue
+      : null;
+    if (enqueueError) throwGatewayEnqueueError(enqueueError);
+    if (!enqueue
+        || typeof enqueue.attempt_id !== "string"
+        || typeof enqueue.listing_id !== "string"
+        || !["queued", "in_progress", "reconciliation_required", "remote_exists", "manual_required"].includes(String(enqueue.status))) {
+      throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+    }
+    effectiveAttemptId = enqueue.attempt_id;
+    effectiveListingId = enqueue.listing_id;
+    if (enqueue.status === "remote_exists") {
+      throw new ChannelGatewayListingAlreadyPublishedError(effectiveListingId, effectiveAttemptId);
+    }
+    if (enqueue.status === "manual_required") {
+      throw new ChannelGatewayListingBlockedError(effectiveListingId, effectiveAttemptId);
+    }
+    if (typeof enqueue.job_id !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+    jobId = enqueue.job_id;
+    if (enqueue.status === "reconciliation_required") {
+      throw new ChannelGatewayReconciliationRequiredError(jobId, effectiveAttemptId, effectiveListingId);
+    }
+    if (enqueue.status === "in_progress") {
+      throw new ChannelGatewayInProgressError(jobId, effectiveAttemptId, "CHANNEL_GATEWAY_IN_PROGRESS", effectiveListingId);
+    }
+  } else if (input.listingId) {
     if (!input.attemptId || !["listing.create", "listing.update", "listing.stop"].includes(input.operation)) {
       throw new Error("CHANNEL_GATEWAY_LISTING_BINDING_INVALID");
     }
@@ -123,8 +247,8 @@ export async function executeViaChannelGateway(input: {
     const enqueue = data && typeof data === "object" && !Array.isArray(data)
       ? data as ListingGatewayEnqueue
       : null;
-    if (enqueueError
-        || !enqueue
+    if (enqueueError) throwGatewayEnqueueError(enqueueError);
+    if (!enqueue
         || typeof enqueue.job_id !== "string"
         || typeof enqueue.attempt_id !== "string"
         || !["queued", "in_progress", "reconciliation_required"].includes(String(enqueue.status))) {
@@ -133,10 +257,10 @@ export async function executeViaChannelGateway(input: {
     jobId = enqueue.job_id;
     effectiveAttemptId = enqueue.attempt_id;
     if (enqueue.status === "reconciliation_required") {
-      throw new ChannelGatewayReconciliationRequiredError(jobId, effectiveAttemptId);
+      throw new ChannelGatewayReconciliationRequiredError(jobId, effectiveAttemptId, effectiveListingId);
     }
     if (enqueue.status === "in_progress") {
-      throw new ChannelGatewayInProgressError(jobId, effectiveAttemptId);
+      throw new ChannelGatewayInProgressError(jobId, effectiveAttemptId, "CHANNEL_GATEWAY_IN_PROGRESS", effectiveListingId);
     }
   } else if (input.writeResource) {
     const { data, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_service_enqueue_resource_gateway_job", {
@@ -157,8 +281,8 @@ export async function executeViaChannelGateway(input: {
     const enqueue = data && typeof data === "object" && !Array.isArray(data)
       ? data as ListingGatewayEnqueue
       : null;
-    if (enqueueError
-        || !enqueue
+    if (enqueueError) throwGatewayEnqueueError(enqueueError);
+    if (!enqueue
         || typeof enqueue.job_id !== "string"
         || typeof enqueue.attempt_id !== "string"
         || !["queued", "in_progress", "reconciliation_required"].includes(String(enqueue.status))) {
@@ -180,15 +304,58 @@ export async function executeViaChannelGateway(input: {
       p_operation: input.operation,
       p_request_payload: { arguments: input.arguments },
     });
-    if (enqueueError || typeof data !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+    if (enqueueError) throwGatewayEnqueueError(enqueueError);
+    if (typeof data !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
     jobId = data;
   }
 
-  return await waitForGatewayJob(
+  const result = await waitForGatewayJob(
     input.serviceClient,
     jobId,
     input.timeoutMs ?? 180_000,
     effectiveAttemptId,
+    effectiveListingId,
+  ) as ChannelOperationResult;
+  return { result, listingId: effectiveListingId ?? undefined };
+}
+
+export async function executeInquiryReplyViaChannelGateway(input: {
+  serviceClient: SupabaseClient;
+  ticketId: string;
+  channel: "qoo10" | "lazada" | "coupang" | "smartstore";
+  reply: string;
+  arguments: Record<string, unknown>;
+  timeoutMs?: number;
+}) {
+  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc(
+    "sellerpilot_enqueue_inquiry_reply_gateway_job",
+    {
+      p_ticket_id: input.ticketId,
+      p_channel: input.channel,
+      p_reply_text: input.reply,
+      p_request_payload: { arguments: input.arguments },
+    },
+  );
+  if (enqueueError) {
+    if (/INQUIRY_REPLY_CONFLICT|INQUIRY_REPLY_ALREADY_RESOLVED/.test(enqueueError.message)) {
+      throw new Error("CHANNEL_GATEWAY_REPLY_CONFLICT");
+    }
+    if (enqueueError.message.includes("INQUIRY_REPLY_LINEAGE_UNBOUND")) {
+      throw new Error("CHANNEL_GATEWAY_REPLY_LINEAGE_UNBOUND");
+    }
+    if (/INQUIRY_REPLY_RECONCILIATION_REQUIRED|INQUIRY_REPLY_LEGACY_IN_PROGRESS/.test(enqueueError.message)) {
+      throw new Error("CHANNEL_GATEWAY_REPLY_RECONCILIATION_REQUIRED");
+    }
+    if (enqueueError.message.includes("active channel credential required")) {
+      throw new Error("CREDENTIALS_MISSING");
+    }
+    throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+  }
+  if (typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+  return await waitForGatewayJob(
+    input.serviceClient,
+    jobId,
+    input.timeoutMs ?? 180_000,
   ) as ChannelOperationResult;
 }
 

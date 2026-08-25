@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { gatewayWorkerCompletionSchema } from "../lib/channels/gateway-contract";
+import {
+  gatewayJobCompletionStatus,
+  gatewayResultHasObservedMutation,
+  gatewayWorkerCompletionSchema,
+} from "../lib/channels/gateway-contract";
 
 test("channel gateway accepts the full Shopee asynchronous verification trail", () => {
   const parsed = gatewayWorkerCompletionSchema.safeParse({
@@ -117,3 +121,16 @@ for (const status of ["failed", "reconciliation_required"] as const) {
     assert.equal(parsed.success, true);
   });
 }
+
+test("inquiry reply provider uncertainty is never classified as safely retryable", () => {
+  assert.equal(gatewayResultHasObservedMutation("inquiries.reply", false, [
+    { name: "inquiry-reply", ok: true, status: 200 },
+    { name: "reply-readback", ok: false, status: 503 },
+  ]), true);
+  assert.equal(gatewayJobCompletionStatus("inquiries.reply", false, [
+    { name: "inquiry-reply", ok: false, status: 503 },
+  ]), "reconciliation_required");
+  assert.equal(gatewayJobCompletionStatus("inquiries.reply", false, [
+    { name: "inquiry-preflight", ok: false, status: 422 },
+  ]), "succeeded");
+});

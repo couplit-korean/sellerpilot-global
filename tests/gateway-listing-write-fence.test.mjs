@@ -7,6 +7,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260825104700_prevent_duplicate_listing_gateway_writes.sql",
   import.meta.url,
 );
+const atomicMigrationUrl = new URL(
+  "../supabase/migrations/20260825111820_serialize_gateway_ledger_transactions.sql",
+  import.meta.url,
+);
 const gatewayUrl = new URL("../lib/channels/gateway.ts", import.meta.url);
 const adminRouteUrl = new URL("../app/api/admin/channel-operations/route.ts", import.meta.url);
 const workbenchUrl = new URL("../app/product-publish-workbench.tsx", import.meta.url);
@@ -211,20 +215,31 @@ test("listing gateway enqueue serializes shared-admin writes and fences unresolv
   }
 });
 
-test("gateway timeout, reconciliation, API, and workbench states stay distinct", async () => {
-  const [gateway, adminRoute, workbench, migration] = await Promise.all([
+test("gateway timeout, atomic create, reconciliation, API, and workbench states stay distinct", async () => {
+  const [gateway, adminRoute, workbench, migration, atomicMigration] = await Promise.all([
     readFile(gatewayUrl, "utf8"),
     readFile(adminRouteUrl, "utf8"),
     readFile(workbenchUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
+    readFile(atomicMigrationUrl, "utf8"),
   ]);
 
   assert.match(gateway, /job\?\.status === "reconciliation_required"[\s\S]*ChannelGatewayReconciliationRequiredError/);
-  assert.match(gateway, /throw new ChannelGatewayInProgressError\(jobId, attemptId, "CHANNEL_GATEWAY_TIMEOUT"\)/);
+  assert.match(gateway, /throw new ChannelGatewayInProgressError\(jobId, attemptId, "CHANNEL_GATEWAY_TIMEOUT", listingId\)/);
+  assert.match(gateway, /sellerpilot_service_reserve_and_enqueue_listing_create/);
+  assert.match(gateway, /effectiveListingId = enqueue\.listing_id/);
+  assert.match(gateway, /enqueue\.status === "remote_exists"[\s\S]*ChannelGatewayListingAlreadyPublishedError/);
+  assert.match(gateway, /enqueue\.status === "manual_required"[\s\S]*ChannelGatewayListingBlockedError/);
+  assert.match(gateway, /return \{ result, listingId: effectiveListingId \?\? undefined \}/);
   assert.match(gateway, /sellerpilot_service_enqueue_listing_gateway_job/);
   assert.match(adminRoute, /ChannelGatewayReconciliationRequiredError[\s\S]*manualRequired: true,[\s\S]*reconciliationRequired: true/);
   assert.match(adminRoute, /ChannelGatewayInProgressError[\s\S]*inProgress: true,[\s\S]*reconciliationRequired: false/);
+  assert.match(adminRoute, /ChannelGatewayListingAlreadyPublishedError[\s\S]*listingId: error\.listingId[\s\S]*status: 409/);
+  assert.match(adminRoute, /ChannelGatewayListingBlockedError[\s\S]*listingId: error\.listingId[\s\S]*status: 409/);
   assert.match(adminRoute, /claim\.status === "running"[\s\S]*status: 202/);
+  assert.match(adminRoute, /listingCreate: operation === "listing\.create"[\s\S]*requestFingerprint/);
+  assert.match(adminRoute, /if \(gatewayExecution\.listingId\) listingId = gatewayExecution\.listingId/);
+  assert.doesNotMatch(adminRoute, /sellerpilot_prepare_product_market_listing/);
   assert.match(adminRoute, /const usesChannelGateway = channel === "ebay"/);
   assert.match(adminRoute, /\(\(listingGatewayOperation \|\| writeChannelOperations\.has\(operation\)\) && channel === "qoo10"\)/);
 
@@ -237,11 +252,13 @@ test("gateway timeout, reconciliation, API, and workbench states stay distinct",
   assert.match(workbench, /window\.clearTimeout\(timer\)/);
   assert.match(workbench, /result\.phase === "queued"[\s\S]*result\.phase === "blocked"/);
   assert.match(workbench, /\["queued", "publishing"\]\.includes\(listing\.status\)/);
-  assert.match(workbench, /retryGeneration = previousResult\?\.phase === "failed"/);
-  assert.match(workbench, /listing\?\.operationAttemptId \?\? "initial"/);
-  assert.match(workbench, /idempotencyKey: `listing:\$\{productId\}:\$\{channel\}:\$\{await fingerprint\(mutationContract\)\}`/);
-  assert.match(workbench, /fetch\(`\/api\/admin\/products\/\$\{productId\}\/remote-edit`/);
+  assert.match(workbench, /retryGeneration = listingMutationGeneration\(listing, mutationGenerationRef\.current\.get\(mutationScope\)\)/);
+  assert.doesNotMatch(workbench, /retryGeneration[\s\S]{0,160}crypto\.randomUUID\(\)/);
+  assert.match(workbench, /idempotencyKey: `listing:\$\{requestedProductId\}:\$\{channel\}:\$\{await fingerprint\(mutationContract\)\}`/);
+  assert.match(workbench, /fetch\(`\/api\/admin\/products\/\$\{requestedProductId\}\/remote-edit`/);
   assert.match(workbench, /mutationId: await remoteEditMutationId\(mutationContract\)/);
+  assert.match(workbench, /if \(!payload\.attemptId\)[\s\S]*phase: "failed"/);
+  assert.match(workbench, /reconcileQueuedChannelResults\(current, listings\)/);
 
   assert.match(migration, /for update;[\s\S]*sellerpilot_private\.channel_gateway_jobs/);
   assert.match(migration, /status in \('queued', 'running', 'reconciliation_required'\)/);
@@ -252,4 +269,17 @@ test("gateway timeout, reconciliation, API, and workbench states stay distinct",
   assert.match(migration, /sellerpilot_private\.admin_users a where a\.user_id = v_attempt_owner_id/);
   assert.match(migration, /sellerpilot_private\.admin_users a where a\.user_id = v_listing\.owner_id/);
   assert.match(migration, /This conflicting attempt never reached the provider[\s\S]*set status = 'failed'/);
+
+  assert.match(atomicMigration, /sellerpilot_service_reserve_and_enqueue_listing_create/);
+  assert.match(atomicMigration, /pg_catalog\.pg_advisory_xact_lock\(193674993, 821065042\)/);
+  assert.match(atomicMigration, /on conflict \(owner_id, product_id, channel_key, market, target_id\)[\s\S]*do nothing/);
+  assert.match(atomicMigration, /from sellerpilot_private\.product_listings listing[\s\S]*for update/);
+  assert.match(atomicMigration, /job\.status in \('queued', 'running', 'reconciliation_required'\)/);
+  assert.match(atomicMigration, /nullif\(trim\(coalesce\(v_listing\.remote_id, ''\)\), ''\) is not null[\s\S]*'status', 'remote_exists'/);
+  assert.match(atomicMigration, /v_listing\.failure_class = 'external_action'[\s\S]*'status', 'manual_required'/);
+  assert.match(atomicMigration, /set operation_attempt_id = p_attempt_id,[\s\S]*currency = upper\(trim\(p_currency\)\),[\s\S]*price = p_price[\s\S]*insert into sellerpilot_private\.channel_gateway_jobs/);
+  assert.match(atomicMigration, /if p_operation = 'listing\.create' then[\s\S]*ATOMIC_LISTING_CREATE_REQUIRED/);
+  assert.match(atomicMigration, /revoke all on function public\.sellerpilot_prepare_product_market_listing[\s\S]*authenticated, service_role/);
+  assert.match(atomicMigration, /revoke all on function public\.sellerpilot_prepare_product_listing[\s\S]*authenticated, service_role/);
+  assert.match(atomicMigration, /revoke all on function public\.sellerpilot_service_reserve_and_enqueue_listing_create[\s\S]*from public, anon, authenticated;[\s\S]*grant execute[\s\S]*to service_role/);
 });

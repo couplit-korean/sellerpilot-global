@@ -34,16 +34,18 @@ test("ticket selection uses the internal source id even when external ticket ids
   assert.equal(selectedCsTicket([], "source-a"), null);
 });
 
-test("only Lazada uses remote reply while every other channel saves an in-progress internal draft", () => {
-  assert.deepEqual(csReplySavePlan("ticket-l", "lazada", "reply"), {
-    endpoint: "/api/admin/cs/lazada-reply",
-    body: { ticketId: "ticket-l", reply: "reply" },
-    completionMessage: "Lazada IM에 답변을 전송하고 처리 완료로 기록했습니다.",
-    remote: true,
-  });
-  assert.deepEqual(csReplySavePlan("ticket-q", "qoo10", "draft"), {
+test("verified marketplace reply channels use one gateway while unsupported channels keep internal drafts", () => {
+  for (const channel of ["qoo10", "lazada", "coupang", "smartstore"]) {
+    assert.deepEqual(csReplySavePlan(`ticket-${channel}`, channel, "reply"), {
+      endpoint: "/api/admin/cs/reply",
+      body: { ticketId: `ticket-${channel}`, reply: "reply" },
+      completionMessage: "판매채널에 답변을 전송하고 처리 완료로 기록했습니다.",
+      remote: true,
+    });
+  }
+  assert.deepEqual(csReplySavePlan("ticket-s", "shopee", "draft"), {
     endpoint: "/api/operations/snapshot",
-    body: { action: "ticket_update", id: "ticket-q", status: "in_progress", replyDraft: "draft" },
+    body: { action: "ticket_update", id: "ticket-s", status: "in_progress", replyDraft: "draft" },
     completionMessage: "외부 채널에는 전송하지 않았습니다. 내부 답변 초안을 처리 중 상태로 저장했습니다.",
     remote: false,
   });
@@ -52,20 +54,20 @@ test("only Lazada uses remote reply while every other channel saves an in-progre
 test("channel verification separates inquiry receiving from remote reply capability", () => {
   assert.deepEqual(csChannelVerification("qoo10", "passed", 0), {
     readLabel: "상품 문의 조회 성공 · 원장 0건",
-    replyLabel: "답변: 내부 초안만 · 판매자센터 전송 필요",
+    replyLabel: "답변: 보안 게이트웨이 원격 전송",
     badge: "조회 성공",
     tone: "passed",
   });
   assert.equal(csChannelVerification("qoo10", "queued").badge, "조회 대기");
   assert.equal(csChannelVerification("qoo10", "queued").tone, "unsupported");
   assert.match(csChannelVerification("shopee", null).readLabel, /API 미연동/);
-  assert.match(csChannelVerification("lazada", "passed").replyLabel, /앱 권한 필요/);
+  assert.match(csChannelVerification("lazada", "passed").replyLabel, /보안 게이트웨이/);
   assert.match(csChannelVerification("temu", "passed").readLabel, /반품·환불 작업/);
   assert.match(csChannelVerification("elevenst", "unsupported").replyLabel, /API 미지원/);
   assert.equal(csChannelVerification("elevenst", "passed", 3).badge, "수신 미지원");
   assert.deepEqual(csChannelVerification("lazada", "failed", 0, "App does not have permission to access this api"), {
     readLabel: "Lazada IM 조회 거절 · 운영 앱 Buyer IM 권한 필요",
-    replyLabel: "답변: 원격 전송 경로 있음 · 앱 권한 필요",
+    replyLabel: "답변: 보안 게이트웨이 원격 전송",
     badge: "권한 필요",
     tone: "failed",
   });

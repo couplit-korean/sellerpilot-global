@@ -13,7 +13,14 @@ export const gatewayClaimSchema = z.object({
   claim_token: z.string().uuid(),
   credential_id: z.string().uuid(),
   channel: gatewayChannelSchema,
-  operation: z.union([z.literal("oauth.exchange"), z.literal("shops.get"), z.literal("diagnostic.test"), z.literal("competitor.search"), z.enum(channelOperationNames)]),
+  operation: z.union([
+    z.literal("oauth.exchange"),
+    z.literal("shops.get"),
+    z.literal("diagnostic.test"),
+    z.literal("competitor.search"),
+    z.literal("listing.lineage.verify"),
+    z.enum(channelOperationNames),
+  ]),
   environment: z.enum(["sandbox", "production"]),
   request: z.record(z.string(), z.unknown()),
   credential: credentialPayloadSchema,
@@ -89,6 +96,82 @@ const competitorSearchResultSchema = z.object({
   safeMessage: z.string().min(1).max(1_000),
 });
 
+const listingLineageEvidenceBaseSchema = z.object({
+  expectedRemoteId: z.string().min(1).max(240),
+  market: z.string().min(1).max(40),
+  targetId: z.string().max(160),
+  evidenceVersion: z.literal("provider_listing_readback_rebind_v1"),
+  marketplaceSku: z.string().min(1).max(160).optional(),
+  providerResourceId: z.string().min(1).max(240).optional(),
+});
+
+const listingLineageStepDataSchema = z.object({
+  sellerpilotVerification: z.enum([
+    "QOO10_ITEM_CODE_VERIFIED",
+    "SHOPEE_SHOP_ID_VERIFIED",
+    "SHOPEE_ITEM_ID_VERIFIED",
+    "LAZADA_COUNTRY_ITEM_ID_VERIFIED",
+    "EBAY_SKU_OFFER_VERIFIED",
+    "EBAY_OFFER_LISTING_ID_VERIFIED",
+    "EBAY_EXACT_OFFER_NOT_UNIQUE",
+  ]),
+  targetId: z.string().max(160).optional(),
+  verifiedRemoteId: z.string().min(1).max(240).optional(),
+  market: z.string().min(1).max(40).optional(),
+  marketplaceSku: z.string().min(1).max(160).optional(),
+  providerResourceId: z.string().min(1).max(240).optional(),
+  exactOfferUnique: z.boolean().optional(),
+}).strict();
+
+const listingLineageVerificationResultSchema = z.discriminatedUnion("verificationStatus", [
+  z.object({
+    ok: z.literal(true),
+    channel: z.enum(["qoo10", "shopee", "lazada", "ebay"]),
+    operation: z.literal("listing.lineage.verify"),
+    verificationStatus: z.literal("verified"),
+    evidence: listingLineageEvidenceBaseSchema.extend({
+      verifiedRemoteId: z.string().min(1).max(240),
+    }),
+    steps: z.array(z.object({
+      name: z.string().min(1).max(160),
+      ok: z.literal(true),
+      status: z.number().int().min(100).max(599),
+      data: listingLineageStepDataSchema,
+    })).min(1).max(3),
+  }),
+  z.object({
+    ok: z.literal(true),
+    channel: z.literal("ebay"),
+    operation: z.literal("listing.lineage.verify"),
+    verificationStatus: z.literal("manual_required"),
+    evidence: listingLineageEvidenceBaseSchema.extend({
+      verifiedRemoteId: z.null(),
+      reasonCode: z.enum(["EBAY_MARKETPLACE_SKU_MISSING", "EBAY_OFFER_AMBIGUOUS"]),
+    }),
+    steps: z.array(z.object({
+      name: z.string().min(1).max(160),
+      ok: z.boolean(),
+      status: z.number().int().min(100).max(599),
+      data: listingLineageStepDataSchema,
+    })).max(2),
+  }),
+]).superRefine((value, context) => {
+  if (value.verificationStatus !== "verified") return;
+  if (value.evidence.expectedRemoteId !== value.evidence.verifiedRemoteId) {
+    context.addIssue({ code: "custom", message: "lineage remote identity mismatch" });
+  }
+  const hasEbayResource = Boolean(value.evidence.marketplaceSku && value.evidence.providerResourceId);
+  if (value.channel === "ebay" && !hasEbayResource) {
+    context.addIssue({ code: "custom", message: "verified ebay lineage requires SKU and offer id" });
+  }
+  if (value.channel !== "ebay" && (value.evidence.marketplaceSku || value.evidence.providerResourceId)) {
+    context.addIssue({ code: "custom", message: "non-ebay lineage cannot carry ebay resource evidence" });
+  }
+  if (value.channel === "shopee" && !/^\d+$/.test(value.evidence.targetId)) {
+    context.addIssue({ code: "custom", message: "verified shopee lineage requires a numeric shop id" });
+  }
+});
+
 export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
   z.object({
     jobId: z.string().uuid(),
@@ -98,6 +181,7 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
       operationResultSchema,
       diagnosticResultSchema,
       competitorSearchResultSchema,
+      listingLineageVerificationResultSchema,
       z.object({
         ok: z.literal(true),
         channel: z.enum(["shopee", "lazada", "ebay"]),
@@ -164,6 +248,9 @@ const trustedMutationSteps: Readonly<Record<string, ReadonlySet<string>>> = {
   "inventory.update": new Set([
     "setgoodspriceqty", "inventory.update", "/product/price_quantity/update",
     "quantity", "origin-product-stock", "option-stock", "goods-stock", "bulk-inventory",
+  ]),
+  "inquiries.reply": new Set([
+    "inquiry-reply", "setinquirymessage", "cscenter.setinquirymessage",
   ]),
   "shipment.acknowledge": new Set(["seller-check", "pack", "acknowledgement", "confirm"]),
   "shipment.confirm": new Set([

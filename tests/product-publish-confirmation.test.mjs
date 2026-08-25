@@ -7,9 +7,9 @@ test("Qoo10 pause actions use controllable in-app confirmations", async () => {
 
   assert.doesNotMatch(source, /window\.confirm/);
   assert.match(source, /aria-label="Qoo10 거래대기 전환 최종 확인"/);
-  assert.match(source, /aria-label="이전 Qoo10 상품 거래대기 최종 확인"/);
   assert.match(source, /Qoo10 거래대기 전환 실행/);
-  assert.match(source, /이전 상품 거래대기 실행/);
+  assert.doesNotMatch(source, /이전 Qoo10 상품 거래대기|이전 상품 거래대기 실행/);
+  assert.match(source, /qoo10StopConfirming\.remoteId === listing\.remoteId/);
 });
 
 test("channel write confirmations move focus, close on Escape, and restore their opener", async () => {
@@ -19,7 +19,7 @@ test("channel write confirmations move focus, close on Escape, and restore their
   assert.match(source, /querySelector<HTMLButtonElement>\("\.publish-confirm-execute"\)/);
   assert.match(source, /event\.key !== "Escape"/);
   assert.match(source, /opener\?\.isConnected[\s\S]*?opener\.focus\(\)/);
-  assert.equal((source.match(/aria-modal="true"/g) ?? []).length, 4);
+  assert.equal((source.match(/aria-modal="true"/g) ?? []).length, 3);
 });
 
 test("Coupang listing preflight never creates an unconfirmed shipping place", async () => {

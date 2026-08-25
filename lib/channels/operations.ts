@@ -43,6 +43,7 @@ export const channelOperationNames = [
   "orders.list",
   "orders.get",
   "inquiries.list",
+  "inquiries.reply",
   "shipment.acknowledge",
   "shipment.confirm",
 ] as const;
@@ -62,6 +63,7 @@ export const channelOperationCapabilities: Record<ChannelOperationName, ChannelC
   "orders.list": "orders",
   "orders.get": "orders",
   "inquiries.list": "inquiries",
+  "inquiries.reply": "inquiries",
   "shipment.acknowledge": "shipment",
   "shipment.confirm": "shipment",
 };
@@ -72,6 +74,7 @@ export const writeChannelOperations = new Set<ChannelOperationName>([
   "listing.stop",
   "price.update",
   "inventory.update",
+  "inquiries.reply",
   "shipment.acknowledge",
   "shipment.confirm",
 ]);
@@ -374,6 +377,9 @@ function lazadaPayload(argumentsValue: Record<string, unknown>) {
 
 function ensureProviderSupport(channel: ActiveChannelKey, operation: ChannelOperationName) {
   if (channel === "ebay" && operation === "shipment.acknowledge") {
+    throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
+  }
+  if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore"].includes(channel)) {
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
   }
   const capability = channelCatalog[channel].capabilities[channelOperationCapabilities[operation]];
@@ -800,6 +806,7 @@ async function executeQoo10(input: ExecuteInput) {
     "inventory.update": { service: "ItemsOrder", method: "SetGoodsPriceQty" },
     "orders.list": { service: "ShippingBasic", method: "GetShippingInfo_v3" },
     "inquiries.list": { service: "CSCenter", method: "GetInquiryMessage" },
+    "inquiries.reply": { service: "CSCenter", method: "SetInquiryMessage" },
     "shipment.confirm": { service: "ShippingBasic", method: "SetSendingInfo" },
   };
   if (input.operation === "orders.get") {
@@ -1417,6 +1424,17 @@ async function executeLazada(input: ExecuteInput) {
     }
     return result(input, steps);
   }
+  if (input.operation === "inquiries.reply") {
+    const sessionId = stringArgument(input.arguments, "sessionId");
+    const reply = stringArgument(input.arguments, "reply");
+    const remote = await lazadaRequest({
+      payload: input.payload,
+      path: "/im/message/send",
+      method: "POST",
+      params: { template_id: "1", session_id: sessionId, txt: reply },
+    });
+    return result(input, [step("inquiry-reply", remote)], sessionId);
+  }
   if (input.operation === "shipment.acknowledge") {
     const packRequest = objectValue(input.arguments, "packReq");
     const remote = await lazadaRequest({
@@ -1822,6 +1840,30 @@ async function executeCoupang(input: ExecuteInput) {
     inquiryStep.data = { ...inquiryStep.data, sellerpilotInquiryKind: kind || "product" };
     return result(input, [inquiryStep]);
   }
+  if (input.operation === "inquiries.reply") {
+    const inquiryId = pathSegment(stringArgument(input.arguments, "inquiryId"));
+    const kind = stringArgument(input.arguments, "kind");
+    const replyBy = textValue(input.payload, "requested_by");
+    if (!replyBy) throw new Error("COUPANG_WING_USER_ID_MISSING");
+    if (kind !== "product" && kind !== "call-center") throw new Error("CHANNEL_ARGUMENT_INVALID:kind");
+    const reply = stringArgument(input.arguments, "reply");
+    const body = kind === "call-center"
+      ? {
+          vendorId,
+          inquiryId: decodeURIComponent(inquiryId),
+          content: reply,
+          replyBy,
+          parentAnswerId: pathSegment(stringArgument(input.arguments, "parentAnswerId")),
+        }
+      : { content: reply, vendorId, replyBy };
+    const remote = await coupangRequest({
+      payload: input.payload,
+      method: "POST",
+      path: `/v2/providers/openapi/apis/api/v4/vendors/${pathSegment(vendorId)}/${kind === "call-center" ? "callCenterInquiries" : "onlineInquiries"}/${inquiryId}/replies`,
+      body,
+    });
+    return result(input, [step("inquiry-reply", remote)], decodeURIComponent(inquiryId));
+  }
   if (input.operation === "orders.list") {
     const kind = stringArgument(input.arguments, "kind", false);
     const remote = await coupangRequest({
@@ -2029,6 +2071,15 @@ async function executeSmartstore(input: ExecuteInput) {
   if (input.operation === "inquiries.list") {
     const remote = await request({ method: "GET", path: "/v1/contents/qnas", query: queryParams(input.arguments) });
     return result(input, [step("inquiries", remote)]);
+  }
+  if (input.operation === "inquiries.reply") {
+    const questionId = pathSegment(stringArgument(input.arguments, "questionId"));
+    const remote = await request({
+      method: "PUT",
+      path: `/v1/contents/qnas/${questionId}`,
+      body: { answerContent: stringArgument(input.arguments, "reply") },
+    });
+    return result(input, [step("inquiry-reply", remote)], decodeURIComponent(questionId));
   }
   if (input.operation === "orders.get") {
     const productOrderId = stringArgument(input.arguments, "productOrderId");

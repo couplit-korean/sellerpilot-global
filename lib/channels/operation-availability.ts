@@ -14,6 +14,7 @@ const operationCapabilities: Record<ChannelOperationName, ChannelCapabilityKey> 
   "orders.list": "orders",
   "orders.get": "orders",
   "inquiries.list": "inquiries",
+  "inquiries.reply": "inquiries",
   "shipment.acknowledge": "shipment",
   "shipment.confirm": "shipment",
 };
@@ -75,6 +76,13 @@ export function channelOperationRelease(channel: ActiveChannelKey, operation: Ch
         ?? "원격 상품 식별값과 수정 결과 readback이 모두 검증되지 않아 상품 수정을 차단했습니다.",
     };
   }
+  if (channel === "ebay" && operation === "listing.stop") {
+    return {
+      available: false,
+      mode: "release_verification_required",
+      reason: "eBay 판매 중지는 offer ID가 필요하지만 현재 원장에는 공개 listing ID만 보존되므로 다른 상품을 중지하지 않도록 차단했습니다.",
+    };
+  }
   if (operation === "price.update") {
     return {
       available: false,
@@ -84,6 +92,9 @@ export function channelOperationRelease(channel: ActiveChannelKey, operation: Ch
   }
   if (channel === "shopee" && operation === "inquiries.list") {
     return { available: false, mode: "release_verification_required", reason: "Shopee Chat API 권한과 실제 메시지 readback이 확인되지 않아 차단했습니다." };
+  }
+  if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore"].includes(channel)) {
+    return { available: false, mode: "release_verification_required", reason: "이 채널은 현재 공식 문의 답변 API가 검증되지 않아 원격 전송을 차단했습니다." };
   }
   if (channel === "ebay" && operation === "shipment.acknowledge") {
     return { available: false, mode: "release_verification_required", reason: "eBay에는 별도 발주확인 쓰기 동작이 없어 차단했습니다." };

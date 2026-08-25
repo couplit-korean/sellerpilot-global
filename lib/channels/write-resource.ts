@@ -34,7 +34,7 @@ function firstValue(value: unknown) {
   return Array.isArray(value) ? value[0] : undefined;
 }
 
-function listingIdentity(channel: ActiveChannelKey, operation: ChannelOperationName, argumentsValue: Record<string, unknown>) {
+export function channelListingRemoteIdentity(channel: ActiveChannelKey, operation: ChannelOperationName, argumentsValue: Record<string, unknown>) {
   const params = record(argumentsValue.params);
   const body = record(argumentsValue.body);
   const request = record(argumentsValue.request);
@@ -54,6 +54,17 @@ function listingIdentity(channel: ActiveChannelKey, operation: ChannelOperationN
   }
   if (channel === "temu") return text(argumentsValue.goodsId, argumentsValue.skuId, argumentsValue.sku);
   return text(argumentsValue.remoteId, argumentsValue.itemId);
+}
+
+export function listingLedgerRemoteIdentity(
+  channel: ActiveChannelKey,
+  operation: ChannelOperationName,
+  listing: { remoteId?: unknown; marketplaceSku?: unknown },
+) {
+  if (channel === "ebay" && operation === "inventory.update") {
+    return text(listing.marketplaceSku);
+  }
+  return text(listing.remoteId);
 }
 
 function shipmentIdentity(channel: ActiveChannelKey, argumentsValue: Record<string, unknown>) {
@@ -83,7 +94,7 @@ export function channelWriteResource(input: {
   let identity: string;
   if (input.operation === "price.update" || input.operation === "inventory.update") {
     kind = "listing_mutation";
-    identity = text(context.listingId) || listingIdentity(input.channel, input.operation, input.arguments);
+    identity = text(context.listingId);
   } else if (input.operation === "shipment.acknowledge" || input.operation === "shipment.confirm") {
     kind = "order_shipment";
     identity = text(context.orderId) || shipmentIdentity(input.channel, input.arguments);

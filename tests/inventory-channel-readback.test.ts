@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { listingLedgerRemoteIdentity } from "../lib/channels/write-resource";
+
+test("eBay inventory is bound to its persisted marketplace SKU, not the public listing ID", () => {
+  const listing = { remoteId: "PUBLIC-LISTING-123", marketplaceSku: "EBAY-SKU" };
+  assert.equal(listingLedgerRemoteIdentity("ebay", "inventory.update", listing), "EBAY-SKU");
+  assert.equal(listingLedgerRemoteIdentity("ebay", "listing.stop", listing), "PUBLIC-LISTING-123");
+  assert.equal(listingLedgerRemoteIdentity("qoo10", "inventory.update", listing), "PUBLIC-LISTING-123");
+});
 
 test("Qoo10 inventory succeeds only after quantity readback", async () => {
   const originalFetch = globalThis.fetch;

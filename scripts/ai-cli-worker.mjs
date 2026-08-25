@@ -14,6 +14,7 @@ import { buildMarketplaceStyleLearningBrief } from "../lib/marketplace-style-lea
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
 import { searchElevenstProductVariants } from "../lib/competitor-prices.ts";
+import { executeProviderListingLineageVerification } from "../lib/channels/listing-lineage-verification.ts";
 import {
   buildDifferenceHash,
   buildDuplicateRetryGuidance,
@@ -40,6 +41,14 @@ import {
   replaceMarketplaceImageUrls,
 } from "../lib/channels/listing-normalization.ts";
 import { executeChannelOperation, writeChannelOperations } from "../lib/channels/operations.ts";
+import {
+  assertShopeeShopProfileTarget,
+  shopeeProviderAccountIdentity,
+  withLazadaProviderAccountIdentity,
+  withProviderAccountIdentity,
+  withoutProviderAccountIdentity,
+  withoutShopeeOAuthAccountState,
+} from "../lib/channels/provider-account-identity.ts";
 import { evaluateTemuEgressIp, parseTemuEgressAllowlist } from "../lib/channels/temu-egress-policy.ts";
 import {
   ensureEbayAccessToken,
@@ -51,11 +60,11 @@ import {
   exchangeEbayOAuthToken,
   exchangeLazadaOAuthToken,
   exchangeShopeeOAuthToken,
+  fetchEbayTradingUserIdentity,
   fetchNaverAccessToken,
   lazadaRequest,
   naverRequest,
   shopeeMerchantRequest,
-  shopeePartnerRequest,
   shopeeEnvironment,
   shopeeRequest,
   textValue,
@@ -108,7 +117,7 @@ const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.js
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.18";
+const workerVersion = "sellerpilot-cli-worker/1.21";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -1555,7 +1564,10 @@ async function shopeeOAuthResult(job, onExternalMutationStart, onCredentialRefre
   const refreshTokenExpiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
   const authorizationExpiresAt = String(job.request?.authorizationExpiresAt ?? "").trim()
     || new Date(Date.now() + 365 * 86_400_000).toISOString();
-  const nextSecret = { ...job.credential };
+  const accountIdentity = shopeeProviderAccountIdentity(mainAccountId
+    ? { mainAccountId }
+    : { shopId });
+  const nextSecret = withProviderAccountIdentity(withoutShopeeOAuthAccountState(job.credential), accountIdentity);
 
   if (mainAccountId) {
     Object.assign(nextSecret, {
@@ -1565,22 +1577,12 @@ async function shopeeOAuthResult(job, onExternalMutationStart, onCredentialRefre
       authorization_expires_at: authorizationExpiresAt,
     });
     await onCredentialRefresh({
-      payload: { ...nextSecret },
+      payload: withoutProviderAccountIdentity(nextSecret),
       expiresAt: authorizationExpiresAt,
       recoveryOnly: true,
     });
-    let shopIds = collectNumericIds(remote.data, ["shop_id", "shopId", "shop_id_list"]);
+    const shopIds = collectNumericIds(remote.data, ["shop_id", "shopId", "shop_id_list"]);
     const merchantIds = collectNumericIds(remote.data, ["merchant_id", "merchantId", "merchant_id_list"]);
-    if (!shopIds.length) {
-      const partnerShops = await shopeePartnerRequest({
-        payload: job.credential,
-        environment: job.environment,
-        path: "/api/v2/public/get_shops_by_partner",
-        query: new URLSearchParams({ page_size: "100" }),
-      });
-      if (!partnerShops.response.ok || textValue(partnerShops.data, "error")) throw new Error("Shopee 파트너 숍 목록 조회에 실패했습니다.");
-      shopIds = collectNumericIds(partnerShops.data, ["shop_id", "shopId", "shop_id_list"]);
-    }
     if (!shopIds.length) throw new Error("Shopee 승인 계정의 Shop ID 목록이 없습니다.");
     const targets = [];
     for (const targetShopId of shopIds) {
@@ -1718,18 +1720,30 @@ async function lazadaOAuthResult(job, onExternalMutationStart, onCredentialRefre
   if (!remote.response.ok || !accessToken || !refreshToken || (responseCode && responseCode !== "0")) throw new Error(`Lazada OAuth 토큰 교환 실패${responseCode ? ` · ${responseCode}` : ""}`);
   const accessExpiresAt = tokenExpiry(remote.data, 2_592_000);
   const refreshExpiresAt = futureExpiry(remote.data.refresh_expires_in, 15_552_000);
+  const providerAccount = withLazadaProviderAccountIdentity({}, remote.data);
+  const requestedCountry = String(job.request?.country || "").trim().toLowerCase();
+  const providerCountry = textValue(remote.data, "country").toLowerCase();
+  const authorizedCountries = new Set(providerAccount.countryUserInfo.map((item) => item.country));
+  const country = authorizedCountries.has(providerCountry)
+    ? providerCountry
+    : authorizedCountries.has(requestedCountry)
+      ? requestedCountry
+      : providerAccount.countryUserInfo[0]?.country;
+  if (!country) throw new Error("LAZADA_ACCOUNT_IDENTITY_INVALID");
   const result = {
     ok: true,
     channel: "lazada",
     operation: "oauth.exchange",
-    credentialPayload: {
+    credentialPayload: withProviderAccountIdentity({
       ...job.credential,
-      country: String(job.request?.country || textValue(job.credential, "country") || "my").toLowerCase(),
+      country,
+      account_platform: providerAccount.accountPlatform,
+      country_user_info: providerAccount.countryUserInfo,
       access_token: accessToken,
       refresh_token: refreshToken,
       access_token_expires_at: accessExpiresAt,
       refresh_token_expires_at: refreshExpiresAt,
-    },
+    }, providerAccount.identity),
     expiresAt: refreshExpiresAt,
     safeMessage: "Lazada OAuth 토큰 교환을 완료했습니다.",
   };
@@ -1760,13 +1774,27 @@ async function ebayOAuthResult(job, onExternalMutationStart, onCredentialRefresh
 
   const accessExpiresAt = futureExpiry(remote.data.expires_in, 7_200);
   const refreshExpiresAt = futureExpiry(remote.data.refresh_token_expires_in, 47_304_000);
-  const credentialPayload = {
+  const recoveryPayload = {
     ...job.credential,
     access_token: accessToken,
     refresh_token: refreshToken,
     access_token_expires_at: accessExpiresAt,
     refresh_token_expires_at: refreshExpiresAt,
   };
+  await onCredentialRefresh({
+    payload: withoutProviderAccountIdentity(recoveryPayload),
+    expiresAt: refreshExpiresAt,
+    recoveryOnly: true,
+  });
+  const providerAccount = await fetchEbayTradingUserIdentity({
+    environment: job.environment,
+    accessToken,
+  });
+  await onExternalMutationStart();
+  const credentialPayload = withProviderAccountIdentity({
+    ...recoveryPayload,
+    ...(providerAccount.userId ? { ebay_user_id: providerAccount.userId } : {}),
+  }, providerAccount.identity);
   await onCredentialRefresh({ payload: credentialPayload, expiresAt: refreshExpiresAt, oauthComplete: true });
   return {
     ok: true,
@@ -1839,17 +1867,20 @@ async function processGatewayJob(job) {
       if (job.channel === "shopee") {
         await assertGatewayLeaseHealthy();
         const shopId = String(job.request?.shopId ?? "").trim();
-        const ensured = await ensureShopeeAccessToken(job.credential, job.environment, 10 * 60 * 1000, shopId, markExternalMutationStarted, rememberCredentialRefresh);
+        const ensured = await ensureShopeeAccessToken(job.credential, job.environment, 10 * 60 * 1000, shopId, markExternalMutationStarted, rememberCredentialRefresh, true);
         remote = await shopeeRequest({
           payload: ensured.payload,
           environment: job.environment,
           method: "GET",
           path: "/api/v2/shop/get_shop_info",
         });
+        if (remote.response.ok && !textValue(remote.data, "error")) {
+          assertShopeeShopProfileTarget(remote.data, shopId);
+        }
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "lazada") {
         await assertGatewayLeaseHealthy();
-        const ensured = await ensureLazadaAccessToken(job.credential, undefined, markExternalMutationStarted, rememberCredentialRefresh);
+        const ensured = await ensureLazadaAccessToken(job.credential, undefined, markExternalMutationStarted, rememberCredentialRefresh, true);
         const country = String(job.request?.country || textValue(ensured.payload, "country") || "my").toLowerCase();
         remote = await lazadaRequest({ payload: { ...ensured.payload, country }, path: "/seller/get" });
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
@@ -1875,21 +1906,41 @@ async function processGatewayJob(job) {
       await assertGatewayLeaseHealthy();
       const items = await searchElevenstProductVariants(primary, aliases, { apiKey: textValue(job.credential, "api_key") }, displayPerQuery);
       result = { ok: true, channel: "elevenst", operation: "competitor.search", items, safeMessage: `11번가 공식 상품검색에서 후보 ${items.length}건을 확인했습니다.` };
+    } else if (job.operation === "listing.lineage.verify") {
+      if (!["qoo10", "shopee", "lazada", "ebay"].includes(job.channel)) {
+        throw new Error("이 채널은 공급자 상품 계보 재검증을 지원하지 않습니다.");
+      }
+      if (job.request?.sellerpilotLineageVersion !== "provider_listing_readback_v1") {
+        throw new Error("상품 계보 재검증 버전이 올바르지 않습니다.");
+      }
+      const operationArguments = job.request?.arguments;
+      if (!operationArguments || typeof operationArguments !== "object" || Array.isArray(operationArguments)) {
+        throw new Error("상품 계보 재검증 인자가 올바르지 않습니다.");
+      }
+      await assertGatewayLeaseHealthy();
+      result = await executeProviderListingLineageVerification({
+        channel: job.channel,
+        payload: job.credential,
+        arguments: operationArguments,
+        environment: job.environment,
+        onExternalMutationStart: markExternalMutationStarted,
+        onCredentialRefresh: rememberCredentialRefresh,
+      });
     } else if (job.operation === "diagnostic.test") {
       let diagnosticCredential = job.credential;
       if (job.channel === "shopee") {
         await assertGatewayLeaseHealthy();
-        const ensured = await ensureShopeeAccessToken(diagnosticCredential, job.environment, undefined, "", markExternalMutationStarted, rememberCredentialRefresh);
+        const ensured = await ensureShopeeAccessToken(diagnosticCredential, job.environment, undefined, "", markExternalMutationStarted, rememberCredentialRefresh, true);
         diagnosticCredential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "lazada") {
         await assertGatewayLeaseHealthy();
-        const ensured = await ensureLazadaAccessToken(diagnosticCredential, undefined, markExternalMutationStarted, rememberCredentialRefresh);
+        const ensured = await ensureLazadaAccessToken(diagnosticCredential, undefined, markExternalMutationStarted, rememberCredentialRefresh, true);
         diagnosticCredential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "ebay") {
         await assertGatewayLeaseHealthy();
-        const ensured = await ensureEbayAccessToken(diagnosticCredential, job.environment, undefined, markExternalMutationStarted, rememberCredentialRefresh);
+        const ensured = await ensureEbayAccessToken(diagnosticCredential, job.environment, undefined, markExternalMutationStarted, rememberCredentialRefresh, true);
         diagnosticCredential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       }
@@ -1913,14 +1964,14 @@ async function processGatewayJob(job) {
             const publish = operationArguments.publish && typeof operationArguments.publish === "object" ? operationArguments.publish : {};
             const shopId = String(publish.shop_id ?? operationArguments.shopId ?? operationArguments.shop_id ?? "").trim();
             await assertGatewayLeaseHealthy();
-            const shopEnsured = await ensureShopeeAccessToken(credential, job.environment, 10 * 60 * 1000, shopId, markExternalMutationStarted, rememberCredentialRefresh);
+            const shopEnsured = await ensureShopeeAccessToken(credential, job.environment, 10 * 60 * 1000, shopId, markExternalMutationStarted, rememberCredentialRefresh, true);
             credential = shopEnsured.payload;
             shopeeShopCredential = shopEnsured.payload;
             if (shopEnsured.refreshed) credentialRefresh = { payload: shopEnsured.payload, expiresAt: shopEnsured.credentialExpiresAt };
           }
           const merchantId = String(operationArguments.merchantId ?? operationArguments.merchant_id ?? "").trim();
           await assertGatewayLeaseHealthy();
-          const merchantEnsured = await ensureShopeeMerchantAccessToken(credential, job.environment, 10 * 60 * 1000, merchantId, markExternalMutationStarted, rememberCredentialRefresh);
+          const merchantEnsured = await ensureShopeeMerchantAccessToken(credential, job.environment, 10 * 60 * 1000, merchantId, markExternalMutationStarted, rememberCredentialRefresh, true);
           credential = merchantEnsured.payload;
           if (merchantEnsured.refreshed || credentialRefresh) credentialRefresh = { payload: merchantEnsured.payload, expiresAt: merchantEnsured.credentialExpiresAt };
           if (job.operation === "listing.create" && operationArguments.resumeOnly !== true) {
@@ -1937,7 +1988,7 @@ async function processGatewayJob(job) {
         } else {
           const shopId = String(operationArguments.shopId ?? operationArguments.shop_id ?? "").trim();
           await assertGatewayLeaseHealthy();
-          const ensured = await ensureShopeeAccessToken(credential, job.environment, 10 * 60 * 1000, shopId, markExternalMutationStarted, rememberCredentialRefresh);
+          const ensured = await ensureShopeeAccessToken(credential, job.environment, 10 * 60 * 1000, shopId, markExternalMutationStarted, rememberCredentialRefresh, true);
           credential = ensured.payload;
           if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
         }
@@ -1945,12 +1996,12 @@ async function processGatewayJob(job) {
         const country = String(operationArguments.country || textValue(credential, "country") || "my").toLowerCase();
         credential = { ...credential, country };
         await assertGatewayLeaseHealthy();
-        const ensured = await ensureLazadaAccessToken(credential, undefined, markExternalMutationStarted, rememberCredentialRefresh);
+        const ensured = await ensureLazadaAccessToken(credential, undefined, markExternalMutationStarted, rememberCredentialRefresh, true);
         credential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "ebay") {
         await assertGatewayLeaseHealthy();
-        const ensured = await ensureEbayAccessToken(credential, job.environment, undefined, markExternalMutationStarted, rememberCredentialRefresh);
+        const ensured = await ensureEbayAccessToken(credential, job.environment, undefined, markExternalMutationStarted, rememberCredentialRefresh, true);
         credential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       }
@@ -2103,7 +2154,9 @@ async function processGatewayJob(job) {
     const message = effectiveError instanceof Error ? effectiveError.message.slice(0, 500) : "채널 작업 처리 오류";
     const terminalOwnershipLoss = effectiveError instanceof WorkerRequestTerminalError
       && [401, 404, 409].includes(effectiveError.status);
-    if (externalWriteStarted) {
+    const retryableLineageReadback = job.operation === "listing.lineage.verify"
+      && /LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR|fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|aborted|network/i.test(message);
+    if (externalWriteStarted || retryableLineageReadback) {
       if (!terminalOwnershipLoss) {
         await persistWorkerCompletion(
           "/api/channel-gateway/worker/complete",
@@ -2121,7 +2174,7 @@ async function processGatewayJob(job) {
           console.error(`[채널 상태 저장 보류] ${job.id} · ${completionMessage}`);
         });
       }
-      console.error(`[채널 수동 확인 필요] ${job.channel} · ${job.operation} · ${job.id} · ${message}`);
+      console.error(`[채널 ${retryableLineageReadback && !externalWriteStarted ? "읽기 재시도 예정" : "수동 확인 필요"}] ${job.channel} · ${job.operation} · ${job.id} · ${message}`);
     } else if (effectiveError instanceof WorkerRequestTerminalError) {
       console.error(`[채널 상태 보존] ${job.channel} · ${job.operation} · ${job.id} · ${message}`);
     } else {

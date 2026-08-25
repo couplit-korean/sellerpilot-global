@@ -116,6 +116,7 @@ export type OperationTicket = {
   replyDeliveryStatus: "never" | "preparing" | "sending" | "succeeded" | "failed" | "reconciliation_required";
   replyDeliveryError: string | null;
   replyOperationAttemptId: string | null;
+  replyGatewayJobId: string | null;
   status: "urgent" | "waiting" | "in_progress" | "resolved";
   priority: number;
   receivedAt: string;
