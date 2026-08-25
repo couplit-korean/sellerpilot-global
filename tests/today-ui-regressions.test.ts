@@ -239,9 +239,10 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(mobilePushManager, /sessionStorage\.setItem\(mobilePushDismissedKey, "1"\)/);
   assert.match(mobilePushManager, /className="mobile-push-gate-dismiss"[\s\S]*?나중에/);
   assert.match(mobilePushManager, /className="mobile-push-page-spacer"/);
-  assert.match(studio, /signal: AbortSignal\.timeout\(30_000\)/);
+  assert.match(studio, /fetchJsonWithStudioJobTimeout\([\s\S]*?lifecycleController\.signal, 30_000/);
+  assert.match(studio, /controller\.abort\(new DOMException\("요청 제한시간을 초과했습니다\.", "TimeoutError"\)\)/);
   assert.doesNotMatch(studio, /onRunningChange\(true\)[\s\S]{0,900}activeJobs/);
-  assert.match(studio, /const shouldDisplayResult = displayJobId\.current === jobId/);
+  assert.match(studio, /shouldDisplayStudioJob\(\{[\s\S]*?displayJobId: displayJobId\.current/);
   assert.doesNotMatch(studio, /recovered \? displayRecoveredResult/);
   assert.match(studio, /productResponse\.status === 409 && productPayload\.code === "DUPLICATE_SELLER_SKU"/);
   assert.match(operationsSnapshotRoute, /mutationError\.code === "23505"/);

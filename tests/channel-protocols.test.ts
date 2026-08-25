@@ -1055,19 +1055,13 @@ test("Coupang listing resume waits for SAVED before requesting approval without 
   }
 });
 
-test("Coupang product update reuses the requested seller product ID and verifies approval state", async () => {
+test("Coupang product update reads first, preserves remote policy fields, and verifies requested content", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   let readbackCount = 0;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, init });
-    if (url.endsWith("/approvals") && init?.method === "PUT") {
-      return new Response(JSON.stringify({ code: "ERROR", message: "already requested" }), {
-        status: 400,
-        headers: { "content-type": "application/json" },
-      });
-    }
     if (init?.method === "PUT") {
       return new Response(JSON.stringify({ code: "SUCCESS", data: null }), {
         status: 200,
@@ -1077,9 +1071,22 @@ test("Coupang product update reuses the requested seller product ID and verifies
     readbackCount += 1;
     return new Response(JSON.stringify({
       code: "SUCCESS",
-      data: readbackCount === 1
-        ? { sellerProductId: 987654321, requested: false, mdId: "NLUP_TEMP_SAVED" }
-        : { sellerProductId: 987654321, requested: true, mdId: "NLUP_APPROVAL_REQUESTED" },
+      data: {
+        sellerProductId: 987654321,
+        sellerProductName: readbackCount === 1 ? "기존 상품" : "수정 상품",
+        deliveryChargeType: "CONDITIONAL_FREE",
+        outboundShippingPlaceCode: 7788,
+        returnCenterCode: "return-1",
+        requested: true,
+        items: [{
+          vendorItemId: 4444,
+          externalVendorSku: "SKU-1",
+          itemName: readbackCount === 1 ? "기존 옵션" : "수정 옵션",
+          salePrice: 55_550,
+          maximumBuyCount: 3,
+          outboundShippingTimeDay: 5,
+        }],
+      },
     }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -1090,17 +1097,33 @@ test("Coupang product update reuses the requested seller product ID and verifies
       channel: "coupang",
       operation: "listing.update",
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
-      arguments: { body: { sellerProductId: 987654321, sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] } },
+      arguments: {
+        body: {
+          sellerProductId: 987654321,
+          sellerProductName: "수정 상품",
+          deliveryChargeType: "FREE",
+          outboundShippingPlaceCode: 9999,
+          returnCenterCode: "create-default",
+          items: [{ externalVendorSku: "SKU-1", itemName: "수정 옵션", salePrice: 1000, maximumBuyCount: 999 }],
+        },
+      },
       environment: "production",
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "987654321");
-    assert.deepEqual(result.steps.map((item) => item.name), ["listing.update", "listing-readback", "listing-approval-request", "listing-approval-readback"]);
-    assert.equal(calls[0].init?.method, "PUT");
-    assert.equal(new URL(calls[1].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321");
-    assert.equal(new URL(calls[2].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321/approvals");
-    assert.equal(calls[2].init?.method, "PUT");
-    assert.equal(calls[3].init?.method, "GET");
+    assert.deepEqual(result.steps.map((item) => item.name), ["listing-update-preflight", "listing.update", "listing-readback"]);
+    assert.equal(calls[0].init?.method, "GET");
+    assert.equal(new URL(calls[0].url).pathname, "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/987654321");
+    assert.equal(calls[1].init?.method, "PUT");
+    assert.equal(calls[2].init?.method, "GET");
+    assert.equal(calls.some((call) => call.url.endsWith("/approvals")), false);
+    const updateBody = JSON.parse(String(calls[1].init?.body));
+    assert.equal(updateBody.deliveryChargeType, "CONDITIONAL_FREE");
+    assert.equal(updateBody.outboundShippingPlaceCode, 7788);
+    assert.equal(updateBody.returnCenterCode, "return-1");
+    assert.equal(updateBody.items[0].salePrice, 55_550);
+    assert.equal(updateBody.items[0].maximumBuyCount, 3);
+    assert.equal(updateBody.items[0].itemName, "수정 옵션");
   } finally {
     globalThis.fetch = originalFetch;
   }

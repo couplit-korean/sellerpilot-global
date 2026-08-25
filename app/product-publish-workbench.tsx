@@ -105,6 +105,11 @@ type PublishContext = {
 };
 
 type ChannelResult = { phase: "idle" | "running" | "succeeded" | "failed"; message?: string; remoteId?: string; attemptId?: string };
+type ConfirmationRequest =
+  | { kind: "bulk" }
+  | { kind: "channel"; channel: ActiveChannelKey }
+  | { kind: "qoo10-stop"; listing: Listing }
+  | { kind: "qoo10-cleanup"; remoteId: string };
 
 function normalizeManualFields(context: PublishContext): ManualFields {
   const value = context.manualFields ?? {} as ManualFields;
@@ -561,6 +566,49 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const globalBaseUsdPriceRef = useRef(globalBaseUsdPrice);
   const quantityRef = useRef(quantity);
   const packageFieldsRef = useRef(packageFields);
+  const confirmationDialogRef = useRef<HTMLDivElement | null>(null);
+  const confirmationOpenerRef = useRef<HTMLElement | null>(null);
+  const confirmationOpen = bulkConfirming || confirmingChannel !== null || qoo10StopConfirming !== null || qoo10CleanupConfirming !== null;
+
+  const closeConfirmation = useCallback(() => {
+    setBulkConfirming(false);
+    setConfirmingChannel(null);
+    setQoo10StopConfirming(null);
+    setQoo10CleanupConfirming(null);
+    const opener = confirmationOpenerRef.current;
+    confirmationOpenerRef.current = null;
+    window.requestAnimationFrame(() => {
+      if (opener?.isConnected && !(opener instanceof HTMLButtonElement && opener.disabled)) opener.focus();
+    });
+  }, []);
+
+  const openConfirmation = useCallback((request: ConfirmationRequest) => {
+    confirmationOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setBulkConfirming(request.kind === "bulk");
+    setConfirmingChannel(request.kind === "channel" ? request.channel : null);
+    setQoo10StopConfirming(request.kind === "qoo10-stop" ? request.listing : null);
+    setQoo10CleanupConfirming(request.kind === "qoo10-cleanup" ? request.remoteId : null);
+  }, []);
+
+  useEffect(() => {
+    if (!confirmationOpen) return;
+    const focusFrame = window.requestAnimationFrame(() => {
+      const dialog = confirmationDialogRef.current;
+      const preferred = dialog?.querySelector<HTMLButtonElement>(".publish-confirm-execute");
+      const fallback = dialog?.querySelector<HTMLButtonElement>("button");
+      (preferred ?? fallback ?? dialog)?.focus();
+    });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeConfirmation();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeConfirmation, confirmationOpen]);
 
   const load = useCallback(async () => {
     if (!productId) {
@@ -654,7 +702,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       return false;
     }
     if (!channelOperationAvailable(channel, operation)) {
-      notify(`${channelCatalog[channel].name} ${operation === "listing.update" ? "상품 전체 수정" : "상품 등록"}은 원격 식별값과 조회 검증이 완료되기 전까지 실행할 수 없습니다.`);
+      notify(`${channelCatalog[channel].name} ${operation === "listing.update" ? "상품 콘텐츠 수정" : "상품 등록"}은 원격 식별값과 조회 검증이 완료되기 전까지 실행할 수 없습니다.`);
       return false;
     }
     let channelArguments: Record<string, unknown>;
@@ -684,10 +732,10 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     const listingCurrency = marketplaceListingCurrency(channel, target?.currency);
     const operationPrice = marketplaceListingPrice(channel, price, { globalBaseUsdPrice, targetCurrency: target?.currency });
     if (!options.skipConfirm) {
-      setConfirmingChannel(channel);
+      openConfirmation({ kind: "channel", channel });
       return false;
     }
-    setConfirmingChannel(null);
+    closeConfirmation();
 
     setResults((current) => ({ ...current, [channel]: { phase: "running" } }));
     try {
@@ -712,9 +760,9 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
         }),
       });
       const payload = await response.json().catch(() => ({ message: "채널 응답을 읽지 못했습니다." })) as { ok?: boolean; message?: string; safeMessage?: string; remoteId?: string; attemptId?: string };
-      if (!response.ok || payload.ok !== true) throw Object.assign(new Error(payload.message ?? payload.safeMessage ?? `상품 ${operation === "listing.update" ? "수정" : "등록"}이 실패했습니다.`), { attemptId: payload.attemptId });
+      if (!response.ok || payload.ok !== true) throw Object.assign(new Error(payload.message ?? payload.safeMessage ?? `상품 ${operation === "listing.update" ? "콘텐츠 수정" : "등록"}이 실패했습니다.`), { attemptId: payload.attemptId });
       setResults((current) => ({ ...current, [channel]: { phase: "succeeded", message: payload.safeMessage, remoteId: payload.remoteId, attemptId: payload.attemptId } }));
-      notify(`${channelCatalog[channel].name} 상품 ${operation === "listing.update" ? "수정" : "등록"} 성공 · 원격 ID ${payload.remoteId ?? listing?.remoteId ?? "응답 확인 필요"}`);
+      notify(`${channelCatalog[channel].name} 상품 ${operation === "listing.update" ? "콘텐츠 수정" : "등록"} 성공 · 원격 ID ${payload.remoteId ?? listing?.remoteId ?? "응답 확인 필요"}`);
       if (!options.deferRefresh) {
         await load();
         onChanged?.();
@@ -722,7 +770,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       return true;
     } catch (error) {
       const attemptId = error && typeof error === "object" && "attemptId" in error && typeof error.attemptId === "string" ? error.attemptId : undefined;
-      const message = error instanceof Error ? error.message : `상품 ${operation === "listing.update" ? "수정" : "등록"}이 실패했습니다.`;
+      const message = error instanceof Error ? error.message : `상품 ${operation === "listing.update" ? "콘텐츠 수정" : "등록"}이 실패했습니다.`;
       setResults((current) => ({ ...current, [channel]: { phase: "failed", message, attemptId } }));
       notify(`${channelCatalog[channel].name}: ${message}`);
       return false;
@@ -744,10 +792,10 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     }).slice(0, 8);
     if (!readyChannels.length) return notify("활성 키·확정 카테고리·검증된 원격 ID가 모두 준비된 등록·수정 대상 채널이 없습니다.");
     if (!confirmed) {
-      setBulkConfirming(true);
+      openConfirmation({ kind: "bulk" });
       return;
     }
-    setBulkConfirming(false);
+    closeConfirmation();
     setBulkRunning(true);
     try {
       const { data: sessionData } = await createClient().auth.getSession();
@@ -768,7 +816,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const stopQoo10Listing = async (listing: Listing) => {
     const credential = activeCredentials.get("qoo10");
     if (!credential || !listing.remoteId || !productId) return notify("Qoo10 활성 키와 원격 상품번호를 확인해 주세요.");
-    setQoo10StopConfirming(null);
+    closeConfirmation();
     setResults((current) => ({ ...current, qoo10: { phase: "running", message: "Qoo10 거래대기 전환 요청 중" } }));
     try {
       const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
@@ -805,7 +853,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const requestPausePreviousQoo10Remote = () => {
     const remoteId = qoo10CleanupId.trim();
     if (!/^\d{9,10}$/.test(remoteId)) return notify("정리할 Qoo10 상품번호 9~10자리를 입력해 주세요.");
-    setQoo10CleanupConfirming(remoteId);
+    openConfirmation({ kind: "qoo10-cleanup", remoteId });
   };
 
   const pausePreviousQoo10Remote = async (remoteId: string) => {
@@ -817,7 +865,7 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
     } catch {
       return notify("정리할 Qoo10 상품번호 9~10자리를 입력해 주세요.");
     }
-    setQoo10CleanupConfirming(null);
+    closeConfirmation();
     setResults((current) => ({ ...current, qoo10: { phase: "running", message: `이전 원격 상품 ${remoteId} 거래대기 전환 중` } }));
     try {
       const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
@@ -854,8 +902,8 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
   const imagePackageReady = marketplaceThumbnailCount >= 1 && dedicatedDetailImageCount >= 4;
 
   return <section className="panel product-publish-workbench">
-    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 수정 실행</h3><p>신규 채널은 등록하고, 이미 게시된 채널은 검증된 원격 ID를 유지한 채 상품명·설명·가격·구성·이미지를 수정합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 처리 중" : bulkConfirming ? "최종 확인 열림" : "선택 채널 등록·수정"}</button></div></div>
-    {bulkConfirming && <div className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·수정을 동시에 실행합니다.</b><small>채널별 payload, 원격 상품 ID, 가격·재고를 최종 확인한 뒤 실행하세요.</small></div><button type="button" className="credential-secondary" onClick={() => setBulkConfirming(false)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeReadyChannels(true)}>확인 후 동시 실행</button></div>}
+    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>신규 채널은 등록하고, 이미 게시된 채널은 검증된 원격 ID를 유지한 채 상품명·설명·구성·이미지만 수정합니다. 재고는 상품 상세의 통합 재고에서 별도로 동기화하며, 가격은 채널별 식별값 검증 전 자동으로 덮어쓰지 않습니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 처리 중" : bulkConfirming ? "최종 확인 열림" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
+    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-modal="true" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·콘텐츠 수정을 동시에 실행합니다.</b><small>신규 등록의 가격·재고와 기존 상품의 원격 ID·콘텐츠 변경 필드를 채널별로 최종 확인하세요.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeReadyChannels(true)}>확인 후 동시 실행</button></div>}
     <div className="publish-common-fields">
       <label><span>국내 기준 판매가 KRW <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); }} /></label>
       <label><span>판매 통화 <i>필수</i></span><input required value={currency} maxLength={3} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
@@ -893,9 +941,9 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
       const blockingCount = blockingRequirements.length + nativeMissing.length;
       const invalidDraft = !draftObject;
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
-        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{remoteUpdate ? operationAvailable ? listing?.remoteId ? "전체 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
+        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target?.marketCode ?? ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => item.marketCode === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
-        {!operationAvailable ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "상품 전체 수정 검증 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${capability.note} · 원격 상품 식별값과 수정 후 조회 검증이 완료되기 전에는 외부 쓰기를 실행하지 않습니다.` : capability.note}</small></div> : <>
+        {!operationAvailable ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "상품 콘텐츠 수정 검증 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${capability.note} · 원격 상품 식별값과 수정 후 조회 검증이 완료되기 전에는 외부 쓰기를 실행하지 않습니다.` : capability.note}</small></div> : <>
           <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}대표+상세 4장</span></div>
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
           {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
@@ -916,12 +964,12 @@ export function ProductPublishWorkbench({ productId, selectedChannels, refreshVe
           <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
-          {confirmingChannel === channel && <div className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "수정" : "등록"}합니다.</b><small>{remoteUpdate ? `원격 ID ${listing?.remoteId ?? "확인 필요"} · ` : ""}가격 {price.toLocaleString()} {target?.currency || currency} · 재고 {quantity}개</small></div><button type="button" className="credential-secondary" onClick={() => setConfirmingChannel(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "수정" : "등록"} 실행</button></div>}
-          {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={() => setQoo10StopConfirming(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
-          <button type="button" className="publish-execute" disabled={!credential || !assignment || invalidDraft || blockingCount > 0 || result.phase === "running" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "수정" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? "검증 후 실제 상품 전체 수정" : "검증 후 실제 1건 등록"}</button>
-          {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={result.phase === "running" || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => setQoo10StopConfirming(listing)}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
+          {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-modal="true" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "콘텐츠 수정" : "등록"}합니다.</b><small>{remoteUpdate ? `원격 ID ${listing?.remoteId ?? "확인 필요"} · 가격·재고·판매정책은 변경하지 않음` : `가격 ${price.toLocaleString()} ${target?.currency || currency} · 재고 ${quantity}개`}</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "콘텐츠 수정" : "등록"} 실행</button></div>}
+          {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-modal="true" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
+          <button type="button" className="publish-execute" disabled={!credential || !assignment || invalidDraft || blockingCount > 0 || result.phase === "running" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "콘텐츠 수정" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? "검증 후 실제 상품 콘텐츠 수정" : "검증 후 실제 1건 등록"}</button>
+          {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={result.phase === "running" || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => openConfirmation({ kind: "qoo10-stop", listing })}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
           {channel === "qoo10" && listing?.status === "published" && <label className="qoo10-remote-cleanup"><span>이전 Qoo10 상품 정리</span><input aria-label="정리할 이전 Qoo10 상품번호" inputMode="numeric" value={qoo10CleanupId} onChange={(event) => setQoo10CleanupId(event.target.value.replace(/\D/g, "").slice(0, 10))} placeholder="9~10자리 상품번호" /><button type="button" className="credential-secondary" disabled={result.phase === "running" || !/^\d{9,10}$/.test(qoo10CleanupId)} onClick={requestPausePreviousQoo10Remote}><CirclePause size={15} />이전 상품 거래대기</button></label>}
-          {channel === "qoo10" && qoo10CleanupConfirming && <div className="publish-write-confirmation channel" role="alertdialog" aria-label="이전 Qoo10 상품 거래대기 최종 확인"><AlertTriangle size={18} /><div><b>이전 Qoo10 원격 상품 {qoo10CleanupConfirming}를 거래대기로 전환합니다.</b><small>현재 새 상품은 판매중 상태를 그대로 유지합니다.</small></div><button type="button" className="credential-secondary" onClick={() => setQoo10CleanupConfirming(null)}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void pausePreviousQoo10Remote(qoo10CleanupConfirming)}>이전 상품 거래대기 실행</button></div>}
+          {channel === "qoo10" && qoo10CleanupConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-modal="true" aria-label="이전 Qoo10 상품 거래대기 최종 확인"><AlertTriangle size={18} /><div><b>이전 Qoo10 원격 상품 {qoo10CleanupConfirming}를 거래대기로 전환합니다.</b><small>현재 새 상품은 판매중 상태를 그대로 유지합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void pausePreviousQoo10Remote(qoo10CleanupConfirming)}>이전 상품 거래대기 실행</button></div>}
         </>}
       </article>;
     })}</div>

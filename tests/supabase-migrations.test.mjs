@@ -199,6 +199,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260825071000_harden_order_shipment_ledger_integrity.sql",
       "20260825080000_competitor_price_provider_provenance.sql",
       "20260825084500_product_listing_published_identity.sql",
+      "20260825095020_bound_lazada_im_bootstrap_attempts.sql",
+      "20260825095022_normalize_product_edit_stock_range.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -240,6 +242,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_mark_channel_sync(uuid,text,text,text,text)",
       "public.sellerpilot_service_ingest_orders(uuid,text,jsonb)",
       "public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)",
+      "public.sellerpilot_service_consume_lazada_im_bootstrap(uuid)",
+      "public.sellerpilot_service_record_lazada_im_bootstrap_result(uuid,uuid,boolean)",
       "public.sellerpilot_service_complete_inventory_sync_item(uuid,uuid,uuid,boolean,integer,text)",
       "public.sellerpilot_service_claim_push_deliveries(integer)",
       "public.sellerpilot_service_finish_push_delivery(uuid,text,text)",
@@ -351,6 +355,90 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "select public.sellerpilot_get_active_credential_secret('lazada', 'production')",
     );
     assert.equal(refreshedSecret.secret_payload.access_token, "new-access-token");
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_service_consume_lazada_im_bootstrap($1)", [refreshedCredentialId]),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_service_consume_lazada_im_bootstrap($1)", [refreshedCredentialId]),
+      false,
+    );
+    const lazadaBootstrapJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_channel_gateway_job(
+        $1, null, 'lazada', 'inquiries.list',
+        '{"arguments":{"bootstrap":true,"startTime":1787616000000,"pageSize":20,"sessionLimit":100}}'::jsonb
+      )`,
+      [refreshedCredentialId],
+    );
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'running', started_at = now() where id = $1",
+      [lazadaBootstrapJobId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_record_lazada_im_bootstrap_result($1, $2, false)",
+        [lazadaBootstrapJobId, refreshedCredentialId],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select lazada_im_bootstrap_succeeded_at is null
+           from sellerpilot_private.channel_sync_state
+          where owner_id = $1 and channel_key = 'lazada' and data_type = 'inquiries'`,
+        [ADMIN_ID],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_record_lazada_im_bootstrap_result($1, $2, true)",
+        [lazadaBootstrapJobId, refreshedCredentialId],
+      ),
+      true,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select lazada_im_bootstrap_attempted_at is not null as attempted,
+                lazada_im_bootstrap_succeeded_at is not null as succeeded,
+                last_succeeded_at is null as ordinary_sync_still_separate
+           from sellerpilot_private.channel_sync_state
+          where owner_id = $1 and channel_key = 'lazada' and data_type = 'inquiries'`,
+        [ADMIN_ID],
+      )).rows,
+      [{ attempted: true, succeeded: true, ordinary_sync_still_separate: true }],
+    );
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [lazadaBootstrapJobId],
+    );
+    const lazadaNonBootstrapJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_channel_gateway_job(
+        $1, null, 'lazada', 'inquiries.list', '{"arguments":{"bootstrap":false}}'::jsonb
+      )`,
+      [refreshedCredentialId],
+    );
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'running', started_at = now() where id = $1",
+      [lazadaNonBootstrapJobId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_record_lazada_im_bootstrap_result($1, $2, true)",
+        [lazadaNonBootstrapJobId, refreshedCredentialId],
+      ),
+      false,
+    );
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [lazadaNonBootstrapJobId],
+    );
 
     const oauthStateHash = "c".repeat(64);
     assert.equal(
@@ -870,7 +958,32 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(db, "select request_payload->'manual_fields'->>'productName' from sellerpilot_private.ai_cli_jobs where id = $1", [JOB_ID]),
       requiredManualFields.productName,
     );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_update_product_details($1, $2::jsonb)",
+        [aiProductId, JSON.stringify({ ...editedManualFields, stock: 999999 })],
+      ),
+      true,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_update_product_details($1, $2::jsonb)",
+        [aiProductId, JSON.stringify({ ...editedManualFields, stock: 1000000 })],
+      ),
+      /invalid product details/,
+    );
     await db.query("update sellerpilot_private.products set on_hand = 2 where id = $1", [aiProductId]);
+    assert.equal(await scalar(db, "select (product_facts->>'stock')::integer from sellerpilot_private.products where id = $1", [aiProductId]), 2);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_update_product_details($1, $2::jsonb)",
+        [aiProductId, JSON.stringify({ ...editedManualFields, stock: 0 })],
+      ),
+      true,
+    );
+    assert.equal(await scalar(db, "select on_hand from sellerpilot_private.products where id = $1", [aiProductId]), 2);
     assert.equal(await scalar(db, "select (product_facts->>'stock')::integer from sellerpilot_private.products where id = $1", [aiProductId]), 2);
     const coupangCredentialId = await scalar(
       db,

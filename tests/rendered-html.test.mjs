@@ -131,9 +131,11 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const aiProductStudio = await readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8");
   const categoryWorkbench = await readFile(new URL("../app/category-classification-workbench.tsx", import.meta.url), "utf8");
   assert.match(aiProductStudio, /sellerpilot:product-studio:active-job:v1/);
-  assert.match(aiProductStudio, /새로고침 전에 시작한 상품 분석.*백그라운드에서 다시 연결/);
-  assert.match(aiProductStudio, /if \(!displayJobId\.current && selectedRecoveryJobId\) displayJobId\.current = selectedRecoveryJobId/);
-  assert.match(aiProductStudio, /const shouldDisplayResult = displayJobId\.current === jobId/);
+  assert.match(aiProductStudio, /이전 폼에서 시작한 상품 분석.*등록 이력에만 백그라운드 연결/);
+  assert.doesNotMatch(aiProductStudio, /selectedRecoveryJobId|displayJobId\.current = selectedRecoveryJobId/);
+  assert.match(aiProductStudio, /shouldDisplayStudioJob\(\{/);
+  assert.match(aiProductStudio, /jobMonitors\.abortAll\(\)/);
+  assert.match(aiProductStudio, /persistActiveStudioJob\(queued\.jobId, studioSessionId\)/);
   assert.match(aiProductStudio, /displayJobId\.current = "";[\s\S]*?displayJobId\.current = queued\.jobId/);
   assert.match(categoryWorkbench, /현재 검색어로 다시 추천/);
   assert.match(categoryWorkbench, /sellerpilot:category-workbench:/);
@@ -145,6 +147,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /resolvedProductId = analyzedProductId \?\? initialProduct\?\.id \?\? null/);
   assert.match(page, /nextAdminAccessState\(current, event, Boolean\(session && session\.user\.id === verifiedAdminUserId\)\)/);
   assert.match(adminAccessState, /current === "admin" && sameVerifiedUser \? "admin" : "checking"/);
+  assert.match(page, /const verificationState = adminVerificationState\(isAdmin, error\)/);
+  assert.match(adminAccessState, /if \(rpcError\) return "error";[\s\S]*?if \(isAdmin === false\) return "forbidden"/);
   assert.match(page, /!active \|\| generation !== verificationGeneration/);
   assert.match(page, /latestSession\.session\.user\.id !== session\.user\.id/);
   assert.doesNotMatch(page, /setAccessState\(session \? "checking" : "signed_out"\)/);
@@ -304,6 +308,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const lazadaAuthorizeRoute = await readFile(new URL("../app/api/admin/channel-credentials/lazada/authorize/route.ts", import.meta.url), "utf8");
   const maintenanceRoute = await readFile(new URL("../app/api/internal/maintenance/route.ts", import.meta.url), "utf8");
   const periodicSyncRoute = await readFile(new URL("../app/api/internal/channel-sync/route.ts", import.meta.url), "utf8");
+  const manualSyncRoute = await readFile(new URL("../app/api/operations/sync/route.ts", import.meta.url), "utf8");
+  const gatewayClaimRoute = await readFile(new URL("../app/api/channel-gateway/worker/claim/route.ts", import.meta.url), "utf8");
   const syncArguments = await readFile(new URL("../lib/channels/sync-arguments.ts", import.meta.url), "utf8");
   const periodicSyncMigration = await readFile(new URL("../supabase/migrations/20260820170000_periodic_channel_sync.sql", import.meta.url), "utf8");
   const rotationHardeningMigration = await readFile(new URL("../supabase/migrations/20260821110000_harden_oauth_rotation_and_cleanup_lints.sql", import.meta.url), "utf8");
@@ -325,6 +331,13 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(maintenanceRoute, /sellerpilot_service_refresh_lazada/);
   assert.match(periodicSyncRoute, /sellerpilot_service_enqueue_periodic_sync/);
   assert.match(periodicSyncRoute, /sellerpilot_service_validate_worker_token/);
+  assert.match(periodicSyncRoute, /createBoundedSupabaseFetch/);
+  assert.match(periodicSyncRoute, /mapWithConcurrency\(queueRequests, 8/);
+  assert.match(gatewayClaimRoute, /workerRpcErrorStatus/);
+  assert.match(cliWorker, /workerAuthBackoffUntil/);
+  assert.match(cliWorker, /gatewayClaimBackoffUntil/);
+  assert.equal((manualSyncRoute.match(/gatewayChannels\.has\(channel\)/g) ?? []).length, 2);
+  assert.doesNotMatch(manualSyncRoute, /channel === "coupang" \|\| channel === "smartstore" \|\| channel === "lazada"/);
   assert.match(periodicSyncRoute, /orderSyncRequests/);
   assert.match(syncArguments, /"ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"/);
   assert.match(syncArguments, /"0", "3", "4", "5"/);

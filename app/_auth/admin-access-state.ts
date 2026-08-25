@@ -1,4 +1,5 @@
 export type AdminAccessState = "checking" | "signed_out" | "admin" | "forbidden" | "error";
+export type AdminVerificationState = Extract<AdminAccessState, "admin" | "forbidden" | "error">;
 
 type RelevantAuthEvent = "INITIAL_SESSION" | "SIGNED_IN" | "SIGNED_OUT" | string;
 
@@ -8,4 +9,11 @@ export function nextAdminAccessState(current: AdminAccessState, event: RelevantA
     return current === "admin" && sameVerifiedUser ? "admin" : "checking";
   }
   return current;
+}
+
+export function adminVerificationState(isAdmin: unknown, rpcError: unknown): AdminVerificationState {
+  if (rpcError) return "error";
+  if (isAdmin === true) return "admin";
+  if (isAdmin === false) return "forbidden";
+  return "error";
 }

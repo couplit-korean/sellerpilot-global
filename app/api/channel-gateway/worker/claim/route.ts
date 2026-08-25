@@ -3,6 +3,11 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { gatewayClaimSchema } from "../../../../../lib/channels/gateway-contract";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
+import {
+  createBoundedSupabaseFetch,
+  workerRpcErrorMessage,
+  workerRpcErrorStatus,
+} from "../../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
 
@@ -14,12 +19,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "채널 작업자 인증이 필요합니다." }, { status: 401 });
   }
   const body = await request.json().catch(() => ({})) as { version?: unknown };
-  const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const serviceClient = createClient(supabaseUrl, secretKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: createBoundedSupabaseFetch() },
+  });
   const { data, error } = await serviceClient.rpc("sellerpilot_claim_channel_gateway_job", {
     p_token_hash: createHash("sha256").update(workerToken).digest("hex"),
     p_worker_version: typeof body.version === "string" ? body.version.slice(0, 80) : "unknown",
   });
-  if (error) return NextResponse.json({ message: "채널 작업자 토큰이 유효하지 않습니다." }, { status: 401 });
+  if (error) {
+    const status = workerRpcErrorStatus(error);
+    console.error("channel gateway claim RPC failed", { code: error.code ?? "unknown", status });
+    return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+  }
   if (!data) return new NextResponse(null, { status: 204 });
   const parsed = gatewayClaimSchema.safeParse(data);
   if (!parsed.success) return NextResponse.json({ message: "채널 작업 형식이 올바르지 않습니다." }, { status: 500 });

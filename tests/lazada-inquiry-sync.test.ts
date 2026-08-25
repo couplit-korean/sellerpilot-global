@@ -142,8 +142,9 @@ test("Lazada IM follows string cursors and keeps the latest buyer message per se
   }
 });
 
-test("Lazada manual IM bootstrap uses the fixed-egress channel gateway", async () => {
+test("Lazada IM and Temu after-sales sync use the fixed-egress channel gateway", async () => {
   const route = await readFile(new URL("../app/api/operations/sync/route.ts", import.meta.url), "utf8");
-  assert.match(route, /channel === "coupang" \|\| channel === "smartstore" \|\| channel === "lazada"/);
+  assert.match(route, /gatewayChannels = new Set<ActiveChannelKey>\(\[.*"lazada".*"temu"/);
+  assert.equal((route.match(/gatewayChannels\.has\(channel\)/g) ?? []).length, 2);
   assert.match(route, /p_operation: "inquiries\.list"/);
 });

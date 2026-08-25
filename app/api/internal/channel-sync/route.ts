@@ -6,6 +6,11 @@ import { inquirySyncArguments } from "../../../../lib/channels/inquiry-sync";
 import { orderSyncRequests } from "../../../../lib/channels/order-sync";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 import { supabaseUrl } from "../../../../lib/supabase/config";
+import {
+  createBoundedSupabaseFetch,
+  workerRpcErrorMessage,
+  workerRpcErrorStatus,
+} from "../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -29,7 +34,26 @@ function serverClient() {
   if (!supabaseUrl || !secretKey) return null;
   return createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: createBoundedSupabaseFetch() },
   });
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  callback: (value: T) => Promise<R>,
+) {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await callback(values[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
@@ -39,7 +63,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
     ...periodicInquiryRequests(channel, now).map((payload) => ({ channel, operation: "inquiries.list" as const, payload })),
   ]);
 
-  const results = await Promise.all(queueRequests.map(async ({ channel, operation, payload }) => {
+  const results = await mapWithConcurrency(queueRequests, 8, async ({ channel, operation, payload }) => {
     const { data, error } = await serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
       p_channel: channel,
       p_operation: operation,
@@ -53,7 +77,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
       operation,
       status: typeof result.status === "string" ? result.status : "failed",
     };
-  }));
+  });
 
   const push = await dispatchPendingPushNotifications(serviceClient, 100)
     .catch(() => ({ configured: true, claimed: 0, sent: 0, failed: 1 }));
@@ -101,8 +125,13 @@ export async function POST(request: Request) {
     p_token_hash: createHash("sha256").update(workerToken).digest("hex"),
     p_worker_version: version,
   });
-  if (error || data !== true) {
-    return NextResponse.json({ message: "채널 작업자 토큰이 유효하지 않습니다." }, { status: 401 });
+  if (error) {
+    const status = workerRpcErrorStatus(error);
+    console.error("periodic channel sync authentication RPC failed", { code: error.code ?? "unknown", status });
+    return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+  }
+  if (data !== true) {
+    return NextResponse.json({ message: workerRpcErrorMessage(401) }, { status: 401 });
   }
   return runPeriodicSync(serviceClient);
 }

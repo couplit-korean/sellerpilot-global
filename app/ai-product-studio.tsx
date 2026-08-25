@@ -11,6 +11,16 @@ import { productIntakeSchema, type NormalizedProductImageSpec, type ProductIntak
 import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
 import type { ProductDetailData } from "./product-detail-puck";
 import type { ProductStudioResult } from "./product-studio-types";
+import {
+  createStudioJobMonitorRegistry,
+  isStudioJobAbort,
+  normalizeActiveStudioJobs,
+  removeActiveStudioJob,
+  shouldDisplayStudioJob,
+  studioJobAbortError,
+  upsertActiveStudioJob,
+  type ActiveStudioJob,
+} from "./_registration/studio-job-session";
 
 const ProductDetailRender = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailRender), { ssr: false, loading: () => <div className="studio-loading"><LoaderCircle className="spin" size={24} />상세페이지 불러오는 중</div> });
 const ProductDetailEditor = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailEditor), { ssr: false });
@@ -42,43 +52,72 @@ const studioUploadTimeoutMs = 45_000;
 
 class StudioJobTerminalError extends Error {}
 
-type ActiveStudioJob = {
-  jobId: string;
-  startedAt: number;
-};
-
 function readActiveStudioJobs(): ActiveStudioJob[] {
   try {
     const raw = window.sessionStorage.getItem(activeStudioJobStorageKey);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as Partial<ActiveStudioJob> | Array<Partial<ActiveStudioJob>>;
-    const candidates = Array.isArray(parsed) ? parsed : [parsed];
-    const valid = candidates.filter((job): job is ActiveStudioJob => typeof job.jobId === "string"
-      && /^[0-9a-f-]{36}$/i.test(job.jobId)
-      && typeof job.startedAt === "number"
-      && Date.now() - job.startedAt <= studioJobMaximumAgeMs);
-    if (valid.length !== candidates.length) window.sessionStorage.setItem(activeStudioJobStorageKey, JSON.stringify(valid));
-    return valid;
+    const jobs = normalizeActiveStudioJobs(JSON.parse(raw), Date.now(), studioJobMaximumAgeMs);
+    const normalized = JSON.stringify(jobs);
+    if (raw !== normalized) window.sessionStorage.setItem(activeStudioJobStorageKey, normalized);
+    return jobs;
   } catch {
     window.sessionStorage.removeItem(activeStudioJobStorageKey);
     return [];
   }
 }
 
-function persistActiveStudioJob(jobId: string) {
-  const jobs = readActiveStudioJobs().filter((job) => job.jobId !== jobId);
-  jobs.push({ jobId, startedAt: Date.now() });
-  window.sessionStorage.setItem(activeStudioJobStorageKey, JSON.stringify(jobs));
+function persistActiveStudioJob(jobId: string, ownerSessionId: string) {
+  const job = { jobId, ownerSessionId, startedAt: Date.now() } satisfies ActiveStudioJob;
+  window.sessionStorage.setItem(activeStudioJobStorageKey, JSON.stringify(upsertActiveStudioJob(readActiveStudioJobs(), job)));
+  return job;
 }
 
 function clearActiveStudioJob(jobId: string) {
-  const remaining = readActiveStudioJobs().filter((job) => job.jobId !== jobId);
+  const remaining = removeActiveStudioJob(readActiveStudioJobs(), jobId);
   if (remaining.length) window.sessionStorage.setItem(activeStudioJobStorageKey, JSON.stringify(remaining));
   else window.sessionStorage.removeItem(activeStudioJobStorageKey);
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+function throwIfStudioJobAborted(signal: AbortSignal) {
+  if (signal.aborted) throw signal.reason ?? studioJobAbortError();
+}
+
+function delay(ms: number, signal: AbortSignal) {
+  throwIfStudioJobAborted(signal);
+  return new Promise<void>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(signal.reason ?? studioJobAbortError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function fetchJsonWithStudioJobTimeout<Payload>(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  parentSignal: AbortSignal,
+  timeoutMs: number,
+  fallbackPayload: Payload,
+) {
+  throwIfStudioJobAborted(parentSignal);
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(parentSignal.reason ?? studioJobAbortError());
+  parentSignal.addEventListener("abort", abortFromParent, { once: true });
+  const timer = window.setTimeout(() => controller.abort(new DOMException("요청 제한시간을 초과했습니다.", "TimeoutError")), timeoutMs);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const payload = await response.json().catch(() => fallbackPayload) as Payload;
+    if (controller.signal.aborted) throw controller.signal.reason ?? studioJobAbortError();
+    return { response, payload };
+  } finally {
+    window.clearTimeout(timer);
+    parentSignal.removeEventListener("abort", abortFromParent);
+  }
 }
 
 function blobToDataUrl(blob: Blob) {
@@ -161,13 +200,15 @@ async function optimizePhoto(photo: StudioPhoto): Promise<OptimizedPhoto> {
   }
 }
 
-async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string, jobId: string) {
+async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string, jobId: string, signal: AbortSignal) {
   const supabase = createClient();
   const uploadedPaths: string[] = [];
   const imageSpecs: NormalizedProductImageSpec[] = [];
   try {
     for (let start = 0; start < photos.length; start += 4) {
+      throwIfStudioJobAborted(signal);
       const batch = await Promise.all(photos.slice(start, start + 4).map((photo) => optimizePhoto(photo)));
+      throwIfStudioJobAborted(signal);
       const results = await Promise.allSettled(batch.map(async (photo, offset) => {
         const index = start + offset;
         const path = `${userId}/${jobId}/input/${String(index + 1).padStart(3, "0")}.jpg`;
@@ -189,6 +230,7 @@ async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string,
       }
       const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
       if (failed) throw failed.reason;
+      throwIfStudioJobAborted(signal);
     }
     return { uploadedPaths, imageSpecs };
   } catch (error) {
@@ -240,30 +282,52 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
   const [sourceProductId, setSourceProductId] = useState<string | null>(null);
   const [regeneratingAssetId, setRegeneratingAssetId] = useState("");
   const [queuedOwnJobId, setQueuedOwnJobId] = useState("");
+  const [studioSessionId] = useState(() => crypto.randomUUID());
+  const [jobMonitors] = useState(() => createStudioJobMonitorRegistry());
   const handledRequest = useRef(0);
   const recoveryStarted = useRef(false);
   const displayJobId = useRef("");
+  const studioMountedRef = useRef(true);
+  const lifecycleControllerRef = useRef<AbortController | null>(null);
   const currentImageUrl = aiHero || mainPhoto?.url || "";
 
-  const waitForCliJob = useCallback(async (jobId: string, accessToken: string) => {
+  useEffect(() => {
+    studioMountedRef.current = true;
+    lifecycleControllerRef.current = new AbortController();
+    return () => {
+      studioMountedRef.current = false;
+      lifecycleControllerRef.current?.abort(studioJobAbortError());
+      lifecycleControllerRef.current = null;
+      jobMonitors.abortAll();
+    };
+  }, [jobMonitors]);
+
+  const waitForCliJob = useCallback(async (
+    jobId: string,
+    accessToken: string,
+    signal: AbortSignal,
+    onPhase?: (phase: "queued" | "running") => void,
+  ) => {
     const deadline = Date.now() + studioJobMaximumAgeMs;
     let consecutiveRequestFailures = 0;
     while (Date.now() < deadline) {
+      throwIfStudioJobAborted(signal);
       let response: Response;
+      let payload: CliJobPayload & { message?: string };
       try {
-        response = await fetch(`/api/ai/jobs/${jobId}`, {
+        ({ response, payload } = await fetchJsonWithStudioJobTimeout(`/api/ai/jobs/${jobId}`, {
           headers: { authorization: `Bearer ${accessToken}` },
           cache: "no-store",
-          signal: AbortSignal.timeout(15_000),
-        });
+        }, signal, 15_000, { message: "CLI 작업 상태 응답을 읽지 못했습니다." } as CliJobPayload & { message?: string }));
         consecutiveRequestFailures = 0;
-      } catch {
+      } catch (error) {
+        if (signal.aborted || isStudioJobAbort(error)) throw signal.reason ?? error;
         consecutiveRequestFailures += 1;
         if (consecutiveRequestFailures >= 5) throw new Error("모바일 네트워크에서 작업 상태를 5회 연속 확인하지 못했습니다. 등록 이력에서 서버 작업 상태를 계속 확인할 수 있습니다.");
-        await delay(2_000);
+        await delay(2_000, signal);
         continue;
       }
-      const payload = await response.json().catch(() => ({ message: "CLI 작업 상태 응답을 읽지 못했습니다." })) as CliJobPayload & { message?: string };
+      throwIfStudioJobAborted(signal);
       if (!response.ok) {
         if (response.status === 404) throw new StudioJobTerminalError(payload.message ?? "CLI 작업을 찾지 못했습니다.");
         throw new Error(payload.message ?? "CLI 작업 상태를 확인하지 못했습니다.");
@@ -272,58 +336,72 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       if (payload.status === "failed" || payload.status === "cancelled") {
         throw new StudioJobTerminalError(payload.error || "ChatGPT CLI 작업이 완료되지 못했습니다.");
       }
-      setCliPhase(payload.status === "running" ? "running" : "queued");
-      await delay(3_000);
+      onPhase?.(payload.status === "running" ? "running" : "queued");
+      await delay(3_000, signal);
     }
     throw new Error("ChatGPT CLI 작업 대기시간이 2시간을 초과했습니다. 등록 이력과 작업자 연결 상태를 확인해 주세요.");
   }, []);
 
-  const finishStudioJob = useCallback(async (jobId: string, accessToken: string, recovered: boolean) => {
-    let cliResult: CliStudioResult;
-    try {
-      cliResult = await waitForCliJob(jobId, accessToken);
-    } catch (error) {
-      if (error instanceof StudioJobTerminalError) clearActiveStudioJob(jobId);
-      throw error;
-    }
-    if (cliResult.mode !== "cli") {
-      clearActiveStudioJob(jobId);
-      throw new Error("상품 분석 결과 형식이 올바르지 않습니다.");
-    }
-    const { heroUrl, generatedImages, ...nextResult } = cliResult;
-    const shouldDisplayResult = displayJobId.current === jobId;
-    if (shouldDisplayResult) {
-      setSourceJobId(jobId);
-      setResult(nextResult);
-      setAiHero(heroUrl ?? "");
-      setThumbnails(generatedPreviewPresets.map((preset) => ({
-        ...preset,
-        dataUrl: generatedImages?.find((image) => image.id === preset.id)?.url ?? "",
-      })).filter((thumbnail) => thumbnail.dataUrl));
-      setSavedDetailData(null);
-    }
-    const productResponse = await fetch("/api/operations/snapshot", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ action: "product_create", jobId }),
-      signal: AbortSignal.timeout(30_000),
+  const finishStudioJob = useCallback(async (job: ActiveStudioJob, accessToken: string, recovered: boolean) => {
+    const monitor = jobMonitors.begin(job.jobId);
+    if (!monitor) return;
+    const canDisplay = () => shouldDisplayStudioJob({
+      job,
+      mounted: studioMountedRef.current,
+      currentSessionId: studioSessionId,
+      displayJobId: displayJobId.current,
     });
-    const productPayload = await productResponse.json().catch(() => ({})) as { id?: string | null; code?: string; message?: string };
-    const productId = productResponse.ok && typeof productPayload.id === "string" ? productPayload.id : null;
-    if (!productId) {
-      if (productResponse.status === 409 && productPayload.code === "DUPLICATE_SELLER_SKU") clearActiveStudioJob(jobId);
-      throw new Error(productPayload.message || "이미지 제작은 완료됐지만 상품 원장 저장을 확인하지 못했습니다. 새로고침하면 완료 작업부터 다시 연결합니다.");
+    try {
+      let cliResult: CliStudioResult;
+      try {
+        cliResult = await waitForCliJob(job.jobId, accessToken, monitor.signal, (phase) => {
+          if (canDisplay()) setCliPhase(phase);
+        });
+      } catch (error) {
+        if (error instanceof StudioJobTerminalError) clearActiveStudioJob(job.jobId);
+        throw error;
+      }
+      if (cliResult.mode !== "cli") {
+        clearActiveStudioJob(job.jobId);
+        throw new Error("상품 분석 결과 형식이 올바르지 않습니다.");
+      }
+      const { heroUrl, generatedImages, ...nextResult } = cliResult;
+      if (canDisplay()) {
+        setSourceJobId(job.jobId);
+        setResult(nextResult);
+        setAiHero(heroUrl ?? "");
+        setThumbnails(generatedPreviewPresets.map((preset) => ({
+          ...preset,
+          dataUrl: generatedImages?.find((image) => image.id === preset.id)?.url ?? "",
+        })).filter((thumbnail) => thumbnail.dataUrl));
+        setSavedDetailData(null);
+      }
+      const { response: productResponse, payload: productPayload } = await fetchJsonWithStudioJobTimeout("/api/operations/snapshot", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ action: "product_create", jobId: job.jobId }),
+      }, monitor.signal, 30_000, {} as { id?: string | null; code?: string; message?: string });
+      throwIfStudioJobAborted(monitor.signal);
+      const productId = productResponse.ok && typeof productPayload.id === "string" ? productPayload.id : null;
+      if (!productId) {
+        if (productResponse.status === 409 && productPayload.code === "DUPLICATE_SELLER_SKU") clearActiveStudioJob(job.jobId);
+        throw new Error(productPayload.message || "이미지 제작은 완료됐지만 상품 원장 저장을 확인하지 못했습니다. 새로고침하면 완료 작업부터 다시 연결합니다.");
+      }
+      if (canDisplay()) setSourceProductId(productId);
+      clearActiveStudioJob(job.jobId);
+      if (canDisplay()) onResultReady?.(nextResult, productId);
+      if (studioMountedRef.current) notify(recovered
+        ? `이전 상품의 ChatGPT CLI 작업을 백그라운드에서 복구해 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장을 등록 이력에 연결했습니다.`
+        : `ChatGPT CLI 분석, codex-image 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장 연결을 완료했습니다.`);
+    } finally {
+      jobMonitors.end(job.jobId, monitor);
     }
-    if (shouldDisplayResult) setSourceProductId(productId);
-    clearActiveStudioJob(jobId);
-    if (shouldDisplayResult) onResultReady?.(nextResult, productId);
-    notify(recovered
-      ? `새로고침 전 ChatGPT CLI 작업을 복구해 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장을 다시 연결했습니다.`
-      : `ChatGPT CLI 분석, codex-image 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장 연결을 완료했습니다.`);
-  }, [notify, onResultReady, waitForCliJob]);
+  }, [jobMonitors, notify, onResultReady, studioSessionId, waitForCliJob]);
 
   const generate = useCallback(async () => {
     if (!mainPhoto || generating || queuedOwnJobId) return;
+    const lifecycleController = lifecycleControllerRef.current;
+    if (!lifecycleController || lifecycleController.signal.aborted || !studioMountedRef.current) return;
     displayJobId.current = "";
     setGenerating(true);
     onRunningChange(true);
@@ -342,62 +420,72 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       if (!accessToken || !userId) throw new Error("AI 제작을 실행하려면 관리자 로그인이 필요합니다.");
       if (photos.length > 100) throw new Error("한 작업에는 대표사진을 포함해 최대 100장까지 분석할 수 있습니다.");
       const jobId = crypto.randomUUID();
-      const { uploadedPaths: imagePaths, imageSpecs } = await optimizeAndUploadInBatches(photos, userId, jobId);
-      persistActiveStudioJob(jobId);
-      const response = await fetch("/api/ai/product-studio", {
+      const { uploadedPaths: imagePaths, imageSpecs } = await optimizeAndUploadInBatches(photos, userId, jobId, lifecycleController.signal);
+      throwIfStudioJobAborted(lifecycleController.signal);
+      persistActiveStudioJob(jobId, studioSessionId);
+      const { response, payload: queued } = await fetchJsonWithStudioJobTimeout("/api/ai/product-studio", {
         method: "POST",
         headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ jobId, manualFields: validatedIntake.data, imagePaths, imageSpecs }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      const queued = await response.json().catch(() => ({ message: "CLI 작업 등록 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
+      }, lifecycleController.signal, 30_000, { message: "CLI 작업 등록 응답을 읽지 못했습니다." } as { jobId?: string; message?: string });
+      throwIfStudioJobAborted(lifecycleController.signal);
       if (!response.ok || !queued.jobId) {
         clearActiveStudioJob(jobId);
         throw new Error(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
       }
       if (queued.jobId !== jobId) clearActiveStudioJob(jobId);
-      persistActiveStudioJob(queued.jobId);
+      const queuedJob = persistActiveStudioJob(queued.jobId, studioSessionId);
       displayJobId.current = queued.jobId;
       setQueuedOwnJobId(queued.jobId);
       onJobQueued?.(queued.jobId);
       notify("상품 분석 작업을 운영 큐에 등록했습니다. 처리되는 동안 다른 상품 등록을 바로 시작할 수 있습니다.");
-      void finishStudioJob(queued.jobId, accessToken, false).catch((error) => {
+      void finishStudioJob(queuedJob, accessToken, false).catch((error) => {
+        if (isStudioJobAbort(error) || !studioMountedRef.current) return;
         const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";
         setLastError(message);
         notify(message);
       }).finally(() => {
-        setQueuedOwnJobId((current) => current === queued.jobId ? "" : current);
+        if (studioMountedRef.current) setQueuedOwnJobId((current) => current === queued.jobId ? "" : current);
       });
     } catch (error) {
+      if (isStudioJobAbort(error) || !studioMountedRef.current) return;
       const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";
       setLastError(message);
       notify(message);
     } finally {
-      setGenerating(false);
-      setCliPhase("idle");
-      onRunningChange(false);
+      if (studioMountedRef.current) {
+        setGenerating(false);
+        setCliPhase("idle");
+        onRunningChange(false);
+      }
     }
-  }, [finishStudioJob, generating, mainPhoto, manualFields, notify, onJobQueued, onRunningChange, photos, queuedOwnJobId]);
+  }, [finishStudioJob, generating, mainPhoto, manualFields, notify, onJobQueued, onRunningChange, photos, queuedOwnJobId, studioSessionId]);
 
   const regenerateAsset = useCallback(async (assetId: string) => {
     if (!sourceJobId || generating || regeneratingAssetId) return;
+    const lifecycleController = lifecycleControllerRef.current;
+    if (!lifecycleController || lifecycleController.signal.aborted || !studioMountedRef.current) return;
     setRegeneratingAssetId(assetId);
     setLastError("");
     onRunningChange(true);
+    let monitor: AbortController | null = null;
+    let monitoredJobId = "";
     try {
       const { data: sessionData } = await createClient().auth.getSession();
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("이미지를 재제작하려면 관리자 로그인이 필요합니다.");
       const jobId = crypto.randomUUID();
-      const response = await fetch("/api/ai/product-studio/regenerate", {
+      const { response, payload: queued } = await fetchJsonWithStudioJobTimeout("/api/ai/product-studio/regenerate", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ jobId, sourceJobId, sourceProductId, assetId }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      const queued = await response.json().catch(() => ({ message: "재제작 작업 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
+      }, lifecycleController.signal, 30_000, { message: "재제작 작업 응답을 읽지 못했습니다." } as { jobId?: string; message?: string });
+      throwIfStudioJobAborted(lifecycleController.signal);
       if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "이미지 재제작 작업을 등록하지 못했습니다.");
-      const regenerated = await waitForCliJob(queued.jobId, accessToken);
+      monitoredJobId = queued.jobId;
+      monitor = jobMonitors.begin(monitoredJobId);
+      if (!monitor) throw new Error("같은 이미지 작업 상태를 이미 확인하고 있습니다.");
+      const regenerated = await waitForCliJob(monitoredJobId, accessToken, monitor.signal);
       if (regenerated.mode !== "asset-regeneration" || regenerated.assetId !== assetId) {
         throw new Error("재제작 이미지 결과가 요청과 일치하지 않습니다.");
       }
@@ -407,14 +495,18 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
       else setThumbnails((current) => current.map((asset) => asset.id === assetId ? { ...asset, dataUrl: nextUrl } : asset));
       notify(`${aiGeneratedAssetSpecs.find((asset) => asset.id === assetId)?.label ?? "선택 이미지"} 1장만 다시 제작해 교체했습니다.`);
     } catch (error) {
+      if (isStudioJobAbort(error) || !studioMountedRef.current) return;
       const message = error instanceof Error ? error.message : "이미지 재제작 중 오류가 발생했습니다.";
       setLastError(message);
       notify(message);
     } finally {
-      setRegeneratingAssetId("");
-      onRunningChange(false);
+      if (monitor) jobMonitors.end(monitoredJobId, monitor);
+      if (studioMountedRef.current) {
+        setRegeneratingAssetId("");
+        onRunningChange(false);
+      }
     }
-  }, [generating, notify, onRunningChange, regeneratingAssetId, sourceJobId, sourceProductId, waitForCliJob]);
+  }, [generating, jobMonitors, notify, onRunningChange, regeneratingAssetId, sourceJobId, sourceProductId, waitForCliJob]);
 
   useEffect(() => {
     if (!requestId || handledRequest.current === requestId) return;
@@ -426,27 +518,27 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, requestId, on
     if (recoveryStarted.current || requestId) return;
     const activeJobs = readActiveStudioJobs();
     if (!activeJobs.length) return;
-    recoveryStarted.current = true;
     const recoveryTimer = window.setTimeout(() => {
+      if (recoveryStarted.current) return;
+      recoveryStarted.current = true;
       void (async () => {
         try {
           const { data: sessionData } = await createClient().auth.getSession();
           const accessToken = sessionData.session?.access_token;
           if (!accessToken) throw new Error("진행 중인 상품 분석을 복구하려면 관리자 로그인이 필요합니다.");
-          notify(`새로고침 전에 시작한 상품 분석 ${activeJobs.length}건을 백그라운드에서 다시 연결합니다. 새 상품 등록은 바로 시작할 수 있습니다.`);
-          const selectedRecoveryJobId = activeJobs.at(-1)?.jobId;
-          if (!displayJobId.current && selectedRecoveryJobId) displayJobId.current = selectedRecoveryJobId;
+          if (!studioMountedRef.current) return;
+          notify(`이전 폼에서 시작한 상품 분석 ${activeJobs.length}건을 등록 이력에만 백그라운드 연결합니다. 현재 새 상품 입력은 변경하지 않습니다.`);
           for (const activeJob of activeJobs) {
-            void finishStudioJob(activeJob.jobId, accessToken, true).catch((error) => {
+            void finishStudioJob(activeJob, accessToken, true).catch((error) => {
+              if (isStudioJobAbort(error) || !studioMountedRef.current) return;
               const message = error instanceof Error ? error.message : "상품 분석 작업 복구 중 오류가 발생했습니다.";
-              setLastError(message);
-              notify(message);
+              notify(`이전 상품 작업 복구: ${message}`);
             });
           }
         } catch (error) {
+          if (isStudioJobAbort(error) || !studioMountedRef.current) return;
           const message = error instanceof Error ? error.message : "상품 분석 작업 복구 중 오류가 발생했습니다.";
-          setLastError(message);
-          notify(message);
+          notify(`이전 상품 작업 복구: ${message}`);
         }
       })();
     }, 0);

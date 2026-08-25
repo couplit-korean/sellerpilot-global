@@ -100,6 +100,9 @@ let nextPeriodicSyncAt = 0;
 const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
 let temuEgressCache = { checkedAt: 0, currentIp: "" };
 let idlePollMs = pollMs;
+let gatewayClaimBackoffUntil = 0;
+let gatewayClaimBackoffStatus = 0;
+let workerAuthBackoffUntil = 0;
 
 class JobCancelledError extends Error {
   constructor() {
@@ -703,39 +706,12 @@ async function prepareCoupangListing(payload, argumentsValue) {
   if (!returnRemote.response.ok) throw new Error(`COUPANG_RETURN_CENTER_QUERY_FAILED:${returnRemote.response.status}`);
   if (!metadataRemote.response.ok) throw new Error(`COUPANG_CATEGORY_METADATA_FAILED:${metadataRemote.response.status}`);
 
-  let outboundCenters = nestedContent(outboundRemote.data);
+  const outboundCenters = nestedContent(outboundRemote.data);
   const returnCenters = nestedContent(returnRemote.data);
-  let outbound = outboundCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
+  const outbound = outboundCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
   const returnCenter = returnCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
   if (!returnCenter) throw new Error(`COUPANG_USABLE_RETURN_CENTER_MISSING:${safeCoupangCenterSummary(returnCenters)}`);
-  if (!outbound) {
-    const createRemote = await coupangRequest({
-      payload,
-      method: "POST",
-      path: `/v2/providers/openapi/apis/api/v5/vendors/${encodeURIComponent(vendorId)}/outboundShippingCenters`,
-      body: {
-        vendorId,
-        userId: requestedBy,
-        shippingPlaceName: "SellerPilot API 출고지",
-        usable: true,
-        global: false,
-        placeAddresses: returnCenter.placeAddresses,
-      },
-    });
-    const createdCode = String(createRemote.data?.data?.resultMessage ?? "").trim();
-    const created = createRemote.response.ok && String(createRemote.data?.data?.resultCode ?? "").toUpperCase() === "SUCCESS" && /^\d+$/.test(createdCode);
-    if (!created) throw new Error(`COUPANG_OUTBOUND_CREATE_FAILED:${createRemote.response.status}`);
-    const createdRemote = await coupangRequest({
-      payload,
-      method: "GET",
-      path: "/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound",
-      query: new URLSearchParams({ placeCodes: createdCode }),
-    });
-    if (!createdRemote.response.ok) throw new Error(`COUPANG_OUTBOUND_READBACK_FAILED:${createdRemote.response.status}`);
-    outboundCenters = nestedContent(createdRemote.data);
-    outbound = outboundCenters.find((center) => String(center?.outboundShippingPlaceCode ?? "") === createdCode && coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
-    if (!outbound) throw new Error(`COUPANG_OUTBOUND_READBACK_MISMATCH:${safeCoupangCenterSummary(outboundCenters)}`);
-  }
+  if (!outbound) throw new Error(`COUPANG_USABLE_OUTBOUND_CENTER_MISSING:${safeCoupangCenterSummary(outboundCenters)}`);
   const returnAddress = preferredKoreanAddress(returnCenter.placeAddresses);
   const contractedDeliveryCode = String(returnCenter.deliverCode ?? "").trim();
   const returnFee = positiveFee(returnCenter) ?? 3_000;
@@ -1532,7 +1508,7 @@ async function processGatewayJob(job) {
           operationArguments = await prepareLazadaListing(credential, operationArguments);
         } else if (job.channel === "smartstore") {
           operationArguments = await prepareSmartstoreListing(credential, operationArguments);
-        } else if (job.channel === "coupang") {
+        } else if (job.channel === "coupang" && job.operation === "listing.create") {
           operationArguments = await prepareCoupangListing(credential, operationArguments);
         }
       }
@@ -1657,6 +1633,10 @@ const activeAiJobs = new Set();
 const activeGatewayJobs = new Set();
 do {
   try {
+    if (Date.now() < workerAuthBackoffUntil) {
+      await delay(Math.min(30_000, workerAuthBackoffUntil - Date.now()));
+      continue;
+    }
     if (!once && Date.now() >= nextPeriodicSyncAt) {
       nextPeriodicSyncAt = Date.now() + periodicSyncMs;
       try {
@@ -1666,6 +1646,9 @@ do {
         });
         if (!syncResponse.ok) {
           nextPeriodicSyncAt = Date.now() + 60_000;
+          if (syncResponse.status === 401) {
+            workerAuthBackoffUntil = Date.now() + 5 * 60_000;
+          }
           throw new Error(`주문·문의 자동 동기화 예약 실패 · HTTP ${syncResponse.status}`);
         }
         const syncResult = await syncResponse.json();
@@ -1687,7 +1670,8 @@ do {
         console.error(syncError instanceof Error ? syncError.message : "주문·문의 자동 동기화 예약 실패");
       }
     }
-    if (activeGatewayJobs.size < maxGatewayConcurrency) {
+    if (Date.now() < workerAuthBackoffUntil) continue;
+    if (activeGatewayJobs.size < maxGatewayConcurrency && Date.now() >= gatewayClaimBackoffUntil) {
       const gatewayResponse = await api("/api/channel-gateway/worker/claim", {
         method: "POST",
         body: JSON.stringify({ version: workerVersion }),
@@ -1703,7 +1687,21 @@ do {
           });
           activeGatewayJobs.add(activeGatewayJob);
         }
+        gatewayClaimBackoffStatus = 0;
         continue;
+      }
+      if (gatewayResponse.status === 401 || gatewayResponse.status === 503) {
+        const backoffMs = gatewayResponse.status === 401 ? 5 * 60_000 : 60_000;
+        gatewayClaimBackoffUntil = Date.now() + backoffMs;
+        if (gatewayResponse.status === 401) workerAuthBackoffUntil = gatewayClaimBackoffUntil;
+        if (gatewayClaimBackoffStatus !== gatewayResponse.status) {
+          console.error(gatewayResponse.status === 401
+            ? "채널 작업자 인증이 거절됐습니다. 관리자 화면에서 토큰 상태를 확인해 주세요."
+            : "운영 데이터베이스가 지연되어 채널 작업 수신을 1분 뒤 재시도합니다.");
+          gatewayClaimBackoffStatus = gatewayResponse.status;
+        }
+      } else {
+        gatewayClaimBackoffStatus = 0;
       }
       if (![204, 404].includes(gatewayResponse.status)) throw new Error(`채널 작업 요청 실패 · HTTP ${gatewayResponse.status}`);
     }

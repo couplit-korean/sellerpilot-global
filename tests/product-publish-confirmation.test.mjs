@@ -12,6 +12,25 @@ test("Qoo10 pause actions use controllable in-app confirmations", async () => {
   assert.match(source, /이전 상품 거래대기 실행/);
 });
 
+test("channel write confirmations move focus, close on Escape, and restore their opener", async () => {
+  const source = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /confirmationOpenerRef\.current = document\.activeElement/);
+  assert.match(source, /querySelector<HTMLButtonElement>\("\.publish-confirm-execute"\)/);
+  assert.match(source, /event\.key !== "Escape"/);
+  assert.match(source, /opener\?\.isConnected[\s\S]*?opener\.focus\(\)/);
+  assert.equal((source.match(/aria-modal="true"/g) ?? []).length, 4);
+});
+
+test("Coupang listing preflight never creates an unconfirmed shipping place", async () => {
+  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+
+  assert.match(worker, /COUPANG_USABLE_OUTBOUND_CENTER_MISSING/);
+  assert.doesNotMatch(worker, /shippingPlaceName: "SellerPilot API 출고지"/);
+  assert.doesNotMatch(worker, /COUPANG_OUTBOUND_CREATE_FAILED/);
+  assert.match(worker, /job\.channel === "coupang" && job\.operation === "listing\.create"/);
+});
+
 test("eBay market listings use one market-specific SKU for inventory and offer", async () => {
   const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
   const operations = await readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8");

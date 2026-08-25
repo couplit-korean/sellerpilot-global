@@ -122,6 +122,13 @@ export async function POST(request: Request) {
           p_inquiries: inquiries,
         });
         if (ingestError) {
+          if (job.channel === "lazada") {
+            await serviceClient.rpc("sellerpilot_service_record_lazada_im_bootstrap_result", {
+              p_job_id: parsed.data.jobId,
+              p_effective_credential_id: credentialId,
+              p_succeeded: false,
+            });
+          }
           await serviceClient.rpc("sellerpilot_service_mark_channel_sync", {
             p_credential_id: credentialId,
             p_channel: job.channel,
@@ -131,7 +138,26 @@ export async function POST(request: Request) {
           });
           return NextResponse.json({ message: "채널 고객 문의를 운영 원장에 저장하지 못했습니다." }, { status: 500 });
         }
+        if (job.channel === "lazada") {
+          // `false` is an expected no-op for a non-bootstrap or stale job;
+          // only an RPC transport/database error makes completion unsafe.
+          const { error: bootstrapError } = await serviceClient.rpc("sellerpilot_service_record_lazada_im_bootstrap_result", {
+            p_job_id: parsed.data.jobId,
+            p_effective_credential_id: credentialId,
+            p_succeeded: true,
+          });
+          if (bootstrapError) {
+            return NextResponse.json({ message: "Lazada 문의 초기 동기화 완료 상태를 저장하지 못했습니다." }, { status: 500 });
+          }
+        }
       } else {
+        if (job.channel === "lazada") {
+          await serviceClient.rpc("sellerpilot_service_record_lazada_im_bootstrap_result", {
+            p_job_id: parsed.data.jobId,
+            p_effective_credential_id: credentialId,
+            p_succeeded: false,
+          });
+        }
         const { error: syncError } = await serviceClient.rpc("sellerpilot_service_mark_channel_sync", {
           p_credential_id: credentialId,
           p_channel: job.channel,

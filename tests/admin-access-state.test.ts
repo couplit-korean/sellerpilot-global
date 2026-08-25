@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nextAdminAccessState } from "../app/_auth/admin-access-state";
+import { adminVerificationState, nextAdminAccessState } from "../app/_auth/admin-access-state";
 
 test("keeps the mounted admin workspace during token refresh sign-in events", () => {
   assert.equal(nextAdminAccessState("admin", "SIGNED_IN", true), "admin");
@@ -18,4 +18,12 @@ test("uses checking for unresolved sessions and signs out explicitly", () => {
 test("keeps a bounded verification error until a new sign-in event or explicit retry", () => {
   assert.equal(nextAdminAccessState("error", "TOKEN_REFRESHED"), "error");
   assert.equal(nextAdminAccessState("error", "INITIAL_SESSION"), "checking");
+});
+
+test("distinguishes an admin denial from a retryable RPC failure", () => {
+  assert.equal(adminVerificationState(true, null), "admin");
+  assert.equal(adminVerificationState(false, null), "forbidden");
+  assert.equal(adminVerificationState(false, new Error("network unavailable")), "error");
+  assert.equal(adminVerificationState(null, null), "error");
+  assert.equal(adminVerificationState(undefined, null), "error");
 });

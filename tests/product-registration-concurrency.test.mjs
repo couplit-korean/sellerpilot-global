@@ -9,7 +9,9 @@ test("one queued product does not serialize another product or channel write", a
 
   assert.match(studio, /readActiveStudioJobs\(\)/);
   assert.match(studio, /for \(const activeJob of activeJobs\)/);
-  assert.match(studio, /void finishStudioJob\(activeJob\.jobId, accessToken, true\)/);
+  assert.match(studio, /void finishStudioJob\(activeJob, accessToken, true\)/);
+  assert.match(studio, /shouldDisplayStudioJob\(\{/);
+  assert.match(studio, /jobMonitors\.abortAll\(\)/);
   assert.match(studio, /처리되는 동안 다른 상품 등록을 바로 시작할 수 있습니다/);
   assert.match(page, /다른 상품 등록/);
   assert.match(workbench, /Promise\.all\(readyChannels\.map/);

@@ -92,7 +92,7 @@ import { normalizeProductSaleConfiguration, productSaleConfigurations } from "..
 import { settleWithConcurrency } from "../lib/promise-pool";
 import { withPromiseTimeout } from "../lib/promise-timeout";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
-import { nextAdminAccessState, type AdminAccessState } from "./_auth/admin-access-state";
+import { adminVerificationState, nextAdminAccessState, type AdminAccessState } from "./_auth/admin-access-state";
 import { formatCompactWon } from "./_dashboard/format-compact-won";
 import { RevenueCalendar } from "./_dashboard/revenue-calendar";
 import { SalesRangeControl } from "./_dashboard/sales-range-control";
@@ -2854,9 +2854,14 @@ export default function Home() {
           startVerification(latestSession.session);
           return;
         }
+        const verificationState = adminVerificationState(isAdmin, error);
+        if (verificationState === "error") {
+          failVerification(generation);
+          return;
+        }
         setUserEmail(session.user.email ?? "");
         setAccessErrorMessage("");
-        if (!error && isAdmin === true) {
+        if (verificationState === "admin") {
           verifiedAdminUserId = session.user.id;
           setAccessState("admin");
         } else {

@@ -21,6 +21,13 @@ import {
   type ChannelCapabilityKey,
 } from "./catalog";
 import { qoo10ProductionPlace, qoo10ResultMessage } from "./qoo10";
+import {
+  listingUpdateRemoteIdentity,
+  mergeCoupangListingUpdateBody,
+  mergeListingUpdatePatch,
+  prepareListingUpdateArguments,
+  verifyListingUpdateReadback,
+} from "./listing-update";
 
 export const channelOperationNames = [
   "categories.list",
@@ -230,6 +237,23 @@ function inventoryQuantityVerificationStep(
       sellerpilotVerification: verified ? "INVENTORY_QUANTITY_VERIFIED" : "INVENTORY_QUANTITY_MISMATCH",
     },
   };
+}
+
+function listingUpdateReadbackStep(
+  name: string,
+  remote: RemoteResponse,
+  channel: ActiveChannelKey,
+  argumentsValue: Record<string, unknown>,
+): ChannelOperationStep {
+  const readbackStep = step(name, remote);
+  const verification = verifyListingUpdateReadback(channel, argumentsValue, remote.data);
+  readbackStep.ok = readbackStep.ok && verification.ok;
+  readbackStep.data = {
+    ...readbackStep.data,
+    sellerpilotVerification: readbackStep.ok ? "LISTING_MUTABLE_FIELDS_VERIFIED" : "LISTING_MUTABLE_FIELDS_MISMATCH",
+    sellerpilotMismatchPaths: verification.mismatches.slice(0, 40),
+  };
+  return readbackStep;
 }
 
 function naverOptionalCategoryMetadataStep(name: string, remote: RemoteResponse): ChannelOperationStep {
@@ -746,6 +770,7 @@ async function executeQoo10(input: ExecuteInput) {
   const detailUpdateStep = step("EditGoodsContents", detailUpdate);
   let readbackStatus = 422;
   let readbackImageCount = 0;
+  let updateReadbackStep: ChannelOperationStep | null = null;
   for (let attempt = 0; detailUpdateStep.ok && attempt < 4; attempt += 1) {
     if (attempt > 0) await operationDelay(750 * attempt);
     const readback = await qoo10Request({
@@ -759,15 +784,29 @@ async function executeQoo10(input: ExecuteInput) {
     readbackStatus = readbackStep.status;
     readbackImageCount = qoo10ImageCount(qoo10DetailHtml(readback.data.ResultObject));
     if (readbackStep.ok && expectedDetailImages >= 4 && readbackImageCount >= expectedDetailImages) {
+      if (input.operation === "listing.update") {
+        updateReadbackStep = listingUpdateReadbackStep("detail-image-readback", readback, input.channel, input.arguments);
+        updateReadbackStep.ok = updateReadbackStep.ok && readbackImageCount >= expectedDetailImages;
+        updateReadbackStep.data = { ...updateReadbackStep.data, detailImageCount: readbackImageCount };
+        if (!updateReadbackStep.ok) continue;
+        return result(input, [createStep, detailUpdateStep, updateReadbackStep], remoteId);
+      }
       return result(input, [createStep, detailUpdateStep, qoo10VerificationStep(true, readbackStatus, readbackImageCount)], remoteId);
     }
   }
 
   if (input.operation === "listing.update") {
+    updateReadbackStep ??= {
+      ...qoo10VerificationStep(false, readbackStatus, readbackImageCount),
+      data: {
+        ...qoo10VerificationStep(false, readbackStatus, readbackImageCount).data,
+        sellerpilotVerification: "LISTING_MUTABLE_FIELDS_MISMATCH",
+      },
+    };
     return result(input, [
       createStep,
       detailUpdateStep,
-      qoo10VerificationStep(false, readbackStatus, readbackImageCount),
+      updateReadbackStep,
     ], remoteId);
   }
 
@@ -1030,9 +1069,46 @@ async function executeShopee(input: ExecuteInput) {
     steps.push(inventoryQuantityVerificationStep("inventory-readback", readback, quantity, summaryInfo.total_available_stock));
     return result(input, steps, itemId);
   }
+  if (input.operation === "listing.update") {
+    const localItemId = stringArgument(input.arguments, "localItemId");
+    const body = objectValue(input.arguments, "body");
+    if (String(body.item_id ?? "") !== localItemId) throw new Error("SHOPEE_LOCAL_ITEM_ID_MISMATCH");
+    const readLocalItem = () => shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: "/api/v2/product/get_item_base_info",
+      query: new URLSearchParams({ item_id_list: localItemId }),
+    });
+    const preflightRemote = await readLocalItem();
+    const preflightStep = step("local-item-preflight", preflightRemote);
+    const preflightResponse = objectValue(preflightRemote.data, "response", false);
+    const preflightItems = Array.isArray(preflightResponse.item_list)
+      ? preflightResponse.item_list as Array<Record<string, unknown>>
+      : [];
+    const localIdentityVerified = preflightItems.some((item) => String(item.item_id ?? "") === localItemId);
+    preflightStep.ok = preflightStep.ok && localIdentityVerified;
+    preflightStep.data = {
+      ...preflightStep.data,
+      sellerpilotVerification: preflightStep.ok ? "SHOPEE_LOCAL_ITEM_ID_VERIFIED" : "SHOPEE_LOCAL_ITEM_ID_NOT_FOUND",
+    };
+    if (!preflightStep.ok) return result(input, [preflightStep], localItemId);
+
+    const writeRemote = await shopeeRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "POST",
+      path: "/api/v2/product/update_item",
+      body,
+    });
+    const writeStep = step("listing.update", writeRemote);
+    if (!writeStep.ok) return result(input, [preflightStep, writeStep], localItemId);
+    const readbackRemote = await readLocalItem();
+    const readbackStep = listingUpdateReadbackStep("listing-readback", readbackRemote, input.channel, input.arguments);
+    return result(input, [preflightStep, writeStep, readbackStep], localItemId);
+  }
   const writePaths: Partial<Record<ChannelOperationName, string>> = {
     "listing.create": "/api/v2/product/add_item",
-    "listing.update": "/api/v2/product/update_item",
     "listing.stop": "/api/v2/product/unlist_item",
     "price.update": "/api/v2/product/update_price",
     "inventory.update": "/api/v2/product/update_stock",
@@ -1048,12 +1124,9 @@ async function executeShopee(input: ExecuteInput) {
       body: objectValue(input.arguments, "body"),
     });
     const responseRemoteId = shopeeResponseId(remote.data, input.operation === "listing.create" ? "item_id" : "request_id");
-    const requestedItemId = input.operation === "listing.update"
-      ? stringArgument(input.arguments, "itemId", false)
-      : "";
-    const remoteId = requestedItemId || responseRemoteId;
+    const remoteId = responseRemoteId;
     const writeStep = step(input.operation, remote);
-    if ((input.operation === "listing.create" || input.operation === "listing.update") && writeStep.ok && remoteId) {
+    if (input.operation === "listing.create" && writeStep.ok && remoteId) {
       const readback = await shopeeRequest({
         payload: input.payload,
         environment: input.environment,
@@ -1382,7 +1455,9 @@ async function executeLazada(input: ExecuteInput) {
       path: "/product/item/get",
       params: { item_id: remoteId },
     });
-    const readbackStep = step("listing-readback", readback);
+    const readbackStep = input.operation === "listing.update"
+      ? listingUpdateReadbackStep("listing-readback", readback, input.channel, input.arguments)
+      : step("listing-readback", readback);
     const readbackData = objectValue(readback.data, "data", false);
     const readbackItem = objectValue(readbackData, "item", false);
     const readbackId = readbackItem.item_id ?? readbackItem.itemId ?? readbackData.item_id ?? readbackData.itemId;
@@ -1436,14 +1511,48 @@ async function executeCoupang(input: ExecuteInput) {
     });
     return result(input, [step("category-status", remote)], categoryId);
   }
-  if (input.operation === "listing.create" || input.operation === "listing.update") {
+  if (input.operation === "listing.update") {
+    const patchBody = objectValue(input.arguments, "body");
+    const remoteId = String(patchBody.sellerProductId ?? "").trim();
+    if (!remoteId) throw new Error("CHANNEL_ARGUMENT_REQUIRED:sellerProductId");
+    const readProduct = () => coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `${sellerProductsPath}/${pathSegment(remoteId)}`,
+    });
+    const preflightRemote = await readProduct();
+    const preflightStep = step("listing-update-preflight", preflightRemote);
+    const currentBody = objectValue(preflightRemote.data, "data", false);
+    preflightStep.ok = preflightStep.ok && String(currentBody.sellerProductId ?? "") === remoteId;
+    preflightStep.data = {
+      ...preflightStep.data,
+      sellerpilotVerification: preflightStep.ok ? "COUPANG_EXISTING_LISTING_VERIFIED" : "COUPANG_EXISTING_LISTING_MISMATCH",
+    };
+    if (!preflightStep.ok) return result(input, [preflightStep], remoteId);
+
+    const mergedBody = mergeCoupangListingUpdateBody(currentBody, patchBody);
+    mergedBody.vendorId = vendorId;
+    mergedBody.sellerProductId = patchBody.sellerProductId;
+    const writeRemote = await coupangRequest({
+      payload: input.payload,
+      method: "PUT",
+      path: sellerProductsPath,
+      body: mergedBody,
+    });
+    const writeStep = step("listing.update", writeRemote);
+    if (!writeStep.ok) return result(input, [preflightStep, writeStep], remoteId);
+    const readbackRemote = await readProduct();
+    const readbackStep = listingUpdateReadbackStep("listing-readback", readbackRemote, input.channel, input.arguments);
+    const readbackBody = objectValue(readbackRemote.data, "data", false);
+    readbackStep.ok = readbackStep.ok && String(readbackBody.sellerProductId ?? "") === remoteId;
+    return result(input, [preflightStep, writeStep, readbackStep], remoteId);
+  }
+  if (input.operation === "listing.create") {
     const body: Record<string, unknown> = { ...objectValue(input.arguments, "body"), vendorId };
-    const resumeRemoteId = input.operation === "listing.create"
-      ? stringArgument(input.arguments, "resumeRemoteId", false)
-      : "";
+    const resumeRemoteId = stringArgument(input.arguments, "resumeRemoteId", false);
     const writeRemote = resumeRemoteId ? null : await coupangRequest({
       payload: input.payload,
-      method: input.operation === "listing.create" ? "POST" : "PUT",
+      method: "POST",
       path: sellerProductsPath,
       body,
     });
@@ -1737,14 +1846,31 @@ async function executeSmartstore(input: ExecuteInput) {
     return result(input, steps, remoteId);
   }
   if (input.operation === "listing.update") {
-    const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
-    const remote = await request({ method: "PUT", path: `/v2/products/origin-products/${originProductNo}`, body: objectValue(input.arguments, "body") });
+    const remoteId = stringArgument(input.arguments, "originProductNo");
+    const originProductNo = pathSegment(remoteId);
+    const patchBody = objectValue(input.arguments, "body");
+    const readProduct = () => request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
+    const preflightRemote = await readProduct();
+    const preflightStep = step("product-update-preflight", preflightRemote);
+    const currentOriginProduct = objectValue(preflightRemote.data, "originProduct", false);
+    preflightStep.ok = preflightStep.ok && Object.keys(currentOriginProduct).length > 0;
+    preflightStep.data = {
+      ...preflightStep.data,
+      sellerpilotVerification: preflightStep.ok ? "SMARTSTORE_EXISTING_PRODUCT_VERIFIED" : "SMARTSTORE_EXISTING_PRODUCT_MISSING",
+    };
+    if (!preflightStep.ok) return result(input, [preflightStep], remoteId);
+    const currentChannelProduct = objectValue(preflightRemote.data, "smartstoreChannelProduct", false);
+    const currentBody = {
+      originProduct: currentOriginProduct,
+      ...(Object.keys(currentChannelProduct).length ? { smartstoreChannelProduct: currentChannelProduct } : {}),
+    };
+    const mergedBody = mergeListingUpdatePatch(currentBody, patchBody) as Record<string, unknown>;
+    const remote = await request({ method: "PUT", path: `/v2/products/origin-products/${originProductNo}`, body: mergedBody });
     const updateStep = step("product-update", remote);
-    if (!updateStep.ok) return result(input, [updateStep], originProductNo);
-    const readbackRemote = await request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
-    const readbackStep = step("product-readback", readbackRemote);
-    readbackStep.ok = readbackStep.ok && Boolean(readbackRemote.data.originProduct && typeof readbackRemote.data.originProduct === "object");
-    return result(input, [updateStep, readbackStep], originProductNo);
+    if (!updateStep.ok) return result(input, [preflightStep, updateStep], remoteId);
+    const readbackRemote = await readProduct();
+    const readbackStep = listingUpdateReadbackStep("product-readback", readbackRemote, input.channel, input.arguments);
+    return result(input, [preflightStep, updateStep, readbackStep], remoteId);
   }
   if (input.operation === "listing.stop") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
@@ -2463,13 +2589,22 @@ async function executeEbay(input: ExecuteInput) {
 
 export async function executeChannelOperation(input: ExecuteInput): Promise<ChannelOperationResult> {
   ensureProviderSupport(input.channel, input.operation);
-  if (input.channel === "qoo10") return executeQoo10(input);
-  if (input.channel === "shopee") return executeShopee(input);
-  if (input.channel === "lazada") return executeLazada(input);
-  if (input.channel === "coupang") return executeCoupang(input);
-  if (input.channel === "elevenst") return executeElevenst(input);
-  if (input.channel === "smartstore") return executeSmartstore(input);
-  if (input.channel === "ebay") return executeEbay(input);
-  if (input.channel === "temu") return executeTemu(input);
+  const safeInput = input.operation === "listing.update"
+    ? {
+      ...input,
+      arguments: prepareListingUpdateArguments(input.channel, input.arguments, {
+        status: "published",
+        remoteId: listingUpdateRemoteIdentity(input.channel, input.arguments),
+      }),
+    }
+    : input;
+  if (safeInput.channel === "qoo10") return executeQoo10(safeInput);
+  if (safeInput.channel === "shopee") return executeShopee(safeInput);
+  if (safeInput.channel === "lazada") return executeLazada(safeInput);
+  if (safeInput.channel === "coupang") return executeCoupang(safeInput);
+  if (safeInput.channel === "elevenst") return executeElevenst(safeInput);
+  if (safeInput.channel === "smartstore") return executeSmartstore(safeInput);
+  if (safeInput.channel === "ebay") return executeEbay(safeInput);
+  if (safeInput.channel === "temu") return executeTemu(safeInput);
   throw new Error("CHANNEL_OPERATION_UNSUPPORTED");
 }
