@@ -120,6 +120,7 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
         p_product_id: product.product_id,
         p_claim_token: product.claim_token,
         p_items: items,
+        p_providers: searched.providers,
       });
       const savedCount = typeof saved === "number" || typeof saved === "string" ? Number(saved) : Number.NaN;
       if (saveError || !Number.isFinite(savedCount) || savedCount < 0) {

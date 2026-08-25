@@ -4,6 +4,10 @@ export type RegistrationActivity = OperationsSnapshot["registrationActivities"][
 export type RegistrationStatus = RegistrationActivity["status"];
 export type RegistrationActivityState = OperationsSnapshot["registrationActivityState"];
 export type RegistrationActivityFilter = "all" | "active" | "ready" | "completed" | "attention";
+const registrationChannelStatuses = Symbol("registrationChannelStatuses");
+export type RegistrationActivityEventState = Map<string, RegistrationStatus> & {
+  [registrationChannelStatuses]?: ReadonlyMap<string, string>;
+};
 
 const runningRegistrationStatuses = new Set<RegistrationStatus>(["analyzing", "publishing"]);
 
@@ -42,11 +46,22 @@ export function registrationChannelStatusLabel(status: string) {
   if (status === "blocked") return "권한";
   if (status === "paused") return "중지";
   if (status === "scope_excluded") return "제외";
+  if (status === "draft") return "준비";
   return "진행";
 }
 
 export function registrationActivityStatusMap(activities: RegistrationActivity[]) {
-  return new Map(activities.map((activity) => [activity.id, activity.status]));
+  const statuses: RegistrationActivityEventState = new Map(
+    activities.map((activity) => [activity.id, activity.status]),
+  );
+  const channelStatuses = new Map<string, string>();
+  for (const activity of activities) {
+    for (const channel of activity.channels) {
+      channelStatuses.set(`${activity.id}:${channel.channel}:${channel.market}`, channel.status);
+    }
+  }
+  statuses[registrationChannelStatuses] = channelStatuses;
+  return statuses;
 }
 
 export function registrationActivityNotifications(
@@ -54,15 +69,26 @@ export function registrationActivityNotifications(
   activities: RegistrationActivity[],
 ) {
   if (!previousStatuses) return [];
+  const previousChannelStatuses = (previousStatuses as RegistrationActivityEventState)[registrationChannelStatuses];
   return activities.flatMap((activity) => {
     const previous = previousStatuses.get(activity.id);
-    if (previous === activity.status) return [];
-    return [`${activity.productName}: ${registrationStatusMeta[activity.status].label}`];
+    const messages: string[] = [];
+    if (previous !== activity.status) {
+      messages.push(`${activity.productName}: ${registrationStatusMeta[activity.status].label}`);
+    }
+    if (previous !== "publishing" || activity.status !== "publishing" || !previousChannelStatuses) return messages;
+    for (const channel of activity.channels) {
+      const channelKey = `${activity.id}:${channel.channel}:${channel.market}`;
+      if (previousChannelStatuses.get(channelKey) === channel.status) continue;
+      const destination = [channel.channelName || channel.channel, channel.market].filter(Boolean).join(" · ");
+      messages.push(`${activity.productName} · ${destination}: ${registrationChannelStatusLabel(channel.status)}`);
+    }
+    return messages;
   });
 }
 
 export function registrationActivityNotificationTransition(
-  previousStatuses: Map<string, RegistrationStatus> | null,
+  previousStatuses: RegistrationActivityEventState | null,
   activities: RegistrationActivity[],
   state: RegistrationActivityState,
 ) {
