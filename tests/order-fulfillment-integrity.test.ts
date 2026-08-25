@@ -65,20 +65,58 @@ test("reconciliation-required shipments are never counted as full success or rem
 });
 
 test("fulfillment route preserves a stable resource-bound gateway write and defers 202 without false failure", async () => {
-  const [route, failureMigration, resourceMigration] = await Promise.all([
+  const [route, orderSync, failureMigration, resourceMigration] = await Promise.all([
     readFile(new URL("../app/api/admin/orders/fulfill/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/order-sync.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260825071000_harden_order_shipment_ledger_integrity.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260825104900_resource_bound_gateway_writes.sql", import.meta.url), "utf8"),
   ]);
 
-  assert.match(route, /idempotencyKey = `shipment-\$\{shipment\.id\}-\$\{createHash\("sha256"\)/);
-  assert.match(route, /orderId: shipment\.id/);
-  assert.match(route, /remoteResponse\.status === 202 && remotePayload\.inProgress === true/);
+  assert.match(route, /idempotencyRoot = `shipment-\$\{shipment\.id\}-\$\{createHash\("sha256"\)/);
+  assert.match(route, /orderId: input\.shipment\.id/);
+  assert.match(route, /remoteResponse\.status === 202 \|\| remotePayload\.inProgress === true/);
+  assert.match(route, /providerMutation\s*\?\s*\{[\s\S]*kind: "reconciliation_required"[\s\S]*:\s*\{[\s\S]*kind: "in_progress"/);
+  const localPreparation = route.slice(
+    route.indexOf("const shipmentDraft: ShipmentDraft"),
+    route.indexOf("const idempotencyRoot"),
+  );
+  assert.match(localPreparation, /failedShipmentResult/);
+  assert.doesNotMatch(localPreparation, /deferredShipmentResult/);
+  assert.ok(route.indexOf("buildShipmentArguments(shipmentDraft)") < route.indexOf("if (order.status === \"paid\" && acknowledgeArguments)"));
+  assert.ok(route.indexOf("operation: \"shipment.acknowledge\"", route.indexOf("if (order.status === \"paid\""))
+    < route.indexOf("operation: \"shipment.confirm\"", route.indexOf("if (order.status === \"paid\"")));
+  assert.ok(route.indexOf("operation: \"orders.get\"", route.indexOf("if (readbackArguments)"))
+    < route.indexOf("operation: \"shipment.confirm\"", route.indexOf("if (readbackArguments)")));
+  assert.match(route, /SHOPEE_SHIPPING_MODE_SELECTION_REQUIRED/);
+  assert.match(route, /shippingParameter: preflightOutcome\.payload/);
+  assert.match(route, /preflight-\$\{randomUUID\(\)\.slice\(0, 8\)\}/);
   assert.doesNotMatch(route, /sellerpilot_record_order_shipment/);
   assert.match(route, /sellerpilot_service_record_order_shipment_failure/);
+  assert.match(orderSync, /const externalOrderId = text\(row\.shipmentBoxId\)/);
+  assert.doesNotMatch(orderSync, /text\(row\.orderId, row\.shipmentBoxId\)/);
+  assert.match(orderSync, /const externalOrderId = text\(row\.productOrderId\)/);
+  assert.doesNotMatch(orderSync, /text\(row\.orderId, row\.productOrderId\)/);
+  assert.match(orderSync, /providerContext:\s*\{\s*shipmentBoxId: externalOrderId,/);
+  assert.match(orderSync, /providerContext:\s*\{\s*productOrderId: externalOrderId,/);
+  assert.match(orderSync, /if \(remote === "3"\) return "ready_to_ship";/);
+  assert.match(orderSync, /if \(remote === "4"\) return "shipped";/);
+  assert.match(orderSync, /if \(remote === "5"\) return "delivered";/);
+  assert.match(orderSync, /PURCHASE_DECIDED\|DELIVERED/);
+  assert.match(orderSync, /DISPATCHED\|DELIVERING/);
+  assert.match(orderSync, /PRODUCT_PREPARE/);
   assert.match(failureMigration, /grant execute on function public\.sellerpilot_service_record_order_shipment_failure\(uuid, uuid, text, text\)[\s\S]*to service_role/);
   assert.match(failureMigration, /from public, anon, authenticated/);
   assert.match(resourceMigration, /sellerpilot_service_enqueue_resource_gateway_job/);
   assert.match(resourceMigration, /new\.operation = 'shipment\.confirm'/);
   assert.doesNotMatch(resourceMigration, /when v_provider_ok then 'shipped'/);
+});
+
+test("TracX delivery webhook bounds Supabase calls and classifies RPC auth separately from transient failures", async () => {
+  const route = await readFile(new URL("../app/api/webhooks/tracx/delivery/route.ts", import.meta.url), "utf8");
+  assert.match(route, /global: \{ fetch: createBoundedSupabaseFetch\(5_000\) \}/);
+  assert.match(route, /workerRpcErrorStatus\(code \? \{ code \} : null\)/);
+  assert.match(route, /try \{[\s\S]*sellerpilot_get_active_credential_secret[\s\S]*\} catch \(error\) \{/);
+  assert.match(route, /try \{[\s\S]*sellerpilot_service_ingest_tracx_delivery[\s\S]*\} catch \(error\) \{/);
+  assert.match(route, /console\.error\(`TracX delivery \$\{context\} RPC failed`, \{ code: code \?\? "unknown", status \}\)/);
+  assert.doesNotMatch(route, /console\.error\([^\n]*(webhook_secret|secret_payload|receivedToken|expectedToken)/);
 });

@@ -1,9 +1,15 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 import { isActiveChannelKey } from "../../../../../lib/channels/catalog";
-import { buildShipmentArguments } from "../../../../../lib/channels/shipment-draft";
+import {
+  buildShipmentAcknowledgeArguments,
+  buildShipmentArguments,
+  buildShipmentPreflightArguments,
+  buildShipmentReadbackArguments,
+  type ShipmentDraft,
+} from "../../../../../lib/channels/shipment-draft";
 import { shipmentWriteAvailability } from "../../../../../lib/channels/shipment-release";
 import {
   shipmentLedgerWriteSucceeded,
@@ -31,6 +37,19 @@ type OrderContext = {
   provider_context?: Record<string, unknown> | null;
 };
 type Credential = { id: string; channel: string; environment: string; status: string };
+type ShipmentOperation = "orders.get" | "shipment.acknowledge" | "shipment.confirm";
+type ChannelOperationPayload = {
+  ok?: boolean;
+  message?: string;
+  safeMessage?: string;
+  inProgress?: boolean;
+  reconciliationRequired?: boolean;
+  manualRequired?: boolean;
+  steps?: unknown[];
+};
+type ShipmentOperationOutcome =
+  | { kind: "succeeded"; payload: ChannelOperationPayload }
+  | { kind: "failed" | "in_progress" | "reconciliation_required"; message: string };
 
 function failedShipmentResult(input: {
   id: string;
@@ -73,6 +92,28 @@ function safeMessage(channel: string, status: number, fallback?: string) {
   return fallback || `${channel} 발송 처리를 완료하지 못했습니다.`;
 }
 
+function localShipmentErrorMessage(raw: string) {
+  if (raw.startsWith("SHIPMENT_REMOTE_ID_REQUIRED") || raw.startsWith("SHIPMENT_REMOTE_ID_MISMATCH")) {
+    return "동기화된 원격 주문 식별값의 종류가 발송 API와 일치하지 않아 요청을 차단했습니다. 주문을 다시 동기화해 주세요.";
+  }
+  if (raw.startsWith("SHIPMENT_FIELD_INVALID:shopee.shopId")) {
+    return "Shopee 주문의 정확한 Shop ID가 동기화되지 않아 기본 상점으로의 오발송을 차단했습니다. 해당 Shop으로 주문을 다시 동기화해 주세요.";
+  }
+  if (raw.startsWith("SHOPEE_SHIPPING_MODE_SELECTION_REQUIRED")) {
+    return "Shopee가 이 주문에 픽업 또는 드롭오프 선택을 요구합니다. 확인되지 않은 장소·시간값을 만들지 않고 자동 발송을 차단했습니다.";
+  }
+  if (raw.startsWith("SHOPEE_SHIPPING_PARAMETER_")) {
+    return "Shopee 배송 파라미터 응답에서 안전하게 사용할 수 있는 발송 방식을 확정하지 못했습니다.";
+  }
+  if (raw.startsWith("SHIPMENT_PACKAGE_DETAILS_REQUIRED")) {
+    return "Lazada는 주문 품목·패키지 정보를 먼저 조회해야 하므로 현재 일괄 운송장 처리에서 제외됩니다.";
+  }
+  if (raw.startsWith("SHIPMENT_CHANNEL_UNAVAILABLE")) {
+    return "이 채널은 판매자 발송 API 권한이 아직 연결되지 않았습니다.";
+  }
+  return "판매채널에 보내기 전 발송 정보 검증을 통과하지 못했습니다.";
+}
+
 export async function POST(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
@@ -95,6 +136,65 @@ export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const operationUrl = new URL("/api/admin/channel-operations", request.url);
   const results: ShipmentFulfillmentResult[] = [];
+
+  const executeShipmentOperation = async (input: {
+    credential: Credential;
+    order: OrderContext;
+    shipment: z.infer<typeof schema>["shipments"][number];
+    operation: ShipmentOperation;
+    arguments: Record<string, unknown>;
+    idempotencyKey: string;
+    providerMutation: boolean;
+  }): Promise<ShipmentOperationOutcome> => {
+    let remoteResponse: Response;
+    try {
+      remoteResponse = await fetch(operationUrl, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({
+          credentialId: input.credential.id,
+          channel: input.order.channel_key,
+          operation: input.operation,
+          idempotencyKey: input.idempotencyKey,
+          confirmWrite: input.operation !== "orders.get",
+          ...(input.operation !== "orders.get" ? {
+            orderId: input.shipment.id,
+            shipmentCarrier: input.shipment.carrierCode,
+            shipmentTracking: input.shipment.trackingNumber,
+          } : {}),
+          arguments: input.arguments,
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch {
+      return input.providerMutation
+        ? {
+            kind: "reconciliation_required",
+            message: "원격 발송 변경 요청의 접수 여부를 확정할 수 없어 재전송을 차단하고 원장 확인이 필요합니다.",
+          }
+        : {
+            kind: "in_progress",
+            message: "판매채널 사전 확인 작업의 서버 접수 여부를 확인 중입니다. 최종 운송장 전송은 아직 실행하지 않았습니다.",
+          };
+    }
+
+    const remotePayload = await remoteResponse.json().catch(() => ({})) as ChannelOperationPayload;
+    const message = safeMessage(
+      input.order.channel_key,
+      remoteResponse.status,
+      remotePayload.message ?? remotePayload.safeMessage,
+    );
+    if (remoteResponse.status === 202 || remotePayload.inProgress === true) {
+      return { kind: "in_progress", message };
+    }
+    if (remotePayload.reconciliationRequired === true || remotePayload.manualRequired === true) {
+      return { kind: "reconciliation_required", message };
+    }
+    if (!remoteResponse.ok || remotePayload.ok === false) {
+      return { kind: "failed", message };
+    }
+    return { kind: "succeeded", payload: remotePayload };
+  };
 
   const recordFailure = async (input: { id: string; carrier: string; message: string }) => {
     try {
@@ -139,78 +239,150 @@ export async function POST(request: Request) {
       continue;
     }
 
+    const shipmentDraft: ShipmentDraft = {
+      channel: order.channel_key,
+      externalOrderId: order.external_order_id,
+      carrierCode: shipment.carrierCode,
+      trackingNumber: shipment.trackingNumber,
+      providerContext: order.provider_context && typeof order.provider_context === "object" && !Array.isArray(order.provider_context)
+        ? order.provider_context
+        : undefined,
+    };
+    let acknowledgeArguments: Record<string, unknown> | null = null;
+    let readbackArguments: Record<string, unknown> | null = null;
+    let preflightArguments: Record<string, unknown> | null = null;
+    let confirmArguments: Record<string, unknown> | null = null;
     try {
-      const operationArguments = buildShipmentArguments({
-        channel: order.channel_key,
-        externalOrderId: order.external_order_id,
-        carrierCode: shipment.carrierCode,
-        trackingNumber: shipment.trackingNumber,
-        providerContext: order.provider_context && typeof order.provider_context === "object" && !Array.isArray(order.provider_context)
-          ? order.provider_context
-          : undefined,
-      });
-      const idempotencyKey = `shipment-${shipment.id}-${createHash("sha256").update(`${shipment.carrierCode}:${shipment.trackingNumber}`).digest("hex").slice(0, 24)}`;
-      const remoteResponse = await fetch(operationUrl, {
-        method: "POST",
-        headers: { authorization, "content-type": "application/json" },
-        body: JSON.stringify({
-          credentialId: credential.id,
-          channel: order.channel_key,
-          operation: "shipment.confirm",
-          idempotencyKey,
-          confirmWrite: true,
-          orderId: shipment.id,
-          shipmentCarrier: shipment.carrierCode,
-          shipmentTracking: shipment.trackingNumber,
-          arguments: operationArguments,
-        }),
-        signal: AbortSignal.timeout(120_000),
-      });
-      const remotePayload = await remoteResponse.json().catch(() => ({})) as {
-        message?: string;
-        safeMessage?: string;
-        remoteId?: string;
-        inProgress?: boolean;
-        reconciliationRequired?: boolean;
-        manualRequired?: boolean;
-      };
-      if (!remoteResponse.ok) {
-        const message = safeMessage(order.channel_key, remoteResponse.status, remotePayload.message ?? remotePayload.safeMessage);
-        if (remoteResponse.status === 202 && remotePayload.inProgress === true) {
-          results.push(deferredShipmentResult({ id: shipment.id, channel: order.channel_key, reconciliationRequired: false, message }));
-          continue;
-        }
-        if (remotePayload.reconciliationRequired === true || remotePayload.manualRequired === true) {
-          results.push(deferredShipmentResult({ id: shipment.id, channel: order.channel_key, reconciliationRequired: true, message }));
-          continue;
-        }
-        results.push(failedShipmentResult({ id: shipment.id, channel: order.channel_key, message, ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }) }));
-        continue;
-      }
-      results.push({
-        id: shipment.id,
-        channel: order.channel_key,
-        ok: true,
-        status: "succeeded",
-        remoteSucceeded: true,
-        ledgerRecorded: true,
-        reconciliationRequired: false,
-        message: "판매채널 발송 처리와 원장 갱신이 완료됐습니다.",
-      });
+      acknowledgeArguments = buildShipmentAcknowledgeArguments(shipmentDraft);
+      readbackArguments = buildShipmentReadbackArguments(shipmentDraft);
+      preflightArguments = buildShipmentPreflightArguments(shipmentDraft);
+      if (!preflightArguments) confirmArguments = buildShipmentArguments(shipmentDraft);
     } catch (error) {
       const raw = error instanceof Error ? error.message : "";
-      const message = raw.startsWith("SHIPMENT_PACKAGE_DETAILS_REQUIRED")
-        ? "Lazada는 주문 품목·패키지 정보를 먼저 조회해야 하므로 현재 일괄 운송장 처리에서 제외됩니다."
-        : raw.startsWith("SHIPMENT_CHANNEL_UNAVAILABLE")
-          ? "이 채널은 판매자 발송 API 권한이 아직 연결되지 않았습니다."
-          : "판매채널 발송 요청 중 안전하게 처리된 오류가 발생했습니다.";
-      results.push(deferredShipmentResult({
+      const message = localShipmentErrorMessage(raw);
+      results.push(failedShipmentResult({
         id: shipment.id,
         channel: order.channel_key,
-        reconciliationRequired: true,
-        message: `${message} 요청 접수 여부를 확정할 수 없어 재전송을 차단하고 원장 확인이 필요합니다.`,
+        message,
+        ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }),
       }));
+      continue;
     }
+
+    const idempotencyRoot = `shipment-${shipment.id}-${createHash("sha256").update(`${shipment.carrierCode}:${shipment.trackingNumber}`).digest("hex").slice(0, 24)}`;
+    const stopForOutcome = async (outcome: ShipmentOperationOutcome) => {
+      if (outcome.kind === "succeeded") return false;
+      if (outcome.kind === "in_progress" || outcome.kind === "reconciliation_required") {
+        results.push(deferredShipmentResult({
+          id: shipment.id,
+          channel: order.channel_key,
+          reconciliationRequired: outcome.kind === "reconciliation_required",
+          message: outcome.message,
+        }));
+        return true;
+      }
+      results.push(failedShipmentResult({
+        id: shipment.id,
+        channel: order.channel_key,
+        message: outcome.message,
+        ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message: outcome.message }),
+      }));
+      return true;
+    };
+
+    if (preflightArguments) {
+      const preflightOutcome = await executeShipmentOperation({
+        credential,
+        order,
+        shipment,
+        operation: "shipment.acknowledge",
+        arguments: preflightArguments,
+        // Shopee's acknowledgement implementation is a read-only
+        // get_shipping_parameter request. A per-request key avoids reusing a
+        // duplicate-success response that intentionally omits provider steps;
+        // the order resource fence still blocks concurrent or unresolved jobs.
+        idempotencyKey: `${idempotencyRoot}-preflight-${randomUUID().slice(0, 8)}`,
+        providerMutation: false,
+      });
+      if (preflightOutcome.kind !== "succeeded") {
+        await stopForOutcome(preflightOutcome);
+        continue;
+      }
+      try {
+        confirmArguments = buildShipmentArguments({
+          ...shipmentDraft,
+          shippingParameter: preflightOutcome.payload,
+        });
+      } catch (error) {
+        const raw = error instanceof Error ? error.message : "";
+        const message = localShipmentErrorMessage(raw);
+        results.push(failedShipmentResult({
+          id: shipment.id,
+          channel: order.channel_key,
+          message,
+          ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }),
+        }));
+        continue;
+      }
+    }
+
+    if (order.status === "paid" && acknowledgeArguments) {
+      const acknowledgeOutcome = await executeShipmentOperation({
+        credential,
+        order,
+        shipment,
+        operation: "shipment.acknowledge",
+        arguments: acknowledgeArguments,
+        idempotencyKey: `${idempotencyRoot}-ack`,
+        providerMutation: true,
+      });
+      if (await stopForOutcome(acknowledgeOutcome)) continue;
+    }
+
+    if (readbackArguments) {
+      const readbackOutcome = await executeShipmentOperation({
+        credential,
+        order,
+        shipment,
+        operation: "orders.get",
+        arguments: readbackArguments,
+        idempotencyKey: `${idempotencyRoot}-receiver-readback`,
+        providerMutation: false,
+      });
+      if (await stopForOutcome(readbackOutcome)) continue;
+    }
+
+    if (!confirmArguments) {
+      const message = "판매채널에 보내기 전 발송 요청을 확정하지 못했습니다.";
+      results.push(failedShipmentResult({
+        id: shipment.id,
+        channel: order.channel_key,
+        message,
+        ledgerRecorded: await recordFailure({ id: shipment.id, carrier: shipment.carrierCode, message }),
+      }));
+      continue;
+    }
+
+    const confirmOutcome = await executeShipmentOperation({
+      credential,
+      order,
+      shipment,
+      operation: "shipment.confirm",
+      arguments: confirmArguments,
+      idempotencyKey: `${idempotencyRoot}-confirm`,
+      providerMutation: true,
+    });
+    if (await stopForOutcome(confirmOutcome)) continue;
+    results.push({
+      id: shipment.id,
+      channel: order.channel_key,
+      ok: true,
+      status: "succeeded",
+      remoteSucceeded: true,
+      ledgerRecorded: true,
+      reconciliationRequired: false,
+      message: "판매채널 발송 처리와 원장 갱신이 완료됐습니다.",
+    });
   }
 
   const { succeeded, failed, inProgress, reconciliationRequired } = shipmentResultSummary(results);

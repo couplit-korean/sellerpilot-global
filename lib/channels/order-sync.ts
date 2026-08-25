@@ -65,6 +65,24 @@ function temuOrderStatus(value: unknown): NormalizedChannelOrder["status"] {
   return status(value);
 }
 
+function qoo10OrderStatus(value: unknown): NormalizedChannelOrder["status"] {
+  const remote = String(value ?? "").trim().toUpperCase();
+  if (remote === "5") return "delivered";
+  if (remote === "4") return "shipped";
+  if (remote === "3") return "ready_to_ship";
+  return status(remote);
+}
+
+function smartstoreOrderStatus(...values: unknown[]): NormalizedChannelOrder["status"] {
+  const remote = values.map((value) => String(value ?? "").trim().toUpperCase()).filter(Boolean).join(" ");
+  if (/CANCEL/.test(remote)) return "cancelled";
+  if (/RETURN/.test(remote)) return "refunded";
+  if (/PURCHASE_DECIDED|DELIVERED/.test(remote)) return "delivered";
+  if (/DISPATCHED|DELIVERING/.test(remote)) return "shipped";
+  if (/PRODUCT_PREPARE/.test(remote)) return "ready_to_ship";
+  return status(remote);
+}
+
 function normalizeTemu(data: Record<string, unknown>) {
   const rows = list(object(data.result).pageItems);
   return rows.map((row): NormalizedChannelOrder | null => {
@@ -111,7 +129,10 @@ function normalizeCoupang(data: Record<string, unknown>) {
   return rows.map((row): NormalizedChannelOrder | null => {
     const cancellation = text(row.receiptType).toUpperCase() === "CANCEL" || Array.isArray(row.returnItems);
     const items = cancellation ? list(row.returnItems) : list(row.orderItems);
-    const externalOrderId = text(row.orderId, row.shipmentBoxId);
+    // Coupang's acknowledgement, order readback, and invoice endpoints all use
+    // shipmentBoxId. orderId is a different namespace and must never be sent to
+    // those endpoints as a fallback.
+    const externalOrderId = text(row.shipmentBoxId);
     if (!externalOrderId) return null;
     const itemTotal = items.reduce((sum, item) => {
       const unitPrice = number(item.orderPrice, item.salesPrice, item.unitPrice, item.discountPrice);
@@ -130,17 +151,23 @@ function normalizeCoupang(data: Record<string, unknown>) {
       amountKrw: total,
       status: cancellation ? "cancelled" : status(row.status),
       orderedAt: iso(row.orderedAt, row.paidAt, row.createdAt, row.modifiedAt),
+      providerContext: {
+        shipmentBoxId: externalOrderId,
+        orderId: text(row.orderId),
+      },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
 function normalizeShopee(data: Record<string, unknown>) {
-  const rows = list(object(data.response).order_list);
+  const response = object(data.response);
+  const rows = list(response.order_list);
   return rows.map((row): NormalizedChannelOrder | null => {
     const externalOrderId = text(row.order_sn, row.order_id);
     if (!externalOrderId) return null;
     const amount = number(row.total_amount);
     const currency = text(row.currency, "KRW").toUpperCase();
+    const shopId = text(row.shop_id, row.shopId, response.shop_id, data.shop_id);
     return {
       externalOrderId,
       customerName: text(row.buyer_username, "Shopee 구매자"),
@@ -151,6 +178,10 @@ function normalizeShopee(data: Record<string, unknown>) {
       amountKrw: currency === "KRW" ? amount : 0,
       status: status(row.order_status),
       orderedAt: iso(row.create_time, row.update_time),
+      providerContext: {
+        orderSn: externalOrderId,
+        ...(shopId ? { shopId } : {}),
+      },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
@@ -193,7 +224,9 @@ function normalizeSmartstore(data: Record<string, unknown>) {
   const root = object(data.data);
   const rows = list(root.lastChangeStatuses).length ? list(root.lastChangeStatuses) : list(root.contents);
   return rows.map((row): NormalizedChannelOrder | null => {
-    const externalOrderId = text(row.orderId, row.productOrderId);
+    // Confirm, detail, and dispatch are product-order scoped. The parent
+    // orderId is not accepted as a safe substitute for productOrderId.
+    const externalOrderId = text(row.productOrderId);
     if (!externalOrderId) return null;
     const amount = number(row.totalPaymentAmount, row.paymentAmount);
     return {
@@ -204,8 +237,12 @@ function normalizeSmartstore(data: Record<string, unknown>) {
       amount,
       currency: "KRW",
       amountKrw: amount,
-      status: status(text(row.productOrderStatus, row.lastChangedType)),
+      status: smartstoreOrderStatus(row.productOrderStatus, row.lastChangedType),
       orderedAt: iso(row.paymentDate, row.lastChangedDate),
+      providerContext: {
+        productOrderId: externalOrderId,
+        orderId: text(row.orderId),
+      },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
@@ -248,7 +285,7 @@ function normalizeQoo10(data: Record<string, unknown>) {
       amount,
       currency,
       amountKrw: currency === "KRW" ? amount : 0,
-      status: status(text(row.ShippingStatus, row.OrderStatus)),
+      status: qoo10OrderStatus(text(row.ShippingStatus, row.OrderStatus)),
       orderedAt: iso(row.OrderDate, row.PaymentDate),
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));

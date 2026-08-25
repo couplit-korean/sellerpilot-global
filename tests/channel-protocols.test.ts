@@ -22,7 +22,12 @@ import {
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
 import { inquirySyncArguments, orderSyncRequests } from "../lib/channels/sync-arguments";
-import { buildShipmentArguments } from "../lib/channels/shipment-draft";
+import {
+  buildShipmentAcknowledgeArguments,
+  buildShipmentArguments,
+  buildShipmentPreflightArguments,
+  buildShipmentReadbackArguments,
+} from "../lib/channels/shipment-draft";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
 
 test("Coupang CEA authorization signs the documented canonical value", () => {
@@ -199,6 +204,7 @@ test("shipment drafts map carrier and tracking fields without changing internal 
     carrierCode: "CJGLS",
     trackingNumber: "111222333444",
     shippedAt,
+    providerContext: { shipmentBoxId: "987654321", orderId: "123456789" },
   }), {
     body: {
       orderSheetInvoiceApplyDtoList: [{
@@ -214,6 +220,7 @@ test("shipment drafts map carrier and tracking fields without changing internal 
     carrierCode: "CJGLS",
     trackingNumber: "111222333444",
     shippedAt,
+    providerContext: { productOrderId: "PROD-ORDER-1", orderId: "ORDER-1" },
   }), {
     body: {
       dispatchProductOrders: [{
@@ -258,13 +265,107 @@ test("shipment drafts map carrier and tracking fields without changing internal 
   });
 });
 
+test("shipment acknowledgement and readback use the same provider-specific order identity", () => {
+  assert.deepEqual(buildShipmentAcknowledgeArguments({
+    channel: "qoo10",
+    externalOrderId: "123456789",
+    carrierCode: "CJ",
+    trackingNumber: "123456789012",
+  }), { params: { OrderNo: "123456789" } });
+  assert.deepEqual(buildShipmentAcknowledgeArguments({
+    channel: "coupang",
+    externalOrderId: "987654321",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+    providerContext: { shipmentBoxId: "987654321", orderId: "123456789" },
+  }), { shipmentBoxIds: [987654321] });
+  assert.deepEqual(buildShipmentReadbackArguments({
+    channel: "coupang",
+    externalOrderId: "987654321",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+    providerContext: { shipmentBoxId: "987654321", orderId: "123456789" },
+  }), { shipmentBoxId: "987654321" });
+  assert.deepEqual(buildShipmentAcknowledgeArguments({
+    channel: "smartstore",
+    externalOrderId: "PROD-ORDER-1",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+    providerContext: { productOrderId: "PROD-ORDER-1", orderId: "ORDER-1" },
+  }), { body: { productOrderIds: ["PROD-ORDER-1"] } });
+});
+
+test("Shopee shipping preflight preserves shop identity and only accepts an explicit non-integrated mode", () => {
+  const draft = {
+    channel: "shopee" as const,
+    externalOrderId: "260821ABC123",
+    carrierCode: "OTHER_LOGISTICS",
+    trackingNumber: "111222333444",
+    providerContext: { orderSn: "260821ABC123", shopId: "1719148844" },
+  };
+  assert.deepEqual(buildShipmentPreflightArguments(draft), {
+    shopId: "1719148844",
+    query: { order_sn: "260821ABC123" },
+  });
+  assert.deepEqual(buildShipmentArguments({
+    ...draft,
+    shippingParameter: {
+      ok: true,
+      steps: [{
+        name: "shipping-parameter",
+        ok: true,
+        data: { response: { info_needed: { non_integrated: ["tracking_number"], pickup: ["address_id", "pickup_time_id"] } } },
+      }],
+    },
+  }), {
+    shopId: "1719148844",
+    body: { order_sn: "260821ABC123", non_integrated: { tracking_number: "111222333444" } },
+  });
+  assert.throws(() => buildShipmentArguments({
+    ...draft,
+    shippingParameter: {
+      ok: true,
+      steps: [{ name: "shipping-parameter", ok: true, data: { response: { info_needed: { pickup: ["address_id", "pickup_time_id"] } } } }],
+    },
+  }), /SHOPEE_SHIPPING_MODE_SELECTION_REQUIRED/);
+  assert.throws(() => buildShipmentArguments({
+    ...draft,
+    shippingParameter: {
+      ok: true,
+      steps: [{ name: "shipping-parameter", ok: true, data: { response: { info_needed: { non_integrated: ["tracking_number", "unverified_value"] } } } }],
+    },
+  }), /SHOPEE_SHIPPING_PARAMETER_UNSUPPORTED_REQUIREMENTS/);
+});
+
 test("shipment drafts fail closed for incomplete marketplace-specific data", () => {
   assert.throws(() => buildShipmentArguments({
     channel: "coupang",
     externalOrderId: "not-a-shipment-box-id",
     carrierCode: "CJGLS",
     trackingNumber: "111222333444",
+    providerContext: { shipmentBoxId: "not-a-shipment-box-id", orderId: "123456789" },
   }), /SHIPMENT_FIELD_INVALID:shipmentBoxId/);
+  assert.throws(() => buildShipmentArguments({
+    channel: "coupang",
+    externalOrderId: "123456789",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+    providerContext: { shipmentBoxId: "987654321", orderId: "123456789" },
+  }), /SHIPMENT_REMOTE_ID_MISMATCH:coupang.shipmentBoxId/);
+  assert.throws(() => buildShipmentArguments({
+    channel: "smartstore",
+    externalOrderId: "ORDER-1",
+    carrierCode: "CJGLS",
+    trackingNumber: "111222333444",
+    providerContext: { productOrderId: "PROD-ORDER-1", orderId: "ORDER-1" },
+  }), /SHIPMENT_REMOTE_ID_MISMATCH:smartstore.productOrderId/);
+  assert.throws(() => buildShipmentPreflightArguments({
+    channel: "shopee",
+    externalOrderId: "260821ABC123",
+    carrierCode: "OTHER_LOGISTICS",
+    trackingNumber: "111222333444",
+    providerContext: { orderSn: "260821ABC123" },
+  }), /SHIPMENT_FIELD_INVALID:shopee.shopId/);
   assert.throws(() => buildShipmentArguments({
     channel: "lazada",
     externalOrderId: "ORDER-1",
