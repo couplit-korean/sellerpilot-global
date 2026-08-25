@@ -1,0 +1,154 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { activeChannelKeys } from "../lib/channels/catalog";
+import {
+  centralProductEditFieldSupport,
+  channelProductEditFieldSupport,
+  listingUpdateMutablePaths,
+  prepareListingUpdateArguments,
+  remoteProductEditIdempotencyKey,
+} from "../lib/channels/listing-update";
+import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
+
+const publishedListing = { status: "published", remoteId: "987654321", publishedAt: "2026-08-25T00:00:00Z" };
+
+test("중앙 편집과 원격 편집의 실제 지원 필드를 분리한다", () => {
+  const central = centralProductEditFieldSupport();
+  assert.equal(central.productName.state, "supported");
+  assert.equal(central.saleConfiguration.state, "supported");
+  assert.deepEqual(central.saleConfiguration.writablePaths, ["packageContents"]);
+  assert.equal(central.price.state, "supported");
+  assert.equal(central.inventory.state, "supported");
+  assert.equal(central.options.state, "blocked");
+  assert.equal(central.images.state, "blocked");
+
+  for (const channel of ["qoo10", "shopee", "lazada", "coupang", "smartstore"] as const) {
+    const remote = channelProductEditFieldSupport(channel);
+    assert.equal(remote.productName.state, "supported", channel);
+    assert.equal(remote.description.state, "supported", channel);
+    assert.equal(remote.images.state, "supported", channel);
+    assert.equal(remote.requiredInformation.state, "partial", channel);
+    assert.equal(remote.options.state, "blocked", channel);
+    assert.equal(remote.saleConfiguration.state, "blocked", channel);
+    assert.equal(remote.price.state, "blocked", channel);
+    assert.equal(remote.inventory.state, "supported", channel);
+  }
+
+  assert.equal(channelProductEditFieldSupport("temu").productName.state, "blocked");
+  assert.equal(channelProductEditFieldSupport("temu").inventory.state, "supported");
+  assert.equal(channelProductEditFieldSupport("ebay").inventory.state, "blocked");
+  assert.match(channelProductEditFieldSupport("ebay").inventory.reason, /SKU/);
+  assert.equal(channelProductEditFieldSupport("elevenst").productName.state, "blocked");
+});
+
+test("가격 readback이 없는 채널은 API 구현 유무와 무관하게 출시 차단한다", () => {
+  for (const channel of activeChannelKeys) {
+    assert.equal(channelOperationAvailable(channel, "price.update"), false, channel);
+    assert.equal(channelOperationRelease(channel, "price.update").available, false, channel);
+  }
+  assert.match(channelOperationRelease("qoo10", "price.update").reason, /가격|readback/);
+  assert.equal(channelOperationRelease("temu", "listing.update").mode, "release_verification_required");
+  assert.match(channelOperationRelease("ebay", "listing.update").reason, /offer ID|SKU/);
+});
+
+test("상품 수정 payload는 원격 identity를 원장에서 고정하고 가격·재고·옵션을 제거한다", () => {
+  const qoo10 = prepareListingUpdateArguments("qoo10", {
+    params: {
+      ItemTitle: "수정 상품",
+      ItemDescription: '<p>수정 설명</p><img src="1"><img src="2"><img src="3"><img src="4">',
+      ItemPrice: "999999",
+      ItemQty: "999",
+      AdditionalOption: "unsafe-option",
+    },
+  }, publishedListing);
+  assert.equal((qoo10.params as Record<string, unknown>).ItemCode, publishedListing.remoteId);
+  assert.equal(Object.hasOwn(qoo10.params as object, "ItemPrice"), false);
+  assert.equal(Object.hasOwn(qoo10.params as object, "ItemQty"), false);
+  assert.equal(Object.hasOwn(qoo10.params as object, "AdditionalOption"), false);
+  assert.deepEqual(listingUpdateMutablePaths("qoo10", qoo10), ["ItemTitle", "ItemDescription"]);
+
+  const shopee = prepareListingUpdateArguments("shopee", {
+    body: {
+      item_name: "수정 상품",
+      description: "수정 설명",
+      original_price: 999999,
+      seller_stock: [{ stock: 999 }],
+      item_sku: "unsafe-new-sku",
+      model: [{ model_id: 7 }],
+    },
+  }, publishedListing);
+  const shopeeBody = shopee.body as Record<string, unknown>;
+  assert.equal(shopeeBody.item_id, 987654321);
+  assert.equal(Object.hasOwn(shopeeBody, "original_price"), false);
+  assert.equal(Object.hasOwn(shopeeBody, "seller_stock"), false);
+  assert.equal(Object.hasOwn(shopeeBody, "item_sku"), false);
+  assert.equal(Object.hasOwn(shopeeBody, "model"), false);
+
+  const lazada = prepareListingUpdateArguments("lazada", {
+    request: { Request: { Product: {
+      Attributes: { name: "수정 상품" },
+      Images: { Image: ["https://images.example.test/1.jpg"] },
+      Skus: { Sku: [{ SellerSku: "unsafe", price: "1", quantity: "999" }] },
+    } } },
+  }, publishedListing);
+  const lazadaProduct = (((lazada.request as Record<string, unknown>).Request as Record<string, unknown>).Product as Record<string, unknown>);
+  assert.equal(Object.hasOwn(lazadaProduct, "Skus"), false);
+  assert.deepEqual(listingUpdateMutablePaths("lazada", lazada), ["Attributes.name", "Images.Image[0]"]);
+
+  const coupang = prepareListingUpdateArguments("coupang", {
+    body: {
+      sellerProductName: "수정 상품",
+      saleStartedAt: "unsafe",
+      items: [{ modelNo: "MATCH-1", itemName: "수정 상품", salePrice: 10, originalPrice: 10, maximumBuyCount: 999 }],
+    },
+  }, publishedListing);
+  const coupangBody = coupang.body as Record<string, unknown>;
+  const coupangItem = (coupangBody.items as Array<Record<string, unknown>>)[0];
+  assert.equal(Object.hasOwn(coupangBody, "saleStartedAt"), false);
+  assert.equal(Object.hasOwn(coupangItem, "salePrice"), false);
+  assert.equal(Object.hasOwn(coupangItem, "originalPrice"), false);
+  assert.equal(Object.hasOwn(coupangItem, "maximumBuyCount"), false);
+
+  const smartstore = prepareListingUpdateArguments("smartstore", {
+    body: {
+      originProduct: {
+        name: "수정 상품",
+        detailContent: "수정 설명",
+        salePrice: 999999,
+        stockQuantity: 999,
+        detailAttribute: { originAreaInfo: { originAreaCode: "04" }, optionInfo: { optionSimple: [] } },
+      },
+      smartstoreChannelProduct: { channelProductName: "수정 상품", channelProductDisplayStatusType: "OFF" },
+    },
+  }, publishedListing);
+  const smartstoreBody = smartstore.body as Record<string, unknown>;
+  const originProduct = smartstoreBody.originProduct as Record<string, unknown>;
+  assert.equal(Object.hasOwn(originProduct, "salePrice"), false);
+  assert.equal(Object.hasOwn(originProduct, "stockQuantity"), false);
+  assert.equal(Object.hasOwn(originProduct.detailAttribute as object, "optionInfo"), false);
+  assert.deepEqual(smartstoreBody.smartstoreChannelProduct, { channelProductName: "수정 상품" });
+});
+
+test("같은 mutationId 재시도는 동일한 원격 멱등키를 사용한다", () => {
+  const input = {
+    productId: "11111111-1111-4111-8111-111111111111",
+    listingId: "22222222-2222-4222-8222-222222222222",
+    mutationId: "33333333-3333-4333-8333-333333333333",
+  };
+  const first = remoteProductEditIdempotencyKey(input);
+  assert.equal(first, remoteProductEditIdempotencyKey({ ...input }));
+  assert.notEqual(first, remoteProductEditIdempotencyKey({ ...input, mutationId: "44444444-4444-4444-8444-444444444444" }));
+  assert.ok(first.length >= 16 && first.length <= 160);
+});
+
+test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic gateway에 전달한다", () => {
+  const source = readFileSync(new URL("../app/api/admin/products/[id]/remote-edit/route.ts", import.meta.url), "utf8");
+  assert.match(source, /context: \{ params: Promise<\{ id: string \}> \}/);
+  assert.match(source, /listingRecords\(loaded\.context\.listings\)\.find\(\(item\) => item\.id === body\.data\.listingId\)/);
+  assert.match(source, /remoteProductEditIdempotencyKey/);
+  assert.match(source, /new URL\("\/api\/admin\/channel-operations", request\.url\)/);
+  assert.match(source, /AbortSignal\.timeout\(58_000\)/);
+  assert.doesNotMatch(source, /randomUUID/);
+  assert.doesNotMatch(source, /operation:\s*"price\.update" as const/);
+});

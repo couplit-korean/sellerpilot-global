@@ -41,12 +41,56 @@ const releasedListingUpdateChannels = new Set<ActiveChannelKey>([
   "smartstore",
 ]);
 
-export function channelOperationAvailable(channel: ActiveChannelKey, operation: ChannelOperationName) {
+export type ChannelOperationRelease = {
+  available: boolean;
+  mode: "available" | "unsupported" | "vendor_docs_required" | "release_verification_required";
+  reason: string;
+};
+
+const listingUpdateBlockedReasons: Partial<Record<ActiveChannelKey, string>> = {
+  elevenst: "11번가 상품 수정은 판매자 전용 수정 명세와 원격 readback이 확정되지 않아 차단했습니다.",
+  temu: "Temu 상품 수정은 판매자별 수정 스키마와 SKU 식별값을 원장에 확정하기 전까지 차단했습니다.",
+  ebay: "eBay 상품 수정에는 offer ID와 SKU가 모두 필요하지만 현재 상품 원장에는 게시 listing ID만 보존되므로 차단했습니다.",
+};
+
+export function channelOperationRelease(channel: ActiveChannelKey, operation: ChannelOperationName): ChannelOperationRelease {
   const capability = channelCatalog[channel].capabilities[operationCapabilities[operation]];
-  if (capability.mode === "unsupported" || capability.mode === "vendor_docs_required") return false;
-  if (channel === "elevenst") return elevenstImplementedOperations.has(operation);
-  if (operation === "listing.update") return releasedListingUpdateChannels.has(channel);
-  if (channel === "shopee" && operation === "inquiries.list") return false;
-  if (channel === "ebay" && operation === "shipment.acknowledge") return false;
-  return true;
+  if (capability.mode === "unsupported" || capability.mode === "vendor_docs_required") {
+    return { available: false, mode: capability.mode, reason: capability.note };
+  }
+  if (channel === "elevenst" && !elevenstImplementedOperations.has(operation)) {
+    return {
+      available: false,
+      mode: "release_verification_required",
+      reason: operation === "listing.update"
+        ? listingUpdateBlockedReasons.elevenst!
+        : "11번가 판매자 전용 쓰기 명세와 원격 결과 재조회가 확인되지 않아 이 작업을 차단했습니다.",
+    };
+  }
+  if (operation === "listing.update" && !releasedListingUpdateChannels.has(channel)) {
+    return {
+      available: false,
+      mode: "release_verification_required",
+      reason: listingUpdateBlockedReasons[channel]
+        ?? "원격 상품 식별값과 수정 결과 readback이 모두 검증되지 않아 상품 수정을 차단했습니다.",
+    };
+  }
+  if (operation === "price.update") {
+    return {
+      available: false,
+      mode: "release_verification_required",
+      reason: "가격 쓰기 뒤 동일 원격 상품의 통화·가격을 다시 조회해 일치 여부를 검증하는 경로가 아직 없어 가격 수정을 차단했습니다.",
+    };
+  }
+  if (channel === "shopee" && operation === "inquiries.list") {
+    return { available: false, mode: "release_verification_required", reason: "Shopee Chat API 권한과 실제 메시지 readback이 확인되지 않아 차단했습니다." };
+  }
+  if (channel === "ebay" && operation === "shipment.acknowledge") {
+    return { available: false, mode: "release_verification_required", reason: "eBay에는 별도 발주확인 쓰기 동작이 없어 차단했습니다." };
+  }
+  return { available: true, mode: "available", reason: capability.note };
+}
+
+export function channelOperationAvailable(channel: ActiveChannelKey, operation: ChannelOperationName) {
+  return channelOperationRelease(channel, operation).available;
 }

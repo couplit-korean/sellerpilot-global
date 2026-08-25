@@ -6,6 +6,157 @@ export type ListingUpdateReference = {
   publishedAt?: string | null;
 };
 
+export const productEditFieldKeys = [
+  "productName",
+  "description",
+  "options",
+  "saleConfiguration",
+  "requiredInformation",
+  "images",
+  "price",
+  "inventory",
+] as const;
+
+export type ProductEditFieldKey = (typeof productEditFieldKeys)[number];
+export type ProductEditFieldState = "supported" | "partial" | "blocked";
+export type ProductEditFieldOperation = "local.update" | "listing.update" | "price.update" | "inventory.update";
+export type ProductEditFieldSupport = {
+  state: ProductEditFieldState;
+  operation: ProductEditFieldOperation;
+  writablePaths: string[];
+  reason: string;
+};
+
+function fieldSupport(
+  state: ProductEditFieldState,
+  operation: ProductEditFieldOperation,
+  writablePaths: readonly string[],
+  reason: string,
+): ProductEditFieldSupport {
+  return { state, operation, writablePaths: [...writablePaths], reason };
+}
+
+const blockedRemotePrice = () => fieldSupport(
+  "blocked",
+  "price.update",
+  [],
+  "원격 가격 쓰기 뒤 동일 상품의 통화·가격 readback이 아직 없어 자동 수정을 차단했습니다.",
+);
+
+const blockedRemoteOptions = () => fieldSupport(
+  "blocked",
+  "listing.update",
+  [],
+  "옵션 ID·SKU별 원격 매칭 원장이 없어 기존 옵션을 추측해서 수정하지 않습니다.",
+);
+
+const blockedRemoteSaleConfiguration = () => fieldSupport(
+  "blocked",
+  "listing.update",
+  [],
+  "1개·1+1 판매구성은 중앙 상품 정보에는 저장되지만 기존 원격 옵션/SKU 구조를 바꾸지 않습니다.",
+);
+
+const blockedRemoteContent = (reason: string) => fieldSupport("blocked", "listing.update", [], reason);
+const blockedRemoteInventory = (reason: string) => fieldSupport("blocked", "inventory.update", [], reason);
+
+const centralProductEditFields: Record<ProductEditFieldKey, ProductEditFieldSupport> = {
+  productName: fieldSupport("supported", "local.update", ["productName"], "중앙 상품명 원장에 저장합니다."),
+  description: fieldSupport("supported", "local.update", ["description"], "중앙 상품 설명 원장에 저장합니다."),
+  options: fieldSupport("blocked", "local.update", [], "현재 중앙 상품 편집 스키마에는 옵션 조합 원장이 없어 임의 옵션을 만들거나 덮어쓰지 않습니다."),
+  saleConfiguration: fieldSupport("supported", "local.update", ["packageContents"], "판매구성 1개·1+1 값을 중앙 상품 정보에 저장합니다."),
+  requiredInformation: fieldSupport("supported", "local.update", [
+    "sellerSku", "categoryHint", "brandName", "manufacturer", "countryOfOrigin", "material", "condition", "gtinStatus", "gtin",
+    "weightKg", "packageLengthCm", "packageWidthCm", "packageHeightCm",
+  ], "등록 때 사용하는 판매자 필수정보를 중앙 상품 정보에 저장합니다."),
+  images: fieldSupport("blocked", "local.update", [], "상품 이미지 교체는 생성 자산·원본 자산의 영구 경로와 역할을 함께 갱신해야 하므로 현재 텍스트 편집 API에서 분리했습니다."),
+  price: fieldSupport("supported", "local.update", ["sellingPrice", "currency"], "중앙 판매가와 통화를 저장합니다."),
+  inventory: fieldSupport("supported", "local.update", ["stock"], "중앙 실재고를 예약재고보다 낮지 않게 저장합니다."),
+};
+
+const verifiedInventoryChannels = new Set<ActiveChannelKey>([
+  "qoo10", "shopee", "lazada", "coupang", "smartstore", "temu",
+]);
+
+const releasedListingContent: Partial<Record<ActiveChannelKey, Partial<Record<ProductEditFieldKey, ProductEditFieldSupport>>>> = {
+  qoo10: {
+    productName: fieldSupport("supported", "listing.update", ["params.ItemTitle"], "Qoo10 상품명을 수정하고 ItemCode readback으로 확인합니다."),
+    description: fieldSupport("supported", "listing.update", ["params.PromotionName", "params.ItemDescription", "params.Keyword"], "요약·상세 HTML·검색어를 수정하고 상세페이지 readback으로 확인합니다."),
+    requiredInformation: fieldSupport("partial", "listing.update", ["params.IndustrialCode", "params.ProductionPlace"], "GTIN과 원산지는 수정하지만 SellerCode·브랜드·옵션 식별값은 변경하지 않습니다."),
+    images: fieldSupport("supported", "listing.update", ["params.StandardImage", "params.ItemDescription"], "대표 이미지와 상세 HTML 이미지를 수정하고 실제 상세 이미지 수를 다시 확인합니다."),
+  },
+  shopee: {
+    productName: fieldSupport("supported", "listing.update", ["body.item_name"], "로컬 item_id의 상품명을 수정하고 같은 item_id를 readback합니다."),
+    description: fieldSupport("supported", "listing.update", ["body.description"], "로컬 상품 설명을 수정하고 같은 item_id에서 값을 다시 확인합니다."),
+    requiredInformation: fieldSupport("partial", "listing.update", ["body.category_id", "body.brand", "body.condition", "body.gtin_code", "body.weight", "body.dimension", "body.attribute_list"], "카테고리·브랜드·상태·GTIN·포장·확정 속성만 수정하며 SKU와 옵션 모델 ID는 변경하지 않습니다."),
+    images: fieldSupport("supported", "listing.update", ["body.image"], "영구 이미지 업로드 결과를 로컬 상품에 반영하고 같은 item_id에서 확인합니다."),
+  },
+  lazada: {
+    productName: fieldSupport("supported", "listing.update", ["request.Request.Product.Attributes.name"], "Lazada item_id의 name 속성을 수정하고 같은 item_id를 readback합니다."),
+    description: fieldSupport("supported", "listing.update", ["request.Request.Product.Attributes.description", "request.Request.Product.Attributes.short_description"], "상세·요약 설명을 수정하고 상품 속성을 다시 확인합니다."),
+    requiredInformation: fieldSupport("partial", "listing.update", ["request.Request.Product.Attributes"], "확정된 상품 속성은 수정하지만 SellerSku·SKU 옵션·포장값은 기존 원격 구조를 보존합니다."),
+    images: fieldSupport("supported", "listing.update", ["request.Request.Product.Images"], "상품 이미지를 수정하고 같은 item_id의 Images를 다시 확인합니다."),
+  },
+  coupang: {
+    productName: fieldSupport("supported", "listing.update", ["body.sellerProductName", "body.displayProductName", "body.items[].itemName"], "sellerProductId를 사전 조회한 뒤 상품명 필드를 병합하고 readback합니다."),
+    description: fieldSupport("supported", "listing.update", ["body.items[].contents"], "기존 vendor item을 보존하면서 상세 콘텐츠만 병합하고 다시 확인합니다."),
+    requiredInformation: fieldSupport("partial", "listing.update", ["body.displayCategoryCode", "body.brand", "body.generalProductName", "body.items[].barcode", "body.items[].modelNo", "body.items[].notices", "body.items[].attributes", "body.items[].certifications"], "카테고리·브랜드·바코드·고시·속성·인증만 수정하며 판매가·수량·배송정책은 기존 값을 보존합니다."),
+    images: fieldSupport("supported", "listing.update", ["body.items[].images"], "원격 item을 식별해 이미지를 병합하고 sellerProductId readback으로 확인합니다."),
+  },
+  smartstore: {
+    productName: fieldSupport("supported", "listing.update", ["body.originProduct.name", "body.smartstoreChannelProduct.channelProductName"], "원상품명·채널상품명을 수정하고 originProductNo에서 다시 확인합니다."),
+    description: fieldSupport("supported", "listing.update", ["body.originProduct.detailContent"], "상세 HTML만 기존 원상품에 병합하고 readback합니다."),
+    requiredInformation: fieldSupport("partial", "listing.update", ["body.originProduct.leafCategoryId", "body.originProduct.detailAttribute.originAreaInfo"], "카테고리와 원산지만 수정하며 판매·노출·배송·A/S 정책은 기존 원격 값을 보존합니다."),
+    images: fieldSupport("supported", "listing.update", ["body.originProduct.images"], "대표·추가 이미지를 원상품에 병합하고 originProductNo에서 다시 확인합니다."),
+  },
+};
+
+function cloneFieldMap(source: Record<ProductEditFieldKey, ProductEditFieldSupport>) {
+  return Object.fromEntries(productEditFieldKeys.map((key) => [key, {
+    ...source[key],
+    writablePaths: [...source[key].writablePaths],
+  }])) as Record<ProductEditFieldKey, ProductEditFieldSupport>;
+}
+
+export function centralProductEditFieldSupport() {
+  return cloneFieldMap(centralProductEditFields);
+}
+
+export function channelProductEditFieldSupport(channel: ActiveChannelKey) {
+  const listingReason = channel === "elevenst"
+    ? "11번가 판매자 전용 수정 명세와 readback이 확정되지 않아 원격 상품 수정을 차단했습니다."
+    : channel === "temu"
+      ? "Temu 판매자별 수정 스키마와 SKU 식별값이 원장에 확정되지 않아 원격 상품 수정을 차단했습니다."
+      : channel === "ebay"
+        ? "eBay offer ID와 SKU가 상품 원장에 함께 보존되지 않아 게시 listing ID만으로 수정하지 않습니다."
+        : "이 채널의 안전한 상품 수정 경로가 출시되지 않았습니다.";
+  const released = releasedListingContent[channel] ?? {};
+  const inventory = verifiedInventoryChannels.has(channel)
+    ? fieldSupport("supported", "inventory.update", ["quantity"], "정확한 원격 상품을 지정해 수량을 쓰고 같은 상품의 재고를 readback합니다.")
+    : blockedRemoteInventory(channel === "ebay"
+      ? "게시 listing ID에서 eBay inventory SKU를 추측하지 않으므로 상품 편집의 원격 재고 수정을 차단했습니다."
+      : "이 채널은 정확한 상품 식별값과 재고 readback 경로가 확인되지 않았습니다.");
+  const result: Record<ProductEditFieldKey, ProductEditFieldSupport> = {
+    productName: released.productName ?? blockedRemoteContent(listingReason),
+    description: released.description ?? blockedRemoteContent(listingReason),
+    options: blockedRemoteOptions(),
+    saleConfiguration: blockedRemoteSaleConfiguration(),
+    requiredInformation: released.requiredInformation ?? blockedRemoteContent(listingReason),
+    images: released.images ?? blockedRemoteContent(listingReason),
+    price: blockedRemotePrice(),
+    inventory,
+  };
+  return cloneFieldMap(result);
+}
+
+export function remoteProductEditIdempotencyKey(input: {
+  productId: string;
+  listingId: string;
+  mutationId: string;
+}) {
+  return `product-edit:${input.productId}:${input.listingId}:${input.mutationId}`;
+}
+
 export function listingWriteOperation(listing: ListingUpdateReference | null | undefined): "listing.create" | "listing.update" {
   const hasPublishedIdentity = Boolean(listing?.remoteId?.trim())
     && (listing?.status === "published" || Boolean(listing?.publishedAt));
@@ -390,6 +541,25 @@ function expectedListingUpdateProjection(channel: ActiveChannelKey, argumentsVal
   }
   if (channel === "smartstore") return safeSmartstoreBody(argumentsValue.body);
   return {};
+}
+
+function mutableLeafPaths(value: unknown, path = ""): string[] {
+  if (Array.isArray(value)) {
+    if (!value.length) return path ? [path] : [];
+    return value.flatMap((item, index) => mutableLeafPaths(item, `${path}[${index}]`));
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .flatMap(([key, item]) => mutableLeafPaths(item, path ? `${path}.${key}` : key));
+  }
+  return path ? [path] : [];
+}
+
+export function listingUpdateMutablePaths(
+  channel: ActiveChannelKey,
+  argumentsValue: Record<string, unknown>,
+) {
+  return mutableLeafPaths(expectedListingUpdateProjection(channel, argumentsValue));
 }
 
 function actualListingUpdateProjection(channel: ActiveChannelKey, argumentsValue: Record<string, unknown>, remoteData: Record<string, unknown>) {
