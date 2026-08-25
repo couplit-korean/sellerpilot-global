@@ -21,6 +21,7 @@ import {
   type ChannelCapabilityKey,
 } from "./catalog";
 import { qoo10ProductionPlace, qoo10ResultMessage } from "./qoo10";
+import { validateElevenstListingProduct } from "./elevenst-listing";
 import {
   listingUpdateRemoteIdentity,
   mergeCoupangListingUpdateBody,
@@ -404,7 +405,7 @@ function elevenstXmlNode(name: string, value: unknown): string {
 }
 
 function elevenstProductPayload(argumentsValue: Record<string, unknown>) {
-  const product = objectValue(argumentsValue, "product");
+  const product = validateElevenstListingProduct(objectValue(argumentsValue, "product"));
   return `<?xml version="1.0" encoding="UTF-8"?>${elevenstXmlNode("Product", product)}`;
 }
 
@@ -427,6 +428,28 @@ function elevenstVerifiedStep(name: string, remote: RemoteResponse, verified = t
       ...remoteStep.data,
       sellerpilotVerification: accepted ? "ELEVENST_RESPONSE_VERIFIED" : "ELEVENST_RESPONSE_UNVERIFIED",
     },
+  };
+}
+
+function elevenstPrewriteFailureStep(name: string, error: unknown, status = 422): ChannelOperationStep {
+  const raw = error instanceof Error ? error.message : "";
+  const safeCode = /^ELEVENST_[A-Z0-9_:-]+$/u.test(raw) ? raw : "ELEVENST_PREWRITE_VALIDATION_FAILED";
+  return {
+    name,
+    ok: false,
+    status,
+    data: {
+      error: safeCode,
+      sellerpilotVerification: "ELEVENST_PREWRITE_REJECTED",
+    },
+  };
+}
+
+function elevenstUnavailableRemote(message: string): RemoteResponse {
+  return {
+    response: new Response(null, { status: 503 }),
+    text: "",
+    data: { accepted: false, errorMessage: message },
   };
 }
 
@@ -518,19 +541,51 @@ async function executeElevenst(input: ExecuteInput) {
     )], categoryId);
   }
   if (input.operation === "listing.create") {
-    const sellerProductCode = String(objectValue(input.arguments, "product").sellerPrdCd ?? "").trim();
+    let product: Record<string, unknown>;
+    try {
+      product = validateElevenstListingProduct(objectValue(input.arguments, "product"));
+    } catch (error) {
+      return result(input, [elevenstPrewriteFailureStep("product-contract-validation", error)]);
+    }
+    const sellerProductCode = String(product.sellerPrdCd ?? "").trim();
+    const categoryId = String(product.dispCtgrNo ?? "").trim();
+
+    let categoryRemote: RemoteResponse;
+    try {
+      categoryRemote = await elevenstCategoryRequest();
+    } catch (error) {
+      return result(input, [elevenstPrewriteFailureStep("category-validation", error, 503)]);
+    }
+    const category = elevenstCategories(categoryRemote).find((item) => item.categoryId === categoryId);
+    const categoryVerified = categoryRemote.data.accepted === true && category?.leaf === true;
+    if (!categoryVerified) {
+      const narrowed = elevenstCategoryResult(
+        categoryRemote,
+        category ? [category] : [],
+        false,
+      );
+      return result(input, [elevenstVerifiedStep("category-validation", narrowed, false)]);
+    }
+
     const findExistingProduct = async () => {
-      if (!sellerProductCode) return null;
       const remote = await elevenstSellerXmlRequest({
         payload: input.payload,
         method: "GET",
         path: `/rest/prodmarketservice/sellerprodcode/${pathSegment(sellerProductCode)}`,
       });
       const productNo = String(remote.data.productNo ?? "").trim();
-      return productNo ? { remote, productNo } : null;
+      if (productNo) return { remote, productNo };
+      const notFound = remote.response.status === 404 || String(remote.data.resultCode ?? "").trim() === "404";
+      if (!notFound) throw new Error("ELEVENST_IDEMPOTENCY_LOOKUP_UNVERIFIED");
+      return null;
     };
 
-    let reconciled = await findExistingProduct();
+    let reconciled: Awaited<ReturnType<typeof findExistingProduct>>;
+    try {
+      reconciled = await findExistingProduct();
+    } catch (error) {
+      return result(input, [elevenstPrewriteFailureStep("product-idempotency-read", error, 503)]);
+    }
     let createRemote: RemoteResponse;
     let productNo = "";
     let createStep: ChannelOperationStep | null = null;
@@ -550,7 +605,12 @@ async function executeElevenst(input: ExecuteInput) {
       } catch (error) {
         for (let attempt = 1; attempt <= 3 && !reconciled; attempt += 1) {
           await operationDelay(800 * attempt);
-          reconciled = await findExistingProduct();
+          try {
+            reconciled = await findExistingProduct();
+          } catch {
+            // The create outcome is already uncertain. Keep reconciling with
+            // the stable seller product code, but never submit a second POST.
+          }
         }
         if (!reconciled) throw error;
         createRemote = reconciled.remote;
@@ -558,6 +618,22 @@ async function executeElevenst(input: ExecuteInput) {
         createStep = elevenstVerifiedStep("product-create-reconcile", createRemote, true);
       }
       if (!productNo) productNo = String(createRemote.data.productNo ?? "").trim();
+      if (!productNo && createRemote.data.accepted === true) {
+        for (let attempt = 1; attempt <= 3 && !reconciled; attempt += 1) {
+          await operationDelay(800 * attempt);
+          try {
+            reconciled = await findExistingProduct();
+          } catch {
+            // A successful response without productNo is an uncertain create.
+            // Lookup failures must not trigger another create request.
+          }
+        }
+        if (reconciled) {
+          createRemote = reconciled.remote;
+          productNo = reconciled.productNo;
+          createStep = elevenstVerifiedStep("product-create-reconcile", createRemote, true);
+        }
+      }
       if (!createStep) {
         providerCreateAcceptedStep = elevenstVerifiedStep("product-create-accepted", createRemote);
         createStep = elevenstVerifiedStep("product-create", createRemote, Boolean(productNo));
@@ -576,12 +652,17 @@ async function executeElevenst(input: ExecuteInput) {
     let readbackVerified = false;
     for (let attempt = 0; attempt < 3 && !readbackVerified; attempt += 1) {
       if (attempt > 0) await operationDelay(800 * attempt);
-      readbackRemote = await elevenstSellerXmlRequest({
-        payload: input.payload,
-        method: "POST",
-        path: "/rest/prodmarketservice/prodmarket",
-        body: elevenstSearchPayload(productNo),
-      });
+      try {
+        readbackRemote = await elevenstSellerXmlRequest({
+          payload: input.payload,
+          method: "POST",
+          path: "/rest/prodmarketservice/prodmarket",
+          body: elevenstSearchPayload(productNo),
+        });
+      } catch {
+        readbackRemote = elevenstUnavailableRemote("11번가 상품 생성 후 재조회 응답을 확인하지 못했습니다.");
+        continue;
+      }
       const products = Array.isArray(readbackRemote.data.products) ? readbackRemote.data.products : [];
       readbackVerified = products.some((item) => item && typeof item === "object" && String((item as Record<string, unknown>).productNo) === productNo);
     }
@@ -589,11 +670,16 @@ async function executeElevenst(input: ExecuteInput) {
     const readbackStep = elevenstVerifiedStep("product-readback", readbackRemote, readbackVerified);
     const steps: ChannelOperationStep[] = [createStep, readbackStep];
     if (booleanArgument(input.arguments, "verificationOnly")) {
-      const stopRemote = await elevenstSellerXmlRequest({
-        payload: input.payload,
-        method: "PUT",
-        path: `/rest/prodstatservice/stat/stopdisplay/${pathSegment(productNo)}`,
-      });
+      let stopRemote: RemoteResponse;
+      try {
+        stopRemote = await elevenstSellerXmlRequest({
+          payload: input.payload,
+          method: "PUT",
+          path: `/rest/prodstatservice/stat/stopdisplay/${pathSegment(productNo)}`,
+        });
+      } catch {
+        stopRemote = elevenstUnavailableRemote("11번가 검증 상품의 전시 중지 응답을 확인하지 못했습니다.");
+      }
       steps.push(elevenstVerifiedStep("verification-stop-display", stopRemote));
     }
     const operationResult = result(input, steps, productNo);
