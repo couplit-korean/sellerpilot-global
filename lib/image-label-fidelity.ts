@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+
 export type ImageLabelFidelityReport = {
   referenceLines?: unknown;
   candidateLines?: unknown;
@@ -18,6 +20,90 @@ export type ImageLabelFidelityInput = {
 const MAXIMUM_REFERENCE_IMAGES = 12;
 const MAXIMUM_TOKEN_COUNT = 512;
 const MAXIMUM_TOKEN_LENGTH = 160;
+const MAXIMUM_REFERENCE_SCAN_TOKEN_COUNT = 8_192;
+export const MAXIMUM_IMAGE_LABEL_REFERENCE_PATHS_PER_RUN = 10;
+
+export function imageLabelPixelDigest(value: Uint8Array) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function assertSourcePixelLabelBaseline(input: {
+  assetId: string;
+  expectedDigest: string;
+  baseline: Uint8Array;
+  candidate: Uint8Array;
+}) {
+  const assetId = input.assetId.trim() || "source-protected";
+  const baseline = Buffer.from(input.baseline);
+  const candidate = Buffer.from(input.candidate);
+  const baselineDigest = imageLabelPixelDigest(baseline);
+  const candidateDigest = imageLabelPixelDigest(candidate);
+  if (baseline.length === 0
+    || baseline.length !== candidate.length
+    || !/^[a-f0-9]{64}$/.test(input.expectedDigest)
+    || baselineDigest !== input.expectedDigest
+    || candidateDigest !== input.expectedDigest
+    || !timingSafeEqual(baseline, candidate)) {
+    throw new Error(`${assetId} 원본 픽셀 기준 이미지와 최종 이미지가 일치하지 않습니다.`);
+  }
+  return input.expectedDigest;
+}
+
+export function batchImageLabelFidelityReferencePaths(
+  requiredReferencePath: string,
+  referencePaths: readonly string[],
+) {
+  const required = checkedPath(requiredReferencePath, "필수 원본");
+  const unique = referencePaths
+    .map((path) => checkedPath(path, "허용 원본"))
+    .filter((path, index, paths) => path !== required && paths.indexOf(path) === index);
+  if (unique.length === 0) return [[]] as string[][];
+  const batches: string[][] = [];
+  for (let index = 0; index < unique.length; index += MAXIMUM_IMAGE_LABEL_REFERENCE_PATHS_PER_RUN) {
+    batches.push(unique.slice(index, index + MAXIMUM_IMAGE_LABEL_REFERENCE_PATHS_PER_RUN));
+  }
+  return batches;
+}
+
+export function mergeImageLabelFidelityReports(inputs: readonly unknown[]) {
+  if (inputs.length === 0) throw new Error("라벨 OCR 배치 결과가 없습니다.");
+  const reports = inputs.map((value) => value && typeof value === "object" ? value as ImageLabelFidelityReport : {});
+  const parsedReports = reports.map((report) => ({
+    required: checkedTokens(report.requiredTokens),
+    candidate: checkedTokens(report.candidateTokens),
+  }));
+  if (parsedReports.some((report) => report.required.overflow || report.candidate.overflow)) {
+    throw new Error("라벨 OCR 배치 토큰이 안전 한도를 초과했습니다.");
+  }
+  const firstRequired = parsedReports[0].required.tokens;
+  const firstCandidate = parsedReports[0].candidate.tokens;
+  const sameTokens = (left: string[], right: string[]) => left.length === right.length
+    && left.every((token) => right.includes(token));
+  for (const report of parsedReports.slice(1)) {
+    if (!sameTokens(firstRequired, report.required.tokens)
+      || !sameTokens(firstCandidate, report.candidate.tokens)) {
+      throw new Error("라벨 OCR 후보·필수 토큰이 배치별로 일치하지 않습니다.");
+    }
+  }
+  const targetTokens = new Set([...firstRequired, ...firstCandidate]);
+  const supportedTokens = new Set<string>();
+  for (const report of reports) {
+    if (!Array.isArray(report.referenceTokens)
+      || report.referenceTokens.length > MAXIMUM_REFERENCE_SCAN_TOKEN_COUNT) {
+      throw new Error("라벨 OCR 허용 원본 토큰이 안전 한도를 초과했습니다.");
+    }
+    for (const item of report.referenceTokens) {
+      if (typeof item !== "string") continue;
+      const token = item.trim();
+      if (token.length <= MAXIMUM_TOKEN_LENGTH && targetTokens.has(token)) supportedTokens.add(token);
+    }
+  }
+  return {
+    referenceTokens: [...supportedTokens],
+    requiredTokens: firstRequired,
+    candidateTokens: firstCandidate,
+  };
+}
 
 function checkedTokens(value: unknown) {
   if (!Array.isArray(value)) return { tokens: [] as string[], overflow: false };

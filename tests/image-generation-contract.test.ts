@@ -208,6 +208,14 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /identitySourceCandidatesForPreset\(identityCutouts, preset\)/);
   assert.match(worker, /strictLabelEvidenceAssetIds = new Set\(\["detail-feature", "detail-package"\]\)/);
   assert.match(worker, /sourcePixelEvidencePolicy:[\s\S]*strictLabelEvidenceAssetIds\.has\(preset\.id\)[\s\S]*"strict-label"[\s\S]*"crop"/);
+  assert.match(worker, /sourcePixelBaselineFile[\s\S]*renderIdentityOnNeutralCanvas[\s\S]*writeFile\(sourcePixelBaselineFile/);
+  assert.match(worker, /labelReferenceFile = sourcePixelBaselineFile/);
+  assert.match(worker, /labelCandidateSnapshotFile[\s\S]*expectedPixelDigest = imageLabelPixelDigest\(normalized\)[\s\S]*assertSourcePixelLabelBaseline/);
+  assert.match(worker, /candidatePath: labelCandidateSnapshotFile/);
+  assert.match(worker, /finally \{[\s\S]*await assertLabelInputsIntact\(\)/);
+  assert.match(worker, /error instanceof ImageLabelPixelIntegrityError\) throw error/);
+  assert.match(worker, /batchImageLabelFidelityReferencePaths\(requiredReferencePath, referencePaths\)/);
+  assert.match(worker, /await writeFile\(file, sourceBytes, \{ flag: "wx", mode: 0o400 \}\)/);
   assert.match(worker, /!allowedRoleSet\.has\(role\)/);
   assert.match(worker, /preset\.identityPolicy\.requiresDedicatedRole && !dedicatedEvidenceRoles\.has\(role\)/);
   assert.match(worker, /buildImageLabelFidelitySwiftArguments\(\{/);

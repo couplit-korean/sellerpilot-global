@@ -64,8 +64,12 @@ import {
   SHOT_DHASH_ROWS,
 } from "../lib/image-shot-uniqueness.ts";
 import {
+  assertSourcePixelLabelBaseline,
+  batchImageLabelFidelityReferencePaths,
   buildImageLabelFidelitySwiftArguments,
   evaluateImageLabelFidelityReport,
+  imageLabelPixelDigest,
+  mergeImageLabelFidelityReports,
 } from "../lib/image-label-fidelity.ts";
 import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
 import {
@@ -166,6 +170,7 @@ const maxIdlePollMs = Math.max(pollMs, Number(process.env.SELLERPILOT_AI_WORKER_
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
 const studioAnalysisTimeoutMs = Math.max(12 * 60_000, Number(process.env.SELLERPILOT_STUDIO_ANALYSIS_TIMEOUT_MS ?? 30 * 60_000));
+const studioRepairTimeoutMs = Math.max(20 * 60_000, Number(process.env.SELLERPILOT_STUDIO_REPAIR_TIMEOUT_MS ?? 45 * 60_000));
 const imageGenerationTimeoutMs = Math.max(15 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 20 * 60_000));
 const backgroundAuditTimeoutMs = Math.max(60_000, Number(process.env.SELLERPILOT_BACKGROUND_AUDIT_TIMEOUT_MS ?? 2 * 60_000));
 const configuredCodexConcurrency = Number(process.env.SELLERPILOT_CODEX_CONCURRENCY ?? 2);
@@ -182,7 +187,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.33";
+const workerVersion = "sellerpilot-cli-worker/1.34";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -800,7 +805,7 @@ async function downloadInputs(job, jobDir, leaseSignal) {
     )) {
       throw new Error(`원본 이미지 ${index + 1}의 픽셀 규격 근거가 일치하지 않습니다.`);
     }
-    await writeFile(file, sourceBytes);
+    await writeFile(file, sourceBytes, { flag: "wx", mode: 0o400 });
     files.push({
       file,
       role: typeof sourceSpec.role === "string" ? sourceSpec.role : index === 0 ? "main" : "extra",
@@ -2135,6 +2140,54 @@ const dedicatedEvidenceRoles = new Set(["back", "label", "barcode", "left", "rig
 const strictLabelEvidenceAssetIds = new Set(["detail-feature", "detail-package"]);
 const imageLabelFidelityTimeoutMs = 90_000;
 
+class ImageLabelPixelIntegrityError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ImageLabelPixelIntegrityError";
+  }
+}
+
+async function readPrivateLabelSnapshot(file, assetId) {
+  const snapshotStats = await lstat(file);
+  if (!snapshotStats.isFile()
+      || snapshotStats.isSymbolicLink()
+      || snapshotStats.nlink !== 1
+      || snapshotStats.size < 1
+      || snapshotStats.size > maximumStudioSourceDownloadBytes
+      || (snapshotStats.mode & 0o077) !== 0) {
+    throw new ImageLabelPixelIntegrityError(`${assetId} 라벨 검증 스냅샷의 파일 무결성을 확인하지 못했습니다.`);
+  }
+  const [snapshotRealPath, parentRealPath] = await Promise.all([realpath(file), realpath(dirname(file))]);
+  if (dirname(snapshotRealPath) !== parentRealPath) {
+    throw new ImageLabelPixelIntegrityError(`${assetId} 라벨 검증 스냅샷이 작업 폴더 밖을 가리킵니다.`);
+  }
+  const [{ open }, { constants }] = await Promise.all([import("node:fs/promises"), import("node:fs")]);
+  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()
+        || before.nlink !== 1
+        || before.dev !== snapshotStats.dev
+        || before.ino !== snapshotStats.ino
+        || before.size !== snapshotStats.size) {
+      throw new ImageLabelPixelIntegrityError(`${assetId} 라벨 검증 스냅샷이 읽기 전에 교체됐습니다.`);
+    }
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    if (after.dev !== before.dev
+        || after.ino !== before.ino
+        || after.size !== before.size
+        || after.mtimeMs !== before.mtimeMs
+        || after.ctimeMs !== before.ctimeMs
+        || bytes.length !== before.size) {
+      throw new ImageLabelPixelIntegrityError(`${assetId} 라벨 검증 스냅샷이 읽는 동안 변경됐습니다.`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
 function normalizedIdentityViewRole(view) {
   const role = String(view?.report?.inputRole || "").toLowerCase();
   return role.startsWith("extra-") ? "extra" : role;
@@ -2173,28 +2226,32 @@ async function verifyGeneratedLabelFidelity({
   if (process.platform !== "darwin") {
     throw new Error(`${assetId} 라벨 OCR 검증은 macOS Vision 작업자에서만 실행할 수 있습니다.`);
   }
-  const args = buildImageLabelFidelitySwiftArguments({
-    candidatePath,
-    requiredReferencePath,
-    referencePaths,
-  });
-  const result = await imageLabelFidelityGate.run(() => runLeaseBoundedProcess(
-    "/usr/bin/swift",
-    [imageLabelFidelityScriptPath, ...args],
-    {
-      timeoutMs: imageLabelFidelityTimeoutMs,
-      leaseSignal,
-      label: `${assetId} 라벨 OCR 검증`,
-      environment: codexChildEnvironment(),
-    },
-  ), { signal: leaseSignal });
-  const lastLine = String(result.stdout).split("\n").filter(Boolean).at(-1) || "{}";
-  let rawReport;
-  try {
-    rawReport = JSON.parse(lastLine);
-  } catch {
-    throw new Error(`${assetId} 라벨 OCR 검증 결과가 올바른 JSON이 아닙니다.`);
+  const rawReports = [];
+  const batches = batchImageLabelFidelityReferencePaths(requiredReferencePath, referencePaths);
+  for (const referenceBatch of batches) {
+    const args = buildImageLabelFidelitySwiftArguments({
+      candidatePath,
+      requiredReferencePath,
+      referencePaths: referenceBatch,
+    });
+    const result = await imageLabelFidelityGate.run(() => runLeaseBoundedProcess(
+      "/usr/bin/swift",
+      [imageLabelFidelityScriptPath, ...args],
+      {
+        timeoutMs: imageLabelFidelityTimeoutMs,
+        leaseSignal,
+        label: `${assetId} 라벨 OCR 검증`,
+        environment: codexChildEnvironment(),
+      },
+    ), { signal: leaseSignal });
+    const lastLine = String(result.stdout).split("\n").filter(Boolean).at(-1) || "{}";
+    try {
+      rawReports.push(JSON.parse(lastLine));
+    } catch {
+      throw new Error(`${assetId} 라벨 OCR 검증 결과가 올바른 JSON이 아닙니다.`);
+    }
   }
+  const rawReport = mergeImageLabelFidelityReports(rawReports);
   const report = evaluateImageLabelFidelityReport(rawReport, sourcePixelEvidencePolicy === "crop"
     ? { allowMissingRequiredTokens: true, allowEmptySourceText: true }
     : undefined);
@@ -2210,7 +2267,11 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
   for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1) {
     await rm(outputFile, { force: true });
     const backgroundPlateFile = join(dirname(outputFile), `.identity-background-${preset.id}.png`);
+    const sourcePixelBaselineFile = join(dirname(outputFile), `.identity-label-baseline-${preset.id}.png`);
+    const labelCandidateSnapshotFile = join(dirname(outputFile), `.identity-label-candidate-${preset.id}.png`);
     await rm(backgroundPlateFile, { force: true });
+    await rm(sourcePixelBaselineFile, { force: true });
+    await rm(labelCandidateSnapshotFile, { force: true });
     let normalized;
     let backgroundFingerprint = null;
     let backgroundPlateSnapshot = null;
@@ -2234,6 +2295,8 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         labelReferenceFile = source.referenceFile;
         normalized = await renderIdentityOnNeutralCanvas(source.foreground, preset);
         await writeFile(outputFile, normalized);
+        await writeFile(sourcePixelBaselineFile, normalized, { flag: "wx", mode: 0o400 });
+        labelReferenceFile = sourcePixelBaselineFile;
       }
     } else {
       const backgroundOnly = Boolean(identityCutouts && preset.identityPolicy.mode === "source-composite");
@@ -2345,18 +2408,47 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
     if (!usedVerifiedSourceComposite && !missingIdentityEvidence) {
       const requiredReferencePath = labelReferenceFile ?? imageFiles[referenceIndexes[0]]?.file;
       if (!requiredReferencePath) throw new Error(`${preset.id} 라벨 OCR 필수 원본이 없습니다.`);
+      const expectedPixelDigest = imageLabelPixelDigest(normalized);
+      await writeFile(labelCandidateSnapshotFile, normalized, { flag: "wx", mode: 0o400 });
+      const assertLabelInputsIntact = async () => {
+        try {
+          await assertStudioSourceFilesUnmodified(imageFiles, maximumStudioSourcePixels);
+          const candidateSnapshot = await readPrivateLabelSnapshot(labelCandidateSnapshotFile, preset.id);
+          const baselineSnapshot = labelReferenceFile === sourcePixelBaselineFile
+            ? await readPrivateLabelSnapshot(sourcePixelBaselineFile, preset.id)
+            : normalized;
+          assertSourcePixelLabelBaseline({
+            assetId: preset.id,
+            expectedDigest: expectedPixelDigest,
+            baseline: baselineSnapshot,
+            candidate: candidateSnapshot,
+          });
+        } catch (error) {
+          if (error instanceof ImageLabelPixelIntegrityError) throw error;
+          throw new ImageLabelPixelIntegrityError(
+            `${preset.id} 라벨 검증 입력의 원본 픽셀 무결성을 확인하지 못했습니다.`,
+            { cause: error },
+          );
+        }
+      };
       try {
-        await verifyGeneratedLabelFidelity({
-          candidatePath: outputFile,
-          requiredReferencePath,
-          referencePaths: referenceIndexes.map((index) => imageFiles[index].file),
-          leaseSignal,
-          assetId: preset.id,
-          sourcePixelEvidencePolicy: identityCutouts && preset.identityPolicy.mode === "source-evidence"
-            ? strictLabelEvidenceAssetIds.has(preset.id) ? "strict-label" : "crop"
-            : "none",
-        });
+        await assertLabelInputsIntact();
+        try {
+          await verifyGeneratedLabelFidelity({
+            candidatePath: labelCandidateSnapshotFile,
+            requiredReferencePath,
+            referencePaths: referenceIndexes.map((index) => imageFiles[index].file),
+            leaseSignal,
+            assetId: preset.id,
+            sourcePixelEvidencePolicy: identityCutouts && preset.identityPolicy.mode === "source-evidence"
+              ? strictLabelEvidenceAssetIds.has(preset.id) ? "strict-label" : "crop"
+              : "none",
+          });
+        } finally {
+          await assertLabelInputsIntact();
+        }
       } catch (error) {
+        if (error instanceof ImageLabelPixelIntegrityError) throw error;
         if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS || (identityCutouts && identitySourceCandidateCount <= 1)) throw error;
         noveltyGuidance = [
           noveltyGuidance,
@@ -2423,7 +2515,7 @@ async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, c
     "--output-last-message", resultFile,
     "--cd", jobDir,
     repairPrompt,
-  ], studioAnalysisTimeoutMs, jobId, claimToken, { leaseSignal, stage: "studio-repair" });
+  ], studioRepairTimeoutMs, jobId, claimToken, { leaseSignal, stage: "studio-repair" });
 
   const repaired = cliStudioResultSchema.safeParse(normalizeStudioLocalizedKeywordCoverage(normalizeStudioWarningLimits(JSON.parse(await readFile(resultFile, "utf8")))));
   if (!repaired.success) {
@@ -3374,7 +3466,7 @@ async function processGatewayJob(job) {
   }
 }
 
-console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-analysis-timeout=${studioAnalysisTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
+console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-analysis-timeout=${studioAnalysisTimeoutMs}ms · studio-repair-timeout=${studioRepairTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
 console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
 console.log(`Worker scopes · ai=${aiWorkerConfigured ? "configured" : "disabled"} · gateway=${gatewayWorkerConfigured ? "configured" : "disabled"} · scheduler=${schedulerWorkerConfigured ? "configured" : "disabled"}`);
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 8);

@@ -3,9 +3,74 @@ import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
+  assertSourcePixelLabelBaseline,
+  batchImageLabelFidelityReferencePaths,
   buildImageLabelFidelitySwiftArguments,
   evaluateImageLabelFidelityReport,
+  imageLabelPixelDigest,
+  mergeImageLabelFidelityReports,
 } from "../lib/image-label-fidelity";
+
+test("source-protected assets require a byte-identical target-scale label baseline", () => {
+  const baseline = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02]);
+  const expectedDigest = imageLabelPixelDigest(baseline);
+  assert.match(assertSourcePixelLabelBaseline({
+    assetId: "hero",
+    expectedDigest,
+    baseline,
+    candidate: Buffer.from(baseline),
+  }), /^[a-f0-9]{64}$/);
+  assert.throws(() => assertSourcePixelLabelBaseline({
+    assetId: "hero",
+    expectedDigest,
+    baseline,
+    candidate: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x03]),
+  }), /원본 픽셀 기준 이미지와 최종 이미지가 일치하지 않습니다/);
+  assert.throws(() => assertSourcePixelLabelBaseline({
+    assetId: "hero",
+    expectedDigest,
+    baseline,
+    candidate: Buffer.from([0x89, 0x50]),
+  }), /원본 픽셀 기준 이미지와 최종 이미지가 일치하지 않습니다/);
+  assert.throws(() => assertSourcePixelLabelBaseline({
+    assetId: "hero",
+    expectedDigest,
+    baseline: Buffer.from("swapped"),
+    candidate: Buffer.from("swapped"),
+  }), /원본 픽셀 기준 이미지와 최종 이미지가 일치하지 않습니다/);
+});
+
+test("label fidelity batches up to one hundred references and merges their token union", () => {
+  const paths = Array.from({ length: 100 }, (_, index) => `/tmp/reference-${index}.png`);
+  const batches = batchImageLabelFidelityReferencePaths("/tmp/baseline.png", paths);
+  assert.equal(batches.length, 10);
+  assert.ok(batches.every((batch) => batch.length === 10));
+  assert.deepEqual(new Set(batches.flat()).size, 100);
+
+  const merged = mergeImageLabelFidelityReports([
+    { referenceTokens: ["SAJO", "150g"], requiredTokens: ["SAJO"], candidateTokens: ["SAJO", "150g"] },
+    { referenceTokens: ["참치", "150g"], requiredTokens: ["SAJO"], candidateTokens: ["150g", "SAJO"] },
+  ]);
+  assert.deepEqual(merged.referenceTokens, ["SAJO", "150g"]);
+  const evaluated = evaluateImageLabelFidelityReport(merged);
+  assert.equal(evaluated.passed, true);
+  assert.throws(() => mergeImageLabelFidelityReports([
+    { referenceTokens: ["SAJO"], requiredTokens: ["SAJO"], candidateTokens: ["SAJO"] },
+    { referenceTokens: ["SAJO"], requiredTokens: ["SAJO"], candidateTokens: ["Sajo"] },
+  ]), /배치별로 일치하지 않습니다/);
+
+  const noisyReports = Array.from({ length: 10 }, (_, batch) => ({
+    referenceTokens: [
+      ...Array.from({ length: 60 }, (_, index) => `unrelated-${batch}-${index}`),
+      ...(batch === 9 ? ["SAJO", "150g"] : []),
+    ],
+    requiredTokens: ["SAJO"],
+    candidateTokens: ["SAJO", "150g"],
+  }));
+  const noisyMerged = mergeImageLabelFidelityReports(noisyReports);
+  assert.deepEqual(noisyMerged.referenceTokens, ["SAJO", "150g"]);
+  assert.equal(evaluateImageLabelFidelityReport(noisyMerged).passed, true);
+});
 
 test("label fidelity passes only an exact non-empty protected-token match", () => {
   const result = evaluateImageLabelFidelityReport({
