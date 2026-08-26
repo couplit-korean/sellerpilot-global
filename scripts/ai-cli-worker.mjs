@@ -46,6 +46,9 @@ import {
   assertIdentityEvidenceLinkage,
   compositeIdentityForeground,
   loadVisionIdentityForeground,
+  planIdentityEvidenceAttempt,
+  renderIdentityEvidenceBoard,
+  renderIdentityEvidencePanel,
   renderIdentityOnNeutralCanvas,
   renderMissingIdentityEvidence,
 } from "../lib/product-identity-protection.ts";
@@ -200,7 +203,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.39";
+const workerVersion = "sellerpilot-cli-worker/1.40";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -841,6 +844,7 @@ async function downloadInputs(job, jobDir, leaseSignal) {
 const sourceProductCutoutScript = resolve(dirname(fileURLToPath(import.meta.url)), "source-product-cutout.swift");
 const sourceProductCutoutTimeoutMs = 2 * 60_000;
 const maximumCutoutInputCount = 8;
+const dedicatedRolePriority = ["back", "label", "barcode", "top", "bottom", "left", "right"];
 
 function cutoutInputPriority(role, mode) {
   const normalized = String(role || "").toLowerCase().replace(/^extra-\d+$/, "extra");
@@ -860,7 +864,7 @@ function selectCutoutInputs(imageFiles, mode) {
     const declaredMain = ranked.filter((image) => String(image.role || "").toLowerCase() === "main");
     return [...declaredFront, ...declaredMain].slice(0, maximumCutoutInputCount);
   }
-  const dedicatedRoles = new Set(["back", "label", "barcode", "left", "right", "top", "bottom"]);
+  const dedicatedRoles = new Set(dedicatedRolePriority);
   const dedicated = ranked.filter((image) => dedicatedRoles.has(String(image.role || "").toLowerCase().replace(/^extra-\d+$/, "extra")));
   return dedicated.slice(0, maximumCutoutInputCount);
 }
@@ -1007,37 +1011,67 @@ async function prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSig
   if (evidence) await assertIdentityEvidenceLinkage(front, evidence, "evidence");
   else if (!evidenceInputs.length) result.warnings = [...new Set(["측면·후면·라벨 원본 사진이 없어 포장 근거 이미지는 공란으로 남겼습니다.", ...(Array.isArray(result.warnings) ? result.warnings : [])])].slice(0, 5);
   const verifiedViews = evidence ? [front, evidence] : [front];
+  const packageEvidenceViews = evidence ? [{ ...evidence, packageEvidenceGrade: "strict-evidence" }] : [];
   const sourceCompositePresets = aiGeneratedAssetSpecs.filter((preset) => preset.identityPolicy.mode === "source-composite");
   const requiredSettingRoles = new Set(sourceCompositePresets.flatMap((preset) => preset.identityPolicy.sourceRoles));
+  const packageEvidencePreset = aiGeneratedAssetSpecs.find((preset) => preset.id === "detail-package");
+  const requiredIdentityRoles = new Set([
+    ...requiredSettingRoles,
+    ...(packageEvidencePreset?.identityPolicy.sourceRoles ?? []),
+  ]);
   const additionalViewInputs = imageFiles
     .filter((image) => {
       if (verifiedViews.some((view) => view.report.inputIndex === image.sourceIndex)) return false;
       const role = String(image.role || "").toLowerCase().replace(/^extra-\d+$/, "extra");
-      return requiredSettingRoles.has(role);
+      return requiredIdentityRoles.has(role);
+    })
+    .sort((left, right) => {
+      const leftRole = String(left.role || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+      const rightRole = String(right.role || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+      const leftPriority = dedicatedRolePriority.indexOf(leftRole);
+      const rightPriority = dedicatedRolePriority.indexOf(rightRole);
+      return (leftPriority < 0 ? dedicatedRolePriority.length : leftPriority)
+        - (rightPriority < 0 ? dedicatedRolePriority.length : rightPriority)
+        || left.sourceIndex - right.sourceIndex;
     })
     .slice(0, Math.max(0, maximumCutoutInputCount - verifiedViews.length));
   for (const image of additionalViewInputs) {
     if (verifiedViews.some((view) => view.report.inputIndex === image.sourceIndex)) continue;
     try {
       const outputPath = join(jobDir, `source-identity-view-${String(image.sourceIndex + 1).padStart(2, "0")}.png`);
+      const normalizedRole = String(image.role || "").toLowerCase().replace(/^extra-\d+$/, "extra");
       let view;
-      try {
+      if (dedicatedRoles.has(normalizedRole)) {
+        try {
+          view = await executeSourceProductCutout(
+            "evidence",
+            identityAnchor,
+            outputPath,
+            [image],
+            leaseSignal,
+          );
+          await assertIdentityEvidenceLinkage(front, view, "evidence");
+          if (!packageEvidenceViews.some((candidate) => candidate.foreground.sourceDigest === view.foreground.sourceDigest)) {
+            packageEvidenceViews.push({ ...view, packageEvidenceGrade: "strict-evidence" });
+          }
+        } catch (strictEvidenceError) {
+          if (leaseSignal?.aborted) throw strictEvidenceError;
+          view = await executeSourceProductCutout(
+            statutoryIdentity ? "view" : "alternate",
+            identityAnchor,
+            outputPath,
+            [image],
+            leaseSignal,
+          );
+          await assertIdentityEvidenceLinkage(front, view, statutoryIdentity ? "view" : "evidence");
+          if (!statutoryIdentity
+              && !packageEvidenceViews.some((candidate) => candidate.foreground.sourceDigest === view.foreground.sourceDigest)) {
+            packageEvidenceViews.push({ ...view, packageEvidenceGrade: "linked-alternate" });
+          }
+        }
+      } else {
         view = await executeSourceProductCutout(
           statutoryIdentity ? "view" : "alternate",
-          identityAnchor,
-          outputPath,
-          [image],
-          leaseSignal,
-        );
-        await assertIdentityEvidenceLinkage(front, view, "view");
-      } catch (primaryError) {
-        if (!statutoryIdentity || leaseSignal?.aborted) throw primaryError;
-        // A legal side/rear panel may be too text-dense for the general view
-        // mode. It can diversify a setting shot only after the stricter
-        // evidence selector proves a seller-anchor match. This fallback never
-        // feeds detail-package, whose candidates were selected above.
-        view = await executeSourceProductCutout(
-          "evidence",
           identityAnchor,
           outputPath,
           [image],
@@ -1067,8 +1101,15 @@ async function prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSig
     }
     assetSources[preset.id] = source;
   }
-  console.log(`[원본 픽셀 보호] front=${front.report.inputIndex}:${front.report.inputRole}:${front.report.method} · evidence=${evidence ? `${evidence.report.inputIndex}:${evidence.report.inputRole}:${evidence.report.method}` : "missing"} · settings=${sourceCompositePresets.map((preset) => `${preset.id}:${assetSources[preset.id].report.inputIndex}`).join(",")}`);
-  return { front, evidence, verifiedViews, assetSources };
+  packageEvidenceViews.sort((left, right) => {
+    const leftRole = String(left.report.inputRole || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+    const rightRole = String(right.report.inputRole || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+    const rolePriority = [...dedicatedRolePriority, "extra"];
+    return rolePriority.indexOf(leftRole) - rolePriority.indexOf(rightRole)
+      || left.report.inputIndex - right.report.inputIndex;
+  });
+  console.log(`[원본 픽셀 보호] front=${front.report.inputIndex}:${front.report.inputRole}:${front.report.method} · evidence=${evidence ? `${evidence.report.inputIndex}:${evidence.report.inputRole}:${evidence.report.method}` : "missing"} · package-evidence=${packageEvidenceViews.length} · settings=${sourceCompositePresets.map((preset) => `${preset.id}:${assetSources[preset.id].report.inputIndex}`).join(",")}`);
+  return { front, evidence, verifiedViews, packageEvidenceViews, assetSources };
 }
 
 async function prepareIdentityCutoutsForJob(result, imageFiles, jobDir, leaseSignal, manualFields) {
@@ -2290,9 +2331,10 @@ function identitySourceCandidatesForPreset(identityCutouts, preset) {
   const allowedRoles = preset.identityPolicy.sourceRoles.map((role) => String(role).toLowerCase());
   const allowedRoleSet = new Set(allowedRoles);
   const seen = new Set();
-  return (Array.isArray(identityCutouts.verifiedViews)
-    ? identityCutouts.verifiedViews
-    : [identityCutouts.front, identityCutouts.evidence])
+  const candidateViews = preset.id === "detail-package"
+    ? Array.isArray(identityCutouts.packageEvidenceViews) ? identityCutouts.packageEvidenceViews : []
+    : Array.isArray(identityCutouts.verifiedViews) ? identityCutouts.verifiedViews : [identityCutouts.front, identityCutouts.evidence];
+  return candidateViews
     .filter(Boolean)
     .filter((view) => {
       const sourceIndex = view?.report?.inputIndex;
@@ -2304,6 +2346,7 @@ function identitySourceCandidatesForPreset(identityCutouts, preset) {
     })
     .sort((left, right) => (
       allowedRoles.indexOf(normalizedIdentityViewRole(left)) - allowedRoles.indexOf(normalizedIdentityViewRole(right))
+      || left.report.inputIndex - right.report.inputIndex
     ));
 }
 
@@ -2359,6 +2402,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
   let retryConflictAssetIds = [];
   let retryAuditFeedback = null;
   const rejectedBackgroundShots = [];
+  const rejectedSourceEvidenceShots = [];
   const retainRejectedBackground = async (generated, attempt) => {
     for (const rejected of rejectedBackgroundShots.splice(0)) {
       if (rejected.plateFile) await rm(rejected.plateFile, { force: true });
@@ -2404,7 +2448,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
     let backgroundFingerprint = null;
     let backgroundPlateSnapshot = null;
     let backgroundProps = null;
-    let labelReferenceFile = null;
+    let labelReferenceFiles = [];
     let missingIdentityEvidence = false;
     let usedVerifiedSourceComposite = false;
     let identitySourceCandidateCount = 0;
@@ -2430,8 +2474,23 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
     if (identityCutouts && preset.identityPolicy.mode !== "source-composite") {
       const sourceCandidates = identitySourceCandidatesForPreset(identityCutouts, preset);
       identitySourceCandidateCount = sourceCandidates.length;
-      const source = sourceCandidates.length ? sourceCandidates[(attempt - 1) % sourceCandidates.length] : null;
+      const packageEvidencePlan = preset.id === "detail-package"
+        ? planIdentityEvidenceAttempt(sourceCandidates.length, attempt)
+        : null;
+      const packageEvidencePlanSources = packageEvidencePlan
+        ? packageEvidencePlan.sourceIndexes.map((index) => sourceCandidates[index]).filter(Boolean)
+        : [];
+      if (packageEvidencePlan
+          && packageEvidencePlanSources.length !== packageEvidencePlan.sourceIndexes.length) {
+        throw new Error(`${preset.id} 원본 근거 재시도 계획에 필요한 evidence-grade 검증 원본 이미지가 부족합니다.`);
+      }
+      const source = preset.id === "detail-package"
+        ? packageEvidencePlanSources[0] ?? null
+        : sourceCandidates.length ? sourceCandidates[(attempt - 1) % sourceCandidates.length] : null;
       if (!source && preset.identityPolicy.requiresDedicatedRole) {
+        if (preset.id === "detail-package" && sourceCandidates.length > 0) {
+          throw new Error(`${preset.id}의 다음 안전한 원본 근거 구성을 만들 evidence-grade 검증 원본 이미지가 부족합니다.`);
+        }
         missingIdentityEvidence = true;
         normalized = await renderMissingIdentityEvidence(preset);
         await writeFile(outputFile, normalized);
@@ -2439,11 +2498,24 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         if (!source) {
           throw new Error(`${preset.id} 이미지에 필요한 검증 원본 역할(${preset.identityPolicy.sourceRoles.join(", ")})이 없습니다.`);
         }
-        labelReferenceFile = source.referenceFile;
-        normalized = await renderIdentityOnNeutralCanvas(source.foreground, preset);
+        normalized = packageEvidencePlan?.mode === "two-source-board"
+          ? await renderIdentityEvidenceBoard(
+              packageEvidencePlanSources.map((candidate) => candidate.foreground),
+              preset,
+              packageEvidencePlan.variant,
+            )
+          : packageEvidencePlan?.mode === "single-source-panel"
+            ? await renderIdentityEvidencePanel(
+                source.foreground,
+                preset,
+                packageEvidencePlan.variant,
+              )
+            : await renderIdentityOnNeutralCanvas(source.foreground, preset);
         await writeFile(outputFile, normalized);
         await writeFile(sourcePixelBaselineFile, normalized, { flag: "wx", mode: 0o400 });
-        labelReferenceFile = sourcePixelBaselineFile;
+        labelReferenceFiles = preset.id === "detail-package"
+          ? packageEvidencePlanSources.map((candidate) => candidate.referenceFile)
+          : [sourcePixelBaselineFile];
       }
     } else {
       const assetPrompt = buildAssetImagePrompt(
@@ -2571,15 +2643,17 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
       }
     }
     if (!usedVerifiedSourceComposite && !missingIdentityEvidence) {
-      const requiredReferencePath = labelReferenceFile ?? imageFiles[referenceIndexes[0]]?.file;
-      if (!requiredReferencePath) throw new Error(`${preset.id} 라벨 OCR 필수 원본이 없습니다.`);
+      const requiredReferencePaths = [...new Set(labelReferenceFiles.length
+        ? labelReferenceFiles
+        : [imageFiles[referenceIndexes[0]]?.file].filter(Boolean))];
+      if (!requiredReferencePaths.length) throw new Error(`${preset.id} 라벨 OCR 필수 원본이 없습니다.`);
       const expectedPixelDigest = imageLabelPixelDigest(normalized);
       await writeFile(labelCandidateSnapshotFile, normalized, { flag: "wx", mode: 0o400 });
       const assertLabelInputsIntact = async () => {
         try {
           await assertStudioSourceFilesUnmodified(imageFiles, maximumStudioSourcePixels);
           const candidateSnapshot = await readPrivateLabelSnapshot(labelCandidateSnapshotFile, preset.id);
-          const baselineSnapshot = labelReferenceFile === sourcePixelBaselineFile
+          const baselineSnapshot = identityCutouts && preset.identityPolicy.mode !== "source-composite"
             ? await readPrivateLabelSnapshot(sourcePixelBaselineFile, preset.id)
             : normalized;
           assertSourcePixelLabelBaseline({
@@ -2599,22 +2673,30 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
       try {
         await assertLabelInputsIntact();
         try {
-          await verifyGeneratedLabelFidelity({
-            candidatePath: labelCandidateSnapshotFile,
-            requiredReferencePath,
-            referencePaths: referenceIndexes.map((index) => imageFiles[index].file),
-            leaseSignal,
-            assetId: preset.id,
-            sourcePixelEvidencePolicy: identityCutouts && preset.identityPolicy.mode === "source-evidence"
-              ? strictLabelEvidenceAssetIds.has(preset.id) ? "strict-label" : "crop"
-              : "none",
-          });
+          for (const requiredReferencePath of requiredReferencePaths) {
+            await verifyGeneratedLabelFidelity({
+              candidatePath: labelCandidateSnapshotFile,
+              requiredReferencePath,
+              referencePaths: [
+                ...requiredReferencePaths,
+                ...referenceIndexes.map((index) => imageFiles[index].file),
+              ],
+              leaseSignal,
+              assetId: preset.id,
+              sourcePixelEvidencePolicy: identityCutouts && preset.identityPolicy.mode === "source-evidence"
+                ? strictLabelEvidenceAssetIds.has(preset.id) ? "strict-label" : "crop"
+                : "none",
+            });
+          }
         } finally {
           await assertLabelInputsIntact();
         }
       } catch (error) {
         if (error instanceof ImageLabelPixelIntegrityError) throw error;
-        if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS || (identityCutouts && identitySourceCandidateCount <= 1)) throw error;
+        const hasNextPackageEvidencePlan = preset.id === "detail-package"
+          && Boolean(planIdentityEvidenceAttempt(identitySourceCandidateCount, attempt + 1));
+        if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS
+            || (identityCutouts && identitySourceCandidateCount <= 1 && !hasNextPackageEvidencePlan)) throw error;
         noveltyGuidance = [
           noveltyGuidance,
           `Label fidelity retry ${attempt}: use the exact selected source pixels. Preserve every visible brand character with case, number, quantity, capacity and unit; remove every token that is absent from the supplied references.`,
@@ -2624,7 +2706,12 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
       }
     }
     const fingerprint = await fingerprintGeneratedShot(preset.id, normalized);
-    const duplicate = findDuplicateShot(fingerprint, existingShots);
+    const duplicate = findDuplicateShot(
+      fingerprint,
+      identityCutouts && preset.identityPolicy.mode !== "source-composite"
+        ? [...existingShots, ...rejectedSourceEvidenceShots]
+        : existingShots,
+    );
     if (!duplicate) {
       if (backgroundFingerprint) existingBackgroundShots.push({ ...backgroundFingerprint, ...backgroundPlateSnapshot });
       if (backgroundProps) existingBackgroundProps.push({ assetId: preset.id, propKeys: backgroundProps });
@@ -2633,6 +2720,20 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
     if (identityCutouts && preset.identityPolicy.mode !== "source-composite") {
       if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
         throw new Error(`${preset.id} 원본 근거 이미지가 ${duplicate.assetId}와 중복되어 서로 다른 안전한 원본 컷을 확보하지 못했습니다.`);
+      }
+      rejectedSourceEvidenceShots.push({
+        ...fingerprint,
+        assetId: `rejected:${preset.id}:${attempt}`,
+      });
+      if (preset.id === "detail-package") {
+        const nextAttempt = attempt + 1;
+        const nextPlan = planIdentityEvidenceAttempt(identitySourceCandidateCount, nextAttempt);
+        if (!nextPlan) {
+          throw new Error(`${preset.id}가 ${duplicate.assetId}와 중복됐으며, 검증 원본을 복제하지 않는 안전한 후속 구성을 만들지 않았습니다.`);
+        }
+        const nextVariant = `${nextPlan.mode}-${nextPlan.variant}`;
+        console.log(`[포장 원본 근거 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · next=${nextAttempt}:${nextVariant} · evidence-sources=${identitySourceCandidateCount}`);
+        continue;
       }
       noveltyGuidance = buildDuplicateRetryGuidance(preset.id, duplicate.assetId, attempt, "source-evidence");
       console.log(`[원본 근거 중복 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · attempt=${attempt}`);

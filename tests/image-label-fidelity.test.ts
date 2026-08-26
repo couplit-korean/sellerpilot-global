@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import sharp from "sharp";
 import {
   assertSourcePixelLabelBaseline,
   batchImageLabelFidelityReferencePaths,
@@ -217,6 +221,27 @@ test("Swift token extraction preserves camel-case brand and unit case", { skip: 
   assert.deepEqual(report.missingTokens, []);
 });
 
+test("a package board permits the other canonical source tokens while validating one required source", { skip: !existsSync("/usr/bin/swift") }, () => {
+  const script = new URL("../scripts/image-label-fidelity.swift", import.meta.url).pathname;
+  const sourceA = "ACV Apple Cider Vinegar 500ml";
+  const sourceB = "LOT 20260827 8801234567890";
+  const candidate = `${sourceA} ${sourceB}`;
+  const result = spawnSync("/usr/bin/swift", [
+    script,
+    "--compare-text",
+    "--candidate", candidate,
+    "--required-reference", sourceA,
+    "--reference", sourceA,
+    "--reference", sourceB,
+  ], { encoding: "utf8", timeout: 30_000, maxBuffer: 1_000_000 });
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  const evaluated = evaluateImageLabelFidelityReport(report);
+  assert.equal(evaluated.passed, true);
+  assert.ok(evaluated.candidateTokens.includes("8801234567890"));
+  assert.deepEqual(evaluated.unsupportedTokens, []);
+});
+
 test("Swift token extraction rejects Korean, mixed-case and CJK brand mutations", { skip: !existsSync("/usr/bin/swift") }, () => {
   const script = new URL("../scripts/image-label-fidelity.swift", import.meta.url).pathname;
   for (const [reference, candidate, expectedMissing, expectedUnsupported] of [
@@ -235,5 +260,67 @@ test("Swift token extraction rejects Korean, mixed-case and CJK brand mutations"
     const report = JSON.parse(result.stdout) as { unsupportedTokens: string[]; missingTokens: string[] };
     assert.ok(report.missingTokens.includes(expectedMissing), `${reference} missing token`);
     assert.ok(report.unsupportedTokens.includes(expectedUnsupported), `${candidate} unsupported token`);
+  }
+});
+
+test("final package evidence rejects an exact source barcode that became unreadable after layout scaling", { skip: !existsSync("/usr/bin/swift") }, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sellerpilot-barcode-fidelity-"));
+  const required = join(directory, "required.png");
+  const unreadable = join(directory, "unreadable.png");
+  const payload = "8801234567890";
+  const generator = `
+import AppKit
+import CoreImage
+import Foundation
+let output = URL(fileURLWithPath: CommandLine.arguments[1])
+let payload = CommandLine.arguments[2].data(using: .ascii)!
+let filter = CIFilter(name: "CICode128BarcodeGenerator")!
+filter.setValue(payload, forKey: "inputMessage")
+filter.setValue(12, forKey: "inputQuietSpace")
+let image = filter.outputImage!.transformed(by: CGAffineTransform(scaleX: 5, y: 5))
+let context = CIContext()
+let cgImage = context.createCGImage(image, from: image.extent)!
+let representation = NSBitmapImageRep(cgImage: cgImage)
+try representation.representation(using: .png, properties: [:])!.write(to: output)
+`;
+  try {
+    const generated = spawnSync("/usr/bin/swift", ["-e", generator, required, payload], {
+      encoding: "utf8",
+      timeout: 30_000,
+      maxBuffer: 1_000_000,
+    });
+    assert.equal(generated.status, 0, generated.stderr);
+    const crushed = await sharp(required)
+      .resize(4, 2, { fit: "fill" })
+      .png()
+      .toBuffer();
+    await sharp(crushed)
+      .resize(600, 240, { fit: "fill", kernel: sharp.kernel.nearest })
+      .png()
+      .toFile(unreadable);
+    const fidelityScript = new URL("../scripts/image-label-fidelity.swift", import.meta.url).pathname;
+    const inspect = (candidate: string) => spawnSync("/usr/bin/swift", [
+      fidelityScript,
+      "--candidate", candidate,
+      "--required-reference", required,
+      "--reference", required,
+    ], { encoding: "utf8", timeout: 30_000, maxBuffer: 1_000_000 });
+    const readableResult = inspect(required);
+    assert.equal(readableResult.status, 0, readableResult.stderr);
+    const readableReport = JSON.parse(readableResult.stdout) as {
+      requiredTokens: string[];
+      candidateTokens: string[];
+    };
+    assert.ok(readableReport.requiredTokens.includes(payload));
+    assert.ok(readableReport.candidateTokens.includes(payload));
+
+    const unreadableResult = inspect(unreadable);
+    assert.equal(unreadableResult.status, 0, unreadableResult.stderr);
+    const unreadableReport = JSON.parse(unreadableResult.stdout);
+    const evaluated = evaluateImageLabelFidelityReport(unreadableReport);
+    assert.equal(evaluated.passed, false);
+    assert.ok(evaluated.missingTokens.includes(payload));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });

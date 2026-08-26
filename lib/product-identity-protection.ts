@@ -384,6 +384,254 @@ export async function renderIdentityOnNeutralCanvas(
   return compositeIdentityForeground(background, foreground, spec);
 }
 
+export type IdentityEvidenceAttemptPlan =
+  | { mode: "full-view"; sourceIndexes: readonly [number]; variant: 0 }
+  | { mode: "single-source-panel"; sourceIndexes: readonly [number]; variant: 1 | 2 | 3 }
+  | { mode: "two-source-board"; sourceIndexes: readonly [number, number]; variant: 1 | 2 };
+
+/**
+ * Keeps the package-evidence recovery search finite and deterministic. One
+ * verified source is never duplicated: retries move that one complete cutout
+ * through three neutral inspection-panel geometries. With two sources, the
+ * second full view and two non-overlapping boards remain the stronger plan.
+ */
+export function planIdentityEvidenceAttempt(
+  sourceCount: number,
+  attempt: number,
+): IdentityEvidenceAttemptPlan | null {
+  const available = Math.max(0, Math.trunc(sourceCount));
+  if (!Number.isInteger(attempt) || attempt < 1 || attempt > 4 || available === 0) return null;
+  if (available >= 2) {
+    if (attempt === 1) return { mode: "full-view", sourceIndexes: [0], variant: 0 };
+    if (attempt === 2) return { mode: "full-view", sourceIndexes: [1], variant: 0 };
+    return {
+      mode: "two-source-board",
+      sourceIndexes: [0, 1],
+      variant: (attempt - 2) as 1 | 2,
+    };
+  }
+  if (attempt === 1) return { mode: "full-view", sourceIndexes: [0], variant: 0 };
+  return {
+    mode: "single-source-panel",
+    sourceIndexes: [0],
+    variant: (attempt - 1) as 1 | 2 | 3,
+  };
+}
+
+const identityEvidencePanelLayouts = [
+  {
+    key: "left-evidence-rail",
+    cell: { left: 0.01, top: 0.03, width: 0.62, height: 0.94 },
+    panels: [
+      { left: 0, top: 0, width: 0.67, height: 1, color: "#ffffff" },
+      { left: 0.70, top: 0.02, width: 0.055, height: 0.96, color: "#aeb7bf" },
+      { left: 0.79, top: 0.08, width: 0.055, height: 0.84, color: "#e5e9ec" },
+      { left: 0.86, top: 0.14, width: 0.055, height: 0.72, color: "#98a3ad" },
+      { left: 0.93, top: 0.20, width: 0.055, height: 0.60, color: "#e0e5e9" },
+    ],
+  },
+  {
+    key: "right-evidence-rail",
+    cell: { left: 0.37, top: 0.03, width: 0.62, height: 0.94 },
+    panels: [
+      { left: 0.33, top: 0, width: 0.67, height: 1, color: "#ffffff" },
+      { left: 0.245, top: 0.02, width: 0.055, height: 0.96, color: "#aeb7bf" },
+      { left: 0.02, top: 0.12, width: 0.18, height: 0.76, color: "#dce1e5" },
+    ],
+  },
+  {
+    key: "upper-evidence-shelf",
+    cell: { left: 0.12, top: 0.02, width: 0.76, height: 0.70 },
+    panels: [
+      { left: 0.08, top: 0, width: 0.84, height: 0.74, color: "#ffffff" },
+      { left: 0.04, top: 0.785, width: 0.92, height: 0.045, color: "#aeb7bf" },
+      { left: 0.18, top: 0.86, width: 0.64, height: 0.12, color: "#dce1e5" },
+    ],
+  },
+] as const;
+
+const identityEvidenceBoardLayouts = [
+  {
+    key: "split-columns",
+    cells: [
+      { left: 0.02, top: 0.04, width: 0.54, height: 0.92 },
+      { left: 0.62, top: 0.11, width: 0.36, height: 0.80 },
+    ],
+    dividers: [{ left: 0.585, top: 0.04, width: 0.018, height: 0.92 }],
+  },
+  {
+    key: "stacked-bands",
+    cells: [
+      { left: 0.08, top: 0.02, width: 0.84, height: 0.47 },
+      { left: 0.14, top: 0.57, width: 0.82, height: 0.39 },
+    ],
+    dividers: [{ left: 0.04, top: 0.525, width: 0.92, height: 0.018 }],
+  },
+] as const;
+
+function boardRectangle(
+  placement: ReturnType<typeof boundedPlacement>,
+  rectangle: { left: number; top: number; width: number; height: number },
+) {
+  const left = placement.left + Math.round(placement.width * rectangle.left);
+  const top = placement.top + Math.round(placement.height * rectangle.top);
+  const width = Math.max(1, Math.min(specBoundary(placement.left, placement.width, left), Math.round(placement.width * rectangle.width)));
+  const height = Math.max(1, Math.min(specBoundary(placement.top, placement.height, top), Math.round(placement.height * rectangle.height)));
+  return { left, top, width, height };
+}
+
+function specBoundary(origin: number, span: number, offset: number) {
+  return origin + span - offset;
+}
+
+/**
+ * Renders one complete verified cutout exactly once on an asymmetric neutral
+ * evidence panel. Only fit-inside scaling and translation are permitted; the
+ * source is never cropped, rotated, mirrored, repeated or annotated.
+ */
+export async function renderIdentityEvidencePanel(
+  foreground: IdentityForeground,
+  spec: IdentityAssetSpec,
+  variant: number,
+) {
+  if (spec.identityPolicy.mode !== "source-evidence") {
+    throw new Error(`${spec.id} 원본 근거 패널은 source-evidence 이미지에만 사용할 수 있습니다.`);
+  }
+  if (!/^[a-f0-9]{64}$/.test(foreground.sourceDigest)) {
+    throw new Error(`${spec.id} 원본 근거 패널의 검증 원본 digest가 올바르지 않습니다.`);
+  }
+  if (!Number.isInteger(variant) || variant < 1 || variant > identityEvidencePanelLayouts.length) {
+    throw new Error(`${spec.id} 원본 근거 패널 변형 번호가 올바르지 않습니다.`);
+  }
+  const layout = identityEvidencePanelLayouts[variant - 1];
+  const placement = boundedPlacement(spec);
+  const cell = boardRectangle(placement, layout.cell);
+  const panelRectangles = layout.panels.map((panel) => boardRectangle(placement, panel));
+  const inset = Math.max(4, Math.round(Math.min(cell.width, cell.height) * 0.035));
+  const [panelBuffers, source] = await Promise.all([
+    Promise.all(layout.panels.map((panel, index) => {
+      const rectangle = panelRectangles[index];
+      return sharp({
+        create: { width: rectangle.width, height: rectangle.height, channels: 4, background: panel.color },
+      }).png().toBuffer();
+    })),
+    sharp(foreground.buffer, {
+      failOn: "warning",
+      limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
+    }).resize(Math.max(1, cell.width - inset * 2), Math.max(1, cell.height - inset * 2), {
+      fit: "inside",
+      withoutEnlargement: false,
+      kernel: sharp.kernel.lanczos3,
+    }).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer({ resolveWithObject: true }),
+  ]);
+  const output = await sharp({
+    create: {
+      width: spec.width,
+      height: spec.height,
+      channels: 4,
+      background: spec.identityPolicy.background,
+    },
+  }).composite([
+    ...panelBuffers.map((input, index) => ({
+      input,
+      left: panelRectangles[index].left,
+      top: panelRectangles[index].top,
+    })),
+    {
+      input: source.data,
+      left: cell.left + Math.floor((cell.width - source.info.width) / 2),
+      top: cell.top + Math.floor((cell.height - source.info.height) / 2),
+    },
+  ]).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+  const metadata = await sharp(output).metadata();
+  if (metadata.width !== spec.width || metadata.height !== spec.height || metadata.format !== "png") {
+    throw new Error(`${spec.id} 원본 근거 패널 규격을 확인하지 못했습니다.`);
+  }
+  return output;
+}
+
+/**
+ * Renders two independently verified source views as a deterministic evidence
+ * board. The whole cutout from each source is kept upright and is only scaled
+ * to fit; no crop, mirror, rotation, label redraw or generated product pixels
+ * are introduced. A single source is deliberately insufficient because
+ * repeating one package view in two panels could misrepresent the evidence.
+ */
+export async function renderIdentityEvidenceBoard(
+  foregrounds: readonly IdentityForeground[],
+  spec: IdentityAssetSpec,
+  variant: number,
+) {
+  if (spec.identityPolicy.mode !== "source-evidence") {
+    throw new Error(`${spec.id} 원본 근거 보드는 source-evidence 이미지에만 사용할 수 있습니다.`);
+  }
+  const distinctSources = foregrounds.filter((foreground, index, sources) => (
+    /^[a-f0-9]{64}$/.test(foreground.sourceDigest)
+    && sources.findIndex((candidate) => candidate.sourceDigest === foreground.sourceDigest) === index
+  )).slice(0, 2);
+  if (distinctSources.length < 2) {
+    throw new Error(`${spec.id} 원본 근거 보드에는 서로 다른 검증 원본 이미지가 2장 이상 필요합니다.`);
+  }
+  const boundedVariant = Math.max(1, Math.min(Math.trunc(variant), identityEvidenceBoardLayouts.length));
+  const layout = identityEvidenceBoardLayouts[boundedVariant - 1];
+  const placement = boundedPlacement(spec);
+  const cells = layout.cells.map((cell) => boardRectangle(placement, cell));
+  const dividerColor = "#c7ced3";
+  const panelColor = "#ffffff";
+  const [panelBuffers, dividerBuffers, sourceBuffers] = await Promise.all([
+    Promise.all(cells.map((cell) => sharp({
+      create: { width: cell.width, height: cell.height, channels: 4, background: panelColor },
+    }).png().toBuffer())),
+    Promise.all(layout.dividers.map((divider) => {
+      const rectangle = boardRectangle(placement, divider);
+      return sharp({
+        create: { width: rectangle.width, height: rectangle.height, channels: 4, background: dividerColor },
+      }).png().toBuffer();
+    })),
+    Promise.all(distinctSources.map((foreground, index) => {
+      const cell = cells[index];
+      const inset = Math.max(4, Math.round(Math.min(cell.width, cell.height) * 0.035));
+      return sharp(foreground.buffer, {
+        failOn: "warning",
+        limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
+      }).resize(Math.max(1, cell.width - inset * 2), Math.max(1, cell.height - inset * 2), {
+        fit: "inside",
+        withoutEnlargement: false,
+        kernel: sharp.kernel.lanczos3,
+      }).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer({ resolveWithObject: true });
+    })),
+  ]);
+  const dividerRectangles = layout.dividers.map((divider) => boardRectangle(placement, divider));
+  const composites = [
+    ...panelBuffers.map((input, index) => ({ input, left: cells[index].left, top: cells[index].top })),
+    ...dividerBuffers.map((input, index) => ({
+      input,
+      left: dividerRectangles[index].left,
+      top: dividerRectangles[index].top,
+    })),
+    ...sourceBuffers.map((source, index) => ({
+      input: source.data,
+      left: cells[index].left + Math.floor((cells[index].width - source.info.width) / 2),
+      top: cells[index].top + Math.floor((cells[index].height - source.info.height) / 2),
+    })),
+  ];
+  const output = await sharp({
+    create: {
+      width: spec.width,
+      height: spec.height,
+      channels: 4,
+      background: spec.identityPolicy.background,
+    },
+  }).composite(composites)
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toBuffer();
+  const metadata = await sharp(output).metadata();
+  if (metadata.width !== spec.width || metadata.height !== spec.height || metadata.format !== "png") {
+    throw new Error(`${spec.id} 원본 근거 보드 규격을 확인하지 못했습니다.`);
+  }
+  return output;
+}
+
 export async function renderMissingIdentityEvidence(spec: IdentityAssetSpec) {
   const digest = createHash("sha256").update(`missing-evidence:${spec.id}`).digest();
   const frameWidth = Math.round(spec.width * (0.46 + (digest[0] % 13) / 100));

@@ -1,4 +1,5 @@
 import Foundation
+import CoreImage
 import Vision
 
 private let maximumReferenceImages = 12
@@ -86,11 +87,36 @@ func recognizedLines(at path: String) throws -> [String] {
     request.usesLanguageCorrection = false
     request.recognitionLanguages = ["ko-KR", "en-US", "ja-JP", "zh-Hant"]
     request.minimumTextHeight = 0.010
-    try VNImageRequestHandler(url: URL(fileURLWithPath: path), options: [:]).perform([request])
-    return (request.results ?? []).compactMap { observation in
+    let barcodeRequest = VNDetectBarcodesRequest()
+    let imageURL = URL(fileURLWithPath: path)
+    try VNImageRequestHandler(url: imageURL, options: [:]).perform([request, barcodeRequest])
+    let textLines = (request.results ?? []).compactMap { observation in
         observation.topCandidates(1).first?.string
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }.filter { !$0.isEmpty }
+    var barcodePayloads = Set<String>((barcodeRequest.results ?? []).compactMap { observation -> String? in
+        guard let payload = observation.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              payload.count >= 8 else { return nil }
+        return payload
+    })
+    if let source = CIImage(contentsOf: imageURL) {
+        for quarterTurns in 1...3 {
+            let orientedRequest = VNDetectBarcodesRequest()
+            let angle = CGFloat(quarterTurns) * .pi / 2
+            let rotated = source.transformed(by: CGAffineTransform(rotationAngle: angle))
+            let normalized = rotated.transformed(
+                by: CGAffineTransform(translationX: -rotated.extent.minX, y: -rotated.extent.minY)
+            )
+            let handler = VNImageRequestHandler(ciImage: normalized, options: [:])
+            guard (try? handler.perform([orientedRequest])) != nil else { continue }
+            for observation in orientedRequest.results ?? [] {
+                guard let payload = observation.payloadStringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      payload.count >= 8 else { continue }
+                barcodePayloads.insert(payload)
+            }
+        }
+    }
+    return textLines + barcodePayloads.sorted()
 }
 
 func matches(_ pattern: String, in value: String) -> [String] {
