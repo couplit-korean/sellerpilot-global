@@ -1,15 +1,41 @@
-import { z } from "zod";
-import { aiGeneratedAssetIds } from "./ai-generated-assets";
+import { z, type RefinementCtx } from "zod";
+import { aiDetailAssetIds, aiGeneratedAssetIds } from "./ai-generated-assets";
 import { productEditSchema, productIntakeSchema, sourcePreservingProductImageSpecSchema } from "./product-intake";
+import {
+  hasDirectIntakeEvidence,
+  hasNegatedHealthFunctionalFoodSignal,
+  hasPositiveHealthFunctionalFoodEvidence,
+  hasPrescriptiveIntakeInstruction,
+  hasUnsupportedGeneralFoodEfficacyClaim,
+  isGeneralFoodClassification,
+} from "./product-classification";
 import { maximumStudioJobSourceBytes } from "./studio-source-photo-policy";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+const detailImageAssetSchema = z.enum(aiDetailAssetIds);
+const masterDetailSectionTypes = ["benefit", "story", "howto", "proof", "spec", "caution", "comparison", "faq", "notice"] as const;
+const localizedDetailSectionTypes = ["overview", "feature", "howto", "spec", "routine", "contents", "care", "proof"] as const;
+const productClassificationSchema = z.object({
+  displayName: z.string().min(1).max(120),
+  verificationStatus: z.enum(["verified", "needs-review"]),
+  evidence: z.string().min(10).max(500),
+  isHealthFunctionalFood: z.boolean().nullable(),
+}).superRefine((value, context) => {
+  if (value.verificationStatus === "needs-review" && value.isHealthFunctionalFood !== null) {
+    context.addIssue({ code: "custom", path: ["isHealthFunctionalFood"], message: "추가 확인 상태에서는 건강기능식품 여부를 null로 유지해야 합니다." });
+  }
+  if (value.verificationStatus === "verified" && value.isHealthFunctionalFood === null) {
+    context.addIssue({ code: "custom", path: ["isHealthFunctionalFood"], message: "확정 상태에서는 건강기능식품 여부가 boolean이어야 합니다." });
+  }
+});
 
 const localizedDetailSectionSchema = z.object({
-  type: z.enum(["overview", "feature", "howto", "spec"]),
-  heading: z.string().min(1).max(100),
-  body: z.string().min(1).max(500),
-  imageAsset: z.enum(["detail-overview", "detail-feature", "detail-use", "detail-package"]),
+  type: z.enum(localizedDetailSectionTypes),
+  buyerQuestion: z.string().min(8).max(180),
+  evidence: z.string().min(10).max(500),
+  heading: z.string().min(4).max(100),
+  body: z.string().min(60).max(700),
+  imageAsset: detailImageAssetSchema,
   imageAltText: z.string().min(1).max(180),
 });
 
@@ -22,7 +48,8 @@ const localizedListingSchema = z.object({
   description: z.string().min(1).max(2_000),
   keywords: z.array(z.string().min(1).max(80)).min(3).max(10),
   thumbnailAltText: z.string().min(1).max(180),
-  detailSections: z.array(localizedDetailSectionSchema).length(4),
+  classification: productClassificationSchema,
+  detailSections: z.array(localizedDetailSectionSchema).length(8),
 });
 
 const nullableResearchText = (maximum: number) => z.string().trim().min(1).max(maximum).nullable();
@@ -144,24 +171,41 @@ export const studioCoreSchema = z.object({
   product: z.object({
     name: z.string().min(1).max(160),
     category: z.string().min(1).max(120),
+    classification: productClassificationSchema,
     oneLine: z.string().min(1).max(240),
     targetCustomer: z.string().min(1).max(240),
-    features: z.array(z.string().min(1).max(240)).min(3).max(5),
-    cautions: z.array(z.string().min(1).max(320)).min(1).max(4),
+    features: z.array(z.string().min(1).max(240)).min(4).max(8),
+    cautions: z.array(z.string().min(1).max(320)).min(2).max(8),
   }),
   design: z.object({
     themeName: z.string().min(1).max(100),
+    creativeStrategy: z.object({
+      designArchetype: z.enum(["proof-led", "problem-solution", "routine-led", "comparison-led", "material-led", "fit-guide", "gift-story", "spec-first"]),
+      purchaseDecision: z.string().min(1).max(300),
+      contentDensity: z.enum(["long", "deep-dive"]),
+      targetSectionCount: z.number().int().min(16).max(20),
+      lengthRationale: z.string().min(1).max(400),
+      differentiationKey: z.string().min(1).max(300),
+      artDirection: z.string().min(1).max(600),
+      motionPolicy: z.literal("static-first"),
+    }),
     palette: z.object({ primary: hex, accent: hex, surface: hex, text: hex }),
     heroCopy: z.string().min(1).max(160),
     heroSubcopy: z.string().min(1).max(240),
     cta: z.string().min(1).max(80),
     sections: z.array(z.object({
-      type: z.enum(["benefit", "story", "howto", "proof", "spec", "caution"]),
+      type: z.enum(masterDetailSectionTypes),
+      buyerQuestion: z.string().min(8).max(160),
+      evidence: z.string().min(10).max(500),
       eyebrow: z.string().min(1).max(80),
       title: z.string().min(1).max(160),
-      body: z.string().min(1).max(800),
-      points: z.array(z.string().min(1).max(240)).min(2).max(4),
-    })).min(5).max(7),
+      body: z.string().min(160).max(1_100),
+      points: z.array(z.string().min(1).max(240)).min(3).max(6),
+      layout: z.enum(["split", "full-bleed", "cards", "steps", "spec-grid", "editorial"]),
+      imageAsset: z.union([z.literal("none"), detailImageAssetSchema]),
+      visualDirection: z.string().min(10).max(500),
+      motion: z.enum(["none", "reveal", "stagger"]),
+    })).min(16).max(20),
   }),
   thumbnail: z.object({
     headline: z.string().min(1).max(120),
@@ -218,10 +262,13 @@ export function normalizeStudioLocalizedKeywordCoverage(value: unknown): unknown
       listing.title,
       listing.shortDescription,
       listing.description,
+      typeof listing.classification === "object" && listing.classification
+        ? (listing.classification as Record<string, unknown>).displayName
+        : undefined,
       ...detailSections.flatMap((section) => {
         if (!section || typeof section !== "object" || Array.isArray(section)) return [];
         const detail = section as Record<string, unknown>;
-        return [detail.heading, detail.body];
+        return [detail.buyerQuestion, detail.heading, detail.body, detail.evidence];
       }),
     ].filter((text): text is string => typeof text === "string").join(" ").toLocaleLowerCase();
     if (listing.keywords.some((keyword) => searchableCopy.includes(keyword.toLocaleLowerCase()))) return entry;
@@ -267,17 +314,6 @@ const requiredLocalizedMarkets = {
   "temu:KR": "ko-KR",
 } as const;
 
-function localizedText(listing: z.infer<typeof localizedListingSchema>) {
-  return [
-    listing.title,
-    listing.shortDescription,
-    listing.description,
-    ...listing.keywords,
-    listing.thumbnailAltText,
-    ...listing.detailSections.flatMap((section) => [section.heading, section.body, section.imageAltText]),
-  ].join(" ");
-}
-
 function hasExpectedScript(locale: string, value: string) {
   if (locale === "ko-KR") return /\p{Script=Hangul}/u.test(value);
   if (locale === "ja-JP") return /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(value);
@@ -289,7 +325,136 @@ function hasExpectedScript(locale: string, value: string) {
   return /[A-Za-z]/u.test(value);
 }
 
+function meaningfulTokens(value: string) {
+  return new Set(value.toLocaleLowerCase().match(/[가-힣]{2,}|[a-z0-9]{3,}/gu) ?? []);
+}
+
+function tokenOverlapRatio(left: Set<string>, right: Set<string>) {
+  if (!left.size || !right.size) return { shared: 0, ratio: 0 };
+  let shared = 0;
+  for (const token of left) if (right.has(token)) shared += 1;
+  return { shared, ratio: shared / Math.min(left.size, right.size) };
+}
+
+function validateGeneralFoodClaim(
+  context: RefinementCtx,
+  path: Array<string | number>,
+  copy: string,
+  evidence?: string,
+) {
+  if (hasUnsupportedGeneralFoodEfficacyClaim(copy)) {
+    context.addIssue({ code: "custom", path, message: "일반식품에는 건강기능식품 효능·질병 예방 표현을 사용할 수 없습니다." });
+  }
+  if (hasPrescriptiveIntakeInstruction(copy) && !hasDirectIntakeEvidence(copy, evidence)) {
+    context.addIssue({ code: "custom", path, message: "일반식품 섭취량은 동일 수치가 있는 라벨·제조사 근거와 함께 제시해야 합니다." });
+  }
+}
+
 export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("cli") }).superRefine((value, context) => {
+  const classificationSignals = [
+    value.product.category,
+    value.product.classification.displayName,
+    ...value.product.features,
+  ].join(" ");
+  if (value.product.classification.isHealthFunctionalFood === true) {
+    if (/당류가공품/.test(classificationSignals)
+      || hasNegatedHealthFunctionalFoodSignal(classificationSignals)
+      || hasNegatedHealthFunctionalFoodSignal(value.product.classification.evidence)) {
+      context.addIssue({ code: "custom", path: ["product", "classification"], message: "일반식품 표시와 건강기능식품 분류를 동시에 사용할 수 없습니다." });
+    }
+    if (!hasPositiveHealthFunctionalFoodEvidence(value.product.classification.evidence)) {
+      context.addIssue({ code: "custom", path: ["product", "classification", "evidence"], message: "건강기능식품 분류에는 실물 마크·기능정보·인정번호 중 확인 근거가 필요합니다." });
+    }
+  } else if (/(?:건강\s*기능\s*식품|health\s+functional\s+food)/iu.test(value.product.classification.displayName)
+    && !hasNegatedHealthFunctionalFoodSignal(value.product.classification.displayName)) {
+    context.addIssue({ code: "custom", path: ["product", "classification", "displayName"], message: "건강기능식품이 아닌 상품에 건강기능식품 분류명을 사용할 수 없습니다." });
+  }
+  const generalFood = value.product.classification.isHealthFunctionalFood !== true
+    && isGeneralFoodClassification(classificationSignals);
+  if (generalFood) {
+    const unsupportedProductClaims = [
+      ["oneLine", value.product.oneLine],
+      ["targetCustomer", value.product.targetCustomer],
+      ...value.product.features.map((feature, index) => [`features.${index}`, feature] as const),
+      ["heroCopy", value.design.heroCopy],
+      ["heroSubcopy", value.design.heroSubcopy],
+    ] as const;
+    for (const [field, copy] of unsupportedProductClaims) {
+      validateGeneralFoodClaim(context, field.startsWith("features.")
+        ? ["product", "features", Number(field.split(".")[1])]
+        : field.startsWith("hero")
+          ? ["design", field]
+          : ["product", field], copy);
+    }
+  }
+
+  if (value.design.sections.length !== value.design.creativeStrategy.targetSectionCount) {
+    context.addIssue({ code: "custom", path: ["design", "creativeStrategy", "targetSectionCount"], message: "상세페이지 목표 섹션 수와 실제 섹션 수가 일치해야 합니다." });
+  }
+  const assignedAssets = value.design.sections.map((section) => section.imageAsset).filter((asset) => asset !== "none");
+  const requiredAssets = [...aiDetailAssetIds];
+  if (requiredAssets.length !== 12
+    || assignedAssets.length !== requiredAssets.length
+    || new Set(assignedAssets).size !== requiredAssets.length
+    || requiredAssets.some((asset) => !assignedAssets.includes(asset as typeof assignedAssets[number]))) {
+    context.addIssue({ code: "custom", path: ["design", "sections"], message: "상세 이미지 12종은 서로 다른 구매 질문에 정확히 한 번씩 배정해야 합니다." });
+  }
+  if (new Set(value.design.sections.map((section) => section.layout)).size < 5) {
+    context.addIssue({ code: "custom", path: ["design", "sections"], message: "긴 상세페이지는 최소 5가지 서로 다른 레이아웃을 사용해야 합니다." });
+  }
+  value.design.sections.forEach((section, index) => {
+    if (index > 0 && section.layout === value.design.sections[index - 1].layout) {
+      context.addIssue({ code: "custom", path: ["design", "sections", index, "layout"], message: "같은 상세 레이아웃을 연속으로 반복할 수 없습니다." });
+    }
+    if (generalFood) {
+      validateGeneralFoodClaim(
+        context,
+        ["design", "sections", index],
+        [section.title, section.body, ...section.points].join(" "),
+        section.evidence,
+      );
+    }
+  });
+  for (const requiredType of masterDetailSectionTypes) {
+    if (!value.design.sections.some((section) => section.type === requiredType)) {
+      context.addIssue({ code: "custom", path: ["design", "sections"], message: `${requiredType} 구매정보 섹션이 필요합니다.` });
+    }
+  }
+
+  const seenDetailCopy = new Map<string, string>();
+  value.design.sections.forEach((section, index) => {
+    const fields = [
+      ["buyerQuestion", section.buyerQuestion],
+      ["evidence", section.evidence],
+      ["title", section.title],
+      ["body", section.body],
+      ...section.points.map((point, pointIndex) => [`points.${pointIndex}`, point]),
+    ] as const;
+    for (const [field, copy] of fields) {
+      const normalized = copy.toLocaleLowerCase().replace(/[\p{P}\p{S}\s]+/gu, "");
+      const previous = seenDetailCopy.get(normalized);
+      if (normalized.length >= 8 && previous) {
+        context.addIssue({ code: "custom", path: ["design", "sections", index, field], message: `상세페이지 내용이 ${previous}와 중복됩니다.` });
+      } else if (normalized.length >= 8) {
+        seenDetailCopy.set(normalized, `sections.${index}.${field}`);
+      }
+    }
+  });
+  const claimTokenSets = value.design.sections.map((section) => meaningfulTokens([section.title, section.body, ...section.points].join(" ")));
+  const questionTokenSets = value.design.sections.map((section) => meaningfulTokens(section.buyerQuestion));
+  for (let current = 1; current < value.design.sections.length; current += 1) {
+    for (let previous = 0; previous < current; previous += 1) {
+      const claims = tokenOverlapRatio(claimTokenSets[current], claimTokenSets[previous]);
+      if (claims.shared >= 6 && claims.ratio >= 0.68) {
+        context.addIssue({ code: "custom", path: ["design", "sections", current], message: `sections.${previous}와 핵심 주장·본문의 의미 중복이 너무 큽니다.` });
+      }
+      const questions = tokenOverlapRatio(questionTokenSets[current], questionTokenSets[previous]);
+      if (questions.shared >= 3 && questions.ratio >= 0.75) {
+        context.addIssue({ code: "custom", path: ["design", "sections", current, "buyerQuestion"], message: `sections.${previous}와 같은 구매 질문을 반복합니다.` });
+      }
+    }
+  }
+
   const received = new Set(value.localizedListings.map((listing) => `${listing.channel}:${listing.market}`));
   for (const required of Object.keys(requiredLocalizedMarkets)) {
     if (!received.has(required)) context.addIssue({ code: "custom", path: ["localizedListings"], message: `${required} 번역이 필요합니다.` });
@@ -301,23 +466,63 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
     if (expectedLocale && listing.locale !== expectedLocale) {
       context.addIssue({ code: "custom", path: ["localizedListings", index, "locale"], message: `${key}의 locale은 ${expectedLocale}여야 합니다.` });
     }
-    const combined = localizedText(listing);
-    if (expectedLocale !== "ko-KR" && /\p{Script=Hangul}/u.test(combined)) {
-      context.addIssue({ code: "custom", path: ["localizedListings", index], message: `${key} 현지화 문안에 한국어가 남아 있습니다.` });
+    if (listing.classification.isHealthFunctionalFood !== value.product.classification.isHealthFunctionalFood
+      || listing.classification.verificationStatus !== value.product.classification.verificationStatus) {
+      context.addIssue({ code: "custom", path: ["localizedListings", index, "classification"], message: `${key} 분류 상태는 마스터 상품 분류와 일치해야 합니다.` });
     }
-    if (!hasExpectedScript(expectedLocale ?? listing.locale, combined)) {
-      context.addIssue({ code: "custom", path: ["localizedListings", index], message: `${key} 문안에 ${expectedLocale ?? listing.locale} 언어 문자가 확인되지 않습니다.` });
+    const locale = expectedLocale ?? listing.locale;
+    const localizedFields: Array<[Array<string | number>, string]> = [
+      [["title"], listing.title],
+      [["shortDescription"], listing.shortDescription],
+      [["description"], listing.description],
+      [["keywords"], listing.keywords.join(" ")],
+      [["thumbnailAltText"], listing.thumbnailAltText],
+      [["classification", "displayName"], listing.classification.displayName],
+      [["classification", "evidence"], listing.classification.evidence],
+      ...listing.detailSections.flatMap((section, sectionIndex): Array<[Array<string | number>, string]> => [
+        [["detailSections", sectionIndex, "buyerQuestion"], section.buyerQuestion],
+        [["detailSections", sectionIndex, "evidence"], section.evidence],
+        [["detailSections", sectionIndex, "heading"], section.heading],
+        [["detailSections", sectionIndex, "body"], section.body],
+        [["detailSections", sectionIndex, "imageAltText"], section.imageAltText],
+      ]),
+    ];
+    for (const [fieldPath, fieldValue] of localizedFields) {
+      if (locale !== "ko-KR" && /\p{Script=Hangul}/u.test(fieldValue)) {
+        context.addIssue({ code: "custom", path: ["localizedListings", index, ...fieldPath], message: `${key} 현지화 필드에 한국어가 남아 있습니다.` });
+      }
+      if (!hasExpectedScript(locale, fieldValue)) {
+        context.addIssue({ code: "custom", path: ["localizedListings", index, ...fieldPath], message: `${key} 현지화 필드에 ${locale} 언어 문자가 확인되지 않습니다.` });
+      }
     }
     const sectionTypes = new Set(listing.detailSections.map((section) => section.type));
     const imageAssets = new Set(listing.detailSections.map((section) => section.imageAsset));
-    if (sectionTypes.size !== 4 || imageAssets.size !== 4) {
-      context.addIssue({ code: "custom", path: ["localizedListings", index, "detailSections"], message: `${key} 상세 섹션 유형과 이미지 역할은 중복 없이 4개여야 합니다.` });
+    if (sectionTypes.size !== localizedDetailSectionTypes.length || imageAssets.size !== localizedDetailSectionTypes.length) {
+      context.addIssue({ code: "custom", path: ["localizedListings", index, "detailSections"], message: `${key} 상세 섹션 유형과 이미지 역할은 중복 없이 8개여야 합니다.` });
+    }
+    const localizedRequiredAssets = ["detail-overview", "detail-feature", "detail-use", "detail-package", "detail-routine", "detail-contents"] as const;
+    if (localizedRequiredAssets.some((asset) => !imageAssets.has(asset))) {
+      context.addIssue({ code: "custom", path: ["localizedListings", index, "detailSections"], message: `${key}에는 전체·특징·사용·패키지·루틴·구성 이미지가 반드시 포함되어야 합니다.` });
+    }
+    if (generalFood) {
+      for (const [field, copy] of [["title", listing.title], ["shortDescription", listing.shortDescription], ["description", listing.description]] as const) {
+        validateGeneralFoodClaim(context, ["localizedListings", index, field], copy);
+      }
+      listing.detailSections.forEach((section, sectionIndex) => {
+        validateGeneralFoodClaim(
+          context,
+          ["localizedListings", index, "detailSections", sectionIndex],
+          [section.heading, section.body].join(" "),
+          section.evidence,
+        );
+      });
     }
     const searchableCopy = [
       listing.title,
       listing.shortDescription,
       listing.description,
-      ...listing.detailSections.flatMap((section) => [section.heading, section.body]),
+      listing.classification.displayName,
+      ...listing.detailSections.flatMap((section) => [section.buyerQuestion, section.heading, section.body, section.evidence]),
     ].join(" ").toLocaleLowerCase();
     if (!listing.keywords.some((keyword) => searchableCopy.includes(keyword.toLocaleLowerCase()))) {
       context.addIssue({ code: "custom", path: ["localizedListings", index, "keywords"], message: `${key} SEO 키워드는 제목·설명·상세본문에 자연스럽게 포함되어야 합니다.` });

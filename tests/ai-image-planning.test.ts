@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
-import { AI_ASSET_PROMPT_VERSION, buildAssetImagePrompt, requiresSourceIdentityProtection, selectAssetReferenceIndexes } from "../lib/ai-image-planning";
+import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import {
+  AI_ASSET_PROMPT_VERSION,
+  buildAssetImagePrompt,
+  requiresSourceIdentityProtection,
+  resolveProductIdentityBackgroundContract,
+  resolveProductSettingShot,
+  selectAssetReferenceIndexes,
+} from "../lib/ai-image-planning";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import { buildProductSettingShotPlan, settingShotAssetIds } from "../lib/product-setting-shots";
 import {
@@ -30,6 +37,7 @@ const result: ProductStudioResult = {
   product: {
     name: "White ceramic mug",
     category: "Drinkware",
+    classification: { displayName: "일반상품", verificationStatus: "verified", evidence: "원본 상품 사진", isHealthFunctionalFood: false },
     oneLine: "A plain white ceramic mug.",
     targetCustomer: "Coffee drinkers",
     features: ["Ceramic body", "Handle", "White finish"],
@@ -37,6 +45,16 @@ const result: ProductStudioResult = {
   },
   design: {
     themeName: "Quiet tableware",
+    creativeStrategy: {
+      designArchetype: "proof-led",
+      purchaseDecision: "Confirm the visible material, form and included item.",
+      contentDensity: "long",
+      targetSectionCount: 16,
+      lengthRationale: "Each section answers a different purchase question.",
+      differentiationKey: "Visible white ceramic form",
+      artDirection: "Source-faithful quiet tableware photography",
+      motionPolicy: "static-first",
+    },
     palette: { primary: "#262626", accent: "#b7895b", surface: "#f6f2ed", text: "#171717" },
     heroCopy: "A calm coffee moment",
     heroSubcopy: "A white ceramic mug for daily drinks.",
@@ -54,16 +72,26 @@ test("each detail image selects the uploaded views that match its factual role",
   assert.deepEqual(selectAssetReferenceIndexes(sourceSpecs, "detail-use", sourceSpecs.length), [0, 1, 3, 4, 9, 2]);
 });
 
-test("the four detail slots receive visibly distinct scene and camera contracts", () => {
+test("the sixteen assets keep twelve mutually distinct detail roles and claim-scoped paths", () => {
   const detailPresets = aiGeneratedAssetSpecs.filter((asset) => asset.role === "detail");
   const prompts = detailPresets.map((preset) => buildAssetImagePrompt(result, `/tmp/${preset.file}`, preset, ["main", ...preset.referenceRoles]));
-  assert.equal(new Set(prompts).size, 4);
+  assert.equal(aiGeneratedAssetSpecs.length, 16);
+  assert.equal(detailPresets.length, 12);
+  assert.equal(new Set(aiGeneratedAssetSpecs.map((asset) => asset.id)).size, 16);
+  assert.equal(new Set(aiGeneratedAssetSpecs.map((asset) => asset.file)).size, 16);
+  assert.equal(new Set(prompts).size, 12);
   assert.ok(prompts.every((prompt) => prompt.includes(AI_ASSET_PROMPT_VERSION)));
-  assert.match(prompts[0], /environmental overview camera/);
+  assert.ok(prompts.every((prompt) => prompt.includes("all sixteen are mutually exclusive")));
+  assert.ok(prompts.every((prompt) => prompt.includes("Label fidelity:")));
+  assert.match(prompts[0], /high rear overview camera/);
   assert.match(prompts[1], /direct crop from the verified source view/);
-  assert.match(prompts[2], /medium environmental camera/);
+  assert.match(prompts[2], /table-level camera/);
   assert.match(prompts[3], /direct crop from the selected supplied evidence view/);
   assert.ok(prompts.every((prompt) => prompt.includes("중립적인 상업 사진")), "unknown categories must not fall back to skincare styling");
+  const hero = aiGeneratedAssetSpecs[0];
+  assert.equal(aiGeneratedAssetPath("job-id", hero, "claim-token"), "results/job-id/claims/claim-token/hero.png");
+  assert.equal(aiGeneratedAssetPath("job-id", hero), "results/job-id/hero.png");
+  assert.ok(aiGeneratedAssetSpecs.every((asset) => asset.identityPolicy.mode && asset.shotClass && asset.mustDifferFrom.length > 0));
 });
 
 test("food use imagery selects a preparation or use shot instead of package quantity", () => {
@@ -75,7 +103,7 @@ test("food use imagery selects a preparation or use shot instead of package quan
   assert.doesNotMatch(prompt, /Required shot for this slot: 구성 수량/);
 });
 
-test("cereal generation assigns four recognizably different real setting shots", () => {
+test("cereal generation assigns eight recognizably different real setting shots", () => {
   const cerealResult = { ...result, product: { ...result.product, category: "식품", name: "첵스초코 초코 시리얼" } };
   const prompts = settingShotAssetIds.map((assetId) => {
     const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
@@ -83,7 +111,7 @@ test("cereal generation assigns four recognizably different real setting shots",
     return buildAssetImagePrompt(cerealResult, `/tmp/${preset.file}`, preset, ["main", "front"]);
   });
   const assignments = prompts.map((prompt) => prompt.match(/^Mandatory product-specific setting: (.+)$/m)?.[1] ?? "");
-  assert.equal(new Set(assignments).size, 4);
+  assert.equal(new Set(assignments).size, 8);
   assert.ok(assignments.every(Boolean));
   assert.match(assignments[0], /아침 식탁/);
   assert.match(assignments[1], /주방.*조리대/);
@@ -91,12 +119,16 @@ test("cereal generation assigns four recognizably different real setting shots",
   assert.match(assignments[3], /거실 소파/);
   assert.match(assignments[3], /창문·주방·다이닝 가구가 보이지 않는/);
   assert.match(assignments[3], /저녁/);
+  assert.match(assignments[4], /현관.*준비 콘솔/);
+  assert.match(assignments[5], /독립형 아일랜드/);
+  assert.match(assignments[6], /서랍형 건식 식품 수납장/);
+  assert.match(assignments[7], /홈오피스 창가 벽감/);
   assert.ok(prompts.every((prompt) => prompt.includes("A colored wall, geometric panel, gradient or pedestal is not a setting shot.")));
   assert.ok(prompts.every((prompt) => prompt.includes("Mandatory self-QA before finishing:")));
   assert.ok(prompts.every((prompt) => prompt.includes("30–45% of the frame")));
 });
 
-test("all nine production product groups receive four distinct setting-shot dimensions", () => {
+test("all nine production product groups receive eight distinct six-dimensional setting-shot contracts", () => {
   const categories = [
     ["스킨케어", "beauty-skincare", "보습 스킨케어 크림"],
     ["뷰티도구", "beauty-tools", "메이크업 브러시 세트"],
@@ -111,20 +143,39 @@ test("all nine production product groups receive four distinct setting-shot dime
   for (const [label, category, productText] of categories) {
     const settingPlan = buildProductSettingShotPlan(category, productText);
     const shots = Object.values(settingPlan);
-    assert.equal(shots.length, 4);
-    for (const key of ["location", "moment", "surface", "supportingObjects", "staging"] as const) {
-      assert.equal(new Set(shots.map((item) => item[key])).size, 4, `${label} must use four different ${key} values`);
+    assert.equal(shots.length, 8);
+    for (const key of ["location", "moment", "surface", "supportingObjects", "staging", "camera"] as const) {
+      assert.equal(new Set(shots.map((item) => item[key])).size, 8, `${label} must use eight different ${key} values`);
+      assert.equal(new Set(shots.map((item) => item.separation[key])).size, 8, `${label} must use eight different ${key} semantic keys`);
     }
   }
 });
 
-test("catalog and factual inspection slots stay separate from setting-shot slots", () => {
-  for (const assetId of ["hero", "square", "detail-feature", "detail-package"] as const) {
+test("catalog and factual inspection slots stay separate from all eight setting-shot slots", () => {
+  for (const assetId of ["hero", "square", "detail-feature", "detail-package", "detail-material", "detail-dimensions", "detail-contents", "detail-care"] as const) {
     const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
     assert.ok(preset);
     const prompt = buildAssetImagePrompt(result, `/tmp/${preset.file}`, preset, ["main", "front"]);
     assert.match(prompt, /Inspection-shot assignment:/);
     assert.doesNotMatch(prompt, /^Mandatory product-specific setting:/m);
+  }
+});
+
+test("supplemental setting shots retain an explicit source-pixel background-only contract", () => {
+  const cerealResult = { ...result, product: { ...result.product, category: "식품", name: "첵스초코 초코 시리얼" } };
+  for (const assetId of ["detail-routine", "detail-scale", "detail-storage", "detail-context"] as const) {
+    const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+    assert.ok(preset);
+    assert.equal(preset.identityPolicy.mode, "source-composite");
+    const setting = resolveProductSettingShot(cerealResult, assetId);
+    assert.ok(setting);
+    const contract = resolveProductIdentityBackgroundContract(setting, assetId);
+    assert.ok(contract);
+    assert.match(contract.location.description, /empty fixed architectural envelope/);
+    const prompt = buildAssetImagePrompt(cerealResult, `/tmp/${assetId}.png`, preset, [], "", "identity-background");
+    assert.match(prompt, /HARD IDENTITY FIREWALL/);
+    assert.match(prompt, /generate only an empty background plate/);
+    assert.doesNotMatch(prompt, /첵스초코/);
   }
 });
 

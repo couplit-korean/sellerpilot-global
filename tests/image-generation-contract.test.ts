@@ -62,8 +62,8 @@ test("all nine product groups enforce six semantic setting-shot boundaries", () 
     const plan = buildProductSettingShotPlan(category, productText);
     assert.deepEqual(Object.keys(plan), settingShotAssetIds);
     for (const dimension of settingShotDimensions) {
-      assert.equal(new Set(Object.values(plan).map((shot) => shot.separation[dimension])).size, 4, `${category}/${productText}/${dimension} semantic key`);
-      assert.equal(new Set(Object.values(plan).map((shot) => shot[dimension])).size, 4, `${category}/${productText}/${dimension} instruction`);
+      assert.equal(new Set(Object.values(plan).map((shot) => shot.separation[dimension])).size, 8, `${category}/${productText}/${dimension} semantic key`);
+      assert.equal(new Set(Object.values(plan).map((shot) => shot[dimension])).size, 8, `${category}/${productText}/${dimension} instruction`);
     }
   }
 });
@@ -89,7 +89,7 @@ test("hero, square, feature and package have mutually exclusive purpose, crop, p
     assert.ok(asset.mustDifferFrom.every((opponent) => opponent !== asset.id));
     const prompt = buildAssetImagePrompt(baseResult, `/tmp/${asset.file}`, asset, ["main", "front", "back", "top"]);
     assert.match(prompt, new RegExp(`Hard shot class: ${asset.shotClass}`));
-    assert.match(prompt, /Series role manifest \(all eight are mutually exclusive\)/);
+    assert.match(prompt, /Series role manifest \(all sixteen are mutually exclusive\)/);
     assert.match(prompt, /Mandatory role self-QA before finishing/);
   }
 
@@ -205,7 +205,14 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /\}\) \?\? front/);
   assert.match(worker, /renderMissingIdentityEvidence\(preset\)/);
   assert.match(worker, /return requiredSettingRoles\.has\(role\)/);
-  assert.match(worker, /sourceRole === "extra" \|\| !allowedSourceRoles\.has\(sourceRole\)/);
+  assert.match(worker, /identitySourceCandidatesForPreset\(identityCutouts, preset\)/);
+  assert.match(worker, /strictLabelEvidenceAssetIds = new Set\(\["detail-feature", "detail-package"\]\)/);
+  assert.match(worker, /sourcePixelEvidencePolicy:[\s\S]*strictLabelEvidenceAssetIds\.has\(preset\.id\)[\s\S]*"strict-label"[\s\S]*"crop"/);
+  assert.match(worker, /!allowedRoleSet\.has\(role\)/);
+  assert.match(worker, /preset\.identityPolicy\.requiresDedicatedRole && !dedicatedEvidenceRoles\.has\(role\)/);
+  assert.match(worker, /buildImageLabelFidelitySwiftArguments\(\{/);
+  assert.match(worker, /imageLabelFidelityGate\.run\(\(\) => runLeaseBoundedProcess\(\s*"\/usr\/bin\/swift"/);
+  assert.match(worker, /evaluateImageLabelFidelityReport\(rawReport,/);
   assert.match(worker, /const dedicatedRoles = new Set\(\["back", "label", "barcode", "left", "right", "top", "bottom"\]\)/);
   assert.match(worker, /outputStats\.nlink !== 1/);
   assert.match(worker, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);

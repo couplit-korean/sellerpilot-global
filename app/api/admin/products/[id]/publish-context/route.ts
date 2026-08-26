@@ -12,7 +12,7 @@ const noteSchema = z.object({
   competitorQuery: z.string().trim().max(500),
   competitorMonitorEnabled: z.boolean(),
 });
-const detailPageBlockTypes = ["HeroBlock", "BenefitBlock", "ImageStoryBlock", "StoryBlock", "CtaBlock"] as const;
+const detailPageBlockTypes = ["HeroBlock", "VerificationRibbonBlock", "BenefitBlock", "ImageStoryBlock", "StoryBlock", "CtaBlock"] as const;
 const detailPageDataSchema = z.object({
   root: z.record(z.string(), z.unknown()),
   content: z.array(z.object({

@@ -121,8 +121,8 @@ export function StyleLearningCenter() {
         <div className="style-learning-impact-grid">
           <article><b>SEO 상품명 · 27개</b><p>채널·국가별 핵심 검색어 순서와 제목 길이 규칙을 적용하고 실제 등록 제목 필드로 전달합니다.</p></article>
           <article><b>상품 설명 · 27개</b><p>모바일 요약, 현지어 설명, 검색 키워드를 생성해 각 채널의 설명·검색 필드에 반영합니다.</p></article>
-          <article><b>상세 텍스트 · 108개</b><p>overview·feature·howto·spec 4개 섹션을 27개 프로필별로 생성해 텍스트와 상세 이미지를 교차 배치합니다.</p></article>
-          <article><b>이미지 SEO · 135개</b><p>대표 27개·상세 108개의 현지어 시각 의미를 사진 생성 프롬프트에 반영합니다. HTML alt 지원 채널에는 대체텍스트로, 미지원 채널에는 이미지 선택·순서 규칙으로 적용합니다.</p></article>
+          <article><b>상세 텍스트 · 216개</b><p>서로 다른 구매 질문·근거를 담은 8개 섹션을 27개 채널·국가 프로필별로 생성해 텍스트와 상세 이미지를 교차 배치합니다.</p></article>
+          <article><b>이미지 SEO · 243개</b><p>대표 27개·상세 216개의 현지어 시각 의미를 사진 생성 프롬프트에 반영합니다. HTML alt 지원 채널에는 대체텍스트로, 미지원 채널에는 이미지 선택·순서 규칙으로 적용합니다.</p></article>
         </div>
       </section>
 

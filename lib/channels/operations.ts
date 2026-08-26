@@ -22,6 +22,7 @@ import {
 } from "./catalog";
 import { qoo10ProductionPlace, qoo10ResultMessage } from "./qoo10";
 import { validateElevenstListingProduct } from "./elevenst-listing";
+import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import {
   listingUpdateRemoteIdentity,
   mergeCoupangListingUpdateBody,
@@ -983,7 +984,11 @@ async function executeQoo10(input: ExecuteInput) {
     const readbackStep = step("GetItemDetailInfo", readback);
     readbackStatus = readbackStep.status;
     readbackImageCount = qoo10ImageCount(qoo10DetailHtml(readback.data.ResultObject));
-    if (readbackStep.ok && expectedDetailImages >= 4 && readbackImageCount >= expectedDetailImages) {
+    if (
+      readbackStep.ok
+      && expectedDetailImages >= marketplaceChannelDetailImageCount
+      && readbackImageCount >= expectedDetailImages
+    ) {
       if (input.operation === "listing.update") {
         updateReadbackStep = listingUpdateReadbackStep("detail-image-readback", readback, input.channel, input.arguments);
         updateReadbackStep.ok = updateReadbackStep.ok && readbackImageCount >= expectedDetailImages;

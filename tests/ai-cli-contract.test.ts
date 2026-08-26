@@ -14,6 +14,7 @@ import {
 } from "../lib/ai-cli-contract";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
+import { hasNegatedHealthFunctionalFoodSignal } from "../lib/product-classification";
 
 const CLAIM_TOKEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -71,47 +72,89 @@ const localized = [
 ] as const;
 
 function validResult() {
+  const sectionBlueprints = [
+    { type: "benefit", buyerQuestion: "What exactly is included in this listing?", evidence: "The main reference image shows one white cup and no saucer or accessory.", eyebrow: "WHAT YOU RECEIVE", title: "One clearly defined cup", body: "The listing contains the single white ceramic espresso cup visible in the supplied image. A saucer, spoon, gift box, and additional cup are not shown and are therefore not presented as included items. This section keeps the purchase quantity separate from any decorative objects that may appear in a marketplace context.", points: ["One visible cup", "No saucer shown", "No accessory assumed"], layout: "cards", imageAsset: "detail-overview", visualDirection: "Show one complete cup alone at a readable three-quarter angle with clear empty space around every edge.", motion: "stagger" },
+    { type: "story", buyerQuestion: "What visible form makes the cup identifiable?", evidence: "The front and side reference views support a compact bowl, white finish, and one curved handle.", eyebrow: "VISIBLE FORM", title: "A compact silhouette with a curved handle", body: "The visible form is defined by a small rounded drinking vessel and a single side handle. Keep the description limited to those observable characteristics instead of assigning an unverified capacity or ergonomic claim. The close view should help a shopper recognize the actual rim, wall, and handle relationship at a glance.", points: ["Rounded vessel profile", "Single curved side handle", "White exterior finish"], layout: "full-bleed", imageAsset: "detail-feature", visualDirection: "Use a tight oblique crop that makes the rim, ceramic surface, and handle connection visibly distinct.", motion: "reveal" },
+    { type: "howto", buyerQuestion: "How is the cup used in an everyday coffee moment?", evidence: "The product category and supplied description identify the object as an espresso cup for home coffee use.", eyebrow: "USE MOMENT", title: "Prepared for a single coffee serving", body: "Place the cup on a stable surface before filling it with a suitable drink. The use scene should communicate ordinary home coffee service without implying heat resistance, dishwasher safety, or a measured serving volume that was not supplied. Buyers should follow their drink and appliance guidance independently of this listing.", points: ["Use on a stable surface", "Confirm drink temperature separately", "Keep the handle accessible"], layout: "split", imageAsset: "detail-use", visualDirection: "Show the cup as the dominant object on a real coffee surface with restrained preparation cues and no unverified accessories.", motion: "reveal" },
+    { type: "proof", buyerQuestion: "Which package and product details can be verified visually?", evidence: "The uploaded views provide the visible product finish and physical outline but do not prove packaging claims.", eyebrow: "REFERENCE CHECK", title: "Only visible details become claims", body: "The white finish, overall vessel shape, and handle can be described because they are visible in the source material. Packaging, barcode, manufacturer marks, and certifications must remain unspecified unless another supplied view confirms them. The evidence panel distinguishes source-backed observations from facts that still need seller documentation.", points: ["Visible shape is usable evidence", "Unseen package data stays unclaimed", "Certifications require a source"], layout: "editorial", imageAsset: "detail-package", visualDirection: "Create a factual inspection view of verified surfaces only; do not invent a retail box, label, barcode, or included item.", motion: "none" },
+    { type: "spec", buyerQuestion: "Which dimensions are confirmed and which still need measurement?", evidence: "No verified height, diameter, weight, or liquid capacity appears in the supplied source material.", eyebrow: "DIMENSION STATUS", title: "Measurements remain a seller checkpoint", body: "Height, rim diameter, base diameter, weight, and liquid capacity should be measured by the seller before publication rather than estimated from the photograph. A technical view may show the observable form and leave space for later values, but it must not render invented numbers, ruler marks, or scale claims.", points: ["Height is not yet supplied", "Capacity needs documentation", "Never estimate from pixels"], layout: "spec-grid", imageAsset: "detail-dimensions", visualDirection: "Use an isometric form inspection with blank annotation space and no numeric dimensions or measurement lines.", motion: "stagger" },
+    { type: "benefit", buyerQuestion: "Where could the cup fit into a simple home coffee routine?", evidence: "The seller description identifies home coffee drinkers as the target customer for this espresso cup.", eyebrow: "ROUTINE FIT", title: "A straightforward place in the coffee setup", body: "The supplied audience description supports a calm home coffee context in which the cup is prepared beside ordinary brewing tools. It does not support claims about professional café performance, a specific brewing machine, or a guaranteed serving ritual. The scene should remain a plausible context rather than a performance promise.", points: ["Home coffee context", "Routine shown without guarantees", "Machine compatibility unverified"], layout: "cards", imageAsset: "detail-routine", visualDirection: "Place the cup in a restrained preparation routine while keeping unverified machines and accessories secondary or absent.", motion: "stagger" },
+    { type: "story", buyerQuestion: "How should shoppers interpret the cup's apparent scale?", evidence: "The photographs reveal relative form but the intake includes no seller-confirmed measurements.", eyebrow: "SCALE CONTEXT", title: "Visual scale without false precision", body: "A familiar and factually safe tabletop cue can provide rough visual context, but it cannot replace seller measurements. The cup should remain the dominant object, and the composition must avoid rulers, printed dimensions, or language that converts perspective into an exact capacity. Buyers should rely on confirmed specifications when those are added.", points: ["Context is only illustrative", "Perspective is not measurement", "Await confirmed specifications"], layout: "full-bleed", imageAsset: "detail-scale", visualDirection: "Use one neutral tabletop reference object for spatial context without suggesting a numeric size or capacity.", motion: "reveal" },
+    { type: "howto", buyerQuestion: "How can the cup be stored between uses?", evidence: "The product is a single handled ceramic vessel, while stacking strength and cabinet dimensions are not documented.", eyebrow: "STORAGE VIEW", title: "Store with the rim and handle protected", body: "Place the cup in a stable location where the rim and handle are not pressed against heavier objects. The listing must not promise stackability, impact resistance, or a particular cabinet fit because those properties were not provided. A storage scene can demonstrate accessible placement while leaving clearance visibly understandable.", points: ["Choose a stable shelf", "Avoid pressure on the handle", "Stackability is not confirmed"], layout: "steps", imageAsset: "detail-storage", visualDirection: "Show a single cup in an accessible shelf position with visible clearance around the rim and handle.", motion: "stagger" },
+    { type: "caution", buyerQuestion: "Which care claims must remain unconfirmed?", evidence: "No dishwasher, microwave, oven, freezer, or cleaning instruction is present in the supplied facts.", eyebrow: "CARE CONFIRMATION", title: "Verify care directions before publishing", body: "Do not add dishwasher-safe, microwave-safe, oven-safe, freezer-safe, or thermal-shock claims without manufacturer evidence. Until care instructions are confirmed, the detail page should identify the relevant physical surfaces only and direct the seller to supply documented cleaning and temperature guidance before those claims appear.", points: ["Do not assume appliance safety", "Request manufacturer guidance", "Avoid thermal-resistance claims"], layout: "spec-grid", imageAsset: "detail-care", visualDirection: "Show the relevant rim and interior surfaces as an inspection view without soap, appliances, or invented care actions.", motion: "none" },
+    { type: "comparison", buyerQuestion: "What does the supplied material fact establish?", evidence: "The seller-confirmed intake identifies ceramic as the product material and the source shows a smooth white surface.", eyebrow: "MATERIAL BOUNDARY", title: "Ceramic is confirmed; performance is not", body: "Ceramic may be stated as the material because it comes from the seller-confirmed intake. That fact alone does not prove a particular glaze formula, scratch resistance, stain resistance, insulation level, or durability rating. The material close-up should therefore focus on the visible finish and edge without suggesting laboratory performance.", points: ["Material: ceramic", "Surface finish is visible", "Durability rating not supplied"], layout: "cards", imageAsset: "detail-material", visualDirection: "Render a macro view of the visible ceramic finish and rim edge without diagrams or performance badges.", motion: "reveal" },
+    { type: "proof", buyerQuestion: "How are the package contents verified for purchase?", evidence: "The intake states one mug, and the main reference shows one cup without any confirmed accessory.", eyebrow: "CONTENTS CHECK", title: "One item, shown once", body: "The package contents should present exactly one cup because that is the seller-confirmed quantity. No saucer, spoon, lid, gift box, or duplicate cup belongs in the contents view unless new evidence is supplied. Showing the physical item once creates a clear reconciliation point between the written intake and the listing image.", points: ["Confirmed quantity: one", "Accessories are excluded", "Duplicates are prohibited"], layout: "editorial", imageAsset: "detail-contents", visualDirection: "Use a factual top-down contents arrangement with the single verified cup shown once and no decorative duplicate.", motion: "none" },
+    { type: "notice", buyerQuestion: "What can the closing lifestyle scene communicate safely?", evidence: "The product category supports an everyday tabletop context but does not establish health or performance outcomes.", eyebrow: "EVERYDAY CONTEXT", title: "A realistic moment without outcome claims", body: "The closing scene may place the cup in an ordinary coffee setting to help shoppers imagine placement and mood. It must not imply improved focus, energy, taste, brewing quality, or any bodily result. The product remains clearly visible while lighting, surface, and props create context that is visually distinct from the hero image.", points: ["Keep the cup clearly visible", "Avoid wellness implications", "Use a distinct environment"], layout: "full-bleed", imageAsset: "detail-context", visualDirection: "Create a wide everyday tabletop context with distinct lighting and no text, people, or outcome symbolism.", motion: "reveal" },
+    { type: "faq", buyerQuestion: "Does the listing confirm microwave or dishwasher use?", evidence: "The seller intake and supplied images contain no appliance-safety or cleaning certification.", eyebrow: "COMMON QUESTION", title: "Appliance compatibility is not yet verified", body: "No. The current evidence does not confirm microwave, dishwasher, oven, or freezer compatibility. Those statements should remain absent until the manufacturer or seller supplies reliable instructions. This answer protects the buyer from treating a common category assumption as a product-specific guarantee.", points: ["Microwave use unverified", "Dishwasher use unverified", "Follow documented instructions"], layout: "split", imageAsset: "none", visualDirection: "Use a concise question-and-answer panel with neutral status markers and no appliance certification icons.", motion: "stagger" },
+    { type: "spec", buyerQuestion: "Which product facts can appear in the specification table today?", evidence: "The seller-confirmed intake supplies the ceramic material, white cup identity, and one-item package contents.", eyebrow: "FACT TABLE", title: "Separate confirmed values from pending fields", body: "The specification table can list the product identity, ceramic material, and quantity of one. Capacity, weight, height, diameters, care compatibility, brand, and origin should be labeled for seller review or omitted until evidence is available. This separation keeps structured marketplace data aligned with the same proof standard as the visual page.", points: ["Identity and material confirmed", "Quantity confirmed as one", "Unknown values stay pending"], layout: "spec-grid", imageAsset: "none", visualDirection: "Create a two-state specification table that visibly separates confirmed entries from fields awaiting seller evidence.", motion: "none" },
+    { type: "comparison", buyerQuestion: "Who fits this listing and who needs more information first?", evidence: "The supplied target customer is a home coffee drinker, while measurements and specialist compatibility remain unverified.", eyebrow: "FIT CHECK", title: "A fit for simple use, not specialist assumptions", body: "This listing can serve shoppers seeking a simple white ceramic espresso cup for a home setting and who can wait for confirmed measurements if size is important. Buyers needing exact machine clearance, commercial service durability, child suitability, or appliance-safe care instructions should request those facts before ordering.", points: ["Fits a simple home context", "Exact clearance needs dimensions", "Specialist requirements need proof"], layout: "cards", imageAsset: "none", visualDirection: "Use balanced fit and needs-confirmation columns without negative stereotypes or exaggerated benefit language.", motion: "stagger" },
+    { type: "caution", buyerQuestion: "What must be checked immediately before an order is placed?", evidence: "The supplied cautions limit the purchase to one cup and identify measurements and care directions as unverified.", eyebrow: "FINAL ORDER CHECK", title: "Confirm quantity, size, and care evidence", body: "Before ordering, verify that one cup is the intended quantity and review seller-confirmed dimensions if fit or capacity matters. Do not assume a saucer or other accessory is included. If microwave, dishwasher, or temperature compatibility affects the decision, obtain the applicable manufacturer guidance before purchase rather than relying on category conventions.", points: ["Purchase quantity is one", "Check confirmed measurements", "Verify required care compatibility"], layout: "editorial", imageAsset: "none", visualDirection: "Finish with a high-contrast three-part checklist covering quantity, measurements, and documented care guidance.", motion: "none" },
+  ] as const;
   return {
     mode: "cli" as const,
     product: {
       name: "White ceramic espresso cup",
       category: "Drinkware",
+      classification: {
+        displayName: "Ceramic drinkware",
+        verificationStatus: "verified" as const,
+        evidence: "Seller-confirmed ceramic material and the supplied product views identify a handled drinking vessel.",
+        isHealthFunctionalFood: false,
+      },
       oneLine: "A compact ceramic cup for espresso.",
       targetCustomer: "Home coffee drinkers",
-      features: ["Ceramic body", "Compact size", "Neutral white finish"],
-      cautions: ["Cup only; saucer is not included."],
+      features: ["Ceramic body", "Compact vessel form", "Neutral white finish", "Single curved handle"],
+      cautions: ["Cup only; saucer is not included.", "Dimensions and appliance compatibility require seller confirmation."],
     },
     design: {
       themeName: "Quiet tableware",
+      creativeStrategy: {
+        designArchetype: "material-led" as const,
+        purchaseDecision: "Whether the visible ceramic form, included quantity, and pending measurements suit a home espresso serving.",
+        contentDensity: "long" as const,
+        targetSectionCount: sectionBlueprints.length,
+        lengthRationale: "A sixteen-section flow covers distinct form, use, specification, evidence, care, comparison, FAQ, and ordering questions without inventing facts.",
+        differentiationKey: "The white ceramic rim-to-handle silhouette is explained through a quiet home coffee inspection story.",
+        artDirection: "Warm side light, pale mineral surfaces, restrained coffee context, and close attention to the white ceramic rim and curved handle.",
+        motionPolicy: "static-first" as const,
+      },
       palette: { primary: "#262626", accent: "#b7895b", surface: "#f6f2ed", text: "#171717" },
       heroCopy: "A calm espresso moment",
       heroSubcopy: "A simple white cup for a daily single shot.",
       cta: "View details",
-      sections: Array.from({ length: 5 }, (_, index) => ({
-        type: "benefit" as const,
-        eyebrow: `Feature ${index + 1}`,
-        title: "Made for a single espresso",
-        body: "A clean ceramic cup with a compact silhouette.",
-        points: ["Ceramic", "Cup only"],
-      })),
+      sections: sectionBlueprints.map((section) => ({ ...section })),
     },
     thumbnail: { headline: "White espresso cup", subline: "Ceramic cup only", badge: "1 piece" },
-    localizedListings: localized.map(([channel, market, locale, copy]) => ({
-      channel,
-      market,
-      locale,
-      title: copy,
-      shortDescription: copy,
-      description: `${copy}. ${copy}.`,
-      keywords: [copy, `${copy} 1`, `${copy} 2`],
-      thumbnailAltText: copy,
-      detailSections: [
-        { type: "overview" as const, heading: copy, body: copy, imageAsset: "detail-overview" as const, imageAltText: copy },
-        { type: "feature" as const, heading: copy, body: copy, imageAsset: "detail-feature" as const, imageAltText: copy },
-        { type: "howto" as const, heading: copy, body: copy, imageAsset: "detail-use" as const, imageAltText: copy },
-        { type: "spec" as const, heading: copy, body: copy, imageAsset: "detail-package" as const, imageAltText: copy },
-      ],
-    })),
+    localizedListings: localized.map(([channel, market, locale, copy]) => {
+      const localizedBody = Array.from({ length: 8 }, () => copy).join(". ");
+      const localizedEvidence = `${copy}. ${copy}.`;
+      return {
+        channel,
+        market,
+        locale,
+        title: copy,
+        shortDescription: copy,
+        description: `${copy}. ${copy}.`,
+        keywords: [copy, `${copy} 1`, `${copy} 2`],
+        thumbnailAltText: copy,
+        classification: {
+          displayName: `${copy} product classification`,
+          verificationStatus: "verified" as const,
+          evidence: `${copy}. ${copy}. Supplied seller evidence.`,
+          isHealthFunctionalFood: false,
+        },
+        detailSections: [
+          { type: "overview" as const, buyerQuestion: `${copy}: overview?`, evidence: localizedEvidence, heading: copy, body: `${localizedBody}. Overview.`, imageAsset: "detail-overview" as const, imageAltText: copy },
+          { type: "feature" as const, buyerQuestion: `${copy}: visible feature?`, evidence: localizedEvidence, heading: copy, body: `${localizedBody}. Feature.`, imageAsset: "detail-feature" as const, imageAltText: copy },
+          { type: "howto" as const, buyerQuestion: `${copy}: safe use?`, evidence: localizedEvidence, heading: copy, body: `${localizedBody}. Use.`, imageAsset: "detail-use" as const, imageAltText: copy },
+          { type: "spec" as const, buyerQuestion: `${copy}: specification?`, evidence: localizedEvidence, heading: copy, body: `${localizedBody}. Specification.`, imageAsset: "detail-package" as const, imageAltText: copy },
+          { type: "routine" as const, buyerQuestion: `${copy}: routine fit?`, evidence: localizedEvidence, heading: copy, body: `${localizedBody}. Routine.`, imageAsset: "detail-routine" as const, imageAltText: copy },
+          { type: "contents" as const, buyerQuestion: `${copy}: included contents?`, evidence: localizedEvidence, heading: copy, body: `${localizedBody}. Contents.`, imageAsset: "detail-contents" as const, imageAltText: copy },
+          { type: "care" as const, buyerQuestion: `${copy}: care status?`, evidence: localizedEvidence, heading: copy, body: `${localizedBody}. Care.`, imageAsset: "detail-care" as const, imageAltText: copy },
+          { type: "proof" as const, buyerQuestion: `${copy}: evidence status?`, evidence: localizedEvidence, heading: copy, body: `${localizedBody}. Evidence.`, imageAsset: "detail-material" as const, imageAltText: copy },
+        ],
+      };
+    }),
     warnings: [],
   };
 }
@@ -121,6 +164,236 @@ test("AI studio contract accepts all 27 exact channel-market locales", () => {
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
 
+test("AI studio contract rejects conflicting health-functional-food classification", () => {
+  const result = validResult();
+  result.product.category = "당류가공품";
+  result.product.classification = {
+    displayName: "건강기능식품",
+    verificationStatus: "verified",
+    evidence: "패키지에 건강기능식품 표시가 있다고 초안에 적히었습니다.",
+    isHealthFunctionalFood: true,
+  };
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /일반식품 표시/);
+});
+
+test("health-functional-food negation recognizes common Korean legal-label wording", () => {
+  const negatedPhrases = [
+    "건강기능식품이 아님",
+    "건강기능식품이 아닌 일반식품",
+    "건강기능식품이 아닙니다",
+    "건강기능식품 아니다",
+    "건강기능식품이 아니며 일반식품입니다",
+    "건강기능식품이 아니오",
+    "건강기능식품 해당 없음",
+    "건강기능식품에 해당하지 않습니다",
+    "건강기능식품 표시가 없습니다",
+    "건강기능식품 마크 없음",
+  ];
+  for (const phrase of negatedPhrases) {
+    assert.equal(hasNegatedHealthFunctionalFoodSignal(phrase), true, phrase);
+    const result = validResult();
+    result.product.category = `정제형 일반식품 · ${phrase}`;
+    result.product.classification = {
+      displayName: "건강기능식품",
+      verificationStatus: "verified",
+      evidence: "후면 라벨의 건강기능식품 표시와 기능정보 표에서 확인했습니다.",
+      isHealthFunctionalFood: true,
+    };
+    result.localizedListings.forEach((listing) => {
+      listing.classification.verificationStatus = "verified";
+      listing.classification.isHealthFunctionalFood = true;
+    });
+    const parsed = cliStudioResultSchema.safeParse(result);
+    assert.equal(parsed.success, false, phrase);
+    assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /일반식품 표시/, phrase);
+  }
+});
+
+test("AI studio contract rejects negative health-functional-food evidence", () => {
+  const result = validResult();
+  result.product.category = "정제형 식품";
+  result.product.classification = {
+    displayName: "건강기능식품",
+    verificationStatus: "verified",
+    evidence: "후면 라벨에는 건강기능식품 표시가 없습니다.",
+    isHealthFunctionalFood: true,
+  };
+  result.localizedListings.forEach((listing) => {
+    listing.classification.verificationStatus = "verified";
+    listing.classification.isHealthFunctionalFood = true;
+  });
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /일반식품 표시|확인 근거/);
+});
+
+test("AI studio contract keeps unknown classification in review state", () => {
+  const result = validResult();
+  result.product.classification = {
+    displayName: "상품 분류 확인 필요",
+    verificationStatus: "verified",
+    evidence: "후면 표시사항 이미지가 제공되지 않아 분류를 확정하지 못했습니다.",
+    isHealthFunctionalFood: null,
+  };
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /확정 상태/);
+});
+
+test("AI studio contract enforces classification status and value in both directions", () => {
+  const unresolved = validResult();
+  unresolved.product.classification = {
+    displayName: "상품 분류 확인 필요",
+    verificationStatus: "needs-review",
+    evidence: "후면 표시사항 이미지가 제공되지 않아 분류를 확정하지 못했습니다.",
+    isHealthFunctionalFood: false,
+  };
+  unresolved.localizedListings.forEach((listing) => {
+    listing.classification.verificationStatus = "needs-review";
+    listing.classification.isHealthFunctionalFood = false;
+  });
+  const invalid = cliStudioResultSchema.safeParse(unresolved);
+  assert.equal(invalid.success, false);
+  assert.match(invalid.error?.issues.map((issue) => issue.message).join("\n") ?? "", /null로 유지/);
+
+  unresolved.product.classification.isHealthFunctionalFood = null;
+  unresolved.localizedListings.forEach((listing) => { listing.classification.isHealthFunctionalFood = null; });
+  const valid = cliStudioResultSchema.safeParse(unresolved);
+  if (!valid.success) assert.fail(JSON.stringify(valid.error.issues, null, 2));
+});
+
+test("AI studio contract rejects short or internally duplicated master detail pages", () => {
+  const shortResult = validResult();
+  shortResult.design.sections.pop();
+  shortResult.design.creativeStrategy.targetSectionCount = shortResult.design.sections.length;
+  const shortParsed = cliStudioResultSchema.safeParse(shortResult);
+  assert.equal(shortParsed.success, false);
+
+  const duplicatedResult = validResult();
+  duplicatedResult.design.sections[1].title = duplicatedResult.design.sections[0].title;
+  const duplicatedParsed = cliStudioResultSchema.safeParse(duplicatedResult);
+  assert.equal(duplicatedParsed.success, false);
+  assert.match(duplicatedParsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /중복/);
+});
+
+test("AI studio contract assigns each master detail image to one unique question", () => {
+  const result = validResult();
+  result.design.sections[1].imageAsset = "detail-overview";
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /정확히 한 번/);
+});
+
+
+test("AI studio contract rejects a mismatched market locale", () => {
+  const result = validResult();
+  result.localizedListings[1].locale = "en-PH";
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /en-SG/);
+});
+
+test("AI studio contract preserves classification status across locales", () => {
+  const result = validResult();
+  result.localizedListings[1].classification.isHealthFunctionalFood = true;
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /마스터 상품 분류와 일치/);
+});
+
+test("AI studio contract rejects Korean residue in localized listings", () => {
+  const result = validResult();
+  result.localizedListings[1].description += " 한국어 문장";
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /한국어/);
+});
+
+test("AI studio contract validates the expected script in every localized detail field", () => {
+  const result = validResult();
+  result.localizedListings[0].detailSections[0].body = "This English-only detail body is deliberately long enough to satisfy the structural minimum while violating the Japanese locale requirement for this individual field.";
+  const detailParsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(detailParsed.success, false);
+  assert.ok(detailParsed.error?.issues.some((issue) => issue.path.join(".") === "localizedListings.0.detailSections.0.body"));
+
+  const coreResult = validResult();
+  coreResult.localizedListings[0].shortDescription = "English-only marketplace summary";
+  const coreParsed = cliStudioResultSchema.safeParse(coreResult);
+  assert.equal(coreParsed.success, false);
+  assert.ok(coreParsed.error?.issues.some((issue) => issue.path.join(".") === "localizedListings.0.shortDescription"));
+});
+
+test("AI studio contract rejects duplicated localized detail image roles", () => {
+  const result = validResult();
+  result.localizedListings[1].detailSections[1].imageAsset = "detail-overview";
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /중복 없이 8개/);
+});
+
+test("AI studio contract rejects disconnected keyword stuffing", () => {
+  const result = validResult();
+  result.localizedListings[1].keywords = ["unrelated alpha", "unrelated beta", "unrelated gamma"];
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /자연스럽게 포함/);
+});
+
+test("general-food contract rejects invented efficacy and intake directions without exact label evidence", () => {
+  const efficacy = validResult();
+  efficacy.product.category = "일반식품";
+  efficacy.product.classification = {
+    displayName: "일반식품",
+    verificationStatus: "verified",
+    evidence: "후면 표시사항에서 일반식품 분류를 확인했습니다.",
+    isHealthFunctionalFood: false,
+  };
+  efficacy.design.sections[0].body += " 이 상품은 면역력 개선과 혈당 조절에 도움을 줍니다.";
+  const efficacyParsed = cliStudioResultSchema.safeParse(efficacy);
+  assert.equal(efficacyParsed.success, false);
+  assert.match(efficacyParsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /효능/);
+
+  const dosage = validResult();
+  dosage.product.category = "일반식품";
+  dosage.product.classification = { ...efficacy.product.classification };
+  dosage.design.sections[2].body += " 하루 2포를 매일 섭취하세요.";
+  const dosageParsed = cliStudioResultSchema.safeParse(dosage);
+  assert.equal(dosageParsed.success, false);
+  assert.match(dosageParsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /섭취량/);
+});
+
+test("general-food contract accepts an exact label-backed intake amount and an explicit no-efficacy statement", () => {
+  const result = validResult();
+  result.product.category = "일반식품";
+  result.product.classification = {
+    displayName: "일반식품",
+    verificationStatus: "verified",
+    evidence: "후면 표시사항에서 일반식품 분류를 확인했습니다.",
+    isHealthFunctionalFood: false,
+  };
+  result.design.sections[2].body += " 후면 라벨에 적힌 섭취방법은 하루 1회 30 g입니다.";
+  result.design.sections[2].evidence += " 후면 라벨의 섭취방법에 하루 1회 30 g으로 표시되어 있습니다.";
+  result.design.sections[11].body += " 이 문구는 면역력을 개선하거나 질병을 예방한다고 표현하지 않습니다.";
+  const parsed = cliStudioResultSchema.safeParse(result);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("general-food guard also rejects invented efficacy inside a localized section", () => {
+  const result = validResult();
+  result.product.category = "General food";
+  result.product.classification = {
+    displayName: "General food",
+    verificationStatus: "verified",
+    evidence: "The supplied rear label identifies the product as a general food.",
+    isHealthFunctionalFood: false,
+  };
+  result.localizedListings[1].detailSections[0].body += " This food improves immunity and lowers blood sugar.";
+  const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.ok(parsed.error?.issues.some((issue) => issue.path.join(".").startsWith("localizedListings.1.detailSections.0")));
+});
 test("AI studio warning limits are normalized deterministically before terminal validation", () => {
   const result = validResult();
   result.warnings = ["  " + "경".repeat(450) + "  ", "   ", "두 번째 경고", "세 번째 경고", "네 번째 경고", "다섯 번째 경고", "여섯 번째 경고"];
@@ -141,38 +414,6 @@ test("AI studio warning truncation never leaves an unpaired UTF-16 surrogate", (
   assert.doesNotMatch(normalized.warnings[0], /[\uD800-\uDBFF]$/);
   const parsed = cliStudioResultSchema.safeParse(normalized);
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
-});
-
-test("AI studio contract rejects a mismatched market locale", () => {
-  const result = validResult();
-  result.localizedListings[1].locale = "en-PH";
-  const parsed = cliStudioResultSchema.safeParse(result);
-  assert.equal(parsed.success, false);
-  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /en-SG/);
-});
-
-test("AI studio contract rejects Korean residue in localized listings", () => {
-  const result = validResult();
-  result.localizedListings[1].description += " 한국어 문장";
-  const parsed = cliStudioResultSchema.safeParse(result);
-  assert.equal(parsed.success, false);
-  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /한국어/);
-});
-
-test("AI studio contract rejects duplicated localized detail image roles", () => {
-  const result = validResult();
-  result.localizedListings[1].detailSections[1].imageAsset = "detail-overview";
-  const parsed = cliStudioResultSchema.safeParse(result);
-  assert.equal(parsed.success, false);
-  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /중복 없이 4개/);
-});
-
-test("AI studio contract rejects disconnected keyword stuffing", () => {
-  const result = validResult();
-  result.localizedListings[1].keywords = ["unrelated alpha", "unrelated beta", "unrelated gamma"];
-  const parsed = cliStudioResultSchema.safeParse(result);
-  assert.equal(parsed.success, false);
-  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /자연스럽게 포함/);
 });
 
 test("AI studio keyword coverage repair derives only a bounded phrase from the existing localized title", () => {
@@ -214,7 +455,6 @@ test("AI studio keyword coverage repair leaves already connected localized copy 
   const result = validResult();
   assert.strictEqual(normalizeStudioLocalizedKeywordCoverage(result), result);
 });
-
 function validRequiredIntake() {
   return {
     researchInput: "https://commons.wikimedia.org/wiki/File:Example.jpg white ceramic mug product reference",
@@ -408,7 +648,7 @@ test("AI worker completion requires the full thumbnail and detail-image set", ()
   const incompletePaths = { ...assetStoragePaths };
   delete incompletePaths["detail-package"];
   assert.equal(workerCompletionSchema.safeParse({ jobId, claimToken: CLAIM_TOKEN, status: "succeeded", result: validResult(), assetStoragePaths: incompletePaths }).success, false);
-  assert.equal(aiGeneratedAssetSpecs.filter((asset) => asset.role === "detail").length, 4);
+  assert.equal(aiGeneratedAssetSpecs.filter((asset) => asset.role === "detail").length, 12);
 });
 
 test("AI worker completion accepts a product research result without generated images", () => {

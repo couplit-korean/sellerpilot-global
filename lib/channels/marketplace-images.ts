@@ -4,13 +4,21 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import sharp from "sharp";
+import { aiDetailAssetIds } from "../ai-generated-assets";
 import type { ActiveChannelKey } from "./catalog";
+import {
+  marketplaceChannelDetailImageCount,
+  marketplaceLocalizedDetailSectionTypes,
+} from "./marketplace-image-contract";
 
 const marketplaceImageBucket = "sellerpilot-marketplace";
 const inputMimeTypes = ["image/jpeg", "image/png", "image/webp"];
 const maxInputBytes = 10 * 1024 * 1024;
 const maxOutputBytes = 3 * 1024 * 1024;
 const outputSize = 1200;
+const detailMaxDimension = 1600;
+
+export type MarketplaceImageNormalizationMode = "gallery-square" | "detail-ratio";
 
 function embeddedIpv4Address(address: string) {
   let normalized = address.toLowerCase().split("%", 1)[0];
@@ -183,14 +191,15 @@ async function downloadImage(sourceUrl: string) {
   return (await downloadMarketplaceImage(sourceUrl)).bytes;
 }
 
-async function normalizedJpeg(source: Buffer) {
+export async function normalizeMarketplaceImageBytes(source: Buffer, mode: MarketplaceImageNormalizationMode) {
   const inputMetadata = await sharp(source, { failOn: "warning", limitInputPixels: 64_000_000 }).metadata();
   if (!inputMetadata.width || !inputMetadata.height) throw new Error("MARKETPLACE_IMAGE_DIMENSIONS_INVALID");
   let output: Uint8Array = new Uint8Array();
   for (const quality of [90, 84, 76, 68]) {
-    output = await sharp(source, { failOn: "warning", limitInputPixels: 64_000_000 })
-      .rotate()
-      .resize(outputSize, outputSize, { fit: "contain", background: "#ffffff" })
+    const pipeline = sharp(source, { failOn: "warning", limitInputPixels: 64_000_000 }).rotate();
+    output = await (mode === "gallery-square"
+      ? pipeline.resize(outputSize, outputSize, { fit: "contain", background: "#ffffff" })
+      : pipeline.resize({ width: detailMaxDimension, height: detailMaxDimension, fit: "inside", withoutEnlargement: true }))
       .flatten({ background: "#ffffff" })
       .jpeg({ quality, progressive: true, mozjpeg: true })
       .toBuffer();
@@ -198,14 +207,21 @@ async function normalizedJpeg(source: Buffer) {
   }
   if (!output.length || output.length > maxOutputBytes) throw new Error("MARKETPLACE_IMAGE_SIZE_INVALID");
   const outputMetadata = await sharp(output).metadata();
-  if (outputMetadata.width !== outputSize || outputMetadata.height !== outputSize || outputMetadata.format !== "jpeg") {
+  const galleryInvalid = mode === "gallery-square" && (outputMetadata.width !== outputSize || outputMetadata.height !== outputSize);
+  const detailInvalid = mode === "detail-ratio" && (
+    !outputMetadata.width
+    || !outputMetadata.height
+    || outputMetadata.width > detailMaxDimension
+    || outputMetadata.height > detailMaxDimension
+  );
+  if (galleryInvalid || detailInvalid || outputMetadata.format !== "jpeg") {
     throw new Error("MARKETPLACE_IMAGE_NORMALIZATION_FAILED");
   }
   return Buffer.from(output);
 }
 
-async function publishNormalizedImage(serviceClient: SupabaseClient, sourceUrl: string) {
-  const normalized = await normalizedJpeg(await downloadImage(sourceUrl));
+async function publishNormalizedImage(serviceClient: SupabaseClient, sourceUrl: string, mode: MarketplaceImageNormalizationMode) {
+  const normalized = await normalizeMarketplaceImageBytes(await downloadImage(sourceUrl), mode);
   await ensureMarketplaceImageBucket(serviceClient);
   const digest = createHash("sha256").update(normalized).digest("hex");
   const objectPath = `normalized/${digest.slice(0, 2)}/${digest}.jpg`;
@@ -229,6 +245,55 @@ function record(value: unknown) {
 
 function strings(value: unknown) {
   return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function boundedText(value: unknown, minimum: number, maximum: number) {
+  if (typeof value !== "string") return false;
+  const text = value.trim();
+  return text.length >= minimum && text.length <= maximum;
+}
+
+function hasCompleteLocalizedDetailSections(assets: Record<string, unknown>) {
+  const classification = record(assets.classification);
+  const verificationStatus = String(classification?.verificationStatus ?? "");
+  const healthFunctionalFood = classification?.isHealthFunctionalFood;
+  if (!classification
+      || !["verified", "needs-review"].includes(verificationStatus)
+      || !boundedText(classification.displayName, 1, 120)
+      || !boundedText(classification.evidence, 10, 500)
+      || (verificationStatus === "verified" && typeof healthFunctionalFood !== "boolean")
+      || (verificationStatus === "needs-review" && healthFunctionalFood !== null)) return false;
+  if (!Array.isArray(assets.localizedDetailSections)
+      || assets.localizedDetailSections.length !== marketplaceChannelDetailImageCount) return false;
+  const sections = assets.localizedDetailSections.map(record);
+  if (sections.some((section) => !section)) return false;
+  const allowedImageRoles = new Set<string>(aiDetailAssetIds);
+  const allowedSectionTypes = new Set<string>(marketplaceLocalizedDetailSectionTypes);
+  const imageRoles = sections.map((section) => String(section?.imageAsset ?? "").trim());
+  const sectionTypes = sections.map((section) => String(section?.type ?? "").trim());
+  const declaredImageRoles = Array.isArray(assets.detailImageRoles)
+    ? assets.detailImageRoles.map((role) => typeof role === "string" ? role.trim() : "")
+    : [];
+  const declaredAltTexts = Array.isArray(assets.detailImageAltTexts)
+    ? assets.detailImageAltTexts
+    : [];
+  const sectionByImageRole = new Map(sections.map((section) => [String(section?.imageAsset ?? "").trim(), section]));
+  return sections.every((section) => Boolean(section)
+      && boundedText(section?.heading, 4, 100)
+      && boundedText(section?.body, 60, 700)
+      && boundedText(section?.buyerQuestion, 8, 180)
+      && boundedText(section?.evidence, 10, 500)
+      && boundedText(section?.imageAltText, 1, 180))
+    && imageRoles.every((role) => allowedImageRoles.has(role))
+    && sectionTypes.every((type) => allowedSectionTypes.has(type))
+    && new Set(imageRoles).size === marketplaceChannelDetailImageCount
+    && new Set(sectionTypes).size === marketplaceChannelDetailImageCount
+    && declaredImageRoles.length === marketplaceChannelDetailImageCount
+    && new Set(declaredImageRoles).size === marketplaceChannelDetailImageCount
+    && declaredImageRoles.every((role) => allowedImageRoles.has(role) && sectionByImageRole.has(role))
+    && declaredAltTexts.length === marketplaceChannelDetailImageCount
+    && declaredAltTexts.every((altText, index) => boundedText(altText, 1, 180)
+      && String(altText).trim() === String(sectionByImageRole.get(declaredImageRoles[index])?.imageAltText ?? "").trim());
 }
 
 function uniqueStrings(values: string[]) {
@@ -290,29 +355,93 @@ function appendDetailImages(value: unknown, urls: string[], altTexts: string[], 
   return injectMarketplaceDetailImages(value, urls, altTexts, roles);
 }
 
+export function buildCoupangMarketplaceContents(
+  currentContentsValue: unknown,
+  localizedSectionsValue: unknown,
+  classificationValue: unknown,
+  detailUrls: string[],
+  detailRoles: string[],
+) {
+  const currentContents = Array.isArray(currentContentsValue) ? currentContentsValue : [];
+  const classification = record(classificationValue);
+  const localizedSections = Array.isArray(localizedSectionsValue)
+    ? localizedSectionsValue.map(record).filter((section): section is Record<string, unknown> => Boolean(section))
+    : [];
+  const currentContentsText = JSON.stringify(currentContents);
+  const classificationValues = [classification?.displayName, classification?.evidence]
+    .map((value) => typeof value === "string" ? value.trim() : "")
+    .filter(Boolean);
+  const evidenceValues = localizedSections.flatMap((section) => [
+    section.heading,
+    section.body,
+    section.buyerQuestion,
+    section.evidence,
+  ]).map((value) => typeof value === "string" ? value.trim() : "").filter(Boolean);
+  const currentContentsPreserveEvidence = [...classificationValues, ...evidenceValues]
+    .every((value) => currentContentsText.includes(value));
+  const classificationHtml = classificationValues.length
+    ? `<section data-sellerpilot-classification="true"><h2>${escapedAttribute(String(classification?.displayName ?? ""))}</h2><p>${escapedAttribute(String(classification?.verificationStatus ?? "needs-review"))}</p><p>${escapedAttribute(String(classification?.evidence ?? ""))}</p></section>`
+    : "";
+  const learnedContents = detailRoles.flatMap((role, index) => {
+    const section = localizedSections.find((candidate) => candidate.imageAsset === role);
+    const heading = typeof section?.heading === "string" ? section.heading.trim() : "";
+    const sectionBody = typeof section?.body === "string" ? section.body.trim() : "";
+    const buyerQuestion = typeof section?.buyerQuestion === "string" ? section.buyerQuestion.trim() : "";
+    const evidence = typeof section?.evidence === "string" ? section.evidence.trim() : "";
+    const sectionHtml = [
+      heading ? `<h2>${escapedAttribute(heading)}</h2>` : "",
+      buyerQuestion ? `<p><strong>구매 전 질문</strong> ${escapedAttribute(buyerQuestion)}</p>` : "",
+      sectionBody ? `<p>${escapedAttribute(sectionBody)}</p>` : "",
+      evidence ? `<p><strong>확인 근거</strong> ${escapedAttribute(evidence)}</p>` : "",
+    ].join("");
+    return [
+      ...(sectionHtml ? [{ contentsType: "TEXT", contentDetails: [{ content: sectionHtml, detailType: "TEXT" }] }] : []),
+      ...(detailUrls[index] ? [{ contentsType: "IMAGE", contentDetails: [{ content: detailUrls[index], detailType: "IMAGE" }] }] : []),
+    ];
+  });
+  const detailImages = detailUrls.map((url) => ({
+    contentsType: "IMAGE",
+    contentDetails: [{ content: url, detailType: "IMAGE" }],
+  }));
+  return currentContentsPreserveEvidence && currentContents.length
+    ? [...currentContents, ...detailImages]
+    : [
+        ...(classificationHtml ? [{ contentsType: "TEXT", contentDetails: [{ content: classificationHtml, detailType: "TEXT" }] }] : []),
+        ...currentContents,
+        ...(learnedContents.length ? learnedContents : detailImages),
+      ];
+}
+
 export async function prepareMarketplaceImages(serviceClient: SupabaseClient, channel: ActiveChannelKey, argumentsValue: Record<string, unknown>) {
   const next = structuredClone(argumentsValue);
   const normalizedBySource = new Map<string, string>();
-  const normalize = async (sourceUrl: string) => {
-    const cached = normalizedBySource.get(sourceUrl);
+  const normalize = async (sourceUrl: string, mode: MarketplaceImageNormalizationMode) => {
+    const cacheKey = `${mode}:${sourceUrl}`;
+    const cached = normalizedBySource.get(cacheKey);
     if (cached) return cached;
-    const outputUrl = await publishNormalizedImage(serviceClient, sourceUrl);
-    normalizedBySource.set(sourceUrl, outputUrl);
+    const outputUrl = await publishNormalizedImage(serviceClient, sourceUrl, mode);
+    normalizedBySource.set(cacheKey, outputUrl);
     return outputUrl;
   };
-  const normalizeList = async (value: unknown, limit: number) => {
+  const normalizeList = async (value: unknown, limit: number, mode: MarketplaceImageNormalizationMode) => {
     const unique = [...new Set(strings(value))].slice(0, limit);
     if (!unique.length) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    return Promise.all(unique.map(normalize));
+    return Promise.all(unique.map((sourceUrl) => normalize(sourceUrl, mode)));
   };
 
   const assets = record(next.sellerpilotAssets);
   delete next.sellerpilotAssets;
-  if (assets && (assets.detailAssetMode !== "dedicated" || new Set(strings(assets.detailImageUrls)).size < 4)) {
+  if (!assets || (
+    assets.detailAssetMode !== "dedicated"
+    || new Set(strings(assets.detailImageUrls)).size < marketplaceChannelDetailImageCount
+    || !hasCompleteLocalizedDetailSections(assets)
+  )) {
     throw new Error("MARKETPLACE_DETAIL_IMAGE_REQUIRED");
   }
-  const gallery = assets ? await normalizeList(assets.galleryImageUrls, 12) : [];
-  const details = assets ? await normalizeList(assets.detailImageUrls, 8) : [];
+  const gallery = assets ? await normalizeList(assets.galleryImageUrls, 12, "gallery-square") : [];
+  const details = assets
+    ? await normalizeList(assets.detailImageUrls, marketplaceChannelDetailImageCount, "detail-ratio")
+    : [];
   const detailImageAltTexts = strings(assets?.detailImageAltTexts).slice(0, details.length);
   const detailImageRoles = strings(assets?.detailImageRoles).slice(0, details.length);
 
@@ -320,16 +449,18 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     const params = record(next.params);
     const sourceUrl = gallery[0] ?? (typeof params?.StandardImage === "string" ? params.StandardImage.trim() : "");
     if (!params || !sourceUrl) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    params.StandardImage = gallery[0] ?? await normalize(sourceUrl);
+    params.StandardImage = gallery[0] ?? await normalize(sourceUrl, "gallery-square");
     params.ItemDescription = renderQoo10DetailDescription(params.ItemDescription, details, detailImageAltTexts, detailImageRoles);
     return next;
   }
 
   if (channel === "shopee" || channel === "lazada" || channel === "smartstore") {
     const limit = channel === "smartstore" ? 10 : channel === "shopee" ? 9 : 8;
-    const sourceGallery = gallery.length ? gallery : await normalizeList(next.imageUrls, limit);
+    const sourceGallery = gallery.length ? gallery : await normalizeList(next.imageUrls, limit, "gallery-square");
     const normalizedAssets = uniqueStrings([...sourceGallery, ...details]);
-    const listingImages = normalizedAssets.slice(0, limit);
+    const listingImages = channel === "shopee"
+      ? uniqueStrings([sourceGallery[0] ?? "", ...details]).slice(0, limit)
+      : normalizedAssets.slice(0, limit);
     // Lazada rejects any external URL left in description HTML. Keep every
     // normalized detail asset in imageUrls so the local worker migrates all of
     // them into Lazada media space, while the product gallery stays at 8.
@@ -361,6 +492,7 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   if (channel === "coupang") {
     const body = record(next.body);
     const items = Array.isArray(body?.items) ? body.items : [];
+    const classification = record(assets?.classification);
     const localizedSections = Array.isArray(assets?.localizedDetailSections)
       ? assets.localizedDetailSections.map(record).filter((section): section is Record<string, unknown> => Boolean(section))
       : [];
@@ -375,20 +507,13 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
           imageType: index === 0 ? "REPRESENTATION" : "DETAIL",
           vendorPath: url,
         }));
-        const currentContents = Array.isArray(item.contents) ? item.contents : [];
-        const learnedContents = detailImageRoles.flatMap((role, index) => {
-          const section = localizedSections.find((candidate) => candidate.imageAsset === role);
-          const heading = typeof section?.heading === "string" ? section.heading.trim() : "";
-          const sectionBody = typeof section?.body === "string" ? section.body.trim() : "";
-          return [
-            ...(heading || sectionBody ? [{ contentsType: "TEXT", contentDetails: [{ content: `<h2>${escapedAttribute(heading)}</h2><p>${escapedAttribute(sectionBody)}</p>`, detailType: "TEXT" }] }] : []),
-            ...(details[index] ? [{ contentsType: "IMAGE", contentDetails: [{ content: details[index], detailType: "IMAGE" }] }] : []),
-          ];
-        });
-        item.contents = learnedContents.length ? learnedContents : [
-          ...details.map((url) => ({ contentsType: "IMAGE", contentDetails: [{ content: url, detailType: "IMAGE" }] })),
-          ...currentContents,
-        ];
+        item.contents = buildCoupangMarketplaceContents(
+          item.contents,
+          localizedSections,
+          classification,
+          details,
+          detailImageRoles,
+        );
         count += combined.length;
         continue;
       }
@@ -397,7 +522,7 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
         const image = record(imageValue);
         const sourceUrl = typeof image?.vendorPath === "string" ? image.vendorPath.trim() : "";
         if (!image || !sourceUrl) continue;
-        image.vendorPath = await normalize(sourceUrl);
+        image.vendorPath = await normalize(sourceUrl, "gallery-square");
         count += 1;
       }
     }
@@ -413,7 +538,7 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
       product.prdImage02,
       product.prdImage03,
       product.prdImage04,
-    ], 4);
+    ], 4, "gallery-square");
     if (!normalized.length) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
     normalized.forEach((url, index) => {
       product[`prdImage0${index + 1}`] = url;
@@ -426,7 +551,9 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     const body = record(next.body);
     const goodsBasic = record(body?.goodsBasic);
     if (!body || !goodsBasic) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    const normalized = gallery.length ? gallery.slice(0, 10) : await normalizeList(goodsBasic.goodsCarouselImage, 10);
+    const normalized = gallery.length
+      ? gallery.slice(0, 10)
+      : await normalizeList(goodsBasic.goodsCarouselImage, 10, "gallery-square");
     const normalizedDetails = details.length ? details.slice(0, 10) : normalized;
     goodsBasic.goodsCarouselImage = normalized;
     goodsBasic.detailImage = normalizedDetails;
@@ -441,7 +568,9 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   const inventoryItem = record(next.inventoryItem);
   const product = record(inventoryItem?.product);
   if (!product) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-  const normalized = gallery.length ? uniqueStrings([...gallery, ...details]).slice(0, 12) : await normalizeList(product.imageUrls, 12);
+  const normalized = gallery.length
+    ? uniqueStrings([...gallery, ...details]).slice(0, 12)
+    : await normalizeList(product.imageUrls, 12, "gallery-square");
   product.imageUrls = normalized;
   product.description = appendDetailImages(product.description, details, detailImageAltTexts, detailImageRoles);
   const offer = record(next.offer);

@@ -8,22 +8,64 @@
     "product": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "category", "oneLine", "targetCustomer", "features", "cautions"],
+      "required": ["name", "category", "classification", "oneLine", "targetCustomer", "features", "cautions"],
       "properties": {
-        "name": { "type": "string" },
-        "category": { "type": "string" },
-        "oneLine": { "type": "string" },
-        "targetCustomer": { "type": "string" },
-        "features": { "type": "array", "minItems": 3, "maxItems": 5, "items": { "type": "string" } },
-        "cautions": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "string" } }
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "classification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["displayName", "verificationStatus", "evidence", "isHealthFunctionalFood"],
+          "anyOf": [
+            {
+              "required": ["verificationStatus", "isHealthFunctionalFood"],
+              "properties": {
+                "verificationStatus": { "const": "verified" },
+                "isHealthFunctionalFood": { "type": "boolean" }
+              }
+            },
+            {
+              "required": ["verificationStatus", "isHealthFunctionalFood"],
+              "properties": {
+                "verificationStatus": { "const": "needs-review" },
+                "isHealthFunctionalFood": { "type": "null" }
+              }
+            }
+          ],
+          "properties": {
+            "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "verificationStatus": { "type": "string", "enum": ["verified", "needs-review"] },
+            "evidence": { "type": "string", "minLength": 10, "maxLength": 500 },
+            "isHealthFunctionalFood": { "type": ["boolean", "null"] }
+          }
+        },
+        "oneLine": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "targetCustomer": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "features": { "type": "array", "minItems": 4, "maxItems": 8, "items": { "type": "string", "minLength": 1, "maxLength": 240 } },
+        "cautions": { "type": "array", "minItems": 2, "maxItems": 8, "items": { "type": "string", "minLength": 1, "maxLength": 320 } }
       }
     },
     "design": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["themeName", "palette", "heroCopy", "heroSubcopy", "cta", "sections"],
+      "required": ["themeName", "creativeStrategy", "palette", "heroCopy", "heroSubcopy", "cta", "sections"],
       "properties": {
-        "themeName": { "type": "string" },
+        "themeName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "creativeStrategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["designArchetype", "purchaseDecision", "contentDensity", "targetSectionCount", "lengthRationale", "differentiationKey", "artDirection", "motionPolicy"],
+          "properties": {
+            "designArchetype": { "type": "string", "enum": ["proof-led", "problem-solution", "routine-led", "comparison-led", "material-led", "fit-guide", "gift-story", "spec-first"] },
+            "purchaseDecision": { "type": "string", "minLength": 1, "maxLength": 300 },
+            "contentDensity": { "type": "string", "enum": ["long", "deep-dive"] },
+            "targetSectionCount": { "type": "integer", "minimum": 16, "maximum": 20 },
+            "lengthRationale": { "type": "string", "minLength": 1, "maxLength": 400 },
+            "differentiationKey": { "type": "string", "minLength": 1, "maxLength": 300 },
+            "artDirection": { "type": "string", "minLength": 1, "maxLength": 600 },
+            "motionPolicy": { "type": "string", "const": "static-first" }
+          }
+        },
         "palette": {
           "type": "object",
           "additionalProperties": false,
@@ -35,23 +77,29 @@
             "text": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
           }
         },
-        "heroCopy": { "type": "string" },
-        "heroSubcopy": { "type": "string" },
-        "cta": { "type": "string" },
+        "heroCopy": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "heroSubcopy": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "cta": { "type": "string", "minLength": 1, "maxLength": 80 },
         "sections": {
           "type": "array",
-          "minItems": 5,
-          "maxItems": 7,
+          "minItems": 16,
+          "maxItems": 20,
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["type", "eyebrow", "title", "body", "points"],
+            "required": ["type", "buyerQuestion", "evidence", "eyebrow", "title", "body", "points", "layout", "imageAsset", "visualDirection", "motion"],
             "properties": {
-              "type": { "type": "string", "enum": ["benefit", "story", "howto", "proof", "spec", "caution"] },
-              "eyebrow": { "type": "string" },
-              "title": { "type": "string" },
-              "body": { "type": "string" },
-              "points": { "type": "array", "minItems": 2, "maxItems": 4, "items": { "type": "string" } }
+              "type": { "type": "string", "enum": ["benefit", "story", "howto", "proof", "spec", "caution", "comparison", "faq", "notice"] },
+              "buyerQuestion": { "type": "string", "minLength": 8, "maxLength": 160 },
+              "evidence": { "type": "string", "minLength": 10, "maxLength": 500 },
+              "eyebrow": { "type": "string", "minLength": 1, "maxLength": 80 },
+              "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+              "body": { "type": "string", "minLength": 160, "maxLength": 1100 },
+              "points": { "type": "array", "minItems": 3, "maxItems": 6, "items": { "type": "string", "minLength": 1, "maxLength": 240 } },
+              "layout": { "type": "string", "enum": ["split", "full-bleed", "cards", "steps", "spec-grid", "editorial"] },
+              "imageAsset": { "type": "string", "enum": ["none", "detail-overview", "detail-feature", "detail-use", "detail-package", "detail-routine", "detail-scale", "detail-storage", "detail-context", "detail-material", "detail-dimensions", "detail-contents", "detail-care"] },
+              "visualDirection": { "type": "string", "minLength": 10, "maxLength": 500 },
+              "motion": { "type": "string", "enum": ["none", "reveal", "stagger"] }
             }
           }
         }
@@ -62,9 +110,9 @@
       "additionalProperties": false,
       "required": ["headline", "subline", "badge"],
       "properties": {
-        "headline": { "type": "string" },
-        "subline": { "type": "string" },
-        "badge": { "type": "string" }
+        "headline": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "subline": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "badge": { "type": "string", "minLength": 1, "maxLength": 60 }
       }
     },
     "localizedListings": {
@@ -74,7 +122,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["channel", "market", "locale", "title", "shortDescription", "description", "keywords", "thumbnailAltText", "detailSections"],
+        "required": ["channel", "market", "locale", "title", "shortDescription", "description", "keywords", "thumbnailAltText", "classification", "detailSections"],
         "properties": {
           "channel": { "type": "string", "enum": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"] },
           "market": { "type": "string", "enum": ["JP", "SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID", "KR", "US", "GB", "DE", "AU", "CA", "FR", "IT", "ES"] },
@@ -84,19 +132,48 @@
           "description": { "type": "string", "minLength": 1, "maxLength": 2000 },
           "keywords": { "type": "array", "minItems": 3, "maxItems": 10, "items": { "type": "string", "minLength": 1, "maxLength": 80 } },
           "thumbnailAltText": { "type": "string", "minLength": 1, "maxLength": 180 },
+          "classification": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["displayName", "verificationStatus", "evidence", "isHealthFunctionalFood"],
+            "anyOf": [
+              {
+                "required": ["verificationStatus", "isHealthFunctionalFood"],
+                "properties": {
+                  "verificationStatus": { "const": "verified" },
+                  "isHealthFunctionalFood": { "type": "boolean" }
+                }
+              },
+              {
+                "required": ["verificationStatus", "isHealthFunctionalFood"],
+                "properties": {
+                  "verificationStatus": { "const": "needs-review" },
+                  "isHealthFunctionalFood": { "type": "null" }
+                }
+              }
+            ],
+            "properties": {
+              "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "verificationStatus": { "type": "string", "enum": ["verified", "needs-review"] },
+              "evidence": { "type": "string", "minLength": 10, "maxLength": 500 },
+              "isHealthFunctionalFood": { "type": ["boolean", "null"] }
+            }
+          },
           "detailSections": {
             "type": "array",
-            "minItems": 4,
-            "maxItems": 4,
+            "minItems": 8,
+            "maxItems": 8,
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["type", "heading", "body", "imageAsset", "imageAltText"],
+              "required": ["type", "buyerQuestion", "evidence", "heading", "body", "imageAsset", "imageAltText"],
               "properties": {
-                "type": { "type": "string", "enum": ["overview", "feature", "howto", "spec"] },
-                "heading": { "type": "string", "minLength": 1, "maxLength": 100 },
-                "body": { "type": "string", "minLength": 1, "maxLength": 500 },
-                "imageAsset": { "type": "string", "enum": ["detail-overview", "detail-feature", "detail-use", "detail-package"] },
+                "type": { "type": "string", "enum": ["overview", "feature", "howto", "spec", "routine", "contents", "care", "proof"] },
+                "buyerQuestion": { "type": "string", "minLength": 8, "maxLength": 180 },
+                "evidence": { "type": "string", "minLength": 10, "maxLength": 500 },
+                "heading": { "type": "string", "minLength": 4, "maxLength": 100 },
+                "body": { "type": "string", "minLength": 60, "maxLength": 700 },
+                "imageAsset": { "type": "string", "enum": ["detail-overview", "detail-feature", "detail-use", "detail-package", "detail-routine", "detail-scale", "detail-storage", "detail-context", "detail-material", "detail-dimensions", "detail-contents", "detail-care"] },
                 "imageAltText": { "type": "string", "minLength": 1, "maxLength": 180 }
               }
             }

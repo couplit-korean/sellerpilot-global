@@ -12,6 +12,8 @@ const RESEARCH_JOB_ID = "e659cfbc-0f80-44a5-94e8-f011ec53e67f";
 const REGEN_JOB_ID = "bc02b888-5531-426a-9a87-32a8c0e356e2";
 const DEDUPED_REGEN_REQUEST_ID = "c4f3296b-42ec-457d-b1cf-b5200662f354";
 const CROSS_OWNER_REGEN_JOB_ID = "9c392f1f-f0de-45bb-a127-42605bc7422b";
+const OWNER_FENCE_REGEN_JOB_ID = "80672f50-4424-44ee-9921-60e52d21ef8b";
+const EXPANDED_REGEN_JOB_ID = "d48c945e-4e48-4d35-b783-a8a831de4ac0";
 const DUPLICATE_SKU_JOB_ID = "6c7f9651-f0dd-48f7-8fe4-51335c404aef";
 const CLAIM_PREPARATION_JOB_ID = "0da0295f-d85b-4d5e-a938-853b49f5ea32";
 const STALE_AI_JOB_ID = "7c64df91-bd91-49bf-a141-1485bcbead3d";
@@ -136,6 +138,14 @@ function aiClaimAssetPaths(jobId, claimToken) {
     "detail-feature": `${prefix}/detail-feature.png`,
     "detail-use": `${prefix}/detail-use.png`,
     "detail-package": `${prefix}/detail-package.png`,
+    "detail-routine": `${prefix}/detail-routine.png`,
+    "detail-scale": `${prefix}/detail-scale.png`,
+    "detail-storage": `${prefix}/detail-storage.png`,
+    "detail-context": `${prefix}/detail-context.png`,
+    "detail-material": `${prefix}/detail-material.png`,
+    "detail-dimensions": `${prefix}/detail-dimensions.png`,
+    "detail-contents": `${prefix}/detail-contents.png`,
+    "detail-care": `${prefix}/detail-care.png`,
   };
 }
 
@@ -268,6 +278,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260826091200_fence_periodic_sync_reconciliation.sql",
       "20260826091300_preserve_studio_source_uploads.sql",
       "20260826091400_preserve_asset_regeneration_manual_fields.sql",
+      "20260826212116_harden_detail_pipeline_lineage.sql",
+      "20260826221500_allow_verification_ribbon_detail_block.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -281,6 +293,71 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         throw error;
       }
     }
+    const detailPipelineLineageMigration = await readFile(
+      new URL("20260826212116_harden_detail_pipeline_lineage.sql", migrationUrl),
+      "utf8",
+    );
+    await db.exec(withoutUnavailableExtensions(detailPipelineLineageMigration));
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from pg_proc procedure
+           join pg_namespace namespace on namespace.oid = procedure.pronamespace
+          where namespace.nspname = 'public'
+            and procedure.proname = 'sellerpilot_get_product_publish_context_pre_classification_evidence'`,
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_get_product_publish_context_pre_classification_evidence(uuid)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_get_product_publish_context_pre_classification_evidence(uuid)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_get_product_publish_context(uuid)', 'EXECUTE')",
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('anon', 'public.sellerpilot_get_product_publish_context(uuid)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_get_product_publish_context(uuid)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_260826_complete_ai_job_once(text,uuid,uuid,text,jsonb,text)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_service_stage_ai_result_uploads(text,uuid,uuid,text[])', 'EXECUTE')",
+      ),
+      true,
+    );
     assert.equal(
       await scalar(db, "select to_regclass('sellerpilot_private.commerce_orders_tracx_reference_idx') is not null"),
       true,
@@ -2265,13 +2342,43 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       mode: "cli",
       title: "AI 생성 테스트 상품",
       detail_copy: "상품 사실정보를 반영한 테스트 결과",
-      product: { name: "AI 생성 테스트 상품", category: "생활" },
+      product: {
+        name: "AI 생성 테스트 상품",
+        category: "생활",
+        classification: {
+          displayName: "일반 생활용품",
+          verificationStatus: "verified",
+          evidence: "판매자가 제공한 포장 라벨과 상품 정보를 교차 확인함",
+          isHealthFunctionalFood: false,
+        },
+      },
       design: { heroCopy: "검증된 상세페이지", palette: { primary: "#111827" } },
       thumbnail: { title: "AI 생성 테스트 상품" },
       warnings: ["migration-test-warning"],
       localizedListings: [{ title: "publish-context에서 제외될 현지화 데이터" }],
       asset_storage_paths: aiClaimAssetPaths(JOB_ID, claimed.claim_token),
     };
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_complete_ai_job($1, $2, $3, 'succeeded', $4::jsonb, null)",
+        [
+          TOKEN_HASH,
+          JOB_ID,
+          claimed.claim_token,
+          JSON.stringify({
+            ...resultPayload,
+            asset_storage_paths: Object.fromEntries(
+              Object.entries(resultPayload.asset_storage_paths).slice(0, 8),
+            ),
+          }),
+        ],
+      ),
+      /invalid studio asset claim paths/,
+    );
+    assert.equal(
+      await scalar(db, "select status from sellerpilot_private.ai_cli_jobs where id = $1", [JOB_ID]),
+      "running",
+    );
     assert.equal(
       await scalar(
         db,
@@ -2447,6 +2554,124 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.match(aiProductId, /^[0-9a-f-]{36}$/i);
     assert.equal(aiProductId, automaticallyReconciledProductId);
+    await db.query(
+      "update sellerpilot_private.products set owner_id = $2 where id = $1",
+      [aiProductId, SECOND_ADMIN_ID],
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_create_asset_regeneration_job($1, $2, $3, 'detail-care')",
+        [OWNER_FENCE_REGEN_JOB_ID, JOB_ID, aiProductId],
+      ),
+      /source product does not match studio job/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.ai_cli_jobs where id = $1",
+        [OWNER_FENCE_REGEN_JOB_ID],
+      ),
+      0,
+    );
+    await db.query(
+      "update sellerpilot_private.products set owner_id = $2 where id = $1",
+      [aiProductId, ADMIN_ID],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_create_asset_regeneration_job($1, $2, $3, 'detail-care')",
+        [EXPANDED_REGEN_JOB_ID, JOB_ID, aiProductId],
+      ),
+      EXPANDED_REGEN_JOB_ID,
+    );
+    await setClaims(db, "service_role");
+    const expandedRegenerationClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_ai_job($1, 'migration-test/expanded-regeneration')",
+      [TOKEN_HASH],
+    );
+    assert.equal(expandedRegenerationClaim.id, EXPANDED_REGEN_JOB_ID);
+    const expandedRegenerationPath = `results/${EXPANDED_REGEN_JOB_ID}/claims/${expandedRegenerationClaim.claim_token}/detail-care.png`;
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_stage_ai_result_uploads($1, $2, $3, array[$4]::text[])",
+        [TOKEN_HASH, EXPANDED_REGEN_JOB_ID, expandedRegenerationClaim.claim_token, expandedRegenerationPath],
+      ),
+      true,
+    );
+    const expandedRegenerationResult = {
+      mode: "asset-regeneration",
+      assetId: "detail-care",
+      sourceJobId: JOB_ID,
+      asset_storage_paths: { "detail-care": expandedRegenerationPath },
+    };
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set created_by = $2 where id = $1",
+      [EXPANDED_REGEN_JOB_ID, SECOND_ADMIN_ID],
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_complete_ai_job($1, $2, $3, 'succeeded', $4::jsonb, null)",
+        [
+          TOKEN_HASH,
+          EXPANDED_REGEN_JOB_ID,
+          expandedRegenerationClaim.claim_token,
+          JSON.stringify(expandedRegenerationResult),
+        ],
+      ),
+      /asset regeneration source owner mismatch/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.ai_cli_jobs where id = $1",
+        [EXPANDED_REGEN_JOB_ID],
+      ),
+      "running",
+    );
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set created_by = $2 where id = $1",
+      [EXPANDED_REGEN_JOB_ID, ADMIN_ID],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_complete_ai_job($1, $2, $3, 'succeeded', $4::jsonb, null)",
+        [
+          TOKEN_HASH,
+          EXPANDED_REGEN_JOB_ID,
+          expandedRegenerationClaim.claim_token,
+          JSON.stringify(expandedRegenerationResult),
+        ],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select result_payload->'asset_storage_paths'->>'detail-care' from sellerpilot_private.ai_cli_jobs where id = $1",
+        [JOB_ID],
+      ),
+      expandedRegenerationPath,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.ai_result_upload_staging where job_id = $1",
+        [EXPANDED_REGEN_JOB_ID],
+      ),
+      0,
+    );
+    await db.query(
+      "delete from sellerpilot_private.ai_cli_audit where job_id = $1",
+      [EXPANDED_REGEN_JOB_ID],
+    );
+    await db.query(
+      "delete from sellerpilot_private.ai_cli_jobs where id = $1",
+      [EXPANDED_REGEN_JOB_ID],
+    );
     await setClaims(db, "authenticated", SECOND_ADMIN_ID);
     await assert.rejects(
       db.query(
@@ -2507,7 +2732,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         "select (safe_detail->>'comparison_asset_count')::integer from sellerpilot_private.ai_cli_audit where job_id = $1 and action = 'job_queued' order by occurred_at desc limit 1",
         [REGEN_JOB_ID],
       ),
-      8,
+      16,
     );
     assert.equal(await scalar(db, "select sku from sellerpilot_private.products where id = $1", [aiProductId]), "AI-REQUIRED-001");
     const competitorMarketplaces = ["smartstore", "coupang", "elevenst", "qoo10", "shopee", "lazada", "ebay", "temu", "other"];
@@ -3058,6 +3283,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           },
         },
         {
+          type: "VerificationRibbonBlock",
+          props: {
+            id: "verification-1",
+            classification: "일반식품",
+            verificationStatus: "verified",
+            evidence: "판매자 제공 상품 라벨",
+          },
+        },
+        {
           type: "CtaBlock",
           props: { id: "cta-1", title: "지금 확인하세요" },
         },
@@ -3139,6 +3373,20 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(detailAudit.version, 2);
     assert.equal(JSON.stringify(detailAudit).includes("수정된 CTA"), false);
 
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set created_by = $2 where id = $1",
+      [JOB_ID, SECOND_ADMIN_ID],
+    );
+    const mismatchedClassificationContext = await scalar(
+      db,
+      "select public.sellerpilot_get_product_publish_context($1)",
+      [aiProductId],
+    );
+    assert.equal(mismatchedClassificationContext.classification, null);
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set created_by = $2 where id = $1",
+      [JOB_ID, ADMIN_ID],
+    );
     const publishContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [aiProductId]);
     assert.equal(publishContext.product.id, aiProductId);
     assert.equal(publishContext.manualFields.sellerSku, "AI-REQUIRED-001");
@@ -3147,6 +3395,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(publishContext.assignments.some((assignment) => assignment.channel === "elevenst" && assignment.categoryId === "1341821"), true);
     assert.deepEqual(publishContext.detailPage.data, detailPageV2);
     assert.equal(publishContext.detailPage.version, 2);
+    assert.deepEqual(publishContext.classification, resultPayload.product.classification);
     assert.deepEqual(Object.keys(publishContext.studioResult).sort(), ["design", "mode", "product", "thumbnail", "warnings"]);
     assert.equal(publishContext.studioResult.mode, "cli");
     assert.equal("asset_storage_paths" in publishContext.studioResult, false);

@@ -29,7 +29,7 @@ export const backgroundSemanticAuditSchema = z.object({
   seriesSpatialDepthDistinct: z.boolean(),
   seriesCameraDistinct: z.boolean(),
   seriesCueDistinct: z.boolean(),
-  conflictingAssetIds: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)).max(3)
+  conflictingAssetIds: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)).max(8)
     .refine((values) => new Set(values).size === values.length, "충돌 설정샷 ID가 중복됐습니다."),
   assignedSupportingObjectsSatisfied: z.boolean(),
   observedNonMerchandiseProps: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)).max(8)
@@ -66,6 +66,10 @@ const identityBackgroundCueByAssetId = {
   wide: { suffix: "fixed-wall-joint", description: "one built-in horizontal wall, backsplash or work-zone joint" },
   "detail-overview": { suffix: "fixed-zone-divider", description: "one integrated storage or architectural zone divider" },
   "detail-use": { suffix: "fixed-recess-cue", description: "one fixed wall return, recessed frame or integrated light niche" },
+  "detail-routine": { suffix: "fixed-transition-threshold", description: "one integrated threshold, passage transition or fixed preparation-zone boundary" },
+  "detail-scale": { suffix: "fixed-level-edge", description: "one built-in level change, counter edge or architectural reference plane without measurement marks" },
+  "detail-storage": { suffix: "fixed-access-reveal", description: "one built-in access reveal, cabinet jamb or permanent storage-bay return" },
+  "detail-context": { suffix: "fixed-depth-opening", description: "one fixed opening, deep window reveal or architectural horizon break supporting layered context" },
 } as const;
 
 function stableSemanticKey(...parts: string[]) {
@@ -95,6 +99,10 @@ function visibleMomentTreatment(moment: string, assetId: keyof typeof identityBa
     wide: { family: "bright-day-overhead", description: "bright neutral daytime overhead architectural light" },
     "detail-overview": { family: "later-day-high-light", description: "later-day high-angle architectural light with short readable shadows" },
     "detail-use": { family: "late-day-accent", description: "low late-day architectural accent light with deep falloff" },
+    "detail-routine": { family: "transition-zone-side-light", description: "directional transition-zone light crossing a fixed threshold and separating preparation from the next activity plane" },
+    "detail-scale": { family: "neutral-raking-reference-light", description: "neutral raking light revealing one fixed architectural reference plane without implying exact measurement" },
+    "detail-storage": { family: "access-bay-top-light", description: "controlled top-side light exposing the depth, access clearance and rear plane of a permanent storage bay" },
+    "detail-context": { family: "layered-context-backlight", description: "broad back-to-side architectural light separating foreground, midground and a distant contextual plane" },
   } as const;
   return fallback[assetId];
 }
@@ -109,12 +117,20 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
     wide: "a high-left downward lateral perspective following a long horizontal work path",
     "detail-overview": "an elevated rear-oblique storage overview with a readable front contact plane and distinct rear plane",
     "detail-use": "a surface-height opposite-side medium perspective with a low foreground surface, mid wall and deep architectural falloff",
+    "detail-routine": "a shoulder-height rear-oblique perspective separating the preparation plane, fixed transition cue and next-action zone",
+    "detail-scale": "a waist-height front-left perspective keeping the contact plane, fixed reference edge and rear envelope on distinct depth planes",
+    "detail-storage": "a high-right corner perspective exposing the access opening, storage floor and rear wall without collapsing their depth",
+    "detail-context": "a low rear-wide perspective with clearly separated foreground, midground and distant architectural context",
   }[settingAssetId];
   const cameraKey = {
     portrait: "right-three-quarter-vertical",
     wide: "high-left-lateral",
     "detail-overview": "elevated-rear-overview",
     "detail-use": "surface-level-opposite-oblique",
+    "detail-routine": "shoulder-height-rear-transition",
+    "detail-scale": "waist-height-front-left-reference",
+    "detail-storage": "high-right-access-corner",
+    "detail-context": "low-rear-wide-context",
   }[settingAssetId];
   return {
     location: {
@@ -219,7 +235,7 @@ export function assertSafeBackgroundSemanticAudit(
       || !value.assignedCameraSatisfied
       || !value.assignedPaletteSatisfied
       || !value.spatialDepthPresent) {
-    throw new Error("배경판의 장소·시간대·표면·카메라 분리 조건이 실제 픽셀에서 확인되지 않았습니다.");
+    throw new Error("배경판의 장소·시간대·표면·카메라·팔레트·공간 깊이 분리 조건이 실제 픽셀에서 확인되지 않았습니다.");
   }
   if (expectedEnvironmentKeys
       && (value.observedLocationKey !== expectedEnvironmentKeys.location
@@ -228,7 +244,7 @@ export function assertSafeBackgroundSemanticAudit(
         || value.observedCameraKey !== expectedEnvironmentKeys.camera
         || value.observedPaletteKey !== expectedEnvironmentKeys.palette
         || value.observedSpatialDepthKey !== expectedEnvironmentKeys.spatialDepth)) {
-    throw new Error("배경판의 장소·시간대·표면·카메라 의미 키가 지정 슬롯과 일치하지 않습니다.");
+    throw new Error("배경판의 장소·시간대·표면·카메라·팔레트·공간 깊이 의미 키가 지정 슬롯과 일치하지 않습니다.");
   }
   if (!value.seriesVisuallyDistinct
       || !value.seriesLocationDistinct

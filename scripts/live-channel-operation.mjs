@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { shopeeMerchantRequest, shopeeRequest } from "../lib/channels/protocols.ts";
+import { marketplaceChannelDetailImageCount } from "../lib/channels/marketplace-image-contract.ts";
+import { buildLocalizedBudgetedPlainDetail } from "../lib/marketplace-localized-content.ts";
 
 const projectRef = process.env.SUPABASE_PROJECT_REF?.trim() || "sqaoqucxakebqkiygdxb";
 const siteUrl = (process.env.SELLERPILOT_URL?.trim() || "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
@@ -168,8 +170,30 @@ if (process.env.LIVE_SHOPEE_GLOBAL_TEST_PRODUCT_ID) {
   const assignment = context.assignments.find((item) => item.channel === "shopee" && item.market === market && item.status === "confirmed");
   const generatedImage = (id) => context.generatedImages.find((item) => item.id === id)?.url;
   const imageUrls = [...new Set([generatedImage("square"), ...context.sourceImages.map((item) => item.url), generatedImage("hero")].filter(Boolean))];
-  const detailImageUrls = [...new Set(context.generatedImages.filter((item) => String(item.id).startsWith("detail-")).map((item) => item.url).filter(Boolean))];
-  if (!target || !listing || !assignment || !imageUrls.length || detailImageUrls.length < 4) throw new Error(`Shopee ${market} target, listing, confirmed category, thumbnail, or four detail images are missing.`);
+  const localizedDetailSections = Array.isArray(listing?.detailSections) ? listing.detailSections : [];
+  const detailImageRoles = localizedDetailSections.map((section) => String(section?.imageAsset ?? ""));
+  const detailImageAltTexts = localizedDetailSections.map((section) => String(section?.imageAltText ?? ""));
+  const detailImageUrls = detailImageRoles.map(generatedImage).filter(Boolean);
+  if (!target || !listing || !assignment || !imageUrls.length || detailImageUrls.length !== marketplaceChannelDetailImageCount) {
+    throw new Error(`Shopee ${market} target, listing, confirmed category, thumbnail, or ${marketplaceChannelDetailImageCount} detail images are missing.`);
+  }
+  const classification = listing.classification ?? context.classification;
+  const shopeeDescription = buildLocalizedBudgetedPlainDetail(
+    listing,
+    listing.title,
+    listing.description,
+    3_000,
+    { classification },
+  );
+  const sellerpilotAssets = {
+    galleryImageUrls: imageUrls,
+    detailImageUrls,
+    detailImageRoles,
+    detailImageAltTexts,
+    localizedDetailSections,
+    classification,
+    detailAssetMode: "dedicated",
+  };
   const sku = `${context.product.sku}-GLOBAL-${Date.now().toString(36).toUpperCase()}`.slice(0, 100);
   const attributeList = Object.entries(assignment.providedAttributes ?? {}).map(([attributeId, value]) => ({
     attribute_id: Number(attributeId),
@@ -178,7 +202,7 @@ if (process.env.LIVE_SHOPEE_GLOBAL_TEST_PRODUCT_ID) {
   const localPrices = { SG: 12.9, MY: 39.9, PH: 499, VN: 219000, TH: 299, TW: 299, BR: 49.9, MX: 169 };
   const common = {
     category_id: Number(assignment.categoryId),
-    description: listing.description.slice(0, 3_000),
+    description: shopeeDescription,
     brand: { brand_id: 0, original_brand_name: "No Brand" },
     condition: "NEW",
     normal_stock: 1,
@@ -193,9 +217,10 @@ if (process.env.LIVE_SHOPEE_GLOBAL_TEST_PRODUCT_ID) {
     resumeOnly: true,
     globalItemId: process.env.LIVE_SHOPEE_GLOBAL_ITEM_ID,
     publishTaskId: process.env.LIVE_SHOPEE_PUBLISH_TASK_ID,
+    sellerpilotAssets,
   } : {
     globalProduct: true,
-    sellerpilotAssets: { galleryImageUrls: imageUrls, detailImageUrls, detailAssetMode: "dedicated" },
+    sellerpilotAssets,
     imageUrls,
     body: {
       ...common,

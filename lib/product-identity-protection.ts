@@ -385,6 +385,18 @@ export async function renderIdentityOnNeutralCanvas(
 }
 
 export async function renderMissingIdentityEvidence(spec: IdentityAssetSpec) {
+  const digest = createHash("sha256").update(`missing-evidence:${spec.id}`).digest();
+  const frameWidth = Math.round(spec.width * (0.46 + (digest[0] % 13) / 100));
+  const frameHeight = Math.round(spec.height * (0.36 + (digest[1] % 15) / 100));
+  const left = Math.round((spec.width - frameWidth) * (0.18 + (digest[2] % 55) / 100));
+  const top = Math.round((spec.height - frameHeight) * (0.14 + (digest[3] % 60) / 100));
+  const border = Math.max(5, Math.round(Math.min(spec.width, spec.height) * 0.008));
+  const markerSize = Math.max(18, Math.round(Math.min(spec.width, spec.height) * (0.035 + (digest[4] % 3) / 100)));
+  const [frame, inset, marker] = await Promise.all([
+    sharp({ create: { width: frameWidth, height: frameHeight, channels: 4, background: "#aab2ba" } }).png().toBuffer(),
+    sharp({ create: { width: frameWidth - border * 2, height: frameHeight - border * 2, channels: 4, background: spec.identityPolicy.background } }).png().toBuffer(),
+    sharp({ create: { width: markerSize, height: markerSize, channels: 4, background: "#7e8994" } }).png().toBuffer(),
+  ]);
   const output = await sharp({
     create: {
       width: spec.width,
@@ -392,7 +404,15 @@ export async function renderMissingIdentityEvidence(spec: IdentityAssetSpec) {
       channels: 4,
       background: spec.identityPolicy.background,
     },
-  }).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+  }).composite([
+    { input: frame, left, top },
+    { input: inset, left: left + border, top: top + border },
+    {
+      input: marker,
+      left: left + border * 3 + (digest[5] % Math.max(1, frameWidth - markerSize - border * 6)),
+      top: top + border * 3 + (digest[6] % Math.max(1, frameHeight - markerSize - border * 6)),
+    },
+  ]).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
   const metadata = await sharp(output).metadata();
   if (metadata.width !== spec.width || metadata.height !== spec.height || metadata.format !== "png") {
     throw new Error(`${spec.id} 미제공 근거 자리표시자 규격을 확인하지 못했습니다.`);

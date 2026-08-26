@@ -409,7 +409,7 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
     if (fetchCount > 2) {
       return new Response(JSON.stringify({
         ResultCode: 0,
-        ResultObject: { ItemDetail: '<div><img src="1.jpg"><img src="2.jpg"><img src="3.jpg"><img src="4.jpg"></div>' },
+        ResultObject: { ItemDetail: `<div>${Array.from({ length: 8 }, (_, index) => `<img src="${index + 1}.jpg">`).join("")}</div>` },
       }), { status: 200, headers: { "content-type": "application/json" } });
     }
     return new Response(JSON.stringify({ ResultCode: 0, ResultMsg: "SUCCESS", ResultObject: { GdNo: "1234567890" } }), {
@@ -422,7 +422,7 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
       channel: "qoo10",
       operation: "listing.create",
       payload: { api_key: "test-key" },
-      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: '<p>Test</p><img src="1.jpg"><img src="2.jpg"><img src="3.jpg"><img src="4.jpg">', RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
+      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: `<p>Test</p>${Array.from({ length: 8 }, (_, index) => `<img src="${index + 1}.jpg">`).join("")}`, RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
       environment: "production",
     });
     const url = new URL(createUrl);
@@ -433,14 +433,14 @@ test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () =
     assert.equal(new Headers(createInit?.headers).get("QAPIVersion"), "1.1");
     assert.equal(new Headers(createInit?.headers).get("GiosisCertificationKey"), "test-key");
     const body = JSON.parse(String(createInit?.body)) as Record<string, string>;
-    assert.equal((body.ItemDescription?.match(/<img /g) ?? []).length, 4);
+    assert.equal((body.ItemDescription?.match(/<img /g) ?? []).length, 8);
     const detailRequestUrl = new URL(detailUrl);
     assert.equal(detailRequestUrl.pathname.endsWith("/ItemsContents.EditGoodsContents"), true);
     assert.equal(detailInit?.method, "POST");
     assert.equal(new Headers(detailInit?.headers).get("QAPIVersion"), "1.0");
     const detailBody = JSON.parse(String(detailInit?.body)) as Record<string, string>;
     assert.equal(detailBody.ItemCode, "1234567890");
-    assert.equal((detailBody.Contents?.match(/<img /g) ?? []).length, 4);
+    assert.equal((detailBody.Contents?.match(/<img /g) ?? []).length, 8);
     assert.equal(result.steps.at(-2)?.name, "EditGoodsContents");
     assert.equal(result.steps.at(-2)?.ok, true);
     assert.equal(result.steps.at(-1)?.name, "detail-image-readback");

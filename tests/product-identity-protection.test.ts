@@ -6,6 +6,13 @@ import test from "node:test";
 import sharp from "sharp";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import {
+  buildDifferenceHash,
+  MINIMUM_SHOT_HASH_DISTANCE,
+  SHOT_DHASH_COLUMNS,
+  SHOT_DHASH_ROWS,
+  visualHashDistance,
+} from "../lib/image-shot-uniqueness";
+import {
   assertIdentityBackgroundPlate,
   assertIdentityEvidenceLinkage,
   loadVisionIdentityForeground,
@@ -138,6 +145,21 @@ test("missing dedicated package evidence renders an honest empty neutral slot", 
   assert.equal(metadata.width, packageAsset.width);
   assert.equal(metadata.height, packageAsset.height);
   assert.equal(metadata.format, "png");
+});
+
+test("missing package and contents evidence render distinct honest placeholders", async () => {
+  const assets = ["detail-package", "detail-contents"].map((id) => aiGeneratedAssetSpecs.find((asset) => asset.id === id));
+  assert.ok(assets.every(Boolean));
+  const hashes = await Promise.all(assets.map(async (asset) => {
+    const placeholder = await renderMissingIdentityEvidence(asset!);
+    const pixels = await sharp(placeholder)
+      .resize(SHOT_DHASH_COLUMNS + 1, SHOT_DHASH_ROWS, { fit: "fill" })
+      .greyscale()
+      .raw()
+      .toBuffer();
+    return buildDifferenceHash(pixels);
+  }));
+  assert.ok(visualHashDistance(hashes[0], hashes[1]) >= MINIMUM_SHOT_HASH_DISTANCE);
 });
 
 test("statutory evidence with no seller-anchor identity match cannot link by packaging color", async () => {

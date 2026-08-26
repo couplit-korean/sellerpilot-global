@@ -12,7 +12,7 @@ test("Qoo10 listing update keeps the requested item ID and verifies all detail i
     if (method === "ItemsLookup.GetItemDetailInfo") {
       return Response.json({
         ResultCode: 0,
-        ResultObject: { ItemTitle: "수정 상품", ItemDetail: '<img src="1"><img src="2"><img src="3"><img src="4">' },
+        ResultObject: { ItemTitle: "수정 상품", ItemDetail: Array.from({ length: 8 }, (_, index) => `<img src="${index + 1}">`).join("") },
       });
     }
     return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
@@ -22,7 +22,7 @@ test("Qoo10 listing update keeps the requested item ID and verifies all detail i
       channel: "qoo10",
       operation: "listing.update",
       payload: { api_key: "test-key" },
-      arguments: { params: { ItemCode: "1234567890", ItemTitle: "수정 상품", ItemDescription: '<img src="1"><img src="2"><img src="3"><img src="4">' } },
+      arguments: { params: { ItemCode: "1234567890", ItemTitle: "수정 상품", ItemDescription: Array.from({ length: 8 }, (_, index) => `<img src="${index + 1}">`).join("") } },
       environment: "production",
     });
     assert.equal(result.ok, true);

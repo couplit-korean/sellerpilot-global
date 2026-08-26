@@ -22,6 +22,7 @@ import { channelOperationAvailable } from "../../../../lib/channels/operation-av
 import { listingUpdateRemoteIdentity, listingWriteOperation } from "../../../../lib/channels/listing-update";
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
+import { marketplaceChannelDetailImageCount } from "../../../../lib/channels/marketplace-image-contract";
 import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
@@ -69,7 +70,7 @@ function errorMessage(error: unknown) {
   if (message.includes("COUPANG_USABLE_RETURN_CENTER_MISSING")) return "쿠팡 WING에 사용 가능한 국내 반품지와 택배사 설정이 없습니다. WING의 반품지 설정을 확인해 주세요.";
   if (message.includes("COUPANG_RETURN_FEE_MISSING")) return "쿠팡 WING 반품지에 0원보다 큰 반품 배송비가 설정되어 있지 않습니다.";
   if (message.includes("COUPANG_WING_USER_ID_MISSING")) return "쿠팡 API Vault에 WING 로그인 사용자 ID가 없습니다.";
-  if (message.includes("MARKETPLACE_DETAIL_IMAGE_REQUIRED")) return "상세페이지 전용 이미지 4장이 모두 생성·검증되지 않아 실제 채널 등록을 차단했습니다. AI 상세 제작을 다시 실행해 주세요.";
+  if (message.includes("MARKETPLACE_DETAIL_IMAGE_REQUIRED")) return `채널용 상세페이지 전용 이미지 ${marketplaceChannelDetailImageCount}장이 모두 생성·검증되지 않아 실제 채널 등록을 차단했습니다. AI 상세 제작을 다시 실행해 주세요.`;
   if (message.includes("MARKETPLACE_IMAGE_")) return "대표 이미지를 1200×1200 JPEG·3MB 이하 영구 공개 경로로 자동 보정하지 못했습니다.";
   if (message.includes("NAVER_AFTER_SERVICE_PHONE_MISSING")) return "네이버 판매자 주소록에서 A/S 연락처를 찾지 못했습니다. API 키의 A/S 전화번호 필드에 실제 연락처를 입력해 주세요.";
   if (message.includes("EBAY_BUSINESS_POLICIES_MISSING")) return "eBay 계정에 해당 마켓의 배송·결제·반품 Business Policy가 없습니다. Seller Hub에서 정책을 만들거나 필수 입력란에 실제 정책 ID를 입력해 주세요.";

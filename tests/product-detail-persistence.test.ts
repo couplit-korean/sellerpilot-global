@@ -11,6 +11,7 @@ const data = {
   root: {},
   content: [
     { type: "HeroBlock", props: { id: "hero", imageUrl: "https://signed.example/old-hero", title: "상품" } },
+    { type: "VerificationRibbonBlock", props: { id: "verification", classification: "일반상품", evidence: "판매자 제공 라벨" } },
     { type: "StoryBlock", props: { id: "story", body: "설명" } },
     { type: "ImageStoryBlock", props: { id: "external", imageUrl: "https://merchant.example/manual.jpg" } },
   ],
@@ -19,12 +20,12 @@ const data = {
 test("Puck persistence stores stable asset identities instead of expiring signed URLs", () => {
   const persisted = makeProductDetailPersistable(data, { hero: "https://signed.example/old-hero" });
   assert.equal(persisted.content[0]?.props.imageUrl, "sellerpilot-asset://hero");
-  assert.equal(persisted.content[2]?.props.imageUrl, "https://merchant.example/manual.jpg");
+  assert.equal(persisted.content[3]?.props.imageUrl, "https://merchant.example/manual.jpg");
   assert.equal(data.content[0]?.props.imageUrl, "https://signed.example/old-hero", "input must stay immutable");
 
   const rendered = resolveProductDetailAssets(persisted, { hero: "https://signed.example/fresh-hero" });
   assert.equal(rendered.content[0]?.props.imageUrl, "https://signed.example/fresh-hero");
-  assert.equal(rendered.content[2]?.props.imageUrl, "https://merchant.example/manual.jpg");
+  assert.equal(rendered.content[3]?.props.imageUrl, "https://merchant.example/manual.jpg");
 });
 
 test("missing private assets render empty instead of retaining an expired private URL", () => {
@@ -52,6 +53,7 @@ test("studio, product detail, API and DB persistence stay connected by the same 
   assert.match(savedPage, /DETAIL_PAGE_VERSION_CONFLICT/);
   assert.match(savedPage, /expectedVersion: detailPage\?\.version \?\? null/);
   assert.match(route, /maximumDetailPagePayloadBytes = 256 \* 1024/);
+  assert.match(route, /VerificationRibbonBlock/);
   assert.match(route, /sellerpilot_save_product_detail_page/);
   assert.match(route, /p_expected_version/);
 });

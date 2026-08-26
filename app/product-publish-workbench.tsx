@@ -5,6 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
 import {
+  marketplaceChannelDetailImageCount,
+  marketplaceGeneratedAssetCount,
+  marketplaceMinimumThumbnailCount,
+} from "../lib/channels/marketplace-image-contract";
+import {
   centralProductEditFieldSupport,
   channelProductEditFieldSupport,
   listingCoreContentForOperation,
@@ -17,13 +22,18 @@ import { blockingListingRequirements, inspectListingDraft, listingDraftValue, se
 import { channelOperationAvailable } from "../lib/channels/operation-availability";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10SellerCode } from "../lib/channels/qoo10";
 import {
+  buildLocalizedBudgetedPlainDetail,
   buildLocalizedPlainDetail,
   buildLocalizedRichDetail,
+  buildLocalizedSectionBulletPoints,
   detailAssetOrderForChannel,
   galleryAssetOrderForChannel,
   localizedImageSeo,
   localizedSeoKeywords,
+  normalizedLocalizedDetailSections,
+  type LocalizedCreativeListing,
   type LocalizedDetailSection,
+  type LocalizedProductClassification,
 } from "../lib/marketplace-localized-content";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
 import { createClient } from "../lib/supabase/client";
@@ -81,7 +91,7 @@ const ebayMarketplaceTargets: ChannelTarget[] = [
   { targetId: "EBAY_IT", displayName: "Italia", marketCode: "IT", locale: "it-IT", language: "Italiano", currency: "EUR" },
   { targetId: "EBAY_ES", displayName: "España", marketCode: "ES", locale: "es-ES", language: "Español", currency: "EUR" },
 ];
-type LocalizedListing = { channel: ActiveChannelKey; market: string; locale: string; title: string; shortDescription: string; description: string; keywords: string[]; thumbnailAltText?: string; detailSections?: LocalizedDetailSection[] };
+type LocalizedListing = LocalizedCreativeListing & { channel: ActiveChannelKey; market: string; locale: string; detailSections?: LocalizedDetailSection[] };
 type PackageFields = { weight: number; length: number; width: number; height: number };
 const publishContextRequestTimeoutMs = 30_000;
 type ManualFields = {
@@ -115,7 +125,9 @@ type PublishContext = {
     description: string;
     sourceUrl: string | null;
     status: string;
+    classification?: LocalizedProductClassification;
   };
+  classification?: LocalizedProductClassification;
   manualFields: ManualFields;
   imageSpecs: Array<{ role: string; width: number; height: number; bytes: number; mediaType: string; fit: string }>;
   assignments: Assignment[];
@@ -219,6 +231,8 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const writeListing: LocalizedListing | undefined = operation === "listing.update"
     ? { ...(localized ?? { channel, market: listingMarket, locale: target?.locale ?? "", keywords: [], title: "", shortDescription: "", description: "" }), ...coreContent }
     : localized;
+  const classification = writeListing?.classification ?? context.classification ?? product.classification;
+  const localizedDetailSections = normalizedLocalizedDetailSections(writeListing);
   const generatedImage = (id: string) => context.generatedImages.find((item) => item.id === id)?.url;
   const galleryAssetIds = galleryAssetOrderForChannel(channel);
   const galleryImageUrls = uniqueUrls([
@@ -227,9 +241,15 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     ...galleryAssetIds.slice(1).map(generatedImage),
   ]);
   const imageSeo = localizedImageSeo(writeListing, channel, coreContent.title);
-  const dedicatedDetailImageRoles = detailAssetOrderForChannel(channel);
+  const dedicatedDetailImageRoles = detailAssetOrderForChannel(channel, writeListing);
   const dedicatedDetailImageUrls = dedicatedDetailImageRoles.map(generatedImage);
-  const dedicatedDetailReady = uniqueUrls(dedicatedDetailImageUrls).length >= 4;
+  const classificationReady = Boolean(classification?.displayName?.trim()
+    && classification.evidence?.trim()
+    && ["verified", "needs-review"].includes(classification.verificationStatus));
+  const dedicatedDetailReady = classificationReady
+    && localizedDetailSections.length === marketplaceChannelDetailImageCount
+    && dedicatedDetailImageRoles.length === marketplaceChannelDetailImageCount
+    && uniqueUrls(dedicatedDetailImageUrls).length === dedicatedDetailImageRoles.length;
   const detailImageUrls = uniqueUrls(dedicatedDetailReady
     ? dedicatedDetailImageUrls
     : [generatedImage("portrait"), generatedImage("wide"), generatedImage("hero")]);
@@ -240,19 +260,23 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     detailImageRoles: dedicatedDetailReady ? imageSeo.detailImageRoles : [],
     detailImageAltTexts: dedicatedDetailReady ? imageSeo.detailImageAltTexts : [],
     thumbnailAltText: imageSeo.thumbnailAltText,
-    localizedDetailSections: writeListing?.detailSections ?? [],
+    localizedDetailSections,
+    classification,
     detailAssetMode: dedicatedDetailReady ? "dedicated" : "legacy_fallback",
-    integrationRevision: "marketplace-write-v3-localized-seo",
+    integrationRevision: "marketplace-write-v4-evidence-detail",
   };
   const manual = context.manualFields;
   const { title, description, shortDescription } = coreContent;
-  const richDescription = buildLocalizedRichDetail(writeListing, title, description);
-  const plainDescription = buildLocalizedPlainDetail(writeListing, title, description);
+  const richDescription = buildLocalizedRichDetail(writeListing, title, description, { classification });
+  const plainDescription = buildLocalizedPlainDetail(writeListing, title, description, { classification });
+  const shopeePlainDescription = buildLocalizedBudgetedPlainDetail(writeListing, title, description, 3_000, { classification });
+  const temuPlainDescription = buildLocalizedBudgetedPlainDetail(writeListing, title, description, 10_000, { classification });
+  const temuBulletPoints = buildLocalizedSectionBulletPoints(writeListing, 700);
   const seoKeywords = localizedSeoKeywords(writeListing);
   const marketSku = target ? `${manual.sellerSku || product.sku}-${target.marketCode}`.slice(0, 100) : manual.sellerSku || product.sku;
   if (channel === "qoo10") {
     return {
-      sellerpilotAssets: { ...sellerpilotAssets, integrationRevision: "itemscontents-v2-localized-seo" },
+      sellerpilotAssets: { ...sellerpilotAssets, integrationRevision: "itemscontents-v3-evidence-detail" },
       params: {
         SecondSubCat: assignment?.categoryId ?? "",
         OuterSecondSubCat: "",
@@ -289,7 +313,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     }));
     const commonProductFields = {
       category_id: Number(assignment?.categoryId ?? 0),
-      description: plainDescription.slice(0, 3_000),
+      description: shopeePlainDescription,
       brand: { brand_id: 0, original_brand_name: manual.brandName },
       condition: manual.condition,
       gtin_code: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "00",
@@ -487,11 +511,11 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
           externalGoodsId,
           goodsName: title.slice(0, 500),
           extCatName: (assignment?.categoryPath.join(" > ") || manual.categoryHint).slice(0, 500),
-          goodsDesc: plainDescription.slice(0, 10_000),
+          goodsDesc: temuPlainDescription,
           goodsCarouselImage: galleryImageUrls.slice(0, 10),
           detailImage: detailImageUrls.slice(0, 10),
           productType: 1,
-          bulletPoints: [...(writeListing?.detailSections ?? []).map((section) => section.body), `[PROGRAM TEST · NOT FOR SALE] ${description}`].filter(Boolean).slice(0, 10),
+          bulletPoints: (temuBulletPoints.length ? temuBulletPoints : [description]).slice(0, 10),
         },
         attributes: [
           { name: "Brand", value: [manual.brandName] },
@@ -531,7 +555,9 @@ function missingNativeValues(channel: ActiveChannelKey, value: Record<string, un
   const detailImages = Array.isArray(assets.detailImageUrls) ? assets.detailImageUrls.filter(Boolean) : [];
   const assetRequirements = [
     galleryImages.length === 0 ? "marketplace thumbnail image" : "",
-    assets.detailAssetMode !== "dedicated" || detailImages.length < 4 ? "dedicated marketplace detail images (4)" : "",
+    assets.detailAssetMode !== "dedicated" || detailImages.length < marketplaceChannelDetailImageCount
+      ? `dedicated marketplace detail images (${marketplaceChannelDetailImageCount})`
+      : "",
   ].filter(Boolean);
   if (channel === "qoo10") {
     const params = value.params as Record<string, unknown> | undefined;
@@ -1235,7 +1261,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
 
   const marketplaceThumbnailCount = context.generatedImages.filter((item) => (item.id === "square" || item.id === "hero") && item.url).length;
   const dedicatedDetailImageCount = context.generatedImages.filter((item) => item.id.startsWith("detail-") && item.url).length;
-  const imagePackageReady = marketplaceThumbnailCount >= 1 && dedicatedDetailImageCount >= 4;
+  const imagePackageReady = marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount
+    && dedicatedDetailImageCount >= marketplaceChannelDetailImageCount;
 
   return <section className="panel product-publish-workbench">
     <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>신규 채널은 등록하고, 이미 게시된 채널은 검증된 원격 ID를 유지한 채 상품명·설명·구성·이미지만 수정합니다. 재고는 상품 상세의 통합 재고에서 별도로 동기화하며, 가격은 채널별 식별값 검증 전 자동으로 덮어쓰지 않습니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 처리 중" : bulkConfirming ? "최종 확인 열림" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
@@ -1256,8 +1283,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       <label><span>판매 구성 <i>필수</i></span><select required value={context.manualFields.packageContents} onChange={(event) => updateProductFact("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select></label>
       <button type="button" onClick={() => setDrafts(buildDraftMap(context, price, quantity, selectedTargets, packageFields, globalBaseUsdPrice))}><RefreshCw size={14} />공통값으로 초안 갱신</button>
     </div>
-    <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>대표 {marketplaceThumbnailCount}장 · 상세 전용 {dedicatedDetailImageCount}/4장</span><span><Check size={15} /><b>등록 직전 보정</b>1200×1200 JPEG · 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
-    {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>대표 썸네일과 상세 전용 이미지 4장이 모두 필요합니다.</b><small>이전 4종 생성 상품은 실제 등록을 차단했습니다. 상품 등록 화면에서 AI 상세·썸네일을 다시 생성하면 새 8종 이미지 세트로 교체됩니다.</small></div></div>}
+    <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>대표 {marketplaceThumbnailCount}장 · 상세 전용 {dedicatedDetailImageCount}/{marketplaceChannelDetailImageCount}장</span><span><Check size={15} /><b>등록 직전 보정</b>대표 1200×1200 JPEG · 상세 원본 비율 · 각 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
+    {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>대표 썸네일과 채널용 상세 전용 이미지 {marketplaceChannelDetailImageCount}장이 모두 필요합니다.</b><small>이전 8종 생성 상품은 실제 등록을 차단합니다. 상품 등록 화면에서 AI 상세·썸네일을 다시 생성하면 대표·설정·근거를 분리한 새 {marketplaceGeneratedAssetCount}종 이미지 세트로 교체됩니다.</small></div></div>}
     <div className="publish-channel-cards">{visibleChannels.map((channel) => {
       const definition = channelCatalog[channel];
       const credential = activeCredentials.get(channel);
@@ -1285,7 +1312,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
         {!operationAvailable ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "상품 콘텐츠 수정 검증 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${capability.note} · 원격 상품 식별값과 수정 후 조회 검증이 완료되기 전에는 외부 쓰기를 실행하지 않습니다.` : capability.note}</small></div> : <>
-          <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}대표+상세 4장</span></div>
+          <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}대표+상세 {marketplaceChannelDetailImageCount}장</span></div>
           {editFieldSupport && <div className="remote-edit-support" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>{productEditFieldKeys.map((field) => <span className={editFieldSupport[field].state} title={editFieldSupport[field].reason} key={field}><b>{productEditFieldLabels[field]}</b><small className="remote-edit-support-state">{productEditSupportLabel(editFieldSupport[field].state, centralEditFieldSupport[field].state)}</small><small className="remote-edit-support-reason">{editFieldSupport[field].reason}</small></span>)}</div>}
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
           {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}

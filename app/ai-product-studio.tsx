@@ -3,7 +3,7 @@
 
 import dynamic from "next/dynamic";
 import { CheckCircle2, Download, ExternalLink, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import { classifyExactJobAdmission } from "../lib/exact-job-admission";
 import { withPromiseTimeout } from "../lib/promise-timeout";
@@ -346,18 +346,45 @@ export async function cleanupUnenqueuedStudioPhotos(paths: readonly string[]) {
   if (error) throw new Error("업로드 임시파일을 정리하지 못했습니다.");
 }
 
-const thumbnailPresets = [
-  { id: "square", label: "마켓 대표", ratio: "1:1 · 1200", width: 1200, height: 1200 },
-  { id: "portrait", label: "모바일 피드", ratio: "4:5 · 1200×1500", width: 1200, height: 1500 },
-  { id: "wide", label: "프로모션 배너", ratio: "16:9 · 1600×900", width: 1600, height: 900 },
-];
+const generatedAssetLabels: Record<string, string> = {
+  square: "마켓 대표",
+  portrait: "모바일 피드 설정샷",
+  wide: "프로모션 배너 설정샷",
+  "detail-overview": "상세 전체·준비컷",
+  "detail-feature": "상세 특징 근접컷",
+  "detail-use": "상세 사용 설정샷",
+  "detail-package": "상세 포장 근거컷",
+  "detail-routine": "상세 루틴 설정샷",
+  "detail-scale": "상세 크기 설정샷",
+  "detail-storage": "상세 보관 설정샷",
+  "detail-context": "상세 생활 맥락컷",
+  "detail-material": "상세 재질 근접컷",
+  "detail-dimensions": "상세 형태·규격컷",
+  "detail-contents": "상세 구성품컷",
+  "detail-care": "상세 관리 근거컷",
+};
 
-const detailPresets = [
-  { id: "detail-overview", label: "상세 전체컷", ratio: "1:1 · 1200", width: 1200, height: 1200 },
-  { id: "detail-feature", label: "상세 특징컷", ratio: "1:1 · 1200", width: 1200, height: 1200 },
-  { id: "detail-use", label: "상세 사용컷", ratio: "1:1 · 1200", width: 1200, height: 1200 },
-  { id: "detail-package", label: "상세 구성컷", ratio: "1:1 · 1200", width: 1200, height: 1200 },
-];
+function studioPreset(asset: (typeof aiGeneratedAssetSpecs)[number]) {
+  return {
+    id: asset.id,
+    label: generatedAssetLabels[asset.id] ?? asset.label,
+    ratio: `${asset.ratio} · ${asset.width}×${asset.height}`,
+    width: asset.width,
+    height: asset.height,
+  };
+}
+
+function thumbnailPreviewStyle(thumbnail: Pick<AutoThumbnail, "width" | "height">) {
+  return { "--thumbnail-ratio": `${thumbnail.width} / ${thumbnail.height}` } as CSSProperties;
+}
+
+const thumbnailPresets = aiGeneratedAssetSpecs
+  .filter((asset) => asset.role !== "detail" && asset.id !== "hero")
+  .map(studioPreset);
+
+const detailPresets = aiGeneratedAssetSpecs
+  .filter((asset) => asset.role === "detail")
+  .map(studioPreset);
 
 const generatedPreviewPresets = [...thumbnailPresets, ...detailPresets];
 
@@ -996,20 +1023,20 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>
-        <span><Sparkles size={15} /><b>상세 기획</b><small>5–7개 구매 흐름 섹션</small></span>
-        <span><ImageIcon size={15} /><b>자동 이미지</b><small>대표 4종 · 상세 4종</small></span>
+        <span><Sparkles size={15} /><b>상세 기획</b><small>16–20개 구매 흐름 섹션</small></span>
+        <span><ImageIcon size={15} /><b>자동 이미지</b><small>채널·대표 4종 · 상세 12종</small></span>
         <a href={CODEX_IMAGE_SOURCE} target="_blank" rel="noreferrer"><WandSparkles size={15} /><b>Codex Image 규칙</b><small>gpt-image-2 · MIT</small><ExternalLink size={12} /></a>
       </div>
       <div className="studio-workspace">
         <aside className="creative-rail">
           <div className="creative-rail-head"><span><b>자동 제작 썸네일</b><small>제품이 프레임의 70% 이상 보이는 마켓용 이미지</small></span><em>{creativeThumbnails.length || 3}종</em></div>
-          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" /><span>CODEX IMAGE</span></div><b>CLI 상품 연출컷</b><small>ChatGPT OAuth · 원본 충실도 높음</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset("hero")} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === "hero" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>}
+          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" loading="lazy" decoding="async" /><span>CODEX IMAGE</span></div><b>CLI 상품 연출컷</b><small>ChatGPT OAuth · 원본 충실도 높음</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset("hero")} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === "hero" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>}
           <div className="thumbnail-grid">
-            {creativeThumbnails.length ? creativeThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
+            {creativeThumbnails.length ? creativeThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" style={thumbnailPreviewStyle(thumbnail)} onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} loading="lazy" decoding="async" /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div style={thumbnailPreviewStyle(thumbnail)}><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
-          <div className="creative-rail-head"><span><b>상세페이지 이미지</b><small>전체·특징·사용·구성 4장을 채널 상세 본문에 삽입</small></span><em>{detailThumbnails.length || 4}종</em></div>
+          <div className="creative-rail-head"><span><b>상세페이지 이미지</b><small>설정샷 8종과 근거·재질·규격·구성 4종을 상세 본문에 연결</small></span><em>{detailThumbnails.length || detailPresets.length}종</em></div>
           <div className="thumbnail-grid detail-assets">
-            {detailThumbnails.length ? detailThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 상세 이미지`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : detailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>상세 전용 이미지 생성 대기</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
+            {detailThumbnails.length ? detailThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" style={thumbnailPreviewStyle(thumbnail)} onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 상세 이미지`} loading="lazy" decoding="async" /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : detailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div style={thumbnailPreviewStyle(thumbnail)}><ImageIcon size={22} /><span>상세 전용 이미지 생성 대기</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
           {result ? <div className="creative-summary"><span>CREATIVE DIRECTION</span><b>{result.design.themeName}</b><p>{result.product.oneLine}</p><div>{Object.values(result.design.palette).map((color) => <i key={color} style={{ background: color }} title={color} />)}</div></div> : <div className="creative-summary empty"><span>CLI RESULT</span><b>실제 분석 결과 대기</b><p>대표사진을 등록하고 분석을 시작하면 결과만 표시합니다.</p></div>}
         </aside>

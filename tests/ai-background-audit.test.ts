@@ -8,7 +8,30 @@ import {
   findRepeatedBackgroundProp,
   resolveIdentityBackgroundContract,
 } from "../lib/ai-background-audit";
+import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import { buildProductSettingShotPlan, settingShotAssetIds } from "../lib/product-setting-shots";
+
+const backgroundContractDimensions = [
+  "location",
+  "moment",
+  "surface",
+  "camera",
+  "prop",
+  "palette",
+  "spatialDepth",
+] as const;
+
+function assertDistinctBackgroundContractDimensions(
+  contracts: Array<ReturnType<typeof resolveIdentityBackgroundContract>>,
+  expectedCount: number,
+) {
+  for (const dimension of backgroundContractDimensions) {
+    const keys = contracts.map((contract) => contract[dimension].key);
+    assert.equal(new Set(keys).size, expectedCount, `${dimension} 계약 키가 중복됐습니다.`);
+    assert.ok(keys.every((key) => key !== "unknown" && /^[a-z0-9][a-z0-9-]{0,63}$/.test(key)));
+    assert.ok(contracts.every((contract) => contract[dimension].description.trim().length > 0));
+  }
+}
 
 const safeAudit = {
   merchandisePresent: false,
@@ -88,18 +111,54 @@ test("background semantic audit accepts only a complete high-confidence empty en
     }, "fixed-window-frame", expectedKeys),
     /시각적으로 분리되지/,
   );
+  for (const field of [
+    "seriesVisuallyDistinct",
+    "seriesLocationDistinct",
+    "seriesMomentDistinct",
+    "seriesSurfaceDistinct",
+    "seriesPaletteDistinct",
+    "seriesSpatialDepthDistinct",
+    "seriesCameraDistinct",
+    "seriesCueDistinct",
+  ] as const) {
+    assert.throws(
+      () => assertSafeBackgroundSemanticAudit({
+        ...parsed,
+        [field]: false,
+        conflictingAssetIds: ["detail-routine"],
+      }, "fixed-window-frame", expectedKeys),
+      /시각적으로 분리되지/,
+    );
+  }
+  const allSlotConflicts = [...settingShotAssetIds.slice(1), "previous-portrait"];
+  assert.equal(backgroundSemanticAuditSchema.parse({
+    ...parsed,
+    seriesVisuallyDistinct: false,
+    conflictingAssetIds: allSlotConflicts,
+  }).conflictingAssetIds.length, 8);
+  assert.throws(
+    () => backgroundSemanticAuditSchema.parse({
+      ...parsed,
+      conflictingAssetIds: [...allSlotConflicts, "ninth-conflict"],
+    }),
+    /too_big|Too big|expected array to have/i,
+  );
 });
 
-test("setting background props are unique across all four semantic audits", () => {
-  const existing = [
-    { assetId: "portrait", propKeys: ["fixed-window-frame"] },
-    { assetId: "wide", propKeys: ["built-in-wall-rail"] },
-    { assetId: "detail-overview", propKeys: ["fixed-shelf-divider"] },
-  ];
-  assert.equal(findRepeatedBackgroundProp(["fixed-wall-sconce"], existing), null);
-  assert.deepEqual(findRepeatedBackgroundProp(["fixed-window-frame"], existing), {
-    propKey: "fixed-window-frame",
-    assetId: "portrait",
+test("setting background props are unique across all eight semantic audits", () => {
+  const plan = buildProductSettingShotPlan("food-staples", "초콜릿 시리얼");
+  const contracts = settingShotAssetIds.map((assetId) => ({
+    assetId,
+    contract: resolveIdentityBackgroundContract(plan[assetId], assetId),
+  }));
+  const existing = contracts.slice(0, 7).map(({ assetId, contract }) => ({
+    assetId,
+    propKeys: [contract.prop.key],
+  }));
+  assert.equal(findRepeatedBackgroundProp([contracts[7].contract.prop.key], existing), null);
+  assert.deepEqual(findRepeatedBackgroundProp([contracts[4].contract.prop.key], existing), {
+    propKey: contracts[4].contract.prop.key,
+    assetId: "detail-routine",
   });
 });
 
@@ -155,19 +214,25 @@ test("identity background contracts stay category-aware while excluding saleable
     const plan = buildProductSettingShotPlan(category, productText);
     return settingShotAssetIds.map((assetId) => resolveIdentityBackgroundContract(plan[assetId], assetId));
   });
+  assert.deepEqual(
+    aiGeneratedAssetSpecs
+      .filter((asset) => asset.identityPolicy.mode === "source-composite")
+      .map((asset) => asset.id),
+    [...settingShotAssetIds],
+  );
   assert.equal(new Set(manifests.map((manifest) => manifest[1].location.key)).size, categories.length);
   assert.match(manifests[0][1].location.description, /침실.*나이트스탠드/);
   assert.match(manifests[0][1].surface.description, /월넛/);
   assert.match(manifests[3][1].location.description, /현대식 주방/);
   assert.match(manifests[3][1].surface.description, /스테인리스/);
   for (const manifest of manifests) {
-    assert.equal(new Set(manifest.map((contract) => contract.location.key)).size, 4);
-    assert.equal(new Set(manifest.map((contract) => contract.moment.key)).size, 4);
-    assert.equal(new Set(manifest.map((contract) => contract.palette.key)).size, 4);
-    assert.equal(new Set(manifest.map((contract) => contract.prop.key)).size, 4);
+    assertDistinctBackgroundContractDimensions(manifest.slice(0, 4), 4);
+    assertDistinctBackgroundContractDimensions(manifest.slice(4), 4);
+    assertDistinctBackgroundContractDimensions(manifest, 8);
     assert.ok(manifest.every((contract) => /saleable furniture or movable prop/.test(contract.location.description)));
+    assert.ok(manifest.every((contract) => /outside the reserved product zone/.test(contract.prop.description)));
     assert.ok(manifest.every((contract) => !/\d+mm/.test(contract.camera.key)));
-    assert.ok(manifest.every((contract) => !/portion|restock|serving|snack|routine/.test(contract.moment.key)));
+    assert.ok(manifest.every((contract) => !/portion|restock|serving|snack/.test(contract.moment.key)));
     assert.ok(manifest.every((contract) => !/\d+mm/.test(contract.spatialDepth.key)));
   }
 });
