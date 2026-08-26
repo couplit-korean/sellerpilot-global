@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   cliStudioResultSchema,
+  normalizeStudioGeneralFoodSafety,
   normalizeStudioLocalizedKeywordCoverage,
   normalizeStudioSectionCount,
   normalizeStudioWarningLimits,
@@ -652,6 +653,436 @@ test("localized daily intake requires the same measured amount in local label ev
     assert.equal(mixedParsed.success, false, example.locale);
     assert.ok(mixedParsed.error?.issues.some((issue) => issue.message.includes("섭취량")), example.locale);
   }
+});
+
+test("general-food safety normalization is immutable and removes only unsafe sentences", () => {
+  const result = generalFoodSafetyResult();
+  const listing = result.localizedListings[16];
+  result.product.cautions[0] = "Cup only. Improves immunity.";
+  result.design.cta = "View facts. Improves immunity.";
+  result.design.sections[0].eyebrow = "VISIBLE FACTS. Improves immunity.";
+  result.design.sections[0].visualDirection = "Show the package only. Improves immunity.";
+  result.thumbnail.headline = "White cup. Improves immunity.";
+  result.thumbnail.subline = "Ceramic cup. Improves immunity.";
+  result.thumbnail.badge = "1 piece. Improves immunity.";
+  result.localizedListings[1].thumbnailAltText = "White package. Improves immunity.";
+  result.localizedListings[1].detailSections[0].imageAltText = "White cup package. Improves immunity.";
+  listing.detailSections[7].body += " 포장 수량은 판매자 입력과 일치합니다. 이 상품은 소화를 개선합니다. Take 1.5 g daily. 서늘한 곳에 보관하세요.";
+  const originalSnapshot = JSON.stringify(result);
+  const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+
+  assert.notStrictEqual(normalized, result);
+  assert.equal(JSON.stringify(result), originalSnapshot);
+  assert.match(normalized.localizedListings[16].detailSections[7].body, /포장 수량은 판매자 입력과 일치합니다/);
+  assert.match(normalized.localizedListings[16].detailSections[7].body, /서늘한 곳에 보관하세요/);
+  assert.doesNotMatch(normalized.localizedListings[16].detailSections[7].body, /소화를 개선/);
+  assert.doesNotMatch(normalized.localizedListings[16].detailSections[7].body, /1\.5 g daily/);
+  assert.equal(normalized.product.cautions[0], "Cup only.");
+  assert.equal(normalized.design.cta, "View facts.");
+  assert.equal(normalized.design.sections[0].eyebrow, "VISIBLE FACTS.");
+  assert.equal(normalized.design.sections[0].visualDirection, "Show the package only.");
+  assert.equal(normalized.thumbnail.headline, "White cup.");
+  assert.equal(normalized.thumbnail.subline, "Ceramic cup.");
+  assert.equal(normalized.thumbnail.badge, "1 piece.");
+  assert.equal(normalized.localizedListings[1].thumbnailAltText, "White package.");
+  assert.equal(normalized.localizedListings[1].detailSections[0].imageAltText, "White cup package.");
+  assert.strictEqual(normalized.warnings, result.warnings);
+  assert.strictEqual(normalized.product.classification, result.product.classification);
+  assert.equal(normalized.design.sections[0].evidence, result.design.sections[0].evidence);
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("general-food safety normalization preserves explicit negation and label-backed intake", () => {
+  const result = generalFoodSafetyResult();
+  const listing = result.localizedListings[1];
+  listing.description += " This product does not improve immunity.";
+  listing.detailSections[0].body += " Take 2 capsules daily.";
+  listing.detailSections[0].evidence += " Manufacturer label directions state 2 capsules daily.";
+
+  const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+  assert.strictEqual(normalized, result);
+  assert.match(normalized.localizedListings[1].description, /does not improve immunity/);
+  assert.match(normalized.localizedListings[1].detailSections[0].body, /2 capsules daily/);
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("remaining marketplace languages remove positive claims and preserve clause-local negation", () => {
+  const examples = [
+    { locale: "ja-JP", positive: "免疫を改善します。", negative: "免疫を改善しません。", mixed: "免疫は改善しませんが、血糖を低減します。", positiveSignal: "免疫を改善", mixedPositiveSignal: "血糖を低減" },
+    { locale: "zh-TW", positive: "免疫可以改善。", negative: "免疫不會改善。", mixed: "免疫不會改善，但血糖會降低。", positiveSignal: "免疫可以改善", mixedPositiveSignal: "血糖會降低" },
+    { locale: "es-MX", positive: "Mejora la inmunidad.", negative: "No mejora la inmunidad.", mixed: "No mejora la inmunidad, pero reduce la glucosa.", positiveSignal: "Mejora la inmunidad", mixedPositiveSignal: "reduce la glucosa" },
+    { locale: "pt-BR", positive: "Melhora a imunidade.", negative: "Não melhora a imunidade.", mixed: "Não melhora a imunidade, mas reduz a glicose.", positiveSignal: "Melhora a imunidade", mixedPositiveSignal: "reduz a glicose" },
+    { locale: "fr-FR", positive: "Améliore l’immunité.", negative: "N’améliore pas l’immunité.", mixed: "N’améliore pas l’immunité, mais réduit la glycémie.", positiveSignal: "Améliore l’immunité", mixedPositiveSignal: "réduit la glycémie" },
+    { locale: "de-DE", positive: "Verbessert das Immunsystem.", negative: "Verbessert nicht das Immunsystem.", mixed: "Verbessert nicht das Immunsystem, aber reduziert den Blutzucker.", positiveSignal: "Verbessert das Immunsystem", mixedPositiveSignal: "reduziert den Blutzucker" },
+    { locale: "it-IT", positive: "Migliora l'immunità.", negative: "Non migliora l'immunità.", mixed: "Non migliora l'immunità, ma riduce la glicemia.", positiveSignal: "Migliora l'immunità", mixedPositiveSignal: "riduce la glicemia" },
+  ] as const;
+
+  for (const example of examples) {
+    const positiveResult = generalFoodSafetyResult();
+    const positiveIndex = positiveResult.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    positiveResult.localizedListings[positiveIndex].detailSections[0].body += ` ${example.positive}`;
+    const normalizedPositive = normalizeStudioGeneralFoodSafety(positiveResult) as ReturnType<typeof validResult>;
+    assert.notStrictEqual(normalizedPositive, positiveResult, `${example.locale} positive`);
+    assert.doesNotMatch(normalizedPositive.localizedListings[positiveIndex].detailSections[0].body, new RegExp(example.positiveSignal, "u"));
+
+    const negativeResult = generalFoodSafetyResult();
+    const negativeIndex = negativeResult.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    negativeResult.localizedListings[negativeIndex].detailSections[0].body += ` ${example.negative}`;
+    assert.strictEqual(normalizeStudioGeneralFoodSafety(negativeResult), negativeResult, `${example.locale} negative`);
+    const negativeParsed = cliStudioResultSchema.safeParse(negativeResult);
+    if (!negativeParsed.success) assert.fail(`${example.locale}: ${JSON.stringify(negativeParsed.error.issues, null, 2)}`);
+
+    const mixedResult = generalFoodSafetyResult();
+    const mixedIndex = mixedResult.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    mixedResult.localizedListings[mixedIndex].detailSections[0].body += ` ${example.mixed}`;
+    const mixedParsed = cliStudioResultSchema.safeParse(mixedResult);
+    assert.equal(mixedParsed.success, false, `${example.locale} mixed validator`);
+    const normalizedMixed = normalizeStudioGeneralFoodSafety(mixedResult) as ReturnType<typeof validResult>;
+    assert.notStrictEqual(normalizedMixed, mixedResult, `${example.locale} mixed normalizer`);
+    assert.doesNotMatch(normalizedMixed.localizedListings[mixedIndex].detailSections[0].body, new RegExp(example.mixedPositiveSignal, "u"));
+  }
+});
+
+test("additive not-only wording remains a positive efficacy claim", () => {
+  const examples = [
+    ["en-SG", "This product not only improves immunity but also reduces blood sugar."],
+    ["es-MX", "Este producto no solo mejora la inmunidad."],
+    ["pt-BR", "Este produto não só melhora a imunidade."],
+    ["fr-FR", "Ce produit n’améliore pas seulement l’immunité."],
+    ["de-DE", "Dieses Produkt verbessert nicht nur das Immunsystem."],
+    ["it-IT", "Questo prodotto non solo migliora l'immunità."],
+  ] as const;
+
+  for (const [locale, additiveClaim] of examples) {
+    const result = generalFoodSafetyResult();
+    const listingIndex = result.localizedListings.findIndex((listing) => listing.locale === locale);
+    result.localizedListings[listingIndex].detailSections[0].body += ` ${additiveClaim}`;
+
+    const parsed = cliStudioResultSchema.safeParse(result);
+    assert.equal(parsed.success, false, locale);
+    assert.ok(parsed.error?.issues.some((issue) => (
+      issue.path.join(".").startsWith(`localizedListings.${listingIndex}.detailSections.0`)
+      && issue.message.includes("효능")
+    )), locale);
+
+    const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+    assert.notStrictEqual(normalized, result, locale);
+    assert.doesNotMatch(normalized.localizedListings[listingIndex].detailSections[0].body, /immun|imun|immun|inmun/iu, locale);
+  }
+});
+
+test("Japanese and Traditional Chinese efficacy guards cover both claim directions and common verbs", () => {
+  const examples = [
+    {
+      locale: "ja-JP",
+      positive: ["免疫力を高めます。", "血糖値を下げます。"],
+      negative: "免疫力を高めません。",
+      mixed: "免疫力を高めませんが、血糖値を下げます。",
+    },
+    {
+      locale: "zh-TW",
+      positive: ["改善免疫力。", "幫助降低血糖。"],
+      negative: "不改善免疫力。",
+      mixed: "不改善免疫力，但幫助降低血糖。",
+    },
+  ] as const;
+
+  for (const example of examples) {
+    for (const positiveClaim of example.positive) {
+      const positive = generalFoodSafetyResult();
+      const listingIndex = positive.localizedListings.findIndex((listing) => listing.locale === example.locale);
+      positive.localizedListings[listingIndex].detailSections[0].body += ` ${positiveClaim}`;
+      const parsed = cliStudioResultSchema.safeParse(positive);
+      assert.equal(parsed.success, false, `${example.locale}: ${positiveClaim}`);
+      assert.ok(parsed.error?.issues.some((issue) => (
+        issue.path.join(".") === `localizedListings.${listingIndex}.detailSections.0.body`
+        && issue.message.includes("효능")
+      )), `${example.locale}: ${positiveClaim}`);
+      const normalized = normalizeStudioGeneralFoodSafety(positive) as ReturnType<typeof validResult>;
+      assert.notStrictEqual(normalized, positive, `${example.locale}: ${positiveClaim}`);
+      assert.doesNotMatch(
+        normalized.localizedListings[listingIndex].detailSections[0].body,
+        new RegExp(positiveClaim.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
+      );
+    }
+
+    const negative = generalFoodSafetyResult();
+    const negativeIndex = negative.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    negative.localizedListings[negativeIndex].detailSections[0].body += ` ${example.negative}`;
+    assert.strictEqual(normalizeStudioGeneralFoodSafety(negative), negative, `${example.locale} negative`);
+    const negativeParsed = cliStudioResultSchema.safeParse(negative);
+    if (!negativeParsed.success) assert.fail(`${example.locale}: ${JSON.stringify(negativeParsed.error.issues, null, 2)}`);
+
+    const mixed = generalFoodSafetyResult();
+    const mixedIndex = mixed.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    mixed.localizedListings[mixedIndex].detailSections[0].body += ` ${example.mixed}`;
+    const mixedParsed = cliStudioResultSchema.safeParse(mixed);
+    assert.equal(mixedParsed.success, false, `${example.locale} mixed`);
+    assert.ok(mixedParsed.error?.issues.some((issue) => (
+      issue.path.join(".") === `localizedListings.${mixedIndex}.detailSections.0.body`
+      && issue.message.includes("효능")
+    )), `${example.locale} mixed`);
+  }
+});
+
+const canonicalIntakeExamples = {
+  "ko-KR": {
+    intake: "하루 2정을 섭취하세요.",
+    negated: "하루 2정을 섭취하지 마세요.",
+    mixed: "하루 2정을 섭취하지 마세요. 하지만 하루 3정을 섭취하세요.",
+    evidence: "제조사 라벨에는 하루 2정으로 표시되어 있습니다.",
+  },
+  "en-SG": {
+    intake: "Take 2 capsules daily.",
+    negated: "Do not take 2 capsules daily.",
+    mixed: "Do not take 2 capsules daily, but take 3 capsules daily.",
+    evidence: "The manufacturer label states 2 capsules daily.",
+  },
+  "en-PH": {
+    intake: "Take 2 capsules daily.",
+    negated: "Do not take 2 capsules daily.",
+    mixed: "Do not take 2 capsules daily, but take 3 capsules daily.",
+    evidence: "The manufacturer label states 2 capsules daily.",
+  },
+  "en-US": {
+    intake: "Take 2 capsules daily.",
+    negated: "Do not take 2 capsules daily.",
+    mixed: "Do not take 2 capsules daily, but take 3 capsules daily.",
+    evidence: "The manufacturer label states 2 capsules daily.",
+  },
+  "en-GB": {
+    intake: "Take 2 capsules daily.",
+    negated: "Do not take 2 capsules daily.",
+    mixed: "Do not take 2 capsules daily, but take 3 capsules daily.",
+    evidence: "The manufacturer label states 2 capsules daily.",
+  },
+  "en-AU": {
+    intake: "Take 2 capsules daily.",
+    negated: "Do not take 2 capsules daily.",
+    mixed: "Do not take 2 capsules daily, but take 3 capsules daily.",
+    evidence: "The manufacturer label states 2 capsules daily.",
+  },
+  "en-CA": {
+    intake: "Take 2 capsules daily.",
+    negated: "Do not take 2 capsules daily.",
+    mixed: "Do not take 2 capsules daily, but take 3 capsules daily.",
+    evidence: "The manufacturer label states 2 capsules daily.",
+  },
+  "ja-JP": {
+    intake: "毎日2錠を服用する。",
+    negated: "毎日2錠を服用しない。",
+    mixed: "毎日2錠を服用しないが、毎日3錠を服用する。",
+    evidence: "製造元のラベルには毎日2錠と記載されています。",
+  },
+  "zh-TW": {
+    intake: "每日服用2粒。",
+    negated: "每日不要服用2粒。",
+    mixed: "每日不要服用2粒，但每日服用3粒。",
+    evidence: "製造商包裝標示每日2粒。",
+  },
+  "vi-VN": {
+    intake: "Uống 2 viên mỗi ngày.",
+    negated: "Không uống 2 viên mỗi ngày.",
+    mixed: "Không uống 2 viên mỗi ngày, nhưng uống 3 viên mỗi ngày.",
+    evidence: "Nhãn của nhà sản xuất ghi uống 2 viên mỗi ngày.",
+  },
+  "id-ID": {
+    intake: "Konsumsi 2 kapsul setiap hari.",
+    negated: "Jangan konsumsi 2 kapsul setiap hari.",
+    mixed: "Jangan konsumsi 2 kapsul setiap hari, tetapi konsumsi 3 kapsul setiap hari.",
+    evidence: "Kemasan produsen mencantumkan 2 kapsul setiap hari.",
+  },
+  "ms-MY": {
+    intake: "Ambil 2 kapsul setiap hari.",
+    negated: "Jangan ambil 2 kapsul setiap hari.",
+    mixed: "Jangan ambil 2 kapsul setiap hari, tetapi ambil 3 kapsul setiap hari.",
+    evidence: "Pembungkusan pengeluar menyatakan 2 kapsul setiap hari.",
+  },
+  "th-TH": {
+    intake: "รับประทาน 2 เม็ดต่อวัน",
+    negated: "ไม่รับประทาน 2 เม็ดต่อวัน",
+    mixed: "ไม่รับประทาน 2 เม็ดต่อวัน แต่รับประทาน 3 เม็ดต่อวัน",
+    evidence: "ฉลากผู้ผลิตระบุให้รับประทาน 2 เม็ดต่อวัน",
+  },
+  "es-MX": {
+    intake: "Tome 2 cápsulas al día.",
+    negated: "No tome 2 cápsulas al día.",
+    mixed: "No tome 2 cápsulas al día, pero tome 3 cápsulas al día.",
+    evidence: "La etiqueta del fabricante indica 2 cápsulas al día.",
+  },
+  "es-ES": {
+    intake: "Tome 2 cápsulas al día.",
+    negated: "No tome 2 cápsulas al día.",
+    mixed: "No tome 2 cápsulas al día, pero tome 3 cápsulas al día.",
+    evidence: "La etiqueta del fabricante indica 2 cápsulas al día.",
+  },
+  "pt-BR": {
+    intake: "Tome 2 cápsulas por dia.",
+    negated: "Não tome 2 cápsulas por dia.",
+    mixed: "Não tome 2 cápsulas por dia, mas tome 3 cápsulas por dia.",
+    evidence: "O rótulo do fabricante indica 2 cápsulas por dia.",
+  },
+  "fr-FR": {
+    intake: "Prenez 2 capsules par jour.",
+    negated: "Ne prenez pas 2 capsules par jour.",
+    mixed: "Ne prenez pas 2 capsules par jour, mais prenez 3 capsules par jour.",
+    evidence: "L’étiquette du fabricant indique 2 capsules par jour.",
+  },
+  "de-DE": {
+    intake: "Nehmen Sie 2 Kapseln täglich.",
+    negated: "Nehmen Sie nicht 2 Kapseln täglich.",
+    mixed: "Nehmen Sie nicht 2 Kapseln täglich, aber nehmen Sie 3 Kapseln täglich.",
+    evidence: "Das Etikett des Herstellers nennt 2 Kapseln täglich.",
+  },
+  "it-IT": {
+    intake: "Assumere 2 capsule al giorno.",
+    negated: "Non assumere 2 capsule al giorno.",
+    mixed: "Non assumere 2 capsule al giorno, ma assumere 3 capsule al giorno.",
+    evidence: "L’etichetta del produttore indica 2 capsule al giorno.",
+  },
+} as const;
+
+test("all 27 canonical listings enforce localized numeric daily intake evidence", () => {
+  assert.equal(localized.length, 27);
+  for (const [, , locale] of localized) assert.ok(locale in canonicalIntakeExamples, locale);
+
+  const unsafe = generalFoodSafetyResult();
+  unsafe.localizedListings.forEach((listing) => {
+    listing.detailSections[0].body += ` ${canonicalIntakeExamples[listing.locale].intake}`;
+  });
+  const unsafeParsed = cliStudioResultSchema.safeParse(unsafe);
+  assert.equal(unsafeParsed.success, false);
+  unsafe.localizedListings.forEach((_, index) => {
+    assert.ok(unsafeParsed.error?.issues.some((issue) => (
+      issue.path.join(".") === `localizedListings.${index}.detailSections.0.body`
+      && issue.message.includes("섭취량")
+    )), `unsafe localized listing ${index}`);
+  });
+  const normalizedUnsafe = normalizeStudioGeneralFoodSafety(unsafe) as ReturnType<typeof validResult>;
+  unsafe.localizedListings.forEach((listing, index) => {
+    assert.doesNotMatch(
+      normalizedUnsafe.localizedListings[index].detailSections[0].body,
+      new RegExp(canonicalIntakeExamples[listing.locale].intake.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
+      `normalized unsafe localized listing ${index}`,
+    );
+  });
+
+  const supported = generalFoodSafetyResult();
+  supported.localizedListings.forEach((listing) => {
+    const example = canonicalIntakeExamples[listing.locale];
+    listing.detailSections[0].body += ` ${example.intake}`;
+    listing.detailSections[0].evidence += ` ${example.evidence}`;
+  });
+  const supportedParsed = cliStudioResultSchema.safeParse(supported);
+  if (!supportedParsed.success) assert.fail(JSON.stringify(supportedParsed.error.issues, null, 2));
+  assert.strictEqual(normalizeStudioGeneralFoodSafety(supported), supported);
+
+  const mismatchedEvidence = generalFoodSafetyResult();
+  mismatchedEvidence.localizedListings.forEach((listing) => {
+    const example = canonicalIntakeExamples[listing.locale];
+    listing.detailSections[0].body += ` ${example.intake}`;
+    listing.detailSections[0].evidence += ` ${example.evidence.replace("2", "3")}`;
+  });
+  const mismatchedParsed = cliStudioResultSchema.safeParse(mismatchedEvidence);
+  assert.equal(mismatchedParsed.success, false);
+  mismatchedEvidence.localizedListings.forEach((_, index) => {
+    assert.ok(mismatchedParsed.error?.issues.some((issue) => (
+      issue.path.join(".") === `localizedListings.${index}.detailSections.0.body`
+      && issue.message.includes("섭취량")
+    )), `mismatched evidence localized listing ${index}`);
+  });
+
+  const negated = generalFoodSafetyResult();
+  negated.localizedListings.forEach((listing) => {
+    listing.detailSections[0].body += ` ${canonicalIntakeExamples[listing.locale].negated}`;
+  });
+  const negatedParsed = cliStudioResultSchema.safeParse(negated);
+  if (!negatedParsed.success) assert.fail(JSON.stringify(negatedParsed.error.issues, null, 2));
+  assert.strictEqual(normalizeStudioGeneralFoodSafety(negated), negated);
+
+  const mixed = generalFoodSafetyResult();
+  mixed.localizedListings.forEach((listing) => {
+    listing.detailSections[0].body += ` ${canonicalIntakeExamples[listing.locale].mixed}`;
+  });
+  const mixedParsed = cliStudioResultSchema.safeParse(mixed);
+  assert.equal(mixedParsed.success, false);
+  mixed.localizedListings.forEach((_, index) => {
+    assert.ok(mixedParsed.error?.issues.some((issue) => (
+      issue.path.join(".") === `localizedListings.${index}.detailSections.0.body`
+      && issue.message.includes("섭취량")
+    )), `mixed localized listing ${index}`);
+  });
+});
+
+test("general-food safety normalization never invents replacement copy for an unsafe-only field", () => {
+  const result = generalFoodSafetyResult();
+  result.localizedListings[1].title = "Improves immunity.";
+  const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+
+  assert.equal(result.localizedListings[1].title, "Improves immunity.");
+  assert.equal(normalized.localizedListings[1].title, "");
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  assert.equal(parsed.success, false);
+  assert.ok(parsed.error?.issues.some((issue) => issue.path.join(".") === "localizedListings.1.title"));
+});
+
+test("general-food safety normalization drops unsafe array entries and leaves cardinality fail-closed", () => {
+  const result = generalFoodSafetyResult();
+  result.product.cautions = ["Improves immunity.", "Lowers blood sugar."];
+  const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+
+  assert.deepEqual(normalized.product.cautions, []);
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  assert.equal(parsed.success, false);
+  assert.ok(parsed.error?.issues.some((issue) => issue.path.join(".") === "product.cautions"));
+});
+
+test("general-food public and image-prompt fields use exact validator paths", () => {
+  const checks = [
+    { path: "product.cautions.0", mutate: (result: ReturnType<typeof generalFoodSafetyResult>) => { result.product.cautions[0] = "Improves immunity."; } },
+    { path: "design.cta", mutate: (result: ReturnType<typeof generalFoodSafetyResult>) => { result.design.cta = "Improves immunity."; } },
+    { path: "design.sections.0.eyebrow", mutate: (result: ReturnType<typeof generalFoodSafetyResult>) => { result.design.sections[0].eyebrow = "Improves immunity."; } },
+    { path: "design.sections.0.visualDirection", mutate: (result: ReturnType<typeof generalFoodSafetyResult>) => { result.design.sections[0].visualDirection = "Improves immunity."; } },
+    { path: "thumbnail.headline", mutate: (result: ReturnType<typeof generalFoodSafetyResult>) => { result.thumbnail.headline = "Improves immunity."; } },
+    { path: "thumbnail.subline", mutate: (result: ReturnType<typeof generalFoodSafetyResult>) => { result.thumbnail.subline = "Improves immunity."; } },
+    { path: "thumbnail.badge", mutate: (result: ReturnType<typeof generalFoodSafetyResult>) => { result.thumbnail.badge = "Improves immunity."; } },
+    { path: "localizedListings.1.thumbnailAltText", mutate: (result: ReturnType<typeof generalFoodSafetyResult>) => { result.localizedListings[1].thumbnailAltText = "Improves immunity."; } },
+    { path: "localizedListings.1.detailSections.0.imageAltText", mutate: (result: ReturnType<typeof generalFoodSafetyResult>) => { result.localizedListings[1].detailSections[0].imageAltText = "Improves immunity."; } },
+  ];
+  for (const check of checks) {
+    const result = generalFoodSafetyResult();
+    check.mutate(result);
+    const parsed = cliStudioResultSchema.safeParse(result);
+    assert.equal(parsed.success, false, check.path);
+    assert.ok(parsed.error?.issues.some((issue) => (
+      issue.path.join(".") === check.path && issue.message.includes("효능")
+    )), check.path);
+  }
+});
+
+test("health-functional-food results are never rewritten by the general-food normalizer", () => {
+  const result = validResult();
+  result.product.category = "Health functional food";
+  result.product.classification.isHealthFunctionalFood = true;
+  result.product.oneLine = "Improves immunity.";
+  assert.strictEqual(normalizeStudioGeneralFoodSafety(result), result);
+});
+
+test("general-food validator covers localized keywords and buyer questions", () => {
+  const result = generalFoodSafetyResult();
+  result.localizedListings[1].keywords[0] = "supports immunity";
+  result.localizedListings[1].detailSections[0].buyerQuestion = "Does this improve immunity?";
+  const parsed = cliStudioResultSchema.safeParse(result);
+
+  assert.equal(parsed.success, false);
+  assert.ok(parsed.error?.issues.some((issue) => (
+    issue.path.join(".") === "localizedListings.1.keywords.0" && issue.message.includes("효능")
+  )));
+  assert.ok(parsed.error?.issues.some((issue) => (
+    issue.path.join(".") === "localizedListings.1.detailSections.0.buyerQuestion" && issue.message.includes("효능")
+  )));
 });
 test("AI studio warning limits are normalized deterministically before terminal validation", () => {
   const result = validResult();

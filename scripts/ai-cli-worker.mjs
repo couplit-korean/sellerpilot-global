@@ -47,6 +47,7 @@ import {
 } from "../lib/product-identity-protection.ts";
 import {
   cliStudioResultSchema,
+  normalizeStudioGeneralFoodSafety,
   normalizeStudioLocalizedKeywordCoverage,
   normalizeStudioSectionCount,
   normalizeStudioWarningLimits,
@@ -195,7 +196,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.36";
+const workerVersion = "sellerpilot-cli-worker/1.37";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -2655,7 +2656,7 @@ function parseMergedStudioSegments(masterOutput, localizedOutputs) {
   const merged = mergeStudioSegmentOutputs(masterOutput, localizedOutputs);
   return cliStudioResultSchema.safeParse(
     normalizeStudioLocalizedKeywordCoverage(normalizeStudioWarningLimits(
-      normalizeStudioSectionCount(merged),
+      normalizeStudioSectionCount(normalizeStudioGeneralFoodSafety(merged)),
     )),
   );
 }
@@ -2888,7 +2889,7 @@ async function processJob(job) {
       const imageFiles = await downloadInputs(job, jobDir, jobHeartbeat.signal);
       const parsedSource = cliStudioResultSchema.safeParse(
         normalizeStudioLocalizedKeywordCoverage(normalizeStudioWarningLimits(
-          normalizeStudioSectionCount(job.request?.sourceResult),
+          normalizeStudioSectionCount(normalizeStudioGeneralFoodSafety(job.request?.sourceResult)),
         )),
       );
       if (!parsedSource.success) throw new Error(`원본 상품 기획 검증 실패 · ${summarizeStudioIssues(parsedSource.error.issues)}`.slice(0, 500));

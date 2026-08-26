@@ -216,6 +216,192 @@ export const studioCoreSchema = z.object({
   warnings: z.array(z.string().min(1).max(400)).max(5),
 });
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function generalFoodCopySegments(copy: string) {
+  const segments: string[] = [];
+  let start = 0;
+  for (let index = 0; index < copy.length; index += 1) {
+    const character = copy[index];
+    const decimalPoint = character === "." && /\d/u.test(copy[index - 1] ?? "") && /\d/u.test(copy[index + 1] ?? "");
+    if (decimalPoint || !/[.!?。！？;；\n]/u.test(character)) continue;
+    segments.push(copy.slice(start, index + 1));
+    start = index + 1;
+  }
+  if (start < copy.length) segments.push(copy.slice(start));
+  return segments.length ? segments : [copy];
+}
+
+function removeUnsupportedGeneralFoodSegments(copy: string, evidence?: unknown) {
+  const segments = generalFoodCopySegments(copy);
+  let changed = false;
+  const retained = segments.filter((segment) => {
+    const semanticCopy = segment.trim();
+    if (!semanticCopy || /^[.!?。！？;；]+$/u.test(semanticCopy)) return true;
+    const unsupportedEfficacy = hasUnsupportedGeneralFoodEfficacyClaim(semanticCopy);
+    const unsupportedIntake = hasPrescriptiveIntakeInstruction(semanticCopy)
+      && !hasDirectIntakeEvidence(semanticCopy, evidence);
+    if (!unsupportedEfficacy && !unsupportedIntake) return true;
+    changed = true;
+    return false;
+  });
+  return changed ? retained.join("").trim() : copy;
+}
+
+function normalizeGeneralFoodStringFields(
+  source: Record<string, unknown>,
+  fields: readonly string[],
+  evidence?: unknown,
+) {
+  let normalized = source;
+  for (const field of fields) {
+    const copy = source[field];
+    if (typeof copy !== "string") continue;
+    const safeCopy = removeUnsupportedGeneralFoodSegments(copy, evidence);
+    if (safeCopy === copy) continue;
+    if (normalized === source) normalized = { ...source };
+    normalized[field] = safeCopy;
+  }
+  return normalized;
+}
+
+function normalizeGeneralFoodStringArray(value: unknown, evidence?: unknown) {
+  if (!Array.isArray(value)) return value;
+  let changed = false;
+  const normalized = value.flatMap((entry) => {
+    if (typeof entry !== "string") return [entry];
+    const safeCopy = removeUnsupportedGeneralFoodSegments(entry, evidence);
+    if (safeCopy === entry) return [entry];
+    changed = true;
+    return safeCopy ? [safeCopy] : [];
+  });
+  return changed ? normalized : value;
+}
+
+function isGeneralFoodStudioValue(source: Record<string, unknown>) {
+  const product = source.product;
+  if (!isPlainRecord(product)) return false;
+  const classification = product.classification;
+  if (!isPlainRecord(classification) || classification.isHealthFunctionalFood === true) return false;
+  const features = Array.isArray(product.features)
+    ? product.features.filter((feature): feature is string => typeof feature === "string")
+    : [];
+  return isGeneralFoodClassification([
+    product.category,
+    classification.displayName,
+    ...features,
+  ].filter((signal): signal is string => typeof signal === "string").join(" "));
+}
+
+/**
+ * Removes only unsupported general-food claim sentences from model output.
+ * It preserves explicit negation and label-backed intake directions, never
+ * invents replacement copy, and leaves final length/cardinality checks to Zod.
+ */
+export function normalizeStudioGeneralFoodSafety(value: unknown): unknown {
+  if (!isPlainRecord(value) || !isGeneralFoodStudioValue(value)) return value;
+
+  const source = value;
+  const product = source.product as Record<string, unknown>;
+  let normalizedProduct = normalizeGeneralFoodStringFields(product, ["oneLine", "targetCustomer"]);
+  const normalizedFeatures = normalizeGeneralFoodStringArray(product.features);
+  if (normalizedFeatures !== product.features) {
+    if (normalizedProduct === product) normalizedProduct = { ...product };
+    normalizedProduct.features = normalizedFeatures;
+  }
+  const normalizedCautions = normalizeGeneralFoodStringArray(product.cautions);
+  if (normalizedCautions !== product.cautions) {
+    if (normalizedProduct === product) normalizedProduct = { ...product };
+    normalizedProduct.cautions = normalizedCautions;
+  }
+
+  const design = source.design;
+  let normalizedDesign: unknown = design;
+  if (isPlainRecord(design)) {
+    let normalizedDesignRecord = normalizeGeneralFoodStringFields(design, ["heroCopy", "heroSubcopy", "cta"]);
+    if (Array.isArray(design.sections)) {
+      let sectionsChanged = false;
+      const normalizedSections = design.sections.map((entry) => {
+        if (!isPlainRecord(entry)) return entry;
+        let normalizedSection = normalizeGeneralFoodStringFields(
+          entry,
+          ["buyerQuestion", "eyebrow", "title", "body", "visualDirection"],
+          entry.evidence,
+        );
+        const normalizedPoints = normalizeGeneralFoodStringArray(entry.points, entry.evidence);
+        if (normalizedPoints !== entry.points) {
+          if (normalizedSection === entry) normalizedSection = { ...entry };
+          normalizedSection.points = normalizedPoints;
+        }
+        if (normalizedSection !== entry) sectionsChanged = true;
+        return normalizedSection;
+      });
+      if (sectionsChanged) {
+        if (normalizedDesignRecord === design) normalizedDesignRecord = { ...design };
+        normalizedDesignRecord.sections = normalizedSections;
+      }
+    }
+    normalizedDesign = normalizedDesignRecord;
+  }
+
+  const thumbnail = source.thumbnail;
+  const normalizedThumbnail = isPlainRecord(thumbnail)
+    ? normalizeGeneralFoodStringFields(thumbnail, ["headline", "subline", "badge"])
+    : thumbnail;
+
+  const localizedListings = source.localizedListings;
+  let normalizedLocalizedListings = localizedListings;
+  if (Array.isArray(localizedListings)) {
+    let listingsChanged = false;
+    normalizedLocalizedListings = localizedListings.map((entry) => {
+      if (!isPlainRecord(entry)) return entry;
+      let normalizedListing = normalizeGeneralFoodStringFields(
+        entry,
+        ["title", "shortDescription", "description", "thumbnailAltText"],
+      );
+      const normalizedKeywords = normalizeGeneralFoodStringArray(entry.keywords);
+      if (normalizedKeywords !== entry.keywords) {
+        if (normalizedListing === entry) normalizedListing = { ...entry };
+        normalizedListing.keywords = normalizedKeywords;
+      }
+      if (Array.isArray(entry.detailSections)) {
+        let detailSectionsChanged = false;
+        const normalizedDetailSections = entry.detailSections.map((detail) => {
+          if (!isPlainRecord(detail)) return detail;
+          const normalizedDetail = normalizeGeneralFoodStringFields(
+            detail,
+            ["buyerQuestion", "heading", "body", "imageAltText"],
+            detail.evidence,
+          );
+          if (normalizedDetail !== detail) detailSectionsChanged = true;
+          return normalizedDetail;
+        });
+        if (detailSectionsChanged) {
+          if (normalizedListing === entry) normalizedListing = { ...entry };
+          normalizedListing.detailSections = normalizedDetailSections;
+        }
+      }
+      if (normalizedListing !== entry) listingsChanged = true;
+      return normalizedListing;
+    });
+    if (!listingsChanged) normalizedLocalizedListings = localizedListings;
+  }
+
+  if (normalizedProduct === product
+    && normalizedDesign === design
+    && normalizedThumbnail === thumbnail
+    && normalizedLocalizedListings === localizedListings) return value;
+  return {
+    ...source,
+    product: normalizedProduct,
+    design: normalizedDesign,
+    thumbnail: normalizedThumbnail,
+    localizedListings: normalizedLocalizedListings,
+  };
+}
+
 export function normalizeStudioWarningLimits(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const source = value as Record<string, unknown>;
@@ -405,19 +591,20 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
   const generalFood = value.product.classification.isHealthFunctionalFood !== true
     && isGeneralFoodClassification(classificationSignals);
   if (generalFood) {
-    const unsupportedProductClaims = [
-      ["oneLine", value.product.oneLine],
-      ["targetCustomer", value.product.targetCustomer],
-      ...value.product.features.map((feature, index) => [`features.${index}`, feature] as const),
-      ["heroCopy", value.design.heroCopy],
-      ["heroSubcopy", value.design.heroSubcopy],
-    ] as const;
-    for (const [field, copy] of unsupportedProductClaims) {
-      validateGeneralFoodClaim(context, field.startsWith("features.")
-        ? ["product", "features", Number(field.split(".")[1])]
-        : field.startsWith("hero")
-          ? ["design", field]
-          : ["product", field], copy);
+    const unsupportedProductClaims: Array<[Array<string | number>, string]> = [
+      [["product", "oneLine"], value.product.oneLine],
+      [["product", "targetCustomer"], value.product.targetCustomer],
+      ...value.product.features.map((feature, index): [Array<string | number>, string] => [["product", "features", index], feature]),
+      ...value.product.cautions.map((caution, index): [Array<string | number>, string] => [["product", "cautions", index], caution]),
+      [["design", "heroCopy"], value.design.heroCopy],
+      [["design", "heroSubcopy"], value.design.heroSubcopy],
+      [["design", "cta"], value.design.cta],
+      [["thumbnail", "headline"], value.thumbnail.headline],
+      [["thumbnail", "subline"], value.thumbnail.subline],
+      [["thumbnail", "badge"], value.thumbnail.badge],
+    ];
+    for (const [path, copy] of unsupportedProductClaims) {
+      validateGeneralFoodClaim(context, path, copy);
     }
   }
 
@@ -440,12 +627,18 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
       context.addIssue({ code: "custom", path: ["design", "sections", index, "layout"], message: "같은 상세 레이아웃을 연속으로 반복할 수 없습니다." });
     }
     if (generalFood) {
-      validateGeneralFoodClaim(
-        context,
-        ["design", "sections", index],
-        [section.title, section.body, ...section.points].join(" "),
-        section.evidence,
-      );
+      for (const [field, copy] of [
+        ["buyerQuestion", section.buyerQuestion],
+        ["eyebrow", section.eyebrow],
+        ["title", section.title],
+        ["body", section.body],
+        ["visualDirection", section.visualDirection],
+      ] as const) {
+        validateGeneralFoodClaim(context, ["design", "sections", index, field], copy, section.evidence);
+      }
+      section.points.forEach((point, pointIndex) => {
+        validateGeneralFoodClaim(context, ["design", "sections", index, "points", pointIndex], point, section.evidence);
+      });
     }
   });
   for (const requiredType of masterDetailSectionTypes) {
@@ -542,16 +735,31 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
       context.addIssue({ code: "custom", path: ["localizedListings", index, "detailSections"], message: `${key}에는 전체·특징·사용·패키지·루틴·구성 이미지가 반드시 포함되어야 합니다.` });
     }
     if (generalFood) {
-      for (const [field, copy] of [["title", listing.title], ["shortDescription", listing.shortDescription], ["description", listing.description]] as const) {
+      for (const [field, copy] of [
+        ["title", listing.title],
+        ["shortDescription", listing.shortDescription],
+        ["description", listing.description],
+        ["thumbnailAltText", listing.thumbnailAltText],
+      ] as const) {
         validateGeneralFoodClaim(context, ["localizedListings", index, field], copy);
       }
+      listing.keywords.forEach((keyword, keywordIndex) => {
+        validateGeneralFoodClaim(context, ["localizedListings", index, "keywords", keywordIndex], keyword);
+      });
       listing.detailSections.forEach((section, sectionIndex) => {
-        validateGeneralFoodClaim(
-          context,
-          ["localizedListings", index, "detailSections", sectionIndex],
-          [section.heading, section.body].join(" "),
-          section.evidence,
-        );
+        for (const [field, copy] of [
+          ["buyerQuestion", section.buyerQuestion],
+          ["heading", section.heading],
+          ["body", section.body],
+          ["imageAltText", section.imageAltText],
+        ] as const) {
+          validateGeneralFoodClaim(
+            context,
+            ["localizedListings", index, "detailSections", sectionIndex, field],
+            copy,
+            section.evidence,
+          );
+        }
       });
     }
     const searchableCopy = [

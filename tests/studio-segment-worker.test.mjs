@@ -85,7 +85,7 @@ test("one finite residual repair uses isolated second-pass artifacts and settles
   assert.equal((residual.match(/studio-master-repair-2/g) ?? []).length, 2, "the residual master pass has one segment and one stage");
 });
 
-test("studio result normalization only reconciles a valid 16-to-20 section count", async () => {
+test("studio result normalization applies general-food safety before structural repairs", async () => {
   const [source, contract] = await Promise.all([
     readFile(workerUrl, "utf8"),
     readFile(new URL("../lib/ai-cli-contract.ts", import.meta.url), "utf8"),
@@ -96,8 +96,9 @@ test("studio result normalization only reconciles a valid 16-to-20 section count
 
   assert.match(helper, /sections\.length < 16 \|\| sections\.length > 20/);
   assert.match(helper, /targetSectionCount: sections\.length/);
-  assert.match(source, /normalizeStudioSectionCount\(merged\)/);
-  assert.match(source, /normalizeStudioSectionCount\(job\.request\?\.sourceResult\)/);
+  assert.match(source, /normalizeStudioSectionCount\(normalizeStudioGeneralFoodSafety\(merged\)\)/);
+  assert.match(source, /normalizeStudioSectionCount\(normalizeStudioGeneralFoodSafety\(job\.request\?\.sourceResult\)\)/);
+  assert.equal((source.match(/normalizeStudioGeneralFoodSafety\(/g) ?? []).length, 2);
 });
 
 test("repair prompts fail closed on unsupported general-food intake and efficacy claims", async () => {
