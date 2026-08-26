@@ -1016,6 +1016,96 @@ test("all 27 canonical listings enforce localized numeric daily intake evidence"
   });
 });
 
+test("general-food fallback restores only safety-shortened summaries and bodies across all 27 listings", () => {
+  assert.equal(new Set(localized.map(([, , locale]) => locale.split("-")[0])).size, 13);
+  const result = generalFoodSafetyResult();
+  const originalSnapshot = JSON.stringify(result);
+  const warningsReference = result.warnings;
+  const productClassificationReference = result.product.classification;
+  const listingClassificationReferences = result.localizedListings.map((listing) => listing.classification);
+  const detailEvidence = result.localizedListings.map((listing) => (
+    listing.detailSections.map((section) => section.evidence)
+  ));
+
+  result.localizedListings.forEach((listing) => {
+    const unsafe = canonicalIntakeExamples[listing.locale].intake;
+    listing.shortDescription = unsafe;
+    listing.detailSections.forEach((section) => {
+      const unsafeTail = Array.from({ length: 12 }, () => unsafe).join(" ");
+      section.body = `${section.heading}. ${unsafeTail}`;
+      assert.ok(section.body.length >= 60 && section.body.length <= 700, listing.locale);
+    });
+  });
+  const mutatedSnapshot = JSON.stringify(result);
+  const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+
+  assert.notStrictEqual(normalized, result);
+  assert.equal(JSON.stringify(result), mutatedSnapshot, "normalization must not mutate the unsafe source");
+  assert.notEqual(mutatedSnapshot, originalSnapshot);
+  assert.strictEqual(normalized.warnings, warningsReference);
+  assert.strictEqual(normalized.product.classification, productClassificationReference);
+  normalized.localizedListings.forEach((listing, listingIndex) => {
+    const unsafe = canonicalIntakeExamples[listing.locale].intake;
+    const unsafePattern = new RegExp(unsafe.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u");
+    assert.ok(listing.shortDescription.length >= 1 && listing.shortDescription.length <= 500, listing.locale);
+    assert.doesNotMatch(listing.shortDescription, unsafePattern, `${listing.locale} summary`);
+    assert.match(listing.shortDescription, new RegExp(
+      listing.title.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
+      "u",
+    ));
+    assert.strictEqual(listing.classification, listingClassificationReferences[listingIndex]);
+    listing.detailSections.forEach((section, sectionIndex) => {
+      assert.ok(section.body.length >= 60 && section.body.length <= 700, `${listing.locale} body`);
+      assert.doesNotMatch(section.body, unsafePattern, `${listing.locale} body`);
+      assert.equal(section.evidence, detailEvidence[listingIndex][sectionIndex]);
+    });
+  });
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+  assert.strictEqual(normalizeStudioGeneralFoodSafety(normalized), normalized, "normalization must be idempotent");
+});
+
+test("general-food body fallback preserves an exact evidence-backed intake sentence", () => {
+  const result = generalFoodSafetyResult();
+  const listing = result.localizedListings.find((entry) => entry.locale === "en-SG");
+  assert.ok(listing);
+  listing.title = "ACV 60 capsules";
+  const section = listing.detailSections[0];
+  section.body = "Take 2 capsules daily. Improves immunity. Improves immunity. Improves immunity.";
+  section.evidence += " The manufacturer label states 2 capsules daily.";
+  assert.ok(section.body.length >= 60);
+  const sourceSnapshot = JSON.stringify(result);
+
+  const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+  assert.equal(JSON.stringify(result), sourceSnapshot);
+  assert.equal(normalized.localizedListings[1].title, "ACV 60 capsules");
+  assert.match(normalized.localizedListings[1].detailSections[0].body, /Take 2 capsules daily/u);
+  assert.doesNotMatch(normalized.localizedListings[1].detailSections[0].body, /Improves immunity/iu);
+  assert.ok(normalized.localizedListings[1].detailSections[0].body.length >= 60);
+  assert.equal(normalized.localizedListings[1].detailSections[0].evidence, section.evidence);
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+  assert.strictEqual(normalizeStudioGeneralFoodSafety(normalized), normalized);
+});
+
+test("general-food fallback does not repair summaries or bodies that were malformed before safety removal", () => {
+  const result = generalFoodSafetyResult();
+  result.localizedListings[1].shortDescription = "";
+  result.localizedListings[1].detailSections[0].body = "Improves immunity.";
+  const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+
+  assert.equal(normalized.localizedListings[1].shortDescription, "");
+  assert.equal(normalized.localizedListings[1].detailSections[0].body, "");
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  assert.equal(parsed.success, false);
+  assert.ok(parsed.error?.issues.some((issue) => (
+    issue.path.join(".") === "localizedListings.1.shortDescription"
+  )));
+  assert.ok(parsed.error?.issues.some((issue) => (
+    issue.path.join(".") === "localizedListings.1.detailSections.0.body"
+  )));
+});
+
 test("general-food safety normalization never invents replacement copy for an unsafe-only field", () => {
   const result = generalFoodSafetyResult();
   result.localizedListings[1].title = "Improves immunity.";

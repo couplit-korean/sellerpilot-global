@@ -295,10 +295,191 @@ function isGeneralFoodStudioValue(source: Record<string, unknown>) {
   ].filter((signal): signal is string => typeof signal === "string").join(" "));
 }
 
+type GeneralFoodLocaleFallback = Readonly<{
+  genericIdentity: string;
+  summary: string;
+  body: string;
+}>;
+
+const generalFoodLocaleFallbacks: Readonly<Record<string, GeneralFoodLocaleFallback>> = {
+  ko: {
+    genericIdentity: "이 상품",
+    summary: "{identity}의 제공된 상품 자료를 참고하고 구매 전 실제 포장의 상품명과 대조하세요.",
+    body: "{identity}의 상품 자료는 상품을 구분하기 위한 참고 정보입니다. 구매 전 실제 포장에 보이는 상품명과 표시 문구를 대조하고, 제공 자료에서 확인되지 않은 내용은 판매자에게 확인하세요.",
+  },
+  en: {
+    genericIdentity: "this product",
+    summary: "Review the supplied product material for {identity} and compare it with the product name visible on the actual package before purchase.",
+    body: "Use the supplied product material for {identity} only as an identification reference. Before purchase, compare the product name and wording visible on the actual package, and ask the seller about any detail that is not confirmed in the supplied material.",
+  },
+  ja: {
+    genericIdentity: "この商品",
+    summary: "{identity}の提供された商品資料を参照し、購入前に実際のパッケージに見える商品名と照合してください。",
+    body: "{identity}の提供された商品資料は、商品を区別するための参考情報です。購入前に実際のパッケージに見える商品名と表示文言を照合し、提供資料で確認できない内容は販売者に確認してください。",
+  },
+  zh: {
+    genericIdentity: "此商品",
+    summary: "請參考{identity}的所提供商品資料，並在購買前與實際包裝上可見的商品名稱核對。",
+    body: "{identity}的所提供商品資料僅作為辨識商品的參考。購買前請核對實際包裝上可見的商品名稱與標示文字，所提供資料中未確認的內容則應向賣家查詢。",
+  },
+  vi: {
+    genericIdentity: "sản phẩm này",
+    summary: "Tham khảo tài liệu sản phẩm được cung cấp cho {identity} và đối chiếu với tên nhìn thấy trên bao bì thực tế trước khi mua.",
+    body: "Chỉ dùng tài liệu sản phẩm được cung cấp cho {identity} làm thông tin tham khảo để nhận diện. Trước khi mua, hãy đối chiếu tên sản phẩm và nội dung nhìn thấy trên bao bì thực tế, đồng thời hỏi người bán về mọi chi tiết chưa được xác nhận trong tài liệu được cung cấp.",
+  },
+  id: {
+    genericIdentity: "produk ini",
+    summary: "Gunakan materi produk yang disediakan untuk {identity} sebagai referensi dan cocokkan dengan nama pada kemasan sebenarnya sebelum membeli.",
+    body: "Gunakan materi produk yang disediakan untuk {identity} hanya sebagai referensi identifikasi. Sebelum membeli, cocokkan nama produk dan tulisan yang terlihat pada kemasan sebenarnya, lalu tanyakan kepada penjual tentang rincian yang belum terkonfirmasi dalam materi yang disediakan.",
+  },
+  ms: {
+    genericIdentity: "produk ini",
+    summary: "Rujuk bahan produk yang diberikan untuk {identity} dan padankan dengan nama pada pembungkusan sebenar sebelum membeli.",
+    body: "Gunakan bahan produk yang diberikan untuk {identity} hanya sebagai rujukan pengenalan. Sebelum membeli, padankan nama produk dan tulisan yang kelihatan pada pembungkusan sebenar, kemudian tanya penjual tentang butiran yang belum disahkan dalam bahan yang diberikan.",
+  },
+  th: {
+    genericIdentity: "สินค้านี้",
+    summary: "ใช้ข้อมูลสินค้าที่ให้มาของ{identity}เป็นข้อมูลอ้างอิง และเทียบกับชื่อที่เห็นบนบรรจุภัณฑ์จริงก่อนซื้อ",
+    body: "ใช้ข้อมูลสินค้าที่ให้มาของ{identity}เป็นข้อมูลอ้างอิงเพื่อแยกแยะสินค้าเท่านั้น ก่อนซื้อให้เทียบชื่อสินค้าและข้อความที่เห็นบนบรรจุภัณฑ์จริง และสอบถามผู้ขายเกี่ยวกับรายละเอียดที่ยังไม่ได้รับการยืนยันในข้อมูลที่ให้มา",
+  },
+  es: {
+    genericIdentity: "este producto",
+    summary: "Consulte el material proporcionado de {identity} y compárelo con el nombre visible en el envase real antes de comprar.",
+    body: "Use el material proporcionado de {identity} solo como referencia de identificación. Antes de comprar, compare el nombre del producto y el texto visible en el envase real, y consulte al vendedor cualquier dato que no esté confirmado en el material proporcionado.",
+  },
+  pt: {
+    genericIdentity: "este produto",
+    summary: "Consulte o material fornecido de {identity} e compare-o com o nome visível na embalagem real antes da compra.",
+    body: "Use o material fornecido de {identity} apenas como referência de identificação. Antes da compra, compare o nome do produto e o texto visível na embalagem real e consulte o vendedor sobre qualquer detalhe não confirmado no material fornecido.",
+  },
+  fr: {
+    genericIdentity: "ce produit",
+    summary: "Consultez les éléments fournis pour {identity} et comparez-les au nom visible sur l’emballage réel avant l’achat.",
+    body: "Utilisez les éléments fournis pour {identity} uniquement comme référence d’identification. Avant l’achat, comparez le nom du produit et le texte visible sur l’emballage réel, puis demandez au vendeur tout détail qui n’est pas confirmé dans les éléments fournis.",
+  },
+  de: {
+    genericIdentity: "dieses Produkt",
+    summary: "Nutzen Sie das bereitgestellte Produktmaterial zu {identity} als Referenz und vergleichen Sie es vor dem Kauf mit dem Namen auf der tatsächlichen Verpackung.",
+    body: "Nutzen Sie das bereitgestellte Produktmaterial zu {identity} nur als Referenz zur Identifizierung. Vergleichen Sie vor dem Kauf den Produktnamen und den sichtbaren Text auf der tatsächlichen Verpackung und fragen Sie beim Verkäufer nach Angaben, die im bereitgestellten Material nicht bestätigt sind.",
+  },
+  it: {
+    genericIdentity: "questo prodotto",
+    summary: "Consultare il materiale fornito per {identity} e confrontarlo con il nome visibile sulla confezione reale prima dell’acquisto.",
+    body: "Usare il materiale fornito per {identity} solo come riferimento per l’identificazione. Prima dell’acquisto, confrontare il nome del prodotto e il testo visibile sulla confezione reale e chiedere al venditore ogni dettaglio non confermato nel materiale fornito.",
+  },
+};
+
+function generalFoodLocaleFallback(locale: unknown) {
+  if (typeof locale !== "string") return undefined;
+  return generalFoodLocaleFallbacks[locale.split("-")[0]?.toLocaleLowerCase() ?? ""];
+}
+
+function validLocalizedGeneralFoodIdentity(
+  source: Record<string, unknown>,
+  normalized: Record<string, unknown>,
+) {
+  if (source.title !== normalized.title || typeof normalized.title !== "string") return undefined;
+  const identity = normalized.title.trim();
+  const locale = typeof normalized.locale === "string" ? normalized.locale : "";
+  if (identity.length < 1 || identity.length > 120
+    || removeUnsupportedGeneralFoodSegments(identity) !== identity
+    || hasPrescriptiveIntakeInstruction(identity)
+    || (locale !== "ko-KR" && /\p{Script=Hangul}/u.test(identity))
+    || !hasExpectedScript(locale, identity)) return undefined;
+  return identity;
+}
+
+function validLocalizedGeneralFoodFallback(
+  locale: string,
+  copy: string,
+  minimum: number,
+  maximum: number,
+) {
+  return copy.length >= minimum
+    && copy.length <= maximum
+    && !hasUnsupportedGeneralFoodEfficacyClaim(copy)
+    && !hasPrescriptiveIntakeInstruction(copy)
+    && (locale === "ko-KR" || !/\p{Script=Hangul}/u.test(copy))
+    && hasExpectedScript(locale, copy);
+}
+
+function restoreLocalizedGeneralFoodMinimums(
+  source: Record<string, unknown>,
+  normalized: Record<string, unknown>,
+) {
+  const fallback = generalFoodLocaleFallback(normalized.locale);
+  const identity = validLocalizedGeneralFoodIdentity(source, normalized);
+  const locale = typeof normalized.locale === "string" ? normalized.locale : "";
+  if (!fallback || !identity) return normalized;
+  let restored = normalized;
+
+  if (typeof source.shortDescription === "string"
+    && source.shortDescription.length >= 1
+    && source.shortDescription.length <= 500
+    && typeof normalized.shortDescription === "string"
+    && source.shortDescription !== normalized.shortDescription
+    && normalized.shortDescription.length < 1) {
+    const summary = fallback.summary.replaceAll("{identity}", identity);
+    if (validLocalizedGeneralFoodFallback(locale, summary, 1, 500)) {
+      restored = { ...restored, shortDescription: summary };
+    }
+  }
+
+  const sourceDetails = source.detailSections;
+  const normalizedDetails = normalized.detailSections;
+  if (Array.isArray(sourceDetails) && Array.isArray(normalizedDetails)) {
+    let detailSectionsChanged = false;
+    const detailSections = normalizedDetails.map((entry, index) => {
+      const original = sourceDetails[index];
+      if (!isPlainRecord(original) || !isPlainRecord(entry)
+        || typeof original.body !== "string"
+        || original.body.length < 60
+        || original.body.length > 700
+        || typeof entry.body !== "string"
+        || original.body === entry.body
+        || entry.body.length >= 60) return entry;
+      const retained = entry.body.trim();
+      const heading = original.heading === entry.heading
+        && typeof entry.heading === "string"
+        && entry.heading.length >= 4
+        && entry.heading.length <= 100
+        && removeUnsupportedGeneralFoodSegments(entry.heading, entry.evidence) === entry.heading
+        && !hasPrescriptiveIntakeInstruction(entry.heading)
+        ? entry.heading
+        : "";
+      const retainedHasIntake = retained ? hasPrescriptiveIntakeInstruction(retained) : false;
+      const prefix = retained || heading;
+      const bodyIdentity = retainedHasIntake ? fallback.genericIdentity : identity;
+      const neutralBody = fallback.body.replaceAll("{identity}", bodyIdentity);
+      if ((retained && (hasUnsupportedGeneralFoodEfficacyClaim(retained)
+        || (hasPrescriptiveIntakeInstruction(retained)
+          && !hasDirectIntakeEvidence(retained, entry.evidence))))
+        || !validLocalizedGeneralFoodFallback(locale, neutralBody, 1, 700)) return entry;
+      const body = prefix ? `${prefix} ${neutralBody}` : neutralBody;
+      if (body.length < 60
+        || body.length > 700
+        || hasUnsupportedGeneralFoodEfficacyClaim(body)
+        || (hasPrescriptiveIntakeInstruction(body)
+          && !hasDirectIntakeEvidence(body, entry.evidence))
+        || (locale !== "ko-KR" && /\p{Script=Hangul}/u.test(body))
+        || !hasExpectedScript(locale, body)) return entry;
+      detailSectionsChanged = true;
+      return { ...entry, body };
+    });
+    if (detailSectionsChanged) {
+      if (restored === normalized) restored = { ...normalized };
+      restored.detailSections = detailSections;
+    }
+  }
+  return restored;
+}
+
 /**
  * Removes only unsupported general-food claim sentences from model output.
- * It preserves explicit negation and label-backed intake directions, never
- * invents replacement copy, and leaves final length/cardinality checks to Zod.
+ * It preserves explicit negation and label-backed intake directions. If that
+ * removal alone empties a localized summary or shortens a localized detail
+ * body, a deterministic product-identity review instruction restores only the
+ * existing structural minimum; unrelated malformed output remains fail-closed.
  */
 export function normalizeStudioGeneralFoodSafety(value: unknown): unknown {
   if (!isPlainRecord(value) || !isGeneralFoodStudioValue(value)) return value;
@@ -382,6 +563,9 @@ export function normalizeStudioGeneralFoodSafety(value: unknown): unknown {
           if (normalizedListing === entry) normalizedListing = { ...entry };
           normalizedListing.detailSections = normalizedDetailSections;
         }
+      }
+      if (normalizedListing !== entry) {
+        normalizedListing = restoreLocalizedGeneralFoodMinimums(entry, normalizedListing);
       }
       if (normalizedListing !== entry) listingsChanged = true;
       return normalizedListing;
