@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const runtimeCardUrl = new URL("../app/ai-cli-runtime-card.tsx", import.meta.url);
+const operationsCssUrl = new URL("../app/operations-system.css", import.meta.url);
 const tokenRouteUrl = new URL("../app/api/admin/ai-worker-token/route.ts", import.meta.url);
 const maintenanceRouteUrl = new URL("../app/api/internal/maintenance/route.ts", import.meta.url);
 const installerUrl = new URL("../scripts/install-ai-worker-launch-agent.mjs", import.meta.url);
@@ -14,8 +15,9 @@ const scopes = [
 ];
 
 test("runtime UI issues one pending three-scope worker token set", async () => {
-  const [runtimeCard, tokenRoute, maintenanceRoute] = await Promise.all([
+  const [runtimeCard, operationsCss, tokenRoute, maintenanceRoute] = await Promise.all([
     readFile(runtimeCardUrl, "utf8"),
+    readFile(operationsCssUrl, "utf8"),
     readFile(tokenRouteUrl, "utf8"),
     readFile(maintenanceRouteUrl, "utf8"),
   ]);
@@ -30,6 +32,22 @@ test("runtime UI issues one pending three-scope worker token set", async () => {
   assert.match(runtimeCard, /issued\.tokens\[definition\.scope\]\.token/);
   assert.match(runtimeCard, /aria-label="CLI 작업자 권한 선택"/);
   assert.match(runtimeCard, /aria-pressed=\{selectedScope === definition\.scope\}/);
+
+  const issueTokenStart = runtimeCard.indexOf("const issueToken = async");
+  const issueTokenEnd = runtimeCard.indexOf("const requestTokenIssue", issueTokenStart);
+  assert.ok(issueTokenStart >= 0 && issueTokenEnd > issueTokenStart, "worker token issue function must be present");
+  assert.doesNotMatch(runtimeCard.slice(issueTokenStart, issueTokenEnd), /window\.confirm/);
+  assert.match(runtimeCard, /const requestTokenIssue = \(\) => \{[\s\S]*?if \(!status\?\.worker\) \{[\s\S]*?void issueToken\(\);[\s\S]*?return;[\s\S]*?setTokenRotationConfirming\(true\);/);
+  assert.match(runtimeCard, /const confirmTokenRotation = \(\) => \{[\s\S]*?setTokenRotationConfirming\(false\);[\s\S]*?void issueToken\(\);/);
+  assert.match(runtimeCard, /<dialog[\s\S]*?role="alertdialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="cli-token-confirm-title"[\s\S]*?aria-describedby="cli-token-confirm-description"/);
+  assert.match(runtimeCard, /AI·게이트웨이·스케줄러 토큰 세트를 새로 발급할까요\? 기존 작업자는 새 런타임 설치가 성공할 때까지 계속 동작합니다\./);
+  assert.match(runtimeCard, /onClick=\{requestTokenIssue\}/);
+  assert.match(runtimeCard, /onClick=\{confirmTokenRotation\}>확인 후 새로 발급<\/button>/);
+  assert.match(runtimeCard, /dialog\.showModal\(\)/);
+  assert.match(runtimeCard, /tokenRotationConfirmButtonRef\.current\?\.focus\(\)/);
+  assert.match(runtimeCard, /onCancel=\{\(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?closeTokenRotationConfirmation\(\);/);
+  assert.match(operationsCss, /\.cli-token-confirm-dialog::backdrop/);
+  assert.match(operationsCss, /\.cli-token-confirm-actions button \{[^}]*min-height: 44px;/);
 
   for (const [scope, service, rotateFlag] of scopes) {
     assert.match(runtimeCard, new RegExp(`scope: "${scope}"`));

@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Ban, CheckCircle2, Clock3, Copy, Cpu, DatabaseZap, History, KeyRound, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SquareTerminal } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 
 type WorkerScope = "ai" | "gateway" | "scheduler";
@@ -131,6 +131,10 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [jobsError, setJobsError] = useState("");
   const [workingJobId, setWorkingJobId] = useState("");
+  const [tokenRotationConfirming, setTokenRotationConfirming] = useState(false);
+  const tokenRotationDialogRef = useRef<HTMLDialogElement | null>(null);
+  const tokenRotationConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
+  const tokenRotationOpenerRef = useRef<HTMLElement | null>(null);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data } = await createClient().auth.getSession();
@@ -213,11 +217,29 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     return () => { window.clearTimeout(initialLoad); window.clearInterval(interval); };
   }, [load]);
 
+  const closeTokenRotationConfirmation = useCallback(() => {
+    const dialog = tokenRotationDialogRef.current;
+    if (dialog?.open) dialog.close();
+    setTokenRotationConfirming(false);
+    const opener = tokenRotationOpenerRef.current;
+    tokenRotationOpenerRef.current = null;
+    window.requestAnimationFrame(() => {
+      if (opener?.isConnected && !(opener instanceof HTMLButtonElement && opener.disabled)) opener.focus();
+    });
+  }, []);
+
+  useEffect(() => {
+    const dialog = tokenRotationDialogRef.current;
+    if (!dialog || !tokenRotationConfirming) return;
+    if (!dialog.open) dialog.showModal();
+    const focusFrame = window.requestAnimationFrame(() => tokenRotationConfirmButtonRef.current?.focus());
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [tokenRotationConfirming]);
+
   const selectedScopeDefinition = workerScopeDefinitions.find((definition) => definition.scope === selectedScope) ?? workerScopeDefinitions[0];
   const selectedWorker = workerForScope(status, selectedScope);
 
   const issueToken = async () => {
-    if (status?.worker && !window.confirm("AI·게이트웨이·스케줄러 토큰 세트를 새로 발급할까요? 기존 작업자는 새 런타임 설치가 성공할 때까지 계속 동작합니다.")) return;
     setIssuing(true);
     setError("");
     try {
@@ -245,6 +267,23 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     } finally {
       setIssuing(false);
     }
+  };
+
+  const requestTokenIssue = () => {
+    if (!status?.worker) {
+      void issueToken();
+      return;
+    }
+    tokenRotationOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setTokenRotationConfirming(true);
+  };
+
+  const confirmTokenRotation = () => {
+    tokenRotationOpenerRef.current = null;
+    const dialog = tokenRotationDialogRef.current;
+    if (dialog?.open) dialog.close();
+    setTokenRotationConfirming(false);
+    void issueToken();
   };
 
   const copy = async (value: string, message: string) => {
@@ -292,9 +331,26 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     </div>
 
     <div className="cli-runtime-actions">
-      <div><label><span>토큰 유효기간</span><select value={expiresInDays} onChange={(event) => setExpiresInDays(Number(event.target.value))}><option value={30}>30일</option><option value={90}>90일</option><option value={180}>180일</option><option value={365}>365일</option></select></label><button type="button" className="credential-primary" onClick={() => void issueToken()} disabled={issuing}>{issuing ? <LoaderCircle className="spin" size={14} /> : status?.worker ? <RotateCcw size={14} /> : <KeyRound size={14} />}{status?.worker ? "3개 토큰 안전 교체" : "3개 전용 토큰 발급"}</button></div>
+      <div><label><span>토큰 유효기간</span><select value={expiresInDays} onChange={(event) => setExpiresInDays(Number(event.target.value))}><option value={30}>30일</option><option value={90}>90일</option><option value={180}>180일</option><option value={365}>365일</option></select></label><button type="button" className="credential-primary" onClick={requestTokenIssue} disabled={issuing || tokenRotationConfirming}>{issuing ? <LoaderCircle className="spin" size={14} /> : status?.worker ? <RotateCcw size={14} /> : <KeyRound size={14} />}{status?.worker ? "3개 토큰 안전 교체" : "3개 전용 토큰 발급"}</button></div>
       <aside><ShieldCheck size={15} /><span><b>{selectedScopeDefinition.label} 전용 권한</b><small>{selectedScopeDefinition.purpose}</small></span></aside>
     </div>
+
+    <dialog
+      ref={tokenRotationDialogRef}
+      className="cli-token-confirm-dialog"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="cli-token-confirm-title"
+      aria-describedby="cli-token-confirm-description"
+      onCancel={(event) => {
+        event.preventDefault();
+        closeTokenRotationConfirmation();
+      }}
+    >
+      <div className="cli-token-confirm-heading"><span><AlertTriangle size={18} /></span><div><small>WORKER TOKEN ROTATION</small><h4 id="cli-token-confirm-title">작업자 토큰 세트 교체 확인</h4></div></div>
+      <p id="cli-token-confirm-description">AI·게이트웨이·스케줄러 토큰 세트를 새로 발급할까요? 기존 작업자는 새 런타임 설치가 성공할 때까지 계속 동작합니다.</p>
+      <div className="cli-token-confirm-actions"><button type="button" className="credential-secondary" onClick={closeTokenRotationConfirmation}>취소</button><button ref={tokenRotationConfirmButtonRef} type="button" className="credential-primary" onClick={confirmTokenRotation}>확인 후 새로 발급</button></div>
+    </dialog>
 
     <div className="cli-job-history">
       <div className="cli-job-history-heading"><span><History size={15} /><b>최근 AI 작업</b></span><small>요청 이미지·시도 횟수·결과 상태를 운영 화면에서 관리합니다.</small></div>
