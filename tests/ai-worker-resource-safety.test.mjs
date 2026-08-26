@@ -43,10 +43,12 @@ test("Codex subprocesses use a bounded FIFO gate and measure timeout only after 
 
   assert.match(source, /SELLERPILOT_IMAGE_TIMEOUT_MS \?\? 20 \* 60_000/);
   assert.match(source, /SELLERPILOT_ANALYSIS_TIMEOUT_MS \?\? 12 \* 60_000/);
-  assert.match(source, /SELLERPILOT_STUDIO_ANALYSIS_TIMEOUT_MS \?\? 30 \* 60_000/);
+  assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 25 \* 60_000/);
+  assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
   assert.match(source, /stage: "support-reply" \}\);/);
-  assert.match(source, /stage: "studio-analysis" \}\);/);
-  assert.match(source, /runCodex\(analysisArgs, studioAnalysisTimeoutMs/);
+  assert.match(source, /stage: "studio-master"/);
+  assert.match(source, /timeoutMs: studioMasterTimeoutMs/);
+  assert.match(source, /timeoutMs: studioLocalizedTimeoutMs/);
   assert.match(source, /SELLERPILOT_CODEX_CONCURRENCY \?\? 2/);
   assert.match(source, /const codexConcurrencyLimit = Math\.min\(4, Math\.max\(1,/);
   assert.match(runCodex, /const queuedAt = Date\.now\(\)/);

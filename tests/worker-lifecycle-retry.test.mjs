@@ -123,9 +123,11 @@ test("continuous transient failures stop inside the configured grace window", as
 test("worker uses lifecycle retry for heartbeat and both completion endpoints", async () => {
   const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.34"/);
-  assert.match(source, /SELLERPILOT_STUDIO_REPAIR_TIMEOUT_MS \?\? 45 \* 60_000/);
-  assert.match(source, /\], studioRepairTimeoutMs, jobId, claimToken, \{ leaseSignal, stage: "studio-repair" \}\)/);
+  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.35"/);
+  assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 25 \* 60_000/);
+  assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
+  assert.match(source, /stage: "studio-master-repair"/);
+  assert.match(source, /stage: `studio-localized\$\{repair \? "-repair" : ""\}:\$\{chunkIndex \+ 1\}`/);
   assert.match(source, /if \(jobId\) await touchJob\(jobId, claimToken\)/);
   assert.match(source, /graceMs: AI_HEARTBEAT_TRANSIENT_GRACE_MS/);
   assert.match(source, /terminalStatuses: \[401, 404, 409\]/);

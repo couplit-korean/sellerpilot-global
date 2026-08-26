@@ -284,7 +284,7 @@ export function normalizeStudioLocalizedKeywordCoverage(value: unknown): unknown
   return changed ? { ...source, localizedListings } : value;
 }
 
-const requiredLocalizedMarkets = {
+export const requiredLocalizedMarkets = {
   "qoo10:JP": "ja-JP",
   "shopee:SG": "en-SG",
   "shopee:MY": "ms-MY",
