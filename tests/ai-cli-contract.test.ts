@@ -360,6 +360,42 @@ test("AI studio contract validates the expected script in every localized detail
   assert.ok(coreParsed.error?.issues.some((issue) => issue.path.join(".") === "localizedListings.0.shortDescription"));
 });
 
+test("Latin-script locales validate distinctive language signals across the whole listing", () => {
+  const shortAsciiFields = validResult();
+  for (const index of [4, 7, 8]) {
+    shortAsciiFields.localizedListings[index].thumbnailAltText = "ACV package front view";
+    shortAsciiFields.localizedListings[index].detailSections[0].imageAltText = "ACV package overview";
+  }
+  const shortAsciiParsed = cliStudioResultSchema.safeParse(shortAsciiFields);
+  if (!shortAsciiParsed.success) assert.fail(JSON.stringify(shortAsciiParsed.error.issues, null, 2));
+
+  for (const index of [4, 7, 8]) {
+    const englishOnly = validResult();
+    const listing = englishOnly.localizedListings[index];
+    listing.title = "White ceramic espresso cup";
+    listing.shortDescription = "White ceramic espresso cup for a simple home coffee routine.";
+    listing.description = "A white ceramic espresso cup shown as one item for a simple home coffee routine.";
+    listing.keywords = ["white ceramic espresso cup", "home coffee cup", "single cup"];
+    listing.thumbnailAltText = "White ceramic espresso cup";
+    listing.classification.displayName = "Ceramic drinkware";
+    listing.classification.evidence = "The seller-supplied product views show a single handled ceramic drinking vessel.";
+    listing.detailSections.forEach((section, sectionIndex) => {
+      section.buyerQuestion = `What should the buyer check in section ${sectionIndex + 1}?`;
+      section.evidence = `Seller-supplied product evidence for section ${sectionIndex + 1}.`;
+      section.heading = `Buyer detail ${sectionIndex + 1}`;
+      section.body = `This English-only section ${sectionIndex + 1} describes a visible product detail without adding unsupported claims. Buyers should check the seller-supplied evidence before purchase.`;
+      section.imageAltText = `White ceramic cup detail ${sectionIndex + 1}`;
+    });
+
+    const parsed = cliStudioResultSchema.safeParse(englishOnly);
+    assert.equal(parsed.success, false);
+    assert.ok(parsed.error?.issues.some((issue) => (
+      issue.path.join(".") === `localizedListings.${index}`
+      && /현지화 전체/.test(issue.message)
+    )));
+  }
+});
+
 test("AI studio contract rejects duplicated localized detail image roles", () => {
   const result = validResult();
   result.localizedListings[1].detailSections[1].imageAsset = "detail-overview";

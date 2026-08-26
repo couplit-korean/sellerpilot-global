@@ -319,10 +319,14 @@ function hasExpectedScript(locale: string, value: string) {
   if (locale === "ja-JP") return /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(value);
   if (locale === "th-TH") return /\p{Script=Thai}/u.test(value);
   if (locale === "zh-TW") return /\p{Script=Han}/u.test(value);
+  return /[A-Za-z]/u.test(value);
+}
+
+function hasExpectedAggregateLocaleSignal(locale: string, value: string) {
   if (locale === "vi-VN") return /[\u0102\u0103\u00C2\u00E2\u0110\u0111\u00CA\u00EA\u00D4\u00F4\u01A0\u01A1\u01AF\u01B0\u1EA0-\u1EFF]/u.test(value);
   if (locale === "pt-BR") return /[\u00C0-\u00FF]/u.test(value);
   if (locale === "es-MX") return /[\u00E1\u00E9\u00ED\u00F3\u00FA\u00F1\u00FC\u00BF\u00A1]/iu.test(value);
-  return /[A-Za-z]/u.test(value);
+  return true;
 }
 
 function meaningfulTokens(value: string) {
@@ -494,6 +498,10 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
       if (!hasExpectedScript(locale, fieldValue)) {
         context.addIssue({ code: "custom", path: ["localizedListings", index, ...fieldPath], message: `${key} 현지화 필드에 ${locale} 언어 문자가 확인되지 않습니다.` });
       }
+    }
+    const aggregateLocalizedText = localizedFields.map(([, fieldValue]) => fieldValue).join(" ");
+    if (!hasExpectedAggregateLocaleSignal(locale, aggregateLocalizedText)) {
+      context.addIssue({ code: "custom", path: ["localizedListings", index], message: `${key} 현지화 전체에 ${locale} 언어 고유 문자 신호가 없습니다.` });
     }
     const sectionTypes = new Set(listing.detailSections.map((section) => section.type));
     const imageAssets = new Set(listing.detailSections.map((section) => section.imageAsset));
