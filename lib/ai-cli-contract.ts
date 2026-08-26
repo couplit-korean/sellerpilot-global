@@ -190,6 +190,52 @@ export function normalizeStudioWarningLimits(value: unknown): unknown {
   };
 }
 
+function boundedTitleKeyword(title: string): string {
+  const trimmed = title.trim();
+  if (!trimmed) return "";
+  let keyword = trimmed.slice(0, 80);
+  if (/[\uD800-\uDBFF]$/u.test(keyword)) keyword = keyword.slice(0, -1);
+  if (keyword.length < trimmed.length) {
+    const wordBoundary = keyword.search(/\s+\S*$/u);
+    if (wordBoundary >= 8) keyword = keyword.slice(0, wordBoundary);
+  }
+  return keyword.trim();
+}
+
+export function normalizeStudioLocalizedKeywordCoverage(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  if (!Array.isArray(source.localizedListings)) return value;
+  let changed = false;
+  const localizedListings = source.localizedListings.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const listing = entry as Record<string, unknown>;
+    if (typeof listing.title !== "string" || !Array.isArray(listing.keywords)
+        || !listing.keywords.every((keyword) => typeof keyword === "string")) return entry;
+    const detailSections = Array.isArray(listing.detailSections) ? listing.detailSections : [];
+    const searchableCopy = [
+      listing.title,
+      listing.shortDescription,
+      listing.description,
+      ...detailSections.flatMap((section) => {
+        if (!section || typeof section !== "object" || Array.isArray(section)) return [];
+        const detail = section as Record<string, unknown>;
+        return [detail.heading, detail.body];
+      }),
+    ].filter((text): text is string => typeof text === "string").join(" ").toLocaleLowerCase();
+    if (listing.keywords.some((keyword) => searchableCopy.includes(keyword.toLocaleLowerCase()))) return entry;
+
+    const connectedKeyword = boundedTitleKeyword(listing.title);
+    if (!connectedKeyword) return entry;
+    const keywords = listing.keywords.length < 10
+      ? [...listing.keywords, connectedKeyword]
+      : [...listing.keywords.slice(0, -1), connectedKeyword];
+    changed = true;
+    return { ...listing, keywords };
+  });
+  return changed ? { ...source, localizedListings } : value;
+}
+
 const requiredLocalizedMarkets = {
   "qoo10:JP": "ja-JP",
   "shopee:SG": "en-SG",

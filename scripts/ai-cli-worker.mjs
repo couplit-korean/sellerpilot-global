@@ -11,6 +11,7 @@ import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
 import { buildAssetImagePrompt, selectAssetReferenceIndexes } from "../lib/ai-image-planning.ts";
 import {
   cliStudioResultSchema,
+  normalizeStudioLocalizedKeywordCoverage,
   normalizeStudioWarningLimits,
   productResearchResultSchema,
   studioCompetitorContextSchema,
@@ -1459,7 +1460,7 @@ function summarizeStudioIssues(issues) {
 }
 
 async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, claimToken, leaseSignal) {
-  const initial = cliStudioResultSchema.safeParse(normalizeStudioWarningLimits(result));
+  const initial = cliStudioResultSchema.safeParse(normalizeStudioLocalizedKeywordCoverage(normalizeStudioWarningLimits(result)));
   if (initial.success) return initial.data;
 
   const repairPrompt = [
@@ -1483,7 +1484,7 @@ async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, c
     repairPrompt,
   ], studioAnalysisTimeoutMs, jobId, claimToken, { leaseSignal, stage: "studio-repair" });
 
-  const repaired = cliStudioResultSchema.safeParse(normalizeStudioWarningLimits(JSON.parse(await readFile(resultFile, "utf8"))));
+  const repaired = cliStudioResultSchema.safeParse(normalizeStudioLocalizedKeywordCoverage(normalizeStudioWarningLimits(JSON.parse(await readFile(resultFile, "utf8")))));
   if (!repaired.success) {
     throw new Error(`AI 다국어 결과 검증 실패 · ${summarizeStudioIssues(repaired.error.issues)}`.slice(0, 500));
   }

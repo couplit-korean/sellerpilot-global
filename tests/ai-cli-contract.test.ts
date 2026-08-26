@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   cliStudioResultSchema,
+  normalizeStudioLocalizedKeywordCoverage,
   normalizeStudioWarningLimits,
   productResearchJobRequestSchema,
   productResearchResultSchema,
@@ -149,6 +150,46 @@ test("AI studio contract rejects disconnected keyword stuffing", () => {
   const parsed = cliStudioResultSchema.safeParse(result);
   assert.equal(parsed.success, false);
   assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /자연스럽게 포함/);
+});
+
+test("AI studio keyword coverage repair derives only a bounded phrase from the existing localized title", () => {
+  const result = validResult();
+  const disconnectedListings = new Map<string, { title: string; keywordCount: number }>([
+    ["AU", { title: "Sajo Mild Tuna Chunks in a Convenient Pantry Pack for Everyday Family Meals and Quick Recipes 😀", keywordCount: 3 }],
+    ["CA", { title: "Sajo Mild Tuna Chunks Pantry Pack", keywordCount: 3 }],
+    ["FR", { title: "Thon Sajo léger en boîte pratique", keywordCount: 10 }],
+    ["IT", { title: "Bocconcini di tonno delicato Sajo in confezione pratica", keywordCount: 10 }],
+  ]);
+  for (const [market, { title, keywordCount }] of disconnectedListings) {
+    const listing = result.localizedListings.find((item) => item.channel === "ebay" && item.market === market);
+    assert.ok(listing);
+    listing.title = title;
+    listing.shortDescription = "A concise localized product summary.";
+    listing.description = "Use only the confirmed pack information shown by the seller.";
+    listing.keywords = Array.from({ length: keywordCount }, (_, index) => `disconnected term ${index}`);
+  }
+
+  const normalized = normalizeStudioLocalizedKeywordCoverage(result) as ReturnType<typeof validResult>;
+  for (const [market, { title, keywordCount }] of disconnectedListings) {
+    const repaired = normalized.localizedListings.find((item) => item.channel === "ebay" && item.market === market);
+    assert.ok(repaired);
+    const connectedKeyword = repaired.keywords.at(-1) ?? "";
+    assert.ok(connectedKeyword.length > 0 && connectedKeyword.length <= 80);
+    assert.equal(title.includes(connectedKeyword), true);
+    assert.doesNotMatch(connectedKeyword, /[\uD800-\uDBFF]$/u);
+    if (title.length > 80) assert.match(title.slice(connectedKeyword.length), /^\s/u);
+    const retainedKeywordCount = Math.min(keywordCount, 9);
+    assert.equal(repaired.keywords.length, Math.min(keywordCount + 1, 10));
+    assert.deepEqual(repaired.keywords.slice(0, -1), Array.from({ length: retainedKeywordCount }, (_, index) => `disconnected term ${index}`));
+  }
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+  assert.strictEqual(normalizeStudioLocalizedKeywordCoverage(normalized), normalized);
+});
+
+test("AI studio keyword coverage repair leaves already connected localized copy unchanged", () => {
+  const result = validResult();
+  assert.strictEqual(normalizeStudioLocalizedKeywordCoverage(result), result);
 });
 
 function validRequiredIntake() {
