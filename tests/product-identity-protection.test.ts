@@ -15,12 +15,14 @@ import {
 import {
   assertIdentityBackgroundPlate,
   assertIdentityEvidenceLinkage,
+  compositeIdentityForeground,
   loadVisionIdentityForeground,
   planIdentityEvidenceAttempt,
   renderIdentityEvidenceBoard,
   renderIdentityEvidencePanel,
   renderIdentityOnNeutralCanvas,
   renderMissingIdentityEvidence,
+  selectCanonicalWholeProductIdentityView,
   type IdentityForeground,
   type VisionCutoutReport,
 } from "../lib/product-identity-protection";
@@ -163,6 +165,142 @@ test("source assets render only the verified foreground on the declared neutral 
   } finally {
     await rm(fixture.directory, { recursive: true, force: true });
   }
+});
+
+test("whole-product assets require the single-instance canonical subject and ignore partial label views", async () => {
+  const wide = aiGeneratedAssetSpecs.find((asset) => asset.id === "wide");
+  const square = aiGeneratedAssetSpecs.find((asset) => asset.id === "square");
+  assert.ok(wide);
+  assert.ok(square);
+  const canonicalWhole = {
+    foreground: await syntheticSolidEvidenceForeground("c".repeat(64), "#173d70", 420, 260),
+    report: { ...frontReport, inputRole: "front", method: "single-instance" as const, instanceCount: 1 },
+  };
+  const partialLabel = {
+    foreground: await syntheticSolidEvidenceForeground("d".repeat(64), "#275d9a", 220, 180),
+    report: { ...frontReport, inputIndex: 0, inputRole: "main", method: "rectangle" as const },
+  };
+
+  const statutoryCutouts = {
+    canonicalWhole,
+    canonicalCompletenessProof: "front-full-instance" as const,
+    front: canonicalWhole,
+    statutoryIdentity: true,
+  };
+  assert.strictEqual(selectCanonicalWholeProductIdentityView(statutoryCutouts, wide), canonicalWhole);
+  assert.strictEqual(selectCanonicalWholeProductIdentityView(statutoryCutouts, square), canonicalWhole);
+  assert.throws(
+    () => selectCanonicalWholeProductIdentityView({
+      canonicalWhole: partialLabel,
+      canonicalCompletenessProof: "front-full-instance",
+      front: canonicalWhole,
+      statutoryIdentity: true,
+    }, wide),
+    /완전한 canonical 정면 상품 컷아웃/,
+  );
+});
+
+test("statutory canonical subjects require same-source identity linkage and complete single-instance geometry", async () => {
+  const wide = aiGeneratedAssetSpecs.find((asset) => asset.id === "wide");
+  assert.ok(wide);
+  const foreground = await syntheticSolidEvidenceForeground("f".repeat(64), "#173d70", 420, 260);
+  const front = { foreground, report: { ...frontReport, inputRole: "front" } };
+  const valid = { foreground, report: { ...frontReport, inputRole: "front" } };
+  assert.doesNotThrow(() => selectCanonicalWholeProductIdentityView({
+    canonicalWhole: valid,
+    canonicalCompletenessProof: "front-full-instance",
+    front,
+    statutoryIdentity: true,
+  }, wide));
+
+  const lowCoverageWholeSubject = {
+    ...valid,
+    report: { ...valid.report, boundingCoverage: 0.89 },
+  };
+  assert.throws(() => selectCanonicalWholeProductIdentityView({
+    canonicalWhole: lowCoverageWholeSubject,
+    canonicalCompletenessProof: "front-full-instance",
+    front,
+    statutoryIdentity: true,
+  }, wide), /완전한 canonical 정면 상품 컷아웃/);
+  assert.doesNotThrow(() => selectCanonicalWholeProductIdentityView({
+    canonicalWhole: lowCoverageWholeSubject,
+    canonicalCompletenessProof: "subject-full-instance",
+    front,
+    statutoryIdentity: true,
+  }, wide));
+
+  const invalidCanonicalViews = [
+    { ...valid, report: { ...valid.report, inputIndex: 9 } },
+    { ...valid, report: { ...valid.report, productNameMatches: 0, gtinMatch: false } },
+    { ...valid, report: { ...valid.report, method: "rectangle" as const } },
+    { ...valid, report: { ...valid.report, instanceCount: 2 } },
+    { ...valid, report: { ...valid.report, boundingCoverage: 0.3 } },
+    { ...valid, report: { ...valid.report, boundingCoverage: 1.02 } },
+    { ...valid, foreground: { ...foreground, retainedPixelRatio: 0.99 } },
+    { ...valid, foreground: { ...foreground, width: 100 } },
+  ];
+  for (const canonicalWhole of invalidCanonicalViews) {
+    assert.throws(() => selectCanonicalWholeProductIdentityView({
+      canonicalWhole,
+      canonicalCompletenessProof: "front-full-instance",
+      front,
+      statutoryIdentity: true,
+    }, wide), /완전한 canonical 정면 상품 컷아웃/);
+  }
+
+  const unlabelledSingleSubject = {
+    ...valid,
+    report: { ...valid.report, productNameMatches: 0, brandMatches: 0, gtinMatch: false },
+  };
+  assert.doesNotThrow(() => selectCanonicalWholeProductIdentityView({
+    canonicalWhole: unlabelledSingleSubject,
+    canonicalCompletenessProof: "subject-full-instance",
+    front: unlabelledSingleSubject,
+    statutoryIdentity: false,
+  }, wide));
+});
+
+test("source-composite places the canonical product bottom on the audited support contact line", async () => {
+  const wide = aiGeneratedAssetSpecs.find((asset) => asset.id === "wide");
+  assert.ok(wide);
+  const foreground = await syntheticSolidEvidenceForeground("e".repeat(64), "#d62626", 420, 200);
+  const background = await sharp({
+    create: { width: wide.width, height: wide.height, channels: 3, background: "#f2f2f2" },
+  }).png().toBuffer();
+  const rendered = await compositeIdentityForeground(background, foreground, wide);
+  const pixels = await sharp(rendered).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  let maximumProductY = -1;
+  for (let y = 0; y < pixels.info.height; y += 1) {
+    for (let x = 0; x < pixels.info.width; x += 1) {
+      const offset = (y * pixels.info.width + x) * pixels.info.channels;
+      if (pixels.data[offset] > 140 && pixels.data[offset + 1] < 90 && pixels.data[offset + 2] < 90) {
+        maximumProductY = y;
+      }
+    }
+  }
+  const expectedContactY = Math.round(wide.height * wide.identityPolicy.placement.top)
+    + Math.round(wide.height * wide.identityPolicy.placement.height) - 1;
+  assert.ok(maximumProductY >= expectedContactY - 1 && maximumProductY <= expectedContactY);
+
+  const suspended = await compositeIdentityForeground(background, foreground, wide, "suspended-or-planar");
+  const suspendedPixels = await sharp(suspended).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  let suspendedMaximumProductY = -1;
+  for (let y = 0; y < suspendedPixels.info.height; y += 1) {
+    for (let x = 0; x < suspendedPixels.info.width; x += 1) {
+      const offset = (y * suspendedPixels.info.width + x) * suspendedPixels.info.channels;
+      if (suspendedPixels.data[offset] > 140
+          && suspendedPixels.data[offset + 1] < 90
+          && suspendedPixels.data[offset + 2] < 90) {
+        suspendedMaximumProductY = y;
+      }
+    }
+  }
+  assert.ok(suspendedMaximumProductY < expectedContactY - 100);
+  await assert.rejects(
+    compositeIdentityForeground(background, foreground, wide, "unknown" as "surface-supported"),
+    /접촉 방식이 올바르지/,
+  );
 });
 
 test("ACV-like single package evidence escapes square and rejected centered views through deterministic asymmetric panels", async () => {

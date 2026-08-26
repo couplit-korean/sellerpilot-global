@@ -1,5 +1,5 @@
 import { aiGeneratedAssetSpecs, type AiGeneratedAssetId } from "./ai-generated-assets";
-import { resolveIdentityBackgroundContract } from "./ai-background-audit";
+import { resolveIdentityBackgroundContract, type IdentityBackgroundContactMode } from "./ai-background-audit";
 import { channelStyleProfiles, generalCommerceStyleProfile, matchStyleCategory } from "./marketplace-style-learning";
 import {
   buildProductSettingShotPlan,
@@ -63,6 +63,21 @@ export function requiresSourceIdentityProtection(result: ProductStudioResult) {
   ].join(" ");
   return sourceIdentityCategoryIds.has(resolveProductImageStyleCategory(result).id)
     || statutoryPackageSignals.test(productText);
+}
+
+export function resolveIdentityBackgroundContactMode(
+  result: Pick<ProductStudioResult, "product">,
+  settingShot?: ProductSettingShot | null,
+): IdentityBackgroundContactMode {
+  const categoryId = resolveProductImageStyleCategory(result).id;
+  const productText = [result.product.name, ...result.product.features].join(" ");
+  const settingText = settingShot
+    ? [settingShot.location, settingShot.surface, settingShot.supportingObjects, settingShot.staging].join(" ")
+    : "";
+  const explicitlySuspendedProduct = /벽\s*(?:걸이|부착|고정)|걸이형|행거|wall[-\s]?(?:mount|mounted)|hanging|suspended/i.test(productText);
+  const suspendedGarmentScene = categoryId === "men-tops"
+    && /옷걸이|걸어|건다|벽면|같은\s*평면|hanger|hanging|wall\s*plane/i.test(settingText);
+  return explicitlySuspendedProduct || suspendedGarmentScene ? "suspended-or-planar" : "surface-supported";
 }
 
 function normalizedRole(value: unknown) {
@@ -181,6 +196,7 @@ export function buildAssetImagePrompt(
   noveltyGuidance = "",
   generationMode: "product" | "identity-background" = "product",
   settingShotOverride?: ProductSettingShot,
+  contactModeOverride?: IdentityBackgroundContactMode,
 ) {
   const categoryStyle = resolveProductImageStyleCategory(result);
   const channelVisuals = channelStyleProfiles.map((profile) => `${profile.label}: ${profile.thumbnailStyle}`).join(" | ");
@@ -205,6 +221,11 @@ export function buildAssetImagePrompt(
 
   if (generationMode === "identity-background") {
     const placement = preset.identityPolicy.placement;
+    const contactLine = Number((placement.top + placement.height).toFixed(4));
+    const contactMode = contactModeOverride ?? resolveIdentityBackgroundContactMode(result, settingShot);
+    const contactInstruction = contactMode === "surface-supported"
+      ? `Its exact bottom edge at normalized y=${contactLine} is the authoritative product contact line: an integrated horizontal support plane must visibly cross that line and continue below it, with clear backing architecture above it. Never leave the zone as an uninterrupted wall, vertical panel or open air at that bottom edge.`
+      : "This trusted slot uses suspended-or-planar placement: keep one coherent, unobstructed backing or hanging plane across the entire zone and preserve full-silhouette clearance. Do not force or invent a tabletop, shelf, pedestal or bottom contact line.";
     const safeContract = resolveProductIdentityBackgroundContract(settingShot, preset.id);
     const safeEnvironmentAssignment = settingShot
       ? [
@@ -223,9 +244,9 @@ export function buildAssetImagePrompt(
       `Background environment: ${preset.scene}`,
       `Mandatory empty-environment assignment: ${safeEnvironmentAssignment}. Make it readable with fixed architecture, built-in surfaces, natural light direction and spatial depth. Slot-specific non-merchandise environmental cue (${safeContract?.prop.key ?? "fixed-architectural-detail"}): ${safeContract?.prop.description ?? "one fixed architectural detail"}. Deliberately omit every retail product, small saleable prop, serving item, loose ingredient, use-result object and container from the product setting plan; those cannot be trusted before source-pixel compositing.`,
       `Hard series visual split: visibly auditable time-light ${safeContract?.moment.key ?? "distinct-visible-time-light"} (${safeContract?.moment.description ?? "a clearly distinct time-of-day lighting pattern"}); palette-family ${safeContract?.palette.key ?? "distinct-category-palette"} (${safeContract?.palette.description ?? "a clearly distinct palette"}); spatial-depth ${safeContract?.spatialDepth.key ?? "distinct-spatial-depth"} (${safeContract?.spatialDepth.description ?? "a clearly distinct depth layout"}). A beige/cream generic room or shelf repeated across slots fails even if the fixture geometry changes.`,
-      `Reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height} as a visually quiet product-placement zone with believable contact surface and lighting.`,
+      `Reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height} as a visually quiet product-placement zone. ${contactInstruction}`,
       "HARD IDENTITY FIREWALL: generate only an empty background plate. No source product, staged saleable good, package, pouch, carton, bottle, can, jar, tube, label, logo, barcode, certification mark, printed text, small movable consumer prop, loose unit, ingredient, serving, accessory or hand may appear anywhere. The declared fixed non-merchandise cue and other necessary fixed architectural context are allowed, but every contextual cue must be visually distinct from the other slots.",
-      "The real product will be composited afterward from a verified transparent source-pixel cutout. Never anticipate, reconstruct, trace, imitate or redraw any part of it.",
+      "The real product will be composited afterward from a verified transparent source-pixel cutout. Never anticipate, reconstruct, trace, imitate or redraw any part of it. Do not pre-render a product-shaped shadow, reflection, silhouette, footprint or imprint; the empty support plane itself must remain physically coherent.",
       `Composition must remain materially different from: ${mustDifferFrom}. ${seriesExclusion(preset.id)}`,
       noveltyGuidance,
       "Mandatory self-QA: inspect the entire plate. If any object could be mistaken for merchandise, packaging, product contents, a labeled container or a certification mark, regenerate before saving.",

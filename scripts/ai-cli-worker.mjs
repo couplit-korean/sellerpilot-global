@@ -34,6 +34,7 @@ import { assertStudioSourceFilesUnmodified, studioSourceDimensionsMatch } from "
 import {
   buildAssetImagePrompt,
   requiresSourceIdentityProtection,
+  resolveIdentityBackgroundContactMode,
   resolveProductSettingShot,
   selectAssetReferenceIndexes,
 } from "../lib/ai-image-planning.ts";
@@ -51,6 +52,7 @@ import {
   renderIdentityEvidencePanel,
   renderIdentityOnNeutralCanvas,
   renderMissingIdentityEvidence,
+  selectCanonicalWholeProductIdentityView,
 } from "../lib/product-identity-protection.ts";
 import {
   cliStudioResultSchema,
@@ -203,7 +205,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.40";
+const workerVersion = "sellerpilot-cli-worker/1.41";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -980,6 +982,29 @@ async function prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSig
     frontInputs,
     leaseSignal,
   );
+  let canonicalWhole = front;
+  let canonicalCompletenessProof = frontMode === "subject" ? "subject-full-instance" : "front-full-instance";
+  const frontProvidesWholeInstance = front.report.method === "single-instance"
+    && front.report.instanceCount === 1
+    && Number.isFinite(front.report.boundingCoverage)
+    && front.report.boundingCoverage >= 0.90;
+  if (frontMode !== "subject" && !frontProvidesWholeInstance) {
+    const canonicalInput = imageFiles.find((image) => image.sourceIndex === front.report.inputIndex);
+    if (!canonicalInput) {
+      throw new Error("정면 상품 근거와 같은 보존 원본에서 완전한 상품 실루엣을 확인할 수 없습니다.");
+    }
+    canonicalWhole = await executeSourceProductCutout(
+      "subject",
+      identityAnchor,
+      join(jobDir, "source-identity-canonical-whole.png"),
+      [canonicalInput],
+      leaseSignal,
+    );
+    if (canonicalWhole.report.inputIndex !== front.report.inputIndex) {
+      throw new Error("상품 정체성 근거와 완전한 상품 실루엣의 원본 provenance가 일치하지 않습니다.");
+    }
+    canonicalCompletenessProof = "subject-full-instance";
+  }
   const evidenceInputs = (statutoryIdentity ? selectCutoutInputs(imageFiles, evidenceMode) : [])
     .filter((image) => image.sourceIndex !== front.report.inputIndex);
   let evidence = null;
@@ -1088,18 +1113,14 @@ async function prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSig
     }
   }
 
-  const usedSourceIndexes = new Set();
   const assetSources = {};
   for (const preset of sourceCompositePresets) {
-    const allowedRoles = new Set(preset.identityPolicy.sourceRoles.map((role) => String(role).toLowerCase()));
-    const source = verifiedViews.find((view) => {
-      const role = String(view.report.inputRole || "").toLowerCase().replace(/^extra-\d+$/, "extra");
-      return !usedSourceIndexes.has(view.report.inputIndex) && allowedRoles.has(role);
-    }) ?? front;
-    if (source !== front || allowedRoles.has(String(front.report.inputRole || "").toLowerCase())) {
-      usedSourceIndexes.add(source.report.inputIndex);
-    }
-    assetSources[preset.id] = source;
+    assetSources[preset.id] = selectCanonicalWholeProductIdentityView({
+      canonicalWhole,
+      canonicalCompletenessProof,
+      front,
+      statutoryIdentity,
+    }, preset);
   }
   packageEvidenceViews.sort((left, right) => {
     const leftRole = String(left.report.inputRole || "").toLowerCase().replace(/^extra-\d+$/, "extra");
@@ -1108,8 +1129,8 @@ async function prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSig
     return rolePriority.indexOf(leftRole) - rolePriority.indexOf(rightRole)
       || left.report.inputIndex - right.report.inputIndex;
   });
-  console.log(`[원본 픽셀 보호] front=${front.report.inputIndex}:${front.report.inputRole}:${front.report.method} · evidence=${evidence ? `${evidence.report.inputIndex}:${evidence.report.inputRole}:${evidence.report.method}` : "missing"} · package-evidence=${packageEvidenceViews.length} · settings=${sourceCompositePresets.map((preset) => `${preset.id}:${assetSources[preset.id].report.inputIndex}`).join(",")}`);
-  return { front, evidence, verifiedViews, packageEvidenceViews, assetSources };
+  console.log(`[원본 픽셀 보호] front=${front.report.inputIndex}:${front.report.inputRole}:${front.report.method} · canonical=${canonicalWhole.report.inputIndex}:${canonicalWhole.report.inputRole}:${canonicalWhole.report.method}:${canonicalCompletenessProof} · evidence=${evidence ? `${evidence.report.inputIndex}:${evidence.report.inputRole}:${evidence.report.method}` : "missing"} · package-evidence=${packageEvidenceViews.length} · settings=${sourceCompositePresets.map((preset) => `${preset.id}:${assetSources[preset.id].report.inputIndex}`).join(",")}`);
+  return { front, canonicalWhole, canonicalCompletenessProof, statutoryIdentity, evidence, verifiedViews, packageEvidenceViews, assetSources };
 }
 
 async function prepareIdentityCutoutsForJob(result, imageFiles, jobDir, leaseSignal, manualFields) {
@@ -2018,6 +2039,7 @@ async function auditGeneratedIdentityBackground({
   expectedPropKey,
   expectedPlateDigest,
   expectedPlateBytes,
+  contactMode,
   comparisonPlates,
   jobId,
   claimToken,
@@ -2041,6 +2063,7 @@ async function auditGeneratedIdentityBackground({
     expectedEnvironmentKeys,
     comparisonAssetIds: comparisonPlates.map((comparison) => comparison.semanticAssetId ?? String(comparison.assetId).replace(/^background:/, "")),
     reservedZone: preset.identityPolicy.placement,
+    contactMode,
     expectedPropKey,
   });
   await runCodex([
@@ -2328,6 +2351,9 @@ function normalizedIdentityViewRole(view) {
 
 function identitySourceCandidatesForPreset(identityCutouts, preset) {
   if (!identityCutouts) return [];
+  if (preset.identityPolicy.mode === "source-catalog") {
+    return [selectCanonicalWholeProductIdentityView(identityCutouts, preset)];
+  }
   const allowedRoles = preset.identityPolicy.sourceRoles.map((role) => String(role).toLowerCase());
   const allowedRoleSet = new Set(allowedRoles);
   const seen = new Set();
@@ -2455,6 +2481,9 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
     const backgroundOnly = Boolean(identityCutouts && preset.identityPolicy.mode === "source-composite");
     const retryIndex = attempt - 1;
     const baseSettingShot = backgroundOnly ? resolveProductSettingShot(result, preset.id) : null;
+    const backgroundContactMode = backgroundOnly
+      ? resolveIdentityBackgroundContactMode(result, baseSettingShot)
+      : "surface-supported";
     const retrySettingShot = baseSettingShot && retryIndex > 0
       ? buildSettingShotRetryVariant(baseSettingShot, preset.id, retryIndex)
       : baseSettingShot;
@@ -2526,6 +2555,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         [noveltyGuidance, deterministicRetryGuidance].filter(Boolean).join("\n"),
         backgroundOnly ? "identity-background" : "product",
         retrySettingShot ?? undefined,
+        backgroundContactMode,
       );
       const imageArgs = [
         "exec",
@@ -2570,6 +2600,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
             expectedPropKey: backgroundContract.prop.key,
             expectedPlateDigest: createHash("sha256").update(generated).digest("hex"),
             expectedPlateBytes: generated.length,
+            contactMode: backgroundContactMode,
             comparisonPlates: boundedBackgroundComparisonShots().filter((shot) => shot.plateFile),
             jobId,
             claimToken,
@@ -2635,7 +2666,12 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         };
       }
       if (backgroundOnly) {
-        normalized = await compositeIdentityForeground(generated, compositeSource.foreground, generationPreset);
+        normalized = await compositeIdentityForeground(
+          generated,
+          compositeSource.foreground,
+          generationPreset,
+          backgroundContactMode,
+        );
         usedVerifiedSourceComposite = true;
         await writeFile(outputFile, normalized);
       } else {

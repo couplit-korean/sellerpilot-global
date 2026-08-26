@@ -5,6 +5,7 @@ import {
   AI_ASSET_PROMPT_VERSION,
   buildAssetImagePrompt,
   requiresSourceIdentityProtection,
+  resolveIdentityBackgroundContactMode,
   resolveProductImageStyleCategory,
   resolveProductIdentityBackgroundContract,
   resolveProductSettingShot,
@@ -217,8 +218,40 @@ test("supplemental setting shots retain an explicit source-pixel background-only
     const prompt = buildAssetImagePrompt(cerealResult, `/tmp/${assetId}.png`, preset, [], "", "identity-background");
     assert.match(prompt, /HARD IDENTITY FIREWALL/);
     assert.match(prompt, /generate only an empty background plate/);
+    assert.match(prompt, /authoritative product contact line/);
+    assert.match(prompt, /support plane must visibly cross that line and continue below it/);
+    assert.match(prompt, /Do not pre-render a product-shaped shadow, reflection, silhouette, footprint or imprint/);
     assert.doesNotMatch(prompt, /첵스초코/);
   }
+});
+
+test("trusted contact mode keeps packages surface-supported while hung garments stay planar", () => {
+  const foodResult = {
+    ...result,
+    product: { ...result.product, category: "일반식품", name: "롯샌 파스퇴르 순우유맛 315 g", features: ["6봉 포장"] },
+  };
+  const menResult = {
+    ...result,
+    product: { ...result.product, category: "남성의류", name: "남성 무지 셔츠", features: ["면 소재"] },
+  };
+  const wallMountedResult = {
+    ...result,
+    product: { ...result.product, category: "일반상품", name: "벽걸이 케이블 정리 홀더", features: ["벽 부착형"] },
+  };
+  const foodWide = resolveProductSettingShot(foodResult, "wide");
+  const menPortrait = resolveProductSettingShot(menResult, "portrait");
+  const menWide = resolveProductSettingShot(menResult, "wide");
+  assert.equal(resolveIdentityBackgroundContactMode(foodResult, foodWide), "surface-supported");
+  assert.equal(resolveIdentityBackgroundContactMode(menResult, menPortrait), "suspended-or-planar");
+  assert.equal(resolveIdentityBackgroundContactMode(menResult, menWide), "surface-supported");
+  assert.equal(resolveIdentityBackgroundContactMode(wallMountedResult, resolveProductSettingShot(wallMountedResult, "portrait")), "suspended-or-planar");
+
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const garmentPrompt = buildAssetImagePrompt(menResult, "/tmp/garment.png", portrait, [], "", "identity-background", menPortrait ?? undefined);
+  assert.match(garmentPrompt, /trusted slot uses suspended-or-planar placement/);
+  assert.match(garmentPrompt, /Do not force or invent a tabletop, shelf, pedestal or bottom contact line/);
+  assert.doesNotMatch(garmentPrompt, /authoritative product contact line/);
 });
 
 test("package evidence never invents a closure or hidden package plane", () => {

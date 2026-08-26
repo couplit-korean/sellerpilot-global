@@ -161,6 +161,7 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.ok(variants.every((variant) => variant.location.includes(base.location)));
   assert.ok(variants.every((variant) => variant.camera.includes("assigned camera family")));
   assert.ok(variants.every((variant) => variant.camera.includes("role-required height")));
+  assert.ok(variants.every((variant) => !/contact plane|contact geometry/i.test(variant.staging)));
 
   const contracts = variants.map((variant) => resolveIdentityBackgroundContract(variant, "detail-overview"));
   for (const dimension of ["location", "moment", "surface", "camera", "palette", "spatialDepth", "prop"] as const) {
@@ -184,6 +185,7 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(guidance, /unchanged source pixels/);
   assert.match(guidance, /immutable product zone/);
   assert.doesNotMatch(guidance, /blacklisted role's product zone|product zone moves|move the product zone/i);
+  assert.doesNotMatch(guidance, /contact plane|contact geometry/i);
   assert.doesNotMatch(guidance, /bathroom vanity|bedroom nightstand/);
 });
 
@@ -273,7 +275,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /const backgroundOnly = Boolean\(identityCutouts && preset\.identityPolicy\.mode === "source-composite"\)/);
   assert.match(worker, /\.\.\.\(!backgroundOnly \? referenceIndexes\.map[\s\S]*: \[\]\)/);
   assert.match(worker, /backgroundOnly \? "identity-background" : "product"/);
-  assert.match(worker, /compositeIdentityForeground\(generated, compositeSource\.foreground, generationPreset\)/);
+  assert.match(worker, /compositeIdentityForeground\([\s\S]*generated,[\s\S]*compositeSource\.foreground,[\s\S]*generationPreset,[\s\S]*backgroundContactMode,[\s\S]*\)/);
   assert.match(worker, /originalMediaType[\s\S]*image\/jpeg[\s\S]*return "\.jpg"/);
   assert.match(worker, /trustedLegacyStudioImagePath\.test/);
   assert.match(worker, /const expectedBytes = preservedOriginal \? sourceSpec\.originalBytes : sourceSpec\.bytes/);
@@ -284,7 +286,13 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /maximumCutoutInputCount = 8/);
   assert.match(worker, /assetSources\[preset\.id\]/);
   assert.match(worker, /\? \[front, evidence\] : \[front\]/);
-  assert.match(worker, /\}\) \?\? front/);
+  assert.match(worker, /executeSourceProductCutout\(\s*"subject",\s*identityAnchor,\s*join\(jobDir, "source-identity-canonical-whole\.png"\)/);
+  assert.match(worker, /canonicalWhole\.report\.inputIndex !== front\.report\.inputIndex/);
+  assert.match(worker, /frontProvidesWholeInstance[\s\S]*front\.report\.boundingCoverage >= 0\.90/);
+  assert.match(worker, /frontMode !== "subject" && !frontProvidesWholeInstance/);
+  assert.match(worker, /canonicalCompletenessProof = "subject-full-instance"/);
+  assert.match(worker, /selectCanonicalWholeProductIdentityView\(\{[\s\S]*canonicalWhole,[\s\S]*front,[\s\S]*statutoryIdentity,[\s\S]*\}, preset\)/);
+  assert.match(worker, /preset\.identityPolicy\.mode === "source-catalog"[\s\S]*selectCanonicalWholeProductIdentityView\(identityCutouts, preset\)/);
   assert.match(worker, /renderMissingIdentityEvidence\(preset\)/);
   assert.match(worker, /packageEvidencePreset[\s\S]*requiredIdentityRoles[\s\S]*return requiredIdentityRoles\.has\(role\)/);
   assert.match(worker, /identitySourceCandidatesForPreset\(identityCutouts, preset\)/);
@@ -325,6 +333,8 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /assertIdentityBackgroundPlate\(generated, generationPreset\)/);
   assert.match(worker, /executeSourceProductCutout\("background"/);
   assert.match(worker, /auditGeneratedIdentityBackground\(\{/);
+  assert.match(worker, /contactMode: backgroundContactMode/);
+  assert.match(worker, /compositeIdentityForeground\([\s\S]*backgroundContactMode,[\s\S]*\)/);
   assert.match(worker, /for \(const existingBackground of \[\.\.\.existingBackgroundShots, \.\.\.rejectedBackgroundShots\]\)[\s\S]*findDuplicateShot\(candidateFingerprint, \[existingBackground\]\)/);
   assert.match(cutout, /IndexSet\(integer: instance\)/);
   assert.match(cutout, /generateScaledMaskForImage\(forInstances: instances/);

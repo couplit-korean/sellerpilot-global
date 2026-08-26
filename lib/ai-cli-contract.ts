@@ -236,18 +236,33 @@ function generalFoodCopySegments(copy: string) {
 
 function removeUnsupportedGeneralFoodSegments(copy: string, evidence?: unknown) {
   const segments = generalFoodCopySegments(copy);
+  // Match the validator's whole-field evidence contract before considering
+  // individual sentences. A body can contain a package count in one sentence
+  // and a label-backed intake direction in another; validating only the
+  // direction sentence would preserve it even though the complete field still
+  // fails closed because every measured token is not present in the evidence.
+  const fieldHasUnsupportedIntake = hasPrescriptiveIntakeInstruction(copy)
+    && !hasDirectIntakeEvidence(copy, evidence);
   let changed = false;
   const retained = segments.filter((segment) => {
     const semanticCopy = segment.trim();
     if (!semanticCopy || /^[.!?。！？;；]+$/u.test(semanticCopy)) return true;
     const unsupportedEfficacy = hasUnsupportedGeneralFoodEfficacyClaim(semanticCopy);
-    const unsupportedIntake = hasPrescriptiveIntakeInstruction(semanticCopy)
-      && !hasDirectIntakeEvidence(semanticCopy, evidence);
+    const prescriptiveIntake = hasPrescriptiveIntakeInstruction(semanticCopy);
+    const unsupportedIntake = prescriptiveIntake
+      && (fieldHasUnsupportedIntake || !hasDirectIntakeEvidence(semanticCopy, evidence));
     if (!unsupportedEfficacy && !unsupportedIntake) return true;
     changed = true;
     return false;
   });
-  return changed ? retained.join("").trim() : copy;
+  const normalized = changed ? retained.join("").trim() : copy;
+  // Some model output joins the frequency and measured amount across adjacent
+  // clauses. If sentence-level removal cannot isolate that instruction, clear
+  // the field so the existing localized body fallback can neutralize it; other
+  // field types remain structurally invalid instead of bypassing the validator.
+  if (hasPrescriptiveIntakeInstruction(normalized)
+    && !hasDirectIntakeEvidence(normalized, evidence)) return "";
+  return normalized;
 }
 
 function normalizeGeneralFoodStringFields(

@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
+import {
+  isIdentityBackgroundContactMode,
+  type IdentityBackgroundContactMode,
+} from "./ai-background-audit";
 
 export type IdentityAssetPolicy = {
   mode: "source-catalog" | "source-evidence" | "source-composite";
@@ -52,6 +56,12 @@ export type VisionCutoutReport = {
 
 export type VisionCutoutMode = "front" | "evidence" | "view" | "subject" | "alternate";
 
+export type VerifiedIdentityView = {
+  foreground: IdentityForeground;
+  report: VisionCutoutReport;
+  [key: string]: unknown;
+};
+
 const MAXIMUM_IDENTITY_SOURCE_PIXELS = 16_000_000;
 const MINIMUM_VISIBLE_PIXEL_RATIO = 0.025;
 const MAXIMUM_FRONT_PIXEL_RATIO = 0.82;
@@ -72,6 +82,63 @@ function boundedPlacement(spec: IdentityAssetSpec) {
   const width = Math.max(1, Math.min(spec.width - left, Math.round(spec.width * placement.width)));
   const height = Math.max(1, Math.min(spec.height - top, Math.round(spec.height * placement.height)));
   return { left, top, width, height };
+}
+
+/**
+ * Whole-product catalog and setting assets must reuse the cutout that passed
+ * the dedicated front/subject selector. A role-compatible alternate rectangle
+ * may be useful as label evidence, but it is not proof of a complete package.
+ */
+export function selectCanonicalWholeProductIdentityView<T extends VerifiedIdentityView>(
+  identityCutouts: {
+    canonicalWhole: T;
+    canonicalCompletenessProof: "front-full-instance" | "subject-full-instance";
+    front: T;
+    statutoryIdentity: boolean;
+  },
+  spec: IdentityAssetSpec,
+) {
+  if (spec.identityPolicy.mode !== "source-catalog" && spec.identityPolicy.mode !== "source-composite") {
+    throw new Error(`${spec.id} 전체 상품 원본 선택은 catalog 또는 composite 이미지에만 사용할 수 있습니다.`);
+  }
+  const canonicalWhole = identityCutouts.canonicalWhole;
+  const role = String(canonicalWhole?.report?.inputRole || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+  const allowedRoles = new Set(spec.identityPolicy.sourceRoles.map((value) => String(value).toLowerCase()));
+  const report = canonicalWhole.report;
+  const foreground = canonicalWhole.foreground;
+  if (!foreground
+      || !/^[a-f0-9]{64}$/.test(foreground.sourceDigest)
+      || !allowedRoles.has(role)
+      || report.method !== "single-instance"
+      || report.instanceCount !== 1
+      || !Number.isInteger(report.inputIndex)
+      || report.inputIndex < 0
+      || !Number.isFinite(report.boundingCoverage)
+      || report.boundingCoverage < 0.45
+      || report.boundingCoverage > 1.01
+      || !Number.isFinite(foreground.retainedPixelRatio)
+      || foreground.retainedPixelRatio < MINIMUM_VISIBLE_PIXEL_RATIO
+      || foreground.retainedPixelRatio >= 0.985
+      || foreground.width < 120
+      || foreground.height < 120
+      || (identityCutouts.canonicalCompletenessProof === "front-full-instance" && report.boundingCoverage < 0.90)
+      || (identityCutouts.canonicalCompletenessProof !== "front-full-instance"
+        && identityCutouts.canonicalCompletenessProof !== "subject-full-instance")
+      || (identityCutouts.statutoryIdentity
+        && (report.inputIndex !== identityCutouts.front.report.inputIndex
+          || report.textCount < 2
+          || !hasConfirmedProductIdentity(report)))) {
+    throw new Error(`${spec.id}에 사용할 완전한 canonical 정면 상품 컷아웃이 없습니다.`);
+  }
+  return canonicalWhole;
+}
+
+function hasConfirmedProductIdentity(report: VisionCutoutReport) {
+  const requiredProductMatches = Math.min(3, report.productTokenCount);
+  return report.gtinMatch
+    || (requiredProductMatches >= 1
+      && report.productNameMatches >= requiredProductMatches
+      && (requiredProductMatches >= 3 || report.brandMatches + report.manufacturerMatches >= 1));
 }
 
 function assertVisionReport(report: VisionCutoutReport, mode: VisionCutoutMode) {
@@ -100,11 +167,7 @@ function assertVisionReport(report: VisionCutoutReport, mode: VisionCutoutMode) 
   if (!Number.isFinite(report.boundingCoverage) || report.boundingCoverage < 0.45 || report.boundingCoverage > 1.01) {
     throw new Error("원본 상품 컷아웃의 장면 분리 밀도를 확인하지 못했습니다.");
   }
-  const requiredFrontProductMatches = Math.min(3, report.productTokenCount);
-  const frontFieldLinked = report.gtinMatch
-    || (requiredFrontProductMatches >= 1
-      && report.productNameMatches >= requiredFrontProductMatches
-      && (requiredFrontProductMatches >= 3 || report.brandMatches + report.manufacturerMatches >= 1));
+  const frontFieldLinked = hasConfirmedProductIdentity(report);
   if (mode === "front" && (!frontFieldLinked || report.textCount < 2 || report.score < 20)) {
     throw new Error("상품명과 일치하는 원본 정면 포장을 신뢰도 높게 확인하지 못했습니다.");
   }
@@ -337,15 +400,27 @@ export async function compositeIdentityForeground(
   background: Buffer,
   foreground: IdentityForeground,
   spec: IdentityAssetSpec,
+  contactMode: IdentityBackgroundContactMode = "surface-supported",
 ) {
   const placement = boundedPlacement(spec);
-  const renderedForeground = await sharp(foreground.buffer, {
+  const sourceComposite = spec.identityPolicy.mode === "source-composite";
+  if (sourceComposite && !isIdentityBackgroundContactMode(contactMode)) {
+    throw new Error(`${spec.id} canonical 상품의 접촉 방식이 올바르지 않습니다.`);
+  }
+  const surfaceSupported = sourceComposite && contactMode === "surface-supported";
+  let foregroundPipeline = sharp(foreground.buffer, {
     failOn: "warning",
     limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
   }).rotate(sourceCompositeRotationDegrees[spec.id] ?? 0, {
     background: { r: 0, g: 0, b: 0, alpha: 0 },
-  })
-    .resize(placement.width, placement.height, {
+  });
+  if (sourceComposite) {
+    foregroundPipeline = foregroundPipeline.trim({
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+      threshold: 1,
+    });
+  }
+  const renderedForeground = await foregroundPipeline.resize(placement.width, placement.height, {
       fit: spec.identityPolicy.fit ?? "inside",
       withoutEnlargement: false,
       kernel: sharp.kernel.lanczos3,
@@ -353,7 +428,46 @@ export async function compositeIdentityForeground(
     .png({ compressionLevel: 9, adaptiveFiltering: true })
     .toBuffer({ resolveWithObject: true });
   const left = placement.left + Math.max(0, Math.floor((placement.width - renderedForeground.info.width) / 2));
-  const top = placement.top + Math.max(0, Math.floor((placement.height - renderedForeground.info.height) / 2));
+  const top = surfaceSupported
+    ? placement.top + placement.height - renderedForeground.info.height
+    : placement.top + Math.max(0, Math.floor((placement.height - renderedForeground.info.height) / 2));
+  if (surfaceSupported) {
+    const alpha = await sharp(renderedForeground.data, {
+      failOn: "warning",
+      limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
+    }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    let visibleCount = 0;
+    let minX = alpha.info.width;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < alpha.info.height; y += 1) {
+      for (let x = 0; x < alpha.info.width; x += 1) {
+        if (alpha.data[(y * alpha.info.width + x) * alpha.info.channels + 3] >= ALPHA_FOREGROUND_THRESHOLD) {
+          visibleCount += 1;
+          minX = Math.min(minX, x);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      }
+    }
+    if (!visibleCount) throw new Error(`${spec.id} canonical 상품 컷아웃에 표시 가능한 원본 픽셀이 없습니다.`);
+    const expectedContactY = placement.top + placement.height - 1;
+    const actualContactY = top + maxY;
+    const supportBandTop = Math.max(0, maxY - Math.max(2, Math.round(alpha.info.height * 0.035)));
+    const supportedColumns = new Uint8Array(alpha.info.width);
+    for (let y = supportBandTop; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        if (alpha.data[(y * alpha.info.width + x) * alpha.info.channels + 3] >= ALPHA_FOREGROUND_THRESHOLD) {
+          supportedColumns[x] = 1;
+        }
+      }
+    }
+    const supportColumnCount = supportedColumns.reduce((total, supported) => total + supported, 0);
+    const visibleWidth = Math.max(1, maxX - minX + 1);
+    if (Math.abs(actualContactY - expectedContactY) > 1 || supportColumnCount / visibleWidth < 0.08) {
+      throw new Error(`${spec.id} canonical 상품 하단이 reserved zone의 접촉면에 자연스럽게 닿지 않습니다.`);
+    }
+  }
   const output = await sharp(background, {
     failOn: "warning",
     limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,

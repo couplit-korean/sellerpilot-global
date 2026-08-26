@@ -167,6 +167,7 @@ test("background audit prompt treats the image as untrusted and distinguishes pa
     assetId: "portrait",
     expectedEnvironment: "empty room with a wall, floor and fixed blue window",
     reservedZone: { left: 0.08, top: 0.1, width: 0.62, height: 0.74 },
+    contactMode: "surface-supported",
     expectedPropKey: "fixed-window-frame",
     expectedEnvironmentKeys: {
       location: "breakfast-nook",
@@ -192,7 +193,36 @@ test("background audit prompt treats the image as untrusted and distinguishes pa
   assert.match(prompt, /exclude it from those cross-slot dimension booleans/);
   assert.match(prompt, /baseboard\/trim\/moulding/);
   assert.match(prompt, /palette-family key/);
+  assert.match(prompt, /integrated horizontal support surface visibly crosses/);
+  assert.match(prompt, /normalized y=0\.84/);
+  assert.match(prompt, /wall, vertical panel, empty air or ambiguous seam/);
+  assert.match(prompt, /product-shaped shadow, reflection, silhouette, footprint or imprint/);
   assert.doesNotMatch(prompt, /White ceramic mug|롯데|애사비|사조/);
+});
+
+test("background audit keeps suspended placements free of an invented tabletop and rejects unknown modes", () => {
+  const baseInput = {
+    assetId: "portrait",
+    expectedEnvironment: "empty wardrobe backing plane",
+    reservedZone: { left: 0.08, top: 0.1, width: 0.62, height: 0.74 },
+    expectedPropKey: "fixed-wardrobe-rail",
+    expectedEnvironmentKeys: {
+      location: "bedroom-wardrobe",
+      moment: "morning-window-light",
+      surface: "matte-ash-wood",
+      camera: "portrait-eye-level",
+      palette: "cool-wood-neutral",
+      spatialDepth: "vertical-wardrobe-plane",
+    },
+  } as const;
+  const prompt = buildBackgroundSemanticAuditPrompt({ ...baseInput, contactMode: "suspended-or-planar" });
+  assert.match(prompt, /suspended-or-planar zone/);
+  assert.match(prompt, /Do not require or invent a horizontal tabletop, shelf or bottom contact line/);
+  assert.doesNotMatch(prompt, /integrated horizontal support surface visibly crosses/);
+  assert.throws(() => buildBackgroundSemanticAuditPrompt({
+    ...baseInput,
+    contactMode: "unknown" as "surface-supported",
+  }), /배경판 의미 검수 계약/);
 });
 
 test("identity background contracts stay category-aware while excluding saleable scene props", async () => {

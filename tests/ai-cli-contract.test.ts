@@ -944,6 +944,28 @@ const canonicalIntakeExamples = {
   },
 } as const;
 
+const localizedPackageCountExamples = {
+  "ko-KR": "포장에는 총 60정이 들어 있습니다.",
+  "en-SG": "The package contains 60 capsules.",
+  "en-PH": "The package contains 60 capsules.",
+  "en-US": "The package contains 60 capsules.",
+  "en-GB": "The package contains 60 capsules.",
+  "en-AU": "The package contains 60 capsules.",
+  "en-CA": "The package contains 60 capsules.",
+  "ja-JP": "包装には合計60錠入っています。",
+  "zh-TW": "包裝內共有60粒。",
+  "vi-VN": "Bao bì chứa tổng cộng 60 viên.",
+  "id-ID": "Kemasan berisi total 60 kapsul.",
+  "ms-MY": "Pembungkusan mengandungi sejumlah 60 kapsul.",
+  "th-TH": "บรรจุภัณฑ์มีทั้งหมด 60 เม็ด。",
+  "es-MX": "El envase contiene 60 cápsulas.",
+  "es-ES": "El envase contiene 60 cápsulas.",
+  "pt-BR": "A embalagem contém 60 cápsulas.",
+  "fr-FR": "L’emballage contient 60 capsules.",
+  "de-DE": "Die Packung enthält 60 Kapseln.",
+  "it-IT": "La confezione contiene 60 capsule.",
+} as const;
+
 test("all 27 canonical listings enforce localized numeric daily intake evidence", () => {
   assert.equal(localized.length, 27);
   for (const [, , locale] of localized) assert.ok(locale in canonicalIntakeExamples, locale);
@@ -1014,6 +1036,46 @@ test("all 27 canonical listings enforce localized numeric daily intake evidence"
       && issue.message.includes("섭취량")
     )), `mixed localized listing ${index}`);
   });
+});
+
+test("general-food normalization clears residual intake at detailSections[2].body for all 27 locales", () => {
+  const result = generalFoodSafetyResult();
+  result.localizedListings.forEach((listing) => {
+    const intake = canonicalIntakeExamples[listing.locale];
+    const packageCount = localizedPackageCountExamples[listing.locale];
+    const section = listing.detailSections[2];
+    section.body += ` ${packageCount} ${intake.intake}`;
+    section.evidence += ` ${intake.evidence}`;
+  });
+  const sourceSnapshot = JSON.stringify(result);
+
+  const rejected = cliStudioResultSchema.safeParse(result);
+  assert.equal(rejected.success, false);
+  result.localizedListings.forEach((_, index) => {
+    assert.ok(rejected.error?.issues.some((issue) => (
+      issue.path.join(".") === `localizedListings.${index}.detailSections.2.body`
+      && issue.message.includes("섭취량")
+    )), `residual intake path ${index}`);
+  });
+
+  const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+  assert.equal(JSON.stringify(result), sourceSnapshot, "normalization must not mutate the localized source");
+  normalized.localizedListings.forEach((listing, index) => {
+    const intake = canonicalIntakeExamples[listing.locale];
+    assert.doesNotMatch(
+      listing.detailSections[2].body,
+      new RegExp(intake.intake.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
+      `normalized residual intake ${index}`,
+    );
+    assert.match(
+      listing.detailSections[2].body,
+      new RegExp(localizedPackageCountExamples[listing.locale].replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
+      `preserved package count ${index}`,
+    );
+  });
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+  assert.strictEqual(normalizeStudioGeneralFoodSafety(normalized), normalized);
 });
 
 test("general-food fallback restores only safety-shortened summaries and bodies across all 27 listings", () => {

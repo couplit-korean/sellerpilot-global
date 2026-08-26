@@ -34,14 +34,14 @@ const settingShotRetryProfiles = [
     key: "opposite-annex-blue-hour-slate",
     location: "a solid-wall-separated side annex dedicated to the same verified everyday function, with the original room completely outside the frame",
     supportingObjects: "one fixed asymmetric vertical fin derived from the assigned architecture and no movable prop, container or saleable object",
-    staging: "inside the immutable source-composite mask zone, the contact plane moves to the opposite near/far depth relationship and reverses negative-space direction",
+    staging: "inside the immutable source-composite mask zone, the support-or-backing plane moves to the opposite near/far depth relationship and reverses negative-space direction",
     camera: "the assigned camera family moved to the opposite side, rotated about 70 degrees in azimuth with a visibly wider perspective while its role-required height remains unchanged",
   },
   {
     key: "detached-bay-midday-ceramic",
     location: "a detached central bay in a different room dedicated to the same verified everyday function, with no sightline into the original location",
     supportingObjects: "one deep fixed architectural reveal derived from the assigned setting and no movable prop, container or saleable object",
-    staging: "inside the immutable source-composite mask zone, the background contact geometry changes to a far-diagonal relationship and reverses foreground hierarchy",
+    staging: "inside the immutable source-composite mask zone, the background support-or-backing geometry changes to a far-diagonal relationship and reverses foreground hierarchy",
     camera: "the assigned camera family shifted from oblique toward axial, rotated about 155 degrees in azimuth with a compressed mid-depth plane while its role-required height remains unchanged",
   },
   {
@@ -72,7 +72,7 @@ const retryMomentsByAsset: Record<SettingShotAssetId, readonly [string, string, 
   "detail-use": [
     "warm late-night side light entering low from frame right with a deep functional foreground falloff",
     "bright early-afternoon cross-light entering from frame left with a sharply separated midground",
-    "cool dawn backlight entering from the far-right rear with a readable low contact plane",
+    "cool dawn backlight entering from the far-right rear with a readable low support-or-backing plane",
   ],
   "detail-routine": [
     "soft overcast morning threshold light entering from the next-action zone",
@@ -82,7 +82,7 @@ const retryMomentsByAsset: Record<SettingShotAssetId, readonly [string, string, 
   "detail-scale": [
     "neutral raking midday light entering from front-left and revealing only the fixed reference plane",
     "cool early-evening light entering from rear-right with long scale-reference shadows",
-    "warm early-morning top-left light separating contact, reference and rear planes",
+    "warm early-morning top-left light separating support-or-backing, reference and rear planes",
   ],
   "detail-storage": [
     "cool twilight top light revealing the access opening, bay floor and rear wall",
@@ -127,7 +127,7 @@ export function buildSettingShotRetryVariant(
     moment: `${retryMoment}; the previous candidate's time and light direction are fully blacklisted`,
     surface: `an integrated ${retrySurface} plane; the previous candidate's material and grain direction are fully blacklisted`,
     supportingObjects: `${profile.supportingObjects} from ${setting.location}; the previous candidate's cue arrangement is fully blacklisted`,
-    staging: `${profile.staging}; preserve ${assetId}'s immutable pixel mask and role anchor (${setting.staging}) while fully blacklisting the previous background contact geometry, depth and negative-space hierarchy`,
+    staging: `${profile.staging}; preserve ${assetId}'s immutable pixel mask and role anchor (${setting.staging}) while fully blacklisting the previous background support-or-backing geometry, depth and negative-space hierarchy`,
     camera: `${setting.camera}; within this exact assigned camera family, ${profile.camera}`,
     separation: {
       location: `${key}-place`,
@@ -158,7 +158,7 @@ export function buildSettingShotRetryGuidance(
     .slice(0, 8);
   return [
     `Deterministic setting-shot retry ${boundedRetry} of ${settingShotRetryProfiles.length} for ${assetId}.`,
-    `HARD ROLE BLACKLIST: ${blacklist}. Do not reuse any blacklisted role's room geometry, light direction, surface family, fixed cue, background contact geometry around the immutable product zone, staging relationship, negative-space direction, depth hierarchy, camera azimuth or focal perspective.`,
+    `HARD ROLE BLACKLIST: ${blacklist}. Do not reuse any blacklisted role's room geometry, light direction, surface family, fixed cue, background support-or-backing geometry around the immutable product zone, staging relationship, negative-space direction, depth hierarchy, camera azimuth or focal perspective.`,
     `Retry transform ${profile.key} replaces all six scene dimensions together while retaining the product-category function and hard shot class: location=${settingVariant.location}; time/light=${settingVariant.moment}; surface=${settingVariant.surface}; fixed cue=${settingVariant.supportingObjects}; product placement=${settingVariant.staging}; camera=${settingVariant.camera}.`,
     failedDimensions.length
       ? `Validated prior audit failure dimensions: ${failedDimensions.join(", ")}. Make each named visual dimension unmistakably different from every blacklisted role while still satisfying this retry's trusted assignment.`
