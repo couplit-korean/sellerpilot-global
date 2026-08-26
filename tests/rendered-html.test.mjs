@@ -66,6 +66,9 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(page, /sellerpilot-operation-sync-requested-at/);
   assert.doesNotMatch(page, /window\.setInterval\(run, 5 \* 60_000\)/);
   assert.equal((page.match(/window\.setInterval\(refreshWhenVisible, 10_000\)/g) ?? []).length, 1);
+  assert.match(page, /const registrationActivityEntryRefreshRef = useRef\(false\)/);
+  assert.match(page, /if \(view !== "registration-activity"\) \{\s*registrationActivityEntryRefreshRef\.current = false;\s*return;\s*\}\s*if \(registrationActivityEntryRefreshRef\.current\) return;\s*registrationActivityEntryRefreshRef\.current = true;\s*void refreshOperations\(\);/);
+  assert.equal((page.match(/void refreshOperations\(\)/g) ?? []).length, 2);
   assert.match(page, /if \(view !== "registration-activity"\) return;[\s\S]{0,360}document\.visibilityState === "visible"[\s\S]{0,160}refreshOperations\(\)/);
   assert.match(page, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
   assert.match(page, /document\.removeEventListener\("visibilitychange", refreshWhenVisible\)/);
@@ -376,7 +379,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(vercelConfig, /"schedule": "\*\/5 \* \* \* \*"/);
   assert.match(cliWorker, /SELLERPILOT_CHANNEL_SYNC_MS/);
   assert.match(cliWorker, /\/api\/internal\/channel-sync/);
-  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.30/);
+  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.31/);
   assert.match(cliWorker, /ensureEbayAccessToken/);
   assert.match(rotationHardeningMigration, /diagnostic_preserved/);
   assert.match(rotationHardeningMigration, /status = 'queued' and attempt_id is null/);

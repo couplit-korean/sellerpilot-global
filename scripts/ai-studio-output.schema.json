@@ -18,16 +18,24 @@
           "required": ["displayName", "verificationStatus", "evidence", "isHealthFunctionalFood"],
           "anyOf": [
             {
-              "required": ["verificationStatus", "isHealthFunctionalFood"],
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["displayName", "verificationStatus", "evidence", "isHealthFunctionalFood"],
               "properties": {
-                "verificationStatus": { "const": "verified" },
+                "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+                "verificationStatus": { "type": "string", "const": "verified" },
+                "evidence": { "type": "string", "minLength": 10, "maxLength": 500 },
                 "isHealthFunctionalFood": { "type": "boolean" }
               }
             },
             {
-              "required": ["verificationStatus", "isHealthFunctionalFood"],
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["displayName", "verificationStatus", "evidence", "isHealthFunctionalFood"],
               "properties": {
-                "verificationStatus": { "const": "needs-review" },
+                "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+                "verificationStatus": { "type": "string", "const": "needs-review" },
+                "evidence": { "type": "string", "minLength": 10, "maxLength": 500 },
                 "isHealthFunctionalFood": { "type": "null" }
               }
             }
@@ -138,16 +146,24 @@
             "required": ["displayName", "verificationStatus", "evidence", "isHealthFunctionalFood"],
             "anyOf": [
               {
-                "required": ["verificationStatus", "isHealthFunctionalFood"],
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["displayName", "verificationStatus", "evidence", "isHealthFunctionalFood"],
                 "properties": {
-                  "verificationStatus": { "const": "verified" },
+                  "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "verificationStatus": { "type": "string", "const": "verified" },
+                  "evidence": { "type": "string", "minLength": 10, "maxLength": 500 },
                   "isHealthFunctionalFood": { "type": "boolean" }
                 }
               },
               {
-                "required": ["verificationStatus", "isHealthFunctionalFood"],
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["displayName", "verificationStatus", "evidence", "isHealthFunctionalFood"],
                 "properties": {
-                  "verificationStatus": { "const": "needs-review" },
+                  "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "verificationStatus": { "type": "string", "const": "needs-review" },
+                  "evidence": { "type": "string", "minLength": 10, "maxLength": 500 },
                   "isHealthFunctionalFood": { "type": "null" }
                 }
               }

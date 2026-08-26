@@ -3121,6 +3121,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const [targetedSearch, setTargetedSearch] = useState<{ kind: "order" | "inquiry"; id: string; query: string } | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
+  const registrationActivityEntryRefreshRef = useRef(false);
   const activityStatusRef = useRef<RegistrationActivityEventState | null>(null);
   const operationEventRef = useRef<OperationEventState | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<DisplayProduct | null>(null);
@@ -3173,6 +3174,16 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     operationEventRef.current = operationEventState(operations.data);
     for (const message of messages) notify(message);
   }, [notify, operations.data]);
+
+  useEffect(() => {
+    if (view !== "registration-activity") {
+      registrationActivityEntryRefreshRef.current = false;
+      return;
+    }
+    if (registrationActivityEntryRefreshRef.current) return;
+    registrationActivityEntryRefreshRef.current = true;
+    void refreshOperations();
+  }, [refreshOperations, view]);
 
   useEffect(() => {
     if (view !== "registration-activity") return;

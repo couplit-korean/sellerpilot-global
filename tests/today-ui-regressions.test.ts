@@ -167,6 +167,41 @@ test("registration progress uses terminal channel results and never invents an A
     label: "AI 이미지 작업 진행 중 · 외부 판매채널 자동 게시 없음",
   });
 
+  const ready = activity("ready", "분석 완료 상품", "ready");
+  ready.channelCount = 0;
+  assert.deepEqual(registrationActivityProgress(ready), {
+    percent: 100,
+    label: "AI 분석이 완료되었습니다. 채널 등록 대상과 필수 정보를 확인해 주세요.",
+  });
+
+  const failed = activity("job:11111111-1111-4111-8111-111111111111", "분석 실패 상품", "failed");
+  failed.channelCount = 0;
+  assert.deepEqual(registrationActivityProgress(failed), {
+    percent: 0,
+    label: "AI 분석을 완료하지 못했습니다. 오류를 확인한 뒤 기존 입력으로 다시 시작해 주세요.",
+  });
+
+  const failedImageOperation = activity("asset:22222222-2222-4222-8222-222222222222", "이미지 실패 상품", "failed");
+  failedImageOperation.channelCount = 0;
+  assert.deepEqual(registrationActivityProgress(failedImageOperation), {
+    percent: 0,
+    label: "AI 이미지 작업을 완료하지 못했습니다. 기존 상품 이미지는 유지됩니다.",
+  });
+
+  const blocked = activity("blocked", "권한 대기 상품", "blocked");
+  blocked.channelCount = 0;
+  assert.deepEqual(registrationActivityProgress(blocked), {
+    percent: 0,
+    label: "외부 권한 또는 필수값 보완이 필요해 작업이 중단되었습니다.",
+  });
+
+  const publishingWithoutChannel = activity("publishing", "채널 없는 등록 상품", "publishing");
+  publishingWithoutChannel.channelCount = 0;
+  assert.deepEqual(registrationActivityProgress(publishingWithoutChannel), {
+    percent: 0,
+    label: "채널 등록 대상이 없어 진행률을 표시하지 않습니다.",
+  });
+
   const publishing = activity("publish", "등록 상품", "publishing");
   publishing.channelCount = 8;
   publishing.publishedCount = 2;

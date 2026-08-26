@@ -56,13 +56,38 @@ export function registrationActivityProgress(activity: RegistrationActivity) {
     } as const;
   }
   if (activity.channelCount <= 0) {
+    const isImageOperation = activity.id.startsWith("revision:") || activity.id.startsWith("asset:");
+    if (activity.status === "ready") {
+      return {
+        percent: 100,
+        label: "AI 분석이 완료되었습니다. 채널 등록 대상과 필수 정보를 확인해 주세요.",
+      } as const;
+    }
+    if (activity.status === "failed") {
+      return {
+        percent: 0,
+        label: isImageOperation
+          ? "AI 이미지 작업을 완료하지 못했습니다. 기존 상품 이미지는 유지됩니다."
+          : "AI 분석을 완료하지 못했습니다. 오류를 확인한 뒤 기존 입력으로 다시 시작해 주세요.",
+      } as const;
+    }
+    if (activity.status === "blocked") {
+      return {
+        percent: 0,
+        label: "외부 권한 또는 필수값 보완이 필요해 작업이 중단되었습니다.",
+      } as const;
+    }
+    if (activity.status !== "analyzing") {
+      return {
+        percent: 0,
+        label: "채널 등록 대상이 없어 진행률을 표시하지 않습니다.",
+      } as const;
+    }
     return {
       percent: null,
-      label: activity.id.startsWith("revision:") || activity.id.startsWith("asset:")
+      label: isImageOperation
         ? "AI 이미지 작업 진행 중 · 외부 판매채널 자동 게시 없음"
-        : activity.status === "analyzing"
-          ? "AI 분석 단계입니다. 채널 대상이 확정되면 실제 완료 비율을 표시합니다."
-          : "채널 대상 확정을 기다리고 있어 비율을 추정하지 않습니다.",
+        : "AI 분석 단계입니다. 채널 대상이 확정되면 실제 완료 비율을 표시합니다.",
     } as const;
   }
   const terminalCount = Math.min(

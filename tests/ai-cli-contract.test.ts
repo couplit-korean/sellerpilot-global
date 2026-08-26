@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   cliStudioResultSchema,
@@ -17,6 +18,40 @@ import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-eviden
 import { hasNegatedHealthFunctionalFoodSignal } from "../lib/product-classification";
 
 const CLAIM_TOKEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+test("AI studio output schema keeps every object strict for structured output", () => {
+  const schema = JSON.parse(readFileSync(new URL("../scripts/ai-studio-output.schema.json", import.meta.url), "utf8")) as unknown;
+
+  const visit = (value: unknown, path: string[]) => {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => visit(item, [...path, String(index)]));
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+
+    const node = value as Record<string, unknown>;
+    if (Object.hasOwn(node, "const")) {
+      assert.ok(Object.hasOwn(node, "type"), `${path.join(".")} const schema must declare an explicit type`);
+    }
+    if (node.type === "object" || Object.hasOwn(node, "properties")) {
+      const label = path.join(".");
+      assert.equal(node.type, "object", `${label} must declare type=object`);
+      assert.equal(node.additionalProperties, false, `${label} must reject additional properties`);
+
+      if (node.properties && typeof node.properties === "object" && !Array.isArray(node.properties)) {
+        const propertyNames = Object.keys(node.properties as Record<string, unknown>).sort();
+        const requiredNames = Array.isArray(node.required)
+          ? node.required.map(String).sort()
+          : [];
+        assert.deepEqual(requiredNames, propertyNames, `${label} must require every declared property`);
+      }
+    }
+
+    Object.entries(node).forEach(([key, nested]) => visit(nested, [...path, key]));
+  };
+
+  visit(schema, ["$"]);
+});
 
 function sourcePreservingImageSpec(overrides: Partial<{
   originalWidth: number;
