@@ -35,6 +35,31 @@ test("Codex subprocess output and termination are bounded", async () => {
   assert.ok(source.indexOf("child.kill(\"SIGKILL\")") < source.indexOf("child.once(\"close\""));
 });
 
+test("Codex subprocesses use a bounded FIFO gate and measure timeout only after dequeue", async () => {
+  const source = await readFile(workerUrl, "utf8");
+  const runStart = source.indexOf("async function runCodex(");
+  const runEnd = source.indexOf("\nconst loginStatus", runStart);
+  const runCodex = source.slice(runStart, runEnd);
+
+  assert.match(source, /SELLERPILOT_IMAGE_TIMEOUT_MS \?\? 15 \* 60_000/);
+  assert.match(source, /SELLERPILOT_CODEX_CONCURRENCY \?\? 2/);
+  assert.match(source, /const codexConcurrencyLimit = Math\.min\(4, Math\.max\(1,/);
+  assert.match(runCodex, /const queuedAt = Date\.now\(\)/);
+  assert.match(runCodex, /codexExecutionGate\.run/);
+  assert.match(runCodex, /codexExecutionGate\.run[\s\S]+if \(jobId\) await touchJob\(jobId, claimToken\)/);
+  assert.ok(
+    runCodex.indexOf("codexExecutionGate.run") < runCodex.indexOf("if (jobId) await touchJob(jobId, claimToken)"),
+    "ownership must be checked after the FIFO slot is granted",
+  );
+  assert.match(runCodex, /leaseSignal\?\.aborted/);
+  assert.match(runCodex, /\[Codex 시작\][^\n]+\$\{stage\}[^\n]+wait=\$\{queueWaitMs\}ms/);
+  assert.ok(
+    runCodex.indexOf("codexExecutionGate.run") < runCodex.indexOf("const timeoutTimer = setTimeout"),
+    "queue wait must happen before the subprocess timeout starts",
+  );
+  assert.doesNotMatch(runCodex, /console\.(?:log|error)\([^\n]*(?:args|stdout|stderr|codexEnv)/);
+});
+
 test("worker tokens are selected by endpoint scope without exposing token values", async () => {
   const source = await readFile(workerUrl, "utf8");
   assert.match(source, /SELLERPILOT_AI_WORKER_TOKEN/);

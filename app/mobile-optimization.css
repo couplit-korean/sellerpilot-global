@@ -2558,6 +2558,13 @@
   }
 
   .toast-copy > b { font-size: 12px; }
+  .toast-copy {
+    min-width: 0;
+  }
+  .toast-copy > b,
+  .toast-copy > span {
+    overflow-wrap: anywhere;
+  }
   .toast-copy > span { font-size: 10px; line-height: 1.4; }
   .toast > button {
     width: 44px;

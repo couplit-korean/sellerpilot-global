@@ -346,4 +346,6 @@ test("390px registration, CS, preview, and notification surfaces keep their mobi
   assert.match(mobileStyles, /\.detail-preview-canvas img\s*\{[\s\S]{0,120}?pointer-events:\s*none/);
   assert.match(mobileStyles, /\.notification-popover > div:first-child button\s*\{[\s\S]{0,100}?min-width:\s*44px;[\s\S]{0,80}?min-height:\s*44px/);
   assert.match(mobileStyles, /\.toast\s*\{[\s\S]{0,180}?right:\s*max\(10px,[\s\S]{0,180}?left:\s*max\(10px,[\s\S]{0,100}?width:\s*auto/);
+  assert.match(mobileStyles, /\.toast-copy\s*\{[\s\S]{0,80}?min-width:\s*0/);
+  assert.match(mobileStyles, /\.toast-copy > b,[\s\S]{0,80}?\.toast-copy > span\s*\{[\s\S]{0,80}?overflow-wrap:\s*anywhere/);
 });

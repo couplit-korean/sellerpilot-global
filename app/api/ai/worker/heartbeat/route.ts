@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     p_token_hash: tokenHash,
     p_job_id: parsed.data.jobId,
     p_claim_token: parsed.data.claimToken,
-    p_worker_version: parsed.data.version ?? "sellerpilot-cli-worker/1.24",
+    p_worker_version: parsed.data.version ?? "sellerpilot-cli-worker/unknown",
   });
   if (error) {
     const status = workerRpcErrorStatus(error);

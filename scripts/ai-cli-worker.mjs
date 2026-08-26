@@ -33,6 +33,7 @@ import {
 } from "../lib/image-shot-uniqueness.ts";
 import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
 import { workerClaimBackoffMs } from "./worker-claim-backoff.mjs";
+import { createConcurrencyGate } from "./worker-concurrency-gate.mjs";
 import {
   AI_HEARTBEAT_INTERVAL_MS,
   AI_HEARTBEAT_TRANSIENT_GRACE_MS,
@@ -119,7 +120,10 @@ const pollMs = Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS 
 const maxIdlePollMs = Math.max(pollMs, Number(process.env.SELLERPILOT_AI_WORKER_MAX_IDLE_POLL_MS ?? 30_000));
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
-const imageGenerationTimeoutMs = Math.max(6 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 10 * 60_000));
+const imageGenerationTimeoutMs = Math.max(6 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 15 * 60_000));
+const configuredCodexConcurrency = Number(process.env.SELLERPILOT_CODEX_CONCURRENCY ?? 2);
+const codexConcurrencyLimit = Math.min(4, Math.max(1, Number.isFinite(configuredCodexConcurrency) ? Math.trunc(configuredCodexConcurrency) : 2));
+const codexExecutionGate = createConcurrencyGate(codexConcurrencyLimit);
 const codexBin = process.env.CODEX_BIN?.trim() || "/Applications/ChatGPT.app/Contents/Resources/codex";
 const studioSchemaPath = resolve("scripts/ai-studio-output.schema.json");
 const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.json");
@@ -127,7 +131,7 @@ const supportReplySchemaPath = resolve("scripts/ai-support-reply-output.schema.j
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.24";
+const workerVersion = "sellerpilot-cli-worker/1.25";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -424,89 +428,109 @@ function appendBoundedOutput(current, chunk) {
   return next.length <= codexOutputLimitBytes ? next : next.subarray(next.length - codexOutputLimitBytes);
 }
 
-async function runCodex(args, timeoutMs, jobId, claimToken) {
-  if (jobId) await touchJob(jobId, claimToken);
-  return new Promise((resolveRun, rejectRun) => {
-    const codexEnv = { ...process.env };
-    delete codexEnv.OPENAI_API_KEY;
-    delete codexEnv.OPENAI_BASE_URL;
-    const child = spawn(codexBin, args, {
-      cwd: process.cwd(),
-      env: codexEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
-    let heartbeatError = null;
-    let heartbeatPromise = null;
-    let heartbeatTimer = null;
-    let terminationTimer = null;
-    let terminationError = null;
-    let settled = false;
-
-    const clearRunResources = () => {
-      clearTimeout(timeoutTimer);
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-      if (terminationTimer) clearTimeout(terminationTimer);
-      terminationTimer = null;
-    };
-    const finish = (error, result) => {
-      if (settled) return;
-      settled = true;
-      clearRunResources();
-      if (error) rejectRun(error);
-      else resolveRun(result);
-    };
-    const terminate = (error) => {
-      terminationError ||= error;
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      try { child.kill("SIGTERM"); } catch { /* close/error settles the run */ }
-      if (!terminationTimer) {
-        terminationTimer = setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null) {
-            try { child.kill("SIGKILL"); } catch { /* close/error settles the run */ }
-          }
-        }, codexTerminationGraceMs);
-      }
-    };
-    const timeoutTimer = setTimeout(() => {
-      terminate(new Error("Codex CLI 실행 제한시간을 초과했습니다."));
-    }, timeoutMs);
-
-    if (jobId) {
-      heartbeatTimer = setInterval(() => {
-        if (heartbeatPromise || heartbeatError) return;
-        heartbeatPromise = touchJob(jobId, claimToken)
-          .catch((error) => {
-            heartbeatError = error;
-            terminate(error);
-          })
-          .finally(() => {
-            heartbeatPromise = null;
-          });
-      }, AI_HEARTBEAT_INTERVAL_MS);
+async function runCodex(args, timeoutMs, jobId, claimToken, { leaseSignal, stage = "worker" } = {}) {
+  const queuedAt = Date.now();
+  return codexExecutionGate.run(async () => {
+    const queueWaitMs = Date.now() - queuedAt;
+    if (jobId) await touchJob(jobId, claimToken);
+    if (leaseSignal?.aborted) {
+      throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
     }
-    child.stdout.on("data", (chunk) => { stdout = appendBoundedOutput(stdout, chunk); });
-    child.stderr.on("data", (chunk) => { stderr = appendBoundedOutput(stderr, chunk); });
-    child.once("error", (error) => {
-      if (!child.pid) finish(error);
-      else terminate(error);
+    if (jobId) console.log(`[Codex 시작] ${jobId} · ${stage} · wait=${queueWaitMs}ms`);
+    const startedAt = Date.now();
+    const result = await new Promise((resolveRun, rejectRun) => {
+      const codexEnv = { ...process.env };
+      delete codexEnv.OPENAI_API_KEY;
+      delete codexEnv.OPENAI_BASE_URL;
+      const child = spawn(codexBin, args, {
+        cwd: process.cwd(),
+        env: codexEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = Buffer.alloc(0);
+      let stderr = Buffer.alloc(0);
+      let heartbeatError = null;
+      let heartbeatPromise = null;
+      let heartbeatTimer = null;
+      let terminationTimer = null;
+      let terminationError = null;
+      let settled = false;
+      let leaseAbortHandler = null;
+
+      const clearRunResources = () => {
+        clearTimeout(timeoutTimer);
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+        if (terminationTimer) clearTimeout(terminationTimer);
+        terminationTimer = null;
+        if (leaseSignal && leaseAbortHandler) leaseSignal.removeEventListener("abort", leaseAbortHandler);
+        leaseAbortHandler = null;
+      };
+      const finish = (error, runResult) => {
+        if (settled) return;
+        settled = true;
+        clearRunResources();
+        if (error) rejectRun(error);
+        else resolveRun(runResult);
+      };
+      const terminate = (error) => {
+        terminationError ||= error;
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        try { child.kill("SIGTERM"); } catch { /* close/error settles the run */ }
+        if (!terminationTimer) {
+          terminationTimer = setTimeout(() => {
+            if (child.exitCode === null && child.signalCode === null) {
+              try { child.kill("SIGKILL"); } catch { /* close/error settles the run */ }
+            }
+          }, codexTerminationGraceMs);
+        }
+      };
+      const timeoutTimer = setTimeout(() => {
+        console.error(`[Codex 제한시간] ${jobId || "startup"} · ${stage} · limit=${timeoutMs}ms`);
+        terminate(new Error("Codex CLI 실행 제한시간을 초과했습니다."));
+      }, timeoutMs);
+
+      if (leaseSignal) {
+        leaseAbortHandler = () => terminate(leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError());
+        leaseSignal.addEventListener("abort", leaseAbortHandler, { once: true });
+        if (leaseSignal.aborted) leaseAbortHandler();
+      }
+      if (jobId) {
+        heartbeatTimer = setInterval(() => {
+          if (heartbeatPromise || heartbeatError) return;
+          heartbeatPromise = touchJob(jobId, claimToken)
+            .catch((error) => {
+              heartbeatError = error;
+              terminate(error);
+            })
+            .finally(() => {
+              heartbeatPromise = null;
+            });
+        }, AI_HEARTBEAT_INTERVAL_MS);
+      }
+      child.stdout.on("data", (chunk) => { stdout = appendBoundedOutput(stdout, chunk); });
+      child.stderr.on("data", (chunk) => { stderr = appendBoundedOutput(stderr, chunk); });
+      child.once("error", (error) => {
+        if (!child.pid) finish(error);
+        else terminate(error);
+      });
+      child.once("close", async (code) => {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+        if (heartbeatPromise) await heartbeatPromise;
+        const stdoutText = stdout.toString("utf8");
+        const stderrText = stderr.toString("utf8");
+        if (heartbeatError) finish(heartbeatError);
+        else if (terminationError) finish(terminationError);
+        else if (code === 0) finish(null, { stdout: stdoutText, stderr: stderrText });
+        else finish(new Error((stderrText || stdoutText || `Codex CLI exit ${code}`).slice(-800)));
+      });
     });
-    child.once("close", async (code) => {
-      if (heartbeatTimer) clearInterval(heartbeatTimer);
-      heartbeatTimer = null;
-      if (heartbeatPromise) await heartbeatPromise;
-      const stdoutText = stdout.toString("utf8");
-      const stderrText = stderr.toString("utf8");
-      if (heartbeatError) finish(heartbeatError);
-      else if (terminationError) finish(terminationError);
-      else if (code === 0) finish(null, { stdout: stdoutText, stderr: stderrText });
-      else finish(new Error((stderrText || stdoutText || `Codex CLI exit ${code}`).slice(-800)));
-    });
-  });
+    if (jobId) console.log(`[Codex 완료] ${jobId} · ${stage} · run=${Date.now() - startedAt}ms`);
+    return result;
+  }, { signal: leaseSignal });
 }
 
 const loginStatus = await runCodex(["login", "status"], 15_000);
@@ -1230,7 +1254,7 @@ function buildProductResearchPrompt(researchInput, references) {
   ].join("\n");
 }
 
-async function researchProduct(job, jobDir) {
+async function researchProduct(job, jobDir, leaseSignal) {
   const researchInput = String(job.request?.researchInput || "").trim();
   if (researchInput.length < 2) throw new Error("상품 링크 또는 설명이 없습니다.");
   const references = await fetchReferencePages(researchInput);
@@ -1246,7 +1270,7 @@ async function researchProduct(job, jobDir) {
     "--output-last-message", resultFile,
     "--cd", jobDir,
     buildProductResearchPrompt(researchInput, references),
-  ], analysisTimeoutMs, job.id, job.claim_token);
+  ], analysisTimeoutMs, job.id, job.claim_token, { leaseSignal, stage: "product-research" });
   const parsed = productResearchResultSchema.safeParse(JSON.parse(await readFile(resultFile, "utf8")));
   if (!parsed.success) {
     throw new Error(`CLI 상품정보 결과 검증 실패 · ${summarizeStudioIssues(parsed.error.issues)}`.slice(0, 500));
@@ -1287,7 +1311,7 @@ function buildSupportReplyPrompt(request) {
   ].join("\n");
 }
 
-async function draftSupportReply(job, jobDir) {
+async function draftSupportReply(job, jobDir, leaseSignal) {
   const request = supportReplyWorkerRequestSchema.parse(job.request);
   const resultFile = join(jobDir, "support-reply-result.json");
   await runCodex([
@@ -1301,7 +1325,7 @@ async function draftSupportReply(job, jobDir) {
     "--output-last-message", resultFile,
     "--cd", jobDir,
     buildSupportReplyPrompt(request),
-  ], analysisTimeoutMs, job.id, job.claim_token);
+  ], analysisTimeoutMs, job.id, job.claim_token, { leaseSignal, stage: "support-reply" });
   const parsed = supportReplyResultSchema.safeParse(JSON.parse(await readFile(resultFile, "utf8")));
   if (!parsed.success) {
     throw new Error(`CLI 문의 답변 결과 검증 실패 · ${summarizeStudioIssues(parsed.error.issues)}`.slice(0, 500));
@@ -1373,7 +1397,7 @@ async function downloadComparisonShots(job, targetAssetId) {
   return shots;
 }
 
-async function generateDistinctAsset({ result, outputFile, preset, imageFiles, jobId, claimToken, existingShots }) {
+async function generateDistinctAsset({ result, outputFile, preset, imageFiles, jobId, claimToken, leaseSignal, existingShots }) {
   const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
   let noveltyGuidance = "";
   for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1) {
@@ -1389,7 +1413,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, j
       ...referenceIndexes.map((index) => `--image=${imageFiles[index].file}`),
       buildAssetImagePrompt(result, outputFile, preset, referenceIndexes.map((index) => imageFiles[index].role), noveltyGuidance),
     ];
-    await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken);
+    await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken, { leaseSignal, stage: `image:${preset.id}` });
     const normalized = await normalizeGeneratedAsset(outputFile, preset);
     const fingerprint = await fingerprintGeneratedShot(preset.id, normalized);
     const duplicate = findDuplicateShot(fingerprint, existingShots);
@@ -1410,7 +1434,7 @@ function summarizeStudioIssues(issues) {
     .join("\n");
 }
 
-async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, claimToken) {
+async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, claimToken, leaseSignal) {
   const initial = cliStudioResultSchema.safeParse(result);
   if (initial.success) return initial.data;
 
@@ -1433,7 +1457,7 @@ async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, c
     "--output-last-message", resultFile,
     "--cd", jobDir,
     repairPrompt,
-  ], analysisTimeoutMs, jobId, claimToken);
+  ], analysisTimeoutMs, jobId, claimToken, { leaseSignal, stage: "studio-repair" });
 
   const repaired = cliStudioResultSchema.safeParse(JSON.parse(await readFile(resultFile, "utf8")));
   if (!repaired.success) {
@@ -1469,7 +1493,7 @@ async function processJob(job) {
     await jobHeartbeat.start();
     await assertJobLeaseHealthy();
     if (job.kind === "support_reply") {
-      const result = await draftSupportReply(job, jobDir);
+      const result = await draftSupportReply(job, jobDir, jobHeartbeat.signal);
       await assertJobLeaseHealthy();
       await stopJobHeartbeat();
       completionPersistenceStarted = true;
@@ -1482,7 +1506,7 @@ async function processJob(job) {
       return;
     }
     if (job.kind === "product_research" || job.request?.researchOnly === true) {
-      const result = await researchProduct(job, jobDir);
+      const result = await researchProduct(job, jobDir, jobHeartbeat.signal);
       await assertJobLeaseHealthy();
       await stopJobHeartbeat();
       completionPersistenceStarted = true;
@@ -1516,6 +1540,7 @@ async function processJob(job) {
         imageFiles,
         jobId: job.id,
         claimToken,
+        leaseSignal: jobHeartbeat.signal,
         existingShots,
       });
       await assertJobLeaseHealthy();
@@ -1572,12 +1597,12 @@ async function processJob(job) {
     ];
     for (const image of imageFiles) analysisArgs.push(`--image=${image.file}`);
     analysisArgs.push(buildAnalysisPrompt(job, referenceText, competitorContext));
-    await runCodex(analysisArgs, analysisTimeoutMs, job.id, claimToken);
+    await runCodex(analysisArgs, analysisTimeoutMs, job.id, claimToken, { leaseSignal: jobHeartbeat.signal, stage: "studio-analysis" });
 
     let result = JSON.parse(await readFile(resultFile, "utf8"));
     const referenceWarnings = references.flatMap((reference) => reference.warning ? [reference.warning] : []);
     if (referenceWarnings.length) result.warnings = [...(Array.isArray(result.warnings) ? result.warnings : []), ...referenceWarnings].slice(0, 5);
-    result = await validateOrRepairStudioResult(result, resultFile, jobDir, job.id, claimToken);
+    result = await validateOrRepairStudioResult(result, resultFile, jobDir, job.id, claimToken, jobHeartbeat.signal);
     const imagePresets = aiGeneratedAssetSpecs;
     const uploads = Array.isArray(job.resultUploads) ? job.resultUploads : [];
     if (uploads.length !== imagePresets.length) throw new Error("대표·썸네일·상세 이미지 8종 업로드 정보가 없습니다.");
@@ -1598,6 +1623,7 @@ async function processJob(job) {
         imageFiles,
         jobId: job.id,
         claimToken,
+        leaseSignal: jobHeartbeat.signal,
         existingShots,
       });
       await assertJobLeaseHealthy();
@@ -1612,6 +1638,7 @@ async function processJob(job) {
       existingShots.push(generated.fingerprint);
       assetStoragePaths[preset.id] = upload.path;
       uploadedResultPaths.push(upload.path);
+      console.log(`[이미지 업로드 완료] ${job.id} · ${preset.id}`);
     }
     if (existingShots.length !== imagePresets.length) throw new Error("생성 이미지 8종의 중복 검증 지문이 완전하지 않습니다.");
 
@@ -2343,7 +2370,7 @@ async function processGatewayJob(job) {
   }
 }
 
-console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · model=${model}`);
+console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · image-timeout=${imageGenerationTimeoutMs}ms`);
 console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 8);
 const maxAiConcurrency = Math.min(8, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 8));
@@ -2435,9 +2462,9 @@ do {
       await delay(Math.min(pollMs, aiClaimBackoffUntil - Date.now()));
       continue;
     }
-    // 상세페이지 작업은 상품 단위로 최대 8건을 병렬 실행합니다. 각 상품의
-    // 생성 이미지도 2장씩 병렬 처리하되, 짧은 채널 API 작업은 계속 우선
-    // 수신해 게이트웨이 제한시간 안에 끝나도록 합니다.
+    // AI 작업은 상품 단위로 최대 8건을 수신하되, 로컬 Codex 하위 프로세스는
+    // 전역 FIFO gate로 별도 제한합니다. 대기 중에도 상품 lease heartbeat는
+    // 유지되며 실제 프로세스를 시작한 뒤에만 실행 제한시간을 계산합니다.
     if (activeAiJobs.size >= maxAiConcurrency) {
       if (once) await Promise.allSettled([...activeAiJobs]);
       else await delay(pollMs);
