@@ -38,6 +38,10 @@ import {
   selectAssetReferenceIndexes,
 } from "../lib/ai-image-planning.ts";
 import {
+  buildSettingShotRetryGuidance,
+  buildSettingShotRetryVariant,
+} from "../lib/product-setting-shots.ts";
+import {
   assertIdentityBackgroundPlate,
   assertIdentityEvidenceLinkage,
   compositeIdentityForeground,
@@ -196,7 +200,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.38";
+const workerVersion = "sellerpilot-cli-worker/1.39";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -1963,6 +1967,7 @@ async function normalizeGeneratedAsset(outputFile, preset) {
 }
 
 const maximumBackgroundAuditBytes = 64 * 1024;
+const maximumBackgroundAuditComparisons = 8;
 
 async function auditGeneratedIdentityBackground({
   outputFile,
@@ -2048,11 +2053,65 @@ async function auditGeneratedIdentityBackground({
   if (!parsed.success) {
     throw new Error(`${preset.id} 배경판 의미 검수 결과 계약이 불완전합니다.`);
   }
-  assertSafeBackgroundSemanticAudit(
-    parsed.data,
-    expectedPropKey,
-    expectedEnvironmentKeys,
-  );
+  const retryDimensionFields = {
+    reservedZoneClear: "reserved-zone",
+    assignedEnvironmentPresent: "assigned-environment",
+    assignedLocationSatisfied: "assigned-location",
+    assignedMomentSatisfied: "assigned-time-light",
+    assignedSurfaceSatisfied: "assigned-surface",
+    assignedCameraSatisfied: "assigned-camera",
+    assignedPaletteSatisfied: "assigned-palette",
+    spatialDepthPresent: "assigned-spatial-depth",
+    assignedSupportingObjectsSatisfied: "assigned-fixed-cue",
+    seriesVisuallyDistinct: "overall-layout",
+    seriesLocationDistinct: "location",
+    seriesMomentDistinct: "time-light",
+    seriesSurfaceDistinct: "surface",
+    seriesPaletteDistinct: "palette",
+    seriesSpatialDepthDistinct: "spatial-depth",
+    seriesCameraDistinct: "camera",
+    seriesCueDistinct: "fixed-cue",
+  };
+  const failedDimensions = Object.entries(retryDimensionFields)
+    .filter(([field]) => parsed.data[field] === false)
+    .map(([, dimension]) => dimension);
+  const safeForRetryComparison = parsed.data.confidence === "high"
+    && !parsed.data.merchandisePresent
+    && !parsed.data.packageOrContainerPresent
+    && !parsed.data.labelBarcodeOrCertificationPresent
+    && !parsed.data.humanPresent
+    && parsed.data.reservedZoneClear
+    && parsed.data.assignedEnvironmentPresent
+    && parsed.data.assignedSupportingObjectsSatisfied
+    && parsed.data.assignedLocationSatisfied
+    && parsed.data.assignedMomentSatisfied
+    && parsed.data.assignedSurfaceSatisfied
+    && parsed.data.assignedCameraSatisfied
+    && parsed.data.assignedPaletteSatisfied
+    && parsed.data.spatialDepthPresent
+    && parsed.data.observedLocationKey === expectedEnvironmentKeys.location
+    && parsed.data.observedMomentKey === expectedEnvironmentKeys.moment
+    && parsed.data.observedSurfaceKey === expectedEnvironmentKeys.surface
+    && parsed.data.observedCameraKey === expectedEnvironmentKeys.camera
+    && parsed.data.observedPaletteKey === expectedEnvironmentKeys.palette
+    && parsed.data.observedSpatialDepthKey === expectedEnvironmentKeys.spatialDepth
+    && parsed.data.observedNonMerchandiseProps.includes(expectedPropKey);
+  try {
+    assertSafeBackgroundSemanticAudit(
+      parsed.data,
+      expectedPropKey,
+      expectedEnvironmentKeys,
+    );
+  } catch (error) {
+    const auditError = new Error(
+      error instanceof Error ? error.message : `${preset.id} 배경판 의미 검수에 실패했습니다.`,
+      { cause: error },
+    );
+    auditError.conflictingAssetIds = parsed.data.conflictingAssetIds;
+    auditError.failedDimensions = failedDimensions;
+    auditError.safeForRetryComparison = safeForRetryComparison;
+    throw auditError;
+  }
   return parsed.data;
 }
 
@@ -2297,6 +2356,42 @@ async function verifyGeneratedLabelFidelity({
 async function generateDistinctAsset({ result, outputFile, preset, imageFiles, identityCutouts, jobId, claimToken, leaseSignal, existingShots, existingBackgroundShots, existingBackgroundProps }) {
   const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
   let noveltyGuidance = "";
+  let retryConflictAssetIds = [];
+  let retryAuditFeedback = null;
+  const rejectedBackgroundShots = [];
+  const retainRejectedBackground = async (generated, attempt) => {
+    for (const rejected of rejectedBackgroundShots.splice(0)) {
+      if (rejected.plateFile) await rm(rejected.plateFile, { force: true });
+    }
+    const semanticAssetId = `rejected-${preset.id}-${attempt}`;
+    const plateFile = join(dirname(outputFile), `.rejected-background-${preset.id}-${attempt}.png`);
+    await writeFile(plateFile, generated, { flag: "wx", mode: 0o600 });
+    rejectedBackgroundShots.push({
+      ...await fingerprintGeneratedShot(`background:${semanticAssetId}`, generated),
+      semanticAssetId,
+      plateFile,
+      plateDigest: createHash("sha256").update(generated).digest("hex"),
+      plateBytes: generated.length,
+    });
+  };
+  const boundedBackgroundComparisonShots = () => {
+    const hasPublishedSameSlotComparison = existingBackgroundShots.some(
+      (shot) => shot.semanticAssetId === `previous-${preset.id}`,
+    );
+    const candidates = hasPublishedSameSlotComparison
+      ? [...existingBackgroundShots]
+      : [...rejectedBackgroundShots, ...existingBackgroundShots];
+    return candidates.sort((left, right) => {
+      const priority = (shot) => {
+        if (String(shot.semanticAssetId ?? "").startsWith(`rejected-${preset.id}-`)) return 0;
+        if (shot.semanticAssetId === `previous-${preset.id}`) return 1;
+        if (preset.mustDifferFrom.includes(shot.semanticAssetId)) return 2;
+        return 3;
+      };
+      return priority(left) - priority(right);
+    })
+    .slice(0, maximumBackgroundAuditComparisons);
+  };
   for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1) {
     await rm(outputFile, { force: true });
     const backgroundPlateFile = join(dirname(outputFile), `.identity-background-${preset.id}.png`);
@@ -2313,6 +2408,25 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
     let missingIdentityEvidence = false;
     let usedVerifiedSourceComposite = false;
     let identitySourceCandidateCount = 0;
+    const backgroundOnly = Boolean(identityCutouts && preset.identityPolicy.mode === "source-composite");
+    const retryIndex = attempt - 1;
+    const baseSettingShot = backgroundOnly ? resolveProductSettingShot(result, preset.id) : null;
+    const retrySettingShot = baseSettingShot && retryIndex > 0
+      ? buildSettingShotRetryVariant(baseSettingShot, preset.id, retryIndex)
+      : baseSettingShot;
+    // Retry choreography changes the trusted architecture and apparent depth,
+    // never this persisted source-composite mask. Regeneration comparisons can
+    // therefore keep masking the same authoritative product-pixel rectangle.
+    const generationPreset = preset;
+    const deterministicRetryGuidance = retrySettingShot && retryIndex > 0
+      ? buildSettingShotRetryGuidance(
+          preset.id,
+          retryConflictAssetIds,
+          retryIndex,
+          retrySettingShot,
+          retryAuditFeedback,
+        )
+      : "";
     if (identityCutouts && preset.identityPolicy.mode !== "source-composite") {
       const sourceCandidates = identitySourceCandidatesForPreset(identityCutouts, preset);
       identitySourceCandidateCount = sourceCandidates.length;
@@ -2332,14 +2446,14 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         labelReferenceFile = sourcePixelBaselineFile;
       }
     } else {
-      const backgroundOnly = Boolean(identityCutouts && preset.identityPolicy.mode === "source-composite");
       const assetPrompt = buildAssetImagePrompt(
         result,
         outputFile,
-        preset,
+        generationPreset,
         backgroundOnly ? [] : referenceIndexes.map((index) => imageFiles[index].role),
-        noveltyGuidance,
+        [noveltyGuidance, deterministicRetryGuidance].filter(Boolean).join("\n"),
         backgroundOnly ? "identity-background" : "product",
+        retrySettingShot ?? undefined,
       );
       const imageArgs = [
         "exec",
@@ -2353,19 +2467,20 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         assetPrompt,
       ];
       await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken, { leaseSignal, stage: `image:${preset.id}` });
-      const generated = await normalizeGeneratedAsset(outputFile, preset);
+      const generated = await normalizeGeneratedAsset(outputFile, generationPreset);
       const compositeSource = backgroundOnly ? identityCutouts.assetSources[preset.id] : null;
       if (backgroundOnly && !compositeSource) throw new Error(`${preset.id} 설정샷의 검증 원본 배정이 없습니다.`);
       if (backgroundOnly) {
         try {
-          const settingShot = resolveProductSettingShot(result, preset.id);
+          let semanticAudit = null;
+          const settingShot = retrySettingShot;
           if (!settingShot) throw new Error(`${preset.id} 설정샷의 장소·시간대·표면·카메라 계약이 없습니다.`);
           const backgroundContract = resolveIdentityBackgroundContract(settingShot, preset.id);
-          await assertIdentityBackgroundPlate(generated, preset);
+          await assertIdentityBackgroundPlate(generated, generationPreset);
           await executeSourceProductCutout("background", "", "", [{ file: outputFile }], leaseSignal);
-          const semanticAudit = await auditGeneratedIdentityBackground({
+          semanticAudit = await auditGeneratedIdentityBackground({
             outputFile,
-            preset,
+            preset: generationPreset,
             expectedEnvironment: [
               `장소=${backgroundContract.location.description}`,
               `가시적 시간대 조명=${backgroundContract.moment.description}`,
@@ -2383,7 +2498,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
             expectedPropKey: backgroundContract.prop.key,
             expectedPlateDigest: createHash("sha256").update(generated).digest("hex"),
             expectedPlateBytes: generated.length,
-            comparisonPlates: existingBackgroundShots.filter((shot) => shot.plateFile),
+            comparisonPlates: boundedBackgroundComparisonShots().filter((shot) => shot.plateFile),
             jobId,
             claimToken,
             leaseSignal,
@@ -2393,22 +2508,35 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
             existingBackgroundProps,
           );
           if (repeatedProp) {
-            throw new Error(`${preset.id} 배경 소품 ${repeatedProp.propKey}이 ${repeatedProp.assetId} 설정샷과 반복됐습니다.`);
+            const repeatedPropError = new Error(`${preset.id} 배경 소품 ${repeatedProp.propKey}이 ${repeatedProp.assetId} 설정샷과 반복됐습니다.`);
+            repeatedPropError.conflictingAssetIds = [repeatedProp.assetId];
+            repeatedPropError.failedDimensions = ["fixed-cue"];
+            repeatedPropError.safeForRetryComparison = true;
+            throw repeatedPropError;
           }
           backgroundProps = semanticAudit.observedNonMerchandiseProps;
         } catch (error) {
           if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) throw error;
-          noveltyGuidance = `Background safety retry ${attempt}: replace the whole plate. The previous scene failed independent visual inspection for merchandise, package/container silhouettes, labels, people, reserved-zone clearance, the literal assigned camera, visible time-of-day lighting, surface, palette, spatial depth, or unique slot-specific fixed cues. Regenerate with a genuinely different camera family and physical layout while keeping the exact assigned location/light/surface contract. Do not merely blur, erase text from, recolor, crop or move the failed object.`;
+          if (error?.safeForRetryComparison === true) {
+            await retainRejectedBackground(generated, attempt);
+          }
+          retryConflictAssetIds = Array.isArray(error?.conflictingAssetIds)
+            ? error.conflictingAssetIds
+            : [];
+          retryAuditFeedback = {
+            failedDimensions: Array.isArray(error?.failedDimensions) ? error.failedDimensions : [],
+          };
+          noveltyGuidance = `Background safety retry reason ${attempt}: the previous candidate failed the independent fail-closed audit. Follow the deterministic trusted retry contract and validated failure dimensions below; do not repair the old plate by blur, erasure, recolor, crop, mirroring or object movement.`;
           continue;
         }
         backgroundFingerprint = await fingerprintGeneratedShot(`background:${preset.id}`, generated);
         let duplicateBackground = null;
-        for (const existingBackground of existingBackgroundShots) {
+        for (const existingBackground of [...existingBackgroundShots, ...rejectedBackgroundShots]) {
           const candidateFingerprint = Array.isArray(existingBackground.maskPlacements)
             ? await fingerprintBackgroundWithMaskedZones(
                 `background:${preset.id}`,
                 generated,
-                preset,
+                generationPreset,
                 existingBackground.maskPlacements,
               )
             : backgroundFingerprint;
@@ -2419,7 +2547,11 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
           if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
             throw new Error(`${preset.id} 배경 장면이 ${duplicateBackground.assetId}와 반복되어 완료하지 않았습니다.`);
           }
-          noveltyGuidance = `Background diversity retry ${attempt}: replace the entire physical location, time of day, surface material, prop layout and camera family. The previous empty plate was too close to ${duplicateBackground.assetId}.`;
+          await retainRejectedBackground(generated, attempt);
+          const conflictingAssetId = String(duplicateBackground.assetId).replace(/^background:/, "");
+          retryConflictAssetIds = [conflictingAssetId];
+          retryAuditFeedback = { failedDimensions: ["overall-layout"] };
+          noveltyGuidance = `Background diversity retry reason ${attempt}: the previous empty plate remained perceptually close to ${conflictingAssetId}. Follow the deterministic trusted retry contract and its hard role blacklist.`;
           continue;
         }
         await writeFile(backgroundPlateFile, generated, { flag: "wx", mode: 0o600 });
@@ -2431,7 +2563,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         };
       }
       if (backgroundOnly) {
-        normalized = await compositeIdentityForeground(generated, compositeSource.foreground, preset);
+        normalized = await compositeIdentityForeground(generated, compositeSource.foreground, generationPreset);
         usedVerifiedSourceComposite = true;
         await writeFile(outputFile, normalized);
       } else {
@@ -2502,14 +2634,21 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
       if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
         throw new Error(`${preset.id} 원본 근거 이미지가 ${duplicate.assetId}와 중복되어 서로 다른 안전한 원본 컷을 확보하지 못했습니다.`);
       }
-      noveltyGuidance = buildDuplicateRetryGuidance(preset.id, duplicate.assetId, attempt);
+      noveltyGuidance = buildDuplicateRetryGuidance(preset.id, duplicate.assetId, attempt, "source-evidence");
       console.log(`[원본 근거 중복 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · attempt=${attempt}`);
       continue;
     }
     if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
       throw new Error(`${preset.id} 이미지가 ${duplicate.assetId}와 반복되어 완료하지 않았습니다.`);
     }
-    noveltyGuidance = buildDuplicateRetryGuidance(preset.id, duplicate.assetId, attempt);
+    if (identityCutouts && preset.identityPolicy.mode === "source-composite" && backgroundPlateSnapshot) {
+      await retainRejectedBackground(await readFile(backgroundPlateFile), attempt);
+      retryConflictAssetIds = [duplicate.assetId];
+      retryAuditFeedback = { failedDimensions: ["overall-layout", "product-placement"] };
+      noveltyGuidance = `Source-composited output duplicate reason ${attempt}: the previous output remained visually close to ${duplicate.assetId}. Keep the immutable source-product mask and follow the next deterministic background retry contract.`;
+    } else {
+      noveltyGuidance = buildDuplicateRetryGuidance(preset.id, duplicate.assetId, attempt, "product-mockup");
+    }
     console.log(`[이미지 중복 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · match=${duplicate.exact ? "sha256" : "dhash"} · distance=${duplicate.distance}`);
   }
   throw new Error(`${preset.id} 이미지 중복 검증을 완료하지 못했습니다.`);

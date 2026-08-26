@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import { resolveIdentityBackgroundContract } from "../lib/ai-background-audit";
 import { buildAssetImagePrompt } from "../lib/ai-image-planning";
 import {
   buildDifferenceHash,
@@ -15,6 +16,8 @@ import {
 } from "../lib/image-shot-uniqueness";
 import {
   assertDistinctSettingShotPlan,
+  buildSettingShotRetryGuidance,
+  buildSettingShotRetryVariant,
   buildProductSettingShotPlan,
   settingShotAssetIds,
   settingShotDimensions,
@@ -26,6 +29,7 @@ const baseResult: ProductStudioResult = {
   product: {
     name: "검증 상품",
     category: "일반상품",
+    classification: { displayName: "일반상품", verificationStatus: "verified", evidence: "원본 상품 사진", isHealthFunctionalFood: false },
     oneLine: "촬영 계약 검증용 상품",
     targetCustomer: "일반 구매자",
     features: ["확인된 외형"],
@@ -128,11 +132,78 @@ test("the exact SHA-256 and 256-bit dHash gate allows an initial image plus thre
 
   const firstRetry = buildDuplicateRetryGuidance("wide", "portrait", 1);
   const thirdRetry = buildDuplicateRetryGuidance("wide", "portrait", 3);
+  const evidenceRetry = buildDuplicateRetryGuidance("detail-feature", "square", 2, "source-evidence");
   assert.notEqual(firstRetry, thirdRetry);
   assert.match(firstRetry, /retry 1 of 3/);
+  assert.match(firstRetry, /different camera height and angle/);
   assert.match(firstRetry, /azimuth at least 45 degrees/);
+  assert.match(firstRetry, /HARD ROLE BLACKLIST: portrait/);
+  assert.match(firstRetry, /factual product identity/);
+  assert.doesNotMatch(firstRetry, /unchanged source product pixels/);
   assert.match(thirdRetry, /retry 3 of 3/);
   assert.match(thirdRetry, /opposite permitted camera height/);
+  assert.match(thirdRetry, /faithful to the supplied references/);
+  assert.match(evidenceRetry, /different permitted verified source view/);
+  assert.match(evidenceRetry, /without fabricating a camera view or hidden product plane/);
+  assert.match(evidenceRetry, /unchanged source product pixels/);
+  assert.match(evidenceRetry, /never invent or redraw package text/);
+  assert.doesNotMatch(evidenceRetry, /opposite permitted camera height/);
+});
+
+test("setting-shot retries deterministically replace all six scene dimensions without losing category context or source pixels", () => {
+  const plan = buildProductSettingShotPlan("food-staples", "롯샌 순우유맛 크림 샌드 과자");
+  const base = plan["detail-overview"];
+  const variants = [1, 2, 3].map((retry) => buildSettingShotRetryVariant(base, "detail-overview", retry));
+  for (const dimension of settingShotDimensions) {
+    assert.equal(new Set([base, ...variants].map((shot) => shot.separation[dimension])).size, 4, dimension);
+    assert.equal(new Set([base, ...variants].map((shot) => shot[dimension])).size, 4, dimension);
+  }
+  assert.ok(variants.every((variant) => variant.location.includes(base.location)));
+  assert.ok(variants.every((variant) => variant.camera.includes("assigned camera family")));
+  assert.ok(variants.every((variant) => variant.camera.includes("role-required height")));
+
+  const contracts = variants.map((variant) => resolveIdentityBackgroundContract(variant, "detail-overview"));
+  for (const dimension of ["location", "moment", "surface", "camera", "palette", "spatialDepth", "prop"] as const) {
+    assert.equal(new Set(contracts.map((contract) => contract[dimension].key)).size, 3, dimension);
+    assert.ok(contracts.every((contract) => contract[dimension].key.length <= 64));
+  }
+  assert.match(contracts[0].moment.description, /sunset|post-sunset/);
+  assert.match(contracts[1].moment.description, /blue-hour|twilight/);
+  assert.match(contracts[2].moment.description, /midday/);
+
+  const guidance = buildSettingShotRetryGuidance(
+    "detail-overview",
+    ["portrait", "wide"],
+    1,
+    variants[0],
+    { failedDimensions: ["time-light", "spatial-depth", "camera"] },
+  );
+  assert.match(guidance, /HARD ROLE BLACKLIST: portrait, wide/);
+  assert.match(guidance, /location=.*time\/light=.*surface=.*fixed cue=.*product placement=.*camera=/);
+  assert.match(guidance, /Validated prior audit failure dimensions: time-light, spatial-depth, camera/);
+  assert.match(guidance, /unchanged source pixels/);
+  assert.match(guidance, /immutable product zone/);
+  assert.doesNotMatch(guidance, /blacklisted role's product zone|product zone moves|move the product zone/i);
+  assert.doesNotMatch(guidance, /bathroom vanity|bedroom nightstand/);
+});
+
+test("every retry index keeps all eight setting slots visually and semantically separated", () => {
+  const basePlan = buildProductSettingShotPlan("food-staples", "사조 참치 일반식품 통조림");
+  for (const retry of [1, 2, 3]) {
+    const variants = settingShotAssetIds.map((assetId) => ({
+      assetId,
+      shot: buildSettingShotRetryVariant(basePlan[assetId], assetId, retry),
+    }));
+    for (const dimension of settingShotDimensions) {
+      assert.equal(new Set(variants.map(({ shot }) => shot[dimension])).size, settingShotAssetIds.length, `retry ${retry} ${dimension}`);
+      assert.equal(new Set(variants.map(({ shot }) => shot.separation[dimension])).size, settingShotAssetIds.length, `retry ${retry} ${dimension} key`);
+    }
+    const contracts = variants.map(({ assetId, shot }) => resolveIdentityBackgroundContract(shot, assetId));
+    for (const dimension of ["location", "moment", "surface", "camera", "palette", "spatialDepth", "prop"] as const) {
+      assert.equal(new Set(contracts.map((contract) => contract[dimension].key)).size, settingShotAssetIds.length, `retry ${retry} ${dimension} contract key`);
+      assert.equal(new Set(contracts.map((contract) => contract[dimension].description)).size, settingShotAssetIds.length, `retry ${retry} ${dimension} contract description`);
+    }
+  }
 });
 
 test("individual regeneration rejects exact and near duplicates of the pre-replacement target", () => {
@@ -182,6 +253,17 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(claimRoute, /candidate\.id === assetId \? `previous:\$\{candidate\.id\}` : candidate\.id/);
   assert.match(worker, /existingShots\.length !== imagePresets\.length/);
   assert.match(worker, /match=\$\{duplicate\.exact \? "sha256" : "dhash"\}/);
+  assert.match(worker, /buildSettingShotRetryVariant\(baseSettingShot, preset\.id, retryIndex\)/);
+  assert.match(worker, /never this persisted source-composite mask/);
+  assert.match(worker, /retryConflictAssetIds/);
+  assert.match(worker, /failedDimensions/);
+  assert.match(worker, /rejectedBackgroundShots/);
+  assert.match(worker, /comparisonPlates: boundedBackgroundComparisonShots\(\)/);
+  assert.match(worker, /hasPublishedSameSlotComparison[\s\S]*\? \[\.\.\.existingBackgroundShots\][\s\S]*: \[\.\.\.rejectedBackgroundShots, \.\.\.existingBackgroundShots\]/);
+  assert.match(worker, /slice\(0, maximumBackgroundAuditComparisons\)/);
+  assert.match(worker, /buildDuplicateRetryGuidance\(preset\.id, duplicate\.assetId, attempt, "source-evidence"\)/);
+  assert.match(worker, /buildDuplicateRetryGuidance\(preset\.id, duplicate\.assetId, attempt, "product-mockup"\)/);
+  assert.match(worker, /Keep the immutable source-product mask and follow the next deterministic background retry contract/);
 });
 
 test("protected products never send source pixels to image generation and preserve legacy input compatibility", async () => {
@@ -191,7 +273,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /const backgroundOnly = Boolean\(identityCutouts && preset\.identityPolicy\.mode === "source-composite"\)/);
   assert.match(worker, /\.\.\.\(!backgroundOnly \? referenceIndexes\.map[\s\S]*: \[\]\)/);
   assert.match(worker, /backgroundOnly \? "identity-background" : "product"/);
-  assert.match(worker, /compositeIdentityForeground\(generated, compositeSource\.foreground, preset\)/);
+  assert.match(worker, /compositeIdentityForeground\(generated, compositeSource\.foreground, generationPreset\)/);
   assert.match(worker, /originalMediaType[\s\S]*image\/jpeg[\s\S]*return "\.jpg"/);
   assert.match(worker, /trustedLegacyStudioImagePath\.test/);
   assert.match(worker, /const expectedBytes = preservedOriginal \? sourceSpec\.originalBytes : sourceSpec\.bytes/);
@@ -226,10 +308,10 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
   assert.match(worker, /openedStats\.dev !== outputStats\.dev[\s\S]*openedStats\.ino !== outputStats\.ino/);
   assert.match(worker, /sourceHandle\.readFile\(\)/);
-  assert.match(worker, /assertIdentityBackgroundPlate\(generated, preset\)/);
+  assert.match(worker, /assertIdentityBackgroundPlate\(generated, generationPreset\)/);
   assert.match(worker, /executeSourceProductCutout\("background"/);
   assert.match(worker, /auditGeneratedIdentityBackground\(\{/);
-  assert.match(worker, /for \(const existingBackground of existingBackgroundShots\)[\s\S]*findDuplicateShot\(candidateFingerprint, \[existingBackground\]\)/);
+  assert.match(worker, /for \(const existingBackground of \[\.\.\.existingBackgroundShots, \.\.\.rejectedBackgroundShots\]\)[\s\S]*findDuplicateShot\(candidateFingerprint, \[existingBackground\]\)/);
   assert.match(cutout, /IndexSet\(integer: instance\)/);
   assert.match(cutout, /generateScaledMaskForImage\(forInstances: instances/);
   assert.doesNotMatch(cutout, /generateScaledMaskForImage\(forInstances: observation\.allInstances/);

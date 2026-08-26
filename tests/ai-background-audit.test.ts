@@ -248,6 +248,9 @@ test("worker runs the independent semantic audit inside every background retry w
   assert.match(worker, /`가시적 시간대 조명=\$\{backgroundContract\.moment\.description/);
   assert.match(worker, /for \(let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS/);
   assert.match(worker, /Background safety retry/);
-  assert.match(worker, /literal assigned camera/);
+  assert.match(worker, /deterministic trusted retry contract/);
+  assert.match(worker, /safeForRetryComparison/);
+  assert.match(worker, /conflictingAssetIds/);
+  assert.doesNotMatch(worker, /different camera family[\s\S]{0,180}exact assigned/);
   assert.doesNotMatch(worker.match(/async function auditGeneratedIdentityBackground[\s\S]+?\n}\n\nasync function fingerprintGeneratedShot/)?.[0] ?? "", /referenceIndexes|imageFiles/);
 });

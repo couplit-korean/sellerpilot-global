@@ -5,6 +5,7 @@ import {
   AI_ASSET_PROMPT_VERSION,
   buildAssetImagePrompt,
   requiresSourceIdentityProtection,
+  resolveProductImageStyleCategory,
   resolveProductIdentityBackgroundContract,
   resolveProductSettingShot,
   selectAssetReferenceIndexes,
@@ -101,6 +102,47 @@ test("food use imagery selects a preparation or use shot instead of package quan
   const prompt = buildAssetImagePrompt(foodResult, "/tmp/detail-use.png", preset, ["main", "front"]);
   assert.match(prompt, /Required shot for this slot: 조리 완성/);
   assert.doesNotMatch(prompt, /Required shot for this slot: 구성 수량/);
+});
+
+test("structured food classification wins over cream-like flavor copy while true skincare still uses beauty", () => {
+  const creamSnack = {
+    ...result,
+    product: {
+      ...result.product,
+      category: "식품·음료 > 과자",
+      name: "롯샌 순우유맛",
+      features: ["부드러운 우유 크림 샌드"],
+      classification: {
+        displayName: "과자",
+        verificationStatus: "verified" as const,
+        evidence: "제품 전면 식품 표시",
+        isHealthFunctionalFood: false,
+      },
+    },
+  };
+  const creamDrink = {
+    ...creamSnack,
+    product: { ...creamSnack.product, category: "음료", name: "크림 소다 음료" },
+  };
+  const skincare = {
+    ...result,
+    product: {
+      ...result.product,
+      category: "화장품 > 스킨케어",
+      name: "보습 크림",
+      features: ["크림 제형"],
+    },
+  };
+  assert.equal(resolveProductImageStyleCategory(creamSnack).id, "food-staples");
+  assert.equal(resolveProductImageStyleCategory(creamDrink).id, "food-staples");
+  assert.equal(resolveProductImageStyleCategory(skincare).id, "beauty-skincare");
+  assert.equal(resolveProductImageStyleCategory(result).id, "general-commerce", "Drinkware is not a drink category");
+  assert.equal(resolveProductImageStyleCategory({
+    ...result,
+    product: { ...result.product, category: "Drinkware", name: "Coffee mug", features: ["Coffee cup handle"] },
+  }).id, "general-commerce", "a non-empty unknown taxonomy must not fall through to food keywords");
+  assert.match(resolveProductSettingShot(creamSnack, "portrait")?.location ?? "", /식료품|키친/);
+  assert.doesNotMatch(resolveProductSettingShot(creamSnack, "portrait")?.location ?? "", /욕실|화장대/);
 });
 
 test("cereal generation assigns eight recognizably different real setting shots", () => {

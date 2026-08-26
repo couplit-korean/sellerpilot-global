@@ -1,10 +1,15 @@
 import { aiGeneratedAssetSpecs, type AiGeneratedAssetId } from "./ai-generated-assets";
 import { resolveIdentityBackgroundContract } from "./ai-background-audit";
-import { channelStyleProfiles, matchStyleCategory } from "./marketplace-style-learning";
-import { buildProductSettingShotPlan, formatProductSettingShot, settingShotAssetIds } from "./product-setting-shots";
+import { channelStyleProfiles, generalCommerceStyleProfile, matchStyleCategory } from "./marketplace-style-learning";
+import {
+  buildProductSettingShotPlan,
+  formatProductSettingShot,
+  settingShotAssetIds,
+  type ProductSettingShot,
+} from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.26-r10-source-identity-16";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r11-source-identity-16";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -21,6 +26,34 @@ const sourceIdentityCategoryIds = new Set([
 
 const statutoryPackageSignals = /식품|시리얼|과자|커피|차|음료|참치|통조림|건강기능|영양제|보충제|화장품|스킨케어|크림|로션|샴푸|완구|어린이|의약외품|haccp|건기식|인증|법정표시|\b(?:g|kg|ml|kcal)\b/i;
 
+export function resolveProductImageStyleCategory(result: Pick<ProductStudioResult, "product">) {
+  const structuredCategory = result.product.category.trim();
+  const normalizedStructuredCategory = structuredCategory.toLocaleLowerCase();
+  const healthFunctionalStatus = result.product.classification.isHealthFunctionalFood;
+  const healthCategorySignal = /건강기능|건강식품|영양제|보충제|supplement|vitamin/i.test(structuredCategory);
+  if (healthFunctionalStatus === true) return matchStyleCategory("비타민");
+  if (healthCategorySignal && healthFunctionalStatus === false) return matchStyleCategory("식품");
+  if (healthCategorySignal) return generalCommerceStyleProfile;
+  const explicitStructuredRoute = [
+    { pattern: /화장도구|뷰티도구|미용도구|beauty\s*tool|makeup\s*tool/i, lookup: "뷰티도구" },
+    { pattern: /화장품|스킨케어|skincare|cosmetic/i, lookup: "스킨케어" },
+    { pattern: /일반식품|식품|음료|주류|food|grocery|beverage/i, lookup: "식품" },
+    { pattern: /남성.*(?:상의|의류)|남자옷|men.*(?:top|shirt)|apparel/i, lookup: "남성상의" },
+    { pattern: /완구|장난감|toy|game/i, lookup: "완구" },
+  ].find((route) => route.pattern.test(structuredCategory));
+  if (explicitStructuredRoute) return matchStyleCategory(explicitStructuredRoute.lookup);
+  if (/^(?:drink|drinks)$/.test(normalizedStructuredCategory)) return matchStyleCategory("식품");
+
+  const structuredMatch = matchStyleCategory(structuredCategory);
+  if (structuredMatch.id !== generalCommerceStyleProfile.id) return structuredMatch;
+  const explicitGenericCategory = /^(?:일반\s*상품|기타(?:\s*상품)?|미분류|other|general(?:[-_\s]*(?:commerce|merchandise|product))?)$/i.test(structuredCategory);
+  if (structuredCategory && !explicitGenericCategory) return generalCommerceStyleProfile;
+  return matchStyleCategory([
+    result.product.name,
+    ...result.product.features,
+  ].join(" "));
+}
+
 export function requiresSourceIdentityProtection(result: ProductStudioResult) {
   const productText = [
     result.product.category,
@@ -28,7 +61,7 @@ export function requiresSourceIdentityProtection(result: ProductStudioResult) {
     ...result.product.features,
     ...result.product.cautions,
   ].join(" ");
-  return sourceIdentityCategoryIds.has(matchStyleCategory(productText).id)
+  return sourceIdentityCategoryIds.has(resolveProductImageStyleCategory(result).id)
     || statutoryPackageSignals.test(productText);
 }
 
@@ -134,11 +167,7 @@ export function resolveProductIdentityBackgroundContract(settingShot: ReturnType
 
 export function resolveProductSettingShot(result: ProductStudioResult, assetId: AiGeneratedAssetId) {
   if (!settingShotAssetIds.includes(assetId as (typeof settingShotAssetIds)[number])) return null;
-  const categoryStyle = matchStyleCategory([
-    result.product.category,
-    result.product.name,
-    ...result.product.features,
-  ].join(" "));
+  const categoryStyle = resolveProductImageStyleCategory(result);
   const productText = [result.product.category, result.product.name, ...result.product.features].join(" ");
   const settingPlan = buildProductSettingShotPlan(categoryStyle.id, productText);
   return settingPlan[assetId as keyof typeof settingPlan];
@@ -151,12 +180,9 @@ export function buildAssetImagePrompt(
   inputRoles: string[] = [],
   noveltyGuidance = "",
   generationMode: "product" | "identity-background" = "product",
+  settingShotOverride?: ProductSettingShot,
 ) {
-  const categoryStyle = matchStyleCategory([
-    result.product.category,
-    result.product.name,
-    ...result.product.features,
-  ].join(" "));
+  const categoryStyle = resolveProductImageStyleCategory(result);
   const channelVisuals = channelStyleProfiles.map((profile) => `${profile.label}: ${profile.thumbnailStyle}`).join(" | ");
   const localizedVisualSignals = [...new Set((Array.isArray(result.localizedListings) ? result.localizedListings : []).flatMap((listing) => {
     if (preset.id.startsWith("detail-")) {
@@ -168,7 +194,7 @@ export function buildAssetImagePrompt(
     return listing.thumbnailAltText ? [`${listing.channel}:${listing.market} ${listing.thumbnailAltText}`] : [];
   }))].join(" | ").slice(0, 2_400);
   const referenceRoles = inputRoles.length ? inputRoles.join(", ") : "main";
-  const settingShot = resolveProductSettingShot(result, preset.id);
+  const settingShot = settingShotOverride ?? resolveProductSettingShot(result, preset.id);
   const requiredShot = categoryStyle.id === "food-supplement" && settingShot
     ? "the mandatory non-ingestion package-inspection, classification-review or storage setting above; do not show a serving, dosage, tablet/capsule, water glass, mouth, hand-to-mouth action or body"
     : assetShot(categoryStyle.shotList, preset.id);

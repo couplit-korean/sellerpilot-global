@@ -29,6 +29,145 @@ export type ProductSettingShot = {
 
 export type ProductSettingShotPlan = Record<SettingShotAssetId, ProductSettingShot>;
 
+const settingShotRetryProfiles = [
+  {
+    key: "opposite-annex-blue-hour-slate",
+    location: "a solid-wall-separated side annex dedicated to the same verified everyday function, with the original room completely outside the frame",
+    supportingObjects: "one fixed asymmetric vertical fin derived from the assigned architecture and no movable prop, container or saleable object",
+    staging: "inside the immutable source-composite mask zone, the contact plane moves to the opposite near/far depth relationship and reverses negative-space direction",
+    camera: "the assigned camera family moved to the opposite side, rotated about 70 degrees in azimuth with a visibly wider perspective while its role-required height remains unchanged",
+  },
+  {
+    key: "detached-bay-midday-ceramic",
+    location: "a detached central bay in a different room dedicated to the same verified everyday function, with no sightline into the original location",
+    supportingObjects: "one deep fixed architectural reveal derived from the assigned setting and no movable prop, container or saleable object",
+    staging: "inside the immutable source-composite mask zone, the background contact geometry changes to a far-diagonal relationship and reverses foreground hierarchy",
+    camera: "the assigned camera family shifted from oblique toward axial, rotated about 155 degrees in azimuth with a compressed mid-depth plane while its role-required height remains unchanged",
+  },
+  {
+    key: "remote-window-bay-night-metal",
+    location: "a recessed fixed bay in a remote wing dedicated to the same verified everyday function, physically disconnected from every earlier room",
+    supportingObjects: "one integrated linear architectural niche derived from the assigned setting and no movable prop, container or saleable object",
+    staging: "inside the immutable source-composite mask zone, the apparent architectural depth shifts to a third relationship while foreground and rear-plane hierarchy are fully reversed",
+    camera: "the assigned camera family moved to a third corner-to-axial position, rotated about 245 degrees in azimuth with a longer perspective while its role-required height remains unchanged",
+  },
+] as const;
+
+const retryMomentsByAsset: Record<SettingShotAssetId, readonly [string, string, string]> = {
+  portrait: [
+    "cool pre-sunrise light entering low from frame left with a long vertical-to-diagonal shadow",
+    "bright late-morning light entering high from frame right with crisp short diagonal shadows",
+    "warm post-sunset edge light entering from behind with deep foreground falloff",
+  ],
+  wide: [
+    "hard neutral noon light running left-to-right across the full horizontal work path",
+    "cool overcast early-morning light with broad shadowless lateral separation",
+    "low amber late-afternoon light running right-to-left with elongated horizontal shadows",
+  ],
+  "detail-overview": [
+    "amber sunset light entering from the rear-left and separating front, middle and rear storage planes",
+    "cool blue-hour top-side light entering from the front-right with three stepped depth shadows",
+    "neutral midday clerestory light entering from the rear-right with short nested overview shadows",
+  ],
+  "detail-use": [
+    "warm late-night side light entering low from frame right with a deep functional foreground falloff",
+    "bright early-afternoon cross-light entering from frame left with a sharply separated midground",
+    "cool dawn backlight entering from the far-right rear with a readable low contact plane",
+  ],
+  "detail-routine": [
+    "soft overcast morning threshold light entering from the next-action zone",
+    "narrow evening side light crossing the fixed transition boundary at a steep angle",
+    "high neutral midday light isolating preparation, threshold and next-action planes",
+  ],
+  "detail-scale": [
+    "neutral raking midday light entering from front-left and revealing only the fixed reference plane",
+    "cool early-evening light entering from rear-right with long scale-reference shadows",
+    "warm early-morning top-left light separating contact, reference and rear planes",
+  ],
+  "detail-storage": [
+    "cool twilight top light revealing the access opening, bay floor and rear wall",
+    "warm late-morning side light entering through the access reveal with a bright front clearance",
+    "neutral late-afternoon backlight separating the storage jamb, floor and rear plane",
+  ],
+  "detail-context": [
+    "bright afternoon backlight separating foreground, midground and a distant fixed opening",
+    "cool sunrise side light entering through a deep reveal and leaving the opposite foreground dark",
+    "warm night architectural edge light separating all three context planes without ambient fill",
+  ],
+};
+
+const retrySurfacesByAsset: Record<SettingShotAssetId, readonly [string, string, string]> = {
+  portrait: ["dark cleft slate", "ivory fine-chip terrazzo", "blue-grey oxidized zinc"],
+  wide: ["ribbed pale ceramic tile", "smoked structural glass", "charred end-grain timber"],
+  "detail-overview": ["brushed stainless steel", "deep green soapstone", "sealed dark cork composite"],
+  "detail-use": ["black saddle leather over a fixed slab", "cobalt glazed tile", "pale honed limestone"],
+  "detail-routine": ["matte red architectural brick", "satin-finished brass sheet", "bright white quartz"],
+  "detail-scale": ["fine grey cast concrete", "cross-cut white oak", "frosted laminated glass"],
+  "detail-storage": ["powder-coated perforated steel", "honed black basalt", "sealed woven-canvas laminate"],
+  "detail-context": ["dark mineral composite", "mint enamelled steel", "warm unglazed terracotta"],
+};
+
+function boundedSettingShotRetry(retry: number) {
+  return Math.max(1, Math.min(Math.trunc(retry), settingShotRetryProfiles.length));
+}
+
+export function buildSettingShotRetryVariant(
+  setting: ProductSettingShot,
+  assetId: SettingShotAssetId,
+  retry: number,
+) {
+  const boundedRetry = boundedSettingShotRetry(retry);
+  const profile = settingShotRetryProfiles[boundedRetry - 1];
+  const retryMoment = retryMomentsByAsset[assetId][boundedRetry - 1];
+  const retrySurface = retrySurfacesByAsset[assetId][boundedRetry - 1];
+  const key = `retry-${boundedRetry}-${assetId}`;
+  return {
+    label: `${setting.label} · 재생성 ${boundedRetry}`,
+    location: `${profile.location} as ${setting.location}; this is a radical spatial replacement, not a generic unrelated room`,
+    moment: `${retryMoment}; the previous candidate's time and light direction are fully blacklisted`,
+    surface: `an integrated ${retrySurface} plane; the previous candidate's material and grain direction are fully blacklisted`,
+    supportingObjects: `${profile.supportingObjects} from ${setting.location}; the previous candidate's cue arrangement is fully blacklisted`,
+    staging: `${profile.staging}; preserve ${assetId}'s immutable pixel mask and role anchor (${setting.staging}) while fully blacklisting the previous background contact geometry, depth and negative-space hierarchy`,
+    camera: `${setting.camera}; within this exact assigned camera family, ${profile.camera}`,
+    separation: {
+      location: `${key}-place`,
+      moment: `${key}-light`,
+      surface: `${key}-surface`,
+      supportingObjects: `${key}-cue`,
+      staging: `${key}-zone`,
+      camera: `${key}-camera`,
+    },
+  } satisfies ProductSettingShot;
+}
+
+export function buildSettingShotRetryGuidance(
+  assetId: SettingShotAssetId,
+  conflictingAssetIds: string[],
+  retry: number,
+  settingVariant: ProductSettingShot,
+  auditFeedback?: { failedDimensions?: string[] } | null,
+) {
+  const boundedRetry = boundedSettingShotRetry(retry);
+  const profile = settingShotRetryProfiles[boundedRetry - 1];
+  const conflicts = [...new Set(conflictingAssetIds)]
+    .filter((value) => /^[a-z0-9][a-z0-9:-]{0,63}$/.test(value))
+    .slice(0, settingShotAssetIds.length);
+  const blacklist = conflicts.length ? conflicts.join(", ") : "every earlier setting-shot plate supplied to the audit";
+  const failedDimensions = [...new Set(auditFeedback?.failedDimensions ?? [])]
+    .filter((value) => /^[a-z][a-z-]{0,31}$/.test(value))
+    .slice(0, 8);
+  return [
+    `Deterministic setting-shot retry ${boundedRetry} of ${settingShotRetryProfiles.length} for ${assetId}.`,
+    `HARD ROLE BLACKLIST: ${blacklist}. Do not reuse any blacklisted role's room geometry, light direction, surface family, fixed cue, background contact geometry around the immutable product zone, staging relationship, negative-space direction, depth hierarchy, camera azimuth or focal perspective.`,
+    `Retry transform ${profile.key} replaces all six scene dimensions together while retaining the product-category function and hard shot class: location=${settingVariant.location}; time/light=${settingVariant.moment}; surface=${settingVariant.surface}; fixed cue=${settingVariant.supportingObjects}; product placement=${settingVariant.staging}; camera=${settingVariant.camera}.`,
+    failedDimensions.length
+      ? `Validated prior audit failure dimensions: ${failedDimensions.join(", ")}. Make each named visual dimension unmistakably different from every blacklisted role while still satisfying this retry's trusted assignment.`
+      : "The prior candidate did not provide safe high-confidence dimension feedback; replace every scene dimension according to this deterministic retry contract.",
+    "The retry assignment below supersedes the original environment assignment, but it never changes the hard shot class or product facts.",
+    "Generate only the empty architectural plate. The verified product is composited afterward from unchanged source pixels; never invent, redraw or anticipate package text, logos, labels, quantities or product parts.",
+  ].join("\n");
+}
+
 type BaseSettingShotAssetId = "portrait" | "wide" | "detail-overview" | "detail-use";
 type SupplementalSettingShotAssetId = Exclude<SettingShotAssetId, BaseSettingShotAssetId>;
 type BaseProductSettingShotPlan = Record<BaseSettingShotAssetId, ProductSettingShot>;

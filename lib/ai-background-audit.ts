@@ -79,6 +79,12 @@ function stableSemanticKey(...parts: string[]) {
 
 function visibleMomentTreatment(moment: string, assetId: keyof typeof identityBackgroundCueByAssetId) {
   const normalized = moment.toLowerCase();
+  if (/blue[- ]hour|twilight|블루\s*아워|박명/.test(normalized)) {
+    return { family: "twilight-blue-edge", description: "cool blue-hour or twilight architectural light with one narrow edge source, deep neutral falloff and no daylight-like high fill" };
+  }
+  if (/sunset|post[- ]sunset|일몰|해질녘/.test(normalized)) {
+    return { family: "sunset-warm-edge", description: "warm sunset or post-sunset architectural edge light with an amber rear-side source and visibly deepening foreground falloff" };
+  }
   if (/취침|밤|늦은 저녁|저녁|evening|night|bedtime/.test(normalized)) {
     return { family: "evening-low-light", description: "warm low-angle evening or night illumination with deep falloff and one fixed architectural light direction" };
   }
@@ -110,6 +116,7 @@ function visibleMomentTreatment(moment: string, assetId: keyof typeof identityBa
 export function resolveIdentityBackgroundContract(settingShot: ProductSettingShot, assetId: AiGeneratedAssetId) {
   if (!(assetId in identityBackgroundCueByAssetId)) throw new Error(`${assetId} 설정샷 배경 계약을 만들 수 없습니다.`);
   const settingAssetId = assetId as keyof typeof identityBackgroundCueByAssetId;
+  const retryContract = /^retry-[1-3]-/.test(settingShot.separation.location);
   const momentTreatment = visibleMomentTreatment(settingShot.moment, settingAssetId);
   const cue = identityBackgroundCueByAssetId[settingAssetId];
   const cameraDescription = {
@@ -122,7 +129,7 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
     "detail-storage": "a high-right corner perspective exposing the access opening, storage floor and rear wall without collapsing their depth",
     "detail-context": "a low rear-wide perspective with clearly separated foreground, midground and distant architectural context",
   }[settingAssetId];
-  const cameraKey = {
+  const baseCameraKey = {
     portrait: "right-three-quarter-vertical",
     wide: "high-left-lateral",
     "detail-overview": "elevated-rear-overview",
@@ -132,27 +139,34 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
     "detail-storage": "high-right-access-corner",
     "detail-context": "low-rear-wide-context",
   }[settingAssetId];
+  const retryCameraDescription = retryContract ? settingShot.camera : cameraDescription;
+  const cameraKey = retryContract
+    ? stableSemanticKey(settingShot.separation.camera, "identity-camera")
+    : baseCameraKey;
+  const momentDescription = retryContract ? settingShot.moment : momentTreatment.description;
   return {
     location: {
       key: stableSemanticKey(settingShot.separation.location, "empty-architecture"),
       description: `the empty fixed architectural envelope of ${settingShot.location}; any saleable furniture or movable prop named by the location stays outside the frame`,
     },
     moment: {
-      key: stableSemanticKey(settingAssetId, momentTreatment.family),
-      description: `${momentTreatment.description}; audit only visible light direction, color temperature and shadows, never infer an action or movable prop`,
+      key: retryContract
+        ? stableSemanticKey(settingShot.separation.moment, momentTreatment.family)
+        : stableSemanticKey(settingAssetId, momentTreatment.family),
+      description: `${momentDescription}; audit only visible light direction, color temperature and shadows, never infer an action or movable prop`,
     },
     surface: {
       key: settingShot.separation.surface,
       description: `an empty integrated contact plane with the verified material appearance of ${settingShot.surface}`,
     },
-    camera: { key: cameraKey, description: cameraDescription },
+    camera: { key: cameraKey, description: retryCameraDescription },
     palette: {
       key: stableSemanticKey(settingShot.separation.surface, momentTreatment.family, "palette"),
-      description: `a category-specific palette led by ${settingShot.surface} under ${momentTreatment.description}`,
+      description: `a category-specific palette led by ${settingShot.surface} under ${momentDescription}`,
     },
     spatialDepth: {
       key: stableSemanticKey(cameraKey, "depth"),
-      description: `foreground, midground and rear architectural planes that visibly support ${cameraDescription}`,
+      description: `foreground, midground and rear architectural planes that visibly support ${retryCameraDescription}`,
     },
     prop: {
       key: stableSemanticKey(settingShot.separation.location, cue.suffix),

@@ -64,10 +64,25 @@ export function findDuplicateShot(
     .sort((left, right) => Number(right.exact) - Number(left.exact) || left.distance - right.distance)[0] ?? null;
 }
 
-export function buildDuplicateRetryGuidance(assetId: string, conflictingAssetId: string, retry: number) {
+export function buildDuplicateRetryGuidance(
+  assetId: string,
+  conflictingAssetId: string,
+  retry: number,
+  mode: "product-mockup" | "source-evidence" = "product-mockup",
+) {
   const boundedRetry = Math.max(1, Math.min(Math.trunc(retry), MAXIMUM_SHOT_GENERATION_RETRIES));
-  const strategy = boundedRetry >= MAXIMUM_SHOT_GENERATION_RETRIES
-    ? "Use the slot's opposite permitted camera height and a clearly different azimuth, move the subject to the opposite frame third or depth plane, reverse the foreground/background hierarchy, and replace every non-product prop and surface layout allowed by the slot."
-    : "Use a substantially different camera height and angle by changing azimuth at least 45 degrees within this slot's role, move the subject away from the previous frame zone, switch foreground depth and negative-space direction, and rebuild the allowed prop and surface arrangement from scratch.";
-  return `Anti-duplicate retry ${boundedRetry} of ${MAXIMUM_SHOT_GENERATION_RETRIES} for ${assetId}: the previous draft was visually too similar to ${conflictingAssetId}. ${strategy} Preserve the hard shot class and factual product identity, but do not create a recolor, mirrored copy, small crop, background swap with the same layout, or another slot's role.`;
+  const strategy = mode === "source-evidence"
+    ? boundedRetry >= MAXIMUM_SHOT_GENERATION_RETRIES
+      ? "Use the most different permitted verified source view, evidence crop, or role-safe framing that remains available; reverse crop pressure and negative-space direction without fabricating a camera view or hidden product plane."
+      : "Use a substantially different permitted verified source view, evidence crop, or role-safe framing; change crop pressure and negative-space direction without fabricating a camera view or hidden product plane."
+    : boundedRetry >= MAXIMUM_SHOT_GENERATION_RETRIES
+      ? "Use the slot's opposite permitted camera height and a clearly different azimuth, move the subject to the opposite frame third or depth plane, reverse the foreground/background hierarchy, and replace every non-product prop and surface layout allowed by the slot."
+      : "Use a substantially different camera height and angle by changing azimuth at least 45 degrees within this slot's role, move the subject away from the previous frame zone, switch foreground depth and negative-space direction, and rebuild the allowed prop and surface arrangement from scratch.";
+  const blacklistDimensions = mode === "source-evidence"
+    ? "crop, placement, depth hierarchy or negative-space direction"
+    : "camera, crop, placement, prop arrangement, depth hierarchy or negative-space direction";
+  const identityContract = mode === "source-evidence"
+    ? "Preserve the hard shot class, unchanged source product pixels and factual identity; never invent or redraw package text."
+    : "Preserve the hard shot class and factual product identity; keep every visible label character, logo, color, count and package feature faithful to the supplied references without inventing text or hidden structure.";
+  return `Anti-duplicate retry ${boundedRetry} of ${MAXIMUM_SHOT_GENERATION_RETRIES} for ${assetId}: the previous draft was visually too similar to ${conflictingAssetId}. HARD ROLE BLACKLIST: ${conflictingAssetId}; do not reuse its ${blacklistDimensions}. ${strategy} ${identityContract} Do not create a recolor, mirrored copy, small crop, background swap with the same layout, or another slot's role.`;
 }
