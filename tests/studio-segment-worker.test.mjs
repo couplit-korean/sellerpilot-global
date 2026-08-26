@@ -48,7 +48,8 @@ test("master and localized phases use derived schemas, isolated invocation, and 
   assert.doesNotMatch(invocation, /JSON\.parse\(await readFile\(resultFile/);
   assert.match(source, /stage\.startsWith\("studio-"\)/);
   assert.match(source, /stage: "studio-master"/);
-  assert.match(source, /stage: `studio-localized\$\{repair \? "-repair" : ""\}:\$\{chunkIndex \+ 1\}`/);
+  assert.match(source, /const repairSuffix = repairPass === 0 \? "" : repairPass === 1 \? "-repair" : "-repair-2"/);
+  assert.match(source, /stage: `studio-localized\$\{repairSuffix\}:\$\{chunkIndex \+ 1\}`/);
   assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 25 \* 60_000/);
   assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
 });
@@ -62,4 +63,50 @@ test("semantic repair is limited to the master or affected localized chunks", as
   assert.match(source, /if \(repairPlan\.repairMaster\)/);
   assert.match(source, /chunks\.forEach\(\(_, index\) => repairPlan\.localizedChunkIndexes\.add\(index\)\)/);
   assert.match(source, /AI 분할 결과 검증 실패/);
+});
+
+test("one finite residual repair uses isolated second-pass artifacts and settles every localized sibling", async () => {
+  const source = await readFile(workerUrl, "utf8");
+  const residualStart = source.indexOf("const residualIssues = parsed.error.issues");
+  const terminalFailure = source.indexOf("AI 분할 결과 검증 실패", residualStart);
+  const residual = source.slice(residualStart, terminalFailure);
+
+  assert.ok(residualStart > 0);
+  assert.match(residual, /const residualRepairPlan = studioSegmentRepairPlan\(residualIssues, chunks\)/);
+  assert.match(residual, /if \(residualRepairPlan\.repairMaster\)/);
+  assert.match(residual, /segmentId: "studio-master-repair-2"/);
+  assert.match(residual, /stage: "studio-master-repair-2"/);
+  assert.match(residual, /chunks\.forEach\(\(_, index\) => residualRepairPlan\.localizedChunkIndexes\.add\(index\)\)/);
+  assert.match(residual, /await settleStudioSegmentBatch\(/);
+  assert.match(residual, /draft: localizedOutputs\[chunkIndex\]/);
+  assert.match(residual, /repairPass: 2/);
+  assert.match(residual, /parsed = parseMergedStudioSegments\(masterOutput, localizedOutputs\)/);
+  assert.equal((residual.match(/repairPass: 2/g) ?? []).length, 1, "the residual localized pass must be finite");
+  assert.equal((residual.match(/studio-master-repair-2/g) ?? []).length, 2, "the residual master pass has one segment and one stage");
+});
+
+test("studio result normalization only reconciles a valid 16-to-20 section count", async () => {
+  const [source, contract] = await Promise.all([
+    readFile(workerUrl, "utf8"),
+    readFile(new URL("../lib/ai-cli-contract.ts", import.meta.url), "utf8"),
+  ]);
+  const helperStart = contract.indexOf("export function normalizeStudioSectionCount(value: unknown)");
+  const helperEnd = contract.indexOf("\nfunction boundedTitleKeyword", helperStart);
+  const helper = contract.slice(helperStart, helperEnd);
+
+  assert.match(helper, /sections\.length < 16 \|\| sections\.length > 20/);
+  assert.match(helper, /targetSectionCount: sections\.length/);
+  assert.match(source, /normalizeStudioSectionCount\(merged\)/);
+  assert.match(source, /normalizeStudioSectionCount\(job\.request\?\.sourceResult\)/);
+});
+
+test("repair prompts fail closed on unsupported general-food intake and efficacy claims", async () => {
+  const source = await readFile(workerUrl, "utf8");
+  assert.match(source, /title·shortDescription·description에는 처방형 섭취 수치·횟수·기간을 항상 생략하세요/);
+  assert.match(source, /같은 section\.evidence에 대상 locale로 완전히 번역/);
+  assert.match(source, /oneLine·targetCustomer·features와 design의 heroCopy·heroSubcopy에는 처방형 섭취 수치/);
+  assert.match(source, /면역·혈당·체중감량·체지방·소화 개선/);
+  assert.match(source, /해당 주장 자체를 삭제하세요/);
+  assert.match(source, /targetSectionCount는 수정 후 design\.sections의 실제 개수와 정확히 같아야 합니다/);
+  assert.match(source, /한국어 근거 문장을 그대로 복사하지 마세요/);
 });

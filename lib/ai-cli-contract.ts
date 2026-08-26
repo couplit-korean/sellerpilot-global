@@ -235,6 +235,35 @@ export function normalizeStudioWarningLimits(value: unknown): unknown {
   };
 }
 
+/**
+ * Reconciles the declared master section count with a structurally valid
+ * 16-to-20-section result. It never makes an undersized or oversized draft
+ * look valid and it does not mutate the model output.
+ */
+export function normalizeStudioSectionCount(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  const design = source.design;
+  if (!design || typeof design !== "object" || Array.isArray(design)) return value;
+  const designRecord = design as Record<string, unknown>;
+  const sections = designRecord.sections;
+  if (!Array.isArray(sections) || sections.length < 16 || sections.length > 20) return value;
+  const creativeStrategy = designRecord.creativeStrategy;
+  if (!creativeStrategy || typeof creativeStrategy !== "object" || Array.isArray(creativeStrategy)) return value;
+  const creativeStrategyRecord = creativeStrategy as Record<string, unknown>;
+  if (creativeStrategyRecord.targetSectionCount === sections.length) return value;
+  return {
+    ...source,
+    design: {
+      ...designRecord,
+      creativeStrategy: {
+        ...creativeStrategyRecord,
+        targetSectionCount: sections.length,
+      },
+    },
+  };
+}
+
 function boundedTitleKeyword(title: string): string {
   const trimmed = title.trim();
   if (!trimmed) return "";

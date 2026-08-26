@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   cliStudioResultSchema,
   normalizeStudioLocalizedKeywordCoverage,
+  normalizeStudioSectionCount,
   normalizeStudioWarningLimits,
   productResearchJobRequestSchema,
   productResearchResultSchema,
@@ -465,6 +466,193 @@ test("general-food guard also rejects invented efficacy inside a localized secti
   assert.equal(parsed.success, false);
   assert.ok(parsed.error?.issues.some((issue) => issue.path.join(".").startsWith("localizedListings.1.detailSections.0")));
 });
+
+function generalFoodSafetyResult() {
+  const result = validResult();
+  result.product.category = "General food";
+  result.product.classification = {
+    displayName: "General food",
+    verificationStatus: "verified",
+    evidence: "The supplied rear package identifies this product as a general food.",
+    isHealthFunctionalFood: false,
+  };
+  return result;
+}
+
+const localizedGeneralFoodClaims = [
+  {
+    locale: "vi-VN",
+    dangerous: [
+      "Sản phẩm này tăng cường miễn dịch.",
+      "Sản phẩm này kiểm soát đường huyết.",
+      "Sản phẩm này hỗ trợ giảm cân.",
+      "Sản phẩm này giảm cân.",
+      "Sản phẩm này giảm mỡ cơ thể.",
+      "Sản phẩm này hỗ trợ tiêu hóa.",
+      "Sản phẩm này ngăn ngừa và điều trị bệnh.",
+      "Miễn dịch được tăng cường bởi sản phẩm này.",
+    ],
+    negated: "Sản phẩm này không tăng cường miễn dịch, không kiểm soát đường huyết, không giảm cân hay mỡ cơ thể, không hỗ trợ tiêu hóa và không ngăn ngừa hoặc điều trị bệnh.",
+    intake: "Uống 2 viên mỗi ngày.",
+    negatedIntake: "Không uống 2 viên mỗi ngày.",
+    mixedIntake: "Không uống 2 viên mỗi ngày, nhưng uống 3 viên mỗi ngày.",
+    evidence: "Nhãn của nhà sản xuất ghi uống 2 viên mỗi ngày.",
+  },
+  {
+    locale: "id-ID",
+    dangerous: [
+      "Produk ini meningkatkan kekebalan tubuh.",
+      "Produk ini menurunkan gula darah.",
+      "Produk ini membantu menurunkan berat badan.",
+      "Produk ini mengurangi lemak tubuh.",
+      "Produk ini membantu pencernaan.",
+      "Produk ini mencegah dan mengobati penyakit.",
+      "Gula darah dapat diturunkan oleh produk ini.",
+    ],
+    negated: "Produk ini tidak meningkatkan kekebalan, tidak menurunkan gula darah, tidak menurunkan berat badan atau lemak tubuh, tidak membantu pencernaan, dan tidak mencegah atau mengobati penyakit.",
+    intake: "Konsumsi 2 kapsul setiap hari.",
+    negatedIntake: "Jangan konsumsi 2 kapsul setiap hari.",
+    mixedIntake: "Jangan konsumsi 2 kapsul setiap hari, tetapi konsumsi 3 kapsul setiap hari.",
+    evidence: "Kemasan produsen mencantumkan 2 kapsul setiap hari.",
+  },
+  {
+    locale: "ms-MY",
+    dangerous: [
+      "Produk ini meningkatkan imuniti.",
+      "Produk ini menurunkan gula darah.",
+      "Produk ini membantu mengurangkan berat badan.",
+      "Produk ini mengurangkan lemak badan.",
+      "Produk ini membantu penghadaman.",
+      "Produk ini mencegah dan merawat penyakit.",
+      "Penghadaman dapat dibantu oleh produk ini.",
+    ],
+    negated: "Produk ini tidak meningkatkan imuniti, tidak menurunkan gula darah, tidak mengurangkan berat badan atau lemak badan, tidak membantu penghadaman, dan tidak mencegah atau merawat penyakit.",
+    intake: "Ambil 2 kapsul setiap hari.",
+    negatedIntake: "Jangan ambil 2 kapsul setiap hari.",
+    mixedIntake: "Jangan ambil 2 kapsul setiap hari, tetapi ambil 3 kapsul setiap hari.",
+    evidence: "Pembungkusan pengeluar menyatakan 2 kapsul setiap hari.",
+  },
+  {
+    locale: "th-TH",
+    dangerous: [
+      "ผลิตภัณฑ์นี้เสริมภูมิคุ้มกัน",
+      "ผลิตภัณฑ์นี้ลดน้ำตาลในเลือด",
+      "ผลิตภัณฑ์นี้ช่วยลดน้ำหนัก",
+      "ผลิตภัณฑ์นี้ลดไขมันในร่างกาย",
+      "ผลิตภัณฑ์นี้ช่วยย่อยอาหาร",
+      "ผลิตภัณฑ์นี้ป้องกันและรักษาโรค",
+      "ภูมิคุ้มกันเพิ่มขึ้นจากผลิตภัณฑ์นี้",
+    ],
+    negated: "ผลิตภัณฑ์นี้ไม่เสริมภูมิคุ้มกัน ไม่ลดน้ำตาลในเลือด ไม่ลดน้ำหนักหรือไขมันในร่างกาย ไม่ช่วยย่อยอาหาร และไม่ป้องกันหรือรักษาโรค",
+    intake: "รับประทาน 2 เม็ดต่อวัน",
+    negatedIntake: "ไม่รับประทาน 2 เม็ดต่อวัน",
+    mixedIntake: "ไม่รับประทาน 2 เม็ดต่อวัน แต่รับประทาน 3 เม็ดต่อวัน",
+    evidence: "ฉลากผู้ผลิตระบุให้รับประทาน 2 เม็ดต่อวัน",
+  },
+] as const;
+
+test("general-food guard rejects Korean digestion and weight-loss efficacy", () => {
+  for (const dangerous of ["이 식품은 소화를 돕습니다.", "이 식품은 체중 감량에 도움을 줍니다."]) {
+    const result = generalFoodSafetyResult();
+    result.design.sections[0].body += ` ${dangerous}`;
+    const parsed = cliStudioResultSchema.safeParse(result);
+    assert.equal(parsed.success, false, dangerous);
+    assert.ok(parsed.error?.issues.some((issue) => issue.message.includes("효능")), dangerous);
+  }
+});
+
+test("general-food guard rejects vi, id, ms, and th efficacy claims but accepts explicit negation", () => {
+  for (const example of localizedGeneralFoodClaims) {
+    for (const dangerous of example.dangerous) {
+      const result = generalFoodSafetyResult();
+      const listingIndex = result.localizedListings.findIndex((listing) => listing.locale === example.locale);
+      assert.notEqual(listingIndex, -1);
+      result.localizedListings[listingIndex].detailSections[0].body += ` ${dangerous}`;
+      const parsed = cliStudioResultSchema.safeParse(result);
+      assert.equal(parsed.success, false, `${example.locale}: ${dangerous}`);
+      assert.ok(parsed.error?.issues.some((issue) => (
+        issue.path.join(".").startsWith(`localizedListings.${listingIndex}.detailSections.0`)
+        && issue.message.includes("효능")
+      )), `${example.locale}: ${dangerous}`);
+    }
+
+    const negatedResult = generalFoodSafetyResult();
+    const listingIndex = negatedResult.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    negatedResult.localizedListings[listingIndex].detailSections[0].body += ` ${example.negated}`;
+    const negatedParsed = cliStudioResultSchema.safeParse(negatedResult);
+    if (!negatedParsed.success) {
+      assert.fail(`${example.locale}: ${JSON.stringify(negatedParsed.error.issues, null, 2)}`);
+    }
+  }
+});
+
+test("a negated localized claim does not hide a later positive claim", () => {
+  const mixedClaims = [
+    ["vi-VN", "Sản phẩm này không tăng cường miễn dịch, nhưng kiểm soát đường huyết."],
+    ["id-ID", "Produk ini tidak meningkatkan kekebalan, tetapi menurunkan gula darah."],
+    ["ms-MY", "Produk ini tidak meningkatkan imuniti, tetapi menurunkan gula darah."],
+    ["th-TH", "ผลิตภัณฑ์นี้ไม่เสริมภูมิคุ้มกัน แต่ลดน้ำตาลในเลือด"],
+  ] as const;
+  for (const [locale, mixedClaim] of mixedClaims) {
+    const result = generalFoodSafetyResult();
+    const listingIndex = result.localizedListings.findIndex((listing) => listing.locale === locale);
+    result.localizedListings[listingIndex].detailSections[0].body += ` ${mixedClaim}`;
+    const parsed = cliStudioResultSchema.safeParse(result);
+    assert.equal(parsed.success, false, locale);
+    assert.ok(parsed.error?.issues.some((issue) => issue.message.includes("효능")), locale);
+  }
+});
+
+test("general-food guard allows ordinary localized taste, package, and net-weight descriptions", () => {
+  const ordinaryDescriptions = [
+    ["vi-VN", "Hương vị ngọt nhẹ, bao bì kín và khối lượng tịnh 200 g."],
+    ["id-ID", "Rasa cokelat dengan kemasan tertutup dan berat bersih 200 g."],
+    ["ms-MY", "Rasa coklat dengan pembungkusan tertutup dan berat bersih 200 g."],
+    ["th-TH", "รสช็อกโกแลต บรรจุภัณฑ์ปิดสนิท น้ำหนักสุทธิ 200 กรัม"],
+  ] as const;
+  const result = generalFoodSafetyResult();
+  for (const [locale, description] of ordinaryDescriptions) {
+    const listingIndex = result.localizedListings.findIndex((listing) => listing.locale === locale);
+    result.localizedListings[listingIndex].detailSections[0].body += ` ${description}`;
+  }
+  const parsed = cliStudioResultSchema.safeParse(result);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("localized daily intake requires the same measured amount in local label evidence", () => {
+  for (const example of localizedGeneralFoodClaims) {
+    const unsafe = generalFoodSafetyResult();
+    const unsafeIndex = unsafe.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    unsafe.localizedListings[unsafeIndex].detailSections[0].body += ` ${example.intake}`;
+    const unsafeParsed = cliStudioResultSchema.safeParse(unsafe);
+    assert.equal(unsafeParsed.success, false, example.locale);
+    assert.ok(unsafeParsed.error?.issues.some((issue) => issue.message.includes("섭취량")), example.locale);
+
+    const supported = generalFoodSafetyResult();
+    const supportedIndex = supported.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    supported.localizedListings[supportedIndex].detailSections[0].body += ` ${example.intake}`;
+    supported.localizedListings[supportedIndex].detailSections[0].evidence += ` ${example.evidence}`;
+    const supportedParsed = cliStudioResultSchema.safeParse(supported);
+    if (!supportedParsed.success) {
+      assert.fail(`${example.locale}: ${JSON.stringify(supportedParsed.error.issues, null, 2)}`);
+    }
+
+    const negated = generalFoodSafetyResult();
+    const negatedIndex = negated.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    negated.localizedListings[negatedIndex].detailSections[0].body += ` ${example.negatedIntake}`;
+    const negatedParsed = cliStudioResultSchema.safeParse(negated);
+    if (!negatedParsed.success) {
+      assert.fail(`${example.locale}: ${JSON.stringify(negatedParsed.error.issues, null, 2)}`);
+    }
+
+    const mixed = generalFoodSafetyResult();
+    const mixedIndex = mixed.localizedListings.findIndex((listing) => listing.locale === example.locale);
+    mixed.localizedListings[mixedIndex].detailSections[0].body += ` ${example.mixedIntake}`;
+    const mixedParsed = cliStudioResultSchema.safeParse(mixed);
+    assert.equal(mixedParsed.success, false, example.locale);
+    assert.ok(mixedParsed.error?.issues.some((issue) => issue.message.includes("섭취량")), example.locale);
+  }
+});
 test("AI studio warning limits are normalized deterministically before terminal validation", () => {
   const result = validResult();
   result.warnings = ["  " + "경".repeat(450) + "  ", "   ", "두 번째 경고", "세 번째 경고", "네 번째 경고", "다섯 번째 경고", "여섯 번째 경고"];
@@ -475,6 +663,21 @@ test("AI studio warning limits are normalized deterministically before terminal 
   assert.equal(normalized.warnings.includes(""), false);
   const parsed = cliStudioResultSchema.safeParse(normalized);
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("studio section count normalization is immutable and limited to valid master lengths", () => {
+  const validLength = validResult();
+  validLength.design.creativeStrategy.targetSectionCount = 20;
+  const normalized = normalizeStudioSectionCount(validLength) as ReturnType<typeof validResult>;
+  assert.notEqual(normalized, validLength);
+  assert.equal(normalized.design.creativeStrategy.targetSectionCount, normalized.design.sections.length);
+  assert.equal(validLength.design.creativeStrategy.targetSectionCount, 20, "normalization must not mutate its input");
+
+  const invalidLength = validResult();
+  invalidLength.design.sections = invalidLength.design.sections.slice(0, 15);
+  invalidLength.design.creativeStrategy.targetSectionCount = 20;
+  assert.equal(normalizeStudioSectionCount(invalidLength), invalidLength);
+  assert.equal(invalidLength.design.creativeStrategy.targetSectionCount, 20);
 });
 
 test("AI studio warning truncation never leaves an unpaired UTF-16 surrogate", () => {
