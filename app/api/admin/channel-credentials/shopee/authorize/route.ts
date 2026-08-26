@@ -19,7 +19,11 @@ const requestSchema = z.object({
   credentialId: z.string().uuid().optional(),
   environment: z.enum(["sandbox", "production"]).default("production"),
   secretPayload: z.record(z.string(), z.string().trim().max(8_000)).default({}),
-  expiresAt: z.string().datetime().nullable().default(null),
+  expiresAt: z.string()
+    .datetime({ offset: true })
+    .transform((value) => new Date(value).toISOString())
+    .nullable()
+    .default(null),
   rotationDays: z.number().int().min(1).max(365).default(90),
   warningDays: z.number().int().min(1).max(180).default(30),
   graceDays: z.number().int().min(0).max(30).default(0),
@@ -33,6 +37,12 @@ function sameValue(left: string, right: string) {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function canonicalTimestamp(value: string | null, fallback: string) {
+  if (!value) return fallback;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : fallback;
 }
 
 function oauthStartResponse(
@@ -114,6 +124,10 @@ export async function POST(request: NextRequest) {
   }
   if (oauthCode) {
     if (!callbackShopId && !mainAccountId) return NextResponse.json({ message: "Shopee 승인 응답에 Shop ID 또는 Main Account ID가 없습니다. 판매자 승인을 다시 시작해 주세요." }, { status: 400 });
+    const authorizationExpiresAt = canonicalTimestamp(
+      credentialExpiresAt,
+      new Date(Date.now() + 365 * 86_400_000).toISOString(),
+    );
     try {
       await exchangeOAuthViaChannelGateway({
         serviceClient,
@@ -122,7 +136,7 @@ export async function POST(request: NextRequest) {
         request: {
           code: oauthCode,
           ...(mainAccountId ? { mainAccountId } : { shopId: callbackShopId }),
-          authorizationExpiresAt: credentialExpiresAt ?? new Date(Date.now() + 365 * 86_400_000).toISOString(),
+          authorizationExpiresAt,
         },
       });
     } catch (error) {

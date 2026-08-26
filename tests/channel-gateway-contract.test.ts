@@ -1,10 +1,50 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  gatewayCredentialRefreshLifecycleSchema,
   gatewayJobCompletionStatus,
   gatewayResultHasObservedMutation,
   gatewayWorkerCompletionSchema,
 } from "../lib/channels/gateway-contract";
+
+test("gateway canonicalizes PostgreSQL timezone offsets before credential staging", () => {
+  const parsed = gatewayCredentialRefreshLifecycleSchema.safeParse({
+    action: "stage",
+    jobId: "51fc7348-3e07-45ba-94c7-62e5244b511b",
+    claimToken: "f0308779-b8dd-4fbb-8cad-f55fe0d33f2d",
+    credentialRefresh: {
+      payload: { access_token: "new-access-token" },
+      expiresAt: "2027-08-25T00:00:00+00:00",
+      recoveryOnly: true,
+    },
+  });
+
+  assert.equal(parsed.success, true);
+  if (parsed.success && parsed.data.action === "stage") {
+    assert.equal(parsed.data.credentialRefresh.expiresAt, "2027-08-25T00:00:00.000Z");
+  }
+});
+
+test("OAuth completion accepts and canonicalizes a timezone offset", () => {
+  const parsed = gatewayWorkerCompletionSchema.safeParse({
+    jobId: "51fc7348-3e07-45ba-94c7-62e5244b511b",
+    claimToken: "f0308779-b8dd-4fbb-8cad-f55fe0d33f2d",
+    status: "succeeded",
+    result: {
+      ok: true,
+      channel: "shopee",
+      operation: "oauth.exchange",
+      credentialPayload: { access_token: "new-access-token" },
+      expiresAt: "2027-08-25T09:00:00+09:00",
+      safeMessage: "Shopee OAuth 토큰 교환을 완료했습니다.",
+    },
+  });
+
+  assert.equal(parsed.success, true);
+  if (parsed.success && parsed.data.status === "succeeded" && parsed.data.result.operation === "oauth.exchange") {
+    assert.equal(parsed.data.result.expiresAt, "2027-08-25T00:00:00.000Z");
+  }
+});
 
 test("channel gateway accepts the full Shopee asynchronous verification trail", () => {
   const parsed = gatewayWorkerCompletionSchema.safeParse({

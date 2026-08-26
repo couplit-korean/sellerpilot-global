@@ -25,6 +25,7 @@ import { createClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey, type ChannelDefinition } from "../lib/channels/catalog";
 import { channelOperationAvailable } from "../lib/channels/operation-availability";
+import { resolveShopeeConnectionStatus, type ShopeeConnectionStatus as ResolvedShopeeConnectionStatus } from "../lib/channels/shopee-connection-status";
 import { AiCliRuntimeCard } from "./ai-cli-runtime-card";
 
 type CredentialKey = ActiveChannelKey | "tracx";
@@ -50,6 +51,12 @@ type Credential = {
   last_check_status: "passed" | "failed" | "manual" | null;
   last_check_message: string | null;
   created_at: string;
+  connection_status?: ResolvedShopeeConnectionStatus;
+};
+
+type ShopeeConnectionStatus = {
+  credential_id: string;
+  connection_status: "provider_verified" | "oauth_reconnect_required";
 };
 
 type AuditRow = {
@@ -252,13 +259,33 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
         setError("로그인 세션을 확인하지 못했습니다. 다시 로그인해 주세요.");
         return;
       }
-      const [{ data, error: listError }, { data: auditData, error: auditError }] = await Promise.all([
+      const [
+        { data, error: listError },
+        { data: auditData, error: auditError },
+        { data: shopeeStatusData, error: shopeeStatusError },
+      ] = await Promise.all([
         supabase.rpc("sellerpilot_list_credentials"),
         supabase.rpc("sellerpilot_list_credential_audit", { p_limit: 80 }),
+        supabase.rpc("sellerpilot_list_shopee_connection_status"),
       ]);
       if (listError) setError(listError.message.includes("administrator") ? "이 계정에 키 관리 관리자 권한이 없습니다." : "키 메타데이터를 불러오지 못했습니다.");
       else {
-        setCredentials((data ?? []) as Credential[]);
+        const connectionStatusById = new Map(
+          ((shopeeStatusData ?? []) as ShopeeConnectionStatus[]).map((row) => [row.credential_id, row.connection_status] as const),
+        );
+        setCredentials((current) => {
+          const previousConnectionStatusById = new Map(current.map((credential) => [credential.id, credential.connection_status] as const));
+          return ((data ?? []) as Credential[]).map((credential) => ({
+            ...credential,
+            connection_status: credential.channel !== "shopee"
+              ? undefined
+              : resolveShopeeConnectionStatus({
+                rpcFailed: Boolean(shopeeStatusError),
+                current: connectionStatusById.get(credential.id),
+                previous: previousConnectionStatusById.get(credential.id),
+              }),
+          }));
+        });
         setError("");
       }
       if (!auditError) setAudits((auditData ?? []) as AuditRow[]);
@@ -367,8 +394,12 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
             : undefined;
           const days = remainingDays(credential?.expires_at ?? null);
           const tone = expiryTone(days, credential?.warning_days ?? 30);
+          const needsOAuthReconnect = channel.key === "shopee"
+            && credential?.connection_status === "oauth_reconnect_required";
+          const shopeeStatusUnavailable = channel.key === "shopee"
+            && credential?.connection_status === "status_unavailable";
           return <article className={`credential-card ${channel.key}`} key={channel.key}>
-            <header><span className="credential-channel-code">{channel.mark}</span><div><small>{channel.market}</small><h3>{channel.name}</h3></div><span className={`connection-state ${credential ? "connected" : "empty"}`}><i />{credential ? "키 등록됨" : "등록 필요"}</span></header>
+            <header><span className="credential-channel-code">{channel.mark}</span><div><small>{channel.market}</small><h3>{channel.name}</h3></div><span className={`connection-state ${needsOAuthReconnect || shopeeStatusUnavailable ? "reconnect" : credential ? "connected" : "empty"}`}><i />{needsOAuthReconnect ? "OAuth 재연동 필요" : shopeeStatusUnavailable ? "상태 확인 필요" : credential ? "키 등록됨" : "등록 필요"}</span></header>
             <div className="credential-policy"><Clock3 size={13} />{channel.credentialPolicy}</div>
             <div className="credential-source-links">{channel.officialDocs.slice(0, 2).map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}</a>)}</div>
             <div className="credential-lifecycle">
@@ -377,9 +408,11 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
               <div><small>자동 경고</small><b>{credential ? `${credential.warning_days}일 전` : "30일 전"}</b><em>{credential ? `${credential.rotation_interval_days}일 교체 주기` : "등록 시 변경 가능"}</em></div>
               <div><small>최근 연결 검사</small><b>{credential?.last_check_status === "passed" ? "정상" : credential?.last_check_status === "failed" ? "실패" : credential?.last_check_status === "manual" ? "수동 확인" : "미실행"}</b><em>{formatDate(credential?.last_checked_at ?? null, true)}</em></div>
             </div>
+            {needsOAuthReconnect && <p className="last-check failed"><AlertTriangle size={13} />판매자 계정 확인 전까지 쇼피 주문 자동 동기화를 중지했습니다. OAuth를 다시 연결해 주세요.</p>}
+            {shopeeStatusUnavailable && <p className="last-check failed"><AlertTriangle size={13} />판매자 계정 확인 상태를 불러오지 못했습니다. 주문 자동 동기화 상태를 정상으로 간주하지 않습니다. 다시 확인해 주세요.</p>}
             {credential?.last_check_message && <p className={`last-check ${credential.last_check_status}`}>{credential.last_check_status === "passed" ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}{credential.last_check_message}</p>}
             {graceCredential && <p className="credential-grace"><RotateCcw size={13} /><span><b>이전 v{graceCredential.version} 롤백 유예</b>{formatDate(graceCredential.grace_ends_at, true)}까지 Vault 보관</span></p>}
-            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}OAuth 재연결</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential} title="실제 판매 API 요청을 관리자 권한으로 검수합니다."><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
+            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}{needsOAuthReconnect ? "OAuth 재연동 필요" : "OAuth 재연결"}</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential} title="실제 판매 API 요청을 관리자 권한으로 검수합니다."><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
           </article>;
         })}
       </section>

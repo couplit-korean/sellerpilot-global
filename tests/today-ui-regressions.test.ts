@@ -4,6 +4,7 @@ import test from "node:test";
 import { salesRangeForPreset } from "../app/_dashboard/sales-range-control";
 import {
   isRegistrationActivityRunning,
+  recoverableRegistrationActivityJobId,
   registrationActivityDisplayElapsedSeconds,
   registrationActivityMatchesFilter,
   registrationActivityNotificationTransition,
@@ -141,12 +142,29 @@ test("ready registration cards are completed analysis drafts, not running work",
   assert.equal(registrationChannelStatusLabel("scope_excluded"), "제외");
 });
 
+test("only a failed orphan product-studio card exposes its exact recoverable job id", () => {
+  const jobId = "11111111-1111-4111-8111-111111111111";
+  const orphan = activity(`job:${jobId}`, "실패한 AI 상품", "failed");
+  orphan.productId = null;
+  assert.equal(recoverableRegistrationActivityJobId(orphan), jobId);
+  assert.equal(recoverableRegistrationActivityJobId({ ...orphan, status: "ready" }), null);
+  assert.equal(recoverableRegistrationActivityJobId({ ...orphan, productId: jobId }), null);
+  assert.equal(recoverableRegistrationActivityJobId({ ...orphan, id: "job:not-a-uuid" }), null);
+});
+
 test("registration progress uses terminal channel results and never invents an AI percentage", () => {
   const analyzing = activity("analysis", "분석 상품", "analyzing");
   analyzing.channelCount = 0;
   assert.deepEqual(registrationActivityProgress(analyzing), {
     percent: null,
     label: "AI 분석 단계입니다. 채널 대상이 확정되면 실제 완료 비율을 표시합니다.",
+  });
+
+  const imageOperation = activity("asset:11111111-1111-4111-8111-111111111111", "이미지 재제작", "analyzing");
+  imageOperation.channelCount = 0;
+  assert.deepEqual(registrationActivityProgress(imageOperation), {
+    percent: null,
+    label: "AI 이미지 작업 진행 중 · 외부 판매채널 자동 게시 없음",
   });
 
   const publishing = activity("publish", "등록 상품", "publishing");
@@ -158,7 +176,12 @@ test("registration progress uses terminal channel results and never invents an A
     percent: 50,
     label: "8개 채널 중 4개 처리 결과를 확인했습니다.",
   });
-  assert.equal(registrationActivityProgress(activity("done", "완료 상품", "completed")).percent, 100);
+  const completedImageOperation = activity("revision:done", "완료 상품 수정", "completed");
+  completedImageOperation.channelCount = 0;
+  assert.deepEqual(registrationActivityProgress(completedImageOperation), {
+    percent: 100,
+    label: "해당 AI 이미지 작업이 완료됐습니다.",
+  });
 });
 
 test("relative return paths cannot escape the SellerPilot origin", () => {
@@ -273,7 +296,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.doesNotMatch(page, /manufacturer: text\("manufacturer", "공급처 확인 필요"\)/);
   assert.match(page, /imageRightsConfirmed: typeof fields\.imageRightsConfirmed === "boolean" \? fields\.imageRightsConfirmed : false/);
   assert.match(page, /stock: current\.stock,[\s\S]{0,180}weightKg: current\.weightKg/);
-  assert.match(page, /수정값은 중앙 상품 원장에 저장되며, 재고 변경은 연결된 채널에도 동기화/);
+  assert.match(page, /텍스트·가격·재고뿐 아니라 원본·대표·역할별 사진을 교체/);
+  assert.match(page, /외부 채널에는 자동 게시하지 않습니다/);
   assert.match(publishWorkbench, /<select required value=\{context\.manualFields\.packageContents\}/);
   assert.doesNotMatch(publishWorkbench, /판매 구성품[^\n]*<input/);
   assert.match(mobileStyles, /@media \(min-width: 901px\) and \(max-width: 1200px\)[\s\S]*?\.overview-toolbar[\s\S]*?flex-direction: column/);
@@ -315,8 +339,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /productResearchControllerRef\.current\?\.abort\(\)/);
   assert.match(page, /detailRegenerationControllerRef = useRef<AbortController \| null>\(null\)/);
   assert.match(page, /detailRegenerationControllerRef\.current\?\.abort\(new DOMException\("상품 상세 화면이 닫혔습니다\.", "AbortError"\)\)/);
-  assert.match(page, /authenticatedFetch\(`\/api\/ai\/jobs\/\$\{queued\.jobId\}`, \{ signal: controller\.signal \}\)/);
-  assert.match(page, /await abortableBrowserDelay\(3_000, controller\.signal\)/);
+  assert.match(page, /authenticatedJsonWithDeadline<[\s\S]{0,320}`\/api\/ai\/jobs\/\$\{monitoredJobId\}`[\s\S]{0,180}requestBudgetMs/);
+  assert.match(page, /await abortableBrowserDelay\(delayMs, regenerationSignal\)/);
   assert.doesNotMatch(page, /await new Promise\(\(resolve\) => window\.setTimeout\(resolve, 3_000\)\)/);
   assert.match(page, /AbortSignal\.any\(\[productResearchController\.signal, AbortSignal\.timeout\(30_000\)\]\)/);
   assert.match(page, /waitForAbortablePromise\(createSupabaseClient\(\)\.auth\.getSession\(\), sessionSignal\)/);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   cliStudioResultSchema,
+  normalizeStudioWarningLimits,
   productResearchJobRequestSchema,
   productResearchResultSchema,
   studioJobRequestSchema,
@@ -93,6 +94,28 @@ function validResult() {
 
 test("AI studio contract accepts all 27 exact channel-market locales", () => {
   const parsed = cliStudioResultSchema.safeParse(validResult());
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("AI studio warning limits are normalized deterministically before terminal validation", () => {
+  const result = validResult();
+  result.warnings = ["  " + "경".repeat(450) + "  ", "   ", "두 번째 경고", "세 번째 경고", "네 번째 경고", "다섯 번째 경고", "여섯 번째 경고"];
+  const normalized = normalizeStudioWarningLimits(result) as ReturnType<typeof validResult>;
+  assert.equal(normalized.warnings.length, 5);
+  assert.equal(normalized.warnings[0].length, 400);
+  assert.equal(normalized.warnings[0].startsWith("경"), true);
+  assert.equal(normalized.warnings.includes(""), false);
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("AI studio warning truncation never leaves an unpaired UTF-16 surrogate", () => {
+  const result = validResult();
+  result.warnings = [`${"가".repeat(399)}😀뒤`];
+  const normalized = normalizeStudioWarningLimits(result) as ReturnType<typeof validResult>;
+  assert.equal(normalized.warnings[0].length, 399);
+  assert.doesNotMatch(normalized.warnings[0], /[\uD800-\uDBFF]$/);
+  const parsed = cliStudioResultSchema.safeParse(normalized);
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
 

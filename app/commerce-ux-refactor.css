@@ -2597,6 +2597,30 @@ button {
 .product-edit-form { overflow: auto; padding: 18px 20px; overscroll-behavior: contain; }
 .product-edit-form > label { display: grid; gap: 6px; }.product-edit-form > label > span { color: #596763; font-size: 9px; font-weight: 800; }.product-edit-form input, .product-edit-form select, .product-edit-form textarea { width: 100%; min-height: 40px; border: 1px solid #dce3e0; border-radius: 8px; padding: 8px 10px; color: #34423e; background: #fff; font-size: 10px; }.product-edit-form textarea { min-height: 76px; resize: vertical; }.product-edit-form .product-edit-description { grid-column: 1 / -1; }.product-edit-form .product-edit-description textarea { min-height: 120px; }
 .product-edit-dialog > .intake-confirmations { margin: 0; border-top: 1px solid #e7ebe9; padding: 12px 20px; }.product-edit-dialog > footer { border-top: 1px solid #e7ebe9; justify-content: flex-end; }
+.product-revision-images { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(260px, .72fr) minmax(0, 1.28fr); gap: 14px; border-top: 1px solid #e6ece9; padding-top: 18px; }
+.product-revision-images > .intake-group-heading, .product-revision-extras, .product-revision-limitation { grid-column: 1 / -1; }
+.product-revision-main { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.product-revision-main > label { display: grid; min-height: 206px; place-items: center; align-content: center; gap: 7px; overflow: hidden; border: 1px dashed #a8c7ba; border-radius: 13px; padding: 13px; color: #34735e; background: #f5faf8; cursor: pointer; text-align: center; }
+.product-revision-main > label.has-photo { grid-template-rows: minmax(0, 1fr) auto auto; border-style: solid; }
+.product-revision-main > label > span { position: relative; display: block; width: 100%; min-height: 148px; overflow: hidden; border-radius: 9px; background: #eef2f0; }
+.product-revision-main > label > span img { object-fit: contain; }
+.product-revision-main b { font-size: 11px; }.product-revision-main small { color: #77857f; font-size: 9px; }
+.product-revision-source-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.product-revision-source-actions > label, .product-revision-source-actions > button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 5px; border: 1px solid #d9e4df; border-radius: 9px; color: #536d63; background: #fff; cursor: pointer; font-size: 9px; font-weight: 800; }
+.product-revision-role-grid { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.product-revision-role-grid > div { position: relative; min-width: 0; }
+.product-revision-role-grid label { display: grid; min-height: 112px; place-items: center; align-content: center; gap: 4px; overflow: hidden; border: 1px dashed #d5dfdb; border-radius: 10px; padding: 7px; color: #6b7c76; background: #fbfcfc; cursor: pointer; text-align: center; }
+.product-revision-role-grid .has-photo label { border-style: solid; border-color: #bdd8cc; background: #f6fbf8; }
+.product-revision-role-grid label > span { position: relative; display: block; width: 100%; height: 64px; overflow: hidden; border-radius: 7px; background: #edf2f0; }
+.product-revision-role-grid label > span img { object-fit: contain; }.product-revision-role-grid b { font-size: 9px; }.product-revision-role-grid small { color: #8a9691; font-size: 7px; }
+.product-revision-role-grid > div > button { position: absolute; z-index: 2; top: 4px; right: 4px; display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; color: #9e4434; background: rgb(255 255 255 / 92%); box-shadow: 0 2px 8px rgb(0 0 0 / 12%); }
+.product-revision-extras { display: grid; gap: 8px; }.product-revision-extras > label { display: flex; min-height: 50px; align-items: center; justify-content: center; gap: 8px; border: 1px dashed #cbd9d3; border-radius: 10px; color: #506e63; background: #f8fbfa; cursor: pointer; }
+.product-revision-extras > label > span { display: grid; gap: 2px; }.product-revision-extras b { font-size: 9px; }.product-revision-extras small { color: #83908b; font-size: 8px; }
+.product-revision-extras > div { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 7px; }.product-revision-extras > div > span { position: relative; min-width: 0; aspect-ratio: 1; overflow: hidden; border: 1px solid #dce5e1; border-radius: 8px; background: #f0f3f2; }.product-revision-extras > div img { object-fit: contain; }
+.product-revision-extras > div button { position: absolute; z-index: 2; top: 3px; right: 3px; display: grid; width: 25px; height: 25px; place-items: center; border-radius: 50%; color: #9e4434; background: rgb(255 255 255 / 92%); }
+.product-revision-limitation { margin: 0; border-radius: 9px; padding: 10px 12px; color: #7c6432; background: #fff9e9; font-size: 9px; line-height: 1.55; }.product-revision-limitation b { margin-right: 5px; color: #76581d; }
+.product-revision-status { display: flex; align-items: center; gap: 11px; border: 1px solid #c8ddf4; border-radius: 12px; padding: 12px 14px; color: #28669d; background: #f3f8fe; }.product-revision-status > span { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: #fff; }.product-revision-status > div { display: grid; min-width: 0; flex: 1; gap: 3px; }.product-revision-status > button { flex: 0 0 auto; margin-left: auto; }.product-revision-status b { font-size: 11px; }.product-revision-status small { color: #5f7992; font-size: 9px; line-height: 1.45; }.product-revision-status em { color: #8292a1; font-size: 8px; font-style: normal; }.product-revision-status.applied { border-color: #c9e5d5; color: #287849; background: #f3fbf6; }.product-revision-status.failed, .product-revision-status.cancelled { border-color: #f0d0c7; color: #a34932; background: #fff6f3; }
+.product-revision-status.confirmation_required, .product-revision-status.monitoring_deferred { border-color: #f0d0c7; color: #a34932; background: #fff6f3; }
 
 @media (max-width: 560px) {
   .competitor-retry { align-items: stretch; flex-direction: column; }

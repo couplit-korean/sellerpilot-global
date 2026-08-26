@@ -104,6 +104,6 @@
         }
       }
     },
-    "warnings": { "type": "array", "maxItems": 5, "items": { "type": "string" } }
+    "warnings": { "type": "array", "maxItems": 5, "items": { "type": "string", "minLength": 1, "maxLength": 400 } }
   }
 }

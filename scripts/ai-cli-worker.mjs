@@ -11,6 +11,7 @@ import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
 import { buildAssetImagePrompt, selectAssetReferenceIndexes } from "../lib/ai-image-planning.ts";
 import {
   cliStudioResultSchema,
+  normalizeStudioWarningLimits,
   productResearchResultSchema,
   studioCompetitorContextSchema,
   supportReplyResultSchema,
@@ -120,7 +121,8 @@ const pollMs = Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS 
 const maxIdlePollMs = Math.max(pollMs, Number(process.env.SELLERPILOT_AI_WORKER_MAX_IDLE_POLL_MS ?? 30_000));
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
-const imageGenerationTimeoutMs = Math.max(6 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 15 * 60_000));
+const studioAnalysisTimeoutMs = Math.max(12 * 60_000, Number(process.env.SELLERPILOT_STUDIO_ANALYSIS_TIMEOUT_MS ?? 20 * 60_000));
+const imageGenerationTimeoutMs = Math.max(15 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 20 * 60_000));
 const configuredCodexConcurrency = Number(process.env.SELLERPILOT_CODEX_CONCURRENCY ?? 2);
 const codexConcurrencyLimit = Math.min(4, Math.max(1, Number.isFinite(configuredCodexConcurrency) ? Math.trunc(configuredCodexConcurrency) : 2));
 const codexExecutionGate = createConcurrencyGate(codexConcurrencyLimit);
@@ -131,7 +133,7 @@ const supportReplySchemaPath = resolve("scripts/ai-support-reply-output.schema.j
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.25";
+const workerVersion = "sellerpilot-cli-worker/1.26";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -1435,7 +1437,7 @@ function summarizeStudioIssues(issues) {
 }
 
 async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, claimToken, leaseSignal) {
-  const initial = cliStudioResultSchema.safeParse(result);
+  const initial = cliStudioResultSchema.safeParse(normalizeStudioWarningLimits(result));
   if (initial.success) return initial.data;
 
   const repairPrompt = [
@@ -1457,9 +1459,9 @@ async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, c
     "--output-last-message", resultFile,
     "--cd", jobDir,
     repairPrompt,
-  ], analysisTimeoutMs, jobId, claimToken, { leaseSignal, stage: "studio-repair" });
+  ], studioAnalysisTimeoutMs, jobId, claimToken, { leaseSignal, stage: "studio-repair" });
 
-  const repaired = cliStudioResultSchema.safeParse(JSON.parse(await readFile(resultFile, "utf8")));
+  const repaired = cliStudioResultSchema.safeParse(normalizeStudioWarningLimits(JSON.parse(await readFile(resultFile, "utf8"))));
   if (!repaired.success) {
     throw new Error(`AI 다국어 결과 검증 실패 · ${summarizeStudioIssues(repaired.error.issues)}`.slice(0, 500));
   }
@@ -1597,7 +1599,7 @@ async function processJob(job) {
     ];
     for (const image of imageFiles) analysisArgs.push(`--image=${image.file}`);
     analysisArgs.push(buildAnalysisPrompt(job, referenceText, competitorContext));
-    await runCodex(analysisArgs, analysisTimeoutMs, job.id, claimToken, { leaseSignal: jobHeartbeat.signal, stage: "studio-analysis" });
+    await runCodex(analysisArgs, studioAnalysisTimeoutMs, job.id, claimToken, { leaseSignal: jobHeartbeat.signal, stage: "studio-analysis" });
 
     let result = JSON.parse(await readFile(resultFile, "utf8"));
     const referenceWarnings = references.flatMap((reference) => reference.warning ? [reference.warning] : []);
@@ -2370,7 +2372,7 @@ async function processGatewayJob(job) {
   }
 }
 
-console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · image-timeout=${imageGenerationTimeoutMs}ms`);
+console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-analysis-timeout=${studioAnalysisTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
 console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 8);
 const maxAiConcurrency = Math.min(8, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 8));

@@ -1890,6 +1890,8 @@ a:focus-visible,
 .connection-state i { width: 6px; height: 6px; border-radius: 50%; }
 .connection-state.connected { color: #086046; background: #e5f4ee; }
 .connection-state.connected i { background: #0b8c67; }
+.connection-state.reconnect { color: #923c34; background: #ffe9e6; }
+.connection-state.reconnect i { background: #d14b3e; }
 .connection-state.empty { color: #6c4b22; background: #fff0da; }
 .connection-state.empty i { background: #c47b1d; }
 .credential-policy { display: flex; min-height: 34px; align-items: center; gap: 6px; padding: 0 16px; border-top: 1px solid #eef0f2; border-bottom: 1px solid #eef0f2; color: #56635f; background: #fafbfb; font-size: 8px; font-weight: 750; }

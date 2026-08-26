@@ -26,10 +26,15 @@ export async function POST(request: Request) {
     p_source_product_id: parsed.data.sourceProductId ?? null,
     p_asset_id: parsed.data.assetId,
   });
-  if (error || data !== parsed.data.jobId) {
+  if (error || typeof data !== "string") {
     return NextResponse.json({ message: "선택한 이미지 재제작 작업을 등록하지 못했습니다." }, { status: 500 });
   }
-  return NextResponse.json({ jobId: data, status: "queued" }, {
+  return NextResponse.json({
+    jobId: data,
+    status: "queued",
+    deduplicated: data !== parsed.data.jobId,
+    requestedJobId: parsed.data.jobId,
+  }, {
     status: 202,
     headers: { "cache-control": "no-store, max-age=0" },
   });

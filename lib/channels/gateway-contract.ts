@@ -8,6 +8,11 @@ const credentialPayloadSchema = z.record(z.string(), z.unknown()).refine(
   "credential payload too large",
 );
 
+const canonicalCredentialExpirySchema = z.string()
+  .datetime({ offset: true })
+  .transform((value) => new Date(value).toISOString())
+  .nullable();
+
 export const gatewayClaimSchema = z.object({
   id: z.string().uuid(),
   claim_token: z.string().uuid(),
@@ -95,7 +100,7 @@ const operationResultSchema = z.object({
 
 const credentialRefreshSchema = z.object({
   payload: credentialPayloadSchema,
-  expiresAt: z.string().datetime().nullable(),
+  expiresAt: canonicalCredentialExpirySchema,
   recoveryOnly: z.boolean().optional(),
   oauthComplete: z.boolean().optional(),
 });
@@ -245,7 +250,7 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
         channel: z.enum(["shopee", "lazada", "ebay"]),
         operation: z.literal("oauth.exchange"),
         credentialPayload: credentialPayloadSchema,
-        expiresAt: z.string().datetime().nullable(),
+        expiresAt: canonicalCredentialExpirySchema,
         safeMessage: z.string().min(1).max(1_000),
       }),
       z.object({

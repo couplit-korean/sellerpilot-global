@@ -1,5 +1,8 @@
 const studioJobIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+export const activeStudioJobStorageKey = "sellerpilot:product-studio:active-job:v1";
+export const studioJobMaximumAgeMs = 2 * 60 * 60_000;
+
 export type ActiveStudioJob = {
   jobId: string;
   startedAt: number;
@@ -32,6 +35,23 @@ export function upsertActiveStudioJob(jobs: ActiveStudioJob[], job: ActiveStudio
 
 export function removeActiveStudioJob(jobs: ActiveStudioJob[], jobId: string): ActiveStudioJob[] {
   return jobs.filter((job) => job.jobId !== jobId);
+}
+
+export function studioJobRecoveryStorageValue(rawValue: string | null, jobId: string, now: number) {
+  let storedValue: unknown = [];
+  try {
+    storedValue = rawValue ? JSON.parse(rawValue) : [];
+  } catch {
+    storedValue = [];
+  }
+  const currentJobs = normalizeActiveStudioJobs(storedValue, now, studioJobMaximumAgeMs);
+  const [recoveryJob] = normalizeActiveStudioJobs(
+    { jobId, startedAt: now, ownerSessionId: null },
+    now,
+    studioJobMaximumAgeMs,
+  );
+  if (!recoveryJob) return null;
+  return JSON.stringify(upsertActiveStudioJob(currentJobs, recoveryJob));
 }
 
 export function shouldDisplayStudioJob(input: {

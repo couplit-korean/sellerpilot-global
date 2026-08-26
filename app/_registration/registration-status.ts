@@ -10,6 +10,7 @@ export type RegistrationActivityEventState = Map<string, RegistrationStatus> & {
 };
 
 const runningRegistrationStatuses = new Set<RegistrationStatus>(["analyzing", "publishing"]);
+const studioJobActivityIdPattern = /^job:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 
 export const registrationStatusMeta: Record<RegistrationStatus, { label: string; detail: string }> = {
   analyzing: { label: "AI 분석 중", detail: "사진과 상품 사실정보를 분석하고 있습니다." },
@@ -22,6 +23,11 @@ export const registrationStatusMeta: Record<RegistrationStatus, { label: string;
 
 export function isRegistrationActivityRunning(status: RegistrationStatus) {
   return runningRegistrationStatuses.has(status);
+}
+
+export function recoverableRegistrationActivityJobId(activity: RegistrationActivity) {
+  if (activity.status !== "failed" || activity.productId !== null) return null;
+  return activity.id.match(studioJobActivityIdPattern)?.[1] ?? null;
 }
 
 export function registrationActivityMatchesFilter(activity: RegistrationActivity, filter: RegistrationActivityFilter) {
@@ -42,14 +48,21 @@ export function registrationActivityDisplayElapsedSeconds(activity: Registration
 
 export function registrationActivityProgress(activity: RegistrationActivity) {
   if (activity.status === "completed") {
-    return { percent: 100, label: "모든 선택 채널의 처리가 끝났습니다." } as const;
+    return {
+      percent: 100,
+      label: activity.channelCount > 0
+        ? "모든 선택 채널의 처리가 끝났습니다."
+        : "해당 AI 이미지 작업이 완료됐습니다.",
+    } as const;
   }
   if (activity.channelCount <= 0) {
     return {
       percent: null,
-      label: activity.status === "analyzing"
-        ? "AI 분석 단계입니다. 채널 대상이 확정되면 실제 완료 비율을 표시합니다."
-        : "채널 대상 확정을 기다리고 있어 비율을 추정하지 않습니다.",
+      label: activity.id.startsWith("revision:") || activity.id.startsWith("asset:")
+        ? "AI 이미지 작업 진행 중 · 외부 판매채널 자동 게시 없음"
+        : activity.status === "analyzing"
+          ? "AI 분석 단계입니다. 채널 대상이 확정되면 실제 완료 비율을 표시합니다."
+          : "채널 대상 확정을 기다리고 있어 비율을 추정하지 않습니다.",
     } as const;
   }
   const terminalCount = Math.min(

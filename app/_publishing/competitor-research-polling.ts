@@ -20,6 +20,7 @@ export type CompetitorResearchPollOptions<Item extends object, Provider extends 
   initialSnapshot?: CompetitorResearchSnapshotSeed<Item, Provider>;
   maxAttempts?: number;
   delayMs?: number;
+  perAttemptTimeoutMs?: number;
 };
 
 type CompetitorResearchPollingCoordinatorOptions<
@@ -30,6 +31,7 @@ type CompetitorResearchPollingCoordinatorOptions<
   onSnapshot: (snapshot: CompetitorResearchPollSnapshot<Item, Provider>) => void;
   maxAttempts?: number;
   delayMs?: number;
+  perAttemptTimeoutMs?: number;
 };
 
 function abortError(signal: AbortSignal) {
@@ -53,6 +55,32 @@ function abortableDelay(ms: number, signal: AbortSignal) {
   });
 }
 
+async function withCompetitorAttemptDeadline<T>(
+  action: (signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal,
+  timeoutMs: number,
+) {
+  if (signal.aborted) throw abortError(signal);
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort(abortError(signal));
+  signal.addEventListener("abort", onParentAbort, { once: true });
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException("가격 비교 조회 시간이 초과되었습니다.", "TimeoutError"));
+  }, timeoutMs);
+  let onAttemptAbort: (() => void) | null = null;
+  const aborted = new Promise<never>((_, reject) => {
+    onAttemptAbort = () => reject(controller.signal.reason ?? new DOMException("가격 비교 조회가 중단되었습니다.", "AbortError"));
+    controller.signal.addEventListener("abort", onAttemptAbort, { once: true });
+  });
+  try {
+    return await Promise.race([action(controller.signal), aborted]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onParentAbort);
+    if (onAttemptAbort) controller.signal.removeEventListener("abort", onAttemptAbort);
+  }
+}
+
 export async function pollCompetitorResearch<Item extends object, Provider extends CompetitorResearchProviderSnapshot>({
   fetcher,
   input,
@@ -61,8 +89,13 @@ export async function pollCompetitorResearch<Item extends object, Provider exten
   initialSnapshot,
   maxAttempts = 3,
   delayMs = 1_500,
+  perAttemptTimeoutMs = 20_000,
 }: CompetitorResearchPollOptions<Item, Provider>): Promise<CompetitorResearchPollSnapshot<Item, Provider>> {
   const attempts = Math.max(1, Math.min(Number.isFinite(maxAttempts) ? Math.trunc(maxAttempts) : 3, 3));
+  const attemptTimeout = Math.max(1_000, Math.min(
+    Number.isFinite(perAttemptTimeoutMs) ? Math.trunc(perAttemptTimeoutMs) : 20_000,
+    60_000,
+  ));
   let latest: CompetitorResearchPollSnapshot<Item, Provider> = {
     items: initialSnapshot?.items ?? [],
     providers: initialSnapshot?.providers ?? [],
@@ -73,16 +106,23 @@ export async function pollCompetitorResearch<Item extends object, Provider exten
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (signal.aborted) throw abortError(signal);
     let response: Response;
+    let payload: { items?: unknown; providers?: unknown } | null;
     try {
-      response = await fetcher(input, { signal });
+      ({ response, payload } = await withCompetitorAttemptDeadline(async (attemptSignal) => {
+        const attemptResponse = await fetcher(input, { signal: attemptSignal });
+        const attemptPayload = await attemptResponse.json().catch(() => null) as { items?: unknown; providers?: unknown } | null;
+        return { response: attemptResponse, payload: attemptPayload };
+      }, signal, attemptTimeout));
     } catch {
       if (signal.aborted) throw abortError(signal);
+      if (attempt + 1 < attempts) {
+        await abortableDelay(delayMs * (attempt + 1), signal);
+        continue;
+      }
       latest = { ...latest, state: "unavailable", retryAvailable: true };
       onSnapshot?.(latest);
       return latest;
     }
-    if (signal.aborted) throw abortError(signal);
-    const payload = await response.json().catch(() => null) as { items?: unknown; providers?: unknown } | null;
     if (signal.aborted) throw abortError(signal);
     const validPayload = Boolean(
       payload
@@ -121,6 +161,7 @@ export function createCompetitorResearchPollingCoordinator<
   onSnapshot,
   maxAttempts = 3,
   delayMs = 1_500,
+  perAttemptTimeoutMs = 20_000,
 }: CompetitorResearchPollingCoordinatorOptions<Item, Provider>) {
   let mounted = true;
   let activeController: AbortController | null = null;
@@ -160,6 +201,7 @@ export function createCompetitorResearchPollingCoordinator<
         initialSnapshot,
         maxAttempts,
         delayMs,
+        perAttemptTimeoutMs,
         onSnapshot: (snapshot) => {
           if (!isCurrent(controller)) return;
           latestSnapshot = snapshot;

@@ -51,7 +51,9 @@ test("periodic channel sync preserves idempotent partial results and surfaces da
   assert.match(source, /sellerpilot_service_enqueue_periodic_sync/);
   assert.match(source, /if \(error\) return \{ channel, operation, status: "failed", infrastructureFailure: true \}/);
   assert.match(source, /catch \{[\s\S]{0,180}infrastructureFailure: true/);
-  assert.match(source, /status !== "queued" && status !== "already_pending" && status !== "not_connected"/);
+  assert.match(source, /status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required"/);
+  assert.match(source, /const reconnectRequired = results\.filter\(\(result\) => result\.status === "reconnect_required"\)\.length/);
+  assert.match(source, /ok: failed === 0 && reconnectRequired === 0/);
   assert.match(source, /const databaseWideFailure = results\.length > 0 && infrastructureFailures === results\.length/);
   assert.match(source, /status: databaseWideFailure \? 503 : infrastructureFailures > 0 \? 207 : 200/);
 });

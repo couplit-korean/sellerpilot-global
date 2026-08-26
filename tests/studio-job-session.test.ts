@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  activeStudioJobStorageKey,
   createStudioJobMonitorRegistry,
   isStudioJobAbort,
   normalizeActiveStudioJobs,
   removeActiveStudioJob,
   shouldDisplayStudioJob,
+  studioJobMaximumAgeMs,
+  studioJobRecoveryStorageValue,
   upsertActiveStudioJob,
   type ActiveStudioJob,
 } from "../app/_registration/studio-job-session";
@@ -49,6 +52,22 @@ test("keeps multiple products in history while independently upserting and clear
 
   assert.deepEqual(jobs, [previousJob, currentJob]);
   assert.deepEqual(removeActiveStudioJob(jobs, currentJobId), [previousJob]);
+});
+
+test("a failed product studio retry reuses its exact job id without taking over the new form", () => {
+  const stored = JSON.stringify([
+    { jobId: previousJobId, startedAt: now - 4_000, ownerSessionId: previousSessionId },
+    { jobId: currentJobId, startedAt: now - 3_000, ownerSessionId: currentSessionId },
+  ]);
+  const recovered = studioJobRecoveryStorageValue(stored, currentJobId, now);
+
+  assert.equal(activeStudioJobStorageKey, "sellerpilot:product-studio:active-job:v1");
+  assert.equal(studioJobMaximumAgeMs, 2 * 60 * 60_000);
+  assert.deepEqual(JSON.parse(recovered!), [
+    { jobId: previousJobId, startedAt: now - 4_000, ownerSessionId: previousSessionId },
+    { jobId: currentJobId, startedAt: now, ownerSessionId: null },
+  ]);
+  assert.equal(studioJobRecoveryStorageValue("not-json", "not-a-job", now), null);
 });
 
 test("aborts every in-flight poller on unmount and safely permits a later recovery monitor", () => {

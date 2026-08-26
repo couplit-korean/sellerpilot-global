@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { CheckCircle2, Download, ExternalLink, ImageIcon, LoaderCircle, MonitorSmartphone, PencilRuler, RefreshCw, Sparkles, WandSparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import { classifyExactJobAdmission } from "../lib/exact-job-admission";
 import { withPromiseTimeout } from "../lib/promise-timeout";
 import { createClient } from "../lib/supabase/client";
 import { productIntakeSchema, type NormalizedProductImageSpec, type ProductIntakeDraft } from "../lib/product-intake";
@@ -14,11 +15,13 @@ import type { ProductDetailData } from "./product-detail-puck";
 import type { ProductStudioResult } from "./product-studio-types";
 import { waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 import {
+  activeStudioJobStorageKey,
   createStudioJobMonitorRegistry,
   isStudioJobAbort,
   normalizeActiveStudioJobs,
   removeActiveStudioJob,
   shouldDisplayStudioJob,
+  studioJobMaximumAgeMs,
   studioJobAbortError,
   upsertActiveStudioJob,
   type ActiveStudioJob,
@@ -28,7 +31,7 @@ import { normalizeStudioPhotoReadError } from "./_publishing/studio-photo-read-e
 const ProductDetailRender = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailRender), { ssr: false, loading: () => <div className="studio-loading"><LoaderCircle className="spin" size={24} />상세페이지 불러오는 중</div> });
 const ProductDetailEditor = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailEditor), { ssr: false });
 
-type StudioPhoto = { name: string; url: string; file: File; role: string; originalWidth: number; originalHeight: number };
+export type StudioPhoto = { name: string; url: string; file: File; role: string; originalWidth: number; originalHeight: number };
 export type StudioCompetitorContext = {
   query: string;
   providerStatuses: Array<{
@@ -71,11 +74,10 @@ type CliJobPayload = {
 type StudioSubmissionPhase = "idle" | "submitting" | "reconciling" | "monitoring" | "uncertain";
 type StudioJobWaitOptions = {
   notFoundGraceMs?: number;
+  maximumAgeMs?: number;
   onAccepted?: () => void;
 };
 
-const activeStudioJobStorageKey = "sellerpilot:product-studio:active-job:v1";
-const studioJobMaximumAgeMs = 2 * 60 * 60_000;
 const studioUploadTimeoutMs = 45_000;
 const studioJobAdmissionGraceMs = 30_000;
 const studioPreUploadOptimizationLimit = 9;
@@ -147,6 +149,19 @@ async function fetchJsonWithStudioJobTimeout<Payload>(
   } finally {
     window.clearTimeout(timer);
     parentSignal.removeEventListener("abort", abortFromParent);
+  }
+}
+
+async function getStudioSessionWithDeadline(parentSignal: AbortSignal, timeoutMessage: string) {
+  throwIfStudioJobAborted(parentSignal);
+  const timeoutSignal = AbortSignal.timeout(15_000);
+  const signal = AbortSignal.any([parentSignal, timeoutSignal]);
+  try {
+    return await waitForAbortablePromise(createClient().auth.getSession(), signal);
+  } catch (error) {
+    if (parentSignal.aborted) throw parentSignal.reason ?? studioJobAbortError();
+    if (timeoutSignal.aborted) throw new Error(timeoutMessage);
+    throw error;
   }
 }
 
@@ -229,7 +244,7 @@ async function optimizePhoto(photo: StudioPhoto): Promise<OptimizedPhoto> {
   }
 }
 
-async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string, jobId: string, signal: AbortSignal) {
+export async function optimizeAndUploadStudioPhotos(photos: StudioPhoto[], userId: string, jobId: string, signal: AbortSignal) {
   const supabase = createClient();
   const uploadedPaths: string[] = [];
   const imageSpecs: NormalizedProductImageSpec[] = [];
@@ -323,6 +338,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   const [sourceJobId, setSourceJobId] = useState("");
   const [sourceProductId, setSourceProductId] = useState<string | null>(null);
   const [regeneratingAssetId, setRegeneratingAssetId] = useState("");
+  const [uncertainRegenerationJobId, setUncertainRegenerationJobId] = useState("");
   const [queuedOwnJobId, setQueuedOwnJobId] = useState("");
   const [submissionPhase, setSubmissionPhase] = useState<StudioSubmissionPhase>("idle");
   const [studioSessionId] = useState(() => crypto.randomUUID());
@@ -333,6 +349,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   const queuedOwnJobIdRef = useRef("");
   const generateInFlightRef = useRef(false);
   const detailSaveInFlightRef = useRef(false);
+  const uncertainRegenerationJobIdRef = useRef("");
   const announcedJobIdsRef = useRef(new Set<string>());
   const studioMountedRef = useRef(true);
   const lifecycleControllerRef = useRef<AbortController | null>(null);
@@ -356,7 +373,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     onPhase?: (phase: "queued" | "running") => void,
     options: StudioJobWaitOptions = {},
   ) => {
-    const deadline = Date.now() + studioJobMaximumAgeMs;
+    const deadline = Date.now() + (options.maximumAgeMs ?? studioJobMaximumAgeMs);
     const notFoundDeadline = Date.now() + (options.notFoundGraceMs ?? 0);
     let consecutiveRequestFailures = 0;
     let accepted = false;
@@ -397,7 +414,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       onPhase?.(payload.status === "running" ? "running" : "queued");
       await delay(3_000, signal);
     }
-    throw new Error("ChatGPT CLI 작업 대기시간이 2시간을 초과했습니다. 등록 이력과 작업자 연결 상태를 확인해 주세요.");
+    throw new Error(`ChatGPT CLI 작업 자동 확인 상한 ${Math.round((options.maximumAgeMs ?? studioJobMaximumAgeMs) / 60_000)}분을 초과했습니다. 등록 이력과 작업자 연결 상태를 확인해 주세요.`);
   }, []);
 
   const finishStudioJob = useCallback(async (
@@ -518,8 +535,20 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   }, [announceOwnJob, finishStudioJob, notify, releaseOwnJob]);
 
   const generate = useCallback(async () => {
-    if (!mainPhoto || generating || queuedOwnJobId) return;
-    if (generateInFlightRef.current || queuedOwnJobIdRef.current) return;
+    if (!mainPhoto) {
+      onRunningChange(false);
+      return;
+    }
+    // A rapid duplicate event during the first upload still belongs to the
+    // active operation, so its parent busy state must remain true.
+    if (generating || generateInFlightRef.current) return;
+    if (queuedOwnJobId || queuedOwnJobIdRef.current) {
+      // PublishingPage sets its own busy flag before incrementing requestId.
+      // Release only a stale outer flag when this child already owns an exact
+      // server job and no local submission is still running.
+      onRunningChange(false);
+      return;
+    }
     const lifecycleController = lifecycleControllerRef.current;
     if (!lifecycleController || lifecycleController.signal.aborted || !studioMountedRef.current) return;
     generateInFlightRef.current = true;
@@ -541,13 +570,16 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       if (!validatedIntake.success) {
         throw new Error(validatedIntake.error.issues[0]?.message ?? "상품 필수정보와 자료 사용 권한을 확인해 주세요.");
       }
-      const { data: sessionData } = await createClient().auth.getSession();
+      const { data: sessionData } = await getStudioSessionWithDeadline(
+        lifecycleController.signal,
+        "상품 분석을 시작하기 위한 로그인 확인이 15초를 초과했습니다. 네트워크 상태를 확인해 주세요.",
+      );
       const accessToken = sessionData.session?.access_token;
       const userId = sessionData.session?.user.id;
       if (!accessToken || !userId) throw new Error("AI 제작을 실행하려면 관리자 로그인이 필요합니다.");
       if (photos.length > 100) throw new Error("한 작업에는 대표사진을 포함해 최대 100장까지 분석할 수 있습니다.");
       const jobId = crypto.randomUUID();
-      const { uploadedPaths: imagePaths, imageSpecs } = await optimizeAndUploadInBatches(photos, userId, jobId, lifecycleController.signal);
+      const { uploadedPaths: imagePaths, imageSpecs } = await optimizeAndUploadStudioPhotos(photos, userId, jobId, lifecycleController.signal);
       throwIfStudioJobAborted(lifecycleController.signal);
       const queuedJob = persistActiveStudioJob(jobId, studioSessionId);
       displayJobId.current = jobId;
@@ -619,9 +651,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     setGenerating(true);
     onRunningChange(true);
     try {
-      const { data: sessionData } = await withPromiseTimeout(
-        createClient().auth.getSession(),
-        15_000,
+      const { data: sessionData } = await getStudioSessionWithDeadline(
+        lifecycleController.signal,
         "기존 상품 분석 상태를 확인하려면 로그인 상태를 다시 확인해 주세요.",
       );
       throwIfStudioJobAborted(lifecycleController.signal);
@@ -650,7 +681,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   }, [generating, monitorOwnStudioJob, notify, onRunningChange, studioSessionId, submissionPhase]);
 
   const regenerateAsset = useCallback(async (assetId: string) => {
-    if (!sourceJobId || generating || regeneratingAssetId) return;
+    if (!sourceJobId || generating || regeneratingAssetId || uncertainRegenerationJobIdRef.current) return;
     const lifecycleController = lifecycleControllerRef.current;
     if (!lifecycleController || lifecycleController.signal.aborted || !studioMountedRef.current) return;
     setRegeneratingAssetId(assetId);
@@ -658,22 +689,61 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     onRunningChange(true);
     let monitor: AbortController | null = null;
     let monitoredJobId = "";
+    let regenerationMayExist = false;
+    const lockUncertainJob = (jobId: string) => {
+      uncertainRegenerationJobIdRef.current = jobId;
+      setUncertainRegenerationJobId(jobId);
+    };
+    const releaseUncertainJob = (jobId: string) => {
+      if (uncertainRegenerationJobIdRef.current !== jobId) return;
+      uncertainRegenerationJobIdRef.current = "";
+      setUncertainRegenerationJobId("");
+    };
     try {
-      const { data: sessionData } = await createClient().auth.getSession();
+      const { data: sessionData } = await getStudioSessionWithDeadline(
+        lifecycleController.signal,
+        "이미지 재제작을 위한 로그인 확인이 15초를 초과했습니다. 네트워크 상태를 확인해 주세요.",
+      );
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("이미지를 재제작하려면 관리자 로그인이 필요합니다.");
       const jobId = crypto.randomUUID();
+      monitoredJobId = jobId;
+      regenerationMayExist = true;
       const { response, payload: queued } = await fetchJsonWithStudioJobTimeout("/api/ai/product-studio/regenerate", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ jobId, sourceJobId, sourceProductId, assetId }),
-      }, lifecycleController.signal, 30_000, { message: "재제작 작업 응답을 읽지 못했습니다." } as { jobId?: string; message?: string });
+      }, lifecycleController.signal, 30_000, { message: "재제작 작업 응답을 읽지 못했습니다." } as { jobId?: string; deduplicated?: boolean; message?: string });
       throwIfStudioJobAborted(lifecycleController.signal);
-      if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "이미지 재제작 작업을 등록하지 못했습니다.");
-      monitoredJobId = queued.jobId;
+      const deduplicatedExistingJob = response.status === 202
+        && response.ok
+        && queued.deduplicated === true
+        && typeof queued.jobId === "string";
+      const admission = deduplicatedExistingJob ? "accepted" : classifyExactJobAdmission({
+        status: response.status,
+        ok: response.ok,
+        requestedJobId: jobId,
+        returnedJobId: queued.jobId,
+      });
+      if (admission === "rejected") {
+        regenerationMayExist = false;
+        throw new StudioJobTerminalError(queued.message ?? "이미지 재제작 작업을 등록하지 못했습니다.");
+      }
+      if (deduplicatedExistingJob) monitoredJobId = queued.jobId!;
+      if (admission === "ambiguous") {
+        lockUncertainJob(monitoredJobId);
+        setLastError(`이미지 재제작 작업 ${monitoredJobId.slice(0, 8)}의 접수 응답이 불명확합니다. 새 작업을 만들지 않고 같은 작업 ID를 확인합니다.`);
+        notify(`이미지 재제작 작업 ${monitoredJobId.slice(0, 8)}의 접수 결과가 불명확해 새 작업을 만들지 않고 기존 ID를 확인합니다.`);
+      }
       monitor = jobMonitors.begin(monitoredJobId);
       if (!monitor) throw new Error("같은 이미지 작업 상태를 이미 확인하고 있습니다.");
-      const regenerated = await waitForCliJob(monitoredJobId, accessToken, monitor.signal);
+      const regenerated = await waitForCliJob(monitoredJobId, accessToken, monitor.signal, undefined, {
+        maximumAgeMs: 30 * 60_000,
+        notFoundGraceMs: admission === "ambiguous" ? studioJobAdmissionGraceMs : 0,
+        onAccepted: () => releaseUncertainJob(monitoredJobId),
+      });
+      regenerationMayExist = false;
+      releaseUncertainJob(monitoredJobId);
       if (regenerated.mode !== "asset-regeneration" || regenerated.assetId !== assetId) {
         throw new Error("재제작 이미지 결과가 요청과 일치하지 않습니다.");
       }
@@ -684,7 +754,12 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       notify(`${aiGeneratedAssetSpecs.find((asset) => asset.id === assetId)?.label ?? "선택 이미지"} 1장만 다시 제작해 교체했습니다.`);
     } catch (error) {
       if (isStudioJobAbort(error) || !studioMountedRef.current) return;
-      const message = error instanceof Error ? error.message : "이미지 재제작 중 오류가 발생했습니다.";
+      if (error instanceof StudioJobTerminalError) regenerationMayExist = false;
+      if (regenerationMayExist && monitoredJobId) lockUncertainJob(monitoredJobId);
+      else if (monitoredJobId) releaseUncertainJob(monitoredJobId);
+      const message = regenerationMayExist && monitoredJobId
+        ? `이미지 재제작 작업 ${monitoredJobId.slice(0, 8)}의 상태를 확정하지 못했습니다. 새 작업을 만들지 말고 등록 진행 중·히스토리에서 같은 작업 ID를 확인해 주세요.`
+        : error instanceof Error ? error.message : "이미지 재제작 중 오류가 발생했습니다.";
       setLastError(message);
       notify(message);
     } finally {
@@ -711,7 +786,12 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       recoveryStarted.current = true;
       void (async () => {
         try {
-          const { data: sessionData } = await createClient().auth.getSession();
+          const lifecycleController = lifecycleControllerRef.current;
+          if (!lifecycleController) return;
+          const { data: sessionData } = await getStudioSessionWithDeadline(
+            lifecycleController.signal,
+            "진행 중인 상품 분석 복구를 위한 로그인 확인이 15초를 초과했습니다.",
+          );
           const accessToken = sessionData.session?.access_token;
           if (!accessToken) throw new Error("진행 중인 상품 분석을 복구하려면 관리자 로그인이 필요합니다.");
           if (!studioMountedRef.current) return;
@@ -750,20 +830,26 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   useEffect(() => {
     if (!sourceProductId) return;
     const controller = new AbortController();
+    const lifecycleSignal = lifecycleControllerRef.current?.signal;
+    const signal = lifecycleSignal ? AbortSignal.any([controller.signal, lifecycleSignal]) : controller.signal;
     void (async () => {
       try {
-        const { data: sessionData } = await createClient().auth.getSession();
+        const { data: sessionData } = await getStudioSessionWithDeadline(
+          signal,
+          "저장된 상세페이지의 로그인 확인이 15초를 초과했습니다.",
+        );
         const accessToken = sessionData.session?.access_token;
-        if (!accessToken || controller.signal.aborted) return;
-        const response = await fetch(`/api/admin/products/${sourceProductId}/publish-context`, {
-          headers: { authorization: `Bearer ${accessToken}` },
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        if (!response.ok || controller.signal.aborted) return;
-        const payload = await response.json() as { detailPage?: unknown };
+        if (!accessToken || signal.aborted) return;
+        const { response, payload } = await fetchJsonWithStudioJobTimeout(
+          `/api/admin/products/${sourceProductId}/publish-context`,
+          { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" },
+          signal,
+          30_000,
+          {} as { detailPage?: unknown },
+        );
+        if (!response.ok || signal.aborted) return;
         const detailPage = parsePersistedProductDetailPage<ProductDetailData>(payload.detailPage);
-        if (!detailPage || controller.signal.aborted) return;
+        if (!detailPage || signal.aborted) return;
         setSavedDetailData(detailPage.data);
         setDetailPageVersion(detailPage.version);
       } catch (error) {
@@ -782,26 +868,37 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     detailSaveInFlightRef.current = true;
     setDetailSaving(true);
     try {
-      const { data: sessionData } = await createClient().auth.getSession();
-      throwIfStudioJobAborted(lifecycleController.signal);
+      const { data: sessionData } = await getStudioSessionWithDeadline(
+        lifecycleController.signal,
+        "상세페이지 저장을 위한 로그인 확인이 15초를 초과했습니다. 다시 시도해 주세요.",
+      );
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("상세페이지를 저장하려면 관리자 로그인이 필요합니다.");
-      const response = await fetch(`/api/admin/products/${sourceProductId}/publish-context`, {
-        method: "PUT",
-        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-        signal: lifecycleController.signal,
-        body: JSON.stringify({
-          data: makeProductDetailPersistable(next, studioAssetUrls),
-          expectedVersion: detailPageVersion,
-        }),
-      });
-      const payload = await response.json().catch(() => ({ message: "상세페이지 저장 응답을 읽지 못했습니다." })) as { detailPage?: unknown; code?: string; message?: string };
+      const { response, payload } = await fetchJsonWithStudioJobTimeout(
+        `/api/admin/products/${sourceProductId}/publish-context`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify({
+            data: makeProductDetailPersistable(next, studioAssetUrls),
+            expectedVersion: detailPageVersion,
+          }),
+        },
+        lifecycleController.signal,
+        30_000,
+        { message: "상세페이지 저장 응답을 읽지 못했습니다." } as { detailPage?: unknown; code?: string; message?: string },
+      );
       if (!response.ok) {
         if (response.status === 409 && payload.code === "DETAIL_PAGE_VERSION_CONFLICT") {
-          const latestResponse = await fetch(`/api/admin/products/${sourceProductId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store", signal: lifecycleController.signal });
-          const latestPayload = latestResponse.ok ? await latestResponse.json() as { detailPage?: unknown } : null;
+          const { response: latestResponse, payload: latestPayload } = await fetchJsonWithStudioJobTimeout(
+            `/api/admin/products/${sourceProductId}/publish-context`,
+            { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" },
+            lifecycleController.signal,
+            30_000,
+            {} as { detailPage?: unknown },
+          );
           const latest = parsePersistedProductDetailPage<ProductDetailData>(latestPayload?.detailPage);
-          if (latest) {
+          if (latestResponse.ok && latest) {
             setSavedDetailData(latest.data);
             setDetailPageVersion(latest.version);
           }
@@ -838,13 +935,13 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       <div className="studio-workspace">
         <aside className="creative-rail">
           <div className="creative-rail-head"><span><b>자동 제작 썸네일</b><small>제품이 프레임의 70% 이상 보이는 마켓용 이미지</small></span><em>{creativeThumbnails.length || 3}종</em></div>
-          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" /><span>CODEX IMAGE</span></div><b>CLI 상품 연출컷</b><small>ChatGPT OAuth · 원본 충실도 높음</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset("hero")} disabled={Boolean(regeneratingAssetId) || generating}>{regeneratingAssetId === "hero" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button></article>}
+          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" /><span>CODEX IMAGE</span></div><b>CLI 상품 연출컷</b><small>ChatGPT OAuth · 원본 충실도 높음</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset("hero")} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === "hero" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>}
           <div className="thumbnail-grid">
-            {creativeThumbnails.length ? creativeThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
+            {creativeThumbnails.length ? creativeThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
           <div className="creative-rail-head"><span><b>상세페이지 이미지</b><small>전체·특징·사용·구성 4장을 채널 상세 본문에 삽입</small></span><em>{detailThumbnails.length || 4}종</em></div>
           <div className="thumbnail-grid detail-assets">
-            {detailThumbnails.length ? detailThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 상세 이미지`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button></article>) : detailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>상세 전용 이미지 생성 대기</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
+            {detailThumbnails.length ? detailThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 상세 이미지`} /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : detailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div><ImageIcon size={22} /><span>상세 전용 이미지 생성 대기</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
           {result ? <div className="creative-summary"><span>CREATIVE DIRECTION</span><b>{result.design.themeName}</b><p>{result.product.oneLine}</p><div>{Object.values(result.design.palette).map((color) => <i key={color} style={{ background: color }} title={color} />)}</div></div> : <div className="creative-summary empty"><span>CLI RESULT</span><b>실제 분석 결과 대기</b><p>대표사진을 등록하고 분석을 시작하면 결과만 표시합니다.</p></div>}
         </aside>
@@ -854,7 +951,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
           <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>실제 상세페이지 결과가 아직 없습니다.</b><small>대표사진과 상품 정보를 분석한 뒤 ChatGPT CLI 결과를 표시합니다.</small></div>}</div>
         </article>
       </div>
-      {lastError && <div className="studio-warning error"><b>{submissionPhase === "uncertain" ? "접수 상태 확인 필요" : "실제 AI 작업 실패"}</b><p>{lastError}</p><small>{submissionPhase === "uncertain" ? `새 작업을 만들지 않고 기존 작업 ID ${queuedOwnJobId}를 잠근 상태입니다.` : "예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 CLI 작업자 상태를 확인해 주세요."}</small>{submissionPhase === "uncertain" && queuedOwnJobId && <button type="button" className="asset-regenerate" onClick={() => void retryOwnJobStatus()} disabled={generating}><RefreshCw size={13} />기존 작업 상태 다시 확인</button>}</div>}
+      {lastError && <div className="studio-warning error"><b>{submissionPhase === "uncertain" || uncertainRegenerationJobId ? "접수 상태 확인 필요" : "실제 AI 작업 실패"}</b><p>{lastError}</p><small>{uncertainRegenerationJobId ? `새 재제작을 만들지 않고 기존 이미지 작업 ID ${uncertainRegenerationJobId}를 잠근 상태입니다. 등록 진행 중·히스토리에서 확인해 주세요.` : submissionPhase === "uncertain" ? `새 작업을 만들지 않고 기존 작업 ID ${queuedOwnJobId}를 잠근 상태입니다.` : "예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 CLI 작업자 상태를 확인해 주세요."}</small>{submissionPhase === "uncertain" && queuedOwnJobId && <button type="button" className="asset-regenerate" onClick={() => void retryOwnJobStatus()} disabled={generating}><RefreshCw size={13} />기존 작업 상태 다시 확인</button>}</div>}
       {result && result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
       {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} saving={detailSaving} onSave={saveDetailPage} onClose={() => { if (!detailSaving) setEditorOpen(false); }} />}
     </section>

@@ -71,11 +71,12 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { AiProductStudio, type StudioCompetitorContext } from "./ai-product-studio";
+import { AiProductStudio, optimizeAndUploadStudioPhotos, type StudioCompetitorContext, type StudioPhoto } from "./ai-product-studio";
 import { AcceptanceChecklistPage } from "./acceptance-checklist";
 import { ChannelConnectionsPage } from "./channel-connections";
 import { CategoryClassificationWorkbench } from "./category-classification-workbench";
 import { ProductPublishWorkbench } from "./product-publish-workbench";
+import { ProductRevisionImagePicker } from "./product-revision-image-picker";
 import {
   parseProductDetailPageEnvelope,
   parseProductDetailSource,
@@ -96,8 +97,13 @@ import type { ProductResearchResult } from "../lib/ai-cli-contract";
 import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
 import { emptyProductIntake, productConditions, productCurrencies, productEditSchema, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
+import { recoverAmbiguousProductRevision } from "../lib/product-revision-recovery";
+import { createRevisionPhotoSelectionFence, releaseStaleRevisionPhoto } from "../lib/product-revision-photo-fence";
 import { settleWithConcurrency } from "../lib/promise-pool";
 import { withPromiseTimeout } from "../lib/promise-timeout";
+import { fetchJsonWithDeadline } from "../lib/bounded-json-request";
+import { classifyExactJobAdmission } from "../lib/exact-job-admission";
+import { deadlineAfter, deadlineIsActive, deadlineRemaining } from "../lib/time-deadline";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
 import {
   adminVerificationState,
@@ -122,15 +128,21 @@ import { operationEventNotifications, operationEventState, type OperationEventSt
 import { toastDurationMs, toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
   isRegistrationActivityRunning,
+  recoverableRegistrationActivityJobId,
   registrationActivityDisplayElapsedSeconds,
   registrationActivityMatchesFilter,
   registrationActivityNotificationTransition,
   registrationActivityProgress,
   registrationChannelStatusLabel,
   registrationStatusMeta,
+  type RegistrationActivity,
   type RegistrationActivityEventState,
   type RegistrationActivityFilter,
 } from "./_registration/registration-status";
+import {
+  activeStudioJobStorageKey,
+  studioJobRecoveryStorageValue,
+} from "./_registration/studio-job-session";
 
 const PRODUCT_RESEARCH_PENDING_KEY = "sellerpilot:product-research-pending:v1";
 const PRODUCT_RESEARCH_JOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -792,6 +804,79 @@ type InventorySyncContext = {
   tasks?: Array<{ id: string; channel: string; status: string; safeMessage?: string | null }>;
 };
 
+type ProductRevisionState = {
+  jobId: string;
+  productId: string;
+  status: "pending" | "applied" | "failed" | "cancelled" | "confirmation_required" | "monitoring_deferred";
+  jobStatus: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  error: string | null;
+  createdAt: string;
+  appliedAt: string | null;
+  autoPublish: false;
+  remoteSkuOrOptionMutation: false;
+  confirmationPending?: boolean;
+};
+
+const productRevisionMonitorMaximumAgeMs = 30 * 60 * 1_000;
+
+function parseProductRevisionState(value: unknown): ProductRevisionState | null {
+  if (!isRecord(value)
+      || typeof value.jobId !== "string"
+      || typeof value.productId !== "string"
+      || !["pending", "applied", "failed", "cancelled"].includes(String(value.status))
+      || !["queued", "running", "succeeded", "failed", "cancelled"].includes(String(value.jobStatus))
+      || typeof value.createdAt !== "string") return null;
+  return {
+    jobId: value.jobId,
+    productId: value.productId,
+    status: value.status as ProductRevisionState["status"],
+    jobStatus: value.jobStatus as ProductRevisionState["jobStatus"],
+    error: typeof value.error === "string" ? value.error : null,
+    createdAt: value.createdAt,
+    appliedAt: typeof value.appliedAt === "string" ? value.appliedAt : null,
+    autoPublish: false,
+    remoteSkuOrOptionMutation: false,
+    confirmationPending: false,
+  };
+}
+
+function waitForProductRevisionRecovery(delayMs: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException("상품 수정 상태 확인을 중단했습니다.", "AbortError"));
+      return;
+    }
+    let timer = 0;
+    const abort = () => {
+      window.clearTimeout(timer);
+      reject(signal.reason ?? new DOMException("상품 수정 상태 확인을 중단했습니다.", "AbortError"));
+    };
+    timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, delayMs);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+async function authenticatedJsonWithDeadline<Payload>(
+  authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>,
+  input: string,
+  init: RequestInit,
+  parentSignal: AbortSignal,
+  timeoutMs: number,
+  fallbackPayload: Payload,
+) {
+  return fetchJsonWithDeadline({
+    fetcher: authenticatedFetch,
+    input,
+    init,
+    parentSignal,
+    timeoutMs,
+    fallbackPayload,
+  });
+}
+
 const emptyProductDetailContext: ProductDetailContext = {
   manualFields: {},
   sourceImages: [],
@@ -864,16 +949,19 @@ function productEditDraft(product: DisplayProduct, fields: Record<string, unknow
   };
 }
 
-function ProductDetailEditDialog({ draft, errors, saving, onChange, onClose, onSave }: {
+function ProductDetailEditDialog({ draft, errors, saving, revisionPhotoCount, onRevisionPhotosChange, onPhotoError, onChange, onClose, onSave }: {
   draft: ProductIntakeDraft;
   errors: Record<string, string>;
   saving: boolean;
+  revisionPhotoCount: number;
+  onRevisionPhotosChange: (photos: StudioPhoto[]) => void;
+  onPhotoError: (message: string) => void;
   onChange: <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => void;
   onClose: () => void;
   onSave: () => void;
 }) {
   return <div className="product-edit-overlay"><section className="product-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="product-edit-title">
-    <header><div><span className="panel-kicker">FULL PRODUCT EDIT</span><h2 id="product-edit-title">등록 상품 전체 수정</h2><p>수정값은 중앙 상품 원장에 저장되며, 재고 변경은 연결된 채널에도 동기화합니다. 나머지 변경은 저장 후 검증된 채널에만 최종 확인을 거쳐 적용합니다.</p></div><button type="button" aria-label="상품 수정 닫기" onClick={onClose} disabled={saving}><X size={18} /></button></header>
+    <header><div><span className="panel-kicker">FULL PRODUCT EDIT</span><h2 id="product-edit-title">등록 상품 전체 수정</h2><p>텍스트·가격·재고뿐 아니라 원본·대표·역할별 사진을 교체할 수 있습니다. 사진 수정은 같은 상품 원장에서 AI 상세를 다시 만들며 외부 채널에는 자동 게시하지 않습니다.</p></div><button type="button" aria-label="상품 수정 닫기" onClick={onClose} disabled={saving}><X size={18} /></button></header>
     <div className="product-edit-form manual-field-grid">
       <div className="intake-group-heading"><span>01</span><div><b>기본 상품 정보</b><small>상품 식별·카테고리·공급 정보를 수정합니다.</small></div></div>
       <label className={errors.researchInput ? "field-error" : ""}><span>상품 링크 또는 설명</span><textarea value={draft.researchInput} maxLength={12_000} onChange={(event) => onChange("researchInput", event.target.value)} />{errors.researchInput && <small>{errors.researchInput}</small>}</label>
@@ -903,17 +991,19 @@ function ProductDetailEditDialog({ draft, errors, saving, onChange, onClose, onS
       <label><span>포장 규칙</span><input value={draft.packagingRule} onChange={(event) => onChange("packagingRule", event.target.value)} /></label>
       <label><span>원본 상품 URL</span><input type="url" value={draft.productUrl} onChange={(event) => onChange("productUrl", event.target.value)} /></label>
       <label className="product-edit-description"><span>상품 사실 설명</span><textarea value={draft.description} maxLength={4000} onChange={(event) => onChange("description", event.target.value)} />{errors.description && <small>{errors.description}</small>}</label>
+      <ProductRevisionImagePicker disabled={saving} onChange={onRevisionPhotosChange} onError={onPhotoError} />
     </div>
     <div className="intake-confirmations"><label><input aria-label="이미지·상품 자료 사용 권한 확인" type="checkbox" checked={draft.imageRightsConfirmed} onChange={(event) => onChange("imageRightsConfirmed", event.target.checked)} /><span><b>이미지·상품 자료 사용 권한</b><small>사용 권한이 있는 자료임을 확인합니다.</small></span></label><label><input aria-label="상품 사실정보 확인" type="checkbox" checked={draft.productFactsConfirmed} onChange={(event) => onChange("productFactsConfirmed", event.target.checked)} /><span><b>상품 사실정보 확인</b><small>수정값이 실물과 일치함을 확인합니다.</small></span></label></div>
     {errors.form && <p className="inventory-editor-message">{errors.form}</p>}
-    <footer><button type="button" className="credential-secondary" onClick={onClose} disabled={saving}>취소</button><button type="button" className="publish-execute" onClick={onSave} disabled={saving}>{saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{saving ? "등록정보 저장 중" : "등록정보 저장"}</button></footer>
+    <footer><button type="button" className="credential-secondary" onClick={onClose} disabled={saving}>취소</button><button type="button" className="publish-execute" onClick={onSave} disabled={saving}>{saving ? <LoaderCircle className="spin" size={15} /> : revisionPhotoCount ? <WandSparkles size={15} /> : <Check size={15} />}{saving ? revisionPhotoCount ? "사진 보정·접수 중" : "등록정보 저장 중" : revisionPhotoCount ? `사진 ${revisionPhotoCount}장으로 리비전 시작` : "등록정보 저장"}</button></footer>
   </section></div>;
 }
 
-function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch, notify, onChanged }: {
+function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, authenticatedFetch, notify, onChanged }: {
   product: DisplayProduct;
   onBack: () => void;
   onEditChannels: () => void;
+  onOpenActivity: () => void;
   authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>;
   notify: (message: string) => void;
   onChanged: () => Promise<void>;
@@ -940,20 +1030,137 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
   const [editOpen, setEditOpen] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
+  const [revisionPhotos, setRevisionPhotos] = useState<StudioPhoto[]>([]);
+  const [productRevision, setProductRevision] = useState<ProductRevisionState | null>(null);
   const [displayOverrides, setDisplayOverrides] = useState({ name: product.name, sku: product.sku, description: product.description, sourceUrl: product.sourceUrl });
   const detailRegenerationControllerRef = useRef<AbortController | null>(null);
+  const revisionSubmissionControllerRef = useRef<AbortController | null>(null);
+  const revisionCompletionAnnouncedRef = useRef(new Set<string>());
+  const productDetailLifecycleControllerRef = useRef<AbortController | null>(null);
+  const getProductDetailSignal = useCallback(() => {
+    const signal = productDetailLifecycleControllerRef.current?.signal;
+    if (!signal || signal.aborted) throw new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError");
+    return signal;
+  }, []);
 
-  useEffect(() => () => {
-    detailRegenerationControllerRef.current?.abort(new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError"));
-    detailRegenerationControllerRef.current = null;
+  useEffect(() => {
+    const lifecycleController = new AbortController();
+    productDetailLifecycleControllerRef.current = lifecycleController;
+    return () => {
+      detailRegenerationControllerRef.current?.abort(new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError"));
+      detailRegenerationControllerRef.current = null;
+      revisionSubmissionControllerRef.current?.abort(new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError"));
+      revisionSubmissionControllerRef.current = null;
+      lifecycleController.abort(new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError"));
+      if (productDetailLifecycleControllerRef.current === lifecycleController) {
+        productDetailLifecycleControllerRef.current = null;
+      }
+    };
   }, [product.sourceId]);
 
   useEffect(() => {
     let cancelled = false;
-    void authenticatedFetch(`/api/admin/products/${product.sourceId}/publish-context`)
-      .then(async (response) => {
+    const controller = new AbortController();
+    void authenticatedJsonWithDeadline<{ revision?: unknown }>(
+      authenticatedFetch,
+      `/api/admin/products/${product.sourceId}/revision`,
+      { cache: "no-store" },
+      controller.signal,
+      15_000,
+      {},
+    )
+      .then(({ response, payload }) => {
+        if (!response.ok) return;
+        const revision = parseProductRevisionState(payload.revision);
+        if (!cancelled) setProductRevision(revision);
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+      controller.abort(new DOMException("상품 리비전 초기 조회를 종료합니다.", "AbortError"));
+    };
+  }, [authenticatedFetch, product.sourceId]);
+
+  useEffect(() => {
+    if (productRevision?.status !== "pending") return;
+    const controller = new AbortController();
+    const createdAt = Date.parse(productRevision.createdAt);
+    const deadline = Number.isFinite(createdAt)
+      ? createdAt + productRevisionMonitorMaximumAgeMs
+      : Date.now() + productRevisionMonitorMaximumAgeMs;
+    let timer = 0;
+    let cancelled = false;
+    const deferMonitoring = () => {
+      if (cancelled) return;
+      setProductRevision((current) => current?.jobId === productRevision.jobId && current.status === "pending" ? {
+        ...current,
+        status: "monitoring_deferred",
+        error: "30분 자동 확인 상한에 도달했습니다. 작업은 취소하거나 다시 만들지 않았으며 ‘등록 진행 중·히스토리’에서 같은 작업 ID 상태를 계속 확인할 수 있습니다.",
+        confirmationPending: false,
+      } : current);
+      notify(`작업 ${productRevision.jobId.slice(0, 8)}은 장기 실행 상태라 자동 확인을 종료했습니다. 등록 진행 중·히스토리에서 이어서 확인해 주세요.`);
+    };
+    const poll = async () => {
+      if (Date.now() >= deadline) {
+        deferMonitoring();
+        return;
+      }
+      try {
+        const { response, payload } = await authenticatedJsonWithDeadline<{ revision?: unknown }>(
+          authenticatedFetch,
+          `/api/admin/products/${product.sourceId}/revision?jobId=${encodeURIComponent(productRevision.jobId)}`,
+          { cache: "no-store" },
+          controller.signal,
+          15_000,
+          {},
+        );
+        if (!response.ok) throw new Error("상품 리비전 상태를 확인하지 못했습니다.");
+        const revision = parseProductRevisionState(payload.revision);
+        if (!cancelled && revision?.jobId === productRevision.jobId) {
+          setProductRevision(revision);
+          if (revision.status === "applied" && !revisionCompletionAnnouncedRef.current.has(revision.jobId)) {
+            revisionCompletionAnnouncedRef.current.add(revision.jobId);
+            notify("같은 상품 원장에 새 사진과 AI 상세페이지를 적용했습니다. 기존 판매채널 상품은 자동 변경하지 않았습니다.");
+            await onChanged();
+            return;
+          }
+          if ((revision.status === "failed" || revision.status === "cancelled") && !revisionCompletionAnnouncedRef.current.has(revision.jobId)) {
+            revisionCompletionAnnouncedRef.current.add(revision.jobId);
+            notify(revision.error || "사진 수정 작업을 적용하지 못해 기존 상품과 판매채널 연결을 그대로 유지했습니다.");
+            return;
+          }
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+      }
+      if (!cancelled) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) deferMonitoring();
+        else timer = window.setTimeout(() => void poll(), Math.min(3_000, remainingMs));
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 1_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [authenticatedFetch, notify, onChanged, product.sourceId, productRevision?.createdAt, productRevision?.jobId, productRevision?.status]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([getProductDetailSignal(), controller.signal]);
+    void authenticatedJsonWithDeadline<Record<string, unknown>>(
+      authenticatedFetch,
+      `/api/admin/products/${product.sourceId}/publish-context`,
+      { cache: "no-store" },
+      signal,
+      30_000,
+      {},
+    )
+      .then(({ response, payload }) => {
         if (!response.ok) throw new Error("상품 채널 원격 정보를 불러오지 못했습니다.");
-        const payload = await response.json() as Record<string, unknown>;
         const listings = Array.isArray(payload.listings)
           ? payload.listings.filter((item): item is RemoteListingReference => isRecord(item) && typeof item.channel === "string")
           : [];
@@ -1006,8 +1213,11 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
           setRemoteListingState("unavailable");
         }
       });
-    return () => { cancelled = true; };
-  }, [authenticatedFetch, product]);
+    return () => {
+      cancelled = true;
+      controller.abort(new DOMException("다른 상품 상세를 불러옵니다.", "AbortError"));
+    };
+  }, [authenticatedFetch, getProductDetailSignal, product]);
 
   const setEditField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
     setEditDraft((current) => current ? { ...current, [key]: value } : current);
@@ -1019,24 +1229,30 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
     });
   };
 
-  const applyInventoryAcrossSafeBatches = async (onHand: number) => {
-    const idempotencyKey = `inventory-ui-${crypto.randomUUID()}`;
+  const applyInventoryAcrossSafeBatches = async (onHand: number, stableIdempotencyKey?: string) => {
+    const idempotencyKey = stableIdempotencyKey ?? `inventory-ui-${crypto.randomUUID()}`;
     let latestSync: InventorySyncContext | null = null;
     const combinedResults: Array<{ ok: boolean }> = [];
     let latestMessage = "";
     for (let batchIndex = 0; batchIndex < 16; batchIndex += 1) {
-      const response = await authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`, {
-        method: "POST",
-        headers: { "idempotency-key": idempotencyKey },
-        body: JSON.stringify({ onHand, confirmWrite: true }),
-      });
-      const payload = await response.json().catch(() => ({ message: "재고 적용 응답을 읽지 못했습니다." })) as {
+      const { response, payload } = await authenticatedJsonWithDeadline<{
         sync?: InventorySyncContext;
         results?: Array<{ ok: boolean }>;
         continuationRequired?: boolean;
         remainingPendingCount?: number;
         message?: string;
-      };
+      }>(
+        authenticatedFetch,
+        `/api/admin/products/${product.sourceId}/inventory`,
+        {
+          method: "POST",
+          headers: { "idempotency-key": idempotencyKey },
+          body: JSON.stringify({ onHand, confirmWrite: true }),
+        },
+        getProductDetailSignal(),
+        30_000,
+        { message: "재고 적용 응답을 읽지 못했습니다." },
+      );
       if (!response.ok && response.status !== 207) {
         throw new Error(payload.message ?? "채널 재고 적용에 실패했습니다.");
       }
@@ -1064,45 +1280,241 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
     setEditSaving(true);
     setEditErrors({});
     try {
-      const response = await authenticatedFetch(`/api/admin/products/${product.sourceId}/publish-context`, { method: "PATCH", body: JSON.stringify(parsed.data) });
-      const payload = await response.json().catch(() => ({ message: "상품 수정 응답을 읽지 못했습니다." })) as { message?: string };
+      if (revisionPhotos.length > 0) {
+        if (revisionPhotos[0]?.role !== "main") throw new Error("새 대표사진을 먼저 선택해 주세요.");
+        const controller = new AbortController();
+        revisionSubmissionControllerRef.current = controller;
+        const sessionSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
+        const { data: sessionData } = await waitForAbortablePromise(createSupabaseClient().auth.getSession(), sessionSignal);
+        const userId = sessionData.session?.user.id;
+        if (!userId) throw new Error("상품 사진을 수정하려면 관리자 로그인이 필요합니다.");
+        const jobId = crypto.randomUUID();
+        const { uploadedPaths: imagePaths, imageSpecs } = await optimizeAndUploadStudioPhotos(revisionPhotos, userId, jobId, controller.signal);
+        const readExactRevision = async (candidateJobId: string, signal: AbortSignal) => {
+          try {
+            const { response, payload } = await authenticatedJsonWithDeadline<{ revision?: unknown }>(
+              authenticatedFetch,
+              `/api/admin/products/${product.sourceId}/revision?jobId=${encodeURIComponent(candidateJobId)}`,
+              { cache: "no-store" },
+              signal,
+              8_000,
+              {},
+            );
+            if (!response.ok) return null;
+            return parseProductRevisionState(payload.revision);
+          } catch (error) {
+            if (signal.aborted) throw error;
+            return null;
+          }
+        };
+        let acceptedRevision: ProductRevisionState | null = null;
+        let ambiguousSubmission = false;
+        let definitiveFailure = "상품 사진 수정 작업을 등록하지 못했습니다.";
+        try {
+          const { response, payload } = await authenticatedJsonWithDeadline<{
+            jobId?: string;
+            productId?: string;
+            status?: string;
+            autoPublish?: boolean;
+            message?: string;
+          } | null>(
+            authenticatedFetch,
+            `/api/admin/products/${product.sourceId}/revision`,
+            {
+              method: "POST",
+              cache: "no-store",
+              body: JSON.stringify({ jobId, manualFields: parsed.data, imagePaths, imageSpecs }),
+            },
+            controller.signal,
+            45_000,
+            null,
+          );
+          if (response.status === 202 && payload?.jobId === jobId && payload.productId === product.sourceId && payload.autoPublish === false) {
+            acceptedRevision = {
+              jobId,
+              productId: product.sourceId,
+              status: "pending",
+              jobStatus: "queued",
+              error: null,
+              createdAt: new Date().toISOString(),
+              appliedAt: null,
+              autoPublish: false,
+              remoteSkuOrOptionMutation: false,
+              confirmationPending: false,
+            };
+          } else if ([408, 425, 429].includes(response.status) || response.status >= 500 || response.ok) {
+            ambiguousSubmission = true;
+          } else {
+            definitiveFailure = payload?.message ?? definitiveFailure;
+          }
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          ambiguousSubmission = true;
+        }
+
+        if (!acceptedRevision && ambiguousSubmission) {
+          acceptedRevision = await recoverAmbiguousProductRevision<ProductRevisionState>({
+            jobId,
+            signal: controller.signal,
+            wait: waitForProductRevisionRecovery,
+            readState: readExactRevision,
+          });
+          if (!acceptedRevision) {
+            try {
+              const { response: cleanupResponse, payload: cleanupPayload } = await authenticatedJsonWithDeadline<{
+                abandoned?: boolean;
+                message?: string;
+              } | null>(
+                authenticatedFetch,
+                `/api/admin/products/${product.sourceId}/revision`,
+                {
+                  method: "DELETE",
+                  cache: "no-store",
+                  body: JSON.stringify({ jobId, imagePaths }),
+                },
+                controller.signal,
+                20_000,
+                null,
+              );
+              if ((cleanupResponse.ok || cleanupResponse.status === 202) && cleanupPayload?.abandoned) {
+                const message = `${cleanupPayload.message ?? "서버 미접수를 확정하고 임시 업로드를 정리했습니다."} 같은 사진으로 다시 저장할 수 있습니다. 재고와 판매채널에는 아무 변경도 시작하지 않았습니다.`;
+                setEditErrors({ form: message });
+                notify(message);
+                return;
+              }
+              if (cleanupResponse.status === 409) acceptedRevision = await readExactRevision(jobId, controller.signal);
+            } catch (error) {
+              if (controller.signal.aborted) throw error;
+            }
+            if (!acceptedRevision) {
+              setProductRevision({
+                jobId,
+                productId: product.sourceId,
+                status: "confirmation_required",
+                jobStatus: "queued",
+                error: "서버 응답과 정리 확인이 모두 끊겼습니다. 새 작업을 만들지 말고 화면을 새로고침해 같은 작업 ID 상태를 확인해 주세요.",
+                createdAt: new Date().toISOString(),
+                appliedAt: null,
+                autoPublish: false,
+                remoteSkuOrOptionMutation: false,
+                confirmationPending: true,
+              });
+              setEditDraft(parsed.data);
+              setEditOpen(false);
+              setRevisionPhotos([]);
+              notify(`작업 ${jobId.slice(0, 8)}의 접수 여부를 자동 확정하지 못했습니다. 새 작업을 만들지 않도록 중지했으며 새로고침 후 같은 ID를 확인합니다.`);
+              return;
+            }
+          }
+        }
+        if (!acceptedRevision) throw new Error(definitiveFailure);
+        setProductRevision(acceptedRevision);
+        if (acceptedRevision.status === "failed" || acceptedRevision.status === "cancelled") {
+          setEditOpen(false);
+          setRevisionPhotos([]);
+          notify(acceptedRevision.error || "사진 수정 작업이 종료되어 기존 상품과 판매채널 연결을 유지했습니다.");
+          return;
+        }
+        let inventoryOutcome = " 재고 수량은 변경하지 않았습니다.";
+        let displayedRevisionStock = inventoryOnHand;
+        if (parsed.data.stock !== inventoryOnHand) {
+          try {
+            const inventoryPayload = await applyInventoryAcrossSafeBatches(
+              parsed.data.stock,
+              `inventory-revision-${jobId}`,
+            );
+            displayedRevisionStock = parsed.data.stock;
+            setInventoryOnHand(parsed.data.stock);
+            setInventorySync(inventoryPayload.sync ?? null);
+            const failed = inventoryPayload.results.filter((item) => !item.ok).length;
+            inventoryOutcome = failed > 0
+              ? ` 중앙 재고는 ${parsed.data.stock.toLocaleString()}개로 저장됐고 ${failed}개 채널은 재고 동기화 이력에서 확인이 필요합니다.`
+              : ` 중앙 재고 ${parsed.data.stock.toLocaleString()}개와 연결된 판매채널 재고 적용 요청을 확인했습니다.`;
+            setInventoryMessage(inventoryOutcome.trim());
+          } catch {
+            inventoryOutcome = " 사진 리비전 접수는 완료됐지만 재고 적용 응답은 확정하지 못했습니다. 새 재고 쓰기를 추측해 반복하지 말고 아래 재고 동기화 이력을 확인한 뒤 재시도해 주세요.";
+            setInventoryMessage(inventoryOutcome.trim());
+          }
+        }
+        setEditDraft({ ...parsed.data, stock: displayedRevisionStock });
+        setEditOpen(false);
+        setRevisionPhotos([]);
+        notify(`${acceptedRevision.status === "applied" ? "같은 상품 ID로 사진·상세페이지 수정을 적용했습니다." : "같은 상품 ID로 사진·상세페이지 수정을 시작했습니다."} 외부 채널 이미지·옵션·SKU는 자동 변경하지 않습니다.${inventoryOutcome}`);
+        if (acceptedRevision.status === "applied") await onChanged().catch(() => null);
+        return;
+      }
+      const { response, payload } = await authenticatedJsonWithDeadline<{ message?: string }>(
+        authenticatedFetch,
+        `/api/admin/products/${product.sourceId}/publish-context`,
+        { method: "PATCH", body: JSON.stringify(parsed.data) },
+        getProductDetailSignal(),
+        30_000,
+        { message: "상품 수정 응답을 읽지 못했습니다." },
+      );
       if (!response.ok) throw new Error(payload.message ?? "상품 전체 정보를 저장하지 못했습니다.");
       let completionMessage = "상품 등록정보를 중앙 원장에 저장했습니다. ‘채널 상품 수정’에서 지원 채널의 실제 상품에도 적용할 수 있습니다.";
+      let displayedStock = inventoryOnHand;
       if (parsed.data.stock !== inventoryOnHand) {
-        const inventoryPayload = await applyInventoryAcrossSafeBatches(parsed.data.stock);
-        setInventoryOnHand(parsed.data.stock);
-        setInventorySync(inventoryPayload.sync ?? null);
-        const failed = inventoryPayload.results.filter((item) => !item.ok).length;
-        completionMessage = failed > 0
-          ? `상품 등록정보와 중앙 재고는 저장됐지만 ${failed}개 채널 재고는 추가 확인이 필요합니다.`
-          : "상품 등록정보를 저장했고 변경된 재고를 연결 채널에 반영했습니다. 나머지 변경은 ‘채널 상품 수정’에서 최종 확인 후 적용하세요.";
+        try {
+          const inventoryPayload = await applyInventoryAcrossSafeBatches(parsed.data.stock);
+          displayedStock = parsed.data.stock;
+          setInventoryOnHand(parsed.data.stock);
+          setInventorySync(inventoryPayload.sync ?? null);
+          const failed = inventoryPayload.results.filter((item) => !item.ok).length;
+          completionMessage = failed > 0
+            ? `상품 등록정보와 중앙 재고는 저장됐지만 ${failed}개 채널 재고는 동기화 이력에서 추가 확인이 필요합니다.`
+            : "상품 등록정보와 중앙 재고를 저장했고 연결된 판매채널 재고 적용 요청도 확인했습니다. 나머지 변경은 ‘채널 상품 수정’에서 최종 확인 후 적용하세요.";
+          setInventoryMessage(completionMessage);
+        } catch {
+          completionMessage = "상품 등록정보는 중앙 원장에 저장했습니다. 재고 적용 응답은 확정하지 못했으므로 새 쓰기를 추측해 반복하지 말고 아래 재고 동기화 이력을 확인한 뒤 재시도해 주세요.";
+          setInventoryMessage(completionMessage);
+        }
       }
-      setDetailContext((current) => ({ ...current, manualFields: parsed.data }));
+      setDetailContext((current) => ({ ...current, manualFields: { ...parsed.data, stock: displayedStock } }));
       setDisplayOverrides({ name: parsed.data.productName, sku: parsed.data.sellerSku, description: parsed.data.description, sourceUrl: parsed.data.productUrl || null });
       setEditDraft(parsed.data);
       setEditOpen(false);
       notify(completionMessage);
-      await onChanged();
+      await onChanged().catch(() => null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "상품 전체 정보를 저장하지 못했습니다.";
       setEditErrors({ form: message });
       notify(message);
     } finally {
+      revisionSubmissionControllerRef.current = null;
       setEditSaving(false);
     }
   };
 
   useEffect(() => {
     if (!inventorySaving) return;
-    const poll = window.setInterval(() => {
-      void authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`).then(async (response) => {
-        if (!response.ok) return;
-        const payload = await response.json() as { sync?: InventorySyncContext | null };
-        if (payload.sync) setInventorySync(payload.sync);
-      }).catch(() => null);
-    }, 1_000);
-    return () => window.clearInterval(poll);
-  }, [authenticatedFetch, inventorySaving, product.sourceId]);
+    const controller = new AbortController();
+    const signal = AbortSignal.any([getProductDetailSignal(), controller.signal]);
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const { response, payload } = await authenticatedJsonWithDeadline<{ sync?: InventorySyncContext | null }>(
+          authenticatedFetch,
+          `/api/admin/products/${product.sourceId}/inventory`,
+          { cache: "no-store" },
+          signal,
+          15_000,
+          {},
+        );
+        if (response.ok && payload.sync && !signal.aborted) setInventorySync(payload.sync);
+      } catch {
+        // The active POST owns the final user-facing outcome. Poll failures are
+        // bounded and retried one at a time without spawning concurrent GETs.
+      } finally {
+        if (!signal.aborted) timer = window.setTimeout(() => void poll(), 1_000);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 1_000);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort(new DOMException("재고 저장 확인을 종료합니다.", "AbortError"));
+    };
+  }, [authenticatedFetch, getProductDetailSignal, inventorySaving, product.sourceId]);
 
   const saveCommerceNotes = async () => {
     if (commerceNotesSaving) return;
@@ -1127,21 +1539,54 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
     detailRegenerationControllerRef.current = controller;
     setRegeneratingDetailAsset(assetId);
     setInventoryMessage("");
+    let exactRegenerationJobId = "";
+    let regenerationMayExist = false;
     try {
       const jobId = crypto.randomUUID();
-      const response = await authenticatedFetch("/api/ai/product-studio/regenerate", {
-        method: "POST",
-        body: JSON.stringify({ jobId, sourceJobId: commerceOperations.aiJobId, sourceProductId: product.sourceId, assetId }),
-        signal: controller.signal,
+      exactRegenerationJobId = jobId;
+      const regenerationSignal = AbortSignal.any([controller.signal, getProductDetailSignal()]);
+      regenerationMayExist = true;
+      const { response, payload: queued } = await authenticatedJsonWithDeadline<{ jobId?: string; deduplicated?: boolean; message?: string }>(
+        authenticatedFetch,
+        "/api/ai/product-studio/regenerate",
+        {
+          method: "POST",
+          body: JSON.stringify({ jobId, sourceJobId: commerceOperations.aiJobId, sourceProductId: product.sourceId, assetId }),
+        },
+        regenerationSignal,
+        30_000,
+        { message: "재제작 작업 응답을 읽지 못했습니다." },
+      );
+      const deduplicatedExistingJob = response.status === 202
+        && response.ok
+        && queued.deduplicated === true
+        && typeof queued.jobId === "string";
+      const admission = deduplicatedExistingJob ? "accepted" : classifyExactJobAdmission({
+        status: response.status,
+        ok: response.ok,
+        requestedJobId: jobId,
+        returnedJobId: queued.jobId,
       });
-      const queued = await response.json().catch(() => ({ message: "재제작 작업 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
-      if (!response.ok || !queued.jobId) throw new Error(queued.message ?? "이미지 재제작 작업을 등록하지 못했습니다.");
-      for (let attempt = 0; attempt < 600; attempt += 1) {
-        const statusResponse = await authenticatedFetch(`/api/ai/jobs/${queued.jobId}`, { signal: controller.signal });
-        const statusPayload = await statusResponse.json().catch(() => ({ message: "재제작 상태를 읽지 못했습니다." })) as {
+      if (admission !== "accepted") {
+        if (admission === "rejected") regenerationMayExist = false;
+        throw new Error(queued.message ?? "이미지 재제작 작업을 등록하지 못했습니다.");
+      }
+      const monitoredJobId = deduplicatedExistingJob ? queued.jobId! : jobId;
+      exactRegenerationJobId = monitoredJobId;
+      const regenerationDeadline = deadlineAfter(30 * 60_000);
+      while (deadlineIsActive(regenerationDeadline)) {
+        const requestBudgetMs = Math.max(1, Math.min(15_000, deadlineRemaining(regenerationDeadline)));
+        const { response: statusResponse, payload: statusPayload } = await authenticatedJsonWithDeadline<{
           status?: string; error?: string | null; message?: string;
           result?: { mode?: string; assetId?: string; generatedImages?: Array<{ id: string; url: string | null }> } | null;
-        };
+        }>(
+          authenticatedFetch,
+          `/api/ai/jobs/${monitoredJobId}`,
+          { cache: "no-store" },
+          regenerationSignal,
+          requestBudgetMs,
+          { message: "재제작 상태를 읽지 못했습니다." },
+        );
         if (!statusResponse.ok) throw new Error(statusPayload.message ?? "재제작 상태를 확인하지 못했습니다.");
         if (statusPayload.status === "succeeded" && statusPayload.result?.mode === "asset-regeneration") {
           const nextUrl = statusPayload.result.generatedImages?.find((asset) => asset.id === assetId)?.url ?? null;
@@ -1151,13 +1596,19 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
           setInventoryMessage(`${assetId.replaceAll("-", " ")} 이미지 1장만 교체했습니다.`);
           return;
         }
-        if (statusPayload.status === "failed" || statusPayload.status === "cancelled") throw new Error(statusPayload.error || "이미지 재제작이 완료되지 못했습니다.");
-        await abortableBrowserDelay(3_000, controller.signal);
+        if (statusPayload.status === "failed" || statusPayload.status === "cancelled") {
+          regenerationMayExist = false;
+          throw new Error(statusPayload.error || "이미지 재제작이 완료되지 못했습니다.");
+        }
+        const delayMs = Math.min(3_000, deadlineRemaining(regenerationDeadline));
+        if (delayMs > 0) await abortableBrowserDelay(delayMs, regenerationSignal);
       }
-      throw new Error("이미지 재제작 대기시간이 30분을 초과했습니다.");
+      throw new Error(`이미지 재제작 작업 ${monitoredJobId.slice(0, 8)}이 30분 자동 확인 상한을 넘었습니다. 새 작업을 만들지 말고 등록 진행 중·히스토리에서 기존 작업 상태를 확인해 주세요.`);
     } catch (error) {
       if (!controller.signal.aborted) {
-        setInventoryMessage(error instanceof Error ? error.message : "이미지 재제작 중 오류가 발생했습니다.");
+        setInventoryMessage(regenerationMayExist && exactRegenerationJobId
+          ? `이미지 재제작 작업 ${exactRegenerationJobId.slice(0, 8)}의 접수·진행 응답을 확정하지 못했습니다. 새 작업을 만들지 말고 등록 진행 중·히스토리에서 같은 작업 ID를 확인해 주세요.`
+          : error instanceof Error ? error.message : "이미지 재제작 중 오류가 발생했습니다.");
       }
     } finally {
       if (detailRegenerationControllerRef.current === controller) {
@@ -1168,14 +1619,23 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
   };
 
   useEffect(() => {
-    void authenticatedFetch(`/api/admin/products/${product.sourceId}/inventory`)
-      .then(async (response) => {
+    const controller = new AbortController();
+    const signal = AbortSignal.any([getProductDetailSignal(), controller.signal]);
+    void authenticatedJsonWithDeadline<{ sync?: InventorySyncContext | null }>(
+      authenticatedFetch,
+      `/api/admin/products/${product.sourceId}/inventory`,
+      { cache: "no-store" },
+      signal,
+      15_000,
+      {},
+    )
+      .then(({ response, payload }) => {
         if (!response.ok) return;
-        const payload = await response.json() as { sync?: InventorySyncContext | null };
-        setInventorySync(payload.sync ?? null);
+        if (!signal.aborted) setInventorySync(payload.sync ?? null);
       })
       .catch(() => null);
-  }, [authenticatedFetch, product.sourceId]);
+    return () => controller.abort(new DOMException("재고 이력 조회를 종료합니다.", "AbortError"));
+  }, [authenticatedFetch, getProductDetailSignal, product.sourceId]);
 
   const applyInventory = async () => {
     if (inventorySaving || !Number.isInteger(inventoryOnHand) || inventoryOnHand < product.reserved) {
@@ -1191,7 +1651,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
       setInventoryMessage(failed ? `중앙 재고는 저장됐고 ${failed}개 채널은 확인이 필요합니다.` : "중앙 재고와 게시된 판매채널 재고를 적용했습니다.");
       setInventoryEditing(false);
     } catch (error) {
-      setInventoryMessage(error instanceof Error ? error.message : "통합 재고 적용에 실패했습니다.");
+      setInventoryMessage(`재고 적용 응답을 확정하지 못했습니다. 새 쓰기를 반복하기 전에 재고 동기화 이력을 확인해 주세요.${error instanceof Error ? ` (${error.message})` : ""}`);
     } finally {
       setInventorySaving(false);
     }
@@ -1232,8 +1692,14 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
     <div className="page-stack product-detail-page">
       <div className="product-detail-actions">
         <button type="button" className="product-detail-back" onClick={onBack}><ArrowLeft size={16} />상품 목록으로</button>
-        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="credential-secondary" onClick={onEditChannels}><RefreshCw size={15} />채널 상품 수정</button><button type="button" className="publish-execute" onClick={() => { setEditErrors({}); setEditDraft((current) => current ?? productEditDraft(product, detailContext.manualFields)); setEditOpen(true); }}><PencilRuler size={15} />상품 전체 수정</button></div>
+        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="credential-secondary" onClick={onEditChannels}><RefreshCw size={15} />채널 상품 수정</button><button type="button" className="publish-execute" disabled={productRevision?.status === "pending" || productRevision?.status === "confirmation_required"} onClick={() => { setEditErrors({}); setRevisionPhotos([]); setEditDraft((current) => current ?? productEditDraft(product, detailContext.manualFields)); setEditOpen(true); }}>{productRevision?.status === "pending" ? <LoaderCircle className="spin" size={15} /> : <PencilRuler size={15} />}{productRevision?.status === "pending" ? "사진 수정 진행 중" : productRevision?.status === "confirmation_required" ? "접수 확인 필요" : "상품 전체 수정"}</button></div>
       </div>
+
+      {productRevision ? <section className={`product-revision-status ${productRevision.status}`} role="status">
+        <span>{productRevision.status === "pending" ? <LoaderCircle className="spin" size={18} /> : productRevision.status === "applied" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}</span>
+        <div><b>{productRevision.status === "confirmation_required" ? "상품 수정 접수 확인이 필요합니다" : productRevision.status === "monitoring_deferred" ? "장기 작업 확인을 등록 진행 화면으로 넘겼습니다" : productRevision.status === "pending" ? "새 사진·AI 상세페이지를 만드는 중입니다" : productRevision.status === "applied" ? "상품 사진 리비전을 적용했습니다" : "상품 사진 리비전을 적용하지 못했습니다"}</b><small>{productRevision.status === "confirmation_required" || productRevision.status === "monitoring_deferred" ? productRevision.error : productRevision.status === "pending" ? "같은 상품 ID와 판매채널 연결을 유지한 채 완료 시 원자적으로 교체합니다." : productRevision.status === "applied" ? "중앙 상품만 교체했으며 판매채널 이미지·옵션·원격 SKU는 변경하지 않았습니다." : productRevision.error || "기존 상품 사진과 판매채널 연결을 그대로 유지했습니다."}</small><em>작업 {productRevision.jobId.slice(0, 8)} · 외부 자동 게시 없음</em></div>
+        {(productRevision.status === "monitoring_deferred" || productRevision.status === "confirmation_required") ? <button type="button" className="credential-secondary" onClick={onOpenActivity}>등록 진행에서 확인</button> : null}
+      </section> : null}
 
       <section className="panel product-detail-hero">
         <div className="product-detail-image"><ProductVisual src={product.image} size="(max-width: 760px) 100vw, 420px" alt={product.name} /></div>
@@ -1315,7 +1781,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, authenticatedFetch
 
       {remoteListingState === "ready" ? <SavedProductDetailPage key={product.sourceId} productId={product.sourceId} source={detailPageSource} initialDetailPage={savedDetailPage} assetUrls={savedDetailAssetUrls} authenticatedFetch={authenticatedFetch} notify={notify} /> : null}
 
-      {editOpen && editDraft && <ProductDetailEditDialog draft={editDraft} errors={editErrors} saving={editSaving} onChange={setEditField} onClose={() => { if (!editSaving) setEditOpen(false); }} onSave={() => void saveProductDetails()} />}
+      {editOpen && editDraft && <ProductDetailEditDialog draft={editDraft} errors={editErrors} saving={editSaving} revisionPhotoCount={revisionPhotos.length} onRevisionPhotosChange={setRevisionPhotos} onPhotoError={(message) => { setEditErrors((current) => ({ ...current, form: message })); notify(message); }} onChange={setEditField} onClose={() => { if (!editSaving) { setEditOpen(false); setRevisionPhotos([]); } }} onSave={() => void saveProductDetails()} />}
 
     </div>
   );
@@ -1368,7 +1834,7 @@ function formatRegistrationDuration(seconds: number) {
   return `${hours}시간 ${minutes % 60}분`;
 }
 
-function RegistrationActivityPage({ activities, activityState, displayProducts, loading, onRefresh, onOpenProduct, onRetryProduct, onNewProduct, onExternalActions }: {
+function RegistrationActivityPage({ activities, activityState, displayProducts, loading, onRefresh, onOpenProduct, onRetryProduct, onRecoverAnalysis, onNewProduct, onExternalActions }: {
   activities: OperationsSnapshot["registrationActivities"];
   activityState: NonNullable<OperationsSnapshot["registrationActivityState"]>;
   displayProducts: DisplayProduct[];
@@ -1376,11 +1842,13 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
   onRefresh: () => Promise<void>;
   onOpenProduct: (product: DisplayProduct) => void;
   onRetryProduct: (product: DisplayProduct) => void;
+  onRecoverAnalysis: (activity: RegistrationActivity) => Promise<void>;
   onNewProduct: () => void;
   onExternalActions: () => void;
 }) {
   const [filter, setFilter] = useState<RegistrationActivityFilter>("all");
   const [refreshing, setRefreshing] = useState(false);
+  const [recoveringActivityId, setRecoveringActivityId] = useState("");
   const productMap = useMemo(() => new Map(displayProducts.map((product) => [product.sourceId, product])), [displayProducts]);
   const filtered = activities.filter((activity) => registrationActivityMatchesFilter(activity, filter));
   const counts = {
@@ -1402,6 +1870,12 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
     try { await onRefresh(); } finally { setRefreshing(false); }
   };
 
+  const recoverAnalysis = async (activity: RegistrationActivity) => {
+    if (recoveringActivityId) return;
+    setRecoveringActivityId(activity.id);
+    try { await onRecoverAnalysis(activity); } finally { setRecoveringActivityId(""); }
+  };
+
   return <div className="page-stack registration-activity-page">
     <section className="registration-activity-hero">
       <div><span className="eyebrow dark"><Activity size={14} /> LIVE REGISTRATION LEDGER</span><h2>여러 상품의 등록을 동시에 확인하세요.</h2><p>AI 분석 시작부터 채널별 완료·거절까지 운영 원장 기준의 상태와 실제 경과 시간을 표시합니다.</p></div>
@@ -1421,18 +1895,25 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
       : filtered.length > 0 ? <section className="registration-card-grid">{filtered.map((activity) => {
         const status = registrationStatusMeta[activity.status];
         const product = activity.productId ? productMap.get(activity.productId) : undefined;
+        const recoveryJobId = recoverableRegistrationActivityJobId(activity);
         const isActive = isRegistrationActivityRunning(activity.status);
-        const elapsedLabel = isActive ? "현재 경과시간" : activity.status === "ready" ? "총 분석시간" : "총 등록시간";
+        const isImageOperation = activity.id.startsWith("revision:") || activity.id.startsWith("asset:");
+        const elapsedLabel = isActive ? "현재 경과시간" : isImageOperation ? "총 처리시간" : activity.status === "ready" ? "총 분석시간" : "총 등록시간";
         const progress = registrationActivityProgress(activity);
+        const statusDetail = isImageOperation
+          ? activity.status === "completed" ? "중앙 상품 이미지 작업이 완료되었습니다."
+            : activity.status === "failed" ? "기존 상품과 판매채널 연결을 유지했습니다."
+              : "AI 이미지 작업을 처리 중입니다."
+          : status.detail;
         return <article className={`panel registration-card ${activity.status}`} key={activity.id}>
           <header><span className={`registration-status ${activity.status}`}>{isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}{status.label}</span><small>{relativeTime(activity.updatedAt)}</small></header>
           <div className="registration-product"><div>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</div><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></div>
-          <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{status.detail} {progress.label}</small></div>
+          <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{recoveryJobId ? "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {progress.label}</small></div>
           <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
           <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">권한 {activity.blockedCount}</b></div>
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>상품 상세<ChevronRight size={14} /></button> : <span />}</footer>
+          <footer>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{recoveryJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : "기존 입력으로 AI 분석 재개"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>상품 상세<ChevronRight size={14} /></button> : !recoveryJobId ? <span /> : null}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;
@@ -1440,6 +1921,7 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
 
 function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, initialProduct, onStartAnother, onShowHistory }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; initialProduct?: { id: string; name: string } | null; onStartAnother: () => void; onShowHistory: () => void }) {
   const [running, setRunning] = useState(false);
+  const automationStartInFlightRef = useRef(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
   const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
@@ -1447,6 +1929,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const photoObjectUrlsRef = useRef(new Set<string>());
   const publishingMountedRef = useRef(true);
   const extraPhotoBatchRef = useRef(false);
+  const [photoSelectionFence] = useState(createRevisionPhotoSelectionFence);
   const competitorResearchControllerRef = useRef<AbortController | null>(null);
   const productResearchControllerRef = useRef<AbortController | null>(null);
   const productResearchGenerationRef = useRef(0);
@@ -1507,16 +1990,18 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   useEffect(() => {
     publishingMountedRef.current = true;
+    photoSelectionFence.mount();
     const objectUrls = photoObjectUrlsRef.current;
     return () => {
       publishingMountedRef.current = false;
       competitorResearchControllerRef.current?.abort();
       productResearchControllerRef.current?.abort();
       productResearchGenerationRef.current += 1;
+      photoSelectionFence.unmount();
       for (const url of objectUrls) URL.revokeObjectURL(url);
       objectUrls.clear();
     };
-  }, []);
+  }, [photoSelectionFence]);
 
   const preservePublishingCaptureContext = useCallback(() => {
     const historyState = isRecord(window.history.state) ? window.history.state : {};
@@ -1590,12 +2075,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = "";
+    const token = photoSelectionFence.nextMain();
     try {
       const photo = await toPhoto(file, "main");
-      if (mainPhoto) releasePhotoUrl(mainPhoto.url);
-      setMainPhoto(photo);
+      if (releaseStaleRevisionPhoto(photoSelectionFence.isCurrent(token), photo.url, releasePhotoUrl)) return;
+      setMainPhoto((current) => {
+        if (current) releasePhotoUrl(current.url);
+        return photo;
+      });
       setUploadError("");
     } catch (error) {
+      if (!photoSelectionFence.isCurrent(token)) return;
       const message = error instanceof Error ? error.message : "대표사진을 확인해 주세요.";
       setUploadError(message);
       notify(message);
@@ -1830,14 +2320,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = "";
+    const token = photoSelectionFence.nextRole(slotId);
     try {
       const photo = await toPhoto(file, slotId);
+      if (releaseStaleRevisionPhoto(photoSelectionFence.isCurrent(token), photo.url, releasePhotoUrl)) return;
       setSlotPhotos((current) => {
         if (current[slotId]) releasePhotoUrl(current[slotId].url);
         return { ...current, [slotId]: photo };
       });
       setUploadError("");
     } catch (error) {
+      if (!photoSelectionFence.isCurrent(token)) return;
       const message = error instanceof Error ? error.message : "옵션 사진을 확인해 주세요.";
       setUploadError(message);
       notify(message);
@@ -1856,13 +2349,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const remaining = Math.max(0, 100 - ((mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length));
     if (!remaining) return notify("한 상품은 분석용 사진을 최대 100장까지 등록할 수 있습니다.");
     const selected = files.slice(0, remaining);
+    const token = photoSelectionFence.nextExtras();
     extraPhotoBatchRef.current = true;
     setExtraPhotosProcessing(true);
     try {
-      const settled = await settleWithConcurrency(selected, 3, (file, index) => toPhoto(file, `extra-${extraPhotos.length + index + 1}`));
+      const settled = await settleWithConcurrency(selected, 3, (file, index) => {
+        if (!photoSelectionFence.isCurrent(token)) throw new DOMException("이전 추가 사진 선택을 중단했습니다.", "AbortError");
+        return toPhoto(file, `extra-${extraPhotos.length + index + 1}`);
+      });
       const accepted = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
       const firstFailure = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
-      if (!publishingMountedRef.current) {
+      if (!photoSelectionFence.isCurrent(token)) {
         for (const photo of accepted) releasePhotoUrl(photo.url);
         return;
       }
@@ -1879,12 +2376,15 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         notify(`${accepted.length}장 등록 · ${message}`);
       }
     } finally {
-      extraPhotoBatchRef.current = false;
-      if (publishingMountedRef.current) setExtraPhotosProcessing(false);
+      if (photoSelectionFence.isCurrent(token)) {
+        extraPhotoBatchRef.current = false;
+        setExtraPhotosProcessing(false);
+      }
     }
   };
 
   const removeSlotPhoto = (slotId: string) => {
+    photoSelectionFence.invalidateRole(slotId);
     setSlotPhotos((current) => {
       const next = { ...current };
       if (next[slotId]) releasePhotoUrl(next[slotId].url);
@@ -1894,6 +2394,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const removeExtraPhoto = (index: number) => {
+    photoSelectionFence.invalidateExtras();
+    extraPhotoBatchRef.current = false;
+    setExtraPhotosProcessing(false);
     setExtraPhotos((current) => {
       if (current[index]) releasePhotoUrl(current[index].url);
       return current.filter((_, photoIndex) => photoIndex !== index);
@@ -1901,6 +2404,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const startAutomation = () => {
+    if (running || automationStartInFlightRef.current) return;
     if (researchingProduct) {
       notify("1차 상품정보 확인을 마치거나 중단한 뒤 최종 상품 분석을 시작해 주세요.");
       return;
@@ -1928,6 +2432,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       return;
     }
     const photoCount = 1 + Object.keys(slotPhotos).length + extraPhotos.length;
+    automationStartInFlightRef.current = true;
     setRunning(true);
     setUploadError("");
     notify(`${photoCount}장을 1200×1200 공통 규격으로 보정하고 필수 상품 정보와 함께 AI 분석에 반영합니다.`);
@@ -2084,7 +2589,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         manualFields={intake}
         competitorContext={studioCompetitorContext}
         requestId={studioRequestId}
-        onRunningChange={setRunning}
+        onRunningChange={(nextRunning) => {
+          automationStartInFlightRef.current = nextRunning;
+          setRunning(nextRunning);
+        }}
         notify={notify}
         onJobQueued={(jobId) => setQueuedJobId(jobId)}
         onResultReady={(studioResult, productId) => {
@@ -2934,6 +3442,61 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
+  const recoverFailedProductAnalysis = useCallback(async (activity: RegistrationActivity) => {
+    const jobId = recoverableRegistrationActivityJobId(activity);
+    if (!jobId) {
+      notify("기존 입력으로 복구할 수 있는 AI 상품 분석 작업이 아닙니다.");
+      return;
+    }
+    let previousStorageValue: string | null = null;
+    try {
+      previousStorageValue = window.sessionStorage.getItem(activeStudioJobStorageKey);
+      const recoveryStorageValue = studioJobRecoveryStorageValue(previousStorageValue, jobId, Date.now());
+      if (!recoveryStorageValue) {
+        notify("AI 상품 분석 작업 ID를 확인하지 못해 재시도를 시작하지 않았습니다.");
+        return;
+      }
+      window.sessionStorage.setItem(activeStudioJobStorageKey, recoveryStorageValue);
+    } catch {
+      notify("모바일 브라우저에 기존 작업 복구 상태를 저장하지 못해 재시도를 시작하지 않았습니다.");
+      return;
+    }
+
+    let response: Response;
+    try {
+      response = await authenticatedOperationsFetch("/api/admin/ai-jobs", {
+        method: "POST",
+        signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify({ jobId, action: "retry" }),
+      });
+    } catch {
+      notify("AI 분석 재시도 응답을 확인하지 못했습니다. 새 작업을 만들지 않고 기존 작업 ID 상태를 상품 등록 화면에서 확인합니다.");
+      navigate("publishing");
+      return;
+    }
+    const payload = await response.json().catch(() => ({ message: "AI 분석 재시도 응답을 읽지 못했습니다." })) as { message?: string };
+    if ([408, 425, 429].includes(response.status) || response.status >= 500) {
+      notify(`AI 분석 재시도 응답이 불명확합니다. 새 작업을 만들지 않고 기존 작업 ${jobId.slice(0, 8)} 상태만 확인합니다.`);
+      navigate("publishing");
+      return;
+    }
+    if (!response.ok && response.status !== 409) {
+      try {
+        if (previousStorageValue === null) window.sessionStorage.removeItem(activeStudioJobStorageKey);
+        else window.sessionStorage.setItem(activeStudioJobStorageKey, previousStorageValue);
+      } catch {
+        notify("AI 상품 분석 재시도에 실패했고 모바일 브라우저의 복구 상태도 되돌리지 못했습니다. 새 작업이나 외부 채널 등록은 실행하지 않았습니다.");
+        return;
+      }
+      notify(payload.message ?? "AI 상품 분석을 다시 시작하지 못했습니다.");
+      return;
+    }
+    notify(response.ok
+      ? "저장된 기존 사진·입력으로 동일한 AI 분석만 다시 시작했습니다. 외부 판매채널 등록은 실행하지 않습니다."
+      : "기존 AI 작업이 이미 실행 중이거나 완료되어 새 작업을 만들지 않고 동일 작업 상태를 확인합니다.");
+    navigate("publishing");
+  }, [authenticatedOperationsFetch, navigate, notify]);
+
   const editExternalActionProduct = useCallback((action: OperationsSnapshot["externalActions"][number]) => {
     setPublishingProduct({ id: action.productId, name: action.productName });
     setPublishingSession((current) => current + 1);
@@ -3062,9 +3625,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
-    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} displayProducts={displayProducts} loading={operations.state === "loading"} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
+    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} displayProducts={displayProducts} loading={operations.state === "loading"} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={recoverFailedProductAnalysis} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
     if (view === "product-detail") return activeSelectedProduct
-      ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} onBack={() => window.history.back()} onEditChannels={() => retryProductPublishing(activeSelectedProduct)} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
+      ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} onBack={() => window.history.back()} onEditChannels={() => retryProductPublishing(activeSelectedProduct)} onOpenActivity={() => navigate("registration-activity")} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
       : <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>{operations.state === "loading" ? "상품 상세정보를 불러오는 중입니다." : "상품을 찾지 못했습니다."}</b><small>{operations.state === "loading" ? "운영 상품 원장을 확인하고 있습니다." : "상품 목록에서 다시 선택해 주세요."}</small>{operations.state !== "loading" ? <button type="button" className="ghost-button" onClick={() => navigate("products")}>상품 목록으로</button> : null}</div>;
     if (view === "remediation") return <ExternalActionsPage actions={operations.data?.externalActions ?? []} onEdit={editExternalActionProduct} onConnections={() => navigate("connections")} />;
     if (view === "publishing") return <PublishingPage key={`${publishingProduct?.id ?? "new-product"}-${publishingSession}`} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} onStartAnother={() => navigate("publishing")} onShowHistory={() => navigate("registration-activity")} />;

@@ -2,40 +2,16 @@ import { NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from "../../../../lib/admin-api";
 import { rejectedUploadPaths } from "../../../../lib/ai-upload-guard";
 import { studioJobRequestSchema } from "../../../../lib/ai-cli-contract";
+import { verifyNormalizedStudioImages } from "../../../../lib/studio-image-validation";
 
 export const runtime = "nodejs";
 
-function jpegDimensions(bytes: Uint8Array) {
-  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
-  let offset = 2;
-  const startOfFrame = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
-  while (offset + 8 < bytes.length) {
-    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
-    const marker = bytes[offset];
-    offset += 1;
-    if (marker === 0xd9 || marker === 0xda) break;
-    if (offset + 1 >= bytes.length) break;
-    const length = (bytes[offset] << 8) | bytes[offset + 1];
-    if (length < 2 || offset + length > bytes.length) break;
-    if (startOfFrame.has(marker) && length >= 7) {
-      return {
-        height: (bytes[offset + 3] << 8) | bytes[offset + 4],
-        width: (bytes[offset + 5] << 8) | bytes[offset + 6],
-      };
-    }
-    offset += length;
-  }
-  return null;
-}
-
 async function verifyPublishImages(paths: string[], admin: AdminApiContext) {
-  const inspections = await Promise.all(paths.slice(0, 9).map(async (path) => {
-    const { data, error } = await admin.serviceClient.storage.from("sellerpilot-ai").download(path);
-    if (error || !data || data.size > 3 * 1024 * 1024 || data.type !== "image/jpeg") return false;
-    const size = jpegDimensions(new Uint8Array(await data.arrayBuffer()));
-    return size?.width === 1200 && size.height === 1200;
-  }));
-  return inspections.every(Boolean);
+  return verifyNormalizedStudioImages(paths, async (path) => {
+    const { data, error } = await admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrl(path, 60);
+    if (error || !data?.signedUrl) return null;
+    return fetch(data.signedUrl, { cache: "no-store", signal: AbortSignal.timeout(15_000) }).catch(() => null);
+  });
 }
 
 export async function POST(request: Request) {

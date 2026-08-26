@@ -129,8 +129,10 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /preservePublishingCaptureContext/);
   assert.match(page, /sellerpilot:last-view:v1", "publishing"/);
   const aiProductStudio = await readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8");
+  const studioJobSession = await readFile(new URL("../app/_registration/studio-job-session.ts", import.meta.url), "utf8");
   const categoryWorkbench = await readFile(new URL("../app/category-classification-workbench.tsx", import.meta.url), "utf8");
-  assert.match(aiProductStudio, /sellerpilot:product-studio:active-job:v1/);
+  assert.match(studioJobSession, /sellerpilot:product-studio:active-job:v1/);
+  assert.match(aiProductStudio, /activeStudioJobStorageKey/);
   assert.match(aiProductStudio, /이전 폼에서 시작한 상품 분석.*등록 이력에만 백그라운드 연결/);
   assert.doesNotMatch(aiProductStudio, /selectedRecoveryJobId|displayJobId\.current = selectedRecoveryJobId/);
   assert.match(aiProductStudio, /shouldDisplayStudioJob\(\{/);
@@ -357,7 +359,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(vercelConfig, /"schedule": "\*\/5 \* \* \* \*"/);
   assert.match(cliWorker, /SELLERPILOT_CHANNEL_SYNC_MS/);
   assert.match(cliWorker, /\/api\/internal\/channel-sync/);
-  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.25/);
+  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.26/);
   assert.match(cliWorker, /ensureEbayAccessToken/);
   assert.match(rotationHardeningMigration, /diagnostic_preserved/);
   assert.match(rotationHardeningMigration, /status = 'queued' and attempt_id is null/);

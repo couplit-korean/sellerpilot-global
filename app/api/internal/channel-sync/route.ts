@@ -24,7 +24,7 @@ type QueueResult = {
 type PeriodicSyncResult = {
   channel: ActiveChannelKey;
   operation: "orders.list" | "inquiries.list";
-  status: "queued" | "already_pending" | "not_connected" | "failed";
+  status: "queued" | "already_pending" | "not_connected" | "reconnect_required" | "failed";
   infrastructureFailure?: true;
 };
 
@@ -80,7 +80,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
       if (error) return { channel, operation, status: "failed", infrastructureFailure: true };
       const result = data && typeof data === "object" && !Array.isArray(data) ? data as QueueResult : {};
       const status = result.status;
-      if (status !== "queued" && status !== "already_pending" && status !== "not_connected") {
+      if (status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required") {
         return { channel, operation, status: "failed", infrastructureFailure: true };
       }
       return { channel, operation, status };
@@ -93,6 +93,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
     .catch(() => ({ configured: true, claimed: 0, sent: 0, failed: 1 }));
   const queued = results.filter((result) => result.status === "queued").length;
   const pending = results.filter((result) => result.status === "already_pending").length;
+  const reconnectRequired = results.filter((result) => result.status === "reconnect_required").length;
   const failed = results.filter((result) => result.status === "failed").length;
   const infrastructureFailures = results.filter((result) => result.infrastructureFailure).length;
   const databaseWideFailure = results.length > 0 && infrastructureFailures === results.length;
@@ -104,10 +105,11 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   }
 
   return NextResponse.json({
-    ok: failed === 0,
+    ok: failed === 0 && reconnectRequired === 0,
     scheduledAt: now.toISOString(),
     queued,
     pending,
+    reconnectRequired,
     failed,
     infrastructureFailures,
     results,

@@ -10,11 +10,17 @@ const JOB_ID = "b231a1ac-7c2f-48bc-b2e4-8ad6db2902b7";
 const CANCEL_JOB_ID = "95303cb5-f3ba-49b6-9bd4-7c5e558f0b14";
 const RESEARCH_JOB_ID = "e659cfbc-0f80-44a5-94e8-f011ec53e67f";
 const REGEN_JOB_ID = "bc02b888-5531-426a-9a87-32a8c0e356e2";
+const DEDUPED_REGEN_REQUEST_ID = "c4f3296b-42ec-457d-b1cf-b5200662f354";
 const DUPLICATE_SKU_JOB_ID = "6c7f9651-f0dd-48f7-8fe4-51335c404aef";
 const CLAIM_PREPARATION_JOB_ID = "0da0295f-d85b-4d5e-a938-853b49f5ea32";
 const STALE_AI_JOB_ID = "7c64df91-bd91-49bf-a141-1485bcbead3d";
 const PRUNE_JOB_ID = "fb641eaf-7de3-4958-ad08-6d064a99fb59";
 const UNSAFE_PRUNE_JOB_ID = "6a4d7635-cb87-4d24-ae93-f5cd8ee9c855";
+const PRODUCT_REVISION_JOB_ID = "3743031d-f49f-4cac-a44a-28e997f1dfc4";
+const NEXT_PRODUCT_REVISION_JOB_ID = "6bf1f902-3298-4c9c-ab55-9670b838706d";
+const STALE_PRODUCT_REVISION_JOB_ID = "3a7780db-a4cb-46d6-a74a-5d71388e6838";
+const ABANDONED_PRODUCT_REVISION_JOB_ID = "231326b1-884d-4757-bcae-2a50ce559839";
+const PRIVATE_RESEARCH_RETRY_JOB_ID = "2b90a2d7-3754-4b65-89c6-c386967a90cc";
 const SHARED_PRODUCT_ID = "4a346497-84c8-4ccd-bf14-8f06f990a2f7";
 const TOKEN_HASH = "a".repeat(64);
 const SECOND_WORKER_TOKEN_HASH = "e".repeat(64);
@@ -254,6 +260,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260826090500_atomic_worker_token_set_rotation.sql",
       "20260826090600_isolate_inventory_sync_generations.sql",
       "20260826090700_add_explicit_tracx_order_bindings.sql",
+      "20260826090800_suppress_legacy_shopee_order_sync.sql",
+      "20260826090900_atomic_product_photo_revision.sql",
+      "20260826091000_dedupe_asset_regeneration_and_activity.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -334,6 +343,34 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         "select has_function_privilege('service_role', 'public.sellerpilot_bind_tracx_order(uuid,text,text)', 'EXECUTE')",
       ),
       false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_enqueue_periodic_sync_without_identity_gate(text,text,jsonb,integer)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_enqueue_periodic_sync_without_identity_gate(text,text,jsonb,integer)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('anon', 'public.sellerpilot_list_shopee_connection_status()', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_list_shopee_connection_status()', 'EXECUTE')",
+      ),
+      true,
     );
 
     const serviceOnlyFunctions = [
@@ -932,6 +969,78 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       )).rows,
       [{ seller_account_key: null, seller_account_key_source: "legacy_unattested" }],
     );
+    await setClaims(db, "service_role");
+    const queuedLegacyShopeeOrder = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_channel_gateway_job(
+        $1, null, 'shopee', 'orders.list',
+        '{"periodicKey":"orders","arguments":{"shopId":"123456789"}}'::jsonb
+      )`,
+      [shopeeCredentialId],
+    );
+    const shopeeOrdersBeforeReconnectGate = await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where credential_id = $1 and operation = 'orders.list'",
+      [shopeeCredentialId],
+    );
+    const legacyShopeePeriodic = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'shopee', 'orders.list',
+        '{"periodicKey":"orders","arguments":{"shopId":"123456789"}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(legacyShopeePeriodic.status, "reconnect_required");
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where credential_id = $1 and operation = 'orders.list'",
+        [shopeeCredentialId],
+      ),
+      shopeeOrdersBeforeReconnectGate,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [queuedLegacyShopeeOrder],
+      ),
+      "cancelled",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.operation_audit
+          where action = 'shopee_periodic_order_sync_suppressed'
+            and entity_id = $1`,
+        [queuedLegacyShopeeOrder],
+      ),
+      1,
+    );
+    assert.match(
+      await scalar(
+        db,
+        "select last_error from sellerpilot_private.channel_sync_state where owner_id = $1 and channel_key = 'shopee' and data_type = 'orders'",
+        [ADMIN_ID],
+      ),
+      /OAuth 재연동/,
+    );
+    await setClaims(db);
+    assert.deepEqual(
+      (await db.query(
+        "select connection_status from public.sellerpilot_list_shopee_connection_status() where credential_id = $1",
+        [shopeeCredentialId],
+      )).rows,
+      [{ connection_status: "oauth_reconnect_required" }],
+    );
+    await setClaims(db, "authenticated", NON_ADMIN_ID);
+    assert.equal(
+      await scalar(db, "select count(*)::integer from public.sellerpilot_list_shopee_connection_status()"),
+      0,
+    );
+    await setClaims(db);
     const shopeeAttempt = await scalar(
       db,
       "select public.sellerpilot_claim_channel_operation($1, 'shopee', 'categories.list', 'shopee-categories-migration-0001', $2)",
@@ -2310,6 +2419,23 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(
       await scalar(
         db,
+        "select public.sellerpilot_create_asset_regeneration_job($1, $2, $3, 'detail-use')",
+        [DEDUPED_REGEN_REQUEST_ID, JOB_ID, aiProductId],
+      ),
+      REGEN_JOB_ID,
+    );
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.ai_cli_jobs where id = $1", [DEDUPED_REGEN_REQUEST_ID]),
+      0,
+    );
+    const activeRegenerationActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(300)");
+    const activeRegenerationCard = activeRegenerationActivity.find((activity) => activity.id === `asset:${REGEN_JOB_ID}`);
+    assert.equal(activeRegenerationCard?.status, "analyzing");
+    assert.equal(activeRegenerationCard?.productId, aiProductId);
+    assert.match(activeRegenerationCard?.message ?? "", /외부 자동 게시 없음/);
+    assert.equal(
+      await scalar(
+        db,
         "select case when request_payload->'comparison_asset_paths'->>'hero' = $2 then 1 else 0 end from sellerpilot_private.ai_cli_jobs where id = $1",
         [REGEN_JOB_ID, resultPayload.asset_storage_paths.hero],
       ),
@@ -3057,6 +3183,359 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [preparedListingId, listingAttempt.attempt_id],
       ),
       true,
+    );
+    await setClaims(db);
+    const productCountBeforeRevision = await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.products where owner_id = $1",
+      [ADMIN_ID],
+    );
+    const gatewayCountBeforeRevision = await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs",
+    );
+    const listingBeforeRevision = (await db.query(
+      "select id, product_id, remote_id, marketplace_sku from sellerpilot_private.product_listings where id = $1",
+      [preparedListingId],
+    )).rows[0];
+    const revisionManualFields = {
+      ...editedManualFields,
+      productName: "AI 생성 테스트 상품 사진 리비전",
+      packageContents: "상품 1개",
+      stock: 0,
+    };
+    const revisionPayload = {
+      description: revisionManualFields.description,
+      product_url: revisionManualFields.productUrl,
+      research_input: revisionManualFields.researchInput,
+      manual_fields: revisionManualFields,
+      image_paths: [`${ADMIN_ID}/${PRODUCT_REVISION_JOB_ID}/input/001.jpg`],
+      image_specs: [{
+        name: "replacement-main.jpg",
+        role: "main",
+        originalWidth: 1800,
+        originalHeight: 1800,
+        width: 1200,
+        height: 1200,
+        bytes: 120000,
+        mediaType: "image/jpeg",
+        fit: "contain",
+      }],
+    };
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_create_product_revision_job($1, $2, $3::jsonb)",
+        [PRODUCT_REVISION_JOB_ID, aiProductId, JSON.stringify(revisionPayload)],
+      ),
+      PRODUCT_REVISION_JOB_ID,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_create_product_revision_job($1, $2, $3::jsonb)",
+        [PRODUCT_REVISION_JOB_ID, aiProductId, JSON.stringify(revisionPayload)],
+      ),
+      PRODUCT_REVISION_JOB_ID,
+    );
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.ai_cli_jobs where id = $1", [PRODUCT_REVISION_JOB_ID]),
+      1,
+    );
+    assert.equal(
+      await scalar(db, "select ai_job_id from sellerpilot_private.products where id = $1", [aiProductId]),
+      JOB_ID,
+    );
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.products where owner_id = $1", [ADMIN_ID]),
+      productCountBeforeRevision,
+    );
+    const pendingRevisionActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(300)");
+    const pendingRevisionCard = pendingRevisionActivity.find((activity) => activity.id === `revision:${PRODUCT_REVISION_JOB_ID}`);
+    assert.equal(pendingRevisionCard?.status, "analyzing");
+    assert.equal(pendingRevisionCard?.productId, aiProductId);
+    assert.match(pendingRevisionCard?.message ?? "", /외부 판매채널에는 자동 게시하지 않습니다/);
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_create_product_revision_job($1, $2, $3::jsonb)",
+        [NEXT_PRODUCT_REVISION_JOB_ID, aiProductId, JSON.stringify({
+          ...revisionPayload,
+          image_paths: [`${ADMIN_ID}/${NEXT_PRODUCT_REVISION_JOB_ID}/input/001.jpg`],
+        })],
+      ),
+      /PRODUCT_REVISION_ALREADY_PENDING/,
+    );
+
+    const revisionResult = {
+      ...resultPayload,
+      product: { ...resultPayload.product, name: revisionManualFields.productName },
+      asset_storage_paths: aiClaimAssetPaths(PRODUCT_REVISION_JOB_ID, "784346eb-2788-4783-97da-451344fed051"),
+    };
+    // An accepted inventory write changes on_hand, product_facts.stock and
+    // updated_at after the photo revision is queued. It must not look like a
+    // conflicting text/detail edit or cause the safe revision fence to fail.
+    await db.query(
+      "update sellerpilot_private.products set on_hand = 3, updated_at = updated_at + interval '1 second' where id = $1",
+      [aiProductId],
+    );
+    // An exact replay stays idempotent even when a safe inventory write has
+    // advanced product.updated_at since the original revision was accepted.
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_create_product_revision_job($1, $2, $3::jsonb)",
+        [PRODUCT_REVISION_JOB_ID, aiProductId, JSON.stringify(revisionPayload)],
+      ),
+      PRODUCT_REVISION_JOB_ID,
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, request_payload, created_by, status, error_message, completed_at
+       ) values ($1, 'product_research', '{}'::jsonb, $2, 'failed', 'test-only failure', now())`,
+      [PRIVATE_RESEARCH_RETRY_JOB_ID, ADMIN_ID],
+    );
+    await setClaims(db, "authenticated", SECOND_ADMIN_ID);
+    const nextRevisionPayload = {
+      ...revisionPayload,
+      image_paths: [`${SECOND_ADMIN_ID}/${NEXT_PRODUCT_REVISION_JOB_ID}/input/001.jpg`],
+    };
+    const completionAndNextRevision = await Promise.allSettled([
+      db.query(
+        "update sellerpilot_private.ai_cli_jobs set status = 'succeeded', result_payload = $2::jsonb, completed_at = now() where id = $1",
+        [PRODUCT_REVISION_JOB_ID, JSON.stringify(revisionResult)],
+      ),
+      db.query(
+        "select public.sellerpilot_create_product_revision_job($1, $2, $3::jsonb)",
+        [NEXT_PRODUCT_REVISION_JOB_ID, aiProductId, JSON.stringify(nextRevisionPayload)],
+      ),
+    ]);
+    assert.equal(completionAndNextRevision[0].status, "fulfilled");
+    if (completionAndNextRevision[1].status === "rejected") {
+      assert.match(String(completionAndNextRevision[1].reason), /PRODUCT_REVISION_ALREADY_PENDING/);
+      assert.equal(
+        await scalar(
+          db,
+          "select public.sellerpilot_create_product_revision_job($1, $2, $3::jsonb)",
+          [NEXT_PRODUCT_REVISION_JOB_ID, aiProductId, JSON.stringify(nextRevisionPayload)],
+        ),
+        NEXT_PRODUCT_REVISION_JOB_ID,
+      );
+    }
+    const sharedStudioJob = await scalar(
+      db,
+      "select public.sellerpilot_get_ai_job($1)",
+      [PRODUCT_REVISION_JOB_ID],
+    );
+    assert.equal(sharedStudioJob.id, PRODUCT_REVISION_JOB_ID);
+    assert.equal(sharedStudioJob.kind, "product_studio");
+    assert.equal("request_payload" in sharedStudioJob, false);
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_get_ai_job($1)", [PRIVATE_RESEARCH_RETRY_JOB_ID]),
+      null,
+    );
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_retry_ai_job($1)", [PRIVATE_RESEARCH_RETRY_JOB_ID]),
+      false,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_create_product_from_ai_v2($1)",
+        [PRIVATE_RESEARCH_RETRY_JOB_ID],
+      ),
+      /AI_PRODUCT_STUDIO_JOB_NOT_FOUND/,
+    );
+    await setClaims(db, "authenticated", NON_ADMIN_ID);
+    await assert.rejects(
+      db.query("select public.sellerpilot_get_ai_job($1)", [PRODUCT_REVISION_JOB_ID]),
+      /administrator access required/,
+    );
+    await setClaims(db, "authenticated", SECOND_ADMIN_ID);
+    await db.query(
+      "delete from sellerpilot_private.ai_cli_jobs where id = $1",
+      [PRIVATE_RESEARCH_RETRY_JOB_ID],
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select id, product_id, remote_id, marketplace_sku from sellerpilot_private.product_listings where id = $1",
+        [preparedListingId],
+      )).rows[0],
+      listingBeforeRevision,
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select id, ai_job_id, name, on_hand, (product_facts->>'stock')::integer as facts_stock, detail_page_data, detail_page_version from sellerpilot_private.products where id = $1",
+        [aiProductId],
+      )).rows[0],
+      {
+        id: aiProductId,
+        ai_job_id: PRODUCT_REVISION_JOB_ID,
+        name: revisionManualFields.productName,
+        on_hand: 3,
+        facts_stock: 3,
+        detail_page_data: null,
+        detail_page_version: 0,
+      },
+    );
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.products where owner_id = $1", [ADMIN_ID]),
+      productCountBeforeRevision,
+    );
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.channel_gateway_jobs"),
+      gatewayCountBeforeRevision,
+    );
+    const appliedRevisionState = await scalar(
+      db,
+      "select public.sellerpilot_get_product_revision_state($1, $2)",
+      [aiProductId, PRODUCT_REVISION_JOB_ID],
+    );
+    assert.equal(appliedRevisionState.jobId, PRODUCT_REVISION_JOB_ID);
+    assert.equal(appliedRevisionState.productId, aiProductId);
+    assert.equal(appliedRevisionState.status, "applied");
+    assert.equal(appliedRevisionState.autoPublish, false);
+    assert.equal(appliedRevisionState.remoteSkuOrOptionMutation, false);
+    const appliedRevisionActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(300)");
+    const appliedRevisionCard = appliedRevisionActivity.find((activity) => activity.id === `revision:${PRODUCT_REVISION_JOB_ID}`);
+    assert.equal(appliedRevisionCard?.status, "completed");
+    assert.match(appliedRevisionCard?.message ?? "", /판매채널 이미지·옵션·SKU는 자동 변경하지 않았습니다/);
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_create_product_from_ai_v2($1)", [JOB_ID]),
+      aiProductId,
+    );
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_create_product_from_ai_v2($1)", [PRODUCT_REVISION_JOB_ID]),
+      aiProductId,
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select previous_detail_page_data, previous_detail_page_version, retain_previous_assets_until > now() + interval '29 days' as retained from sellerpilot_private.product_ai_revisions where job_id = $1",
+        [PRODUCT_REVISION_JOB_ID],
+      )).rows[0],
+      { previous_detail_page_data: detailPageV2, previous_detail_page_version: 2, retained: true },
+    );
+    assert.ok(Number(await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.ai_storage_cleanup_queue where last_error = 'superseded_product_revision_retention' and available_at > now() + interval '29 days'",
+    )) >= 9);
+    assert.equal(
+      await scalar(
+        db,
+        "select (safe_detail->>'auto_publish')::boolean from sellerpilot_private.operation_audit where action = 'product_revision_applied' and entity_id = $1 order by occurred_at desc limit 1",
+        [aiProductId],
+      ),
+      false,
+    );
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [NEXT_PRODUCT_REVISION_JOB_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_job_completion_receipts (
+         job_id, worker_token_id, claim_token, status, completion_fingerprint
+       ) select $1, token.id, gen_random_uuid(), 'failed', $3
+           from sellerpilot_private.ai_cli_worker_tokens token
+          where token.token_hash = $2`,
+      [NEXT_PRODUCT_REVISION_JOB_ID, TOKEN_HASH, "a".repeat(64)],
+    );
+    await setClaims(db);
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_retry_ai_job($1)", [NEXT_PRODUCT_REVISION_JOB_ID]),
+      true,
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select status, attempt_count, preparation_failure_count, claim_token from sellerpilot_private.ai_cli_jobs where id = $1",
+        [NEXT_PRODUCT_REVISION_JOB_ID],
+      )).rows[0],
+      { status: "queued", attempt_count: 0, preparation_failure_count: 0, claim_token: null },
+    );
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.ai_job_completion_receipts where job_id = $1", [NEXT_PRODUCT_REVISION_JOB_ID]),
+      0,
+    );
+    assert.equal(
+      await scalar(db, "select status from sellerpilot_private.product_ai_revisions where job_id = $1", [NEXT_PRODUCT_REVISION_JOB_ID]),
+      "pending",
+    );
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set status = 'cancelled', completed_at = now() where id = $1",
+      [NEXT_PRODUCT_REVISION_JOB_ID],
+    );
+
+    const staleRevisionPayload = {
+      ...revisionPayload,
+      image_paths: [`${ADMIN_ID}/${STALE_PRODUCT_REVISION_JOB_ID}/input/001.jpg`],
+    };
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_create_product_revision_job($1, $2, $3::jsonb)",
+        [STALE_PRODUCT_REVISION_JOB_ID, aiProductId, JSON.stringify(staleRevisionPayload)],
+      ),
+      STALE_PRODUCT_REVISION_JOB_ID,
+    );
+    const laterManualEdit = {
+      ...revisionManualFields,
+      productName: "리비전 접수 후 별도 저장한 상품명",
+      description: "사진 리비전이 진행되는 동안 별도로 저장한 최신 상품 설명을 덮어쓰지 않는지 확인합니다.",
+      stock: 2,
+    };
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_update_product_details($1, $2::jsonb)",
+        [aiProductId, JSON.stringify(laterManualEdit)],
+      ),
+      true,
+    );
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set status = 'succeeded', result_payload = $2::jsonb, completed_at = now() where id = $1",
+      [STALE_PRODUCT_REVISION_JOB_ID, JSON.stringify({
+        ...revisionResult,
+        asset_storage_paths: aiClaimAssetPaths(STALE_PRODUCT_REVISION_JOB_ID, "a19ae9d1-a544-4a12-96fd-b89501a03f89"),
+      })],
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select name, ai_job_id from sellerpilot_private.products where id = $1",
+        [aiProductId],
+      )).rows[0],
+      { name: laterManualEdit.productName, ai_job_id: PRODUCT_REVISION_JOB_ID },
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select status, failure_reason is not null as has_reason from sellerpilot_private.product_ai_revisions where job_id = $1",
+        [STALE_PRODUCT_REVISION_JOB_ID],
+      )).rows[0],
+      { status: "failed", has_reason: true },
+    );
+
+    const abandonedPaths = [`${ADMIN_ID}/${ABANDONED_PRODUCT_REVISION_JOB_ID}/input/001.jpg`];
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_abandon_uncreated_product_revision_job($1, $2, $3::jsonb)",
+        [aiProductId, ABANDONED_PRODUCT_REVISION_JOB_ID, JSON.stringify(abandonedPaths)],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.ai_storage_cleanup_queue where object_path = $1 and last_error = 'unconfirmed_product_revision_upload'",
+        [abandonedPaths[0]],
+      ),
+      1,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_create_product_revision_job($1, $2, $3::jsonb)",
+        [ABANDONED_PRODUCT_REVISION_JOB_ID, aiProductId, JSON.stringify({
+          ...revisionPayload,
+          image_paths: abandonedPaths,
+        })],
+      ),
+      /PRODUCT_REVISION_JOB_ABANDONED/,
     );
     await setClaims(db);
     const otherCoupangCredentialId = await scalar(
@@ -3854,7 +4333,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(aiProduct.demo, false);
     assert.equal(aiProduct.status, "low_stock");
     assert.deepEqual(aiProduct.listingChannels, ["C"]);
-    assert.equal(aiProduct.aiHeroPath, resultPayload.asset_storage_paths.hero);
+    assert.equal(aiProduct.aiHeroPath, revisionResult.asset_storage_paths.hero);
     assert.equal(snapshot.products.some((product) => product.id === SHARED_PRODUCT_ID), true);
     const sharedPublishContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [SHARED_PRODUCT_ID]);
     assert.equal(sharedPublishContext.product.id, SHARED_PRODUCT_ID);
@@ -4062,7 +4541,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(await scalar(db, "select public.sellerpilot_cancel_ai_job($1)", [CANCEL_JOB_ID]), true);
     assert.equal(await scalar(db, "select public.sellerpilot_retry_ai_job($1)", [CANCEL_JOB_ID]), true);
     const jobs = await db.query("select * from public.sellerpilot_list_ai_jobs(10)");
-    assert.equal(jobs.rows.length, 5);
+    assert.equal(jobs.rows.length, 7);
+    assert.equal(jobs.rows.some((job) => job.id === PRODUCT_REVISION_JOB_ID && job.status === "succeeded"), true);
+    assert.equal(jobs.rows.some((job) => job.id === STALE_PRODUCT_REVISION_JOB_ID && job.status === "succeeded"), true);
     assert.equal(jobs.rows.some((job) => job.id === DUPLICATE_SKU_JOB_ID && job.status === "succeeded"), true);
     assert.equal(jobs.rows.some((job) => job.status === "succeeded" && job.has_hero), true);
     assert.equal(jobs.rows.some((job) => job.kind === "product_research"), true);
@@ -4162,10 +4643,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(
       await scalar(
         db,
-        "select count(*) from sellerpilot_private.ai_storage_cleanup_queue where object_path = any($1::text[])",
+        "select count(*) from sellerpilot_private.ai_storage_cleanup_queue where object_path = any($1::text[]) and available_at > now() + interval '29 days'",
         [[protectedSourceInputPath, protectedRegeneratedPath]],
       ),
-      0,
+      1,
     );
     assert.equal(
       await scalar(
@@ -4189,35 +4670,40 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "select public.sellerpilot_service_claim_ai_storage_cleanup(10, 120)",
     );
     assert.equal(cleanupClaim.bucket, "sellerpilot-ai");
-    assert.deepEqual(cleanupClaim.paths, [pruneInputPath, pruneResultPath].sort());
+    assert.deepEqual(cleanupClaim.paths, [abandonedPaths[0], pruneInputPath, pruneResultPath].sort());
     assert.deepEqual(
       await scalar(
         db,
         "select public.sellerpilot_service_complete_ai_storage_cleanup($1, array[$2]::text[], 'storage_remove_partial')",
         [cleanupClaim.claimToken, pruneInputPath],
       ),
-      { removed: 1, requeued: 1 },
+      { removed: 1, requeued: 2 },
     );
     await db.query(
-      "update sellerpilot_private.ai_storage_cleanup_queue set available_at = now() - interval '1 second'",
+      "update sellerpilot_private.ai_storage_cleanup_queue set available_at = now() - interval '1 second' where object_path = any($1::text[])",
+      [[abandonedPaths[0], pruneResultPath]],
     );
     const retryCleanupClaim = await scalar(
       db,
       "select public.sellerpilot_service_claim_ai_storage_cleanup(10, 120)",
     );
-    assert.deepEqual(retryCleanupClaim.paths, [pruneResultPath]);
+    assert.deepEqual(retryCleanupClaim.paths, [abandonedPaths[0], pruneResultPath].sort());
     assert.deepEqual(
       await scalar(
         db,
-        "select public.sellerpilot_service_complete_ai_storage_cleanup($1, array[$2]::text[], null)",
-        [retryCleanupClaim.claimToken, pruneResultPath],
+        "select public.sellerpilot_service_complete_ai_storage_cleanup($1, array[$2,$3]::text[], null)",
+        [retryCleanupClaim.claimToken, pruneResultPath, abandonedPaths[0]],
       ),
-      { removed: 1, requeued: 0 },
+      { removed: 2, requeued: 0 },
     );
     assert.equal(
-      await scalar(db, "select count(*) from sellerpilot_private.ai_storage_cleanup_queue"),
+      await scalar(db, "select count(*) from sellerpilot_private.ai_storage_cleanup_queue where available_at <= now()"),
       0,
     );
+    assert.ok(Number(await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.ai_storage_cleanup_queue where available_at > now() + interval '29 days'",
+    )) >= 9);
 
     await setClaims(db);
     for (const signature of [

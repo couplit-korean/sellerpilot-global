@@ -2107,6 +2107,30 @@
     padding-right: 14px;
     padding-left: 14px;
   }
+
+  .product-revision-images {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .product-revision-main,
+  .product-revision-role-grid,
+  .product-revision-extras,
+  .product-revision-limitation {
+    grid-column: 1;
+    min-width: 0;
+  }
+
+  .product-revision-role-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .product-revision-role-grid label { min-height: 136px; }
+  .product-revision-role-grid label > span { height: 84px; }
+  .product-revision-extras > div { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .product-revision-status { align-items: flex-start; flex-wrap: wrap; }
+  .product-revision-status > div { flex-basis: calc(100% - 48px); }
+  .product-revision-status > button { width: 100%; min-height: 44px; margin-left: 0; }
 }
 
 @media (max-width: 390px) {
@@ -2445,6 +2469,21 @@
     justify-content: center;
     font-size: 11px;
   }
+
+  .product-revision-main > label { min-height: 230px; }
+  .product-revision-main > label > span { min-height: 172px; }
+  .product-revision-source-actions > label,
+  .product-revision-source-actions > button,
+  .product-revision-extras > label { min-height: 48px; font-size: 11px; }
+  .product-revision-role-grid b,
+  .product-revision-extras b { font-size: 11px; }
+  .product-revision-role-grid small,
+  .product-revision-extras small,
+  .product-revision-limitation,
+  .product-revision-status small { font-size: 10px; }
+  .product-revision-role-grid > div > button,
+  .product-revision-extras > div button { width: 44px; height: 44px; }
+  .product-revision-status b { font-size: 12px; }
 
   .category-suggestions .category-suggestions-toolbar {
     align-items: stretch;

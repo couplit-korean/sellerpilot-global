@@ -23,6 +23,8 @@ test("inventory writes use retry-stable keys and expire stale pending work", asy
   assert.match(route, /continuationRequired: remainingPendingCount > 0/);
   assert.match(route, /remainingPendingCount/);
   assert.match(page, /applyInventoryAcrossSafeBatches/);
-  assert.match(page, /const idempotencyKey = `inventory-ui-\$\{crypto\.randomUUID\(\)\}`/);
+  assert.match(page, /const applyInventoryAcrossSafeBatches = async \(onHand: number, stableIdempotencyKey\?: string\)/);
+  assert.match(page, /const idempotencyKey = stableIdempotencyKey \?\? `inventory-ui-\$\{crypto\.randomUUID\(\)\}`/);
+  assert.match(page, /`inventory-revision-\$\{jobId\}`/);
   assert.match(page, /if \(!payload\.continuationRequired\)/);
 });

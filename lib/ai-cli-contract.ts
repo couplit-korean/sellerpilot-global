@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { aiGeneratedAssetIds } from "./ai-generated-assets";
-import { normalizedProductImageSpecSchema, productIntakeSchema } from "./product-intake";
+import { normalizedProductImageSpecSchema, productEditSchema, productIntakeSchema } from "./product-intake";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 
@@ -171,6 +171,25 @@ export const studioCoreSchema = z.object({
   warnings: z.array(z.string().min(1).max(400)).max(5),
 });
 
+export function normalizeStudioWarningLimits(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  if (!Array.isArray(source.warnings)) return value;
+  const warnings = source.warnings
+    .map((warning) => {
+      if (typeof warning !== "string") return warning;
+      let normalized = warning.trim().slice(0, 400);
+      if (/[\uD800-\uDBFF]$/.test(normalized)) normalized = normalized.slice(0, -1);
+      return normalized;
+    })
+    .filter((warning) => typeof warning !== "string" || warning.length > 0)
+    .slice(0, 5);
+  return {
+    ...source,
+    warnings,
+  };
+}
+
 const requiredLocalizedMarkets = {
   "qoo10:JP": "ja-JP",
   "shopee:SG": "en-SG",
@@ -266,6 +285,21 @@ export const studioJobRequestSchema = z.object({
   imageSpecs: z.array(normalizedProductImageSpecSchema).min(1).max(100),
   competitorContext: studioCompetitorContextSchema.optional(),
 }).superRefine((value, context) => {
+  if (value.imagePaths.length !== value.imageSpecs.length) {
+    context.addIssue({ code: "custom", path: ["imageSpecs"], message: "이미지 경로와 규격 정보 수가 일치해야 합니다." });
+  }
+  if (value.imageSpecs[0]?.role !== "main") {
+    context.addIssue({ code: "custom", path: ["imageSpecs", 0, "role"], message: "첫 번째 이미지는 대표사진이어야 합니다." });
+  }
+});
+
+export const productRevisionJobRequestSchema = z.object({
+  jobId: z.string().uuid(),
+  manualFields: productEditSchema,
+  imagePaths: z.array(z.string().min(1).max(400)).min(1).max(100),
+  imageSpecs: z.array(normalizedProductImageSpecSchema).min(1).max(100),
+  competitorContext: studioCompetitorContextSchema.optional(),
+}).strict().superRefine((value, context) => {
   if (value.imagePaths.length !== value.imageSpecs.length) {
     context.addIssue({ code: "custom", path: ["imageSpecs"], message: "이미지 경로와 규격 정보 수가 일치해야 합니다." });
   }
