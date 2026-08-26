@@ -263,6 +263,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260826090800_suppress_legacy_shopee_order_sync.sql",
       "20260826090900_atomic_product_photo_revision.sql",
       "20260826091000_dedupe_asset_regeneration_and_activity.sql",
+      "20260826091100_bound_registration_activity_query.sql",
+      "20260826091200_fence_periodic_sync_reconciliation.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -283,6 +285,40 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(
       await scalar(db, "select to_regclass('sellerpilot_private.commerce_orders_tracx_tracking_idx') is not null"),
       true,
+    );
+    for (const indexName of [
+      "sellerpilot_private.products_registration_activity_updated_idx",
+      "sellerpilot_private.product_listings_registration_activity_updated_idx",
+      "sellerpilot_private.product_listings_registration_activity_product_idx",
+      "sellerpilot_private.ai_cli_jobs_registration_studio_updated_idx",
+      "sellerpilot_private.ai_cli_jobs_registration_asset_updated_idx",
+      "sellerpilot_private.product_ai_revisions_registration_activity_updated_idx",
+    ]) {
+      assert.equal(await scalar(db, "select to_regclass($1) is not null", [indexName]), true);
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('anon', 'public.sellerpilot_list_registration_activity(integer)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_list_registration_activity(integer)', 'EXECUTE')",
+      ),
+      true,
+    );
+    const boundedRegistrationActivityDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_list_registration_activity(integer)'::regprocedure)",
+    );
+    assert.match(boundedRegistrationActivityDefinition, /recent_listing_probe[\s\S]*limit v_listing_probe_limit/i);
+    assert.match(boundedRegistrationActivityDefinition, /recent_studio_job_probe[\s\S]*limit v_job_probe_limit/i);
+    assert.doesNotMatch(
+      boundedRegistrationActivityDefinition,
+      /sellerpilot_list_registration_activity_pre_image_activity/i,
     );
     const temuFulfillmentMigration = await readFile(
       new URL("20260822050435_temu_orders_shipping_aftersales.sql", migrationUrl),
@@ -4395,6 +4431,81 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.equal(duplicateSharedOperation.duplicate, true);
     assert.equal(duplicateSharedOperation.attempt_id, sharedOperation.attempt_id);
+
+    await setClaims(db, "service_role");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'reconciliation_required',
+              created_at = now() - interval '6 minutes',
+              updated_at = now() - interval '6 minutes',
+              error_message = 'test-only uncertain OAuth refresh'
+        where id = $1`,
+      [periodicQueued.jobId],
+    );
+    const reconciliationJobCount = await scalar(
+      db,
+      `select count(*)::integer
+         from sellerpilot_private.channel_gateway_jobs
+        where credential_id = $1
+          and channel = 'qoo10'
+          and operation = 'orders.list'
+          and request_payload->>'periodicKey' = 'orders'`,
+      [credentialId],
+    );
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const fencedPeriodic = await scalar(
+        db,
+        `select public.sellerpilot_service_enqueue_periodic_sync(
+          'qoo10', 'orders.list',
+          '{"periodicKey":"orders","arguments":{"params":{"ShippingStat":"9"}}}'::jsonb,
+          5
+        )`,
+      );
+      assert.equal(fencedPeriodic.status, "reconciliation_required");
+      assert.equal(fencedPeriodic.jobId, periodicQueued.jobId);
+    }
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.channel_gateway_jobs
+          where credential_id = $1
+            and channel = 'qoo10'
+            and operation = 'orders.list'
+            and request_payload->>'periodicKey' = 'orders'`,
+        [credentialId],
+      ),
+      reconciliationJobCount,
+    );
+
+    await setClaims(db);
+    const replacementQoo10CredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'qoo10', 'production', '{"certification_key":"replacement-test-only"}'::jsonb,
+        now() + interval '30 days', 90, 30, 7
+      )`,
+    );
+    assert.notEqual(replacementQoo10CredentialId, credentialId);
+    await setClaims(db, "service_role");
+    const replacementPeriodic = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'qoo10', 'orders.list',
+        '{"periodicKey":"orders","arguments":{"params":{"ShippingStat":"9"}}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(replacementPeriodic.status, "queued");
+    assert.notEqual(replacementPeriodic.jobId, periodicQueued.jobId);
+    assert.equal(
+      await scalar(
+        db,
+        "select credential_id::text from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [replacementPeriodic.jobId],
+      ),
+      replacementQoo10CredentialId,
+    );
     await setClaims(db);
 
     await db.query(
@@ -4854,6 +4965,117 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(
       await scalar(db, "select count(*) from sellerpilot_private.ai_cli_worker_tokens where rotation_set_id = $1 and status = 'revoked'", [expirySet.tokenSetId]),
       3,
+    );
+
+    // A large historical studio ledger must not make the activity RPC scan
+    // and JSON-build every orphan job. The function probes a fixed newest-first
+    // window, preserves the response contract, and still enforces admin access.
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, status, request_payload, error_message, created_by,
+         created_at, completed_at, updated_at
+       )
+       select gen_random_uuid(),
+              'product_studio',
+              'failed',
+              jsonb_build_object(
+                'manual_fields', jsonb_build_object(
+                  'productName', '과거 성능 검증 상품 ' || series.value::text,
+                  'sellerSku', 'PERF-' || series.value::text
+                )
+              ),
+              'historical test-only failure',
+              $1,
+              now() - interval '30 days' - series.value * interval '1 second',
+              now() - interval '30 days' - series.value * interval '1 second',
+              now() - interval '30 days' - series.value * interval '1 second'
+         from generate_series(1, 12000) as series(value)`,
+      [ADMIN_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.products (
+         owner_id, external_code, sku, name, description, status,
+         on_hand, reserved, reorder_point, cost_krw, demo, updated_at
+       )
+       select $1,
+              'BOUND-EMPTY-' || series.value::text,
+              'BOUND-EMPTY-' || series.value::text,
+              '최근 활동 없는 상품 ' || series.value::text,
+              '활동 후보 슬롯을 소진하지 않아야 하는 테스트 상품',
+              'active', 0, 0, 0, 0, false,
+              clock_timestamp()
+         from generate_series(1, 700) as series(value)`,
+      [ADMIN_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, status, request_payload, error_message, created_by,
+         created_at, completed_at, updated_at
+       )
+       select gen_random_uuid(),
+              'product_studio',
+              'failed',
+              jsonb_build_object(
+                'manual_fields', jsonb_build_object(
+                  'productName', '후보 경계 상품 ' || series.value::text,
+                  'sellerSku', 'BOUND-ACTIVE-' || series.value::text
+                )
+              ),
+              'bounded candidate test-only failure',
+              $1,
+              now() - interval '60 days' - series.value * interval '1 second',
+              now() - interval '60 days' - series.value * interval '1 second',
+              now() - interval '60 days' - series.value * interval '1 second'
+         from generate_series(1, 50) as series(value)`,
+      [ADMIN_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.products (
+         owner_id, external_code, sku, name, description, ai_job_id, status,
+         on_hand, reserved, reorder_point, cost_krw, demo, updated_at
+       )
+       select $1,
+              job.request_payload->'manual_fields'->>'sellerSku',
+              job.request_payload->'manual_fields'->>'sellerSku',
+              job.request_payload->'manual_fields'->>'productName',
+              '더 최근의 활동 없는 상품 뒤에서도 조회되어야 하는 테스트 상품',
+              job.id, 'active', 0, 0, 0, 0, false,
+              clock_timestamp() + interval '1 hour'
+         from sellerpilot_private.ai_cli_jobs job
+        where job.request_payload->'manual_fields'->>'sellerSku' like 'BOUND-ACTIVE-%'`,
+      [ADMIN_ID],
+    );
+    await db.exec("analyze sellerpilot_private.ai_cli_jobs");
+    await db.exec("analyze sellerpilot_private.products");
+    await db.exec("set statement_timeout = '5s'");
+    await setClaims(db);
+    const boundedActivity = await scalar(
+      db,
+      "select public.sellerpilot_list_registration_activity(160)",
+    );
+    await db.exec("reset statement_timeout");
+    assert.equal(boundedActivity.length, 160);
+    assert.equal(new Set(boundedActivity.map((activity) => activity.id)).size, boundedActivity.length);
+    assert.equal(
+      boundedActivity.every((activity) => [
+        "id", "productId", "productName", "productCode", "sku", "status",
+        "startedAt", "updatedAt", "completedAt", "elapsedSeconds", "channelCount",
+        "publishedCount", "failedCount", "blockedCount", "channels", "message",
+      ].every((key) => Object.hasOwn(activity, key))),
+      true,
+    );
+    const boundedCandidateActivity = await scalar(
+      db,
+      "select public.sellerpilot_list_registration_activity(50)",
+    );
+    assert.equal(
+      boundedCandidateActivity.filter((activity) => activity.productCode.startsWith("BOUND-ACTIVE-")).length,
+      50,
+    );
+    await setClaims(db, "authenticated", NON_ADMIN_ID);
+    await assert.rejects(
+      db.query("select public.sellerpilot_list_registration_activity(160)"),
+      /administrator access required/,
     );
   } finally {
     await db.close();

@@ -35,6 +35,10 @@ function keychainToken(service) {
   }
 }
 
+function isWorkerTokenConfigured(token) {
+  return typeof token === "string" && /^spw_[A-Za-z0-9_-]{43}$/.test(token);
+}
+
 function keychainTemuEgressIps() {
   try {
     return command("/usr/bin/security", ["find-generic-password", "-s", temuEgressService, "-a", sellerpilotUrl, "-w"]);
@@ -292,7 +296,7 @@ if (process.platform !== "darwin") throw new Error("이 설치기는 macOS Launc
 if (process.argv.includes("--status")) {
   const tokenStatuses = workerTokenScopes.map((definition) => ({
     ...definition,
-    present: keychainToken(definition.service).startsWith("spw_"),
+    present: isWorkerTokenConfigured(keychainToken(definition.service)),
   }));
   let launchStatus = "미설치";
   try {
@@ -314,6 +318,17 @@ async function install() {
   const runtimeOnly = process.argv.includes("--runtime-only");
   if (runtimeOnly && (tokenSetId || rotateAll || rotatesOne)) {
     throw new Error("런타임 전용 업그레이드와 토큰 교체 옵션은 함께 사용할 수 없습니다.");
+  }
+  const missingScopes = workerTokenScopes
+    .filter((definition) => !isWorkerTokenConfigured(keychainToken(definition.service)))
+    .map((definition) => definition.label);
+  if (missingScopes.length) {
+    if (runtimeOnly) {
+      throw new Error(`런타임 업그레이드 전에 전용 작업자 토큰을 모두 설치해 주세요. 누락: ${missingScopes.join(", ")}`);
+    }
+    if (!tokenSetId) {
+      throw new Error("최초 설치는 웹에서 발급된 전체 명령(--rotate-token --token-set <UUID>)으로 실행해 주세요.");
+    }
   }
   if ((rotateAll || rotatesOne) && !tokenSetId) {
     throw new Error("토큰 교체에는 웹에서 발급한 3개 범위의 --token-set ID가 필요합니다.");
@@ -339,10 +354,10 @@ async function install() {
     if (!runtimeOnly) {
       for (const definition of workerTokenScopes) {
         const previousToken = keychainToken(definition.service);
-        const token = rotateAll || !previousToken.startsWith("spw_")
+        const token = rotateAll || !isWorkerTokenConfigured(previousToken)
           ? promptForToken(definition.label)
           : previousToken;
-        if (!token.startsWith("spw_") || token.length < 24) {
+        if (!isWorkerTokenConfigured(token)) {
           throw new Error(`${definition.label}에 spw_로 시작하는 올바른 전용 토큰이 필요합니다.`);
         }
         tokenChanges.push({ ...definition, previousToken, token });

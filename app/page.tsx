@@ -1858,12 +1858,6 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
     attention: activities.filter((item) => ["failed", "blocked"].includes(item.status)).length,
   };
 
-  useEffect(() => {
-    if (!activities.some((activity) => isRegistrationActivityRunning(activity.status))) return;
-    const interval = window.setInterval(() => void onRefresh(), 10_000);
-    return () => window.clearInterval(interval);
-  }, [activities, onRefresh]);
-
   const refresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
@@ -3141,10 +3135,18 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, [notify, operations.data]);
 
   useEffect(() => {
+    if (view !== "registration-activity") return;
     if (!registrationActivities.some((activity) => isRegistrationActivityRunning(activity.status))) return;
-    const interval = window.setInterval(() => void refreshOperations(), 10_000);
-    return () => window.clearInterval(interval);
-  }, [refreshOperations, registrationActivities]);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshOperations();
+    };
+    const interval = window.setInterval(refreshWhenVisible, 10_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [refreshOperations, registrationActivities, view]);
 
   const changeAdminCredentials = useCallback(async () => {
     if (credentialChanging) return;
@@ -3402,7 +3404,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       });
       const payload = await response.json().catch(() => ({ message: "주문 동기화 응답을 읽지 못했습니다." })) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "판매채널 주문 동기화를 시작하지 못했습니다.");
-      if (!silent) notify("연결된 판매채널의 실제 주문·고객 문의 조회를 시작했습니다. 결과는 자동 반영됩니다.");
+      if (!silent) notify(payload.message ?? "연결된 판매채널의 실제 주문·고객 문의 조회를 시작했습니다. 결과는 자동 반영됩니다.");
       window.setTimeout(() => void reloadOperations(), 3_000);
       window.setTimeout(() => void reloadOperations(), 12_000);
       window.setTimeout(() => void reloadOperations(), 30_000);
@@ -3413,21 +3415,6 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       setSyncingOrders(false);
     }
   }, [authenticatedOperationsFetch, notify, reloadOperations]);
-
-  useEffect(() => {
-    const key = "sellerpilot-operation-sync-requested-at";
-    const previous = Number(window.sessionStorage.getItem(key) ?? 0);
-    const run = () => {
-      window.sessionStorage.setItem(key, String(Date.now()));
-      void syncOrders(true);
-    };
-    const timer = Date.now() - previous >= 5 * 60_000 ? window.setTimeout(run, 0) : null;
-    const interval = window.setInterval(run, 5 * 60_000);
-    return () => {
-      if (timer !== null) window.clearTimeout(timer);
-      window.clearInterval(interval);
-    };
-  }, [syncOrders]);
 
   const navigate = useCallback((next: View) => {
     setTargetedSearch(null);

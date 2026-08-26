@@ -60,7 +60,11 @@ test("macOS installer atomically activates the pending set only after staged lau
   assert.match(installer, /workerTokenScopes\.map\(\(definition\) => \(\{/);
   assert.match(installer, /tokenStatuses\.some\(\(token\) => !token\.present\)/);
   assert.match(installer, /const runtimeOnly = process\.argv\.includes\("--runtime-only"\)/);
+  assert.match(installer, /\^spw_\[A-Za-z0-9_-\]\{43\}\$/);
   assert.match(installer, /if \(runtimeOnly && \(tokenSetId \|\| rotateAll \|\| rotatesOne\)\)/);
+  assert.match(installer, /const missingScopes = workerTokenScopes[\s\S]*?!isWorkerTokenConfigured\(keychainToken\(definition\.service\)\)/);
+  assert.match(installer, /if \(runtimeOnly\) \{[\s\S]*?런타임 업그레이드 전에 전용 작업자 토큰을 모두 설치/);
+  assert.match(installer, /if \(!tokenSetId\) \{[\s\S]*?최초 설치는 웹에서 발급된 전체 명령/);
   assert.match(installer, /if \(!runtimeOnly\) \{[\s\S]*?for \(const definition of workerTokenScopes\)/);
   assert.match(installer, /for \(const definition of workerTokenScopes\)/);
   assert.match(installer, /process\.argv\.includes\(definition\.rotateFlag\)/);

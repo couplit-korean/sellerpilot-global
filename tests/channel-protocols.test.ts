@@ -149,6 +149,14 @@ test("Coupang cancellation sync uses the documented minute range with the Korean
   });
 });
 
+test("11st periodic windows keep stable dedupe keys while advancing provider dates", () => {
+  const first = orderSyncRequests("elevenst", new Date("2026-08-20T07:00:00.000Z"));
+  const second = orderSyncRequests("elevenst", new Date("2026-08-20T07:05:00.000Z"));
+  assert.deepEqual(first.map((request) => request.periodicKey), ["orders:older-window", "orders:recent-window"]);
+  assert.deepEqual(second.map((request) => request.periodicKey), ["orders:older-window", "orders:recent-window"]);
+  assert.notDeepEqual(first.map((request) => request.arguments), second.map((request) => request.arguments));
+});
+
 test("Qoo10 unanswered inquiry sync uses the current CSCenter parameter names", () => {
   assert.deepEqual(inquirySyncArguments("qoo10", new Date("2026-08-20T07:00:00.000Z")), [{
     params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" },

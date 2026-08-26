@@ -33,7 +33,13 @@ import {
   SHOT_DHASH_ROWS,
 } from "../lib/image-shot-uniqueness.ts";
 import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
-import { workerClaimBackoffMs } from "./worker-claim-backoff.mjs";
+import {
+  canRunGatewayClaim,
+  canRunPeriodicChannelSync,
+  isWorkerTokenConfigured,
+  workerClaimBackoffMs,
+  workerFailureBackoffMs,
+} from "./worker-claim-backoff.mjs";
 import { createConcurrencyGate } from "./worker-concurrency-gate.mjs";
 import {
   AI_HEARTBEAT_INTERVAL_MS,
@@ -97,8 +103,11 @@ function loadWorkerToken(environmentName, keychainService) {
 }
 
 const aiWorkerToken = loadWorkerToken("SELLERPILOT_AI_WORKER_TOKEN", "SellerPilot AI Worker");
-const gatewayWorkerToken = loadWorkerToken("SELLERPILOT_GATEWAY_WORKER_TOKEN", "SellerPilot Gateway Worker") || aiWorkerToken;
-const schedulerWorkerToken = loadWorkerToken("SELLERPILOT_SCHEDULER_WORKER_TOKEN", "SellerPilot Scheduler Worker") || aiWorkerToken;
+const gatewayWorkerToken = loadWorkerToken("SELLERPILOT_GATEWAY_WORKER_TOKEN", "SellerPilot Gateway Worker");
+const schedulerWorkerToken = loadWorkerToken("SELLERPILOT_SCHEDULER_WORKER_TOKEN", "SellerPilot Scheduler Worker");
+const aiWorkerConfigured = isWorkerTokenConfigured(aiWorkerToken);
+const gatewayWorkerConfigured = isWorkerTokenConfigured(gatewayWorkerToken);
+const schedulerWorkerConfigured = isWorkerTokenConfigured(schedulerWorkerToken);
 function loadTemuEgressAllowlist() {
   const environmentValue = process.env.SELLERPILOT_TEMU_EGRESS_IPS?.trim();
   if (environmentValue) return parseTemuEgressAllowlist(environmentValue);
@@ -133,7 +142,7 @@ const supportReplySchemaPath = resolve("scripts/ai-support-reply-output.schema.j
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.26";
+const workerVersion = "sellerpilot-cli-worker/1.27";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -142,6 +151,7 @@ let temuEgressCache = { checkedAt: 0, currentIp: "" };
 let idlePollMs = pollMs;
 let gatewayClaimBackoffUntil = 0;
 let gatewayClaimBackoffStatus = 0;
+let gatewayQueueIdle = false;
 let aiClaimBackoffUntil = 0;
 let aiClaimBackoffStatus = 0;
 const authBackoffUntil = { ai: 0, gateway: 0, scheduler: 0 };
@@ -154,7 +164,7 @@ class JobCancelledError extends Error {
   }
 }
 
-if (!aiWorkerToken.startsWith("spw_")) {
+if (!aiWorkerConfigured) {
   throw new Error("웹에서 발급한 CLI 작업자 토큰을 환경변수 또는 macOS 키체인 'SellerPilot AI Worker'에 저장해 주세요.");
 }
 
@@ -227,6 +237,13 @@ function deferWorkerScope(scope, status = 401) {
   authBackoffUntil[scope] = Math.max(authBackoffUntil[scope], Date.now() + workerClaimBackoffMs(status));
 }
 
+function deferTransientClaims(scope, status) {
+  if (status !== 503) return;
+  const until = Date.now() + workerClaimBackoffMs(status);
+  if (scope === "gateway") gatewayClaimBackoffUntil = Math.max(gatewayClaimBackoffUntil, until);
+  if (scope === "ai") aiClaimBackoffUntil = Math.max(aiClaimBackoffUntil, until);
+}
+
 async function api(path, init = {}, timeoutMs = 30_000) {
   const scope = workerScopeForPath(path);
   const scopedToken = workerTokenForScope(scope);
@@ -282,6 +299,7 @@ async function touchJob(jobId, claimToken) {
     if (error instanceof WorkerRequestTerminalError && error.status === 401) {
       deferWorkerScope("ai");
     }
+    if (error instanceof WorkerRequestTerminalError) deferTransientClaims("ai", error.status);
     throw error;
   }
   const payload = await response.json();
@@ -356,6 +374,7 @@ async function touchGatewayJob(jobId, claimToken) {
     if (error instanceof WorkerRequestTerminalError && error.status === 401) {
       deferWorkerScope("gateway");
     }
+    if (error instanceof WorkerRequestTerminalError) deferTransientClaims("gateway", error.status);
     throw error;
   }
   const payload = await response.json();
@@ -417,6 +436,9 @@ async function persistWorkerCompletion(path, payload, label, graceMs = WORKER_CO
   } catch (error) {
     if (error instanceof WorkerRequestTerminalError && error.status === 401) {
       deferWorkerScope(workerScopeForPath(path));
+    }
+    if (error instanceof WorkerRequestTerminalError) {
+      deferTransientClaims(workerScopeForPath(path), error.status);
     }
     throw error;
   }
@@ -2374,16 +2396,27 @@ async function processGatewayJob(job) {
 
 console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-analysis-timeout=${studioAnalysisTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
 console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
+console.log(`Worker scopes · ai=${aiWorkerConfigured ? "configured" : "disabled"} · gateway=${gatewayWorkerConfigured ? "configured" : "disabled"} · scheduler=${schedulerWorkerConfigured ? "configured" : "disabled"}`);
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 8);
 const maxAiConcurrency = Math.min(8, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 8));
-const configuredGatewayConcurrency = Number(process.env.SELLERPILOT_CHANNEL_WORKER_CONCURRENCY ?? 4);
-const maxGatewayConcurrency = Math.min(6, Math.max(1, Number.isFinite(configuredGatewayConcurrency) ? Math.trunc(configuredGatewayConcurrency) : 4));
+const configuredGatewayConcurrency = Number(process.env.SELLERPILOT_CHANNEL_WORKER_CONCURRENCY ?? 2);
+const maxGatewayConcurrency = Math.min(4, Math.max(1, Number.isFinite(configuredGatewayConcurrency) ? Math.trunc(configuredGatewayConcurrency) : 2));
 const activeAiJobs = new Set();
 const activeGatewayJobs = new Set();
 do {
   try {
-    if (!once && Date.now() >= nextPeriodicSyncAt && Date.now() >= authBackoffUntil.scheduler) {
+    if (canRunPeriodicChannelSync({
+      once,
+      gatewayConfigured: gatewayWorkerConfigured,
+      schedulerConfigured: schedulerWorkerConfigured,
+      queueIdle: gatewayQueueIdle,
+      activeGatewayJobs: activeGatewayJobs.size,
+      now: Date.now(),
+      nextPeriodicSyncAt,
+      schedulerBackoffUntil: authBackoffUntil.scheduler,
+    })) {
       nextPeriodicSyncAt = Date.now() + periodicSyncMs;
+      gatewayQueueIdle = false;
       try {
         const syncResponse = await api("/api/internal/channel-sync", {
           method: "POST",
@@ -2397,9 +2430,12 @@ do {
           throw new Error(`주문·문의 자동 동기화 예약 실패 · HTTP ${syncResponse.status}`);
         }
         const syncResult = await syncResponse.json();
-        if (Number(syncResult.queued ?? 0) > 0) {
+        const scheduledCount = Number(syncResult.queued ?? 0);
+        const pendingCount = Number(syncResult.pending ?? 0);
+        gatewayQueueIdle = scheduledCount === 0 && pendingCount === 0;
+        if (scheduledCount > 0) {
           markWorkerBusy();
-          console.log(`[자동 동기화] ${syncResult.queued}개 채널 조회 작업 예약`);
+          console.log(`[자동 동기화] ${scheduledCount}개 채널 조회 작업 예약`);
         }
         // Do not wait here: the competitor route can enqueue an 11st read that
         // this same process must claim. Single-flight background execution lets
@@ -2413,45 +2449,71 @@ do {
         console.error(syncError instanceof Error ? syncError.message : "주문·문의 자동 동기화 예약 실패");
       }
     }
-    if (activeGatewayJobs.size < maxGatewayConcurrency
-        && Date.now() >= gatewayClaimBackoffUntil
-        && Date.now() >= authBackoffUntil.gateway) {
-      const gatewayResponse = await api("/api/channel-gateway/worker/claim", {
-        method: "POST",
-        body: JSON.stringify({ version: workerVersion }),
-      });
-      if (gatewayResponse.ok && gatewayResponse.status !== 204) {
-        markWorkerBusy();
-        const gatewayJob = await gatewayResponse.json();
-        if (once) {
-          await processGatewayJob(gatewayJob);
-        } else {
-          const activeGatewayJob = processGatewayJob(gatewayJob).finally(() => {
-            activeGatewayJobs.delete(activeGatewayJob);
-          });
-          activeGatewayJobs.add(activeGatewayJob);
+    if (canRunGatewayClaim({
+      configured: gatewayWorkerConfigured,
+      activeGatewayJobs: activeGatewayJobs.size,
+      maxGatewayConcurrency,
+      now: Date.now(),
+      claimBackoffUntil: gatewayClaimBackoffUntil,
+      authBackoffUntil: authBackoffUntil.gateway,
+    })) {
+      try {
+        const gatewayResponse = await api("/api/channel-gateway/worker/claim", {
+          method: "POST",
+          body: JSON.stringify({ version: workerVersion }),
+        });
+        if (gatewayResponse.ok && gatewayResponse.status !== 204) {
+          markWorkerBusy();
+          gatewayQueueIdle = false;
+          const gatewayJob = await gatewayResponse.json();
+          if (once) {
+            await processGatewayJob(gatewayJob);
+            continue;
+          } else {
+            const activeGatewayJob = processGatewayJob(gatewayJob).finally(() => {
+              activeGatewayJobs.delete(activeGatewayJob);
+            });
+            activeGatewayJobs.add(activeGatewayJob);
+          }
+          gatewayClaimBackoffStatus = 0;
         }
-        gatewayClaimBackoffStatus = 0;
-        continue;
-      }
-      if (gatewayResponse.status === 401 || gatewayResponse.status === 503) {
-        const backoffMs = workerClaimBackoffMs(gatewayResponse.status);
-        gatewayClaimBackoffUntil = Date.now() + backoffMs;
-        if (gatewayResponse.status === 401) deferWorkerScope("gateway", gatewayResponse.status);
-        if (gatewayClaimBackoffStatus !== gatewayResponse.status) {
-          console.error(gatewayResponse.status === 401
-            ? "채널 작업자 인증이 거절됐습니다. 관리자 화면에서 토큰 상태를 확인해 주세요."
-            : "운영 데이터베이스가 지연되어 채널 작업 수신을 1분 뒤 재시도합니다.");
-          gatewayClaimBackoffStatus = gatewayResponse.status;
+        if (gatewayResponse.status === 204 && activeGatewayJobs.size === 0) gatewayQueueIdle = true;
+        if (!gatewayResponse.ok) {
+          gatewayQueueIdle = false;
+          const backoffMs = workerFailureBackoffMs(gatewayResponse.status);
+          gatewayClaimBackoffUntil = Date.now() + backoffMs;
+          if (gatewayResponse.status === 401) deferWorkerScope("gateway", gatewayResponse.status);
+          if (gatewayClaimBackoffStatus !== gatewayResponse.status) {
+            console.error(gatewayResponse.status === 401
+              ? "채널 작업자 인증이 거절됐습니다. 관리자 화면에서 토큰 상태를 확인해 주세요."
+              : gatewayResponse.status === 503
+                ? "운영 데이터베이스가 지연되어 채널 작업 수신을 1분 뒤 재시도합니다."
+                : `채널 작업 요청 실패 · HTTP ${gatewayResponse.status} · 1분 뒤 재시도합니다.`);
+            gatewayClaimBackoffStatus = gatewayResponse.status;
+          }
+          if (once && gatewayResponse.status !== 404) {
+            throw new Error(`채널 작업 요청 실패 · HTTP ${gatewayResponse.status}`);
+          }
+        } else if (gatewayResponse.status === 204) {
+          gatewayClaimBackoffStatus = 0;
         }
-      } else {
-        gatewayClaimBackoffStatus = 0;
+      } catch (gatewayClaimError) {
+        gatewayQueueIdle = false;
+        gatewayClaimBackoffUntil = Math.max(
+          gatewayClaimBackoffUntil,
+          Date.now() + workerFailureBackoffMs(0),
+        );
+        if (once) throw gatewayClaimError;
+        if (gatewayClaimBackoffStatus !== -1) {
+          console.error(gatewayClaimError instanceof Error
+            ? `채널 작업 수신 오류 · ${gatewayClaimError.message} · 1분 뒤 재시도합니다.`
+            : "채널 작업 수신 오류 · 1분 뒤 재시도합니다.");
+          gatewayClaimBackoffStatus = -1;
+        }
       }
-      if (![204, 404].includes(gatewayResponse.status)) throw new Error(`채널 작업 요청 실패 · HTTP ${gatewayResponse.status}`);
     }
-    if (activeGatewayJobs.size >= maxGatewayConcurrency) {
-      if (once) await Promise.allSettled([...activeGatewayJobs]);
-      else await Promise.race([...activeGatewayJobs]);
+    if (once && activeGatewayJobs.size >= maxGatewayConcurrency) {
+      await Promise.allSettled([...activeGatewayJobs]);
       continue;
     }
     if (Date.now() < authBackoffUntil.ai) {

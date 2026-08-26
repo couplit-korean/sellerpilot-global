@@ -103,14 +103,14 @@ export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()) {
     const olderStart = new Date(now.getTime() - 14 * 86_400_000);
     return [
       {
-        periodicKey: `orders:${elevenstDateTime(olderStart)}:${elevenstDateTime(recentStart)}`,
+        periodicKey: "orders:older-window",
         arguments: {
           startTime: elevenstDateTime(olderStart),
           endTime: elevenstDateTime(recentStart),
         },
       },
       {
-        periodicKey: `orders:${elevenstDateTime(recentStart)}:${elevenstDateTime(now)}`,
+        periodicKey: "orders:recent-window",
         arguments: base,
       },
     ];

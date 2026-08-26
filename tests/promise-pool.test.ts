@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { settleWithConcurrency } from "../lib/promise-pool";
+import { createPromiseGate, settleWithConcurrency } from "../lib/promise-pool";
 
 test("large mobile photo batches preserve order and never exceed bounded concurrency", async () => {
   let active = 0;
@@ -24,4 +24,21 @@ test("large mobile photo batches preserve order and never exceed bounded concurr
 
 test("invalid concurrency is rejected before any work starts", async () => {
   await assert.rejects(settleWithConcurrency([1], 0, async (value) => value), /positive integer/);
+  assert.throws(() => createPromiseGate(0), /positive integer/);
+});
+
+test("shared promise gate bounds tasks submitted by independent callers", async () => {
+  const gate = createPromiseGate(4);
+  let active = 0;
+  let peak = 0;
+  const results = await Promise.all(Array.from({ length: 22 }, (_, index) => gate(async () => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise((resolve) => setTimeout(resolve, index % 3));
+    active -= 1;
+    return index;
+  })));
+
+  assert.equal(peak, 4);
+  assert.deepEqual(results, Array.from({ length: 22 }, (_, index) => index));
 });

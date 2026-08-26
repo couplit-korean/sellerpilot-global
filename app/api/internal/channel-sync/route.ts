@@ -13,6 +13,10 @@ import {
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+// At most 22 idempotent enqueue RPCs are produced. Four workers keep the
+// 8-second per-RPC worst case within this route's 60-second execution budget
+// without recreating the previous eight-request database spike.
+const PERIODIC_SYNC_ENQUEUE_CONCURRENCY = 4;
 
 type QueueResult = {
   channel?: unknown;
@@ -24,7 +28,7 @@ type QueueResult = {
 type PeriodicSyncResult = {
   channel: ActiveChannelKey;
   operation: "orders.list" | "inquiries.list";
-  status: "queued" | "already_pending" | "not_connected" | "reconnect_required" | "failed";
+  status: "queued" | "already_pending" | "not_connected" | "reconnect_required" | "reconciliation_required" | "failed";
   infrastructureFailure?: true;
 };
 
@@ -69,7 +73,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
     ...periodicInquiryRequests(channel, now).map((payload) => ({ channel, operation: "inquiries.list" as const, payload })),
   ]);
 
-  const results = await mapWithConcurrency(queueRequests, 8, async ({ channel, operation, payload }): Promise<PeriodicSyncResult> => {
+  const results = await mapWithConcurrency(queueRequests, PERIODIC_SYNC_ENQUEUE_CONCURRENCY, async ({ channel, operation, payload }): Promise<PeriodicSyncResult> => {
     try {
       const { data, error } = await serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
         p_channel: channel,
@@ -80,7 +84,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
       if (error) return { channel, operation, status: "failed", infrastructureFailure: true };
       const result = data && typeof data === "object" && !Array.isArray(data) ? data as QueueResult : {};
       const status = result.status;
-      if (status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required") {
+      if (status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required" && status !== "reconciliation_required") {
         return { channel, operation, status: "failed", infrastructureFailure: true };
       }
       return { channel, operation, status };
@@ -94,6 +98,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   const queued = results.filter((result) => result.status === "queued").length;
   const pending = results.filter((result) => result.status === "already_pending").length;
   const reconnectRequired = results.filter((result) => result.status === "reconnect_required").length;
+  const reconciliationRequired = results.filter((result) => result.status === "reconciliation_required").length;
   const failed = results.filter((result) => result.status === "failed").length;
   const infrastructureFailures = results.filter((result) => result.infrastructureFailure).length;
   const databaseWideFailure = results.length > 0 && infrastructureFailures === results.length;
@@ -105,17 +110,22 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   }
 
   return NextResponse.json({
-    ok: failed === 0 && reconnectRequired === 0,
+    ok: failed === 0 && reconnectRequired === 0 && reconciliationRequired === 0,
     scheduledAt: now.toISOString(),
     queued,
     pending,
     reconnectRequired,
+    reconciliationRequired,
     failed,
     infrastructureFailures,
     results,
     push: { configured: push.configured, sent: push.sent, failed: push.failed },
   }, {
-    status: databaseWideFailure ? 503 : infrastructureFailures > 0 ? 207 : 200,
+    status: databaseWideFailure
+      ? 503
+      : infrastructureFailures > 0 || reconnectRequired > 0 || reconciliationRequired > 0
+        ? 207
+        : 200,
     headers: { "cache-control": "no-store, max-age=0" },
   });
 }
