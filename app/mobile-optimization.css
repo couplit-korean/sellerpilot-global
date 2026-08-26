@@ -888,17 +888,16 @@
   }
 
   .publishing-steps {
-    display: flex;
+    display: grid;
     width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
-    overflow-x: auto;
-    padding-bottom: 4px;
-    overscroll-behavior-inline: contain;
+    overflow-x: visible;
+    padding-bottom: 0;
   }
 
   .publishing-steps li {
-    min-width: 108px;
-    flex: 1 0 108px;
+    min-width: 0;
   }
 
   .upload-panel,
