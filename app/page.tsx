@@ -93,6 +93,7 @@ import { useOperationsSnapshot, type OperationsSnapshot, type OperationTicket, t
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
+import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
 import { emptyProductIntake, productConditions, productCurrencies, productEditSchema, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
 import { settleWithConcurrency } from "../lib/promise-pool";
@@ -1482,17 +1483,21 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       count: provider.count,
       marketplaces: provider.marketplaces,
     })),
-    candidates: researchCompetitors.filter((item) => item.verifiedSameProduct).slice(0, 24).map((item) => ({
-      provider: item.provider,
-      marketplace: item.marketplace,
-      externalId: item.externalId,
-      title: item.title,
-      url: item.url,
-      mallName: item.mallName,
-      price: item.price,
-      currency: item.currency,
-      verifiedSameProduct: true,
-    })),
+    candidates: researchCompetitors.filter((item) => item.verifiedSameProduct).slice(0, 24).flatMap((item) => {
+      const url = canonicalizeStudioCompetitorUrl(item);
+      if (!url) return [];
+      return [{
+        provider: item.provider,
+        marketplace: item.marketplace,
+        externalId: item.externalId,
+        title: item.title,
+        url,
+        mallName: item.mallName,
+        price: item.price,
+        currency: item.currency,
+        verifiedSameProduct: true as const,
+      }];
+    }),
   }), [competitorProviders, competitorResearchRetryInput, intake.productName, intake.researchInput, researchCompetitors]);
 
   const releasePhotoUrl = useCallback((url: string) => {

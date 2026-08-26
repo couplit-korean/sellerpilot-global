@@ -11,6 +11,7 @@ import {
   workerCompletionSchema,
 } from "../lib/ai-cli-contract";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
 
 const CLAIM_TOKEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -241,6 +242,49 @@ test("AI studio request accepts only bounded verified same-product price evidenc
     ...base,
     competitorContext: { ...competitorContext, query: "<script>not evidence</script>" },
   }).success, false);
+});
+
+test("AI studio request canonicalizes HTTP 11st evidence before the second stage", () => {
+  const url = canonicalizeStudioCompetitorUrl({
+    provider: "elevenst_product_search",
+    marketplace: "elevenst",
+    url: "http://ignored:secret@www.11st.co.kr/products/654321?prdNo=654321#offer",
+  });
+  assert.equal(url, "https://www.11st.co.kr/products/654321?prdNo=654321");
+
+  const parsed = studioJobRequestSchema.safeParse({
+    jobId: "22222222-2222-4222-8222-222222222222",
+    manualFields: validRequiredIntake(),
+    imagePaths: ["user/job/input/001.jpg"],
+    imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1200, height: 1200, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],
+    competitorContext: {
+      query: "롯데샌드 파인애플 315g",
+      providerStatuses: [{ provider: "elevenst_product_search", status: "searched", count: 1, marketplaces: ["elevenst"] }],
+      candidates: [{
+        provider: "elevenst_product_search",
+        marketplace: "elevenst",
+        externalId: "654321",
+        title: "롯데샌드 파인애플 315g",
+        url,
+        mallName: "11번가 판매자",
+        price: 3_900,
+        currency: "KRW",
+        verifiedSameProduct: true,
+      }],
+    },
+  });
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+
+  assert.equal(canonicalizeStudioCompetitorUrl({
+    provider: "elevenst_product_search",
+    marketplace: "elevenst",
+    url: "http://www.11st.co.kr.evil.example/products/654321",
+  }), "");
+  assert.equal(canonicalizeStudioCompetitorUrl({
+    provider: "ebay_browse",
+    marketplace: "ebay",
+    url: "http://www.ebay.com/itm/654321",
+  }), "");
 });
 
 test("AI studio request accepts free-text research without a source URL", () => {

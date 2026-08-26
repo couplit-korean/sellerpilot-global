@@ -23,6 +23,7 @@ import {
   upsertActiveStudioJob,
   type ActiveStudioJob,
 } from "./_registration/studio-job-session";
+import { normalizeStudioPhotoReadError } from "./_publishing/studio-photo-read-error";
 
 const ProductDetailRender = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailRender), { ssr: false, loading: () => <div className="studio-loading"><LoaderCircle className="spin" size={24} />상세페이지 불러오는 중</div> });
 const ProductDetailEditor = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailEditor), { ssr: false });
@@ -77,6 +78,7 @@ const activeStudioJobStorageKey = "sellerpilot:product-studio:active-job:v1";
 const studioJobMaximumAgeMs = 2 * 60 * 60_000;
 const studioUploadTimeoutMs = 45_000;
 const studioJobAdmissionGraceMs = 30_000;
+const studioPreUploadOptimizationLimit = 9;
 
 class StudioJobTerminalError extends Error {}
 
@@ -223,8 +225,7 @@ async function optimizePhoto(photo: StudioPhoto): Promise<OptimizedPhoto> {
       },
     };
   } catch (error) {
-    if (error instanceof Error) throw error;
-    throw new Error(`${photo.name} 이미지를 JPEG로 변환하지 못했습니다.`);
+    throw normalizeStudioPhotoReadError(photo.name, error);
   }
 }
 
@@ -233,9 +234,19 @@ async function optimizeAndUploadInBatches(photos: StudioPhoto[], userId: string,
   const uploadedPaths: string[] = [];
   const imageSpecs: NormalizedProductImageSpec[] = [];
   try {
+    let preoptimizedPhotos: OptimizedPhoto[] | null = null;
+    if (photos.length <= studioPreUploadOptimizationLimit) {
+      preoptimizedPhotos = [];
+      for (let start = 0; start < photos.length; start += 4) {
+        throwIfStudioJobAborted(signal);
+        preoptimizedPhotos.push(...await Promise.all(photos.slice(start, start + 4).map((photo) => optimizePhoto(photo))));
+        throwIfStudioJobAborted(signal);
+      }
+    }
     for (let start = 0; start < photos.length; start += 4) {
       throwIfStudioJobAborted(signal);
-      const batch = await Promise.all(photos.slice(start, start + 4).map((photo) => optimizePhoto(photo)));
+      const batch = preoptimizedPhotos?.slice(start, start + 4)
+        ?? await Promise.all(photos.slice(start, start + 4).map((photo) => optimizePhoto(photo)));
       throwIfStudioJobAborted(signal);
       const results = await Promise.allSettled(batch.map(async (photo, offset) => {
         const index = start + offset;
