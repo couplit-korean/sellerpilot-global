@@ -1,16 +1,30 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
+import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from "../../../../../../lib/admin-api";
 import { productRevisionJobRequestSchema } from "../../../../../../lib/ai-cli-contract";
-import { verifyNormalizedStudioImages } from "../../../../../../lib/studio-image-validation";
+import { withPromiseTimeout } from "../../../../../../lib/promise-timeout";
+import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } from "../../../../../../lib/studio-image-paths";
+import { createSignedStudioImageDownloader, verifyPreservedStudioImages } from "../../../../../../lib/studio-image-validation";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const productIdSchema = z.string().uuid();
 const cleanupRequestSchema = z.object({
   jobId: z.string().uuid(),
   imagePaths: z.array(z.string().min(1).max(400)).min(1).max(100),
 }).strict();
+
+async function studioRevisionValidationDownloader(paths: string[], admin: AdminApiContext) {
+  return createSignedStudioImageDownloader({
+    paths,
+    sign: () => withPromiseTimeout(
+      admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrls(paths, 10 * 60),
+      30_000,
+      "상품 수정 이미지 검증 URL 생성 제한시간을 초과했습니다.",
+    ),
+  });
+}
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const admin = await authenticateAdminRequest(request);
@@ -46,11 +60,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }, { status: 400 });
   }
 
-  const uploadedPaths = parsed.data.imagePaths;
-  const expectedPrefix = `${admin.user.id}/${parsed.data.jobId}/input/`;
-  if (uploadedPaths.some((path) => !path.startsWith(expectedPrefix) || path.includes(".."))) {
+  const preservedPaths = validatePreservedStudioUploadPaths(
+    admin.user.id,
+    parsed.data.jobId,
+    parsed.data.imagePaths,
+    parsed.data.imageSpecs,
+  );
+  if (!preservedPaths) {
     return NextResponse.json({ message: "현재 사용자의 이번 수정 작업 이미지 경로만 등록할 수 있습니다." }, { status: 403 });
   }
+  const uploadedPaths = preservedPaths.imagePaths;
+  const allUploadedPaths = preservedPaths.allPaths;
 
   // Cleanup must be fenced with the exact job id. A duplicate POST can arrive
   // after the first request committed but before its response reached the
@@ -65,18 +85,24 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       },
     );
     if (error || !safeToRemove) return false;
-    await admin.serviceClient.storage.from("sellerpilot-ai").remove(uploadedPaths);
+    await admin.serviceClient.storage.from("sellerpilot-ai").remove(allUploadedPaths);
     return true;
   };
 
-  const verified = await verifyNormalizedStudioImages(uploadedPaths, async (path) => {
-    const { data, error } = await admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrl(path, 60);
-    if (error || !data?.signedUrl) return null;
-    return fetch(data.signedUrl, { cache: "no-store", signal: AbortSignal.timeout(15_000) }).catch(() => null);
-  });
-  if (!verified) {
+  const download = await studioRevisionValidationDownloader(allUploadedPaths, admin);
+  const verified = download ? await verifyPreservedStudioImages({
+    normalizedPaths: uploadedPaths,
+    originalPaths: preservedPaths.originalPaths,
+    specs: parsed.data.imageSpecs,
+    download,
+  }) : { normalized: false, originals: false };
+  if (!verified.normalized) {
     await abandonAndCleanupIfUncreated();
     return NextResponse.json({ message: "수정용 이미지는 1200×1200 JPG·3MB 이하 규격이어야 합니다." }, { status: 400 });
+  }
+  if (!verified.originals) {
+    await abandonAndCleanupIfUncreated();
+    return NextResponse.json({ message: "수정용 원본 이미지의 형식·크기·픽셀 정보가 요청과 일치하지 않습니다." }, { status: 400 });
   }
 
   try {
@@ -173,7 +199,8 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       message: "같은 작업 ID가 서버에 존재합니다. 업로드를 유지하고 상태를 확인해 주세요.",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
-  const { error: cleanupError } = await admin.serviceClient.storage.from("sellerpilot-ai").remove(payload.data.imagePaths);
+  const cleanupPaths = expandStudioCleanupStoragePaths(payload.data.imagePaths);
+  const { error: cleanupError } = await admin.serviceClient.storage.from("sellerpilot-ai").remove(cleanupPaths);
   if (cleanupError) {
     return NextResponse.json({
       jobId: payload.data.jobId,

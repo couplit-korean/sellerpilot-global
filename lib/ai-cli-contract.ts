@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { aiGeneratedAssetIds } from "./ai-generated-assets";
-import { normalizedProductImageSpecSchema, productEditSchema, productIntakeSchema } from "./product-intake";
+import { productEditSchema, productIntakeSchema, sourcePreservingProductImageSpecSchema } from "./product-intake";
+import { maximumStudioJobSourceBytes } from "./studio-source-photo-policy";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 
@@ -328,7 +329,7 @@ export const studioJobRequestSchema = z.object({
   jobId: z.string().uuid(),
   manualFields: productIntakeSchema,
   imagePaths: z.array(z.string().min(1).max(400)).min(1).max(100),
-  imageSpecs: z.array(normalizedProductImageSpecSchema).min(1).max(100),
+  imageSpecs: z.array(sourcePreservingProductImageSpecSchema).min(1).max(100),
   competitorContext: studioCompetitorContextSchema.optional(),
 }).superRefine((value, context) => {
   if (value.imagePaths.length !== value.imageSpecs.length) {
@@ -337,13 +338,16 @@ export const studioJobRequestSchema = z.object({
   if (value.imageSpecs[0]?.role !== "main") {
     context.addIssue({ code: "custom", path: ["imageSpecs", 0, "role"], message: "첫 번째 이미지는 대표사진이어야 합니다." });
   }
+  if (value.imageSpecs.reduce((total, spec) => total + spec.originalBytes, 0) > maximumStudioJobSourceBytes) {
+    context.addIssue({ code: "custom", path: ["imageSpecs"], message: "한 상품의 원본 사진 합계는 200MB 이하여야 합니다." });
+  }
 });
 
 export const productRevisionJobRequestSchema = z.object({
   jobId: z.string().uuid(),
   manualFields: productEditSchema,
   imagePaths: z.array(z.string().min(1).max(400)).min(1).max(100),
-  imageSpecs: z.array(normalizedProductImageSpecSchema).min(1).max(100),
+  imageSpecs: z.array(sourcePreservingProductImageSpecSchema).min(1).max(100),
   competitorContext: studioCompetitorContextSchema.optional(),
 }).strict().superRefine((value, context) => {
   if (value.imagePaths.length !== value.imageSpecs.length) {
@@ -351,6 +355,9 @@ export const productRevisionJobRequestSchema = z.object({
   }
   if (value.imageSpecs[0]?.role !== "main") {
     context.addIssue({ code: "custom", path: ["imageSpecs", 0, "role"], message: "첫 번째 이미지는 대표사진이어야 합니다." });
+  }
+  if (value.imageSpecs.reduce((total, spec) => total + spec.originalBytes, 0) > maximumStudioJobSourceBytes) {
+    context.addIssue({ code: "custom", path: ["imageSpecs"], message: "한 상품의 원본 사진 합계는 200MB 이하여야 합니다." });
   }
 });
 

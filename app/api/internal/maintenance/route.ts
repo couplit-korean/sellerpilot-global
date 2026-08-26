@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { expandStudioCleanupStoragePaths } from "../../../../lib/studio-image-paths";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
@@ -50,7 +51,8 @@ async function cleanupPrunedAiStorage(serviceClient: SupabaseClient) {
   const claim = aiStorageCleanupClaim(data);
   if (!claim) return { claimed: 0, removed: 0, requeued: 0, failed: false };
 
-  const { error: removeError } = await serviceClient.storage.from(claim.bucket).remove(claim.paths);
+  const storagePaths = expandStudioCleanupStoragePaths(claim.paths);
+  const { error: removeError } = await serviceClient.storage.from(claim.bucket).remove(storagePaths);
   const removedPaths = removeError ? [] : claim.paths;
   const { data: completion, error: completionError } = await serviceClient.rpc(
     "sellerpilot_service_complete_ai_storage_cleanup",

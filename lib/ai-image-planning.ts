@@ -1,15 +1,36 @@
 import { aiGeneratedAssetSpecs, type AiGeneratedAssetId } from "./ai-generated-assets";
+import { resolveIdentityBackgroundContract } from "./ai-background-audit";
 import { channelStyleProfiles, matchStyleCategory } from "./marketplace-style-learning";
 import { buildProductSettingShotPlan, formatProductSettingShot, settingShotAssetIds } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.25-r8";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.26-r9-source-identity";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
 export type SourceImageSpec = {
   role?: string | null;
 };
+
+const sourceIdentityCategoryIds = new Set([
+  "beauty-skincare",
+  "food-staples",
+  "food-supplement",
+  "toys-games",
+]);
+
+const statutoryPackageSignals = /식품|시리얼|과자|커피|차|음료|참치|통조림|건강기능|영양제|보충제|화장품|스킨케어|크림|로션|샴푸|완구|어린이|의약외품|haccp|건기식|인증|법정표시|\b(?:g|kg|ml|kcal)\b/i;
+
+export function requiresSourceIdentityProtection(result: ProductStudioResult) {
+  const productText = [
+    result.product.category,
+    result.product.name,
+    ...result.product.features,
+    ...result.product.cautions,
+  ].join(" ");
+  return sourceIdentityCategoryIds.has(matchStyleCategory(productText).id)
+    || statutoryPackageSignals.test(productText);
+}
 
 function normalizedRole(value: unknown) {
   const role = typeof value === "string" ? value.trim().toLocaleLowerCase() : "";
@@ -43,8 +64,8 @@ function assetShot(categoryShots: string[], assetId: AiGeneratedAssetId) {
   const fixedRoleShots: Partial<Record<AiGeneratedAssetId, string>> = {
     hero: "대표 정면 3/4 브랜드 히어로 — 오른쪽 1/3 배치와 왼쪽 네거티브 공간",
     square: "순백 배경의 완전 정면 상품 식별컷 — 정중앙 대칭과 균일 여백",
-    "detail-feature": "실제 참조에서 확인되는 재질·질감·구조 한 가지의 초근접 증거컷 — 전체 패키지 금지",
-    "detail-package": "실제 상단 봉합·뚜껑과 측면 또는 후면을 함께 보여주는 고각 패키지 구조 검사컷 — 정면 지배 금지",
+    "detail-feature": "실제 원본 정면에서 확인되는 라벨·재질·구조의 원본 픽셀 근접 증거컷 — 추측 금지",
+    "detail-package": "실제로 제공된 측면·후면·표시사항 패널의 원본 픽셀 증거컷 — 숨은 면 추측 금지",
   };
   if (fixedRoleShots[assetId]) return fixedRoleShots[assetId];
   const semanticPatterns: Partial<Record<AiGeneratedAssetId, RegExp>> = {
@@ -69,11 +90,23 @@ function seriesExclusion(assetId: AiGeneratedAssetId) {
   if (assetId === "detail-overview") return "Do not turn this into a macro crop or overhead package flat lay. Show the whole product in its assigned storage or preparation environment, distinct from the active-use scene.";
   if (assetId === "detail-feature") return "Do not repeat the full-product front hero, centered square, overview or package inspection. One verified texture or construction feature must fill the frame and the complete silhouette must remain outside the crop.";
   if (assetId === "detail-use") return "Do not use a seamless catalog backdrop, macro-only crop, or package flat lay; the environment must explain real use.";
-  if (assetId === "detail-package") return "Do not create a lifestyle scene or hero pedestal, never duplicate one physical item to imply a set, and never show the package as another straight-on front catalog shot. The top closure plus a verified side or rear plane must be visibly dominant so this cannot be confused with hero or square.";
+  if (assetId === "detail-package") return "Do not create a lifestyle scene, hero pedestal, synthetic rotation or hidden package plane. Use only a supplied side, rear, label or barcode source view and never claim a closure or structure that is not visible in that exact source.";
   if (assetId === "square") return "Do not add lifestyle props, gradients, banners, badges, promotional text, a pedestal, three-quarter rotation or hero-style negative space. This is the only dead-centered straight-on white identification slot.";
   if (assetId === "portrait") return "Do not reuse the centered square catalog layout or a colored studio wall; the vertical composition must be a real assigned environment.";
   if (assetId === "wide") return "Do not crop a square composition into a banner or use an abstract studio set; compose the assigned real environment natively for the horizontal frame.";
   return "Do not reuse the exact framing intended for the square catalog thumbnail or any detail-page slot.";
+}
+
+export function resolveProductSettingShot(result: ProductStudioResult, assetId: AiGeneratedAssetId) {
+  if (!settingShotAssetIds.includes(assetId as (typeof settingShotAssetIds)[number])) return null;
+  const categoryStyle = matchStyleCategory([
+    result.product.category,
+    result.product.name,
+    ...result.product.features,
+  ].join(" "));
+  const productText = [result.product.category, result.product.name, ...result.product.features].join(" ");
+  const settingPlan = buildProductSettingShotPlan(categoryStyle.id, productText);
+  return settingPlan[assetId as keyof typeof settingPlan];
 }
 
 export function buildAssetImagePrompt(
@@ -82,6 +115,7 @@ export function buildAssetImagePrompt(
   preset: AssetSpec,
   inputRoles: string[] = [],
   noveltyGuidance = "",
+  generationMode: "product" | "identity-background" = "product",
 ) {
   const categoryStyle = matchStyleCategory([
     result.product.category,
@@ -100,15 +134,41 @@ export function buildAssetImagePrompt(
   }))].join(" | ").slice(0, 2_400);
   const referenceRoles = inputRoles.length ? inputRoles.join(", ") : "main";
   const requiredShot = assetShot(categoryStyle.shotList, preset.id);
-  const productText = [result.product.category, result.product.name, ...result.product.features].join(" ");
-  const settingPlan = buildProductSettingShotPlan(categoryStyle.id, productText);
-  const settingShot = settingShotAssetIds.includes(preset.id as (typeof settingShotAssetIds)[number])
-    ? settingPlan[preset.id as keyof typeof settingPlan]
-    : null;
+  const settingShot = resolveProductSettingShot(result, preset.id);
   const seriesRoleManifest = aiGeneratedAssetSpecs
     .map((asset) => `${asset.id}=${asset.shotClass} | purpose=${asset.purpose} | placement=${asset.subjectPlacement}`)
     .join(" || ");
   const mustDifferFrom = preset.mustDifferFrom.join(", ");
+
+  if (generationMode === "identity-background") {
+    const placement = preset.identityPolicy.placement;
+    const safeContract = settingShot ? resolveIdentityBackgroundContract(settingShot, preset.id) : null;
+    const safeEnvironmentAssignment = settingShot
+      ? [
+          `장소=${safeContract?.location.description ?? settingShot.location}`,
+          `가시적 시간대 조명=${safeContract?.moment.description ?? settingShot.moment}`,
+          `표면=${safeContract?.surface.description ?? settingShot.surface}`,
+          `카메라=${safeContract?.camera.description ?? settingShot.camera}`,
+          `장면 분리키=${safeContract?.location.key ?? settingShot.separation.location}/${safeContract?.moment.key ?? settingShot.separation.moment}/${safeContract?.surface.key ?? settingShot.separation.surface}/${safeContract?.camera.key ?? settingShot.separation.camera}`,
+        ].join(" · ")
+      : "factual neutral commercial architecture appropriate to the broad category";
+    return [
+      "설치된 codex-image 스킬의 규칙을 사용하고 반드시 내장 image_gen 도구로 배경 이미지만 제작하세요.",
+      `SellerPilot asset prompt version: ${AI_ASSET_PROMPT_VERSION}`,
+      "Use case: background-plate-only",
+      `Series slot: ${preset.id}; target aspect ratio ${preset.ratio}.`,
+      `Background environment: ${preset.scene}`,
+      `Mandatory empty-environment assignment: ${safeEnvironmentAssignment}. Make it readable with fixed architecture, built-in surfaces, natural light direction and spatial depth. Slot-specific non-merchandise environmental cue (${safeContract?.prop.key ?? "fixed-architectural-detail"}): ${safeContract?.prop.description ?? "one fixed architectural detail"}. Deliberately omit every retail product, small saleable prop, serving item, loose ingredient, use-result object and container from the product setting plan; those cannot be trusted before source-pixel compositing.`,
+      `Hard series visual split: visibly auditable time-light ${safeContract?.moment.key ?? "distinct-visible-time-light"} (${safeContract?.moment.description ?? "a clearly distinct time-of-day lighting pattern"}); palette-family ${safeContract?.palette.key ?? "distinct-category-palette"} (${safeContract?.palette.description ?? "a clearly distinct palette"}); spatial-depth ${safeContract?.spatialDepth.key ?? "distinct-spatial-depth"} (${safeContract?.spatialDepth.description ?? "a clearly distinct depth layout"}). A beige/cream generic room or shelf repeated across slots fails even if the fixture geometry changes.`,
+      `Reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height} as a visually quiet product-placement zone with believable contact surface and lighting.`,
+      "HARD IDENTITY FIREWALL: generate only an empty background plate. No source product, staged saleable good, package, pouch, carton, bottle, can, jar, tube, label, logo, barcode, certification mark, printed text, small movable consumer prop, loose unit, ingredient, serving, accessory or hand may appear anywhere. The declared fixed non-merchandise cue and other necessary fixed architectural context are allowed, but every contextual cue must be visually distinct from the other slots.",
+      "The real product will be composited afterward from a verified transparent source-pixel cutout. Never anticipate, reconstruct, trace, imitate or redraw any part of it.",
+      `Composition must remain materially different from: ${mustDifferFrom}. ${seriesExclusion(preset.id)}`,
+      noveltyGuidance,
+      "Mandatory self-QA: inspect the entire plate. If any object could be mistaken for merchandise, packaging, product contents, a labeled container or a certification mark, regenerate before saving.",
+      `생성 결과 PNG를 정확히 ${outputPath} 경로에 저장하세요. Python·SVG·Canvas로 대체 이미지를 만들지 마세요.`,
+    ].filter(Boolean).join("\n");
+  }
 
   return [
     "설치된 codex-image 스킬의 규칙을 사용하고 반드시 내장 image_gen 도구로 이미지를 제작하세요.",

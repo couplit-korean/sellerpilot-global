@@ -93,9 +93,12 @@ test("macOS installer atomically activates the pending set only after staged lau
   assert.match(installer, /abortPendingTokenSet\(proof\)/);
   assert.match(installer, /TokenSetStateUnknownError/);
   assert.match(installer, /"add-generic-password", "-U"/);
+  assert.match(installer, /"-w",\s*\], \{\s*input: `\$\{token\}\\n\$\{token\}\\n`,\s*stdio: \["pipe", "pipe", "pipe"\]/);
+  assert.doesNotMatch(installer, /"-w",\s*token\b/);
   assert.match(installer, /with hidden answer/);
   assert.match(installer, /mkdtemp\(join\(runtimeParent, "\.worker-runtime-staging-"\)\)/);
   assert.match(installer, /validateStagedRuntime\(stagedRuntimeRoot\)/);
+  assert.match(installer, /"\/usr\/bin\/swiftc"[\s\S]*"-typecheck"[\s\S]*"source-product-cutout\.swift"/);
   assert.match(installer, /rename\(stagedRuntimeRoot, runtimeRoot\)/);
   assert.match(installer, /restoreRuntime\(activation\)/);
   assert.match(installer, /const rollbackErrors = \[\]/);
@@ -111,10 +114,32 @@ test("macOS installer atomically activates the pending set only after staged lau
       < installer.indexOf("const outcome = await activateOrAbortPendingTokenSet(proof)"),
     "pending tokens must activate only after the staged LaunchAgent is running",
   );
+  const activationConfirmed = installer.indexOf("tokenSetActivated = true");
+  const postActivationKickstart = installer.indexOf(
+    'command("/bin/launchctl", ["kickstart", "-k", `${guiDomain}/${label}`])',
+    activationConfirmed,
+  );
+  const postActivationRunningCheck = installer.indexOf("await assertLaunchAgentRunning()", postActivationKickstart);
+  assert.ok(
+    activationConfirmed >= 0
+      && postActivationKickstart > activationConfirmed
+      && postActivationRunningCheck > postActivationKickstart,
+    "an activated token set must restart and recheck the worker to clear pending-token auth backoff",
+  );
   assert.ok(
     installer.indexOf("const abortStatus = await abortPendingTokenSet(proof)")
       < installer.indexOf("try { await restoreRuntime(activation);"),
     "a failed installation must abort its pending set before restoring old local state",
+  );
+  const activatedFailureBranch = installer.match(/if \(tokenSetActivated\) \{[\s\S]*?\n {4}\}\n\n {4}try \{ command\("\/bin\/launchctl", \["bootout"/)?.[0] ?? "";
+  assert.match(activatedFailureBranch, /throw new AggregateError/);
+  assert.match(activatedFailureBranch, /새 런타임과 Keychain은 보존/);
+  assert.doesNotMatch(activatedFailureBranch, /\breturn\b/);
+  assert.doesNotMatch(activatedFailureBranch, /restoreRuntime|restorePlist|storeKeychainToken|deleteKeychainToken/);
+  assert.ok(
+    installer.indexOf("await install();")
+      < installer.indexOf('console.log("SellerPilot AI 작업자를 설치하고 시작했습니다.")'),
+    "a rejected post-activation restart must exit before the installer prints success",
   );
   const stageBody = installer.match(/async function stageRuntime\(\)[\s\S]*?\n}\n\nasync function activateStagedRuntime/)?.[0] ?? "";
   assert.doesNotMatch(stageBody, /rm\(runtimeRoot/);

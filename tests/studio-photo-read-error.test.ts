@@ -25,7 +25,7 @@ test("non-stale abort and timeout errors retain their existing identity", () => 
 test("small studio jobs optimize every photo before the first storage upload", async () => {
   const studio = await readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8");
   const preoptimizationIndex = studio.indexOf("if (photos.length <= studioPreUploadOptimizationLimit)");
-  const uploadIndex = studio.indexOf('supabase.storage.from("sellerpilot-ai").upload');
+  const uploadIndex = studio.indexOf("const uploaded = await uploadStudioPhotoPairs({");
 
   assert.ok(preoptimizationIndex > 0);
   assert.ok(uploadIndex > preoptimizationIndex);

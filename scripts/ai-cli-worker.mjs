@@ -1,14 +1,44 @@
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { access, lstat, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
-import { buildAssetImagePrompt, selectAssetReferenceIndexes } from "../lib/ai-image-planning.ts";
+import {
+  assertPublicReferenceUrl as assertPublicUrl,
+  fetchPublicReferenceDocument,
+} from "../lib/public-reference-fetch.ts";
+import {
+  assertSafeBackgroundSemanticAudit,
+  backgroundSemanticAuditSchema,
+  buildBackgroundSemanticAuditPrompt,
+  findRepeatedBackgroundProp,
+  resolveIdentityBackgroundContract,
+} from "../lib/ai-background-audit.ts";
+import {
+  maximumStudioJobSourceBytes,
+  maximumStudioSourceImageBytes,
+  maximumStudioSourceImagePixels,
+} from "../lib/studio-source-photo-policy.ts";
+import { assertStudioSourceFilesUnmodified, studioSourceDimensionsMatch } from "../lib/studio-source-integrity.ts";
+import {
+  buildAssetImagePrompt,
+  requiresSourceIdentityProtection,
+  resolveProductSettingShot,
+  selectAssetReferenceIndexes,
+} from "../lib/ai-image-planning.ts";
+import {
+  assertIdentityBackgroundPlate,
+  assertIdentityEvidenceLinkage,
+  compositeIdentityForeground,
+  loadVisionIdentityForeground,
+  renderIdentityOnNeutralCanvas,
+  renderMissingIdentityEvidence,
+} from "../lib/product-identity-protection.ts";
 import {
   cliStudioResultSchema,
   normalizeStudioLocalizedKeywordCoverage,
@@ -133,6 +163,7 @@ const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
 const studioAnalysisTimeoutMs = Math.max(12 * 60_000, Number(process.env.SELLERPILOT_STUDIO_ANALYSIS_TIMEOUT_MS ?? 20 * 60_000));
 const imageGenerationTimeoutMs = Math.max(15 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 20 * 60_000));
+const backgroundAuditTimeoutMs = Math.max(60_000, Number(process.env.SELLERPILOT_BACKGROUND_AUDIT_TIMEOUT_MS ?? 2 * 60_000));
 const configuredCodexConcurrency = Number(process.env.SELLERPILOT_CODEX_CONCURRENCY ?? 2);
 const codexConcurrencyLimit = Math.min(4, Math.max(1, Number.isFinite(configuredCodexConcurrency) ? Math.trunc(configuredCodexConcurrency) : 2));
 const codexExecutionGate = createConcurrencyGate(codexConcurrencyLimit);
@@ -140,10 +171,11 @@ const codexBin = process.env.CODEX_BIN?.trim() || "/Applications/ChatGPT.app/Con
 const studioSchemaPath = resolve("scripts/ai-studio-output.schema.json");
 const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.json");
 const supportReplySchemaPath = resolve("scripts/ai-support-reply-output.schema.json");
+const backgroundAuditSchemaPath = resolve("scripts/ai-background-audit-output.schema.json");
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.27";
+const workerVersion = "sellerpilot-cli-worker/1.29";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -173,6 +205,7 @@ await access(codexBin);
 await access(studioSchemaPath);
 await access(researchSchemaPath);
 await access(supportReplySchemaPath);
+await access(backgroundAuditSchemaPath);
 await access(codexImageSkillPath).catch(() => {
   throw new Error("codex-image 스킬이 설치되지 않았습니다. wjb127/codex-image 스킬을 먼저 설치해 주세요.");
 });
@@ -447,6 +480,24 @@ async function persistWorkerCompletion(path, payload, label, graceMs = WORKER_CO
 
 const codexOutputLimitBytes = 1024 * 1024;
 const codexTerminationGraceMs = 5_000;
+const codexEnvironmentAllowlist = [
+  "HOME", "CODEX_HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "SHELL",
+  "LANG", "LC_ALL", "LC_CTYPE", "TERM", "XDG_CONFIG_HOME",
+];
+
+function codexChildEnvironment() {
+  return Object.fromEntries(codexEnvironmentAllowlist.flatMap((key) => (
+    typeof process.env[key] === "string" ? [[key, process.env[key]]] : []
+  )));
+}
+
+function isProductStudioCodexStage(stage) {
+  return stage === "product-research"
+    || stage === "studio-analysis"
+    || stage === "studio-repair"
+    || stage.startsWith("image:")
+    || stage.startsWith("background-audit:");
+}
 
 function appendBoundedOutput(current, chunk) {
   const next = Buffer.concat([current, Buffer.from(chunk)]);
@@ -464,7 +515,7 @@ async function runCodex(args, timeoutMs, jobId, claimToken, { leaseSignal, stage
     if (jobId) console.log(`[Codex 시작] ${jobId} · ${stage} · wait=${queueWaitMs}ms`);
     const startedAt = Date.now();
     const result = await new Promise((resolveRun, rejectRun) => {
-      const codexEnv = { ...process.env };
+      const codexEnv = isProductStudioCodexStage(stage) ? codexChildEnvironment() : { ...process.env };
       delete codexEnv.OPENAI_API_KEY;
       delete codexEnv.OPENAI_BASE_URL;
       const child = spawn(codexBin, args, {
@@ -563,45 +614,388 @@ if (!`${loginStatus.stdout}\n${loginStatus.stderr}`.includes("Logged in using Ch
   throw new Error("Codex CLI가 ChatGPT 계정으로 로그인되어 있지 않습니다. codex login을 먼저 실행해 주세요.");
 }
 
-async function downloadInputs(job, jobDir) {
+const trustedLegacyStudioImagePath = /^[0-9a-f-]{36}\/[0-9a-f-]{36}\/input\/[0-9]{3}\.(?:jpe?g|png|webp)$/i;
+const maximumStudioSourceDownloadBytes = maximumStudioSourceImageBytes;
+const maximumStudioSourcePixels = maximumStudioSourceImagePixels;
+
+function downloadSignal(leaseSignal, timeoutMs = 30_000) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return leaseSignal ? AbortSignal.any([timeout, leaseSignal]) : timeout;
+}
+
+async function readResponseBodyBounded(response, maximumBytes, label, expectedBytes) {
+  const declaredHeader = response.headers.get("content-length");
+  const declared = declaredHeader && declaredHeader.trim() ? Number(declaredHeader) : null;
+  if (declared !== null && Number.isFinite(declared) && declared > maximumBytes) {
+    throw new Error(`${label} 크기가 허용 한도를 초과합니다.`);
+  }
+  if (Number.isInteger(expectedBytes) && declared !== null && Number.isFinite(declared) && declared !== expectedBytes) {
+    throw new Error(`${label}의 바이트 근거가 일치하지 않습니다.`);
+  }
+  if (!response.body) throw new Error(`${label} 응답 본문이 없습니다.`);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximumBytes || (Number.isInteger(expectedBytes) && total > expectedBytes)) {
+        throw new Error(`${label} 크기가 선언된 안전 범위를 초과합니다.`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (Number.isInteger(expectedBytes) && total !== expectedBytes) {
+    throw new Error(`${label}의 바이트 근거가 일치하지 않습니다.`);
+  }
+  return Buffer.concat(chunks, total);
+}
+
+function sourceImageExtension(sourceSpec, storagePath) {
+  const hasPreservedMetadata = typeof sourceSpec?.originalPath === "string"
+    || typeof sourceSpec?.originalMediaType === "string"
+    || typeof sourceSpec?.originalName === "string"
+    || Number.isInteger(sourceSpec?.originalBytes);
+  const mediaType = String(sourceSpec?.originalMediaType ?? "").toLowerCase();
+  if (mediaType === "image/jpeg") return ".jpg";
+  if (mediaType === "image/png") return ".png";
+  if (mediaType === "image/webp") return ".webp";
+  if (hasPreservedMetadata) throw new Error("보존 원본 이미지 MIME 형식이 불완전합니다.");
+  if (!trustedLegacyStudioImagePath.test(String(storagePath ?? ""))) {
+    throw new Error("기존 정규화 이미지의 신뢰된 Storage 경로를 확인하지 못했습니다.");
+  }
+  const legacyMediaType = String(sourceSpec?.mediaType ?? "").toLowerCase();
+  if (legacyMediaType === "image/jpeg") return ".jpg";
+  if (legacyMediaType === "image/png") return ".png";
+  if (legacyMediaType === "image/webp") return ".webp";
+  const legacyExtension = extname(String(storagePath ?? "")).toLowerCase();
+  if ([".jpg", ".jpeg", ".png", ".webp"].includes(legacyExtension)) {
+    return legacyExtension === ".jpeg" ? ".jpg" : legacyExtension;
+  }
+  throw new Error("원본 이미지 MIME 형식을 확인하지 못했습니다.");
+}
+
+async function downloadInputs(job, jobDir, leaseSignal) {
   const images = Array.isArray(job.request?.images) ? job.request.images : [];
   const imageSpecs = Array.isArray(job.request?.imageSpecs) ? job.request.imageSpecs : [];
+  if (images.length !== imageSpecs.length || images.length > 100) {
+    throw new Error("CLI 원본 이미지와 규격 정보 수가 일치하지 않습니다.");
+  }
+  const aggregateBytes = imageSpecs.reduce((total, spec) => {
+    const preserved = Number.isInteger(spec?.originalBytes) ? spec.originalBytes : spec?.bytes;
+    return total + (Number.isInteger(preserved) ? preserved : maximumStudioJobSourceBytes + 1);
+  }, 0);
+  if (aggregateBytes > maximumStudioJobSourceBytes) {
+    throw new Error("한 상품의 원본 사진 합계는 200MB 이하여야 합니다.");
+  }
   const files = [];
   for (const [index, image] of images.entries()) {
+    if (leaseSignal?.aborted) throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
     if (!image?.signedUrl) continue;
-    const response = await fetch(image.signedUrl, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) throw new Error(`입력 이미지 다운로드 실패 · HTTP ${response.status}`);
-    const extension = extname(String(image.path || "")) || ".jpg";
-    const file = join(jobDir, `input-${String(index + 1).padStart(2, "0")}${extension}`);
-    await writeFile(file, Buffer.from(await response.arrayBuffer()));
     const sourceSpec = imageSpecs[index] && typeof imageSpecs[index] === "object" ? imageSpecs[index] : {};
+    const preservedOriginal = typeof sourceSpec.originalPath === "string"
+      && Number.isInteger(sourceSpec.originalBytes)
+      && typeof sourceSpec.originalMediaType === "string";
+    const expectedBytes = preservedOriginal ? sourceSpec.originalBytes : sourceSpec.bytes;
+    if (!Number.isInteger(expectedBytes) || expectedBytes < 1 || expectedBytes > maximumStudioSourceDownloadBytes) {
+      throw new Error(`원본 이미지 ${index + 1}의 바이트 근거가 올바르지 않습니다.`);
+    }
+    const response = await fetch(image.signedUrl, { signal: downloadSignal(leaseSignal) });
+    if (!response.ok) throw new Error(`입력 이미지 다운로드 실패 · HTTP ${response.status}`);
+    const extension = sourceImageExtension(sourceSpec, image.path);
+    const file = join(jobDir, `input-${String(index + 1).padStart(2, "0")}${extension}`);
+    const sourceBytes = await readResponseBodyBounded(
+      response,
+      maximumStudioSourceDownloadBytes,
+      `원본 이미지 ${index + 1}`,
+      expectedBytes,
+    );
+    const metadata = await sharp(sourceBytes, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels }).metadata();
+    const expectedFormat = extension === ".jpg" ? "jpeg" : extension.slice(1);
+    if (metadata.format !== expectedFormat) throw new Error(`원본 이미지 ${index + 1}의 MIME 근거가 실제 픽셀과 다릅니다.`);
+    if (!metadata.width || !metadata.height || metadata.width * metadata.height > maximumStudioSourcePixels) {
+      throw new Error(`원본 이미지 ${index + 1}의 픽셀 수가 안전 한도를 초과합니다.`);
+    }
+    if (preservedOriginal && !studioSourceDimensionsMatch(
+      metadata.format,
+      metadata.width,
+      metadata.height,
+      sourceSpec.originalWidth,
+      sourceSpec.originalHeight,
+    )) {
+      throw new Error(`원본 이미지 ${index + 1}의 픽셀 규격 근거가 일치하지 않습니다.`);
+    }
+    await writeFile(file, sourceBytes);
     files.push({
       file,
       role: typeof sourceSpec.role === "string" ? sourceSpec.role : index === 0 ? "main" : "extra",
+      sourceIndex: index,
+      preservedOriginal,
+      sourceDigest: createHash("sha256").update(sourceBytes).digest("hex"),
+      sourceBytes: sourceBytes.length,
+      sourceWidth: metadata.width,
+      sourceHeight: metadata.height,
+      sourceFormat: metadata.format,
     });
   }
   if (!files.length) throw new Error("CLI 작업에 사용할 상품 이미지가 없습니다.");
   return files;
 }
 
-function isPrivateAddress(address) {
-  if (address === "::1" || address === "0.0.0.0" || address.startsWith("fc") || address.startsWith("fd") || address.startsWith("fe8") || address.startsWith("fe9") || address.startsWith("fea") || address.startsWith("feb")) return true;
-  if (address.startsWith("::ffff:")) return isPrivateAddress(address.slice(7));
-  if (isIP(address) !== 4) return false;
-  const parts = address.split(".").map(Number);
-  return parts[0] === 10
-    || parts[0] === 127
-    || parts[0] === 0
-    || (parts[0] === 169 && parts[1] === 254)
-    || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
-    || (parts[0] === 192 && parts[1] === 168)
-    || parts[0] >= 224;
+const sourceProductCutoutScript = resolve(dirname(fileURLToPath(import.meta.url)), "source-product-cutout.swift");
+const sourceProductCutoutTimeoutMs = 2 * 60_000;
+const maximumCutoutInputCount = 8;
+
+function cutoutInputPriority(role, mode) {
+  const normalized = String(role || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+  const desired = mode === "front" || mode === "subject"
+    ? ["front", "main", "extra", "left", "right", "back", "label", "barcode", "top", "bottom"]
+    : ["back", "label", "barcode", "left", "right", "top", "bottom", "extra", "main", "front"];
+  const priority = desired.indexOf(normalized);
+  return priority < 0 ? desired.length : priority;
 }
 
-async function assertPublicUrl(url) {
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("http/https 공개 링크만 지원합니다.");
-  const records = await lookup(url.hostname, { all: true });
-  if (!records.length || records.some((record) => isPrivateAddress(record.address))) throw new Error("내부 네트워크 주소는 접근할 수 없습니다.");
+function selectCutoutInputs(imageFiles, mode) {
+  const ranked = imageFiles
+    .map((image, order) => ({ ...image, order }))
+    .sort((left, right) => cutoutInputPriority(left.role, mode) - cutoutInputPriority(right.role, mode) || left.order - right.order);
+  if (mode === "front" || mode === "subject") {
+    const declaredFront = ranked.filter((image) => String(image.role || "").toLowerCase() === "front");
+    const declaredMain = ranked.filter((image) => String(image.role || "").toLowerCase() === "main");
+    return [...declaredFront, ...declaredMain].slice(0, maximumCutoutInputCount);
+  }
+  const dedicatedRoles = new Set(["back", "label", "barcode", "left", "right", "top", "bottom"]);
+  const dedicated = ranked.filter((image) => dedicatedRoles.has(String(image.role || "").toLowerCase().replace(/^extra-\d+$/, "extra")));
+  return dedicated.slice(0, maximumCutoutInputCount);
+}
+
+async function executeSourceProductCutout(mode, productName, outputFile, inputs, leaseSignal) {
+  if (process.platform !== "darwin") {
+    throw new Error("원본 상품 픽셀 보호 모드는 macOS Vision 작업자에서만 실행할 수 있습니다.");
+  }
+  await access(sourceProductCutoutScript);
+  if (leaseSignal?.aborted) throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
+  if (mode === "background" && (inputs.length !== 1 || !inputs[0]?.file)) {
+    throw new Error("검증할 배경판 파일이 없습니다.");
+  }
+  const args = mode === "background"
+    ? [sourceProductCutoutScript, "background", inputs[0].file]
+    : [
+        sourceProductCutoutScript,
+        mode,
+        typeof productName === "string" ? productName : JSON.stringify(productName),
+        outputFile,
+        ...inputs.map((input) => input.file),
+      ];
+  const result = await new Promise((resolveRun, rejectRun) => {
+    const child = spawn("/usr/bin/swift", args, {
+      cwd: process.cwd(),
+      env: { ...process.env, SELLERPILOT_CUTOUT_DEBUG: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = Buffer.alloc(0);
+    let stderr = Buffer.alloc(0);
+    let settled = false;
+    let terminationError = null;
+    let killTimer = null;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutTimer);
+      if (killTimer) clearTimeout(killTimer);
+      if (leaseSignal) leaseSignal.removeEventListener("abort", abortHandler);
+      if (error) rejectRun(error);
+      else resolveRun(value);
+    };
+    const terminate = (error) => {
+      terminationError ||= error;
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      try { child.kill("SIGTERM"); } catch { /* close/error settles */ }
+      killTimer ||= setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          try { child.kill("SIGKILL"); } catch { /* close/error settles */ }
+        }
+      }, 5_000);
+    };
+    const timeoutTimer = setTimeout(() => terminate(new Error("원본 상품 컷아웃 제한시간을 초과했습니다.")), sourceProductCutoutTimeoutMs);
+    const abortHandler = () => terminate(leaseSignal?.reason instanceof Error ? leaseSignal.reason : new JobCancelledError());
+    if (leaseSignal) leaseSignal.addEventListener("abort", abortHandler, { once: true });
+    child.stdout.on("data", (chunk) => { stdout = appendBoundedOutput(stdout, chunk); });
+    child.stderr.on("data", (chunk) => { stderr = appendBoundedOutput(stderr, chunk); });
+    child.once("error", (error) => {
+      if (!child.pid) finish(error);
+      else terminate(error);
+    });
+    child.once("close", (code) => {
+      const stdoutText = stdout.toString("utf8").trim();
+      const stderrText = stderr.toString("utf8").trim();
+      if (terminationError) finish(terminationError);
+      else if (code !== 0) finish(new Error((stderrText || stdoutText || `Vision cutout exit ${code}`).slice(-800)));
+      else finish(null, stdoutText);
+    });
+  });
+  const report = JSON.parse(String(result).split("\n").at(-1) || "{}");
+  if (mode === "background") {
+    if (report.textCount !== 0
+        || report.barcodeCount !== 0
+        || report.humanCount !== 0
+        || report.packageRectangleCount !== 0
+        || report.merchandiseClassificationCount !== 0) {
+      throw new Error("생성 배경판에서 글자·바코드·사람 또는 상품·용기형 물체가 감지되어 상품 합성을 중단했습니다.");
+    }
+    return report;
+  }
+  if (!Number.isInteger(report.inputIndex) || !inputs[report.inputIndex]) {
+    throw new Error("원본 상품 컷아웃의 선택 이미지 보고가 올바르지 않습니다.");
+  }
+  const selectedInput = inputs[report.inputIndex];
+  return {
+    report: {
+      ...report,
+      inputIndex: selectedInput.sourceIndex,
+      inputRole: selectedInput.role,
+    },
+    foreground: await loadVisionIdentityForeground(outputFile, {
+      ...report,
+      inputIndex: selectedInput.sourceIndex,
+      inputRole: selectedInput.role,
+    }, mode),
+  };
+}
+
+async function prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSignal, identityAnchor = result.product.name) {
+  if (imageFiles.some((image) => !image.preservedOriginal)) {
+    throw new Error("상품 원본 픽셀 보호에는 보존된 원본 이미지가 필요합니다. 기존 정규화 사진만 있는 작업은 새로 등록해 주세요.");
+  }
+  const statutoryIdentity = requiresSourceIdentityProtection(result);
+  const frontMode = statutoryIdentity ? "front" : "subject";
+  const evidenceMode = statutoryIdentity ? "evidence" : "alternate";
+  const frontInputs = selectCutoutInputs(imageFiles, frontMode);
+  if (!frontInputs.length) throw new Error("대표 또는 정면 역할의 보존 원본 사진이 없습니다.");
+  const front = await executeSourceProductCutout(
+    frontMode,
+    identityAnchor,
+    join(jobDir, "source-identity-front.png"),
+    frontInputs,
+    leaseSignal,
+  );
+  const evidenceInputs = (statutoryIdentity ? selectCutoutInputs(imageFiles, evidenceMode) : [])
+    .filter((image) => image.sourceIndex !== front.report.inputIndex);
+  let evidence = null;
+  if (evidenceInputs.length) {
+    try {
+      evidence = await executeSourceProductCutout(
+        evidenceMode,
+        identityAnchor,
+        join(jobDir, "source-identity-evidence.png"),
+        evidenceInputs,
+        leaseSignal,
+      );
+    } catch (error) {
+      if (leaseSignal?.aborted) throw error;
+      result.warnings = [...new Set([
+        "제공된 측면·후면·라벨 사진을 동일 상품의 안전한 근거로 확인하지 못해 포장 근거 이미지는 공란으로 남겼습니다.",
+        ...(Array.isArray(result.warnings) ? result.warnings : []),
+      ])].slice(0, 5);
+    }
+  }
+  if (evidence && front.report.inputIndex === evidence.report.inputIndex) {
+    throw new Error("정면과 구분되는 원본 측면·후면 표시 사진을 확인하지 못해 상품 포장 근거 생성을 중단했습니다.");
+  }
+  const dedicatedRoles = new Set(["back", "label", "barcode", "left", "right", "top", "bottom"]);
+  const evidenceRole = String(evidence?.report.inputRole || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+  if (evidence && !dedicatedRoles.has(evidenceRole)) {
+    throw new Error("근거 이미지가 전용 측면·후면·라벨 원본 역할에서 선택되지 않았습니다.");
+  }
+  if (evidence) await assertIdentityEvidenceLinkage(front, evidence, "evidence");
+  else if (!evidenceInputs.length) result.warnings = [...new Set(["측면·후면·라벨 원본 사진이 없어 포장 근거 이미지는 공란으로 남겼습니다.", ...(Array.isArray(result.warnings) ? result.warnings : [])])].slice(0, 5);
+  const verifiedViews = evidence ? [front, evidence] : [front];
+  const sourceCompositePresets = aiGeneratedAssetSpecs.filter((preset) => preset.identityPolicy.mode === "source-composite");
+  const requiredSettingRoles = new Set(sourceCompositePresets.flatMap((preset) => preset.identityPolicy.sourceRoles));
+  const additionalViewInputs = imageFiles
+    .filter((image) => {
+      if (verifiedViews.some((view) => view.report.inputIndex === image.sourceIndex)) return false;
+      const role = String(image.role || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+      return requiredSettingRoles.has(role);
+    })
+    .slice(0, Math.max(0, maximumCutoutInputCount - verifiedViews.length));
+  for (const image of additionalViewInputs) {
+    if (verifiedViews.some((view) => view.report.inputIndex === image.sourceIndex)) continue;
+    try {
+      const outputPath = join(jobDir, `source-identity-view-${String(image.sourceIndex + 1).padStart(2, "0")}.png`);
+      let view;
+      try {
+        view = await executeSourceProductCutout(
+          statutoryIdentity ? "view" : "alternate",
+          identityAnchor,
+          outputPath,
+          [image],
+          leaseSignal,
+        );
+        await assertIdentityEvidenceLinkage(front, view, "view");
+      } catch (primaryError) {
+        if (!statutoryIdentity || leaseSignal?.aborted) throw primaryError;
+        // A legal side/rear panel may be too text-dense for the general view
+        // mode. It can diversify a setting shot only after the stricter
+        // evidence selector proves a seller-anchor match. This fallback never
+        // feeds detail-package, whose candidates were selected above.
+        view = await executeSourceProductCutout(
+          "evidence",
+          identityAnchor,
+          outputPath,
+          [image],
+          leaseSignal,
+        );
+        await assertIdentityEvidenceLinkage(front, view, "view");
+      }
+      if (!verifiedViews.some((candidate) => candidate.foreground.sourceDigest === view.foreground.sourceDigest)) {
+        verifiedViews.push(view);
+      }
+    } catch (error) {
+      if (leaseSignal?.aborted) throw error;
+      console.warn(`[원본 픽셀 보호 제외] source=${image.sourceIndex}:${image.role} · ${error instanceof Error ? error.message : "검증 실패"}`);
+    }
+  }
+
+  const usedSourceIndexes = new Set();
+  const assetSources = {};
+  for (const preset of sourceCompositePresets) {
+    const allowedRoles = new Set(preset.identityPolicy.sourceRoles.map((role) => String(role).toLowerCase()));
+    const source = verifiedViews.find((view) => {
+      const role = String(view.report.inputRole || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+      return !usedSourceIndexes.has(view.report.inputIndex) && allowedRoles.has(role);
+    }) ?? front;
+    if (source !== front || allowedRoles.has(String(front.report.inputRole || "").toLowerCase())) {
+      usedSourceIndexes.add(source.report.inputIndex);
+    }
+    assetSources[preset.id] = source;
+  }
+  console.log(`[원본 픽셀 보호] front=${front.report.inputIndex}:${front.report.inputRole}:${front.report.method} · evidence=${evidence ? `${evidence.report.inputIndex}:${evidence.report.inputRole}:${evidence.report.method}` : "missing"} · settings=${sourceCompositePresets.map((preset) => `${preset.id}:${assetSources[preset.id].report.inputIndex}`).join(",")}`);
+  return { front, evidence, assetSources };
+}
+
+async function prepareIdentityCutoutsForJob(result, imageFiles, jobDir, leaseSignal, manualFields) {
+  await assertStudioSourceFilesUnmodified(imageFiles, maximumStudioSourcePixels);
+  const preservedCount = imageFiles.filter((image) => image.preservedOriginal).length;
+  if (preservedCount === 0) return null; // Explicit compatibility path for already-queued normalized legacy jobs.
+  if (preservedCount !== imageFiles.length) {
+    throw new Error("보존 원본과 기존 정규화 사진이 섞인 작업은 상품 정체성을 안전하게 확인할 수 없습니다. 사진을 다시 등록해 주세요.");
+  }
+  const manualProductName = typeof manualFields?.productName === "string" ? manualFields.productName.trim() : "";
+  const identityAnchor = {
+    productName: manualProductName || null,
+    brandName: typeof manualFields?.brandName === "string" && manualFields.brandName.trim() ? manualFields.brandName.trim() : null,
+    manufacturer: typeof manualFields?.manufacturer === "string" && manualFields.manufacturer.trim() ? manualFields.manufacturer.trim() : null,
+    gtin: manualFields?.gtinStatus === "HAS_GTIN" && typeof manualFields?.gtin === "string"
+      ? manualFields.gtin.replace(/\D/g, "") || null
+      : null,
+    fallbackName: manualProductName ? null : result.product.name,
+  };
+  return prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSignal, identityAnchor);
 }
 
 function objectRecords(value, depth = 0) {
@@ -1149,45 +1543,30 @@ function extractReferenceUrls(input) {
   return [...new Set(matches.map((value) => value.replace(/[),.;!?\]}]+$/g, "")))].slice(0, 5);
 }
 
-async function fetchReferencePage(value) {
+async function fetchReferencePage(value, leaseSignal) {
   if (!value) return { url: "", title: "입력 없음", status: "unavailable", text: "입력 없음", warning: "" };
   const originalUrl = String(value);
   try {
-    let url = new URL(value);
-    for (let redirect = 0; redirect <= 3; redirect += 1) {
-      await assertPublicUrl(url);
-      const response = await fetch(url, {
-        redirect: "manual",
-        headers: { accept: "text/html,text/plain;q=0.9", "user-agent": "SellerPilot-Product-Reference/1.0" },
-        signal: AbortSignal.timeout(15_000),
-      });
-      if ([301, 302, 303, 307, 308].includes(response.status)) {
-        const location = response.headers.get("location");
-        if (!location || redirect === 3) throw new Error("리디렉션이 너무 많습니다.");
-        url = new URL(location, url);
-        continue;
-      }
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const contentType = response.headers.get("content-type") ?? "";
-      if (!contentType.includes("text/html") && !contentType.includes("text/plain") && !contentType.includes("application/xhtml+xml")) throw new Error("HTML 또는 텍스트 링크만 지원합니다.");
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.length > 2_000_000) throw new Error("본문이 2MB를 초과합니다.");
-      const document = decodeReferenceBuffer(buffer, contentType);
-      const title = htmlToText(document.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] || url.hostname).slice(0, 300);
-      const text = contentType.includes("text/plain") ? document.replace(/\s+/g, " ").trim().slice(0, 18_000) : htmlDocumentFacts(document);
-      return { url: url.toString(), title: title || url.hostname, status: "read", text: text || "읽을 수 있는 본문 없음", warning: "" };
-    }
+    const response = await fetchPublicReferenceDocument(value, { signal: leaseSignal });
+    if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
+    const url = new URL(response.finalUrl);
+    const document = decodeReferenceBuffer(response.body, response.contentType);
+    const title = htmlToText(document.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] || url.hostname).slice(0, 300);
+    const text = response.contentType.includes("text/plain") ? document.replace(/\s+/g, " ").trim().slice(0, 18_000) : htmlDocumentFacts(document);
+    return { url: url.toString(), title: title || url.hostname, status: "read", text: text || "읽을 수 있는 본문 없음", warning: "" };
   } catch (error) {
+    if (leaseSignal?.aborted) {
+      throw leaseSignal.reason instanceof Error ? leaseSignal.reason : error;
+    }
     let title = originalUrl;
     try { title = new URL(originalUrl).hostname; } catch { /* invalid URL is reported below */ }
     return { url: originalUrl, title, status: "unavailable", text: "링크 본문을 가져오지 못함", warning: `참고 링크 확인 보류: ${error instanceof Error ? error.message : "알 수 없는 오류"}` };
   }
-  return { url: originalUrl, title: originalUrl, status: "unavailable", text: "링크 본문을 가져오지 못함", warning: "참고 링크 확인 보류" };
 }
 
-async function fetchReferencePages(input, fallbackUrl = "") {
+async function fetchReferencePages(input, fallbackUrl = "", leaseSignal) {
   const urls = extractReferenceUrls(`${input}\n${fallbackUrl}`);
-  return Promise.all(urls.map((url) => fetchReferencePage(url)));
+  return Promise.all(urls.map((url) => fetchReferencePage(url, leaseSignal)));
 }
 
 function promptData(value) {
@@ -1282,13 +1661,13 @@ function buildProductResearchPrompt(researchInput, references) {
 async function researchProduct(job, jobDir, leaseSignal) {
   const researchInput = String(job.request?.researchInput || "").trim();
   if (researchInput.length < 2) throw new Error("상품 링크 또는 설명이 없습니다.");
-  const references = await fetchReferencePages(researchInput);
+  const references = await fetchReferencePages(researchInput, "", leaseSignal);
   const resultFile = join(jobDir, "product-research-result.json");
   await runCodex([
     "exec",
     "--model", model,
     "--config", 'model_reasoning_effort="medium"',
-    "--sandbox", "workspace-write",
+    "--sandbox", "read-only",
     "--skip-git-repo-check",
     "--ephemeral",
     "--output-schema", researchSchemaPath,
@@ -1362,8 +1741,48 @@ async function draftSupportReply(job, jobDir, leaseSignal) {
 }
 
 async function normalizeGeneratedAsset(outputFile, preset) {
-  const source = await readFile(outputFile);
-  const normalized = await sharp(source, { failOn: "warning", limitInputPixels: 64_000_000 })
+  const outputStats = await lstat(outputFile);
+  if (!outputStats.isFile()
+      || outputStats.isSymbolicLink()
+      || outputStats.nlink !== 1
+      || outputStats.size < 1
+      || outputStats.size > maximumStudioSourceDownloadBytes) {
+    throw new Error(`${preset.id} 생성 이미지 파일 크기가 안전 한도를 벗어났습니다.`);
+  }
+  const [outputRealPath, parentRealPath] = await Promise.all([realpath(outputFile), realpath(dirname(outputFile))]);
+  if (dirname(outputRealPath) !== parentRealPath) {
+    throw new Error(`${preset.id} 생성 이미지가 작업 폴더 밖을 가리킵니다.`);
+  }
+  const [{ open }, { constants }] = await Promise.all([import("node:fs/promises"), import("node:fs")]);
+  const sourceHandle = await open(outputFile, constants.O_RDONLY | constants.O_NOFOLLOW);
+  let source;
+  try {
+    const openedStats = await sourceHandle.stat();
+    if (!openedStats.isFile()
+        || openedStats.nlink !== 1
+        || openedStats.dev !== outputStats.dev
+        || openedStats.ino !== outputStats.ino
+        || openedStats.size !== outputStats.size) {
+      throw new Error(`${preset.id} 생성 이미지가 검증 전에 교체됐습니다.`);
+    }
+    source = await sourceHandle.readFile();
+    const afterReadStats = await sourceHandle.stat();
+    if (afterReadStats.dev !== openedStats.dev
+        || afterReadStats.ino !== openedStats.ino
+        || afterReadStats.size !== openedStats.size
+        || afterReadStats.mtimeMs !== openedStats.mtimeMs
+        || afterReadStats.ctimeMs !== openedStats.ctimeMs
+        || source.length !== openedStats.size) {
+      throw new Error(`${preset.id} 생성 이미지가 검증 도중 변경됐습니다.`);
+    }
+  } finally {
+    await sourceHandle.close();
+  }
+  const inputMetadata = await sharp(source, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels }).metadata();
+  if (!inputMetadata.width || !inputMetadata.height || inputMetadata.width * inputMetadata.height > maximumStudioSourcePixels) {
+    throw new Error(`${preset.id} 생성 이미지 픽셀 수가 안전 한도를 초과합니다.`);
+  }
+  const normalized = await sharp(source, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels })
     .rotate()
     .resize(preset.width, preset.height, { fit: "cover", position: "centre" })
     .png({ compressionLevel: 9, adaptiveFiltering: true })
@@ -1372,12 +1791,115 @@ async function normalizeGeneratedAsset(outputFile, preset) {
   if (metadata.width !== preset.width || metadata.height !== preset.height || metadata.format !== "png") {
     throw new Error(`${preset.id} 이미지 규격 검증 실패`);
   }
-  await writeFile(outputFile, normalized);
+  const normalizedTemp = join(dirname(outputFile), `.sellerpilot-normalized-${randomUUID()}.png`);
+  try {
+    await writeFile(normalizedTemp, normalized, { flag: "wx", mode: 0o600 });
+    await rename(normalizedTemp, outputFile);
+  } finally {
+    await rm(normalizedTemp, { force: true });
+  }
   return normalized;
 }
 
+const maximumBackgroundAuditBytes = 64 * 1024;
+
+async function auditGeneratedIdentityBackground({
+  outputFile,
+  preset,
+  expectedEnvironment,
+  expectedEnvironmentKeys,
+  expectedPropKey,
+  expectedPlateDigest,
+  expectedPlateBytes,
+  comparisonPlates,
+  jobId,
+  claimToken,
+  leaseSignal,
+}) {
+  const auditFile = join(dirname(outputFile), `background-audit-${preset.id}.json`);
+  await rm(auditFile, { force: true });
+  for (const comparison of comparisonPlates) {
+    const comparisonStats = await stat(comparison.plateFile);
+    if (!comparisonStats.isFile() || comparisonStats.size !== comparison.plateBytes) {
+      throw new Error(`${comparison.assetId} 비교 배경판이 변경됐습니다.`);
+    }
+    const comparisonBuffer = await readFile(comparison.plateFile);
+    if (createHash("sha256").update(comparisonBuffer).digest("hex") !== comparison.plateDigest) {
+      throw new Error(`${comparison.assetId} 비교 배경판 픽셀이 변경됐습니다.`);
+    }
+  }
+  const prompt = buildBackgroundSemanticAuditPrompt({
+    assetId: preset.id,
+    expectedEnvironment,
+    expectedEnvironmentKeys,
+    comparisonAssetIds: comparisonPlates.map((comparison) => comparison.semanticAssetId ?? String(comparison.assetId).replace(/^background:/, "")),
+    reservedZone: preset.identityPolicy.placement,
+    expectedPropKey,
+  });
+  await runCodex([
+    "exec",
+    "--model", model,
+    "--config", 'model_reasoning_effort="low"',
+    "--sandbox", "read-only",
+    "--skip-git-repo-check",
+    "--ephemeral",
+    "--output-schema", backgroundAuditSchemaPath,
+    "--output-last-message", auditFile,
+    "--cd", dirname(outputFile),
+    `--image=${outputFile}`,
+    ...comparisonPlates.map((comparison) => `--image=${comparison.plateFile}`),
+    prompt,
+  ], backgroundAuditTimeoutMs, jobId, claimToken, { leaseSignal, stage: `background-audit:${preset.id}` });
+  if (leaseSignal?.aborted) throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
+  const plateStats = await stat(outputFile);
+  if (!plateStats.isFile()
+      || plateStats.size !== expectedPlateBytes
+      || plateStats.size < 1
+      || plateStats.size > maximumStudioSourceDownloadBytes) {
+    throw new Error(`${preset.id} 배경판이 의미 검수 도중 변경됐습니다.`);
+  }
+  const plateAfterAudit = await readFile(outputFile);
+  if (createHash("sha256").update(plateAfterAudit).digest("hex") !== expectedPlateDigest) {
+    throw new Error(`${preset.id} 배경판 픽셀이 의미 검수 도중 변경됐습니다.`);
+  }
+  for (const comparison of comparisonPlates) {
+    const comparisonStats = await stat(comparison.plateFile);
+    const comparisonBuffer = comparisonStats.size <= maximumStudioSourceDownloadBytes
+      ? await readFile(comparison.plateFile)
+      : Buffer.alloc(0);
+    if (!comparisonStats.isFile()
+        || comparisonStats.size !== comparison.plateBytes
+        || createHash("sha256").update(comparisonBuffer).digest("hex") !== comparison.plateDigest) {
+      throw new Error(`${comparison.assetId} 비교 배경판이 의미 검수 도중 변경됐습니다.`);
+    }
+  }
+  const auditStats = await stat(auditFile);
+  if (!auditStats.isFile() || auditStats.size < 2 || auditStats.size > maximumBackgroundAuditBytes) {
+    throw new Error(`${preset.id} 배경판 의미 검수 결과 크기가 안전 한도를 벗어났습니다.`);
+  }
+  let rawAudit;
+  try {
+    rawAudit = JSON.parse(await readFile(auditFile, "utf8"));
+  } catch {
+    throw new Error(`${preset.id} 배경판 의미 검수 결과가 올바른 JSON이 아닙니다.`);
+  }
+  const parsed = backgroundSemanticAuditSchema.safeParse(rawAudit);
+  if (!parsed.success) {
+    throw new Error(`${preset.id} 배경판 의미 검수 결과 계약이 불완전합니다.`);
+  }
+  assertSafeBackgroundSemanticAudit(
+    parsed.data,
+    expectedPropKey,
+    expectedEnvironmentKeys,
+  );
+  return parsed.data;
+}
+
 async function fingerprintGeneratedShot(assetId, buffer) {
-  const pixels = await sharp(buffer, { failOn: "warning", limitInputPixels: 64_000_000 })
+  if (!Buffer.isBuffer(buffer) || buffer.length < 1 || buffer.length > maximumStudioSourceDownloadBytes) {
+    throw new Error(`${assetId} 이미지 바이트 크기가 안전 한도를 벗어났습니다.`);
+  }
+  const pixels = await sharp(buffer, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels })
     .resize(SHOT_DHASH_COLUMNS + 1, SHOT_DHASH_ROWS, { fit: "fill" })
     .flatten({ background: "#ffffff" })
     .greyscale()
@@ -1395,7 +1917,31 @@ async function fingerprintGeneratedShot(assetId, buffer) {
   };
 }
 
-async function downloadComparisonShots(job, targetAssetId) {
+async function fingerprintBackgroundWithMaskedZones(assetId, buffer, preset, maskPlacements) {
+  const outsideZone = await renderBackgroundWithMaskedZones(buffer, preset, maskPlacements);
+  return fingerprintGeneratedShot(assetId, outsideZone);
+}
+
+async function renderBackgroundWithMaskedZones(buffer, preset, maskPlacements) {
+  const masks = await Promise.all(maskPlacements.map(async (placement) => {
+    const left = Math.max(0, Math.floor(preset.width * placement.left));
+    const top = Math.max(0, Math.floor(preset.height * placement.top));
+    const width = Math.min(preset.width - left, Math.ceil(preset.width * placement.width));
+    const height = Math.min(preset.height - top, Math.ceil(preset.height * placement.height));
+    const input = await sharp({
+      create: { width, height, channels: 3, background: "#808080" },
+    }).png().toBuffer();
+    return { input, left, top };
+  }));
+  const outsideZone = await sharp(buffer, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels })
+    .resize(preset.width, preset.height, { fit: "cover", position: "centre" })
+    .composite(masks)
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toBuffer();
+  return outsideZone;
+}
+
+async function downloadComparisonShots(job, targetAssetId, jobDir, leaseSignal) {
   const images = Array.isArray(job.request?.comparisonImages) ? job.request.comparisonImages : [];
   const comparisonById = new Map();
   for (const image of images) {
@@ -1412,37 +1958,199 @@ async function downloadComparisonShots(job, targetAssetId) {
   if (missingAssetIds.length || !comparisonById.has(previousAssetId) || comparisonById.size !== expectedAssetIds.length + 1) {
     throw new Error(`재제작 중복 비교 이미지가 완전하지 않습니다: ${missingAssetIds.join(", ") || "unexpected asset"}`);
   }
-  const shots = [];
-  for (const assetId of [...expectedAssetIds, previousAssetId]) {
-    const image = comparisonById.get(assetId);
-    const response = await fetch(image.signedUrl, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) throw new Error(`${assetId} 기존 이미지 중복 비교 자료를 받지 못했습니다.`);
-    shots.push(await fingerprintGeneratedShot(assetId, Buffer.from(await response.arrayBuffer())));
-  }
-  return shots;
+  const targetPreset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === targetAssetId);
+  const comparisonDownloadGate = createConcurrencyGate(3);
+  const downloaded = await Promise.all([...expectedAssetIds, previousAssetId].map((assetId) => (
+    comparisonDownloadGate.run(async () => {
+      if (leaseSignal?.aborted) throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
+      const image = comparisonById.get(assetId);
+      const response = await fetch(image.signedUrl, { signal: downloadSignal(leaseSignal, 30_000) });
+      if (!response.ok) throw new Error(`${assetId} 기존 이미지 중복 비교 자료를 받지 못했습니다.`);
+      const source = await readResponseBodyBounded(
+        response,
+        maximumStudioSourceDownloadBytes,
+        `${assetId} 기존 이미지 중복 비교 자료`,
+      );
+      const shot = await fingerprintGeneratedShot(assetId, source);
+      const comparisonAssetId = assetId.startsWith("previous:") ? targetAssetId : assetId;
+      const comparisonPreset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === comparisonAssetId);
+      if (comparisonPreset?.identityPolicy.mode !== "source-composite"
+          || targetPreset?.identityPolicy.mode !== "source-composite") {
+        return { shot, backgroundShot: null };
+      }
+      const maskPlacements = [targetPreset.identityPolicy.placement, comparisonPreset.identityPolicy.placement]
+        .filter((placement, index, placements) => placements.findIndex((candidate) => (
+          candidate.left === placement.left
+          && candidate.top === placement.top
+          && candidate.width === placement.width
+          && candidate.height === placement.height
+        )) === index);
+      const maskedComparison = await renderBackgroundWithMaskedZones(source, comparisonPreset, maskPlacements);
+      const semanticAssetId = assetId.startsWith("previous:") ? `previous-${targetAssetId}` : assetId;
+      const plateFile = join(jobDir, `.comparison-background-${semanticAssetId}.png`);
+      await writeFile(plateFile, maskedComparison, { flag: "wx", mode: 0o600 });
+      return {
+        shot,
+        backgroundShot: {
+          ...await fingerprintGeneratedShot(`background:${assetId}`, maskedComparison),
+          maskPlacements,
+          semanticAssetId,
+          plateFile,
+          plateDigest: createHash("sha256").update(maskedComparison).digest("hex"),
+          plateBytes: maskedComparison.length,
+        },
+      };
+    }, { signal: leaseSignal })
+  )));
+  return {
+    shots: downloaded.map((entry) => entry.shot),
+    backgroundShots: downloaded.flatMap((entry) => entry.backgroundShot ? [entry.backgroundShot] : []),
+  };
 }
 
-async function generateDistinctAsset({ result, outputFile, preset, imageFiles, jobId, claimToken, leaseSignal, existingShots }) {
+async function generateDistinctAsset({ result, outputFile, preset, imageFiles, identityCutouts, jobId, claimToken, leaseSignal, existingShots, existingBackgroundShots, existingBackgroundProps }) {
   const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
   let noveltyGuidance = "";
   for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1) {
     await rm(outputFile, { force: true });
-    const imageArgs = [
-      "exec",
-      "--model", model,
-      "--enable", "image_generation",
-      "--sandbox", "workspace-write",
-      "--skip-git-repo-check",
-      "--ephemeral",
-      "--cd", dirname(outputFile),
-      ...referenceIndexes.map((index) => `--image=${imageFiles[index].file}`),
-      buildAssetImagePrompt(result, outputFile, preset, referenceIndexes.map((index) => imageFiles[index].role), noveltyGuidance),
-    ];
-    await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken, { leaseSignal, stage: `image:${preset.id}` });
-    const normalized = await normalizeGeneratedAsset(outputFile, preset);
+    const backgroundPlateFile = join(dirname(outputFile), `.identity-background-${preset.id}.png`);
+    await rm(backgroundPlateFile, { force: true });
+    let normalized;
+    let backgroundFingerprint = null;
+    let backgroundPlateSnapshot = null;
+    let backgroundProps = null;
+    if (identityCutouts && preset.identityPolicy.mode !== "source-composite") {
+      const source = preset.id === "detail-package" ? identityCutouts.evidence : identityCutouts.front;
+      if (!source && preset.identityPolicy.requiresDedicatedRole) {
+        normalized = await renderMissingIdentityEvidence(preset);
+        await writeFile(outputFile, normalized);
+      } else {
+      if (!source) throw new Error(`${preset.id} 이미지의 검증 원본이 없습니다.`);
+      const sourceRole = String(source.report.inputRole || "").toLowerCase().replace(/^extra-\d+$/, "extra");
+      const allowedSourceRoles = new Set(preset.identityPolicy.sourceRoles.map((role) => String(role).toLowerCase()));
+      if (sourceRole === "extra" || !allowedSourceRoles.has(sourceRole)) {
+        throw new Error(`${preset.id} 이미지에 필요한 검증 원본 역할(${[...allowedSourceRoles].join(", ")})이 선택되지 않았습니다.`);
+      }
+      if (preset.identityPolicy.requiresDedicatedRole && ["main", "front"].includes(sourceRole)) {
+        throw new Error(`${preset.id} 근거 이미지는 정면과 구분된 전용 촬영 역할이어야 합니다.`);
+      }
+      normalized = await renderIdentityOnNeutralCanvas(source.foreground, preset);
+      await writeFile(outputFile, normalized);
+      }
+    } else {
+      const backgroundOnly = Boolean(identityCutouts && preset.identityPolicy.mode === "source-composite");
+      const assetPrompt = buildAssetImagePrompt(
+        result,
+        outputFile,
+        preset,
+        backgroundOnly ? [] : referenceIndexes.map((index) => imageFiles[index].role),
+        noveltyGuidance,
+        backgroundOnly ? "identity-background" : "product",
+      );
+      const imageArgs = [
+        "exec",
+        "--model", model,
+        "--enable", "image_generation",
+        "--sandbox", "workspace-write",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--cd", dirname(outputFile),
+        ...(!backgroundOnly ? referenceIndexes.map((index) => `--image=${imageFiles[index].file}`) : []),
+        assetPrompt,
+      ];
+      await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken, { leaseSignal, stage: `image:${preset.id}` });
+      const generated = await normalizeGeneratedAsset(outputFile, preset);
+      const compositeSource = backgroundOnly ? identityCutouts.assetSources[preset.id] : null;
+      if (backgroundOnly && !compositeSource) throw new Error(`${preset.id} 설정샷의 검증 원본 배정이 없습니다.`);
+      if (backgroundOnly) {
+        try {
+          const settingShot = resolveProductSettingShot(result, preset.id);
+          if (!settingShot) throw new Error(`${preset.id} 설정샷의 장소·시간대·표면·카메라 계약이 없습니다.`);
+          const backgroundContract = resolveIdentityBackgroundContract(settingShot, preset.id);
+          await assertIdentityBackgroundPlate(generated, preset);
+          await executeSourceProductCutout("background", "", "", [{ file: outputFile }], leaseSignal);
+          const semanticAudit = await auditGeneratedIdentityBackground({
+            outputFile,
+            preset,
+            expectedEnvironment: [
+              `장소=${backgroundContract.location.description}`,
+              `가시적 시간대 조명=${backgroundContract.moment.description}`,
+              `표면=${backgroundContract.surface.description}`,
+              `카메라=${backgroundContract.camera.description}`,
+            ].join(" · "),
+            expectedEnvironmentKeys: {
+              location: backgroundContract.location.key,
+              moment: backgroundContract.moment.key,
+              surface: backgroundContract.surface.key,
+              camera: backgroundContract.camera.key,
+              palette: backgroundContract.palette.key,
+              spatialDepth: backgroundContract.spatialDepth.key,
+            },
+            expectedPropKey: backgroundContract.prop.key,
+            expectedPlateDigest: createHash("sha256").update(generated).digest("hex"),
+            expectedPlateBytes: generated.length,
+            comparisonPlates: existingBackgroundShots.filter((shot) => shot.plateFile),
+            jobId,
+            claimToken,
+            leaseSignal,
+          });
+          const repeatedProp = findRepeatedBackgroundProp(
+            semanticAudit.observedNonMerchandiseProps,
+            existingBackgroundProps,
+          );
+          if (repeatedProp) {
+            throw new Error(`${preset.id} 배경 소품 ${repeatedProp.propKey}이 ${repeatedProp.assetId} 설정샷과 반복됐습니다.`);
+          }
+          backgroundProps = semanticAudit.observedNonMerchandiseProps;
+        } catch (error) {
+          if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) throw error;
+          noveltyGuidance = `Background safety retry ${attempt}: replace the whole plate. The previous scene failed independent visual inspection for merchandise, package/container silhouettes, labels, people, reserved-zone clearance, the literal assigned camera, visible time-of-day lighting, surface, palette, spatial depth, or unique slot-specific fixed cues. Regenerate with a genuinely different camera family and physical layout while keeping the exact assigned location/light/surface contract. Do not merely blur, erase text from, recolor, crop or move the failed object.`;
+          continue;
+        }
+        backgroundFingerprint = await fingerprintGeneratedShot(`background:${preset.id}`, generated);
+        let duplicateBackground = null;
+        for (const existingBackground of existingBackgroundShots) {
+          const candidateFingerprint = Array.isArray(existingBackground.maskPlacements)
+            ? await fingerprintBackgroundWithMaskedZones(
+                `background:${preset.id}`,
+                generated,
+                preset,
+                existingBackground.maskPlacements,
+              )
+            : backgroundFingerprint;
+          duplicateBackground = findDuplicateShot(candidateFingerprint, [existingBackground]);
+          if (duplicateBackground) break;
+        }
+        if (duplicateBackground) {
+          if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
+            throw new Error(`${preset.id} 배경 장면이 ${duplicateBackground.assetId}와 반복되어 완료하지 않았습니다.`);
+          }
+          noveltyGuidance = `Background diversity retry ${attempt}: replace the entire physical location, time of day, surface material, prop layout and camera family. The previous empty plate was too close to ${duplicateBackground.assetId}.`;
+          continue;
+        }
+        await writeFile(backgroundPlateFile, generated, { flag: "wx", mode: 0o600 });
+        backgroundPlateSnapshot = {
+          semanticAssetId: preset.id,
+          plateFile: backgroundPlateFile,
+          plateDigest: createHash("sha256").update(generated).digest("hex"),
+          plateBytes: generated.length,
+        };
+      }
+      normalized = backgroundOnly
+        ? await compositeIdentityForeground(generated, compositeSource.foreground, preset)
+        : generated;
+      if (backgroundOnly) await writeFile(outputFile, normalized);
+    }
     const fingerprint = await fingerprintGeneratedShot(preset.id, normalized);
     const duplicate = findDuplicateShot(fingerprint, existingShots);
-    if (!duplicate) return { normalized, fingerprint, attempts: attempt };
+    if (!duplicate) {
+      if (backgroundFingerprint) existingBackgroundShots.push({ ...backgroundFingerprint, ...backgroundPlateSnapshot });
+      if (backgroundProps) existingBackgroundProps.push({ assetId: preset.id, propKeys: backgroundProps });
+      return { normalized, fingerprint, attempts: attempt };
+    }
+    if (identityCutouts && preset.identityPolicy.mode !== "source-composite") {
+      throw new Error(`${preset.id} 원본 근거 이미지가 ${duplicate.assetId}와 중복되어 서로 다른 안전한 원본 컷을 확보하지 못했습니다.`);
+    }
     if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
       throw new Error(`${preset.id} 이미지가 ${duplicate.assetId}와 반복되어 완료하지 않았습니다.`);
     }
@@ -1475,7 +2183,7 @@ async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId, c
     "exec",
     "--model", model,
     "--config", 'model_reasoning_effort="medium"',
-    "--sandbox", "workspace-write",
+    "--sandbox", "read-only",
     "--skip-git-repo-check",
     "--ephemeral",
     "--output-schema", studioSchemaPath,
@@ -1544,7 +2252,7 @@ async function processJob(job) {
       return;
     }
     if (job.kind === "product_asset_regeneration") {
-      const imageFiles = await downloadInputs(job, jobDir);
+      const imageFiles = await downloadInputs(job, jobDir, jobHeartbeat.signal);
       const parsedSource = cliStudioResultSchema.safeParse(job.request?.sourceResult);
       if (!parsedSource.success) throw new Error(`원본 상품 기획 검증 실패 · ${summarizeStudioIssues(parsedSource.error.issues)}`.slice(0, 500));
       const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === job.request?.assetId);
@@ -1557,16 +2265,39 @@ async function processJob(job) {
         global: { fetch: createLeaseBoundedStorageFetch(jobHeartbeat.signal) },
       });
       const outputFile = join(jobDir, preset.file);
-      const existingShots = await downloadComparisonShots(job, preset.id);
+      const {
+        shots: existingShots,
+        backgroundShots: existingBackgroundShots,
+      } = await downloadComparisonShots(job, preset.id, jobDir, jobHeartbeat.signal);
+      const existingBackgroundProps = aiGeneratedAssetSpecs
+        .filter((candidate) => candidate.identityPolicy.mode === "source-composite" && candidate.id !== preset.id)
+        .map((candidate) => {
+          const comparisonSettingShot = resolveProductSettingShot(parsedSource.data, candidate.id);
+          if (!comparisonSettingShot) throw new Error(`${candidate.id} 기존 설정샷 배경 계약을 확인하지 못했습니다.`);
+          return {
+            assetId: candidate.id,
+            propKeys: [resolveIdentityBackgroundContract(comparisonSettingShot, candidate.id).prop.key],
+          };
+        });
+      const identityCutouts = await prepareIdentityCutoutsForJob(
+        parsedSource.data,
+        imageFiles,
+        jobDir,
+        jobHeartbeat.signal,
+        job.request?.manualFields,
+      );
       const generated = await generateDistinctAsset({
         result: parsedSource.data,
         outputFile,
         preset,
         imageFiles,
+        identityCutouts,
         jobId: job.id,
         claimToken,
         leaseSignal: jobHeartbeat.signal,
         existingShots,
+        existingBackgroundShots,
+        existingBackgroundProps,
       });
       await assertJobLeaseHealthy();
       const { error: uploadError } = await resultStorageClient.storage
@@ -1600,10 +2331,11 @@ async function processJob(job) {
     const competitorContext = job.request?.competitorContext == null
       ? null
       : studioCompetitorContextSchema.parse(job.request.competitorContext);
-    const imageFiles = await downloadInputs(job, jobDir);
+    const imageFiles = await downloadInputs(job, jobDir, jobHeartbeat.signal);
     const references = await fetchReferencePages(
       String(job.request?.researchInput || job.request?.manualFields?.researchInput || ""),
       String(job.request?.productUrl || ""),
+      jobHeartbeat.signal,
     );
     const referenceText = references.length
       ? JSON.stringify(references.map((reference) => ({ url: reference.url, title: reference.title, status: reference.status, text: reference.text }))).slice(0, 60_000)
@@ -1613,7 +2345,7 @@ async function processJob(job) {
       "exec",
       "--model", model,
       "--config", 'model_reasoning_effort="medium"',
-      "--sandbox", "workspace-write",
+      "--sandbox", "read-only",
       "--skip-git-repo-check",
       "--ephemeral",
       "--output-schema", studioSchemaPath,
@@ -1628,6 +2360,13 @@ async function processJob(job) {
     const referenceWarnings = references.flatMap((reference) => reference.warning ? [reference.warning] : []);
     if (referenceWarnings.length) result.warnings = [...(Array.isArray(result.warnings) ? result.warnings : []), ...referenceWarnings].slice(0, 5);
     result = await validateOrRepairStudioResult(result, resultFile, jobDir, job.id, claimToken, jobHeartbeat.signal);
+    const identityCutouts = await prepareIdentityCutoutsForJob(
+      result,
+      imageFiles,
+      jobDir,
+      jobHeartbeat.signal,
+      job.request?.manualFields,
+    );
     const imagePresets = aiGeneratedAssetSpecs;
     const uploads = Array.isArray(job.resultUploads) ? job.resultUploads : [];
     if (uploads.length !== imagePresets.length) throw new Error("대표·썸네일·상세 이미지 8종 업로드 정보가 없습니다.");
@@ -1637,6 +2376,8 @@ async function processJob(job) {
     });
     const assetStoragePaths = {};
     const existingShots = [];
+    const existingBackgroundShots = [];
+    const existingBackgroundProps = [];
     for (const preset of imagePresets) {
       const outputFile = join(jobDir, preset.file);
       const upload = uploads.find((item) => item?.id === preset.id);
@@ -1646,10 +2387,13 @@ async function processJob(job) {
         outputFile,
         preset,
         imageFiles,
+        identityCutouts,
         jobId: job.id,
         claimToken,
         leaseSignal: jobHeartbeat.signal,
         existingShots,
+        existingBackgroundShots,
+        existingBackgroundProps,
       });
       await assertJobLeaseHealthy();
       const { error: uploadError } = await resultStorageClient.storage

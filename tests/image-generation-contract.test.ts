@@ -99,8 +99,9 @@ test("hero, square, feature and package have mutually exclusive purpose, crop, p
   const packagePrompt = buildAssetImagePrompt(baseResult, "/tmp/package.png", critical[3], ["main", "back", "top"]);
   assert.match(heroPrompt, /오른쪽 1\/3 배치와 왼쪽 네거티브 공간/);
   assert.match(squarePrompt, /순백 배경의 완전 정면 상품 식별컷/);
-  assert.match(featurePrompt, /전체 패키지 금지/);
-  assert.match(packagePrompt, /상단 봉합·뚜껑과 측면 또는 후면/);
+  assert.match(featurePrompt, /원본 픽셀 근접 증거컷/);
+  assert.match(packagePrompt, /실제로 제공된 측면·후면·표시사항 패널/);
+  assert.doesNotMatch(packagePrompt, /상단 봉합·뚜껑/);
 });
 
 test("the exact SHA-256 and 256-bit dHash gate allows an initial image plus three materially different retries", () => {
@@ -171,7 +172,9 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /pixels\.length !== \(SHOT_DHASH_COLUMNS \+ 1\) \* SHOT_DHASH_ROWS/);
   assert.match(worker, /buildDifferenceHash\(pixels\)/);
   assert.match(worker, /findDuplicateShot\(fingerprint, existingShots\)/);
-  assert.match(worker, /downloadComparisonShots\(job, preset\.id\)/);
+  assert.match(worker, /downloadComparisonShots\(job, preset\.id, jobDir, jobHeartbeat\.signal\)/);
+  assert.match(worker, /const comparisonDownloadGate = createConcurrencyGate\(3\)/);
+  assert.match(worker, /fetch\(image\.signedUrl, \{ signal: downloadSignal\(leaseSignal, 30_000\) \}\)/);
   assert.match(worker, /expectedAssetIds[\s\S]*assetId !== targetAssetId/);
   assert.match(worker, /const previousAssetId = `previous:\$\{targetAssetId\}`/);
   assert.match(worker, /comparisonById\.size !== expectedAssetIds\.length \+ 1/);
@@ -179,4 +182,46 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(claimRoute, /candidate\.id === assetId \? `previous:\$\{candidate\.id\}` : candidate\.id/);
   assert.match(worker, /existingShots\.length !== imagePresets\.length/);
   assert.match(worker, /match=\$\{duplicate\.exact \? "sha256" : "dhash"\}/);
+});
+
+test("protected products never send source pixels to image generation and preserve legacy input compatibility", async () => {
+  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const cutout = await readFile(new URL("../scripts/source-product-cutout.swift", import.meta.url), "utf8");
+  assert.match(worker, /preset\.identityPolicy\.mode !== "source-composite"[\s\S]*renderIdentityOnNeutralCanvas/);
+  assert.match(worker, /const backgroundOnly = Boolean\(identityCutouts && preset\.identityPolicy\.mode === "source-composite"\)/);
+  assert.match(worker, /\.\.\.\(!backgroundOnly \? referenceIndexes\.map[\s\S]*: \[\]\)/);
+  assert.match(worker, /backgroundOnly \? "identity-background" : "product"/);
+  assert.match(worker, /compositeIdentityForeground\(generated, compositeSource\.foreground, preset\)/);
+  assert.match(worker, /originalMediaType[\s\S]*image\/jpeg[\s\S]*return "\.jpg"/);
+  assert.match(worker, /trustedLegacyStudioImagePath\.test/);
+  assert.match(worker, /const expectedBytes = preservedOriginal \? sourceSpec\.originalBytes : sourceSpec\.bytes/);
+  assert.match(worker, /imageFiles\.some\(\(image\) => !image\.preservedOriginal\)/);
+  assert.match(worker, /preservedCount === 0[^\n]*legacy jobs/);
+  assert.match(worker, /prepareIdentityCutoutsForJob\([\s\S]*prepareSourceIdentityCutouts/);
+  assert.match(worker, /readResponseBodyBounded\([\s\S]*getReader\(\)/);
+  assert.match(worker, /maximumCutoutInputCount = 8/);
+  assert.match(worker, /assetSources\[preset\.id\]/);
+  assert.match(worker, /\? \[front, evidence\] : \[front\]/);
+  assert.match(worker, /\}\) \?\? front/);
+  assert.match(worker, /renderMissingIdentityEvidence\(preset\)/);
+  assert.match(worker, /return requiredSettingRoles\.has\(role\)/);
+  assert.match(worker, /sourceRole === "extra" \|\| !allowedSourceRoles\.has\(sourceRole\)/);
+  assert.match(worker, /const dedicatedRoles = new Set\(\["back", "label", "barcode", "left", "right", "top", "bottom"\]\)/);
+  assert.match(worker, /outputStats\.nlink !== 1/);
+  assert.match(worker, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
+  assert.match(worker, /openedStats\.dev !== outputStats\.dev[\s\S]*openedStats\.ino !== outputStats\.ino/);
+  assert.match(worker, /sourceHandle\.readFile\(\)/);
+  assert.match(worker, /assertIdentityBackgroundPlate\(generated, preset\)/);
+  assert.match(worker, /executeSourceProductCutout\("background"/);
+  assert.match(worker, /auditGeneratedIdentityBackground\(\{/);
+  assert.match(worker, /for \(const existingBackground of existingBackgroundShots\)[\s\S]*findDuplicateShot\(candidateFingerprint, \[existingBackground\]\)/);
+  assert.match(cutout, /IndexSet\(integer: instance\)/);
+  assert.match(cutout, /generateScaledMaskForImage\(forInstances: instances/);
+  assert.doesNotMatch(cutout, /generateScaledMaskForImage\(forInstances: observation\.allInstances/);
+  assert.match(cutout, /VNDetectBarcodesRequest/);
+  assert.match(cutout, /VNDetectHumanRectanglesRequest/);
+  assert.match(cutout, /for quarterTurns in 1\.\.\.3/);
+  assert.match(cutout, /barcodePayloads\.insert\(payload\)\.inserted/);
+  assert.match(cutout, /CommandLine\.arguments\[1\] == "background"/);
+  assert.match(worker, /front\.report\.inputIndex === evidence\.report\.inputIndex/);
 });

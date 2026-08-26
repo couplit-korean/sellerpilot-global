@@ -11,6 +11,7 @@ const CANCEL_JOB_ID = "95303cb5-f3ba-49b6-9bd4-7c5e558f0b14";
 const RESEARCH_JOB_ID = "e659cfbc-0f80-44a5-94e8-f011ec53e67f";
 const REGEN_JOB_ID = "bc02b888-5531-426a-9a87-32a8c0e356e2";
 const DEDUPED_REGEN_REQUEST_ID = "c4f3296b-42ec-457d-b1cf-b5200662f354";
+const CROSS_OWNER_REGEN_JOB_ID = "9c392f1f-f0de-45bb-a127-42605bc7422b";
 const DUPLICATE_SKU_JOB_ID = "6c7f9651-f0dd-48f7-8fe4-51335c404aef";
 const CLAIM_PREPARATION_JOB_ID = "0da0295f-d85b-4d5e-a938-853b49f5ea32";
 const STALE_AI_JOB_ID = "7c64df91-bd91-49bf-a141-1485bcbead3d";
@@ -265,6 +266,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260826091000_dedupe_asset_regeneration_and_activity.sql",
       "20260826091100_bound_registration_activity_query.sql",
       "20260826091200_fence_periodic_sync_reconciliation.sql",
+      "20260826091300_preserve_studio_source_uploads.sql",
+      "20260826091400_preserve_asset_regeneration_manual_fields.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -2444,6 +2447,19 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.match(aiProductId, /^[0-9a-f-]{36}$/i);
     assert.equal(aiProductId, automaticallyReconciledProductId);
+    await setClaims(db, "authenticated", SECOND_ADMIN_ID);
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_create_asset_regeneration_job($1, $2, $3, 'detail-use')",
+        [CROSS_OWNER_REGEN_JOB_ID, JOB_ID, aiProductId],
+      ),
+      /source studio job not found/,
+    );
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.ai_cli_jobs where id = $1", [CROSS_OWNER_REGEN_JOB_ID]),
+      0,
+    );
+    await setClaims(db);
     assert.equal(
       await scalar(
         db,
@@ -2476,6 +2492,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [REGEN_JOB_ID, resultPayload.asset_storage_paths.hero],
       ),
       1,
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select request_payload->'manual_fields' from sellerpilot_private.ai_cli_jobs where id = $1",
+        [REGEN_JOB_ID],
+      ),
+      requiredManualFields,
     );
     assert.equal(
       await scalar(

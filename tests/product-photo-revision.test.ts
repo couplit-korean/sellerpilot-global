@@ -58,6 +58,10 @@ test("product photo revision accepts normalized main-first images and stock zero
     imageSpecs: [{
       name: "main.png",
       role: "main",
+      originalName: "main.png",
+      originalBytes: 24,
+      originalMediaType: "image/png",
+      originalPath: `owner/${jobId}/original/001.source`,
       originalWidth: 1800,
       originalHeight: 1800,
       width: 1200,
@@ -189,7 +193,11 @@ test("revision route and UI preserve uncertain uploads and query the exact job",
   assert.match(route, /sellerpilot_abandon_uncreated_product_revision_job/);
   assert.match(route, /const abandonAndCleanupIfUncreated = async/);
   assert.match(route, /if \(error \|\| !safeToRemove\) return false/);
-  assert.match(route, /if \(!verified\) \{[\s\S]*await abandonAndCleanupIfUncreated\(\)/);
+  assert.match(route, /if \(!verified\.normalized\) \{[\s\S]*await abandonAndCleanupIfUncreated\(\)/);
+  assert.match(route, /if \(!verified\.originals\) \{[\s\S]*await abandonAndCleanupIfUncreated\(\)/);
+  assert.match(route, /export const maxDuration = 300/);
+  assert.equal((route.match(/createSignedUrls\(/g) ?? []).length, 1);
+  assert.match(route, /verifyPreservedStudioImages/);
   assert.doesNotMatch(page, /storage\.from\("sellerpilot-ai"\)\.remove/);
   assert.match(page, /\[408, 425, 429\]\.includes\(response\.status\) \|\| response\.status >= 500/);
   assert.match(page, /revision\?jobId=\$\{encodeURIComponent\(candidateJobId\)\}/);
@@ -205,6 +213,7 @@ test("revision route and UI preserve uncertain uploads and query the exact job",
   const saveStart = page.indexOf("const saveProductDetails = async");
   const inventoryPollStart = page.indexOf("if (!inventorySaving) return;", saveStart);
   const saveBody = page.slice(saveStart, inventoryPollStart);
+  assert.match(saveBody, /\/revision`[\s\S]*controller\.signal,[\s\S]*90_000/);
   const acceptedRevisionPoint = saveBody.indexOf("if (!acceptedRevision) throw new Error");
   const revisionInventoryPoint = saveBody.indexOf("inventory-revision-${jobId}");
   assert.ok(acceptedRevisionPoint > 0 && revisionInventoryPoint > acceptedRevisionPoint);

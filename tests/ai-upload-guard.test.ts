@@ -11,6 +11,17 @@ const validPaths = [
 
 test("invalid AI intake cleanup is limited to the authenticated user's job paths", () => {
   assert.deepEqual(rejectedUploadPaths({ jobId, imagePaths: validPaths }, userId), validPaths);
+  assert.deepEqual(rejectedUploadPaths({
+    jobId,
+    imagePaths: validPaths,
+    imageSpecs: [
+      { originalPath: `${userId}/${jobId}/original/001.source` },
+      { originalPath: `${userId}/${jobId}/original/002.source` },
+    ],
+  }, userId), [
+    validPaths[0], `${userId}/${jobId}/original/001.source`,
+    validPaths[1], `${userId}/${jobId}/original/002.source`,
+  ]);
 });
 
 test("invalid AI intake cleanup rejects foreign, mixed, and traversal paths", () => {
@@ -18,6 +29,14 @@ test("invalid AI intake cleanup rejects foreign, mixed, and traversal paths", ()
   assert.deepEqual(rejectedUploadPaths({ jobId, imagePaths: [`${foreignUser}/${jobId}/input/001.jpg`] }, userId), []);
   assert.deepEqual(rejectedUploadPaths({ jobId, imagePaths: [...validPaths, `${foreignUser}/${jobId}/input/003.jpg`] }, userId), []);
   assert.deepEqual(rejectedUploadPaths({ jobId, imagePaths: [`${userId}/${jobId}/input/../secret.jpg`] }, userId), []);
+  assert.deepEqual(rejectedUploadPaths({
+    jobId,
+    imagePaths: validPaths,
+    imageSpecs: [
+      { originalPath: `${foreignUser}/${jobId}/original/001.source` },
+      { originalPath: `${userId}/${jobId}/original/002.source` },
+    ],
+  }, userId), validPaths);
 });
 
 test("invalid AI intake cleanup requires bounded UUID job payloads", () => {

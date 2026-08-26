@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
 import { studioCompetitorContextSchema } from "../../../../../lib/ai-cli-contract";
+import { sourceImagePathsForWorker } from "../../../../../lib/studio-image-paths";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 import {
   createBoundedSupabaseFetch,
@@ -191,6 +192,17 @@ export async function POST(request: Request) {
   const imageSpecs = Array.isArray(jobRequest.image_specs)
     ? jobRequest.image_specs.filter((spec): spec is Record<string, unknown> => Boolean(spec) && typeof spec === "object" && !Array.isArray(spec))
     : [];
+  let sourcePaths: string[];
+  try {
+    sourcePaths = sourceImagePathsForWorker(paths, imageSpecs);
+  } catch (sourcePathError) {
+    return preparationFailure({
+      message: "원본 상품 이미지 경로가 파생 이미지와 일치하지 않습니다.",
+      safeReason: "invalid_source_image_provenance",
+      mode: "fail",
+      error: sourcePathError,
+    });
+  }
   const regenerationAssetId = typeof jobRequest.asset_id === "string" ? jobRequest.asset_id : "";
   const regenerationAsset = job.kind === "product_asset_regeneration"
     ? aiGeneratedAssetSpecs.find((candidate) => candidate.id === regenerationAssetId)
@@ -205,7 +217,7 @@ export async function POST(request: Request) {
   try {
     const { data: signedFiles, error: signedError } = await serviceClient.storage
       .from("sellerpilot-ai")
-      .createSignedUrls(paths, 10 * 60);
+      .createSignedUrls(sourcePaths, 10 * 60);
     if (signedError) {
       return preparationFailure({
         message: "작업 이미지 URL을 만들지 못했습니다.",
@@ -215,10 +227,10 @@ export async function POST(request: Request) {
     }
     const signedSourceImages = (signedFiles ?? []).flatMap((file, index) => (
       typeof file.signedUrl === "string" && !file.error
-        ? [{ path: paths[index], signedUrl: file.signedUrl }]
+        ? [{ path: sourcePaths[index], signedUrl: file.signedUrl }]
         : []
     ));
-    if (signedSourceImages.length !== paths.length) {
+    if (signedSourceImages.length !== sourcePaths.length) {
       return preparationFailure({
         message: "일부 작업 이미지 URL을 만들지 못했습니다.",
         safeReason: "source_image_signing_incomplete",
@@ -276,6 +288,9 @@ export async function POST(request: Request) {
           sourceJobId: typeof jobRequest.source_job_id === "string" ? jobRequest.source_job_id : "",
           sourceProductId: typeof jobRequest.source_product_id === "string" ? jobRequest.source_product_id : null,
           assetId,
+          manualFields: jobRequest.manual_fields && typeof jobRequest.manual_fields === "object" && !Array.isArray(jobRequest.manual_fields)
+            ? jobRequest.manual_fields
+            : {},
           sourceResult: jobRequest.source_result && typeof jobRequest.source_result === "object" && !Array.isArray(jobRequest.source_result)
             ? jobRequest.source_result
             : null,

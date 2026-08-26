@@ -7,6 +7,7 @@ import type { StudioPhoto } from "./ai-product-studio";
 import { settleWithConcurrency } from "../lib/promise-pool";
 import { withPromiseTimeout } from "../lib/promise-timeout";
 import { createRevisionPhotoSelectionFence, releaseStaleRevisionPhoto } from "../lib/product-revision-photo-fence";
+import { assertStudioSourceDimensions, assertStudioSourceFile } from "../lib/studio-source-photo-policy";
 
 const revisionPhotoRoles = [
   { id: "front", label: "정면" },
@@ -29,9 +30,11 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
   const [extraPhotos, setExtraPhotos] = useState<StudioPhoto[]>([]);
   const [processing, setProcessing] = useState(false);
   const processingRef = useRef(false);
+  const pendingNewRoleRef = useRef(new Set<string>());
   const objectUrlsRef = useRef(new Set<string>());
   const mountedRef = useRef(true);
   const [selectionFence] = useState(createRevisionPhotoSelectionFence);
+  const totalPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(rolePhotos).length + extraPhotos.length;
 
   const release = useCallback((url: string) => {
     if (!objectUrlsRef.current.delete(url)) return;
@@ -56,10 +59,7 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
   }, [extraPhotos, mainPhoto, onChange, rolePhotos]);
 
   const toPhoto = useCallback(async (file: File, role: string): Promise<StudioPhoto> => {
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      throw new Error("JPG, PNG, WEBP 이미지만 등록할 수 있습니다.");
-    }
-    if (file.size > 20 * 1024 * 1024) throw new Error("원본 이미지는 20MB 이하로 등록해 주세요.");
+    assertStudioSourceFile(file);
     const url = URL.createObjectURL(file);
     objectUrlsRef.current.add(url);
     try {
@@ -72,9 +72,7 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
         image.onload = null;
         image.onerror = null;
       });
-      if (dimensions.width < 600 || dimensions.height < 600) {
-        throw new Error("이미지는 최소 600×600px 이상이어야 합니다.");
-      }
+      assertStudioSourceDimensions(dimensions.width, dimensions.height);
       if (!mountedRef.current) throw new Error("상품 수정 화면이 닫혀 이미지 처리를 중단했습니다.");
       return { name: file.name, url, file, role, originalWidth: dimensions.width, originalHeight: dimensions.height };
     } catch (error) {
@@ -108,6 +106,17 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
       onError("역할별 사진보다 대표사진을 먼저 선택해 주세요.");
       return;
     }
+    if (processingRef.current) {
+      onError("추가 사진 확인이 끝난 뒤 역할별 사진을 선택해 주세요.");
+      return;
+    }
+    const reservesNewSlot = !rolePhotos[role];
+    if (reservesNewSlot
+        && totalPhotoCount + pendingNewRoleRef.current.size >= 100) {
+      onError("한 상품은 분석용 사진을 최대 100장까지 등록할 수 있습니다.");
+      return;
+    }
+    if (reservesNewSlot) pendingNewRoleRef.current.add(role);
     const token = selectionFence.nextRole(role);
     try {
       const next = await toPhoto(file, role);
@@ -118,6 +127,8 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
       });
     } catch (error) {
       if (selectionFence.isCurrent(token)) onError(error instanceof Error ? error.message : "역할별 사진을 확인해 주세요.");
+    } finally {
+      if (reservesNewSlot) pendingNewRoleRef.current.delete(role);
     }
   };
 
@@ -127,6 +138,10 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
     if (!files.length || disabled || processingRef.current) return;
     if (!mainPhoto) {
       onError("추가 사진보다 대표사진을 먼저 선택해 주세요.");
+      return;
+    }
+    if (pendingNewRoleRef.current.size) {
+      onError("역할별 사진 확인이 끝난 뒤 추가 사진을 선택해 주세요.");
       return;
     }
     const remaining = Math.max(0, 100 - (mainPhoto ? 1 : 0) - Object.keys(rolePhotos).length - extraPhotos.length);
@@ -146,7 +161,14 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
         for (const photo of accepted) release(photo.url);
         return;
       }
-      if (accepted.length) setExtraPhotos((current) => [...current, ...accepted].slice(0, 100));
+      if (accepted.length) setExtraPhotos((current) => {
+        const capacity = Math.max(0, 100 - (mainPhoto ? 1 : 0) - Object.keys(rolePhotos).length);
+        const next = [...current, ...accepted];
+        const kept = next.slice(0, capacity);
+        const keptUrls = new Set(kept.map((photo) => photo.url));
+        for (const photo of accepted) if (!keptUrls.has(photo.url)) release(photo.url);
+        return kept;
+      });
       if (failure) onError(failure.reason instanceof Error ? failure.reason.message : "일부 추가 사진을 확인해 주세요.");
     } finally {
       if (selectionFence.isCurrent(token)) {
@@ -195,10 +217,10 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
   return <section className="product-revision-images" aria-labelledby="product-revision-images-title">
     <div className="intake-group-heading"><span>05</span><div><b id="product-revision-images-title">원본·대표·역할별 사진 교체</b><small>사진을 선택한 경우 같은 상품 ID로 AI 상세페이지를 다시 만들며 외부 채널에는 자동 게시하지 않습니다.</small></div></div>
     <div className="product-revision-main">
-      <input id="product-revision-main-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" disabled={disabled} onChange={(event) => void selectMain(event)} />
+      <input id="product-revision-main-camera" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={disabled} onChange={(event) => void selectMain(event)} />
       <label htmlFor="product-revision-main" className={mainPhoto ? "has-photo" : ""} aria-disabled={disabled}>
         <input id="product-revision-main" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled} onChange={(event) => void selectMain(event)} />
-        {mainPhoto ? <><span><Image src={mainPhoto.url} alt="교체할 대표 상품 사진" fill sizes="(max-width: 720px) 88vw, 420px" unoptimized /></span><b>대표사진 교체됨</b><small>{mainPhoto.originalWidth}×{mainPhoto.originalHeight} → 1200×1200 JPG</small></> : <><ImagePlus size={24} /><b>새 대표사진 선택</b><small>필수 · JPG, PNG, WEBP · 최소 600×600px</small></>}
+        {mainPhoto ? <><span><Image src={mainPhoto.url} alt="교체할 대표 상품 사진" fill sizes="(max-width: 720px) 88vw, 420px" unoptimized /></span><b>대표사진 교체됨</b><small>{mainPhoto.originalWidth}×{mainPhoto.originalHeight} 원본 보존 · 분석용 1200×1200 JPG</small></> : <><ImagePlus size={24} /><b>새 대표사진 선택</b><small>필수 · JPG, PNG, WEBP · 최소 600×600px</small></>}
       </label>
       <div className="product-revision-source-actions"><label htmlFor="product-revision-main-camera"><Camera size={15} />촬영</label><label htmlFor="product-revision-main"><ImagePlus size={15} />앨범</label>{mainPhoto ? <button type="button" disabled={disabled} onClick={clearMainAndDependents}><Trash2 size={14} />전체 제거</button> : null}</div>
     </div>
@@ -207,7 +229,7 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
         const photo = rolePhotos[role.id];
         return <div className={photo ? "has-photo" : ""} key={role.id}>
           <label htmlFor={`product-revision-${role.id}`}>
-            <input id={`product-revision-${role.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled} onChange={(event) => void selectRole(role.id, event)} />
+            <input id={`product-revision-${role.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled || processing || (!photo && totalPhotoCount >= 100)} onChange={(event) => void selectRole(role.id, event)} />
             {photo ? <span><Image src={photo.url} alt={`교체할 ${role.label} 사진`} fill sizes="(max-width: 720px) 42vw, 120px" unoptimized /></span> : <ImagePlus size={17} />}
             <b>{role.label}</b><small>{photo ? "교체 · 다시 선택 가능" : "선택"}</small>
           </label>
@@ -216,8 +238,8 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
       })}
     </div>
     <div className="product-revision-extras">
-      <label htmlFor="product-revision-extras" aria-disabled={disabled || processing}>
-        <input id="product-revision-extras" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={disabled || processing} onChange={(event) => void selectExtras(event)} />
+      <label htmlFor="product-revision-extras" aria-disabled={disabled || processing || totalPhotoCount >= 100}>
+        <input id="product-revision-extras" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={disabled || processing || totalPhotoCount >= 100} onChange={(event) => void selectExtras(event)} />
         {processing ? <LoaderCircle className="spin" size={17} /> : <ImagePlus size={17} />}<span><b>{processing ? "추가 사진 확인 중" : "추가 사진 여러 장"}</b><small>모바일 메모리 보호를 위해 3장씩 확인 · 전체 최대 100장</small></span>
       </label>
       {extraPhotos.length ? <div>{extraPhotos.map((photo, index) => <span key={`${photo.url}-${index}`}><Image src={photo.url} alt={`교체할 추가 상품 사진 ${index + 1}`} fill sizes="80px" unoptimized /><button type="button" aria-label={`추가 사진 ${index + 1} 제거`} disabled={disabled} onClick={() => removeExtra(index)}><X size={11} /></button></span>)}</div> : null}

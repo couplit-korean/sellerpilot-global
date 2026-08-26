@@ -1,4 +1,11 @@
 import { z } from "zod";
+import {
+  maximumStudioSourceImageBytes,
+  maximumStudioSourceImageDimension,
+  maximumStudioSourceImagePixels,
+  minimumStudioSourceImageDimension,
+  studioSourceImageMediaTypes,
+} from "./studio-source-photo-policy";
 
 export const productCurrencies = [
   "KRW", "JPY", "USD", "SGD", "MYR", "PHP", "VND", "THB", "TWD", "BRL", "MXN", "IDR", "EUR",
@@ -73,8 +80,28 @@ export const normalizedProductImageSpecSchema = z.object({
   fit: z.literal("contain"),
 });
 
+export const sourcePreservingProductImageSpecSchema = normalizedProductImageSpecSchema.extend({
+  originalWidth: z.number().int().min(minimumStudioSourceImageDimension).max(maximumStudioSourceImageDimension),
+  originalHeight: z.number().int().min(minimumStudioSourceImageDimension).max(maximumStudioSourceImageDimension),
+  originalName: z.string().trim().min(1).max(240),
+  originalBytes: z.number().int().min(1).max(maximumStudioSourceImageBytes),
+  originalMediaType: z.enum(studioSourceImageMediaTypes),
+  originalPath: z.string().min(1).max(400),
+}).superRefine((value, context) => {
+  if (value.originalWidth > maximumStudioSourceImageDimension
+      || value.originalHeight > maximumStudioSourceImageDimension
+      || value.originalWidth * value.originalHeight > maximumStudioSourceImagePixels) {
+    context.addIssue({
+      code: "custom",
+      path: ["originalWidth"],
+      message: "원본 이미지는 1,600만 픽셀 이하여야 합니다.",
+    });
+  }
+});
+
 export type ProductIntakeFields = z.infer<typeof productIntakeSchema>;
 export type NormalizedProductImageSpec = z.infer<typeof normalizedProductImageSpecSchema>;
+export type SourcePreservingProductImageSpec = z.infer<typeof sourcePreservingProductImageSpecSchema>;
 export type ProductIntakeDraft = Omit<ProductIntakeFields, "imageRightsConfirmed" | "productFactsConfirmed"> & {
   imageRightsConfirmed: boolean;
   productFactsConfirmed: boolean;

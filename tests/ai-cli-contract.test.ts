@@ -17,6 +17,29 @@ import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-eviden
 
 const CLAIM_TOKEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
+function sourcePreservingImageSpec(overrides: Partial<{
+  originalWidth: number;
+  originalHeight: number;
+  bytes: number;
+}> = {}) {
+  return {
+    name: "001.jpg",
+    role: "main",
+    originalName: "source.png",
+    originalBytes: 875_000,
+    originalMediaType: "image/png" as const,
+    originalPath: "user/job/original/001.source",
+    originalWidth: 1600,
+    originalHeight: 900,
+    width: 1200 as const,
+    height: 1200 as const,
+    bytes: 450_000,
+    mediaType: "image/jpeg" as const,
+    fit: "contain" as const,
+    ...overrides,
+  };
+}
+
 const localized = [
   ["qoo10", "JP", "ja-JP", "白い陶器のエスプレッソカップ"],
   ["shopee", "SG", "en-SG", "White ceramic espresso cup"],
@@ -267,7 +290,7 @@ test("AI studio request requires seller facts and normalized listing images", ()
     jobId: "11111111-1111-4111-8111-111111111111",
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
-    imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1200, height: 1200, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],
+    imageSpecs: [sourcePreservingImageSpec()],
   });
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
@@ -277,7 +300,7 @@ test("AI studio request accepts only bounded verified same-product price evidenc
     jobId: "11111111-1111-4111-8111-111111111111",
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
-    imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1200, height: 1200, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],
+    imageSpecs: [sourcePreservingImageSpec()],
   };
   const competitorContext = {
     query: "화이트 도자기 에스프레소 컵",
@@ -320,7 +343,7 @@ test("AI studio request canonicalizes HTTP 11st evidence before the second stage
     jobId: "22222222-2222-4222-8222-222222222222",
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
-    imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1200, height: 1200, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],
+    imageSpecs: [sourcePreservingImageSpec()],
     competitorContext: {
       query: "롯데샌드 파인애플 315g",
       providerStatuses: [{ provider: "elevenst_product_search", status: "searched", count: 1, marketplaces: ["elevenst"] }],
@@ -360,7 +383,7 @@ test("AI studio request accepts free-text research without a source URL", () => 
       productUrl: "",
     },
     imagePaths: ["user/job/input/001.jpg"],
-    imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1200, originalHeight: 1200, width: 1200, height: 1200, bytes: 350_000, mediaType: "image/jpeg", fit: "contain" }],
+    imageSpecs: [sourcePreservingImageSpec({ originalWidth: 1200, originalHeight: 1200, bytes: 350_000 })],
   });
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });

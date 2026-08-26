@@ -8,7 +8,16 @@ import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import { classifyExactJobAdmission } from "../lib/exact-job-admission";
 import { withPromiseTimeout } from "../lib/promise-timeout";
 import { createClient } from "../lib/supabase/client";
-import { productIntakeSchema, type NormalizedProductImageSpec, type ProductIntakeDraft } from "../lib/product-intake";
+import { productIntakeSchema, type ProductIntakeDraft, type SourcePreservingProductImageSpec } from "../lib/product-intake";
+import { uploadStudioStorageObject } from "../lib/studio-direct-upload";
+import { assertStudioPhotoBatch, uploadStudioPhotoPairs } from "../lib/studio-photo-upload";
+import {
+  assertStudioSourceDimensions,
+  assertStudioSourceFile,
+  studioPhotoPreparationConcurrency,
+  studioPhotoUploadConcurrency,
+  type StudioSourceImageMediaType,
+} from "../lib/studio-source-photo-policy";
 import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
 import { makeProductDetailPersistable, parsePersistedProductDetailPage } from "./_publishing/product-detail-persistence";
 import type { ProductDetailData } from "./product-detail-puck";
@@ -53,7 +62,12 @@ export type StudioCompetitorContext = {
   }>;
 };
 type AutoThumbnail = { id: string; label: string; ratio: string; width: number; height: number; dataUrl: string };
-type OptimizedPhoto = { name: string; mediaType: "image/jpeg"; blob: Blob; spec: NormalizedProductImageSpec };
+type OptimizedPhoto = {
+  name: string;
+  mediaType: "image/jpeg";
+  blob: Blob;
+  spec: Omit<SourcePreservingProductImageSpec, "originalPath">;
+};
 type RegeneratedAssetResult = {
   mode: "asset-regeneration";
   assetId: string;
@@ -76,6 +90,7 @@ type StudioJobWaitOptions = {
   notFoundGraceMs?: number;
   maximumAgeMs?: number;
   onAccepted?: () => void;
+  preserveMissingAdmission?: boolean;
 };
 
 const studioUploadTimeoutMs = 45_000;
@@ -165,15 +180,6 @@ async function getStudioSessionWithDeadline(parentSignal: AbortSignal, timeoutMe
   }
 }
 
-function blobToDataUrl(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
 function loadImage(source: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
@@ -193,110 +199,151 @@ async function canvasToJpeg(canvas: HTMLCanvasElement) {
 
 async function optimizePhoto(photo: StudioPhoto): Promise<OptimizedPhoto> {
   try {
-    const source = await withPromiseTimeout(
-      blobToDataUrl(photo.file),
-      30_000,
-      `${photo.name} 파일을 30초 안에 읽지 못했습니다. 다른 사진으로 다시 시도해 주세요.`,
-    );
+    assertStudioSourceFile(photo.file);
     const image = await withPromiseTimeout(
-      loadImage(source),
+      loadImage(photo.url),
       30_000,
       `${photo.name} 이미지를 30초 안에 해석하지 못했습니다. 지원되는 사진 형식인지 확인해 주세요.`,
     );
-    const canvas = document.createElement("canvas");
-    canvas.width = 1200;
-    canvas.height = 1200;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("이미지 변환 화면을 열지 못했습니다.");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    const inset = 48;
-    const scale = Math.min((canvas.width - inset * 2) / image.naturalWidth, (canvas.height - inset * 2) / image.naturalHeight);
-    const width = Math.round(image.naturalWidth * scale);
-    const height = Math.round(image.naturalHeight * scale);
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-    context.drawImage(image, Math.round((canvas.width - width) / 2), Math.round((canvas.height - height) / 2), width, height);
-    const blob = await withPromiseTimeout(
-      canvasToJpeg(canvas),
-      30_000,
-      `${photo.name} 이미지 보정이 30초 안에 끝나지 않았습니다. 사진 크기를 줄여 다시 시도해 주세요.`,
-    );
-    const name = photo.name.replace(/\.[^.]+$/, ".jpg");
-    return {
-      name,
-      mediaType: "image/jpeg",
-      blob,
-      spec: {
+    try {
+      assertStudioSourceDimensions(image.naturalWidth, image.naturalHeight);
+      if (image.naturalWidth !== photo.originalWidth || image.naturalHeight !== photo.originalHeight) {
+        throw new Error(`${photo.name} 원본 크기가 선택 당시 정보와 달라 사진을 다시 선택해 주세요.`);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = 1200;
+      canvas.height = 1200;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("이미지 변환 화면을 열지 못했습니다.");
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      const inset = 48;
+      const scale = Math.min((canvas.width - inset * 2) / image.naturalWidth, (canvas.height - inset * 2) / image.naturalHeight);
+      const width = Math.round(image.naturalWidth * scale);
+      const height = Math.round(image.naturalHeight * scale);
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = "high";
+      context.drawImage(image, Math.round((canvas.width - width) / 2), Math.round((canvas.height - height) / 2), width, height);
+      const blob = await withPromiseTimeout(
+        canvasToJpeg(canvas),
+        30_000,
+        `${photo.name} 이미지 보정이 30초 안에 끝나지 않았습니다. 사진 크기를 줄여 다시 시도해 주세요.`,
+      );
+      const name = photo.name.replace(/\.[^.]+$/, ".jpg");
+      return {
         name,
-        role: photo.role,
-        originalWidth: photo.originalWidth,
-        originalHeight: photo.originalHeight,
-        width: 1200,
-        height: 1200,
-        bytes: blob.size,
         mediaType: "image/jpeg",
-        fit: "contain",
-      },
-    };
+        blob,
+        spec: {
+          name,
+          role: photo.role,
+          originalName: photo.name,
+          originalBytes: photo.file.size,
+          originalMediaType: photo.file.type as StudioSourceImageMediaType,
+          originalWidth: photo.originalWidth,
+          originalHeight: photo.originalHeight,
+          width: 1200,
+          height: 1200,
+          bytes: blob.size,
+          mediaType: "image/jpeg",
+          fit: "contain",
+        },
+      };
+    } finally {
+      image.onload = null;
+      image.onerror = null;
+      image.src = "";
+    }
   } catch (error) {
     throw normalizeStudioPhotoReadError(photo.name, error);
   }
 }
 
-export async function optimizeAndUploadStudioPhotos(photos: StudioPhoto[], userId: string, jobId: string, signal: AbortSignal) {
+export async function optimizeAndUploadStudioPhotos(
+  photos: StudioPhoto[],
+  userId: string,
+  jobId: string,
+  accessToken: string,
+  signal: AbortSignal,
+) {
+  assertStudioPhotoBatch(photos.map((photo) => photo.file));
   const supabase = createClient();
+  const uploadedStoragePaths = new Set<string>();
   const uploadedPaths: string[] = [];
-  const imageSpecs: NormalizedProductImageSpec[] = [];
+  const imageSpecs: SourcePreservingProductImageSpec[] = [];
+  const removeUploaded = async (paths: string[]) => {
+    if (!paths.length) return;
+    const { error } = await withPromiseTimeout(
+      supabase.storage.from("sellerpilot-ai").remove(paths),
+      15_000,
+      "업로드 임시파일 정리 제한시간을 초과했습니다.",
+    );
+    if (error) throw new Error("업로드 임시파일을 정리하지 못했습니다.");
+  };
   try {
     let preoptimizedPhotos: OptimizedPhoto[] | null = null;
     if (photos.length <= studioPreUploadOptimizationLimit) {
       preoptimizedPhotos = [];
-      for (let start = 0; start < photos.length; start += 4) {
+      for (let start = 0; start < photos.length; start += studioPhotoPreparationConcurrency) {
         throwIfStudioJobAborted(signal);
-        preoptimizedPhotos.push(...await Promise.all(photos.slice(start, start + 4).map((photo) => optimizePhoto(photo))));
+        preoptimizedPhotos.push(...await Promise.all(photos
+          .slice(start, start + studioPhotoPreparationConcurrency)
+          .map((photo) => optimizePhoto(photo))));
         throwIfStudioJobAborted(signal);
       }
     }
-    for (let start = 0; start < photos.length; start += 4) {
+    for (let start = 0; start < photos.length; start += studioPhotoPreparationConcurrency) {
       throwIfStudioJobAborted(signal);
-      const batch = preoptimizedPhotos?.slice(start, start + 4)
-        ?? await Promise.all(photos.slice(start, start + 4).map((photo) => optimizePhoto(photo)));
+      const sourceBatch = photos.slice(start, start + studioPhotoPreparationConcurrency);
+      const batch = preoptimizedPhotos?.slice(start, start + studioPhotoPreparationConcurrency)
+        ?? await Promise.all(sourceBatch.map((photo) => optimizePhoto(photo)));
       throwIfStudioJobAborted(signal);
-      const results = await Promise.allSettled(batch.map(async (photo, offset) => {
-        const index = start + offset;
-        const path = `${userId}/${jobId}/input/${String(index + 1).padStart(3, "0")}.jpg`;
-        const { error } = await withPromiseTimeout(
-          supabase.storage.from("sellerpilot-ai").upload(path, photo.blob, {
-            contentType: photo.mediaType,
-            cacheControl: "3600",
-            upsert: false,
-          }),
-          studioUploadTimeoutMs,
-          `${photo.name} 비공개 업로드가 45초 안에 끝나지 않았습니다. 모바일 연결을 확인한 뒤 다시 시도해 주세요.`,
-        );
-        if (error) throw new Error(`${photo.name} 비공개 업로드에 실패했습니다.`);
-        return { path, spec: photo.spec };
-      }));
-      for (const result of results) if (result.status === "fulfilled") {
-        uploadedPaths.push(result.value.path);
-        imageSpecs.push(result.value.spec);
-      }
-      const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-      if (failed) throw failed.reason;
+      const uploaded = await uploadStudioPhotoPairs({
+        userId,
+        jobId,
+        units: batch.map((photo, offset) => ({
+          index: start + offset,
+          original: sourceBatch[offset].file,
+          originalMediaType: sourceBatch[offset].file.type,
+          normalized: photo.blob,
+          spec: photo.spec,
+        })),
+        concurrency: studioPhotoUploadConcurrency,
+        signal,
+        upload: async (path, body, contentType) => {
+          await uploadStudioStorageObject({
+            accessToken,
+            path,
+            body,
+            contentType,
+            cacheControl: path.includes("/original/") ? "31536000" : "3600",
+            parentSignal: signal,
+            timeoutMs: studioUploadTimeoutMs,
+          });
+        },
+        cleanup: removeUploaded,
+        onUploaded: (path) => uploadedStoragePaths.add(path),
+        onCleanupCandidate: (path) => uploadedStoragePaths.add(path),
+      });
+      uploadedPaths.push(...uploaded.uploadedPaths);
+      imageSpecs.push(...uploaded.imageSpecs);
       throwIfStudioJobAborted(signal);
     }
-    return { uploadedPaths, imageSpecs };
+    return { uploadedPaths, imageSpecs, allUploadedPaths: [...uploadedStoragePaths] };
   } catch (error) {
-    if (uploadedPaths.length) {
-      await withPromiseTimeout(
-        supabase.storage.from("sellerpilot-ai").remove(uploadedPaths),
-        15_000,
-        "업로드 임시파일 정리 제한시간을 초과했습니다.",
-      ).catch(() => null);
-    }
+    if (uploadedStoragePaths.size) await removeUploaded([...uploadedStoragePaths]).catch(() => undefined);
     throw error;
   }
+}
+
+export async function cleanupUnenqueuedStudioPhotos(paths: readonly string[]) {
+  if (!paths.length) return;
+  const { error } = await withPromiseTimeout(
+    createClient().storage.from("sellerpilot-ai").remove([...new Set(paths)]),
+    15_000,
+    "업로드 임시파일 정리 제한시간을 초과했습니다.",
+  );
+  if (error) throw new Error("업로드 임시파일을 정리하지 못했습니다.");
 }
 
 const thumbnailPresets = [
@@ -400,7 +447,12 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
           await delay(2_000, signal);
           continue;
         }
-        if (response.status === 404) throw new StudioJobTerminalError(payload.message ?? "CLI 작업을 찾지 못했습니다.");
+        if (response.status === 404) {
+          if (options.preserveMissingAdmission) {
+            throw new Error(payload.message ?? "CLI 작업 접수 여부를 아직 확정하지 못했습니다.");
+          }
+          throw new StudioJobTerminalError(payload.message ?? "CLI 작업을 찾지 못했습니다.");
+        }
         throw new Error(payload.message ?? "CLI 작업 상태를 확인하지 못했습니다.");
       }
       if (!accepted) {
@@ -509,6 +561,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     setSubmissionPhase(reconcileAdmission ? "reconciling" : "monitoring");
     void finishStudioJob(job, accessToken, false, {
       notFoundGraceMs: reconcileAdmission ? studioJobAdmissionGraceMs : 0,
+      preserveMissingAdmission: reconcileAdmission,
       onAccepted: () => {
         if (!studioMountedRef.current || queuedOwnJobIdRef.current !== job.jobId) return;
         setSubmissionPhase("monitoring");
@@ -565,6 +618,9 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     setEditorOpen(false);
     setLastError("");
     setCliPhase("queued");
+    let uploadedCleanupPaths: string[] = [];
+    let enqueueStarted = false;
+    let terminallyRejected = false;
     try {
       const validatedIntake = productIntakeSchema.safeParse(manualFields);
       if (!validatedIntake.success) {
@@ -579,7 +635,14 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       if (!accessToken || !userId) throw new Error("AI 제작을 실행하려면 관리자 로그인이 필요합니다.");
       if (photos.length > 100) throw new Error("한 작업에는 대표사진을 포함해 최대 100장까지 분석할 수 있습니다.");
       const jobId = crypto.randomUUID();
-      const { uploadedPaths: imagePaths, imageSpecs } = await optimizeAndUploadStudioPhotos(photos, userId, jobId, lifecycleController.signal);
+      const { uploadedPaths: imagePaths, imageSpecs, allUploadedPaths } = await optimizeAndUploadStudioPhotos(
+        photos,
+        userId,
+        jobId,
+        accessToken,
+        lifecycleController.signal,
+      );
+      uploadedCleanupPaths = allUploadedPaths;
       throwIfStudioJobAborted(lifecycleController.signal);
       const queuedJob = persistActiveStudioJob(jobId, studioSessionId);
       displayJobId.current = jobId;
@@ -589,11 +652,12 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       let response: Response;
       let queued: { jobId?: string; message?: string };
       try {
+        enqueueStarted = true;
         ({ response, payload: queued } = await fetchJsonWithStudioJobTimeout("/api/ai/product-studio", {
           method: "POST",
           headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
           body: JSON.stringify({ jobId, manualFields: validatedIntake.data, competitorContext, imagePaths, imageSpecs }),
-        }, lifecycleController.signal, 30_000, { message: "CLI 작업 등록 응답을 읽지 못했습니다." } as { jobId?: string; message?: string }));
+        }, lifecycleController.signal, 90_000, { message: "CLI 작업 등록 응답을 읽지 못했습니다." } as { jobId?: string; message?: string }));
       } catch (error) {
         if (isStudioJobAbort(error) || !studioMountedRef.current) throw error;
         setSubmissionPhase("reconciling");
@@ -617,6 +681,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         return;
       }
       if (!response.ok || !queued.jobId) {
+        terminallyRejected = true;
         clearActiveStudioJob(jobId);
         releaseOwnJob(jobId);
         throw new StudioJobTerminalError(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
@@ -628,6 +693,9 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       announceOwnJob(queued.jobId, false);
       monitorOwnStudioJob(queuedJob, accessToken, false);
     } catch (error) {
+      if ((!enqueueStarted || terminallyRejected) && uploadedCleanupPaths.length) {
+        await cleanupUnenqueuedStudioPhotos(uploadedCleanupPaths).catch(() => undefined);
+      }
       if (isStudioJobAbort(error) || !studioMountedRef.current) return;
       const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";
       setLastError(message);

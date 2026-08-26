@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
-import { AI_ASSET_PROMPT_VERSION, buildAssetImagePrompt, selectAssetReferenceIndexes } from "../lib/ai-image-planning";
+import { AI_ASSET_PROMPT_VERSION, buildAssetImagePrompt, requiresSourceIdentityProtection, selectAssetReferenceIndexes } from "../lib/ai-image-planning";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import { buildProductSettingShotPlan, settingShotAssetIds } from "../lib/product-setting-shots";
 import {
@@ -49,7 +49,7 @@ const result: ProductStudioResult = {
 };
 
 test("each detail image selects the uploaded views that match its factual role", () => {
-  assert.deepEqual(selectAssetReferenceIndexes(sourceSpecs, "detail-feature", sourceSpecs.length), [0, 7, 1, 3, 4, 5]);
+  assert.deepEqual(selectAssetReferenceIndexes(sourceSpecs, "detail-feature", sourceSpecs.length), [0, 7, 1, 3, 4, 2]);
   assert.deepEqual(selectAssetReferenceIndexes(sourceSpecs, "detail-package", sourceSpecs.length), [0, 2, 7, 8, 5, 6]);
   assert.deepEqual(selectAssetReferenceIndexes(sourceSpecs, "detail-use", sourceSpecs.length), [0, 1, 3, 4, 9, 2]);
 });
@@ -60,9 +60,9 @@ test("the four detail slots receive visibly distinct scene and camera contracts"
   assert.equal(new Set(prompts).size, 4);
   assert.ok(prompts.every((prompt) => prompt.includes(AI_ASSET_PROMPT_VERSION)));
   assert.match(prompts[0], /environmental overview camera/);
-  assert.match(prompts[1], /macro or close-focus/);
+  assert.match(prompts[1], /direct crop from the verified source view/);
   assert.match(prompts[2], /medium environmental camera/);
-  assert.match(prompts[3], /high oblique 45–60-degree inspection camera/);
+  assert.match(prompts[3], /direct crop from the selected supplied evidence view/);
   assert.ok(prompts.every((prompt) => prompt.includes("중립적인 상업 사진")), "unknown categories must not fall back to skincare styling");
 });
 
@@ -128,14 +128,40 @@ test("catalog and factual inspection slots stay separate from setting-shot slots
   }
 });
 
-test("package inspection cannot repeat the front-facing hero or square composition", () => {
+test("package evidence never invents a closure or hidden package plane", () => {
   const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-package");
   assert.ok(preset);
   const prompt = buildAssetImagePrompt(result, `/tmp/${preset.file}`, preset, ["main", "back", "top"]);
-  assert.match(prompt, /top closure, flap, lid or seal/);
-  assert.match(prompt, /straight-on front face must never be the dominant plane/);
-  assert.match(prompt, /never straight-on and never a front-face flat lay/);
-  assert.match(prompt, /cannot be confused with hero or square/);
+  assert.match(prompt, /실제로 제공된 측면·후면·표시사항 패널/);
+  assert.match(prompt, /do not claim a top closure, hidden plane or package structure/);
+  assert.match(prompt, /no inferred high-oblique camera/);
+  assert.doesNotMatch(prompt, /top closure plus a verified/);
+});
+
+test("statutory-package products use a background-only identity firewall", () => {
+  const foodResult = {
+    ...result,
+    product: { ...result.product, category: "일반식품", name: "롯데 과자 315 g", features: ["HACCP 포장"] },
+  };
+  const apparelResult = {
+    ...result,
+    product: { ...result.product, category: "남성의류", name: "무지 면 티셔츠", features: ["면 소재"] },
+  };
+  assert.equal(requiresSourceIdentityProtection(foodResult), true);
+  assert.equal(requiresSourceIdentityProtection(apparelResult), false);
+  const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(preset);
+  const prompt = buildAssetImagePrompt(foodResult, "/tmp/background.png", preset, [], "", "identity-background");
+  assert.match(prompt, /HARD IDENTITY FIREWALL/);
+  assert.match(prompt, /generate only an empty background plate/);
+  assert.match(prompt, /real product will be composited afterward from a verified transparent source-pixel cutout/);
+  assert.match(prompt, /Mandatory empty-environment assignment:.*키친 아일랜드/);
+  assert.match(prompt, /fixed architecture, built-in surfaces, natural light direction and spatial depth/);
+  assert.match(prompt, /Slot-specific non-merchandise environmental cue \(grocery-unpacking-island-fixed-side-frame\): one integrated side reveal/);
+  assert.match(prompt, /Deliberately omit every retail product, small saleable prop/);
+  assert.doesNotMatch(prompt, /투명 시리얼 볼과 접힌 흰 리넨/);
+  assert.doesNotMatch(prompt, /롯데 과자/);
+  assert.doesNotMatch(prompt, /Input references in order/);
 });
 
 test("failed order and inquiry reads are stored as failed gateway jobs", () => {

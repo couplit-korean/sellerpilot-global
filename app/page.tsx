@@ -71,7 +71,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { AiProductStudio, optimizeAndUploadStudioPhotos, type StudioCompetitorContext, type StudioPhoto } from "./ai-product-studio";
+import { AiProductStudio, cleanupUnenqueuedStudioPhotos, optimizeAndUploadStudioPhotos, type StudioCompetitorContext, type StudioPhoto } from "./ai-product-studio";
 import { AcceptanceChecklistPage } from "./acceptance-checklist";
 import { ChannelConnectionsPage } from "./channel-connections";
 import { CategoryClassificationWorkbench } from "./category-classification-workbench";
@@ -100,9 +100,11 @@ import { normalizeProductSaleConfiguration, productSaleConfigurations } from "..
 import { recoverAmbiguousProductRevision } from "../lib/product-revision-recovery";
 import { createRevisionPhotoSelectionFence, releaseStaleRevisionPhoto } from "../lib/product-revision-photo-fence";
 import { settleWithConcurrency } from "../lib/promise-pool";
+import { assertStudioPhotoBatch } from "../lib/studio-photo-upload";
 import { withPromiseTimeout } from "../lib/promise-timeout";
 import { fetchJsonWithDeadline } from "../lib/bounded-json-request";
 import { classifyExactJobAdmission } from "../lib/exact-job-admission";
+import { assertStudioSourceDimensions, assertStudioSourceFile } from "../lib/studio-source-photo-policy";
 import { deadlineAfter, deadlineIsActive, deadlineRemaining } from "../lib/time-deadline";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
 import {
@@ -1286,10 +1288,21 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
         revisionSubmissionControllerRef.current = controller;
         const sessionSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
         const { data: sessionData } = await waitForAbortablePromise(createSupabaseClient().auth.getSession(), sessionSignal);
+        const accessToken = sessionData.session?.access_token;
         const userId = sessionData.session?.user.id;
-        if (!userId) throw new Error("상품 사진을 수정하려면 관리자 로그인이 필요합니다.");
+        if (!accessToken || !userId) throw new Error("상품 사진을 수정하려면 관리자 로그인이 필요합니다.");
         const jobId = crypto.randomUUID();
-        const { uploadedPaths: imagePaths, imageSpecs } = await optimizeAndUploadStudioPhotos(revisionPhotos, userId, jobId, controller.signal);
+        const { uploadedPaths: imagePaths, imageSpecs, allUploadedPaths } = await optimizeAndUploadStudioPhotos(
+          revisionPhotos,
+          userId,
+          jobId,
+          accessToken,
+          controller.signal,
+        );
+        if (controller.signal.aborted) {
+          await cleanupUnenqueuedStudioPhotos(allUploadedPaths).catch(() => undefined);
+          throw controller.signal.reason ?? new DOMException("상품 수정 화면이 닫혔습니다.", "AbortError");
+        }
         const readExactRevision = async (candidateJobId: string, signal: AbortSignal) => {
           try {
             const { response, payload } = await authenticatedJsonWithDeadline<{ revision?: unknown }>(
@@ -1326,7 +1339,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
               body: JSON.stringify({ jobId, manualFields: parsed.data, imagePaths, imageSpecs }),
             },
             controller.signal,
-            45_000,
+            90_000,
             null,
           );
           if (response.status === 202 && payload?.jobId === jobId && payload.productId === product.sourceId && payload.autoPublish === false) {
@@ -1923,6 +1936,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const photoObjectUrlsRef = useRef(new Set<string>());
   const publishingMountedRef = useRef(true);
   const extraPhotoBatchRef = useRef(false);
+  const pendingNewSlotPhotoRef = useRef(new Set<string>());
   const [photoSelectionFence] = useState(createRevisionPhotoSelectionFence);
   const competitorResearchControllerRef = useRef<AbortController | null>(null);
   const productResearchControllerRef = useRef<AbortController | null>(null);
@@ -2041,8 +2055,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const toPhoto = async (file: File, role: string): Promise<UploadedPhoto> => {
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("JPG, PNG, WEBP 이미지만 등록할 수 있습니다.");
-    if (file.size > 20 * 1024 * 1024) throw new Error("원본 이미지는 20MB 이하로 등록해 주세요.");
+    assertStudioSourceFile(file);
     const url = URL.createObjectURL(file);
     photoObjectUrlsRef.current.add(url);
     try {
@@ -2055,7 +2068,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         image.onload = null;
         image.onerror = null;
       });
-      if (dimensions.width < 600 || dimensions.height < 600) throw new Error("이미지는 최소 600×600px 이상이어야 합니다.");
+      assertStudioSourceDimensions(dimensions.width, dimensions.height);
       if (!publishingMountedRef.current) throw new Error("상품 등록 화면이 닫혀 이미지 처리를 중단했습니다.");
       return { name: file.name, url, file, role, originalWidth: dimensions.width, originalHeight: dimensions.height };
     } catch (error) {
@@ -2314,6 +2327,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = "";
+    if (extraPhotoBatchRef.current) {
+      notify("추가 사진 확인이 끝난 뒤 역할별 사진을 선택해 주세요.");
+      return;
+    }
+    const reservesNewSlot = !slotPhotos[slotId];
+    const currentPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length;
+    if (reservesNewSlot && currentPhotoCount + pendingNewSlotPhotoRef.current.size >= 100) {
+      notify("한 상품은 분석용 사진을 최대 100장까지 등록할 수 있습니다.");
+      return;
+    }
+    if (reservesNewSlot) pendingNewSlotPhotoRef.current.add(slotId);
     const token = photoSelectionFence.nextRole(slotId);
     try {
       const photo = await toPhoto(file, slotId);
@@ -2328,6 +2352,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       const message = error instanceof Error ? error.message : "옵션 사진을 확인해 주세요.";
       setUploadError(message);
       notify(message);
+    } finally {
+      if (reservesNewSlot) pendingNewSlotPhotoRef.current.delete(slotId);
     }
   };
 
@@ -2338,6 +2364,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     event.target.value = "";
     if (extraPhotoBatchRef.current) {
       notify("선택한 사진을 확인하고 있습니다. 완료된 뒤 다음 사진을 추가해 주세요.");
+      return;
+    }
+    if (pendingNewSlotPhotoRef.current.size) {
+      notify("역할별 사진 확인이 끝난 뒤 추가 사진을 선택해 주세요.");
       return;
     }
     const remaining = Math.max(0, 100 - ((mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length));
@@ -2359,7 +2389,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       }
       if (accepted.length) setExtraPhotos((current) => {
         const next = [...current, ...accepted];
-        const kept = next.slice(0, 100);
+        const capacity = Math.max(0, 100 - (mainPhoto ? 1 : 0) - Object.keys(slotPhotos).length);
+        const kept = next.slice(0, capacity);
         const keptUrls = new Set(kept.map((photo) => photo.url));
         for (const photo of accepted) if (!keptUrls.has(photo.url)) releasePhotoUrl(photo.url);
         return kept;
@@ -2425,6 +2456,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify("대표사진 1장을 먼저 등록해 주세요.");
       return;
     }
+    try {
+      assertStudioPhotoBatch([mainPhoto, ...Object.values(slotPhotos), ...extraPhotos].map((photo) => photo.file));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "상품 사진 수와 원본 용량을 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
     const photoCount = 1 + Object.keys(slotPhotos).length + extraPhotos.length;
     automationStartInFlightRef.current = true;
     setRunning(true);
@@ -2477,10 +2516,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           <section className="main-photo-section">
             <div className="upload-section-heading"><div><b>대표사진</b><span className="required-chip">필수</span><small>검색 결과와 채널 목록에서 가장 먼저 보이는 이미지입니다.</small></div><em>{mainPhoto ? "1장 등록됨" : "미등록"}</em></div>
-            <input id="main-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" onClick={preservePublishingCaptureContext} onChange={selectMainPhoto} />
+            <input id="main-product-photo-camera" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onClick={preservePublishingCaptureContext} onChange={selectMainPhoto} />
             <label className={`drop-zone main-drop-zone ${mainPhoto ? "has-photo" : ""} ${running ? "running" : ""}`} htmlFor="main-product-photo">
               <input id="main-product-photo" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={selectMainPhoto} />
-              {mainPhoto ? <><span className="main-photo-preview"><Image src={mainPhoto.url} alt="등록한 대표 상품 사진" fill sizes="700px" unoptimized /></span><span className="photo-preview-overlay"><ImagePlus size={17} />대표사진 교체</span><strong className="photo-file-name">{mainPhoto.name} · {mainPhoto.originalWidth}×{mainPhoto.originalHeight} → 1200×1200</strong></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>대표 상품 사진을 넣으세요</strong><p>JPG, PNG, WEBP · 최소 600×600px · 자동 1:1 여백 보정</p><em><ImagePlus size={15} />대표사진 선택</em></>}
+              {mainPhoto ? <><span className="main-photo-preview"><Image src={mainPhoto.url} alt="등록한 대표 상품 사진" fill sizes="700px" unoptimized /></span><span className="photo-preview-overlay"><ImagePlus size={17} />대표사진 교체</span><strong className="photo-file-name">{mainPhoto.name} · {mainPhoto.originalWidth}×{mainPhoto.originalHeight} 원본 보존 · 분석용 1200×1200</strong></> : <><span className="upload-graphic"><CloudUpload size={31} /></span><strong>대표 상품 사진을 넣으세요</strong><p>JPG, PNG, WEBP · 최소 600×600px · 자동 1:1 여백 보정</p><em><ImagePlus size={15} />대표사진 선택</em></>}
               {running && <span className="analysis-overlay"><LoaderCircle className="spin" size={29} /><b>사진·설명·링크 통합 분석 중</b><small>OCR과 상품 정보 교차검증을 진행하고 있습니다.</small><i><span /></i></span>}
             </label>
             <div className="photo-source-actions" aria-label="대표사진 입력 방식">
@@ -2495,15 +2534,16 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="option-photo-grid">
               {optionalPhotoSlots.map((slot) => {
                 const photo = slotPhotos[slot.id];
-                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><input id={`option-photo-${slot.id}-camera`} className="visually-hidden" type="file" accept="image/*" capture="environment" onClick={preservePublishingCaptureContext} onChange={(event) => void selectSlotPhoto(slot.id, event)} /><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>{photo.originalWidth}×{photo.originalHeight} · 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label><div className="photo-source-actions compact" aria-label={`${slot.label} 사진 입력 방식`}><label htmlFor={`option-photo-${slot.id}-camera`}><Camera size={14} /><span><b>촬영</b></span></label><label htmlFor={`option-photo-${slot.id}`}><ImagePlus size={14} /><span><b>앨범</b></span></label></div>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
+                const slotDisabled = extraPhotosProcessing || (!photo && totalPhotoCount >= 100);
+                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><input id={`option-photo-${slot.id}-camera`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={slotDisabled} onClick={preservePublishingCaptureContext} onChange={(event) => void selectSlotPhoto(slot.id, event)} /><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`} aria-disabled={slotDisabled}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={slotDisabled} onChange={(event) => void selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>{photo.originalWidth}×{photo.originalHeight} · 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label><div className="photo-source-actions compact" aria-label={`${slot.label} 사진 입력 방식`}><label htmlFor={`option-photo-${slot.id}-camera`}><Camera size={14} /><span><b>촬영</b></span></label><label htmlFor={`option-photo-${slot.id}`}><ImagePlus size={14} /><span><b>앨범</b></span></label></div>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
               })}
             </div>
           </section>
 
           <section className="extra-photo-section">
             <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>상세컷, 구성품, 포장 상태 등 필요한 만큼 한 번에 선택할 수 있습니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
-            <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/*" capture="environment" disabled={extraPhotosProcessing} onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
-            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotosProcessing}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotosProcessing} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotosProcessing ? "선택한 사진 확인 중" : "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : "분석용 최대 100장 · 채널 등록은 앞 8~9장 자동 선별"}</small></span></label>
+            <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={extraPhotosProcessing || totalPhotoCount >= 100} onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
+            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotosProcessing || totalPhotoCount >= 100}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotosProcessing || totalPhotoCount >= 100} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotosProcessing ? "선택한 사진 확인 중" : totalPhotoCount >= 100 ? "최대 100장 등록됨" : "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : "분석용 최대 100장 · 채널 등록은 앞 8~9장 자동 선별"}</small></span></label>
             <div className="photo-source-actions" aria-label="추가 사진 입력 방식">
               <label htmlFor="extra-product-photo-camera"><Camera size={18} /><span><b>사진 촬영</b><small>한 장씩 바로 추가</small></span></label>
               <label htmlFor="extra-product-photos"><ImagePlus size={18} /><span><b>앨범에서 선택</b><small>여러 장 한 번에 첨부</small></span></label>
@@ -2567,7 +2607,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·CLI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
           </section>
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && !researchingProduct ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 1200×1200 JPG 자동보정 · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}</span><button type="button" onClick={startAutomation} disabled={running || researchingProduct || Boolean(queuedJobId)}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && !researchingProduct ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}</span><button type="button" onClick={startAutomation} disabled={running || researchingProduct || Boolean(queuedJobId)}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>

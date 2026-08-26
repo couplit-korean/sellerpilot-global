@@ -53,8 +53,13 @@ function storeKeychainToken(service, token) {
       "add-generic-password", "-U",
       "-s", service,
       "-a", sellerpilotUrl,
-      "-w", token,
-    ]);
+      // `security help add-generic-password` recommends a trailing `-w` so the
+      // password is prompted instead of exposed in the child process argv.
+      "-w",
+    ], {
+      input: `${token}\n${token}\n`,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
   } catch {
     throw new Error(`${service} 키체인 토큰을 저장하지 못했습니다.`);
   }
@@ -108,6 +113,10 @@ async function pathExists(path) {
 
 async function validateStagedRuntime(stagedRuntimeRoot) {
   command(process.execPath, ["--check", join(stagedRuntimeRoot, "scripts", "ai-cli-worker.mjs")]);
+  command("/usr/bin/swiftc", [
+    "-typecheck",
+    join(stagedRuntimeRoot, "scripts", "source-product-cutout.swift"),
+  ]);
   command(process.execPath, [
     "--import", "tsx",
     "--input-type=module",
@@ -414,6 +423,12 @@ async function install() {
         throw new Error("새 작업자 토큰 세트가 활성화 전에 폐기됐습니다. 기존 작업자를 복구합니다.");
       }
       tokenSetActivated = true;
+      // The staged process starts while this token set is still pending and can
+      // therefore retain an in-memory 401 backoff. Restart only after the
+      // server confirms atomic activation so every scope reloads the now-active
+      // Keychain token without waiting for that backoff to expire.
+      command("/bin/launchctl", ["kickstart", "-k", `${guiDomain}/${label}`]);
+      await assertLaunchAgentRunning();
     }
 
     const completedActivation = activation;
@@ -435,10 +450,17 @@ async function install() {
     }
     if (tokenSetActivated) {
       if (activation) {
-        await rm(activation.backupContainer, { recursive: true, force: true }).catch(() => undefined);
+        try {
+          await rm(activation.backupContainer, { recursive: true, force: true });
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
         activation = null;
       }
-      return;
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        "새 작업자 토큰 세트는 이미 활성화됐지만 LaunchAgent 재기동 확인에 실패했습니다. 새 런타임과 Keychain은 보존했으므로 기존 토큰으로 되돌리지 말고 운영 상태를 확인해 주세요.",
+      );
     }
 
     try { command("/bin/launchctl", ["bootout", guiDomain, plistPath]); } catch (rollbackError) {
