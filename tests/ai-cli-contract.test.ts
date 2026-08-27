@@ -1372,6 +1372,19 @@ test("AI studio warnings remove Korean claim directives that precede an English 
   assert.deepEqual(normalizeStudioWarningLimits(normalized), normalized, "warning sanitation must be idempotent");
 });
 
+test("AI studio warnings remove malformed model commentary after a complete Korean fact", () => {
+  const result = validResult();
+  const sellerCaution = "이 제품은 일반식품으로 확인되어 건강기능식품이 아닙니다";
+  result.warnings = [
+    `${sellerCaution}���존재하지 않습니다? Actually false. Need remove glitch. Keep clean. memory citation not present. response JSON`,
+  ];
+
+  const normalized = normalizeStudioWarningLimits(result) as ReturnType<typeof validResult>;
+  assert.equal(normalized.warnings[0], sellerCaution);
+  assert.doesNotMatch(normalized.warnings[0], /�|actually false|remove glitch|keep clean|memory citation|response JSON/iu);
+  assert.deepEqual(normalizeStudioWarningLimits(normalized), normalized, "warning sanitation must be idempotent");
+});
+
 test("AI studio warning normalization collapses only adjacent duplicate sentences", () => {
   const result = validResult();
   result.warnings = ["표시 라벨을 확인하세요. 표시 라벨을 확인하세요. 판매 로트도 확인하세요."];
