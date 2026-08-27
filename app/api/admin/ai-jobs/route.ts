@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
+import { sellerSafeAiJobFailure } from "../../../../lib/ai-worker-error-safety";
 
 export const runtime = "nodejs";
 
@@ -20,7 +21,14 @@ export async function GET(request: Request) {
   if (error) {
     return NextResponse.json({ message: "AI 작업 이력을 불러오지 못했습니다." }, { status: 500 });
   }
-  return NextResponse.json({ jobs: data ?? [] }, {
+  const jobs = (Array.isArray(data) ? data : []).map((job) => {
+    const row = job as Record<string, unknown>;
+    return {
+      ...row,
+      error_message: row.error_message ? sellerSafeAiJobFailure(row.error_message) : null,
+    };
+  });
+  return NextResponse.json({ jobs }, {
     headers: { "cache-control": "no-store, max-age=0" },
   });
 }
