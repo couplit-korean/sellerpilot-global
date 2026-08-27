@@ -66,7 +66,7 @@ type RuntimeSmokeRunners = {
 };
 
 type RuntimeSmokeHandlerOptions = {
-  cronSecret?: string;
+  runtimeSmokeSecret?: string;
   runners?: RuntimeSmokeRunners;
 };
 
@@ -364,11 +364,13 @@ export async function handleServerRuntimeSmoke(
   request: Request,
   options: RuntimeSmokeHandlerOptions = {},
 ) {
-  const cronSecret = options.cronSecret ?? process.env.CRON_SECRET?.trim() ?? "";
-  if (!cronSecret) {
+  const runtimeSmokeSecret = options.runtimeSmokeSecret
+    ?? process.env.SERVER_RUNTIME_SMOKE_SECRET?.trim()
+    ?? "";
+  if (!runtimeSmokeSecret) {
     return json({ ok: false, message: "서버 진단 인증값이 설정되지 않았습니다." }, 503);
   }
-  if (!bearerMatches(request, cronSecret)) {
+  if (!bearerMatches(request, runtimeSmokeSecret)) {
     return json({ ok: false, message: "서버 진단 인증이 필요합니다." }, 401);
   }
   if (request.method === "GET") return json(readiness(request));

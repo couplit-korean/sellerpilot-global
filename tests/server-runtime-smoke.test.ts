@@ -9,7 +9,7 @@ import {
 } from "../lib/server-runtime-smoke";
 
 const routeUrl = "https://sellerpilot.invalid/api/internal/server-runtime-smoke";
-const authorization = { authorization: "Bearer test-cron-secret" };
+const authorization = { authorization: "Bearer test-runtime-smoke-secret" };
 
 function request(method: "GET" | "POST", body?: unknown, headers: Record<string, string> = {}) {
   return new Request(routeUrl, {
@@ -32,14 +32,14 @@ test("readiness is authenticated, no-store, and never runs a costly smoke implic
   };
 
   const unauthorized = await handleServerRuntimeSmoke(new Request(routeUrl), {
-    cronSecret: "test-cron-secret",
+    runtimeSmokeSecret: "test-runtime-smoke-secret",
     runners,
   });
   assert.equal(unauthorized.status, 401);
 
   const response = await handleServerRuntimeSmoke(
     new Request(`${routeUrl}?action=ai_gateway_smoke`, { headers: authorization }),
-    { cronSecret: "test-cron-secret", runners },
+    { runtimeSmokeSecret: "test-runtime-smoke-secret", runners },
   );
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store, max-age=0");
@@ -57,7 +57,7 @@ test("readiness is authenticated, no-store, and never runs a costly smoke implic
   assert.equal(sandboxCalls, 0);
 
   const emptyPost = await handleServerRuntimeSmoke(request("POST", {}), {
-    cronSecret: "test-cron-secret",
+    runtimeSmokeSecret: "test-runtime-smoke-secret",
     runners,
   });
   assert.equal(emptyPost.status, 200);
@@ -81,7 +81,7 @@ test("each explicit action invokes only its exact synthetic runner", async () =>
 
   const gatewayResponse = await handleServerRuntimeSmoke(
     request("POST", { action: "ai_gateway_smoke" }),
-    { cronSecret: "test-cron-secret", runners },
+    { runtimeSmokeSecret: "test-runtime-smoke-secret", runners },
   );
   assert.equal(gatewayResponse.status, 200);
   assert.equal((await gatewayResponse.json()).executionRequested, true);
@@ -89,7 +89,7 @@ test("each explicit action invokes only its exact synthetic runner", async () =>
 
   const sandboxResponse = await handleServerRuntimeSmoke(
     request("POST", { action: "sandbox_smoke" }),
-    { cronSecret: "test-cron-secret", runners },
+    { runtimeSmokeSecret: "test-runtime-smoke-secret", runners },
   );
   assert.equal(sandboxResponse.status, 200);
   assert.equal((await sandboxResponse.json()).stopped, true);
@@ -97,7 +97,7 @@ test("each explicit action invokes only its exact synthetic runner", async () =>
 
   const invalid = await handleServerRuntimeSmoke(
     request("POST", { action: "ai_gateway_smoke", prompt: "use customer data" }),
-    { cronSecret: "test-cron-secret", runners },
+    { runtimeSmokeSecret: "test-runtime-smoke-secret", runners },
   );
   assert.equal(invalid.status, 400);
   assert.deepEqual(calls, ["gateway", "sandbox"]);
@@ -136,7 +136,7 @@ test("OIDC smoke injects only the ephemeral token and never returns or rethrows 
   );
 
   const response = await handleServerRuntimeSmoke(request("POST", { action: "ai_gateway_smoke" }), {
-    cronSecret: "test-cron-secret",
+    runtimeSmokeSecret: "test-runtime-smoke-secret",
     runners: {
       aiGateway: async () => { throw new Error(`unexpected ${secretToken}`); },
       sandbox: async () => ({}),
@@ -203,6 +203,8 @@ test("source contract excludes static AI keys, auth caches, databases, claims, a
   assert.match(route, /runtime = "nodejs"/);
   assert.match(route, /dynamic = "force-dynamic"/);
   assert.doesNotMatch(helper, /AI_GATEWAY_API_KEY|OPENAI_API_KEY|auth\.json/);
+  assert.doesNotMatch(helper, /CRON_SECRET/);
+  assert.match(helper, /SERVER_RUNTIME_SMOKE_SECRET/);
   assert.doesNotMatch(helper, /SUPABASE|sellerpilot_claim|support_reply|marketplace credential/i);
   assert.doesNotMatch(route, /supabase|worker|claim|support|channel/i);
 });
