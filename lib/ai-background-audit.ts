@@ -45,6 +45,12 @@ export type BackgroundSemanticAudit = z.infer<typeof backgroundSemanticAuditSche
 
 export type IdentityBackgroundContactMode = "surface-supported" | "suspended-or-planar";
 
+// Image generation and an independent vision audit cannot reliably agree on a
+// single sub-pixel horizon. Two percent of frame height keeps the composited
+// source product visually grounded while still failing floating, wall-backed
+// or materially misplaced support planes.
+export const IDENTITY_BACKGROUND_CONTACT_TOLERANCE = 0.02;
+
 export function isIdentityBackgroundContactMode(value: unknown): value is IdentityBackgroundContactMode {
   return value === "surface-supported" || value === "suspended-or-planar";
 }
@@ -238,6 +244,8 @@ function finiteUnitInterval(value: number) {
 export function buildBackgroundSemanticAuditPrompt(input: BackgroundSemanticAuditPromptInput) {
   const { reservedZone } = input;
   const contactLine = Number((reservedZone.top + reservedZone.height).toFixed(4));
+  const contactBandStart = Number(Math.max(0, contactLine - IDENTITY_BACKGROUND_CONTACT_TOLERANCE).toFixed(4));
+  const contactBandEnd = Number(Math.min(1, contactLine + IDENTITY_BACKGROUND_CONTACT_TOLERANCE).toFixed(4));
   if (!input.assetId.trim()
       || !isIdentityBackgroundContactMode(input.contactMode)
       || !input.expectedEnvironment.trim()
@@ -257,7 +265,7 @@ export function buildBackgroundSemanticAuditPrompt(input: BackgroundSemanticAudi
 
   const previousSameSlotIds = (input.comparisonAssetIds ?? []).filter((assetId) => assetId === `previous-${input.assetId}`);
   const contactAudit = input.contactMode === "surface-supported"
-    ? `reservedZoneClear is true only when the declared zone is visually quiet enough to receive a separately composited product, contains no merchandise, container, person, busy object cluster or dominant obstruction, and an integrated horizontal support surface visibly crosses the zone's exact bottom edge at normalized y=${contactLine} with support plane pixels continuing below it. A wall, vertical panel, empty air or ambiguous seam at that exact contact edge fails reservedZoneClear.`
+    ? `reservedZoneClear is true only when the declared zone is visually quiet enough to receive a separately composited product, contains no merchandise, container, person, busy object cluster or dominant obstruction, and an integrated horizontal support surface visibly crosses the narrow normalized contact band y=${contactBandStart}..${contactBandEnd} centred on y=${contactLine}, with support plane pixels continuing below it. A wall, vertical panel, empty air or ambiguous seam throughout that complete contact band fails reservedZoneClear. Do not fail a candidate merely because a broad low-contrast fixed backing plane or quiet architectural seam continues through the zone; fail it when an edge, fixture, shadow or texture is salient enough to compete with the product silhouette.`
     : "reservedZoneClear is true only when the declared suspended-or-planar zone is visually quiet and unobstructed across the complete product silhouette, with one coherent backing plane or hanging envelope behind it. Do not require or invent a horizontal tabletop, shelf or bottom contact line for this mode.";
   return [
     "You are a fail-closed visual safety auditor for an ecommerce background plate.",
@@ -283,8 +291,8 @@ export function buildBackgroundSemanticAuditPrompt(input: BackgroundSemanticAudi
     input.comparisonAssetIds?.length
       ? `Image 1 is the candidate. The later trusted comparison plates, in order, are: ${input.comparisonAssetIds.join(", ")}. Safety flags, reserved-zone checks and assigned-dimension checks describe Image 1 only. Comparison plates may contain a neutral rectangular mask over an earlier product zone; ignore that mask and compare the remaining environment pixels. Compare pixels, not prompt wording. Set every series*Distinct field true only when the candidate is unmistakably different from every cross-slot comparison plate in that dimension. conflictingAssetIds must contain only comparison IDs that fail at least one required distinction; it must be empty when every required distinction is true, and every false series*Distinct field must have at least one relevant conflict ID. Merely changing one fixture, crop or product placement while retaining the same beige/cream room, surface, light mood or depth counts as not distinct.${previousSameSlotIds.length ? ` Same-slot regeneration comparison ${previousSameSlotIds.join(", ")} intentionally shares the trusted location, moment-light, surface, palette and camera family; exclude it from those cross-slot dimension booleans. For that previous same-slot plate, require a materially different architectural layout, perspective composition, spatial arrangement and fixed-cue placement; mark seriesVisuallyDistinct and seriesCueDistinct false and list its ID only when that visual regeneration is still a near-repeat.` : ""}`
       : "There are no earlier plates in this series. Set every series*Distinct field and seriesVisuallyDistinct true, with conflictingAssetIds empty, only if the candidate itself unambiguously exposes all trusted dimensions.",
-    `assignedSupportingObjectsSatisfied is true only when the required ${input.expectedPropKey} cue visibly matches its trusted visual definition and no forbidden consumer prop substitutes for it. That required slot-specific cue must remain distinct from earlier plates. Additional fixed architectural or non-saleable contextual cues are allowed and must be exhaustively reported; a shared structural room-recognition cue such as cabinet fronts, a doorway or a window is not by itself a series-cue failure when the required slot-specific cue, full layout, camera, surface and depth remain unmistakably different.`,
-    `observedNonMerchandiseProps must exhaustively list every nontrivial fixed architectural or non-saleable contextual cue as stable lowercase kebab-case keys, including the required "${input.expectedPropKey}" key. Do not collapse distinct doorway, window, built-in rail, divider, sconce or fixed-furniture cues into one generic key. Do not list the declared support-or-backing surface, generic walls, floors, baseboard/trim/moulding, light/palette keys or the source product. If any visible cue is omitted or ambiguous, assignedSupportingObjectsSatisfied=false and confidence cannot be high.`,
+    `assignedSupportingObjectsSatisfied is true only when the required ${input.expectedPropKey} cue visibly matches its trusted visual definition, every hard room-recognition structure named by the trusted contract is visible, and no forbidden consumer prop substitutes for either. That required slot-specific cue must remain distinct from earlier plates. Additional fixed architectural or non-saleable contextual cues are allowed; a shared structural room-recognition cue such as cabinet fronts, a doorway or a window is not by itself a series-cue failure when the required slot-specific cue, full layout, camera, surface and depth remain unmistakably different.`,
+    `observedNonMerchandiseProps must include the required "${input.expectedPropKey}" key and every other confidently identifiable nontrivial fixed architectural or non-saleable contextual cue as stable lowercase kebab-case keys. Do not invent keys for ambiguous incidental shapes, and do not collapse clearly distinct doorway, window, built-in rail, divider, sconce or fixed-furniture cues into one generic key. Do not list the declared support-or-backing surface, generic walls, floors, baseboard/trim/moulding, light/palette keys or the source product. An ambiguous incidental seam does not by itself fail assignedSupportingObjectsSatisfied or confidence when the required slot-specific cue and every hard room-recognition structure are unambiguous.`,
     "confidence must be high only when the whole frame is clear enough to make every decision. Use medium or low for blur, ambiguity, crop uncertainty, contradictory cues or incomplete inspection.",
   ].join("\n");
 }
@@ -304,7 +312,12 @@ export function assertSafeBackgroundSemanticAudit(
     throw new Error("배경판 의미 검수에서 상품·포장·용기·표시 또는 사람이 감지됐습니다.");
   }
   if (!value.reservedZoneClear || !value.assignedEnvironmentPresent || !value.assignedSupportingObjectsSatisfied) {
-    throw new Error("배경판이 비어 있는 상품 배치 구역 또는 지정 환경 조건을 충족하지 못했습니다.");
+    const failures = [
+      !value.reservedZoneClear ? "reserved-zone" : "",
+      !value.assignedEnvironmentPresent ? "assigned-environment" : "",
+      !value.assignedSupportingObjectsSatisfied ? "assigned-fixed-cue" : "",
+    ].filter(Boolean);
+    throw new Error(`배경판이 비어 있는 상품 배치 구역 또는 지정 환경 조건을 충족하지 못했습니다: ${failures.join(", ")}.`);
   }
   if (!value.assignedLocationSatisfied
       || !value.assignedMomentSatisfied

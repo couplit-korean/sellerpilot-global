@@ -278,13 +278,13 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(variants[0].supportingObjects, /rectangular built-in task-light recess/);
   assert.match(variants[1].supportingObjects, /fixed access threshold or cabinet toe-kick return/);
   assert.match(variants[2].supportingObjects, /fixed rectangular ventilation or transom panel/);
-  assert.match(variants[1].location, /true centred access aisle/);
-  assert.match(variants[1].location, /paired left and right built-ins or functional wall systems/);
-  assert.match(variants[1].camera, /genuinely centred axial architectural optical axis/);
-  assert.match(variants[1].camera, /symmetric/);
-  assert.match(variants[1].camera, /large blank left wall/);
-  assert.match(variants[1].camera, /narrow kitchen, cabinet or doorway reveal confined to the right/);
-  assert.match(variants[1].camera, /right-side-only daylight/);
+  assert.match(variants[1].location, /offset access aisle entirely readable in the larger uncovered side band/);
+  assert.match(variants[1].location, /rear threshold outside the reserved quiet rectangle/);
+  assert.match(variants[1].camera, /near-axial architectural view aligned to the uncovered side aisle/);
+  assert.match(variants[1].camera, /without any major edge crossing the reserved quiet rectangle/);
+  assert.match(variants[1].camera, /frame-centred threshold hidden behind the reserved quiet rectangle/);
+  assert.match(variants[1].camera, /paired left and right built-ins whose major edges cross the reserved rectangle/);
+  assert.match(variants[1].camera, /narrow functional-room reveal without two fixed cues/);
   assert.match(variants[1].camera, /vertical three-quarter/);
 
   const contracts = variants.map((variant) => resolveIdentityBackgroundContract(variant, "detail-overview"));
@@ -345,8 +345,8 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(guidance, /FULL SIX-AXIS REPLACEMENT GATE/);
   assert.match(guidance, /MANDATORY SCREEN-SPACE TOPOLOGY/);
   assert.match(guidance, /FORBIDDEN CAMERA\/TOPOLOGY/);
-  assert.match(guidance, /large blank left wall/);
-  assert.match(guidance, /narrow kitchen, cabinet or doorway reveal confined to the right/);
+  assert.match(guidance, /dominant blank half-frame/);
+  assert.match(guidance, /narrow functional-room reveal without two fixed cues/);
   assert.doesNotMatch(guidance, /blacklisted role's product zone|product zone moves|move the product zone/i);
   assert.doesNotMatch(guidance, /contact plane|contact geometry/i);
   assert.doesNotMatch(guidance, /bathroom vanity|bedroom nightstand/);
@@ -384,7 +384,7 @@ test("audit-directed retries explicitly repair reserved-zone, assigned-scene and
 
   assert.match(guidance, /AUDIT-DIRECTED REPAIR GATE/);
   assert.match(guidance, /identical left, top, width and height/);
-  assert.match(guidance, /only at the exact declared bottom edge/);
+  assert.match(guidance, /declared bottom edge within the enclosing prompt's narrow tolerance band/);
   assert.match(guidance, /at least two visible fixed architectural structures/);
   assert.match(guidance, /exact assigned functional room/);
   assert.match(guidance, /multiple fixed architectural convergence lines/);
