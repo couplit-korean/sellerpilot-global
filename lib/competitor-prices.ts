@@ -522,10 +522,10 @@ const accessoryTerms = {
   accessory: ["accessory", "accessories", "adapter", "charger", "charging cable", "strap", "holder", "stand", "액세서리", "어댑터", "충전기", "케이블", "스트랩", "거치대", "アクセサリー", "アダプター", "充電器", "ケーブル", "ストラップ", "配件", "轉接器", "充電器", "数据线", "支架", "อุปกรณ์เสริม", "ที่ชาร์จ", "สายชาร์จ", "ขาตั้ง", "phụ kiện", "bộ sạc", "cáp sạc", "giá đỡ", "aksesori", "adaptor", "pengecas", "kabel", "dudukan", "accesorio", "adaptador", "cargador", "soporte", "acessório", "carregador", "suporte"],
   refill_sample: ["refill", "sample", "tester", "empty bottle", "리필", "샘플", "테스터", "빈용기", "詰め替え", "リフィル", "サンプル", "补充装", "補充裝", "小样", "小樣", "รีฟิล", "ตัวอย่าง", "isi ulang", "sampel", "recarga", "muestra", "refil", "amostra"],
   collectible_card: [
-    "trading card", "promo card", "promotional card", "collectible card", "pokemon card", "photo card", "photocard", "card single",
+    "card", "cards", "tcg", "promo", "collectible", "collectibles", "trading card", "promo card", "promotional card", "collectible card", "pokemon card", "photo card", "photocard", "card single",
     "트레이딩 카드", "프로모 카드", "프로모션 카드", "수집 카드", "포켓몬 카드", "포토 카드", "포토카드",
-    "トレーディングカード", "プロモカード", "コレクションカード", "ポケモンカード", "フォトカード",
-    "交易卡", "促销卡", "促銷卡", "收藏卡", "宝可梦卡", "寶可夢卡", "小卡",
+    "카드", "프로모", "수집품", "トレカ", "プロモ", "コレクション", "トレーディングカード", "プロモカード", "コレクションカード", "ポケモンカード", "フォトカード",
+    "卡片", "卡牌", "促销", "促銷", "收藏", "交易卡", "促销卡", "促銷卡", "收藏卡", "宝可梦卡", "寶可夢卡", "小卡",
     "การ์ดสะสม", "โปเกมอนการ์ด", "thẻ bài", "thẻ sưu tập", "kartu koleksi", "kartu pokemon",
     "tarjeta coleccionable", "carta promocional", "cartão colecionável", "cartão promocional",
   ],
@@ -759,7 +759,8 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
 
   const primaryQuery = normalizedQueries[0] ?? "";
   const allowedAccessories = accessoryCategories(primaryQuery);
-  if ([...accessoryCategories(candidate.title)].some((category) => !allowedAccessories.has(category))) return 0;
+  const candidateAccessories = accessoryCategories(candidate.title);
+  if ([...candidateAccessories].some((category) => !allowedAccessories.has(category))) return 0;
   const requiredVariants = variantRequirements(normalizedQueries);
   const allowedVariants = new Set([...productVariantCategories(primaryQuery), ...requiredVariants]);
   const candidateVariants = productVariantCategories(candidate.title);
@@ -768,7 +769,9 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
   const matchesCandidateIdentityToken = (token: string) => {
     if (tokenMatchesCandidate(token, candidateTokens, compactCandidate)) return true;
     const tokenVariants = productVariantCategories(token);
-    return tokenVariants.size > 0 && [...tokenVariants].every((category) => candidateVariants.has(category));
+    if (tokenVariants.size > 0 && [...tokenVariants].every((category) => candidateVariants.has(category))) return true;
+    const tokenAccessories = accessoryCategories(token);
+    return tokenAccessories.size > 0 && [...tokenAccessories].every((category) => candidateAccessories.has(category));
   };
 
   let best = 0;

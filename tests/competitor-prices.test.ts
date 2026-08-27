@@ -397,9 +397,21 @@ test("competitor relevance fails closed on GTIN, exact model, accessory, edition
   assert.equal(competitorCandidateRelevance(candidate({
     title: "Pokemon Pikachu VMAX 142/S-P Kellogg's Chex Choco Korean Promo Card Sealed",
   }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu VMAX 142/S-P Kellogg's Chex Choco Korean Promo Sealed",
+  }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu VMAX 142/S-P Kellogg's Chex Choco Korean TCG Sealed",
+  }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu VMAX 142/S-P Kellogg's Chex Choco Korean Collectible Sealed",
+  }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
   assert.ok(competitorCandidateRelevance(candidate({
     title: "Pokemon Pikachu VMAX Korean Promo Card Sealed",
   }), ["Pokemon Pikachu VMAX Korean Promo Card"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu VMAX TCG Sealed",
+  }), ["Pokemon Pikachu VMAX card"]) > 0);
   assert.ok(competitorCandidateRelevance(candidate({ title: "Coca Cola Zero 355ml 24 cans" }), ["Coca Cola Zero 355ml 24 cans"]) > 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Coca Cola Zero Cherry 355ml 24 cans" }), ["Coca Cola Zero 355ml 24 cans"]), 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Coca Cola Limited Edition 355ml" }), ["Coca Cola Cherry Limited Edition 355ml"]), 0);
