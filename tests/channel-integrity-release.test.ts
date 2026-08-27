@@ -18,6 +18,8 @@ test("11번가 성공 listing.create와 미검증 수정·발송 작업을 분�
 test("문의·배송 UI가 구현되지 않은 외부 쓰기를 실행 가능으로 노출하지 않는다", () => {
   assert.equal(channelOperationAvailable("shopee", "inquiries.list"), false);
   assert.equal(channelOperationAvailable("ebay", "shipment.acknowledge"), false);
+  assert.equal(channelOperationAvailable("temu", "shipment.acknowledge"), false);
+  assert.equal(channelOperationAvailable("temu", "shipment.confirm"), true);
   assert.equal(shipmentWriteAvailability("elevenst").available, false);
   assert.match(shipmentWriteAvailability("elevenst").reason, /권한|엔드포인트/);
   assert.equal(shipmentWriteAvailability("lazada").available, true);

@@ -57,6 +57,7 @@ type BackgroundSemanticAuditPromptInput = {
   };
   contactMode: IdentityBackgroundContactMode;
   expectedPropKey: string;
+  expectedPropDescription: string;
   expectedEnvironmentKeys: {
     location: string;
     moment: string;
@@ -151,6 +152,12 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
     ? stableSemanticKey(settingShot.separation.camera, "identity-camera")
     : baseCameraKey;
   const momentDescription = retryContract ? settingShot.moment : momentTreatment.description;
+  const retryPropKey = retryContract
+    ? stableSemanticKey(settingShot.separation.supportingObjects, "fixed-cue")
+    : stableSemanticKey(settingShot.separation.location, cue.suffix);
+  const retryPropDescription = retryContract
+    ? `${settingShot.supportingObjects}; it belongs to the replacement architecture and stays outside the reserved product zone`
+    : `${cue.description} belonging to ${settingShot.location}, outside the reserved product zone`;
   return {
     location: {
       key: stableSemanticKey(settingShot.separation.location, "empty-architecture"),
@@ -176,8 +183,8 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
       description: `foreground, midground and rear architectural planes that visibly support ${retryCameraDescription}`,
     },
     prop: {
-      key: stableSemanticKey(settingShot.separation.location, cue.suffix),
-      description: `${cue.description} belonging to ${settingShot.location}, outside the reserved product zone`,
+      key: retryPropKey,
+      description: retryPropDescription,
     },
   };
 }
@@ -193,6 +200,7 @@ export function buildBackgroundSemanticAuditPrompt(input: BackgroundSemanticAudi
       || !isIdentityBackgroundContactMode(input.contactMode)
       || !input.expectedEnvironment.trim()
       || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(input.expectedPropKey)
+      || !input.expectedPropDescription.trim()
       || Object.values(input.expectedEnvironmentKeys).some((key) => !/^[a-z0-9][a-z0-9-]{0,63}$/.test(key))
       || !finiteUnitInterval(reservedZone.left)
       || !finiteUnitInterval(reservedZone.top)
@@ -216,7 +224,7 @@ export function buildBackgroundSemanticAuditPrompt(input: BackgroundSemanticAudi
     `Trusted series slot: ${input.assetId}.`,
     `Trusted expected environment contract: ${input.expectedEnvironment}`,
     `The normalized product placement zone is left=${reservedZone.left}, top=${reservedZone.top}, width=${reservedZone.width}, height=${reservedZone.height}.`,
-    `The required non-merchandise environmental cue key is ${input.expectedPropKey}.`,
+    `The required non-merchandise environmental cue key is ${input.expectedPropKey}. Its trusted visual definition is: ${input.expectedPropDescription}. The key is only an identifier; never mark it observed unless those defining pixels are actually visible.`,
     "Set merchandisePresent=true if any object is staged as the source product or another saleable consumer good, including an unlabeled, blurred, abstracted, miniature or partly occluded product silhouette. Ordinary contextual architecture, built-in furniture and fixed unbranded environmental cues do not count by themselves.",
     "Set packageOrContainerPresent=true for any bottle, body-and-cap silhouette, carton, retail box, pouch, can, jar, tube, blister, packet, multipack, branded or unbranded consumer container. A plain geometric approximation still counts.",
     "Set labelBarcodeOrCertificationPresent=true for any product label, logo, certification mark, barcode, QR code, nutrition panel or package-like printed panel.",
@@ -232,7 +240,7 @@ export function buildBackgroundSemanticAuditPrompt(input: BackgroundSemanticAudi
     input.comparisonAssetIds?.length
       ? `Image 1 is the candidate. The later trusted comparison plates, in order, are: ${input.comparisonAssetIds.join(", ")}. Safety flags, reserved-zone checks and assigned-dimension checks describe Image 1 only. Comparison plates may contain a neutral rectangular mask over an earlier product zone; ignore that mask and compare the remaining environment pixels. Compare pixels, not prompt wording. Set every series*Distinct field true only when the candidate is unmistakably different from every cross-slot comparison plate in that dimension. conflictingAssetIds must contain only comparison IDs that fail at least one required distinction; it must be empty when every required distinction is true, and every false series*Distinct field must have at least one relevant conflict ID. Merely changing one fixture, crop or product placement while retaining the same beige/cream room, surface, light mood or depth counts as not distinct.${previousSameSlotIds.length ? ` Same-slot regeneration comparison ${previousSameSlotIds.join(", ")} intentionally shares the trusted location, moment-light, surface, palette and camera family; exclude it from those cross-slot dimension booleans. For that previous same-slot plate, require a materially different architectural layout, perspective composition, spatial arrangement and fixed-cue placement; mark seriesVisuallyDistinct and seriesCueDistinct false and list its ID only when that visual regeneration is still a near-repeat.` : ""}`
       : "There are no earlier plates in this series. Set every series*Distinct field and seriesVisuallyDistinct true, with conflictingAssetIds empty, only if the candidate itself unambiguously exposes all trusted dimensions.",
-    `assignedSupportingObjectsSatisfied is true only when the required ${input.expectedPropKey} cue is visibly present and no forbidden consumer prop substitutes for it. Additional fixed architectural or non-saleable contextual cues are allowed, but they must be exhaustively reported and must not repeat a cue from an earlier comparison plate.`,
+    `assignedSupportingObjectsSatisfied is true only when the required ${input.expectedPropKey} cue visibly matches its trusted visual definition and no forbidden consumer prop substitutes for it. Additional fixed architectural or non-saleable contextual cues are allowed, but they must be exhaustively reported and must not repeat a cue from an earlier comparison plate.`,
     `observedNonMerchandiseProps must exhaustively list every nontrivial fixed architectural or non-saleable contextual cue as stable lowercase kebab-case keys, including the required "${input.expectedPropKey}" key. Do not collapse distinct doorway, window, built-in rail, divider, sconce or fixed-furniture cues into one generic key. Do not list the declared support-or-backing surface, generic walls, floors, baseboard/trim/moulding, light/palette keys or the source product. If any visible cue is omitted or ambiguous, assignedSupportingObjectsSatisfied=false and confidence cannot be high.`,
     "confidence must be high only when the whole frame is clear enough to make every decision. Use medium or low for blur, ambiguity, crop uncertainty, contradictory cues or incomplete inspection.",
   ].join("\n");

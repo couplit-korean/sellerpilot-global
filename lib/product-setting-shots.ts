@@ -27,31 +27,76 @@ export type ProductSettingShot = {
   separation: SettingShotSeparation;
 };
 
+export type SettingShotRetryAuditFeedback = {
+  failedDimensions?: string[];
+  hardNegativeLocationKeys?: string[];
+  hardNegativeMomentKeys?: string[];
+  hardNegativeSurfaceKeys?: string[];
+  hardNegativeCameraKeys?: string[];
+  hardNegativePaletteKeys?: string[];
+  hardNegativeSpatialDepthKeys?: string[];
+  hardNegativeCueKeys?: string[];
+};
+
 export type ProductSettingShotPlan = Record<SettingShotAssetId, ProductSettingShot>;
 
 const settingShotRetryProfiles = [
   {
-    key: "opposite-annex-blue-hour-slate",
-    location: "a solid-wall-separated side annex dedicated to the same verified everyday function, with the original room completely outside the frame",
-    supportingObjects: "one fixed asymmetric vertical fin derived from the assigned architecture and no movable prop, container or saleable object",
+    key: "open-rotunda-radial-light",
+    location: "an open central rotunda dedicated to the same verified everyday function, with one uninterrupted curved rear envelope and the original room completely outside the frame",
+    supportingObjects: "one broad ceiling-integrated circular light well with a radial rim and no vertical fin, post, divider, jamb, return, reveal, bay or niche",
     staging: "inside the immutable source-composite mask zone, the support-or-backing plane moves to the opposite near/far depth relationship and reverses negative-space direction",
     camera: "the assigned camera family moved to the opposite side, rotated about 70 degrees in azimuth with a visibly wider perspective while its role-required height remains unchanged",
   },
   {
-    key: "detached-bay-midday-ceramic",
-    location: "a detached central bay in a different room dedicated to the same verified everyday function, with no sightline into the original location",
-    supportingObjects: "one deep fixed architectural reveal derived from the assigned setting and no movable prop, container or saleable object",
+    key: "horizontal-gallery-floor-channel",
+    location: "a long low-ceiling gallery dedicated to the same verified everyday function, organized by uninterrupted horizontal layers with no sightline into the original location",
+    supportingObjects: "one continuous floor-level horizontal shadow channel spanning the frame and no vertical fin, post, divider, jamb, return, reveal, bay or niche",
     staging: "inside the immutable source-composite mask zone, the background support-or-backing geometry changes to a far-diagonal relationship and reverses foreground hierarchy",
     camera: "the assigned camera family shifted from oblique toward axial, rotated about 155 degrees in azimuth with a compressed mid-depth plane while its role-required height remains unchanged",
   },
   {
-    key: "remote-window-bay-night-metal",
-    location: "a recessed fixed bay in a remote wing dedicated to the same verified everyday function, physically disconnected from every earlier room",
-    supportingObjects: "one integrated linear architectural niche derived from the assigned setting and no movable prop, container or saleable object",
+    key: "faceted-roof-diagonal-fold",
+    location: "a freestanding faceted roof chamber dedicated to the same verified everyday function, with a broad diagonal envelope physically disconnected from every earlier room",
+    supportingObjects: "one uninterrupted diagonal wall-to-ceiling fold and no vertical fin, post, divider, jamb, return, reveal, bay, frame or niche",
     staging: "inside the immutable source-composite mask zone, the apparent architectural depth shifts to a third relationship while foreground and rear-plane hierarchy are fully reversed",
     camera: "the assigned camera family moved to a third corner-to-axial position, rotated about 245 degrees in azimuth with a longer perspective while its role-required height remains unchanged",
   },
 ] as const;
+
+const retryAuditFeedbackFields = [
+  "failedDimensions",
+  "hardNegativeLocationKeys",
+  "hardNegativeMomentKeys",
+  "hardNegativeSurfaceKeys",
+  "hardNegativeCameraKeys",
+  "hardNegativePaletteKeys",
+  "hardNegativeSpatialDepthKeys",
+  "hardNegativeCueKeys",
+] as const satisfies readonly (keyof SettingShotRetryAuditFeedback)[];
+
+function sanitizedRetryAuditValues(field: keyof SettingShotRetryAuditFeedback, values: unknown) {
+  if (!Array.isArray(values)) return [];
+  const pattern = field === "failedDimensions"
+    ? /^[a-z][a-z-]{0,31}$/
+    : /^[a-z0-9][a-z0-9-]{0,63}$/;
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && pattern.test(value)))]
+    .slice(0, field === "failedDimensions" ? 16 : 24);
+}
+
+export function mergeSettingShotRetryAuditFeedback(
+  current?: SettingShotRetryAuditFeedback | null,
+  incoming?: SettingShotRetryAuditFeedback | null,
+) {
+  const merged: SettingShotRetryAuditFeedback = {};
+  for (const field of retryAuditFeedbackFields) {
+    merged[field] = sanitizedRetryAuditValues(field, [
+      ...(current?.[field] ?? []),
+      ...(incoming?.[field] ?? []),
+    ]);
+  }
+  return merged;
+}
 
 const retryMomentsByAsset: Record<SettingShotAssetId, readonly [string, string, string]> = {
   portrait: [
@@ -145,7 +190,7 @@ export function buildSettingShotRetryGuidance(
   conflictingAssetIds: string[],
   retry: number,
   settingVariant: ProductSettingShot,
-  auditFeedback?: { failedDimensions?: string[] } | null,
+  auditFeedback?: SettingShotRetryAuditFeedback | null,
 ) {
   const boundedRetry = boundedSettingShotRetry(retry);
   const profile = settingShotRetryProfiles[boundedRetry - 1];
@@ -153,9 +198,19 @@ export function buildSettingShotRetryGuidance(
     .filter((value) => /^[a-z0-9][a-z0-9:-]{0,63}$/.test(value))
     .slice(0, settingShotAssetIds.length);
   const blacklist = conflicts.length ? conflicts.join(", ") : "every earlier setting-shot plate supplied to the audit";
-  const failedDimensions = [...new Set(auditFeedback?.failedDimensions ?? [])]
-    .filter((value) => /^[a-z][a-z-]{0,31}$/.test(value))
-    .slice(0, 8);
+  const sanitizedAuditFeedback = mergeSettingShotRetryAuditFeedback(null, auditFeedback);
+  const failedDimensions = sanitizedAuditFeedback.failedDimensions ?? [];
+  const hardNegativeSignatures = [
+    ["location", sanitizedAuditFeedback.hardNegativeLocationKeys],
+    ["time-light", sanitizedAuditFeedback.hardNegativeMomentKeys],
+    ["surface", sanitizedAuditFeedback.hardNegativeSurfaceKeys],
+    ["camera", sanitizedAuditFeedback.hardNegativeCameraKeys],
+    ["palette", sanitizedAuditFeedback.hardNegativePaletteKeys],
+    ["spatial-depth", sanitizedAuditFeedback.hardNegativeSpatialDepthKeys],
+    ["fixed-cue/supporting-object", sanitizedAuditFeedback.hardNegativeCueKeys],
+  ]
+    .filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].length > 0)
+    .map(([dimension, values]) => `${dimension}=${values.join("|")}`);
   return [
     `Deterministic setting-shot retry ${boundedRetry} of ${settingShotRetryProfiles.length} for ${assetId}.`,
     `HARD ROLE BLACKLIST: ${blacklist}. Do not reuse any blacklisted role's room geometry, light direction, surface family, fixed cue, background support-or-backing geometry around the immutable product zone, staging relationship, negative-space direction, depth hierarchy, camera azimuth or focal perspective.`,
@@ -163,6 +218,10 @@ export function buildSettingShotRetryGuidance(
     failedDimensions.length
       ? `Validated prior audit failure dimensions: ${failedDimensions.join(", ")}. Make each named visual dimension unmistakably different from every blacklisted role while still satisfying this retry's trusted assignment.`
       : "The prior candidate did not provide safe high-confidence dimension feedback; replace every scene dimension according to this deterministic retry contract.",
+    hardNegativeSignatures.length
+      ? `STRUCTURED FAILED-PLATE BLACKLIST (schema-validated semantic keys only): ${hardNegativeSignatures.join("; ")}. These identify forbidden visual families from all earlier rejected candidates, not words to render in the image.`
+      : "No validated failed-plate semantic keys are available; rely on the complete deterministic replacement contract.",
+    "FORBIDDEN STRUCTURAL EQUIVALENCE: never rename or slightly reshape a rejected rigid cue. A fixed vertical divider, post, wall return, jamb, fin, stepped divider array, deep reveal, recessed bay, linear frame and architectural niche are the same rigid-vertical visual family; if any prior cue used one, every equivalent in this family is forbidden. Use only the new trusted cue and geometry assigned above.",
     "The retry assignment below supersedes the original environment assignment, but it never changes the hard shot class or product facts.",
     "Generate only the empty architectural plate. The verified product is composited afterward from unchanged source pixels; never invent, redraw or anticipate package text, logos, labels, quantities or product parts.",
   ].join("\n");

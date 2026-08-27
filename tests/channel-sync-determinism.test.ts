@@ -77,6 +77,22 @@ test("direct synchronization captures a sensible observation timestamp instead o
   assert.equal(normalizeChannelInquiries("qoo10", inquiryResult, directSyncTimestamp)[0]?.receivedAt, directSyncTimestamp);
 });
 
+test("Shopee normalized orders preserve the credential-certified shop and merchant context", () => {
+  const orderResult = result("shopee", "orders.list", "orders", {
+    response: { order_list: [{ order_sn: "ORDER-LINEAGE" }] },
+    sellerpilotProviderContext: { shopId: "123456789", merchantId: "987654321" },
+  });
+
+  assert.deepEqual(
+    normalizeChannelOrders("shopee", orderResult, NORMALIZATION_TIMESTAMP)[0]?.providerContext,
+    {
+      orderSn: "ORDER-LINEAGE",
+      shopId: "123456789",
+      merchantId: "987654321",
+    },
+  );
+});
+
 test("Temu deadline priority is identical across exact completion replays", () => {
   const referenceTime = new Date(NORMALIZATION_TIMESTAMP).getTime();
   const inquiryResult = result("temu", "inquiries.list", "inquiries", {

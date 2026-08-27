@@ -463,7 +463,7 @@ function lazadaPayload(argumentsValue: Record<string, unknown>) {
 }
 
 function ensureProviderSupport(channel: ActiveChannelKey, operation: ChannelOperationName) {
-  if (channel === "ebay" && operation === "shipment.acknowledge") {
+  if (["ebay", "temu"].includes(channel) && operation === "shipment.acknowledge") {
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
   }
   if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore"].includes(channel)) {
@@ -1039,6 +1039,65 @@ function shopeeResponseId(data: Record<string, unknown>, key: string) {
   return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
 }
 
+function shopeeOrderPageWithCredentialIdentity(
+  remote: RemoteResponse,
+  payload: SecretPayload,
+): RemoteResponse {
+  const shopId = textValue(payload, "shop_id");
+  if (!/^[1-9][0-9]{0,31}$/.test(shopId)) {
+    throw new Error("SHOPEE_ORDER_CREDENTIAL_SHOP_ID_INVALID");
+  }
+  const merchantId = textValue(payload, "merchant_id");
+  if (merchantId && !/^[1-9][0-9]{0,31}$/.test(merchantId)) {
+    throw new Error("SHOPEE_ORDER_CREDENTIAL_MERCHANT_ID_INVALID");
+  }
+  const providerIdentityVersion = textValue(payload, "provider_account_identity_version");
+  const providerSubject = textValue(payload, "provider_account_subject");
+  const mainAccountId = textValue(payload, "main_account_id");
+  const targetIds = (key: "shop_ids" | "merchant_ids") => Array.isArray(payload[key])
+    ? payload[key].map((value) => String(value ?? "").trim()).filter(Boolean)
+    : [];
+  const targets = objectArray(payload.shopee_targets);
+  const mainIdentity = providerIdentityVersion === "v1"
+    && /^[1-9][0-9]{0,31}$/.test(mainAccountId)
+    && providerSubject === `shopee:main:${mainAccountId}`;
+  if (providerIdentityVersion || providerSubject) {
+    const directShopIdentity = providerIdentityVersion === "v1"
+      && providerSubject === `shopee:shop:${shopId}`;
+    const mainShopAuthorized = mainIdentity
+      && targetIds("shop_ids").includes(shopId)
+      && targets.some((target) => target.type === "shop" && String(target.id ?? "").trim() === shopId);
+    if (!directShopIdentity && !mainShopAuthorized) {
+      throw new Error("SHOPEE_ORDER_CREDENTIAL_LINEAGE_MISMATCH");
+    }
+  }
+  if (merchantId && (!mainIdentity
+      || !targetIds("merchant_ids").includes(merchantId)
+      || !targets.some((target) => target.type === "merchant" && String(target.id ?? "").trim() === merchantId))) {
+    throw new Error("SHOPEE_ORDER_CREDENTIAL_MERCHANT_LINEAGE_MISMATCH");
+  }
+
+  const response = nestedObject(remote.data.response);
+  const pageShopIds = [remote.data.shop_id, remote.data.shopId, response.shop_id, response.shopId]
+    .concat(objectArray(response.order_list).flatMap((order) => [order.shop_id, order.shopId]))
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  if (pageShopIds.some((value) => value !== shopId)) {
+    throw new Error("SHOPEE_ORDER_CREDENTIAL_LINEAGE_MISMATCH");
+  }
+
+  return {
+    ...remote,
+    data: {
+      ...remote.data,
+      sellerpilotProviderContext: {
+        shopId,
+        ...(merchantId ? { merchantId } : {}),
+      },
+    },
+  };
+}
+
 async function executeShopee(input: ExecuteInput) {
   const globalProduct = booleanArgument(input.arguments, "globalProduct");
   if (globalProduct && (input.operation === "categories.list" || input.operation === "categories.suggest")) {
@@ -1355,13 +1414,13 @@ async function executeShopee(input: ExecuteInput) {
       const query = new URLSearchParams(baseQuery);
       if (cursor) query.set("cursor", cursor);
       else query.delete("cursor");
-      const remote = await shopeeRequest({
+      const remote = shopeeOrderPageWithCredentialIdentity(await shopeeRequest({
         payload: input.payload,
         environment: input.environment,
         method: "GET",
         path: "/api/v2/order/get_order_list",
         query,
-      });
+      }), input.payload);
       const pageStep = step(pageIndex === 0 ? "orders" : `orders:${pageIndex + 1}`, remote);
       steps.push(pageStep);
       if (!pageStep.ok) break;

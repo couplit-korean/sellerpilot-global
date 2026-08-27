@@ -29,13 +29,53 @@ test("Shopee order sync follows the official next_cursor until more is false", a
     const result = await executeChannelOperation({
       channel: "shopee",
       operation: "orders.list",
-      payload: { partner_id: "1", partner_key: "secret", shop_id: "2", access_token: "token" },
+      payload: {
+        partner_id: "1",
+        partner_key: "secret",
+        shop_id: "2",
+        merchant_id: "7",
+        main_account_id: "3",
+        shop_ids: [2],
+        merchant_ids: [7],
+        shopee_targets: [
+          { type: "shop", id: "2" },
+          { type: "merchant", id: "7" },
+        ],
+        provider_account_identity_version: "v1",
+        provider_account_subject: "shopee:main:3",
+        access_token: "token",
+      },
       arguments: { query: { time_range_field: "create_time", time_from: 1, time_to: 2, page_size: 50 } },
       environment: "production",
     });
     assert.equal(result.ok, true);
     assert.deepEqual(result.steps.map((item) => item.name), ["orders", "orders:2"]);
     assert.deepEqual(cursors, ["", "cursor-2"]);
+    assert.deepEqual(result.steps[0]?.data.sellerpilotProviderContext, { shopId: "2", merchantId: "7" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Shopee order sync rejects a provider page from another shop credential lineage", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    response: {
+      order_list: [{ order_sn: "FOREIGN-ORDER", shop_id: 999 }],
+      more: false,
+    },
+  });
+  try {
+    await assert.rejects(
+      executeChannelOperation({
+        channel: "shopee",
+        operation: "orders.list",
+        payload: { partner_id: "1", partner_key: "secret", shop_id: "2", access_token: "token" },
+        arguments: { query: { time_range_field: "create_time", time_from: 1, time_to: 2, page_size: 50 } },
+        environment: "production",
+      }),
+      /SHOPEE_ORDER_CREDENTIAL_LINEAGE_MISMATCH/,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

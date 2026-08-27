@@ -44,6 +44,7 @@ import {
 import {
   buildSettingShotRetryGuidance,
   buildSettingShotRetryVariant,
+  mergeSettingShotRetryAuditFeedback,
 } from "../lib/product-setting-shots.ts";
 import {
   assertIdentityBackgroundPlate,
@@ -211,7 +212,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.43";
+const workerVersion = "sellerpilot-cli-worker/1.44";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -2124,6 +2125,7 @@ async function auditGeneratedIdentityBackground({
   expectedEnvironment,
   expectedEnvironmentKeys,
   expectedPropKey,
+  expectedPropDescription,
   expectedPlateDigest,
   expectedPlateBytes,
   contactMode,
@@ -2152,6 +2154,7 @@ async function auditGeneratedIdentityBackground({
     reservedZone: preset.identityPolicy.placement,
     contactMode,
     expectedPropKey,
+    expectedPropDescription,
   });
   await runCodex([
     "exec",
@@ -2260,6 +2263,16 @@ async function auditGeneratedIdentityBackground({
     );
     auditError.conflictingAssetIds = parsed.data.conflictingAssetIds;
     auditError.failedDimensions = failedDimensions;
+    auditError.retryAuditFeedback = {
+      failedDimensions,
+      hardNegativeLocationKeys: [parsed.data.observedLocationKey],
+      hardNegativeMomentKeys: [parsed.data.observedMomentKey],
+      hardNegativeSurfaceKeys: [parsed.data.observedSurfaceKey],
+      hardNegativeCameraKeys: [parsed.data.observedCameraKey],
+      hardNegativePaletteKeys: [parsed.data.observedPaletteKey],
+      hardNegativeSpatialDepthKeys: [parsed.data.observedSpatialDepthKey],
+      hardNegativeCueKeys: parsed.data.observedNonMerchandiseProps,
+    };
     auditError.safeForRetryComparison = safeForRetryComparison;
     throw auditError;
   }
@@ -2685,6 +2698,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
               spatialDepth: backgroundContract.spatialDepth.key,
             },
             expectedPropKey: backgroundContract.prop.key,
+            expectedPropDescription: backgroundContract.prop.description,
             expectedPlateDigest: createHash("sha256").update(generated).digest("hex"),
             expectedPlateBytes: generated.length,
             contactMode: backgroundContactMode,
@@ -2701,6 +2715,10 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
             const repeatedPropError = new Error(`${preset.id} 배경 소품 ${repeatedProp.propKey}이 ${repeatedProp.assetId} 설정샷과 반복됐습니다.`);
             repeatedPropError.conflictingAssetIds = [repeatedProp.assetId];
             repeatedPropError.failedDimensions = ["fixed-cue"];
+            repeatedPropError.retryAuditFeedback = {
+              failedDimensions: ["fixed-cue"],
+              hardNegativeCueKeys: [repeatedProp.propKey],
+            };
             repeatedPropError.safeForRetryComparison = true;
             throw repeatedPropError;
           }
@@ -2710,12 +2728,16 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
           if (error?.safeForRetryComparison === true) {
             await retainRejectedBackground(generated, attempt);
           }
-          retryConflictAssetIds = Array.isArray(error?.conflictingAssetIds)
-            ? error.conflictingAssetIds
-            : [];
-          retryAuditFeedback = {
-            failedDimensions: Array.isArray(error?.failedDimensions) ? error.failedDimensions : [],
-          };
+          retryConflictAssetIds = [...new Set([
+            ...retryConflictAssetIds,
+            ...(Array.isArray(error?.conflictingAssetIds) ? error.conflictingAssetIds : []),
+          ])].slice(0, maximumBackgroundAuditComparisons);
+          retryAuditFeedback = mergeSettingShotRetryAuditFeedback(
+            retryAuditFeedback,
+            error?.retryAuditFeedback ?? {
+              failedDimensions: Array.isArray(error?.failedDimensions) ? error.failedDimensions : [],
+            },
+          );
           noveltyGuidance = `Background safety retry reason ${attempt}: the previous candidate failed the independent fail-closed audit. Follow the deterministic trusted retry contract and validated failure dimensions below; do not repair the old plate by blur, erasure, recolor, crop, mirroring or object movement.`;
           continue;
         }
@@ -2739,8 +2761,14 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
           }
           await retainRejectedBackground(generated, attempt);
           const conflictingAssetId = String(duplicateBackground.assetId).replace(/^background:/, "");
-          retryConflictAssetIds = [conflictingAssetId];
-          retryAuditFeedback = { failedDimensions: ["overall-layout"] };
+          retryConflictAssetIds = [...new Set([
+            ...retryConflictAssetIds,
+            conflictingAssetId,
+          ])].slice(0, maximumBackgroundAuditComparisons);
+          retryAuditFeedback = mergeSettingShotRetryAuditFeedback(
+            retryAuditFeedback,
+            { failedDimensions: ["overall-layout"] },
+          );
           noveltyGuidance = `Background diversity retry reason ${attempt}: the previous empty plate remained perceptually close to ${conflictingAssetId}. Follow the deterministic trusted retry contract and its hard role blacklist.`;
           continue;
         }
@@ -2867,8 +2895,14 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
     }
     if (identityCutouts && preset.identityPolicy.mode === "source-composite" && backgroundPlateSnapshot) {
       await retainRejectedBackground(await readFile(backgroundPlateFile), attempt);
-      retryConflictAssetIds = [duplicate.assetId];
-      retryAuditFeedback = { failedDimensions: ["overall-layout", "product-placement"] };
+      retryConflictAssetIds = [...new Set([
+        ...retryConflictAssetIds,
+        duplicate.assetId,
+      ])].slice(0, maximumBackgroundAuditComparisons);
+      retryAuditFeedback = mergeSettingShotRetryAuditFeedback(
+        retryAuditFeedback,
+        { failedDimensions: ["overall-layout", "product-placement"] },
+      );
       noveltyGuidance = `Source-composited output duplicate reason ${attempt}: the previous output remained visually close to ${duplicate.assetId}. Keep the immutable source-product mask and follow the next deterministic background retry contract.`;
     } else {
       noveltyGuidance = buildDuplicateRetryGuidance(preset.id, duplicate.assetId, attempt, "product-mockup");

@@ -169,6 +169,7 @@ test("background audit prompt treats the image as untrusted and distinguishes pa
     reservedZone: { left: 0.08, top: 0.1, width: 0.62, height: 0.74 },
     contactMode: "surface-supported",
     expectedPropKey: "fixed-window-frame",
+    expectedPropDescription: "one fixed blue-painted window frame on the rear-left wall",
     expectedEnvironmentKeys: {
       location: "breakfast-nook",
       moment: "cool-dawn-window-light",
@@ -185,6 +186,8 @@ test("background audit prompt treats the image as untrusted and distinguishes pa
   assert.match(prompt, /single window merely because it is rectangular/);
   assert.match(prompt, /at least two visible physical cues/);
   assert.match(prompt, /observedNonMerchandiseProps/);
+  assert.match(prompt, /trusted visual definition is: one fixed blue-painted window frame/);
+  assert.match(prompt, /key is only an identifier/);
   assert.match(prompt, /exhaustively list every nontrivial fixed architectural/);
   assert.match(prompt, /cool-dawn-window-light/);
   assert.match(prompt, /Image 1 is the candidate/);
@@ -206,6 +209,7 @@ test("background audit keeps suspended placements free of an invented tabletop a
     expectedEnvironment: "empty wardrobe backing plane",
     reservedZone: { left: 0.08, top: 0.1, width: 0.62, height: 0.74 },
     expectedPropKey: "fixed-wardrobe-rail",
+    expectedPropDescription: "one fixed wardrobe rail above the suspended product zone",
     expectedEnvironmentKeys: {
       location: "bedroom-wardrobe",
       moment: "morning-window-light",

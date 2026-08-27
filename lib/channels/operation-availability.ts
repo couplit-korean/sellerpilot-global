@@ -96,8 +96,14 @@ export function channelOperationRelease(channel: ActiveChannelKey, operation: Ch
   if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore"].includes(channel)) {
     return { available: false, mode: "release_verification_required", reason: "이 채널은 현재 공식 문의 답변 API가 검증되지 않아 원격 전송을 차단했습니다." };
   }
-  if (channel === "ebay" && operation === "shipment.acknowledge") {
-    return { available: false, mode: "release_verification_required", reason: "eBay에는 별도 발주확인 쓰기 동작이 없어 차단했습니다." };
+  if (["ebay", "temu"].includes(channel) && operation === "shipment.acknowledge") {
+    return {
+      available: false,
+      mode: "release_verification_required",
+      reason: channel === "temu"
+        ? "Temu 실행 계약에는 별도 발주확인 동작이 없어 출고 확정과 혼동되지 않도록 차단했습니다."
+        : "eBay에는 별도 발주확인 쓰기 동작이 없어 차단했습니다.",
+    };
   }
   return { available: true, mode: "available", reason: capability.note };
 }

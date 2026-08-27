@@ -19,6 +19,7 @@ import {
   buildSettingShotRetryGuidance,
   buildSettingShotRetryVariant,
   buildProductSettingShotPlan,
+  mergeSettingShotRetryAuditFeedback,
   settingShotAssetIds,
   settingShotDimensions,
 } from "../lib/product-setting-shots";
@@ -162,6 +163,10 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.ok(variants.every((variant) => variant.camera.includes("assigned camera family")));
   assert.ok(variants.every((variant) => variant.camera.includes("role-required height")));
   assert.ok(variants.every((variant) => !/contact plane|contact geometry/i.test(variant.staging)));
+  assert.ok(variants.every((variant) => /no vertical fin, post, divider, jamb, return, reveal, bay/i.test(variant.supportingObjects)));
+  assert.match(variants[0].supportingObjects, /circular light well/);
+  assert.match(variants[1].supportingObjects, /horizontal shadow channel/);
+  assert.match(variants[2].supportingObjects, /diagonal wall-to-ceiling fold/);
 
   const contracts = variants.map((variant) => resolveIdentityBackgroundContract(variant, "detail-overview"));
   for (const dimension of ["location", "moment", "surface", "camera", "palette", "spatialDepth", "prop"] as const) {
@@ -171,17 +176,46 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(contracts[0].moment.description, /sunset|post-sunset/);
   assert.match(contracts[1].moment.description, /blue-hour|twilight/);
   assert.match(contracts[2].moment.description, /midday/);
+  assert.match(contracts[0].prop.description, /circular light well/);
+  assert.match(contracts[1].prop.description, /horizontal shadow channel/);
+  assert.match(contracts[2].prop.description, /diagonal wall-to-ceiling fold/);
+  assert.ok(contracts.every((contract) => !/fixed-zone-divider/.test(contract.prop.key)));
+
+  const cumulativeAudit = mergeSettingShotRetryAuditFeedback(
+    {
+      failedDimensions: ["time-light", "fixed-cue"],
+      hardNegativeMomentKeys: ["portrait-warm-side-light"],
+      hardNegativeCueKeys: ["portrait-fixed-vertical-post", "right-side-wall-return"],
+    },
+    {
+      failedDimensions: ["camera", "fixed-cue", "INVALID VALUE"],
+      hardNegativeCameraKeys: ["rejected-detail-overview-1-near-axial"],
+      hardNegativeCueKeys: ["right-side-wall-return", "stepped-divider-array", "unsafe key!"],
+    },
+  );
+  assert.deepEqual(cumulativeAudit.failedDimensions, ["time-light", "fixed-cue", "camera"]);
+  assert.deepEqual(cumulativeAudit.hardNegativeCueKeys, [
+    "portrait-fixed-vertical-post",
+    "right-side-wall-return",
+    "stepped-divider-array",
+  ]);
 
   const guidance = buildSettingShotRetryGuidance(
     "detail-overview",
     ["portrait", "wide"],
     1,
     variants[0],
-    { failedDimensions: ["time-light", "spatial-depth", "camera"] },
+    cumulativeAudit,
   );
   assert.match(guidance, /HARD ROLE BLACKLIST: portrait, wide/);
   assert.match(guidance, /location=.*time\/light=.*surface=.*fixed cue=.*product placement=.*camera=/);
-  assert.match(guidance, /Validated prior audit failure dimensions: time-light, spatial-depth, camera/);
+  assert.match(guidance, /Validated prior audit failure dimensions: time-light, fixed-cue, camera/);
+  assert.match(guidance, /STRUCTURED FAILED-PLATE BLACKLIST/);
+  assert.match(guidance, /time-light=portrait-warm-side-light/);
+  assert.match(guidance, /camera=rejected-detail-overview-1-near-axial/);
+  assert.match(guidance, /fixed-cue\/supporting-object=portrait-fixed-vertical-post\|right-side-wall-return\|stepped-divider-array/);
+  assert.match(guidance, /fixed vertical divider, post, wall return, jamb, fin, stepped divider array, deep reveal, recessed bay/);
+  assert.doesNotMatch(guidance, /unsafe key/);
   assert.match(guidance, /unchanged source pixels/);
   assert.match(guidance, /immutable product zone/);
   assert.doesNotMatch(guidance, /blacklisted role's product zone|product zone moves|move the product zone/i);
@@ -259,6 +293,13 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /never this persisted source-composite mask/);
   assert.match(worker, /retryConflictAssetIds/);
   assert.match(worker, /failedDimensions/);
+  assert.match(worker, /auditError\.retryAuditFeedback = \{/);
+  assert.match(worker, /hardNegativeMomentKeys: \[parsed\.data\.observedMomentKey\]/);
+  assert.match(worker, /hardNegativeCueKeys: parsed\.data\.observedNonMerchandiseProps/);
+  assert.match(worker, /expectedPropDescription: backgroundContract\.prop\.description/);
+  assert.match(worker, /retryAuditFeedback = mergeSettingShotRetryAuditFeedback\(/);
+  assert.match(worker, /\.\.\.retryConflictAssetIds,[\s\S]*error\?\.conflictingAssetIds/);
+  assert.match(worker, /Source-composited output duplicate reason[\s\S]*retryAuditFeedback = mergeSettingShotRetryAuditFeedback|retryAuditFeedback = mergeSettingShotRetryAuditFeedback\([\s\S]*Source-composited output duplicate reason/);
   assert.match(worker, /rejectedBackgroundShots/);
   assert.match(worker, /comparisonPlates: boundedBackgroundComparisonShots\(\)/);
   assert.match(worker, /hasPublishedSameSlotComparison[\s\S]*\? \[\.\.\.existingBackgroundShots\][\s\S]*: \[\.\.\.rejectedBackgroundShots, \.\.\.existingBackgroundShots\]/);

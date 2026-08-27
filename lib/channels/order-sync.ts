@@ -149,13 +149,15 @@ function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalize
 
 function normalizeShopee(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const response = object(data.response);
+  const credentialContext = object(data.sellerpilotProviderContext);
   const rows = list(response.order_list);
   return rows.map((row): NormalizedChannelOrder | null => {
     const externalOrderId = text(row.order_sn, row.order_id);
     if (!externalOrderId) return null;
     const amount = number(row.total_amount);
     const currency = text(row.currency, "KRW").toUpperCase();
-    const shopId = text(row.shop_id, row.shopId, response.shop_id, data.shop_id);
+    const shopId = text(row.shop_id, row.shopId, response.shop_id, data.shop_id, credentialContext.shopId);
+    const merchantId = text(credentialContext.merchantId);
     return {
       externalOrderId,
       customerName: text(row.buyer_username, "Shopee 구매자"),
@@ -169,6 +171,7 @@ function normalizeShopee(data: Record<string, unknown>, iso: TimestampNormalizer
       providerContext: {
         orderSn: externalOrderId,
         ...(shopId ? { shopId } : {}),
+        ...(merchantId ? { merchantId } : {}),
       },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));

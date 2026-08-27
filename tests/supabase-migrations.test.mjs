@@ -283,6 +283,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260826221500_allow_verification_ribbon_detail_block.sql",
       "20260827000726_authorize_live_ai_result_uploads.sql",
       "20260827011228_reset_registration_activity_retry_clock.sql",
+      "20260827025330_harden_shopee_shipment_lineage_and_ack_semantics.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -456,6 +457,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "utf8",
     );
     await db.exec(withoutUnavailableExtensions(tracxExplicitBindingMigration));
+    const shipmentLineageMigration = await readFile(
+      new URL("20260827025330_harden_shopee_shipment_lineage_and_ack_semantics.sql", migrationUrl),
+      "utf8",
+    );
+    await db.exec(withoutUnavailableExtensions(shipmentLineageMigration));
     assert.equal(
       await scalar(
         db,
@@ -1937,6 +1943,178 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
               credential_refresh_started_at=null,completed_at=now()
         where id=any($1::uuid[])`,
       [[refreshCrashJobId, refreshBlockedJobId]],
+    );
+
+    await setClaims(db, "service_role");
+    const shopeeLineageOrder = {
+      externalOrderId: "SHOPEE-LINEAGE-ORDER-1",
+      customerName: "Shopee test buyer",
+      productName: "Shopee lineage test product",
+      quantity: 1,
+      amount: 1200,
+      currency: "KRW",
+      amountKrw: 1200,
+      status: "paid",
+      orderedAt: "2026-08-27T00:00:00.000Z",
+      providerContext: { orderSn: "SHOPEE-LINEAGE-ORDER-1", shopId: "123456789" },
+    };
+    assert.deepEqual(
+      (await db.query(
+        `select status, seller_account_key_source,
+                seller_account_key is not null as has_seller_account_key,
+                seller_account_verified_at is not null as verified
+           from sellerpilot_private.channel_credentials where id = $1`,
+        [progressivePreparation.credential_id],
+      )).rows[0],
+      {
+        status: "active",
+        seller_account_key_source: "provider_certified_v1",
+        has_seller_account_key: true,
+        verified: true,
+      },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_orders($1, 'shopee', $2::jsonb)",
+        [progressivePreparation.credential_id, JSON.stringify([shopeeLineageOrder])],
+      ),
+      1,
+    );
+    const shopeeLineageContext = await scalar(
+      db,
+      `select provider_context
+         from sellerpilot_private.commerce_orders
+        where owner_id = $1 and channel_key = 'shopee'
+          and external_order_id = 'SHOPEE-LINEAGE-ORDER-1'`,
+      [ADMIN_ID],
+    );
+    assert.equal(shopeeLineageContext.shopId, "123456789");
+    assert.equal(shopeeLineageContext.sourceCredentialId, progressivePreparation.credential_id);
+    assert.match(shopeeLineageContext.sellerAccountKey, /^[a-f0-9]{64}$/);
+
+    await setClaims(db);
+    const shopeePreflightAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'shopee', 'shipment.acknowledge', 'shopee-lineage-preflight-0001', $2)",
+      [progressivePreparation.credential_id, "8".repeat(64)],
+    );
+    const shopeeWrongShopAttempt = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'shopee', 'shipment.acknowledge', 'shopee-lineage-preflight-wrong-shop-0001', $2)",
+      [progressivePreparation.credential_id, "9".repeat(64)],
+    );
+    const shopeeLineageOrderId = await scalar(
+      db,
+      `select id from sellerpilot_private.commerce_orders
+        where owner_id = $1 and channel_key = 'shopee'
+          and external_order_id = 'SHOPEE-LINEAGE-ORDER-1'`,
+      [ADMIN_ID],
+    );
+    await setClaims(db, "service_role");
+    const shopeePreflightJob = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_resource_gateway_job(
+        $1, $2, 'shopee', 'shipment.acknowledge',
+        '{"arguments":{"shopId":"123456789","query":{"order_sn":"SHOPEE-LINEAGE-ORDER-1"}}}'::jsonb,
+        'order_shipment', $3, $4, null, null, $5, 'SPX', 'SHOPEE-PREFLIGHT-TRACK'
+      )`,
+      [
+        progressivePreparation.credential_id,
+        shopeePreflightAttempt.attempt_id,
+        "a".repeat(64),
+        "8".repeat(64),
+        shopeeLineageOrderId,
+      ],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded',
+              response_payload = '{"ok":true,"safeMessage":"shipping parameter verified"}'::jsonb,
+              completed_at = now()
+        where id = $1`,
+      [shopeePreflightJob.job_id],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, shipment_write_status, tracking_number, last_shipment_at
+           from sellerpilot_private.commerce_orders where id = $1`,
+        [shopeeLineageOrderId],
+      )).rows[0],
+      {
+        status: "paid",
+        shipment_write_status: "pending",
+        tracking_number: null,
+        last_shipment_at: null,
+      },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*) from sellerpilot_private.operation_audit where entity_id = $1 and action = 'shipment_preflight_verified'",
+        [shopeeLineageOrderId],
+      ),
+      1,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_resource_gateway_job(
+          $1, $2, 'shopee', 'shipment.acknowledge',
+          '{"arguments":{"shopId":"987654321","query":{"order_sn":"SHOPEE-LINEAGE-ORDER-1"}}}'::jsonb,
+          'order_shipment', $3, $4, null, null, $5, 'SPX', 'SHOPEE-WRONG-SHOP'
+        )`,
+        [
+          progressivePreparation.credential_id,
+          shopeeWrongShopAttempt.attempt_id,
+          "b".repeat(64),
+          "9".repeat(64),
+          shopeeLineageOrderId,
+        ],
+      ),
+      /Shopee shipment request order lineage mismatch/,
+    );
+    await db.query(
+      "delete from sellerpilot_private.channel_gateway_jobs where id = $1",
+      [shopeePreflightJob.job_id],
+    );
+    await db.query(
+      "delete from sellerpilot_private.channel_operation_attempts where id = any($1::uuid[])",
+      [[shopeePreflightAttempt.attempt_id, shopeeWrongShopAttempt.attempt_id]],
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_ingest_orders($1, 'shopee', $2::jsonb)",
+        [progressivePreparation.credential_id, JSON.stringify([{
+          ...shopeeLineageOrder,
+          providerContext: { orderSn: "SHOPEE-LINEAGE-ORDER-1", shopId: "987654321" },
+        }])],
+      ),
+      /Shopee order shop lineage mismatch/,
+    );
+    const foreignShopeeCredentialId = await scalar(
+      db,
+      "select public.sellerpilot_service_refresh_shopee($1, $2::jsonb, $3::timestamptz)",
+      [progressivePreparation.credential_id, JSON.stringify({
+        ...progressiveRefreshPayload,
+        shop_id: "987654321",
+        provider_account_subject: "shopee:shop:987654321",
+      }), refreshExpiresAt],
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_ingest_orders($1, 'shopee', $2::jsonb)",
+        [foreignShopeeCredentialId, JSON.stringify([{
+          ...shopeeLineageOrder,
+          providerContext: { orderSn: "SHOPEE-LINEAGE-ORDER-1", shopId: "987654321" },
+        }])],
+      ),
+      /Shopee existing order credential lineage mismatch/,
+    );
+    await db.query(
+      `delete from sellerpilot_private.commerce_orders
+        where owner_id = $1 and channel_key = 'shopee'
+          and external_order_id = 'SHOPEE-LINEAGE-ORDER-1'`,
+      [ADMIN_ID],
     );
     await setClaims(db);
     const requiredManualFields = {
@@ -4337,6 +4515,22 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
 
     // A shipment acknowledgement only records the provider acknowledgement;
     // it must never promote a paid order to shipped.
+    const shipmentAcknowledgeOrderId = await scalar(
+      db,
+      `insert into sellerpilot_private.commerce_orders (
+        owner_id, external_order_id, channel_key, customer_name, product_name,
+        quantity, amount, currency, amount_krw, status, ordered_at, demo
+      ) values (
+        $1, 'REAL-ORDER-ACK-1', 'qoo10', '발주확인 테스트 구매자', '발주확인 테스트 상품',
+        1, 1000, 'KRW', 1000, 'paid', now(), false
+      ) returning id`,
+      [ADMIN_ID],
+    );
+    const lastShipmentAtBeforeAcknowledge = await scalar(
+      db,
+      "select last_shipment_at::text from sellerpilot_private.commerce_orders where id = $1",
+      [shipmentAcknowledgeOrderId],
+    );
     await setClaims(db);
     const acknowledgeClaim = await scalar(
       db,
@@ -4347,10 +4541,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     const acknowledgeEnqueue = await scalar(
       db,
       `select public.sellerpilot_service_enqueue_resource_gateway_job(
-        $1, $2, 'qoo10', 'shipment.acknowledge', '{"arguments":{"orderNo":"REAL-ORDER-1"}}'::jsonb,
+        $1, $2, 'qoo10', 'shipment.acknowledge', '{"arguments":{"orderNo":"REAL-ORDER-ACK-1"}}'::jsonb,
         'order_shipment', $3, $4, null, null, $5, 'LEX', 'TRACK-ACK-1'
       )`,
-      [credentialId, acknowledgeClaim.attempt_id, "4".repeat(64), "3".repeat(64), shipmentFailureOrderId],
+      [credentialId, acknowledgeClaim.attempt_id, "4".repeat(64), "3".repeat(64), shipmentAcknowledgeOrderId],
     );
     await db.query(
       `update sellerpilot_private.channel_gateway_jobs
@@ -4361,10 +4555,81 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.deepEqual(
       (await db.query(
-        "select status, shipment_write_status from sellerpilot_private.commerce_orders where id = $1",
-        [shipmentFailureOrderId],
+        `select status, shipment_write_status, tracking_number,
+                last_shipment_at::text as last_shipment_at
+           from sellerpilot_private.commerce_orders where id = $1`,
+        [shipmentAcknowledgeOrderId],
       )).rows[0],
-      { status: "paid", shipment_write_status: "succeeded" },
+      {
+        status: "paid",
+        shipment_write_status: "pending",
+        tracking_number: null,
+        last_shipment_at: lastShipmentAtBeforeAcknowledge,
+      },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*) from sellerpilot_private.operation_audit where entity_id = $1 and action = 'shipment_acknowledged'",
+        [shipmentAcknowledgeOrderId],
+      ),
+      1,
+    );
+    await setClaims(db);
+    const confirmClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_operation($1, 'qoo10', 'shipment.confirm', 'resource-order-confirm-0001', $2)",
+      [credentialId, "5".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    const confirmEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_resource_gateway_job(
+        $1, $2, 'qoo10', 'shipment.confirm', '{"arguments":{"params":{"OrderNo":"REAL-ORDER-ACK-1"}}}'::jsonb,
+        'order_shipment', $3, $4, null, null, $5, 'LEX', 'TRACK-CONFIRM-1'
+      )`,
+      [credentialId, confirmClaim.attempt_id, "6".repeat(64), "5".repeat(64), shipmentAcknowledgeOrderId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded', response_payload = '{"ok":true,"safeMessage":"confirmed"}'::jsonb,
+              completed_at = now()
+        where id = $1`,
+      [confirmEnqueue.job_id],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, shipment_write_status, tracking_number,
+                last_shipment_at is not null as last_shipment_at_recorded
+           from sellerpilot_private.commerce_orders where id = $1`,
+        [shipmentAcknowledgeOrderId],
+      )).rows[0],
+      {
+        status: "shipped",
+        shipment_write_status: "succeeded",
+        tracking_number: "TRACK-CONFIRM-1",
+        last_shipment_at_recorded: true,
+      },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*) from sellerpilot_private.operation_audit where entity_id = $1 and action = 'shipment_confirmed'",
+        [shipmentAcknowledgeOrderId],
+      ),
+      1,
+    );
+    await db.query(
+      "delete from sellerpilot_private.channel_gateway_jobs where order_id = $1",
+      [shipmentAcknowledgeOrderId],
+    );
+    await db.query(
+      "delete from sellerpilot_private.channel_operation_attempts where id = any($1::uuid[])",
+      [[acknowledgeClaim.attempt_id, confirmClaim.attempt_id]],
+    );
+    await db.query(
+      "delete from sellerpilot_private.commerce_orders where id = $1",
+      [shipmentAcknowledgeOrderId],
     );
 
     await setClaims(db);
