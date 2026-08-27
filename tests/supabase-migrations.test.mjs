@@ -24,6 +24,7 @@ const NEXT_PRODUCT_REVISION_JOB_ID = "6bf1f902-3298-4c9c-ab55-9670b838706d";
 const STALE_PRODUCT_REVISION_JOB_ID = "3a7780db-a4cb-46d6-a74a-5d71388e6838";
 const ABANDONED_PRODUCT_REVISION_JOB_ID = "231326b1-884d-4757-bcae-2a50ce559839";
 const PRIVATE_RESEARCH_RETRY_JOB_ID = "2b90a2d7-3754-4b65-89c6-c386967a90cc";
+const RETRY_CLOCK_JOB_ID = "55261a19-9394-4d0c-a8b5-8d6d53dc88f0";
 const SHARED_PRODUCT_ID = "4a346497-84c8-4ccd-bf14-8f06f990a2f7";
 const TOKEN_HASH = "a".repeat(64);
 const SECOND_WORKER_TOKEN_HASH = "e".repeat(64);
@@ -281,6 +282,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260826212116_harden_detail_pipeline_lineage.sql",
       "20260826221500_allow_verification_ribbon_detail_block.sql",
       "20260827000726_authorize_live_ai_result_uploads.sql",
+      "20260827011228_reset_registration_activity_retry_clock.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -391,12 +393,40 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       true,
     );
+    assert.equal(
+      await scalar(
+        db,
+        `select exists (
+           select 1
+             from information_schema.columns
+            where table_schema = 'sellerpilot_private'
+              and table_name = 'ai_cli_jobs'
+              and column_name = 'retry_started_at'
+         )`,
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('anon', 'public.sellerpilot_retry_ai_job(uuid)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_retry_ai_job(uuid)', 'EXECUTE')",
+      ),
+      true,
+    );
     const boundedRegistrationActivityDefinition = await scalar(
       db,
       "select pg_get_functiondef('public.sellerpilot_list_registration_activity(integer)'::regprocedure)",
     );
     assert.match(boundedRegistrationActivityDefinition, /recent_listing_probe[\s\S]*limit v_listing_probe_limit/i);
     assert.match(boundedRegistrationActivityDefinition, /recent_studio_job_probe[\s\S]*limit v_job_probe_limit/i);
+    assert.match(boundedRegistrationActivityDefinition, /retry_started_at/i);
     assert.doesNotMatch(
       boundedRegistrationActivityDefinition,
       /sellerpilot_list_registration_activity_pre_image_activity/i,
@@ -1945,6 +1975,114 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       product_url: "https://example.test/product/1",
       research_input: requiredManualFields.researchInput,
     };
+
+    await setClaims(db);
+    await db.query(
+      "select public.sellerpilot_create_ai_job($1, 'product_studio', $2::jsonb)",
+      [RETRY_CLOCK_JOB_ID, JSON.stringify({
+        ...requestPayload,
+        image_paths: [`${ADMIN_ID}/${RETRY_CLOCK_JOB_ID}/input/hero.jpg`],
+        manual_fields: {
+          ...requestPayload.manual_fields,
+          productName: "재시도 경과시간 테스트 상품",
+          sellerSku: "QA-RETRY-CLOCK",
+        },
+      })],
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set status = 'failed',
+              attempt_count = 1,
+              created_at = clock_timestamp() - interval '1 day',
+              started_at = clock_timestamp() - interval '23 hours',
+              completed_at = clock_timestamp() - interval '22 hours',
+              updated_at = clock_timestamp() - interval '22 hours'
+        where id = $1`,
+      [RETRY_CLOCK_JOB_ID],
+    );
+    assert.equal(
+      await scalar(db, "select public.sellerpilot_retry_ai_job($1)", [RETRY_CLOCK_JOB_ID]),
+      true,
+    );
+    const queuedRetryClock = (await db.query(
+      `select extract(epoch from created_at)::bigint as created_epoch,
+              extract(epoch from retry_started_at)::bigint as retry_epoch,
+              started_at is null as claim_not_started
+         from sellerpilot_private.ai_cli_jobs
+        where id = $1`,
+      [RETRY_CLOCK_JOB_ID],
+    )).rows[0];
+    const queuedRetryActivities = await scalar(
+      db,
+      "select public.sellerpilot_list_registration_activity(20)",
+    );
+    const queuedRetryCard = queuedRetryActivities.find(
+      (activity) => activity.id === `job:${RETRY_CLOCK_JOB_ID}`,
+    );
+    assert.equal(queuedRetryCard.status, "analyzing");
+    assert.equal(queuedRetryClock.claim_not_started, true);
+    assert.ok(queuedRetryClock.retry_epoch - queuedRetryClock.created_epoch > 80_000);
+    assert.ok(Math.abs(Date.parse(queuedRetryCard.startedAt) / 1_000 - queuedRetryClock.retry_epoch) <= 1);
+    assert.ok(queuedRetryCard.elapsedSeconds < 60);
+
+    await setClaims(db, "service_role");
+    const retryClockClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_ai_job($1, 'migration-test/retry-clock')",
+      [TOKEN_HASH],
+    );
+    assert.equal(retryClockClaim.id, RETRY_CLOCK_JOB_ID);
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set started_at = clock_timestamp() - interval '7 seconds',
+              updated_at = clock_timestamp()
+        where id = $1`,
+      [RETRY_CLOCK_JOB_ID],
+    );
+    const claimedRetryEpoch = Number(await scalar(
+      db,
+      "select extract(epoch from started_at)::bigint from sellerpilot_private.ai_cli_jobs where id = $1",
+      [RETRY_CLOCK_JOB_ID],
+    ));
+    await setClaims(db);
+    const runningRetryActivities = await scalar(
+      db,
+      "select public.sellerpilot_list_registration_activity(20)",
+    );
+    const runningRetryCard = runningRetryActivities.find(
+      (activity) => activity.id === `job:${RETRY_CLOCK_JOB_ID}`,
+    );
+    assert.equal(runningRetryCard.status, "analyzing");
+    assert.ok(Math.abs(Date.parse(runningRetryCard.startedAt) / 1_000 - claimedRetryEpoch) <= 1);
+    assert.ok(runningRetryCard.elapsedSeconds >= 7 && runningRetryCard.elapsedSeconds < 60);
+    const auditedRetryEpoch = Number(await scalar(
+      db,
+      `select extract(epoch from max(occurred_at))::bigint
+         from sellerpilot_private.ai_cli_audit
+        where job_id = $1
+          and action = 'job_retried'
+          and safe_detail->>'source' = 'admin_ui'`,
+      [RETRY_CLOCK_JOB_ID],
+    ));
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set retry_started_at = null where id = $1",
+      [RETRY_CLOCK_JOB_ID],
+    );
+    const retryClockMigration = await readFile(
+      new URL("20260827011228_reset_registration_activity_retry_clock.sql", migrationUrl),
+      "utf8",
+    );
+    await db.exec(withoutUnavailableExtensions(retryClockMigration));
+    assert.equal(
+      Number(await scalar(
+        db,
+        "select extract(epoch from retry_started_at)::bigint from sellerpilot_private.ai_cli_jobs where id = $1",
+        [RETRY_CLOCK_JOB_ID],
+      )),
+      auditedRetryEpoch,
+    );
+    await db.query("delete from sellerpilot_private.ai_cli_audit where job_id = $1", [RETRY_CLOCK_JOB_ID]);
+    await db.query("delete from sellerpilot_private.ai_cli_jobs where id = $1", [RETRY_CLOCK_JOB_ID]);
 
     await db.query(
       "select public.sellerpilot_create_ai_job($1, 'product_studio', $2::jsonb)",
