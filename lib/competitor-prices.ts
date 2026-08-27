@@ -66,6 +66,14 @@ const providerMarketplaces: Record<CompetitorSearchProvider, CompetitorMarketpla
   brave_marketplace_web: ["shopee", "lazada", "temu"],
 };
 
+// Keep the eight user-facing sales channels ahead of the catch-all bucket.
+// Product-studio evidence is intentionally capped at 8 channels x 3 items, so
+// an unclassified Naver mall must never displace a real Temu (or other active
+// channel) observation merely because "other" sorts earlier alphabetically.
+const competitorMarketplaceOrder: readonly CompetitorMarketplace[] = [
+  "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu", "other",
+];
+
 const BRAVE_WEB_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
 const BRAVE_MARKETPLACE_QUERY_LIMIT = 4;
 const BRAVE_MARKETPLACE_RESULT_LIMIT = 20;
@@ -1381,7 +1389,10 @@ export async function searchCompetitorProviders(
     const items = await withProviderTimeout(provider.search(effectivePrimary, effectiveAliases, displayPerQuery, context), providerTimeoutMs);
     const ranked = items
       .map((item) => ({ item, score: competitorCandidateRelevance(item, queries) }))
-      .filter(({ score }) => score > 0)
+      // A zero/NaN price is not a usable market-price observation. Reject it
+      // at the shared provider boundary so direct APIs and gateway-backed 11st
+      // searches follow the same fail-closed rule.
+      .filter(({ item, score }) => score > 0 && Number.isFinite(item.price) && item.price > 0)
       .sort((left, right) => right.score - left.score || left.item.price - right.item.price)
       .map(({ item }) => item);
     return { provider, items: ranked };
@@ -1424,9 +1435,13 @@ export function groupCompetitorPrices(items: CompetitorPriceCandidate[], limitPe
   const counts = new Map<CompetitorMarketplace, number>();
   return items
     .map((item) => ({ item, score: queries.length > 0 ? competitorCandidateRelevance(item, queries) : 0 }))
-    .filter(({ score }) => queries.length === 0 || score > 0)
+    .filter(({ item, score }) => (
+      Number.isFinite(item.price)
+      && item.price > 0
+      && (queries.length === 0 || score > 0)
+    ))
     .sort((left, right) => (
-      left.item.marketplace.localeCompare(right.item.marketplace)
+      competitorMarketplaceOrder.indexOf(left.item.marketplace) - competitorMarketplaceOrder.indexOf(right.item.marketplace)
       || right.score - left.score
       || left.item.currency.localeCompare(right.item.currency)
       || left.item.price - right.item.price

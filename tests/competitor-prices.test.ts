@@ -576,6 +576,63 @@ test("provider results rank channel candidates by exact-product confidence befor
   assert.equal(result.providers[0]?.count, 3);
 });
 
+test("provider results reject unusable prices and reserve the first 24 evidence slots for all eight sales channels", async () => {
+  const marketplaces = ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu", "other"] as const;
+  const candidates = marketplaces.flatMap((marketplace) => Array.from({ length: 3 }, (_, index) => candidate({
+    externalId: `${marketplace}-${index}`,
+    marketplace,
+    url: `https://example.test/${marketplace}/${index}`,
+    price: 8_000 + index,
+  })));
+  candidates.unshift(candidate({ externalId: "zero", marketplace: "elevenst", price: 0 }));
+  candidates.unshift(candidate({ externalId: "nan", marketplace: "temu", price: Number.NaN }));
+
+  const registry: CompetitorProviderRegistry = {
+    configured: [{
+      id: "naver_shopping",
+      marketplaces: ["smartstore", "coupang", "elevenst", "qoo10", "other"],
+      search: async () => candidates,
+    }],
+    unavailable: [],
+  };
+
+  const result = await searchCompetitorProviders(registry, "켈로그 첵스초코 570g", ["Kellogg Choco Chex 570g"]);
+  assert.equal(result.items.length, 27);
+  assert.equal(result.items.some((item) => item.externalId === "zero" || item.externalId === "nan"), false);
+  assert.equal(result.providers[0]?.count, 27);
+  assert.equal(result.items.slice(0, 24).some((item) => item.marketplace === "other"), false);
+  for (const marketplace of marketplaces.slice(0, 8)) {
+    assert.equal(result.items.slice(0, 24).filter((item) => item.marketplace === marketplace).length, 3, marketplace);
+  }
+});
+
+test("current QA products reject wrong flavor, pack size, brand, and formulation matches", () => {
+  const cases: Array<{ queries: string[]; same: string; wrong: string[] }> = [
+    {
+      queries: ["롯데샌드 파인애플 315g", "Lotte Sand Pineapple 315g", "ロッテサンド パイナップル 315g"],
+      same: "롯데샌드 파인애플 315g",
+      wrong: ["롯데샌드 딸기 315g", "롯데샌드 파인애플 105g", "롯데샌드 315g"],
+    },
+    {
+      queries: ["사조 살코기참치 150g", "Sajo Lean Tuna 150g", "サジョ ライトツナ 150g"],
+      same: "사조 살코기참치 150g",
+      wrong: ["사조 고추참치 150g", "동원 살코기참치 150g", "사조참치 150g"],
+    },
+    {
+      queries: ["애사비 사과초모식초 15포", "Apple cider vinegar powder 15 sticks", "アップルサイダービネガー 15包"],
+      same: "애사비 사과초모식초 15포",
+      wrong: ["애사비 구미 15개", "사과초모식초 15포", "애사비 사과초모식초 30포"],
+    },
+  ];
+
+  for (const fixture of cases) {
+    assert.ok(competitorCandidateRelevance(candidate({ title: fixture.same }), fixture.queries) > 0, fixture.same);
+    for (const title of fixture.wrong) {
+      assert.equal(competitorCandidateRelevance(candidate({ title }), fixture.queries), 0, title);
+    }
+  }
+});
+
 test("11st official ProductSearch parses only catalog fields and uses English search mode for an English alias", async () => {
   const originalFetch = globalThis.fetch;
   let calledUrl = "";
