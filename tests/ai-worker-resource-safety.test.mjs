@@ -65,10 +65,12 @@ test("Codex subprocesses use a bounded FIFO gate and measure timeout only after 
   assert.match(source, /createStudioMasterInvocationBudget\(\s*studioMasterTimeoutMs,\s*codexTerminationGraceMs/);
   assert.match(source, /studioMasterTimeoutMs = Math\.min\(\s*35 \* 60_000/);
   assert.match(source, /timeoutMs: studioLocalizedTimeoutMs/);
-  assert.match(source, /SELLERPILOT_CODEX_CONCURRENCY \?\? 2/);
-  assert.match(source, /const codexConcurrencyLimit = Math\.min\(4, Math\.max\(1,/);
+  assert.match(source, /SELLERPILOT_CODEX_CONCURRENCY \?\? 9/);
+  assert.match(source, /const codexConcurrencyLimit = Math\.min\(9, Math\.max\(1,/);
+  assert.match(source, /const codexExecutionGate = createConcurrencyGate\(codexConcurrencyLimit\)/);
+  assert.match(source, /const nonProductCodexExecutionGate = createConcurrencyGate\(2\)/);
   assert.match(runCodex, /const queuedAt = Date\.now\(\)/);
-  assert.match(runCodex, /codexExecutionGate\.run/);
+  assert.match(runCodex, /const execute = \(\) => codexExecutionGate\.run/);
   assert.match(runCodex, /codexExecutionGate\.run[\s\S]+if \(jobId\) await touchJob\(jobId, claimToken\)/);
   assert.ok(
     runCodex.indexOf("codexExecutionGate.run") < runCodex.indexOf("if (jobId) await touchJob(jobId, claimToken)"),

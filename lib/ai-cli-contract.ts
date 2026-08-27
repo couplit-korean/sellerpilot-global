@@ -11,6 +11,7 @@ import {
 } from "./product-classification";
 import { maximumStudioJobSourceBytes } from "./studio-source-photo-policy";
 import { canonicalizeStudioCompetitorUrl } from "./studio-competitor-evidence";
+import { terminalImageFailureContextSchema } from "./terminal-image-failure-context";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const detailImageAssetSchema = z.enum(aiDetailAssetIds);
@@ -1430,6 +1431,7 @@ export const workerCompletionSchema = z.union([
     claimToken: z.string().uuid(),
     status: z.literal("failed"),
     error: z.string().min(1).max(500),
+    terminalImageFailureContext: terminalImageFailureContextSchema.optional(),
   }),
 ]);
 

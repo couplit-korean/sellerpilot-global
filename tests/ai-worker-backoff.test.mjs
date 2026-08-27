@@ -128,7 +128,8 @@ test("AI claim route compensates every post-claim preparation failure", async ()
   assert.match(route, /sellerpilot_complete_ai_job/);
   assert.match(route, /p_status: "failed"/);
   assert.match(route, /catch \(preparationError\)[\s\S]*?safeReason: "claim_preparation_exception"/);
-  assert.equal(route.match(/preparationFailure\(\{/g)?.length, 13);
+  assert.equal(route.match(/preparationFailure\(\{/g)?.length, 14);
+  assert.match(route, /safeReason: "invalid_terminal_image_failure_context"[\s\S]{0,80}mode: "fail"/);
   assert.match(route, /safeReason: "invalid_competitor_context"/);
   assert.match(route, /safeReason: "invalid_source_image_provenance"/);
   assert.match(route, /safeReason: "source_image_signing_incomplete"/);

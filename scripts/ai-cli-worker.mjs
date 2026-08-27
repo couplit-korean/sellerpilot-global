@@ -87,6 +87,13 @@ import {
   SHOT_DHASH_ROWS,
 } from "../lib/image-shot-uniqueness.ts";
 import {
+  appendTerminalImageFailureEntry,
+  buildPriorTerminalImageHardBlacklist,
+  terminalImageFailureContextSchema,
+  terminalImageFailureEntrySchema,
+  terminalImageFailuresForRole,
+} from "../lib/terminal-image-failure-context.ts";
+import {
   assertSourcePixelLabelBaseline,
   batchImageLabelFidelityReferencePaths,
   buildImageLabelFidelitySwiftArguments,
@@ -149,7 +156,8 @@ import {
 } from "../lib/channels/protocols.ts";
 
 const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
-const aiOnly = process.argv.includes("--ai-only");
+const productOnly = process.argv.includes("--product-only");
+const aiOnly = process.argv.includes("--ai-only") || productOnly;
 function loadWorkerToken(environmentName, keychainService) {
   const environmentToken = process.env[environmentName]?.trim();
   if (environmentToken) return environmentToken;
@@ -210,9 +218,10 @@ const imageGenerationTimeoutMs = Math.min(
   ),
 );
 const backgroundAuditTimeoutMs = Math.max(60_000, Number(process.env.SELLERPILOT_BACKGROUND_AUDIT_TIMEOUT_MS ?? 2 * 60_000));
-const configuredCodexConcurrency = Number(process.env.SELLERPILOT_CODEX_CONCURRENCY ?? 2);
-const codexConcurrencyLimit = Math.min(4, Math.max(1, Number.isFinite(configuredCodexConcurrency) ? Math.trunc(configuredCodexConcurrency) : 2));
+const configuredCodexConcurrency = Number(process.env.SELLERPILOT_CODEX_CONCURRENCY ?? 9);
+const codexConcurrencyLimit = Math.min(9, Math.max(1, Number.isFinite(configuredCodexConcurrency) ? Math.trunc(configuredCodexConcurrency) : 9));
 const codexExecutionGate = createConcurrencyGate(codexConcurrencyLimit);
+const nonProductCodexExecutionGate = createConcurrencyGate(2);
 const imageLabelFidelityGate = createConcurrencyGate(2);
 const codexBin = process.env.CODEX_BIN?.trim() || "/Applications/ChatGPT.app/Contents/Resources/codex";
 const studioSchemaPath = resolve("scripts/ai-studio-output.schema.json");
@@ -224,7 +233,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.53";
+const workerVersion = "sellerpilot-cli-worker/1.54";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -632,6 +641,12 @@ function isProductStudioCodexStage(stage) {
     || stage.startsWith("background-audit:");
 }
 
+function usesProductCodexConcurrency(stage) {
+  return stage.startsWith("studio-")
+    || stage.startsWith("image:")
+    || stage.startsWith("background-audit:");
+}
+
 function appendBoundedOutput(current, chunk) {
   const next = Buffer.concat([current, Buffer.from(chunk)]);
   return next.length <= codexOutputLimitBytes ? next : next.subarray(next.length - codexOutputLimitBytes);
@@ -704,7 +719,7 @@ async function runCodex(args, timeoutMs, jobId, claimToken, {
   onDequeued,
 } = {}) {
   const queuedAt = Date.now();
-  return codexExecutionGate.run(async () => {
+  const execute = () => codexExecutionGate.run(async () => {
     const queueWaitMs = Date.now() - queuedAt;
     onDequeued?.(queueWaitMs);
     if (jobId) await touchJob(jobId, claimToken);
@@ -806,6 +821,9 @@ async function runCodex(args, timeoutMs, jobId, claimToken, {
     if (jobId) console.log(`[Codex 완료] ${jobId} · ${stage} · run=${Date.now() - startedAt}ms`);
     return result;
   }, { signal: leaseSignal });
+  return usesProductCodexConcurrency(stage)
+    ? execute()
+    : nonProductCodexExecutionGate.run(execute, { signal: leaseSignal });
 }
 
 const loginStatus = await runCodex(["login", "status"], 15_000);
@@ -2316,6 +2334,66 @@ async function fingerprintGeneratedShot(assetId, buffer) {
   };
 }
 
+function terminalRetryFeedbackFromEntries(entries) {
+  return entries.reduce((feedback, entry) => mergeSettingShotRetryAuditFeedback(feedback, {
+    failedDimensions: entry.failureDimensions,
+    hardNegativeLocationKeys: entry.semanticSignature.locationKeys,
+    hardNegativeMomentKeys: entry.semanticSignature.momentKeys,
+    hardNegativeSurfaceKeys: entry.semanticSignature.surfaceKeys,
+    hardNegativeCameraKeys: entry.semanticSignature.cameraKeys,
+    hardNegativePaletteKeys: entry.semanticSignature.paletteKeys,
+    hardNegativeSpatialDepthKeys: entry.semanticSignature.spatialDepthKeys,
+    hardNegativeCueKeys: entry.semanticSignature.cueKeys,
+  }), null);
+}
+
+function retryFeedbackSemanticSignature(feedback) {
+  const sanitized = mergeSettingShotRetryAuditFeedback(null, feedback);
+  return {
+    locationKeys: sanitized.hardNegativeLocationKeys ?? [],
+    momentKeys: sanitized.hardNegativeMomentKeys ?? [],
+    surfaceKeys: sanitized.hardNegativeSurfaceKeys ?? [],
+    cameraKeys: sanitized.hardNegativeCameraKeys ?? [],
+    paletteKeys: sanitized.hardNegativePaletteKeys ?? [],
+    spatialDepthKeys: sanitized.hardNegativeSpatialDepthKeys ?? [],
+    cueKeys: sanitized.hardNegativeCueKeys ?? [],
+  };
+}
+
+async function terminalImageQualityError({
+  error,
+  preset,
+  attempt,
+  generated,
+  fingerprint = null,
+  retryAuditFeedback,
+  conflictingAssetIds = [],
+}) {
+  const terminalError = error instanceof Error
+    ? error
+    : new Error(`${preset.id} 이미지 품질 검증에 실패했습니다.`);
+  const rejectedFingerprint = fingerprint ?? await fingerprintGeneratedShot(preset.id, generated);
+  const sanitizedFeedback = mergeSettingShotRetryAuditFeedback(null, retryAuditFeedback);
+  terminalError.terminalImageFailureEntry = terminalImageFailureEntrySchema.parse({
+    role: preset.id,
+    width: preset.width,
+    height: preset.height,
+    failureDimensions: sanitizedFeedback.failedDimensions?.length
+      ? sanitizedFeedback.failedDimensions
+      : ["overall-layout"],
+    semanticSignature: retryFeedbackSemanticSignature(sanitizedFeedback),
+    rejectedAssetLineage: {
+      attempt,
+      digest: rejectedFingerprint.digest,
+      topologySignature: Buffer.from(rejectedFingerprint.visualHash).toString("hex"),
+      conflictingAssetIds: [...new Set(conflictingAssetIds)]
+        .filter((assetId) => typeof assetId === "string" && /^[a-z][a-z0-9:-]{0,63}$/.test(assetId))
+        .slice(0, 8),
+    },
+  });
+  return terminalError;
+}
+
 async function fingerprintBackgroundWithMaskedZones(assetId, buffer, preset, maskPlacements) {
   const outsideZone = await renderBackgroundWithMaskedZones(buffer, preset, maskPlacements);
   return fingerprintGeneratedShot(assetId, outsideZone);
@@ -2788,11 +2866,20 @@ async function generateDistinctAsset({
   existingBackgroundProps,
   comparisonShots = [],
   comparisonBackgroundShots = [],
+  priorTerminalImageFailureContext = null,
 }) {
   const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
+  const priorTerminalEntries = settingShotAssetIds.includes(preset.id)
+    ? terminalImageFailuresForRole(priorTerminalImageFailureContext, preset.id)
+    : [];
+  const priorTerminalBlacklistGuidance = settingShotAssetIds.includes(preset.id)
+    ? buildPriorTerminalImageHardBlacklist(priorTerminalImageFailureContext, preset.id)
+    : "";
   let noveltyGuidance = "";
-  let retryConflictAssetIds = [];
-  let retryAuditFeedback = null;
+  let retryConflictAssetIds = [...new Set(priorTerminalEntries.flatMap(
+    (entry) => entry.rejectedAssetLineage.conflictingAssetIds,
+  ))].slice(0, maximumBackgroundAuditComparisons);
+  let retryAuditFeedback = terminalRetryFeedbackFromEntries(priorTerminalEntries);
   const rejectedBackgroundShots = [];
   const rejectedSourceEvidenceShots = [];
   const retainRejectedBackground = async (generated, attempt) => {
@@ -2841,6 +2928,7 @@ async function generateDistinctAsset({
     let backgroundFingerprint = null;
     let backgroundPlateSnapshot = null;
     let backgroundProps = null;
+    let acceptedBackgroundAuditFeedback = null;
     let labelReferenceFiles = [];
     let missingIdentityEvidence = false;
     let usedVerifiedSourceComposite = false;
@@ -2928,7 +3016,7 @@ async function generateDistinctAsset({
         outputFile,
         generationPreset,
         backgroundOnly ? [] : referenceIndexes.map((index) => imageFiles[index].role),
-        [noveltyGuidance, deterministicRetryGuidance].filter(Boolean).join("\n"),
+        [priorTerminalBlacklistGuidance, noveltyGuidance, deterministicRetryGuidance].filter(Boolean).join("\n"),
         backgroundOnly ? "identity-background" : "product",
         retrySettingShot ?? undefined,
         backgroundContactMode,
@@ -2996,6 +3084,15 @@ async function generateDistinctAsset({
             claimToken,
             leaseSignal,
           });
+          acceptedBackgroundAuditFeedback = {
+            hardNegativeLocationKeys: [semanticAudit.observedLocationKey],
+            hardNegativeMomentKeys: [semanticAudit.observedMomentKey],
+            hardNegativeSurfaceKeys: [semanticAudit.observedSurfaceKey],
+            hardNegativeCameraKeys: [semanticAudit.observedCameraKey],
+            hardNegativePaletteKeys: [semanticAudit.observedPaletteKey],
+            hardNegativeSpatialDepthKeys: [semanticAudit.observedSpatialDepthKey],
+            hardNegativeCueKeys: semanticAudit.observedNonMerchandiseProps,
+          };
           const repeatedProp = findRepeatedBackgroundProp(
             semanticAudit.observedNonMerchandiseProps,
             existingBackgroundProps,
@@ -3013,7 +3110,28 @@ async function generateDistinctAsset({
           }
           backgroundProps = [backgroundContract.prop.key];
         } catch (error) {
-          if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) throw error;
+          if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
+            const terminalFeedback = mergeSettingShotRetryAuditFeedback(
+              retryAuditFeedback,
+              mergeSettingShotRetryAuditFeedback(
+                acceptedBackgroundAuditFeedback,
+                error?.retryAuditFeedback ?? {
+                  failedDimensions: Array.isArray(error?.failedDimensions) ? error.failedDimensions : [],
+                },
+              ),
+            );
+            throw await terminalImageQualityError({
+              error,
+              preset,
+              attempt,
+              generated,
+              retryAuditFeedback: terminalFeedback,
+              conflictingAssetIds: [
+                ...retryConflictAssetIds,
+                ...(Array.isArray(error?.conflictingAssetIds) ? error.conflictingAssetIds : []),
+              ],
+            });
+          }
           if (error?.safeForRetryComparison === true) {
             await retainRejectedBackground(generated, attempt);
           }
@@ -3050,7 +3168,19 @@ async function generateDistinctAsset({
         }
         if (duplicateBackground) {
           if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
-            throw new Error(`${preset.id} 배경 장면이 ${duplicateBackground.assetId}와 반복되어 완료하지 않았습니다.`);
+            const terminalFeedback = mergeSettingShotRetryAuditFeedback(
+              mergeSettingShotRetryAuditFeedback(retryAuditFeedback, acceptedBackgroundAuditFeedback),
+              { failedDimensions: ["overall-layout", "camera", "spatial-depth", "fixed-cue"] },
+            );
+            throw await terminalImageQualityError({
+              error: new Error(`${preset.id} 배경 장면이 ${duplicateBackground.assetId}와 반복되어 완료하지 않았습니다.`),
+              preset,
+              attempt,
+              generated,
+              fingerprint: backgroundFingerprint,
+              retryAuditFeedback: terminalFeedback,
+              conflictingAssetIds: [...retryConflictAssetIds, duplicateBackground.assetId],
+            });
           }
           await retainRejectedBackground(generated, attempt);
           const conflictingAssetId = String(duplicateBackground.assetId).replace(/^background:/, "");
@@ -3184,6 +3314,21 @@ async function generateDistinctAsset({
       continue;
     }
     if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
+      if (settingShotAssetIds.includes(preset.id)) {
+        const terminalFeedback = mergeSettingShotRetryAuditFeedback(
+          mergeSettingShotRetryAuditFeedback(retryAuditFeedback, acceptedBackgroundAuditFeedback),
+          { failedDimensions: ["overall-layout", "camera", "spatial-depth", "fixed-cue"] },
+        );
+        throw await terminalImageQualityError({
+          error: new Error(`${preset.id} 이미지가 ${duplicate.assetId}와 반복되어 완료하지 않았습니다.`),
+          preset,
+          attempt,
+          generated: normalized,
+          fingerprint,
+          retryAuditFeedback: terminalFeedback,
+          conflictingAssetIds: [...retryConflictAssetIds, duplicate.assetId],
+        });
+      }
       throw new Error(`${preset.id} 이미지가 ${duplicate.assetId}와 반복되어 완료하지 않았습니다.`);
     }
     if (identityCutouts && preset.identityPolicy.mode === "source-composite" && backgroundPlateSnapshot) {
@@ -3423,7 +3568,7 @@ async function generateSegmentedStudioResult({
   const masterSchema = createStudioMasterOutputSchema(fullSchema);
   const chunks = planStudioLocalizedChunks(4);
   const localizedSchemas = chunks.map((targets) => createStudioLocalizedChunkOutputSchema(fullSchema, targets));
-  const localizedGate = createConcurrencyGate(2);
+  const localizedGate = createConcurrencyGate(3);
   const masterInvocationBudget = createStudioMasterInvocationBudget(
     studioMasterTimeoutMs,
     codexTerminationGraceMs,
@@ -3735,6 +3880,7 @@ async function processJob(job) {
         existingBackgroundProps,
         comparisonShots: settingShotAssetIds.includes(preset.id) ? crossProductArchive.shots : [],
         comparisonBackgroundShots,
+        priorTerminalImageFailureContext: job.terminalImageFailureContext,
       });
       await assertJobLeaseHealthy();
       await uploadAiResultAsset({
@@ -3841,6 +3987,7 @@ async function processJob(job) {
         existingBackgroundProps,
         comparisonShots: settingShot ? crossProductArchive.shots : [],
         comparisonBackgroundShots,
+        priorTerminalImageFailureContext: job.terminalImageFailureContext,
       });
       await assertJobLeaseHealthy();
       await uploadAiResultAsset({
@@ -3895,9 +4042,32 @@ async function processJob(job) {
     } else if (preserveRemoteState) {
       console.error(`[상태 보존] ${job.id} · ${message}`);
     } else {
+      const parsedFailureEntry = terminalImageFailureEntrySchema.safeParse(
+        effectiveError?.terminalImageFailureEntry,
+      );
+      const parsedPriorContext = terminalImageFailureContextSchema.safeParse(
+        job.terminalImageFailureContext,
+      );
+      let terminalImageFailureContext = null;
+      if (parsedFailureEntry.success) {
+        try {
+          terminalImageFailureContext = appendTerminalImageFailureEntry(
+            parsedPriorContext.success ? parsedPriorContext.data : null,
+            parsedFailureEntry.data,
+          );
+        } catch {
+          console.error(`[이미지 실패 맥락 생략] ${job.id} · 안전한 크기로 축약하지 못했습니다.`);
+        }
+      }
       await persistWorkerCompletion(
         "/api/ai/worker/complete",
-        { jobId: job.id, claimToken, status: "failed", error: message },
+        {
+          jobId: job.id,
+          claimToken,
+          status: "failed",
+          error: message,
+          ...(terminalImageFailureContext ? { terminalImageFailureContext } : {}),
+        },
         "AI 작업 실패 상태 저장 실패",
       ).catch((completionError) => {
         const completionMessage = completionError instanceof Error ? completionError.message : "완료 상태 저장 오류";
@@ -4591,11 +4761,12 @@ async function processGatewayJob(job) {
   }
 }
 
-console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${aiOnly ? "ai-only" : "all-scopes"} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
+const workerMode = productOnly ? "product-only" : aiOnly ? "ai-only" : "all-scopes";
+console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
 console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
 console.log(`Worker scopes · ai=${aiWorkerConfigured ? "configured" : "disabled"} · gateway=${gatewayWorkerConfigured ? "configured" : "disabled"} · scheduler=${schedulerWorkerConfigured ? "configured" : "disabled"}`);
-const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 8);
-const maxAiConcurrency = Math.min(8, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 8));
+const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 9);
+const maxAiConcurrency = Math.min(9, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 9));
 const configuredGatewayConcurrency = Number(process.env.SELLERPILOT_CHANNEL_WORKER_CONCURRENCY ?? 2);
 const maxGatewayConcurrency = Math.min(4, Math.max(1, Number.isFinite(configuredGatewayConcurrency) ? Math.trunc(configuredGatewayConcurrency) : 2));
 const activeAiJobs = new Set();
@@ -4723,7 +4894,7 @@ do {
       await delay(Math.min(pollMs, aiClaimBackoffUntil - Date.now()));
       continue;
     }
-    // AI 작업은 상품 단위로 최대 8건을 수신하되, 로컬 Codex 하위 프로세스는
+    // AI 작업은 상품 단위로 최대 9건을 수신하되, 로컬 Codex 하위 프로세스는
     // 전역 FIFO gate로 별도 제한합니다. 대기 중에도 상품 lease heartbeat는
     // 유지되며 실제 프로세스를 시작한 뒤에만 실행 제한시간을 계산합니다.
     if (activeAiJobs.size >= maxAiConcurrency) {
@@ -4733,7 +4904,10 @@ do {
     }
     const response = await api("/api/ai/worker/claim", {
       method: "POST",
-      body: JSON.stringify({ version: workerVersion }),
+      body: JSON.stringify({
+        version: workerVersion,
+        ...(productOnly ? { scope: "product" } : {}),
+      }),
     });
     if (response.status === 426) {
       aiClaimBackoffUntil = Date.now() + 5 * 60_000;
@@ -4766,6 +4940,10 @@ do {
     if (!response.ok) throw new Error(`작업 요청 실패 · HTTP ${response.status}`);
     markWorkerBusy();
     const job = await response.json();
+    if (productOnly && job.claim_scope !== "product") {
+      aiClaimBackoffUntil = Date.now() + 5 * 60_000;
+      throw new Error("상품 전용 claim 경계를 서버가 확인하지 않아 작업 실행을 중단했습니다.");
+    }
     if (once) {
       await processJob(job);
     } else {

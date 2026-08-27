@@ -294,6 +294,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828001000_expose_product_readiness_facts.sql",
       "20260828002000_fix_stale_ai_service_secret_guard.sql",
       "20260828003000_fence_competitor_matcher_v2.sql",
+      "20260828004000_persist_terminal_image_failure_context.sql",
+      "20260828123100_allow_validated_animated_gif_detail_block.sql",
+      "20260828130000_isolate_product_ai_worker_claim.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -4178,6 +4181,80 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [aiProductId, JSON.stringify(detailPageV2)],
     );
     assert.equal(savedDetailV2.version, 2);
+    const animatedGifBlock = {
+      type: "AnimatedGifBlock",
+      props: {
+        id: "gif-1",
+        gifUrl: "https://media.example.com/product-motion.gif",
+        posterUrl: "https://media.example.com/product-motion.webp",
+        alt: "상품 사용 장면 애니메이션",
+        caption: "상품의 움직임을 짧게 보여주는 보조 이미지",
+        tone: "light",
+      },
+    };
+    const detailPageWithGif = {
+      ...detailPageV2,
+      content: [...detailPageV2.content, animatedGifBlock],
+    };
+    await db.exec("begin");
+    try {
+      const savedDetailWithGif = await scalar(
+        db,
+        "select public.sellerpilot_save_product_detail_page($1, $2::jsonb, 2)",
+        [aiProductId, JSON.stringify(detailPageWithGif)],
+      );
+      assert.equal(savedDetailWithGif.version, 3);
+      assert.deepEqual(savedDetailWithGif.data, detailPageWithGif);
+      assert.deepEqual(
+        await scalar(db, "select public.sellerpilot_get_product_detail_page($1)", [aiProductId]),
+        savedDetailWithGif,
+      );
+    } finally {
+      await db.exec("rollback");
+    }
+    const invalidGifBlocks = [
+      {
+        ...animatedGifBlock,
+        props: { ...animatedGifBlock.props, gifUrl: "https://localhost/private.gif" },
+      },
+      {
+        ...animatedGifBlock,
+        props: { ...animatedGifBlock.props, gifUrl: "https://127.1/private.gif" },
+      },
+      {
+        ...animatedGifBlock,
+        props: { ...animatedGifBlock.props, gifUrl: "https://0x7f.1/private.gif" },
+      },
+      {
+        ...animatedGifBlock,
+        props: { ...animatedGifBlock.props, gifUrl: "https://media.example.com/download?format=.gif" },
+      },
+      {
+        ...animatedGifBlock,
+        props: { ...animatedGifBlock.props, gifUrl: "https://media.example.com/download#.gif" },
+      },
+      {
+        ...animatedGifBlock,
+        props: { ...animatedGifBlock.props, id: 123, alt: 123, caption: true },
+      },
+    ];
+    for (const invalidGifBlock of invalidGifBlocks) {
+      await db.exec("begin");
+      try {
+        await assert.rejects(
+          db.query(
+            "select public.sellerpilot_save_product_detail_page($1, $2::jsonb, 2)",
+            [aiProductId, JSON.stringify({
+              ...detailPageV2,
+              content: [...detailPageV2.content, invalidGifBlock],
+            })],
+          ),
+          /DETAIL_PAGE_INVALID/,
+        );
+      } finally {
+        await db.exec("rollback");
+      }
+    }
     await assert.rejects(
       db.query(
         "select public.sellerpilot_save_product_detail_page($1, $2::jsonb, 2)",

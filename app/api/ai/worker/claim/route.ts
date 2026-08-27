@@ -13,6 +13,7 @@ import {
 } from "../../../../../lib/ai-worker-version";
 import { sourceImagePathsForWorker } from "../../../../../lib/studio-image-paths";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
+import { terminalImageFailureContextSchema } from "../../../../../lib/terminal-image-failure-context";
 import {
   createBoundedSupabaseFetch,
   workerRpcErrorMessage,
@@ -61,8 +62,12 @@ export async function POST(request: Request) {
     global: { fetch: createBoundedSupabaseFetch() },
   });
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
-  const body = await request.json().catch(() => ({})) as { version?: unknown };
+  const body = await request.json().catch(() => ({})) as { version?: unknown; scope?: unknown };
   const version = typeof body.version === "string" ? body.version.slice(0, 80) : "unknown";
+  if (body.scope !== undefined && body.scope !== "product") {
+    return NextResponse.json({ message: "지원하지 않는 AI 작업 범위입니다." }, { status: 400 });
+  }
+  const productOnlyClaim = body.scope === "product";
   if (!supportsLiveResultUploadAuthorization(version)) {
     return NextResponse.json({
       message: "AI 작업자를 최신 버전으로 재시작해 주세요.",
@@ -72,10 +77,13 @@ export async function POST(request: Request) {
       headers: { "cache-control": "no-store, max-age=0" },
     });
   }
-  const { data, error } = await serviceClient.rpc("sellerpilot_claim_ai_job", {
+  const claimArguments = {
     p_token_hash: tokenHash,
     p_worker_version: version,
-  });
+  };
+  const { data, error } = productOnlyClaim
+    ? await serviceClient.rpc("sellerpilot_claim_product_ai_job", claimArguments)
+    : await serviceClient.rpc("sellerpilot_claim_ai_job", claimArguments);
   if (error) {
     const status = workerRpcErrorStatus(error);
     console.error("AI worker claim RPC failed", { code: error.code ?? "unknown", status });
@@ -178,14 +186,30 @@ export async function POST(request: Request) {
   const jobRequest = job.request && typeof job.request === "object" && !Array.isArray(job.request)
     ? job.request as Record<string, unknown>
     : {};
+  const rawTerminalImageFailureContext = job.terminal_image_failure_context;
+  const parsedTerminalImageFailureContext = rawTerminalImageFailureContext == null
+    ? null
+    : terminalImageFailureContextSchema.safeParse(rawTerminalImageFailureContext);
+  if (parsedTerminalImageFailureContext && !parsedTerminalImageFailureContext.success) {
+    return preparationFailure({
+      message: "이전 이미지 실패 맥락을 안전하게 확인하지 못했습니다.",
+      safeReason: "invalid_terminal_image_failure_context",
+      mode: "fail",
+    });
+  }
+  const jobForWorker = { ...job };
+  delete jobForWorker.terminal_image_failure_context;
+  jobForWorker.terminalImageFailureContext = parsedTerminalImageFailureContext?.success
+    ? parsedTerminalImageFailureContext.data
+    : null;
   if (job.kind === "support_reply") {
-    return NextResponse.json({ ...job, request: jobRequest }, {
+    return NextResponse.json({ ...jobForWorker, request: jobRequest }, {
       headers: { "cache-control": "no-store, max-age=0" },
     });
   }
   if (job.kind === "product_research" || jobRequest.research_only === true) {
     return NextResponse.json({
-      ...job,
+      ...jobForWorker,
       request: {
         researchInput: typeof jobRequest.research_input === "string" ? jobRequest.research_input : "",
         researchOnly: true,
@@ -382,7 +406,7 @@ export async function POST(request: Request) {
       const stagingFailure = await stageResultUploads([assetPath]);
       if (stagingFailure) return stagingFailure;
       return NextResponse.json({
-        ...job,
+        ...jobForWorker,
         request: {
           sourceJobId: typeof jobRequest.source_job_id === "string" ? jobRequest.source_job_id : "",
           sourceProductId: typeof jobRequest.source_product_id === "string" ? jobRequest.source_product_id : null,
@@ -417,7 +441,7 @@ export async function POST(request: Request) {
     if (stagingFailure) return stagingFailure;
 
     return NextResponse.json({
-      ...job,
+      ...jobForWorker,
       request: {
         description: typeof jobRequest.description === "string" ? jobRequest.description : "",
         productUrl: typeof jobRequest.product_url === "string" ? jobRequest.product_url : "",

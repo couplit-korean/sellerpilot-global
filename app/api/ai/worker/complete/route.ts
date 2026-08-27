@@ -148,13 +148,16 @@ export async function POST(request: Request) {
     }
   }
 
-  const { data, error } = await serviceClient.rpc("sellerpilot_complete_ai_job", {
+  const { data, error } = await serviceClient.rpc("sellerpilot_complete_ai_job_with_image_context", {
     p_token_hash: tokenHash,
     p_job_id: completion.jobId,
     p_claim_token: completion.claimToken,
     p_status: completion.status,
     p_result_payload: resultPayload,
     p_error_message: completion.status === "failed" ? sellerSafeAiJobFailure(completion.error) : null,
+    p_terminal_image_failure_context: completion.status === "failed"
+      ? completion.terminalImageFailureContext ?? null
+      : null,
   });
   if (error || data !== true) {
     if (error) {

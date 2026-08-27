@@ -1,4 +1,6 @@
 export const detailAnimatedGifMaximumUrlLength = 2_048;
+export const detailAnimatedGifMaximumAltLength = 500;
+export const detailAnimatedGifMaximumCaptionLength = 2_000;
 
 const staticPosterExtensions = [".jpg", ".jpeg", ".png", ".webp", ".avif"] as const;
 
@@ -9,7 +11,13 @@ export type DetailAnimatedGifInput = {
   caption: string;
 };
 
-export type DetailAnimatedGifIssue = "invalid_gif_url" | "invalid_poster_url" | "missing_alt" | "missing_caption";
+export type DetailAnimatedGifIssue =
+  | "invalid_gif_url"
+  | "invalid_poster_url"
+  | "missing_alt"
+  | "missing_caption"
+  | "alt_too_long"
+  | "caption_too_long";
 
 export type ValidatedDetailAnimatedGif = {
   gifUrl: string | null;
@@ -51,7 +59,9 @@ export function validateDetailAnimatedGif(input: DetailAnimatedGifInput): Valida
   if (!gifUrl) issues.push("invalid_gif_url");
   if (!posterUrl) issues.push("invalid_poster_url");
   if (!alt) issues.push("missing_alt");
+  else if (alt.length > detailAnimatedGifMaximumAltLength) issues.push("alt_too_long");
   if (!caption) issues.push("missing_caption");
+  else if (caption.length > detailAnimatedGifMaximumCaptionLength) issues.push("caption_too_long");
   return {
     gifUrl,
     posterUrl,

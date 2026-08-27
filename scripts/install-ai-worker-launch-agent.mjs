@@ -403,7 +403,11 @@ async function install() {
   <key>Label</key><string>${label}</string>
   <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>--import</string><string>tsx</string><string>${xml(workerPath)}</string>${aiOnlyRuntime ? "<string>--ai-only</string>" : ""}</array>
   <key>WorkingDirectory</key><string>${xml(runtimeRoot)}</string>
-  <key>EnvironmentVariables</key><dict><key>SELLERPILOT_URL</key><string>${xml(sellerpilotUrl)}</string></dict>
+  <key>EnvironmentVariables</key><dict>
+    <key>SELLERPILOT_URL</key><string>${xml(sellerpilotUrl)}</string>
+    <key>SELLERPILOT_AI_WORKER_CONCURRENCY</key><string>9</string>
+    <key>SELLERPILOT_CODEX_CONCURRENCY</key><string>9</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ThrottleInterval</key><integer>10</integer>

@@ -15,7 +15,7 @@ test("product studio generation is segmented before any generated image work", a
   assert.ok(segmentedCall > processStart);
   assert.ok(imageStart > segmentedCall, "generated image preparation must wait for the validated segmented result");
   assert.match(source, /const chunks = planStudioLocalizedChunks\(4\)/);
-  assert.match(source, /const localizedGate = createConcurrencyGate\(2\)/);
+  assert.match(source, /const localizedGate = createConcurrencyGate\(3\)/);
   assert.match(source, /settleStudioSegmentBatch\([\s\S]{0,120}chunks\.map\(\(_, chunkIndex\) => invokeLocalized\(chunkIndex\)\)/);
   assert.match(source, /mergeStudioSegmentOutputs\(masterOutput, localizedOutputs\)/);
   assert.match(source, /cliStudioResultSchema\.safeParse/);

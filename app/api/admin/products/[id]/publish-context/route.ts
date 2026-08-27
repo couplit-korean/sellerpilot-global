@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
 import { productEditSchema } from "../../../../../../lib/product-intake";
+import {
+  detailAnimatedGifMaximumAltLength,
+  detailAnimatedGifMaximumCaptionLength,
+  detailAnimatedGifMaximumUrlLength,
+  validateDetailAnimatedGif,
+} from "../../../../../../lib/product-media-contract";
 
 export const runtime = "nodejs";
 
@@ -12,13 +18,31 @@ const noteSchema = z.object({
   competitorQuery: z.string().trim().max(500),
   competitorMonitorEnabled: z.boolean(),
 });
-const detailPageBlockTypes = ["HeroBlock", "VerificationRibbonBlock", "BenefitBlock", "ImageStoryBlock", "StoryBlock", "CtaBlock"] as const;
+const detailPageBlockTypes = ["HeroBlock", "VerificationRibbonBlock", "BenefitBlock", "ImageStoryBlock", "AnimatedGifBlock", "StoryBlock", "CtaBlock"] as const;
+const animatedGifPropsSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  gifUrl: z.string().max(detailAnimatedGifMaximumUrlLength),
+  posterUrl: z.string().max(detailAnimatedGifMaximumUrlLength),
+  alt: z.string().max(detailAnimatedGifMaximumAltLength),
+  caption: z.string().max(detailAnimatedGifMaximumCaptionLength),
+  tone: z.enum(["light", "dark"]),
+}).passthrough();
 const detailPageDataSchema = z.object({
   root: z.record(z.string(), z.unknown()),
   content: z.array(z.object({
     type: z.enum(detailPageBlockTypes),
     props: z.record(z.string(), z.unknown()),
-  }).passthrough()).max(64),
+  }).passthrough().superRefine((block, context) => {
+    if (block.type !== "AnimatedGifBlock") return;
+    const props = animatedGifPropsSchema.safeParse(block.props);
+    if (!props.success || !validateDetailAnimatedGif(props.data).canAnimate) {
+      context.addIssue({
+        code: "custom",
+        path: ["props"],
+        message: "GIF 블록은 검증된 HTTPS GIF·poster URL과 대체텍스트·캡션이 모두 필요합니다.",
+      });
+    }
+  })).max(64),
 }).passthrough();
 const detailPageSaveSchema = z.object({
   data: detailPageDataSchema,

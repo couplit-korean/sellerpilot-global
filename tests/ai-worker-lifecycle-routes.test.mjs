@@ -49,7 +49,7 @@ test("AI completion bounds Supabase calls and maps both lifecycle RPC failures",
   );
   assert.ok(
     source.indexOf("workerCompletionSchema.safeParse(payload)")
-      < source.indexOf('serviceClient.rpc("sellerpilot_complete_ai_job"'),
+      < source.indexOf('serviceClient.rpc("sellerpilot_complete_ai_job_with_image_context"'),
     "normalized studio results must be schema-validated before DB storage",
   );
 });
