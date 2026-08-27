@@ -36,6 +36,7 @@ const LEGACY_CROSS_TOKEN_HASH = "f".repeat(64);
 const PENDING_AI_TOKEN_HASH = "1".repeat(64);
 const PENDING_GATEWAY_TOKEN_HASH = "2".repeat(64);
 const PENDING_SCHEDULER_TOKEN_HASH = "3".repeat(64);
+const LEGACY_SCOPE_RETIREMENT_MIGRATION = "20260828140000_remove_legacy_combined_worker_scope.sql";
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -297,8 +298,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828004000_persist_terminal_image_failure_context.sql",
       "20260828123100_allow_validated_animated_gif_detail_block.sql",
       "20260828130000_isolate_product_ai_worker_claim.sql",
+      LEGACY_SCOPE_RETIREMENT_MIGRATION,
     ]);
     for (const name of migrationNames) {
+      if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
       try {
         await db.exec(withoutUnavailableExtensions(sql));
@@ -6569,6 +6572,218 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await assert.rejects(
       db.query("select public.sellerpilot_list_registration_activity(160)"),
       /administrator access required/,
+    );
+    // Retiring the combined rollout bridge is intentionally deferred until
+    // the end of this integration flow. An operating legacy worker must keep
+    // working when no complete replacement set exists, and the migration must
+    // leave every function and token untouched on that failed attempt.
+    await db.query(
+      `update sellerpilot_private.ai_cli_worker_tokens
+          set status = 'revoked', revoked_at = clock_timestamp()
+        where scope in ('ai', 'gateway', 'scheduler')
+          and status = 'active'`,
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_worker_tokens
+          set status = 'active', revoked_at = null,
+              expires_at = clock_timestamp() + interval '30 days'
+        where token_hash = $1
+          and scope = 'legacy_combined'`,
+      [TOKEN_HASH],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.worker_token_has_scope($1, 'gateway', true)",
+        [TOKEN_HASH],
+      ),
+      true,
+    );
+
+    const legacyScopeRetirementSql = withoutUnavailableExtensions(
+      await readFile(new URL(LEGACY_SCOPE_RETIREMENT_MIGRATION, migrationUrl), "utf8"),
+    );
+    assert.match(
+      legacyScopeRetirementSql,
+      /count\(distinct token\.scope\) = 3/,
+    );
+    assert.match(legacyScopeRetirementSql, /token\.scope = p_scope/);
+    assert.doesNotMatch(
+      legacyScopeRetirementSql,
+      /token\.scope\s+in\s*\(\s*p_scope\s*,\s*'legacy_combined'/i,
+    );
+    assert.doesNotMatch(
+      legacyScopeRetirementSql,
+      /channel_gateway_jobs|support_tickets|inquiry_reply|complete_channel_gateway/i,
+    );
+    await assert.rejects(
+      db.exec(legacyScopeRetirementSql),
+      /active scoped worker token set required before retiring legacy_combined/,
+    );
+    await db.exec("rollback").catch(() => undefined);
+    assert.deepEqual(
+      (await db.query(
+        `select status, revoked_at is null as not_revoked
+           from sellerpilot_private.ai_cli_worker_tokens
+          where token_hash = $1`,
+        [TOKEN_HASH],
+      )).rows,
+      [{ status: "active", not_revoked: true }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.worker_token_has_scope($1, 'gateway', true)",
+        [TOKEN_HASH],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.ai_cli_worker_tokens
+          where scope in ('ai', 'gateway', 'scheduler')
+            and status = 'active'`,
+      ),
+      0,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.ai_cli_audit
+          where action = 'token_revoked'
+            and safe_detail->>'reason' = 'legacy_combined_retired'`,
+      ),
+      0,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select to_regprocedure('public.sellerpilot_20260828_claim_product_ai_job_scoped_once(text,text)') is null",
+      ),
+      true,
+    );
+
+    await db.query(
+      `update sellerpilot_private.ai_cli_worker_tokens
+          set status = 'active', revoked_at = null,
+              expires_at = clock_timestamp() + interval '30 days'
+        where token_hash = any($1::text[])
+          and scope in ('ai', 'gateway', 'scheduler')`,
+      [Object.values(pendingProof)],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select rotation_set_id::text as rotation_set_id,
+                array_agg(scope order by scope) as scopes
+           from sellerpilot_private.ai_cli_worker_tokens
+          where token_hash = any($1::text[])
+            and status = 'active'
+          group by rotation_set_id`,
+        [Object.values(pendingProof)],
+      )).rows.map((row) => row.scopes),
+      [["ai", "gateway", "scheduler"]],
+    );
+
+    await setClaims(db, "service_role");
+    await db.exec(legacyScopeRetirementSql);
+    assert.deepEqual(
+      (await db.query(
+        `select status, revoked_at is not null as revoked
+           from sellerpilot_private.ai_cli_worker_tokens
+          where token_hash = $1`,
+        [TOKEN_HASH],
+      )).rows,
+      [{ status: "revoked", revoked: true }],
+    );
+    await assert.rejects(
+      db.query(
+        `update sellerpilot_private.ai_cli_worker_tokens
+            set status = 'active', revoked_at = null
+          where token_hash = $1`,
+        [TOKEN_HASH],
+      ),
+      /ai_cli_worker_tokens_no_active_legacy_combined_check/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.ai_cli_audit
+          where worker_token_id = (
+                  select id from sellerpilot_private.ai_cli_worker_tokens
+                   where token_hash = $1
+                )
+            and action = 'token_revoked'
+            and safe_detail->>'reason' = 'legacy_combined_retired'`,
+        [TOKEN_HASH],
+      ),
+      1,
+    );
+    for (const scope of ["ai", "gateway", "scheduler"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select sellerpilot_private.worker_token_has_scope($1, $2, true)",
+          [TOKEN_HASH, scope],
+        ),
+        false,
+      );
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.worker_token_has_scope($1, 'ai', true)",
+        [pendingProof.ai],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.worker_token_has_scope($1, 'gateway', true)",
+        [pendingProof.gateway],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_validate_worker_token($1, 'migration-test/strict-scheduler')",
+        [TOKEN_HASH],
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_validate_worker_token($1, 'migration-test/strict-scheduler')",
+        [pendingProof.scheduler],
+      ),
+      true,
+    );
+    for (const claimSql of [
+      "select public.sellerpilot_claim_channel_gateway_job($1, 'migration-test/legacy-retired')",
+      "select public.sellerpilot_claim_ai_job($1, 'migration-test/legacy-retired')",
+      "select public.sellerpilot_claim_product_ai_job($1, 'migration-test/legacy-retired')",
+    ]) {
+      await assert.rejects(db.query(claimSql, [TOKEN_HASH]), /invalid worker token/);
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_20260828_claim_product_ai_job_scoped_once(text,text)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_claim_product_ai_job(text,text)', 'EXECUTE')",
+      ),
+      true,
     );
   } finally {
     await db.close();
