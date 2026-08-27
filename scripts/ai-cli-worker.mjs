@@ -242,7 +242,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.55";
+const workerVersion = "sellerpilot-cli-worker/1.56";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -3104,11 +3104,10 @@ async function generateDistinctAsset({
           try {
             await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
           } catch (error) {
-            const mayRepairMissingSupport = attempt === maximumAttempt
-              && preset.id === "portrait"
+            const mayRepairSupportBoundary = attempt === maximumAttempt
               && backgroundContactMode === "surface-supported"
               && isRepairableMissingIdentitySupportBoundary(error);
-            if (!mayRepairMissingSupport) throw error;
+            if (!mayRepairSupportBoundary) throw error;
             generated = await repairMissingIdentitySupportSurface(generated, generationPreset);
             await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
             await writeFile(outputFile, generated);

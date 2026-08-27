@@ -588,13 +588,14 @@ test("final support fallback repairs only a missing boundary and preserves candi
   );
 });
 
-test("stripe and intrusion failures are never eligible for the missing-support fallback", async () => {
+test("stripe, diagonal and intrusion failures are never eligible for the support fallback", async () => {
   const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
   assert.ok(portrait);
   const spec = { ...portrait, width: 320, height: 400 };
   const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
   const unsafe = [
     await syntheticSurfacePlate(spec, { seamY: contactY, samePlaneStripe: true }),
+    await syntheticSurfacePlate(spec, { seamY: contactY, diagonalRise: 30 }),
     await syntheticSurfacePlate(spec, { seamY: contactY, verticalIntrusion: true }),
   ];
   for (const candidate of unsafe) {
@@ -621,6 +622,74 @@ test("surface-supported background plates reject a contact-band edge seam that c
   const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
   const bandEdge = await syntheticSurfacePlate(spec, { seamY: contactY + 7 });
   await assertReservedZoneFailure(assertIdentityBackgroundPlate(bandEdge, spec, "surface-supported"));
+});
+
+test("a one-sample resize drift beyond the strict contact gate is repaired at the nominal line", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const roundedResizeDrift = await syntheticSurfacePlate(spec, { seamY: contactY + 4 });
+
+  await assert.rejects(
+    assertIdentityBackgroundPlate(roundedResizeDrift, spec, "surface-supported"),
+    (error: unknown) => {
+      assert.match(
+        error instanceof Error ? error.message : "",
+        /nominal 접촉선.*측정 편차: \d+\.\d{2}px.*자동 보정 허용 상한: 3\.00px/,
+      );
+      assert.equal(isRepairableMissingIdentitySupportBoundary(error), true);
+      return true;
+    },
+  );
+
+  const repaired = await repairMissingIdentitySupportSurface(roundedResizeDrift, spec);
+  await assert.doesNotReject(assertIdentityBackgroundPlate(repaired, spec, "surface-supported"));
+});
+
+test("a larger nominal contact offset remains non-repairable", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const materiallyOffset = await syntheticSurfacePlate(spec, { seamY: contactY + 8 });
+
+  await assert.rejects(
+    assertIdentityBackgroundPlate(materiallyOffset, spec, "surface-supported"),
+    (error: unknown) => {
+      assert.match(
+        error instanceof Error ? error.message : "",
+        /nominal 접촉선.*측정 편차: \d+\.\d{2}px.*자동 보정 허용 상한: 3\.00px/,
+      );
+      assert.equal(isRepairableMissingIdentitySupportBoundary(error), false);
+      return true;
+    },
+  );
+});
+
+test("support fallback restores every source-composite setting-shot aspect ratio", async () => {
+  const sourceCompositeAssets = aiGeneratedAssetSpecs.filter((asset) => (
+    asset.identityPolicy.mode === "source-composite"
+  ));
+  assert.ok(sourceCompositeAssets.length > 1);
+
+  for (const asset of sourceCompositeAssets) {
+    const scale = 320 / Math.min(asset.width, asset.height);
+    const spec = {
+      ...asset,
+      width: Math.round(asset.width * scale),
+      height: Math.round(asset.height * scale),
+    };
+    const missingSupport = await sharp({
+      create: { width: spec.width, height: spec.height, channels: 3, background: "#d8cbb8" },
+    }).png().toBuffer();
+    await assert.rejects(
+      assertIdentityBackgroundPlate(missingSupport, spec, "surface-supported"),
+      (error: unknown) => isRepairableMissingIdentitySupportBoundary(error),
+    );
+    const repaired = await repairMissingIdentitySupportSurface(missingSupport, spec);
+    await assert.doesNotReject(assertIdentityBackgroundPlate(repaired, spec, "surface-supported"));
+  }
 });
 
 test("portrait and wide plates reject a same-plane stripe at the nominal contact line", async () => {

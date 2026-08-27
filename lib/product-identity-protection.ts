@@ -81,6 +81,8 @@ const MINIMUM_CONTACT_SEAM_GRADIENT = 8;
 const MINIMUM_CONTACT_SEAM_COVERAGE = 0.78;
 const MINIMUM_VERTICAL_INTRUSION_GRADIENT = 28;
 const MAXIMUM_CONTACT_RIDGE_WIDTH = 9;
+// The strict gate stays at 2px; only one additional 256-grid sample pixel may enter final repair.
+const MAXIMUM_REPAIRABLE_CONTACT_RIDGE_DRIFT = 3;
 const MINIMUM_SUPPORT_DISTRIBUTION_DISTANCE = 4;
 const MAXIMUM_SUPPORT_DEPTH_DRIFT = 24;
 const MAXIMUM_SUPPORT_LATERAL_DRIFT = 48;
@@ -189,6 +191,23 @@ async function assertSurfaceSupportedReservedZoneGeometry(
   const verticalGradient = (x: number, y: number) => Math.abs(
     pixels[(y + 1) * size + x] - pixels[(y - 1) * size + x],
   );
+  const seamGeometry = (points: Array<{ x: number; y: number }>) => {
+    const meanX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
+    const meanY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
+    const denominator = points.reduce((sum, point) => sum + (point.x - meanX) ** 2, 0);
+    const slope = denominator === 0 ? 0 : points.reduce(
+      (sum, point) => sum + (point.x - meanX) * (point.y - meanY),
+      0,
+    ) / denominator;
+    const riseAcrossReservedZone = Math.abs(slope * Math.max(1, columnCount - 1));
+    const residualRms = Math.sqrt(points.reduce((sum, point) => {
+      const predictedY = meanY + slope * (point.x - meanX);
+      return sum + (point.y - predictedY) ** 2;
+    }, 0) / points.length);
+    const seamRange = Math.max(...points.map((point) => point.y))
+      - Math.min(...points.map((point) => point.y));
+    return { riseAcrossReservedZone, residualRms, seamRange };
+  };
   const orderedRowScores: Array<{ y: number; coverage: number; strength: number }> = [];
   for (let y = bandStart; y <= bandEnd; y += 1) {
     let coverage = 0;
@@ -206,6 +225,30 @@ async function assertSurfaceSupportedReservedZoneGeometry(
   const bestRow = rankedRowScores[0];
   const minimumCoveredColumns = Math.ceil(columnCount * MINIMUM_CONTACT_SEAM_COVERAGE);
   if (!bestRow || bestRow.coverage < minimumCoveredColumns) {
+    const strongestBandPoints: Array<{ x: number; y: number }> = [];
+    for (let x = xStart; x < xEnd; x += 1) {
+      let strongestGradient = 0;
+      let strongestY = bandStart;
+      for (let y = bandStart; y <= bandEnd; y += 1) {
+        const gradient = verticalGradient(x, y);
+        if (gradient > strongestGradient) {
+          strongestGradient = gradient;
+          strongestY = y;
+        }
+      }
+      if (strongestGradient >= MINIMUM_CONTACT_SEAM_GRADIENT) {
+        strongestBandPoints.push({ x, y: strongestY });
+      }
+    }
+    if (strongestBandPoints.length >= minimumCoveredColumns) {
+      const { riseAcrossReservedZone, residualRms, seamRange } = seamGeometry(strongestBandPoints);
+      if (riseAcrossReservedZone > 3 || residualRms > 1.5 || seamRange > 4) {
+        throw new IdentityBackgroundReservedZoneError(
+          spec,
+          "지지면 경계가 상품 배치 폭에서 수평을 유지하지 못했습니다.",
+        );
+      }
+    }
     throw new IdentityBackgroundReservedZoneError(
       spec,
       "접촉 허용 밴드 전체를 가로지르는 수평 지지면 경계가 없습니다.",
@@ -245,8 +288,17 @@ async function assertSurfaceSupportedReservedZoneGeometry(
     0,
   ) / ridgeWeight;
   const nominalContactRow = contactLine * size;
-  if (!Number.isFinite(ridgeCenter) || Math.abs(ridgeCenter - nominalContactRow) > 2) {
-    throw new IdentityBackgroundReservedZoneError(spec, "지지면 경계가 실제 합성 하단의 nominal 접촉선에서 2px보다 멀리 떨어졌습니다.");
+  const contactRidgeDrift = Math.abs(ridgeCenter - nominalContactRow);
+  if (!Number.isFinite(ridgeCenter) || contactRidgeDrift > 2) {
+    const driftDescription = Number.isFinite(contactRidgeDrift)
+      ? `${contactRidgeDrift.toFixed(2)}px`
+      : "계산 불가";
+    throw new IdentityBackgroundReservedZoneError(
+      spec,
+      `지지면 경계가 실제 합성 하단의 nominal 접촉선에서 2px보다 멀리 떨어졌습니다(측정 편차: ${driftDescription}, 자동 보정 허용 상한: ${MAXIMUM_REPAIRABLE_CONTACT_RIDGE_DRIFT.toFixed(2)}px).`,
+      Number.isFinite(contactRidgeDrift)
+        && contactRidgeDrift <= MAXIMUM_REPAIRABLE_CONTACT_RIDGE_DRIFT,
+    );
   }
 
   const seamPoints: Array<{ x: number; y: number }> = [];
@@ -271,20 +323,7 @@ async function assertSurfaceSupportedReservedZoneGeometry(
     throw new IdentityBackgroundReservedZoneError(spec, "지지면 접촉선의 연속 범위가 상품 배치 폭보다 짧습니다.");
   }
 
-  const meanX = seamPoints.reduce((sum, point) => sum + point.x, 0) / seamPoints.length;
-  const meanY = seamPoints.reduce((sum, point) => sum + point.y, 0) / seamPoints.length;
-  const denominator = seamPoints.reduce((sum, point) => sum + (point.x - meanX) ** 2, 0);
-  const slope = denominator === 0 ? 0 : seamPoints.reduce(
-    (sum, point) => sum + (point.x - meanX) * (point.y - meanY),
-    0,
-  ) / denominator;
-  const riseAcrossReservedZone = Math.abs(slope * Math.max(1, columnCount - 1));
-  const residualRms = Math.sqrt(seamPoints.reduce((sum, point) => {
-    const predictedY = meanY + slope * (point.x - meanX);
-    return sum + (point.y - predictedY) ** 2;
-  }, 0) / seamPoints.length);
-  const seamRange = Math.max(...seamPoints.map((point) => point.y))
-    - Math.min(...seamPoints.map((point) => point.y));
+  const { riseAcrossReservedZone, residualRms, seamRange } = seamGeometry(seamPoints);
   if (riseAcrossReservedZone > 3 || residualRms > 1.5 || seamRange > 4) {
     throw new IdentityBackgroundReservedZoneError(spec, "지지면 경계가 상품 배치 폭에서 수평을 유지하지 못했습니다.");
   }

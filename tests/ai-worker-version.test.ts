@@ -32,5 +32,6 @@ test("new AI claims reject worker 1.50 and accept worker 1.51 or newer", () => {
   assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.53"), true);
   assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.54"), true);
   assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.55"), true);
+  assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.56"), true);
   assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/unknown"), false);
 });
