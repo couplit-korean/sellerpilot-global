@@ -19,6 +19,7 @@ import {
   compositeIdentityForeground,
   isRepairableMissingIdentitySupportBoundary,
   loadVisionIdentityForeground,
+  normalizeIdentityBackgroundPlate,
   planIdentityEvidenceAttempt,
   repairMissingIdentitySupportSurface,
   renderIdentityEvidenceBoard,
@@ -532,6 +533,72 @@ test("identity background plates fail closed when the reserved product zone is v
   }
   const busy = await sharp(pixels, { raw: { width: portrait.width, height: portrait.height, channels: 3 } }).png().toBuffer();
   await assert.rejects(assertIdentityBackgroundPlate(busy, portrait, "suspended-or-planar"), /고대비 물체/);
+});
+
+test("background-only alpha normalization replaces every non-opaque pixel with an explicit safe color", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 32, height: 40 };
+  for (const alpha of [254, 0]) {
+    const raw = Buffer.alloc(spec.width * spec.height * 4);
+    for (let offset = 0; offset < raw.length; offset += 4) {
+      raw[offset] = 11;
+      raw[offset + 1] = 73;
+      raw[offset + 2] = 149;
+      raw[offset + 3] = alpha;
+    }
+    const candidate = await sharp(raw, {
+      raw: { width: spec.width, height: spec.height, channels: 4 },
+    }).png().toBuffer();
+    const normalized = await normalizeIdentityBackgroundPlate(candidate, spec);
+    const pixels = await sharp(normalized).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    assert.equal(pixels.info.width, spec.width);
+    assert.equal(pixels.info.height, spec.height);
+    for (let offset = 0; offset < pixels.data.length; offset += 4) {
+      assert.deepEqual([...pixels.data.subarray(offset, offset + 4)], [255, 255, 255, 255]);
+    }
+  }
+});
+
+test("background-only alpha normalization preserves opaque pixels and flattens only the partial region", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 32, height: 40 };
+  const raw = Buffer.alloc(spec.width * spec.height * 4);
+  for (let y = 0; y < spec.height; y += 1) {
+    for (let x = 0; x < spec.width; x += 1) {
+      const offset = (y * spec.width + x) * 4;
+      const opaque = x < spec.width / 2;
+      raw[offset] = opaque ? 42 : 190;
+      raw[offset + 1] = opaque ? 88 : 20;
+      raw[offset + 2] = opaque ? 123 : 70;
+      raw[offset + 3] = opaque ? 255 : 128;
+    }
+  }
+  const candidate = await sharp(raw, {
+    raw: { width: spec.width, height: spec.height, channels: 4 },
+  }).png().toBuffer();
+  const normalized = await normalizeIdentityBackgroundPlate(candidate, spec);
+  const pixels = await sharp(normalized).ensureAlpha().raw().toBuffer();
+  assert.deepEqual([...pixels.subarray(0, 4)], [42, 88, 123, 255]);
+  const partialOffset = (spec.width - 1) * 4;
+  assert.deepEqual([...pixels.subarray(partialOffset, partialOffset + 4)], [255, 255, 255, 255]);
+});
+
+test("opaque background normalization is byte-identical and retains stripe and geometry audits", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const stripe = await syntheticSurfacePlate(spec, { seamY: contactY, samePlaneStripe: true });
+  const normalizedStripe = await normalizeIdentityBackgroundPlate(stripe, spec);
+  assert.equal(normalizedStripe.equals(stripe), true);
+  await assertReservedZoneFailure(assertIdentityBackgroundPlate(normalizedStripe, spec, "surface-supported"));
+
+  const supported = await syntheticSurfacePlate(spec, { seamY: contactY });
+  const normalizedSupported = await normalizeIdentityBackgroundPlate(supported, spec);
+  assert.equal(normalizedSupported.equals(supported), true);
+  await assert.doesNotReject(assertIdentityBackgroundPlate(normalizedSupported, spec, "surface-supported"));
 });
 
 test("surface-supported background plates require one horizontal seam inside the contact band", async () => {

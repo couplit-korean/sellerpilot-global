@@ -61,6 +61,7 @@ import {
   compositeIdentityForeground,
   isRepairableMissingIdentitySupportBoundary,
   loadVisionIdentityForeground,
+  normalizeIdentityBackgroundPlate,
   planIdentityEvidenceAttempt,
   repairMissingIdentitySupportSurface,
   renderIdentityEvidenceBoard,
@@ -111,6 +112,7 @@ import {
   mergeImageLabelFidelityReports,
 } from "../lib/image-label-fidelity.ts";
 import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
+import { runVisionCutoutWithTransientRetry } from "../lib/source-product-cutout-retry.ts";
 import {
   canRunGatewayClaim,
   canRunPeriodicChannelSync,
@@ -242,7 +244,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.57";
+const workerVersion = "sellerpilot-cli-worker/1.58";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -1018,52 +1020,70 @@ async function executeSourceProductCutout(mode, productName, outputFile, inputs,
         outputFile,
         ...inputs.map((input) => input.file),
       ];
-  const result = await new Promise((resolveRun, rejectRun) => {
-    const child = spawn("/usr/bin/swift", args, {
-      cwd: process.cwd(),
-      env: { ...process.env, SELLERPILOT_CUTOUT_DEBUG: "0" },
-      stdio: ["ignore", "pipe", "pipe"],
+  const runAttempt = async (attempt) => {
+    if (leaseSignal?.aborted) throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
+    if (attempt > 1 && mode !== "background") await rm(outputFile, { force: true });
+    if (leaseSignal?.aborted) throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
+    return new Promise((resolveRun, rejectRun) => {
+      const child = spawn("/usr/bin/swift", args, {
+        cwd: process.cwd(),
+        env: { ...process.env, SELLERPILOT_CUTOUT_DEBUG: "0" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = Buffer.alloc(0);
+      let stderr = Buffer.alloc(0);
+      let settled = false;
+      let terminationError = null;
+      let killTimer = null;
+      const finish = (error, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutTimer);
+        if (killTimer) clearTimeout(killTimer);
+        if (leaseSignal) leaseSignal.removeEventListener("abort", abortHandler);
+        child.stdout.removeAllListeners("data");
+        child.stderr.removeAllListeners("data");
+        child.removeAllListeners("error");
+        child.removeAllListeners("close");
+        if (error) rejectRun(error);
+        else resolveRun(value);
+      };
+      const terminate = (error) => {
+        terminationError ||= error;
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        try { child.kill("SIGTERM"); } catch { /* close/error settles */ }
+        killTimer ||= setTimeout(() => {
+          if (child.exitCode === null && child.signalCode === null) {
+            try { child.kill("SIGKILL"); } catch { /* close/error settles */ }
+          }
+        }, 5_000);
+      };
+      const timeoutTimer = setTimeout(() => terminate(new Error("원본 상품 컷아웃 제한시간을 초과했습니다.")), sourceProductCutoutTimeoutMs);
+      const abortHandler = () => terminate(leaseSignal?.reason instanceof Error ? leaseSignal.reason : new JobCancelledError());
+      if (leaseSignal) leaseSignal.addEventListener("abort", abortHandler, { once: true });
+      child.stdout.on("data", (chunk) => { stdout = appendBoundedOutput(stdout, chunk); });
+      child.stderr.on("data", (chunk) => { stderr = appendBoundedOutput(stderr, chunk); });
+      child.once("error", (error) => {
+        if (!child.pid) finish(error);
+        else terminate(error);
+      });
+      child.once("close", (code, signal) => {
+        const stdoutText = stdout.toString("utf8").trim();
+        const stderrText = stderr.toString("utf8").trim();
+        if (terminationError) finish(terminationError);
+        else if (signal) finish(new Error("SELLERPILOT_TRANSIENT_SWIFT_CHILD_FAILURE"));
+        else if (code !== 0) finish(new Error((stderrText || stdoutText || `Vision cutout exit ${code}`).slice(-800)));
+        else finish(null, stdoutText);
+      });
     });
-    let stdout = Buffer.alloc(0);
-    let stderr = Buffer.alloc(0);
-    let settled = false;
-    let terminationError = null;
-    let killTimer = null;
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutTimer);
-      if (killTimer) clearTimeout(killTimer);
-      if (leaseSignal) leaseSignal.removeEventListener("abort", abortHandler);
-      if (error) rejectRun(error);
-      else resolveRun(value);
-    };
-    const terminate = (error) => {
-      terminationError ||= error;
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      try { child.kill("SIGTERM"); } catch { /* close/error settles */ }
-      killTimer ||= setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) {
-          try { child.kill("SIGKILL"); } catch { /* close/error settles */ }
-        }
-      }, 5_000);
-    };
-    const timeoutTimer = setTimeout(() => terminate(new Error("원본 상품 컷아웃 제한시간을 초과했습니다.")), sourceProductCutoutTimeoutMs);
-    const abortHandler = () => terminate(leaseSignal?.reason instanceof Error ? leaseSignal.reason : new JobCancelledError());
-    if (leaseSignal) leaseSignal.addEventListener("abort", abortHandler, { once: true });
-    child.stdout.on("data", (chunk) => { stdout = appendBoundedOutput(stdout, chunk); });
-    child.stderr.on("data", (chunk) => { stderr = appendBoundedOutput(stderr, chunk); });
-    child.once("error", (error) => {
-      if (!child.pid) finish(error);
-      else terminate(error);
-    });
-    child.once("close", (code) => {
-      const stdoutText = stdout.toString("utf8").trim();
-      const stderrText = stderr.toString("utf8").trim();
-      if (terminationError) finish(terminationError);
-      else if (code !== 0) finish(new Error((stderrText || stdoutText || `Vision cutout exit ${code}`).slice(-800)));
-      else finish(null, stdoutText);
-    });
+  };
+  const result = await runVisionCutoutWithTransientRetry({
+    mode,
+    signal: leaseSignal,
+    runAttempt,
+    onRetry: (attempt, retryMode) => {
+      console.warn(`[원본 픽셀 보호 재시도] mode=${retryMode} attempt=${attempt}`);
+    },
   });
   const report = JSON.parse(String(result).split("\n").at(-1) || "{}");
   if (mode === "background") {
@@ -3096,6 +3116,8 @@ async function generateDistinctAsset({
       const compositeSource = backgroundOnly ? identityCutouts.assetSources[preset.id] : null;
       if (backgroundOnly && !compositeSource) throw new Error(`${preset.id} 설정샷의 검증 원본 배정이 없습니다.`);
       if (backgroundOnly) {
+        generated = await normalizeIdentityBackgroundPlate(generated, generationPreset);
+        await writeFile(outputFile, generated);
         try {
           let semanticAudit = null;
           const settingShot = retrySettingShot;

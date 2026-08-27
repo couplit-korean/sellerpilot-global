@@ -519,5 +519,5 @@ test("the worker routes lineage verification through the read-only normalized ve
   assert.match(branch, /onCredentialRefresh: rememberCredentialRefresh/);
   assert.doesNotMatch(branch, /markExternalWriteStarted|externalWriteStarted\s*=\s*true/);
   assert.match(worker, /retryableLineageReadback[\s\S]*LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR/);
-  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.57"/);
+  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.58"/);
 });

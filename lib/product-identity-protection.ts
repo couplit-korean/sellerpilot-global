@@ -162,7 +162,7 @@ function boundedPlacement(spec: IdentityAssetSpec) {
 }
 
 async function assertSurfaceSupportedReservedZoneGeometry(
-  source: sharp.Sharp,
+  source: ReturnType<typeof sharp>,
   spec: IdentityAssetSpec,
 ) {
   const { left, top, width, height } = spec.identityPolicy.placement;
@@ -1206,6 +1206,52 @@ export async function renderMissingIdentityEvidence(spec: IdentityAssetSpec) {
     throw new Error(`${spec.id} 미제공 근거 자리표시자 규격을 확인하지 못했습니다.`);
   }
   return output;
+}
+
+export async function normalizeIdentityBackgroundPlate(
+  background: Buffer,
+  spec: IdentityAssetSpec,
+) {
+  if (!Buffer.isBuffer(background) || background.length < 1 || background.length > 20 * 1024 * 1024) {
+    throw new Error(`${spec.id} 배경판 바이트 크기가 안전 한도를 벗어났습니다.`);
+  }
+  const source = sharp(background, {
+    failOn: "warning",
+    limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
+  });
+  const [metadata, stats] = await Promise.all([
+    source.clone().metadata(),
+    source.clone().stats(),
+  ]);
+  if (metadata.width !== spec.width || metadata.height !== spec.height) {
+    throw new Error(`${spec.id} 배경판 규격이 지정된 이미지 역할과 일치하지 않습니다.`);
+  }
+  if (stats.isOpaque) return background;
+
+  const decoded = await source.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  if (decoded.info.width !== spec.width
+      || decoded.info.height !== spec.height
+      || decoded.info.channels !== 4) {
+    throw new Error(`${spec.id} 배경판 알파 픽셀 규격을 안전하게 확인하지 못했습니다.`);
+  }
+  for (let offset = 0; offset < decoded.data.length; offset += 4) {
+    if (decoded.data[offset + 3] === 255) continue;
+    decoded.data[offset] = 255;
+    decoded.data[offset + 1] = 255;
+    decoded.data[offset + 2] = 255;
+    decoded.data[offset + 3] = 255;
+  }
+  const flattened = await sharp(decoded.data, {
+    raw: { width: spec.width, height: spec.height, channels: 4 },
+  }).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+  const flattenedStats = await sharp(flattened, {
+    failOn: "warning",
+    limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
+  }).stats();
+  if (!flattenedStats.isOpaque) {
+    throw new Error(`${spec.id} 배경판 알파 안전색 정규화에 실패했습니다.`);
+  }
+  return flattened;
 }
 
 export async function assertIdentityBackgroundPlate(

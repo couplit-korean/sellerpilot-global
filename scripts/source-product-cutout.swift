@@ -72,6 +72,7 @@ enum CutoutError: Error, CustomStringConvertible {
     case usage
     case noSafeCandidate
     case cannotRender
+    case transientVisionExecution
 
     var description: String {
         switch self {
@@ -81,7 +82,20 @@ enum CutoutError: Error, CustomStringConvertible {
             return "원본 사진에서 단일 상품 포장을 신뢰도 높게 분리하지 못했습니다. 흰 배경 정면 사진을 추가해 주세요."
         case .cannotRender:
             return "원본 상품 픽셀을 PNG로 렌더링하지 못했습니다."
+        case .transientVisionExecution:
+            return "SELLERPILOT_TRANSIENT_VISION_FAILURE"
         }
+    }
+}
+
+func performVision<T>(_ operation: () throws -> T) throws -> T {
+    do {
+        return try operation()
+    } catch {
+        // Vision/ANE execution errors are runtime failures, not evidence that
+        // the product identity is invalid. Emit only a stable safe marker; the
+        // worker owns the single bounded retry and never logs the raw NSError.
+        throw CutoutError.transientVisionExecution
     }
 }
 
@@ -117,7 +131,7 @@ func guardBackground(at inputURL: URL) throws -> BackgroundGuardReport {
     rectangles.quadratureTolerance = 24
     let classifications = VNClassifyImageRequest()
     let handler = VNImageRequestHandler(url: inputURL, options: [:])
-    try handler.perform([text, barcodes, humans, rectangles, classifications])
+    try performVision { try handler.perform([text, barcodes, humans, rectangles, classifications]) }
     let textCount = (text.results ?? []).filter { observation in
         (observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0) >= 2
     }.count
@@ -169,7 +183,7 @@ func recognizeText(at imageURL: URL) throws -> [OCRLine] {
     request.minimumTextHeight = 0.009
     let barcodeRequest = VNDetectBarcodesRequest()
     let handler = VNImageRequestHandler(url: imageURL, options: [:])
-    try handler.perform([request, barcodeRequest])
+    try performVision { try handler.perform([request, barcodeRequest]) }
     let textLines: [OCRLine] = (request.results ?? []).compactMap { observation -> OCRLine? in
         guard let candidate = observation.topCandidates(1).first else { return nil }
         let text = candidate.string.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -415,7 +429,7 @@ func rectangleCandidates(inputIndex: Int, inputURL: URL, source: CIImage, lines:
     request.minimumConfidence = 0.45
     request.quadratureTolerance = 34
     let handler = VNImageRequestHandler(url: inputURL, options: [:])
-    try handler.perform([request])
+    try performVision { try handler.perform([request]) }
     return (request.results ?? []).compactMap { rectangle in
         let box = rectangle.boundingBox
         let area = box.width * box.height
@@ -603,12 +617,14 @@ func maskedImage(source: CIImage, maskBuffer: CVPixelBuffer, stats: MaskStats, c
 func instanceCandidates(inputIndex: Int, inputURL: URL, source: CIImage, lines: [OCRLine], mode: String, anchor: IdentityAnchor, tokens: [String]) throws -> [Candidate] {
     let request = VNGenerateForegroundInstanceMaskRequest()
     let handler = VNImageRequestHandler(url: inputURL, options: [:])
-    try handler.perform([request])
+    try performVision { try handler.perform([request]) }
     guard let observation = request.results?.first else { return [] }
     let instanceCount = observation.allInstances.count
     return try observation.allInstances.compactMap { instance in
         let instances = IndexSet(integer: instance)
-        let maskBuffer = try observation.generateScaledMaskForImage(forInstances: instances, from: handler)
+        let maskBuffer = try performVision {
+            try observation.generateScaledMaskForImage(forInstances: instances, from: handler)
+        }
         guard let stats = maskStats(maskBuffer) else { return nil }
         let box = stats.normalizedBox
         let textCount = containedTextCount(lines, in: box)
@@ -833,8 +849,8 @@ func run() throws {
               source.extent.width >= 120,
               source.extent.height >= 120,
               source.extent.width * source.extent.height <= 16_000_000 else { continue }
-        let lines = (try? recognizeText(at: inputURL)) ?? []
-        candidates.append(contentsOf: (try? rectangleCandidates(
+        let lines = try recognizeText(at: inputURL)
+        candidates.append(contentsOf: try rectangleCandidates(
             inputIndex: index,
             inputURL: inputURL,
             source: source,
@@ -842,8 +858,8 @@ func run() throws {
             mode: mode,
             anchor: anchor,
             tokens: tokens
-        )) ?? [])
-        candidates.append(contentsOf: (try? instanceCandidates(
+        ))
+        candidates.append(contentsOf: try instanceCandidates(
             inputIndex: index,
             inputURL: inputURL,
             source: source,
@@ -851,7 +867,7 @@ func run() throws {
             mode: mode,
             anchor: anchor,
             tokens: tokens
-        )) ?? [])
+        ))
         candidates = Array(candidates.sorted { $0.score > $1.score }.prefix(24))
     }
     let ranked = candidates.sorted { left, right in
