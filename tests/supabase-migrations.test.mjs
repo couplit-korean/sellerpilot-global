@@ -31,6 +31,7 @@ const SECOND_WORKER_TOKEN_HASH = "e".repeat(64);
 const AI_SCOPED_TOKEN_HASH = "b".repeat(64);
 const GATEWAY_SCOPED_TOKEN_HASH = "c".repeat(64);
 const SCHEDULER_SCOPED_TOKEN_HASH = "d".repeat(64);
+const LEGACY_CROSS_TOKEN_HASH = "f".repeat(64);
 const PENDING_AI_TOKEN_HASH = "1".repeat(64);
 const PENDING_GATEWAY_TOKEN_HASH = "2".repeat(64);
 const PENDING_SCHEDULER_TOKEN_HASH = "3".repeat(64);
@@ -285,6 +286,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260827011228_reset_registration_activity_retry_clock.sql",
       "20260827025330_harden_shopee_shipment_lineage_and_ack_semantics.sql",
       "20260827075654_cross_product_setting_comparisons.sql",
+      "20260827181100_allow_legacy_ai_cross_product_bridge.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -2160,6 +2162,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     const crossProductCurrentClaim = "70000000-0000-4000-8000-000000000002";
     const crossProductCurrentRegenerationJobId = "70000000-0000-4000-8000-000000000003";
     const crossProductCurrentRegenerationClaim = "70000000-0000-4000-8000-000000000004";
+    const crossProductLegacyJobId = "70000000-0000-4000-8000-000000000005";
+    const crossProductLegacyClaim = "70000000-0000-4000-8000-000000000006";
     const crossProductSourceJobIds = Array.from(
       { length: 9 },
       (_, index) => `7100000${index}-0000-4000-8000-000000000001`,
@@ -2310,6 +2314,67 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [TOKEN_HASH, crossProductCurrentJobId, crossProductCurrentClaim],
       ),
       /invalid worker token/,
+    );
+    await db.query(
+      "update sellerpilot_private.ai_cli_worker_tokens set status = 'revoked', revoked_at = now() where token_hash = $1",
+      [TOKEN_HASH],
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+         label, token_hash, fingerprint, status, scope, expires_at,
+         created_by, created_at, rotation_set_id
+       ) values (
+         'Bounded legacy cross-product bridge', $1, 'FFFFFFFFFFFF', 'active',
+         'legacy_combined', timestamptz '2026-09-01 17:43:09+00',
+         $2, timestamptz '2026-08-25 00:00:00+00', null
+       )`,
+      [LEGACY_CROSS_TOKEN_HASH, ADMIN_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, status, request_payload, created_by, worker_token_id,
+         claim_token, lease_expires_at, started_at
+       ) select $1, 'product_studio', 'running', '{}'::jsonb, $2, token.id,
+                $3, now() + interval '15 minutes', now()
+           from sellerpilot_private.ai_cli_worker_tokens token
+          where token.token_hash = $4`,
+      [crossProductLegacyJobId, ADMIN_ID, crossProductLegacyClaim, LEGACY_CROSS_TOKEN_HASH],
+    );
+    const legacyBridgeOpen = await scalar(
+      db,
+      "select clock_timestamp() < timestamptz '2026-09-01 17:44:00+00'",
+    );
+    if (legacyBridgeOpen) {
+      const legacyComparisons = await scalar(
+        db,
+        "select public.sellerpilot_service_get_cross_product_setting_comparisons($1, $2, $3, 8)",
+        [LEGACY_CROSS_TOKEN_HASH, crossProductLegacyJobId, crossProductLegacyClaim],
+      );
+      assert.equal(legacyComparisons.productCount, 8);
+      assert.equal(legacyComparisons.assetCount, 64);
+      await db.query(
+        "update sellerpilot_private.ai_cli_worker_tokens set expires_at = now() - interval '1 second' where token_hash = $1",
+        [LEGACY_CROSS_TOKEN_HASH],
+      );
+    }
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_get_cross_product_setting_comparisons($1, $2, $3, 8)",
+        [LEGACY_CROSS_TOKEN_HASH, crossProductLegacyJobId, crossProductLegacyClaim],
+      ),
+      /invalid worker token/,
+    );
+    await db.query(
+      "delete from sellerpilot_private.ai_cli_jobs where id = $1",
+      [crossProductLegacyJobId],
+    );
+    await db.query(
+      "delete from sellerpilot_private.ai_cli_worker_tokens where token_hash = $1",
+      [LEGACY_CROSS_TOKEN_HASH],
+    );
+    await db.query(
+      "update sellerpilot_private.ai_cli_worker_tokens set status = 'active', revoked_at = null where token_hash = $1",
+      [TOKEN_HASH],
     );
     await db.query(
       `insert into sellerpilot_private.ai_cli_jobs (

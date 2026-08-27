@@ -110,9 +110,10 @@ test("cross-product paths reject wrong filenames, traversal, and oversized produ
 });
 
 test("worker claim obtains owner-fenced comparison paths and exposes only signed URLs", async () => {
-  const [route, migration] = await Promise.all([
+  const [route, migration, legacyBridgeMigration] = await Promise.all([
     readFile(new URL("../app/api/ai/worker/claim/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260827075654_cross_product_setting_comparisons.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260827181100_allow_legacy_ai_cross_product_bridge.sql", import.meta.url), "utf8"),
   ]);
 
   assert.match(route, /sellerpilot_service_get_cross_product_setting_comparisons/);
@@ -152,4 +153,21 @@ test("worker claim obtains owner-fenced comparison paths and exposes only signed
   assert.match(migration, /limit greatest\(32, v_limit \* 8\)/);
   assert.match(migration, /from public, anon, authenticated, service_role/);
   assert.match(migration, /to service_role/);
+
+  assert.match(legacyBridgeMigration, /security definer/);
+  assert.match(legacyBridgeMigration, /set search_path = ''/);
+  assert.match(legacyBridgeMigration, /sellerpilot_private\.worker_token_has_scope\(p_token_hash, 'ai', true\)/);
+  assert.match(legacyBridgeMigration, /token\.scope = 'ai'/);
+  assert.match(legacyBridgeMigration, /token\.scope = 'legacy_combined'/);
+  assert.match(legacyBridgeMigration, /token\.rotation_set_id is null/);
+  assert.match(legacyBridgeMigration, /token\.created_at < timestamptz '2026-08-26 09:00:00\+00'/);
+  assert.equal(
+    (legacyBridgeMigration.match(/timestamptz '2026-09-01 17:44:00\+00'/g) ?? []).length,
+    2,
+  );
+  assert.match(legacyBridgeMigration, /job\.worker_token_id = v_token_id/);
+  assert.match(legacyBridgeMigration, /job\.claim_token = p_claim_token/);
+  assert.match(legacyBridgeMigration, /job\.lease_expires_at > clock_timestamp\(\)/);
+  assert.match(legacyBridgeMigration, /from public, anon, authenticated, service_role/);
+  assert.match(legacyBridgeMigration, /to service_role/);
 });
