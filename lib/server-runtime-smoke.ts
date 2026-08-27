@@ -9,9 +9,10 @@ const NO_STORE_HEADERS = {
 };
 const MAX_REQUEST_BODY_BYTES = 512;
 const SANDBOX_CREATE_TIMEOUT_MS = 20_000;
-const SANDBOX_LIFETIME_MS = 30_000;
+const SANDBOX_LIFETIME_MS = 50_000;
 const SANDBOX_COMMAND_TIMEOUT_MS = 5_000;
 const SANDBOX_STOP_TIMEOUT_MS = 10_000;
+const terminalSandboxStatuses = new Set<SandboxStatus>(["stopped", "failed", "aborted"]);
 
 const runtimeSmokeActions = ["readiness", "ai_gateway_smoke", "sandbox_smoke"] as const;
 type RuntimeSmokeAction = (typeof runtimeSmokeActions)[number];
@@ -50,7 +51,17 @@ type SandboxCommandResult = {
   stderr: (options?: { signal?: AbortSignal }) => Promise<string>;
 };
 
+type SandboxStatus =
+  | "failed"
+  | "aborted"
+  | "pending"
+  | "running"
+  | "stopping"
+  | "stopped"
+  | "snapshotting";
+
 type SyntheticSandbox = {
+  readonly status?: SandboxStatus;
   runCommand: (options: SandboxCommandOptions) => Promise<SandboxCommandResult>;
   stop: (options?: { signal?: AbortSignal }) => Promise<unknown>;
 };
@@ -77,16 +88,192 @@ type SmokeErrorCode =
   | "sandbox_unavailable"
   | "sandbox_command_failed"
   | "sandbox_response_invalid"
+  | "sandbox_terminal_failed"
   | "sandbox_cleanup_failed";
+
+type SmokeDiagnostic = {
+  name:
+    | "GatewayAuthenticationError"
+    | "GatewayError"
+    | "GatewayFailedDependencyError"
+    | "GatewayForbiddenError"
+    | "GatewayInternalServerError"
+    | "GatewayInvalidRequestError"
+    | "GatewayModelNotFoundError"
+    | "GatewayRateLimitError"
+    | "GatewayResponseError"
+    | "GatewayTimeoutError"
+    | "AI_APICallError"
+    | "AI_NoOutputGeneratedError"
+    | "APIError"
+    | "SandboxTerminalError"
+    | "AbortError"
+    | "TimeoutError"
+    | "UnknownError";
+  code:
+    | "authentication_error"
+    | "billing_required"
+    | "failed_dependency"
+    | "forbidden"
+    | "internal_server_error"
+    | "invalid_request_error"
+    | "model_not_found"
+    | "no_output"
+    | "rate_limit_exceeded"
+    | "response_error"
+    | "timeout_error"
+    | "SANDBOX_STOPPED"
+    | "SANDBOX_STOPPING"
+    | "SANDBOX_FAILED"
+    | "SANDBOX_ABORTED"
+    | "sandbox_api_error"
+    | "unknown";
+  status?: 400 | 401 | 402 | 403 | 404 | 408 | 409 | 410 | 422 | 424 | 429 | 500 | 502 | 503 | 504;
+};
 
 class SmokeExecutionError extends Error {
   readonly code: SmokeErrorCode;
+  readonly diagnostic?: SmokeDiagnostic;
 
-  constructor(code: SmokeErrorCode) {
+  constructor(code: SmokeErrorCode, diagnostic?: SmokeDiagnostic) {
     super(code);
     this.name = "SmokeExecutionError";
     this.code = code;
+    this.diagnostic = diagnostic;
   }
+}
+
+const safeDiagnosticStatuses = new Set<SmokeDiagnostic["status"]>([
+  400, 401, 402, 403, 404, 408, 409, 410, 422, 424, 429, 500, 502, 503, 504,
+]);
+const gatewayDiagnosticNames = new Set<SmokeDiagnostic["name"]>([
+  "GatewayAuthenticationError",
+  "GatewayError",
+  "GatewayFailedDependencyError",
+  "GatewayForbiddenError",
+  "GatewayInternalServerError",
+  "GatewayInvalidRequestError",
+  "GatewayModelNotFoundError",
+  "GatewayRateLimitError",
+  "GatewayResponseError",
+  "GatewayTimeoutError",
+  "AI_APICallError",
+  "AI_NoOutputGeneratedError",
+  "AbortError",
+  "TimeoutError",
+]);
+const gatewayDiagnosticCodes = new Set<SmokeDiagnostic["code"]>([
+  "authentication_error",
+  "failed_dependency",
+  "forbidden",
+  "internal_server_error",
+  "invalid_request_error",
+  "model_not_found",
+  "rate_limit_exceeded",
+  "response_error",
+  "timeout_error",
+]);
+
+function errorChain(error: unknown) {
+  const chain: Array<Record<string, unknown>> = [];
+  let candidate: unknown = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!candidate || typeof candidate !== "object" || seen.has(candidate)) break;
+    seen.add(candidate);
+    const record = candidate as Record<string, unknown>;
+    chain.push(record);
+    try {
+      candidate = record.cause;
+    } catch {
+      break;
+    }
+  }
+  return chain;
+}
+
+function safeStatus(value: unknown): SmokeDiagnostic["status"] | undefined {
+  return typeof value === "number" && safeDiagnosticStatuses.has(value as SmokeDiagnostic["status"])
+    ? value as SmokeDiagnostic["status"]
+    : undefined;
+}
+
+function gatewayDiagnostic(error: unknown): SmokeDiagnostic {
+  const chain = errorChain(error);
+  const gatewayRecord = chain.find((record) => (
+    typeof record.type === "string" && gatewayDiagnosticCodes.has(record.type as SmokeDiagnostic["code"])
+  ) || (
+    typeof record.name === "string" && record.name.startsWith("Gateway")
+  ));
+  const record = gatewayRecord ?? chain[0] ?? {};
+  const name = typeof record.name === "string" && gatewayDiagnosticNames.has(record.name as SmokeDiagnostic["name"])
+    ? record.name as SmokeDiagnostic["name"]
+    : "UnknownError";
+  const status = safeStatus(record.statusCode)
+    ?? safeStatus(chain.find((item) => safeStatus(item.statusCode))?.statusCode);
+  const explicitCode = typeof record.type === "string" && gatewayDiagnosticCodes.has(record.type as SmokeDiagnostic["code"])
+    ? record.type as SmokeDiagnostic["code"]
+    : undefined;
+  const code = status === 402
+    ? "billing_required"
+    : explicitCode
+      ?? (name === "GatewayAuthenticationError" || name === "GatewayError" ? "authentication_error"
+      : name === "GatewayFailedDependencyError" ? "failed_dependency"
+        : name === "GatewayForbiddenError" ? "forbidden"
+          : name === "GatewayInternalServerError" ? "internal_server_error"
+            : name === "GatewayInvalidRequestError" ? "invalid_request_error"
+              : name === "GatewayModelNotFoundError" ? "model_not_found"
+                : name === "GatewayRateLimitError" ? "rate_limit_exceeded"
+                  : name === "GatewayResponseError" ? "response_error"
+                    : name === "GatewayTimeoutError" || name === "AbortError" || name === "TimeoutError"
+                      ? "timeout_error"
+                      : name === "AI_NoOutputGeneratedError" ? "no_output"
+                        : "unknown");
+  return { name, code, ...(status ? { status } : {}) };
+}
+
+function sandboxDiagnostic(error: unknown): SmokeDiagnostic {
+  const record = errorChain(error)[0] ?? {};
+  const response = record.response && typeof record.response === "object"
+    ? record.response as Record<string, unknown>
+    : {};
+  const status = safeStatus(response.status) ?? safeStatus(record.statusCode);
+  const name = record.name === "APIError"
+    ? "APIError"
+    : record.name === "AbortError"
+      ? "AbortError"
+      : record.name === "TimeoutError"
+        ? "TimeoutError"
+        : "UnknownError";
+  const code = status === 410
+    ? "SANDBOX_STOPPED"
+    : status === 422
+      ? "SANDBOX_STOPPING"
+      : name === "AbortError" || name === "TimeoutError"
+        ? "timeout_error"
+        : status
+          ? "sandbox_api_error"
+          : "unknown";
+  return { name, code, ...(status ? { status } : {}) };
+}
+
+function sandboxStatus(sandbox: SyntheticSandbox) {
+  try {
+    return sandbox.status;
+  } catch {
+    return undefined;
+  }
+}
+
+function isTerminalSandboxStatus(
+  status: SandboxStatus | undefined,
+): status is Extract<SandboxStatus, "stopped" | "failed" | "aborted"> {
+  return Boolean(status && terminalSandboxStatuses.has(status));
+}
+
+function sandboxStopMeansTerminal(error: unknown, diagnostic: SmokeDiagnostic) {
+  if (diagnostic.code === "SANDBOX_STOPPED") return true;
+  return error instanceof Error && error.message === "No active session to stop.";
 }
 
 function json(body: Record<string, unknown>, status = 200) {
@@ -172,15 +359,13 @@ async function defaultAiGatewayRequest(input: { oidcToken: string; model: string
       }).strict(),
     }),
     prompt: "Return the requested synthetic readiness object. Do not use tools, web data, customer data, or product data.",
-    maxOutputTokens: 64,
+    maxOutputTokens: 256,
     maxRetries: 0,
-    timeout: 15_000,
+    timeout: 25_000,
     providerOptions: {
       gateway: {
         user: "sellerpilot-server-runtime-smoke",
         tags: ["feature:server-runtime-smoke", "data:synthetic"],
-        zeroDataRetention: true,
-        disallowPromptTraining: true,
       },
     },
   });
@@ -208,8 +393,8 @@ export async function runSyntheticAiGatewaySmoke(
   let output: AiGatewaySmokeOutput;
   try {
     output = await dependencies.request({ oidcToken, model: AI_GATEWAY_SMOKE_MODEL });
-  } catch {
-    throw new SmokeExecutionError("gateway_request_failed");
+  } catch (error) {
+    throw new SmokeExecutionError("gateway_request_failed", gatewayDiagnostic(error));
   }
   if (output.status !== "ok" || output.runtime !== "vercel-function-oidc") {
     throw new SmokeExecutionError("gateway_response_invalid");
@@ -272,8 +457,8 @@ export async function runSyntheticSandboxSmoke(
       tags: { purpose: "synthetic-smoke" },
       signal,
     }));
-  } catch {
-    throw new SmokeExecutionError("sandbox_unavailable");
+  } catch (error) {
+    throw new SmokeExecutionError("sandbox_unavailable", sandboxDiagnostic(error));
   }
 
   let output: ReturnType<typeof parseSandboxOutput> | null = null;
@@ -300,12 +485,40 @@ export async function runSyntheticSandboxSmoke(
       : new SmokeExecutionError("sandbox_command_failed");
   }
 
-  try {
-    await withTimeoutSignal(SANDBOX_STOP_TIMEOUT_MS, (signal) => sandbox.stop({ signal }));
-  } catch {
-    throw new SmokeExecutionError("sandbox_cleanup_failed");
+  let cleanup: "stopped" | "already_terminal" = "stopped";
+  let terminalStatus: Extract<SandboxStatus, "stopped" | "failed" | "aborted"> | undefined;
+  const statusBeforeCleanup = sandboxStatus(sandbox);
+  if (isTerminalSandboxStatus(statusBeforeCleanup)) {
+    cleanup = "already_terminal";
+    terminalStatus = statusBeforeCleanup;
+  } else {
+    try {
+      await withTimeoutSignal(SANDBOX_STOP_TIMEOUT_MS, (signal) => sandbox.stop({ signal }));
+      const statusAfterSuccessfulStop = sandboxStatus(sandbox);
+      if (isTerminalSandboxStatus(statusAfterSuccessfulStop)) {
+        terminalStatus = statusAfterSuccessfulStop;
+      }
+    } catch (error) {
+      const diagnostic = sandboxDiagnostic(error);
+      const statusAfterStop = sandboxStatus(sandbox);
+      if (isTerminalSandboxStatus(statusAfterStop)
+          || sandboxStopMeansTerminal(error, diagnostic)) {
+        cleanup = "already_terminal";
+        terminalStatus = statusAfterStop === "failed" || statusAfterStop === "aborted"
+          ? statusAfterStop
+          : "stopped";
+      } else {
+        throw new SmokeExecutionError("sandbox_cleanup_failed", diagnostic);
+      }
+    }
   }
   if (executionError) throw executionError;
+  if (terminalStatus === "failed" || terminalStatus === "aborted") {
+    throw new SmokeExecutionError("sandbox_terminal_failed", {
+      name: "SandboxTerminalError",
+      code: terminalStatus === "failed" ? "SANDBOX_FAILED" : "SANDBOX_ABORTED",
+    });
+  }
   if (!output) throw new SmokeExecutionError("sandbox_response_invalid");
 
   return {
@@ -313,7 +526,9 @@ export async function runSyntheticSandboxSmoke(
     action: "sandbox_smoke",
     isolation: "ephemeral_linux_microvm",
     network: "deny_all",
+    command: "passed",
     stopped: true,
+    cleanup,
     response: output,
     durationMs: Math.max(0, now() - startedAt),
   };
@@ -357,7 +572,15 @@ function executionFailure(action: Exclude<RuntimeSmokeAction, "readiness">, erro
   const message = action === "ai_gateway_smoke"
     ? "Vercel OIDC 기반 AI Gateway 합성 점검을 완료하지 못했습니다."
     : "격리된 Linux Sandbox 합성 점검을 완료하지 못했습니다.";
-  return json({ ok: false, action, executionRequested: true, code, message }, status);
+  const diagnostic = error instanceof SmokeExecutionError ? error.diagnostic : undefined;
+  return json({
+    ok: false,
+    action,
+    executionRequested: true,
+    code,
+    message,
+    ...(diagnostic ? { diagnostic } : {}),
+  }, status);
 }
 
 export async function handleServerRuntimeSmoke(

@@ -146,6 +146,82 @@ test("OIDC smoke injects only the ephemeral token and never returns or rethrows 
   assert.equal((await response.text()).includes(secretToken), false);
 });
 
+test("AI Gateway failures expose only allowlisted status, name, and code diagnostics", async () => {
+  const secretToken = "header.synthetic-secret.signature";
+  const providerSecret = "private-provider-response";
+  let captured: unknown;
+  try {
+    await runSyntheticAiGatewaySmoke({
+      getOidcToken: async () => secretToken,
+      request: async () => {
+        throw Object.assign(new Error(`${providerSecret} ${secretToken}`), {
+          name: "GatewayFailedDependencyError",
+          type: "failed_dependency",
+          statusCode: 424,
+          response: { body: providerSecret },
+        });
+      },
+    });
+  } catch (error) {
+    captured = error;
+  }
+
+  assert.ok(captured instanceof Error);
+  const failure = captured as Error & { diagnostic?: Record<string, unknown> };
+  assert.equal(failure.message, "gateway_request_failed");
+  assert.deepEqual(failure.diagnostic, {
+    name: "GatewayFailedDependencyError",
+    code: "failed_dependency",
+    status: 424,
+  });
+  assert.equal(JSON.stringify(failure.diagnostic).includes(providerSecret), false);
+  assert.equal(JSON.stringify(failure.diagnostic).includes(secretToken), false);
+
+  const response = await handleServerRuntimeSmoke(request("POST", { action: "ai_gateway_smoke" }), {
+    runtimeSmokeSecret: "test-runtime-smoke-secret",
+    runners: {
+      aiGateway: () => runSyntheticAiGatewaySmoke({
+        getOidcToken: async () => secretToken,
+        request: async () => {
+          throw Object.assign(new Error(providerSecret), {
+            name: "GatewayFailedDependencyError",
+            type: "failed_dependency",
+            statusCode: 424,
+          });
+        },
+      }),
+      sandbox: async () => ({}),
+    },
+  });
+  const responseText = await response.text();
+  assert.equal(response.status, 502);
+  assert.equal(responseText.includes(providerSecret), false);
+  assert.equal(responseText.includes(secretToken), false);
+  assert.deepEqual(JSON.parse(responseText).diagnostic, failure.diagnostic);
+
+  await assert.rejects(
+    runSyntheticAiGatewaySmoke({
+      getOidcToken: async () => secretToken,
+      request: async () => {
+        throw Object.assign(new Error(providerSecret), {
+          name: "GatewayInternalServerError",
+          type: "internal_server_error",
+          statusCode: 402,
+        });
+      },
+    }),
+    (error: unknown) => {
+      const billingFailure = error as Error & { diagnostic?: Record<string, unknown> };
+      assert.deepEqual(billingFailure.diagnostic, {
+        name: "GatewayInternalServerError",
+        code: "billing_required",
+        status: 402,
+      });
+      return true;
+    },
+  );
+});
+
 test("sandbox smoke runs one fixed Linux Node command with denied egress and always stops", async () => {
   const calls: Array<Record<string, unknown>> = [];
   let stopped = 0;
@@ -166,10 +242,13 @@ test("sandbox smoke runs one fixed Linux Node command with denied egress and alw
     },
   });
   assert.equal(result.stopped, true);
+  assert.equal(result.command, "passed");
+  assert.equal(result.cleanup, "stopped");
   assert.equal(result.network, "deny_all");
   assert.equal(stopped, 1);
   assert.equal(calls[0]?.networkPolicy, "deny-all");
   assert.equal(calls[0]?.persistent, false);
+  assert.equal(calls[0]?.timeout, 50_000);
   assert.equal("env" in (calls[0] ?? {}), false);
   assert.equal("source" in (calls[0] ?? {}), false);
   assert.equal(calls[1]?.cmd, "node");
@@ -182,6 +261,133 @@ test("sandbox smoke runs one fixed Linux Node command with denied egress and alw
     }),
   }), /sandbox_command_failed/);
   assert.equal(stoppedAfterFailure, 1);
+});
+
+test("sandbox cleanup is idempotent when the session is already terminal or returns 410", async () => {
+  let terminalStopCalls = 0;
+  const alreadyTerminal = await runSyntheticSandboxSmoke({
+    create: async () => ({
+      status: "stopped",
+      runCommand: async () => ({
+        exitCode: 0,
+        stdout: async () => JSON.stringify({ platform: "linux", arch: "arm64", nodeVersion: "24.1.0" }),
+        stderr: async () => "",
+      }),
+      stop: async () => { terminalStopCalls += 1; },
+    }),
+  });
+  assert.equal(alreadyTerminal.cleanup, "already_terminal");
+  assert.equal(alreadyTerminal.stopped, true);
+  assert.equal(terminalStopCalls, 0);
+
+  const secret = "sandbox-private-response";
+  const stoppedResponse = Object.assign(new Error(secret), {
+    name: "APIError",
+    response: { status: 410 },
+    json: { error: { message: secret } },
+    text: secret,
+  });
+  let timedOutStopCalls = 0;
+  const timedOutBeforeStop = await runSyntheticSandboxSmoke({
+    create: async () => ({
+      status: "running",
+      runCommand: async () => ({
+        exitCode: 0,
+        stdout: async () => JSON.stringify({ platform: "linux", arch: "x64", nodeVersion: "24.1.0" }),
+        stderr: async () => "",
+      }),
+      stop: async () => {
+        timedOutStopCalls += 1;
+        throw stoppedResponse;
+      },
+    }),
+  });
+  assert.equal(timedOutBeforeStop.cleanup, "already_terminal");
+  assert.equal(timedOutBeforeStop.stopped, true);
+  assert.equal(timedOutStopCalls, 1);
+  assert.equal(JSON.stringify(timedOutBeforeStop).includes(secret), false);
+
+  const noActiveSession = await runSyntheticSandboxSmoke({
+    create: async () => ({
+      get status(): "running" {
+        throw new Error("SDK session cache is empty");
+      },
+      runCommand: async () => ({
+        exitCode: 0,
+        stdout: async () => JSON.stringify({ platform: "linux", arch: "x64", nodeVersion: "24.1.0" }),
+        stderr: async () => "",
+      }),
+      stop: async () => { throw new Error("No active session to stop."); },
+    }),
+  });
+  assert.equal(noActiveSession.cleanup, "already_terminal");
+  assert.equal(noActiveSession.stopped, true);
+});
+
+test("sandbox failed or aborted terminal states are cleaned but never reported as success", async () => {
+  for (const status of ["failed", "aborted"] as const) {
+    let stopCalls = 0;
+    await assert.rejects(
+      runSyntheticSandboxSmoke({
+        create: async () => ({
+          status,
+          runCommand: async () => ({
+            exitCode: 0,
+            stdout: async () => JSON.stringify({ platform: "linux", arch: "x64", nodeVersion: "24.1.0" }),
+            stderr: async () => "",
+          }),
+          stop: async () => { stopCalls += 1; },
+        }),
+      }),
+      (error: unknown) => {
+        const failure = error as Error & { diagnostic?: Record<string, unknown> };
+        assert.equal(failure.message, "sandbox_terminal_failed");
+        assert.deepEqual(failure.diagnostic, {
+          name: "SandboxTerminalError",
+          code: status === "failed" ? "SANDBOX_FAILED" : "SANDBOX_ABORTED",
+        });
+        return true;
+      },
+    );
+    assert.equal(stopCalls, 0);
+  }
+});
+
+test("sandbox cleanup does not mistake a still-stopping 422 response for completion", async () => {
+  const secret = "sandbox-stopping-private-response";
+  let captured: unknown;
+  try {
+    await runSyntheticSandboxSmoke({
+      create: async () => ({
+        status: "stopping",
+        runCommand: async () => ({
+          exitCode: 0,
+          stdout: async () => JSON.stringify({ platform: "linux", arch: "x64", nodeVersion: "24.1.0" }),
+          stderr: async () => "",
+        }),
+        stop: async () => {
+          throw Object.assign(new Error(secret), {
+            name: "APIError",
+            response: { status: 422 },
+            json: { error: { message: secret } },
+            text: secret,
+          });
+        },
+      }),
+    });
+  } catch (error) {
+    captured = error;
+  }
+
+  assert.ok(captured instanceof Error);
+  const failure = captured as Error & { diagnostic?: Record<string, unknown> };
+  assert.equal(failure.message, "sandbox_cleanup_failed");
+  assert.deepEqual(failure.diagnostic, {
+    name: "APIError",
+    code: "SANDBOX_STOPPING",
+    status: 422,
+  });
+  assert.equal(JSON.stringify(failure.diagnostic).includes(secret), false);
 });
 
 test("source contract excludes static AI keys, auth caches, databases, claims, and channel writes", async () => {
@@ -198,6 +404,8 @@ test("source contract excludes static AI keys, auth caches, databases, claims, a
   assert.match(helper, /getVercelOidcToken/);
   assert.match(helper, /apiKey: input\.oidcToken/);
   assert.match(helper, /"ai-gateway-auth-method": "oidc"/);
+  assert.match(helper, /maxOutputTokens: 256/);
+  assert.doesNotMatch(helper, /zeroDataRetention|disallowPromptTraining/);
   assert.match(helper, /networkPolicy: "deny-all"/);
   assert.match(helper, /persistent: false/);
   assert.match(route, /runtime = "nodejs"/);
