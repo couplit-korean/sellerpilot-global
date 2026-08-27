@@ -18,7 +18,11 @@ import {
 } from "../lib/ai-cli-contract";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
 import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
-import { hasNegatedHealthFunctionalFoodSignal } from "../lib/product-classification";
+import {
+  hasNegatedHealthFunctionalFoodSignal,
+  hasPrescriptiveIntakeInstruction,
+  hasUnsupportedGeneralFoodEfficacyClaim,
+} from "../lib/product-classification";
 
 const CLAIM_TOKEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -618,6 +622,42 @@ test("general-food guard allows ordinary localized taste, package, and net-weigh
     result.localizedListings[listingIndex].detailSections[0].body += ` ${description}`;
   }
   const parsed = cliStudioResultSchema.safeParse(result);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("ACV package count after a completed sentence is not treated as a Korean intake direction", () => {
+  const description = "BEYOND ORIGIN 애사비 젤리스틱은 포장에 기타가공품으로 표시된 씹어 먹는 일반식품입니다. 한 상자는 15g 낱포 14개, 총 내용량 210g이며 사과초모식초 5%와 사과향 향료 0.25%가 표시되어 있습니다. 구매 전 포장의 원재료, 영양정보, 보관방법과 주의사항을 확인하세요.";
+  assert.equal(hasPrescriptiveIntakeInstruction(description), false);
+  assert.equal(hasPrescriptiveIntakeInstruction("씹어 먹는 일반식품으로 한 포씩 개별 포장되어 있습니다."), false);
+  assert.equal(hasPrescriptiveIntakeInstruction("씹어 먹는 일반식품으로 한 포씩 개별 포장하여 섭취하세요."), true);
+  assert.equal(hasPrescriptiveIntakeInstruction("하루 섭취량입니다. 1포를 드세요."), true);
+  assert.equal(hasPrescriptiveIntakeInstruction("이 상품은 씹어 먹는 식품이며 1일 1회 1포를 섭취하십시오."), true);
+
+  const result = generalFoodSafetyResult();
+  const listing = result.localizedListings.find((entry) => entry.channel === "temu" && entry.market === "KR");
+  assert.ok(listing);
+  listing.description = description;
+  const normalized = normalizeStudioGeneralFoodSafety(result);
+  assert.strictEqual(normalized, result, "the verified package description must not be erased");
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("Lotte Thai non-health-product wording remains an explicit bounded negation", () => {
+  const description = "บิสกิตแซนด์ทรงกลมลายดอกไม้ประกบครีมสีขาว แบ่งบรรจุเป็น 6 ซองย่อย ซองละ 52.5 กรัม รวม 315 กรัม ฉลากด้านหน้าระบุว่ามีนมพาสเจอร์ไรส์ 0.1% และนมผงขาดมันเนย 0.05% ผลิตภัณฑ์นี้จัดเป็นขนมทั่วไป ไม่ใช่อาหารเพื่อสุขภาพหรือผลิตภัณฑ์สำหรับป้องกันหรือรักษาโรค";
+  assert.equal(hasUnsupportedGeneralFoodEfficacyClaim(description), false);
+  assert.equal(hasUnsupportedGeneralFoodEfficacyClaim("ผลิตภัณฑ์นี้เป็นผลิตภัณฑ์สำหรับป้องกันหรือรักษาโรค"), true);
+  assert.equal(hasUnsupportedGeneralFoodEfficacyClaim("ผลิตภัณฑ์นี้ไม่ใช่ของเล่นและมีรสหวาน จึงช่วยป้องกันโรค"), true);
+  assert.equal(hasUnsupportedGeneralFoodEfficacyClaim("ผลิตภัณฑ์นี้ไม่ใช่ขนมธรรมดาเพราะช่วยป้องกันโรค"), true);
+  assert.equal(hasUnsupportedGeneralFoodEfficacyClaim("ผลิตภัณฑ์นี้ไม่ใช่เพียงขนม แต่ช่วยป้องกันโรค"), true);
+
+  const result = generalFoodSafetyResult();
+  const listing = result.localizedListings.find((entry) => entry.channel === "lazada" && entry.market === "TH");
+  assert.ok(listing);
+  listing.description = description;
+  const normalized = normalizeStudioGeneralFoodSafety(result);
+  assert.strictEqual(normalized, result, "the explicit Thai negation must not be erased");
+  const parsed = cliStudioResultSchema.safeParse(normalized);
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
 

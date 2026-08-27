@@ -89,10 +89,13 @@ const generalFoodEfficacyPatterns: readonly GeneralFoodEfficacyRule[] = [
 const measuredIntakeAmountSource = "(?:\\d+(?:[.,]\\d+)?|한|두|세|one|two|three|一|二|三)";
 const measuredIntakeUnitSource = "(?:tablets?|capsules?|sachets?|packets?|spoons?|servings?|times?|viên|lần|gói|muỗng|thìa|khẩu\\s*phần|tablet|kapsul|kali|bungkus|sendok|porsi|เม็ด|แคปซูล|ครั้ง|ซอง|ช้อน|หน่วยบริโภค|cápsulas?|comprimidos?|tabletas?|sobres?|cucharadas?|porciones?|veces?|cápsulas?|comprimidos?|tabletes?|sachês?|saquetas?|colheres?|porções?|vezes?|capsules?|comprimés?|sachets?|cuillères?|portions?|fois|kapseln?|tabletten?|beutel|löffel|portionen?|mal|capsule?|compresse?|bustine?|cucchiai?|porzioni?|volte?|회|정|캡슐|포|봉|스푼|개|回|次|錠|粒|包|杯|mg|kg|ml|g|l)";
 const measuredIntakeSource = `${measuredIntakeAmountSource}\\s*${measuredIntakeUnitSource}`;
+const koreanIntakeClauseGapSource = "[^.!?。！？;；\\n]";
+const koreanIntakeHeadingSource = "(?:섭취\\s*량|복용\\s*량|권장\\s*(?:섭취\\s*)?량)";
 
 const prescriptiveIntakePatterns: readonly GeneralFoodEfficacyRule[] = [
-  { language: "ko", pattern: new RegExp(`(?:하루|1일|일일|매일|매회|1회|회당).{0,24}${measuredIntakeSource}`, "giu") },
-  { language: "ko", pattern: new RegExp(`(?:섭취|복용|먹|마시).{0,20}${measuredIntakeSource}`, "giu") },
+  { language: "ko", pattern: new RegExp(`(?:하루|1일|일일|매일|매회|1회|회당)${koreanIntakeClauseGapSource}{0,16}${koreanIntakeHeadingSource}${koreanIntakeClauseGapSource}{0,12}[.!?。！？;；]\\s*${measuredIntakeSource}`, "giu") },
+  { language: "ko", pattern: new RegExp(`(?:하루|1일|일일|매일|매회|1회|회당)${koreanIntakeClauseGapSource}{0,24}${measuredIntakeSource}`, "giu") },
+  { language: "ko", pattern: new RegExp(`(?:섭취|복용|먹|마시)${koreanIntakeClauseGapSource}{0,20}${measuredIntakeSource}`, "giu") },
   { language: "en", pattern: new RegExp(`(?:daily|per\\s*day|each\\s*day|a\\s*day).{0,24}${measuredIntakeSource}`, "giu") },
   { language: "en", pattern: new RegExp(`(?:take|consume|eat|drink).{0,20}${measuredIntakeSource}.{0,24}(?:daily|per\\s*day|each\\s*day|a\\s*day)`, "giu") },
   { language: "ja", pattern: new RegExp(`(?:一日|1日|毎日)[^.!?。！？;；,，、\\n]{0,20}?${measuredIntakeSource}`, "giu") },
@@ -163,7 +166,9 @@ function isExplicitlyNegatedHealthClaim(
     return /\b(?:tidak|bukan)(?:\s+(?:dimaksudkan|bertujuan|untuk|boleh|dapat|akan|membantu|menyokong)){0,5}\s*$/iu.test(prefix);
   }
   if (language === "th") {
-    return /ไม่(?:ได้|ได้มี|มี|ใช่|ได้มีไว้เพื่อ|มีวัตถุประสงค์เพื่อ)?[\s\u200b]*$/u.test(prefix);
+    const directlyNegated = /ไม่(?:ได้|ได้มี|มี|ใช่|ได้มีไว้เพื่อ|มีวัตถุประสงค์เพื่อ)?[\s\u200b]*$/u.test(prefix);
+    const explicitlyNotAHealthOrTreatmentProduct = /ไม่ใช่[\s\u200b]*อาหารเพื่อสุขภาพ[\s\u200b]*หรือ[\s\u200b]*ผลิตภัณฑ์สำหรับ[\s\u200b]*$/u.test(prefix);
+    return directlyNegated || explicitlyNotAHealthOrTreatmentProduct;
   }
   if (language === "ja") {
     return /^(?:[^.!?。！？\n]{0,48})(?:しない|しません|できない|できません|されない|されません|ない|ません|ものでは(?:ない|ありません)|効果は(?:ない|ありません))/u.test(suffix)
@@ -205,6 +210,11 @@ function isExplicitlyNegatedIntakeInstruction(
   if (language === "none") return false;
   const { prefix, suffix } = claimClauseContext(value, start, end);
   if (language === "ko") {
+    const descriptivePackageCount = new RegExp(
+      `(?:먹|마시)는${koreanIntakeClauseGapSource}{0,20}(?:일반\\s*식품|식품|제품)${koreanIntakeClauseGapSource}{0,20}${measuredIntakeSource}$`,
+      "iu",
+    ).test(matchedCopy) && /^\s*씩\s*개별\s*포장(?:되어|돼)?\s*(?:있습니다|있다|됩니다|된다|됨)?\s*$/u.test(suffix);
+    if (descriptivePackageCount) return true;
     return /^[^.!?\n]{0,60}(?:(?:섭취|복용|먹|마시)(?:하|되)?지\s*않|(?:섭취|복용|먹|마시)(?:하)?지\s*마|권장하지\s*않|필요(?:가)?\s*없)/u.test(suffix);
   }
   if (language === "en") {
