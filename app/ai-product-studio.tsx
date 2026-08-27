@@ -102,6 +102,7 @@ type StudioAbortScope = {
 const studioUploadTimeoutMs = 45_000;
 const studioJobAdmissionGraceMs = 30_000;
 const studioPreUploadOptimizationLimit = 9;
+const maximumSubmittedIntakeSnapshots = 8;
 
 class StudioJobTerminalError extends Error {}
 
@@ -469,7 +470,12 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   onRunningChange: (running: boolean) => void;
   notify: (message: string) => void;
   onJobQueued?: (jobId: string) => void;
-  onResultReady?: (result: ProductStudioResult, productId: string | null) => void;
+  onResultReady?: (
+    result: ProductStudioResult,
+    productId: string | null,
+    jobId: string,
+    submittedIntake: ProductIntakeDraft | null,
+  ) => void;
 }) {
   const [result, setResult] = useState<ProductStudioResult | null>(null);
   const [thumbnails, setThumbnails] = useState<AutoThumbnail[]>([]);
@@ -497,6 +503,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   const detailSaveInFlightRef = useRef(false);
   const uncertainRegenerationJobIdRef = useRef("");
   const announcedJobIdsRef = useRef(new Set<string>());
+  const submittedIntakesByJobIdRef = useRef(new Map<string, ProductIntakeDraft>());
   const studioMountedRef = useRef(true);
   const lifecycleControllerRef = useRef<AbortController | null>(null);
   const currentImageUrl = aiHero || mainPhoto?.url || "";
@@ -504,11 +511,13 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   useEffect(() => {
     studioMountedRef.current = true;
     lifecycleControllerRef.current = new AbortController();
+    const submittedIntakes = submittedIntakesByJobIdRef.current;
     return () => {
       studioMountedRef.current = false;
       lifecycleControllerRef.current?.abort(studioJobAbortError());
       lifecycleControllerRef.current = null;
       jobMonitors.abortAll();
+      submittedIntakes.clear();
     };
   }, [jobMonitors]);
 
@@ -589,11 +598,15 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
           if (canDisplay()) setCliPhase(phase);
         }, waitOptions);
       } catch (error) {
-        if (error instanceof StudioJobTerminalError) clearActiveStudioJob(job.jobId);
+        if (error instanceof StudioJobTerminalError) {
+          clearActiveStudioJob(job.jobId);
+          submittedIntakesByJobIdRef.current.delete(job.jobId);
+        }
         throw error;
       }
       if (cliResult.mode !== "cli") {
         clearActiveStudioJob(job.jobId);
+        submittedIntakesByJobIdRef.current.delete(job.jobId);
         throw new StudioJobTerminalError("상품 분석 결과 형식이 올바르지 않습니다.");
       }
       const { heroUrl, generatedImages, ...nextResult } = cliResult;
@@ -618,13 +631,16 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       if (!productId) {
         if (productResponse.status === 409 && productPayload.code === "DUPLICATE_SELLER_SKU") {
           clearActiveStudioJob(job.jobId);
+          submittedIntakesByJobIdRef.current.delete(job.jobId);
           throw new StudioJobTerminalError(productPayload.message || "이미 등록된 판매자 SKU라서 상품 원장을 새로 만들지 않았습니다.");
         }
         throw new Error(productPayload.message || "이미지 제작은 완료됐지만 상품 원장 저장을 확인하지 못했습니다. 새로고침하면 완료 작업부터 다시 연결합니다.");
       }
       if (canDisplay()) setSourceProductId(productId);
+      const submittedIntake = submittedIntakesByJobIdRef.current.get(job.jobId) ?? null;
       clearActiveStudioJob(job.jobId);
-      if (canDisplay()) onResultReady?.(nextResult, productId);
+      submittedIntakesByJobIdRef.current.delete(job.jobId);
+      if (canDisplay()) onResultReady?.(nextResult, productId, job.jobId, submittedIntake);
       if (studioMountedRef.current) notify(recovered
         ? `이전 상품의 ChatGPT CLI 작업을 백그라운드에서 복구해 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장을 등록 이력에 연결했습니다.`
         : `ChatGPT CLI 분석, codex-image 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장 연결을 완료했습니다.`);
@@ -677,6 +693,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       setLastError(message);
       if (error instanceof StudioJobTerminalError) {
         clearActiveStudioJob(job.jobId);
+        submittedIntakesByJobIdRef.current.delete(job.jobId);
         releaseOwnJob(job.jobId);
         notify(`${message} 기존 작업이 종료된 것이 확인되어 새로 시도할 수 있습니다.`);
         return;
@@ -720,6 +737,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     let uploadedCleanupPaths: string[] = [];
     let enqueueStarted = false;
     let terminallyRejected = false;
+    let preparedJobId = "";
     try {
       const validatedIntake = productIntakeSchema.safeParse(manualFields);
       if (!validatedIntake.success) {
@@ -734,6 +752,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       if (!accessToken || !userId) throw new Error("AI 제작을 실행하려면 관리자 로그인이 필요합니다.");
       if (photos.length > 100) throw new Error("한 작업에는 대표사진을 포함해 최대 100장까지 분석할 수 있습니다.");
       const jobId = crypto.randomUUID();
+      preparedJobId = jobId;
       const { uploadedPaths: imagePaths, imageSpecs, allUploadedPaths } = await optimizeAndUploadStudioPhotos(
         photos,
         userId,
@@ -743,6 +762,13 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       );
       uploadedCleanupPaths = allUploadedPaths;
       throwIfStudioJobAborted(lifecycleController.signal);
+      const submittedIntakes = submittedIntakesByJobIdRef.current;
+      while (submittedIntakes.size >= maximumSubmittedIntakeSnapshots) {
+        const oldestJobId = submittedIntakes.keys().next().value;
+        if (typeof oldestJobId !== "string") break;
+        submittedIntakes.delete(oldestJobId);
+      }
+      submittedIntakes.set(jobId, { ...validatedIntake.data });
       const queuedJob = persistActiveStudioJob(jobId, studioSessionId);
       displayJobId.current = jobId;
       queuedOwnJobIdRef.current = jobId;
@@ -782,6 +808,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       if (!response.ok || !queued.jobId) {
         terminallyRejected = true;
         clearActiveStudioJob(jobId);
+        submittedIntakesByJobIdRef.current.delete(jobId);
         releaseOwnJob(jobId);
         throw new StudioJobTerminalError(queued.message ?? "상품 분석 요청을 처리하지 못했습니다.");
       }
@@ -794,6 +821,9 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     } catch (error) {
       if ((!enqueueStarted || terminallyRejected) && uploadedCleanupPaths.length) {
         await cleanupUnenqueuedStudioPhotos(uploadedCleanupPaths).catch(() => undefined);
+      }
+      if ((!enqueueStarted || terminallyRejected) && preparedJobId) {
+        submittedIntakesByJobIdRef.current.delete(preparedJobId);
       }
       if (isStudioJobAbort(error) || !studioMountedRef.current) return;
       const message = error instanceof Error ? error.message : "AI 스튜디오 처리 중 오류가 발생했습니다.";

@@ -29,6 +29,29 @@ test("the same product form cannot enqueue a duplicate while its own job is acti
   assert.match(page, /onRunningChange=\{\(nextRunning\) => \{[\s\S]{0,180}automationStartInFlightRef\.current = nextRunning/);
 });
 
+test("studio completion reconciles only the validated intake snapshot for its exact job", async () => {
+  const studio = await readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8");
+  const finishStart = studio.indexOf("const finishStudioJob = useCallback");
+  const finishEnd = studio.indexOf("const releaseOwnJob = useCallback", finishStart);
+  const finishBlock = studio.slice(finishStart, finishEnd);
+  const generateStart = studio.indexOf("const generate = useCallback");
+  const generateEnd = studio.indexOf("const retryOwnJobStatus = useCallback", generateStart);
+  const generateBlock = studio.slice(generateStart, generateEnd);
+
+  assert.ok(finishStart >= 0 && finishEnd > finishStart);
+  assert.ok(generateStart >= 0 && generateEnd > generateStart);
+  assert.match(studio, /const maximumSubmittedIntakeSnapshots = 8/);
+  assert.match(studio, /submittedIntakesByJobIdRef = useRef\(new Map<string, ProductIntakeDraft>\(\)\)/);
+  assert.match(studio, /const submittedIntakes = submittedIntakesByJobIdRef\.current;[\s\S]{0,280}jobMonitors\.abortAll\(\);\s*submittedIntakes\.clear\(\)/);
+  assert.match(generateBlock, /while \(submittedIntakes\.size >= maximumSubmittedIntakeSnapshots\)/);
+  assert.match(generateBlock, /submittedIntakes\.set\(jobId, \{ \.\.\.validatedIntake\.data \}\)/);
+  assert.match(generateBlock, /terminallyRejected = true;[\s\S]{0,180}submittedIntakesByJobIdRef\.current\.delete\(jobId\)/);
+  assert.match(generateBlock, /if \(\(!enqueueStarted \|\| terminallyRejected\) && preparedJobId\)[\s\S]{0,140}delete\(preparedJobId\)/);
+  assert.match(finishBlock, /const submittedIntake = submittedIntakesByJobIdRef\.current\.get\(job\.jobId\) \?\? null/);
+  assert.match(finishBlock, /submittedIntakesByJobIdRef\.current\.delete\(job\.jobId\);\s*if \(canDisplay\(\)\) onResultReady\?\.\(nextResult, productId, job\.jobId, submittedIntake\)/);
+  assert.match(finishBlock, /error instanceof StudioJobTerminalError[\s\S]{0,180}submittedIntakesByJobIdRef\.current\.delete\(job\.jobId\)/);
+});
+
 test("a failed orphan analysis retries only its existing AI job before opening recovery", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const start = page.indexOf("const recoverFailedProductAnalysis");

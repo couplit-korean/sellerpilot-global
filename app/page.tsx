@@ -2215,12 +2215,15 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const applyCommerceTemplate = (template: CommerceTemplate) => {
     const numeric = (key: string, fallback: number) => typeof template.values[key] === "number" ? Number(template.values[key]) : fallback;
     const string = (key: string, fallback: string) => typeof template.values[key] === "string" ? String(template.values[key]) : fallback;
-    setIntake((current) => ({
-      ...current,
-      weightKg: numeric("weightKg", current.weightKg), packageLengthCm: numeric("packageLengthCm", current.packageLengthCm),
-      packageWidthCm: numeric("packageWidthCm", current.packageWidthCm), packageHeightCm: numeric("packageHeightCm", current.packageHeightCm),
-      shippingFeeKrw: numeric("shippingFeeKrw", current.shippingFeeKrw), shippingRule: string("shippingRule", current.shippingRule), packagingRule: string("packagingRule", current.packagingRule),
-    }));
+    const currentIntake = intakeRef.current;
+    const nextTemplateIntake: ProductIntakeDraft = {
+      ...currentIntake,
+      weightKg: numeric("weightKg", currentIntake.weightKg), packageLengthCm: numeric("packageLengthCm", currentIntake.packageLengthCm),
+      packageWidthCm: numeric("packageWidthCm", currentIntake.packageWidthCm), packageHeightCm: numeric("packageHeightCm", currentIntake.packageHeightCm),
+      shippingFeeKrw: numeric("shippingFeeKrw", currentIntake.shippingFeeKrw), shippingRule: string("shippingRule", currentIntake.shippingRule), packagingRule: string("packagingRule", currentIntake.packagingRule),
+    };
+    intakeRef.current = nextTemplateIntake;
+    setIntake(nextTemplateIntake);
     setAppliedTemplate(template.name);
     notify(`‘${template.name}’ 배송·포장 템플릿을 입력란에 적용했습니다.`);
   };
@@ -2676,7 +2679,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify("동일 상품 가격 확인이 끝난 뒤 상품 분석을 시작해 주세요. 조회 실패 시에는 공란 상태로 계속 진행할 수 있습니다.");
       return;
     }
-    const parsed = productIntakeSchema.safeParse(intake);
+    const parsed = productIntakeSchema.safeParse(intakeRef.current);
     if (!parsed.success) {
       const errors: Record<string, string> = {};
       for (const issue of parsed.error.issues) {
@@ -2867,17 +2870,32 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         }}
         notify={notify}
         onJobQueued={(jobId) => setQueuedJobId(jobId)}
-        onResultReady={(studioResult, productId) => {
+        onResultReady={(studioResult, productId, _jobId, submittedIntake) => {
           setAnalyzedProductName(studioResult.product.name);
           setAnalyzedProductId(productId);
           const koreanListing = studioResult.localizedListings.find((listing) => listing.channel === "coupang" && listing.market === "KR")
             ?? studioResult.localizedListings.find((listing) => listing.channel === "smartstore" && listing.market === "KR");
-          setIntake((current) => ({
-            ...current,
-            productName: studioResult.product.name,
-            categoryHint: studioResult.product.category,
-            description: koreanListing?.description ?? studioResult.product.oneLine,
-          }));
+          const currentIntake = intakeRef.current;
+          const nextIntake: ProductIntakeDraft = submittedIntake ? {
+            ...currentIntake,
+            productName: Object.is(currentIntake.productName, submittedIntake.productName)
+              ? studioResult.product.name
+              : currentIntake.productName,
+            categoryHint: Object.is(currentIntake.categoryHint, submittedIntake.categoryHint)
+              ? studioResult.product.category
+              : currentIntake.categoryHint,
+            description: Object.is(currentIntake.description, submittedIntake.description)
+              ? koreanListing?.description ?? studioResult.product.oneLine
+              : currentIntake.description,
+          } : currentIntake;
+          researchAppliedValuesRef.current = collectResearchAppliedValues(
+            currentIntake,
+            nextIntake,
+            ["productName", "categoryHint", "description"],
+            researchAppliedValuesRef.current,
+          );
+          intakeRef.current = nextIntake;
+          setIntake(nextIntake);
           setPublishRefreshVersion((current) => current + 1);
         }}
       />
