@@ -27,6 +27,7 @@ test("AI heartbeat keeps authentication, server configuration, and transient RPC
   assert.match(source, /claimToken: z\.string\(\)\.uuid\(\)/);
   assert.match(source, /p_claim_token: parsed\.data\.claimToken/);
   assert.match(source, /p_worker_version: parsed\.data\.version \?\? "sellerpilot-cli-worker\/unknown"/);
+  assert.doesNotMatch(source, /supportsLiveResultUploadAuthorization|minimumResultUploadWorkerVersion/);
 });
 
 test("AI completion bounds Supabase calls and maps both lifecycle RPC failures", async () => {

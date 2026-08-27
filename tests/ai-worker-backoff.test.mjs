@@ -111,7 +111,7 @@ test("AI claim route bounds Supabase RPCs and preserves 401 versus 503 semantics
   assert.doesNotMatch(route, /if \(error\) return NextResponse\.json\([^\n]+status: 401/);
   assert.doesNotMatch(route, /!workerToken\.startsWith\("spw_"\) \|\| !supabaseUrl \|\| !secretKey/);
   assert.match(route, /supportsLiveResultUploadAuthorization\(version\)/);
-  assert.match(route, /minimumVersion: "sellerpilot-cli-worker\/1\.43"/);
+  assert.match(route, /minimumVersion: minimumResultUploadWorkerVersion/);
   assert.match(route, /status: 426/);
   assert.ok(
     route.indexOf("supportsLiveResultUploadAuthorization(version)")

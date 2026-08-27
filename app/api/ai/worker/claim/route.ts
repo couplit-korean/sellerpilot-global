@@ -3,6 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
 import { studioCompetitorContextSchema } from "../../../../../lib/ai-cli-contract";
+import {
+  minimumResultUploadWorkerVersion,
+  supportsLiveResultUploadAuthorization,
+} from "../../../../../lib/ai-worker-version";
 import { sourceImagePathsForWorker } from "../../../../../lib/studio-image-paths";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 import {
@@ -15,16 +19,6 @@ export const runtime = "nodejs";
 
 type ClaimCompensationMode = "requeue" | "fail";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MINIMUM_RESULT_UPLOAD_WORKER = { major: 1, minor: 42 } as const;
-
-function supportsLiveResultUploadAuthorization(version: string) {
-  const match = /^sellerpilot-cli-worker\/(\d+)\.(\d+)(?:\.(\d+))?$/.exec(version);
-  if (!match) return false;
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  return major > MINIMUM_RESULT_UPLOAD_WORKER.major
-    || (major === MINIMUM_RESULT_UPLOAD_WORKER.major && minor >= MINIMUM_RESULT_UPLOAD_WORKER.minor);
-}
 
 function safeErrorMetadata(error: unknown) {
   if (!error || typeof error !== "object") return { code: "unknown", status: "unknown" };
@@ -68,7 +62,7 @@ export async function POST(request: Request) {
   if (!supportsLiveResultUploadAuthorization(version)) {
     return NextResponse.json({
       message: "AI 작업자를 최신 버전으로 재시작해 주세요.",
-      minimumVersion: "sellerpilot-cli-worker/1.43",
+      minimumVersion: minimumResultUploadWorkerVersion,
     }, {
       status: 426,
       headers: { "cache-control": "no-store, max-age=0" },
