@@ -247,7 +247,7 @@ export function buildAssetImagePrompt(
     const reservedBottom = Number((placement.top + placement.height).toFixed(4));
     const contactMode = contactModeOverride ?? resolveIdentityBackgroundContactMode(result, settingShot);
     const contactInstruction = contactMode === "surface-supported"
-      ? `Its bottom edge at normalized y=${contactLine} is the authoritative product contact line: an integrated horizontal support plane must visibly cross the narrow y=${contactBandStart}..${contactBandEnd} tolerance band and continue below it, with clear backing architecture above it. Never leave the complete contact band as an uninterrupted wall, vertical panel or open air.`
+      ? `Its bottom edge at normalized y=${contactLine} is the authoritative product contact line. The narrow y=${contactBandStart}..${contactBandEnd} tolerance band is only the audit search range: after normalizing the plate to 256-by-256, the final horizontal support gradient-ridge centre must land within 2 sampled pixels of nominal y=${contactLine}. Merely placing a seam somewhere inside the tolerance band fails because the source-product composite bottom remains fixed at that nominal line. The assigned support material must continue below the ridge, with clear backing architecture above it; never leave the complete contact band as an uninterrupted wall, vertical panel or open air.`
       : "This trusted slot uses suspended-or-planar placement: keep one coherent, unobstructed backing or hanging plane across the entire zone and preserve full-silhouette clearance. Do not force or invent a tabletop, shelf, pedestal or bottom contact line.";
     const safeContract = resolveProductIdentityBackgroundContract(settingShot, preset.id);
     const safeEnvironmentAssignment = settingShot

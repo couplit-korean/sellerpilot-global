@@ -3055,7 +3055,7 @@ async function generateDistinctAsset({
           const settingShot = retrySettingShot;
           if (!settingShot) throw new Error(`${preset.id} 설정샷의 장소·시간대·표면·카메라 계약이 없습니다.`);
           const backgroundContract = resolveIdentityBackgroundContract(settingShot, preset.id);
-          await assertIdentityBackgroundPlate(generated, generationPreset);
+          await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
           await executeSourceProductCutout("background", "", "", [{ file: outputFile }], leaseSignal);
           semanticAudit = await auditGeneratedIdentityBackground({
             outputFile,

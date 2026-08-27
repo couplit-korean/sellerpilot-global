@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import {
+  IDENTITY_BACKGROUND_CONTACT_TOLERANCE,
   isIdentityBackgroundContactMode,
   type IdentityBackgroundContactMode,
 } from "./ai-background-audit";
@@ -75,6 +76,72 @@ const sourceCompositeRotationDegrees: Record<string, number> = {
   "detail-use": 5,
 };
 
+const IDENTITY_BACKGROUND_GEOMETRY_SAMPLE_SIZE = 256;
+const MINIMUM_CONTACT_SEAM_GRADIENT = 8;
+const MINIMUM_CONTACT_SEAM_COVERAGE = 0.78;
+const MINIMUM_VERTICAL_INTRUSION_GRADIENT = 28;
+const MAXIMUM_CONTACT_RIDGE_WIDTH = 9;
+const MINIMUM_SUPPORT_DISTRIBUTION_DISTANCE = 4;
+const MAXIMUM_SUPPORT_DEPTH_DRIFT = 24;
+const MAXIMUM_SUPPORT_LATERAL_DRIFT = 48;
+
+class IdentityBackgroundReservedZoneError extends Error {
+  readonly failedDimensions = ["reserved-zone"];
+  readonly retryAuditFeedback = { failedDimensions: ["reserved-zone"] };
+
+  constructor(spec: IdentityAssetSpec, reason: string) {
+    super(`${spec.id} 배경판의 상품 배치 구역이 접촉면 기하 검사를 통과하지 못했습니다(reserved-zone): ${reason}`);
+    this.name = "IdentityBackgroundReservedZoneError";
+  }
+}
+
+type LuminanceRegionSignature = {
+  mean: number;
+  deviation: number;
+  texture: number;
+};
+
+function luminanceRegionSignature(
+  pixels: Buffer,
+  size: number,
+  xStart: number,
+  xEnd: number,
+  yStart: number,
+  yEnd: number,
+): LuminanceRegionSignature {
+  let count = 0;
+  let sum = 0;
+  let sumSquares = 0;
+  let texture = 0;
+  for (let y = yStart; y < yEnd; y += 1) {
+    for (let x = xStart; x < xEnd; x += 1) {
+      const value = pixels[y * size + x];
+      count += 1;
+      sum += value;
+      sumSquares += value * value;
+      const horizontal = x + 1 < xEnd ? Math.abs(value - pixels[y * size + x + 1]) : 0;
+      const vertical = y + 1 < yEnd ? Math.abs(value - pixels[(y + 1) * size + x]) : 0;
+      texture += (horizontal + vertical) / 2;
+    }
+  }
+  if (count < 1) return { mean: 0, deviation: 0, texture: 0 };
+  const mean = sum / count;
+  return {
+    mean,
+    deviation: Math.sqrt(Math.max(0, sumSquares / count - mean ** 2)),
+    texture: texture / count,
+  };
+}
+
+function luminanceSignatureDistance(
+  left: LuminanceRegionSignature,
+  right: LuminanceRegionSignature,
+) {
+  return Math.abs(left.mean - right.mean)
+    + Math.abs(left.deviation - right.deviation) * 0.35
+    + Math.abs(left.texture - right.texture) * 0.35;
+}
+
 function boundedPlacement(spec: IdentityAssetSpec) {
   const placement = spec.identityPolicy.placement;
   const left = Math.max(0, Math.min(spec.width - 1, Math.round(spec.width * placement.left)));
@@ -82,6 +149,178 @@ function boundedPlacement(spec: IdentityAssetSpec) {
   const width = Math.max(1, Math.min(spec.width - left, Math.round(spec.width * placement.width)));
   const height = Math.max(1, Math.min(spec.height - top, Math.round(spec.height * placement.height)));
   return { left, top, width, height };
+}
+
+async function assertSurfaceSupportedReservedZoneGeometry(
+  source: sharp.Sharp,
+  spec: IdentityAssetSpec,
+) {
+  const { left, top, width, height } = spec.identityPolicy.placement;
+  const contactLine = top + height;
+  if (![left, top, width, height, contactLine].every(Number.isFinite)
+      || left < 0 || top < 0 || width <= 0 || height <= 0
+      || left + width > 1 || contactLine <= 0 || contactLine >= 1) {
+    throw new IdentityBackgroundReservedZoneError(spec, "상품 배치 좌표가 프레임 안의 유효한 접촉선을 만들지 못했습니다.");
+  }
+
+  const size = IDENTITY_BACKGROUND_GEOMETRY_SAMPLE_SIZE;
+  const pixels = await source.clone()
+    .resize(size, size, { fit: "fill" })
+    .removeAlpha()
+    .greyscale()
+    .raw()
+    .toBuffer();
+  const xStart = Math.max(2, Math.ceil(left * size));
+  const xEnd = Math.min(size - 2, Math.floor((left + width) * size));
+  const bandStart = Math.max(1, Math.floor((contactLine - IDENTITY_BACKGROUND_CONTACT_TOLERANCE) * size));
+  const bandEnd = Math.min(size - 2, Math.ceil((contactLine + IDENTITY_BACKGROUND_CONTACT_TOLERANCE) * size));
+  const columnCount = xEnd - xStart;
+  if (columnCount < 16 || bandEnd < bandStart) {
+    throw new IdentityBackgroundReservedZoneError(spec, "접촉면을 판정할 상품 배치 구역이 너무 좁습니다.");
+  }
+
+  const verticalGradient = (x: number, y: number) => Math.abs(
+    pixels[(y + 1) * size + x] - pixels[(y - 1) * size + x],
+  );
+  const orderedRowScores: Array<{ y: number; coverage: number; strength: number }> = [];
+  for (let y = bandStart; y <= bandEnd; y += 1) {
+    let coverage = 0;
+    let strength = 0;
+    for (let x = xStart; x < xEnd; x += 1) {
+      const gradient = verticalGradient(x, y);
+      if (gradient >= MINIMUM_CONTACT_SEAM_GRADIENT) coverage += 1;
+      strength += gradient;
+    }
+    orderedRowScores.push({ y, coverage, strength });
+  }
+  const rankedRowScores = [...orderedRowScores].sort((leftScore, rightScore) => (
+    rightScore.coverage - leftScore.coverage || rightScore.strength - leftScore.strength
+  ));
+  const bestRow = rankedRowScores[0];
+  const minimumCoveredColumns = Math.ceil(columnCount * MINIMUM_CONTACT_SEAM_COVERAGE);
+  if (!bestRow || bestRow.coverage < minimumCoveredColumns) {
+    throw new IdentityBackgroundReservedZoneError(spec, "접촉 허용 밴드 전체를 가로지르는 수평 지지면 경계가 없습니다.");
+  }
+  const bestIndex = orderedRowScores.findIndex((candidate) => candidate.y === bestRow.y);
+  const ridgeCoverageFloor = Math.ceil(columnCount * 0.6);
+  const belongsToGradientRidge = (candidate: (typeof orderedRowScores)[number]) => (
+    candidate.coverage >= ridgeCoverageFloor
+    && candidate.strength >= bestRow.strength * 0.18
+  );
+  let ridgeStartIndex = bestIndex;
+  let ridgeEndIndex = bestIndex;
+  while (ridgeStartIndex > 0 && belongsToGradientRidge(orderedRowScores[ridgeStartIndex - 1])) {
+    ridgeStartIndex -= 1;
+  }
+  while (ridgeEndIndex + 1 < orderedRowScores.length
+      && belongsToGradientRidge(orderedRowScores[ridgeEndIndex + 1])) {
+    ridgeEndIndex += 1;
+  }
+  const ridgeRows = orderedRowScores.slice(ridgeStartIndex, ridgeEndIndex + 1);
+  if (ridgeRows.length > MAXIMUM_CONTACT_RIDGE_WIDTH) {
+    throw new IdentityBackgroundReservedZoneError(spec, "지지면 경계 전이가 너무 넓어 하나의 접촉선으로 확정할 수 없습니다.");
+  }
+  const competingRidge = orderedRowScores.some((candidate, index) => (
+    (index < ridgeStartIndex - 1 || index > ridgeEndIndex + 1)
+    && candidate.coverage >= minimumCoveredColumns
+    && candidate.strength >= bestRow.strength * 0.65
+  ));
+  if (competingRidge) {
+    throw new IdentityBackgroundReservedZoneError(spec, "접촉 허용 밴드 안에 서로 분리된 경계 능선이 있습니다.");
+  }
+  const ridgeWeight = ridgeRows.reduce((sum, candidate) => sum + candidate.strength, 0);
+  const ridgeCenter = ridgeRows.reduce(
+    (sum, candidate) => sum + candidate.y * candidate.strength,
+    0,
+  ) / ridgeWeight;
+  const nominalContactRow = contactLine * size;
+  if (!Number.isFinite(ridgeCenter) || Math.abs(ridgeCenter - nominalContactRow) > 2) {
+    throw new IdentityBackgroundReservedZoneError(spec, "지지면 경계가 실제 합성 하단의 nominal 접촉선에서 2px보다 멀리 떨어졌습니다.");
+  }
+
+  const seamPoints: Array<{ x: number; y: number }> = [];
+  const ridgeStart = ridgeRows[0].y;
+  const ridgeEnd = ridgeRows[ridgeRows.length - 1].y;
+  for (let x = xStart; x < xEnd; x += 1) {
+    let gradientSum = 0;
+    let weightedY = 0;
+    let strongestGradient = 0;
+    for (let y = ridgeStart; y <= ridgeEnd; y += 1) {
+      const gradient = verticalGradient(x, y);
+      gradientSum += gradient;
+      weightedY += y * gradient;
+      strongestGradient = Math.max(strongestGradient, gradient);
+    }
+    if (gradientSum >= MINIMUM_CONTACT_SEAM_GRADIENT * 2
+        && strongestGradient >= MINIMUM_CONTACT_SEAM_GRADIENT) {
+      seamPoints.push({ x, y: weightedY / gradientSum });
+    }
+  }
+  if (seamPoints.length < minimumCoveredColumns) {
+    throw new IdentityBackgroundReservedZoneError(spec, "지지면 접촉선의 연속 범위가 상품 배치 폭보다 짧습니다.");
+  }
+
+  const meanX = seamPoints.reduce((sum, point) => sum + point.x, 0) / seamPoints.length;
+  const meanY = seamPoints.reduce((sum, point) => sum + point.y, 0) / seamPoints.length;
+  const denominator = seamPoints.reduce((sum, point) => sum + (point.x - meanX) ** 2, 0);
+  const slope = denominator === 0 ? 0 : seamPoints.reduce(
+    (sum, point) => sum + (point.x - meanX) * (point.y - meanY),
+    0,
+  ) / denominator;
+  const riseAcrossReservedZone = Math.abs(slope * Math.max(1, columnCount - 1));
+  const residualRms = Math.sqrt(seamPoints.reduce((sum, point) => {
+    const predictedY = meanY + slope * (point.x - meanX);
+    return sum + (point.y - predictedY) ** 2;
+  }, 0) / seamPoints.length);
+  const seamRange = Math.max(...seamPoints.map((point) => point.y))
+    - Math.min(...seamPoints.map((point) => point.y));
+  if (riseAcrossReservedZone > 3 || residualRms > 1.5 || seamRange > 4) {
+    throw new IdentityBackgroundReservedZoneError(spec, "지지면 경계가 상품 배치 폭에서 수평을 유지하지 못했습니다.");
+  }
+
+  const belowStart = Math.min(size - 2, ridgeEnd + 3);
+  const belowDepth = size - 1 - belowStart;
+  const sampleDepth = Math.min(10, Math.floor(belowDepth / 3));
+  const aboveEnd = ridgeStart - 3;
+  if (sampleDepth < 3 || aboveEnd - sampleDepth < 1) {
+    throw new IdentityBackgroundReservedZoneError(spec, "접촉선 위·아래의 배경판 깊이가 지지면 연속성을 판정하기에 부족합니다.");
+  }
+  const backingSignature = luminanceRegionSignature(
+    pixels, size, xStart, xEnd, aboveEnd - sampleDepth, aboveEnd,
+  );
+  const nearSupportSignature = luminanceRegionSignature(
+    pixels, size, xStart, xEnd, belowStart, belowStart + sampleDepth,
+  );
+  const farSupportSignature = luminanceRegionSignature(
+    pixels, size, xStart, xEnd, size - 1 - sampleDepth, size - 1,
+  );
+  if (luminanceSignatureDistance(backingSignature, nearSupportSignature)
+      < MINIMUM_SUPPORT_DISTRIBUTION_DISTANCE) {
+    throw new IdentityBackgroundReservedZoneError(spec, "접촉선 위·아래가 같은 평면 분포여서 얇은 줄무늬와 실제 지지면을 구분할 수 없습니다.");
+  }
+  if (luminanceSignatureDistance(nearSupportSignature, farSupportSignature) > MAXIMUM_SUPPORT_DEPTH_DRIFT) {
+    throw new IdentityBackgroundReservedZoneError(spec, "접촉선 아래 지지면의 명도·질감 분포가 프레임 하단까지 연속되지 않습니다.");
+  }
+  const lateralMeans = Array.from({ length: 3 }, (_, index) => {
+    const segmentStart = Math.round(xStart + columnCount * index / 3);
+    const segmentEnd = Math.round(xStart + columnCount * (index + 1) / 3);
+    return luminanceRegionSignature(pixels, size, segmentStart, segmentEnd, belowStart, size - 1).mean;
+  });
+  if (Math.max(...lateralMeans) - Math.min(...lateralMeans) > MAXIMUM_SUPPORT_LATERAL_DRIFT) {
+    throw new IdentityBackgroundReservedZoneError(spec, "접촉선 아래 지지면이 예약 폭 전체에서 안정적으로 연속되지 않습니다.");
+  }
+
+  const minimumVerticalRun = Math.max(8, Math.ceil((size - belowStart) * 0.45));
+  for (let x = xStart + 1; x < xEnd - 1; x += 1) {
+    let run = 0;
+    for (let y = belowStart; y < size - 1; y += 1) {
+      const horizontalGradient = Math.abs(pixels[y * size + x + 1] - pixels[y * size + x - 1]);
+      run = horizontalGradient >= MINIMUM_VERTICAL_INTRUSION_GRADIENT ? run + 1 : 0;
+      if (run >= minimumVerticalRun) {
+        throw new IdentityBackgroundReservedZoneError(spec, "접촉선 아래 상품 배치 구역에 긴 수직 벽·패널 경계가 침입했습니다.");
+      }
+    }
+  }
 }
 
 /**
@@ -782,7 +1021,11 @@ export async function renderMissingIdentityEvidence(spec: IdentityAssetSpec) {
   return output;
 }
 
-export async function assertIdentityBackgroundPlate(background: Buffer, spec: IdentityAssetSpec) {
+export async function assertIdentityBackgroundPlate(
+  background: Buffer,
+  spec: IdentityAssetSpec,
+  contactMode: IdentityBackgroundContactMode,
+) {
   if (!Buffer.isBuffer(background) || background.length < 1 || background.length > 20 * 1024 * 1024) {
     throw new Error(`${spec.id} 배경판 바이트 크기가 안전 한도를 벗어났습니다.`);
   }
@@ -793,6 +1036,9 @@ export async function assertIdentityBackgroundPlate(background: Buffer, spec: Id
   const backgroundStats = await source.clone().stats();
   if (!backgroundStats.isOpaque) {
     throw new Error(`${spec.id} 배경판은 모든 픽셀이 완전히 불투명해야 합니다.`);
+  }
+  if (!isIdentityBackgroundContactMode(contactMode)) {
+    throw new Error(`${spec.id} 배경판의 canonical 상품 접촉 방식이 올바르지 않습니다.`);
   }
   const fullFrame = await source.clone().resize(128, 128, { fit: "fill" }).removeAlpha().raw().toBuffer();
   const quantized = new Uint16Array(128 * 128);
@@ -870,7 +1116,7 @@ export async function assertIdentityBackgroundPlate(background: Buffer, spec: Id
   }
 
   const placement = boundedPlacement(spec);
-  const sample = await source.extract(placement).resize(96, 96, { fit: "fill" }).greyscale().raw().toBuffer();
+  const sample = await source.clone().extract(placement).resize(96, 96, { fit: "fill" }).greyscale().raw().toBuffer();
   let highContrastEdges = 0;
   let comparisons = 0;
   for (let y = 0; y < 96; y += 1) {
@@ -888,5 +1134,8 @@ export async function assertIdentityBackgroundPlate(background: Buffer, spec: Id
   }
   if (highContrastEdges / comparisons > 0.16) {
     throw new Error(`${spec.id} 배경판의 상품 배치 구역에 글자·포장처럼 보이는 고대비 물체가 있습니다.`);
+  }
+  if (contactMode === "surface-supported") {
+    await assertSurfaceSupportedReservedZoneGeometry(source, spec);
   }
 }

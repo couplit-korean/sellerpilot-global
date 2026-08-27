@@ -351,7 +351,9 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(guidance, /FUNCTIONAL-ROOM PIXEL-PROOF GATE/);
   assert.match(guidance, /two independent fixed room-recognition structures/);
   assert.match(guidance, /third, separately identifiable integrated architectural element/);
-  assert.match(guidance, /continuous horizontal support boundary fully inside/);
+  assert.match(guidance, /continuous horizontal support boundary across the complete reserved x-span/);
+  assert.match(guidance, /256-by-256/);
+  assert.match(guidance, /within 2 sampled pixels of the nominal reserved-zone bottom/);
   assert.match(guidance, /leaving no wall, vertical panel, open-air or diagonal-boundary pixels in the below-boundary region/);
   assert.match(guidance, /Do not classify or repair blankness confined to the immutable quiet rectangle as a dominant wall or repeated topology/);
   assert.match(guidance, /at least two non-collinear outer bands/);
@@ -369,9 +371,11 @@ test("surface-supported retries use horizontal functional materials instead of w
   assert.match(useRetry.surface, /continuous physical support plane/);
   assert.doesNotMatch(useRetry.surface, /cobalt glazed tile/);
   assert.match(wideRetry.surface, /continuous horizontal worktop/);
-  assert.match(wideRetry.surface, /exact bottom tolerance band/);
+  assert.match(wideRetry.surface, /within two 256-by-256 sampled pixels of the nominal reserved-zone bottom/);
   assert.match(wideRetry.location, /fronto-parallel support\/backing seam/);
   assert.match(wideRetry.location, /normalized end-to-end slope no greater than 0\.005/);
+  assert.match(wideRetry.location, /contact band is only the audit search range/);
+  assert.match(wideRetry.location, /within 2 sampled pixels of the nominal reserved-zone bottom/);
   assert.match(wideRetry.location, /Within that x-span, every pixel from the seam through the frame bottom/);
   assert.doesNotMatch(wideRetry.location, /lower support-plane edge converge/);
 
@@ -393,6 +397,42 @@ test("wide surface-supported retry guidance keeps perspective edges out of the c
   assert.match(guidance, /below-seam x-span/);
   assert.match(guidance, /Inspect this invariant before saving/);
   assert.doesNotMatch(guidance, /lower support-plane edge converge/);
+});
+
+test("portrait and wide background prompts pin the support ridge to the nominal 256-grid contact line", () => {
+  const plan = buildProductSettingShotPlan("food-staples", "사조 살코기 참치 일반식품 통조림");
+  for (const assetId of ["portrait", "wide"] as const) {
+    const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    assert.ok(preset);
+    const initialPrompt = buildAssetImagePrompt(
+      baseResult,
+      `/tmp/${preset.file}`,
+      preset,
+      [],
+      "",
+      "identity-background",
+      plan[assetId],
+      "surface-supported",
+    );
+    assert.match(initialPrompt, /tolerance band is only the audit search range/);
+    assert.match(initialPrompt, /after normalizing the plate to 256-by-256/);
+    assert.match(initialPrompt, /within 2 sampled pixels of nominal y=/);
+    assert.match(initialPrompt, /Merely placing a seam somewhere inside the tolerance band fails/);
+
+    const retry = buildSettingShotRetryVariant(plan[assetId], assetId, 2, "surface-supported");
+    const retryPrompt = buildSettingShotRetryGuidance(
+      assetId,
+      [`rejected-${assetId}-1`],
+      2,
+      retry,
+      { failedDimensions: ["reserved-zone"] },
+      "surface-supported",
+    );
+    assert.match(retryPrompt, /contact band is only the audit search range/);
+    assert.match(retryPrompt, /after normalizing the plate to 256-by-256/);
+    assert.match(retryPrompt, /within 2 sampled pixels of the nominal reserved-zone bottom/);
+    assert.match(retryPrompt, /seam merely somewhere inside the tolerance band fails/i);
+  }
 });
 
 test("wide suspended retry guidance never asks for a support surface", () => {
@@ -457,7 +497,8 @@ test("audit-directed retries explicitly repair reserved-zone, assigned-scene and
 
   assert.match(guidance, /AUDIT-DIRECTED REPAIR GATE/);
   assert.match(guidance, /identical left, top, width and height/);
-  assert.match(guidance, /continuous horizontal support boundary fully inside the enclosing prompt's narrow contact tolerance band/);
+  assert.match(guidance, /continuous horizontal support boundary across the complete width of the reserved rectangle/);
+  assert.match(guidance, /within 2 sampled pixels of the nominal reserved-zone bottom/);
   assert.match(guidance, /at least two visible fixed architectural structures/);
   assert.match(guidance, /exact assigned functional room/);
   assert.match(guidance, /multiple fixed architectural convergence lines/);
@@ -745,7 +786,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
   assert.match(worker, /openedStats\.dev !== outputStats\.dev[\s\S]*openedStats\.ino !== outputStats\.ino/);
   assert.match(worker, /sourceHandle\.readFile\(\)/);
-  assert.match(worker, /assertIdentityBackgroundPlate\(generated, generationPreset\)/);
+  assert.match(worker, /assertIdentityBackgroundPlate\(generated, generationPreset, backgroundContactMode\)/);
   assert.match(worker, /executeSourceProductCutout\("background"/);
   assert.match(worker, /auditGeneratedIdentityBackground\(\{/);
   assert.match(worker, /contactMode: backgroundContactMode/);

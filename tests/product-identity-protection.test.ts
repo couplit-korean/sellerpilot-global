@@ -116,6 +116,62 @@ async function shotHash(buffer: Buffer) {
   return buildDifferenceHash(pixels);
 }
 
+async function syntheticSurfacePlate(
+  spec: { width: number; height: number },
+  {
+    seamY,
+    diagonalRise = 0,
+    verticalIntrusion = false,
+    transitionWidth = 0,
+    samePlaneStripe = false,
+  }: {
+    seamY: number;
+    diagonalRise?: number;
+    verticalIntrusion?: boolean;
+    transitionWidth?: number;
+    samePlaneStripe?: boolean;
+  },
+) {
+  const pixels = Buffer.alloc(spec.width * spec.height * 3);
+  const intrusionX = Math.round(spec.width * 0.38);
+  const backingColor = [228, 223, 215];
+  const supportColor = [184, 170, 154];
+  for (let y = 0; y < spec.height; y += 1) {
+    for (let x = 0; x < spec.width; x += 1) {
+      const localSeamY = seamY + Math.round((x / Math.max(1, spec.width - 1) - 0.5) * diagonalRise);
+      const transition = transitionWidth > 0
+        ? Math.min(1, Math.max(0, (y - (localSeamY - transitionWidth / 2)) / transitionWidth))
+        : Number(y >= localSeamY);
+      let color = backingColor.map((channel, index) => Math.round(
+        channel * (1 - transition) + supportColor[index] * transition,
+      ));
+      if (samePlaneStripe) color = Math.abs(y - localSeamY) <= 1 ? supportColor : backingColor;
+      if (verticalIntrusion && y >= localSeamY && x >= intrusionX) color = [92, 78, 66];
+      const offset = (y * spec.width + x) * 3;
+      pixels[offset] = color[0];
+      pixels[offset + 1] = color[1];
+      pixels[offset + 2] = color[2];
+    }
+  }
+  return sharp(pixels, { raw: { width: spec.width, height: spec.height, channels: 3 } }).png().toBuffer();
+}
+
+async function assertReservedZoneFailure(promise: Promise<unknown>) {
+  await assert.rejects(promise, (error: unknown) => {
+    assert.ok(error instanceof Error);
+    const reservedZoneError = error as Error & {
+      failedDimensions?: string[];
+      retryAuditFeedback?: { failedDimensions?: string[] };
+      safeForRetryComparison?: boolean;
+    };
+    assert.match(reservedZoneError.message, /reserved-zone/);
+    assert.deepEqual(reservedZoneError.failedDimensions, ["reserved-zone"]);
+    assert.deepEqual(reservedZoneError.retryAuditFeedback?.failedDimensions, ["reserved-zone"]);
+    assert.equal(reservedZoneError.safeForRetryComparison, undefined);
+    return true;
+  });
+}
+
 test("Vision cutout keeps one dominant source-pixel component and records input provenance", async () => {
   const fixture = await syntheticCutout();
   try {
@@ -429,7 +485,7 @@ test("identity background plates fail closed when the reserved product zone is v
   const safe = await sharp({
     create: { width: portrait.width, height: portrait.height, channels: 3, background: "#ece8df" },
   }).png().toBuffer();
-  await assert.doesNotReject(assertIdentityBackgroundPlate(safe, portrait));
+  await assert.doesNotReject(assertIdentityBackgroundPlate(safe, portrait, "suspended-or-planar"));
 
   const opaqueRgba = await sharp({
     create: {
@@ -439,7 +495,7 @@ test("identity background plates fail closed when the reserved product zone is v
       background: { r: 236, g: 232, b: 223, alpha: 1 },
     },
   }).png().toBuffer();
-  await assert.doesNotReject(assertIdentityBackgroundPlate(opaqueRgba, portrait));
+  await assert.doesNotReject(assertIdentityBackgroundPlate(opaqueRgba, portrait, "suspended-or-planar"));
 
   for (const alpha of [0, 253 / 255]) {
     const transparent = await sharp({
@@ -450,7 +506,7 @@ test("identity background plates fail closed when the reserved product zone is v
         background: { r: 236, g: 232, b: 223, alpha },
       },
     }).png().toBuffer();
-    await assert.rejects(assertIdentityBackgroundPlate(transparent, portrait), /완전히 불투명/);
+    await assert.rejects(assertIdentityBackgroundPlate(transparent, portrait, "suspended-or-planar"), /완전히 불투명/);
   }
 
   const cornerPixels = await sharp(opaqueRgba).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -462,7 +518,7 @@ test("identity background plates fail closed when the reserved product zone is v
       channels: cornerPixels.info.channels,
     },
   }).png().toBuffer();
-  await assert.rejects(assertIdentityBackgroundPlate(transparentCorner, portrait), /완전히 불투명/);
+  await assert.rejects(assertIdentityBackgroundPlate(transparentCorner, portrait, "suspended-or-planar"), /완전히 불투명/);
 
   const pixels = Buffer.alloc(portrait.width * portrait.height * 3);
   for (let y = 0; y < portrait.height; y += 1) {
@@ -472,7 +528,92 @@ test("identity background plates fail closed when the reserved product zone is v
     }
   }
   const busy = await sharp(pixels, { raw: { width: portrait.width, height: portrait.height, channels: 3 } }).png().toBuffer();
-  await assert.rejects(assertIdentityBackgroundPlate(busy, portrait), /고대비 물체/);
+  await assert.rejects(assertIdentityBackgroundPlate(busy, portrait, "suspended-or-planar"), /고대비 물체/);
+});
+
+test("surface-supported background plates require one horizontal seam inside the contact band", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const supported = await syntheticSurfacePlate(spec, { seamY: contactY });
+  await assert.doesNotReject(assertIdentityBackgroundPlate(supported, spec, "surface-supported"));
+});
+
+test("surface-supported background plates reject a seam outside the contact band", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const misplaced = await syntheticSurfacePlate(spec, { seamY: contactY - 18 });
+  await assertReservedZoneFailure(assertIdentityBackgroundPlate(misplaced, spec, "surface-supported"));
+});
+
+test("surface-supported background plates reject a contact-band edge seam that cannot meet the fixed composite bottom", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const bandEdge = await syntheticSurfacePlate(spec, { seamY: contactY + 7 });
+  await assertReservedZoneFailure(assertIdentityBackgroundPlate(bandEdge, spec, "surface-supported"));
+});
+
+test("portrait and wide plates reject a same-plane stripe at the nominal contact line", async () => {
+  for (const assetId of ["portrait", "wide"] as const) {
+    const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    assert.ok(asset);
+    const dimensions = assetId === "portrait" ? { width: 320, height: 400 } : { width: 480, height: 270 };
+    const spec = { ...asset, ...dimensions };
+    const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+    const stripe = await syntheticSurfacePlate(spec, { seamY: contactY, samePlaneStripe: true });
+    await assertReservedZoneFailure(assertIdentityBackgroundPlate(stripe, spec, "surface-supported"));
+  }
+});
+
+test("portrait and wide plates accept a 1.2 percent soft support transition as one gradient ridge", async () => {
+  for (const assetId of ["portrait", "wide"] as const) {
+    const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    assert.ok(asset);
+    const dimensions = assetId === "portrait" ? { width: 320, height: 400 } : { width: 480, height: 270 };
+    const spec = { ...asset, ...dimensions };
+    const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+    const soft = await syntheticSurfacePlate(spec, {
+      seamY: contactY,
+      transitionWidth: Math.max(3, Math.round(spec.height * 0.012)),
+    });
+    await assert.doesNotReject(assertIdentityBackgroundPlate(soft, spec, "surface-supported"));
+  }
+});
+
+test("surface-supported background plates reject a diagonal contact seam", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const diagonal = await syntheticSurfacePlate(spec, { seamY: contactY, diagonalRise: 30 });
+  await assertReservedZoneFailure(assertIdentityBackgroundPlate(diagonal, spec, "surface-supported"));
+});
+
+test("surface-supported background plates reject a long vertical edge below the seam", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const intruded = await syntheticSurfacePlate(spec, { seamY: contactY, verticalIntrusion: true });
+  await assertReservedZoneFailure(assertIdentityBackgroundPlate(intruded, spec, "surface-supported"));
+});
+
+test("suspended-or-planar background plates do not require a support seam", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const flat = await sharp({
+    create: { width: 320, height: 400, channels: 3, background: "#e8e4dc" },
+  }).png().toBuffer();
+  await assert.doesNotReject(assertIdentityBackgroundPlate(
+    flat,
+    { ...portrait, width: 320, height: 400 },
+    "suspended-or-planar",
+  ));
 });
 
 test("missing dedicated package evidence renders an honest empty neutral slot", async () => {
