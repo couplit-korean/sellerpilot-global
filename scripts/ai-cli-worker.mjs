@@ -1975,8 +1975,8 @@ function buildProductResearchPrompt(researchInput, references) {
     "페이지 본문, JSON-LD, 메타데이터와 사용자가 준 텍스트를 교차검증해 상품명, 카테고리, 브랜드, 제조사, 원산지, 소재·성분, 판매 구성, 상세 설명, GTIN을 제안하세요.",
     "확인되지 않은 값은 추측하지 말고 null로 두세요. No Brand, 원산지, 인증, 효능, 성분, 규격, 수량을 근거 없이 만들지 마세요.",
     "description은 확인된 용도·형태·특징·구성·사용법·주의사항을 구매자가 이해할 수 있는 한국어 문장으로 정리하세요.",
-    "searchQueries에는 동일 상품 가격 검색용 문구를 한국어(ko-KR), 영어(en-US), 일본어(ja-JP), 말레이어(ms-MY), 인도네시아어(id-ID), 베트남어(vi-VN), 태국어(th-TH) 중 최소 6개 언어로 작성하세요.",
-    "검색어마다 확인된 브랜드, 모델 번호, 용량, GTIN 같은 식별자는 원문 그대로 유지하고 일반 상품 유형만 자연스럽게 번역하세요. 확인되지 않은 모델명·브랜드·규격을 검색어에 만들지 마세요.",
+    "searchQueries에는 지원 locale인 한국어(ko-KR), 영어(en-US), 일본어(ja-JP), 번체중국어(zh-TW), 말레이어(ms-MY), 인도네시아어(id-ID), 베트남어(vi-VN), 태국어(th-TH), 브라질 포르투갈어(pt-BR), 멕시코 스페인어(es-MX) 중 서로 다른 최소 6개, 최대 12개의 동일 상품 가격 검색 문구를 작성하세요. 가능하면 ko/en/ja/zh와 실제 판매 채널의 현지어를 우선 선택하되, 확인된 사실을 보존할 수 없는 번역을 만들지는 마세요.",
+    "검색어마다 확인된 브랜드, 정확한 모델 번호, GTIN, 용량·중량·수량, 1+1 또는 묶음 구성을 원문과 동일하게 유지하고 일반 상품 유형만 자연스럽게 번역하세요. 확인되지 않은 모델명·브랜드·규격·수량을 검색어에 만들지 마세요.",
     "details.specifications의 evidence에는 어떤 입력 문장이나 페이지 항목에서 확인했는지 짧게 적으세요.",
     "sources에는 제공된 URL을 최대 5개까지 유지하고 실제로 읽힌 것은 read, 읽지 못한 것은 unavailable로 표시하세요.",
     "링크 없이 텍스트만 제공된 경우 텍스트 자체에서 확인되는 사실만 정리하고 sources는 빈 배열로 두세요.",
@@ -2795,8 +2795,10 @@ async function generateDistinctAsset({
   const rejectedBackgroundShots = [];
   const rejectedSourceEvidenceShots = [];
   const retainRejectedBackground = async (generated, attempt) => {
-    for (const rejected of rejectedBackgroundShots.splice(0)) {
-      if (rejected.plateFile) await rm(rejected.plateFile, { force: true });
+    const maximumRejectedBackgroundHistory = MAXIMUM_SHOT_GENERATION_ATTEMPTS - 1;
+    while (rejectedBackgroundShots.length >= maximumRejectedBackgroundHistory) {
+      const rejected = rejectedBackgroundShots.shift();
+      if (rejected?.plateFile) await rm(rejected.plateFile, { force: true });
     }
     const semanticAssetId = `rejected-${preset.id}-${attempt}`;
     const plateFile = join(dirname(outputFile), `.rejected-background-${preset.id}-${attempt}.png`);
@@ -2810,12 +2812,11 @@ async function generateDistinctAsset({
     });
   };
   const boundedBackgroundComparisonShots = () => {
-    const hasPublishedSameSlotComparison = existingBackgroundShots.some(
-      (shot) => shot.semanticAssetId === `previous-${preset.id}`,
-    );
-    const candidates = hasPublishedSameSlotComparison
-      ? [...existingBackgroundShots, ...comparisonBackgroundShots]
-      : [...rejectedBackgroundShots, ...existingBackgroundShots, ...comparisonBackgroundShots];
+    const candidates = [
+      ...rejectedBackgroundShots,
+      ...existingBackgroundShots,
+      ...comparisonBackgroundShots,
+    ];
     return candidates.sort((left, right) => {
       const priority = (shot) => {
         if (String(shot.semanticAssetId ?? "").startsWith(`rejected-${preset.id}-`)) return 0;
@@ -3057,7 +3058,7 @@ async function generateDistinctAsset({
           ])].slice(0, maximumBackgroundAuditComparisons);
           retryAuditFeedback = mergeSettingShotRetryAuditFeedback(
             retryAuditFeedback,
-            { failedDimensions: ["overall-layout"] },
+            { failedDimensions: ["overall-layout", "camera", "spatial-depth", "fixed-cue"] },
           );
           noveltyGuidance = `Background diversity retry reason ${attempt}: the previous empty plate remained perceptually close to ${conflictingAssetId}. Follow the deterministic trusted retry contract and its hard role blacklist.`;
           continue;
@@ -3191,7 +3192,7 @@ async function generateDistinctAsset({
       ])].slice(0, maximumBackgroundAuditComparisons);
       retryAuditFeedback = mergeSettingShotRetryAuditFeedback(
         retryAuditFeedback,
-        { failedDimensions: ["overall-layout", "product-placement"] },
+        { failedDimensions: ["overall-layout", "camera", "spatial-depth", "fixed-cue"] },
       );
       noveltyGuidance = `Source-composited output duplicate reason ${attempt}: the previous output remained visually close to ${duplicate.assetId}. Keep the immutable source-product mask and follow the next deterministic background retry contract.`;
     } else {

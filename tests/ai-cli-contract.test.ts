@@ -1598,6 +1598,24 @@ test("product research contract accepts a link or free-text CLI request", () => 
   assert.equal(productResearchResultSchema.safeParse(validResearchResult()).success, true);
 });
 
+test("product research search locales stay aligned across Zod and worker JSON schema", () => {
+  const locales = ["ko-KR", "en-US", "ja-JP", "zh-TW", "ms-MY", "id-ID", "vi-VN", "th-TH", "pt-BR", "es-MX"];
+  const result = {
+    ...validResearchResult(),
+    searchQueries: locales.map((locale) => ({ locale, query: `verified exact product ${locale}` })),
+  };
+  assert.equal(productResearchResultSchema.safeParse(result).success, true);
+  assert.equal(productResearchResultSchema.safeParse({
+    ...result,
+    searchQueries: result.searchQueries.map((item, index) => index === 3 ? { ...item, locale: "zh-CN" } : item),
+  }).success, false);
+
+  const workerSchema = JSON.parse(readFileSync(new URL("../scripts/ai-product-research-output.schema.json", import.meta.url), "utf8")) as {
+    properties: { searchQueries: { items: { properties: { locale: { enum: string[] } } } } };
+  };
+  assert.deepEqual(workerSchema.properties.searchQueries.items.properties.locale.enum, locales);
+});
+
 test("AI studio request requires seller facts and normalized listing images", () => {
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "11111111-1111-4111-8111-111111111111",

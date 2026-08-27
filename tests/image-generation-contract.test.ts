@@ -260,18 +260,32 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
     assert.equal(new Set([base, ...variants].map((shot) => shot.separation[dimension])).size, 4, dimension);
     assert.equal(new Set([base, ...variants].map((shot) => shot[dimension])).size, 4, dimension);
   }
-  assert.ok(variants.every((variant) => variant.location.includes(base.location)));
-  assert.ok(variants.every((variant) => variant.camera.includes("assigned camera family")));
+  const functionalRoom = base.location.split(";")[0];
+  assert.ok(variants.every((variant) => variant.location.includes(functionalRoom)));
+  assert.ok(variants.every((variant) => !variant.location.includes(base.location)));
+  assert.ok(variants.every((variant) => variant.camera.includes("AUTHORITATIVE replacement camera")));
   assert.ok(variants.every((variant) => variant.camera.includes("role-required height")));
+  assert.ok(variants.every((variant) => variant.camera.includes("overrides and excludes the base camera description")));
+  assert.ok(variants.every((variant) => !variant.camera.includes(base.camera)));
   assert.ok(variants.every((variant) => !/contact plane|contact geometry/i.test(variant.staging)));
   assert.ok(variants.every((variant) => /exact reserved product rectangle at its original left, top, width and height/.test(variant.staging)));
   assert.ok(variants.every((variant) => /fully quiet and unobstructed/.test(variant.staging)));
+  assert.ok(variants.every((variant) => /persisted rectangle only/.test(variant.staging)));
+  assert.ok(variants.every((variant) => !variant.staging.includes(base.staging)));
   assert.ok(variants.every((variant) => /mandatory functional room-recognition structures/.test(variant.supportingObjects)));
-  assert.ok(variants.every((variant) => /exact assigned real-life room/.test(variant.location)));
-  assert.ok(variants.every((variant) => /at least two functional room-recognition structures/.test(variant.location)));
+  assert.ok(variants.every((variant) => /assigned functional room/.test(variant.location)));
+  assert.ok(variants.every((variant) => /at least two room-recognition structures/.test(variant.location)));
   assert.match(variants[0].supportingObjects, /rectangular built-in task-light recess/);
   assert.match(variants[1].supportingObjects, /fixed access threshold or cabinet toe-kick return/);
   assert.match(variants[2].supportingObjects, /fixed rectangular ventilation or transom panel/);
+  assert.match(variants[1].location, /true centred access aisle/);
+  assert.match(variants[1].location, /paired left and right built-ins or functional wall systems/);
+  assert.match(variants[1].camera, /genuinely centred axial architectural optical axis/);
+  assert.match(variants[1].camera, /symmetric/);
+  assert.match(variants[1].camera, /large blank left wall/);
+  assert.match(variants[1].camera, /narrow kitchen, cabinet or doorway reveal confined to the right/);
+  assert.match(variants[1].camera, /right-side-only daylight/);
+  assert.match(variants[1].camera, /vertical three-quarter/);
 
   const contracts = variants.map((variant) => resolveIdentityBackgroundContract(variant, "detail-overview"));
   for (const dimension of ["location", "moment", "surface", "camera", "palette", "spatialDepth", "prop"] as const) {
@@ -286,7 +300,7 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(contracts[2].prop.description, /fixed rectangular ventilation or transom panel/);
   assert.ok(contracts.every((contract) => !/fixed-zone-divider/.test(contract.prop.key)));
   assert.ok(contracts.every((contract) => /architectural/.test(contract.camera.description)));
-  assert.ok(contracts.every((contract) => /junction|convergence/.test(contract.camera.description)));
+  assert.ok(contracts.every((contract) => /junction|convergence|vanishing/.test(contract.camera.description)));
   assert.ok(contracts.every((contract) => !/product|상품|source-composite|mask/i.test(contract.camera.description)));
 
   const cumulativeAudit = mergeSettingShotRetryAuditFeedback(
@@ -311,8 +325,8 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   const guidance = buildSettingShotRetryGuidance(
     "detail-overview",
     ["portrait", "wide"],
-    1,
-    variants[0],
+    2,
+    variants[1],
     cumulativeAudit,
   );
   assert.match(guidance, /HARD ROLE BLACKLIST: portrait, wide/);
@@ -329,6 +343,10 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(guidance, /immutable product zone/);
   assert.match(guidance, /IMMUTABLE RESERVED-ZONE GATE/);
   assert.match(guidance, /FULL SIX-AXIS REPLACEMENT GATE/);
+  assert.match(guidance, /MANDATORY SCREEN-SPACE TOPOLOGY/);
+  assert.match(guidance, /FORBIDDEN CAMERA\/TOPOLOGY/);
+  assert.match(guidance, /large blank left wall/);
+  assert.match(guidance, /narrow kitchen, cabinet or doorway reveal confined to the right/);
   assert.doesNotMatch(guidance, /blacklisted role's product zone|product zone moves|move the product zone/i);
   assert.doesNotMatch(guidance, /contact plane|contact geometry/i);
   assert.doesNotMatch(guidance, /bathroom vanity|bedroom nightstand/);
@@ -371,7 +389,7 @@ test("audit-directed retries explicitly repair reserved-zone, assigned-scene and
   assert.match(guidance, /exact assigned functional room/);
   assert.match(guidance, /multiple fixed architectural convergence lines/);
   assert.match(guidance, /mandatory slot-specific fixed cue.*outside the entire reserved product rectangle/);
-  assert.match(guidance, /rebuild the complete architectural composition/);
+  assert.match(guidance, /rebuild the complete architectural floor-plan/);
   assert.match(guidance, /different source side, time treatment, shadow direction and shadow length/);
   assert.match(guidance, /different integrated material family, texture scale and grain direction/);
   assert.match(guidance, /different architectural side, azimuth, perspective convergence and focal-depth relationship/);
@@ -491,8 +509,12 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /Source-composited output duplicate reason[\s\S]*retryAuditFeedback = mergeSettingShotRetryAuditFeedback|retryAuditFeedback = mergeSettingShotRetryAuditFeedback\([\s\S]*Source-composited output duplicate reason/);
   assert.match(worker, /rejectedBackgroundShots/);
   assert.match(worker, /comparisonPlates: boundedBackgroundComparisonShots\(\)/);
-  assert.match(worker, /hasPublishedSameSlotComparison[\s\S]*comparisonBackgroundShots[\s\S]*rejectedBackgroundShots/);
+  assert.doesNotMatch(worker, /rejectedBackgroundShots\.splice\(0\)/);
+  assert.match(worker, /maximumRejectedBackgroundHistory = MAXIMUM_SHOT_GENERATION_ATTEMPTS - 1/);
+  assert.match(worker, /while \(rejectedBackgroundShots\.length >= maximumRejectedBackgroundHistory\)/);
+  assert.match(worker, /const candidates = \[[\s\S]*\.\.\.rejectedBackgroundShots,[\s\S]*\.\.\.existingBackgroundShots,[\s\S]*\.\.\.comparisonBackgroundShots/);
   assert.match(worker, /slice\(0, maximumBackgroundAuditComparisons\)/);
+  assert.match(worker, /failedDimensions: \["overall-layout", "camera", "spatial-depth", "fixed-cue"\]/);
   assert.match(worker, /buildDuplicateRetryGuidance\(preset\.id, duplicate\.assetId, attempt, "source-evidence"\)/);
   assert.match(worker, /buildDuplicateRetryGuidance\(preset\.id, duplicate\.assetId, attempt, "product-mockup"\)/);
   assert.match(worker, /Keep the immutable source-product mask and follow the next deterministic background retry contract/);

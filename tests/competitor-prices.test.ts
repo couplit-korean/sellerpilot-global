@@ -42,6 +42,29 @@ test("competitor queries keep distinct multilingual product names and discard du
   ]), ["첵스초코 570g", "Kellogg's Choco Chex 570g", "ケロッグ チョコチェックス 570g"]);
 });
 
+test("competitor queries retain bounded channel-local language coverage after normalized deduplication", () => {
+  const queries = normalizedCompetitorQueries("켈로그 첵스초코 570g", [
+    "Kellogg Choco Chex 570 g",
+    "Kellogg Choco-Chex 570 g",
+    "ケロッグ チョコチェックス 570g",
+    "家樂氏 巧克力 穀物 570g",
+    "Bijirin coklat Kellogg perisa coklat 570g",
+    "Produk sereal cokelat Kellogg rasa cokelat 570g",
+    "Ngũ cốc sô cô la Kellogg 570g",
+    "ซีเรียลช็อกโกแลต Kellogg 570g",
+    "Produto cereal de chocolate Kellogg 570g",
+    "Producto cereal de chocolate Kellogg 570g",
+    `Kellogg chocolate cereal ${"long ".repeat(100)}570g`,
+  ], 12);
+
+  assert.equal(queries.length, 11);
+  assert.equal(queries.every((query) => query.length <= 160), true);
+  assert.equal(queries.filter((query) => query.includes("Choco")).length, 1);
+  for (const marker of ["ケロッグ", "家樂氏", "perisa", "Produk", "Ngũ", "ซีเรียล", "Produto", "Producto"]) {
+    assert.equal(queries.some((query) => query.includes(marker)), true, marker);
+  }
+});
+
 test("Brave marketplace queries stay within the documented limits and only name official marketplace domains", () => {
   const query = braveMarketplaceSearchQuery(`사조참치 ${"긴상품명 ".repeat(100)}95g`, "shopee");
   assert.ok(query.length <= 400);
@@ -144,15 +167,20 @@ test("Brave marketplace web search reuses multilingual aliases, rejects untruste
       [
         "Sajo lean tuna 95g 8 pack",
         "サジョ ライトツナ 95g 8缶",
+        "沙祖 瘦肉 鮪魚 95g 8罐",
         "ปลาทูน่าซาโจ 95g 8 กระป๋อง",
         "Cá ngừ Sajo 95g 8 hộp",
+        "Produk tuna Sajo rasa asli 95g 8 kaleng",
+        "Tuna Sajo perisa asli 95g 8 tin",
+        "Produto atum Sajo 95g 8 latas",
+        "Producto atún Sajo 95g 8 latas",
       ],
       { apiKey },
       20,
     );
-    assert.equal(calls.length, 6);
+    assert.equal(calls.length, 3);
     assert.equal(calls.every((url) => url.searchParams.get("country") === "ALL"), true);
-    assert.deepEqual([...new Set(calls.map((url) => url.searchParams.get("search_lang")))].sort(), ["en", "ko"]);
+    assert.deepEqual([...new Set(calls.map((url) => url.searchParams.get("search_lang")))].sort(), ["en"]);
     assert.deepEqual([...new Set(items.map((item) => item.marketplace))].sort(), ["lazada", "shopee", "temu"]);
     assert.deepEqual(Object.fromEntries(["shopee", "lazada", "temu"].map((marketplace) => [
       marketplace,
@@ -172,10 +200,14 @@ test("Brave marketplace web search reuses multilingual aliases, rejects untruste
 
 test("Brave marketplace web search exhausts distinct language families before returning an honest empty result", async () => {
   const originalFetch = globalThis.fetch;
-  const languages: string[] = [];
+  const languages: Array<{ marketplace: "shopee" | "lazada" | "temu"; language: string }> = [];
   globalThis.fetch = async (input) => {
     const url = new URL(String(input));
-    languages.push(url.searchParams.get("search_lang") ?? "");
+    const query = url.searchParams.get("q") ?? "";
+    const marketplace = query.includes("site:shopee.sg") ? "shopee"
+      : query.includes("site:lazada.sg") ? "lazada"
+        : "temu";
+    languages.push({ marketplace, language: url.searchParams.get("search_lang") ?? "" });
     return Response.json({ web: { results: [] } });
   };
   try {
@@ -184,14 +216,49 @@ test("Brave marketplace web search exhausts distinct language families before re
       [
         "Sajo lean tuna 95g 8 pack",
         "サジョ ライトツナ 95g 8缶",
+        "沙祖 瘦肉 鮪魚 95g 8罐",
         "ปลาทูน่าซาโจ 95g 8 กระป๋อง",
         "Cá ngừ Sajo 95g 8 hộp",
+        "Produk tuna Sajo rasa asli 95g 8 kaleng",
+        "Tuna Sajo perisa asli 95g 8 tin",
+        "Produto atum Sajo 95g 8 latas",
+        "Producto atún Sajo 95g 8 latas",
       ],
       { apiKey: "B".repeat(32) },
     );
     assert.deepEqual(items, []);
     assert.equal(languages.length, 12);
-    assert.deepEqual([...new Set(languages)].sort(), ["en", "ko", "th", "vi"]);
+    assert.deepEqual([...new Set(languages.map(({ language }) => language))].sort(), ["en", "es", "id", "ja", "ms", "pt-br", "th", "vi", "zh"]);
+    assert.deepEqual(languages.filter(({ marketplace }) => marketplace === "shopee").map(({ language }) => language), ["en", "pt-br", "es", "id"]);
+    assert.deepEqual(languages.filter(({ marketplace }) => marketplace === "lazada").map(({ language }) => language), ["en", "ms", "th", "vi"]);
+    assert.deepEqual(languages.filter(({ marketplace }) => marketplace === "temu").map(({ language }) => language), ["en", "zh", "ja", "pt-br"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Brave marketplace results use all aliases when the search language and returned title differ", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    const query = url.searchParams.get("q") ?? "";
+    if (!query.includes("site:shopee.sg") || url.searchParams.get("search_lang") !== "es") return Response.json({ web: { results: [] } });
+    return Response.json({ web: { results: [{
+      title: "Kellogg Choco Chex 570g",
+      url: "https://shopee.com.mx/Kellogg-Chex-i.11.22",
+      product: { offers: { price: "149.00", priceCurrency: "MXN" } },
+    }] } });
+  };
+  try {
+    const items = await searchBraveMarketplaceWebVariants("켈로그 첵스초코 570g", [
+      "Kellogg Choco Chex 570g",
+      "ケロッグ チョコチェックス 570g",
+      "家樂氏 巧克力 穀物 570g",
+      "Produto cereal Kellogg 570g",
+      "Producto cereal Kellogg 570g",
+      "Produk sereal Kellogg rasa cokelat 570g",
+    ], { apiKey: "B".repeat(32) });
+    assert.deepEqual(items.map((item) => item.externalId), ["shopee.com.mx:11-22"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -279,8 +346,20 @@ test("marketplace identity keeps the same native item id separate across officia
 test("competitor relevance requires the requested package size and enough identity tokens", () => {
   const queries = ["켈로그 첵스초코 570g", "Kellogg's Choco Chex 570g"];
   assert.ok(competitorCandidateRelevance(candidate(), queries) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "켈로그 첵스초코 570g 박스 10 x 20cm" }), queries) > 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "켈로그 첵스초코 1.2kg" }), queries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "켈로그 첵스초코 570g x 2" }), queries), 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "초코 시리얼 570g" }), queries), 0);
+});
+
+test("competitor relevance normalizes spaced units and locale decimal or grouping separators", () => {
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 95g" }), ["Sajo lean tuna 95 g"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Mild shampoo 500ml" }), ["Mild shampoo 500 ml"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Rice 500g" }), ["Rice 0,500 kg"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Rice 1250g" }), ["Rice 1,250 kg"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Rice 1000g" }), ["Rice 1.000 g"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Apple iPhone 15 128GB" }), ["Apple iPhone 15 128 GB"]) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Apple iPhone 15 256GB" }), ["Apple iPhone 15 128 GB"]), 0);
 });
 
 test("competitor relevance requires every requested measurement while accepting equivalent pack counters", () => {
@@ -296,6 +375,95 @@ test("competitor relevance requires every requested measurement while accepting 
   assert.ok(competitorCandidateRelevance(sameProduct, queries) > 0);
   assert.ok(competitorCandidateRelevance(sameProductWithBareMultiplier, queries) > 0);
   assert.equal(competitorCandidateRelevance(wrongPack, queries), 0);
+});
+
+test("competitor relevance fails closed on GTIN, exact model, accessory, edition, and product-family conflicts", () => {
+  const sonyQueries = [
+    "Sony WH-1000XM5 wireless headphones 880-1234-567890",
+    "소니 WH-1000XM5 무선 헤드폰 8801234567890",
+  ];
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Sony WH-1000XM5 Wireless Headphones 8801234567890" }), sonyQueries) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sony WH-1000XM4 Wireless Headphones 8801234567890" }), sonyQueries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sony WH-1000XM5 Wireless Headphones" }), sonyQueries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sony WH-1000XM5 Wireless Headphones 8801234567890" }), [
+    sonyQueries[0],
+    "Sony WH-1000XM5 wireless headphones 4901234567894",
+  ]), 0);
+
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Apple iPhone 15 Pro 128GB" }), ["Apple iPhone 15 128GB"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Apple AirPods Pro 2 compatible charging case" }), ["Apple AirPods Pro 2"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Apple iPhone 15 Pro 128GB" }), ["Apple iPhone 15 128GB", "Apple iPhone 15 Pro 128GB"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Apple AirPods Pro 2 compatible charging case" }), ["Apple AirPods Pro 2", "Apple AirPods Pro 2 compatible case"]), 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Coca Cola Zero 355ml 24 cans" }), ["Coca Cola Zero 355ml 24 cans"]) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Coca Cola Zero Cherry 355ml 24 cans" }), ["Coca Cola Zero 355ml 24 cans"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Coca Cola Limited Edition 355ml" }), ["Coca Cola Cherry Limited Edition 355ml"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Brand Wireless Premium Headphones X100" }), ["Brand Black Wireless Premium Headphones X100"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sajo hot pepper tuna 95g 8 cans" }), [
+    "사조 살코기 참치 95g x 8개",
+    "Sajo lean tuna 95g 8 cans",
+  ]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "초코 시리얼 570g" }), ["초코딸기 시리얼 570g"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "巧克力 麦片 570g" }), ["巧克力草莓 麦片 570g"]), 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Coca Cola case of 12 cans" }), ["Coca Cola 12 cans"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Sajo light tuna 95g 8 cans" }), [
+    "사조 살코기플러스 참치 95g x 8개",
+    "Sajo lean tuna 95g 8 cans",
+    "サジョ ライトツナ 95g 8缶",
+  ]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "蘋果 iPhone 15 128GB" }), [
+    "애플 아이폰 15 128GB",
+    "Apple iPhone 15 128GB",
+    "蘋果 iPhone 15 128GB",
+  ]) > 0);
+});
+
+test("competitor model matching tolerates CJK and Latin script boundaries without relaxing the core model", () => {
+  assert.ok(competitorCandidateRelevance(candidate({ title: "索尼 WH-1000XM5 无线耳机" }), ["索尼WH-1000XM5无线耳机"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "ソニー WH-1000XM5 ワイヤレスヘッドホン" }), ["ソニーWH-1000XM5ワイヤレスヘッドホン"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Samsung 갤럭시 S24 스마트폰" }), ["Samsung갤럭시S24스마트폰"]) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "索尼 WH-1000XM4 无线耳机" }), ["索尼WH-1000XM5无线耳机"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sony headphones" }), [
+    "소니 무선 헤드폰",
+    "Sony WH-1000XM5 headphones",
+    "ソニー WH-1000XM5 ヘッドホン",
+  ]), 0);
+});
+
+test("competitor relevance normalizes imperial units, 1+1, pack count, and declared total weight", () => {
+  const eightPackQueries = ["사조 살코기 참치 95g x 8개", "Sajo lean tuna 95g 8 cans"];
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 3.35 oz 8 cans" }), eightPackQueries) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 95g x 8 total 760g" }), eightPackQueries) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 100g 8 cans" }), eightPackQueries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 95g 40 cans" }), eightPackQueries), 0);
+
+  const twinPackQueries = ["Sajo lean tuna 95g 1+1", "사조 살코기 참치 95g 2개"];
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 95 g 2 pack" }), twinPackQueries) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 95 g single can" }), twinPackQueries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 95 g 2 pack" }), ["Sajo lean tuna 95g"]), 0);
+
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 95g" }), ["Sajo lean tuna 95g 1 bottle"]) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Sajo lean tuna 95g 2 pack" }), ["Sajo lean tuna 95g 1 bottle"]), 0);
+});
+
+test("provider results rank channel candidates by exact-product confidence before price and keep three", async () => {
+  const registry: CompetitorProviderRegistry = {
+    configured: [{
+      id: "naver_shopping",
+      marketplaces: ["smartstore", "coupang", "elevenst", "qoo10", "other"],
+      search: async () => [
+        candidate({ externalId: "word-order", title: "Chex Choco by Kellogg 570g", url: "https://www.11st.co.kr/products/101", price: 1_000 }),
+        candidate({ externalId: "exact-high", title: "Kellogg Choco Chex 570g", url: "https://www.11st.co.kr/products/102", price: 9_000 }),
+        candidate({ externalId: "exact-low", title: "Kellogg Choco Chex 570g official", url: "https://www.11st.co.kr/products/103", price: 8_000 }),
+        candidate({ externalId: "wrong-pack", title: "Kellogg Choco Chex 1.2kg", url: "https://www.11st.co.kr/products/104", price: 500 }),
+        candidate({ externalId: "accessory", title: "Kellogg Choco Chex 570g compatible case", url: "https://www.11st.co.kr/products/105", price: 100 }),
+      ],
+    }],
+    unavailable: [],
+  };
+
+  const result = await searchCompetitorProviders(registry, "Kellogg Choco Chex 570g", []);
+  assert.deepEqual(result.items.map((item) => item.externalId), ["exact-low", "exact-high", "word-order"]);
+  assert.equal(result.providers[0]?.count, 3);
 });
 
 test("11st official ProductSearch parses only catalog fields and uses English search mode for an English alias", async () => {
@@ -397,6 +565,53 @@ test("11st variant search reserves room for pack-neutral queries when AI supplie
       ...Array.from({ length: 7 }, (_, index) => `Sajo tuna 95g ${index + 9} pack`),
     ]);
     assert.ok(searches.includes("사조 살코기플러스 참치 95g"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st pack-neutral retrieval handles leading multipliers and hyphenated pack labels", async () => {
+  const originalFetch = globalThis.fetch;
+  const searches: string[] = [];
+  globalThis.fetch = async (input) => {
+    searches.push(new URL(String(input)).searchParams.get("keyword") ?? "");
+    return new Response("<ProductSearchResponse><Products /></ProductSearchResponse>", {
+      status: 200,
+      headers: { "content-type": "text/xml; charset=utf-8" },
+    });
+  };
+  try {
+    await searchElevenstProductVariants(
+      "8 x 95g Sajo lean tuna",
+      ["Sajo lean tuna 95g 8-pack"],
+      { apiKey: "A".repeat(32) },
+      30,
+    );
+    assert.deepEqual(searches, [
+      "8 x 95g Sajo lean tuna",
+      "Sajo lean tuna 95g 8-pack",
+      "95g Sajo lean tuna",
+      "Sajo lean tuna 95g",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st pack-neutral retrieval also searches a base query for non-measured multipacks", async () => {
+  const originalFetch = globalThis.fetch;
+  const searches: string[] = [];
+  globalThis.fetch = async (input) => {
+    searches.push(new URL(String(input)).searchParams.get("keyword") ?? "");
+    return new Response("<ProductSearchResponse><Products /></ProductSearchResponse>", {
+      status: 200,
+      headers: { "content-type": "text/xml; charset=utf-8" },
+    });
+  };
+  try {
+    await searchElevenstProductVariants("Apple AirTag 4 pack", [], { apiKey: "A".repeat(32) }, 30);
+    assert.deepEqual(searches, ["Apple AirTag 4 pack", "Apple AirTag"]);
+    assert.equal(competitorCandidateRelevance(candidate({ title: "Apple AirTag single" }), ["Apple AirTag 4 pack"]), 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -52,26 +52,49 @@ export type ProductSettingShotPlan = Record<SettingShotAssetId, ProductSettingSh
 const settingShotRetryProfiles = [
   {
     key: "opposite-side-rectangular-task-light",
-    location: "stay inside the exact assigned real-life room and keep at least two functional room-recognition structures, but rebuild the view from the opposite side with an ordinary flat ceiling, a different doorway or cabinet junction, and a rectangular built-in task-light recess",
-    supportingObjects: "one ordinary rectangular built-in task-light recess appropriate to the assigned room, outside the product zone; it is secondary to the room's functional cabinet, worktop, doorway, window or storage evidence",
-    staging: "inside the immutable source-composite mask zone, the support-or-backing plane moves to the opposite near/far depth relationship and reverses negative-space direction",
-    camera: "the assigned camera family moved to the opposite side, rotated about 70 degrees in azimuth with a visibly wider perspective while its role-required height remains unchanged",
+    location: "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with an L-shaped built-in or work-surface bay seen from the opposite side; a full-height doorway or opening must occupy one outer third, the functional built-in must span the centre and opposite half, and no blank wall may dominate half the frame",
+    supportingObjects: "one ordinary rectangular built-in task-light recess integrated into the functional bay outside the product zone; it is secondary to the room's built-in, work surface, doorway, window or storage evidence",
+    staging: "outside the immutable source-composite mask zone, reverse the near/far support-or-backing relationship and place the longest negative-space run on the side opposite the base composition",
+    camera: "AUTHORITATIVE replacement camera: view the room from the opposite architectural side at the role-required height and framing, rotate roughly 70 degrees from the base axis, and show a wide two-point convergence with the full-height opening and functional bay both occupying substantial frame area",
+    forbiddenTopology: "the base camera axis; a dominant blank left wall with only a narrow room reveal on the right; a right-side-only daylight strip; centred axial symmetry; or a crop, mirror, recolour or small lateral shift of any rejected plate",
   },
   {
     key: "axial-access-threshold",
-    location: "stay inside the exact assigned real-life room and keep at least two functional room-recognition structures, but rebuild the view along a different ordinary access aisle with a flat ceiling, a clearly visible entry threshold, and changed foreground-to-rear depth",
-    supportingObjects: "one room-appropriate fixed access threshold or cabinet toe-kick return outside the product zone; it must belong to the assigned room and must not become a display plinth",
-    staging: "inside the immutable source-composite mask zone, the background support-or-backing geometry changes to a far-diagonal relationship and reverses foreground hierarchy",
-    camera: "the assigned camera family shifted from oblique toward axial, rotated about 155 degrees in azimuth with a compressed mid-depth plane while its role-required height remains unchanged",
+    location: "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with a true centred access aisle: paired left and right built-ins or functional wall systems must frame a central rear threshold, with both side walls and the ceiling visibly converging toward that threshold",
+    supportingObjects: "one room-appropriate fixed access threshold or cabinet toe-kick return centred on the rear axis outside the product zone; it must belong to the paired room system and must not become a display plinth",
+    staging: "outside the immutable source-composite mask zone, use balanced left/right middle planes and a central rear plane; keep foreground hierarchy centred instead of preserving any previous side-heavy diagonal",
+    camera: "AUTHORITATIVE replacement camera: use a genuinely centred axial architectural optical axis at the role-required height and framing, rotated roughly 155 degrees from the base axis; paired left/right floor, wall and ceiling lines must converge symmetrically on the central rear threshold",
+    forbiddenTopology: "any vertical three-quarter or right-oblique view; a large blank left wall; a narrow kitchen, cabinet or doorway reveal confined to the right; right-side-only daylight; asymmetric wall-and-ceiling convergence; or the opposite-side L-shaped topology from retry 1",
   },
   {
     key: "third-corner-rectangular-vent",
-    location: "stay inside the exact assigned real-life room and keep at least two functional room-recognition structures, but rebuild the view from a third ordinary corner with a flat or naturally sloped residential ceiling, a different cabinet or doorway layout, and no exhibition geometry",
-    supportingObjects: "one fixed rectangular ventilation or transom panel appropriate to the assigned room, outside the product zone and visibly integrated with the real wall, doorway or storage system",
-    staging: "inside the immutable source-composite mask zone, the apparent architectural depth shifts to a third relationship while foreground and rear-plane hierarchy are fully reversed",
-    camera: "the assigned camera family moved to a third corner-to-axial position, rotated about 245 degrees in azimuth with a longer perspective while its role-required height remains unchanged",
+    location: "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with a third-corner cross-axis layout: a broad full-height opening with an integrated transom or vent must span one side while a perpendicular built-in, storage bank or work-surface return crosses the opposing lower quadrant and exposes two distinct vanishing directions",
+    supportingObjects: "one fixed rectangular ventilation or transom panel integrated above the broad full-height opening outside the product zone; it must be visibly attached to the real wall, doorway or storage system rather than floating as decoration",
+    staging: "outside the immutable source-composite mask zone, use crossing side and rear planes with a long diagonal foreground-to-rear path; neither the centred aisle nor the previous side-heavy blank-wall hierarchy may remain",
+    camera: "AUTHORITATIVE replacement camera: move to a third architectural corner at the role-required height and framing, rotate roughly 245 degrees from the base axis, and look across the broad opening toward the perpendicular built-in return so two non-symmetric vanishing directions and long near/middle/rear separation are unmistakable",
+    forbiddenTopology: "the base vertical three-quarter axis; a dominant blank left wall with a narrow right reveal; right-side-only daylight; the centred paired aisle from retry 2; the opposite-side L-shaped bay from retry 1; or a crop, mirror, recolour or fixture-only edit of a rejected plate",
   },
 ] as const;
+
+const retryCameraEnvelopeByAsset: Readonly<Record<SettingShotAssetId, string>> = {
+  portrait: "portrait-orientation framing at the role-required height (low for this slot)",
+  wide: "wide horizontal framing at the role-required height (elevated lateral for this slot)",
+  "detail-overview": "overview framing at the role-required height (elevated storage-reading for this slot)",
+  "detail-use": "medium functional framing at the role-required height (surface-level for this slot)",
+  "detail-routine": "routine-transition framing at the role-required height (shoulder-level for this slot)",
+  "detail-scale": "reference framing at the role-required height (waist-level for this slot)",
+  "detail-storage": "storage-access framing at the role-required height (high access for this slot)",
+  "detail-context": "wide contextual framing at the role-required height (low context for this slot)",
+};
+
+export function resolveSettingShotRetryCameraDescription(
+  assetId: SettingShotAssetId,
+  retry: number,
+) {
+  const boundedRetry = Math.max(1, Math.min(Math.trunc(retry), settingShotRetryProfiles.length));
+  const profile = settingShotRetryProfiles[boundedRetry - 1];
+  return `${retryCameraEnvelopeByAsset[assetId]}; ${profile.camera}. This replacement camera axis overrides and excludes the base camera description. FORBIDDEN CAMERA/TOPOLOGY: ${profile.forbiddenTopology}.`;
+}
 
 const settingShotRetryRepairDirectives: Readonly<Record<string, string>> = {
   "audit-confidence": "render every required fixed architectural cue, material boundary, light direction and depth junction with enough clarity for a high-confidence whole-frame audit; haze, ambiguous crops and implied off-frame evidence are forbidden",
@@ -87,14 +110,14 @@ const settingShotRetryRepairDirectives: Readonly<Record<string, string>> = {
   "assigned-time-light-key": "make the retry light signature unambiguous enough that the trusted moment key, rather than unknown or a prior light family, is the only defensible audit result",
   "assigned-surface": "show a broad integrated plane with the retry's exact material, readable texture and grain direction outside the quiet product zone; a recolor of the prior material or an ambiguous generic slab fails",
   "assigned-surface-key": "make the retry surface family unambiguous enough that the trusted surface key, rather than unknown or a prior material family, is the only defensible audit result",
-  "assigned-camera": "prove the retry's exact camera family and azimuth transform with multiple fixed architectural convergence lines and a visibly changed near/middle/rear relationship; a crop, mirror or small lateral shift fails",
+  "assigned-camera": "prove the retry's authoritative replacement camera axis with multiple fixed architectural convergence lines, the profile's mandatory screen-space topology and a visibly changed near/middle/rear relationship; the base camera family is forbidden, and a crop, mirror or small lateral shift fails",
   "assigned-camera-key": "make the retry camera transform unambiguous enough that the trusted camera key, rather than unknown or a prior perspective family, is the only defensible audit result",
   "assigned-palette": "make the retry palette a coherent consequence of its assigned surface and light, visibly separated from every blacklisted cream/beige or prior palette family rather than applying a simple tint",
   "assigned-palette-key": "make the retry palette family unambiguous enough that the trusted palette key, rather than unknown or a prior palette family, is the only defensible audit result",
   "assigned-spatial-depth": "expose separate foreground, middle and rear fixed architectural planes with readable occlusion and convergence; a flat wall, shallow niche or isolated shelf fails",
   "assigned-spatial-depth-key": "make the retry depth structure unambiguous enough that the trusted spatial-depth key, rather than unknown or a prior depth family, is the only defensible audit result",
-  "assigned-fixed-cue": "show exactly the retry's mandatory slot-specific fixed cue as real integrated architecture outside the entire reserved product rectangle; a renamed, reshaped or relocated version of a rejected cue fails",
-  "overall-layout": "rebuild the complete architectural composition, convergence, negative-space direction, fixed-cue placement and near/middle/rear hierarchy; changing only color, crop, one fixture or product-zone surroundings fails",
+  "assigned-fixed-cue": "show exactly the retry's mandatory slot-specific fixed cue as real integrated architecture outside the entire reserved product rectangle and attach it to the retry profile's required doorway, built-in or room system; a renamed, reshaped, relocated or isolated version of a rejected cue fails",
+  "overall-layout": "rebuild the complete architectural floor-plan, screen-space occupancy, convergence, negative-space direction, fixed-cue placement and near/middle/rear hierarchy; a dominant blank half-frame wall, narrow side reveal, changing only color, crop, one fixture or product-zone surroundings fails",
   location: "retain the exact assigned room function but use visibly different fixed-room geometry and access/cabinet/window relationships from every comparison plate",
   "time-light": "use the retry's different source side, time treatment, shadow direction and shadow length so no comparison plate shares its lighting signature",
   surface: "use the retry's different integrated material family, texture scale and grain direction so no comparison plate shares its support-plane appearance",
@@ -206,14 +229,15 @@ export function buildSettingShotRetryVariant(
   const retryMoment = retryMomentsByAsset[assetId][boundedRetry - 1];
   const retrySurface = retrySurfacesByAsset[assetId][boundedRetry - 1];
   const key = `retry-${boundedRetry}-${assetId}`;
+  const functionalRoom = setting.location.split(";")[0]?.trim() || setting.location.trim();
   return {
     label: `${setting.label} · 재생성 ${boundedRetry}`,
-    location: `${setting.location}; ${profile.location}. Never turn it into a rotunda, gallery, showroom, abstract chamber, display niche or pedestal set`,
+    location: `assigned functional room=${functionalRoom}; ${profile.location}. The base location text supplies room function only: its floor-plan, wall occupancy, opening side, negative-space axis and viewpoint are blacklisted. Never turn it into a rotunda, gallery, showroom, abstract chamber, display niche or pedestal set`,
     moment: `${retryMoment}; the previous candidate's time and light direction are fully blacklisted`,
     surface: `an integrated ${retrySurface} plane; the previous candidate's material and grain direction are fully blacklisted`,
-    supportingObjects: `${profile.supportingObjects}; retain the mandatory functional room-recognition structures from ${setting.location}, but do not treat those common structures as the slot-specific unique cue; the previous candidate's unique cue arrangement is blacklisted`,
-    staging: `keep ${assetId}'s exact reserved product rectangle at its original left, top, width and height, fully quiet and unobstructed; only the surrounding architecture outside that immutable rectangle changes. ${profile.staging}; preserve the source-product pixel mask and role anchor (${setting.staging}) while fully blacklisting the previous background support-or-backing geometry, depth and negative-space hierarchy`,
-    camera: `${setting.camera}; within this exact assigned camera family, ${profile.camera}`,
+    supportingObjects: `${profile.supportingObjects}; retain the mandatory functional room-recognition structures required by assigned functional room ${functionalRoom}, but do not reuse the base floor-plan or treat those common structures as the slot-specific unique cue; the previous candidate's unique cue arrangement is blacklisted`,
+    staging: `keep ${assetId}'s exact reserved product rectangle at its original left, top, width and height, fully quiet and unobstructed; only the surrounding architecture outside that immutable rectangle changes. ${profile.staging}; preserve the source-product pixel mask and persisted rectangle only, and do not import the base staging direction, background support-or-backing geometry, depth or negative-space hierarchy`,
+    camera: resolveSettingShotRetryCameraDescription(assetId, boundedRetry),
     separation: {
       location: `${key}-place`,
       moment: `${key}-light`,
@@ -258,6 +282,7 @@ export function buildSettingShotRetryGuidance(
     `Deterministic setting-shot retry ${boundedRetry} of ${settingShotRetryProfiles.length} for ${assetId}.`,
     `HARD ROLE BLACKLIST: ${blacklist}. Do not reuse any blacklisted role's room geometry, light direction, surface family, fixed cue, background support-or-backing geometry around the immutable product zone, staging relationship, negative-space direction, depth hierarchy, camera azimuth or focal perspective.`,
     `Retry transform ${profile.key} replaces all six scene dimensions together while retaining the product-category function and hard shot class: location=${settingVariant.location}; time/light=${settingVariant.moment}; surface=${settingVariant.surface}; fixed cue=${settingVariant.supportingObjects}; product placement=${settingVariant.staging}; camera=${settingVariant.camera}.`,
+    `MANDATORY SCREEN-SPACE TOPOLOGY: ${profile.location}. FORBIDDEN CAMERA/TOPOLOGY: ${profile.forbiddenTopology}. If the forbidden topology is visible anywhere in the candidate, reject the composition and render a new plate instead of repairing it.`,
     failedDimensions.length
       ? `Validated prior audit failure dimensions: ${failedDimensions.join(", ")}. Make each named visual dimension unmistakably different from every blacklisted role while still satisfying this retry's trusted assignment.`
       : "The prior candidate did not provide safe high-confidence dimension feedback; replace every scene dimension according to this deterministic retry contract.",

@@ -304,92 +304,487 @@ export function structuredMarketplaceWebPrice(result: Record<string, unknown>, f
   return prices.sort((left, right) => left.price - right.price)[0] ?? null;
 }
 
-function meaningfulSearchTokens(value: string) {
-  const ignored = new Set(["상품", "제품", "정품", "공식", "new", "item", "product", "official"]);
-  return [...new Set(normalizedSearchText(value).split(" ").filter((token) => token.length >= 2 && !ignored.has(token)))];
-}
+const ignoredSearchTokens = new Set([
+  "상품", "제품", "정품", "공식", "신품", "무료배송", "item", "product", "official", "genuine", "authentic", "original", "new",
+  "total", "net", "weight", "contents", "content", "netto", "peso", "conteúdo", "contenido",
+  "for", "with", "and", "the", "by", "para", "con", "com", "dengan", "untuk", "dan", "cho", "với", "của",
+  "商品", "製品", "正規品", "公式", "新品", "产品", "產品", "正品", "官方", "สินค้า", "ของแท้",
+  "produk", "barang", "sản", "phẩm", "chính", "hãng", "producto", "produto", "oficial",
+]);
+
+const measurementTokenSuffix = /\d(?:kg|mg|g|ml|l|cm|mm|m|oz|lb|개|입|팩|캔|병|봉|매|정|세트|pack|packs|pcs|pieces|bottles|cans|bags)$/iu;
 
 type SearchMeasurement = {
-  kind: "mass" | "volume" | "length" | "count" | "ounce" | "pound";
+  kind: "mass" | "volume" | "length" | "count";
   value: number;
+  system: "metric" | "imperial" | "count";
 };
 
-const COUNT_UNIT_PATTERN = "개입|세트|pieces?|bottles?|packs?|cans?|pcs?|bags?|개|입|팩|캔|병|봉|매|정|ea";
+type MeasurementUnitDefinition = Omit<SearchMeasurement, "value"> & { units: readonly string[]; factor: number };
 
-function measurementTokens(value: string) {
-  const compact = compactSearchText(value);
-  const multiplicative = value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, "");
-  const measurements: SearchMeasurement[] = [];
-  const pattern = new RegExp(`(\\d+(?:\\.\\d+)?)(kg|mg|ml|cm|mm|oz|lb|${COUNT_UNIT_PATTERN}|g|l|m)`, "giu");
-  for (const match of compact.matchAll(pattern)) {
-    const amount = Number(match[1]);
-    const unit = (match[2] ?? "").toLocaleLowerCase();
-    if (!Number.isFinite(amount) || amount < 0) continue;
-    if (unit === "kg") measurements.push({ kind: "mass", value: amount * 1_000_000 });
-    else if (unit === "g") measurements.push({ kind: "mass", value: amount * 1_000 });
-    else if (unit === "mg") measurements.push({ kind: "mass", value: amount });
-    else if (unit === "l") measurements.push({ kind: "volume", value: amount * 1_000 });
-    else if (unit === "ml") measurements.push({ kind: "volume", value: amount });
-    else if (unit === "m") measurements.push({ kind: "length", value: amount * 1_000 });
-    else if (unit === "cm") measurements.push({ kind: "length", value: amount * 10 });
-    else if (unit === "mm") measurements.push({ kind: "length", value: amount });
-    else if (unit === "oz") measurements.push({ kind: "ounce", value: amount });
-    else if (unit === "lb") measurements.push({ kind: "pound", value: amount });
-    else measurements.push({ kind: "count", value: amount });
+const measurementUnitDefinitions: readonly MeasurementUnitDefinition[] = [
+  { kind: "mass", system: "metric", factor: 1_000_000, units: ["kg", "kilogram", "kilograms", "킬로그램", "キログラム", "公斤", "千克", "กิโลกรัม"] },
+  { kind: "mass", system: "metric", factor: 1_000, units: ["g", "gram", "grams", "그램", "グラム", "克", "กรัม"] },
+  { kind: "mass", system: "metric", factor: 1, units: ["mg", "milligram", "milligrams", "밀리그램", "ミリグラム", "毫克", "มิลลิกรัม"] },
+  { kind: "mass", system: "imperial", factor: 28_349.523_125, units: ["oz", "ounce", "ounces", "オンス", "盎司"] },
+  { kind: "mass", system: "imperial", factor: 453_592.37, units: ["lb", "lbs", "pound", "pounds", "ポンド", "磅"] },
+  { kind: "volume", system: "metric", factor: 1_000, units: ["l", "liter", "liters", "litre", "litres", "리터", "リットル", "公升", "升", "ลิตร"] },
+  { kind: "volume", system: "metric", factor: 1, units: ["ml", "milliliter", "milliliters", "millilitre", "millilitres", "밀리리터", "ミリリットル", "毫升", "มล", "มิลลิลิตร"] },
+  { kind: "volume", system: "imperial", factor: 29.573_529_562_5, units: ["floz"] },
+  { kind: "length", system: "metric", factor: 1_000, units: ["m", "meter", "meters", "metre", "metres", "미터", "メートル", "米", "เมตร"] },
+  { kind: "length", system: "metric", factor: 10, units: ["cm", "centimeter", "centimeters", "centimetre", "centimetres", "센티미터", "センチメートル", "厘米", "เซนติเมตร"] },
+  { kind: "length", system: "metric", factor: 1, units: ["mm", "millimeter", "millimeters", "millimetre", "millimetres", "밀리미터", "ミリメートル", "毫米", "มิลลิเมตร"] },
+];
+
+const countUnits = [
+  "개입", "세트", "묶음", "박스", "상자", "개", "입", "팩", "캔", "병", "봉", "매", "정",
+  "units", "unit", "pieces", "piece", "bottles", "bottle", "packs", "pack", "cans", "can", "pcs", "pc", "bags", "bag", "boxes", "box", "sets", "set", "tablets", "tablet", "capsules", "capsule", "servings", "serving", "ea",
+  "セット", "パック", "個", "本", "袋", "缶", "枚", "錠", "箱", "个", "個", "件", "包", "瓶", "罐", "盒", "支", "片", "套", "组", "組",
+  "ชิ้น", "ขวด", "แพ็ค", "กระป๋อง", "ถุง", "กล่อง", "ชุด", "เม็ด",
+  "cái", "hộp", "gói", "chai", "lon", "túi", "bộ", "viên", "combo",
+  "pek", "pak", "paket", "botol", "tin", "kaleng", "kotak", "bungkus", "kapsul",
+  "unidades", "unidad", "piezas", "pieza", "botellas", "botella", "paquetes", "paquete", "latas", "lata", "bolsas", "bolsa", "cajas", "caja",
+  "unidade", "peças", "peça", "garrafas", "garrafa", "pacotes", "pacote", "sacos", "saco", "caixas", "caixa",
+] as const;
+
+const normalizedCountUnitTokens = new Set(countUnits.map((unit) => normalizedSearchText(unit)));
+const storageUnits = ["kb", "mb", "gb", "tb", "kib", "mib", "gib", "tib"] as const;
+const normalizedStorageUnitTokens = new Set<string>(storageUnits);
+const STORAGE_UNIT_PATTERN = storageUnits.join("|");
+const storageTokenSuffix = new RegExp(`^\\d+(?:[.,]\\d+)?(?:${STORAGE_UNIT_PATTERN})$`, "iu");
+
+function meaningfulSearchTokens(value: string) {
+  return [...new Set(normalizedSearchText(value).split(" ").filter((token) => (
+    token.length >= 2
+    && !ignoredSearchTokens.has(token)
+    && !normalizedCountUnitTokens.has(token)
+    && !normalizedMeasurementUnitTokens.has(token)
+    && !normalizedStorageUnitTokens.has(token)
+    && !/^\d+(?:[.,]\d+)?$/u.test(token)
+    && !/^\d{1,3}\+\d{1,3}$/u.test(token)
+    && !/^[x×*]\d{1,4}$/iu.test(token)
+    && !measurementTokenSuffix.test(token)
+    && !storageTokenSuffix.test(token)
+  )))];
+}
+
+function regexAlternatives(values: readonly string[]) {
+  return [...values]
+    .sort((left, right) => right.length - left.length)
+    .map((value) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+    .join("|");
+}
+
+const measurementUnits = measurementUnitDefinitions.flatMap((definition) => definition.units);
+const measurementUnitPattern = regexAlternatives(measurementUnits);
+const packMeasurementUnitPattern = regexAlternatives(measurementUnitDefinitions.filter((definition) => definition.kind === "mass" || definition.kind === "volume").flatMap((definition) => definition.units));
+const COUNT_UNIT_PATTERN = regexAlternatives(countUnits);
+const measurementUnitByName = new Map(measurementUnitDefinitions.flatMap((definition) => definition.units.map((unit) => [unit, definition] as const)));
+const normalizedMeasurementUnitTokens = new Set(measurementUnits.map((unit) => normalizedSearchText(unit)));
+
+function localizedNumber(value: string, definition: MeasurementUnitDefinition) {
+  let numeric = value.replace(/\s+/gu, "");
+  const comma = numeric.lastIndexOf(",");
+  const dot = numeric.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) numeric = comma > dot ? numeric.replaceAll(".", "").replace(",", ".") : numeric.replaceAll(",", "");
+  else if (comma >= 0 || dot >= 0) {
+    const separator = comma >= 0 ? "," : ".";
+    const separatorIndex = Math.max(comma, dot);
+    const integerPart = numeric.slice(0, separatorIndex);
+    const fractionPart = numeric.slice(separatorIndex + 1);
+    const prefersThreeDigitFraction = definition.kind === "mass" ? definition.factor > 1_000
+      : definition.kind === "volume" ? definition.factor > 1
+        : definition.kind === "length" ? definition.factor > 10
+          : false;
+    if (fractionPart.length === 3 && integerPart !== "0" && !prefersThreeDigitFraction) numeric = numeric.replaceAll(separator, "");
+    else if (fractionPart.length <= 3) numeric = separator === "," ? numeric.replace(",", ".") : numeric;
+    else numeric = numeric.replaceAll(separator, "");
   }
-  for (const match of multiplicative.matchAll(/\d+(?:\.\d+)?(?:kg|mg|g|ml|l|oz|lb)[x×*](\d+(?:\.\d+)?)(?![\p{L}\p{N}])/giu)) {
-    const amount = Number(match[1]);
-    if (Number.isFinite(amount) && amount >= 0) measurements.push({ kind: "count", value: amount });
-  }
-  return measurements;
+  const parsed = Number(numeric);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function sameMeasurement(left: SearchMeasurement, right: SearchMeasurement) {
-  return left.kind === right.kind && Math.abs(left.value - right.value) <= Math.max(0.000_001, Math.abs(left.value) * 0.000_001);
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "count") return Number.isInteger(left.value) && left.value === right.value;
+  const tolerance = left.system === right.system ? 0.000_001 : 0.02;
+  return Math.abs(left.value - right.value) <= Math.max(0.000_001, Math.abs(left.value) * tolerance);
+}
+
+function uniqueMeasurements(measurements: SearchMeasurement[]) {
+  const unique: SearchMeasurement[] = [];
+  for (const measurement of measurements) {
+    if (!unique.some((candidate) => sameMeasurement(measurement, candidate))) unique.push(measurement);
+  }
+  return unique;
+}
+
+function measurementTokens(value: string) {
+  const normalized = value.normalize("NFKC").toLocaleLowerCase()
+    .replace(/fl\.?\s*oz/giu, "floz")
+    .replace(/fluid\s+ounces?/giu, "floz");
+  const measurements: SearchMeasurement[] = [];
+  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])(\\d[\\d.,]*)\\s*(${measurementUnitPattern})(?=$|[^\\p{L}\\p{N}]|[x×*]\\s*\\d|\\d+\\s*(?:${COUNT_UNIT_PATTERN}))`, "giu");
+  for (const match of normalized.matchAll(pattern)) {
+    const unit = (match[2] ?? "").toLocaleLowerCase();
+    const definition = measurementUnitByName.get(unit);
+    if (!definition) continue;
+    const amount = localizedNumber(match[1] ?? "", definition);
+    if (amount === null) continue;
+    measurements.push({ kind: definition.kind, system: definition.system, value: amount * definition.factor });
+  }
+
+  const countPattern = new RegExp(`(?<![\\p{L}\\p{N}])(\\d{1,4})\\s*(?:${COUNT_UNIT_PATTERN})(?![\\p{L}\\p{N}])`, "giu");
+  for (const match of normalized.matchAll(countPattern)) {
+    const count = Number(match[1]);
+    if (Number.isInteger(count) && count > 0) measurements.push({ kind: "count", system: "count", value: count });
+  }
+
+  const trailingBareCountPattern = new RegExp(`(?:\\d[\\d.,]*)\\s*(?:${packMeasurementUnitPattern})\\s*[x×*]\\s*(\\d{1,4})(?!\\d)(?!\\s*(?:${measurementUnitPattern}))`, "giu");
+  const trailingExplicitCountPattern = new RegExp(`(?:\\d[\\d.,]*)\\s*(?:${measurementUnitPattern})\\s*(\\d{1,4})\\s*(?:${COUNT_UNIT_PATTERN})`, "giu");
+  for (const match of [...normalized.matchAll(trailingBareCountPattern), ...normalized.matchAll(trailingExplicitCountPattern)]) {
+    const count = Number(match[1]);
+    if (Number.isInteger(count) && count > 0) measurements.push({ kind: "count", system: "count", value: count });
+  }
+
+  const leadingCountPattern = new RegExp(`(?<![\\p{L}\\p{N}])(\\d{1,4})\\s*[x×*]\\s*\\d[\\d.,]*\\s*(?:${packMeasurementUnitPattern})`, "giu");
+  for (const match of normalized.matchAll(leadingCountPattern)) {
+    const count = Number(match[1]);
+    if (Number.isInteger(count) && count > 0) measurements.push({ kind: "count", system: "count", value: count });
+  }
+
+  for (const match of normalized.matchAll(/(?<!\d)(\d{1,3})\s*\+\s*(\d{1,3})(?!\d)/gu)) {
+    const count = Number(match[1]) + Number(match[2]);
+    if (Number.isInteger(count) && count > 1) measurements.push({ kind: "count", system: "count", value: count });
+  }
+  for (const match of normalized.matchAll(/\b(?:set|pack|lot)\s+of\s+(\d{1,4})\b/giu)) {
+    const count = Number(match[1]);
+    if (Number.isInteger(count) && count > 0) measurements.push({ kind: "count", system: "count", value: count });
+  }
+  return uniqueMeasurements(measurements);
+}
+
+function measurementRequirements(queries: string[]) {
+  const profiles = queries.map(measurementTokens);
+  const required = [...(profiles[0] ?? [])];
+  for (const kind of ["mass", "volume", "length", "count"] as const) {
+    if (required.some((measurement) => measurement.kind === kind)) continue;
+    const groups: Array<{ measurement: SearchMeasurement; queryIndexes: Set<number> }> = [];
+    profiles.slice(1).forEach((profile, offset) => {
+      for (const measurement of profile.filter((candidate) => candidate.kind === kind)) {
+        const group = groups.find((candidate) => sameMeasurement(candidate.measurement, measurement));
+        if (group) group.queryIndexes.add(offset + 1);
+        else groups.push({ measurement, queryIndexes: new Set([offset + 1]) });
+      }
+    });
+    const consensus = groups.sort((left, right) => right.queryIndexes.size - left.queryIndexes.size)[0];
+    if (consensus && consensus.queryIndexes.size >= 2) required.push(consensus.measurement);
+  }
+  return uniqueMeasurements(required);
+}
+
+function measurementsMatchRequirements(requirements: SearchMeasurement[], candidates: SearchMeasurement[]) {
+  const requiredCounts = requirements.filter((measurement) => measurement.kind === "count");
+  const candidateCounts = candidates.filter((measurement) => measurement.kind === "count");
+  if (!requirements.every((required) => (
+    required.kind === "count" && required.value === 1 && candidateCounts.length === 0
+      ? true
+      : candidates.some((candidate) => sameMeasurement(required, candidate))
+  ))) return false;
+  if (!requiredCounts.length && candidateCounts.some((measurement) => measurement.value > 1)) return false;
+  if (requiredCounts.length && candidateCounts.some((measurement) => measurement.value > 1 && !requiredCounts.some((required) => sameMeasurement(required, measurement)))) return false;
+
+  const packCount = requiredCounts[0]?.value ?? 1;
+  for (const kind of ["mass", "volume", "length"] as const) {
+    const required = requirements.filter((measurement) => measurement.kind === kind);
+    if (required.length !== 1) continue;
+    const compatibleTotals = packCount > 1 ? [{ ...required[0], value: required[0].value * packCount }] : [];
+    const conflicting = candidates.filter((measurement) => measurement.kind === kind).some((measurement) => (
+      !required.some((candidate) => sameMeasurement(candidate, measurement))
+      && !compatibleTotals.some((candidate) => sameMeasurement(candidate, measurement))
+    ));
+    if (conflicting) return false;
+  }
+  return true;
+}
+
+function measurementMatchesCandidate(required: SearchMeasurement, candidates: SearchMeasurement[]) {
+  return required.kind === "count" && required.value === 1 && !candidates.some((candidate) => candidate.kind === "count")
+    ? true
+    : candidates.some((candidate) => sameMeasurement(required, candidate));
+}
+
+const accessoryTerms = {
+  protective_case: ["case", "cases", "cover", "covers", "sleeve", "pouch", "케이스", "커버", "파우치", "ケース", "カバー", "保护壳", "保護殼", "外壳", "外殼", "เคส", "ฝาครอบ", "ốp lưng", "bao da", "funda", "cubierta", "capa", "estojo"],
+  replacement: ["replacement", "replacement part", "spare part", "compatible", "호환", "교체용", "부품", "交換用", "互換", "替换", "替換", "兼容", "อะไหล่", "ใช้ร่วมกับ", "thay thế", "tương thích", "pengganti", "kompatibel", "repuesto", "compatível", "compatível"],
+  accessory: ["accessory", "accessories", "adapter", "charger", "charging cable", "strap", "holder", "stand", "액세서리", "어댑터", "충전기", "케이블", "스트랩", "거치대", "アクセサリー", "アダプター", "充電器", "ケーブル", "ストラップ", "配件", "轉接器", "充電器", "数据线", "支架", "อุปกรณ์เสริม", "ที่ชาร์จ", "สายชาร์จ", "ขาตั้ง", "phụ kiện", "bộ sạc", "cáp sạc", "giá đỡ", "aksesori", "adaptor", "pengecas", "kabel", "dudukan", "accesorio", "adaptador", "cargador", "soporte", "acessório", "carregador", "suporte"],
+  refill_sample: ["refill", "sample", "tester", "empty bottle", "리필", "샘플", "테스터", "빈용기", "詰め替え", "リフィル", "サンプル", "补充装", "補充裝", "小样", "小樣", "รีฟิล", "ตัวอย่าง", "isi ulang", "sampel", "recarga", "muestra", "refil", "amostra"],
+} as const;
+
+const variantTerms = {
+  pro: ["pro", "professional", "프로", "プロ", "专业版", "專業版"],
+  max: ["max", "맥스", "マックス", "最大版"],
+  plus: ["plus", "플러스", "プラス", "加強版", "加强版"],
+  ultra: ["ultra", "울트라", "ウルトラ", "超强版", "超強版"],
+  mini: ["mini", "미니", "ミニ", "迷你"],
+  light: ["lite", "light", "라이트", "ライト", "轻量版", "輕量版"],
+  air: ["air", "에어", "エア"],
+  flavor_cherry: ["cherry", "체리", "チェリー", "樱桃", "櫻桃", "cereza", "cereja"],
+  flavor_strawberry: ["strawberry", "딸기", "ストロベリー", "草莓", "fresa", "morango"],
+  flavor_vanilla: ["vanilla", "바닐라", "バニラ", "香草", "vainilla", "baunilha"],
+  flavor_chocolate: ["chocolate", "choco", "초콜릿", "초코", "チョコレート", "巧克力", "cokelat"],
+  flavor_grape: ["grape", "포도", "グレープ", "葡萄", "uva"],
+  flavor_lemon: ["lemon", "레몬", "レモン", "柠檬", "檸檬", "limón", "limão"],
+  flavor_lime: ["lime", "라임", "ライム", "青柠", "萊姆", "lima"],
+  flavor_orange: ["orange", "오렌지", "オレンジ", "橙", "naranja", "laranja"],
+  flavor_apple: ["apple", "사과", "アップル", "苹果", "蘋果", "manzana", "maçã"],
+  flavor_peach: ["peach", "복숭아", "ピーチ", "桃", "melocotón", "pêssego"],
+  flavor_mango: ["mango", "망고", "マンゴー", "芒果", "manga"],
+  flavor_mint: ["mint", "민트", "ミント", "薄荷", "menta"],
+  flavor_spicy: ["spicy", "hot pepper", "chili", "매운", "고추", "スパイシー", "唐辛子", "pedas", "picante"],
+  color_black: ["black", "블랙", "검정", "ブラック", "negro", "preto"],
+  color_white: ["white", "화이트", "흰색", "ホワイト", "blanco", "branco"],
+  color_red: ["red", "레드", "빨강", "レッド", "rojo", "vermelho"],
+  color_blue: ["blue", "블루", "파랑", "ブルー", "azul"],
+  color_green: ["green", "그린", "초록", "グリーン", "verde"],
+  color_pink: ["pink", "핑크", "ピンク", "粉色", "rosa"],
+  color_gold: ["gold", "골드", "ゴールド", "金色", "dorado", "dourado"],
+  color_silver: ["silver", "실버", "シルバー", "银色", "銀色", "plateado", "prateado"],
+  formula_zero: ["zero", "제로", "ゼロ", "零", "cero", "sem açúcar"],
+  formula_diet: ["diet", "다이어트", "ダイエット", "低卡", "低糖", "dieta"],
+  formula_sugar_free: ["sugar free", "sugar-free", "무설탕", "シュガーフリー", "无糖", "無糖", "sin azúcar"],
+  formula_decaf: ["decaf", "decaffeinated", "디카페인", "デカフェ", "无咖啡因", "無咖啡因", "descafeinado"],
+  formula_lean: ["lean", "살코기", "ライトツナ", "瘦肉", "magro"],
+} as const;
+
+function phraseCategories(value: string, dictionary: Record<string, readonly string[]>) {
+  const normalized = normalizedSearchText(value);
+  const padded = ` ${normalized} `;
+  const compact = compactSearchText(value);
+  const categories = new Set<string>();
+  for (const [category, terms] of Object.entries(dictionary)) {
+    if (terms.some((term) => {
+      const normalizedTerm = normalizedSearchText(term);
+      if (!normalizedTerm) return false;
+      const latinOnly = /^[\p{Script=Latin}\d ]+$/u.test(normalizedTerm);
+      return latinOnly ? padded.includes(` ${normalizedTerm} `) : compact.includes(compactSearchText(term));
+    })) categories.add(category);
+  }
+  return categories;
+}
+
+function accessoryCategories(value: string) {
+  const categories = phraseCategories(value, accessoryTerms);
+  const normalized = normalizedSearchText(value);
+  const packagingCase = /(?:^|\s)(?:cases?\s+of\s+\d{1,4}|\d{1,4}\s*-?\s*cases?)(?:\s|$)/iu.test(normalized);
+  if (packagingCase) categories.delete("protective_case");
+  return categories;
+}
+
+function productVariantCategories(value: string) {
+  const categories = phraseCategories(value, variantTerms);
+  const normalized = normalizedSearchText(value);
+  const compact = compactSearchText(value);
+  if (/(?:^|\s)(?:light\s+tuna|tuna\s+light)(?:\s|$)/iu.test(normalized) || compact.includes("ライトツナ")) {
+    categories.delete("light");
+    categories.add("formula_lean");
+  }
+  if (/(?:^|\s)(?:iphone|ipad|macbook|airpods?|apple\s+watch)(?:\s|$)/iu.test(normalized)) {
+    categories.delete("flavor_apple");
+  }
+  return categories;
+}
+
+function variantRequirements(queries: string[]) {
+  const profiles = queries.map(productVariantCategories);
+  if (profiles.length <= 1) return profiles[0] ?? new Set<string>();
+  const evidence = new Map<string, Set<number>>();
+  profiles.forEach((categories, index) => {
+    for (const category of categories) {
+      const indexes = evidence.get(category) ?? new Set<number>();
+      indexes.add(index);
+      evidence.set(category, indexes);
+    }
+  });
+  return new Set([...evidence].filter(([, indexes]) => indexes.size >= 2).map(([category]) => category));
+}
+
+const formattedIdentifierPattern = /(?<!\d)(?:\d[\s.-]?){7,13}\d(?!\d)/gu;
+
+function identifierTokens(value: string) {
+  const matches = value.normalize("NFKC").match(formattedIdentifierPattern) ?? [];
+  return [...new Set(matches.map((match) => match.replace(/\D/gu, "")).filter((identifier) => /^\d{8,14}$/u.test(identifier)))];
+}
+
+function modelTokens(value: string) {
+  const normalized = value.normalize("NFKC").toLocaleLowerCase();
+  const identifierParts = new Set((value.normalize("NFKC").match(formattedIdentifierPattern) ?? []).flatMap((identifier) => normalizedSearchText(identifier).split(" ")));
+  const measurementNumberParts = new Set([
+    ...normalized.matchAll(new RegExp(`(?<![\\p{L}\\p{N}])(\\d[\\d.,]*)\\s*(?:${measurementUnitPattern})`, "giu")),
+    ...normalized.matchAll(new RegExp(`(?<![\\p{L}\\p{N}])(\\d{1,4})\\s*(?:${COUNT_UNIT_PATTERN})(?![\\p{L}\\p{N}])`, "giu")),
+  ].flatMap((match) => normalizedSearchText(match[1] ?? "").split(" ")));
+  const models = new Set<string>();
+  for (const match of normalized.matchAll(new RegExp(`(?<![\\p{L}\\p{N}])(\\d{1,6}(?:[.,]\\d+)?)\\s*(${STORAGE_UNIT_PATTERN})(?![\\p{L}\\p{N}])`, "giu"))) {
+    const rawAmount = match[1] ?? "";
+    const amount = rawAmount.replace(/,(?=\d{3}(?:$|\D))/gu, "").replace(",", ".");
+    const parsed = Number(amount);
+    if (Number.isFinite(parsed) && parsed > 0) models.add(`${parsed}${(match[2] ?? "").toLocaleLowerCase()}`);
+  }
+  const latinModelCores = normalized.match(/[a-z]{1,16}(?:[-_.]?\d[a-z0-9-_.]*)+|\d{1,6}[a-z][a-z0-9-_.]*/giu) ?? [];
+  for (const core of latinModelCores) {
+    const compact = core.replace(/[^a-z0-9]/giu, "");
+    if (compact.length < 2 || measurementTokenSuffix.test(compact) || measurementTokens(core).length > 0) continue;
+    models.add(compact);
+  }
+  const segments = normalized.match(/[\p{L}\p{N}]+(?:[-_.][\p{L}\p{N}]+)*/gu) ?? [];
+  for (const segment of segments) {
+    const compact = segment.replace(/[^\p{L}\p{N}]/gu, "");
+    if (compact.length < 3 || !/\p{L}/u.test(compact) || !/\d/u.test(compact)) continue;
+    if (measurementTokenSuffix.test(compact) || measurementTokens(segment).length > 0) continue;
+    const nonLatinLetters = segment.replace(/[\p{Script=Latin}\p{N}_.-]/gu, "");
+    if (/\p{Script=Latin}/u.test(segment) && /\p{L}/u.test(nonLatinLetters)) continue;
+    models.add(compact);
+  }
+  const words = normalizedSearchText(value).split(" ");
+  for (let index = 0; index < words.length - 1; index += 1) {
+    const left = words[index] ?? "";
+    const right = words[index + 1] ?? "";
+    const leftIsGeneric = ignoredSearchTokens.has(left) || normalizedCountUnitTokens.has(left) || normalizedMeasurementUnitTokens.has(left) || normalizedStorageUnitTokens.has(left);
+    const rightIsGeneric = ignoredSearchTokens.has(right) || normalizedCountUnitTokens.has(right) || normalizedMeasurementUnitTokens.has(right) || normalizedStorageUnitTokens.has(right);
+    if (!leftIsGeneric && !identifierParts.has(right) && !measurementNumberParts.has(right) && /^[\p{L}]{2,}$/u.test(left) && /^\d{1,4}$/u.test(right)) models.add(`${left}${right}`);
+    if (!rightIsGeneric && !identifierParts.has(left) && !measurementNumberParts.has(left) && /^\d{1,4}$/u.test(left) && /^[\p{L}]{2,}$/u.test(right)) models.add(`${left}${right}`);
+  }
+  return [...models];
+}
+
+function modelRequirements(queries: string[]) {
+  // Latin model codes and normalized storage specs are stable across locales.
+  // A localized product-family word joined to a generation number (for example
+  // 아이폰15) is kept as conflict evidence, but is not a hard cross-language
+  // requirement unless two independent aliases repeat it.
+  const required = new Set(modelTokens(queries[0] ?? "").filter((model) => /\p{Script=Latin}/u.test(model)));
+  const aliasEvidence = new Map<string, Set<number>>();
+  queries.slice(1).forEach((query, offset) => {
+    for (const model of modelTokens(query)) {
+      const indexes = aliasEvidence.get(model) ?? new Set<number>();
+      indexes.add(offset + 1);
+      aliasEvidence.set(model, indexes);
+    }
+  });
+  for (const [model, indexes] of aliasEvidence) {
+    if (indexes.size >= 2) required.add(model);
+  }
+  return [...required];
+}
+
+function modelStem(value: string) {
+  return value.replace(/\d+/gu, "");
+}
+
+function tokenMatchesCandidate(token: string, candidateTokens: Set<string>, compactCandidate: string) {
+  if (candidateTokens.has(token)) return true;
+  const compactToken = token.replaceAll(" ", "");
+  const minimumSubstringLength = /[^\p{Script=Latin}\d]/u.test(compactToken) ? 2 : 4;
+  return compactToken.length >= minimumSubstringLength && compactCandidate.includes(compactToken);
+}
+
+function identityAnchors(tokens: string[]) {
+  if (tokens.length <= 2) return tokens;
+  const interior = tokens.slice(1, -1).sort((left, right) => right.length - left.length || tokens.lastIndexOf(right) - tokens.lastIndexOf(left))[0];
+  return [...new Set([tokens[0], interior, tokens.at(-1)].filter((token): token is string => Boolean(token)))];
 }
 
 function packNeutralSearchQuery(value: string) {
-  const countSuffix = new RegExp(`(?:\\s*(?:x|×|\\*)\\s*)?\\d+(?:\\.\\d+)?\\s*(?:${COUNT_UNIT_PATTERN})(?=$|[\\s,;/()])`, "giu");
-  const neutral = value.replace(countSuffix, " ").replace(/\s+/g, " ").trim();
-  if (neutral === value.trim() || measurementTokens(neutral).every((measurement) => measurement.kind === "count")) return "";
+  const countSuffix = new RegExp(`(?:\\s*(?:x|×|\\*)\\s*)?\\d+(?:\\.\\d+)?\\s*-?\\s*(?:${COUNT_UNIT_PATTERN})(?=$|[\\s,;/()])`, "giu");
+  const packMeasurement = `\\d[\\d.,]*\\s*(?:${packMeasurementUnitPattern})`;
+  const neutral = value
+    .replace(new RegExp(`(${packMeasurement})\\s*[x×*]\\s*\\d{1,4}(?!\\d)(?:\\s*(?:${COUNT_UNIT_PATTERN}))?`, "giu"), "$1")
+    .replace(new RegExp(`\\d{1,4}(?!\\d)(?:\\s*(?:${COUNT_UNIT_PATTERN}))?\\s*[x×*]\\s*(${packMeasurement})`, "giu"), "$1")
+    .replace(countSuffix, " ")
+    .replace(/(?<!\d)\d{1,3}\s*\+\s*\d{1,3}(?!\d)/gu, " ")
+    .replace(/\b(?:set|pack|lot)\s+of\s+\d{1,4}\b/giu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const neutralMeasurements = measurementTokens(neutral);
+  if (neutral === value.trim() || (neutralMeasurements.length > 0 && neutralMeasurements.every((measurement) => measurement.kind === "count"))) return "";
   return neutral;
 }
 
 function elevenstRetrievalQueries(primary: string, aliases: string[]) {
-  const base = normalizedCompetitorQueries(primary, aliases);
+  const base = normalizedCompetitorQueries(primary, aliases, 8);
   const neutral = base.map(packNeutralSearchQuery).filter(Boolean);
   return normalizedCompetitorQueries(base[0] ?? primary, [...base.slice(1), ...neutral], 12);
 }
 
-function identifierTokens(value: string) {
-  return normalizedSearchText(value).match(/(?<!\d)\d{8,14}(?!\d)/gu) ?? [];
-}
-
 export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate, queries: string[]) {
-  const candidateText = `${candidate.title} ${candidate.mallName}`;
-  const normalizedCandidate = normalizedSearchText(candidateText);
-  const compactCandidate = compactSearchText(candidateText);
+  const normalizedQueries = normalizedCompetitorQueries(queries[0] ?? "", queries.slice(1), 12);
+  if (!normalizedQueries.length) return 0;
+  // A seller or mall name is not product identity evidence. Only the listing
+  // title may satisfy brand/model/variant checks.
+  const normalizedCandidate = normalizedSearchText(candidate.title);
+  const compactCandidate = compactSearchText(candidate.title);
+  const candidateTokens = new Set(normalizedCandidate.split(" ").filter(Boolean));
   const candidateMeasurements = measurementTokens(candidate.title);
-  const queryMeasurements = queries.map(measurementTokens);
-  const primaryMeasurements = queryMeasurements[0] ?? [];
-  if (primaryMeasurements.length > 0 && !primaryMeasurements.every((measurement) => (
-    candidateMeasurements.some((candidateMeasurement) => sameMeasurement(measurement, candidateMeasurement))
-  ))) return 0;
+  const queryMeasurements = normalizedQueries.map(measurementTokens);
+  const requirements = measurementRequirements(normalizedQueries);
+  if (!measurementsMatchRequirements(requirements, candidateMeasurements)) return 0;
+
+  const queryIdentifiers = new Set(normalizedQueries.flatMap(identifierTokens));
+  const candidateIdentifiers = new Set(identifierTokens(candidate.title));
+  if (queryIdentifiers.size > 1) return 0;
+  const [requiredIdentifier] = queryIdentifiers;
+  if (requiredIdentifier && !candidateIdentifiers.has(requiredIdentifier)) return 0;
+
+  const queryModels = new Set(normalizedQueries.flatMap(modelTokens));
+  const requiredModels = modelRequirements(normalizedQueries);
+  const candidateModels = new Set(modelTokens(candidate.title));
+  if (requiredModels.some((model) => !candidateModels.has(model))) return 0;
+  for (const candidateModel of candidateModels) {
+    if ([...queryModels].some((queryModel) => (
+      candidateModel !== queryModel
+      && modelStem(candidateModel).length >= 2
+      && modelStem(candidateModel) === modelStem(queryModel)
+    ))) return 0;
+  }
+
+  const primaryQuery = normalizedQueries[0] ?? "";
+  const allowedAccessories = accessoryCategories(primaryQuery);
+  if ([...accessoryCategories(candidate.title)].some((category) => !allowedAccessories.has(category))) return 0;
+  const requiredVariants = variantRequirements(normalizedQueries);
+  const allowedVariants = new Set([...productVariantCategories(primaryQuery), ...requiredVariants]);
+  const candidateVariants = productVariantCategories(candidate.title);
+  if ([...candidateVariants].some((category) => !allowedVariants.has(category))) return 0;
+  if ([...requiredVariants].some((category) => !candidateVariants.has(category))) return 0;
+  const matchesCandidateIdentityToken = (token: string) => {
+    if (tokenMatchesCandidate(token, candidateTokens, compactCandidate)) return true;
+    const tokenVariants = productVariantCategories(token);
+    return tokenVariants.size > 0 && [...tokenVariants].every((category) => candidateVariants.has(category));
+  };
+
   let best = 0;
 
-  for (let index = 0; index < queries.length; index += 1) {
-    const query = queries[index];
+  for (let index = 0; index < normalizedQueries.length; index += 1) {
+    const query = normalizedQueries[index];
     const identifiers = identifierTokens(query);
-    if (identifiers.length && !identifiers.some((identifier) => compactCandidate.includes(identifier))) continue;
+    if (identifiers.length && !identifiers.some((identifier) => candidateIdentifiers.has(identifier))) continue;
+    const models = modelTokens(query);
+    if (models.length && !models.every((model) => candidateModels.has(model))) continue;
     const measurements = queryMeasurements[index] ?? [];
-    if (measurements.length && !measurements.every((measurement) => candidateMeasurements.some((candidateMeasurement) => sameMeasurement(measurement, candidateMeasurement)))) continue;
+    if (measurements.length && !measurements.every((measurement) => measurementMatchesCandidate(measurement, candidateMeasurements))) continue;
     const tokens = meaningfulSearchTokens(query);
-    if (!tokens.length) continue;
-    const matched = tokens.filter((token) => normalizedCandidate.includes(token) || compactCandidate.includes(token.replaceAll(" ", "")));
-    const required = tokens.length === 1 ? 1 : Math.max(2, Math.ceil(tokens.length * 0.5));
+    if (!tokens.length) {
+      if (!identifiers.length && !models.length) continue;
+      best = Math.max(best, identifiers.length * 500 + models.length * 250 + measurements.length * 60 + (index === 0 ? 50 : 0));
+      continue;
+    }
+    const matched = tokens.filter(matchesCandidateIdentityToken);
+    const required = tokens.length === 1 ? 1 : Math.max(2, Math.ceil(tokens.length * 0.6));
     if (matched.length < required) continue;
-    const phraseBonus = compactCandidate.includes(compactSearchText(query)) ? 100 : 0;
-    best = Math.max(best, matched.length * 100 + Math.round((matched.length / tokens.length) * 100) + phraseBonus);
+    const anchors = identityAnchors(tokens);
+    if (anchors.some((anchor) => !matchesCandidateIdentityToken(anchor))) continue;
+    const phraseBonus = compactCandidate.includes(compactSearchText(query)) ? 200 : 0;
+    const evidenceBonus = identifiers.length * 500 + models.length * 250 + measurements.length * 60;
+    best = Math.max(best, matched.length * 20 + Math.round((matched.length / tokens.length) * 400) + phraseBonus + evidenceBonus + (index === 0 ? 50 : 0));
   }
   return best;
 }
@@ -454,17 +849,58 @@ export function braveMarketplaceWebCredentials(): BraveMarketplaceWebCredentials
   return /^[A-Za-z0-9_-]{20,500}$/u.test(apiKey) ? { apiKey } : null;
 }
 
-export function normalizedCompetitorQueries(primary: string, aliases: string[] = [], maximum = 8) {
+type CompetitorQueryLanguageFamily = "hangul" | "kana" | "han" | "thai" | "vietnamese" | "malay" | "indonesian" | "portuguese" | "spanish" | "latin" | "other";
+
+function competitorQueryLanguageFamily(query: string): CompetitorQueryLanguageFamily {
+  if (/\p{Script=Hangul}/u.test(query)) return "hangul";
+  if (/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(query)) return "kana";
+  if (/\p{Script=Thai}/u.test(query)) return "thai";
+  if (/\p{Script=Han}/u.test(query)) return "han";
+  if (/[ăâđêôơưằắẳẵặầấẩẫậềếểễệồốổỗộờớởỡợừứửữự]/iu.test(query)) return "vietnamese";
+  const padded = ` ${normalizedSearchText(query)} `;
+  if (/[ãõç]/iu.test(query) || /\b(?:produto|pacote|garrafa|caixa|sabão|edição)\b/iu.test(padded)) return "portuguese";
+  if (/[ñ¿¡]/iu.test(query) || /\b(?:producto|paquete|botella|caja|edición)\b/iu.test(padded)) return "spanish";
+  if (/\b(?:produk|kemasan|isi|rasa|kaleng|bungkus)\b/iu.test(padded)) return "indonesian";
+  if (/\b(?:perisa|pek|tulen|rasmi|baharu|kotak)\b/iu.test(padded)) return "malay";
+  if (/\p{Script=Latin}/u.test(query)) return "latin";
+  return "other";
+}
+
+const competitorQueryLanguagePriority: readonly CompetitorQueryLanguageFamily[] = [
+  "hangul", "latin", "kana", "han", "malay", "indonesian", "vietnamese", "thai", "portuguese", "spanish", "other",
+];
+
+export function normalizedCompetitorQueries(primary: string, aliases: string[] = [], maximum = 12) {
+  const limit = Math.max(1, Math.min(maximum, 12));
   const seen = new Set<string>();
-  return [primary, ...aliases]
+  const available = [primary, ...aliases]
     .map((value) => value.replace(/\p{Cc}/gu, " ").replace(/\s+/g, " ").trim().slice(0, 160))
     .filter((value) => {
-      const key = value.toLocaleLowerCase();
+      const key = compactSearchText(value);
       if (value.length < 2 || seen.has(key)) return false;
       seen.add(key);
       return true;
-    })
-    .slice(0, Math.max(1, Math.min(maximum, 12)));
+    });
+  if (available.length <= limit) return available;
+
+  const selected = [available[0]];
+  const selectedValues = new Set(selected);
+  const primaryFamily = competitorQueryLanguageFamily(available[0]);
+  for (const family of competitorQueryLanguagePriority) {
+    if (family === primaryFamily) continue;
+    const candidate = available.slice(1).find((query) => competitorQueryLanguageFamily(query) === family);
+    if (!candidate || selectedValues.has(candidate)) continue;
+    selected.push(candidate);
+    selectedValues.add(candidate);
+    if (selected.length >= limit) return selected;
+  }
+  for (const candidate of available.slice(1)) {
+    if (selectedValues.has(candidate)) continue;
+    selected.push(candidate);
+    selectedValues.add(candidate);
+    if (selected.length >= limit) break;
+  }
+  return selected;
 }
 
 export async function searchNaverShopping(query: string, credentials: NaverSearchCredentials, display = 30): Promise<CompetitorPriceCandidate[]> {
@@ -503,13 +939,15 @@ async function successfulVariantSearches(
   for (const item of fulfilled) {
     const key = `${item.provider}:${item.marketplace}:${item.externalId || item.url}`;
     const current = unique.get(key);
-    if (!current || (item.imageUrl && !current.imageUrl) || item.price < current.price) unique.set(key, item);
+    const score = competitorCandidateRelevance(item, queries);
+    const currentScore = current ? competitorCandidateRelevance(current, queries) : 0;
+    if (!current || score > currentScore || (score === currentScore && item.imageUrl && !current.imageUrl) || (score === currentScore && Boolean(item.imageUrl) === Boolean(current.imageUrl) && item.price < current.price)) unique.set(key, item);
   }
   return [...unique.values()];
 }
 
 export async function searchNaverShoppingVariants(primary: string, aliases: string[], credentials: NaverSearchCredentials, displayPerQuery = 30) {
-  const queries = normalizedCompetitorQueries(primary, aliases);
+  const queries = normalizedCompetitorQueries(primary, aliases, 8);
   return successfulVariantSearches(queries, (query) => searchNaverShopping(query, credentials, displayPerQuery), "NAVER_SHOPPING_SEARCH_FAILED");
 }
 
@@ -613,7 +1051,7 @@ export async function searchEbayBrowse(query: string, credentials: EbayBrowseCre
 }
 
 export async function searchEbayBrowseVariants(primary: string, aliases: string[], credentials: EbayBrowseCredentials, displayPerQuery = 30) {
-  const queries = normalizedCompetitorQueries(primary, aliases);
+  const queries = normalizedCompetitorQueries(primary, aliases, 8);
   const accessToken = await ebayApplicationAccessToken(credentials);
   return successfulVariantSearches(queries, (query) => searchEbayBrowse(query, credentials, accessToken, displayPerQuery), "EBAY_BROWSE_SEARCH_FAILED");
 }
@@ -637,34 +1075,37 @@ export function braveMarketplaceSearchQuery(query: string, marketplace: Marketpl
 }
 
 function braveSearchLanguage(query: string) {
-  if (/\p{Script=Hangul}/u.test(query)) return "ko";
-  if (/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(query)) return "ja";
-  if (/\p{Script=Thai}/u.test(query)) return "th";
-  if (/\p{Script=Han}/u.test(query)) return "zh";
-  if (/[ăâđêôơưàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]/iu.test(query)) return "vi";
+  const family = competitorQueryLanguageFamily(query);
+  if (family === "hangul") return "ko";
+  if (family === "kana") return "ja";
+  if (family === "thai") return "th";
+  if (family === "han") return "zh";
+  if (family === "vietnamese") return "vi";
+  if (family === "malay") return "ms";
+  if (family === "indonesian") return "id";
+  if (family === "portuguese") return "pt-br";
+  if (family === "spanish") return "es";
   return "en";
 }
 
-function marketplaceQueryLanguageFamily(query: string) {
-  if (/\p{Script=Hangul}/u.test(query)) return "hangul";
-  if (/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(query)) return "kana";
-  if (/\p{Script=Thai}/u.test(query)) return "thai";
-  if (/\p{Script=Han}/u.test(query)) return "han";
-  if (braveSearchLanguage(query) === "vi") return "vietnamese";
-  if (/\p{Script=Latin}/u.test(query)) return "latin";
-  return "other";
-}
-
-function diverseMarketplaceQueries(primary: string, aliases: string[]) {
+function diverseMarketplaceQueries(primary: string, aliases: string[], marketplace: MarketplaceWebMarketplace) {
   const available = normalizedCompetitorQueries(primary, aliases, 12);
   if (available.length <= BRAVE_MARKETPLACE_QUERY_LIMIT) return available;
-  const selected = [available[0]];
+  const primaryFamily = competitorQueryLanguageFamily(available[0]);
+  // A Korean source title remains part of the relevance fence, but when the
+  // research contract supplied local aliases it does not consume one of the
+  // four marketplace-web requests.
+  const selected = primaryFamily === "hangul" ? [] : [available[0]];
   const selectedValues = new Set(selected);
-  const primaryFamily = marketplaceQueryLanguageFamily(available[0]);
-  const familyOrder = ["latin", "thai", "vietnamese", "han", "hangul", "kana", "other"]
-    .filter((family) => family !== primaryFamily);
+  const marketplaceFamilyOrder: Record<MarketplaceWebMarketplace, readonly CompetitorQueryLanguageFamily[]> = {
+    shopee: ["latin", "portuguese", "spanish", "indonesian", "malay", "thai", "vietnamese", "han", "kana", "hangul", "other"],
+    lazada: ["latin", "malay", "thai", "vietnamese", "indonesian", "han", "kana", "hangul", "portuguese", "spanish", "other"],
+    temu: ["latin", "han", "kana", "portuguese", "spanish", "hangul", "thai", "vietnamese", "malay", "indonesian", "other"],
+  };
+  const familyOrder = marketplaceFamilyOrder[marketplace]
+    .filter((family) => !selected.some((query) => competitorQueryLanguageFamily(query) === family));
   for (const family of familyOrder) {
-    const candidate = available.slice(1).find((query) => marketplaceQueryLanguageFamily(query) === family);
+    const candidate = available.slice(1).find((query) => competitorQueryLanguageFamily(query) === family);
     if (!candidate || selectedValues.has(candidate)) continue;
     selected.push(candidate);
     selectedValues.add(candidate);
@@ -676,6 +1117,7 @@ function diverseMarketplaceQueries(primary: string, aliases: string[]) {
     selectedValues.add(candidate);
     if (selected.length >= BRAVE_MARKETPLACE_QUERY_LIMIT) break;
   }
+  if (selected.length === 0) selected.push(available[0]);
   return selected;
 }
 
@@ -684,6 +1126,7 @@ export async function searchBraveMarketplaceWeb(
   credentials: BraveMarketplaceWebCredentials,
   marketplace: MarketplaceWebMarketplace,
   display = BRAVE_MARKETPLACE_RESULT_LIMIT,
+  relevanceQueries: string[] = [query],
 ): Promise<CompetitorPriceCandidate[]> {
   const url = new URL(BRAVE_WEB_SEARCH_ENDPOINT);
   url.searchParams.set("q", braveMarketplaceSearchQuery(query, marketplace));
@@ -730,7 +1173,7 @@ export async function searchBraveMarketplaceWeb(
       price: price.price,
       currency: price.currency,
     } satisfies CompetitorPriceCandidate;
-    return competitorCandidateRelevance(candidate, [query]) > 0 ? [candidate] : [];
+    return competitorCandidateRelevance(candidate, relevanceQueries) > 0 ? [candidate] : [];
   });
 }
 
@@ -740,13 +1183,14 @@ export async function searchBraveMarketplaceWebVariants(
   credentials: BraveMarketplaceWebCredentials,
   displayPerQuery = BRAVE_MARKETPLACE_RESULT_LIMIT,
 ) {
-  const queries = diverseMarketplaceQueries(primary, aliases);
+  const allQueries = normalizedCompetitorQueries(primary, aliases, 12);
   const settled = await Promise.allSettled((["shopee", "lazada", "temu"] as const).map(async (marketplace) => {
+    const queries = diverseMarketplaceQueries(primary, aliases, marketplace);
     const candidates: CompetitorPriceCandidate[] = [];
     let successfulQueries = 0;
     for (const query of queries) {
       try {
-        candidates.push(...await searchBraveMarketplaceWeb(query, credentials, marketplace, displayPerQuery));
+        candidates.push(...await searchBraveMarketplaceWeb(query, credentials, marketplace, displayPerQuery, allQueries));
         successfulQueries += 1;
       } catch {
         continue;
@@ -759,14 +1203,16 @@ export async function searchBraveMarketplaceWebVariants(
   }));
   if (settled.length > 0 && settled.every((result) => result.status === "rejected")) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
   const candidates = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
-  const relevant = candidates.filter((candidate) => competitorCandidateRelevance(candidate, queries) > 0);
+  const relevant = candidates.filter((candidate) => competitorCandidateRelevance(candidate, allQueries) > 0);
   const unique = new Map<string, CompetitorPriceCandidate>();
   for (const candidate of relevant) {
     const key = marketplaceIdentity(candidate);
     const current = unique.get(key);
-    if (!current || (candidate.imageUrl && !current.imageUrl) || candidate.price < current.price) unique.set(key, candidate);
+    const score = competitorCandidateRelevance(candidate, allQueries);
+    const currentScore = current ? competitorCandidateRelevance(current, allQueries) : 0;
+    if (!current || score > currentScore || (score === currentScore && candidate.imageUrl && !current.imageUrl) || (score === currentScore && Boolean(candidate.imageUrl) === Boolean(current.imageUrl) && candidate.price < current.price)) unique.set(key, candidate);
   }
-  return groupCompetitorPrices([...unique.values()], 3);
+  return groupCompetitorPrices([...unique.values()], 3, allQueries);
 }
 
 export async function competitorProviderRegistry(
@@ -895,11 +1341,13 @@ export async function searchCompetitorProviders(
   for (const item of candidates) {
     const key = marketplaceIdentity(item);
     const current = unique.get(key);
-    if (!current || (item.imageUrl && !current.imageUrl) || item.price < current.price) unique.set(key, item);
+    const score = competitorCandidateRelevance(item, queries);
+    const currentScore = current ? competitorCandidateRelevance(current, queries) : 0;
+    if (!current || score > currentScore || (score === currentScore && item.imageUrl && !current.imageUrl) || (score === currentScore && Boolean(item.imageUrl) === Boolean(current.imageUrl) && item.price < current.price)) unique.set(key, item);
   }
   const order = Object.keys(providerMarketplaces);
   return {
-    items: groupCompetitorPrices([...unique.values()]),
+    items: groupCompetitorPrices([...unique.values()], 3, queries),
     providers: providers.sort((left, right) => order.indexOf(left.provider) - order.indexOf(right.provider)),
     available: providers.some((provider) => provider.status === "searched"),
     pending: providers.some((provider) => provider.status === "pending"),
@@ -907,14 +1355,22 @@ export async function searchCompetitorProviders(
   };
 }
 
-export function groupCompetitorPrices(items: CompetitorPriceCandidate[], limitPerMarketplace = 3) {
+export function groupCompetitorPrices(items: CompetitorPriceCandidate[], limitPerMarketplace = 3, queries: string[] = []) {
   const counts = new Map<CompetitorMarketplace, number>();
-  return [...items]
-    .sort((left, right) => left.marketplace.localeCompare(right.marketplace) || left.currency.localeCompare(right.currency) || left.price - right.price)
-    .filter((item) => {
+  return items
+    .map((item) => ({ item, score: queries.length > 0 ? competitorCandidateRelevance(item, queries) : 0 }))
+    .filter(({ score }) => queries.length === 0 || score > 0)
+    .sort((left, right) => (
+      left.item.marketplace.localeCompare(right.item.marketplace)
+      || right.score - left.score
+      || left.item.currency.localeCompare(right.item.currency)
+      || left.item.price - right.item.price
+    ))
+    .filter(({ item }) => {
       const count = counts.get(item.marketplace) ?? 0;
       if (count >= limitPerMarketplace) return false;
       counts.set(item.marketplace, count + 1);
       return true;
-    });
+    })
+    .map(({ item }) => item);
 }

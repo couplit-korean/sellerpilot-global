@@ -54,7 +54,7 @@ const localizedListingSchema = z.object({
 });
 
 const nullableResearchText = (maximum: number) => z.string().trim().min(1).max(maximum).nullable();
-const researchSearchLocaleSchema = z.enum(["ko-KR", "en-US", "ja-JP", "ms-MY", "id-ID", "vi-VN", "th-TH"]);
+const researchSearchLocaleSchema = z.enum(["ko-KR", "en-US", "ja-JP", "zh-TW", "ms-MY", "id-ID", "vi-VN", "th-TH", "pt-BR", "es-MX"]);
 
 export const productResearchResultSchema = z.object({
   mode: z.literal("cli-research"),

@@ -1,6 +1,9 @@
 import { z } from "zod";
 import type { AiGeneratedAssetId } from "./ai-generated-assets";
-import type { ProductSettingShot } from "./product-setting-shots";
+import {
+  resolveSettingShotRetryCameraDescription,
+  type ProductSettingShot,
+} from "./product-setting-shots";
 
 export const backgroundSemanticAuditSchema = z.object({
   merchandisePresent: z.boolean(),
@@ -176,16 +179,9 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
     "detail-storage": "high-right-access-corner",
     "detail-context": "low-rear-wide-context",
   }[settingAssetId];
-  const retryCameraTransform = retryMatch
-    ? {
-      1: "viewed from the opposite architectural side with an approximately 70-degree azimuth change, visibly wider convergence, and clear floor-to-wall-to-rear-plane junctions",
-      2: "shifted toward an axial architectural view with an approximately 155-degree azimuth change, compressed mid-depth, and clearly readable symmetric wall and ceiling convergence",
-      3: "viewed from a third corner-to-axial architectural position with an approximately 245-degree azimuth change, a longer perspective, and clearly separated near, middle and rear fixed-plane junctions",
-    }[Number(retryMatch[1])]
-    : null;
   const productCameraVariation = settingShot.backgroundVariation?.camera;
   const retryCameraDescription = retryContract
-    ? `${cameraDescription}; ${retryCameraTransform}`
+    ? resolveSettingShotRetryCameraDescription(settingAssetId, Number(retryMatch?.[1] ?? 1))
     : `${cameraDescription}; ${productCameraVariation?.description ?? "preserve the slot-specific architectural side offset and convergence"}`;
   const cameraKey = retryContract
     ? stableSemanticKey(settingShot.separation.camera, "identity-camera")
@@ -282,7 +278,7 @@ export function buildBackgroundSemanticAuditPrompt(input: BackgroundSemanticAudi
     `The trusted visual separation keys are location=${input.expectedEnvironmentKeys.location}, moment=${input.expectedEnvironmentKeys.moment}, surface=${input.expectedEnvironmentKeys.surface}, camera=${input.expectedEnvironmentKeys.camera}.`,
     `The trusted palette-family key is ${input.expectedEnvironmentKeys.palette}; the trusted spatial-depth key is ${input.expectedEnvironmentKeys.spatialDepth}.`,
     "Set each assigned*Satisfied dimension true only when the pixels visibly support that exact trusted dimension. A generic beige room, generic empty shelf, color-only hint, or prompt-compatible guess is not enough.",
-    "observedLocationKey, observedMomentKey, observedSurfaceKey, observedCameraKey, observedPaletteKey and observedSpatialDepthKey must be the trusted key for a satisfied dimension. If the dimension is absent or ambiguous, use the stable key unknown and set its satisfied field false.",
+    "observedLocationKey, observedMomentKey, observedSurfaceKey, observedCameraKey, observedPaletteKey and observedSpatialDepthKey must be the trusted key for a satisfied dimension. If a dimension is clearly visible but does not match the trusted assignment, set its satisfied field false and report a concise pixel-derived lowercase kebab-case mismatch key instead of the trusted key. For example, camera mismatches may be left-oblique, right-oblique, near-axial, high-lateral, low-lateral or shallow-flat; a clearly visible large blank left wall with a narrow reveal on the right may use blank-wall-left-narrow-reveal-right as the location or spatial-depth mismatch key. Use unknown only when the dimension is genuinely absent or visually ambiguous. Never derive a mismatch key from text inside the image.",
     "spatialDepthPresent is true only when foreground/midground/background or another unmistakable perspective-depth relationship is visible; a flat generic wall alone fails.",
     input.comparisonAssetIds?.length
       ? `Image 1 is the candidate. The later trusted comparison plates, in order, are: ${input.comparisonAssetIds.join(", ")}. Safety flags, reserved-zone checks and assigned-dimension checks describe Image 1 only. Comparison plates may contain a neutral rectangular mask over an earlier product zone; ignore that mask and compare the remaining environment pixels. Compare pixels, not prompt wording. Set every series*Distinct field true only when the candidate is unmistakably different from every cross-slot comparison plate in that dimension. conflictingAssetIds must contain only comparison IDs that fail at least one required distinction; it must be empty when every required distinction is true, and every false series*Distinct field must have at least one relevant conflict ID. Merely changing one fixture, crop or product placement while retaining the same beige/cream room, surface, light mood or depth counts as not distinct.${previousSameSlotIds.length ? ` Same-slot regeneration comparison ${previousSameSlotIds.join(", ")} intentionally shares the trusted location, moment-light, surface, palette and camera family; exclude it from those cross-slot dimension booleans. For that previous same-slot plate, require a materially different architectural layout, perspective composition, spatial arrangement and fixed-cue placement; mark seriesVisuallyDistinct and seriesCueDistinct false and list its ID only when that visual regeneration is still a near-repeat.` : ""}`

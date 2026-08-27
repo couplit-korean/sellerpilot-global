@@ -31,7 +31,7 @@
         "additionalProperties": false,
         "required": ["locale", "query"],
         "properties": {
-          "locale": { "type": "string", "enum": ["ko-KR", "en-US", "ja-JP", "ms-MY", "id-ID", "vi-VN", "th-TH"] },
+          "locale": { "type": "string", "enum": ["ko-KR", "en-US", "ja-JP", "zh-TW", "ms-MY", "id-ID", "vi-VN", "th-TH", "pt-BR", "es-MX"] },
           "query": { "type": "string", "minLength": 2, "maxLength": 160 }
         }
       }
