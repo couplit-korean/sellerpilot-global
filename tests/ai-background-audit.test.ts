@@ -164,6 +164,17 @@ test("setting background props are unique across all eight semantic audits", () 
     propKey: contracts[4].contract.prop.key,
     assetId: "detail-routine",
   });
+  assert.equal(findRepeatedBackgroundProp(
+    ["fixed-lower-cabinet-fronts", contracts[7].contract.prop.key],
+    existing,
+  ), null, "공간 인식을 위한 공통 구조물은 슬롯별 고정 단서 중복으로 오인하지 않습니다.");
+  assert.deepEqual(findRepeatedBackgroundProp(
+    ["fixed-lower-cabinet-fronts", contracts[4].contract.prop.key, contracts[7].contract.prop.key],
+    existing,
+  ), {
+    propKey: contracts[4].contract.prop.key,
+    assetId: "detail-routine",
+  });
 });
 
 test("food dining backgrounds require fixed room evidence and reject wet-room or showroom lookalikes", () => {
@@ -294,6 +305,41 @@ test("identity background contracts stay category-aware while excluding saleable
     assert.ok(manifest.every((contract) => !/\d+mm/.test(contract.camera.key)));
     assert.ok(manifest.every((contract) => !/portion|restock|serving|snack/.test(contract.moment.key)));
     assert.ok(manifest.every((contract) => !/\d+mm/.test(contract.spatialDepth.key)));
+  }
+});
+
+test("corresponding food slots preserve room recognition while exposing product-specific audit contracts", () => {
+  const products = [
+    ["식품·음료 > 과자 롯샌 파스퇴르 순우유맛 315 g", "부드러운 우유 크림 샌드"],
+    ["일반식품 사조 살코기 참치 안심따개 100 g", "통조림"],
+    ["일반식품 BEYOND ORIGIN 애사비 젤리스틱 15 g 14개", "기타가공품"],
+  ] as const;
+  const plans = products.map(([sceneIdentityText, feature]) => buildProductSettingShotPlan(
+    "food-staples",
+    `${sceneIdentityText} ${feature}`,
+    sceneIdentityText,
+  ));
+  for (const assetId of settingShotAssetIds) {
+    const contracts = plans.map((plan) => resolveIdentityBackgroundContract(plan[assetId], assetId));
+    for (const dimension of backgroundContractDimensions) {
+      assert.equal(
+        new Set(contracts.map((contract) => contract[dimension].key)).size,
+        products.length,
+        `${assetId}/${dimension} audit contract must vary by product`,
+      );
+      assert.equal(
+        new Set(contracts.map((contract) => contract[dimension].description)).size,
+        products.length,
+        `${assetId}/${dimension} audit instruction must vary by product`,
+      );
+    }
+    assert.ok(contracts.every((contract) => /outside the reserved product zone/.test(contract.prop.description)));
+    assert.ok(contracts.every((contract) => !/product|상품|source-composite|mask/i.test(contract.camera.description)));
+  }
+  for (const plan of plans) {
+    assert.match(resolveIdentityBackgroundContract(plan.portrait, "portrait").location.description, /food-preparation cues/);
+    assert.match(resolveIdentityBackgroundContract(plan["detail-overview"], "detail-overview").location.description, /dry-storage cues/);
+    assert.match(resolveIdentityBackgroundContract(plan["detail-use"], "detail-use").location.description, /fixed dining cues/);
   }
 });
 

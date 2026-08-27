@@ -153,7 +153,10 @@ test("studio result normalization applies general-food safety before structural 
   assert.match(helper, /sections\.length < 16 \|\| sections\.length > 20/);
   assert.match(helper, /targetSectionCount: sections\.length/);
   assert.match(terminalHelper, /normalizeStudioLocalizedKeywordCoverage\(normalizeStudioWarningLimits\(/);
-  assert.match(terminalHelper, /normalizeStudioSectionCount\(normalizeStudioGeneralFoodSafety\(value\)\)/);
+  assert.match(
+    terminalHelper,
+    /normalizeStudioSectionCount\(normalizeStudioGeneralFoodSafety\([\s\S]*normalizeStudioLocalizedEvidenceLanguage\(value\)/,
+  );
   assert.match(source, /normalizeStudioResultForTerminalValidation\(merged\)/);
   assert.match(source, /normalizeStudioResultForTerminalValidation\(job\.request\?\.sourceResult\)/);
   assert.equal((source.match(/normalizeStudioResultForTerminalValidation\(/g) ?? []).length, 2);

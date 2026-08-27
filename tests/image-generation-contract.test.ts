@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import {
+  aiGeneratedAssetSpecs,
+  resolveProductIdentityPlacement,
+} from "../lib/ai-generated-assets";
 import { resolveIdentityBackgroundContract } from "../lib/ai-background-audit";
 import { buildAssetImagePrompt } from "../lib/ai-image-planning";
 import {
@@ -71,6 +74,104 @@ test("all nine product groups enforce six semantic setting-shot boundaries", () 
       assert.equal(new Set(Object.values(plan).map((shot) => shot[dimension])).size, 8, `${category}/${productText}/${dimension} instruction`);
     }
   }
+});
+
+test("different real food products receive deterministic cross-product variation in every corresponding setting slot", () => {
+  const products = [
+    {
+      detectionText: "식품·음료 > 과자 롯샌 파스퇴르 순우유맛 315 g 부드러운 우유 크림 샌드",
+      sceneIdentityText: "식품·음료 > 과자 롯샌 파스퇴르 순우유맛 315 g",
+    },
+    {
+      detectionText: "일반식품 사조 살코기 참치 안심따개 100 g 통조림",
+      sceneIdentityText: "일반식품 사조 살코기 참치 안심따개 100 g",
+    },
+    {
+      detectionText: "일반식품 BEYOND ORIGIN 애사비 젤리스틱 15 g 14개 기타가공품",
+      sceneIdentityText: "일반식품 BEYOND ORIGIN 애사비 젤리스틱 15 g 14개",
+    },
+  ] as const;
+  const plans = products.map((product) => buildProductSettingShotPlan(
+    "food-staples",
+    product.detectionText,
+    product.sceneIdentityText,
+  ));
+
+  assert.deepEqual(
+    buildProductSettingShotPlan("food-staples", products[0].detectionText, products[0].sceneIdentityText),
+    plans[0],
+    "the same category and product identity must reproduce the exact plan",
+  );
+  for (const assetId of settingShotAssetIds) {
+    for (const dimension of settingShotDimensions) {
+      assert.equal(
+        new Set(plans.map((plan) => plan[assetId][dimension])).size,
+        products.length,
+        `${assetId}/${dimension} must materially vary by product`,
+      );
+      assert.equal(
+        new Set(plans.map((plan) => plan[assetId].separation[dimension])).size,
+        products.length,
+        `${assetId}/${dimension} semantic key must vary by product`,
+      );
+    }
+    const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    assert.ok(preset);
+    const placements = products.map((product) => resolveProductIdentityPlacement(preset, product.sceneIdentityText));
+    assert.equal(new Set(placements.map((placement) => JSON.stringify(placement))).size, products.length, `${assetId}/actual placement`);
+    assert.ok(placements.every((placement) => (
+      placement.left >= 0
+      && placement.top >= 0
+      && placement.width > 0
+      && placement.height > 0
+      && placement.left + placement.width <= 1
+      && placement.top + placement.height <= 1
+    )));
+  }
+});
+
+test("independent scene digest lanes avoid the known FNV collision and 5,000 full-plan identities", () => {
+  const collisionPair = [
+    "일반식품 테스트 일반식품 상품 90",
+    "일반식품 테스트 일반식품 상품 234",
+  ] as const;
+  const pairPlans = collisionPair.map((identity) => buildProductSettingShotPlan(
+    "food-staples",
+    identity,
+    identity,
+  ));
+  for (const assetId of settingShotAssetIds) {
+    const changedDimensions = settingShotDimensions.filter((dimension) => (
+      pairPlans[0][assetId].separation[dimension] !== pairPlans[1][assetId].separation[dimension]
+    ));
+    assert.ok(changedDimensions.length >= 5, `${assetId} must vary in at least five of six visual dimensions`);
+    const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    assert.ok(preset);
+    assert.notDeepEqual(
+      resolveProductIdentityPlacement(preset, collisionPair[0]),
+      resolveProductIdentityPlacement(preset, collisionPair[1]),
+      `${assetId} must not reuse the prior colliding normalized placement`,
+    );
+  }
+
+  const signatures = new Set<string>();
+  for (let index = 0; index < 5_000; index += 1) {
+    const identity = `일반식품 테스트 일반식품 상품 ${index}`;
+    const first = buildProductSettingShotPlan("food-staples", identity, identity);
+    const second = buildProductSettingShotPlan("food-staples", identity, identity);
+    assert.deepEqual(second, first, `${identity} plan must be deterministic`);
+    const signature = settingShotAssetIds.map((assetId) => {
+      const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+      assert.ok(preset);
+      return [
+        ...settingShotDimensions.map((dimension) => first[assetId].separation[dimension]),
+        JSON.stringify(resolveProductIdentityPlacement(preset, identity)),
+      ].join("|");
+    }).join("\n");
+    assert.equal(signatures.has(signature), false, `${identity} must have a unique full-plan signature`);
+    signatures.add(signature);
+  }
+  assert.equal(signatures.size, 5_000);
 });
 
 test("the setting-shot validator rejects a future semantic or camera collision", () => {
@@ -163,10 +264,12 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.ok(variants.every((variant) => variant.camera.includes("assigned camera family")));
   assert.ok(variants.every((variant) => variant.camera.includes("role-required height")));
   assert.ok(variants.every((variant) => !/contact plane|contact geometry/i.test(variant.staging)));
-  assert.ok(variants.every((variant) => /no vertical fin, post, divider, jamb, return, reveal, bay/i.test(variant.supportingObjects)));
-  assert.match(variants[0].supportingObjects, /circular light well/);
-  assert.match(variants[1].supportingObjects, /horizontal shadow channel/);
-  assert.match(variants[2].supportingObjects, /diagonal wall-to-ceiling fold/);
+  assert.ok(variants.every((variant) => /mandatory functional room-recognition structures/.test(variant.supportingObjects)));
+  assert.ok(variants.every((variant) => /exact assigned real-life room/.test(variant.location)));
+  assert.ok(variants.every((variant) => /at least two functional room-recognition structures/.test(variant.location)));
+  assert.match(variants[0].supportingObjects, /rectangular built-in task-light recess/);
+  assert.match(variants[1].supportingObjects, /fixed access threshold or cabinet toe-kick return/);
+  assert.match(variants[2].supportingObjects, /fixed rectangular ventilation or transom panel/);
 
   const contracts = variants.map((variant) => resolveIdentityBackgroundContract(variant, "detail-overview"));
   for (const dimension of ["location", "moment", "surface", "camera", "palette", "spatialDepth", "prop"] as const) {
@@ -176,9 +279,9 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(contracts[0].moment.description, /sunset|post-sunset/);
   assert.match(contracts[1].moment.description, /blue-hour|twilight/);
   assert.match(contracts[2].moment.description, /midday/);
-  assert.match(contracts[0].prop.description, /circular light well/);
-  assert.match(contracts[1].prop.description, /horizontal shadow channel/);
-  assert.match(contracts[2].prop.description, /diagonal wall-to-ceiling fold/);
+  assert.match(contracts[0].prop.description, /rectangular built-in task-light recess/);
+  assert.match(contracts[1].prop.description, /fixed access threshold or cabinet toe-kick return/);
+  assert.match(contracts[2].prop.description, /fixed rectangular ventilation or transom panel/);
   assert.ok(contracts.every((contract) => !/fixed-zone-divider/.test(contract.prop.key)));
   assert.ok(contracts.every((contract) => /architectural/.test(contract.camera.description)));
   assert.ok(contracts.every((contract) => /junction|convergence/.test(contract.camera.description)));
@@ -217,7 +320,8 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(guidance, /time-light=portrait-warm-side-light/);
   assert.match(guidance, /camera=rejected-detail-overview-1-near-axial/);
   assert.match(guidance, /fixed-cue\/supporting-object=portrait-fixed-vertical-post\|right-side-wall-return\|stepped-divider-array/);
-  assert.match(guidance, /fixed vertical divider, post, wall return, jamb, fin, stepped divider array, deep reveal, recessed bay/);
+  assert.match(guidance, /Ordinary cabinet fronts, worktop-to-backsplash junctions, doorway or window frames needed to prove the assigned real room may remain/);
+  assert.match(guidance, /Rotunda, gallery, showroom, abstract chamber, display niche and pedestal-set interpretations are forbidden/);
   assert.doesNotMatch(guidance, /unsafe key/);
   assert.match(guidance, /unchanged source pixels/);
   assert.match(guidance, /immutable product zone/);
@@ -241,6 +345,24 @@ test("every retry index keeps all eight setting slots visually and semantically 
     for (const dimension of ["location", "moment", "surface", "camera", "palette", "spatialDepth", "prop"] as const) {
       assert.equal(new Set(contracts.map((contract) => contract[dimension].key)).size, settingShotAssetIds.length, `retry ${retry} ${dimension} contract key`);
       assert.equal(new Set(contracts.map((contract) => contract[dimension].description)).size, settingShotAssetIds.length, `retry ${retry} ${dimension} contract description`);
+    }
+  }
+});
+
+test("product-specific setting variations stay subordinate to recognizable real-life rooms", () => {
+  for (const productText of [
+    "롯샌 순우유맛 크림 샌드 일반식품 과자",
+    "사조 살코기 참치 일반식품 통조림",
+    "첵스초코 초콜릿 시리얼",
+  ]) {
+    const plan = buildProductSettingShotPlan("food-staples", productText, productText);
+    for (const assetId of settingShotAssetIds) {
+      const shot = plan[assetId];
+      assert.match(shot.location, /기본 생활공간의 실제 기능과 필수 고정 단서를 먼저 유지/);
+      assert.match(shot.supportingObjects, /지정 생활공간을 증명하는 필수 수납장·작업면·출입문·창문 단서는 유지/);
+      assert.match(shot.surface, /상품과 맞닿는 주 지지면은/);
+      assert.doesNotMatch(shot.location, /배럴|다면 천장|방사형 천장|갤러리형 천장|큰 사선 지붕 접힘/);
+      assert.doesNotMatch(shot.backgroundVariation?.fixedCue.description ?? "", /타원형|방사형|갤러리|페데스털|전시 니치/);
     }
   }
 });
@@ -282,9 +404,11 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /pixels\.length !== \(SHOT_DHASH_COLUMNS \+ 1\) \* SHOT_DHASH_ROWS/);
   assert.match(worker, /buildDifferenceHash\(pixels\)/);
   assert.match(worker, /findDuplicateShot\([\s\S]*fingerprint,[\s\S]*existingShots[\s\S]*rejectedSourceEvidenceShots/);
-  assert.match(worker, /downloadComparisonShots\(job, preset\.id, jobDir, jobHeartbeat\.signal\)/);
+  assert.match(worker, /const currentSceneIdentityText = resolveProductSceneIdentityText\(parsedSource\.data\)[\s\S]{0,500}downloadComparisonShots\([\s\S]{0,240}currentSceneIdentityText/);
   assert.match(worker, /const comparisonDownloadGate = createConcurrencyGate\(3\)/);
-  assert.match(worker, /fetch\(image\.signedUrl, \{ signal: downloadSignal\(leaseSignal, 30_000\) \}\)/);
+  assert.match(worker, /downloadComparisonShots\([\s\S]{0,260}const expectedOrigin = resolveComparisonStorageOrigin\(job\)/);
+  assert.match(worker, /comparisonById\.set\(image\.assetId, \{[\s\S]{0,180}validateComparisonSignedUrl\(image\.signedUrl, expectedOrigin, "재제작 중복 비교 이미지"\)/);
+  assert.match(worker, /fetch\(image\.signedUrl, \{[\s\S]{0,180}signal: downloadSignal\(leaseSignal, 30_000\),[\s\S]{0,80}redirect: "error"/);
   assert.match(worker, /expectedAssetIds[\s\S]*assetId !== targetAssetId/);
   assert.match(worker, /const previousAssetId = `previous:\$\{targetAssetId\}`/);
   assert.match(worker, /comparisonById\.size !== expectedAssetIds\.length \+ 1/);
@@ -294,6 +418,12 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /match=\$\{duplicate\.exact \? "sha256" : "dhash"\}/);
   assert.match(worker, /buildSettingShotRetryVariant\(baseSettingShot, preset\.id, retryIndex\)/);
   assert.match(worker, /never this persisted source-composite mask/);
+  assert.match(worker, /const generationPreset = backgroundOnly[\s\S]{0,320}placement: resolveProductIdentityPlacement\(preset, resolveProductSceneIdentityText\(result\)\)/);
+  assert.match(worker, /resolveProductIdentityPlacement\(targetPreset, sceneIdentityText\)[\s\S]{0,120}resolveProductIdentityPlacement\(comparisonPreset, sceneIdentityText\)/);
+  assert.match(worker, /targetPreset\.identityPolicy\.placement,[\s\S]{0,120}comparisonPreset\.identityPolicy\.placement,[\s\S]{0,180}resolveProductIdentityPlacement\(targetPreset, sceneIdentityText\)/);
+  assert.match(worker, /preset: generationPreset,/);
+  assert.match(worker, /reservedZone: preset\.identityPolicy\.placement/);
+  assert.match(worker, /compositeIdentityForeground\([\s\S]{0,300}generationPreset/);
   assert.match(worker, /retryConflictAssetIds/);
   assert.match(worker, /failedDimensions/);
   assert.match(worker, /auditError\.retryAuditFeedback = \{/);
@@ -305,11 +435,100 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /Source-composited output duplicate reason[\s\S]*retryAuditFeedback = mergeSettingShotRetryAuditFeedback|retryAuditFeedback = mergeSettingShotRetryAuditFeedback\([\s\S]*Source-composited output duplicate reason/);
   assert.match(worker, /rejectedBackgroundShots/);
   assert.match(worker, /comparisonPlates: boundedBackgroundComparisonShots\(\)/);
-  assert.match(worker, /hasPublishedSameSlotComparison[\s\S]*\? \[\.\.\.existingBackgroundShots\][\s\S]*: \[\.\.\.rejectedBackgroundShots, \.\.\.existingBackgroundShots\]/);
+  assert.match(worker, /hasPublishedSameSlotComparison[\s\S]*comparisonBackgroundShots[\s\S]*rejectedBackgroundShots/);
   assert.match(worker, /slice\(0, maximumBackgroundAuditComparisons\)/);
   assert.match(worker, /buildDuplicateRetryGuidance\(preset\.id, duplicate\.assetId, attempt, "source-evidence"\)/);
   assert.match(worker, /buildDuplicateRetryGuidance\(preset\.id, duplicate\.assetId, attempt, "product-mockup"\)/);
   assert.match(worker, /Keep the immutable source-product mask and follow the next deterministic background retry contract/);
+  assert.match(worker, /maximumCrossProductComparisonProducts = 8/);
+  assert.match(worker, /crossProductComparisonDownloadConcurrency = 4/);
+  assert.match(worker, /crossProductComparisonDownloadTimeoutMs = 25_000/);
+  assert.match(worker, /createConcurrencyGate\(crossProductComparisonDownloadConcurrency\)/);
+  assert.match(worker, /downloadSignal\(leaseSignal, crossProductComparisonDownloadTimeoutMs\)/);
+  assert.match(claimRoute, /createSignedUrls\([\s\S]{0,180}10 \* 60/);
+  assert.ok(
+    Math.ceil(64 / 4) * 25_000 + 60_000 < 10 * 60_000,
+    "최악의 교차상품 비교 다운로드 파동과 60초 여유가 서명 TTL 안에 있어야 합니다.",
+  );
+  assert.match(worker, /validateCrossProductComparisonRequest\(job\)/);
+  assert.match(worker, /products\.length > maximumCrossProductComparisonProducts/);
+  assert.match(worker, /images\.length !== settingShotAssetIds\.length/);
+  assert.match(worker, /rawExcludedSourceJobId[\s\S]{0,360}rawExcludedSourceJobId\.toLowerCase\(\)/);
+  assert.match(worker, /rawSourceJobId[\s\S]{0,260}rawSourceJobId\.toLowerCase\(\)[\s\S]{0,120}sourceJobId === excludedSourceJobId[\s\S]{0,120}seenSourceJobs\.has\(sourceJobId\)/);
+  assert.match(worker, /sourceJobId === excludedSourceJobId/);
+  assert.match(worker, /parsed\.protocol !== "https:"[\s\S]*parsed\.origin !== expectedOrigin/);
+  assert.match(worker, /downloadCrossProductComparisonArchive\(job, jobDir, jobHeartbeat\.signal\)/);
+  assert.match(worker, /metadata\.format !== "png" \|\| metadata\.width !== preset\.width \|\| metadata\.height !== preset\.height/);
+  assert.match(worker, /readCrossProductComparisonSource\(image\)/);
+  assert.match(worker, /fileStats\.isSymbolicLink\(\)/);
+  assert.match(worker, /prepareCrossProductBackgroundShots\([\s\S]*resolveProductIdentityPlacement\(targetPreset, product\.sceneIdentityText\)/);
+  assert.match(worker, /targetPreset\.identityPolicy\.placement,[\s\S]{0,120}currentPlacement,[\s\S]{0,120}previousPlacement/);
+  assert.match(worker, /comparisonShots: settingShot \? crossProductArchive\.shots : \[\]/);
+  assert.match(worker, /comparisonBackgroundShots/);
+});
+
+test("image generation retries only the exact Codex timeout inside the finite shot-attempt loop", async () => {
+  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const timeoutRetryBlock = worker.match(
+    /catch \(error\) \{\s*const retryableGenerationTimeout =[\s\S]{0,900}?continue;\s*\}/,
+  )?.[0];
+
+  assert.ok(timeoutRetryBlock, "the image-generation timeout retry block must remain explicit");
+  assert.match(
+    timeoutRetryBlock,
+    /attempt < MAXIMUM_SHOT_GENERATION_ATTEMPTS\s*&& error instanceof Error\s*&& error\.message === "Codex CLI 실행 제한시간을 초과했습니다\."/,
+  );
+  assert.match(timeoutRetryBlock, /if \(!retryableGenerationTimeout\) throw error;/);
+  assert.match(timeoutRetryBlock, /noveltyGuidance = `Image generation timeout retry/);
+  assert.match(timeoutRetryBlock, /continue;/);
+  assert.doesNotMatch(timeoutRetryBlock, /error\.message\.includes|error\.name|\/timeout\//i);
+
+  const loopStart = worker.indexOf(
+    "for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1)",
+  );
+  const retryStart = worker.indexOf("const retryableGenerationTimeout =", loopStart);
+  assert.notEqual(loopStart, -1);
+  assert.ok(retryStart > loopStart, "the timeout retry must stay inside the bounded attempt loop");
+});
+
+test("individual regeneration fetches the cross-product archive only for setting-shot assets", async () => {
+  const [worker, claimRoute] = await Promise.all([
+    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/ai/worker/claim/route.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(
+    claimRoute,
+    /const crossProductPreparation = crossProductSettingAssetIds\.includes\(\s*assetId as \(typeof crossProductSettingAssetIds\)\[number\],?\s*\)\s*\? await prepareCrossProductComparisons\(\)\s*: \{ comparisons: \[\], failure: null \} as const;/,
+  );
+  assert.match(
+    worker,
+    /const crossProductArchivePromise = settingShotAssetIds\.includes\(preset\.id\)\s*\? downloadCrossProductComparisonArchive\(job, jobDir, jobHeartbeat\.signal\)\s*: Promise\.resolve\(\{ products: \[\], shots: \[\] \}\);/,
+  );
+  assert.match(
+    worker,
+    /const \[imageFiles, crossProductArchive, previousComparisons\] = await Promise\.all\(\[\s*downloadInputs\(job, jobDir, jobHeartbeat\.signal\),\s*crossProductArchivePromise,/,
+  );
+  assert.match(
+    worker,
+    /if \(job\.kind !== "product_studio"\)[\s\S]{0,500}const \[imageFiles, crossProductArchive\] = await Promise\.all\(\[\s*downloadInputs\(job, jobDir, jobHeartbeat\.signal\),\s*downloadCrossProductComparisonArchive\(job, jobDir, jobHeartbeat\.signal\),/,
+  );
+});
+
+test("cross-product UUID fences canonicalize case variants before self and duplicate checks", async () => {
+  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const lower = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const upper = lower.toUpperCase();
+  assert.equal(upper === lower, false);
+  assert.equal(upper.toLowerCase(), lower);
+  assert.equal(new Set([lower]).has(upper.toLowerCase()), true);
+  assert.match(worker, /const excludedSourceJobId = rawExcludedSourceJobId\.toLowerCase\(\)/);
+  assert.match(worker, /const sourceJobId = rawSourceJobId\.toLowerCase\(\)/);
+  assert.ok(
+    worker.indexOf("const sourceJobId = rawSourceJobId.toLowerCase()")
+      < worker.indexOf("seenSourceJobs.has(sourceJobId)"),
+    "UUIDs must be canonicalized before the duplicate Set lookup",
+  );
 });
 
 test("protected products never send source pixels to image generation and preserve legacy input compatibility", async () => {
@@ -352,7 +571,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /labelReferenceFiles = preset\.id === "detail-package"[\s\S]*candidate\.referenceFile/);
   assert.match(worker, /for \(const requiredReferencePath of requiredReferencePaths\)[\s\S]*verifyGeneratedLabelFidelity\([\s\S]*referencePaths: \[[\s\S]*\.\.\.requiredReferencePaths,[\s\S]*\.\.\.referenceIndexes\.map/);
   assert.match(worker, /hasNextPackageEvidencePlan = preset\.id === "detail-package"[\s\S]*planIdentityEvidenceAttempt\(identitySourceCandidateCount, attempt \+ 1\)/);
-  assert.match(worker, /rejectedSourceEvidenceShots[\s\S]*\.\.\.existingShots, \.\.\.rejectedSourceEvidenceShots/);
+  assert.match(worker, /rejectedSourceEvidenceShots[\s\S]*\.\.\.existingShots, \.\.\.comparisonShots, \.\.\.rejectedSourceEvidenceShots/);
   assert.match(worker, /const nextPlan = planIdentityEvidenceAttempt\(identitySourceCandidateCount, nextAttempt\)/);
   assert.match(worker, /strictLabelEvidenceAssetIds = new Set\(\["detail-feature", "detail-package"\]\)/);
   assert.match(worker, /sourcePixelEvidencePolicy:[\s\S]*strictLabelEvidenceAssetIds\.has\(preset\.id\)[\s\S]*"strict-label"[\s\S]*"crop"/);
@@ -379,7 +598,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /auditGeneratedIdentityBackground\(\{/);
   assert.match(worker, /contactMode: backgroundContactMode/);
   assert.match(worker, /compositeIdentityForeground\([\s\S]*backgroundContactMode,[\s\S]*\)/);
-  assert.match(worker, /for \(const existingBackground of \[\.\.\.existingBackgroundShots, \.\.\.rejectedBackgroundShots\]\)[\s\S]*findDuplicateShot\(candidateFingerprint, \[existingBackground\]\)/);
+  assert.match(worker, /for \(const existingBackground of \[[\s\S]*\.\.\.existingBackgroundShots,[\s\S]*\.\.\.comparisonBackgroundShots,[\s\S]*\.\.\.rejectedBackgroundShots,[\s\S]*\]\)[\s\S]*findDuplicateShot\(candidateFingerprint, \[existingBackground\]\)/);
   assert.match(cutout, /IndexSet\(integer: instance\)/);
   assert.match(cutout, /generateScaledMaskForImage\(forInstances: instances/);
   assert.doesNotMatch(cutout, /generateScaledMaskForImage\(forInstances: observation\.allInstances/);

@@ -408,6 +408,105 @@ function generalFoodLocaleFallback(locale: unknown) {
   return generalFoodLocaleFallbacks[locale.split("-")[0]?.toLocaleLowerCase() ?? ""];
 }
 
+const localizedEvidenceFallbacks: Readonly<Record<string, {
+  classification: string;
+  section: string;
+}>> = {
+  en: {
+    classification: "This classification follows the corresponding evidence in the seller source record; only this localized wording requires review before publication.",
+    section: "Evidence note {index} follows its corresponding evidence in the seller source record; only this localized wording requires review before publication.",
+  },
+  ja: {
+    classification: "この分類は販売者の元記録にある対応根拠に従っています。公開前に確認が必要なのは、この現地語表現のみです。",
+    section: "根拠メモ{index}は販売者の元記録にある対応根拠に従っています。公開前に確認が必要なのは、この現地語表現のみです。",
+  },
+  zh: {
+    classification: "此分類依據賣家來源記錄中的對應證據；發佈前僅需審核此在地化措辭。",
+    section: "證據註記{index}依據賣家來源記錄中的對應證據；發佈前僅需審核此在地化措辭。",
+  },
+  vi: {
+    classification: "Phân loại này dựa trên bằng chứng tương ứng trong hồ sơ nguồn của người bán; trước khi đăng chỉ cần kiểm tra lại cách diễn đạt bản địa hóa này.",
+    section: "Ghi chú bằng chứng {index} dựa trên bằng chứng tương ứng trong hồ sơ nguồn của người bán; trước khi đăng chỉ cần kiểm tra lại cách diễn đạt bản địa hóa này.",
+  },
+  id: {
+    classification: "Klasifikasi ini mengikuti bukti terkait dalam catatan sumber penjual; hanya redaksi lokal ini yang perlu ditinjau sebelum publikasi.",
+    section: "Catatan bukti {index} mengikuti bukti terkait dalam catatan sumber penjual; hanya redaksi lokal ini yang perlu ditinjau sebelum publikasi.",
+  },
+  ms: {
+    classification: "Klasifikasi ini mengikut bukti berkaitan dalam rekod sumber penjual; hanya ayat setempat ini perlu disemak sebelum penerbitan.",
+    section: "Catatan bukti {index} mengikut bukti berkaitan dalam rekod sumber penjual; hanya ayat setempat ini perlu disemak sebelum penerbitan.",
+  },
+  th: {
+    classification: "การจัดประเภทนี้อ้างอิงหลักฐานที่เกี่ยวข้องในบันทึกต้นทางของผู้ขาย โดยต้องตรวจทานเฉพาะถ้อยคำฉบับท้องถิ่นนี้ก่อนเผยแพร่",
+    section: "บันทึกหลักฐาน {index} อ้างอิงหลักฐานที่เกี่ยวข้องในบันทึกต้นทางของผู้ขาย โดยต้องตรวจทานเฉพาะถ้อยคำฉบับท้องถิ่นนี้ก่อนเผยแพร่",
+  },
+  es: {
+    classification: "Esta clasificación sigue la evidencia correspondiente del registro fuente del vendedor; antes de publicar solo debe revisarse esta redacción localizada.",
+    section: "La nota de evidencia {index} sigue la evidencia correspondiente del registro fuente del vendedor; antes de publicar solo debe revisarse esta redacción localizada.",
+  },
+  pt: {
+    classification: "Esta classificação segue a evidência correspondente no registro-fonte do vendedor; antes da publicação, somente esta redação localizada precisa ser revisada.",
+    section: "A nota de evidência {index} segue a evidência correspondente no registro-fonte do vendedor; antes da publicação, somente esta redação localizada precisa ser revisada.",
+  },
+  fr: {
+    classification: "Cette classification suit la preuve correspondante du dossier source du vendeur ; seule cette formulation localisée doit être vérifiée avant publication.",
+    section: "La note de preuve {index} suit la preuve correspondante du dossier source du vendeur ; seule cette formulation localisée doit être vérifiée avant publication.",
+  },
+  de: {
+    classification: "Diese Klassifizierung folgt dem zugehörigen Nachweis im Quelldatensatz des Verkäufers; vor der Veröffentlichung muss nur diese lokalisierte Formulierung geprüft werden.",
+    section: "Nachweisnotiz {index} folgt dem zugehörigen Nachweis im Quelldatensatz des Verkäufers; vor der Veröffentlichung muss nur diese lokalisierte Formulierung geprüft werden.",
+  },
+  it: {
+    classification: "Questa classificazione segue la prova corrispondente nel record di origine del venditore; prima della pubblicazione deve essere verificata solo questa formulazione localizzata.",
+    section: "La nota di prova {index} segue la prova corrispondente nel record di origine del venditore; prima della pubblicazione deve essere verificata solo questa formulazione localizzata.",
+  },
+};
+
+/**
+ * Evidence is provenance, not customer-facing copy. If a localized model draft
+ * copies Korean master evidence verbatim, replace only that evidence field with
+ * a conservative locale-native review note. The note never claims that a
+ * package, label, image, or material was supplied; it only preserves lineage
+ * to the corresponding seller source record. Other localized fields remain
+ * fail-closed so this cannot conceal a generally untranslated listing.
+ */
+export function normalizeStudioLocalizedEvidenceLanguage(value: unknown): unknown {
+  if (!isPlainRecord(value) || !Array.isArray(value.localizedListings)) return value;
+  let listingsChanged = false;
+  const localizedListings = value.localizedListings.map((entry) => {
+    if (!isPlainRecord(entry) || entry.locale === "ko-KR" || typeof entry.locale !== "string") return entry;
+    const fallback = localizedEvidenceFallbacks[entry.locale.split("-")[0]?.toLocaleLowerCase() ?? ""];
+    if (!fallback) return entry;
+    let listingChanged = false;
+    let classification = entry.classification;
+    if (isPlainRecord(classification)
+      && typeof classification.evidence === "string"
+      && /\p{Script=Hangul}/u.test(classification.evidence)) {
+      classification = { ...classification, evidence: fallback.classification };
+      listingChanged = true;
+    }
+    let detailSections = entry.detailSections;
+    if (Array.isArray(detailSections)) {
+      let detailsChanged = false;
+      detailSections = detailSections.map((detail, detailIndex) => {
+        if (!isPlainRecord(detail)
+          || typeof detail.evidence !== "string"
+          || !/\p{Script=Hangul}/u.test(detail.evidence)) return detail;
+        detailsChanged = true;
+        return {
+          ...detail,
+          evidence: fallback.section.replace("{index}", String(detailIndex + 1)),
+        };
+      });
+      if (detailsChanged) listingChanged = true;
+    }
+    if (!listingChanged) return entry;
+    listingsChanged = true;
+    return { ...entry, classification, detailSections };
+  });
+  return listingsChanged ? { ...value, localizedListings } : value;
+}
+
 function validLocalizedGeneralFoodIdentity(
   source: Record<string, unknown>,
   normalized: Record<string, unknown>,
@@ -795,7 +894,9 @@ export function normalizeStudioLocalizedKeywordCoverage(value: unknown): unknown
 
 export function normalizeStudioResultForTerminalValidation(value: unknown): unknown {
   return normalizeStudioLocalizedKeywordCoverage(normalizeStudioWarningLimits(
-    normalizeStudioSectionCount(normalizeStudioGeneralFoodSafety(value)),
+    normalizeStudioSectionCount(normalizeStudioGeneralFoodSafety(
+      normalizeStudioLocalizedEvidenceLanguage(value),
+    )),
   ));
 }
 

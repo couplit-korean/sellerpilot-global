@@ -102,11 +102,11 @@ function visibleMomentTreatment(moment: string, assetId: keyof typeof identityBa
   if (/늦은 오전|오전|late-morning|midmorning/.test(normalized)) {
     return { family: "late-morning-high-key", description: "bright high-key late-morning daylight with crisp neutral architectural shadows from a high diagonal or overhead direction, visibly brighter than early-day light" };
   }
-  if (/한낮|낮|midday|noon/.test(normalized)) {
-    return { family: "midday-high-fill", description: "bright warm-neutral midday fill from above with short or softly bounded downward architectural shadows and no long dawn-like side beam" };
-  }
   if (/해가 막 오른|이른 아침|일출|아침|sunrise|dawn|morning/.test(normalized)) {
     return { family: "morning-directional", description: "clear early-day directional light with a visible cool-to-warm morning gradient" };
+  }
+  if (/한낮|(?:^|[\s,;])낮(?:$|[\s,;])|midday|noon/.test(normalized)) {
+    return { family: "midday-high-fill", description: "bright warm-neutral midday fill from above with short or softly bounded downward architectural shadows and no long dawn-like side beam" };
   }
   const fallback = {
     portrait: { family: "early-day-directional", description: "directional early-day architectural light with a visible source direction" },
@@ -134,16 +134,16 @@ function resolveFixedRoomRecognitionRule(settingShot: ProductSettingShot): Fixed
       forbiddenLookalikes: "a bathroom, shower, washroom, vanity, spa, retail showroom, abstract gallery, generic empty shelf, display niche or pedestal; floor-to-ceiling wet-room tile, a shower curb or drain, a basin and a vanity mirror are forbidden",
     };
   }
-  if (/키친|주방|조리대|아일랜드|홈카페|브레이크룸|kitchen|breakroom|food[- ]prep/.test(location)) {
-    return {
-      requiredArchitecture: "at least two unmistakable fixed food-preparation cues: an integrated worktop-to-backsplash junction, fixed lower-cabinet fronts or a built-in ventilation/window element belonging to the same preparation zone",
-      forbiddenLookalikes: "a bathroom, shower, washroom, vanity, spa, retail showroom, abstract gallery, generic empty shelf, display niche or pedestal; a tiled enclosure without fixed kitchen cabinetry or preparation architecture is forbidden",
-    };
-  }
   if (/팬트리|건식\s*식품|식품\s*(?:선반|수납|보관)|찬장|pantry|dry[- ]goods|dry food/.test(location)) {
     return {
       requiredArchitecture: "at least two unmistakable fixed dry-storage cues: multiple integrated pantry shelf levels plus a permanent access, ventilation or cabinet-base element belonging to one built-in food-storage system",
       forbiddenLookalikes: "a bathroom, shower, washroom, vanity, spa, retail showroom, abstract gallery, single generic empty shelf, isolated display niche or pedestal; one unsupported shelf plane is never enough",
+    };
+  }
+  if (/키친|주방|조리대|아일랜드|홈카페|브레이크룸|kitchen|breakroom|food[- ]prep/.test(location)) {
+    return {
+      requiredArchitecture: "at least two unmistakable fixed food-preparation cues: an integrated worktop-to-backsplash junction, fixed lower-cabinet fronts or a built-in ventilation/window element belonging to the same preparation zone",
+      forbiddenLookalikes: "a bathroom, shower, washroom, vanity, spa, retail showroom, abstract gallery, generic empty shelf, display niche or pedestal; a tiled enclosure without fixed kitchen cabinetry or preparation architecture is forbidden",
     };
   }
   return null;
@@ -183,19 +183,25 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
       3: "viewed from a third corner-to-axial architectural position with an approximately 245-degree azimuth change, a longer perspective, and clearly separated near, middle and rear fixed-plane junctions",
     }[Number(retryMatch[1])]
     : null;
+  const productCameraVariation = settingShot.backgroundVariation?.camera;
   const retryCameraDescription = retryContract
     ? `${cameraDescription}; ${retryCameraTransform}`
-    : cameraDescription;
+    : `${cameraDescription}; ${productCameraVariation?.description ?? "preserve the slot-specific architectural side offset and convergence"}`;
   const cameraKey = retryContract
     ? stableSemanticKey(settingShot.separation.camera, "identity-camera")
-    : baseCameraKey;
-  const momentDescription = retryContract ? settingShot.moment : momentTreatment.description;
+    : stableSemanticKey(baseCameraKey, productCameraVariation?.key ?? settingShot.separation.camera);
+  const momentDescription = retryContract
+    ? settingShot.moment
+    : `${settingShot.moment}; render it as ${momentTreatment.description}`;
+  const momentKey = retryContract
+    ? stableSemanticKey(settingShot.separation.moment, momentTreatment.family)
+    : stableSemanticKey(settingShot.backgroundVariation?.moment.key ?? settingShot.separation.moment, momentTreatment.family);
   const retryPropKey = retryContract
     ? stableSemanticKey(settingShot.separation.supportingObjects, "fixed-cue")
-    : stableSemanticKey(settingShot.separation.location, cue.suffix);
+    : stableSemanticKey(settingShot.backgroundVariation?.fixedCue.key ?? settingShot.separation.supportingObjects, cue.suffix);
   const retryPropDescription = retryContract
     ? `${settingShot.supportingObjects}; it belongs to the replacement architecture and stays outside the reserved product zone`
-    : `${cue.description} belonging to ${settingShot.location}, outside the reserved product zone`;
+    : `${settingShot.backgroundVariation?.fixedCue.description ?? cue.description}; retain ${cue.description} as the slot-role anchor belonging to ${settingShot.location}, outside the reserved product zone`;
   const roomRecognition = resolveFixedRoomRecognitionRule(settingShot);
   const roomRecognitionContract = roomRecognition
     ? ` Fixed room-recognition contract: the pixels must show ${roomRecognition.requiredArchitecture}. The scene must not read primarily as ${roomRecognition.forbiddenLookalikes}. Material, color or an empty support plane alone never proves the assigned room function.`
@@ -206,13 +212,11 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
       description: `the empty fixed architectural envelope of ${settingShot.location}; any saleable furniture or movable prop named by the location stays outside the frame.${roomRecognitionContract}`,
     },
     moment: {
-      key: retryContract
-        ? stableSemanticKey(settingShot.separation.moment, momentTreatment.family)
-        : stableSemanticKey(settingAssetId, momentTreatment.family),
+      key: momentKey,
       description: `${momentDescription}; audit only visible light direction, color temperature and shadows, never infer an action or movable prop`,
     },
     surface: {
-      key: settingShot.separation.surface,
+      key: stableSemanticKey(settingShot.separation.surface),
       description: `an empty integrated support-or-backing plane with the verified material appearance of ${settingShot.surface}`,
     },
     camera: { key: cameraKey, description: retryCameraDescription },
@@ -283,7 +287,7 @@ export function buildBackgroundSemanticAuditPrompt(input: BackgroundSemanticAudi
     input.comparisonAssetIds?.length
       ? `Image 1 is the candidate. The later trusted comparison plates, in order, are: ${input.comparisonAssetIds.join(", ")}. Safety flags, reserved-zone checks and assigned-dimension checks describe Image 1 only. Comparison plates may contain a neutral rectangular mask over an earlier product zone; ignore that mask and compare the remaining environment pixels. Compare pixels, not prompt wording. Set every series*Distinct field true only when the candidate is unmistakably different from every cross-slot comparison plate in that dimension. conflictingAssetIds must contain only comparison IDs that fail at least one required distinction; it must be empty when every required distinction is true, and every false series*Distinct field must have at least one relevant conflict ID. Merely changing one fixture, crop or product placement while retaining the same beige/cream room, surface, light mood or depth counts as not distinct.${previousSameSlotIds.length ? ` Same-slot regeneration comparison ${previousSameSlotIds.join(", ")} intentionally shares the trusted location, moment-light, surface, palette and camera family; exclude it from those cross-slot dimension booleans. For that previous same-slot plate, require a materially different architectural layout, perspective composition, spatial arrangement and fixed-cue placement; mark seriesVisuallyDistinct and seriesCueDistinct false and list its ID only when that visual regeneration is still a near-repeat.` : ""}`
       : "There are no earlier plates in this series. Set every series*Distinct field and seriesVisuallyDistinct true, with conflictingAssetIds empty, only if the candidate itself unambiguously exposes all trusted dimensions.",
-    `assignedSupportingObjectsSatisfied is true only when the required ${input.expectedPropKey} cue visibly matches its trusted visual definition and no forbidden consumer prop substitutes for it. Additional fixed architectural or non-saleable contextual cues are allowed, but they must be exhaustively reported and must not repeat a cue from an earlier comparison plate.`,
+    `assignedSupportingObjectsSatisfied is true only when the required ${input.expectedPropKey} cue visibly matches its trusted visual definition and no forbidden consumer prop substitutes for it. That required slot-specific cue must remain distinct from earlier plates. Additional fixed architectural or non-saleable contextual cues are allowed and must be exhaustively reported; a shared structural room-recognition cue such as cabinet fronts, a doorway or a window is not by itself a series-cue failure when the required slot-specific cue, full layout, camera, surface and depth remain unmistakably different.`,
     `observedNonMerchandiseProps must exhaustively list every nontrivial fixed architectural or non-saleable contextual cue as stable lowercase kebab-case keys, including the required "${input.expectedPropKey}" key. Do not collapse distinct doorway, window, built-in rail, divider, sconce or fixed-furniture cues into one generic key. Do not list the declared support-or-backing surface, generic walls, floors, baseboard/trim/moulding, light/palette keys or the source product. If any visible cue is omitted or ambiguous, assignedSupportingObjectsSatisfied=false and confidence cannot be high.`,
     "confidence must be high only when the whole frame is clear enough to make every decision. Use medium or low for blur, ambiguity, crop uncertainty, contradictory cues or incomplete inspection.",
   ].join("\n");

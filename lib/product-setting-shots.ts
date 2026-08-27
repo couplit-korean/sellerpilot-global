@@ -1,4 +1,8 @@
-import type { AiGeneratedAssetId } from "./ai-generated-assets";
+import {
+  resolveProductPlacementVariant,
+  resolveProductSceneVariantCode,
+  type AiGeneratedAssetId,
+} from "./ai-generated-assets";
 
 export const settingShotAssetIds = [
   "portrait",
@@ -25,6 +29,11 @@ export type ProductSettingShot = {
   staging: string;
   camera: string;
   separation: SettingShotSeparation;
+  backgroundVariation?: {
+    fixedCue: { key: string; description: string };
+    camera: { key: string; description: string };
+    moment: { key: string; description: string };
+  };
 };
 
 export type SettingShotRetryAuditFeedback = {
@@ -42,23 +51,23 @@ export type ProductSettingShotPlan = Record<SettingShotAssetId, ProductSettingSh
 
 const settingShotRetryProfiles = [
   {
-    key: "open-rotunda-radial-light",
-    location: "an open central rotunda dedicated to the same verified everyday function, with one uninterrupted curved rear envelope and the original room completely outside the frame",
-    supportingObjects: "one broad ceiling-integrated circular light well with a radial rim and no vertical fin, post, divider, jamb, return, reveal, bay or niche",
+    key: "opposite-side-rectangular-task-light",
+    location: "stay inside the exact assigned real-life room and keep at least two functional room-recognition structures, but rebuild the view from the opposite side with an ordinary flat ceiling, a different doorway or cabinet junction, and a rectangular built-in task-light recess",
+    supportingObjects: "one ordinary rectangular built-in task-light recess appropriate to the assigned room, outside the product zone; it is secondary to the room's functional cabinet, worktop, doorway, window or storage evidence",
     staging: "inside the immutable source-composite mask zone, the support-or-backing plane moves to the opposite near/far depth relationship and reverses negative-space direction",
     camera: "the assigned camera family moved to the opposite side, rotated about 70 degrees in azimuth with a visibly wider perspective while its role-required height remains unchanged",
   },
   {
-    key: "horizontal-gallery-floor-channel",
-    location: "a long low-ceiling gallery dedicated to the same verified everyday function, organized by uninterrupted horizontal layers with no sightline into the original location",
-    supportingObjects: "one continuous floor-level horizontal shadow channel spanning the frame and no vertical fin, post, divider, jamb, return, reveal, bay or niche",
+    key: "axial-access-threshold",
+    location: "stay inside the exact assigned real-life room and keep at least two functional room-recognition structures, but rebuild the view along a different ordinary access aisle with a flat ceiling, a clearly visible entry threshold, and changed foreground-to-rear depth",
+    supportingObjects: "one room-appropriate fixed access threshold or cabinet toe-kick return outside the product zone; it must belong to the assigned room and must not become a display plinth",
     staging: "inside the immutable source-composite mask zone, the background support-or-backing geometry changes to a far-diagonal relationship and reverses foreground hierarchy",
     camera: "the assigned camera family shifted from oblique toward axial, rotated about 155 degrees in azimuth with a compressed mid-depth plane while its role-required height remains unchanged",
   },
   {
-    key: "faceted-roof-diagonal-fold",
-    location: "a freestanding faceted roof chamber dedicated to the same verified everyday function, with a broad diagonal envelope physically disconnected from every earlier room",
-    supportingObjects: "one uninterrupted diagonal wall-to-ceiling fold and no vertical fin, post, divider, jamb, return, reveal, bay, frame or niche",
+    key: "third-corner-rectangular-vent",
+    location: "stay inside the exact assigned real-life room and keep at least two functional room-recognition structures, but rebuild the view from a third ordinary corner with a flat or naturally sloped residential ceiling, a different cabinet or doorway layout, and no exhibition geometry",
+    supportingObjects: "one fixed rectangular ventilation or transom panel appropriate to the assigned room, outside the product zone and visibly integrated with the real wall, doorway or storage system",
     staging: "inside the immutable source-composite mask zone, the apparent architectural depth shifts to a third relationship while foreground and rear-plane hierarchy are fully reversed",
     camera: "the assigned camera family moved to a third corner-to-axial position, rotated about 245 degrees in azimuth with a longer perspective while its role-required height remains unchanged",
   },
@@ -168,10 +177,10 @@ export function buildSettingShotRetryVariant(
   const key = `retry-${boundedRetry}-${assetId}`;
   return {
     label: `${setting.label} · 재생성 ${boundedRetry}`,
-    location: `${profile.location} as ${setting.location}; this is a radical spatial replacement, not a generic unrelated room`,
+    location: `${setting.location}; ${profile.location}. Never turn it into a rotunda, gallery, showroom, abstract chamber, display niche or pedestal set`,
     moment: `${retryMoment}; the previous candidate's time and light direction are fully blacklisted`,
     surface: `an integrated ${retrySurface} plane; the previous candidate's material and grain direction are fully blacklisted`,
-    supportingObjects: `${profile.supportingObjects} from ${setting.location}; the previous candidate's cue arrangement is fully blacklisted`,
+    supportingObjects: `${profile.supportingObjects}; retain the mandatory functional room-recognition structures from ${setting.location}, but do not treat those common structures as the slot-specific unique cue; the previous candidate's unique cue arrangement is blacklisted`,
     staging: `${profile.staging}; preserve ${assetId}'s immutable pixel mask and role anchor (${setting.staging}) while fully blacklisting the previous background support-or-backing geometry, depth and negative-space hierarchy`,
     camera: `${setting.camera}; within this exact assigned camera family, ${profile.camera}`,
     separation: {
@@ -221,8 +230,8 @@ export function buildSettingShotRetryGuidance(
     hardNegativeSignatures.length
       ? `STRUCTURED FAILED-PLATE BLACKLIST (schema-validated semantic keys only): ${hardNegativeSignatures.join("; ")}. These identify forbidden visual families from all earlier rejected candidates, not words to render in the image.`
       : "No validated failed-plate semantic keys are available; rely on the complete deterministic replacement contract.",
-    "FORBIDDEN STRUCTURAL EQUIVALENCE: never rename or slightly reshape a rejected rigid cue. A fixed vertical divider, post, wall return, jamb, fin, stepped divider array, deep reveal, recessed bay, linear frame and architectural niche are the same rigid-vertical visual family; if any prior cue used one, every equivalent in this family is forbidden. Use only the new trusted cue and geometry assigned above.",
-    "The retry assignment below supersedes the original environment assignment, but it never changes the hard shot class or product facts.",
+    "FORBIDDEN STRUCTURAL EQUIVALENCE: never rename or slightly reshape the specifically rejected slot-specific cue. Ordinary cabinet fronts, worktop-to-backsplash junctions, doorway or window frames needed to prove the assigned real room may remain, but they cannot substitute for the new unique cue and the overall layout, light, surface, depth and camera must still change materially.",
+    "The retry assignment preserves the original real-life room function and its required recognition evidence while replacing the rejected composition; it never changes the hard shot class or product facts. Rotunda, gallery, showroom, abstract chamber, display niche and pedestal-set interpretations are forbidden.",
     "Generate only the empty architectural plate. The verified product is composited afterward from unchanged source pixels; never invent, redraw or anticipate package text, logos, labels, quantities or product parts.",
   ].join("\n");
 }
@@ -246,6 +255,168 @@ const cameras = {
   storage: ["high-corner-right-40mm", "오른쪽 위 모서리의 40mm 시점으로 수납 깊이와 꺼내는 여백을 함께 보여준다"],
   context: ["low-wide-rear-24mm", "낮은 뒤쪽 24mm 가로 시점으로 전경·중경·후경을 겹치지 않게 나누고 상품을 한쪽에 고정한다"],
 } as const satisfies Record<"portrait" | "wide" | "overview" | "use" | "routine" | "scale" | "storage" | "context", CameraContract>;
+
+type SemanticVariant = { key: string; description: string };
+
+const spatialOrientationVariants = [
+  { key: "rear-left-to-front-right", location: "후면 왼쪽에서 전면 오른쪽으로 흐르는 비대칭 축", moment: "후면 왼쪽에서 전면 오른쪽으로 긴 사선 그림자를 만든다", surface: "결과 줄눈이 후면 왼쪽에서 전면 오른쪽으로 이어진다", cue: "상품 합성 구역 밖의 후면 왼쪽 상단", camera: "기준축에서 왼쪽으로 12도 이동해 오른쪽 후경의 소실점을 더 길게 연다" },
+  { key: "rear-right-to-front-left", location: "후면 오른쪽에서 전면 왼쪽으로 흐르는 역대각 축", moment: "후면 오른쪽에서 전면 왼쪽으로 낮은 역대각 그림자를 만든다", surface: "결과 줄눈이 후면 오른쪽에서 전면 왼쪽으로 이어진다", cue: "상품 합성 구역 밖의 후면 오른쪽 상단", camera: "기준축에서 오른쪽으로 14도 이동해 왼쪽 후경의 소실점을 더 길게 연다" },
+  { key: "high-left-horizontal", location: "왼쪽 높은 곳에서 오른쪽으로 길게 이어지는 수평 축", moment: "왼쪽 높은 광원에서 짧고 선명한 수평 그림자를 만든다", surface: "긴 결 방향을 왼쪽에서 오른쪽으로 수평 정렬한다", cue: "상품 합성 구역보다 높은 왼쪽 천장 가장자리", camera: "같은 높이 역할을 지키며 왼쪽으로 평행 이동해 수평 소실선을 강조한다" },
+  { key: "high-right-horizontal", location: "오른쪽 높은 곳에서 왼쪽으로 길게 이어지는 수평 축", moment: "오른쪽 높은 광원에서 반대 방향의 짧은 수평 그림자를 만든다", surface: "긴 결 방향을 오른쪽에서 왼쪽으로 수평 정렬한다", cue: "상품 합성 구역보다 높은 오른쪽 천장 가장자리", camera: "같은 높이 역할을 지키며 오른쪽으로 평행 이동해 반대 수평 소실선을 강조한다" },
+  { key: "off-center-aisle", location: "고정 선반·수납장·작업면 사이의 실제 통로가 한쪽 소실점으로 수렴하는 비대칭 구성", moment: "통로 한쪽의 평범한 창이나 작업등에서 반대쪽 고정면으로 명암이 이어진다", surface: "선반·조리대의 직선 결이 한쪽 후면 소실점으로 이어진다", cue: "상품 합성 구역 밖의 통로 끝 고정 수납장 또는 출입문틀", camera: "역할 고유 높이에서 통로 중심을 9도 벗어나 실제 선반·작업면 수렴을 비대칭으로 보여준다" },
+  { key: "low-left-sweep", location: "왼쪽 낮은 바닥선에서 오른쪽 후면으로 올라가는 완만한 축", moment: "왼쪽 낮은 광원이 오른쪽 후면으로 길게 올라가는 그림자를 만든다", surface: "왼쪽 낮은 모서리에서 오른쪽 후면으로 결을 올린다", cue: "상품 합성 구역 밖의 왼쪽 낮은 건축 경계", camera: "기준축보다 왼쪽 아래로 이동하되 역할 고유의 카메라 높이 범위를 유지한다" },
+  { key: "low-right-sweep", location: "오른쪽 낮은 바닥선에서 왼쪽 후면으로 올라가는 완만한 축", moment: "오른쪽 낮은 광원이 왼쪽 후면으로 길게 올라가는 그림자를 만든다", surface: "오른쪽 낮은 모서리에서 왼쪽 후면으로 결을 올린다", cue: "상품 합성 구역 밖의 오른쪽 낮은 건축 경계", camera: "기준축보다 오른쪽 아래로 이동하되 역할 고유의 카메라 높이 범위를 유지한다" },
+  { key: "front-left-deep-rear", location: "왼쪽 전경을 열고 오른쪽 깊은 후면으로 수렴하는 구성", moment: "왼쪽 전면의 넓은 빛이 오른쪽 후면으로 점차 어두워진다", surface: "왼쪽 전경의 넓은 판에서 오른쪽 후면으로 결 간격을 좁힌다", cue: "상품 합성 구역 밖의 오른쪽 깊은 후면", camera: "왼쪽 전면으로 평행 이동해 오른쪽 깊은 후면의 원근 수렴을 강조한다" },
+  { key: "front-right-deep-rear", location: "오른쪽 전경을 열고 왼쪽 깊은 후면으로 수렴하는 구성", moment: "오른쪽 전면의 넓은 빛이 왼쪽 후면으로 점차 어두워진다", surface: "오른쪽 전경의 넓은 판에서 왼쪽 후면으로 결 간격을 좁힌다", cue: "상품 합성 구역 밖의 왼쪽 깊은 후면", camera: "오른쪽 전면으로 평행 이동해 왼쪽 깊은 후면의 원근 수렴을 강조한다" },
+  { key: "sloped-ceiling-cabinet-axis", location: "평범한 완경사 천장 아래 고정 수납장·작업면 접합이 공간 기능을 지배하는 구성", moment: "일반 창이나 작업등의 사선광이 수납장 전면과 작업면에 서로 다른 길이의 그림자를 만든다", surface: "주 지지면의 직선 결을 수납장 끝단에서 반대편 낮은 모서리로 이어 준다", cue: "상품 합성 구역 밖의 고정 수납장 끝단과 작업면 접합", camera: "기준축을 18도 이동해 완경사 천장보다 수납장·작업면 접합과 후면 수렴선을 먼저 보여준다" },
+  { key: "low-horizontal-depth", location: "낮은 수평선이 먼 후경까지 끊김 없이 이어지는 구성", moment: "낮은 측면광이 긴 수평 그림자 띠를 후경까지 이어 만든다", surface: "낮고 긴 수평 결을 전경과 후경에 연속시킨다", cue: "상품 합성 구역 밖의 먼 후경 하단", camera: "역할 고유 높이에서 측면으로 20도 이동해 낮은 수평 깊이층을 길게 보여준다" },
+] as const;
+
+const locationArchitectureVariants: readonly SemanticVariant[] = [
+  { key: "offset-window-reveal", description: "평범한 평천장 아래 중심에서 벗어난 창문턱과 직선 후벽 접합이 보이는" },
+  { key: "service-soffit-doorway", description: "기존 수납·작업 구역 위 얕은 서비스 소핏과 옆쪽 출입문틀이 함께 보이는" },
+  { key: "half-height-built-in-return", description: "반높이 고정 수납 벽의 끝단과 평범한 직선 천장 경계가 분리되는" },
+  { key: "rectangular-skylight-return", description: "작은 직사각형 천창 또는 고창의 깊은 턱과 일반 벽 모서리가 보이는" },
+  { key: "continuous-cabinet-soffit", description: "고정 수납장 위 연속된 얕은 소핏과 깊은 직선 후벽이 이어지는" },
+  { key: "ordinary-sloped-ceiling", description: "실제 주거·업무 공간의 완만한 경사지붕과 낮은 반대편 직선 벽이 만나는" },
+  { key: "rounded-corner-straight-wall", description: "한쪽 벽 모서리만 완만하게 라운드 처리되고 나머지는 직선 벽·바닥인" },
+  { key: "corner-window-orthogonal-walls", description: "코너 창문턱과 서로 직각인 두 고정 벽면이 명확히 보이는" },
+  { key: "stepped-beam-recessed-door", description: "높이가 다른 두 평범한 천장 보와 안쪽으로 들어간 출입문이 보이는" },
+  { key: "under-cabinet-light-junction", description: "작업면과 평행한 하부 조명선, 수납장 끝단, 후벽 접합이 함께 보이는" },
+  { key: "walk-in-access-aisle", description: "출입문틀과 양쪽 고정 수납·작업면 사이의 좁은 실제 접근 통로가 보이는" },
+];
+
+const momentLightVariants: readonly SemanticVariant[] = [
+  { key: "clear-crisp-light", description: "맑고 선명한 단일 자연광" },
+  { key: "thin-overcast-light", description: "얇은 구름을 통과한 넓고 부드러운 자연광" },
+  { key: "post-rain-reflection", description: "비가 갠 뒤 차갑게 반사되는 깨끗한 자연광" },
+  { key: "warm-dry-edge", description: "건조하고 따뜻한 공기에서 경계가 또렷한 측면광" },
+  { key: "cool-high-contrast", description: "차갑고 대비가 큰 방향성 자연광" },
+  { key: "hazy-soft-beam", description: "옅은 안개를 통과해 가장자리가 부드러운 빛줄기" },
+  { key: "narrow-slot-light", description: "좁은 건축 개구부를 통과한 집중광" },
+  { key: "broad-bounced-light", description: "큰 고정 벽면에 한 번 반사된 넓은 간접광" },
+  { key: "neutral-cross-light", description: "중립색의 강한 교차광" },
+  { key: "low-grazing-light", description: "표면을 스치며 질감을 드러내는 낮은 광선" },
+  { key: "high-diffuse-light", description: "천장 쪽에서 넓게 퍼지는 높은 확산광" },
+];
+
+const surfaceMaterialVariants: readonly SemanticVariant[] = [
+  { key: "honed-travertine", description: "옅은 회백색 연마 트래버틴" },
+  { key: "dark-soapstone", description: "짙은 녹회색 무광 소프스톤" },
+  { key: "brushed-stainless", description: "가는 결의 브러시드 스테인리스" },
+  { key: "sealed-white-oak", description: "방수 마감한 밝은 화이트 오크" },
+  { key: "fine-chip-terrazzo", description: "잔골재가 드문 아이보리 테라조" },
+  { key: "blue-grey-linoleum", description: "청회색 천연 리놀륨" },
+  { key: "satin-quartz", description: "새틴 광택의 옅은 쿼츠 복합재" },
+  { key: "sage-ceramic", description: "세이지색 저광택 세라믹 판" },
+  { key: "honed-basalt", description: "균일하게 연마한 짙은 현무암" },
+  { key: "amber-mineral-resin", description: "호박색 미세 골재가 든 무광 미네랄 레진" },
+  { key: "powder-coated-steel", description: "미세 질감의 중립색 분체도장 강판" },
+];
+
+const fixedArchitecturalCueVariants: readonly SemanticVariant[] = [
+  { key: "rectangular-task-light-recess", description: "고정 수납·작업 구역 위 직사각형 매입 작업등 턱" },
+  { key: "continuous-clerestory-slot", description: "실제 벽 상부의 끊김 없는 수평 고창 슬롯" },
+  { key: "cabinet-toe-kick-return", description: "하부 수납장과 바닥 사이의 연속된 토킥 리세스 끝단" },
+  { key: "doorway-threshold-return", description: "출입문틀과 바닥이 만나는 고정 문턱 끝단" },
+  { key: "fixed-ventilation-grille", description: "벽이나 고정 수납장에 매입된 직사각형 환기 그릴" },
+  { key: "flush-utility-access-panel", description: "벽과 같은 면에 설치된 작은 직사각형 점검 패널" },
+  { key: "ceiling-beam-junction", description: "평천장과 얕은 고정 보가 만나는 직선 접합부" },
+  { key: "under-cabinet-task-light", description: "작업면과 평행한 고정 하부장 작업 조명선" },
+  { key: "rectangular-high-transom", description: "출입문 위에 통합된 직사각형 고정 트랜섬" },
+  { key: "cabinet-side-panel-return", description: "고정 수납장 측판과 후벽이 만나는 분명한 직선 끝단" },
+  { key: "cabinet-service-soffit", description: "고정 수납장 위에 붙은 넓고 얕은 서비스 소핏" },
+];
+
+const cameraMovementVariants: readonly SemanticVariant[] = [
+  { key: "short-lateral-shift", description: "기준 시점에서 짧게 평행 이동해 전경과 후경의 겹침을 끊는다" },
+  { key: "long-lateral-shift", description: "기준 시점에서 크게 평행 이동해 반대편 소실선을 길게 드러낸다" },
+  { key: "near-axial-offset", description: "완전 정면은 피하면서 축에 가까운 시점으로 면의 폭 차이를 강조한다" },
+  { key: "deep-oblique-offset", description: "역할 범위 안의 더 깊은 사선 시점으로 세 깊이층을 분리한다" },
+  { key: "wide-convergence", description: "역할 고유 화각 범위의 넓은 쪽을 사용해 건축 수렴선을 벌린다" },
+  { key: "compressed-convergence", description: "역할 고유 화각 범위의 긴 쪽을 사용해 중경을 압축한다" },
+  { key: "raised-axis", description: "역할 고유 높이 범위의 상단에서 바닥·벽·후면 접합을 함께 드러낸다" },
+  { key: "lowered-axis", description: "역할 고유 높이 범위의 하단에서 지지면과 후면 외피를 분리한다" },
+  { key: "foreground-led", description: "전경 고정면을 넓게 두고 후면 수렴을 한쪽으로 밀어낸다" },
+  { key: "rear-plane-led", description: "후면 고정면을 넓게 두고 전경 경계를 짧게 끊는다" },
+  { key: "corner-to-axis", description: "한 모서리에서 중심축 쪽으로 접근해 서로 다른 두 소실선을 보인다" },
+];
+
+const stagingDepthVariants: readonly SemanticVariant[] = [
+  { key: "open-opposite-foreground", description: "합성 구역 반대편 전경을 넓게 비우고 후면 지지면을 짧게 끊는다" },
+  { key: "deep-rear-clearance", description: "합성 구역 뒤에 긴 후면 여백을 남기고 전경 경계를 가깝게 둔다" },
+  { key: "diagonal-negative-space", description: "합성 구역에서 반대 모서리까지 비어 있는 사선 네거티브 공간을 만든다" },
+  { key: "horizontal-negative-space", description: "합성 구역의 반대쪽에 긴 수평 네거티브 공간을 만든다" },
+  { key: "layered-near-mid-far", description: "합성 구역 바깥에서 근경·중경·후경 고정면을 세 단계로 분리한다" },
+  { key: "shallow-front-deep-back", description: "짧은 전면 지지 구간과 깊은 후면 외피를 대비시킨다" },
+  { key: "deep-front-shallow-back", description: "넓은 전면 지지 구간과 짧은 후면 경계를 대비시킨다" },
+  { key: "asymmetric-side-clearance", description: "합성 구역 한쪽의 접근 여백을 다른 쪽보다 두 배 이상 넓게 둔다" },
+  { key: "offset-rear-plane", description: "합성 구역 뒤 고정면의 중심축을 옆으로 이동해 정대칭을 피한다" },
+  { key: "split-depth-corridor", description: "합성 구역 바깥에 서로 겹치지 않는 두 개의 깊이 통로를 만든다" },
+  { key: "low-horizon-clearance", description: "낮은 건축 수평선을 유지하고 합성 구역 위쪽 여백을 크게 연다" },
+];
+
+function pairedVariant(
+  sceneIdentityText: string,
+  assetId: SettingShotAssetId,
+  dimension: "location" | "moment" | "surface" | "cue" | "camera",
+  primary: readonly SemanticVariant[],
+) {
+  const modulus = primary.length * spatialOrientationVariants.length;
+  const code = resolveProductSceneVariantCode(sceneIdentityText, assetId, dimension, modulus);
+  return {
+    primary: primary[code % primary.length],
+    orientation: spatialOrientationVariants[Math.floor(code / primary.length)],
+    measurement: resolveVisualMeasurement(
+      dimension,
+      resolveProductSceneVariantCode(sceneIdentityText, assetId, dimension, 997),
+    ),
+  };
+}
+
+function resolveVisualMeasurement(
+  dimension: "location" | "moment" | "surface" | "cue" | "camera",
+  code: number,
+): SemanticVariant {
+  if (dimension === "location") {
+    const horizontal = 20 + (code % 61);
+    const depth = 30 + Math.floor(code / 61);
+    return {
+      key: `rear-focus-x-${horizontal}-depth-${depth}`,
+      description: `후면 소실점은 프레임 가로 ${horizontal}% 지점, 주 깊이 경계는 세로 ${depth}% 지점에 고정한다`,
+    };
+  }
+  if (dimension === "moment") {
+    const incidence = 12 + (code % 77);
+    const shadowEdge = 2 + Math.floor(code / 77);
+    return {
+      key: `light-angle-${incidence}-edge-${shadowEdge}`,
+      description: `고정 건축면 기준 주광 입사각은 ${incidence}도이며 그림자 경계 폭은 프레임의 ${shadowEdge}%로 보이게 한다`,
+    };
+  }
+  if (dimension === "surface") {
+    const grainAngle = code % 181;
+    const jointRhythm = 4 + Math.floor(code / 181);
+    return {
+      key: `grain-angle-${grainAngle}-joint-${jointRhythm}`,
+      description: `표면 결은 가로축 기준 ${grainAngle}도이고 고정 이음 간격은 상품 폭의 약 ${jointRhythm}배로 유지한다`,
+    };
+  }
+  if (dimension === "cue") {
+    const horizontal = 10 + (code % 81);
+    const vertical = 10 + Math.floor(code / 81);
+    return {
+      key: `cue-x-${horizontal}-y-${vertical}`,
+      description: `고정 단서 중심은 프레임 가로 ${horizontal}%, 세로 ${vertical}% 지점에 두되 합성 구역과 겹치지 않는다`,
+    };
+  }
+  const azimuth = 5 + (code % 71);
+  const depthCompression = 85 + Math.floor(code / 71);
+  return {
+    key: `azimuth-${azimuth}-depth-${depthCompression}`,
+    description: `역할 기준축에서 ${azimuth}도 이동하고 기준 원근 깊이의 ${depthCompression}% 압축감을 사용한다`,
+  };
+}
 
 function scene(separation: SceneSeparation, descriptions: SceneDescriptions, camera: CameraContract): SceneParts {
   return { separation, descriptions, camera };
@@ -323,6 +494,62 @@ function completePlan(
     "detail-storage": shot("설정샷 7", supplemental["detail-storage"]),
     "detail-context": shot("설정샷 8", supplemental["detail-context"]),
   }, planLabel);
+}
+
+function applyProductSpecificSceneVariation(
+  planLabel: string,
+  sourcePlan: ProductSettingShotPlan,
+  sceneIdentityText: string,
+): ProductSettingShotPlan {
+  const varied = Object.fromEntries(settingShotAssetIds.map((assetId) => {
+    const source = sourcePlan[assetId];
+    const location = pairedVariant(sceneIdentityText, assetId, "location", locationArchitectureVariants);
+    const moment = pairedVariant(sceneIdentityText, assetId, "moment", momentLightVariants);
+    const surface = pairedVariant(sceneIdentityText, assetId, "surface", surfaceMaterialVariants);
+    const cue = pairedVariant(sceneIdentityText, assetId, "cue", fixedArchitecturalCueVariants);
+    const camera = pairedVariant(sceneIdentityText, assetId, "camera", cameraMovementVariants);
+    const stagingCode = resolveProductSceneVariantCode(
+      sceneIdentityText,
+      assetId,
+      "staging",
+      stagingDepthVariants.length * spatialOrientationVariants.length,
+    );
+    const stagingDepth = stagingDepthVariants[stagingCode % stagingDepthVariants.length];
+    const stagingOrientation = spatialOrientationVariants[Math.floor(stagingCode / stagingDepthVariants.length)];
+    const placement = resolveProductPlacementVariant(sceneIdentityText, assetId);
+    return [assetId, {
+      ...source,
+      location: `${source.location}; 이 기본 생활공간의 실제 기능과 필수 고정 단서를 먼저 유지한다. 그 공간 내부에 종속된 구조 변형으로 ${location.primary.description} 구성을 사용하고 공간의 주 방향은 ${location.orientation.location}으로 고정한다; ${location.measurement.description}. 로툰다·갤러리·쇼룸·추상 챔버·전시 니치·페데스털 세트로 바꾸지 않는다`,
+      moment: `${source.moment}; ${moment.primary.description}이 ${moment.orientation.moment}; ${moment.measurement.description}`,
+      surface: `상품과 맞닿는 주 지지면은 ${source.surface}로 유지한다; 합성 구역 밖의 보조 고정면만 ${surface.primary.description}이며 ${surface.orientation.surface}; ${surface.measurement.description}`,
+      supportingObjects: `${source.supportingObjects}; 지정 생활공간을 증명하는 필수 수납장·작업면·출입문·창문 단서는 유지하되 고유한 보조 고정 단서로 ${cue.primary.description}을 ${cue.orientation.cue}에 둔다; ${cue.measurement.description}. 보조 단서가 생활공간을 전시장처럼 지배하지 않게 한다`,
+      staging: `${source.staging}; 실제 정규화 합성 구역은 ${placement.description}; ${stagingDepth.description}; 깊이 방향은 ${stagingOrientation.location}을 따른다`,
+      camera: `${source.camera}; 같은 하드 역할 카메라군 안에서 ${camera.primary.description}; ${camera.orientation.camera}; ${camera.measurement.description}`,
+      separation: {
+        location: `${location.primary.key}-${location.orientation.key}-${location.measurement.key}-${source.separation.location}`,
+        moment: `${moment.primary.key}-${moment.orientation.key}-${moment.measurement.key}-${source.separation.moment}`,
+        surface: `${surface.primary.key}-${surface.orientation.key}-${surface.measurement.key}-${source.separation.surface}`,
+        supportingObjects: `${cue.primary.key}-${cue.orientation.key}-${cue.measurement.key}-${source.separation.supportingObjects}`,
+        staging: `${placement.key}-${stagingDepth.key}-${stagingOrientation.key}-${source.separation.staging}`,
+        camera: `${camera.primary.key}-${camera.orientation.key}-${camera.measurement.key}-${source.separation.camera}`,
+      },
+      backgroundVariation: {
+        fixedCue: {
+          key: `${cue.primary.key}-${cue.orientation.key}-${cue.measurement.key}`,
+          description: `${cue.primary.description} fixed ${cue.orientation.cue}; ${cue.measurement.description}; fully outside the reserved product-composite zone`,
+        },
+        camera: {
+          key: `${camera.primary.key}-${camera.orientation.key}-${camera.measurement.key}`,
+          description: `${camera.primary.description}; ${camera.orientation.camera}; ${camera.measurement.description}; preserve the slot's hard camera height and framing family`,
+        },
+        moment: {
+          key: `${moment.primary.key}-${moment.orientation.key}-${moment.measurement.key}`,
+          description: `${moment.primary.description}; ${moment.orientation.moment}; ${moment.measurement.description}`,
+        },
+      },
+    } satisfies ProductSettingShot] as const;
+  })) as ProductSettingShotPlan;
+  return assertDistinctSettingShotPlan(varied, `${planLabel}-product-specific`);
 }
 
 function cerealPlan() {
@@ -476,20 +703,40 @@ const generalPlan = plan({
   "detail-use": scene(["covered-balcony-table", "evening-core-use", "dark-composite-slab", "verified-use-target", "result-front-product-back-right"], ["앞 세 장소와 겹치지 않는 지붕 있는 발코니 작업 테이블", "저녁에 핵심 기능이 가장 분명하게 수행되는 순간", "짙은 복합소재 슬래브 표면", "상품 사실로 뒷받침되는 사용 대상만 두고 장식 소품은 배제", "기능 결과는 왼쪽 전경, 상품은 오른쪽 후경에 두어 사용법을 설명한다"], cameras.use),
 });
 
-export function buildProductSettingShotPlan(categoryId: string, productText: string): ProductSettingShotPlan {
+export function buildProductSettingShotPlan(
+  categoryId: string,
+  detectionText: string,
+  sceneIdentityText = detectionText,
+): ProductSettingShotPlan {
   if (categoryId === "food-staples") {
-    if (/시리얼|cereal|오트밀|oatmeal|granola|그래놀라/i.test(productText)) {
-      return completePlan("cereal", cerealPlan(), supplementalPlans.cereal);
+    if (/시리얼|cereal|오트밀|oatmeal|granola|그래놀라/i.test(detectionText)) {
+      return applyProductSpecificSceneVariation(
+        "cereal",
+        completePlan("cereal", cerealPlan(), supplementalPlans.cereal),
+        sceneIdentityText,
+      );
     }
-    if (/커피|coffee|원두|tea|티백|차\b/i.test(productText)) {
-      return completePlan("coffee-tea", coffeeTeaPlan(), supplementalPlans["coffee-tea"]);
+    if (/커피|coffee|원두|tea|티백|차\b/i.test(detectionText)) {
+      return applyProductSpecificSceneVariation(
+        "coffee-tea",
+        completePlan("coffee-tea", coffeeTeaPlan(), supplementalPlans["coffee-tea"]),
+        sceneIdentityText,
+      );
     }
-    return completePlan("general-food", generalFoodPlan(), supplementalPlans["general-food"]);
+    return applyProductSpecificSceneVariation(
+      "general-food",
+      completePlan("general-food", generalFoodPlan(), supplementalPlans["general-food"]),
+      sceneIdentityText,
+    );
   }
   const planLabel = categoryId in categoryPlans ? categoryId : "general-commerce";
   const base = categoryPlans[categoryId] ?? generalPlan;
   const supplemental = supplementalPlans[planLabel as keyof typeof supplementalPlans] ?? supplementalPlans["general-commerce"];
-  return completePlan(planLabel, base, supplemental);
+  return applyProductSpecificSceneVariation(
+    planLabel,
+    completePlan(planLabel, base, supplemental),
+    sceneIdentityText,
+  );
 }
 
 export function formatProductSettingShot(setting: ProductSettingShot) {

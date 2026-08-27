@@ -284,6 +284,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260827000726_authorize_live_ai_result_uploads.sql",
       "20260827011228_reset_registration_activity_retry_clock.sql",
       "20260827025330_harden_shopee_shipment_lineage_and_ack_semantics.sql",
+      "20260827075654_cross_product_setting_comparisons.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -541,6 +542,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_complete_ai_storage_cleanup(uuid,text[],text)",
       "public.sellerpilot_service_stage_ai_result_uploads(text,uuid,uuid,text[])",
       "public.sellerpilot_service_authorize_ai_result_upload(text,uuid,uuid,text,text)",
+      "public.sellerpilot_service_get_cross_product_setting_comparisons(text,uuid,uuid,integer)",
       "public.sellerpilot_service_activate_worker_token_set(uuid,jsonb)",
       "public.sellerpilot_service_abort_worker_token_set(uuid,jsonb)",
       "public.sellerpilot_service_expire_pending_worker_token_sets()",
@@ -2153,6 +2155,231 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       product_url: "https://example.test/product/1",
       research_input: requiredManualFields.researchInput,
     };
+
+    const crossProductCurrentJobId = "70000000-0000-4000-8000-000000000001";
+    const crossProductCurrentClaim = "70000000-0000-4000-8000-000000000002";
+    const crossProductCurrentRegenerationJobId = "70000000-0000-4000-8000-000000000003";
+    const crossProductCurrentRegenerationClaim = "70000000-0000-4000-8000-000000000004";
+    const crossProductSourceJobIds = Array.from(
+      { length: 9 },
+      (_, index) => `7100000${index}-0000-4000-8000-000000000001`,
+    );
+    const crossProductProductIds = Array.from(
+      { length: 9 },
+      (_, index) => `7200000${index}-0000-4000-8000-000000000001`,
+    );
+    const crossProductClaims = Array.from(
+      { length: 9 },
+      (_, index) => `7300000${index}-0000-4000-8000-000000000001`,
+    );
+    for (let index = 0; index < crossProductSourceJobIds.length; index += 1) {
+      const sourceJobId = crossProductSourceJobIds[index];
+      const productId = crossProductProductIds[index];
+      const result = {
+        mode: "cli",
+        product: { category: "일반식품", name: `교차 비교 상품 ${index}` },
+        asset_storage_paths: aiClaimAssetPaths(sourceJobId, crossProductClaims[index]),
+      };
+      await db.query(
+        `insert into sellerpilot_private.ai_cli_jobs (
+           id, kind, status, request_payload, result_payload, created_by,
+           created_at, completed_at, updated_at
+         ) values (
+           $1, 'product_studio', 'succeeded', '{}'::jsonb, $2::jsonb, $3,
+           now() - ($4 * interval '1 minute'),
+           now() - ($4 * interval '1 minute'),
+           now() - ($4 * interval '1 minute')
+         )`,
+        [sourceJobId, JSON.stringify(result), ADMIN_ID, index + 1],
+      );
+      await db.query(
+        `insert into sellerpilot_private.products (
+           id, owner_id, external_code, sku, name, description, ai_job_id,
+           status, demo, created_at, updated_at
+         ) values (
+           $1, $2, $3, $4, $5, '', $6, 'active', false,
+           now() - ($7 * interval '1 minute'),
+           now() - ($7 * interval '1 minute')
+         )`,
+        [productId, ADMIN_ID, `CROSS-${index}`, `CROSS-SKU-${index}`, `교차 비교 상품 ${index}`, sourceJobId, index + 1],
+      );
+    }
+
+    const crossProductRegenerationJobId = "74000000-0000-4000-8000-000000000001";
+    const crossProductRegenerationClaim = "74000000-0000-4000-8000-000000000002";
+    const regeneratedPortraitPath = aiClaimAssetPaths(
+      crossProductRegenerationJobId,
+      crossProductRegenerationClaim,
+    ).portrait;
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, status, request_payload, result_payload, created_by,
+         created_at, completed_at, updated_at
+       ) values (
+         $1, 'product_asset_regeneration', 'succeeded', $2::jsonb, $3::jsonb, $4,
+         now(), now(), now()
+       )`,
+      [
+        crossProductRegenerationJobId,
+        JSON.stringify({
+          source_job_id: crossProductSourceJobIds[0],
+          source_product_id: crossProductProductIds[0],
+          asset_id: "portrait",
+        }),
+        JSON.stringify({
+          mode: "asset-regeneration",
+          asset_storage_paths: { portrait: regeneratedPortraitPath },
+        }),
+        ADMIN_ID,
+      ],
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set result_payload = jsonb_set(result_payload, '{asset_storage_paths,portrait}', to_jsonb($2::text), true)
+        where id = $1`,
+      [crossProductSourceJobIds[0], regeneratedPortraitPath],
+    );
+
+    const crossOwnerSourceJobId = "75000000-0000-4000-8000-000000000001";
+    const crossOwnerProductId = "75000000-0000-4000-8000-000000000002";
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, status, request_payload, result_payload, created_by, completed_at
+       ) values ($1, 'product_studio', 'succeeded', '{}'::jsonb, $2::jsonb, $3, now())`,
+      [crossOwnerSourceJobId, JSON.stringify({
+        mode: "cli",
+        product: { category: "일반식품", name: "다른 소유자 상품" },
+        asset_storage_paths: aiClaimAssetPaths(crossOwnerSourceJobId, "75000000-0000-4000-8000-000000000003"),
+      }), SECOND_ADMIN_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.products (
+         id, owner_id, external_code, sku, name, ai_job_id, status, demo
+       ) values ($1, $2, 'CROSS-OWNER', 'CROSS-OWNER-SKU', '다른 소유자 상품', $3, 'active', false)`,
+      [crossOwnerProductId, SECOND_ADMIN_ID, crossOwnerSourceJobId],
+    );
+
+    await db.query(
+      "update sellerpilot_private.ai_cli_worker_tokens set status = 'active', revoked_at = null where token_hash = $1",
+      [AI_SCOPED_TOKEN_HASH],
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, status, request_payload, created_by, worker_token_id,
+         claim_token, lease_expires_at, started_at
+       ) select $1, 'product_studio', 'running', '{}'::jsonb, $2, token.id,
+                $3, now() + interval '15 minutes', now()
+           from sellerpilot_private.ai_cli_worker_tokens token
+          where token.token_hash = $4`,
+      [crossProductCurrentJobId, ADMIN_ID, crossProductCurrentClaim, AI_SCOPED_TOKEN_HASH],
+    );
+    await setClaims(db, "service_role");
+    const crossProductComparisons = await scalar(
+      db,
+      "select public.sellerpilot_service_get_cross_product_setting_comparisons($1, $2, $3, 8)",
+      [AI_SCOPED_TOKEN_HASH, crossProductCurrentJobId, crossProductCurrentClaim],
+    );
+    assert.equal(crossProductComparisons.version, 1);
+    assert.equal(crossProductComparisons.productCount, 8);
+    assert.equal(crossProductComparisons.assetCount, 64);
+    assert.equal(crossProductComparisons.products.length, 8);
+    assert.equal(crossProductComparisons.products.some((product) => product.sourceJobId === crossOwnerSourceJobId), false);
+    assert.ok(crossProductComparisons.products.every((product) => Object.keys(product.assets).length === 8));
+    const regeneratedComparison = crossProductComparisons.products.find(
+      (product) => product.sourceJobId === crossProductSourceJobIds[0],
+    );
+    assert.equal(regeneratedComparison?.assets.portrait, regeneratedPortraitPath);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_get_cross_product_setting_comparisons($1, $2, $3, 8)",
+        [AI_SCOPED_TOKEN_HASH, crossProductCurrentJobId, "70000000-0000-4000-8000-000000000099"],
+      ),
+      null,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_get_cross_product_setting_comparisons($1, $2, $3, 8)",
+        [GATEWAY_SCOPED_TOKEN_HASH, crossProductCurrentJobId, crossProductCurrentClaim],
+      ),
+      /invalid worker token/,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_get_cross_product_setting_comparisons($1, $2, $3, 8)",
+        [TOKEN_HASH, crossProductCurrentJobId, crossProductCurrentClaim],
+      ),
+      /invalid worker token/,
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, status, request_payload, created_by, worker_token_id,
+         claim_token, lease_expires_at, started_at
+       ) select $1, 'product_asset_regeneration', 'running', $2::jsonb, $3, token.id,
+                $4, now() + interval '15 minutes', now()
+           from sellerpilot_private.ai_cli_worker_tokens token
+          where token.token_hash = $5`,
+      [
+        crossProductCurrentRegenerationJobId,
+        JSON.stringify({
+          source_job_id: crossProductSourceJobIds[0],
+          source_product_id: crossProductProductIds[0],
+          asset_id: "detail-context",
+        }),
+        ADMIN_ID,
+        crossProductCurrentRegenerationClaim,
+        AI_SCOPED_TOKEN_HASH,
+      ],
+    );
+    const regenerationCrossProductComparisons = await scalar(
+      db,
+      "select public.sellerpilot_service_get_cross_product_setting_comparisons($1, $2, $3, 8)",
+      [AI_SCOPED_TOKEN_HASH, crossProductCurrentRegenerationJobId, crossProductCurrentRegenerationClaim],
+    );
+    assert.equal(regenerationCrossProductComparisons.productCount, 8);
+    assert.equal(regenerationCrossProductComparisons.assetCount, 64);
+    assert.equal(
+      regenerationCrossProductComparisons.products.some(
+        (product) => product.sourceJobId === crossProductSourceJobIds[0],
+      ),
+      false,
+    );
+    assert.ok(regenerationCrossProductComparisons.products.every(
+      (product) => product.sceneIdentity.category === "일반식품"
+        && product.sceneIdentity.name.startsWith("교차 비교 상품 "),
+    ));
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set request_payload = jsonb_set(request_payload, '{source_product_id}', to_jsonb($2::text), true)
+        where id = $1`,
+      [crossProductCurrentRegenerationJobId, crossOwnerProductId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_get_cross_product_setting_comparisons($1, $2, $3, 8)",
+        [AI_SCOPED_TOKEN_HASH, crossProductCurrentRegenerationJobId, crossProductCurrentRegenerationClaim],
+      ),
+      null,
+    );
+    await db.query(
+      "delete from sellerpilot_private.products where id = any($1::uuid[])",
+      [[...crossProductProductIds, crossOwnerProductId]],
+    );
+    await db.query(
+      "delete from sellerpilot_private.ai_cli_jobs where id = any($1::uuid[])",
+      [[
+        crossProductCurrentJobId,
+        crossProductCurrentRegenerationJobId,
+        crossProductRegenerationJobId,
+        crossOwnerSourceJobId,
+        ...crossProductSourceJobIds,
+      ]],
+    );
+    await db.query(
+      "update sellerpilot_private.ai_cli_worker_tokens set status = 'revoked', revoked_at = now() where token_hash = $1",
+      [AI_SCOPED_TOKEN_HASH],
+    );
 
     await setClaims(db);
     await db.query(

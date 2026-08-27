@@ -1,4 +1,8 @@
-import { aiGeneratedAssetSpecs, type AiGeneratedAssetId } from "./ai-generated-assets";
+import {
+  aiGeneratedAssetSpecs,
+  resolveProductIdentityPlacement,
+  type AiGeneratedAssetId,
+} from "./ai-generated-assets";
 import { resolveIdentityBackgroundContract, type IdentityBackgroundContactMode } from "./ai-background-audit";
 import { channelStyleProfiles, generalCommerceStyleProfile, matchStyleCategory } from "./marketplace-style-learning";
 import {
@@ -9,7 +13,7 @@ import {
 } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r12-food-room-recognition-16";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r13-real-life-cross-product-16";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -180,11 +184,22 @@ export function resolveProductIdentityBackgroundContract(settingShot: ReturnType
   return resolveIdentityBackgroundContract(settingShot, assetId);
 }
 
+export function resolveProductSceneIdentityText(result: Pick<ProductStudioResult, "product">) {
+  return [result.product.category, result.product.name]
+    .map((value) => value.normalize("NFKC").trim().replace(/\s+/g, " "))
+    .filter(Boolean)
+    .join(" ");
+}
+
 export function resolveProductSettingShot(result: ProductStudioResult, assetId: AiGeneratedAssetId) {
   if (!settingShotAssetIds.includes(assetId as (typeof settingShotAssetIds)[number])) return null;
   const categoryStyle = resolveProductImageStyleCategory(result);
-  const productText = [result.product.category, result.product.name, ...result.product.features].join(" ");
-  const settingPlan = buildProductSettingShotPlan(categoryStyle.id, productText);
+  const detectionText = [result.product.category, result.product.name, ...result.product.features].join(" ");
+  const settingPlan = buildProductSettingShotPlan(
+    categoryStyle.id,
+    detectionText,
+    resolveProductSceneIdentityText(result),
+  );
   return settingPlan[assetId as keyof typeof settingPlan];
 }
 
@@ -220,7 +235,7 @@ export function buildAssetImagePrompt(
   const mustDifferFrom = preset.mustDifferFrom.join(", ");
 
   if (generationMode === "identity-background") {
-    const placement = preset.identityPolicy.placement;
+    const placement = resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(result));
     const contactLine = Number((placement.top + placement.height).toFixed(4));
     const contactMode = contactModeOverride ?? resolveIdentityBackgroundContactMode(result, settingShot);
     const contactInstruction = contactMode === "surface-supported"

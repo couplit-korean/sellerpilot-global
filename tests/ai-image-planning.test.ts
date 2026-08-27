@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import {
+  aiGeneratedAssetPath,
+  aiGeneratedAssetSpecs,
+  resolveProductIdentityPlacement,
+} from "../lib/ai-generated-assets";
 import {
   AI_ASSET_PROMPT_VERSION,
   buildAssetImagePrompt,
@@ -8,6 +12,7 @@ import {
   resolveIdentityBackgroundContactMode,
   resolveProductImageStyleCategory,
   resolveProductIdentityBackgroundContract,
+  resolveProductSceneIdentityText,
   resolveProductSettingShot,
   selectAssetReferenceIndexes,
 } from "../lib/ai-image-planning";
@@ -198,6 +203,43 @@ test("all nine production product groups receive eight distinct six-dimensional 
   }
 });
 
+test("scene identity is stable across feature edits while a different product name changes plan and placement", () => {
+  const base = {
+    ...result,
+    product: {
+      ...result.product,
+      category: "일반식품",
+      name: "사조 살코기 참치 안심따개 100 g",
+      features: ["원본에서 확인된 통조림"],
+    },
+  };
+  const featureEdit = {
+    ...base,
+    product: { ...base.product, features: ["원본에서 확인된 통조림", "새로 확인한 포장 특징"] },
+  };
+  const differentProduct = {
+    ...base,
+    product: { ...base.product, name: "롯샌 파스퇴르 순우유맛 315 g" },
+  };
+  assert.equal(resolveProductSceneIdentityText(base), resolveProductSceneIdentityText(featureEdit));
+  assert.notEqual(resolveProductSceneIdentityText(base), resolveProductSceneIdentityText(differentProduct));
+
+  for (const assetId of settingShotAssetIds) {
+    assert.deepEqual(resolveProductSettingShot(base, assetId), resolveProductSettingShot(featureEdit, assetId));
+    assert.notDeepEqual(resolveProductSettingShot(base, assetId), resolveProductSettingShot(differentProduct, assetId));
+    const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    assert.ok(preset);
+    assert.deepEqual(
+      resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(base)),
+      resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(featureEdit)),
+    );
+    assert.notDeepEqual(
+      resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(base)),
+      resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(differentProduct)),
+    );
+  }
+});
+
 test("catalog and factual inspection slots stay separate from all eight setting-shot slots", () => {
   for (const assetId of ["hero", "square", "detail-feature", "detail-package", "detail-material", "detail-dimensions", "detail-contents", "detail-care"] as const) {
     const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
@@ -287,7 +329,14 @@ test("statutory-package products use a background-only identity firewall", () =>
   assert.match(prompt, /real product will be composited afterward from a verified transparent source-pixel cutout/);
   assert.match(prompt, /Mandatory empty-environment assignment:.*키친 아일랜드/);
   assert.match(prompt, /fixed architecture, built-in surfaces, natural light direction and spatial depth/);
-  assert.match(prompt, /Slot-specific non-merchandise environmental cue \(grocery-unpacking-island-fixed-side-frame\): one integrated side reveal/);
+  const setting = resolveProductSettingShot(foodResult, "portrait");
+  assert.ok(setting);
+  const contract = resolveProductIdentityBackgroundContract(setting, "portrait");
+  assert.ok(contract);
+  assert.ok(prompt.includes(`Slot-specific non-merchandise environmental cue (${contract.prop.key}): ${contract.prop.description}`));
+  const placement = resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(foodResult));
+  assert.notDeepEqual(placement, preset.identityPolicy.placement);
+  assert.match(prompt, new RegExp(`Reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height}`));
   assert.match(prompt, /Deliberately omit every retail product, small saleable prop/);
   assert.doesNotMatch(prompt, /투명 시리얼 볼과 접힌 흰 리넨/);
   assert.doesNotMatch(prompt, /롯데 과자/);

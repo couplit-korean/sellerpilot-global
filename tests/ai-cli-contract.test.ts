@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   cliStudioResultSchema,
   normalizeStudioGeneralFoodSafety,
+  normalizeStudioLocalizedEvidenceLanguage,
   normalizeStudioLocalizedKeywordCoverage,
   normalizeStudioResultForTerminalValidation,
   normalizeStudioSectionCount,
@@ -349,6 +350,55 @@ test("AI studio contract rejects Korean residue in localized listings", () => {
   const result = validResult();
   result.localizedListings[1].description += " 한국어 문장";
   const parsed = cliStudioResultSchema.safeParse(result);
+  assert.equal(parsed.success, false);
+  assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /한국어/);
+});
+
+test("terminal normalization repairs only Korean residue in localized evidence", () => {
+  const result = validResult();
+  const us = result.localizedListings.find((listing) => listing.channel === "ebay" && listing.market === "US");
+  assert.ok(us);
+  us.classification.evidence = "The supplied package was checked. 포장 전면 근거를 그대로 복사했습니다.";
+  us.detailSections.forEach((section, index) => {
+    section.evidence = `실제 포장과 소재 이미지를 근거로 확인했습니다. 섹션 ${index + 1}`;
+  });
+  const original = structuredClone(result);
+
+  const evidenceOnly = normalizeStudioLocalizedEvidenceLanguage(result) as ReturnType<typeof validResult>;
+  const normalizedUs = evidenceOnly.localizedListings.find((listing) => listing.channel === "ebay" && listing.market === "US");
+  assert.ok(normalizedUs);
+
+  const fallbackEvidence = [
+    normalizedUs.classification.evidence,
+    ...normalizedUs.detailSections.map((section) => section.evidence),
+  ];
+  fallbackEvidence.forEach((evidence) => {
+    assert.doesNotMatch(evidence, /\p{Script=Hangul}/u);
+    assert.doesNotMatch(
+      evidence,
+      /\b(?:package|packaging|label|image|photo|material)s?\b/i,
+      "fallback must not claim that an actual package, material, or image was supplied",
+    );
+  });
+  assert.equal(
+    new Set(normalizedUs.detailSections.map((section) => section.evidence)).size,
+    8,
+    "each localized section fallback must retain a distinct evidence-note index",
+  );
+  normalizedUs.detailSections.forEach((section, index) => {
+    assert.match(section.evidence, new RegExp(`\\b${index + 1}\\b`));
+  });
+  assert.deepEqual(result, original, "normalization must not mutate the model artifact");
+
+  const parsed = cliStudioResultSchema.safeParse(evidenceOnly);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("terminal normalization never hides Korean residue outside provenance fields", () => {
+  const result = validResult();
+  result.localizedListings[1].description += " 번역되지 않은 한국어 문장";
+  const normalized = normalizeStudioResultForTerminalValidation(result);
+  const parsed = cliStudioResultSchema.safeParse(normalized);
   assert.equal(parsed.success, false);
   assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /한국어/);
 });

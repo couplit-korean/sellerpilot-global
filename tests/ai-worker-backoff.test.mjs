@@ -128,11 +128,15 @@ test("AI claim route compensates every post-claim preparation failure", async ()
   assert.match(route, /sellerpilot_complete_ai_job/);
   assert.match(route, /p_status: "failed"/);
   assert.match(route, /catch \(preparationError\)[\s\S]*?safeReason: "claim_preparation_exception"/);
-  assert.equal(route.match(/return preparationFailure\(\{/g)?.length, 9);
+  assert.equal(route.match(/preparationFailure\(\{/g)?.length, 13);
   assert.match(route, /safeReason: "invalid_competitor_context"/);
   assert.match(route, /safeReason: "invalid_source_image_provenance"/);
   assert.match(route, /safeReason: "source_image_signing_incomplete"/);
   assert.match(route, /safeReason: "comparison_image_signing_incomplete"/);
+  assert.match(route, /safeReason: "cross_product_comparison_lookup_failed"/);
+  assert.match(route, /safeReason: "invalid_cross_product_comparison_contract"/);
+  assert.match(route, /safeReason: "cross_product_comparison_signing_failed"/);
+  assert.match(route, /safeReason: "cross_product_comparison_signing_incomplete"/);
   assert.ok(
     route.indexOf('safeReason: "invalid_asset_regeneration_payload"')
       < route.indexOf(".createSignedUrls(sourcePaths, 10 * 60)"),

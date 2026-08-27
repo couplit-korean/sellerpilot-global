@@ -4,6 +4,10 @@ import { NextResponse } from "next/server";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
 import { studioCompetitorContextSchema } from "../../../../../lib/ai-cli-contract";
 import {
+  crossProductSettingAssetIds,
+  crossProductSettingComparisonsSchema,
+} from "../../../../../lib/cross-product-setting-comparisons";
+import {
   minimumResultUploadWorkerVersion,
   supportsLiveResultUploadAuthorization,
 } from "../../../../../lib/ai-worker-version";
@@ -249,9 +253,98 @@ export async function POST(request: Request) {
         safeReason: "source_image_signing_incomplete",
       });
     }
+    const prepareCrossProductComparisons = async () => {
+      const { data: rawComparisons, error: lookupError } = await serviceClient.rpc(
+        "sellerpilot_service_get_cross_product_setting_comparisons",
+        {
+          p_token_hash: tokenHash,
+          p_job_id: jobId,
+          p_claim_token: claimToken,
+          p_limit_products: 8,
+        },
+      );
+      if (lookupError) {
+        return {
+          comparisons: null,
+          failure: await preparationFailure({
+            message: "기존 상품 설정샷 비교 자료를 준비하지 못했습니다.",
+            safeReason: "cross_product_comparison_lookup_failed",
+            error: lookupError,
+          }),
+        } as const;
+      }
+      const parsedComparisons = crossProductSettingComparisonsSchema.safeParse(rawComparisons);
+      if (!parsedComparisons.success) {
+        return {
+          comparisons: null,
+          failure: await preparationFailure({
+            message: "기존 상품 설정샷 비교 계약을 확인하지 못했습니다.",
+            safeReason: "invalid_cross_product_comparison_contract",
+          }),
+        } as const;
+      }
+      const comparisonEntries = parsedComparisons.data.products.flatMap((product) => (
+        crossProductSettingAssetIds.map((assetId) => ({
+          sourceJobId: product.sourceJobId,
+          sceneIdentity: product.sceneIdentity,
+          assetId,
+          path: product.assets[assetId],
+        }))
+      ));
+      const { data: signedFiles, error: signingError } = comparisonEntries.length
+        ? await serviceClient.storage.from("sellerpilot-ai").createSignedUrls(
+          comparisonEntries.map((entry) => entry.path),
+          10 * 60,
+        )
+        : { data: [], error: null };
+      if (signingError) {
+        return {
+          comparisons: null,
+          failure: await preparationFailure({
+            message: "기존 상품 설정샷 비교 URL을 만들지 못했습니다.",
+            safeReason: "cross_product_comparison_signing_failed",
+            error: signingError,
+          }),
+        } as const;
+      }
+      const signedEntries = comparisonEntries.flatMap((entry, index) => {
+        const signedFile = signedFiles?.[index];
+        return signedFile
+          && signedFile.path === entry.path
+          && typeof signedFile.signedUrl === "string"
+          && !signedFile.error
+          ? [{ ...entry, signedUrl: signedFile.signedUrl }]
+          : [];
+      });
+      if (signedEntries.length !== comparisonEntries.length) {
+        return {
+          comparisons: null,
+          failure: await preparationFailure({
+            message: "일부 기존 상품 설정샷 비교 URL을 만들지 못했습니다.",
+            safeReason: "cross_product_comparison_signing_incomplete",
+          }),
+        } as const;
+      }
+      return {
+        comparisons: parsedComparisons.data.products.map((product) => ({
+          sourceJobId: product.sourceJobId,
+          sceneIdentity: product.sceneIdentity,
+          images: signedEntries
+            .filter((entry) => entry.sourceJobId === product.sourceJobId)
+            .map((entry) => ({ assetId: entry.assetId, signedUrl: entry.signedUrl })),
+        })),
+        failure: null,
+      } as const;
+    };
     if (job.kind === "product_asset_regeneration") {
       const assetId = regenerationAssetId;
       const asset = regenerationAsset!;
+      const crossProductPreparation = crossProductSettingAssetIds.includes(
+        assetId as (typeof crossProductSettingAssetIds)[number],
+      )
+        ? await prepareCrossProductComparisons()
+        : { comparisons: [], failure: null } as const;
+      if (crossProductPreparation.failure) return crossProductPreparation.failure;
       const comparisonMap = jobRequest.comparison_asset_paths && typeof jobRequest.comparison_asset_paths === "object" && !Array.isArray(jobRequest.comparison_asset_paths)
         ? jobRequest.comparison_asset_paths as Record<string, unknown>
         : {};
@@ -270,9 +363,12 @@ export async function POST(request: Request) {
           error: comparisonError,
         });
       }
-      const signedComparisonImages = comparisonEntries.flatMap(([comparisonAssetId], index) => {
+      const signedComparisonImages = comparisonEntries.flatMap(([comparisonAssetId, expectedPath], index) => {
         const signedComparison = signedComparisons?.[index];
-        return signedComparison && typeof signedComparison.signedUrl === "string" && !signedComparison.error
+        return signedComparison
+          && signedComparison.path === expectedPath
+          && typeof signedComparison.signedUrl === "string"
+          && !signedComparison.error
           ? [{ assetId: comparisonAssetId, signedUrl: signedComparison.signedUrl }]
           : [];
       });
@@ -300,6 +396,7 @@ export async function POST(request: Request) {
           imageSpecs,
           images: signedSourceImages,
           comparisonImages: signedComparisonImages,
+          crossProductComparisons: crossProductPreparation.comparisons,
         },
         resultUploads: [{
           id: asset.id,
@@ -310,6 +407,8 @@ export async function POST(request: Request) {
         }],
       }, { headers: { "cache-control": "no-store, max-age=0" } });
     }
+    const crossProductPreparation = await prepareCrossProductComparisons();
+    if (crossProductPreparation.failure) return crossProductPreparation.failure;
     const assetPaths = aiGeneratedAssetSpecs.map((asset) => ({
       id: asset.id,
       path: aiGeneratedAssetPath(jobId, asset, claimToken),
@@ -328,6 +427,7 @@ export async function POST(request: Request) {
           : {},
         imageSpecs,
         images: signedSourceImages,
+        crossProductComparisons: crossProductPreparation.comparisons,
         ...(parsedCompetitorContext?.success ? { competitorContext: parsedCompetitorContext.data } : {}),
       },
       resultUploads: assetPaths.map((upload) => ({

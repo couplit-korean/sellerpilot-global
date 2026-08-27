@@ -7,7 +7,10 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
-import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
+import {
+  aiGeneratedAssetSpecs,
+  resolveProductIdentityPlacement,
+} from "../lib/ai-generated-assets.ts";
 import { sellerSafeAiJobFailure } from "../lib/ai-worker-error-safety.ts";
 import {
   assertPublicReferenceUrl as assertPublicUrl,
@@ -38,6 +41,7 @@ import {
   buildAssetImagePrompt,
   requiresSourceIdentityProtection,
   resolveIdentityBackgroundContactMode,
+  resolveProductSceneIdentityText,
   resolveProductSettingShot,
   selectAssetReferenceIndexes,
 } from "../lib/ai-image-planning.ts";
@@ -45,6 +49,7 @@ import {
   buildSettingShotRetryGuidance,
   buildSettingShotRetryVariant,
   mergeSettingShotRetryAuditFeedback,
+  settingShotAssetIds,
 } from "../lib/product-setting-shots.ts";
 import {
   assertIdentityBackgroundPlate,
@@ -209,7 +214,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.50";
+const workerVersion = "sellerpilot-cli-worker/1.51";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -2324,14 +2329,18 @@ async function renderBackgroundWithMaskedZones(buffer, preset, maskPlacements) {
   return outsideZone;
 }
 
-async function downloadComparisonShots(job, targetAssetId, jobDir, leaseSignal) {
+async function downloadComparisonShots(job, targetAssetId, jobDir, leaseSignal, sceneIdentityText) {
   const images = Array.isArray(job.request?.comparisonImages) ? job.request.comparisonImages : [];
+  const expectedOrigin = resolveComparisonStorageOrigin(job);
   const comparisonById = new Map();
   for (const image of images) {
     if (!image?.assetId || !image?.signedUrl || comparisonById.has(image.assetId)) {
       throw new Error("재제작 이미지의 중복 비교 자료가 올바르지 않습니다.");
     }
-    comparisonById.set(image.assetId, image);
+    comparisonById.set(image.assetId, {
+      ...image,
+      signedUrl: validateComparisonSignedUrl(image.signedUrl, expectedOrigin, "재제작 중복 비교 이미지"),
+    });
   }
   const expectedAssetIds = aiGeneratedAssetSpecs
     .map((asset) => asset.id)
@@ -2347,7 +2356,10 @@ async function downloadComparisonShots(job, targetAssetId, jobDir, leaseSignal) 
     comparisonDownloadGate.run(async () => {
       if (leaseSignal?.aborted) throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
       const image = comparisonById.get(assetId);
-      const response = await fetch(image.signedUrl, { signal: downloadSignal(leaseSignal, 30_000) });
+      const response = await fetch(image.signedUrl, {
+        signal: downloadSignal(leaseSignal, 30_000),
+        redirect: "error",
+      });
       if (!response.ok) throw new Error(`${assetId} 기존 이미지 중복 비교 자료를 받지 못했습니다.`);
       const source = await readResponseBodyBounded(
         response,
@@ -2361,7 +2373,12 @@ async function downloadComparisonShots(job, targetAssetId, jobDir, leaseSignal) 
           || targetPreset?.identityPolicy.mode !== "source-composite") {
         return { shot, backgroundShot: null };
       }
-      const maskPlacements = [targetPreset.identityPolicy.placement, comparisonPreset.identityPolicy.placement]
+      const maskPlacements = [
+        targetPreset.identityPolicy.placement,
+        comparisonPreset.identityPolicy.placement,
+        resolveProductIdentityPlacement(targetPreset, sceneIdentityText),
+        resolveProductIdentityPlacement(comparisonPreset, sceneIdentityText),
+      ]
         .filter((placement, index, placements) => placements.findIndex((candidate) => (
           candidate.left === placement.left
           && candidate.top === placement.top
@@ -2389,6 +2406,231 @@ async function downloadComparisonShots(job, targetAssetId, jobDir, leaseSignal) 
     shots: downloaded.map((entry) => entry.shot),
     backgroundShots: downloaded.flatMap((entry) => entry.backgroundShot ? [entry.backgroundShot] : []),
   };
+}
+
+const maximumCrossProductComparisonProducts = 8;
+const maximumCrossProductSignedUrlLength = 4_096;
+const crossProductComparisonDownloadConcurrency = 4;
+const crossProductComparisonDownloadTimeoutMs = 25_000;
+
+function normalizeCrossProductSceneIdentityPart(value, maximumLength, label) {
+  if (typeof value !== "string") throw new Error(`${label}이 문자열이 아닙니다.`);
+  const normalized = value.normalize("NFKC").trim().replace(/\s+/g, " ");
+  if (!normalized || normalized.length > maximumLength || /[\p{Cc}\p{Cf}]/u.test(normalized)) {
+    throw new Error(`${label}이 안전한 길이 또는 문자 계약을 벗어났습니다.`);
+  }
+  return normalized;
+}
+
+function resolveComparisonStorageOrigin(job) {
+  const resultUpload = Array.isArray(job.resultUploads) ? job.resultUploads[0] : null;
+  let parsed;
+  try {
+    parsed = new URL(String(resultUpload?.supabaseUrl ?? ""));
+  } catch {
+    throw new Error("비교 이미지 저장소 출처를 확인하지 못했습니다.");
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+    throw new Error("비교 이미지 저장소 출처가 안전하지 않습니다.");
+  }
+  return parsed.origin;
+}
+
+function validateComparisonSignedUrl(value, expectedOrigin, label) {
+  if (typeof value !== "string" || !value || value.length > maximumCrossProductSignedUrlLength) {
+    throw new Error(`${label} URL이 올바르지 않습니다.`);
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${label} URL을 해석하지 못했습니다.`);
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.origin !== expectedOrigin) {
+    throw new Error(`${label} URL의 저장소 출처가 일치하지 않습니다.`);
+  }
+  return parsed.toString();
+}
+
+function validateCrossProductComparisonRequest(job) {
+  const products = job.request?.crossProductComparisons;
+  if (!Array.isArray(products) || products.length > maximumCrossProductComparisonProducts) {
+    throw new Error("교차 상품 설정샷 비교 계약이 없거나 허용 개수를 벗어났습니다.");
+  }
+  const expectedOrigin = resolveComparisonStorageOrigin(job);
+  const seenSourceJobs = new Set();
+  const seenSignedUrls = new Set();
+  const rawExcludedSourceJobId = job.kind === "product_asset_regeneration"
+    ? String(job.request?.sourceJobId ?? "")
+    : String(job.id ?? "");
+  if (!UUID_PATTERN.test(rawExcludedSourceJobId)) {
+    throw new Error("현재 상품 작업 식별자가 유효하지 않습니다.");
+  }
+  const excludedSourceJobId = rawExcludedSourceJobId.toLowerCase();
+  return products.map((product, productIndex) => {
+    const rawSourceJobId = typeof product?.sourceJobId === "string" ? product.sourceJobId : "";
+    if (!UUID_PATTERN.test(rawSourceJobId)) {
+      throw new Error("교차 상품 비교 작업 식별자가 유효하지 않습니다.");
+    }
+    const sourceJobId = rawSourceJobId.toLowerCase();
+    if (sourceJobId === excludedSourceJobId
+        || seenSourceJobs.has(sourceJobId)) {
+      throw new Error("교차 상품 비교 작업 식별자가 유효하지 않거나 중복되었습니다.");
+    }
+    seenSourceJobs.add(sourceJobId);
+    const category = normalizeCrossProductSceneIdentityPart(
+      product?.sceneIdentity?.category,
+      120,
+      "교차 상품 카테고리",
+    );
+    const name = normalizeCrossProductSceneIdentityPart(
+      product?.sceneIdentity?.name,
+      160,
+      "교차 상품명",
+    );
+    const images = Array.isArray(product?.images) ? product.images : [];
+    if (images.length !== settingShotAssetIds.length) {
+      throw new Error("교차 상품 비교 이미지 8종이 완전하지 않습니다.");
+    }
+    const imageById = new Map();
+    for (const image of images) {
+      const assetId = typeof image?.assetId === "string" ? image.assetId : "";
+      if (!settingShotAssetIds.includes(assetId) || imageById.has(assetId)) {
+        throw new Error("교차 상품 비교 이미지 역할이 유효하지 않거나 중복되었습니다.");
+      }
+      const signedUrl = validateComparisonSignedUrl(image.signedUrl, expectedOrigin, "교차 상품 비교 이미지");
+      if (seenSignedUrls.has(signedUrl)) throw new Error("교차 상품 비교 이미지 URL이 중복되었습니다.");
+      seenSignedUrls.add(signedUrl);
+      imageById.set(assetId, { assetId, signedUrl });
+    }
+    const missingAssetIds = settingShotAssetIds.filter((assetId) => !imageById.has(assetId));
+    if (missingAssetIds.length) {
+      throw new Error(`교차 상품 비교 이미지 역할이 누락되었습니다: ${missingAssetIds.join(", ")}`);
+    }
+    return {
+      sourceJobId,
+      semanticPrefix: `cross-${sourceJobId.slice(0, 8)}-${productIndex}`,
+      sceneIdentityText: resolveProductSceneIdentityText({ product: { category, name } }),
+      images: settingShotAssetIds.map((assetId) => imageById.get(assetId)),
+    };
+  });
+}
+
+async function downloadCrossProductComparisonArchive(job, jobDir, leaseSignal) {
+  const products = validateCrossProductComparisonRequest(job);
+  const downloadGate = createConcurrencyGate(crossProductComparisonDownloadConcurrency);
+  const downloadedProducts = await Promise.all(products.map(async (product, productIndex) => {
+    const images = await Promise.all(product.images.map((image) => downloadGate.run(async () => {
+      if (leaseSignal?.aborted) throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
+      const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === image.assetId);
+      if (!preset || preset.identityPolicy.mode !== "source-composite") {
+        throw new Error(`${image.assetId} 교차 상품 비교 역할이 설정샷 규격과 일치하지 않습니다.`);
+      }
+      const response = await fetch(image.signedUrl, {
+        signal: downloadSignal(leaseSignal, crossProductComparisonDownloadTimeoutMs),
+        redirect: "error",
+      });
+      if (!response.ok) throw new Error(`${image.assetId} 교차 상품 비교 이미지를 받지 못했습니다.`);
+      const source = await readResponseBodyBounded(
+        response,
+        maximumStudioSourceDownloadBytes,
+        `${image.assetId} 교차 상품 비교 이미지`,
+      );
+      const metadata = await sharp(source, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels }).metadata();
+      if (metadata.format !== "png" || metadata.width !== preset.width || metadata.height !== preset.height) {
+        throw new Error(`${image.assetId} 교차 상품 비교 이미지의 픽셀 규격이 일치하지 않습니다.`);
+      }
+      const semanticAssetId = `${product.semanticPrefix}-${image.assetId}`;
+      const file = join(jobDir, `.cross-product-${String(productIndex).padStart(2, "0")}-${image.assetId}.png`);
+      await writeFile(file, source, { flag: "wx", mode: 0o400 });
+      return {
+        assetId: image.assetId,
+        semanticAssetId,
+        file,
+        bytes: source.length,
+        digest: createHash("sha256").update(source).digest("hex"),
+        shot: await fingerprintGeneratedShot(semanticAssetId, source),
+      };
+    }, { signal: leaseSignal })));
+    return {
+      sourceJobId: product.sourceJobId,
+      sceneIdentityText: product.sceneIdentityText,
+      images,
+    };
+  }));
+  return {
+    products: downloadedProducts,
+    shots: downloadedProducts.flatMap((product) => product.images.map((image) => image.shot)),
+  };
+}
+
+async function readCrossProductComparisonSource(image) {
+  const fileStats = await lstat(image.file);
+  if (!fileStats.isFile()
+      || fileStats.isSymbolicLink()
+      || fileStats.nlink !== 1
+      || fileStats.size !== image.bytes
+      || fileStats.size < 1
+      || fileStats.size > maximumStudioSourceDownloadBytes
+      || (fileStats.mode & 0o077) !== 0) {
+    throw new Error(`${image.assetId} 교차 상품 비교 파일 무결성을 확인하지 못했습니다.`);
+  }
+  const [filePath, parentPath] = await Promise.all([realpath(image.file), realpath(dirname(image.file))]);
+  if (dirname(filePath) !== parentPath) {
+    throw new Error(`${image.assetId} 교차 상품 비교 파일이 작업 폴더 밖을 가리킵니다.`);
+  }
+  const source = await readFile(image.file);
+  if (source.length !== image.bytes || createHash("sha256").update(source).digest("hex") !== image.digest) {
+    throw new Error(`${image.assetId} 교차 상품 비교 파일이 다운로드 후 변경됐습니다.`);
+  }
+  return source;
+}
+
+function uniqueIdentityPlacements(placements) {
+  return placements.filter((placement, index) => placements.findIndex((candidate) => (
+    candidate.left === placement.left
+    && candidate.top === placement.top
+    && candidate.width === placement.width
+    && candidate.height === placement.height
+  )) === index);
+}
+
+async function prepareCrossProductBackgroundShots(
+  archive,
+  targetPreset,
+  currentSceneIdentityText,
+  jobDir,
+  leaseSignal,
+) {
+  if (targetPreset.identityPolicy.mode !== "source-composite") return [];
+  const currentPlacement = resolveProductIdentityPlacement(targetPreset, currentSceneIdentityText);
+  const preparationGate = createConcurrencyGate(2);
+  return Promise.all(archive.products.map((product, productIndex) => preparationGate.run(async () => {
+    if (leaseSignal?.aborted) throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
+    const image = product.images.find((candidate) => candidate.assetId === targetPreset.id);
+    if (!image) throw new Error(`${targetPreset.id} 교차 상품 배경 비교 이미지가 누락됐습니다.`);
+    const source = await readCrossProductComparisonSource(image);
+    const previousPlacement = resolveProductIdentityPlacement(targetPreset, product.sceneIdentityText);
+    const maskPlacements = uniqueIdentityPlacements([
+      targetPreset.identityPolicy.placement,
+      currentPlacement,
+      previousPlacement,
+    ]);
+    const maskedComparison = await renderBackgroundWithMaskedZones(source, targetPreset, maskPlacements);
+    const plateFile = join(
+      jobDir,
+      `.cross-background-${String(productIndex).padStart(2, "0")}-${targetPreset.id}.png`,
+    );
+    await writeFile(plateFile, maskedComparison, { flag: "wx", mode: 0o600 });
+    return {
+      ...await fingerprintGeneratedShot(`background:${image.semanticAssetId}`, maskedComparison),
+      maskPlacements,
+      semanticAssetId: image.semanticAssetId,
+      plateFile,
+      plateDigest: createHash("sha256").update(maskedComparison).digest("hex"),
+      plateBytes: maskedComparison.length,
+    };
+  }, { signal: leaseSignal })));
 }
 
 const dedicatedEvidenceRoles = new Set(["back", "label", "barcode", "left", "right", "top", "bottom"]);
@@ -2521,7 +2763,21 @@ async function verifyGeneratedLabelFidelity({
   return report;
 }
 
-async function generateDistinctAsset({ result, outputFile, preset, imageFiles, identityCutouts, jobId, claimToken, leaseSignal, existingShots, existingBackgroundShots, existingBackgroundProps }) {
+async function generateDistinctAsset({
+  result,
+  outputFile,
+  preset,
+  imageFiles,
+  identityCutouts,
+  jobId,
+  claimToken,
+  leaseSignal,
+  existingShots,
+  existingBackgroundShots,
+  existingBackgroundProps,
+  comparisonShots = [],
+  comparisonBackgroundShots = [],
+}) {
   const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
   let noveltyGuidance = "";
   let retryConflictAssetIds = [];
@@ -2548,8 +2804,8 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
       (shot) => shot.semanticAssetId === `previous-${preset.id}`,
     );
     const candidates = hasPublishedSameSlotComparison
-      ? [...existingBackgroundShots]
-      : [...rejectedBackgroundShots, ...existingBackgroundShots];
+      ? [...existingBackgroundShots, ...comparisonBackgroundShots]
+      : [...rejectedBackgroundShots, ...existingBackgroundShots, ...comparisonBackgroundShots];
     return candidates.sort((left, right) => {
       const priority = (shot) => {
         if (String(shot.semanticAssetId ?? "").startsWith(`rejected-${preset.id}-`)) return 0;
@@ -2587,9 +2843,17 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
       ? buildSettingShotRetryVariant(baseSettingShot, preset.id, retryIndex)
       : baseSettingShot;
     // Retry choreography changes the trusted architecture and apparent depth,
-    // never this persisted source-composite mask. Regeneration comparisons can
-    // therefore keep masking the same authoritative product-pixel rectangle.
-    const generationPreset = preset;
+    // never this persisted source-composite mask. Its product-specific resolved
+    // rectangle is authoritative for generation, audit, masking and compositing.
+    const generationPreset = backgroundOnly
+      ? {
+          ...preset,
+          identityPolicy: {
+            ...preset.identityPolicy,
+            placement: resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(result)),
+          },
+        }
+      : preset;
     const deterministicRetryGuidance = retrySettingShot && retryIndex > 0
       ? buildSettingShotRetryGuidance(
           preset.id,
@@ -2667,7 +2931,20 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         ...(!backgroundOnly ? referenceIndexes.map((index) => `--image=${imageFiles[index].file}`) : []),
         assetPrompt,
       ];
-      await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken, { leaseSignal, stage: `image:${preset.id}` });
+      try {
+        await runCodex(imageArgs, imageGenerationTimeoutMs, jobId, claimToken, {
+          leaseSignal,
+          stage: `image:${preset.id}`,
+        });
+      } catch (error) {
+        const retryableGenerationTimeout = attempt < MAXIMUM_SHOT_GENERATION_ATTEMPTS
+          && error instanceof Error
+          && error.message === "Codex CLI 실행 제한시간을 초과했습니다.";
+        if (!retryableGenerationTimeout) throw error;
+        console.warn(`[이미지 제한시간 재시도] ${jobId} · ${preset.id} · attempt=${attempt}`);
+        noveltyGuidance = `Image generation timeout retry ${attempt}: the prior invocation produced no accepted image. Generate the same trusted role from a fresh composition and follow the deterministic retry contract; do not infer any visual property from the timed-out invocation.`;
+        continue;
+      }
       const generated = await normalizeGeneratedAsset(outputFile, generationPreset);
       const compositeSource = backgroundOnly ? identityCutouts.assetSources[preset.id] : null;
       if (backgroundOnly && !compositeSource) throw new Error(`${preset.id} 설정샷의 검증 원본 배정이 없습니다.`);
@@ -2721,7 +2998,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
             repeatedPropError.safeForRetryComparison = true;
             throw repeatedPropError;
           }
-          backgroundProps = semanticAudit.observedNonMerchandiseProps;
+          backgroundProps = [backgroundContract.prop.key];
         } catch (error) {
           if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) throw error;
           if (error?.safeForRetryComparison === true) {
@@ -2742,7 +3019,11 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         }
         backgroundFingerprint = await fingerprintGeneratedShot(`background:${preset.id}`, generated);
         let duplicateBackground = null;
-        for (const existingBackground of [...existingBackgroundShots, ...rejectedBackgroundShots]) {
+        for (const existingBackground of [
+          ...existingBackgroundShots,
+          ...comparisonBackgroundShots,
+          ...rejectedBackgroundShots,
+        ]) {
           const candidateFingerprint = Array.isArray(existingBackground.maskPlacements)
             ? await fingerprintBackgroundWithMaskedZones(
                 `background:${preset.id}`,
@@ -2859,8 +3140,8 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
     const duplicate = findDuplicateShot(
       fingerprint,
       identityCutouts && preset.identityPolicy.mode !== "source-composite"
-        ? [...existingShots, ...rejectedSourceEvidenceShots]
-        : existingShots,
+        ? [...existingShots, ...comparisonShots, ...rejectedSourceEvidenceShots]
+        : [...existingShots, ...comparisonShots],
     );
     if (!duplicate) {
       if (backgroundFingerprint) existingBackgroundShots.push({ ...backgroundFingerprint, ...backgroundPlateSnapshot });
@@ -3368,7 +3649,6 @@ async function processJob(job) {
       return;
     }
     if (job.kind === "product_asset_regeneration") {
-      const imageFiles = await downloadInputs(job, jobDir, jobHeartbeat.signal);
       const parsedSource = cliStudioResultSchema.safeParse(
         normalizeStudioResultForTerminalValidation(job.request?.sourceResult),
       );
@@ -3378,6 +3658,21 @@ async function processJob(job) {
       if (!preset || !upload?.bucket || !upload?.path || !upload?.supabaseUrl || !upload?.publishableKey) {
         throw new Error("재제작할 이미지 업로드 정보가 없습니다.");
       }
+      const currentSceneIdentityText = resolveProductSceneIdentityText(parsedSource.data);
+      const crossProductArchivePromise = settingShotAssetIds.includes(preset.id)
+        ? downloadCrossProductComparisonArchive(job, jobDir, jobHeartbeat.signal)
+        : Promise.resolve({ products: [], shots: [] });
+      const [imageFiles, crossProductArchive, previousComparisons] = await Promise.all([
+        downloadInputs(job, jobDir, jobHeartbeat.signal),
+        crossProductArchivePromise,
+        downloadComparisonShots(
+          job,
+          preset.id,
+          jobDir,
+          jobHeartbeat.signal,
+          currentSceneIdentityText,
+        ),
+      ]);
       resultStorageClient = createClient(upload.supabaseUrl, upload.publishableKey, {
         auth: { persistSession: false, autoRefreshToken: false },
         global: { fetch: createLeaseBoundedStorageFetch(jobHeartbeat.signal) },
@@ -3386,7 +3681,16 @@ async function processJob(job) {
       const {
         shots: existingShots,
         backgroundShots: existingBackgroundShots,
-      } = await downloadComparisonShots(job, preset.id, jobDir, jobHeartbeat.signal);
+      } = previousComparisons;
+      const comparisonBackgroundShots = settingShotAssetIds.includes(preset.id)
+        ? await prepareCrossProductBackgroundShots(
+            crossProductArchive,
+            preset,
+            currentSceneIdentityText,
+            jobDir,
+            jobHeartbeat.signal,
+          )
+        : [];
       const existingBackgroundProps = aiGeneratedAssetSpecs
         .filter((candidate) => candidate.identityPolicy.mode === "source-composite" && candidate.id !== preset.id)
         .map((candidate) => {
@@ -3416,6 +3720,8 @@ async function processJob(job) {
         existingShots,
         existingBackgroundShots,
         existingBackgroundProps,
+        comparisonShots: settingShotAssetIds.includes(preset.id) ? crossProductArchive.shots : [],
+        comparisonBackgroundShots,
       });
       await assertJobLeaseHealthy();
       await uploadAiResultAsset({
@@ -3452,7 +3758,10 @@ async function processJob(job) {
     const competitorContext = job.request?.competitorContext == null
       ? null
       : studioCompetitorContextSchema.parse(job.request.competitorContext);
-    const imageFiles = await downloadInputs(job, jobDir, jobHeartbeat.signal);
+    const [imageFiles, crossProductArchive] = await Promise.all([
+      downloadInputs(job, jobDir, jobHeartbeat.signal),
+      downloadCrossProductComparisonArchive(job, jobDir, jobHeartbeat.signal),
+    ]);
     const references = await fetchReferencePages(
       String(job.request?.researchInput || job.request?.manualFields?.researchInput || ""),
       String(job.request?.productUrl || ""),
@@ -3490,10 +3799,21 @@ async function processJob(job) {
     const existingShots = [];
     const existingBackgroundShots = [];
     const existingBackgroundProps = [];
+    const currentSceneIdentityText = resolveProductSceneIdentityText(result);
     for (const preset of imagePresets) {
       const outputFile = join(jobDir, preset.file);
       const upload = uploads.find((item) => item?.id === preset.id);
       if (!upload?.bucket || !upload?.path) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
+      const settingShot = settingShotAssetIds.includes(preset.id);
+      const comparisonBackgroundShots = settingShot
+        ? await prepareCrossProductBackgroundShots(
+            crossProductArchive,
+            preset,
+            currentSceneIdentityText,
+            jobDir,
+            jobHeartbeat.signal,
+          )
+        : [];
       const generated = await generateDistinctAsset({
         result,
         outputFile,
@@ -3506,6 +3826,8 @@ async function processJob(job) {
         existingShots,
         existingBackgroundShots,
         existingBackgroundProps,
+        comparisonShots: settingShot ? crossProductArchive.shots : [],
+        comparisonBackgroundShots,
       });
       await assertJobLeaseHealthy();
       await uploadAiResultAsset({

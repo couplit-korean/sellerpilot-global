@@ -1,3 +1,114 @@
+export type IdentityPlacement = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+export type ProductSceneDimension = "location" | "moment" | "surface" | "cue" | "staging" | "camera";
+
+const settingShotSceneIndex: Record<string, number> = {
+  portrait: 0,
+  wide: 1,
+  "detail-overview": 2,
+  "detail-use": 3,
+  "detail-routine": 4,
+  "detail-scale": 5,
+  "detail-storage": 6,
+  "detail-context": 7,
+};
+
+function normalizedSceneIdentityText(value: string) {
+  return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US") || "unknown product";
+}
+
+function seededSceneHash(value: string, seed: number) {
+  let hash = (seed ^ value.length) >>> 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 0x5bd1e995);
+    hash = ((hash << 13) | (hash >>> 19)) >>> 0;
+  }
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35);
+  hash ^= hash >>> 16;
+  return hash >>> 0;
+}
+
+function sceneDigestRemainder(value: string, modulus: number) {
+  const high = seededSceneHash(value, 0x243f6a88);
+  const low = seededSceneHash(value, 0x9e3779b9);
+  // Combine both independent 32-bit lanes as an unsigned 64-bit remainder.
+  // Every current scene pool is tiny; the bound also keeps this arithmetic exact
+  // under Number.MAX_SAFE_INTEGER without requiring BigInt in browser bundles.
+  if (modulus > 1_000_000) throw new Error("상품 장면 변형 모듈러스가 너무 큽니다.");
+  return (((high % modulus) * (0x1_0000_0000 % modulus)) + (low % modulus)) % modulus;
+}
+
+export function resolveProductSceneVariantCode(
+  sceneIdentityText: string,
+  assetId: string,
+  dimension: ProductSceneDimension,
+  modulus: number,
+) {
+  if (!Number.isSafeInteger(modulus) || modulus < 2) throw new Error("상품 장면 변형 모듈러스가 올바르지 않습니다.");
+  const slot = settingShotSceneIndex[assetId];
+  if (slot === undefined) return 0;
+  const lane = [
+    normalizedSceneIdentityText(sceneIdentityText),
+    assetId,
+    dimension,
+    String(slot),
+  ].join("\u001f");
+  return sceneDigestRemainder(lane, modulus);
+}
+
+function placementDirection(value: number, negative: string, positive: string) {
+  if (value === 0) return "기준";
+  return value < 0 ? negative : positive;
+}
+
+export function resolveProductPlacementVariant(sceneIdentityText: string, assetId: string) {
+  const code = resolveProductSceneVariantCode(sceneIdentityText, assetId, "staging", 999_983);
+  const horizontalOffset = ((code % 161) - 80) / 1_000;
+  const bottomOffset = ((Math.floor(code / 161) % 91) - 45) / 1_000;
+  const scale = 1 + ((Math.floor(code / (161 * 91)) % 69) - 34) / 1_000;
+  const horizontalMagnitude = Math.abs(horizontalOffset * 100).toFixed(1);
+  const verticalMagnitude = Math.abs(bottomOffset * 100).toFixed(1);
+  const scalePercent = (scale * 100).toFixed(1);
+  const horizontalDirection = placementDirection(horizontalOffset, "왼쪽", "오른쪽");
+  const verticalDirection = placementDirection(bottomOffset, "위", "아래");
+  return {
+    key: `x-${horizontalDirection === "왼쪽" ? "left" : horizontalDirection === "오른쪽" ? "right" : "axis"}-${Math.abs(Math.round(horizontalOffset * 1_000))}-y-${verticalDirection === "위" ? "up" : verticalDirection === "아래" ? "down" : "contact"}-${Math.abs(Math.round(bottomOffset * 1_000))}-scale-${Math.round(scale * 1_000)}`,
+    description: `역할 기준점에서 ${horizontalDirection} 방향 ${horizontalMagnitude}%p, 접촉선은 ${verticalDirection} 방향 ${verticalMagnitude}%p 이동하고 원본 실루엣 크기는 ${scalePercent}%로 유지하는 물리적 배치`,
+    horizontalOffset,
+    bottomOffset,
+    scale,
+  };
+}
+
+function boundedPlacementValue(value: number) {
+  return Number(Math.min(0.97, Math.max(0.03, value)).toFixed(4));
+}
+
+export function resolveProductIdentityPlacement(
+  preset: { id: string; identityPolicy: { placement: IdentityPlacement } },
+  sceneIdentityText: string,
+): IdentityPlacement {
+  if (!(preset.id in settingShotSceneIndex)) return { ...preset.identityPolicy.placement };
+  const canonical = aiGeneratedAssetSpecs.find((candidate) => candidate.id === preset.id)?.identityPolicy.placement
+    ?? preset.identityPolicy.placement;
+  const variant = resolveProductPlacementVariant(sceneIdentityText, preset.id);
+  const width = Number((canonical.width * variant.scale).toFixed(4));
+  const height = Number((canonical.height * variant.scale).toFixed(4));
+  const centerX = canonical.left + canonical.width / 2 + variant.horizontalOffset;
+  const bottom = canonical.top + canonical.height + variant.bottomOffset;
+  const left = boundedPlacementValue(Math.min(0.97 - width, Math.max(0.03, centerX - width / 2)));
+  const top = boundedPlacementValue(Math.min(0.97 - height, Math.max(0.03, bottom - height)));
+  return { left, top, width, height };
+}
+
 export const aiGeneratedAssetSpecs = [
   {
     id: "hero",
