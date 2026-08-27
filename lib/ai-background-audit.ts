@@ -124,7 +124,8 @@ function visibleMomentTreatment(moment: string, assetId: keyof typeof identityBa
 export function resolveIdentityBackgroundContract(settingShot: ProductSettingShot, assetId: AiGeneratedAssetId) {
   if (!(assetId in identityBackgroundCueByAssetId)) throw new Error(`${assetId} 설정샷 배경 계약을 만들 수 없습니다.`);
   const settingAssetId = assetId as keyof typeof identityBackgroundCueByAssetId;
-  const retryContract = /^retry-[1-3]-/.test(settingShot.separation.location);
+  const retryMatch = /^retry-([1-3])-/.exec(settingShot.separation.location);
+  const retryContract = Boolean(retryMatch);
   const momentTreatment = visibleMomentTreatment(settingShot.moment, settingAssetId);
   const cue = identityBackgroundCueByAssetId[settingAssetId];
   const cameraDescription = {
@@ -147,7 +148,16 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
     "detail-storage": "high-right-access-corner",
     "detail-context": "low-rear-wide-context",
   }[settingAssetId];
-  const retryCameraDescription = retryContract ? settingShot.camera : cameraDescription;
+  const retryCameraTransform = retryMatch
+    ? {
+      1: "viewed from the opposite architectural side with an approximately 70-degree azimuth change, visibly wider convergence, and clear floor-to-wall-to-rear-plane junctions",
+      2: "shifted toward an axial architectural view with an approximately 155-degree azimuth change, compressed mid-depth, and clearly readable symmetric wall and ceiling convergence",
+      3: "viewed from a third corner-to-axial architectural position with an approximately 245-degree azimuth change, a longer perspective, and clearly separated near, middle and rear fixed-plane junctions",
+    }[Number(retryMatch[1])]
+    : null;
+  const retryCameraDescription = retryContract
+    ? `${cameraDescription}; ${retryCameraTransform}`
+    : cameraDescription;
   const cameraKey = retryContract
     ? stableSemanticKey(settingShot.separation.camera, "identity-camera")
     : baseCameraKey;

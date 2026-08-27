@@ -5,13 +5,15 @@ import {
   supportsLiveResultUploadAuthorization,
 } from "../lib/ai-worker-version";
 
-test("new AI claims reject worker 1.43 and accept worker 1.44", () => {
-  assert.equal(minimumResultUploadWorkerVersion, "sellerpilot-cli-worker/1.44");
+test("new AI claims reject worker 1.44 and accept worker 1.45", () => {
+  assert.equal(minimumResultUploadWorkerVersion, "sellerpilot-cli-worker/1.45");
   assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.42"), false);
   assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.42.99"), false);
   assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.43"), false);
   assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.43.99"), false);
-  assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.44"), true);
-  assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.44.0"), true);
+  assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.44"), false);
+  assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.44.99"), false);
+  assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.45"), true);
+  assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/1.45.0"), true);
   assert.equal(supportsLiveResultUploadAuthorization("sellerpilot-cli-worker/unknown"), false);
 });

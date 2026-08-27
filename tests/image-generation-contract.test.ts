@@ -180,6 +180,9 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(contracts[1].prop.description, /horizontal shadow channel/);
   assert.match(contracts[2].prop.description, /diagonal wall-to-ceiling fold/);
   assert.ok(contracts.every((contract) => !/fixed-zone-divider/.test(contract.prop.key)));
+  assert.ok(contracts.every((contract) => /architectural/.test(contract.camera.description)));
+  assert.ok(contracts.every((contract) => /junction|convergence/.test(contract.camera.description)));
+  assert.ok(contracts.every((contract) => !/product|상품|source-composite|mask/i.test(contract.camera.description)));
 
   const cumulativeAudit = mergeSettingShotRetryAuditFeedback(
     {
