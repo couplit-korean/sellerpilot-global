@@ -205,7 +205,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.41";
+const workerVersion = "sellerpilot-cli-worker/1.42";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -420,6 +420,81 @@ function createLeaseBoundedStorageFetch(leaseSignal) {
       ...(init.signal ? [init.signal] : []),
     ]),
   });
+}
+
+async function authorizeAiResultUpload(jobId, claimToken, assetId, expectedPath, expectedBucket) {
+  const requestBody = JSON.stringify({ jobId, claimToken, assetId });
+  let response;
+  try {
+    response = await requestWithTransientRetry({
+      request: () => api("/api/ai/worker/result-upload-authorize", {
+        method: "POST",
+        body: requestBody,
+      }),
+      delay,
+      graceMs: AI_HEARTBEAT_TRANSIENT_GRACE_MS,
+      terminalStatuses: [401, 409],
+      label: `${assetId} 이미지 업로드 권한 갱신 실패`,
+      onTransient: ({ attempt, status, waitMs }) => {
+        if (attempt === 1) {
+          console.error(`${assetId} 이미지 업로드 권한이 일시 지연됐습니다 · HTTP ${status} · ${waitMs}ms 뒤 재시도`);
+        }
+      },
+    });
+  } catch (error) {
+    if (error instanceof WorkerRequestTerminalError && error.status === 401) {
+      deferWorkerScope("ai");
+    }
+    if (error instanceof WorkerRequestTerminalError) deferTransientClaims("ai", error.status);
+    throw error;
+  }
+  const payload = await response.json().catch(() => null);
+  if (!payload || typeof payload !== "object"
+    || payload.id !== assetId
+    || payload.path !== expectedPath
+    || payload.bucket !== expectedBucket
+    || typeof payload.token !== "string"
+    || !payload.token) {
+    throw new Error(`${assetId} 이미지 업로드 권한 응답이 올바르지 않습니다.`);
+  }
+  return payload;
+}
+
+async function uploadAiResultAsset({
+  resultStorageClient,
+  jobId,
+  claimToken,
+  assetId,
+  expectedPath,
+  expectedBucket,
+  imageBytes,
+  assertLeaseHealthy,
+}) {
+  let lastUploadError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    await assertLeaseHealthy();
+    const authorization = await authorizeAiResultUpload(
+      jobId,
+      claimToken,
+      assetId,
+      expectedPath,
+      expectedBucket,
+    );
+    await assertLeaseHealthy();
+    const { error: uploadError } = await resultStorageClient.storage
+      .from(authorization.bucket)
+      .uploadToSignedUrl(authorization.path, authorization.token, imageBytes, {
+        contentType: "image/png",
+        cacheControl: "3600",
+      });
+    if (!uploadError) return;
+    lastUploadError = uploadError;
+    await assertLeaseHealthy();
+  }
+  const safeMessage = lastUploadError && typeof lastUploadError.message === "string"
+    ? lastUploadError.message
+    : "스토리지 응답을 확인하지 못했습니다.";
+  throw new Error(`${assetId} 이미지 업로드 실패: ${safeMessage}`);
 }
 
 async function touchGatewayJob(jobId, claimToken) {
@@ -3171,7 +3246,7 @@ async function processJob(job) {
       if (!parsedSource.success) throw new Error(`원본 상품 기획 검증 실패 · ${summarizeStudioIssues(parsedSource.error.issues)}`.slice(0, 500));
       const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === job.request?.assetId);
       const upload = Array.isArray(job.resultUploads) ? job.resultUploads.find((item) => item?.id === preset?.id) : null;
-      if (!preset || !upload?.bucket || !upload?.path || !upload?.token || !upload?.supabaseUrl || !upload?.publishableKey) {
+      if (!preset || !upload?.bucket || !upload?.path || !upload?.supabaseUrl || !upload?.publishableKey) {
         throw new Error("재제작할 이미지 업로드 정보가 없습니다.");
       }
       resultStorageClient = createClient(upload.supabaseUrl, upload.publishableKey, {
@@ -3214,13 +3289,16 @@ async function processJob(job) {
         existingBackgroundProps,
       });
       await assertJobLeaseHealthy();
-      const { error: uploadError } = await resultStorageClient.storage
-        .from(upload.bucket)
-        .uploadToSignedUrl(upload.path, upload.token, generated.normalized, {
-          contentType: "image/png",
-          cacheControl: "3600",
-        });
-      if (uploadError) throw new Error(`${preset.id} 이미지 업로드 실패: ${uploadError.message}`);
+      await uploadAiResultAsset({
+        resultStorageClient,
+        jobId: job.id,
+        claimToken,
+        assetId: preset.id,
+        expectedPath: upload.path,
+        expectedBucket: upload.bucket,
+        imageBytes: generated.normalized,
+        assertLeaseHealthy: assertJobLeaseHealthy,
+      });
       uploadedResultPaths.push(upload.path);
       await assertJobLeaseHealthy();
       const completion = {
@@ -3286,7 +3364,7 @@ async function processJob(job) {
     for (const preset of imagePresets) {
       const outputFile = join(jobDir, preset.file);
       const upload = uploads.find((item) => item?.id === preset.id);
-      if (!upload?.bucket || !upload?.path || !upload?.token) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
+      if (!upload?.bucket || !upload?.path) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
       const generated = await generateDistinctAsset({
         result,
         outputFile,
@@ -3301,13 +3379,16 @@ async function processJob(job) {
         existingBackgroundProps,
       });
       await assertJobLeaseHealthy();
-      const { error: uploadError } = await resultStorageClient.storage
-        .from(upload.bucket)
-        .uploadToSignedUrl(upload.path, upload.token, generated.normalized, {
-          contentType: "image/png",
-          cacheControl: "3600",
-        });
-      if (uploadError) throw new Error(`${preset.id} 이미지 업로드 실패: ${uploadError.message}`);
+      await uploadAiResultAsset({
+        resultStorageClient,
+        jobId: job.id,
+        claimToken,
+        assetId: preset.id,
+        expectedPath: upload.path,
+        expectedBucket: upload.bucket,
+        imageBytes: generated.normalized,
+        assertLeaseHealthy: assertJobLeaseHealthy,
+      });
       await assertJobLeaseHealthy();
       existingShots.push(generated.fingerprint);
       assetStoragePaths[preset.id] = upload.path;
@@ -4190,6 +4271,15 @@ do {
       method: "POST",
       body: JSON.stringify({ version: workerVersion }),
     });
+    if (response.status === 426) {
+      aiClaimBackoffUntil = Date.now() + 5 * 60_000;
+      if (aiClaimBackoffStatus !== response.status) {
+        console.error("AI 작업자 버전이 오래되었습니다. 최신 런타임으로 재시작해 주세요.");
+        aiClaimBackoffStatus = response.status;
+      }
+      if (once) throw new Error("작업 요청 실패 · HTTP 426");
+      continue;
+    }
     if (response.status === 401 || response.status === 503) {
       const backoffMs = workerClaimBackoffMs(response.status);
       aiClaimBackoffUntil = Date.now() + backoffMs;

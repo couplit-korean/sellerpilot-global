@@ -280,6 +280,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260826091400_preserve_asset_regeneration_manual_fields.sql",
       "20260826212116_harden_detail_pipeline_lineage.sql",
       "20260826221500_allow_verification_ribbon_detail_block.sql",
+      "20260827000726_authorize_live_ai_result_uploads.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -503,6 +504,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_claim_ai_storage_cleanup(integer,integer)",
       "public.sellerpilot_service_complete_ai_storage_cleanup(uuid,text[],text)",
       "public.sellerpilot_service_stage_ai_result_uploads(text,uuid,uuid,text[])",
+      "public.sellerpilot_service_authorize_ai_result_upload(text,uuid,uuid,text,text)",
       "public.sellerpilot_service_activate_worker_token_set(uuid,jsonb)",
       "public.sellerpilot_service_abort_worker_token_set(uuid,jsonb)",
       "public.sellerpilot_service_expire_pending_worker_token_sets()",
@@ -583,6 +585,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "select pg_get_functiondef('public.sellerpilot_service_stage_ai_result_uploads(text,uuid,uuid,text[])'::regprocedure)",
     );
     assert.match(resultUploadStagingDefinition, /FOR UPDATE/i);
+    const resultUploadAuthorizationDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_service_authorize_ai_result_upload(text,uuid,uuid,text,text)'::regprocedure)",
+    );
+    assert.match(resultUploadAuthorizationDefinition, /FOR UPDATE/i);
+    assert.match(resultUploadAuthorizationDefinition, /kind = 'product_studio'/i);
+    assert.match(resultUploadAuthorizationDefinition, /kind = 'product_asset_regeneration'/i);
+    assert.match(resultUploadAuthorizationDefinition, /request_payload/i);
     for (const signature of [
       "public.sellerpilot_service_claim_lazada_reply(uuid,uuid,text)",
       "public.sellerpilot_service_begin_lazada_reply(uuid,text)",
@@ -2209,6 +2219,40 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.equal(currentAiClaim.id, STALE_AI_JOB_ID);
     assert.notEqual(currentAiClaim.claim_token, staleAiClaim.claim_token);
+    const currentHeroResultPath = `results/${STALE_AI_JOB_ID}/claims/${currentAiClaim.claim_token}/hero.png`;
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_authorize_ai_result_upload($1, $2, $3, 'hero', $4)",
+        [TOKEN_HASH, STALE_AI_JOB_ID, currentAiClaim.claim_token, currentHeroResultPath],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_authorize_ai_result_upload($1, $2, $3, 'hero', $4)",
+        [
+          TOKEN_HASH,
+          STALE_AI_JOB_ID,
+          currentAiClaim.claim_token,
+          `results/${STALE_AI_JOB_ID}/claims/${currentAiClaim.claim_token}/wrong.png`,
+        ],
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.ai_result_upload_staging where job_id = $1 and claim_token = $2 and object_path = $3",
+        [STALE_AI_JOB_ID, currentAiClaim.claim_token, currentHeroResultPath],
+      ),
+      1,
+    );
+    await db.query(
+      "delete from sellerpilot_private.ai_result_upload_staging where job_id = $1 and claim_token = $2 and object_path = $3",
+      [STALE_AI_JOB_ID, currentAiClaim.claim_token, currentHeroResultPath],
+    );
     assert.equal(
       await scalar(
         db,
@@ -2593,6 +2637,27 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.equal(expandedRegenerationClaim.id, EXPANDED_REGEN_JOB_ID);
     const expandedRegenerationPath = `results/${EXPANDED_REGEN_JOB_ID}/claims/${expandedRegenerationClaim.claim_token}/detail-care.png`;
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_authorize_ai_result_upload($1, $2, $3, 'detail-care', $4)",
+        [TOKEN_HASH, EXPANDED_REGEN_JOB_ID, expandedRegenerationClaim.claim_token, expandedRegenerationPath],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_authorize_ai_result_upload($1, $2, $3, 'hero', $4)",
+        [
+          TOKEN_HASH,
+          EXPANDED_REGEN_JOB_ID,
+          expandedRegenerationClaim.claim_token,
+          `results/${EXPANDED_REGEN_JOB_ID}/claims/${expandedRegenerationClaim.claim_token}/hero.png`,
+        ],
+      ),
+      false,
+    );
     assert.equal(
       await scalar(
         db,
@@ -4786,6 +4851,49 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [RESEARCH_JOB_ID, JSON.stringify({ research_input: "https://example.test/product/1 또는 흰색 도자기 머그컵 설명" })],
     );
     assert.equal(await scalar(db, "select kind from sellerpilot_private.ai_cli_jobs where id = $1", [RESEARCH_JOB_ID]), "product_research");
+    const nonImageClaimToken = "49717699-1470-4bda-b8a0-2d70980e42c7";
+    await setClaims(db, "service_role");
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set status = 'running',
+              worker_token_id = (select id from sellerpilot_private.ai_cli_worker_tokens where token_hash = $2),
+              claim_token = $3,
+              lease_expires_at = now() + interval '5 minutes'
+        where id = $1`,
+      [RESEARCH_JOB_ID, TOKEN_HASH, nonImageClaimToken],
+    );
+    const nonImageHeroPath = `results/${RESEARCH_JOB_ID}/claims/${nonImageClaimToken}/hero.png`;
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_authorize_ai_result_upload($1, $2, $3, 'hero', $4)",
+        [TOKEN_HASH, RESEARCH_JOB_ID, nonImageClaimToken, nonImageHeroPath],
+      ),
+      false,
+    );
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set kind = 'support_reply' where id = $1",
+      [RESEARCH_JOB_ID],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_authorize_ai_result_upload($1, $2, $3, 'hero', $4)",
+        [TOKEN_HASH, RESEARCH_JOB_ID, nonImageClaimToken, nonImageHeroPath],
+      ),
+      false,
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set kind = 'product_research',
+              status = 'queued',
+              worker_token_id = null,
+              claim_token = null,
+              lease_expires_at = null
+        where id = $1`,
+      [RESEARCH_JOB_ID],
+    );
+    await setClaims(db);
     const activityWithoutResearchDraft = await scalar(db, "select public.sellerpilot_list_registration_activity(300)");
     assert.equal(activityWithoutResearchDraft.some((activity) => activity.id === `job:${RESEARCH_JOB_ID}`), false);
 

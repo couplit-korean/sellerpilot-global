@@ -123,7 +123,7 @@ test("continuous transient failures stop inside the configured grace window", as
 test("worker uses lifecycle retry for heartbeat and both completion endpoints", async () => {
   const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.41"/);
+  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.42"/);
   assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 25 \* 60_000/);
   assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
   assert.match(source, /stage: "studio-master-repair"/);
@@ -145,7 +145,11 @@ test("worker uses lifecycle retry for heartbeat and both completion endpoints", 
   const aiProcess = source.slice(aiProcessStart, gatewayProcessStart);
   assert.match(aiProcess, /await jobHeartbeat\.start\(\)/);
   assert.ok((aiProcess.match(/await assertJobLeaseHealthy\(\)/g) ?? []).length >= 7);
-  assert.ok((aiProcess.match(/uploadToSignedUrl/g) ?? []).length >= 2);
+  assert.ok((aiProcess.match(/uploadAiResultAsset/g) ?? []).length >= 2);
+  assert.match(source, /api\("\/api\/ai\/worker\/result-upload-authorize"/);
+  assert.match(source, /for \(let attempt = 1; attempt <= 2; attempt \+= 1\)/);
+  assert.match(source, /authorizeAiResultUpload[\s\S]*uploadToSignedUrl/);
+  assert.doesNotMatch(aiProcess, /upload\.token/);
   assert.match(aiProcess, /await assertJobLeaseHealthy\(\);[\s\S]*await stopJobHeartbeat\(\);[\s\S]*persistWorkerCompletion/);
   assert.match(source, /createLeaseBoundedStorageFetch\(jobHeartbeat\.signal\)/);
 });

@@ -68,6 +68,8 @@ test("AI worker claim applies the shared backoff without reducing the daemon del
   assert.match(worker, /if \(response\.status === 401\) deferWorkerScope\("ai", response\.status\)/);
   assert.match(worker, /Date\.now\(\) < authBackoffUntil\.ai/);
   assert.match(worker, /Date\.now\(\) < aiClaimBackoffUntil/);
+  assert.match(worker, /response\.status === 426[\s\S]*?aiClaimBackoffUntil = Date\.now\(\) \+ 5 \* 60_000/);
+  assert.match(worker, /AI 작업자 버전이 오래되었습니다/);
 });
 
 test("gateway scheduling is scope-isolated, queue-idle gated, and cannot starve AI claims", async () => {
@@ -108,6 +110,14 @@ test("AI claim route bounds Supabase RPCs and preserves 401 versus 503 semantics
   assert.match(route, /if \(!supabaseUrl \|\| !secretKey\)[\s\S]*?workerRpcErrorMessage\(503\)[\s\S]*?status: 503/);
   assert.doesNotMatch(route, /if \(error\) return NextResponse\.json\([^\n]+status: 401/);
   assert.doesNotMatch(route, /!workerToken\.startsWith\("spw_"\) \|\| !supabaseUrl \|\| !secretKey/);
+  assert.match(route, /supportsLiveResultUploadAuthorization\(version\)/);
+  assert.match(route, /minimumVersion: "sellerpilot-cli-worker\/1\.42"/);
+  assert.match(route, /status: 426/);
+  assert.ok(
+    route.indexOf("supportsLiveResultUploadAuthorization(version)")
+      < route.indexOf('serviceClient.rpc("sellerpilot_claim_ai_job"'),
+    "obsolete workers must be rejected before claiming a queued job",
+  );
 });
 
 test("AI claim route compensates every post-claim preparation failure", async () => {
@@ -118,7 +128,7 @@ test("AI claim route compensates every post-claim preparation failure", async ()
   assert.match(route, /sellerpilot_complete_ai_job/);
   assert.match(route, /p_status: "failed"/);
   assert.match(route, /catch \(preparationError\)[\s\S]*?safeReason: "claim_preparation_exception"/);
-  assert.equal(route.match(/return preparationFailure\(\{/g)?.length, 11);
+  assert.equal(route.match(/return preparationFailure\(\{/g)?.length, 9);
   assert.match(route, /safeReason: "invalid_competitor_context"/);
   assert.match(route, /safeReason: "invalid_source_image_provenance"/);
   assert.match(route, /safeReason: "source_image_signing_incomplete"/);

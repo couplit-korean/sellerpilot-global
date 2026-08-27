@@ -15,6 +15,16 @@ export const runtime = "nodejs";
 
 type ClaimCompensationMode = "requeue" | "fail";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MINIMUM_RESULT_UPLOAD_WORKER = { major: 1, minor: 42 } as const;
+
+function supportsLiveResultUploadAuthorization(version: string) {
+  const match = /^sellerpilot-cli-worker\/(\d+)\.(\d+)(?:\.(\d+))?$/.exec(version);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > MINIMUM_RESULT_UPLOAD_WORKER.major
+    || (major === MINIMUM_RESULT_UPLOAD_WORKER.major && minor >= MINIMUM_RESULT_UPLOAD_WORKER.minor);
+}
 
 function safeErrorMetadata(error: unknown) {
   if (!error || typeof error !== "object") return { code: "unknown", status: "unknown" };
@@ -55,6 +65,15 @@ export async function POST(request: Request) {
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
   const body = await request.json().catch(() => ({})) as { version?: unknown };
   const version = typeof body.version === "string" ? body.version.slice(0, 80) : "unknown";
+  if (!supportsLiveResultUploadAuthorization(version)) {
+    return NextResponse.json({
+      message: "AI 작업자를 최신 버전으로 재시작해 주세요.",
+      minimumVersion: "sellerpilot-cli-worker/1.42",
+    }, {
+      status: 426,
+      headers: { "cache-control": "no-store, max-age=0" },
+    });
+  }
   const { data, error } = await serviceClient.rpc("sellerpilot_claim_ai_job", {
     p_token_hash: tokenHash,
     p_worker_version: version,
@@ -270,16 +289,6 @@ export async function POST(request: Request) {
         });
       }
       const assetPath = aiGeneratedAssetPath(jobId, asset, claimToken);
-      const { data: upload, error: uploadError } = await serviceClient.storage
-        .from("sellerpilot-ai")
-        .createSignedUploadUrl(assetPath, { upsert: true });
-      if (uploadError || !upload?.token) {
-        return preparationFailure({
-          message: "재제작 이미지 업로드 URL을 만들지 못했습니다.",
-          safeReason: "regeneration_upload_signing_failed",
-          error: uploadError,
-        });
-      }
       const stagingFailure = await stageResultUploads([assetPath]);
       if (stagingFailure) return stagingFailure;
       return NextResponse.json({
@@ -301,7 +310,6 @@ export async function POST(request: Request) {
         resultUploads: [{
           id: asset.id,
           path: assetPath,
-          token: upload.token,
           supabaseUrl,
           publishableKey: supabasePublishableKey,
           bucket: "sellerpilot-ai",
@@ -312,18 +320,6 @@ export async function POST(request: Request) {
       id: asset.id,
       path: aiGeneratedAssetPath(jobId, asset, claimToken),
     }));
-    const assetUploads = await Promise.all(assetPaths.map(async (asset) => {
-      const { data: upload, error: uploadError } = await serviceClient.storage
-        .from("sellerpilot-ai")
-        .createSignedUploadUrl(asset.path, { upsert: true });
-      return uploadError || !upload?.token ? null : { ...asset, token: upload.token };
-    }));
-    if (assetUploads.some((upload) => !upload)) {
-      return preparationFailure({
-        message: "생성 이미지 업로드 URL을 만들지 못했습니다.",
-        safeReason: "result_upload_signing_failed",
-      });
-    }
     const stagingFailure = await stageResultUploads(assetPaths.map((asset) => asset.path));
     if (stagingFailure) return stagingFailure;
 
@@ -340,7 +336,7 @@ export async function POST(request: Request) {
         images: signedSourceImages,
         ...(parsedCompetitorContext?.success ? { competitorContext: parsedCompetitorContext.data } : {}),
       },
-      resultUploads: assetUploads.map((upload) => ({
+      resultUploads: assetPaths.map((upload) => ({
         ...upload,
         supabaseUrl,
         publishableKey: supabasePublishableKey,

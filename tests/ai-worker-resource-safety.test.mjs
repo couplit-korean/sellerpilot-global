@@ -21,9 +21,11 @@ test("AI worker dispatches support replies and preserves uploaded assets across 
   assert.match(claimRoute, /p_claim_token: claimToken/);
   assert.ok(
     claimRoute.indexOf("const stagingFailure = await stageResultUploads(assetPaths.map")
-      < claimRoute.indexOf("resultUploads: assetUploads.map"),
-    "result destinations must be staged before the worker receives upload tokens",
+      < claimRoute.indexOf("resultUploads: assetPaths.map"),
+    "result destinations must be staged before the worker receives upload metadata",
   );
+  assert.doesNotMatch(claimRoute, /createSignedUploadUrl/);
+  assert.doesNotMatch(claimRoute, /token: upload\.token/);
 });
 
 test("Codex subprocess output and termination are bounded", async () => {
