@@ -93,6 +93,9 @@ test("fulfillment route preserves a stable resource-bound gateway write and defe
   assert.match(route, /preflight-\$\{randomUUID\(\)\.slice\(0, 8\)\}/);
   assert.match(route, /const shipmentConcurrency = 3/);
   assert.match(route, /\.min\(1\)\.max\(3\)/);
+  assert.match(route, /const shipmentOperationTimeoutMs = 70_000/);
+  assert.match(route, /AbortSignal\.timeout\(shipmentOperationTimeoutMs\)/);
+  assert.doesNotMatch(route, /AbortSignal\.timeout\(120_000\)/);
   assert.match(route, /Promise\.all\(parsed\.data\.shipments\.slice\(offset, offset \+ shipmentConcurrency\)\.map\(processShipmentSafely\)\)/);
   assert.match(page, /const fulfillmentRequestBatchSize = 3/);
   assert.match(page, /shipments\.slice\(offset, offset \+ fulfillmentRequestBatchSize\)/);

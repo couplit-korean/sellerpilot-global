@@ -20,6 +20,12 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+// Lazada can require acknowledge, receiver readback, and confirm in sequence.
+// Keep the worst-case provider wait (3 x 70s) below the 300s route ceiling so
+// authentication, ledger reconciliation, and response serialization retain a
+// meaningful safety margin instead of being cut off after an external write.
+const shipmentOperationTimeoutMs = 70_000;
+
 const schema = z.object({
   confirmWrite: z.literal(true),
   shipments: z.array(z.object({
@@ -174,7 +180,7 @@ export async function POST(request: Request) {
           } : {}),
           arguments: input.arguments,
         }),
-        signal: AbortSignal.timeout(120_000),
+        signal: AbortSignal.timeout(shipmentOperationTimeoutMs),
       });
     } catch {
       return input.providerMutation

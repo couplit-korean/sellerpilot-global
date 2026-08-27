@@ -121,6 +121,34 @@ function visibleMomentTreatment(moment: string, assetId: keyof typeof identityBa
   return fallback[assetId];
 }
 
+type FixedRoomRecognitionRule = {
+  requiredArchitecture: string;
+  forbiddenLookalikes: string;
+};
+
+function resolveFixedRoomRecognitionRule(settingShot: ProductSettingShot): FixedRoomRecognitionRule | null {
+  const location = settingShot.location.normalize("NFKC").toLowerCase();
+  if (/다이닝|식탁|dining|breakfast[- ]nook/.test(location)) {
+    return {
+      requiredArchitecture: "at least two unmistakable fixed dining cues: a dining-height integrated table or ledge aligned with a built-in banquette back, plus a fixed dining window reveal or ceiling pendant mounting canopy",
+      forbiddenLookalikes: "a bathroom, shower, washroom, vanity, spa, retail showroom, abstract gallery, generic empty shelf, display niche or pedestal; floor-to-ceiling wet-room tile, a shower curb or drain, a basin and a vanity mirror are forbidden",
+    };
+  }
+  if (/키친|주방|조리대|아일랜드|홈카페|브레이크룸|kitchen|breakroom|food[- ]prep/.test(location)) {
+    return {
+      requiredArchitecture: "at least two unmistakable fixed food-preparation cues: an integrated worktop-to-backsplash junction, fixed lower-cabinet fronts or a built-in ventilation/window element belonging to the same preparation zone",
+      forbiddenLookalikes: "a bathroom, shower, washroom, vanity, spa, retail showroom, abstract gallery, generic empty shelf, display niche or pedestal; a tiled enclosure without fixed kitchen cabinetry or preparation architecture is forbidden",
+    };
+  }
+  if (/팬트리|건식\s*식품|식품\s*(?:선반|수납|보관)|찬장|pantry|dry[- ]goods|dry food/.test(location)) {
+    return {
+      requiredArchitecture: "at least two unmistakable fixed dry-storage cues: multiple integrated pantry shelf levels plus a permanent access, ventilation or cabinet-base element belonging to one built-in food-storage system",
+      forbiddenLookalikes: "a bathroom, shower, washroom, vanity, spa, retail showroom, abstract gallery, single generic empty shelf, isolated display niche or pedestal; one unsupported shelf plane is never enough",
+    };
+  }
+  return null;
+}
+
 export function resolveIdentityBackgroundContract(settingShot: ProductSettingShot, assetId: AiGeneratedAssetId) {
   if (!(assetId in identityBackgroundCueByAssetId)) throw new Error(`${assetId} 설정샷 배경 계약을 만들 수 없습니다.`);
   const settingAssetId = assetId as keyof typeof identityBackgroundCueByAssetId;
@@ -168,10 +196,14 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
   const retryPropDescription = retryContract
     ? `${settingShot.supportingObjects}; it belongs to the replacement architecture and stays outside the reserved product zone`
     : `${cue.description} belonging to ${settingShot.location}, outside the reserved product zone`;
+  const roomRecognition = resolveFixedRoomRecognitionRule(settingShot);
+  const roomRecognitionContract = roomRecognition
+    ? ` Fixed room-recognition contract: the pixels must show ${roomRecognition.requiredArchitecture}. The scene must not read primarily as ${roomRecognition.forbiddenLookalikes}. Material, color or an empty support plane alone never proves the assigned room function.`
+    : "";
   return {
     location: {
       key: stableSemanticKey(settingShot.separation.location, "empty-architecture"),
-      description: `the empty fixed architectural envelope of ${settingShot.location}; any saleable furniture or movable prop named by the location stays outside the frame`,
+      description: `the empty fixed architectural envelope of ${settingShot.location}; any saleable furniture or movable prop named by the location stays outside the frame.${roomRecognitionContract}`,
     },
     moment: {
       key: retryContract
@@ -194,7 +226,7 @@ export function resolveIdentityBackgroundContract(settingShot: ProductSettingSho
     },
     prop: {
       key: retryPropKey,
-      description: retryPropDescription,
+      description: `${retryPropDescription}.${roomRecognitionContract}`,
     },
   };
 }
@@ -242,6 +274,7 @@ export function buildBackgroundSemanticAuditPrompt(input: BackgroundSemanticAudi
     "Ordinary fixed architecture such as a wall, floor, window, door or built-in empty cabinet is not merchandise by itself. Do not flag a single window merely because it is rectangular.",
     `${contactAudit} A pre-rendered product-shaped shadow, reflection, silhouette, footprint or imprint also fails reservedZoneClear.`,
     "assignedEnvironmentPresent is true only when at least two visible physical cues support the trusted expected environment; do not infer it from color alone.",
+    "Every fixed room-recognition requirement and forbidden-look-alike clause in the trusted environment or cue definition is a hard constraint. If the required fixed cues are absent, or the candidate reads primarily as a look-alike explicitly named as forbidden by that trusted contract, set assignedEnvironmentPresent=false, assignedLocationSatisfied=false and assignedSupportingObjectsSatisfied=false even when its material, palette, light, surface or camera otherwise match. Never invent or globally apply a look-alike exclusion that the trusted contract did not name; an explicitly assigned non-food bathroom remains allowed.",
     `The trusted visual separation keys are location=${input.expectedEnvironmentKeys.location}, moment=${input.expectedEnvironmentKeys.moment}, surface=${input.expectedEnvironmentKeys.surface}, camera=${input.expectedEnvironmentKeys.camera}.`,
     `The trusted palette-family key is ${input.expectedEnvironmentKeys.palette}; the trusted spatial-depth key is ${input.expectedEnvironmentKeys.spatialDepth}.`,
     "Set each assigned*Satisfied dimension true only when the pixels visibly support that exact trusted dimension. A generic beige room, generic empty shelf, color-only hint, or prompt-compatible guess is not enough.",

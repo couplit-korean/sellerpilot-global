@@ -12,7 +12,11 @@ import {
   selectAssetReferenceIndexes,
 } from "../lib/ai-image-planning";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
-import { buildProductSettingShotPlan, settingShotAssetIds } from "../lib/product-setting-shots";
+import {
+  buildProductSettingShotPlan,
+  buildSettingShotRetryVariant,
+  settingShotAssetIds,
+} from "../lib/product-setting-shots";
 import {
   buildDuplicateRetryGuidance,
   findDuplicateShot,
@@ -288,6 +292,55 @@ test("statutory-package products use a background-only identity firewall", () =>
   assert.doesNotMatch(prompt, /투명 시리얼 볼과 접힌 흰 리넨/);
   assert.doesNotMatch(prompt, /롯데 과자/);
   assert.doesNotMatch(prompt, /Input references in order/);
+});
+
+test("food dining background prompts require built-in dining cues and ban bathroom or showroom ambiguity", () => {
+  const foodResult = {
+    ...result,
+    product: {
+      ...result.product,
+      category: "일반식품",
+      name: "롯샌 파스퇴르 순우유맛 315 g",
+      features: ["6봉 포장"],
+    },
+  };
+  const detailUse = aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-use");
+  assert.ok(detailUse);
+  const setting = resolveProductSettingShot(foodResult, "detail-use");
+  assert.ok(setting);
+  const retry = buildSettingShotRetryVariant(
+    buildProductSettingShotPlan("food-staples", foodResult.product.name)["detail-use"],
+    "detail-use",
+    2,
+  );
+  const prompt = buildAssetImagePrompt(
+    foodResult,
+    "/tmp/food-detail-use.png",
+    detailUse,
+    [],
+    "",
+    "identity-background",
+    retry,
+  );
+  assert.match(prompt, /at least two unmistakable fixed dining cues/);
+  assert.match(prompt, /built-in banquette back/);
+  assert.match(prompt, /floor-to-ceiling wet-room tile/);
+  assert.match(prompt, /retail showroom, abstract gallery, generic empty shelf/);
+  assert.match(prompt, /cobalt glazed tile/);
+
+  const generalSetting = resolveProductSettingShot(result, "detail-use");
+  assert.ok(generalSetting);
+  const generalPrompt = buildAssetImagePrompt(
+    result,
+    "/tmp/general-detail-use.png",
+    detailUse,
+    [],
+    "",
+    "identity-background",
+    generalSetting,
+  );
+  assert.doesNotMatch(generalPrompt, /fixed room-recognition contract/i);
+  assert.doesNotMatch(generalPrompt, /floor-to-ceiling wet-room tile/);
 });
 
 test("failed order and inquiry reads are stored as failed gateway jobs", () => {

@@ -9,7 +9,11 @@ import {
   resolveIdentityBackgroundContract,
 } from "../lib/ai-background-audit";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
-import { buildProductSettingShotPlan, settingShotAssetIds } from "../lib/product-setting-shots";
+import {
+  buildProductSettingShotPlan,
+  buildSettingShotRetryVariant,
+  settingShotAssetIds,
+} from "../lib/product-setting-shots";
 
 const backgroundContractDimensions = [
   "location",
@@ -162,6 +166,26 @@ test("setting background props are unique across all eight semantic audits", () 
   });
 });
 
+test("food dining backgrounds require fixed room evidence and reject wet-room or showroom lookalikes", () => {
+  const foodPlan = buildProductSettingShotPlan("food-staples", "롯샌 순우유맛 크림 샌드 과자");
+  const dining = foodPlan["detail-use"];
+  const retry = buildSettingShotRetryVariant(dining, "detail-use", 2);
+  for (const shot of [dining, retry]) {
+    const contract = resolveIdentityBackgroundContract(shot, "detail-use");
+    assert.match(contract.location.description, /at least two unmistakable fixed dining cues/);
+    assert.match(contract.location.description, /built-in banquette back/);
+    assert.match(contract.location.description, /dining window reveal or ceiling pendant mounting canopy/);
+    assert.match(contract.location.description, /bathroom, shower, washroom, vanity, spa, retail showroom/);
+    assert.match(contract.location.description, /floor-to-ceiling wet-room tile/);
+    assert.match(contract.prop.description, /fixed room-recognition contract/i);
+  }
+
+  const generalPlan = buildProductSettingShotPlan("general-commerce", "케이블 정리 홀더");
+  const generalContract = resolveIdentityBackgroundContract(generalPlan["detail-use"], "detail-use");
+  assert.doesNotMatch(generalContract.location.description, /fixed room-recognition contract/i);
+  assert.doesNotMatch(generalContract.prop.description, /bathroom, shower, washroom/);
+});
+
 test("background audit prompt treats the image as untrusted and distinguishes packaging from architecture", () => {
   const prompt = buildBackgroundSemanticAuditPrompt({
     assetId: "portrait",
@@ -185,6 +209,8 @@ test("background audit prompt treats the image as untrusted and distinguishes pa
   assert.match(prompt, /body-and-cap silhouette/);
   assert.match(prompt, /single window merely because it is rectangular/);
   assert.match(prompt, /at least two visible physical cues/);
+  assert.match(prompt, /forbidden-look-alike clause/);
+  assert.match(prompt, /set assignedEnvironmentPresent=false, assignedLocationSatisfied=false and assignedSupportingObjectsSatisfied=false/);
   assert.match(prompt, /observedNonMerchandiseProps/);
   assert.match(prompt, /trusted visual definition is: one fixed blue-painted window frame/);
   assert.match(prompt, /key is only an identifier/);
