@@ -16,6 +16,7 @@
 # next.js
 /.next/
 /.vinext/
+/next-env.d.ts
 /out/
 
 # misc
