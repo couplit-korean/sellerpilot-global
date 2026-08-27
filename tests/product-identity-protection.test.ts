@@ -431,6 +431,39 @@ test("identity background plates fail closed when the reserved product zone is v
   }).png().toBuffer();
   await assert.doesNotReject(assertIdentityBackgroundPlate(safe, portrait));
 
+  const opaqueRgba = await sharp({
+    create: {
+      width: portrait.width,
+      height: portrait.height,
+      channels: 4,
+      background: { r: 236, g: 232, b: 223, alpha: 1 },
+    },
+  }).png().toBuffer();
+  await assert.doesNotReject(assertIdentityBackgroundPlate(opaqueRgba, portrait));
+
+  for (const alpha of [0, 253 / 255]) {
+    const transparent = await sharp({
+      create: {
+        width: portrait.width,
+        height: portrait.height,
+        channels: 4,
+        background: { r: 236, g: 232, b: 223, alpha },
+      },
+    }).png().toBuffer();
+    await assert.rejects(assertIdentityBackgroundPlate(transparent, portrait), /완전히 불투명/);
+  }
+
+  const cornerPixels = await sharp(opaqueRgba).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  cornerPixels.data[3] = 254;
+  const transparentCorner = await sharp(cornerPixels.data, {
+    raw: {
+      width: cornerPixels.info.width,
+      height: cornerPixels.info.height,
+      channels: cornerPixels.info.channels,
+    },
+  }).png().toBuffer();
+  await assert.rejects(assertIdentityBackgroundPlate(transparentCorner, portrait), /완전히 불투명/);
+
   const pixels = Buffer.alloc(portrait.width * portrait.height * 3);
   for (let y = 0; y < portrait.height; y += 1) {
     for (let x = 0; x < portrait.width; x += 1) {

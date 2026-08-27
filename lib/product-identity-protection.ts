@@ -790,6 +790,10 @@ export async function assertIdentityBackgroundPlate(background: Buffer, spec: Id
     failOn: "warning",
     limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
   });
+  const backgroundStats = await source.clone().stats();
+  if (!backgroundStats.isOpaque) {
+    throw new Error(`${spec.id} 배경판은 모든 픽셀이 완전히 불투명해야 합니다.`);
+  }
   const fullFrame = await source.clone().resize(128, 128, { fit: "fill" }).removeAlpha().raw().toBuffer();
   const quantized = new Uint16Array(128 * 128);
   const binCounts = new Map<number, number>();

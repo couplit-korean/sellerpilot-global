@@ -50,7 +50,7 @@ test("master and localized phases use derived schemas, isolated invocation, and 
   assert.match(source, /stage: "studio-master"/);
   assert.match(source, /const repairSuffix = repairPass === 0 \? "" : repairPass === 1 \? "-repair" : "-repair-2"/);
   assert.match(source, /stage: `studio-localized\$\{repairSuffix\}:\$\{chunkIndex \+ 1\}`/);
-  assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 25 \* 60_000/);
+  assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 35 \* 60_000/);
   assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
 });
 
@@ -89,7 +89,7 @@ test("master generation uses a compact brief and one medium-to-low timeout fallb
   assert.doesNotMatch(source, /buildMarketplaceStyleLearningBrief\(/);
   assert.match(source, /reasoningEffort: "medium"/);
   assert.match(source, /timeoutRetryReasoningEffort: "low"/);
-  assert.match(source, /studioMasterTimeoutMs = Math\.min\(\s*25 \* 60_000,\s*Math\.max\(12 \* 60_000/);
+  assert.match(source, /studioMasterTimeoutMs = Math\.min\(\s*35 \* 60_000,\s*Math\.max\(12 \* 60_000/);
   assert.match(source, /createStudioMasterInvocationBudget\(\s*studioMasterTimeoutMs,\s*codexTerminationGraceMs/);
   assert.match(invocation, /maximumAttempts = masterInvocationBudget[\s\S]*masterInvocationBudget\.remainingLaunches/);
   assert.match(invocation, /attemptReasoningEffort = useTimeoutRetryReasoning[\s\S]*timeoutRetryReasoningEffort[\s\S]*reasoningEffort/);

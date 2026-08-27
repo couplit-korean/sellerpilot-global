@@ -189,8 +189,8 @@ const maxIdlePollMs = Math.max(pollMs, Number(process.env.SELLERPILOT_AI_WORKER_
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
 const studioMasterTimeoutMs = Math.min(
-  25 * 60_000,
-  Math.max(12 * 60_000, Number(process.env.SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS ?? 25 * 60_000)),
+  35 * 60_000,
+  Math.max(12 * 60_000, Number(process.env.SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS ?? 35 * 60_000)),
 );
 const studioLocalizedTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS ?? 12 * 60_000));
 const imageGenerationTimeoutMs = Math.max(15 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 20 * 60_000));
@@ -209,7 +209,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.48";
+const workerVersion = "sellerpilot-cli-worker/1.49";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;

@@ -107,8 +107,8 @@ export function planStudioMasterAttemptTimeouts(
 ): readonly number[] {
   const minimumTotalTimeoutMs = 12 * 60_000;
   const minimumAttemptTimeoutMs = 8 * 60_000;
-  const maximumPrimaryTimeoutMs = 14 * 60_000;
-  const maximumTotalTimeoutMs = 25 * 60_000;
+  const maximumPrimaryTimeoutMs = 20 * 60_000;
+  const maximumTotalTimeoutMs = 35 * 60_000;
   if (!Number.isSafeInteger(totalTimeoutMs)
       || totalTimeoutMs < minimumTotalTimeoutMs
       || totalTimeoutMs > maximumTotalTimeoutMs
@@ -152,7 +152,7 @@ export type StudioMasterInvocationBudget = Readonly<{
 /**
  * Owns the process-launch budget for one complete master artifact. Initial
  * generation and every possible role/semantic repair must share this instance,
- * otherwise each logical repair could silently start a fresh 25-minute window.
+ * otherwise each logical repair could silently start a fresh 35-minute window.
  */
 export function createStudioMasterInvocationBudget(
   totalTimeoutMs: number,
