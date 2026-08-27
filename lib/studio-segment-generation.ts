@@ -147,26 +147,55 @@ export type StudioMasterInvocationBudget = Readonly<{
   maximumLaunches: number;
   readonly remainingLaunches: number;
   take: () => StudioMasterInvocationAllocation;
+  excludeQueueWait: (allocation: StudioMasterInvocationAllocation, waitMs: number) => void;
+  settle: (allocation: StudioMasterInvocationAllocation) => void;
 }>;
 
 /**
- * Owns the process-launch budget for one complete master artifact. Initial
- * generation and every possible role/semantic repair must share this instance,
- * otherwise each logical repair could silently start a fresh 35-minute window.
+ * Owns the measured process-execution budget for one complete master artifact.
+ * Initial generation and every role/semantic repair share this instance. Fast
+ * successful runs return their unused time to later repairs, while repeated
+ * timeouts still cannot exceed the same bounded 35-minute execution window.
  */
 export function createStudioMasterInvocationBudget(
   totalTimeoutMs: number,
   terminationGraceMs = 5_000,
+  now = Date.now,
 ): StudioMasterInvocationBudget {
   const attemptTimeouts = planStudioMasterAttemptTimeouts(totalTimeoutMs, terminationGraceMs);
+  if (typeof now !== "function") {
+    throw new StudioSegmentContractError("invalid-plan", "Studio master budget clock is invalid.");
+  }
+  const maximumLaunches = 8;
+  const minimumUsefulTimeoutMs = 60_000;
+  const laterLaunchTimeoutCapMs = attemptTimeouts[1] ?? attemptTimeouts[0];
   let launchIndex = 0;
+  let consumedExecutionMs = 0;
+  const activeLaunches = new Map<number, number>();
   return Object.freeze({
-    maximumLaunches: attemptTimeouts.length,
+    maximumLaunches,
     get remainingLaunches() {
-      return attemptTimeouts.length - launchIndex;
+      return maximumLaunches - launchIndex;
     },
     take() {
-      if (launchIndex >= attemptTimeouts.length) {
+      if (activeLaunches.size > 0) {
+        throw new StudioSegmentContractError(
+          "invalid-plan",
+          "Studio master execution already has an active allocation.",
+        );
+      }
+      if (launchIndex >= maximumLaunches) {
+        throw new StudioSegmentContractError(
+          "budget-exhausted",
+          "Studio master execution budget is exhausted.",
+        );
+      }
+      const remainingExecutionMs = totalTimeoutMs
+        - consumedExecutionMs
+        - (terminationGraceMs * 2);
+      const timeoutCapMs = launchIndex === 0 ? attemptTimeouts[0] : laterLaunchTimeoutCapMs;
+      const timeoutMs = Math.min(timeoutCapMs, remainingExecutionMs);
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs < minimumUsefulTimeoutMs) {
         throw new StudioSegmentContractError(
           "budget-exhausted",
           "Studio master execution budget is exhausted.",
@@ -174,10 +203,33 @@ export function createStudioMasterInvocationBudget(
       }
       const allocation = Object.freeze({
         launch: launchIndex + 1,
-        timeoutMs: attemptTimeouts[launchIndex],
+        timeoutMs,
       });
       launchIndex += 1;
+      activeLaunches.set(allocation.launch, now());
       return allocation;
+    },
+    excludeQueueWait(allocation, waitMs) {
+      const startedAt = activeLaunches.get(allocation.launch);
+      if (startedAt === undefined || !Number.isSafeInteger(waitMs) || waitMs < 0) {
+        throw new StudioSegmentContractError(
+          "invalid-plan",
+          "Studio master queue wait allocation is invalid.",
+        );
+      }
+      activeLaunches.set(allocation.launch, startedAt + waitMs);
+    },
+    settle(allocation) {
+      const startedAt = activeLaunches.get(allocation.launch);
+      if (startedAt === undefined) {
+        throw new StudioSegmentContractError(
+          "invalid-plan",
+          "Studio master execution allocation is not active.",
+        );
+      }
+      const finishedAt = now();
+      consumedExecutionMs += Math.max(0, finishedAt - startedAt);
+      activeLaunches.delete(allocation.launch);
     },
   });
 }

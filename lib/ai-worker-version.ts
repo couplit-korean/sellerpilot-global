@@ -1,4 +1,4 @@
-const minimumResultUploadWorker = Object.freeze({ major: 1, minor: 49 });
+const minimumResultUploadWorker = Object.freeze({ major: 1, minor: 50 });
 
 export const minimumResultUploadWorkerVersion =
   `sellerpilot-cli-worker/${minimumResultUploadWorker.major}.${minimumResultUploadWorker.minor}` as const;

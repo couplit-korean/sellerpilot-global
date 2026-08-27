@@ -182,14 +182,41 @@ test("master timeout planning stays within one wall-clock budget and at most two
 });
 
 test("one master invocation budget is shared by initial generation and every repair", () => {
-  const budget = createStudioMasterInvocationBudget(35 * 60_000, 5_000);
+  let nowMs = 0;
+  const budget = createStudioMasterInvocationBudget(35 * 60_000, 5_000, () => nowMs);
 
-  assert.equal(budget.maximumLaunches, 2);
-  assert.equal(budget.remainingLaunches, 2);
-  assert.deepEqual(budget.take(), { launch: 1, timeoutMs: 20 * 60_000 });
-  assert.equal(budget.remainingLaunches, 1);
-  assert.deepEqual(budget.take(), { launch: 2, timeoutMs: (14 * 60_000) + 45_000 });
-  assert.equal(budget.remainingLaunches, 0);
+  assert.equal(budget.maximumLaunches, 8);
+  assert.equal(budget.remainingLaunches, 8);
+  const initial = budget.take();
+  assert.deepEqual(initial, { launch: 1, timeoutMs: 20 * 60_000 });
+  assert.equal(budget.remainingLaunches, 7);
+  assert.throws(() => budget.take(), /active allocation/);
+  nowMs += 2 * 60_000;
+  budget.excludeQueueWait(initial, 2 * 60_000);
+  nowMs += 3 * 60_000;
+  budget.settle(initial);
+
+  const semanticRepair = budget.take();
+  assert.deepEqual(semanticRepair, { launch: 2, timeoutMs: (14 * 60_000) + 45_000 });
+  nowMs += 3 * 60_000;
+  budget.settle(semanticRepair);
+  const residualRepair = budget.take();
+  assert.deepEqual(residualRepair, { launch: 3, timeoutMs: (14 * 60_000) + 45_000 });
+  nowMs += 2 * 60_000;
+  budget.settle(residualRepair);
+  assert.equal(budget.remainingLaunches, 5);
+});
+
+test("master invocation budget fails closed after full timeout allocations", () => {
+  let nowMs = 0;
+  const budget = createStudioMasterInvocationBudget(35 * 60_000, 5_000, () => nowMs);
+  const primary = budget.take();
+  nowMs += primary.timeoutMs + 5_000;
+  budget.settle(primary);
+  const fallback = budget.take();
+  assert.equal(fallback.timeoutMs, (14 * 60_000) + 45_000);
+  nowMs += fallback.timeoutMs;
+  budget.settle(fallback);
   assert.throws(
     () => budget.take(),
     (error) => error instanceof StudioSegmentContractError && error.code === "budget-exhausted",

@@ -96,6 +96,8 @@ test("master generation uses a compact brief and one medium-to-low timeout fallb
   assert.match(invocation, /model_reasoning_effort="\$\{attemptReasoningEffort\}"/);
   assert.match(invocation, /error\.message === "Codex CLI 실행 제한시간을 초과했습니다\."/);
   assert.match(invocation, /attempt < maximumAttempts/);
+  assert.match(invocation, /onDequeued: \(queueWaitMs\) => masterInvocationBudget\?\.excludeQueueWait\(allocation, queueWaitMs\)/);
+  assert.match(invocation, /try \{[\s\S]*await runCodex\([\s\S]*finally \{[\s\S]*masterInvocationBudget\.settle\(allocation\)/);
   assert.doesNotMatch(invocation, /retryRunError:[\s\S]*JobCancelledError/);
   assert.ok((earlyMaster.match(/masterInvocationBudget,/g) ?? []).length >= 2);
   assert.equal((source.match(/\.\.\.studioMasterInvocationPolicy,\s*masterInvocationBudget,/g) ?? []).length, 4);

@@ -209,7 +209,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.49";
+const workerVersion = "sellerpilot-cli-worker/1.50";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -686,10 +686,12 @@ async function runCodex(args, timeoutMs, jobId, claimToken, {
   leaseSignal,
   stage = "worker",
   heartbeatOwnedExternally = false,
+  onDequeued,
 } = {}) {
   const queuedAt = Date.now();
   return codexExecutionGate.run(async () => {
     const queueWaitMs = Date.now() - queuedAt;
+    onDequeued?.(queueWaitMs);
     if (jobId) await touchJob(jobId, claimToken);
     if (leaseSignal?.aborted) {
       throw leaseSignal.reason instanceof Error ? leaseSignal.reason : new JobCancelledError();
@@ -2953,9 +2955,11 @@ async function invokeStudioSegment({
       || !["low", "medium"].includes(timeoutRetryReasoningEffort)
       || (!masterInvocationBudget && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
       || (masterInvocationBudget && (typeof masterInvocationBudget.take !== "function"
+        || typeof masterInvocationBudget.excludeQueueWait !== "function"
+        || typeof masterInvocationBudget.settle !== "function"
         || !Number.isSafeInteger(masterInvocationBudget.remainingLaunches)
         || masterInvocationBudget.remainingLaunches < 0
-        || masterInvocationBudget.remainingLaunches > 2))
+        || masterInvocationBudget.remainingLaunches > 8))
       || !Number.isSafeInteger(artifactAttempts)
       || artifactAttempts < 1
       || artifactAttempts > 2) {
@@ -2998,7 +3002,7 @@ async function invokeStudioSegment({
         return shouldRetry;
       }
       : undefined,
-    runAttempt: ({ candidatePath, attempt }) => {
+    runAttempt: async ({ candidatePath, attempt }) => {
       const allocation = masterInvocationBudget?.take();
       const attemptTimeoutMs = allocation?.timeoutMs ?? timeoutMs;
       const attemptReasoningEffort = useTimeoutRetryReasoning
@@ -3007,17 +3011,22 @@ async function invokeStudioSegment({
       if (useTimeoutRetryReasoning) {
         console.warn(`[Studio 제한시간 재시도] ${jobId} · ${stage} · launch=${allocation?.launch ?? attempt}`);
       }
-      return runCodex([
-        ...argsBeforeOutput,
-        "--config", `model_reasoning_effort="${attemptReasoningEffort}"`,
-        ...argsAfterReasoning,
-        "--output-last-message", candidatePath,
-        ...argsAfterOutput,
-      ], attemptTimeoutMs, jobId, claimToken, {
-        leaseSignal,
-        stage,
-        heartbeatOwnedExternally: true,
-      });
+      try {
+        return await runCodex([
+          ...argsBeforeOutput,
+          "--config", `model_reasoning_effort="${attemptReasoningEffort}"`,
+          ...argsAfterReasoning,
+          "--output-last-message", candidatePath,
+          ...argsAfterOutput,
+        ], attemptTimeoutMs, jobId, claimToken, {
+          leaseSignal,
+          stage,
+          heartbeatOwnedExternally: true,
+          onDequeued: (queueWaitMs) => masterInvocationBudget?.excludeQueueWait(allocation, queueWaitMs),
+        });
+      } finally {
+        if (allocation) masterInvocationBudget.settle(allocation);
+      }
     },
   });
   return artifact.value;
