@@ -76,6 +76,7 @@ import { AcceptanceChecklistPage } from "./acceptance-checklist";
 import { ChannelConnectionsPage } from "./channel-connections";
 import { CategoryClassificationWorkbench } from "./category-classification-workbench";
 import { ProductPublishWorkbench } from "./product-publish-workbench";
+import { resolveHydratedProductEditDraft } from "./product-edit-draft-fence";
 import { ProductRevisionImagePicker } from "./product-revision-image-picker";
 import {
   parseProductDetailPageEnvelope,
@@ -1045,6 +1046,8 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
   const detailRegenerationControllerRef = useRef<AbortController | null>(null);
   const revisionSubmissionControllerRef = useRef<AbortController | null>(null);
   const revisionCompletionAnnouncedRef = useRef(new Set<string>());
+  const editDialogOpenRef = useRef(false);
+  const editDraftDirtyRef = useRef(false);
   const productDetailLifecycleControllerRef = useRef<AbortController | null>(null);
   const getProductDetailSignal = useCallback(() => {
     const signal = productDetailLifecycleControllerRef.current?.signal;
@@ -1066,6 +1069,11 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
       }
     };
   }, [product.sourceId]);
+
+  useEffect(() => {
+    editDialogOpenRef.current = editOpen;
+    if (!editOpen) editDraftDirtyRef.current = false;
+  }, [editOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1193,17 +1201,22 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
         const nextCommerceOperations = isRecord(payload.commerceOperations)
           ? payload.commerceOperations as unknown as ProductCommerceOperations
           : emptyProductCommerceOperations;
+        const manualFields = isRecord(payload.manualFields) ? payload.manualFields : {};
         if (!cancelled) {
           setRemoteListings(listings);
           setDetailContext({
-            manualFields: isRecord(payload.manualFields) ? payload.manualFields : {},
+            manualFields,
             sourceImages: parseAssets(payload.sourceImages),
             generatedImages: parseAssets(payload.generatedImages),
             localizedListings,
           });
           setSavedDetailPage(parseProductDetailPageEnvelope(payload.detailPage));
           setDetailPageSource(parseProductDetailSource(payload.studioResult));
-          setEditDraft(productEditDraft(product, isRecord(payload.manualFields) ? payload.manualFields : {}));
+          const incomingEditDraft = productEditDraft(product, manualFields);
+          setEditDraft((current) => resolveHydratedProductEditDraft(current, incomingEditDraft, {
+            dialogOpen: editDialogOpenRef.current,
+            dirty: editDraftDirtyRef.current,
+          }));
           setCommerceOperations({ ...emptyProductCommerceOperations, ...nextCommerceOperations, listings: Array.isArray(nextCommerceOperations.listings) ? nextCommerceOperations.listings : [], competitorPrices: Array.isArray(nextCommerceOperations.competitorPrices) ? nextCommerceOperations.competitorPrices : [] });
           setSupplierName(nextCommerceOperations.supplierName ?? "");
           setComparisonMemo(nextCommerceOperations.comparisonMemo ?? "");
@@ -1229,6 +1242,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
   }, [authenticatedFetch, getProductDetailSignal, product]);
 
   const setEditField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
+    editDraftDirtyRef.current = true;
     setEditDraft((current) => current ? { ...current, [key]: value } : current);
     setEditErrors((current) => {
       if (!current[key]) return current;
@@ -1712,7 +1726,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
     <div className="page-stack product-detail-page">
       <div className="product-detail-actions">
         <button type="button" className="product-detail-back" onClick={onBack}><ArrowLeft size={16} />상품 목록으로</button>
-        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="credential-secondary" onClick={onEditChannels}><RefreshCw size={15} />채널 상품 수정</button><button type="button" className="publish-execute" disabled={productRevision?.status === "pending" || productRevision?.status === "confirmation_required"} onClick={() => { setEditErrors({}); setRevisionPhotos([]); setEditDraft((current) => current ?? productEditDraft(product, detailContext.manualFields)); setEditOpen(true); }}>{productRevision?.status === "pending" ? <LoaderCircle className="spin" size={15} /> : <PencilRuler size={15} />}{productRevision?.status === "pending" ? "사진 수정 진행 중" : productRevision?.status === "confirmation_required" ? "접수 확인 필요" : "상품 전체 수정"}</button></div>
+        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="credential-secondary" onClick={onEditChannels}><RefreshCw size={15} />채널 상품 수정</button><button type="button" className="publish-execute" title={remoteListingState === "unavailable" ? "상품 정보를 다시 불러온 뒤 수정할 수 있습니다." : undefined} disabled={remoteListingState !== "ready" || productRevision?.status === "pending" || productRevision?.status === "confirmation_required"} onClick={() => { if (remoteListingState !== "ready") return; editDialogOpenRef.current = true; editDraftDirtyRef.current = false; setEditErrors({}); setRevisionPhotos([]); setEditDraft(productEditDraft(product, detailContext.manualFields)); setEditOpen(true); }}>{remoteListingState === "loading" || productRevision?.status === "pending" ? <LoaderCircle className="spin" size={15} /> : remoteListingState === "unavailable" ? <AlertCircle size={15} /> : <PencilRuler size={15} />}{remoteListingState === "loading" ? "수정 정보 불러오는 중" : remoteListingState === "unavailable" ? "수정 정보 확인 필요" : productRevision?.status === "pending" ? "사진 수정 진행 중" : productRevision?.status === "confirmation_required" ? "접수 확인 필요" : "상품 전체 수정"}</button></div>
       </div>
 
       {productRevision ? <section className={`product-revision-status ${productRevision.status}`} role="status">
@@ -1801,7 +1815,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
 
       {remoteListingState === "ready" ? <SavedProductDetailPage key={product.sourceId} productId={product.sourceId} source={detailPageSource} initialDetailPage={savedDetailPage} assetUrls={savedDetailAssetUrls} authenticatedFetch={authenticatedFetch} notify={notify} /> : null}
 
-      {editOpen && editDraft && <ProductDetailEditDialog draft={editDraft} errors={editErrors} saving={editSaving} revisionPhotoCount={revisionPhotos.length} onRevisionPhotosChange={setRevisionPhotos} onPhotoError={(message) => { setEditErrors((current) => ({ ...current, form: message })); notify(message); }} onChange={setEditField} onClose={() => { if (!editSaving) { setEditOpen(false); setRevisionPhotos([]); } }} onSave={() => void saveProductDetails()} />}
+      {editOpen && editDraft && <ProductDetailEditDialog draft={editDraft} errors={editErrors} saving={editSaving} revisionPhotoCount={revisionPhotos.length} onRevisionPhotosChange={setRevisionPhotos} onPhotoError={(message) => { setEditErrors((current) => ({ ...current, form: message })); notify(message); }} onChange={setEditField} onClose={() => { if (!editSaving) { editDialogOpenRef.current = false; editDraftDirtyRef.current = false; setEditOpen(false); setRevisionPhotos([]); } }} onSave={() => void saveProductDetails()} />}
 
     </div>
   );

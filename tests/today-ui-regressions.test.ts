@@ -17,6 +17,7 @@ import {
 } from "../app/_registration/registration-status";
 import { appendToast, toastDurationMs, toastToneForMessage } from "../app/_notifications/use-toast-queue";
 import { operationEventNotifications, operationEventState, type OperationEventSnapshot } from "../app/_notifications/operation-event-notifications";
+import { resolveHydratedProductEditDraft } from "../app/product-edit-draft-fence";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
 import { productEditSchema } from "../lib/product-intake";
 import { withPromiseTimeout } from "../lib/promise-timeout";
@@ -250,6 +251,19 @@ test("toast queue preserves separate events for two seconds instead of replacing
   assert.equal(toastToneForMessage("채널 등록 오류"), "error");
   assert.equal(toastToneForMessage("외부 권한 확인 필요"), "warning");
   assert.equal(toastToneForMessage("새 주문: Qoo10 123"), "info");
+  assert.equal(toastToneForMessage("상품 A: AI 분석 중"), "info");
+  assert.equal(toastToneForMessage("상품 B: 채널 등록 중"), "info");
+  assert.equal(toastToneForMessage("상품 C: 채널 등록 준비"), "success");
+  assert.equal(toastToneForMessage("3개 중 3개 등록 완료"), "success");
+  assert.equal(toastToneForMessage("상품 처리 중단"), "warning");
+});
+
+test("late product detail hydration never replaces an open or dirty edit draft", () => {
+  const typedDraft = { productName: "사용자가 입력한 이름" };
+  const serverDraft = { productName: "늦게 도착한 서버 이름" };
+  assert.strictEqual(resolveHydratedProductEditDraft(typedDraft, serverDraft, { dialogOpen: true, dirty: false }), typedDraft);
+  assert.strictEqual(resolveHydratedProductEditDraft(typedDraft, serverDraft, { dialogOpen: false, dirty: true }), typedDraft);
+  assert.strictEqual(resolveHydratedProductEditDraft(typedDraft, serverDraft, { dialogOpen: false, dirty: false }), serverDraft);
 });
 
 test("order, delivery, CS, and synchronization events all enter the notification queue", () => {
@@ -343,6 +357,9 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /stock: current\.stock,[\s\S]{0,180}weightKg: current\.weightKg/);
   assert.match(page, /텍스트·가격·재고뿐 아니라 원본·대표·역할별 사진을 교체/);
   assert.match(page, /외부 채널에는 자동 게시하지 않습니다/);
+  assert.match(page, /disabled=\{remoteListingState !== "ready" \|\| productRevision\?\.status === "pending"/);
+  assert.match(page, /resolveHydratedProductEditDraft\(current, incomingEditDraft/);
+  assert.match(page, /editDraftDirtyRef\.current = true;[\s\S]{0,120}setEditDraft/);
   assert.match(publishWorkbench, /<select required value=\{context\.manualFields\.packageContents\}/);
   assert.doesNotMatch(publishWorkbench, /판매 구성품[^\n]*<input/);
   assert.match(commerceStyles, /\.registration-filter-strip\s*\{[^}]*grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)/);
