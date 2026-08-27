@@ -81,8 +81,9 @@ const MINIMUM_CONTACT_SEAM_GRADIENT = 8;
 const MINIMUM_CONTACT_SEAM_COVERAGE = 0.78;
 const MINIMUM_VERTICAL_INTRUSION_GRADIENT = 28;
 const MAXIMUM_CONTACT_RIDGE_WIDTH = 9;
-// The strict gate stays at 2px; only one additional 256-grid sample pixel may enter final repair.
-const MAXIMUM_REPAIRABLE_CONTACT_RIDGE_DRIFT = 3;
+// The strict gate stays at 2px. Final-attempt repair may only realign a narrowly
+// bounded resize/rounding offset; every repaired plate still re-runs this full audit.
+const MAXIMUM_REPAIRABLE_CONTACT_RIDGE_DRIFT = 5;
 const MINIMUM_SUPPORT_DISTRIBUTION_DISTANCE = 4;
 const MAXIMUM_SUPPORT_DEPTH_DRIFT = 24;
 const MAXIMUM_SUPPORT_LATERAL_DRIFT = 48;

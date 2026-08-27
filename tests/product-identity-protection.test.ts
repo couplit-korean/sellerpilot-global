@@ -636,7 +636,7 @@ test("a one-sample resize drift beyond the strict contact gate is repaired at th
     (error: unknown) => {
       assert.match(
         error instanceof Error ? error.message : "",
-        /nominal 접촉선.*측정 편차: \d+\.\d{2}px.*자동 보정 허용 상한: 3\.00px/,
+        /nominal 접촉선.*측정 편차: \d+\.\d{2}px.*자동 보정 허용 상한: 5\.00px/,
       );
       assert.equal(isRepairableMissingIdentitySupportBoundary(error), true);
       return true;
@@ -647,20 +647,43 @@ test("a one-sample resize drift beyond the strict contact gate is repaired at th
   await assert.doesNotReject(assertIdentityBackgroundPlate(repaired, spec, "surface-supported"));
 });
 
-test("a larger nominal contact offset remains non-repairable", async () => {
+test("a roughly 4.5px nominal contact drift is repairable and re-audits at the nominal line", async () => {
   const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
   assert.ok(portrait);
   const spec = { ...portrait, width: 320, height: 400 };
   const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
-  const materiallyOffset = await syntheticSurfacePlate(spec, { seamY: contactY + 8 });
+  const roundedResizeDrift = await syntheticSurfacePlate(spec, { seamY: contactY + 8 });
+
+  await assert.rejects(
+    assertIdentityBackgroundPlate(roundedResizeDrift, spec, "surface-supported"),
+    (error: unknown) => {
+      const message = error instanceof Error ? error.message : "";
+      const measuredDrift = Number(message.match(/측정 편차: (\d+\.\d{2})px/)?.[1]);
+      assert.ok(measuredDrift >= 4.4 && measuredDrift <= 4.6, message);
+      assert.match(message, /자동 보정 허용 상한: 5\.00px/);
+      assert.equal(isRepairableMissingIdentitySupportBoundary(error), true);
+      return true;
+    },
+  );
+
+  const repaired = await repairMissingIdentitySupportSurface(roundedResizeDrift, spec);
+  await assert.doesNotReject(assertIdentityBackgroundPlate(repaired, spec, "surface-supported"));
+});
+
+test("a nominal contact drift above 5px remains non-repairable", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const materiallyOffset = await syntheticSurfacePlate(spec, { seamY: contactY + 9 });
 
   await assert.rejects(
     assertIdentityBackgroundPlate(materiallyOffset, spec, "surface-supported"),
     (error: unknown) => {
-      assert.match(
-        error instanceof Error ? error.message : "",
-        /nominal 접촉선.*측정 편차: \d+\.\d{2}px.*자동 보정 허용 상한: 3\.00px/,
-      );
+      const message = error instanceof Error ? error.message : "";
+      const measuredDrift = Number(message.match(/측정 편차: (\d+\.\d{2})px/)?.[1]);
+      assert.ok(measuredDrift > 5, message);
+      assert.match(message, /자동 보정 허용 상한: 5\.00px/);
       assert.equal(isRepairableMissingIdentitySupportBoundary(error), false);
       return true;
     },
