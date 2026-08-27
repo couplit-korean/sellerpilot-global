@@ -522,11 +522,11 @@ const accessoryTerms = {
   accessory: ["accessory", "accessories", "adapter", "charger", "charging cable", "strap", "holder", "stand", "액세서리", "어댑터", "충전기", "케이블", "스트랩", "거치대", "アクセサリー", "アダプター", "充電器", "ケーブル", "ストラップ", "配件", "轉接器", "充電器", "数据线", "支架", "อุปกรณ์เสริม", "ที่ชาร์จ", "สายชาร์จ", "ขาตั้ง", "phụ kiện", "bộ sạc", "cáp sạc", "giá đỡ", "aksesori", "adaptor", "pengecas", "kabel", "dudukan", "accesorio", "adaptador", "cargador", "soporte", "acessório", "carregador", "suporte"],
   refill_sample: ["refill", "sample", "tester", "empty bottle", "리필", "샘플", "테스터", "빈용기", "詰め替え", "リフィル", "サンプル", "补充装", "補充裝", "小样", "小樣", "รีฟิล", "ตัวอย่าง", "isi ulang", "sampel", "recarga", "muestra", "refil", "amostra"],
   collectible_card: [
-    "card", "cards", "tcg", "promo", "collectible", "collectibles", "trading card", "promo card", "promotional card", "collectible card", "pokemon card", "photo card", "photocard", "card single",
+    "tcg", "trading card", "promo card", "promotional card", "collectible card", "pokemon card", "photo card", "photocard", "card single",
     "트레이딩 카드", "프로모 카드", "프로모션 카드", "수집 카드", "포켓몬 카드", "포토 카드", "포토카드",
-    "카드", "프로모", "수집품", "トレカ", "プロモ", "コレクション", "トレーディングカード", "プロモカード", "コレクションカード", "ポケモンカード", "フォトカード",
-    "卡片", "卡牌", "促销", "促銷", "收藏", "交易卡", "促销卡", "促銷卡", "收藏卡", "宝可梦卡", "寶可夢卡", "小卡",
-    "การ์ดสะสม", "โปเกมอนการ์ด", "thẻ bài", "thẻ sưu tập", "kartu koleksi", "kartu pokemon",
+    "トレカ", "トレーディングカード", "プロモカード", "コレクションカード", "ポケモンカード", "フォトカード",
+    "交易卡", "促销卡", "促銷卡", "收藏卡", "宝可梦卡", "寶可夢卡", "小卡",
+    "การ์ดสะสม", "โปเกมอนการ์ด", "thẻ sưu tập", "kartu koleksi", "kartu pokemon",
     "tarjeta coleccionable", "carta promocional", "cartão colecionável", "cartão promocional",
   ],
 } as const;
@@ -589,6 +589,32 @@ function accessoryCategories(value: string) {
   const packagingCase = /(?:^|\s)(?:cases?\s+of\s+\d{1,4}|\d{1,4}\s*-?\s*cases?)(?:\s|$)/iu.test(normalized);
   if (packagingCase) categories.delete("protective_case");
   return categories;
+}
+
+function collectorFamilyEvidence(value: string) {
+  const normalized = normalizedSearchText(value);
+  const compact = compactSearchText(value);
+  return /(?:^|\s)(?:pokemon|pikachu|charizard|vmax|vstar|yu-gi-oh|yugioh)(?:\s|$)/iu.test(normalized)
+    || /포켓몬|피카츄|리자몽|ポケモン|ピカチュウ|喷火龙|噴火龍/u.test(compact);
+}
+
+function genericCardWord(value: string) {
+  const normalized = normalizedSearchText(value);
+  const compact = compactSearchText(value);
+  return /(?:^|\s)cards?(?:\s|$)/iu.test(normalized)
+    || /카드|カード|卡片|卡牌/u.test(compact);
+}
+
+function collectibleListingSignature(value: string) {
+  const normalized = normalizedSearchText(value);
+  const compact = compactSearchText(value);
+  const explicitCard = accessoryCategories(value).has("collectible_card");
+  if (explicitCard) return true;
+  const promotional = /(?:^|\s)(?:promo|promotional)(?:\s|$)/iu.test(normalized)
+    || compact.includes("プロモ") || compact.includes("프로모");
+  const collectible = /(?:^|\s)collectibles?(?:\s|$)/iu.test(normalized)
+    || compact.includes("コレクション") || compact.includes("수집품") || compact.includes("收藏");
+  return (promotional || collectible) && collectorFamilyEvidence(value);
 }
 
 function productVariantCategories(value: string) {
@@ -759,8 +785,18 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
 
   const primaryQuery = normalizedQueries[0] ?? "";
   const allowedAccessories = accessoryCategories(primaryQuery);
+  const explicitCollectibleQueryIntent = normalizedQueries.some((query) => (
+    accessoryCategories(query).has("collectible_card")
+    || (collectorFamilyEvidence(query) && genericCardWord(query))
+  ));
+  const querySharesCollectorFamily = normalizedQueries.some(collectorFamilyEvidence);
+  if (explicitCollectibleQueryIntent) allowedAccessories.add("collectible_card");
   const candidateAccessories = accessoryCategories(candidate.title);
   if ([...candidateAccessories].some((category) => !allowedAccessories.has(category))) return 0;
+  const candidateCollectibleSignature = collectibleListingSignature(candidate.title);
+  if (candidateCollectibleSignature
+      && !candidateAccessories.has("collectible_card")
+      && !querySharesCollectorFamily) return 0;
   const requiredVariants = variantRequirements(normalizedQueries);
   const allowedVariants = new Set([...productVariantCategories(primaryQuery), ...requiredVariants]);
   const candidateVariants = productVariantCategories(candidate.title);
@@ -771,7 +807,8 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
     const tokenVariants = productVariantCategories(token);
     if (tokenVariants.size > 0 && [...tokenVariants].every((category) => candidateVariants.has(category))) return true;
     const tokenAccessories = accessoryCategories(token);
-    return tokenAccessories.size > 0 && [...tokenAccessories].every((category) => candidateAccessories.has(category));
+    if (tokenAccessories.size > 0 && [...tokenAccessories].every((category) => candidateAccessories.has(category))) return true;
+    return genericCardWord(token) && explicitCollectibleQueryIntent && candidateCollectibleSignature;
   };
 
   let best = 0;

@@ -406,12 +406,36 @@ test("competitor relevance fails closed on GTIN, exact model, accessory, edition
   assert.equal(competitorCandidateRelevance(candidate({
     title: "Pokemon Pikachu VMAX 142/S-P Kellogg's Chex Choco Korean Collectible Sealed",
   }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu VMAX 142/S-P Kellogg's Chex Choco Korean Promo Card Sealed",
+  }), ["Kellogg Chex Choco Promo Pack"]), 0);
+  assert.ok(competitorCandidateRelevance(candidate({
+    title: "Kellogg Chex Choco Promo Pack",
+  }), ["Kellogg Chex Choco Promo Pack"]) > 0);
   assert.ok(competitorCandidateRelevance(candidate({
     title: "Pokemon Pikachu VMAX Korean Promo Card Sealed",
   }), ["Pokemon Pikachu VMAX Korean Promo Card"]) > 0);
   assert.ok(competitorCandidateRelevance(candidate({
     title: "Pokemon Pikachu VMAX TCG Sealed",
   }), ["Pokemon Pikachu VMAX card"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu VMAX 142/S-P Korean Promo Card Sealed",
+  }), ["Pokemon Pikachu VMAX 142/S-P", "Pokemon Pikachu VMAX 142/S-P Promo Card"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({
+    title: "SanDisk Ultra 128GB microSDXC Memory Card",
+  }), ["SanDisk Ultra microSDXC 128GB"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({
+    title: "Mattel UNO Classic Card Game",
+  }), ["Mattel UNO Classic Game"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu Collectible Figure",
+  }), ["Pokemon Pikachu Collectible Figure"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu Promotional Plush",
+  }), ["Pokemon Pikachu Promotional Plush"]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({
+    title: "Kellogg Chex Choco Pokemon Promo Pack",
+  }), ["Kellogg Chex Choco Pokemon Promo Pack"]) > 0);
   assert.ok(competitorCandidateRelevance(candidate({ title: "Coca Cola Zero 355ml 24 cans" }), ["Coca Cola Zero 355ml 24 cans"]) > 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Coca Cola Zero Cherry 355ml 24 cans" }), ["Coca Cola Zero 355ml 24 cans"]), 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Coca Cola Limited Edition 355ml" }), ["Coca Cola Cherry Limited Edition 355ml"]), 0);
