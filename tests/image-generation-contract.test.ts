@@ -787,6 +787,9 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /openedStats\.dev !== outputStats\.dev[\s\S]*openedStats\.ino !== outputStats\.ino/);
   assert.match(worker, /sourceHandle\.readFile\(\)/);
   assert.match(worker, /assertIdentityBackgroundPlate\(generated, generationPreset, backgroundContactMode\)/);
+  assert.match(worker, /attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS[\s\S]*preset\.id === "portrait"[\s\S]*isRepairableMissingIdentitySupportBoundary\(error\)/);
+  assert.match(worker, /repairMissingIdentitySupportSurface\(generated, generationPreset\)[\s\S]*assertIdentityBackgroundPlate\(generated, generationPreset, backgroundContactMode\)/);
+  assert.match(worker, /await writeFile\(outputFile, generated\)[\s\S]*executeSourceProductCutout\("background"/);
   assert.match(worker, /executeSourceProductCutout\("background"/);
   assert.match(worker, /auditGeneratedIdentityBackground\(\{/);
   assert.match(worker, /contactMode: backgroundContactMode/);

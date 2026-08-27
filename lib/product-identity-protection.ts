@@ -88,11 +88,18 @@ const MAXIMUM_SUPPORT_LATERAL_DRIFT = 48;
 class IdentityBackgroundReservedZoneError extends Error {
   readonly failedDimensions = ["reserved-zone"];
   readonly retryAuditFeedback = { failedDimensions: ["reserved-zone"] };
+  readonly repairableMissingSupportBoundary: boolean;
 
-  constructor(spec: IdentityAssetSpec, reason: string) {
+  constructor(spec: IdentityAssetSpec, reason: string, repairableMissingSupportBoundary = false) {
     super(`${spec.id} 배경판의 상품 배치 구역이 접촉면 기하 검사를 통과하지 못했습니다(reserved-zone): ${reason}`);
     this.name = "IdentityBackgroundReservedZoneError";
+    this.repairableMissingSupportBoundary = repairableMissingSupportBoundary;
   }
+}
+
+export function isRepairableMissingIdentitySupportBoundary(error: unknown): boolean {
+  return error instanceof IdentityBackgroundReservedZoneError
+    && error.repairableMissingSupportBoundary;
 }
 
 type LuminanceRegionSignature = {
@@ -199,7 +206,11 @@ async function assertSurfaceSupportedReservedZoneGeometry(
   const bestRow = rankedRowScores[0];
   const minimumCoveredColumns = Math.ceil(columnCount * MINIMUM_CONTACT_SEAM_COVERAGE);
   if (!bestRow || bestRow.coverage < minimumCoveredColumns) {
-    throw new IdentityBackgroundReservedZoneError(spec, "접촉 허용 밴드 전체를 가로지르는 수평 지지면 경계가 없습니다.");
+    throw new IdentityBackgroundReservedZoneError(
+      spec,
+      "접촉 허용 밴드 전체를 가로지르는 수평 지지면 경계가 없습니다.",
+      true,
+    );
   }
   const bestIndex = orderedRowScores.findIndex((candidate) => candidate.y === bestRow.y);
   const ridgeCoverageFloor = Math.ceil(columnCount * 0.6);
@@ -321,6 +332,142 @@ async function assertSurfaceSupportedReservedZoneGeometry(
       }
     }
   }
+}
+
+function averageRgbRegion(
+  pixels: Buffer,
+  width: number,
+  xStart: number,
+  xEnd: number,
+  yStart: number,
+  yEnd: number,
+): [number, number, number] {
+  const sums = [0, 0, 0];
+  let count = 0;
+  for (let y = yStart; y < yEnd; y += 1) {
+    for (let x = xStart; x < xEnd; x += 1) {
+      const offset = (y * width + x) * 3;
+      sums[0] += pixels[offset];
+      sums[1] += pixels[offset + 1];
+      sums[2] += pixels[offset + 2];
+      count += 1;
+    }
+  }
+  if (count < 1) throw new Error("지지면 보정에 사용할 배경 색상 표본이 없습니다.");
+  return sums.map((sum) => sum / count) as [number, number, number];
+}
+
+function rgbLuminance(color: readonly number[]) {
+  return color[0] * 0.2126 + color[1] * 0.7152 + color[2] * 0.0722;
+}
+
+function clampColor(value: number) {
+  return Math.max(12, Math.min(243, Math.round(value)));
+}
+
+/**
+ * Deterministically reconstructs only the quiet product backing and the narrow
+ * lower support plane. The surrounding candidate architecture remains intact,
+ * so fallback plates retain their generated location, light, camera and cues.
+ * Callers must run the unchanged pixel and semantic audits on the returned PNG.
+ */
+export async function repairMissingIdentitySupportSurface(
+  background: Buffer,
+  spec: IdentityAssetSpec,
+) {
+  if (!Buffer.isBuffer(background) || background.length < 1 || background.length > 20 * 1024 * 1024) {
+    throw new Error(`${spec.id} 지지면 보정 입력의 바이트 크기가 안전 한도를 벗어났습니다.`);
+  }
+  const placement = spec.identityPolicy.placement;
+  const contactLine = placement.top + placement.height;
+  if (![placement.left, placement.top, placement.width, placement.height, contactLine].every(Number.isFinite)
+      || placement.left < 0 || placement.top < 0 || placement.width <= 0 || placement.height <= 0
+      || placement.left + placement.width > 1 || contactLine <= 0 || contactLine >= 1) {
+    throw new Error(`${spec.id} 지지면 보정 좌표가 올바르지 않습니다.`);
+  }
+
+  const decoded = await sharp(background, {
+    failOn: "warning",
+    limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
+  }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  if (decoded.info.width !== spec.width || decoded.info.height !== spec.height || decoded.info.channels !== 3) {
+    throw new Error(`${spec.id} 지지면 보정 입력 규격이 생성 계약과 일치하지 않습니다.`);
+  }
+
+  const { width, height } = decoded.info;
+  const pixels = Buffer.from(decoded.data);
+  const original = Buffer.from(decoded.data);
+  const xStart = Math.max(0, Math.min(width - 1, Math.round(width * placement.left)));
+  const xEnd = Math.max(xStart + 1, Math.min(width, Math.round(width * (placement.left + placement.width))));
+  const topY = Math.max(0, Math.min(height - 2, Math.round(height * placement.top)));
+  const contactY = Math.max(topY + 2, Math.min(height - 2, Math.round(height * contactLine)));
+  const stabilizationDepth = Math.max(8, Math.round(height * 0.06));
+  const stabilizationStart = Math.max(topY, contactY - stabilizationDepth);
+  const backingColor = averageRgbRegion(original, width, xStart, xEnd, stabilizationStart, contactY);
+  const lowerColor = averageRgbRegion(original, width, 0, width, contactY, height);
+  const backingLuminance = rgbLuminance(backingColor);
+  const targetSupportLuminance = Math.max(
+    24,
+    Math.min(231, backingLuminance + (backingLuminance >= 128 ? -38 : 38)),
+  );
+  const lowerLuminance = rgbLuminance(lowerColor);
+  let supportColor = lowerColor.map((channel) => clampColor(
+    channel + targetSupportLuminance - lowerLuminance,
+  ));
+  const repairedLuminance = rgbLuminance(supportColor);
+  if (Math.abs(repairedLuminance - backingLuminance) < 30) {
+    const correction = (backingLuminance >= 128 ? -1 : 1)
+      * (30 - Math.abs(repairedLuminance - backingLuminance));
+    supportColor = supportColor.map((channel) => clampColor(channel + correction));
+  }
+
+  const seed = createHash("sha256").update(background).update(spec.id).digest();
+  for (let y = stabilizationStart; y < contactY; y += 1) {
+    const progress = (y - stabilizationStart) / Math.max(1, contactY - stabilizationStart - 1);
+    const smoothBlend = progress * progress * (3 - 2 * progress);
+    const sourceWeight = 1 - smoothBlend;
+    const quietShade = smoothBlend * (progress - 0.5) * ((seed[0] % 3) - 1);
+    for (let x = xStart; x < xEnd; x += 1) {
+      const offset = (y * width + x) * 3;
+      for (let channel = 0; channel < 3; channel += 1) {
+        pixels[offset + channel] = clampColor(
+          backingColor[channel] * (1 - sourceWeight)
+            + original[offset + channel] * sourceWeight
+            + quietShade,
+        );
+      }
+    }
+  }
+
+  const supportDepth = Math.max(1, height - contactY);
+  for (let y = contactY; y < height; y += 1) {
+    const depth = (y - contactY) / supportDepth;
+    const sourceWeight = 0.05 * Math.min(1, depth * 8);
+    const depthShade = (depth - 0.5) * (4 + (seed[1] % 3));
+    const rowTexture = ((Math.floor(y / 9) + seed[2]) % 3) - 1;
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 3;
+      const columnTexture = (((Math.floor(x / 17) + seed[3]) % 5) - 2) * 0.35;
+      for (let channel = 0; channel < 3; channel += 1) {
+        pixels[offset + channel] = clampColor(
+          supportColor[channel] * (1 - sourceWeight)
+            + original[offset + channel] * sourceWeight
+            + depthShade
+            + rowTexture
+            + columnTexture,
+        );
+      }
+    }
+  }
+
+  const output = await sharp(pixels, {
+    raw: { width, height, channels: 3 },
+  }).png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
+  const metadata = await sharp(output).metadata();
+  if (metadata.width !== spec.width || metadata.height !== spec.height || metadata.format !== "png") {
+    throw new Error(`${spec.id} 지지면 보정 결과 규격을 확인하지 못했습니다.`);
+  }
+  return output;
 }
 
 /**

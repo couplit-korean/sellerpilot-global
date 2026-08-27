@@ -19,6 +19,11 @@ export type StudioLocalizedTarget = Readonly<{
   locale: LocalizedLocale;
 }>;
 
+export type StudioValidationIssue = Readonly<{
+  path: readonly PropertyKey[];
+  message: string;
+}>;
+
 export type StudioSegmentContractErrorCode =
   | "invalid-schema"
   | "invalid-plan"
@@ -337,6 +342,85 @@ export function planStudioLocalizedChunks(
     chunks.push(Object.freeze(canonicalStudioLocalizedTargets.slice(offset, offset + chunkSize)));
   }
   return Object.freeze(chunks);
+}
+
+export function localizedSegmentCoverageIssue(
+  segment: unknown,
+  targets: readonly StudioLocalizedTarget[],
+): string {
+  if (!isJsonObject(segment)
+      || Object.keys(segment).length !== 1
+      || !Array.isArray(segment.localizedListings)) {
+    return "현지화 청크 루트는 localizedListings 배열 하나만 포함해야 합니다.";
+  }
+  const expected = new Set(targets.map((target) => (
+    `${target.channel}:${target.market}:${target.locale}`
+  )));
+  const received = segment.localizedListings.map((listing) => (
+    isJsonObject(listing)
+      && typeof listing.channel === "string"
+      && typeof listing.market === "string"
+      && typeof listing.locale === "string"
+      ? `${listing.channel}:${listing.market}:${listing.locale}`
+      : "invalid"
+  ));
+  if (received.length !== targets.length
+      || new Set(received).size !== expected.size
+      || received.some((key) => !expected.has(key))) {
+    return `exact_targets를 각각 한 번씩 작성해야 합니다. expected=${[...expected].join(", ")}`;
+  }
+  return "";
+}
+
+function localizedChunkIndexForListingIndex(
+  chunks: readonly (readonly StudioLocalizedTarget[])[],
+  listingIndex: number,
+): number {
+  let offset = 0;
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+    const nextOffset = offset + chunks[chunkIndex].length;
+    if (listingIndex >= offset && listingIndex < nextOffset) return chunkIndex;
+    offset = nextOffset;
+  }
+  return -1;
+}
+
+export function planStudioSegmentRepair(
+  issues: readonly StudioValidationIssue[],
+  chunks: readonly (readonly StudioLocalizedTarget[])[],
+): { repairMaster: boolean; localizedChunkIndexes: Set<number> } {
+  let repairMaster = false;
+  let repairEveryLocalizedChunk = false;
+  const localizedChunkIndexes = new Set<number>();
+  for (const issue of issues) {
+    if (issue.path[0] !== "localizedListings") {
+      repairMaster = true;
+      continue;
+    }
+    if (typeof issue.path[1] !== "number") {
+      repairEveryLocalizedChunk = true;
+      continue;
+    }
+    const chunkIndex = localizedChunkIndexForListingIndex(chunks, issue.path[1]);
+    if (chunkIndex < 0) repairEveryLocalizedChunk = true;
+    else localizedChunkIndexes.add(chunkIndex);
+  }
+  if (repairEveryLocalizedChunk) {
+    chunks.forEach((_, index) => localizedChunkIndexes.add(index));
+  }
+  return { repairMaster, localizedChunkIndexes };
+}
+
+export function studioIssuesForLocalizedChunk(
+  issues: readonly StudioValidationIssue[],
+  chunks: readonly (readonly StudioLocalizedTarget[])[],
+  chunkIndex: number,
+): readonly StudioValidationIssue[] {
+  return issues.filter((issue) => {
+    if (issue.path[0] !== "localizedListings") return false;
+    if (typeof issue.path[1] !== "number") return true;
+    return localizedChunkIndexForListingIndex(chunks, issue.path[1]) === chunkIndex;
+  });
 }
 
 /** Derives the smaller master structured-output schema without mutating the full schema. */

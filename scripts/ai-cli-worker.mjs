@@ -32,8 +32,11 @@ import {
   createStudioLocalizedChunkOutputSchema,
   createStudioMasterOutputSchema,
   createStudioMasterInvocationBudget,
+  localizedSegmentCoverageIssue,
   mergeStudioSegmentOutputs,
   planStudioLocalizedChunks,
+  planStudioSegmentRepair,
+  studioIssuesForLocalizedChunk,
   studioMasterDetailImageRoleIssue,
 } from "../lib/studio-segment-generation.ts";
 import { assertStudioSourceFilesUnmodified, studioSourceDimensionsMatch } from "../lib/studio-source-integrity.ts";
@@ -55,8 +58,10 @@ import {
   assertIdentityBackgroundPlate,
   assertIdentityEvidenceLinkage,
   compositeIdentityForeground,
+  isRepairableMissingIdentitySupportBoundary,
   loadVisionIdentityForeground,
   planIdentityEvidenceAttempt,
+  repairMissingIdentitySupportSurface,
   renderIdentityEvidenceBoard,
   renderIdentityEvidencePanel,
   renderIdentityOnNeutralCanvas,
@@ -3046,7 +3051,7 @@ async function generateDistinctAsset({
         noveltyGuidance = `Image generation timeout retry ${attempt}: the prior invocation produced no accepted image. Generate the same trusted role from a fresh composition and follow the deterministic retry contract; do not infer any visual property from the timed-out invocation.`;
         continue;
       }
-      const generated = await normalizeGeneratedAsset(outputFile, generationPreset);
+      let generated = await normalizeGeneratedAsset(outputFile, generationPreset);
       const compositeSource = backgroundOnly ? identityCutouts.assetSources[preset.id] : null;
       if (backgroundOnly && !compositeSource) throw new Error(`${preset.id} 설정샷의 검증 원본 배정이 없습니다.`);
       if (backgroundOnly) {
@@ -3055,7 +3060,19 @@ async function generateDistinctAsset({
           const settingShot = retrySettingShot;
           if (!settingShot) throw new Error(`${preset.id} 설정샷의 장소·시간대·표면·카메라 계약이 없습니다.`);
           const backgroundContract = resolveIdentityBackgroundContract(settingShot, preset.id);
-          await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
+          try {
+            await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
+          } catch (error) {
+            const mayRepairMissingSupport = attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS
+              && preset.id === "portrait"
+              && backgroundContactMode === "surface-supported"
+              && isRepairableMissingIdentitySupportBoundary(error);
+            if (!mayRepairMissingSupport) throw error;
+            generated = await repairMissingIdentitySupportSurface(generated, generationPreset);
+            await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
+            await writeFile(outputFile, generated);
+            console.warn(`[배경 지지면 결정 보정] ${jobId} · ${preset.id} · attempt=${attempt}`);
+          }
           await executeSourceProductCutout("background", "", "", [{ file: outputFile }], leaseSignal);
           semanticAudit = await auditGeneratedIdentityBackground({
             outputFile,
@@ -3480,63 +3497,8 @@ function withReferenceWarnings(masterOutput, referenceWarnings) {
   return { ...masterOutput, warnings };
 }
 
-function localizedSegmentCoverageIssue(segment, targets) {
-  if (!segment || typeof segment !== "object" || Array.isArray(segment)
-      || Object.keys(segment).length !== 1 || !Array.isArray(segment.localizedListings)) {
-    return "현지화 청크 루트는 localizedListings 배열 하나만 포함해야 합니다.";
-  }
-  const expected = new Set(targets.map((target) => `${target.channel}:${target.market}:${target.locale}`));
-  const received = segment.localizedListings.map((listing) => (
-    listing && typeof listing === "object" && !Array.isArray(listing)
-      ? `${listing.channel}:${listing.market}:${listing.locale}`
-      : "invalid"
-  ));
-  if (received.length !== targets.length || new Set(received).size !== expected.size
-      || received.some((key) => !expected.has(key))) {
-    return `exact_targets를 각각 한 번씩 작성해야 합니다. expected=${[...expected].join(", ")}`;
-  }
-  return "";
-}
-
-function localizedChunkIndexForListingIndex(chunks, listingIndex) {
-  let offset = 0;
-  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
-    const nextOffset = offset + chunks[chunkIndex].length;
-    if (listingIndex >= offset && listingIndex < nextOffset) return chunkIndex;
-    offset = nextOffset;
-  }
-  return -1;
-}
-
-function studioSegmentRepairPlan(issues, chunks) {
-  let repairMaster = false;
-  let repairEveryLocalizedChunk = false;
-  const localizedChunkIndexes = new Set();
-  for (const issue of issues) {
-    if (issue.path[0] !== "localizedListings") {
-      repairMaster = true;
-      continue;
-    }
-    if (typeof issue.path[1] !== "number") {
-      repairEveryLocalizedChunk = true;
-      continue;
-    }
-    const chunkIndex = localizedChunkIndexForListingIndex(chunks, issue.path[1]);
-    if (chunkIndex < 0) repairEveryLocalizedChunk = true;
-    else localizedChunkIndexes.add(chunkIndex);
-  }
-  if (repairEveryLocalizedChunk) {
-    chunks.forEach((_, index) => localizedChunkIndexes.add(index));
-  }
-  return { repairMaster, localizedChunkIndexes };
-}
-
 function issuesForLocalizedChunk(issues, chunks, chunkIndex) {
-  const relevant = issues.filter((issue) => {
-    if (issue.path[0] !== "localizedListings") return false;
-    if (typeof issue.path[1] !== "number") return true;
-    return localizedChunkIndexForListingIndex(chunks, issue.path[1]) === chunkIndex;
-  });
+  const relevant = studioIssuesForLocalizedChunk(issues, chunks, chunkIndex);
   return summarizeStudioIssues(relevant, relevant.length);
 }
 
@@ -3649,12 +3611,19 @@ async function generateSegmentedStudioResult({
     );
     localizedOutputs = [...localizedOutputs];
     repairedEntries.forEach(([chunkIndex, repaired]) => { localizedOutputs[chunkIndex] = repaired; });
+    const unresolvedCoverage = coverageRepairIndexes.flatMap((chunkIndex) => {
+      const issue = localizedSegmentCoverageIssue(localizedOutputs[chunkIndex], chunks[chunkIndex]);
+      return issue ? [`chunk ${chunkIndex + 1}: ${issue}`] : [];
+    });
+    if (unresolvedCoverage.length) {
+      throw new Error(`AI 현지화 대상 범위 보정 실패 · ${unresolvedCoverage.join("\n")}`.slice(0, 500));
+    }
   }
 
   let parsed = parseMergedStudioSegments(masterOutput, localizedOutputs);
   if (parsed.success) return parsed.data;
 
-  const repairPlan = studioSegmentRepairPlan(parsed.error.issues, chunks);
+  const repairPlan = planStudioSegmentRepair(parsed.error.issues, chunks);
   if (repairPlan.repairMaster) {
     masterOutput = await invokeStudioSegment({
       jobDir,
@@ -3682,9 +3651,13 @@ async function generateSegmentedStudioResult({
   if (repairPlan.localizedChunkIndexes.size) {
     const repairedEntries = await settleStudioSegmentBatch(
       [...repairPlan.localizedChunkIndexes].map(async (chunkIndex) => {
-        const issues = repairPlan.repairMaster
-          ? "마스터가 의미 검증을 거쳐 수정됐습니다. immutable_master_json에 맞춰 해당 청크 전체를 다시 현지화하세요."
-          : issuesForLocalizedChunk(parsed.error.issues, chunks, chunkIndex);
+        const exactChunkIssues = issuesForLocalizedChunk(parsed.error.issues, chunks, chunkIndex);
+        const issues = [
+          repairPlan.repairMaster
+            ? "마스터가 의미 검증을 거쳐 수정됐습니다. immutable_master_json에 맞춰 해당 청크 전체를 다시 현지화하세요."
+            : "",
+          exactChunkIssues,
+        ].filter(Boolean).join("\n");
         const repaired = await invokeLocalized(chunkIndex, { draft: localizedOutputs[chunkIndex], issues, repairPass: 1 });
         return [chunkIndex, repaired];
       }),
@@ -3696,7 +3669,7 @@ async function generateSegmentedStudioResult({
   parsed = parseMergedStudioSegments(masterOutput, localizedOutputs);
   if (!parsed.success) {
     const residualIssues = parsed.error.issues;
-    const residualRepairPlan = studioSegmentRepairPlan(residualIssues, chunks);
+    const residualRepairPlan = planStudioSegmentRepair(residualIssues, chunks);
     if (residualRepairPlan.repairMaster) {
       masterOutput = await invokeStudioSegment({
         jobDir,

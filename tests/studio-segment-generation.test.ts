@@ -6,9 +6,12 @@ import {
   createStudioLocalizedChunkOutputSchema,
   createStudioMasterInvocationBudget,
   createStudioMasterOutputSchema,
+  localizedSegmentCoverageIssue,
   mergeStudioSegmentOutputs,
   planStudioMasterAttemptTimeouts,
   planStudioLocalizedChunks,
+  planStudioSegmentRepair,
+  studioIssuesForLocalizedChunk,
   studioMasterDetailImageRoleIssue,
   StudioSegmentContractError,
   type StudioLocalizedTarget,
@@ -103,6 +106,53 @@ test("studio segment plan reads all 27 canonical targets in chunks of at most fo
   expectContractError("invalid-plan", () => planStudioLocalizedChunks(0));
   expectContractError("invalid-plan", () => planStudioLocalizedChunks(5));
   expectContractError("invalid-plan", () => planStudioLocalizedChunks(1.5));
+});
+
+test("studio repair planning preserves exact localized residual paths when a master repair is also required", () => {
+  const chunks = planStudioLocalizedChunks();
+  const issues = [
+    { path: ["design", "sections"], message: "master role coverage mismatch" },
+    ...[4, 5, 6, 7].map((index) => ({
+      path: ["localizedListings", index, "detailSections"],
+      message: `listing ${index} required image roles missing`,
+    })),
+    { path: ["localizedListings", 17, "keywords"], message: "localized keyword disconnected" },
+    { path: ["localizedListings", 26, "shortDescription"], message: "unsupported instruction evidence" },
+  ];
+
+  const plan = planStudioSegmentRepair(issues, chunks);
+  assert.equal(plan.repairMaster, true);
+  assert.deepEqual([...plan.localizedChunkIndexes], [1, 4, 6]);
+  assert.deepEqual(
+    studioIssuesForLocalizedChunk(issues, chunks, 1).map((issue) => issue.path),
+    [
+      ["localizedListings", 4, "detailSections"],
+      ["localizedListings", 5, "detailSections"],
+      ["localizedListings", 6, "detailSections"],
+      ["localizedListings", 7, "detailSections"],
+    ],
+  );
+  assert.deepEqual(
+    studioIssuesForLocalizedChunk(issues, chunks, 4).map((issue) => issue.path),
+    [["localizedListings", 17, "keywords"]],
+  );
+  assert.deepEqual(
+    studioIssuesForLocalizedChunk(issues, chunks, 6).map((issue) => issue.path),
+    [["localizedListings", 26, "shortDescription"]],
+  );
+});
+
+test("localized target coverage is checked again on the repaired segment", () => {
+  const targets = planStudioLocalizedChunks()[1];
+  const incomplete = {
+    localizedListings: targets.slice(0, -1).map(listing),
+  };
+  assert.match(localizedSegmentCoverageIssue(incomplete, targets), /exact_targets/);
+
+  const repaired = {
+    localizedListings: targets.map(listing),
+  };
+  assert.equal(localizedSegmentCoverageIssue(repaired, targets), "");
 });
 
 test("master schema is derived from the full schema without localized listings or mutation", () => {

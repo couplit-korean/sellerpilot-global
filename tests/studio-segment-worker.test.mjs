@@ -109,12 +109,14 @@ test("master generation uses a compact brief and one medium-to-low timeout fallb
 
 test("semantic repair is limited to the master or affected localized chunks", async () => {
   const source = await readFile(workerUrl, "utf8");
-  assert.match(source, /function studioSegmentRepairPlan\(issues, chunks\)/);
-  assert.match(source, /issue\.path\[0\] !== "localizedListings"/);
-  assert.match(source, /localizedChunkIndexForListingIndex\(chunks, issue\.path\[1\]\)/);
+  assert.match(source, /planStudioSegmentRepair\(parsed\.error\.issues, chunks\)/);
   assert.match(source, /repairPlan\.localizedChunkIndexes/);
   assert.match(source, /if \(repairPlan\.repairMaster\)/);
+  assert.match(source, /const exactChunkIssues = issuesForLocalizedChunk\(parsed\.error\.issues, chunks, chunkIndex\)/);
+  assert.match(source, /repairPlan\.repairMaster[\s\S]{0,260}exactChunkIssues/);
   assert.match(source, /chunks\.forEach\(\(_, index\) => repairPlan\.localizedChunkIndexes\.add\(index\)\)/);
+  assert.match(source, /const unresolvedCoverage = coverageRepairIndexes\.flatMap/);
+  assert.match(source, /AI 현지화 대상 범위 보정 실패/);
   assert.match(source, /AI 분할 결과 검증 실패/);
 });
 
@@ -125,7 +127,7 @@ test("one finite residual repair uses isolated second-pass artifacts and settles
   const residual = source.slice(residualStart, terminalFailure);
 
   assert.ok(residualStart > 0);
-  assert.match(residual, /const residualRepairPlan = studioSegmentRepairPlan\(residualIssues, chunks\)/);
+  assert.match(residual, /const residualRepairPlan = planStudioSegmentRepair\(residualIssues, chunks\)/);
   assert.match(residual, /if \(residualRepairPlan\.repairMaster\)/);
   assert.match(residual, /segmentId: "studio-master-repair-2"/);
   assert.match(residual, /stage: "studio-master-repair-2"/);

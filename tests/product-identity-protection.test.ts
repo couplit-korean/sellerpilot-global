@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,8 +17,10 @@ import {
   assertIdentityBackgroundPlate,
   assertIdentityEvidenceLinkage,
   compositeIdentityForeground,
+  isRepairableMissingIdentitySupportBoundary,
   loadVisionIdentityForeground,
   planIdentityEvidenceAttempt,
+  repairMissingIdentitySupportSurface,
   renderIdentityEvidenceBoard,
   renderIdentityEvidencePanel,
   renderIdentityOnNeutralCanvas,
@@ -538,6 +541,68 @@ test("surface-supported background plates require one horizontal seam inside the
   const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
   const supported = await syntheticSurfacePlate(spec, { seamY: contactY });
   await assert.doesNotReject(assertIdentityBackgroundPlate(supported, spec, "surface-supported"));
+});
+
+test("final support fallback repairs only a missing boundary and preserves candidate-specific outer pixels", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const candidates = await Promise.all(["#d8cbb8", "#314b60"].map((background) => sharp({
+    create: { width: spec.width, height: spec.height, channels: 3, background },
+  }).png().toBuffer()));
+
+  for (const candidate of candidates) {
+    await assert.rejects(
+      assertIdentityBackgroundPlate(candidate, spec, "surface-supported"),
+      (error: unknown) => isRepairableMissingIdentitySupportBoundary(error),
+    );
+  }
+
+  const repaired = await Promise.all(candidates.map((candidate) => (
+    repairMissingIdentitySupportSurface(candidate, spec)
+  )));
+  await Promise.all(repaired.map((candidate) => (
+    assertIdentityBackgroundPlate(candidate, spec, "surface-supported")
+  )));
+  assert.notEqual(
+    createHash("sha256").update(repaired[0]).digest("hex"),
+    createHash("sha256").update(repaired[1]).digest("hex"),
+    "the fallback palette and texture must remain derived from each generated candidate",
+  );
+
+  const [originalPixels, repairedPixels] = await Promise.all([
+    sharp(candidates[0]).removeAlpha().raw().toBuffer(),
+    sharp(repaired[0]).removeAlpha().raw().toBuffer(),
+  ]);
+  const outsideReservedZoneOffset = ((20 * spec.width) + 20) * 3;
+  assert.deepEqual(
+    repairedPixels.subarray(outsideReservedZoneOffset, outsideReservedZoneOffset + 3),
+    originalPixels.subarray(outsideReservedZoneOffset, outsideReservedZoneOffset + 3),
+    "outer architecture above the support plane must remain pixel-identical",
+  );
+  const preservedReservedUpperOffset = ((80 * spec.width) + 120) * 3;
+  assert.deepEqual(
+    repairedPixels.subarray(preservedReservedUpperOffset, preservedReservedUpperOffset + 3),
+    originalPixels.subarray(preservedReservedUpperOffset, preservedReservedUpperOffset + 3),
+    "the fallback must not flatten the already-safe upper product backing",
+  );
+});
+
+test("stripe and intrusion failures are never eligible for the missing-support fallback", async () => {
+  const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
+  assert.ok(portrait);
+  const spec = { ...portrait, width: 320, height: 400 };
+  const contactY = Math.round(spec.height * (spec.identityPolicy.placement.top + spec.identityPolicy.placement.height));
+  const unsafe = [
+    await syntheticSurfacePlate(spec, { seamY: contactY, samePlaneStripe: true }),
+    await syntheticSurfacePlate(spec, { seamY: contactY, verticalIntrusion: true }),
+  ];
+  for (const candidate of unsafe) {
+    await assert.rejects(assertIdentityBackgroundPlate(candidate, spec, "surface-supported"), (error: unknown) => {
+      assert.equal(isRepairableMissingIdentitySupportBoundary(error), false);
+      return true;
+    });
+  }
 });
 
 test("surface-supported background plates reject a seam outside the contact band", async () => {
