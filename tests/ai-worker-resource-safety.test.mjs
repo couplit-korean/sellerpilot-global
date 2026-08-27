@@ -4,18 +4,22 @@ import test from "node:test";
 
 const workerUrl = new URL("../scripts/ai-cli-worker.mjs", import.meta.url);
 const claimRouteUrl = new URL("../app/api/ai/worker/claim/route.ts", import.meta.url);
+const completionRouteUrl = new URL("../app/api/ai/worker/complete/route.ts", import.meta.url);
 const marketplaceImagesUrl = new URL("../lib/channels/marketplace-images.ts", import.meta.url);
 const maintenanceRouteUrl = new URL("../app/api/internal/maintenance/route.ts", import.meta.url);
 
-test("AI worker dispatches support replies and preserves uploaded assets across ambiguous completion", async () => {
-  const [source, claimRoute] = await Promise.all([
+test("AI worker dispatches support replies, sanitizes failures, and preserves uploaded assets across ambiguous completion", async () => {
+  const [source, claimRoute, completionRoute] = await Promise.all([
     readFile(workerUrl, "utf8"),
     readFile(claimRouteUrl, "utf8"),
+    readFile(completionRouteUrl, "utf8"),
   ]);
   assert.match(source, /job\.kind === "support_reply"[\s\S]{0,900}draftSupportReply/);
   assert.match(source, /--output-schema", supportReplySchemaPath/);
   assert.match(source, /completionPersistenceStarted = true;[\s\S]{0,180}persistWorkerCompletion/);
   assert.match(source, /const preserveRemoteState = completionPersistenceStarted/);
+  assert.match(source, /const message = sellerSafeAiJobFailure\(effectiveError\)/);
+  assert.match(completionRoute, /p_error_message: completion\.status === "failed" \? sellerSafeAiJobFailure\(completion\.error\) : null/);
   assert.match(claimRoute, /sellerpilot_service_stage_ai_result_uploads/);
   assert.match(claimRoute, /p_job_id: jobId/);
   assert.match(claimRoute, /p_claim_token: claimToken/);

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
+import { sellerSafeAiJobFailure } from "../lib/ai-worker-error-safety.ts";
 import {
   assertPublicReferenceUrl as assertPublicUrl,
   fetchPublicReferenceDocument,
@@ -3418,7 +3419,7 @@ async function processJob(job) {
         leaseStateUncertain = true;
       }
     }
-    const message = effectiveError instanceof Error ? effectiveError.message.slice(0, 500) : "CLI 작업 처리 오류";
+    const message = sellerSafeAiJobFailure(effectiveError);
     const preserveRemoteState = completionPersistenceStarted
       || leaseStateUncertain
       || effectiveError instanceof WorkerRequestTerminalError

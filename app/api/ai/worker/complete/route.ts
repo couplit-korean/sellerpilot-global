@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
+import { sellerSafeAiJobFailure } from "../../../../../lib/ai-worker-error-safety";
 import { workerCompletionSchema } from "../../../../../lib/ai-cli-contract";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
 import {
@@ -139,7 +140,7 @@ export async function POST(request: Request) {
     p_claim_token: completion.claimToken,
     p_status: completion.status,
     p_result_payload: resultPayload,
-    p_error_message: completion.status === "failed" ? completion.error : null,
+    p_error_message: completion.status === "failed" ? sellerSafeAiJobFailure(completion.error) : null,
   });
   if (error || data !== true) {
     if (error) {
