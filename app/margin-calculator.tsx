@@ -14,8 +14,9 @@ import {
   TrendingUp,
   WalletCards,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
+import { fetchJsonWithDeadline } from "../lib/bounded-json-request";
 import { channels, type ChannelKey } from "./channel-config";
 import type { OperationMarginScenario, OperationProduct } from "./use-operations-snapshot";
 
@@ -101,6 +102,37 @@ const defaultPaymentFeeOverrides = Object.fromEntries(
 ) as Record<ChannelKey, number>;
 
 const wonFormatter = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 });
+export const marginExchangeRateTimeoutMs = 12_000;
+
+type MarginExchangeRatePayload = {
+  source?: string;
+  asOf?: string;
+  rates?: Array<{ code: string; unit: number; value: number }>;
+};
+
+export async function fetchMarginReferenceRates({
+  signal,
+  timeoutMs = marginExchangeRateTimeoutMs,
+  fetcher = fetch,
+}: {
+  signal: AbortSignal;
+  timeoutMs?: number;
+  fetcher?: (input: string, init?: RequestInit) => Promise<Response>;
+}) {
+  const { response, payload } = await fetchJsonWithDeadline<MarginExchangeRatePayload>({
+    fetcher,
+    input: "/api/exchange-rates",
+    init: { cache: "no-store" },
+    parentSignal: signal,
+    timeoutMs,
+    fallbackPayload: {},
+  });
+  if (!response.ok || !Array.isArray(payload.rates)) throw new Error("기준환율 응답 오류");
+  return {
+    rates: Object.fromEntries(payload.rates.map((rate) => [rate.code, rate.value / Math.max(rate.unit, 1)])),
+    basis: `${payload.source ?? "기준환율"} · ${payload.asOf ?? "기준일 확인 중"}`,
+  };
+}
 
 function formatWon(value: number) {
   const absolute = wonFormatter.format(Math.abs(Math.round(value)));
@@ -256,20 +288,28 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   const [savingScenario, setSavingScenario] = useState(false);
   const [referenceRates, setReferenceRates] = useState<Record<string, number>>({});
   const [rateBasis, setRateBasis] = useState("기준환율 확인 중");
+  const rateRequestRef = useRef<AbortController | null>(null);
   useEffect(() => {
+    rateRequestRef.current?.abort(new DOMException("새 기준환율 요청을 시작합니다.", "AbortError"));
+    const controller = new AbortController();
+    rateRequestRef.current = controller;
     let active = true;
     const loadRates = async () => {
-      const response = await fetch("/api/exchange-rates", { cache: "no-store" });
-      const payload = await response.json() as { source?: string; asOf?: string; rates?: Array<{ code: string; unit: number; value: number }> };
-      if (!response.ok || !Array.isArray(payload.rates)) throw new Error("기준환율 응답 오류");
-      if (!active) return;
-      setReferenceRates(Object.fromEntries(payload.rates.map((rate) => [rate.code, rate.value / Math.max(rate.unit, 1)])));
-      setRateBasis(`${payload.source ?? "기준환율"} · ${payload.asOf ?? "기준일 확인 중"}`);
+      const loaded = await fetchMarginReferenceRates({ signal: controller.signal });
+      if (!active || controller.signal.aborted) return;
+      setReferenceRates(loaded.rates);
+      setRateBasis(loaded.basis);
     };
     void loadRates().catch(() => {
-      if (active) setRateBasis("최근 기준환율 대체값 · API 재확인 필요");
+      if (active && !controller.signal.aborted) setRateBasis("최근 기준환율 대체값 · API 재확인 필요");
+    }).finally(() => {
+      if (rateRequestRef.current === controller) rateRequestRef.current = null;
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      if (rateRequestRef.current === controller) rateRequestRef.current = null;
+      controller.abort(new DOMException("마진 계산 화면이 닫혀 기준환율 요청을 취소했습니다.", "AbortError"));
+    };
   }, []);
   const calculationProfiles = useMemo(() => marginChannelProfiles.map((profile) => ({
     ...profile,

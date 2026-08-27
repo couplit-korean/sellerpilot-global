@@ -11,6 +11,12 @@ export type ShotFingerprint = {
   visualHash: Uint8Array;
 };
 
+export type DuplicateShotMatch = {
+  assetId: string;
+  exact: boolean;
+  distance: number;
+};
+
 export function buildDifferenceHash(
   grayscalePixels: Uint8Array,
   rowStride = SHOT_DHASH_COLUMNS + 1,
@@ -49,7 +55,7 @@ export function visualHashDistance(left: Uint8Array, right: Uint8Array) {
   return distance;
 }
 
-export function findDuplicateShot(
+export function findDuplicateShots(
   candidate: ShotFingerprint,
   existing: ShotFingerprint[],
   minimumDistance = MINIMUM_SHOT_HASH_DISTANCE,
@@ -61,7 +67,19 @@ export function findDuplicateShot(
       distance: visualHashDistance(candidate.visualHash, shot.visualHash),
     }))
     .filter((match) => match.exact || match.distance < minimumDistance)
-    .sort((left, right) => Number(right.exact) - Number(left.exact) || left.distance - right.distance)[0] ?? null;
+    .sort((left, right) => (
+      Number(right.exact) - Number(left.exact)
+      || left.distance - right.distance
+      || left.assetId.localeCompare(right.assetId)
+    ));
+}
+
+export function findDuplicateShot(
+  candidate: ShotFingerprint,
+  existing: ShotFingerprint[],
+  minimumDistance = MINIMUM_SHOT_HASH_DISTANCE,
+) {
+  return findDuplicateShots(candidate, existing, minimumDistance)[0] ?? null;
 }
 
 export function buildDuplicateRetryGuidance(

@@ -112,6 +112,9 @@ import { withPromiseTimeout } from "../lib/promise-timeout";
 import { fetchJsonWithDeadline } from "../lib/bounded-json-request";
 import { classifyExactJobAdmission } from "../lib/exact-job-admission";
 import { assertStudioSourceDimensions, assertStudioSourceFile } from "../lib/studio-source-photo-policy";
+import { createStudioPhotoSelectionBudget, type StudioPhotoBudgetReservation } from "../lib/studio-photo-selection-budget";
+import { createAbortableConcurrencyGate } from "../lib/abortable-concurrency-gate";
+import { createStudioPhotoEditSession } from "../lib/studio-photo-edit-session";
 import { deadlineAfter, deadlineIsActive, deadlineRemaining } from "../lib/time-deadline";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
 import {
@@ -1052,53 +1055,64 @@ function productEditDraft(product: DisplayProduct, fields: Record<string, unknow
   };
 }
 
-function ProductDetailEditDialog({ draft, errors, saving, revisionPhotoCount, onRevisionPhotosChange, onPhotoError, onChange, onClose, onSave }: {
+function ProductDetailEditDialog({ photoSessionId, draft, errors, saving, photosProcessing, revisionPhotoCount, onRevisionPhotosChange, onPhotosProcessingChange, onPhotoError, onChange, onClose, onSave }: {
+  photoSessionId: number;
   draft: ProductIntakeDraft;
   errors: Record<string, string>;
   saving: boolean;
+  photosProcessing: boolean;
   revisionPhotoCount: number;
-  onRevisionPhotosChange: (photos: StudioPhoto[]) => void;
-  onPhotoError: (message: string) => void;
+  onRevisionPhotosChange: (sessionId: number, photos: StudioPhoto[]) => void;
+  onPhotosProcessingChange: (sessionId: number, processing: boolean) => void;
+  onPhotoError: (sessionId: number, message: string) => void;
   onChange: <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => void;
   onClose: () => void;
   onSave: () => void;
 }) {
+  const fieldErrorId = (field: keyof ProductIntakeDraft) => `product-edit-error-${field}`;
+  const fieldErrorAttributes = (field: keyof ProductIntakeDraft) => ({
+    "aria-invalid": errors[field] ? true : undefined,
+    "aria-describedby": errors[field] ? fieldErrorId(field) : undefined,
+  });
+  const fieldError = (field: keyof ProductIntakeDraft) => errors[field]
+    ? <small id={fieldErrorId(field)}>{errors[field]}</small>
+    : null;
   return <div className="product-edit-overlay"><section className="product-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="product-edit-title">
     <header><div><span className="panel-kicker">FULL PRODUCT EDIT</span><h2 id="product-edit-title">등록 상품 전체 수정</h2><p>텍스트·가격·재고뿐 아니라 원본·대표·역할별 사진을 교체할 수 있습니다. 사진 수정은 같은 상품 원장에서 AI 상세를 다시 만들며 외부 채널에는 자동 게시하지 않습니다.</p></div><button type="button" aria-label="상품 수정 닫기" onClick={onClose} disabled={saving}><X size={18} /></button></header>
     <div className="product-edit-form manual-field-grid">
       <div className="intake-group-heading"><span>01</span><div><b>기본 상품 정보</b><small>상품 식별·카테고리·공급 정보를 수정합니다.</small></div></div>
-      <label className={errors.researchInput ? "field-error" : ""}><span>상품 링크 또는 설명</span><textarea value={draft.researchInput} maxLength={12_000} onChange={(event) => onChange("researchInput", event.target.value)} />{errors.researchInput && <small>{errors.researchInput}</small>}</label>
-      <label className={errors.productName ? "field-error" : ""}><span>상품명</span><input value={draft.productName} onChange={(event) => onChange("productName", event.target.value)} />{errors.productName && <small>{errors.productName}</small>}</label>
-      <label className={errors.sellerSku ? "field-error" : ""}><span>판매자 SKU</span><input value={draft.sellerSku} onChange={(event) => onChange("sellerSku", event.target.value.toUpperCase())} />{errors.sellerSku && <small>{errors.sellerSku}</small>}</label>
-      <label><span>상품군 힌트</span><input value={draft.categoryHint} onChange={(event) => onChange("categoryHint", event.target.value)} /></label>
-      <label><span>브랜드</span><input value={draft.brandName} onChange={(event) => onChange("brandName", event.target.value)} /></label>
-      <label><span>제조사·공급처</span><input value={draft.manufacturer} onChange={(event) => onChange("manufacturer", event.target.value)} /></label>
-      <label><span>원산지</span><input value={draft.countryOfOrigin} onChange={(event) => onChange("countryOfOrigin", event.target.value)} /></label>
+      <label className={errors.researchInput ? "field-error" : ""}><span>상품 링크 또는 설명</span><textarea {...fieldErrorAttributes("researchInput")} value={draft.researchInput} maxLength={12_000} onChange={(event) => onChange("researchInput", event.target.value)} />{fieldError("researchInput")}</label>
+      <label className={errors.productName ? "field-error" : ""}><span>상품명</span><input {...fieldErrorAttributes("productName")} value={draft.productName} onChange={(event) => onChange("productName", event.target.value)} />{fieldError("productName")}</label>
+      <label className={errors.sellerSku ? "field-error" : ""}><span>판매자 SKU</span><input {...fieldErrorAttributes("sellerSku")} value={draft.sellerSku} onChange={(event) => onChange("sellerSku", event.target.value.toUpperCase())} />{fieldError("sellerSku")}</label>
+      <label className={errors.categoryHint ? "field-error" : ""}><span>상품군 힌트</span><input {...fieldErrorAttributes("categoryHint")} value={draft.categoryHint} onChange={(event) => onChange("categoryHint", event.target.value)} />{fieldError("categoryHint")}</label>
+      <label className={errors.brandName ? "field-error" : ""}><span>브랜드</span><input {...fieldErrorAttributes("brandName")} value={draft.brandName} onChange={(event) => onChange("brandName", event.target.value)} />{fieldError("brandName")}</label>
+      <label className={errors.manufacturer ? "field-error" : ""}><span>제조사·공급처</span><input {...fieldErrorAttributes("manufacturer")} value={draft.manufacturer} onChange={(event) => onChange("manufacturer", event.target.value)} />{fieldError("manufacturer")}</label>
+      <label className={errors.countryOfOrigin ? "field-error" : ""}><span>원산지</span><input {...fieldErrorAttributes("countryOfOrigin")} value={draft.countryOfOrigin} onChange={(event) => onChange("countryOfOrigin", event.target.value)} />{fieldError("countryOfOrigin")}</label>
       <div className="intake-group-heading"><span>02</span><div><b>구성·표시 정보</b><small>실물과 표시사항 기준으로 수정합니다.</small></div></div>
-      <label><span>소재·성분</span><input value={draft.material} onChange={(event) => onChange("material", event.target.value)} /></label>
-      <label><span>판매 구성</span><select value={draft.packageContents} onChange={(event) => onChange("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select></label>
-      <label><span>상품 상태</span><select value={draft.condition} onChange={(event) => onChange("condition", event.target.value as ProductIntakeDraft["condition"])}>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select></label>
-      <label><span>바코드 상태</span><select value={draft.gtinStatus} onChange={(event) => onChange("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select></label>
-      {draft.gtinStatus === "HAS_GTIN" && <label className={errors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC</span><input inputMode="numeric" value={draft.gtin} onChange={(event) => onChange("gtin", event.target.value.replace(/\D/g, ""))} />{errors.gtin && <small>{errors.gtin}</small>}</label>}
+      <label className={errors.material ? "field-error" : ""}><span>소재·성분</span><input {...fieldErrorAttributes("material")} value={draft.material} onChange={(event) => onChange("material", event.target.value)} />{fieldError("material")}</label>
+      <label className={errors.packageContents ? "field-error" : ""}><span>판매 구성</span><select {...fieldErrorAttributes("packageContents")} value={draft.packageContents} onChange={(event) => onChange("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select>{fieldError("packageContents")}</label>
+      <label className={errors.condition ? "field-error" : ""}><span>상품 상태</span><select {...fieldErrorAttributes("condition")} value={draft.condition} onChange={(event) => onChange("condition", event.target.value as ProductIntakeDraft["condition"])}>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select>{fieldError("condition")}</label>
+      <label className={errors.gtinStatus ? "field-error" : ""}><span>바코드 상태</span><select {...fieldErrorAttributes("gtinStatus")} value={draft.gtinStatus} onChange={(event) => onChange("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select>{fieldError("gtinStatus")}</label>
+      {(draft.gtinStatus === "HAS_GTIN" || errors.gtin) && <label className={errors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC</span><input {...fieldErrorAttributes("gtin")} inputMode="numeric" value={draft.gtin} onChange={(event) => onChange("gtin", event.target.value.replace(/\D/g, ""))} />{fieldError("gtin")}</label>}
       <div className="intake-group-heading"><span>03</span><div><b>가격·재고</b><small>가격은 중앙 원장에, 변경된 실재고는 연결 채널에도 반영합니다.</small></div></div>
-      <label><span>판매가</span><input type="number" min="0.01" step="0.01" value={draft.sellingPrice} onChange={(event) => onChange("sellingPrice", Number(event.target.value))} /></label>
-      <label><span>통화</span><select value={draft.currency} onChange={(event) => onChange("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option key={value}>{value}</option>)}</select></label>
-      <label><span>실재고</span><input type="number" min="0" step="1" value={draft.stock} onChange={(event) => onChange("stock", Number(event.target.value))} /></label>
+      <label className={errors.sellingPrice ? "field-error" : ""}><span>판매가</span><input {...fieldErrorAttributes("sellingPrice")} type="number" min="0.01" step="0.01" value={draft.sellingPrice} onChange={(event) => onChange("sellingPrice", Number(event.target.value))} />{fieldError("sellingPrice")}</label>
+      <label className={errors.currency ? "field-error" : ""}><span>통화</span><select {...fieldErrorAttributes("currency")} value={draft.currency} onChange={(event) => onChange("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option key={value}>{value}</option>)}</select>{fieldError("currency")}</label>
+      <label className={errors.stock ? "field-error" : ""}><span>실재고</span><input {...fieldErrorAttributes("stock")} type="number" min="0" step="1" value={draft.stock} onChange={(event) => onChange("stock", Number(event.target.value))} />{fieldError("stock")}</label>
       <div className="intake-group-heading"><span>04</span><div><b>포장·배송</b><small>운임과 채널 제한 계산에 사용합니다.</small></div></div>
-      <label><span>포장 중량 kg</span><input type="number" min="0.01" step="0.01" value={draft.weightKg} onChange={(event) => onChange("weightKg", Number(event.target.value))} /></label>
-      <label><span>포장 가로 cm</span><input type="number" min="0.1" step="0.1" value={draft.packageLengthCm} onChange={(event) => onChange("packageLengthCm", Number(event.target.value))} /></label>
-      <label><span>포장 세로 cm</span><input type="number" min="0.1" step="0.1" value={draft.packageWidthCm} onChange={(event) => onChange("packageWidthCm", Number(event.target.value))} /></label>
-      <label><span>포장 높이 cm</span><input type="number" min="0.1" step="0.1" value={draft.packageHeightCm} onChange={(event) => onChange("packageHeightCm", Number(event.target.value))} /></label>
-      <label><span>기본 배송비 KRW</span><input type="number" min="0" step="100" value={draft.shippingFeeKrw} onChange={(event) => onChange("shippingFeeKrw", Number(event.target.value))} /></label>
-      <label><span>배송 규칙</span><input value={draft.shippingRule} onChange={(event) => onChange("shippingRule", event.target.value)} /></label>
-      <label><span>포장 규칙</span><input value={draft.packagingRule} onChange={(event) => onChange("packagingRule", event.target.value)} /></label>
-      <label><span>원본 상품 URL</span><input type="url" value={draft.productUrl} onChange={(event) => onChange("productUrl", event.target.value)} /></label>
-      <label className="product-edit-description"><span>상품 사실 설명</span><textarea value={draft.description} maxLength={4000} onChange={(event) => onChange("description", event.target.value)} />{errors.description && <small>{errors.description}</small>}</label>
-      <ProductRevisionImagePicker disabled={saving} onChange={onRevisionPhotosChange} onError={onPhotoError} />
+      <label className={errors.weightKg ? "field-error" : ""}><span>포장 중량 kg</span><input {...fieldErrorAttributes("weightKg")} type="number" min="0.01" step="0.01" value={draft.weightKg} onChange={(event) => onChange("weightKg", Number(event.target.value))} />{fieldError("weightKg")}</label>
+      <label className={errors.packageLengthCm ? "field-error" : ""}><span>포장 가로 cm</span><input {...fieldErrorAttributes("packageLengthCm")} type="number" min="0.1" step="0.1" value={draft.packageLengthCm} onChange={(event) => onChange("packageLengthCm", Number(event.target.value))} />{fieldError("packageLengthCm")}</label>
+      <label className={errors.packageWidthCm ? "field-error" : ""}><span>포장 세로 cm</span><input {...fieldErrorAttributes("packageWidthCm")} type="number" min="0.1" step="0.1" value={draft.packageWidthCm} onChange={(event) => onChange("packageWidthCm", Number(event.target.value))} />{fieldError("packageWidthCm")}</label>
+      <label className={errors.packageHeightCm ? "field-error" : ""}><span>포장 높이 cm</span><input {...fieldErrorAttributes("packageHeightCm")} type="number" min="0.1" step="0.1" value={draft.packageHeightCm} onChange={(event) => onChange("packageHeightCm", Number(event.target.value))} />{fieldError("packageHeightCm")}</label>
+      <label className={errors.shippingFeeKrw ? "field-error" : ""}><span>기본 배송비 KRW</span><input {...fieldErrorAttributes("shippingFeeKrw")} type="number" min="0" step="100" value={draft.shippingFeeKrw} onChange={(event) => onChange("shippingFeeKrw", Number(event.target.value))} />{fieldError("shippingFeeKrw")}</label>
+      <label className={errors.shippingRule ? "field-error" : ""}><span>배송 규칙</span><input {...fieldErrorAttributes("shippingRule")} value={draft.shippingRule} onChange={(event) => onChange("shippingRule", event.target.value)} />{fieldError("shippingRule")}</label>
+      <label className={errors.packagingRule ? "field-error" : ""}><span>포장 규칙</span><input {...fieldErrorAttributes("packagingRule")} value={draft.packagingRule} onChange={(event) => onChange("packagingRule", event.target.value)} />{fieldError("packagingRule")}</label>
+      <label className={errors.productUrl ? "field-error" : ""}><span>원본 상품 URL</span><input {...fieldErrorAttributes("productUrl")} type="url" value={draft.productUrl} onChange={(event) => onChange("productUrl", event.target.value)} />{fieldError("productUrl")}</label>
+      <label className={`product-edit-description ${errors.description ? "field-error" : ""}`}><span>상품 사실 설명</span><textarea {...fieldErrorAttributes("description")} value={draft.description} maxLength={4000} onChange={(event) => onChange("description", event.target.value)} />{fieldError("description")}</label>
+      <ProductRevisionImagePicker sessionId={photoSessionId} disabled={saving} onChange={onRevisionPhotosChange} onProcessingChange={onPhotosProcessingChange} onError={onPhotoError} />
     </div>
-    <div className="intake-confirmations"><label><input aria-label="이미지·상품 자료 사용 권한 확인" type="checkbox" checked={draft.imageRightsConfirmed} onChange={(event) => onChange("imageRightsConfirmed", event.target.checked)} /><span><b>이미지·상품 자료 사용 권한</b><small>사용 권한이 있는 자료임을 확인합니다.</small></span></label><label><input aria-label="상품 사실정보 확인" type="checkbox" checked={draft.productFactsConfirmed} onChange={(event) => onChange("productFactsConfirmed", event.target.checked)} /><span><b>상품 사실정보 확인</b><small>수정값이 실물과 일치함을 확인합니다.</small></span></label></div>
+    <div className="intake-confirmations"><label className={errors.imageRightsConfirmed ? "field-error" : ""}><input {...fieldErrorAttributes("imageRightsConfirmed")} aria-label="이미지·상품 자료 사용 권한 확인" type="checkbox" checked={draft.imageRightsConfirmed} onChange={(event) => onChange("imageRightsConfirmed", event.target.checked)} /><span><b>이미지·상품 자료 사용 권한</b><small>사용 권한이 있는 자료임을 확인합니다.</small>{fieldError("imageRightsConfirmed")}</span></label><label className={errors.productFactsConfirmed ? "field-error" : ""}><input {...fieldErrorAttributes("productFactsConfirmed")} aria-label="상품 사실정보 확인" type="checkbox" checked={draft.productFactsConfirmed} onChange={(event) => onChange("productFactsConfirmed", event.target.checked)} /><span><b>상품 사실정보 확인</b><small>수정값이 실물과 일치함을 확인합니다.</small>{fieldError("productFactsConfirmed")}</span></label></div>
     {errors.form && <p className="inventory-editor-message">{errors.form}</p>}
-    <footer><button type="button" className="credential-secondary" onClick={onClose} disabled={saving}>취소</button><button type="button" className="publish-execute" onClick={onSave} disabled={saving}>{saving ? <LoaderCircle className="spin" size={15} /> : revisionPhotoCount ? <WandSparkles size={15} /> : <Check size={15} />}{saving ? revisionPhotoCount ? "사진 보정·접수 중" : "등록정보 저장 중" : revisionPhotoCount ? `사진 ${revisionPhotoCount}장으로 리비전 시작` : "등록정보 저장"}</button></footer>
+    <footer><button type="button" className="credential-secondary" onClick={onClose} disabled={saving}>취소</button><button type="button" className="publish-execute" onClick={onSave} disabled={saving || photosProcessing}>{saving ? <LoaderCircle className="spin" size={15} /> : photosProcessing ? <LoaderCircle className="spin" size={15} /> : revisionPhotoCount ? <WandSparkles size={15} /> : <Check size={15} />}{saving ? revisionPhotoCount ? "사진 보정·접수 중" : "등록정보 저장 중" : photosProcessing ? "선택한 사진 확인 중" : revisionPhotoCount ? `사진 ${revisionPhotoCount}장으로 리비전 시작` : "등록정보 저장"}</button></footer>
   </section></div>;
 }
 
@@ -1134,6 +1148,9 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
   const [editSaving, setEditSaving] = useState(false);
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
   const [revisionPhotos, setRevisionPhotos] = useState<StudioPhoto[]>([]);
+  const [revisionPhotosProcessing, setRevisionPhotosProcessing] = useState(false);
+  const [revisionPhotoSession] = useState(() => createStudioPhotoEditSession<StudioPhoto>());
+  const [revisionPhotoSessionId, setRevisionPhotoSessionId] = useState(0);
   const [productRevision, setProductRevision] = useState<ProductRevisionState | null>(null);
   const [displayOverrides, setDisplayOverrides] = useState({ name: product.name, sku: product.sku, description: product.description, sourceUrl: product.sourceUrl });
   const detailRegenerationControllerRef = useRef<AbortController | null>(null);
@@ -1348,6 +1365,31 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
     });
   };
 
+  const beginRevisionPhotoSession = useCallback(() => {
+    const sessionId = revisionPhotoSession.start();
+    setRevisionPhotoSessionId(sessionId);
+    setRevisionPhotos([]);
+    setRevisionPhotosProcessing(false);
+    return sessionId;
+  }, [revisionPhotoSession]);
+
+  const invalidateRevisionPhotoSession = useCallback(() => {
+    const sessionId = revisionPhotoSession.invalidate();
+    setRevisionPhotoSessionId(sessionId);
+    setRevisionPhotos([]);
+    setRevisionPhotosProcessing(false);
+  }, [revisionPhotoSession]);
+
+  const handleRevisionPhotosChange = useCallback((sessionId: number, photos: StudioPhoto[]) => {
+    if (!revisionPhotoSession.updatePhotos(sessionId, photos)) return;
+    setRevisionPhotos(photos);
+  }, [revisionPhotoSession]);
+
+  const handleRevisionPhotosProcessingChange = useCallback((sessionId: number, processing: boolean) => {
+    if (!revisionPhotoSession.updateProcessing(sessionId, processing)) return;
+    setRevisionPhotosProcessing(processing);
+  }, [revisionPhotoSession]);
+
   const applyInventoryAcrossSafeBatches = async (onHand: number, stableIdempotencyKey?: string) => {
     const idempotencyKey = stableIdempotencyKey ?? `inventory-ui-${crypto.randomUUID()}`;
     let latestSync: InventorySyncContext | null = null;
@@ -1387,6 +1429,13 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
 
   const saveProductDetails = async () => {
     if (!editDraft || editSaving) return;
+    const revisionPhotoSnapshot = revisionPhotoSession.snapshot();
+    if (revisionPhotoSnapshot.processing) {
+      const message = "선택한 상품 사진 확인이 끝난 뒤 등록정보를 저장해 주세요.";
+      setEditErrors((current) => ({ ...current, form: message }));
+      notify(message);
+      return;
+    }
     const parsed = productEditSchema.safeParse(editDraft);
     if (!parsed.success) {
       const nextErrors: Record<string, string> = {};
@@ -1399,8 +1448,8 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
     setEditSaving(true);
     setEditErrors({});
     try {
-      if (revisionPhotos.length > 0) {
-        if (revisionPhotos[0]?.role !== "main") throw new Error("새 대표사진을 먼저 선택해 주세요.");
+      if (revisionPhotoSnapshot.photos.length > 0) {
+        if (revisionPhotoSnapshot.photos[0]?.role !== "main") throw new Error("새 대표사진을 먼저 선택해 주세요.");
         const controller = new AbortController();
         revisionSubmissionControllerRef.current = controller;
         const sessionScope = createPageAbortScope([controller.signal], 15_000, "관리자 로그인 확인 시간이 초과되었습니다.");
@@ -1411,7 +1460,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
         if (!accessToken || !userId) throw new Error("상품 사진을 수정하려면 관리자 로그인이 필요합니다.");
         const jobId = crypto.randomUUID();
         const { uploadedPaths: imagePaths, imageSpecs, allUploadedPaths } = await optimizeAndUploadStudioPhotos(
-          revisionPhotos,
+          revisionPhotoSnapshot.photos,
           userId,
           jobId,
           accessToken,
@@ -1531,8 +1580,8 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
                 confirmationPending: true,
               });
               setEditDraft(parsed.data);
+              invalidateRevisionPhotoSession();
               setEditOpen(false);
-              setRevisionPhotos([]);
               notify(`작업 ${jobId.slice(0, 8)}의 접수 여부를 자동 확정하지 못했습니다. 새 작업을 만들지 않도록 중지했으며 새로고침 후 같은 ID를 확인합니다.`);
               return;
             }
@@ -1541,8 +1590,8 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
         if (!acceptedRevision) throw new Error(definitiveFailure);
         setProductRevision(acceptedRevision);
         if (acceptedRevision.status === "failed" || acceptedRevision.status === "cancelled") {
+          invalidateRevisionPhotoSession();
           setEditOpen(false);
-          setRevisionPhotos([]);
           notify(acceptedRevision.error || "사진 수정 작업이 종료되어 기존 상품과 판매채널 연결을 유지했습니다.");
           return;
         }
@@ -1568,8 +1617,8 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
           }
         }
         setEditDraft({ ...parsed.data, stock: displayedRevisionStock });
+        invalidateRevisionPhotoSession();
         setEditOpen(false);
-        setRevisionPhotos([]);
         notify(`${acceptedRevision.status === "applied" ? "같은 상품 ID로 사진·상세페이지 수정을 적용했습니다." : "같은 상품 ID로 사진·상세페이지 수정을 시작했습니다."} 외부 채널 이미지·옵션·SKU는 자동 변경하지 않습니다.${inventoryOutcome}`);
         if (acceptedRevision.status === "applied") await onChanged().catch(() => null);
         return;
@@ -1604,6 +1653,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
       setDetailContext((current) => ({ ...current, manualFields: { ...parsed.data, stock: displayedStock } }));
       setDisplayOverrides({ name: parsed.data.productName, sku: parsed.data.sellerSku, description: parsed.data.description, sourceUrl: parsed.data.productUrl || null });
       setEditDraft(parsed.data);
+      invalidateRevisionPhotoSession();
       setEditOpen(false);
       notify(completionMessage);
       await onChanged().catch(() => null);
@@ -1832,7 +1882,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
     <div className="page-stack product-detail-page">
       <div className="product-detail-actions">
         <button type="button" className="product-detail-back" onClick={onBack}><ArrowLeft size={16} />상품 목록으로</button>
-        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="credential-secondary" onClick={onEditChannels}><RefreshCw size={15} />채널 상품 수정</button><button type="button" className="publish-execute" title={remoteListingState === "unavailable" ? "상품 정보를 다시 불러온 뒤 수정할 수 있습니다." : undefined} disabled={remoteListingState !== "ready" || productRevision?.status === "pending" || productRevision?.status === "confirmation_required"} onClick={() => { if (remoteListingState !== "ready") return; editDialogOpenRef.current = true; editDraftDirtyRef.current = false; setEditErrors({}); setRevisionPhotos([]); setEditDraft(productEditDraft(product, detailContext.manualFields)); setEditOpen(true); }}>{remoteListingState === "loading" || productRevision?.status === "pending" ? <LoaderCircle className="spin" size={15} /> : remoteListingState === "unavailable" ? <AlertCircle size={15} /> : <PencilRuler size={15} />}{remoteListingState === "loading" ? "수정 정보 불러오는 중" : remoteListingState === "unavailable" ? "수정 정보 확인 필요" : productRevision?.status === "pending" ? "사진 수정 진행 중" : productRevision?.status === "confirmation_required" ? "접수 확인 필요" : "상품 전체 수정"}</button></div>
+        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="credential-secondary" onClick={onEditChannels}><RefreshCw size={15} />채널 상품 수정</button><button type="button" className="publish-execute" title={remoteListingState === "unavailable" ? "상품 정보를 다시 불러온 뒤 수정할 수 있습니다." : undefined} disabled={remoteListingState !== "ready" || productRevision?.status === "pending" || productRevision?.status === "confirmation_required"} onClick={() => { if (remoteListingState !== "ready") return; editDialogOpenRef.current = true; editDraftDirtyRef.current = false; setEditErrors({}); beginRevisionPhotoSession(); setEditDraft(productEditDraft(product, detailContext.manualFields)); setEditOpen(true); }}>{remoteListingState === "loading" || productRevision?.status === "pending" ? <LoaderCircle className="spin" size={15} /> : remoteListingState === "unavailable" ? <AlertCircle size={15} /> : <PencilRuler size={15} />}{remoteListingState === "loading" ? "수정 정보 불러오는 중" : remoteListingState === "unavailable" ? "수정 정보 확인 필요" : productRevision?.status === "pending" ? "사진 수정 진행 중" : productRevision?.status === "confirmation_required" ? "접수 확인 필요" : "상품 전체 수정"}</button></div>
       </div>
 
       {productRevision ? <section className={`product-revision-status ${productRevision.status}`} role="status">
@@ -1927,7 +1977,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
 
       {remoteListingState === "ready" ? <SavedProductDetailPage key={product.sourceId} productId={product.sourceId} source={detailPageSource} initialDetailPage={savedDetailPage} assetUrls={savedDetailAssetUrls} authenticatedFetch={authenticatedFetch} notify={notify} /> : null}
 
-      {editOpen && editDraft && <ProductDetailEditDialog draft={editDraft} errors={editErrors} saving={editSaving} revisionPhotoCount={revisionPhotos.length} onRevisionPhotosChange={setRevisionPhotos} onPhotoError={(message) => { setEditErrors((current) => ({ ...current, form: message })); notify(message); }} onChange={setEditField} onClose={() => { if (!editSaving) { editDialogOpenRef.current = false; editDraftDirtyRef.current = false; setEditOpen(false); setRevisionPhotos([]); } }} onSave={() => void saveProductDetails()} />}
+      {editOpen && editDraft && <ProductDetailEditDialog photoSessionId={revisionPhotoSessionId} draft={editDraft} errors={editErrors} saving={editSaving} photosProcessing={revisionPhotosProcessing} revisionPhotoCount={revisionPhotos.length} onRevisionPhotosChange={handleRevisionPhotosChange} onPhotosProcessingChange={handleRevisionPhotosProcessingChange} onPhotoError={(sessionId, message) => { if (!revisionPhotoSession.isCurrent(sessionId)) return; setEditErrors((current) => ({ ...current, form: message })); notify(message); }} onChange={setEditField} onClose={() => { if (!editSaving) { editDialogOpenRef.current = false; editDraftDirtyRef.current = false; invalidateRevisionPhotoSession(); setEditOpen(false); } }} onSave={() => void saveProductDetails()} />}
 
     </div>
   );
@@ -2102,11 +2152,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
   const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
   const [extraPhotosProcessing, setExtraPhotosProcessing] = useState(false);
+  const [photoSelectionsProcessing, setPhotoSelectionsProcessing] = useState(false);
+  const photoSelectionsProcessingCountRef = useRef(0);
   const photoObjectUrlsRef = useRef(new Set<string>());
+  const photoBudgetKeyByUrlRef = useRef(new Map<string, string>());
+  const photoDecodeControllersRef = useRef(new Map<string, AbortController>());
   const publishingMountedRef = useRef(true);
   const extraPhotoBatchRef = useRef(false);
   const pendingNewSlotPhotoRef = useRef(new Set<string>());
   const [photoSelectionFence] = useState(createRevisionPhotoSelectionFence);
+  const [photoSelectionBudget] = useState(createStudioPhotoSelectionBudget);
+  const [photoDecodeGate] = useState(() => createAbortableConcurrencyGate(3));
   const competitorResearchControllerRef = useRef<AbortController | null>(null);
   const productResearchControllerRef = useRef<AbortController | null>(null);
   const productResearchGenerationRef = useRef(0);
@@ -2177,20 +2233,56 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     URL.revokeObjectURL(url);
   }, []);
 
+  const beginPhotoSelectionProcessing = () => {
+    photoSelectionsProcessingCountRef.current += 1;
+    setPhotoSelectionsProcessing(true);
+  };
+
+  const endPhotoSelectionProcessing = () => {
+    photoSelectionsProcessingCountRef.current = Math.max(0, photoSelectionsProcessingCountRef.current - 1);
+    setPhotoSelectionsProcessing(photoSelectionsProcessingCountRef.current > 0);
+  };
+
+  const abortPhotoDecodeScope = (scope: string, message: string) => {
+    const controller = photoDecodeControllersRef.current.get(scope);
+    if (!controller) return;
+    photoDecodeControllersRef.current.delete(scope);
+    controller.abort(new DOMException(message, "AbortError"));
+  };
+
+  const beginPhotoDecodeScope = (scope: string) => {
+    const controller = new AbortController();
+    photoDecodeControllersRef.current.set(scope, controller);
+    return controller;
+  };
+
+  const finishPhotoDecodeScope = (scope: string, controller: AbortController) => {
+    if (photoDecodeControllersRef.current.get(scope) === controller) photoDecodeControllersRef.current.delete(scope);
+  };
+
   useEffect(() => {
     publishingMountedRef.current = true;
     photoSelectionFence.mount();
     const objectUrls = photoObjectUrlsRef.current;
+    const photoBudgetKeys = photoBudgetKeyByUrlRef.current;
+    const decodeControllers = photoDecodeControllersRef.current;
     return () => {
       publishingMountedRef.current = false;
       competitorResearchControllerRef.current?.abort();
       productResearchControllerRef.current?.abort();
       productResearchGenerationRef.current += 1;
+      for (const controller of decodeControllers.values()) {
+        controller.abort(new DOMException("상품 등록 사진 화면을 닫았습니다.", "AbortError"));
+      }
+      decodeControllers.clear();
       photoSelectionFence.unmount();
+      photoSelectionBudget.reset();
+      photoSelectionsProcessingCountRef.current = 0;
+      photoBudgetKeys.clear();
       for (const url of objectUrls) URL.revokeObjectURL(url);
       objectUrls.clear();
     };
-  }, [photoSelectionFence]);
+  }, [photoSelectionBudget, photoSelectionFence]);
 
   const preservePublishingCaptureContext = useCallback(() => {
     const historyState = isRecord(window.history.state) ? window.history.state : {};
@@ -2273,20 +2365,39 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     });
   };
 
-  const toPhoto = async (file: File, role: string): Promise<UploadedPhoto> => {
+  const toPhoto = async (file: File, role: string, signal: AbortSignal): Promise<UploadedPhoto> => {
     assertStudioSourceFile(file);
+    if (signal.aborted) throw signal.reason ?? new DOMException("사진 확인을 취소했습니다.", "AbortError");
     const url = URL.createObjectURL(file);
     photoObjectUrlsRef.current.add(url);
+    const image = new window.Image();
+    let removeAbortListener = () => {};
     try {
-      const image = new window.Image();
       const dimensions = await withPromiseTimeout(new Promise<{ width: number; height: number }>((resolve, reject) => {
-        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
-        image.onerror = () => reject(new Error("이미지를 읽지 못했습니다."));
+        const onAbort = () => {
+          image.onload = null;
+          image.onerror = null;
+          image.src = "";
+          releasePhotoUrl(url);
+          reject(signal.reason ?? new DOMException("사진 확인을 취소했습니다.", "AbortError"));
+        };
+        removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+        signal.addEventListener("abort", onAbort, { once: true });
+        image.onload = () => {
+          removeAbortListener();
+          resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        };
+        image.onerror = () => {
+          removeAbortListener();
+          reject(new Error("이미지를 읽지 못했습니다."));
+        };
         image.src = url;
       }), 15_000, "모바일에서 이미지를 읽는 시간이 너무 오래 걸렸습니다. 사진을 다시 선택해 주세요.").finally(() => {
+        removeAbortListener();
         image.onload = null;
         image.onerror = null;
       });
+      if (signal.aborted) throw signal.reason ?? new DOMException("사진 확인을 취소했습니다.", "AbortError");
       assertStudioSourceDimensions(dimensions.width, dimensions.height);
       if (!publishingMountedRef.current) throw new Error("상품 등록 화면이 닫혀 이미지 처리를 중단했습니다.");
       return { name: file.name, url, file, role, originalWidth: dimensions.width, originalHeight: dimensions.height };
@@ -2301,10 +2412,47 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = "";
-    const token = photoSelectionFence.nextMain();
     try {
-      const photo = await toPhoto(file, "main");
-      if (releaseStaleRevisionPhoto(photoSelectionFence.isCurrent(token), photo.url, releasePhotoUrl)) return;
+      assertStudioSourceFile(file);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "대표사진을 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
+    const token = photoSelectionFence.nextMain();
+    const scope = "main";
+    abortPhotoDecodeScope(scope, "새 대표사진을 선택해 이전 사진 확인을 취소했습니다.");
+    let budgetReservation: StudioPhotoBudgetReservation;
+    try {
+      budgetReservation = photoSelectionBudget.reserve([{ key: "main", size: file.size }]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "대표사진을 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
+    const decodeController = beginPhotoDecodeScope(scope);
+    beginPhotoSelectionProcessing();
+    try {
+      const photo = await photoDecodeGate.run(
+        () => toPhoto(file, "main", decodeController.signal),
+        decodeController.signal,
+      );
+      if (releaseStaleRevisionPhoto(
+        photoSelectionFence.isCurrent(token) && photoSelectionBudget.isCurrent(budgetReservation),
+        photo.url,
+        releasePhotoUrl,
+      )) return;
+      try {
+        if (!photoSelectionBudget.commit(budgetReservation, [{ key: "main", size: file.size }])) {
+          releasePhotoUrl(photo.url);
+          return;
+        }
+      } catch (error) {
+        releasePhotoUrl(photo.url);
+        throw error;
+      }
       setMainPhoto((current) => {
         if (current) releasePhotoUrl(current.url);
         return photo;
@@ -2315,6 +2463,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       const message = error instanceof Error ? error.message : "대표사진을 확인해 주세요.";
       setUploadError(message);
       notify(message);
+    } finally {
+      photoSelectionBudget.cancel(budgetReservation);
+      finishPhotoDecodeScope(scope, decodeController);
+      endPhotoSelectionProcessing();
     }
   };
 
@@ -2529,13 +2681,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       intakeRef.current = nextIntake;
       setIntake(nextIntake);
       setResearchResult(result);
-      const competitorQuery = suggestion.productName || nextIntake.productName || researchInput;
-      const competitorParams = new URLSearchParams({ query: competitorQuery.slice(0, 500) });
-      for (const searchQuery of result.searchQueries) competitorParams.append("alias", searchQuery.query.slice(0, 160));
-      runCompetitorResearchPolling(
-        `/api/admin/competitor-prices?${competitorParams.toString()}`,
-        { items: [], providers: [] },
+      const initialCompetitorResearchPath = buildCompetitorResearchRetryPath(
+        nextIntake,
+        result.searchQueries.map((searchQuery) => searchQuery.query),
       );
+      if (initialCompetitorResearchPath) {
+        runCompetitorResearchPolling(initialCompetitorResearchPath, { items: [], providers: [] });
+      }
       setFirstDraftGenerated(true);
       setManualErrors({});
       notify("1차 자동생성 초안을 만들었습니다. 확인되지 않은 값은 공란으로 유지했습니다. 실물 기준 필수값을 입력해 주세요.");
@@ -2574,11 +2726,49 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify("한 상품은 분석용 사진을 최대 100장까지 등록할 수 있습니다.");
       return;
     }
-    if (reservesNewSlot) pendingNewSlotPhotoRef.current.add(slotId);
-    const token = photoSelectionFence.nextRole(slotId);
+    const budgetKey = `role:${slotId}`;
     try {
-      const photo = await toPhoto(file, slotId);
-      if (releaseStaleRevisionPhoto(photoSelectionFence.isCurrent(token), photo.url, releasePhotoUrl)) return;
+      assertStudioSourceFile(file);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "옵션 사진을 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
+    const token = photoSelectionFence.nextRole(slotId);
+    abortPhotoDecodeScope(budgetKey, `새 ${slotId} 사진을 선택해 이전 사진 확인을 취소했습니다.`);
+    let budgetReservation: StudioPhotoBudgetReservation;
+    try {
+      budgetReservation = photoSelectionBudget.reserve([{ key: budgetKey, size: file.size }]);
+    } catch (error) {
+      if (reservesNewSlot) pendingNewSlotPhotoRef.current.delete(slotId);
+      const message = error instanceof Error ? error.message : "옵션 사진을 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
+    if (reservesNewSlot) pendingNewSlotPhotoRef.current.add(slotId);
+    const decodeController = beginPhotoDecodeScope(budgetKey);
+    beginPhotoSelectionProcessing();
+    try {
+      const photo = await photoDecodeGate.run(
+        () => toPhoto(file, slotId, decodeController.signal),
+        decodeController.signal,
+      );
+      if (releaseStaleRevisionPhoto(
+        photoSelectionFence.isCurrent(token) && photoSelectionBudget.isCurrent(budgetReservation),
+        photo.url,
+        releasePhotoUrl,
+      )) return;
+      try {
+        if (!photoSelectionBudget.commit(budgetReservation, [{ key: budgetKey, size: file.size }])) {
+          releasePhotoUrl(photo.url);
+          return;
+        }
+      } catch (error) {
+        releasePhotoUrl(photo.url);
+        throw error;
+      }
       setSlotPhotos((current) => {
         if (current[slotId]) releasePhotoUrl(current[slotId].url);
         return { ...current, [slotId]: photo };
@@ -2590,7 +2780,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       setUploadError(message);
       notify(message);
     } finally {
-      if (reservesNewSlot) pendingNewSlotPhotoRef.current.delete(slotId);
+      photoSelectionBudget.cancel(budgetReservation);
+      finishPhotoDecodeScope(budgetKey, decodeController);
+      endPhotoSelectionProcessing();
+      if (reservesNewSlot && photoSelectionFence.isCurrent(token)) pendingNewSlotPhotoRef.current.delete(slotId);
     }
   };
 
@@ -2610,26 +2803,75 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const remaining = Math.max(0, 100 - ((mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length));
     if (!remaining) return notify("한 상품은 분석용 사진을 최대 100장까지 등록할 수 있습니다.");
     const selected = files.slice(0, remaining);
+    const candidates = selected.map((file, index) => ({
+      file,
+      key: `extra:${crypto.randomUUID()}`,
+      role: `extra-${extraPhotos.length + index + 1}`,
+    }));
+    const budgetEntries = candidates.flatMap((candidate) => {
+      try {
+        assertStudioSourceFile(candidate.file);
+        return [{ key: candidate.key, size: candidate.file.size }];
+      } catch {
+        return [];
+      }
+    });
     const token = photoSelectionFence.nextExtras();
+    const scope = "extras";
+    abortPhotoDecodeScope(scope, "새 추가 사진 선택으로 이전 사진 확인을 취소했습니다.");
+    let budgetReservation: StudioPhotoBudgetReservation;
+    try {
+      budgetReservation = photoSelectionBudget.reserve(budgetEntries);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "추가 사진을 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
+    const decodeController = beginPhotoDecodeScope(scope);
     extraPhotoBatchRef.current = true;
     setExtraPhotosProcessing(true);
+    beginPhotoSelectionProcessing();
     try {
-      const settled = await settleWithConcurrency(selected, 3, (file, index) => {
+      const settled = await settleWithConcurrency(candidates, 3, async (candidate) => {
         if (!photoSelectionFence.isCurrent(token)) throw new DOMException("이전 추가 사진 선택을 중단했습니다.", "AbortError");
-        return toPhoto(file, `extra-${extraPhotos.length + index + 1}`);
+        const photo = await photoDecodeGate.run(
+          () => toPhoto(candidate.file, candidate.role, decodeController.signal),
+          decodeController.signal,
+        );
+        return { photo, key: candidate.key, size: candidate.file.size };
       });
       const accepted = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
       const firstFailure = settled.find((result): result is PromiseRejectedResult => result.status === "rejected");
-      if (!photoSelectionFence.isCurrent(token)) {
-        for (const photo of accepted) releasePhotoUrl(photo.url);
+      if (!photoSelectionFence.isCurrent(token) || !photoSelectionBudget.isCurrent(budgetReservation)) {
+        for (const acceptedPhoto of accepted) releasePhotoUrl(acceptedPhoto.photo.url);
         return;
       }
+      try {
+        if (!photoSelectionBudget.commit(
+          budgetReservation,
+          accepted.map((acceptedPhoto) => ({ key: acceptedPhoto.key, size: acceptedPhoto.size })),
+        )) {
+          for (const acceptedPhoto of accepted) releasePhotoUrl(acceptedPhoto.photo.url);
+          return;
+        }
+      } catch (error) {
+        for (const acceptedPhoto of accepted) releasePhotoUrl(acceptedPhoto.photo.url);
+        throw error;
+      }
+      for (const acceptedPhoto of accepted) photoBudgetKeyByUrlRef.current.set(acceptedPhoto.photo.url, acceptedPhoto.key);
       if (accepted.length) setExtraPhotos((current) => {
-        const next = [...current, ...accepted];
+        const next = [...current, ...accepted.map((acceptedPhoto) => acceptedPhoto.photo)];
         const capacity = Math.max(0, 100 - (mainPhoto ? 1 : 0) - Object.keys(slotPhotos).length);
         const kept = next.slice(0, capacity);
         const keptUrls = new Set(kept.map((photo) => photo.url));
-        for (const photo of accepted) if (!keptUrls.has(photo.url)) releasePhotoUrl(photo.url);
+        for (const acceptedPhoto of accepted) {
+          if (keptUrls.has(acceptedPhoto.photo.url)) continue;
+          const budgetKey = photoBudgetKeyByUrlRef.current.get(acceptedPhoto.photo.url);
+          if (budgetKey) photoSelectionBudget.remove(budgetKey);
+          photoBudgetKeyByUrlRef.current.delete(acceptedPhoto.photo.url);
+          releasePhotoUrl(acceptedPhoto.photo.url);
+        }
         return kept;
       });
       if (firstFailure) {
@@ -2637,7 +2879,16 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         setUploadError(message);
         notify(`${accepted.length}장 등록 · ${message}`);
       }
+    } catch (error) {
+      if (photoSelectionFence.isCurrent(token)) {
+        const message = error instanceof Error ? error.message : "추가 사진을 확인해 주세요.";
+        setUploadError(message);
+        notify(message);
+      }
     } finally {
+      photoSelectionBudget.cancel(budgetReservation);
+      finishPhotoDecodeScope(scope, decodeController);
+      endPhotoSelectionProcessing();
       if (photoSelectionFence.isCurrent(token)) {
         extraPhotoBatchRef.current = false;
         setExtraPhotosProcessing(false);
@@ -2647,6 +2898,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const removeSlotPhoto = (slotId: string) => {
     photoSelectionFence.invalidateRole(slotId);
+    abortPhotoDecodeScope(`role:${slotId}`, "역할별 사진을 제거해 확인을 취소했습니다.");
+    photoSelectionBudget.remove(`role:${slotId}`);
     setSlotPhotos((current) => {
       const next = { ...current };
       if (next[slotId]) releasePhotoUrl(next[slotId].url);
@@ -2657,16 +2910,28 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const removeExtraPhoto = (index: number) => {
     photoSelectionFence.invalidateExtras();
+    abortPhotoDecodeScope("extras", "추가 사진을 제거해 확인을 취소했습니다.");
     extraPhotoBatchRef.current = false;
     setExtraPhotosProcessing(false);
     setExtraPhotos((current) => {
-      if (current[index]) releasePhotoUrl(current[index].url);
+      if (current[index]) {
+        const budgetKey = photoBudgetKeyByUrlRef.current.get(current[index].url);
+        if (budgetKey) photoSelectionBudget.remove(budgetKey);
+        photoBudgetKeyByUrlRef.current.delete(current[index].url);
+        releasePhotoUrl(current[index].url);
+      }
       return current.filter((_, photoIndex) => photoIndex !== index);
     });
   };
 
   const startAutomation = () => {
     if (running || automationStartInFlightRef.current) return;
+    if (photoSelectionsProcessingCountRef.current > 0 || photoSelectionBudget.hasPending()) {
+      const message = "선택한 상품 사진 확인이 끝난 뒤 상품 분석을 시작해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
     if (researchingProduct) {
       notify("1차 상품정보 확인을 마치거나 중단한 뒤 최종 상품 분석을 시작해 주세요.");
       return;
@@ -2848,7 +3113,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·CLI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
           </section>
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && !researchingProduct && !competitorResearchBlocksAnalysis ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{competitorResearchBlocksAnalysis ? " · 동일상품 가격 확인 대기" : ""}</span><button type="button" onClick={startAutomation} disabled={running || researchingProduct || competitorResearchBlocksAnalysis || Boolean(queuedJobId)}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : competitorResearchBlocksAnalysis ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && !researchingProduct && !competitorResearchBlocksAnalysis && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격 확인 대기" : ""}</span><button type="button" onClick={startAutomation} disabled={running || researchingProduct || photoSelectionsProcessing || competitorResearchBlocksAnalysis || Boolean(queuedJobId)}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>

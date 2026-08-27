@@ -579,7 +579,21 @@ test("both full-series and individual-regeneration worker paths use the same has
   const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
   const claimRoute = await readFile(new URL("../app/api/ai/worker/claim/route.ts", import.meta.url), "utf8");
   assert.equal(worker.match(/await generateDistinctAsset\(\{/g)?.length, 2);
-  assert.match(worker, /for \(let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt \+= 1\)/);
+  assert.match(worker, /for \(let attempt = startingAttempt; attempt <= maximumAttempt; attempt \+= 1\)/);
+  assert.match(worker, /maximumAttempt > MAXIMUM_SHOT_GENERATION_ATTEMPTS/);
+  assert.match(worker, /await runDeterministicProductImageBatches\(\{/);
+  assert.match(worker, /attemptsUsed: generated\.attempts - attempt \+ 1/);
+  assert.match(worker, /findPostGenerationConflict: \(\{[\s\S]{0,260}acceptedCandidates,[\s\S]{0,260}findProductImageBatchSemanticConflict\(\{/);
+  assert.match(worker, /acceptedSettingCandidates = acceptedCandidates\.filter/);
+  assert.match(worker, /auditGeneratedIdentityBackground\(\{[\s\S]{0,1000}comparisonPlates,/);
+  assert.match(worker, /kind: "semantic",[\s\S]{0,300}retryAuditFeedback:[\s\S]{0,260}safeForRetryComparison:/);
+  assert.match(worker, /conflict\.kind !== "semantic" \|\| conflict\.safeForRetryComparison/);
+  assert.match(worker, /commitCandidate: async[\s\S]{0,900}uploadAiResultAsset\(\{/);
+  const batchLoserRetryStart = worker.indexOf("async function prepareProductImageBatchLoserRetry(");
+  const batchLoserRetryEnd = worker.indexOf("async function throwProductImageBatchExhausted(", batchLoserRetryStart);
+  const batchLoserRetry = worker.slice(batchLoserRetryStart, batchLoserRetryEnd);
+  assert.ok(batchLoserRetryStart > 0 && batchLoserRetryEnd > batchLoserRetryStart);
+  assert.match(batchLoserRetry, /if \(identityCutouts && preset\.identityPolicy\.mode !== "source-composite"\)/);
   assert.match(worker, /await rm\(outputFile, \{ force: true \}\)/);
   assert.match(worker, /createHash\("sha256"\)\.update\(buffer\)/);
   assert.match(worker, /\.flatten\(\{ background: "#ffffff" \}\)/);
@@ -626,7 +640,7 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /comparisonPlates: boundedBackgroundComparisonShots\(\)/);
   assert.doesNotMatch(worker, /rejectedBackgroundShots\.splice\(0\)/);
   assert.match(worker, /maximumRejectedBackgroundHistory = MAXIMUM_SHOT_GENERATION_ATTEMPTS - 1/);
-  assert.match(worker, /while \(rejectedBackgroundShots\.length >= maximumRejectedBackgroundHistory\)/);
+  assert.match(worker, /while \(retryState\.rejectedBackgroundShots\.length >= maximumRejectedBackgroundHistory\)/);
   assert.match(worker, /const candidates = \[[\s\S]*\.\.\.rejectedBackgroundShots,[\s\S]*\.\.\.existingBackgroundShots,[\s\S]*\.\.\.comparisonBackgroundShots/);
   assert.match(worker, /slice\(0, maximumBackgroundAuditComparisons\)/);
   assert.match(worker, /failedDimensions: \["overall-layout", "camera", "spatial-depth", "fixed-cue"\]/);
@@ -669,7 +683,7 @@ test("image generation retries only the exact Codex timeout inside the finite sh
   assert.ok(timeoutRetryBlock, "the image-generation timeout retry block must remain explicit");
   assert.match(
     timeoutRetryBlock,
-    /attempt < MAXIMUM_SHOT_GENERATION_ATTEMPTS\s*&& error instanceof Error\s*&& error\.message === "Codex CLI 실행 제한시간을 초과했습니다\."/,
+    /attempt < maximumAttempt\s*&& error instanceof Error\s*&& error\.message === "Codex CLI 실행 제한시간을 초과했습니다\."/,
   );
   assert.match(timeoutRetryBlock, /if \(!retryableGenerationTimeout\) throw error;/);
   assert.match(timeoutRetryBlock, /noveltyGuidance = `Image generation timeout retry/);
@@ -677,7 +691,7 @@ test("image generation retries only the exact Codex timeout inside the finite sh
   assert.doesNotMatch(timeoutRetryBlock, /error\.message\.includes|error\.name|\/timeout\//i);
 
   const loopStart = worker.indexOf(
-    "for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1)",
+    "for (let attempt = startingAttempt; attempt <= maximumAttempt; attempt += 1)",
   );
   const retryStart = worker.indexOf("const retryableGenerationTimeout =", loopStart);
   assert.notEqual(loopStart, -1);
@@ -787,7 +801,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /openedStats\.dev !== outputStats\.dev[\s\S]*openedStats\.ino !== outputStats\.ino/);
   assert.match(worker, /sourceHandle\.readFile\(\)/);
   assert.match(worker, /assertIdentityBackgroundPlate\(generated, generationPreset, backgroundContactMode\)/);
-  assert.match(worker, /attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS[\s\S]*preset\.id === "portrait"[\s\S]*isRepairableMissingIdentitySupportBoundary\(error\)/);
+  assert.match(worker, /attempt === maximumAttempt[\s\S]*preset\.id === "portrait"[\s\S]*isRepairableMissingIdentitySupportBoundary\(error\)/);
   assert.match(worker, /repairMissingIdentitySupportSurface\(generated, generationPreset\)[\s\S]*assertIdentityBackgroundPlate\(generated, generationPreset, backgroundContactMode\)/);
   assert.match(worker, /await writeFile\(outputFile, generated\)[\s\S]*executeSourceProductCutout\("background"/);
   assert.match(worker, /executeSourceProductCutout\("background"/);

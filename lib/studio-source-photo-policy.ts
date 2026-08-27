@@ -23,6 +23,17 @@ export function assertStudioSourceFile(file: Pick<File, "size" | "type">) {
   }
 }
 
+export function assertStudioSourceByteBudget(
+  files: readonly Pick<Blob, "size">[],
+  maximumBytes = maximumStudioJobSourceBytes,
+) {
+  const sourceBytes = files.reduce((total, file) => total + file.size, 0);
+  if (sourceBytes > maximumBytes) {
+    throw new Error("한 상품의 원본 사진 합계는 200MB 이하로 등록해 주세요.");
+  }
+  return sourceBytes;
+}
+
 export function assertStudioSourceDimensions(width: number, height: number) {
   if (!Number.isInteger(width) || !Number.isInteger(height)
       || width < minimumStudioSourceImageDimension

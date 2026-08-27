@@ -395,7 +395,7 @@ test("worker runs the independent semantic audit inside every background retry w
   assert.match(worker, /expectedPlateDigest/);
   assert.match(worker, /stage: `background-audit:\$\{preset\.id\}`/);
   assert.match(worker, /`가시적 시간대 조명=\$\{backgroundContract\.moment\.description/);
-  assert.match(worker, /for \(let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS/);
+  assert.match(worker, /for \(let attempt = startingAttempt; attempt <= maximumAttempt/);
   assert.match(worker, /Background safety retry/);
   assert.match(worker, /deterministic trusted retry contract/);
   assert.match(worker, /safeForRetryComparison/);

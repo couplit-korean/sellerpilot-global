@@ -93,6 +93,9 @@ import {
   SHOT_DHASH_ROWS,
 } from "../lib/image-shot-uniqueness.ts";
 import {
+  runDeterministicProductImageBatches,
+} from "../lib/product-image-batch-coordinator.ts";
+import {
   appendTerminalImageFailureEntry,
   buildPriorTerminalImageHardBlacklist,
   terminalImageFailureContextSchema,
@@ -239,7 +242,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.54";
+const workerVersion = "sellerpilot-cli-worker/1.55";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -2858,6 +2861,48 @@ async function verifyGeneratedLabelFidelity({
   return report;
 }
 
+function createAssetGenerationRetryState(preset, priorTerminalImageFailureContext) {
+  const priorTerminalEntries = settingShotAssetIds.includes(preset.id)
+    ? terminalImageFailuresForRole(priorTerminalImageFailureContext, preset.id)
+    : [];
+  return {
+    priorTerminalBlacklistGuidance: settingShotAssetIds.includes(preset.id)
+      ? buildPriorTerminalImageHardBlacklist(priorTerminalImageFailureContext, preset.id)
+      : "",
+    noveltyGuidance: "",
+    retryConflictAssetIds: [...new Set(priorTerminalEntries.flatMap(
+      (entry) => entry.rejectedAssetLineage.conflictingAssetIds,
+    ))].slice(0, maximumBackgroundAuditComparisons),
+    retryAuditFeedback: terminalRetryFeedbackFromEntries(priorTerminalEntries),
+    rejectedBackgroundShots: [],
+    rejectedSourceEvidenceShots: [],
+  };
+}
+
+async function retainRejectedBackgroundForRetry({
+  retryState,
+  preset,
+  outputFile,
+  generated,
+  attempt,
+}) {
+  const maximumRejectedBackgroundHistory = MAXIMUM_SHOT_GENERATION_ATTEMPTS - 1;
+  while (retryState.rejectedBackgroundShots.length >= maximumRejectedBackgroundHistory) {
+    const rejected = retryState.rejectedBackgroundShots.shift();
+    if (rejected?.plateFile) await rm(rejected.plateFile, { force: true });
+  }
+  const semanticAssetId = `rejected-${preset.id}-${attempt}`;
+  const plateFile = join(dirname(outputFile), `.rejected-background-${preset.id}-${attempt}.png`);
+  await writeFile(plateFile, generated, { flag: "wx", mode: 0o600 });
+  retryState.rejectedBackgroundShots.push({
+    ...await fingerprintGeneratedShot(`background:${semanticAssetId}`, generated),
+    semanticAssetId,
+    plateFile,
+    plateDigest: createHash("sha256").update(generated).digest("hex"),
+    plateBytes: generated.length,
+  });
+}
+
 async function generateDistinctAsset({
   result,
   outputFile,
@@ -2873,36 +2918,31 @@ async function generateDistinctAsset({
   comparisonShots = [],
   comparisonBackgroundShots = [],
   priorTerminalImageFailureContext = null,
+  retryState = createAssetGenerationRetryState(preset, priorTerminalImageFailureContext),
+  startingAttempt = 1,
+  maximumAttempt = MAXIMUM_SHOT_GENERATION_ATTEMPTS,
 }) {
+  if (!Number.isSafeInteger(startingAttempt)
+      || !Number.isSafeInteger(maximumAttempt)
+      || startingAttempt < 1
+      || maximumAttempt > MAXIMUM_SHOT_GENERATION_ATTEMPTS
+      || startingAttempt > maximumAttempt) {
+    throw new Error(`${preset.id} 이미지 시도 예산이 올바르지 않습니다.`);
+  }
   const referenceIndexes = selectAssetReferenceIndexes(imageFiles, preset.id, imageFiles.length);
-  const priorTerminalEntries = settingShotAssetIds.includes(preset.id)
-    ? terminalImageFailuresForRole(priorTerminalImageFailureContext, preset.id)
-    : [];
-  const priorTerminalBlacklistGuidance = settingShotAssetIds.includes(preset.id)
-    ? buildPriorTerminalImageHardBlacklist(priorTerminalImageFailureContext, preset.id)
-    : "";
-  let noveltyGuidance = "";
-  let retryConflictAssetIds = [...new Set(priorTerminalEntries.flatMap(
-    (entry) => entry.rejectedAssetLineage.conflictingAssetIds,
-  ))].slice(0, maximumBackgroundAuditComparisons);
-  let retryAuditFeedback = terminalRetryFeedbackFromEntries(priorTerminalEntries);
-  const rejectedBackgroundShots = [];
-  const rejectedSourceEvidenceShots = [];
+  const priorTerminalBlacklistGuidance = retryState.priorTerminalBlacklistGuidance;
+  let noveltyGuidance = retryState.noveltyGuidance;
+  let retryConflictAssetIds = [...retryState.retryConflictAssetIds];
+  let retryAuditFeedback = retryState.retryAuditFeedback;
+  const rejectedBackgroundShots = retryState.rejectedBackgroundShots;
+  const rejectedSourceEvidenceShots = retryState.rejectedSourceEvidenceShots;
   const retainRejectedBackground = async (generated, attempt) => {
-    const maximumRejectedBackgroundHistory = MAXIMUM_SHOT_GENERATION_ATTEMPTS - 1;
-    while (rejectedBackgroundShots.length >= maximumRejectedBackgroundHistory) {
-      const rejected = rejectedBackgroundShots.shift();
-      if (rejected?.plateFile) await rm(rejected.plateFile, { force: true });
-    }
-    const semanticAssetId = `rejected-${preset.id}-${attempt}`;
-    const plateFile = join(dirname(outputFile), `.rejected-background-${preset.id}-${attempt}.png`);
-    await writeFile(plateFile, generated, { flag: "wx", mode: 0o600 });
-    rejectedBackgroundShots.push({
-      ...await fingerprintGeneratedShot(`background:${semanticAssetId}`, generated),
-      semanticAssetId,
-      plateFile,
-      plateDigest: createHash("sha256").update(generated).digest("hex"),
-      plateBytes: generated.length,
+    await retainRejectedBackgroundForRetry({
+      retryState,
+      preset,
+      outputFile,
+      generated,
+      attempt,
     });
   };
   const boundedBackgroundComparisonShots = () => {
@@ -2922,7 +2962,7 @@ async function generateDistinctAsset({
     })
     .slice(0, maximumBackgroundAuditComparisons);
   };
-  for (let attempt = 1; attempt <= MAXIMUM_SHOT_GENERATION_ATTEMPTS; attempt += 1) {
+  for (let attempt = startingAttempt; attempt <= maximumAttempt; attempt += 1) {
     await rm(outputFile, { force: true });
     const backgroundPlateFile = join(dirname(outputFile), `.identity-background-${preset.id}.png`);
     const sourcePixelBaselineFile = join(dirname(outputFile), `.identity-label-baseline-${preset.id}.png`);
@@ -3044,7 +3084,7 @@ async function generateDistinctAsset({
           stage: `image:${preset.id}`,
         });
       } catch (error) {
-        const retryableGenerationTimeout = attempt < MAXIMUM_SHOT_GENERATION_ATTEMPTS
+        const retryableGenerationTimeout = attempt < maximumAttempt
           && error instanceof Error
           && error.message === "Codex CLI 실행 제한시간을 초과했습니다.";
         if (!retryableGenerationTimeout) throw error;
@@ -3064,7 +3104,7 @@ async function generateDistinctAsset({
           try {
             await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
           } catch (error) {
-            const mayRepairMissingSupport = attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS
+            const mayRepairMissingSupport = attempt === maximumAttempt
               && preset.id === "portrait"
               && backgroundContactMode === "surface-supported"
               && isRepairableMissingIdentitySupportBoundary(error);
@@ -3128,7 +3168,7 @@ async function generateDistinctAsset({
           }
           backgroundProps = [backgroundContract.prop.key];
         } catch (error) {
-          if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
+          if (attempt === maximumAttempt) {
             const terminalFeedback = mergeSettingShotRetryAuditFeedback(
               retryAuditFeedback,
               mergeSettingShotRetryAuditFeedback(
@@ -3185,7 +3225,7 @@ async function generateDistinctAsset({
           if (duplicateBackground) break;
         }
         if (duplicateBackground) {
-          if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
+          if (attempt === maximumAttempt) {
             const terminalFeedback = mergeSettingShotRetryAuditFeedback(
               mergeSettingShotRetryAuditFeedback(retryAuditFeedback, acceptedBackgroundAuditFeedback),
               { failedDimensions: ["overall-layout", "camera", "spatial-depth", "fixed-cue"] },
@@ -3287,7 +3327,7 @@ async function generateDistinctAsset({
         if (error instanceof ImageLabelPixelIntegrityError) throw error;
         const hasNextPackageEvidencePlan = preset.id === "detail-package"
           && Boolean(planIdentityEvidenceAttempt(identitySourceCandidateCount, attempt + 1));
-        if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS
+        if (attempt === maximumAttempt
             || (identityCutouts && identitySourceCandidateCount <= 1 && !hasNextPackageEvidencePlan)) throw error;
         noveltyGuidance = [
           noveltyGuidance,
@@ -3305,12 +3345,30 @@ async function generateDistinctAsset({
         : [...existingShots, ...comparisonShots],
     );
     if (!duplicate) {
-      if (backgroundFingerprint) existingBackgroundShots.push({ ...backgroundFingerprint, ...backgroundPlateSnapshot });
-      if (backgroundProps) existingBackgroundProps.push({ assetId: preset.id, propKeys: backgroundProps });
-      return { normalized, fingerprint, attempts: attempt };
+      const acceptedBackgroundShot = backgroundFingerprint
+        ? { ...backgroundFingerprint, ...backgroundPlateSnapshot }
+        : null;
+      const acceptedBackgroundProps = backgroundProps
+        ? { assetId: preset.id, propKeys: backgroundProps }
+        : null;
+      if (acceptedBackgroundShot) existingBackgroundShots.push(acceptedBackgroundShot);
+      if (acceptedBackgroundProps) existingBackgroundProps.push(acceptedBackgroundProps);
+      retryState.noveltyGuidance = noveltyGuidance;
+      retryState.retryConflictAssetIds = [...retryConflictAssetIds];
+      retryState.retryAuditFeedback = mergeSettingShotRetryAuditFeedback(
+        retryAuditFeedback,
+        acceptedBackgroundAuditFeedback,
+      );
+      return {
+        normalized,
+        fingerprint,
+        backgroundShot: acceptedBackgroundShot,
+        backgroundProps: acceptedBackgroundProps,
+        attempts: attempt,
+      };
     }
     if (identityCutouts && preset.identityPolicy.mode !== "source-composite") {
-      if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
+      if (attempt === maximumAttempt) {
         throw new Error(`${preset.id} 원본 근거 이미지가 ${duplicate.assetId}와 중복되어 서로 다른 안전한 원본 컷을 확보하지 못했습니다.`);
       }
       rejectedSourceEvidenceShots.push({
@@ -3331,7 +3389,7 @@ async function generateDistinctAsset({
       console.log(`[원본 근거 중복 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · attempt=${attempt}`);
       continue;
     }
-    if (attempt === MAXIMUM_SHOT_GENERATION_ATTEMPTS) {
+    if (attempt === maximumAttempt) {
       if (settingShotAssetIds.includes(preset.id)) {
         const terminalFeedback = mergeSettingShotRetryAuditFeedback(
           mergeSettingShotRetryAuditFeedback(retryAuditFeedback, acceptedBackgroundAuditFeedback),
@@ -3366,6 +3424,255 @@ async function generateDistinctAsset({
     console.log(`[이미지 중복 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · match=${duplicate.exact ? "sha256" : "dhash"} · distance=${duplicate.distance}`);
   }
   throw new Error(`${preset.id} 이미지 중복 검증을 완료하지 못했습니다.`);
+}
+
+function productImageBatchConflictAssetId(conflict) {
+  return String(conflict?.assetId ?? "unknown").replace(/^background:/, "");
+}
+
+function productImageBatchConflictAssetIds(conflict) {
+  const assetIds = conflict?.kind === "semantic" && conflict.conflictingAssetIds.length
+    ? conflict.conflictingAssetIds
+    : [productImageBatchConflictAssetId(conflict)];
+  return [...new Set(assetIds.map((assetId) => String(assetId).replace(/^background:/, "")))]
+    .slice(0, maximumBackgroundAuditComparisons);
+}
+
+function productImageBatchConflictFeedback(conflict) {
+  if (conflict?.kind === "semantic") {
+    return conflict.retryAuditFeedback;
+  }
+  if (conflict?.kind === "prop") {
+    return {
+      failedDimensions: ["fixed-cue"],
+      hardNegativeCueKeys: [conflict.propKey],
+    };
+  }
+  return {
+    failedDimensions: ["overall-layout", "camera", "spatial-depth", "fixed-cue"],
+  };
+}
+
+function resolveProductImageBatchBackgroundAuditContext(result, preset, attempt) {
+  const baseSettingShot = resolveProductSettingShot(result, preset.id);
+  if (!baseSettingShot) throw new Error(`${preset.id} 설정샷의 장소·시간대·표면·카메라 계약이 없습니다.`);
+  const backgroundContactMode = resolveIdentityBackgroundContactMode(result, baseSettingShot);
+  const retryIndex = attempt - 1;
+  const settingShot = retryIndex > 0
+    ? buildSettingShotRetryVariant(baseSettingShot, preset.id, retryIndex, backgroundContactMode)
+    : baseSettingShot;
+  const generationPreset = {
+    ...preset,
+    identityPolicy: {
+      ...preset.identityPolicy,
+      placement: resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(result)),
+    },
+  };
+  const backgroundContract = resolveIdentityBackgroundContract(settingShot, preset.id);
+  return {
+    generationPreset,
+    backgroundContactMode,
+    backgroundContract,
+  };
+}
+
+function completeProductImageBatchBackgroundShot(candidate) {
+  const backgroundShot = candidate.backgroundShot;
+  return backgroundShot?.plateFile
+      && backgroundShot.plateDigest
+      && Number.isSafeInteger(backgroundShot.plateBytes)
+      && backgroundShot.plateBytes > 0
+    ? backgroundShot
+    : null;
+}
+
+async function findProductImageBatchSemanticConflict({
+  result,
+  preset,
+  attempt,
+  candidate,
+  acceptedCandidates,
+  jobId,
+  claimToken,
+  leaseSignal,
+}) {
+  if (!settingShotAssetIds.includes(preset.id)) return null;
+  const candidateBackground = completeProductImageBatchBackgroundShot(candidate);
+  if (!candidateBackground) throw new Error(`${preset.id} 배치 의미 검수용 배경판 lineage가 없습니다.`);
+  const acceptedSettingCandidates = acceptedCandidates.filter((accepted) => (
+    settingShotAssetIds.includes(accepted.assetId)
+  ));
+  if (!acceptedSettingCandidates.length) return null;
+  const comparisonPlates = acceptedSettingCandidates.map((accepted) => {
+    const backgroundShot = completeProductImageBatchBackgroundShot(accepted);
+    if (!backgroundShot) throw new Error(`${accepted.assetId} 승인 배경판 lineage가 없습니다.`);
+    return backgroundShot;
+  });
+  const {
+    generationPreset,
+    backgroundContactMode,
+    backgroundContract,
+  } = resolveProductImageBatchBackgroundAuditContext(result, preset, attempt);
+  try {
+    await auditGeneratedIdentityBackground({
+      outputFile: candidateBackground.plateFile,
+      preset: generationPreset,
+      expectedEnvironment: [
+        `장소=${backgroundContract.location.description}`,
+        `가시적 시간대 조명=${backgroundContract.moment.description}`,
+        `표면=${backgroundContract.surface.description}`,
+        `카메라=${backgroundContract.camera.description}`,
+      ].join(" · "),
+      expectedEnvironmentKeys: {
+        location: backgroundContract.location.key,
+        moment: backgroundContract.moment.key,
+        surface: backgroundContract.surface.key,
+        camera: backgroundContract.camera.key,
+        palette: backgroundContract.palette.key,
+        spatialDepth: backgroundContract.spatialDepth.key,
+      },
+      expectedPropKey: backgroundContract.prop.key,
+      expectedPropDescription: backgroundContract.prop.description,
+      expectedPlateDigest: candidateBackground.plateDigest,
+      expectedPlateBytes: candidateBackground.plateBytes,
+      contactMode: backgroundContactMode,
+      comparisonPlates,
+      jobId,
+      claimToken,
+      leaseSignal,
+    });
+    return null;
+  } catch (error) {
+    if (leaseSignal?.aborted) throw error;
+    const acceptedAssetIds = new Set(acceptedSettingCandidates.map((accepted) => accepted.assetId));
+    const conflictingAssetIds = (Array.isArray(error?.conflictingAssetIds)
+      ? error.conflictingAssetIds
+      : [])
+      .filter((assetId) => acceptedAssetIds.has(assetId))
+      .slice(0, maximumBackgroundAuditComparisons);
+    const failedDimensions = Array.isArray(error?.failedDimensions) && error.failedDimensions.length
+      ? error.failedDimensions
+      : ["audit-confidence"];
+    return {
+      kind: "semantic",
+      assetId: conflictingAssetIds[0] ?? `semantic-audit-${preset.id}`,
+      conflictingAssetIds,
+      retryAuditFeedback: mergeSettingShotRetryAuditFeedback(
+        null,
+        error?.retryAuditFeedback ?? { failedDimensions },
+      ),
+      safeForRetryComparison: error?.safeForRetryComparison === true,
+    };
+  }
+}
+
+async function retainProductImageBatchLoserBackground({
+  preset,
+  outputFile,
+  generated,
+  attempt,
+  retryState,
+}) {
+  if (!generated.backgroundShot?.plateFile) return;
+  const backgroundBytes = await readFile(generated.backgroundShot.plateFile);
+  await retainRejectedBackgroundForRetry({
+    retryState,
+    preset,
+    outputFile,
+    generated: backgroundBytes,
+    attempt,
+  });
+}
+
+async function prepareProductImageBatchLoserRetry({
+  preset,
+  identityCutouts,
+  attempt,
+  candidate,
+  conflict,
+  retryState,
+  outputFile,
+}) {
+  const generated = candidate.value.generated;
+  const conflictingAssetId = productImageBatchConflictAssetId(conflict);
+  const conflictingAssetIds = productImageBatchConflictAssetIds(conflict);
+  if (identityCutouts && preset.identityPolicy.mode !== "source-composite") {
+    retryState.rejectedSourceEvidenceShots.push({
+      ...generated.fingerprint,
+      assetId: `rejected:${preset.id}:${attempt}`,
+    });
+    retryState.noveltyGuidance = buildDuplicateRetryGuidance(
+      preset.id,
+      conflictingAssetId,
+      attempt,
+      "source-evidence",
+    );
+    console.log(`[배치 원본 근거 중복 재시도] ${preset.id} ↔ ${conflictingAssetId} · attempt=${attempt}`);
+    return;
+  }
+
+  if (settingShotAssetIds.includes(preset.id)) {
+    if (conflict.kind !== "semantic" || conflict.safeForRetryComparison) {
+      await retainProductImageBatchLoserBackground({
+        preset,
+        outputFile,
+        generated,
+        attempt,
+        retryState,
+      });
+    }
+    retryState.retryConflictAssetIds = [...new Set([
+      ...retryState.retryConflictAssetIds,
+      ...conflictingAssetIds,
+    ])].slice(0, maximumBackgroundAuditComparisons);
+    retryState.retryAuditFeedback = mergeSettingShotRetryAuditFeedback(
+      retryState.retryAuditFeedback,
+      productImageBatchConflictFeedback(conflict),
+    );
+    retryState.noveltyGuidance = [
+      `Deterministic batch retry ${attempt}: this candidate lost the spec-order barrier to ${conflictingAssetId}.`,
+      "Keep the immutable source-product mask and generate a new background contract; do not repair the rejected plate by blur, erasure, recolor, crop, mirroring or object movement.",
+    ].join(" ");
+    console.log(`[배치 설정샷 충돌 재시도] ${preset.id} ↔ ${conflictingAssetId} · kind=${conflict.kind} · attempt=${attempt}`);
+    return;
+  }
+
+  retryState.noveltyGuidance = buildDuplicateRetryGuidance(
+    preset.id,
+    conflictingAssetId,
+    attempt,
+    "product-mockup",
+  );
+  console.log(`[배치 이미지 중복 재시도] ${preset.id} ↔ ${conflictingAssetId} · attempt=${attempt}`);
+}
+
+async function throwProductImageBatchExhausted({
+  preset,
+  attempt,
+  candidate,
+  conflict,
+  retryState,
+  reason,
+}) {
+  const conflictingAssetId = productImageBatchConflictAssetId(conflict);
+  const conflictingAssetIds = productImageBatchConflictAssetIds(conflict);
+  const generated = candidate?.value?.generated ?? null;
+  if (generated && settingShotAssetIds.includes(preset.id)) {
+    const terminalFeedback = mergeSettingShotRetryAuditFeedback(
+      retryState.retryAuditFeedback,
+      productImageBatchConflictFeedback(conflict),
+    );
+    throw await terminalImageQualityError({
+      error: new Error(`${preset.id} 이미지가 배치 검증에서 ${conflictingAssetId}와 반복되어 완료하지 않았습니다.`),
+      preset,
+      attempt,
+      generated: generated.normalized,
+      fingerprint: generated.fingerprint,
+      retryAuditFeedback: terminalFeedback,
+      conflictingAssetIds: [...retryState.retryConflictAssetIds, ...conflictingAssetIds],
+    });
+  }
+  throw new Error(`${preset.id} 이미지가 ${attempt}회 배치 검증 후에도 승인되지 않았습니다. · ${reason}`);
 }
 
 function summarizeStudioIssues(issues, maximumIssues = 12) {
@@ -3985,53 +4292,143 @@ async function processJob(job) {
     const existingBackgroundShots = [];
     const existingBackgroundProps = [];
     const currentSceneIdentityText = resolveProductSceneIdentityText(result);
-    for (const preset of imagePresets) {
-      const outputFile = join(jobDir, preset.file);
+    const uploadsByAssetId = new Map(imagePresets.map((preset) => {
       const upload = uploads.find((item) => item?.id === preset.id);
       if (!upload?.bucket || !upload?.path) throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
-      const settingShot = settingShotAssetIds.includes(preset.id);
-      const comparisonBackgroundShots = settingShot
-        ? await prepareCrossProductBackgroundShots(
-            crossProductArchive,
-            preset,
-            currentSceneIdentityText,
-            jobDir,
-            jobHeartbeat.signal,
-          )
-        : [];
-      const generated = await generateDistinctAsset({
-        result,
-        outputFile,
+      return [preset.id, upload];
+    }));
+    const retryStates = new Map(imagePresets.map((preset) => [
+      preset.id,
+      createAssetGenerationRetryState(preset, job.terminalImageFailureContext),
+    ]));
+    const comparisonBackgroundShotsByAssetId = new Map();
+    const comparisonBackgroundShotsFor = (preset) => {
+      if (!settingShotAssetIds.includes(preset.id)) return Promise.resolve([]);
+      const existing = comparisonBackgroundShotsByAssetId.get(preset.id);
+      if (existing) return existing;
+      const prepared = prepareCrossProductBackgroundShots(
+        crossProductArchive,
         preset,
-        imageFiles,
-        identityCutouts,
+        currentSceneIdentityText,
+        jobDir,
+        jobHeartbeat.signal,
+      );
+      comparisonBackgroundShotsByAssetId.set(preset.id, prepared);
+      return prepared;
+    };
+    await runDeterministicProductImageBatches({
+      specs: imagePresets,
+      signal: jobHeartbeat.signal,
+      maximumAttempts: MAXIMUM_SHOT_GENERATION_ATTEMPTS,
+      getCommittedHistory: () => ({
+        shots: existingShots,
+        backgroundShots: existingBackgroundShots,
+        backgroundProps: existingBackgroundProps,
+      }),
+      generateCandidate: async ({ spec: preset, attempt, history, signal }) => {
+        await assertJobLeaseHealthy();
+        const outputFile = join(jobDir, preset.file);
+        const upload = uploadsByAssetId.get(preset.id);
+        const retryState = retryStates.get(preset.id);
+        if (!upload || !retryState) throw new Error(`${preset.id} 배치 이미지 상태가 없습니다.`);
+        const settingShot = settingShotAssetIds.includes(preset.id);
+        const comparisonBackgroundShots = await comparisonBackgroundShotsFor(preset);
+        const generated = await generateDistinctAsset({
+          result,
+          outputFile,
+          preset,
+          imageFiles,
+          identityCutouts,
+          jobId: job.id,
+          claimToken,
+          leaseSignal: signal,
+          existingShots: [...history.shots],
+          existingBackgroundShots: [...history.backgroundShots],
+          existingBackgroundProps: history.backgroundProps.map((entry) => ({
+            assetId: entry.assetId,
+            propKeys: [...entry.propKeys],
+          })),
+          comparisonShots: settingShot ? crossProductArchive.shots : [],
+          comparisonBackgroundShots,
+          priorTerminalImageFailureContext: job.terminalImageFailureContext,
+          retryState,
+          startingAttempt: attempt,
+          maximumAttempt: MAXIMUM_SHOT_GENERATION_ATTEMPTS,
+        });
+        return {
+          status: "accepted",
+          attemptsUsed: generated.attempts - attempt + 1,
+          fingerprint: generated.fingerprint,
+          backgroundShot: generated.backgroundShot,
+          backgroundProps: generated.backgroundProps,
+          value: { generated, upload, outputFile },
+        };
+      },
+      findPostGenerationConflict: ({
+        spec: preset,
+        attempt,
+        candidate,
+        acceptedCandidates,
+        signal,
+      }) => findProductImageBatchSemanticConflict({
+        result,
+        preset,
+        attempt,
+        candidate,
+        acceptedCandidates,
         jobId: job.id,
         claimToken,
-        leaseSignal: jobHeartbeat.signal,
-        existingShots,
-        existingBackgroundShots,
-        existingBackgroundProps,
-        comparisonShots: settingShot ? crossProductArchive.shots : [],
-        comparisonBackgroundShots,
-        priorTerminalImageFailureContext: job.terminalImageFailureContext,
-      });
-      await assertJobLeaseHealthy();
-      await uploadAiResultAsset({
-        resultStorageClient,
-        jobId: job.id,
-        claimToken,
-        assetId: preset.id,
-        expectedPath: upload.path,
-        expectedBucket: upload.bucket,
-        imageBytes: generated.normalized,
-        assertLeaseHealthy: assertJobLeaseHealthy,
-      });
-      await assertJobLeaseHealthy();
-      existingShots.push(generated.fingerprint);
-      assetStoragePaths[preset.id] = upload.path;
-      uploadedResultPaths.push(upload.path);
-      console.log(`[이미지 업로드 완료] ${job.id} · ${preset.id}`);
-    }
+        leaseSignal: signal,
+      }),
+      onBarrierRejected: async ({ spec: preset, attempt, candidate, conflict }) => {
+        await assertJobLeaseHealthy();
+        const retryState = retryStates.get(preset.id);
+        if (!retryState) throw new Error(`${preset.id} 배치 재시도 상태가 없습니다.`);
+        await prepareProductImageBatchLoserRetry({
+          preset,
+          identityCutouts,
+          attempt,
+          candidate,
+          conflict,
+          retryState,
+          outputFile: candidate.value.outputFile,
+        });
+      },
+      onAttemptsExhausted: async ({ spec: preset, attempt, candidate, conflict, reason }) => {
+        const retryState = retryStates.get(preset.id);
+        if (!retryState) throw new Error(`${preset.id} 배치 종료 상태가 없습니다.`);
+        await throwProductImageBatchExhausted({
+          preset,
+          attempt,
+          candidate,
+          conflict,
+          retryState,
+          reason,
+        });
+      },
+      commitCandidate: async ({ spec: preset, candidate, signal }) => {
+        if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new JobCancelledError();
+        await assertJobLeaseHealthy();
+        const { generated, upload } = candidate.value;
+        await uploadAiResultAsset({
+          resultStorageClient,
+          jobId: job.id,
+          claimToken,
+          assetId: preset.id,
+          expectedPath: upload.path,
+          expectedBucket: upload.bucket,
+          imageBytes: generated.normalized,
+          assertLeaseHealthy: assertJobLeaseHealthy,
+        });
+        uploadedResultPaths.push(upload.path);
+        await assertJobLeaseHealthy();
+        existingShots.push(candidate.fingerprint);
+        if (candidate.backgroundShot) existingBackgroundShots.push(candidate.backgroundShot);
+        if (candidate.backgroundProps) existingBackgroundProps.push(candidate.backgroundProps);
+        assetStoragePaths[preset.id] = upload.path;
+        console.log(`[이미지 업로드 완료] ${job.id} · ${preset.id}`);
+      },
+    });
     if (existingShots.length !== imagePresets.length) {
       throw new Error(`생성 이미지 ${imagePresets.length}종의 중복 검증 지문이 완전하지 않습니다.`);
     }

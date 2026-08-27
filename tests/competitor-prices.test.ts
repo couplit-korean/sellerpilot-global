@@ -621,7 +621,7 @@ test("current QA products reject wrong flavor, pack size, brand, and formulation
     {
       queries: ["애사비 사과초모식초 15포", "Apple cider vinegar powder 15 sticks", "アップルサイダービネガー 15包"],
       same: "애사비 사과초모식초 15포",
-      wrong: ["애사비 구미 15개", "사과초모식초 15포", "애사비 사과초모식초 30포"],
+      wrong: ["애사비 구미 15개", "사과 분말 15포", "애사비 사과초모식초 30포"],
     },
   ];
 
@@ -631,6 +631,115 @@ test("current QA products reject wrong flavor, pack size, brand, and formulation
       assert.equal(competitorCandidateRelevance(candidate({ title }), fixture.queries), 0, title);
     }
   }
+});
+
+test("recognized and repeated brand evidence survives multilingual aliases fail closed", () => {
+  const brandedCases = [
+    {
+      queries: ["롯데샌드 파인애플 315g", "Pineapple sandwich biscuits 315g", "パイナップルサンドビスケット 315g"],
+      same: ["롯데샌드 파인애플 315g", "Lotte pineapple sandwich biscuits 315g", "ロッテ パイナップルサンドビスケット 315g"],
+      wrong: ["Generic Pineapple sandwich biscuits 315g", "NoBrand Pineapple sandwich biscuits 315g"],
+    },
+    {
+      queries: ["사조 살코기플러스 참치 95g x 8개", "Lean tuna 95g 8 cans", "ライトツナ 95g 8缶"],
+      same: ["사조 살코기플러스 참치 95g x 8개", "Sajo lean tuna 95g 8 cans", "サジョ ライトツナ 95g 8缶"],
+      wrong: ["Dongwon lean tuna 95g 8 cans", "Generic lean tuna 95g 8 cans"],
+    },
+    {
+      queries: ["BEYOND ORIGIN 애사비 젤리스틱 15포", "Apple cider vinegar jelly sticks 15 pack", "アップルサイダービネガーゼリースティック 15包"],
+      same: ["Beyond Origin apple cider vinegar jelly sticks 15 pack", "비욘드 오리진 애사비 젤리스틱 15포"],
+      wrong: ["Generic apple cider vinegar jelly sticks 15 pack"],
+    },
+    {
+      queries: ["ACME daily vitamin 30 tablets", "ACME vitamina diaria 30 tabletas", "ACME vitamin harian 30 tablet"],
+      same: ["ACME daily vitamin 30 tablets"],
+      wrong: ["Generic daily vitamin 30 tablets"],
+    },
+  ];
+
+  for (const fixture of brandedCases) {
+    for (const title of fixture.same) {
+      assert.ok(competitorCandidateRelevance(candidate({ title }), fixture.queries) > 0, title);
+    }
+    for (const title of fixture.wrong) {
+      assert.equal(competitorCandidateRelevance(candidate({ title }), fixture.queries), 0, title);
+    }
+  }
+});
+
+test("repeated multiword Latin brand identity requires the whole phrase", () => {
+  const queries = [
+    "Nature Made daily vitamin 30 tablets",
+    "Nature Made vitamina diaria 30 tabletas",
+    "Nature Made vitamin harian 30 tablet",
+  ];
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Nature Made daily vitamin 30 tablets" }), queries) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Nature Bounty daily vitamin 30 tablets" }), queries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Nature daily vitamin 30 tablets" }), queries), 0);
+});
+
+test("single-query ACV normalization is symmetric without letting generic apple replace ACV identity", () => {
+  const query = ["BEYOND ORIGIN 애사비 젤리스틱 15포"];
+  assert.ok(competitorCandidateRelevance(
+    candidate({ title: "비욘드 오리진 애사비 젤리스틱 15포" }),
+    query,
+  ) > 0);
+  assert.equal(competitorCandidateRelevance(
+    candidate({ title: "비욘드 오리진 사과 젤리스틱 15포" }),
+    query,
+  ), 0);
+  assert.equal(competitorCandidateRelevance(
+    candidate({ title: "Generic apple jelly sticks 15 pack" }),
+    query,
+  ), 0);
+});
+
+test("multilingual ACV shorthand and expanded family phrases bridge only with ACV evidence on both sides", () => {
+  const queries = [
+    "BEYOND ORIGIN 애사비 젤리스틱 15포",
+    "Beyond Origin apple cider vinegar jelly sticks 15 pack",
+    "Beyond Origin アップルサイダービネガー ゼリースティック 15包",
+  ];
+  assert.ok(competitorCandidateRelevance(
+    candidate({ title: "Beyond Origin ACV jelly sticks 15 pack" }),
+    queries,
+  ) > 0);
+  assert.ok(competitorCandidateRelevance(
+    candidate({ title: "Beyond Origin apple cider vinegar jelly sticks 15 pack" }),
+    ["Beyond Origin ACV jelly sticks 15 pack"],
+  ) > 0);
+  assert.ok(competitorCandidateRelevance(
+    candidate({ title: "사과초모식초 분말 15포" }),
+    ["애사비 사과초모식초 15포", "Apple cider vinegar powder 15 sticks"],
+  ) > 0);
+  assert.equal(competitorCandidateRelevance(
+    candidate({ title: "Beyond Origin apple jelly sticks 15 pack" }),
+    queries,
+  ), 0);
+  assert.equal(competitorCandidateRelevance(
+    candidate({ title: "Generic apple jelly sticks 15 pack" }),
+    queries,
+  ), 0);
+});
+
+test("general product names without brand evidence keep the existing multilingual matcher", () => {
+  const queries = [
+    "애사비 사과초모식초 15포",
+    "Apple cider vinegar powder 15 sticks",
+    "アップルサイダービネガー 15包",
+  ];
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Apple cider vinegar powder 15 sticks" }), queries) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: "Apple cider vinegar gummies 15 pieces" }), queries), 0);
+
+  const repeatedGenericLeadingWord = [
+    "Pineapple sandwich biscuits 315g",
+    "Pineapple cream cookies 315g",
+    "パイナップルサンドビスケット 315g",
+  ];
+  assert.ok(competitorCandidateRelevance(
+    candidate({ title: "パイナップルサンドビスケット 315g" }),
+    repeatedGenericLeadingWord,
+  ) > 0);
 });
 
 test("11st official ProductSearch parses only catalog fields and uses English search mode for an English alias", async () => {

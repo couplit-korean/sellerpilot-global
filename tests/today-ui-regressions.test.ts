@@ -373,7 +373,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /signal: enqueueScope\.signal/);
   assert.doesNotMatch(page, /AbortSignal\.timeout\(/);
   assert.match(page, /withPromiseTimeout\(new Promise<\{ width: number; height: number \}>[\s\S]*?15_000[\s\S]*?모바일에서 이미지를 읽는 시간이 너무 오래 걸렸습니다/);
-  assert.match(page, /settleWithConcurrency\(selected, 3,/);
+  assert.match(page, /settleWithConcurrency\(candidates, 3,/);
   assert.match(page, /모바일 메모리를 보호하며 3장씩 처리/);
   assert.match(page, /for \(const url of objectUrls\) URL\.revokeObjectURL\(url\)/);
   assert.doesNotMatch(page, /Promise\.allSettled\(selected\.map/);
@@ -454,13 +454,16 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /if \(researchingProduct\)[\s\S]{0,160}1차 상품정보 확인을 마치거나 중단/);
   assert.match(page, /const competitorResearchBlocksAnalysis = isCompetitorResearchBlockingAnalysis\([\s\S]{0,160}pendingCompetitorBypassConfirmed/);
   assert.match(page, /if \(competitorResearchBlocksAnalysis\)[\s\S]{0,260}동일 상품 가격 확인이 끝난 뒤 상품 분석을 시작/);
-  assert.match(page, /disabled=\{running \|\| researchingProduct \|\| competitorResearchBlocksAnalysis \|\| Boolean\(queuedJobId\)\}/);
+  assert.match(page, /disabled=\{running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| competitorResearchBlocksAnalysis \|\| Boolean\(queuedJobId\)\}/);
   assert.match(page, /가격 확인 중/);
   assert.match(page, /가격 없이 계속/);
   assert.match(page, /invalidatedExistingContext = interruptedResearch[\s\S]{0,180}competitorResearchState !== "idle"/);
   assert.match(page, /invalidatedExistingContext && competitorResearchState !== "stale"/);
   assert.match(page, /setCompetitorResearchState\(invalidatedExistingContext \? "stale" : "idle"\)/);
   assert.match(page, /const nextCompetitorRetryPath = buildCompetitorResearchRetryPath\(nextIntake\)/);
+  assert.match(page, /const initialCompetitorResearchPath = buildCompetitorResearchRetryPath\([\s\S]{0,120}nextIntake,[\s\S]{0,160}result\.searchQueries\.map/);
+  assert.match(page, /runCompetitorResearchPolling\(initialCompetitorResearchPath, \{ items: \[\], providers: \[\] \}\)/);
+  assert.doesNotMatch(page, /const competitorQuery = suggestion\.productName/);
   assert.match(page, /clearUnchangedResearchAppliedValues\([\s\S]{0,180}researchAppliedValuesRef\.current/);
   assert.match(page, /researchAppliedValuesRef\.current = collectResearchAppliedValues\(/);
   assert.match(page, /shouldInvalidateCompetitorResearch\(String\(key\), currentIntake\[key\], value\)/);

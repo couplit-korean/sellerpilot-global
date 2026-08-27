@@ -347,8 +347,8 @@ const measurementUnitDefinitions: readonly MeasurementUnitDefinition[] = [
 ];
 
 const countUnits = [
-  "개입", "세트", "묶음", "박스", "상자", "개", "입", "팩", "캔", "병", "봉", "매", "정",
-  "units", "unit", "pieces", "piece", "bottles", "bottle", "packs", "pack", "cans", "can", "pcs", "pc", "bags", "bag", "boxes", "box", "sets", "set", "tablets", "tablet", "capsules", "capsule", "servings", "serving", "ea",
+  "개입", "세트", "묶음", "박스", "상자", "개", "입", "팩", "캔", "병", "봉", "포", "매", "정",
+  "units", "unit", "pieces", "piece", "bottles", "bottle", "packs", "pack", "cans", "can", "pcs", "pc", "bags", "bag", "boxes", "box", "sets", "set", "sticks", "stick", "tablets", "tablet", "capsules", "capsule", "servings", "serving", "ea",
   "セット", "パック", "個", "本", "袋", "缶", "枚", "錠", "箱", "个", "個", "件", "包", "瓶", "罐", "盒", "支", "片", "套", "组", "組",
   "ชิ้น", "ขวด", "แพ็ค", "กระป๋อง", "ถุง", "กล่อง", "ชุด", "เม็ด",
   "cái", "hộp", "gói", "chai", "lon", "túi", "bộ", "viên", "combo",
@@ -629,6 +629,26 @@ function collectibleListingSignature(value: string) {
   return modifiers.size > 0 && collectorFamilyEvidence(value);
 }
 
+const compactAppleCiderVinegarIdentityTerms = [
+  "애사비", "사과초모식초", "사과식초", "アップルサイダービネガー", "苹果醋", "蘋果醋",
+  "vinagredesidrademanzana", "vinagredemaçã",
+] as const;
+const appleCiderVinegarIdentityTokens = new Set([
+  "apple", "cider", "vinegar", "vinagre", "sidra", "manzana", "maçã",
+]);
+
+function hasAppleCiderVinegarIdentity(value: string) {
+  const normalized = normalizedSearchText(value);
+  const compact = compactSearchText(value);
+  return /(?:^|\s)(?:acv|apple\s+cider\s+vinegar)(?:\s|$)/iu.test(normalized)
+    || compactAppleCiderVinegarIdentityTerms.some((term) => compact.includes(term));
+}
+
+function isAppleCiderVinegarIdentityToken(value: string) {
+  const normalized = normalizedSearchText(value);
+  return hasAppleCiderVinegarIdentity(value) || appleCiderVinegarIdentityTokens.has(normalized);
+}
+
 function productVariantCategories(value: string) {
   const categories = phraseCategories(value, variantTerms);
   const normalized = normalizedSearchText(value);
@@ -640,6 +660,11 @@ function productVariantCategories(value: string) {
   if (/(?:^|\s)(?:iphone|ipad|macbook|airpods?|apple\s+watch)(?:\s|$)/iu.test(normalized)) {
     categories.delete("flavor_apple");
   }
+  // ACV/애사비 and its expanded translations describe the same apple-cider
+  // vinegar product family. Normalize this symmetrically for both requested
+  // queries and candidate titles; token matching below still requires the
+  // literal ACV/애사비 identity so a generic apple listing cannot substitute.
+  if (hasAppleCiderVinegarIdentity(value)) categories.add("flavor_apple");
   return categories;
 }
 
@@ -742,6 +767,56 @@ function identityAnchors(tokens: string[]) {
   return [...new Set([tokens[0], interior, tokens.at(-1)].filter((token): token is string => Boolean(token)))];
 }
 
+// Brand names are product identity, not optional relevance words. Product
+// research normally preserves them in every localized query, but the JSON
+// contract cannot prove that an AI-generated translation did so. Keep a small,
+// evidence-backed alias set for brands that currently enter SellerPilot in
+// multiple scripts. Intake-built searches also repeat the full confirmed
+// Latin brand (or unbranded-product manufacturer) phrase at the beginning of
+// every query. Requiring that whole common phrase prevents "Nature Made" from
+// degrading to the generic first token "Nature" while leaving genuinely
+// unbranded/general-name searches on the existing matcher.
+const safeCompetitorBrandAliasGroups: readonly (readonly string[])[] = [
+  ["lotte", "롯데", "ロッテ"],
+  ["sajo", "사조", "サジョ"],
+  ["beyond origin", "비욘드 오리진", "ビヨンドオリジン"],
+  ["kellogg", "kelloggs", "kellogg's", "켈로그", "ケロッグ", "家樂氏"],
+];
+
+function containsIdentityPhrase(value: string, phrase: string) {
+  const normalizedValue = normalizedSearchText(value);
+  const normalizedPhrase = normalizedSearchText(phrase);
+  if (!normalizedPhrase) return false;
+  if (/^[\p{Script=Latin}\p{N} ]+$/u.test(normalizedPhrase)) {
+    return ` ${normalizedValue} `.includes(` ${normalizedPhrase} `);
+  }
+  return compactSearchText(value).includes(compactSearchText(phrase));
+}
+
+function repeatedLeadingLatinIdentityPhrase(queries: string[]) {
+  if (queries.length <= 1) return "";
+  const tokenProfiles = queries.map(meaningfulSearchTokens);
+  const primaryTokens = tokenProfiles[0] ?? [];
+  const common: string[] = [];
+  for (let index = 0; index < Math.min(primaryTokens.length, 6); index += 1) {
+    const token = primaryTokens[index] ?? "";
+    if (!/^[a-z][a-z0-9'._-]{1,31}$/iu.test(token)
+        || !tokenProfiles.slice(1).every((tokens) => tokens[index] === token)) break;
+    common.push(token);
+  }
+  return common.join(" ").slice(0, 80);
+}
+
+function competitorBrandRequirements(queries: string[]) {
+  const aliasGroups = safeCompetitorBrandAliasGroups.filter((aliases) => (
+    queries.some((query) => aliases.some((alias) => containsIdentityPhrase(query, alias)))
+  ));
+  return {
+    aliasGroups,
+    repeatedLatinPhrase: repeatedLeadingLatinIdentityPhrase(queries),
+  };
+}
+
 function packNeutralSearchQuery(value: string) {
   const countSuffix = new RegExp(`(?:\\s*(?:x|×|\\*)\\s*)?\\d+(?:\\.\\d+)?\\s*-?\\s*(?:${COUNT_UNIT_PATTERN})(?=$|[\\s,;/()])`, "giu");
   const packMeasurement = `\\d[\\d.,]*\\s*(?:${packMeasurementUnitPattern})`;
@@ -772,6 +847,20 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
   const normalizedCandidate = normalizedSearchText(candidate.title);
   const compactCandidate = compactSearchText(candidate.title);
   const candidateTokens = new Set(normalizedCandidate.split(" ").filter(Boolean));
+  const brandRequirements = competitorBrandRequirements(normalizedQueries);
+  const matchedBrandAliasGroups = brandRequirements.aliasGroups.filter((aliases) => (
+    aliases.some((alias) => containsIdentityPhrase(candidate.title, alias))
+  ));
+  if (matchedBrandAliasGroups.length !== brandRequirements.aliasGroups.length) return 0;
+  const candidateMatchesBrandToken = (token: string) => matchedBrandAliasGroups.some((aliases) => (
+    aliases.some((alias) => meaningfulSearchTokens(alias).includes(token))
+  ));
+  const repeatedPhraseSatisfiedBySafeAlias = matchedBrandAliasGroups.some((aliases) => (
+    aliases.some((alias) => normalizedSearchText(alias) === brandRequirements.repeatedLatinPhrase)
+  ));
+  if (brandRequirements.repeatedLatinPhrase
+      && !containsIdentityPhrase(candidate.title, brandRequirements.repeatedLatinPhrase)
+      && !repeatedPhraseSatisfiedBySafeAlias) return 0;
   const candidateMeasurements = measurementTokens(candidate.title);
   const queryMeasurements = normalizedQueries.map(measurementTokens);
   const requirements = measurementRequirements(normalizedQueries);
@@ -812,12 +901,21 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
   const requiredVariants = variantRequirements(normalizedQueries);
   const allowedVariants = new Set([...productVariantCategories(primaryQuery), ...requiredVariants]);
   const candidateVariants = productVariantCategories(candidate.title);
+  const candidateHasAppleCiderVinegarIdentity = hasAppleCiderVinegarIdentity(candidate.title);
+  if (normalizedQueries.some(hasAppleCiderVinegarIdentity)
+      && !candidateHasAppleCiderVinegarIdentity) return 0;
   if ([...candidateVariants].some((category) => !allowedVariants.has(category))) return 0;
   if ([...requiredVariants].some((category) => !candidateVariants.has(category))) return 0;
-  const matchesCandidateIdentityToken = (token: string) => {
+  const matchesCandidateIdentityToken = (token: string, queryHasAppleCiderVinegarIdentity = false) => {
     if (tokenMatchesCandidate(token, candidateTokens, compactCandidate)) return true;
+    if (candidateMatchesBrandToken(token)) return true;
+    if (queryHasAppleCiderVinegarIdentity
+        && candidateHasAppleCiderVinegarIdentity
+        && isAppleCiderVinegarIdentityToken(token)) return true;
     const tokenVariants = productVariantCategories(token);
-    if (tokenVariants.size > 0 && [...tokenVariants].every((category) => candidateVariants.has(category))) return true;
+    if (!hasAppleCiderVinegarIdentity(token)
+        && tokenVariants.size > 0
+        && [...tokenVariants].every((category) => candidateVariants.has(category))) return true;
     const tokenAccessories = accessoryCategories(token);
     if (tokenAccessories.size > 0 && [...tokenAccessories].every((category) => candidateAccessories.has(category))) return true;
     return genericCardWord(token) && explicitCollectibleQueryIntent && candidateCollectibleSignature;
@@ -834,16 +932,18 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
     const measurements = queryMeasurements[index] ?? [];
     if (measurements.length && !measurements.every((measurement) => measurementMatchesCandidate(measurement, candidateMeasurements))) continue;
     const tokens = meaningfulSearchTokens(query);
+    const queryHasAppleCiderVinegarIdentity = hasAppleCiderVinegarIdentity(query);
+    const matchesQueryIdentityToken = (token: string) => matchesCandidateIdentityToken(token, queryHasAppleCiderVinegarIdentity);
     if (!tokens.length) {
       if (!identifiers.length && !models.length) continue;
       best = Math.max(best, identifiers.length * 500 + models.length * 250 + measurements.length * 60 + (index === 0 ? 50 : 0));
       continue;
     }
-    const matched = tokens.filter(matchesCandidateIdentityToken);
+    const matched = tokens.filter(matchesQueryIdentityToken);
     const required = tokens.length === 1 ? 1 : Math.max(2, Math.ceil(tokens.length * 0.6));
     if (matched.length < required) continue;
     const anchors = identityAnchors(tokens);
-    if (anchors.some((anchor) => !matchesCandidateIdentityToken(anchor))) continue;
+    if (anchors.some((anchor) => !matchesQueryIdentityToken(anchor))) continue;
     const phraseBonus = compactCandidate.includes(compactSearchText(query)) ? 200 : 0;
     const evidenceBonus = identifiers.length * 500 + models.length * 250 + measurements.length * 60;
     best = Math.max(best, matched.length * 20 + Math.round((matched.length / tokens.length) * 400) + phraseBonus + evidenceBonus + (index === 0 ? 50 : 0));

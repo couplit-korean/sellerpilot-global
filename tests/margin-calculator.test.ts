@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { calculateMargins } from "../app/margin-calculator";
+import {
+  calculateMargins,
+  fetchMarginReferenceRates,
+  marginExchangeRateTimeoutMs,
+} from "../app/margin-calculator";
 import type { ChannelKey } from "../app/channel-config";
 
 const form = {
@@ -79,4 +83,71 @@ test("known-fee channel calculation is unchanged and manual UI fails closed", as
   assert.match(source, /selectedResult\.feeReady \? <><div className="margin-stack-bar"/);
   assert.match(source, /disabled=\{!selectedResult\.feeReady \|\| !selectedResult\.recommendedPrice\}/);
   assert.match(source, /disabled=\{savingScenario \|\| !selectedResult\.feeReady\}/);
+});
+
+test("margin exchange-rate request times out and aborts a stalled fetch", async () => {
+  let requestSignal: AbortSignal | undefined;
+  const pending = fetchMarginReferenceRates({
+    signal: new AbortController().signal,
+    timeoutMs: 5,
+    fetcher: async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return await new Promise<Response>(() => undefined);
+    },
+  });
+
+  await assert.rejects(
+    pending,
+    (error: unknown) => error instanceof DOMException && error.name === "TimeoutError",
+  );
+  assert.equal(requestSignal?.aborted, true);
+  assert.equal(marginExchangeRateTimeoutMs, 12_000);
+});
+
+test("margin exchange-rate request propagates owner cancellation and parses a valid response", async () => {
+  const owner = new AbortController();
+  let requestSignal: AbortSignal | undefined;
+  const cancelled = fetchMarginReferenceRates({
+    signal: owner.signal,
+    fetcher: async (_input, init) => {
+      requestSignal = init?.signal ?? undefined;
+      return await new Promise<Response>(() => undefined);
+    },
+  });
+  owner.abort(new DOMException("화면 전환", "AbortError"));
+  await assert.rejects(
+    cancelled,
+    (error: unknown) => error instanceof DOMException && error.name === "AbortError",
+  );
+  assert.equal(requestSignal?.aborted, true);
+
+  const loaded = await fetchMarginReferenceRates({
+    signal: new AbortController().signal,
+    fetcher: async () => new Response(JSON.stringify({
+      source: "검증 기준환율",
+      asOf: "2026-08-28",
+      rates: [{ code: "JPY", unit: 100, value: 880 }],
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+  assert.deepEqual(loaded, {
+    rates: { JPY: 8.8 },
+    basis: "검증 기준환율 · 2026-08-28",
+  });
+});
+
+test("margin exchange-rate lifecycle cancels prior and unmounted requests before state writes", async () => {
+  const source = await readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8");
+  const effectStart = source.indexOf("rateRequestRef.current?.abort");
+  const requestStart = source.indexOf("const controller = new AbortController()", effectStart);
+  const fetchStart = source.indexOf("fetchMarginReferenceRates({ signal: controller.signal })", requestStart);
+  const activeFence = source.indexOf("if (!active || controller.signal.aborted) return", fetchStart);
+  const stateWrite = source.indexOf("setReferenceRates(loaded.rates)", activeFence);
+  const cleanupStart = source.indexOf("return () =>", stateWrite);
+  const cleanupAbort = source.indexOf("controller.abort", cleanupStart);
+
+  assert.ok(effectStart >= 0 && requestStart > effectStart && fetchStart > requestStart);
+  assert.ok(activeFence > fetchStart && stateWrite > activeFence);
+  assert.ok(cleanupStart > stateWrite && cleanupAbort > cleanupStart);
+  assert.match(source, /if \(active && !controller\.signal\.aborted\) setRateBasis/);
+  assert.match(source, /setRateBasis\("최근 기준환율 대체값 · API 재확인 필요"\)/);
 });

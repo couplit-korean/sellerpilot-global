@@ -15,7 +15,7 @@ test("registration keeps product research before required seller fields and uses
   assert.notEqual(requiredSellerFieldsIndex, -1);
   assert.ok(researchPanelIndex < requiredSellerFieldsIndex);
   assert.match(page, /<span>판매 구성 <i>필수<\/i><\/span><select required value=\{intake\.packageContents\}/);
-  assert.match(page, /<span>판매 구성<\/span><select value=\{draft\.packageContents\}/);
+  assert.match(page, /<span>판매 구성<\/span><select[^>]*value=\{draft\.packageContents\}/);
   assert.equal(page.match(/productSaleConfigurations\.map\(/g)?.length, 2);
 });
 
@@ -56,7 +56,7 @@ test("mobile product analysis visibly waits for an in-flight competitor lookup w
 
   assert.match(page, /const competitorResearchBlocksAnalysis = isCompetitorResearchBlockingAnalysis\([\s\S]{0,160}pendingCompetitorBypassConfirmed/);
   assert.match(page, /if \(competitorResearchBlocksAnalysis\) \{[\s\S]{0,260}동일 상품 가격 확인이 끝난 뒤 상품 분석을 시작/);
-  assert.match(page, /disabled=\{running \|\| researchingProduct \|\| competitorResearchBlocksAnalysis \|\| Boolean\(queuedJobId\)\}/);
+  assert.match(page, /disabled=\{running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| competitorResearchBlocksAnalysis \|\| Boolean\(queuedJobId\)\}/);
   assert.match(page, /동일상품 가격 확인 대기/);
   assert.match(page, /가격 확인 중/);
   assert.match(page, /가격 없이 계속/);

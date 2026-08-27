@@ -21,7 +21,7 @@ test("worker defaults and hard caps reserve nine AI and Codex slots with three l
   assert.match(worker, /const codexExecutionGate = createConcurrencyGate\(codexConcurrencyLimit\)/);
   assert.match(worker, /const nonProductCodexExecutionGate = createConcurrencyGate\(2\)/);
   assert.match(worker, /const localizedGate = createConcurrencyGate\(3\)/);
-  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.54"/);
+  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.55"/);
   assert.match(installer, /<key>SELLERPILOT_AI_WORKER_CONCURRENCY<\/key><string>9<\/string>/);
   assert.match(installer, /<key>SELLERPILOT_CODEX_CONCURRENCY<\/key><string>9<\/string>/);
 });
@@ -105,18 +105,22 @@ test("three products can each hold three fair child slots within the global nine
   assert.equal(globalGate.activeCount, 0);
 });
 
-test("a product keeps its 16-image acceptance loop sequential", async () => {
+test("a product generates at most three candidates per wave and commits approved images in spec order", async () => {
   const worker = await readFile(workerUrl, "utf8");
-  const loopStart = worker.indexOf("for (const preset of imagePresets)");
-  const loopEnd = worker.indexOf("if (existingShots.length !== imagePresets.length)", loopStart);
-  const imageLoop = worker.slice(loopStart, loopEnd);
+  const batchStart = worker.indexOf("await runDeterministicProductImageBatches({");
+  const batchEnd = worker.indexOf("if (existingShots.length !== imagePresets.length)", batchStart);
+  const imageBatch = worker.slice(batchStart, batchEnd);
 
-  assert.ok(loopStart > 0 && loopEnd > loopStart);
-  assert.match(imageLoop, /const generated = await generateDistinctAsset\(/);
-  assert.match(imageLoop, /existingShots\.push\(generated\.fingerprint\)/);
+  assert.ok(batchStart > 0 && batchEnd > batchStart);
+  assert.match(imageBatch, /generateCandidate: async \(\{ spec: preset, attempt, history, signal \}\)/);
+  assert.match(imageBatch, /const generated = await generateDistinctAsset\(/);
+  assert.match(imageBatch, /findPostGenerationConflict:/);
+  assert.match(imageBatch, /onBarrierRejected: async/);
+  assert.match(imageBatch, /commitCandidate: async/);
+  assert.match(imageBatch, /existingShots\.push\(candidate\.fingerprint\)/);
   assert.ok(
-    imageLoop.indexOf("const generated = await generateDistinctAsset(")
-      < imageLoop.indexOf("existingShots.push(generated.fingerprint)"),
+    imageBatch.indexOf("onBarrierRejected: async")
+      < imageBatch.indexOf("commitCandidate: async"),
   );
-  assert.doesNotMatch(imageLoop, /Promise\.all\([^)]*imagePresets/);
+  assert.doesNotMatch(imageBatch, /for \(const preset of imagePresets\)/);
 });

@@ -8,6 +8,7 @@ import {
   pollCompetitorResearch,
   shouldInvalidateCompetitorResearch,
 } from "../app/_publishing/competitor-research-polling";
+import { competitorCandidateRelevance } from "../lib/competitor-prices";
 
 type Provider = { status: "pending" | "searched"; count: number };
 type Item = { id: string };
@@ -76,6 +77,131 @@ test("stale price retry conditions include corrected brand, GTIN, and sale confi
   assert.match(queryFor(bundlePath), /상품 1\+1/);
   assert.doesNotMatch(queryFor(buildCompetitorResearchRetryPath({ ...base, gtinStatus: "NO_GTIN" })), /8800000000001/);
   assert.equal(buildCompetitorResearchRetryPath({}), "");
+});
+
+test("initial price research preserves deterministic intake identity and bounded localized aliases", () => {
+  const path = buildCompetitorResearchRetryPath({
+    researchInput: "https://supplier.example/item/sony-headphones",
+    productName: "Sony WH-1000XM5 wireless headphones 128GB",
+    categoryHint: "wireless headphones",
+    brandName: "Sony",
+    manufacturer: "Sony Corporation",
+    packageContents: "headphones 1 unit",
+    condition: "NEW",
+    gtinStatus: "HAS_GTIN",
+    gtin: "8801234567890",
+  }, [
+    "Sony WH-1000XM5 wireless headphones 128GB",
+    "소니 WH-1000XM5 무선 헤드폰 128GB",
+    "ソニー WH-1000XM5 ワイヤレスヘッドホン 128GB",
+    `Sony WH-1000XM5 ${"x".repeat(300)}`,
+    ...Array.from({ length: 12 }, (_, index) => `Sony WH-1000XM5 locale ${index}`),
+  ]);
+  const url = new URL(path, "https://sellerpilot.test");
+  const query = url.searchParams.get("query") ?? "";
+  const aliases = url.searchParams.getAll("alias");
+
+  assert.match(query, /Sony/);
+  assert.match(query, /WH-1000XM5/);
+  assert.match(query, /headphones 1 unit/);
+  assert.match(query, /8801234567890/);
+  assert.ok(query.length <= 500);
+  assert.ok(aliases.length <= 12);
+  assert.ok(aliases.every((alias) => alias.length >= 2 && alias.length <= 160));
+  assert.ok(aliases.some((alias) => alias.includes("소니 WH-1000XM5 무선 헤드폰 128GB")));
+  assert.ok(aliases.some((alias) => alias.includes("ソニー WH-1000XM5 ワイヤレスヘッドホン 128GB")));
+  assert.ok(aliases.every((alias) => alias.startsWith("Sony ")));
+  assert.ok(aliases.every((alias) => alias.includes("WH-1000XM5")));
+  assert.ok(aliases.every((alias) => alias.includes("headphones 1 unit")));
+  assert.ok(aliases.every((alias) => alias.includes("8801234567890")));
+  const candidateBase = {
+    provider: "ebay_browse" as const,
+    externalId: "sony-price-regression",
+    url: "https://www.ebay.com/itm/sony-price-regression",
+    imageUrl: "",
+    mallName: "eBay",
+    marketplace: "ebay" as const,
+    price: 300,
+    currency: "USD",
+  };
+  const identityQueries = [query, ...aliases];
+  assert.equal(competitorCandidateRelevance({
+    ...candidateBase,
+    title: "Generic WH-1000XM5 wireless headphones 128GB 1 unit 8801234567890",
+  }, identityQueries), 0);
+  assert.ok(competitorCandidateRelevance({
+    ...candidateBase,
+    title: "Sony WH-1000XM5 wireless headphones 128GB 1 unit 8801234567890",
+  }, identityQueries) > 0);
+
+  const genericPath = buildCompetitorResearchRetryPath({
+    productName: "Apple cider vinegar powder 15 sticks",
+    brandName: "No Brand",
+    packageContents: "15 sticks",
+    gtinStatus: "NO_GTIN",
+  }, ["Apple cider vinegar powder 15 sticks"]);
+  const [genericAlias] = new URL(genericPath, "https://sellerpilot.test").searchParams.getAll("alias");
+  assert.doesNotMatch(genericAlias ?? "", /No Brand/iu);
+});
+
+test("stale and manual retry paths keep single-query ACV identity matchable", () => {
+  const retryPath = buildCompetitorResearchRetryPath({
+    researchInput: "비욘드 오리진 애사비 젤리스틱 15포",
+    productName: "BEYOND ORIGIN 애사비 젤리스틱 15포",
+    brandName: "BEYOND ORIGIN",
+    packageContents: "15포",
+    condition: "NEW",
+    gtinStatus: "NO_GTIN",
+  });
+  const retryUrl = new URL(retryPath, "https://sellerpilot.test");
+  const retryQueries = [retryUrl.searchParams.get("query") ?? "", ...retryUrl.searchParams.getAll("alias")];
+  const exactCandidate = {
+    provider: "elevenst_product_search" as const,
+    externalId: "acv-stale-manual-retry",
+    title: "비욘드 오리진 애사비 젤리스틱 15포",
+    url: "https://www.11st.co.kr/products/acv-stale-manual-retry",
+    imageUrl: "",
+    mallName: "11st",
+    marketplace: "elevenst" as const,
+    price: 19_900,
+    currency: "KRW",
+  };
+
+  assert.ok(competitorCandidateRelevance(exactCandidate, retryQueries) > 0);
+  assert.ok(competitorCandidateRelevance(exactCandidate, ["BEYOND ORIGIN 애사비 젤리스틱 15포"]) > 0);
+});
+
+test("unbranded intake protects the full manufacturer across localized retry aliases", () => {
+  const retryPath = buildCompetitorResearchRetryPath({
+    productName: "Daily vitamin 30 tablets",
+    brandName: "No Brand",
+    manufacturer: "Acme Labs",
+    packageContents: "30 tablets",
+    condition: "NEW",
+    gtinStatus: "NO_GTIN",
+  }, [
+    "Daily vitamin 30 tablets",
+    "Vitamina diaria 30 tabletas",
+    "Vitamin harian 30 tablet",
+  ]);
+  const retryUrl = new URL(retryPath, "https://sellerpilot.test");
+  const retryQueries = [retryUrl.searchParams.get("query") ?? "", ...retryUrl.searchParams.getAll("alias")];
+  const baseCandidate = {
+    provider: "ebay_browse" as const,
+    externalId: "manufacturer-identity-regression",
+    url: "https://www.ebay.com/itm/manufacturer-identity-regression",
+    imageUrl: "",
+    mallName: "eBay",
+    marketplace: "ebay" as const,
+    price: 15,
+    currency: "USD",
+  };
+
+  assert.ok(retryQueries.every((query) => query.startsWith("Acme Labs ")));
+  assert.doesNotMatch(retryQueries.join(" "), /No Brand/iu);
+  assert.ok(competitorCandidateRelevance({ ...baseCandidate, title: "Acme Labs daily vitamin 30 tablets" }, retryQueries) > 0);
+  assert.equal(competitorCandidateRelevance({ ...baseCandidate, title: "Other Labs daily vitamin 30 tablets" }, retryQueries), 0);
+  assert.equal(competitorCandidateRelevance({ ...baseCandidate, title: "Generic daily vitamin 30 tablets" }, retryQueries), 0);
 });
 
 test("competitor research polls a pending gateway result and publishes the settled snapshot", async () => {

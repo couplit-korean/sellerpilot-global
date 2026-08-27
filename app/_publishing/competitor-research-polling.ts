@@ -38,23 +38,75 @@ function normalizedIdentityPart(value: unknown, maximumLength: number) {
     : "";
 }
 
-export function buildCompetitorResearchRetryPath(identity: CompetitorResearchRetryIdentity) {
+function searchableBrandIdentity(value: string) {
+  return /^(?:no\s*brand|unbranded|generic|무브랜드|브랜드\s*없음)$/iu.test(value) ? "" : value;
+}
+
+function stableProductModelParts(productName: string) {
+  const candidates = productName.match(/[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*/gu) ?? [];
+  return [...new Set(candidates.filter((candidate) => (
+    candidate.length >= 2
+    && candidate.length <= 40
+    && /[A-Za-z]/u.test(candidate)
+    && /\d/u.test(candidate)
+  )))].slice(0, 4);
+}
+
+function containsNormalizedIdentity(value: string, identity: string) {
+  const normalizedValue = ` ${value.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim()} `;
+  const normalizedIdentity = identity.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g, " ").trim();
+  return Boolean(normalizedIdentity) && normalizedValue.includes(` ${normalizedIdentity} `);
+}
+
+function identityProtectedAlias(
+  alias: string,
+  producerIdentity: string,
+  productModels: string[],
+  packageContents: string,
+  gtin: string,
+) {
+  const normalizedAlias = normalizedIdentityPart(alias, 160);
+  if (!normalizedAlias) return "";
+  // Keep a confirmed brand, or the manufacturer for an explicitly unbranded
+  // product, at the front of every localized query. Repeating the original
+  // spelling is intentional: an unstructured translation cannot prove that a
+  // localized token is a safe alias for that producer identity.
+  const identityParts = [
+    producerIdentity,
+    ...productModels.filter((model) => !containsNormalizedIdentity(normalizedAlias, model)),
+    !containsNormalizedIdentity(normalizedAlias, packageContents) ? packageContents : "",
+    !containsNormalizedIdentity(normalizedAlias, gtin) ? gtin : "",
+  ].filter(Boolean);
+  return normalizedIdentityPart([...identityParts, normalizedAlias].join(" "), 160);
+}
+
+export function buildCompetitorResearchRetryPath(
+  identity: CompetitorResearchRetryIdentity,
+  localizedAliases: readonly string[] = [],
+) {
   const brand = normalizedIdentityPart(identity.brandName, 80);
+  const searchableBrand = searchableBrandIdentity(brand);
   const manufacturer = normalizedIdentityPart(identity.manufacturer, 80);
+  const producerIdentity = searchableBrand || manufacturer;
   const productName = normalizedIdentityPart(identity.productName, 160);
+  const productModels = stableProductModelParts(productName);
   const packageContents = normalizedIdentityPart(identity.packageContents, 40);
   const condition = normalizedIdentityPart(identity.condition, 24);
   const gtin = identity.gtinStatus === "NO_GTIN" ? "" : normalizedIdentityPart(identity.gtin, 14);
   const researchInput = normalizedIdentityPart(identity.researchInput, 160);
-  const primaryParts = [brand, manufacturer !== brand ? manufacturer : "", productName, packageContents, condition !== "NEW" ? condition : "", gtin].filter(Boolean);
+  const primaryParts = [searchableBrand, manufacturer !== searchableBrand ? manufacturer : "", productName, packageContents, condition !== "NEW" ? condition : "", gtin].filter(Boolean);
   const primary = (primaryParts.join(" ") || researchInput).slice(0, 500);
   if (primary.length < 2) return "";
 
   const params = new URLSearchParams({ query: primary });
   const aliases = [
+    ...localizedAliases,
+    productName,
     normalizedIdentityPart(identity.categoryHint, 120),
     !/^https?:\/\//i.test(researchInput) ? researchInput : "",
-  ].filter((value, index, values) => value.length >= 2 && value !== primary && values.indexOf(value) === index);
+  ]
+    .map((alias) => identityProtectedAlias(alias, producerIdentity, productModels, packageContents, gtin))
+    .filter((value, index, values) => value.length >= 2 && value !== primary && values.indexOf(value) === index);
   for (const alias of aliases.slice(0, 12)) params.append("alias", alias);
   return `/api/admin/competitor-prices?${params.toString()}`;
 }
