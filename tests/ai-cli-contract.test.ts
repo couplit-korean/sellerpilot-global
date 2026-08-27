@@ -6,6 +6,7 @@ import {
   normalizeStudioGeneralFoodSafety,
   normalizeStudioLocalizedEvidenceLanguage,
   normalizeStudioLocalizedKeywordCoverage,
+  normalizeStudioRequiredSectionTypeCoverage,
   normalizeStudioResultForTerminalValidation,
   normalizeStudioSectionCount,
   normalizeStudioWarningLimits,
@@ -1477,6 +1478,111 @@ test("studio section count normalization is immutable and limited to valid maste
   invalidLength.design.creativeStrategy.targetSectionCount = 20;
   assert.equal(normalizeStudioSectionCount(invalidLength), invalidLength);
   assert.equal(invalidLength.design.creativeStrategy.targetSectionCount, 20);
+});
+
+test("terminal normalization deterministically restores a missing story role without changing detail content", () => {
+  const result = validResult();
+  result.design.sections.forEach((section) => {
+    if (section.type === "story") section.type = "benefit";
+  });
+  const before = structuredClone(result);
+  const invalid = cliStudioResultSchema.safeParse(result);
+  assert.equal(invalid.success, false);
+  assert.match(invalid.error?.issues.map((issue) => issue.message).join("\n") ?? "", /story 구매정보 섹션/);
+
+  const normalized = normalizeStudioResultForTerminalValidation(result) as ReturnType<typeof validResult>;
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+
+  assert.deepEqual(result, before, "coverage normalization must not mutate the repaired model artifact");
+  assert.equal(normalized.design.sections.length, before.design.sections.length);
+  assert.equal(normalized.design.sections.find((section) => section.type === "story")?.imageAsset, "detail-routine");
+  const normalizedWithOriginalTypes = structuredClone(normalized.design.sections);
+  normalizedWithOriginalTypes.forEach((section, index) => { section.type = before.design.sections[index].type; });
+  assert.deepEqual(normalizedWithOriginalTypes, before.design.sections, "repair may only relabel a semantically matching duplicate-type section");
+  assert.deepEqual(
+    normalized.design.sections.map((section) => section.layout),
+    before.design.sections.map((section) => section.layout),
+  );
+  assert.deepEqual(
+    normalized.design.sections.map((section) => section.imageAsset),
+    before.design.sections.map((section) => section.imageAsset),
+  );
+  assert.deepEqual(normalizeStudioResultForTerminalValidation(normalized), normalized, "coverage repair must be idempotent");
+});
+
+test("required section coverage normalization fails closed when no semantic replacement exists", () => {
+  const sections = Array.from({ length: 16 }, (_, index) => ({
+    type: index === 0 ? "howto" : "benefit",
+    buyerQuestion: "Opaque copy",
+    eyebrow: "Opaque copy",
+    title: "Opaque copy",
+    body: "Opaque copy",
+    points: ["Opaque copy"],
+    imageAsset: "none",
+  }));
+  const result = { design: { sections } };
+  assert.equal(normalizeStudioRequiredSectionTypeCoverage(result), result);
+});
+
+test("a shared detail-feature asset does not relabel a pure benefit section as comparison", () => {
+  const requiredExceptComparison = ["benefit", "story", "howto", "proof", "spec", "caution", "faq", "notice"];
+  const sections = Array.from({ length: 16 }, (_, index) => {
+    const copy = index === 0 ? "Key product benefit for the buyer" : "Opaque copy";
+    return {
+      type: requiredExceptComparison[index] ?? "benefit",
+      buyerQuestion: copy,
+      eyebrow: copy,
+      title: copy,
+      body: copy,
+      points: [copy],
+      imageAsset: index === 0 ? "detail-feature" : "none",
+    };
+  });
+  const result = { design: { sections } };
+
+  assert.equal(
+    normalizeStudioRequiredSectionTypeCoverage(result),
+    result,
+    "a detail-feature image is shared by benefit and comparison, so the asset alone is ambiguous",
+  );
+});
+
+test("required section coverage finds a deterministic global assignment for ambiguous missing roles", () => {
+  const section = (type: string, imageAsset: string, copy: string) => ({
+    type,
+    buyerQuestion: copy,
+    eyebrow: copy,
+    title: copy,
+    body: copy,
+    points: [copy],
+    imageAsset,
+  });
+  const sections = [
+    section("benefit", "detail-scale", "Technical specifications and product comparison"),
+    section("benefit", "detail-contents", "Technical specifications"),
+    section("benefit", "none", "Opaque retained benefit"),
+    section("story", "none", "Opaque story"),
+    section("howto", "none", "Opaque howto"),
+    section("proof", "none", "Opaque proof"),
+    section("caution", "none", "Opaque caution"),
+    section("faq", "none", "Opaque faq"),
+    section("notice", "none", "Opaque notice"),
+    ...Array.from({ length: 7 }, () => section("story", "none", "Opaque duplicate story")),
+  ];
+  const result = { design: { sections } };
+  const before = structuredClone(result);
+
+  const normalized = normalizeStudioRequiredSectionTypeCoverage(result) as typeof result;
+  assert.deepEqual(result, before, "global assignment must not mutate the model artifact");
+  assert.equal(normalized.design.sections[0].type, "comparison");
+  assert.equal(normalized.design.sections[1].type, "spec");
+  assert.equal(normalized.design.sections[2].type, "benefit", "at least one source-type section must remain");
+  assert.equal(
+    normalizeStudioRequiredSectionTypeCoverage(normalized),
+    normalized,
+    "a completed global assignment must be idempotent by reference",
+  );
 });
 
 test("AI studio warning truncation never leaves an unpaired UTF-16 surrogate", () => {

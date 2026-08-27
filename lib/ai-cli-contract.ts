@@ -856,6 +856,168 @@ export function normalizeStudioSectionCount(value: unknown): unknown {
   };
 }
 
+type MasterDetailSectionType = typeof masterDetailSectionTypes[number];
+
+const masterDetailSectionTypeRepairSignals: Record<MasterDetailSectionType, {
+  imageAssets: readonly string[];
+  copyPatterns: readonly RegExp[];
+}> = {
+  benefit: {
+    imageAssets: ["detail-overview", "detail-feature"],
+    copyPatterns: [/\b(?:key|customer|purchase|product) benefits?\b|\bvalue proposition\b|\bwhy (?:choose|buy)\b|구매\s*효익|핵심\s*장점|선택\s*이유|핵심\s*특징/iu],
+  },
+  story: {
+    imageAssets: ["detail-routine", "detail-context"],
+    copyPatterns: [/\b(?:brand|product|origin) story\b|\b(?:daily|everyday) routine\b|\b(?:usage|everyday|lifestyle) (?:scene|context)\b|상품\s*이야기|브랜드\s*스토리|탄생\s*배경|일상\s*루틴|사용\s*장면|생활\s*장면/iu],
+  },
+  howto: {
+    imageAssets: ["detail-use", "detail-storage"],
+    copyPatterns: [/\bhow to (?:use|prepare|store)\b|\b(?:usage|use|preparation|storage) (?:steps?|instructions?|method)\b|\bstep-by-step\b|사용법|사용\s*방법|이용\s*방법|사용\s*단계|보관\s*방법|준비\s*단계/iu],
+  },
+  proof: {
+    imageAssets: ["detail-package", "detail-material", "detail-contents"],
+    copyPatterns: [/\b(?:verification|supporting|source-backed) evidence\b|\b(?:label|material|contents) (?:check|verification|evidence)\b|\bverified (?:fact|detail|claim)s?\b|확인\s*근거|검증\s*(?:근거|결과)|근거\s*자료|라벨\s*확인|표시\s*사항|소재\s*확인|구성품\s*확인/iu],
+  },
+  spec: {
+    imageAssets: ["detail-dimensions", "detail-scale", "detail-contents"],
+    copyPatterns: [/\b(?:product|technical) specifications?\b|\bspec(?:ification)? table\b|\b(?:product )?(?:dimensions|measurements)\b|\bsize and weight\b|\bcapacity and quantity\b|상품\s*규격|제품\s*규격|규격표|사양표|크기와\s*치수|중량과\s*용량|측정값|제원/iu],
+  },
+  caution: {
+    imageAssets: ["detail-care", "detail-storage"],
+    copyPatterns: [/\b(?:safety|allergy) warnings?\b|\b(?:care|storage) instructions?\b|\b(?:storage|handling) precautions?\b|\bcare and safety\b|주의사항|안전\s*안내|알레르기\s*주의|관리\s*방법|보관\s*주의|취급\s*주의/iu],
+  },
+  comparison: {
+    imageAssets: ["detail-scale", "detail-feature"],
+    copyPatterns: [/\b(?:product|option|feature) comparison\b|\bside-by-side\b|\bcomparison (?:criteria|guide|table)\b|\bdifference between\b|\bchoice guide\b|상품\s*비교|옵션\s*비교|비교\s*(?:기준|가이드|표)|차이점|선택\s*가이드|대비표/iu],
+  },
+  faq: {
+    imageAssets: [],
+    copyPatterns: [/\bfaqs?\b|\bfrequently asked questions?\b|\bcommon questions?\b|\bquestions? and answers?\b|자주\s*묻는\s*질문|많이\s*묻는\s*질문|질문과\s*답변|구매자\s*질문/iu],
+  },
+  notice: {
+    imageAssets: [],
+    copyPatterns: [/\b(?:purchase|order) notice\b|\bbefore (?:purchase|ordering)\b|\bfinal order check\b|\b(?:manufacturer|expiry|contact) information\b|구매\s*전\s*안내|주문\s*전\s*안내|최종\s*주문\s*확인|제조\s*정보|소비기한\s*안내|유통기한\s*안내|고객센터\s*안내/iu],
+  },
+};
+
+const masterDetailSectionTypeOwnersByImageAsset = new Map<string, MasterDetailSectionType[]>();
+for (const type of masterDetailSectionTypes) {
+  for (const imageAsset of masterDetailSectionTypeRepairSignals[type].imageAssets) {
+    const owners = masterDetailSectionTypeOwnersByImageAsset.get(imageAsset) ?? [];
+    owners.push(type);
+    masterDetailSectionTypeOwnersByImageAsset.set(imageAsset, owners);
+  }
+}
+
+function studioSectionTypeRepairScore(section: Record<string, unknown>, type: MasterDetailSectionType) {
+  const signals = masterDetailSectionTypeRepairSignals[type];
+  const imageAsset = typeof section.imageAsset === "string" ? section.imageAsset : "";
+  const copy = [
+    section.buyerQuestion,
+    section.eyebrow,
+    section.title,
+    section.body,
+    ...(Array.isArray(section.points) ? section.points : []),
+  ].filter((item): item is string => typeof item === "string").join(" ");
+  const imageMatches = signals.imageAssets.includes(imageAsset);
+  const imageOwnerCount = masterDetailSectionTypeOwnersByImageAsset.get(imageAsset)?.length ?? 0;
+  const exclusiveImageMatch = imageMatches && imageOwnerCount === 1;
+  const sharedImageMatch = imageMatches && imageOwnerCount > 1;
+  const copyMatchCount = signals.copyPatterns.reduce(
+    (score, pattern) => score + (pattern.test(copy) ? 1 : 0),
+    0,
+  );
+  if (!exclusiveImageMatch && copyMatchCount === 0) return 0;
+  return (exclusiveImageMatch ? 100 : 0)
+    + (copyMatchCount * 40)
+    + (sharedImageMatch && copyMatchCount > 0 ? 10 : 0);
+}
+
+/**
+ * Restores a missing required section type only when an existing duplicate-type
+ * section has deterministic semantic evidence for that role. Copy, evidence,
+ * ordering, layouts, image assignments, and the 16-to-20 section count remain
+ * untouched; ambiguous drafts stay invalid so the terminal validator fails
+ * closed instead of inventing purchase facts.
+ */
+export function normalizeStudioRequiredSectionTypeCoverage(value: unknown): unknown {
+  if (!isPlainRecord(value) || !isPlainRecord(value.design)) return value;
+  const sections = value.design.sections;
+  if (!Array.isArray(sections) || sections.length < 16 || sections.length > 20
+      || !sections.every(isPlainRecord)) return value;
+
+  const knownTypes = new Set<string>(masterDetailSectionTypes);
+  if (!sections.every((section) => typeof section.type === "string" && knownTypes.has(section.type))) return value;
+  const counts = new Map<MasterDetailSectionType, number>(masterDetailSectionTypes.map((type) => [type, 0]));
+  sections.forEach((section) => {
+    const type = section.type as MasterDetailSectionType;
+    counts.set(type, (counts.get(type) ?? 0) + 1);
+  });
+  const missingTypes = masterDetailSectionTypes.filter((type) => counts.get(type) === 0);
+  if (!missingTypes.length) return value;
+
+  type RepairCandidate = Readonly<{
+    index: number;
+    score: number;
+    sourceType: MasterDetailSectionType;
+  }>;
+  const candidatesByType = new Map<MasterDetailSectionType, RepairCandidate[]>(missingTypes.map((missingType) => [
+    missingType,
+    sections
+      .map((section, index) => ({
+        index,
+        score: studioSectionTypeRepairScore(section, missingType),
+        sourceType: section.type as MasterDetailSectionType,
+      }))
+      .filter(({ score, sourceType }) => score > 0 && (counts.get(sourceType) ?? 0) > 1)
+      .sort((left, right) => right.score - left.score || left.index - right.index),
+  ]));
+  if (missingTypes.some((type) => !(candidatesByType.get(type)?.length))) return value;
+
+  const sourceCapacity = new Map<MasterDetailSectionType, number>(
+    masterDetailSectionTypes.map((type) => [type, Math.max(0, (counts.get(type) ?? 0) - 1)]),
+  );
+  const search = (
+    pendingTypes: readonly MasterDetailSectionType[],
+    replacements: ReadonlyMap<number, MasterDetailSectionType>,
+    capacity: ReadonlyMap<MasterDetailSectionType, number>,
+  ): Map<number, MasterDetailSectionType> | null => {
+    if (!pendingTypes.length) return new Map(replacements);
+    const availableByType = pendingTypes.map((type, order) => ({
+      type,
+      order,
+      candidates: (candidatesByType.get(type) ?? []).filter((candidate) => (
+        !replacements.has(candidate.index) && (capacity.get(candidate.sourceType) ?? 0) > 0
+      )),
+    })).sort((left, right) => left.candidates.length - right.candidates.length || left.order - right.order);
+    const selected = availableByType[0];
+    if (!selected?.candidates.length) return null;
+
+    const remainingTypes = pendingTypes.filter((type) => type !== selected.type);
+    for (const candidate of selected.candidates) {
+      const nextReplacements = new Map(replacements);
+      nextReplacements.set(candidate.index, selected.type);
+      const nextCapacity = new Map(capacity);
+      nextCapacity.set(candidate.sourceType, (nextCapacity.get(candidate.sourceType) ?? 0) - 1);
+      const resolved = search(remainingTypes, nextReplacements, nextCapacity);
+      if (resolved) return resolved;
+    }
+    return null;
+  };
+  const replacements = search(missingTypes, new Map(), sourceCapacity);
+  if (!replacements) return value;
+
+  return {
+    ...value,
+    design: {
+      ...value.design,
+      sections: sections.map((section, index) => (
+        replacements.has(index) ? { ...section, type: replacements.get(index) } : section
+      )),
+    },
+  };
+}
+
 function boundedTitleKeyword(title: string): string {
   const trimmed = title.trim();
   if (!trimmed) return "";
@@ -907,8 +1069,8 @@ export function normalizeStudioLocalizedKeywordCoverage(value: unknown): unknown
 
 export function normalizeStudioResultForTerminalValidation(value: unknown): unknown {
   return normalizeStudioLocalizedKeywordCoverage(normalizeStudioWarningLimits(
-    normalizeStudioSectionCount(normalizeStudioGeneralFoodSafety(
-      normalizeStudioLocalizedEvidenceLanguage(value),
+    normalizeStudioSectionCount(normalizeStudioRequiredSectionTypeCoverage(
+      normalizeStudioGeneralFoodSafety(normalizeStudioLocalizedEvidenceLanguage(value)),
     )),
   ));
 }

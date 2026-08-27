@@ -138,7 +138,7 @@ test("one finite residual repair uses isolated second-pass artifacts and settles
   assert.equal((residual.match(/studio-master-repair-2/g) ?? []).length, 2, "the residual master pass has one segment and one stage");
 });
 
-test("studio result normalization applies general-food safety before structural repairs", async () => {
+test("studio result normalization applies general-food safety before semantic and structural repairs", async () => {
   const [source, contract] = await Promise.all([
     readFile(workerUrl, "utf8"),
     readFile(new URL("../lib/ai-cli-contract.ts", import.meta.url), "utf8"),
@@ -155,7 +155,7 @@ test("studio result normalization applies general-food safety before structural 
   assert.match(terminalHelper, /normalizeStudioLocalizedKeywordCoverage\(normalizeStudioWarningLimits\(/);
   assert.match(
     terminalHelper,
-    /normalizeStudioSectionCount\(normalizeStudioGeneralFoodSafety\([\s\S]*normalizeStudioLocalizedEvidenceLanguage\(value\)/,
+    /normalizeStudioSectionCount\(normalizeStudioRequiredSectionTypeCoverage\([\s\S]*normalizeStudioGeneralFoodSafety\([\s\S]*normalizeStudioLocalizedEvidenceLanguage\(value\)/,
   );
   assert.match(source, /normalizeStudioResultForTerminalValidation\(merged\)/);
   assert.match(source, /normalizeStudioResultForTerminalValidation\(job\.request\?\.sourceResult\)/);
