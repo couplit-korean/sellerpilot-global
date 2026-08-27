@@ -131,7 +131,9 @@ import { operationEventNotifications, operationEventState, type OperationEventSt
 import { toastDurationMs, toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
   isRegistrationActivityRunning,
+  isRegistrationImageActivity,
   recoverableRegistrationActivityJobId,
+  registrationActivityDisplayStatusLabel,
   registrationActivityDisplayElapsedSeconds,
   registrationActivityFilterFromValue,
   registrationActivityMatchesFilter,
@@ -608,12 +610,12 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   return (
     <div className="page-stack">
       <section className="daily-briefing">
-        <div className="briefing-copy"><span>{currentDate}</span><h2>현재 즉시 처리할 업무가 <b>{operationsAvailable ? `${totalTasks}건` : "확인 중"}</b> 있습니다.</h2><p>결제완료·출고대기·미처리 CS·재시도 가능 등록 오류만 집계합니다. 재고주의와 외부 권한 대기는 별도 표시합니다.</p></div>
+        <div className="briefing-copy"><span>{currentDate}</span><h2>현재 즉시 처리할 업무가 <b>{operationsAvailable ? `${totalTasks}건` : "확인 중"}</b> 있습니다.</h2><p>결제완료·출고대기·미처리 CS·등록·분석 재시도 대상만 집계합니다. 이미지 재제작·상품 수정 실패와 외부 권한 대기는 별도 이력으로 표시합니다.</p></div>
         <div className="briefing-tasks">
           <button onClick={() => onNavigate("orders")}><span className="task-tone order" /><small>통합 주문</small><b>{operationsAvailable ? summary.orderCount : "—"}</b><em>실주문 원장</em></button>
           <button onClick={() => onNavigate("orders")}><span className="task-tone shipping" /><small>출고 대기</small><b>{operationsAvailable ? summary.readyToShipCount : "—"}</b><em>채널 상태 동기화</em></button>
           <button onClick={() => onNavigate("cs")}><span className="task-tone claim" /><small>미처리 CS</small><b>{operationsAvailable ? summary.openTicketCount : "—"}</b><em>통합 문의함</em></button>
-          <button onClick={() => onNavigate("registration-activity", "failed")}><span className="task-tone error" /><small>재시도 오류</small><b>{operationsAvailable ? summary.registrationErrorCount : "—"}</b><em>권한 대기 {summary.registrationBlockedCount}건</em></button>
+          <button onClick={() => onNavigate("registration-activity", "failed")}><span className="task-tone error" /><small>등록·분석 재시도</small><b>{operationsAvailable ? summary.registrationErrorCount : "—"}</b><em>권한 대기 {summary.registrationBlockedCount}건</em></button>
         </div>
         <aside className="briefing-settlement"><span>실제 연결 확인</span><strong>{operationsAvailable ? `${summary.activeCredentialCount} / ${enabledSalesChannelCount} 진단 통과` : "확인 중"}</strong><small>운영 키 {summary.registeredCredentialCount} / {enabledSalesChannelCount} · 미등록·미검증 채널을 전체 수에서 숨기지 않습니다.</small><button onClick={() => onNavigate("connections")}>채널 연결 관리<ChevronRight size={14} /></button></aside>
       </section>
@@ -678,7 +680,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
               { label: "AI 분석 중", value: livePipeline.aiRunning, tone: "violet", icon: WandSparkles, status: "active" },
               { label: "채널 등록 대기", value: livePipeline.listingQueued, tone: "blue", icon: Upload, status: "active" },
               { label: "등록 완료", value: livePipeline.listingPublished, tone: "green", icon: CheckCircle2, status: "completed" },
-              { label: "재시도 가능", value: livePipeline.listingFailed, tone: "red", icon: AlertCircle, status: "failed" },
+              { label: "등록·분석 재시도", value: livePipeline.listingFailed, tone: "red", icon: AlertCircle, status: "failed" },
               { label: "외부 권한 대기", value: livePipeline.listingBlocked, tone: "orange", icon: ShieldCheck, status: "blocked" },
             ].map((item) => <div className="interactive" role="button" tabIndex={0} onClick={() => onNavigate("registration-activity", item.status as RegistrationActivityFilter)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onNavigate("registration-activity", item.status as RegistrationActivityFilter); }} key={item.label}><span className={`pipeline-icon ${item.tone}`}><item.icon size={16} /></span><span>{item.label}</span><strong>{item.value}<small>건</small></strong></div>)}
           </div>
@@ -690,7 +692,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
           <div className="panel-heading"><div><span className="panel-kicker">운영 참고·조치</span><h3>재고·등록·CS 전체 현황</h3></div><span className="count-chip">{summary.lowStockCount + summary.registrationErrorCount + summary.registrationBlockedCount + summary.openTicketCount}</span></div>
           <div className="alert-list">
             <button onClick={() => onNavigate("products")}><span className="alert-icon danger"><Box size={16} /></span><span><b>재고주의 상품 {summary.lowStockCount}건</b><small>실재고와 재주문 기준으로 집계했습니다.</small></span><em>상품 보기<ChevronRight size={14} /></em></button>
-            <button onClick={() => onNavigate("registration-activity", "failed")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>등록 재시도 {summary.registrationErrorCount}건</b><small>AI 분석·카테고리·필수 속성·API 응답을 확인하세요.</small></span><em>오류 보기<ChevronRight size={14} /></em></button>
+            <button onClick={() => onNavigate("registration-activity", "failed")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>등록·분석 재시도 {summary.registrationErrorCount}건</b><small>채널 등록과 AI 분석 재시도 대상입니다. 이미지·상품 수정 실패는 오류 전체 이력에서 별도로 확인하세요.</small></span><em>오류 보기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("remediation")}><span className="alert-icon warning"><ShieldCheck size={16} /></span><span><b>외부 판매 권한 대기 {summary.registrationBlockedCount}건</b><small>상품수정이 필요한 항목만 한 건씩 바로 처리합니다.</small></span><em>처리하기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("cs")}><span className="alert-icon blue"><MessageCircleMore size={16} /></span><span><b>미처리 CS {summary.openTicketCount}건</b><small>각 채널에서 동기화된 실제 문의입니다.</small></span><em>답변하기<ChevronRight size={14} /></em></button>
           </div>
@@ -1917,10 +1919,11 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
         ["active", "현재 처리 중", counts.active],
         ["ready", "등록 준비", counts.ready],
         ["completed", "완료", counts.completed],
-        ["failed", "재시도 필요", counts.failed],
+        ["failed", "오류 전체", counts.failed],
         ["blocked", "외부 권한 대기", counts.blocked],
       ] as const).map(([value, label, count]) => <button type="button" className={filter === value ? "active" : ""} onClick={() => onFilterChange(value)} key={value}><span>{label}</span><b>{count}</b></button>)}
     </section>
+    {filter === "failed" && <section className="panel registration-filter-context"><b>오류 집계 기준</b><p>대시보드의 등록·분석 재시도 수는 재시도 가능한 채널 대상과 AI 분석 작업 기준입니다. 이 탭은 이미지 재제작·상품 수정 실패까지 작업 카드 단위로 함께 표시합니다.</p></section>}
     {activityState === "unavailable" ? <section className="panel registration-empty" role="alert"><AlertCircle size={28} /><b>등록 진행 이력을 불러오지 못했습니다.</b><small>다른 운영 데이터와 기존 알림 기준은 유지했습니다. 잠시 후 다시 확인하거나 직접 재시도해 주세요.</small><button type="button" className="credential-secondary" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{refreshing ? "다시 확인 중" : "등록 이력 다시 확인"}</button></section>
       : loading && activities.length === 0 ? <section className="panel registration-empty"><LoaderCircle className="spin" size={28} /><b>등록 이력을 불러오는 중입니다.</b></section>
       : filtered.length > 0 ? <section className="registration-card-grid">{filtered.map((activity) => {
@@ -1928,7 +1931,13 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
         const product = activity.productId ? productMap.get(activity.productId) : undefined;
         const recoveryJobId = recoverableRegistrationActivityJobId(activity);
         const isActive = isRegistrationActivityRunning(activity.status);
-        const isImageOperation = activity.id.startsWith("revision:") || activity.id.startsWith("asset:");
+        const isImageOperation = isRegistrationImageActivity(activity);
+        const displayStatusLabel = registrationActivityDisplayStatusLabel(activity);
+        const imageFailureActionLabel = activity.status === "failed" && activity.id.startsWith("asset:")
+          ? "상품 상세에서 이미지 재제작"
+          : activity.status === "failed" && activity.id.startsWith("revision:")
+            ? "상품 상세에서 다시 수정"
+            : "상품 상세";
         const elapsedLabel = isActive ? "현재 경과시간" : isImageOperation ? "총 처리시간" : activity.status === "ready" ? "총 분석시간" : "총 등록시간";
         const progress = registrationActivityProgress(activity);
         const statusDetail = isImageOperation
@@ -1937,14 +1946,14 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
               : "AI 이미지 작업을 처리 중입니다."
           : status.detail;
         return <article className={`panel registration-card ${activity.status}`} key={activity.id}>
-          <header><span className={`registration-status ${activity.status}`}>{isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}{status.label}</span><small>{relativeTime(activity.updatedAt)}</small></header>
+          <header><span className={`registration-status ${activity.status}`}>{isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}{displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
           <div className="registration-product"><div>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</div><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></div>
           <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{recoveryJobId ? "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {progress.label}</small></div>
           <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
           <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">권한 {activity.blockedCount}</b></div>
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{recoveryJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : "기존 입력으로 AI 분석 재개"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>상품 상세<ChevronRight size={14} /></button> : !recoveryJobId ? <span /> : null}</footer>
+          <footer>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{recoveryJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : "기존 입력으로 AI 분석 재개"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !recoveryJobId ? <span /> : null}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;
@@ -3711,7 +3720,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 
   const notificationItems = useMemo(() => [
     { key: `low-stock:${operationSummary?.lowStockCount ?? 0}`, title: `재고주의 상품 ${operationSummary?.lowStockCount ?? 0}건`, detail: "운영 원장 실재고 기준", view: "products" as View, registrationStatus: undefined, tone: "danger", icon: Box },
-    { key: `listing-errors:${operationSummary?.registrationErrorCount ?? 0}`, title: `등록 재시도 ${operationSummary?.registrationErrorCount ?? 0}건`, detail: "AI 분석과 상품별 채널 오류·소요시간을 확인하세요.", view: "registration-activity" as View, registrationStatus: "failed" as RegistrationActivityFilter, tone: "warning", icon: AlertCircle },
+    { key: `listing-errors:${operationSummary?.registrationErrorCount ?? 0}`, title: `등록·분석 재시도 ${operationSummary?.registrationErrorCount ?? 0}건`, detail: "채널 등록·AI 분석 재시도와 별도 이미지 작업 오류를 확인하세요.", view: "registration-activity" as View, registrationStatus: "failed" as RegistrationActivityFilter, tone: "warning", icon: AlertCircle },
     { key: `external-actions:${operationSummary?.registrationBlockedCount ?? 0}`, title: `외부 권한·상품수정 ${operationSummary?.registrationBlockedCount ?? 0}건`, detail: "판매자센터에서 한 건씩 보완", view: "remediation" as View, registrationStatus: undefined, tone: "warning", icon: ShieldCheck },
     { key: `open-cs:${operationSummary?.openTicketCount ?? 0}`, title: `미처리 CS ${operationSummary?.openTicketCount ?? 0}건`, detail: "답변 대기와 처리 중 문의", view: "cs" as View, registrationStatus: undefined, tone: "blue", icon: MessageCircleMore },
   ].filter((item) => !dismissedNotifications.has(item.key) && !item.title.includes(" 0건")), [dismissedNotifications, operationSummary]);

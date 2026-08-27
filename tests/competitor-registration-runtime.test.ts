@@ -201,8 +201,25 @@ test("the scheduler sends provider-level outcomes to the snapshot completion RPC
     source.indexOf("sellerpilot_service_complete_competitor_price_refresh"),
     source.indexOf("const savedCount", source.indexOf("sellerpilot_service_complete_competitor_price_refresh")),
   );
+  assert.match(source, /COMPETITOR_MATCHER_VERSION/);
+  assert.match(source, /matcherVersion: COMPETITOR_MATCHER_VERSION/);
   assert.match(completion, /p_items: items/);
   assert.match(completion, /p_providers: searched\.providers/);
+});
+
+test("the matcher-version forward migration hides legacy automatic observations without deleting manual evidence", async () => {
+  const migration = await readFile(
+    new URL("../supabase/migrations/20260827212726_fence_competitor_matcher_version.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(migration, /add column if not exists matcher_version text/);
+  assert.match(migration, /provider = 'manual'[\s\S]*matcher_version = 'strict-2026-08-27-v1'/);
+  assert.match(migration, /cp\.provider = 'manual'[\s\S]*cp\.matcher_version = 'strict-2026-08-27-v1'[\s\S]*interval '7 days'/);
+  assert.match(migration, /sellerpilot_service_record_competitor_prices\(\s*p_product_id uuid,\s*p_items jsonb\s*\)/);
+  assert.match(migration, /v_provider <> 'manual'[\s\S]*v_matcher_version is distinct from 'strict-2026-08-27-v1'[\s\S]*raise exception 'invalid competitor matcher version'/);
+  assert.match(migration, /matcher_version=excluded\.matcher_version/);
+  assert.match(migration, /revoke all on function public\.sellerpilot_service_record_competitor_prices\(uuid,jsonb\)[\s\S]*from public,anon,authenticated,service_role[\s\S]*grant execute[\s\S]*to service_role/);
+  assert.doesNotMatch(migration, /delete from sellerpilot_private\.competitor_price_observations[\s\S]*matcher_version/);
 });
 
 test("the provider snapshot migration removes the ambiguous three-argument completion RPC", async () => {

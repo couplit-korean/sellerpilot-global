@@ -66,3 +66,37 @@ test("blocked and running counts stay unchanged and non-recoverable AI cards are
   assert.equal((result.summary as Record<string, unknown>).registrationBlockedCount, summary.registrationBlockedCount);
   assert.equal((result.summary as Record<string, unknown>).openTicketCount, summary.openTicketCount);
 });
+
+test("retryable KPI counts channel targets but excludes failed image and revision history cards", () => {
+  const result = reconcileRegistrationDashboardMetrics({
+    pipeline: { aiRunning: 0, listingQueued: 0, listingPublished: 0, listingFailed: 0, listingBlocked: 0 },
+    summary: { registrationErrorCount: 0, registrationBlockedCount: 0 },
+  }, [
+    {
+      id: "product:44444444-4444-4444-8444-444444444444",
+      productId: "44444444-4444-4444-8444-444444444444",
+      status: "failed",
+      channels: [
+        { channel: "shopee", market: "MY", status: "failed" },
+        { channel: "shopee", market: "SG", status: "failed" },
+      ],
+    },
+    {
+      id: "asset:55555555-5555-4555-8555-555555555555",
+      productId: "44444444-4444-4444-8444-444444444444",
+      status: "failed",
+      channels: [],
+    },
+    {
+      id: "revision:66666666-6666-4666-8666-666666666666",
+      productId: "44444444-4444-4444-8444-444444444444",
+      status: "failed",
+      channels: [],
+    },
+  ]);
+
+  assert.equal((result.pipeline as Record<string, unknown>).listingFailed, 2);
+  assert.equal((result.pipeline as Record<string, unknown>).channelListingFailed, 2);
+  assert.equal((result.pipeline as Record<string, unknown>).aiRetryableFailed, 0);
+  assert.equal((result.summary as Record<string, unknown>).registrationErrorCount, 2);
+});

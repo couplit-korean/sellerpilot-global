@@ -51,10 +51,11 @@ function retryableRegistrationIdentifiers(activities: readonly unknown[]) {
 }
 
 /**
- * Adds recoverable product-studio failures to the existing channel-listing
- * counters. The two DB counters describe the same channel population, so the
- * larger value is used once rather than adding them together. Activity IDs
- * are also de-duplicated before they contribute to the total.
+ * Counts retryable channel targets plus recoverable orphan product-studio
+ * jobs, not failed activity cards. The two DB counters describe the same
+ * channel population, so the larger value is used once rather than adding
+ * them together. Asset-regeneration and product-revision cards remain visible
+ * in the full failed history but do not contribute to this retryable KPI.
  */
 export function reconcileRegistrationDashboardMetrics(
   payload: Record<string, unknown>,

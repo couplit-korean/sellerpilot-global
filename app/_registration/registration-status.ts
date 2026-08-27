@@ -25,6 +25,18 @@ export function isRegistrationActivityRunning(status: RegistrationStatus) {
   return runningRegistrationStatuses.has(status);
 }
 
+export function isRegistrationImageActivity(activity: Pick<RegistrationActivity, "id">) {
+  return activity.id.startsWith("revision:") || activity.id.startsWith("asset:");
+}
+
+export function registrationActivityDisplayStatusLabel(activity: RegistrationActivity) {
+  if (activity.status === "failed") {
+    if (activity.id.startsWith("asset:")) return "이미지 재제작 실패";
+    if (activity.id.startsWith("revision:")) return "상품 수정 작업 실패";
+  }
+  return registrationStatusMeta[activity.status].label;
+}
+
 export function recoverableRegistrationActivityJobId(activity: RegistrationActivity) {
   if (activity.status !== "failed" || activity.productId !== null) return null;
   return activity.id.match(studioJobActivityIdPattern)?.[1] ?? null;
@@ -61,7 +73,7 @@ export function registrationActivityProgress(activity: RegistrationActivity) {
     } as const;
   }
   if (activity.channelCount <= 0) {
-    const isImageOperation = activity.id.startsWith("revision:") || activity.id.startsWith("asset:");
+    const isImageOperation = isRegistrationImageActivity(activity);
     if (activity.status === "ready") {
       return {
         percent: 100,
@@ -139,7 +151,7 @@ export function registrationActivityNotifications(
     const previous = previousStatuses.get(activity.id);
     const messages: string[] = [];
     if (previous !== activity.status) {
-      messages.push(`${activity.productName}: ${registrationStatusMeta[activity.status].label}`);
+      messages.push(`${activity.productName}: ${registrationActivityDisplayStatusLabel(activity)}`);
     }
     if (previous === undefined || !previousChannelStatuses) return messages;
     for (const channel of activity.channels) {

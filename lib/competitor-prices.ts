@@ -4,6 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export type CompetitorMarketplace = "smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other";
 export type CompetitorSearchProvider = "naver_shopping" | "elevenst_product_search" | "ebay_browse" | "brave_marketplace_web";
 
+export const COMPETITOR_MATCHER_VERSION = "strict-2026-08-27-v1" as const;
+
 export type CompetitorPriceCandidate = {
   provider: CompetitorSearchProvider;
   externalId: string;

@@ -4,7 +4,9 @@ import test from "node:test";
 import { salesRangeForPreset } from "../app/_dashboard/sales-range-control";
 import {
   isRegistrationActivityRunning,
+  isRegistrationImageActivity,
   recoverableRegistrationActivityJobId,
+  registrationActivityDisplayStatusLabel,
   registrationActivityDisplayElapsedSeconds,
   registrationActivityFilterFromValue,
   registrationActivityMatchesFilter,
@@ -88,6 +90,23 @@ test("every new or changed registration event is queued once after initial hydra
     "상품 A: 등록 완료",
     "상품 B: 재시도 필요",
     "상품 C: 채널 등록 중",
+  ]);
+});
+
+test("image and revision failures use truthful activity-aware labels in cards and notifications", () => {
+  const assetFailure = activity("asset:11111111-1111-4111-8111-111111111111", "이미지 실패 상품", "failed");
+  const revisionFailure = activity("revision:22222222-2222-4222-8222-222222222222", "수정 실패 상품", "failed");
+  const registrationFailure = activity("product:33333333-3333-4333-8333-333333333333", "등록 실패 상품", "failed");
+
+  assert.equal(isRegistrationImageActivity(assetFailure), true);
+  assert.equal(isRegistrationImageActivity(revisionFailure), true);
+  assert.equal(isRegistrationImageActivity(registrationFailure), false);
+  assert.equal(registrationActivityDisplayStatusLabel(assetFailure), "이미지 재제작 실패");
+  assert.equal(registrationActivityDisplayStatusLabel(revisionFailure), "상품 수정 작업 실패");
+  assert.equal(registrationActivityDisplayStatusLabel(registrationFailure), "재시도 필요");
+  assert.deepEqual(registrationActivityNotifications(new Map(), [assetFailure, revisionFailure]), [
+    "이미지 실패 상품: 이미지 재제작 실패",
+    "수정 실패 상품: 상품 수정 작업 실패",
   ]);
 });
 
@@ -338,7 +357,12 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
     readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-push-manager.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(page, /onNavigate\("registration-activity", "failed"\)[^\n]*등록 재시도/);
+  assert.match(page, /onNavigate\("registration-activity", "failed"\)[^\n]*등록·분석 재시도/);
+  assert.match(page, /등록·분석 재시도/);
+  assert.match(page, /\["failed", "오류 전체", counts\.failed\]/);
+  assert.match(page, /대시보드의 등록·분석 재시도 수는 재시도 가능한 채널 대상과 AI 분석 작업 기준입니다/);
+  assert.match(page, /상품 상세에서 이미지 재제작/);
+  assert.match(page, /상품 상세에서 다시 수정/);
   assert.match(page, /params\.set\("status", nextRegistrationStatus\)/);
   assert.match(page, /registrationActivityFilterFromValue\(params\.get\("status"\) \?\? \(typeof state\.status === "string" \? state\.status : null\)\)/);
   assert.match(operationsSnapshotRoute, /reconcileRegistrationDashboardMetrics\(payload, payload\.registrationActivities/);

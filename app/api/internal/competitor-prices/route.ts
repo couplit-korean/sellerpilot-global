@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { executeCompetitorSearchViaChannelGateway } from "../../../../lib/channels/gateway";
-import { competitorProviderRegistry, searchCompetitorProviders } from "../../../../lib/competitor-prices";
+import { COMPETITOR_MATCHER_VERSION, competitorProviderRegistry, searchCompetitorProviders } from "../../../../lib/competitor-prices";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 import { createBoundedSupabaseFetch, workerRpcErrorMessage } from "../../../../lib/worker-rpc";
 
@@ -115,7 +115,10 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
       results.push({ productId: product.product_id, ok: false, pending: false, count: 0, providers: searched.providers });
       continue;
     }
-    const items = searched.items;
+    const items = searched.items.map((item) => ({
+      ...item,
+      matcherVersion: COMPETITOR_MATCHER_VERSION,
+    }));
     try {
       const { data: saved, error: saveError } = await serviceClient.rpc("sellerpilot_service_complete_competitor_price_refresh", {
         p_product_id: product.product_id,

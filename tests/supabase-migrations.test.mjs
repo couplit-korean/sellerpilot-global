@@ -288,6 +288,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260827075654_cross_product_setting_comparisons.sql",
       "20260827181100_allow_legacy_ai_cross_product_bridge.sql",
       "20260827193102_enable_brave_marketplace_competitor_provider.sql",
+      "20260827212726_fence_competitor_matcher_version.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -3421,6 +3422,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       marketplace: competitorMarketplaces[index % competitorMarketplaces.length],
       price: 10_000 + index,
       currency: "KRW",
+      matcherVersion: "strict-2026-08-27-v1",
     }));
     await setClaims(db, "service_role");
     assert.equal(
@@ -3448,7 +3450,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         db,
         `select public.sellerpilot_service_record_competitor_prices(
           $1,
-          '[{"externalId":"competitor-invalid-market","title":"잘못된 채널 후보","url":"https://marketplace.example.test/products/invalid","imageUrl":"","mallName":"알 수 없는 판매처","marketplace":"unknown-market","price":9999}]'::jsonb
+          '[{"externalId":"competitor-invalid-market","title":"잘못된 채널 후보","url":"https://marketplace.example.test/products/invalid","imageUrl":"","mallName":"알 수 없는 판매처","marketplace":"unknown-market","price":9999,"matcherVersion":"strict-2026-08-27-v1"}]'::jsonb
         )`,
         [aiProductId],
       ),
@@ -3467,7 +3469,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         db,
         `select public.sellerpilot_service_record_competitor_prices(
           $1,
-          '[{"provider":"ebay_browse","externalId":"competitor-1","title":"Kellogg Choco Chex 570g","url":"https://www.ebay.com/itm/competitor-1","imageUrl":"","mallName":"eBay","marketplace":"ebay","price":12.5,"currency":"USD"}]'::jsonb
+          '[{"provider":"ebay_browse","externalId":"competitor-1","title":"Kellogg Choco Chex 570g","url":"https://www.ebay.com/itm/competitor-1","imageUrl":"","mallName":"eBay","marketplace":"ebay","price":12.5,"currency":"USD","matcherVersion":"strict-2026-08-27-v1"}]'::jsonb
         )`,
         [aiProductId],
       ),
@@ -3685,12 +3687,33 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
        ) values
          ($1, 'elevenst_product_search', 'obsolete-elevenst', '이전 11번가 결과',
           'https://www.11st.co.kr/products/111', null, '11번가', 'elevenst', 8900, 'KRW', now() - interval '1 day'),
+         ($1, 'elevenst_product_search', 'legacy-elevenst-strawberry', '첵스초코 딸기맛 350g',
+          'https://www.11st.co.kr/products/legacy-strawberry', null, '11번가', 'elevenst', 6900, 'KRW', now() - interval '1 hour'),
+         ($1, 'elevenst_product_search', 'legacy-elevenst-cup', '첵스초코 컵 40g',
+          'https://www.11st.co.kr/products/legacy-cup', null, '11번가', 'elevenst', 1900, 'KRW', now() - interval '1 hour'),
+         ($1, 'elevenst_product_search', 'legacy-elevenst-mixed', '첵스초코 혼합 2종 세트',
+          'https://www.11st.co.kr/products/legacy-mixed', null, '11번가', 'elevenst', 12900, 'KRW', now() - interval '1 hour'),
          ($1, 'ebay_browse', 'obsolete-ebay', '오래된 eBay 결과',
           'https://www.ebay.com/itm/obsolete-ebay', null, 'eBay', 'ebay', 14, 'USD', now() - interval '8 days'),
+         ($1, 'ebay_browse', 'legacy-ebay-fresh', 'Legacy automatic eBay candidate',
+          'https://www.ebay.com/itm/legacy-ebay-fresh', null, 'eBay', 'ebay', 13, 'USD', now() - interval '1 hour'),
          ($1, 'manual', 'manual-reference', '수동 기준 가격',
           'https://manual.example.test/products/reference', null, '수동 확인', 'other', 12345, 'KRW', now() - interval '30 days')`,
       [aiProductId],
     );
+
+    await setClaims(db);
+    const matcherFencedOperations = await scalar(
+      db,
+      "select public.sellerpilot_get_product_operations_v2($1)",
+      [aiProductId],
+    );
+    assert.equal(matcherFencedOperations.competitorPrices.some((item) => item.title === "수동 기준 가격"), true);
+    assert.equal(matcherFencedOperations.competitorPrices.some((item) => item.title === "첵스초코 딸기맛 350g"), false);
+    assert.equal(matcherFencedOperations.competitorPrices.some((item) => item.title === "첵스초코 컵 40g"), false);
+    assert.equal(matcherFencedOperations.competitorPrices.some((item) => item.title === "첵스초코 혼합 2종 세트"), false);
+    assert.equal(matcherFencedOperations.competitorPrices.some((item) => item.title === "Legacy automatic eBay candidate"), false);
+    await setClaims(db, "service_role");
 
     await assert.rejects(
       db.query(
@@ -3698,6 +3721,26 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [aiProductId],
       ),
       /invalid competitor prices/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_record_competitor_prices(
+          $1,
+          '[{"provider":"elevenst_product_search","externalId":"unversioned-result","title":"Unversioned automatic result","url":"https://www.11st.co.kr/products/unversioned-result","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW"}]'::jsonb
+        )`,
+        [aiProductId],
+      ),
+      /invalid competitor matcher version/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_record_competitor_prices(
+          $1,
+          '[{"provider":"ebay_browse","externalId":"future-matcher","title":"Kellogg Choco Chex 570g","url":"https://www.ebay.com/itm/future-matcher","mallName":"eBay","marketplace":"ebay","price":12,"currency":"USD","matcherVersion":"strict-unknown"}]'::jsonb
+        )`,
+        [aiProductId],
+      ),
+      /invalid competitor matcher version/,
     );
     await assert.rejects(
       db.query(
@@ -3788,7 +3831,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         db,
         `select public.sellerpilot_service_complete_competitor_price_refresh(
           $1, $2,
-          '[{"provider":"elevenst_product_search","externalId":"durable-competitor-1","title":"첵스초코 570g","url":"https://www.11st.co.kr/products/123","imageUrl":"","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW"},{"provider":"brave_marketplace_web","externalId":"www.temu.com:601099999999999","title":"Kellogg Choco Chex 570g","url":"https://www.temu.com/kellogg-choco-chex-g-601099999999999.html","imageUrl":"","mallName":"Temu","marketplace":"temu","price":11.5,"currency":"USD"}]'::jsonb,
+          '[{"provider":"elevenst_product_search","externalId":"durable-competitor-1","title":"첵스초코 570g","url":"https://www.11st.co.kr/products/123","imageUrl":"","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW","matcherVersion":"strict-2026-08-27-v1"},{"provider":"brave_marketplace_web","externalId":"www.temu.com:601099999999999","title":"Kellogg Choco Chex 570g","url":"https://www.temu.com/kellogg-choco-chex-g-601099999999999.html","imageUrl":"","mallName":"Temu","marketplace":"temu","price":11.5,"currency":"USD","matcherVersion":"strict-2026-08-27-v1"}]'::jsonb,
           '[{"provider":"naver_shopping","status":"unavailable","count":0,"marketplaces":["smartstore"]},{"provider":"elevenst_product_search","status":"searched","count":1,"marketplaces":["elevenst"]},{"provider":"ebay_browse","status":"failed","count":0,"marketplaces":["ebay"]},{"provider":"brave_marketplace_web","status":"searched","count":1,"marketplaces":["shopee","lazada","temu"]}]'::jsonb
         )`,
         [aiProductId, resumedCompetitorClaim.claim_token],
@@ -3810,6 +3853,22 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [aiProductId],
       ),
       1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.competitor_price_observations where product_id = $1 and external_id = 'legacy-ebay-fresh' and matcher_version is null",
+        [aiProductId],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.competitor_price_observations where product_id = $1 and matcher_version = 'strict-2026-08-27-v1' and external_id in ('durable-competitor-1', 'www.temu.com:601099999999999')",
+        [aiProductId],
+      ),
+      2,
     );
     assert.equal(
       await scalar(db, "select count(*)::integer from sellerpilot_private.competitor_price_refresh_claims where product_id = $1 and claim_token is not null", [aiProductId]),
@@ -3839,6 +3898,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(freshCompetitorOperations.competitorPrices.some((item) => item.title === "수동 기준 가격"), true);
     assert.equal(freshCompetitorOperations.competitorPrices.some((item) => item.title === "Kellogg Choco Chex 570g"), true);
     assert.equal(freshCompetitorOperations.competitorPrices.some((item) => item.title === "오래된 eBay 결과"), false);
+    assert.equal(freshCompetitorOperations.competitorPrices.some((item) => item.title === "Legacy automatic eBay candidate"), false);
     await setClaims(db, "service_role");
     assert.equal(
       await scalar(
