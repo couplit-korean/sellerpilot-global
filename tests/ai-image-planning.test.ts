@@ -265,7 +265,9 @@ test("supplemental setting shots retain an explicit source-pixel background-only
     assert.match(prompt, /HARD IDENTITY FIREWALL/);
     assert.match(prompt, /generate only an empty background plate/);
     assert.match(prompt, /authoritative product contact line/);
-    assert.match(prompt, /support plane must visibly cross the narrow y=.*tolerance band and continue below it/);
+    assert.match(prompt, /tolerance band is only the audit search range/);
+    assert.match(prompt, /after normalizing the plate to 256-by-256, the final horizontal support gradient-ridge centre must land within 2 sampled pixels of nominal y=/);
+    assert.match(prompt, /assigned support material must continue below the ridge/);
     assert.match(prompt, /OUTER-BAND ARCHITECTURE GATE/);
     assert.match(prompt, /at least two non-collinear bands/);
     assert.match(prompt, /A blank wall extending materially outside the rectangle/);
