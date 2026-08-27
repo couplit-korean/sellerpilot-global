@@ -594,7 +594,7 @@ function accessoryCategories(value: string) {
 function collectorFamilyEvidence(value: string) {
   const normalized = normalizedSearchText(value);
   const compact = compactSearchText(value);
-  return /(?:^|\s)(?:pokemon|pikachu|charizard|vmax|vstar|yu-gi-oh|yugioh)(?:\s|$)/iu.test(normalized)
+  return /(?:^|\s)(?:pokemon|pokémon|pikachu|charizard|vmax|vstar|yu-gi-oh|yugioh)(?:\s|$)/iu.test(normalized)
     || /포켓몬|피카츄|리자몽|ポケモン|ピカチュウ|喷火龙|噴火龍/u.test(compact);
 }
 
