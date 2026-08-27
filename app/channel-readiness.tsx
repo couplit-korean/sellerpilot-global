@@ -28,6 +28,7 @@ import {
   channelReadinessObservedAt,
   integrationGates,
   qoo10RegistrationMap,
+  resolveChannelReadiness,
   type ReadinessState,
 } from "./channel-readiness-data";
 import type { OperationsSnapshot } from "./use-operations-snapshot";
@@ -49,24 +50,26 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [] }: 
   channelMetrics?: OperationsSnapshot["channelMetrics"];
 }) {
   const capabilityKeys = Object.keys(capabilityLabels) as ChannelCapabilityKey[];
-  const consoleVerifiedChannels = channelReadiness.filter((channel) => channel.consoleVerified);
+  const resolvedReadiness = channelReadiness.map((channel) => resolveChannelReadiness(
+    channel,
+    channelMetrics.find((metric) => metric.channelKey === channel.key),
+  ));
+  const consoleVerifiedChannels = resolvedReadiness.filter((channel) => channel.consoleVerified);
   const hasLiveMetrics = channelMetrics.length > 0;
   const registeredCredentials = hasLiveMetrics
     ? channelMetrics.filter((metric) => metric.credentialStatus !== "missing").length
-    : channelReadiness.filter((channel) => channel.apiReadPassed).length;
-  const apiReadPassed = hasLiveMetrics
-    ? channelMetrics.filter((metric) => metric.credentialStatus === "active").length
-    : channelReadiness.filter((channel) => channel.apiReadPassed).length;
-  const verifiedChecks = channelReadiness.flatMap((channel) => channel.checks).filter((check) => check.state === "verified").length;
-  const blockerCount = channelReadiness.reduce((total, channel) => total + channel.blockers.length, 0);
+    : resolvedReadiness.filter((channel) => channel.apiReadPassed).length;
+  const apiReadPassed = resolvedReadiness.filter((channel) => channel.apiReadPassed).length;
+  const verifiedChecks = resolvedReadiness.flatMap((channel) => channel.checks).filter((check) => check.state === "verified").length;
+  const blockerCount = resolvedReadiness.reduce((total, channel) => total + channel.blockers.length, 0);
 
   return (
     <div className="page-stack readiness-page">
       {!embedded && <section className="readiness-hero">
         <div>
-          <span className="readiness-eyebrow"><Radio size={14} /> READ-ONLY ACCOUNT INSPECTION · {channelReadinessObservedAt}</span>
+          <span className="readiness-eyebrow"><Radio size={14} /> LAST CONSOLE SNAPSHOT · {channelReadinessObservedAt} · LIVE DB MERGED</span>
           <h2>로그인됐다는 사실과<br /><em>API가 작동한다는 증거를 분리합니다.</em></h2>
-          <p>운영 대상 {channelReadiness.length}개 판매채널의 공식 문서 구현 상태와 실제 콘솔 확인 상태를 분리했습니다. Vault 읽기 진단, 개발자 앱 심사와 주문·문의 권한을 같은 화면에서 확인할 수 있습니다.</p>
+          <p>운영 대상 {resolvedReadiness.length}개 판매채널의 마지막 콘솔 스냅샷과 현재 Vault·API 읽기 진단을 분리해 병합합니다. 과거 심사 결과는 날짜가 붙은 이력으로만 표시하며 현재 운영 DB 근거를 덮어쓰지 않습니다.</p>
         </div>
         <aside>
           <ShieldCheck size={20} />
@@ -75,39 +78,25 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [] }: 
       </section>}
 
       <section className="readiness-summary" aria-label="채널 연동 준비 상태 요약">
-        <article><span>판매채널 실콘솔</span><strong>{consoleVerifiedChannels.length} / {channelReadiness.length}</strong><small>11번가 포함 전체 대상</small></article>
-        <article><span>Vault 운영 키</span><strong>{registeredCredentials} / {channelReadiness.length}</strong><small>현재 운영 DB 실시간 집계</small></article>
+        <article><span>판매채널 실콘솔</span><strong>{consoleVerifiedChannels.length} / {resolvedReadiness.length}</strong><small>{channelReadinessObservedAt} 마지막 스냅샷</small></article>
+        <article><span>Vault 운영 키</span><strong>{registeredCredentials} / {resolvedReadiness.length}</strong><small>현재 운영 DB 실시간 집계</small></article>
         <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>문서·코드·화면 증거</small></article>
         <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>키·승인·고정 IP·Partner 앱</small></article>
-        <article className="danger"><span>현재 API 읽기 통과</span><strong>{apiReadPassed} / {channelReadiness.length}</strong><small>최근 운영 키 읽기 진단 기준</small></article>
+        <article className="danger"><span>현재 API 읽기 통과</span><strong>{apiReadPassed} / {resolvedReadiness.length}</strong><small>최근 운영 키 읽기 진단 기준</small></article>
       </section>
 
       <section className="readiness-channel-grid">
-        {channelReadiness.map((channel) => {
+        {resolvedReadiness.map((channel) => {
           const apiDefinition = isActiveChannelKey(channel.key) ? channelCatalog[channel.key] : null;
           const officialDocs = channel.officialDocs ?? apiDefinition?.officialDocs ?? [];
           const liveMetric = channelMetrics.find((metric) => metric.channelKey === channel.key);
-          const liveState: ReadinessState = !liveMetric
-            ? channel.overall
-            : liveMetric.credentialStatus === "active"
-              ? "verified"
-              : liveMetric.credentialStatus === "unverified"
-                ? "partial"
-                : "not_configured";
-          const liveStateCopy = !liveMetric
-            ? channel.appState
-            : liveMetric.credentialStatus === "active"
-              ? `Vault 운영 키 등록 · 최근 읽기 진단 정상${liveMetric.credentialLastCheckedAt ? ` · ${new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(liveMetric.credentialLastCheckedAt))}` : ""}`
-              : liveMetric.credentialStatus === "unverified"
-                ? `Vault 운영 키 등록 · ${liveMetric.credentialLastCheckStatus === "failed" ? "최근 읽기 진단 실패" : "읽기 진단 필요"}`
-                : "Vault 운영 키 미등록";
           return <article className={`readiness-channel-card ${channel.key}`} key={channel.key}>
             <header>
               <span className="readiness-channel-mark">{channels[channel.key].mark}</span>
               <div><small>{channel.console}</small><h3>{channel.name}</h3><p>{channel.market}</p></div>
-              <ReadinessBadge state={liveState} />
+              <ReadinessBadge state={channel.overall} />
             </header>
-            <div className={`readiness-app-state ${liveMetric ? "live" : ""}`}><i />{liveStateCopy}</div>
+            <div className={`readiness-app-state ${liveMetric ? "live" : ""}`}><i />{channel.appState}</div>
             <p className="readiness-channel-summary">{channel.summary}</p>
             <div className="readiness-doc-links">{officialDocs.map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}<ExternalLink size={11} /></a>)}</div>
             <div className="readiness-checks">

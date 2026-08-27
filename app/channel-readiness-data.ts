@@ -23,6 +23,12 @@ export type ChannelReadiness = {
   officialDocs?: { label: string; url: string }[];
 };
 
+export type ChannelReadinessLiveMetric = {
+  credentialStatus: string;
+  credentialLastCheckStatus: "passed" | "failed" | "manual" | null;
+  credentialLastCheckedAt: string | null;
+};
+
 /**
  * 실제 콘솔에서 확인된 사실과 공식 개발자 문서로 확인한 구현 준비 상태를
  * 분리합니다. 앱 키, 시크릿, 판매자 식별자와 일회성 코드는 포함하지 않습니다.
@@ -179,23 +185,23 @@ export const channelReadiness: ChannelReadiness[] = [
     name: "Temu Korea",
     market: "한국",
     console: "Temu Partner Platform",
-    appState: "SellerPilot Partner App 생성됨 · 보안 설문 승인 · 컴플라이언스 2개 항목 보완 대기",
-    overall: "blocked",
+    appState: "2026-08-24 마지막 콘솔 확인 · 컴플라이언스 보완 요청 이력 · 현재 재제출 결과 재확인 필요",
+    overall: "partial",
     consoleVerified: true,
     apiReadPassed: false,
-    summary: "Temu Partner Platform에 SellerPilot 자체개발 앱이 이미 생성돼 있고 보안 설문은 승인됐습니다. 개인정보 처리 서버 국가와 클라우드 사업자 항목이 불완전으로 반려돼 앱이 비활성 상태이며, 정확한 인프라 정보로 재제출·승인된 뒤 판매자 토큰을 발급할 수 있습니다.",
+    summary: "2026-08-24 콘솔에서는 SellerPilot 자체개발 앱과 승인된 보안 설문, 컴플라이언스 보완 요청을 확인했습니다. 이 기록은 재제출 전 마지막 스냅샷이며 현재 심사 결과를 뜻하지 않습니다. 현재 상태는 Partner Platform 재확인과 운영 API 읽기 진단으로 판정합니다.",
     checks: [
-      { label: "판매자 계정", state: "verified", evidence: "COUPLIT 한국 스토어 활성 상태 확인" },
-      { label: "Partner App", state: "verified", evidence: "SellerPilot · Self-developed application · COUPLIT 스토어 연결" },
-      { label: "보안 설문", state: "verified", evidence: "Security Questionnaire · Approved" },
-      { label: "컴플라이언스 설문", state: "blocked", evidence: "서버 국가와 클라우드 사업자 항목 불완전으로 Rejected" },
+      { label: "판매자 계정", state: "verified", evidence: "2026-08-24 콘솔에서 COUPLIT 한국 스토어 활성 상태 확인" },
+      { label: "Partner App", state: "verified", evidence: "2026-08-24 콘솔에서 SellerPilot · Self-developed application · COUPLIT 스토어 연결 확인" },
+      { label: "보안 설문", state: "verified", evidence: "2026-08-24 콘솔에서 Security Questionnaire 승인 확인" },
+      { label: "컴플라이언스 설문", state: "partial", evidence: "2026-08-24 서버 국가·클라우드 사업자 보완 요청 이력 · 재제출 후 현재 심사 결과는 콘솔 재확인 필요" },
       { label: "V3 상품 발행", state: "verified", evidence: "temu.local.goods.v3.add 공식 필드·서명·응답 규격 구현" },
       { label: "이미지·카테고리", state: "verified", evidence: "공개 HTTPS 이미지 자동 저장·카테고리 자동 추천 규격 반영" },
       { label: "프로그램 재조회", state: "verified", evidence: "외부 상품코드로 temu.local.goods.list.retrieve 재검증 구현" },
       { label: "실계정 E2E", state: "not_configured", evidence: "Partner App Key·Secret·판매자 Access Token 미연결" },
     ],
-    blockers: ["실제 처리지 한국·싱가포르·미국과 공급사 정보를 컴플라이언스 설문에 정확히 반영", "컴플라이언스 재심사 승인 후 앱 Online 전환·App Key/Secret 노출 확인", "한국 판매자 승인 Access Token 발급", "기본 배송 템플릿 설정"],
-    nextAction: "컴플라이언스 2개 항목 보완·재제출 → 승인·앱 Online 전환 및 App Key·Secret 확인 → 한국 Seller Center 수동 승인 → Access Token 발급 → Vault 연결 → 상품 목록 읽기 진단",
+    blockers: ["Partner Platform에서 재제출 후 현재 컴플라이언스 심사 결과 확인", "승인 상태라면 App Key·Secret과 한국 판매자 승인 Access Token 연결", "기본 배송 템플릿 설정"],
+    nextAction: "Partner Platform 현재 심사 결과 확인 → 승인 상태라면 App Key·Secret 확인 → 한국 Seller Center 수동 승인 → Access Token 발급 → Vault 연결 → 상품 목록 읽기 진단",
   },
   {
     key: "smartstore",
@@ -247,6 +253,108 @@ export const channelReadiness: ChannelReadiness[] = [
     nextAction: "Fulfillment 주문 폴링 재대조 → Seller Hub 메시지 보조 동선 유지 → 승인된 Inventory/Offer 테스트",
   },
 ];
+
+function liveCheckTimestamp(value: string | null) {
+  if (!value) return "확인 시각 미기록";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "확인 시각 형식 오류";
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Seoul",
+  }).format(new Date(timestamp));
+}
+
+function liveCredentialProjection(metric: ChannelReadinessLiveMetric) {
+  const checkedAt = liveCheckTimestamp(metric.credentialLastCheckedAt);
+  const passed = metric.credentialStatus === "active" && metric.credentialLastCheckStatus === "passed";
+  if (passed) {
+    return {
+      state: "verified" as const,
+      apiReadPassed: true,
+      appState: `운영 DB 실시간 · Vault 키 등록 · API 읽기 진단 통과 · ${checkedAt}`,
+      evidence: `현재 운영 Vault 자격증명의 읽기 진단 통과 · ${checkedAt}`,
+      summary: `현재 운영 DB에서 유효한 자격증명과 API 읽기 진단 통과를 확인했습니다. 마지막 콘솔 스냅샷과 별개인 실시간 운영 근거입니다.`,
+      blocker: null,
+      nextAction: "현재 읽기 진단 유지",
+    };
+  }
+  if (metric.credentialStatus !== "missing") {
+    const failed = metric.credentialLastCheckStatus === "failed";
+    return {
+      state: failed ? "blocked" as const : "partial" as const,
+      apiReadPassed: false,
+      appState: `운영 DB 실시간 · Vault 키 등록 · ${failed ? "최근 API 읽기 진단 실패" : "API 읽기 진단 필요"} · ${checkedAt}`,
+      evidence: `현재 운영 Vault 자격증명 등록 · ${failed ? "최근 읽기 진단 실패" : "읽기 진단 미확정"} · ${checkedAt}`,
+      summary: `현재 운영 DB에는 자격증명이 등록돼 있지만 API 읽기 진단은 ${failed ? "실패했습니다" : "아직 통과하지 않았습니다"}. 마지막 콘솔 스냅샷만으로 현재 연결 성공을 주장하지 않습니다.`,
+      blocker: failed ? "현재 운영 자격증명의 API 읽기 진단 실패 원인 해소" : "현재 운영 자격증명의 API 읽기 진단 통과",
+      nextAction: failed ? "운영 자격증명 오류 확인 → API 읽기 진단 재실행" : "API 읽기 진단 실행",
+    };
+  }
+  return {
+    state: "not_configured" as const,
+    apiReadPassed: false,
+    appState: "운영 DB 실시간 · Vault 운영 키 미등록",
+    evidence: "현재 운영 DB에 활성 production 자격증명이 없습니다.",
+    summary: "현재 운영 DB에는 활성 production 자격증명이 없습니다. 과거 콘솔 스냅샷은 현재 API 연결을 증명하지 않습니다.",
+    blocker: "현재 운영 Vault production 자격증명 연결",
+    nextAction: "운영 자격증명 연결 → API 읽기 진단 실행",
+  };
+}
+
+export function resolveChannelReadiness(
+  channel: ChannelReadiness,
+  metric?: ChannelReadinessLiveMetric,
+): ChannelReadiness {
+  if (!metric) return channel;
+  const live = liveCredentialProjection(metric);
+  const liveCheck: ReadinessCheck = {
+    label: "현재 운영 API 읽기",
+    state: live.state,
+    evidence: live.evidence,
+  };
+  const historicalSummary = `마지막 콘솔 스냅샷(${channelReadinessObservedAt}): ${channel.summary}`;
+
+  if (channel.key !== "temu") {
+    return {
+      ...channel,
+      overall: live.state,
+      apiReadPassed: live.apiReadPassed,
+      appState: live.appState,
+      summary: `${live.summary} ${historicalSummary}`,
+      checks: [liveCheck, ...channel.checks.filter((check) => check.label !== liveCheck.label)],
+      blockers: live.blocker && !channel.blockers.includes(live.blocker)
+        ? [live.blocker, ...channel.blockers]
+        : channel.blockers,
+      nextAction: live.apiReadPassed ? channel.nextAction : `${live.nextAction} → ${channel.nextAction}`,
+    };
+  }
+
+  const temuBlockers = live.apiReadPassed
+    ? ["Partner Platform에서 재제출 후 현재 컴플라이언스 심사 결과 확인", "기본 배송 템플릿 설정"]
+    : [
+        "Partner Platform에서 재제출 후 현재 컴플라이언스 심사 결과 확인",
+        ...(live.blocker ? [live.blocker] : []),
+        ...(metric.credentialStatus === "missing" ? ["승인 상태라면 App Key·Secret과 한국 판매자 승인 Access Token 연결"] : []),
+        "기본 배송 템플릿 설정",
+      ];
+  const temuNextAction = live.apiReadPassed
+    ? "현재 API 읽기 진단 유지 → Partner Platform 현재 심사 결과 대조 → 승인된 테스트상품 쓰기 전 카테고리·배송 템플릿 검수"
+    : metric.credentialStatus === "missing"
+      ? "Partner Platform 현재 심사 결과 확인 → 승인 상태라면 App Key·Secret과 한국 판매자 승인 Access Token 연결 → Vault 저장 → 상품 목록 읽기 진단"
+      : `Partner Platform 현재 심사 결과 확인 → ${live.nextAction} → 승인된 테스트상품 사전검사`;
+
+  return {
+    ...channel,
+    overall: live.state,
+    apiReadPassed: live.apiReadPassed,
+    appState: live.appState,
+    summary: `${live.summary} ${historicalSummary}`,
+    checks: [liveCheck, ...channel.checks.filter((check) => check.label !== "실계정 E2E" && check.label !== liveCheck.label)],
+    blockers: [...new Set(temuBlockers)],
+    nextAction: temuNextAction,
+  };
+}
 
 export const qoo10RegistrationMap = [
   { group: "카테고리·브랜드", fields: "대·중·소 카테고리, 카테고리 검색, 브랜드 코드/없음", rule: "카테고리별 필수속성 재조회" },
