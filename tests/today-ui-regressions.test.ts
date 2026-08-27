@@ -382,7 +382,18 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.doesNotMatch(page, /brandName: text\("brandName", "No Brand"\)/);
   assert.doesNotMatch(page, /manufacturer: text\("manufacturer", "공급처 확인 필요"\)/);
   assert.match(page, /imageRightsConfirmed: typeof fields\.imageRightsConfirmed === "boolean" \? fields\.imageRightsConfirmed : false/);
-  assert.match(page, /stock: current\.stock,[\s\S]{0,180}weightKg: current\.weightKg/);
+  const researchDraftStart = page.indexOf("const nextIntake: ProductIntakeDraft = {");
+  const researchDraftEnd = page.indexOf(
+    "researchAppliedValuesRef.current = collectResearchAppliedValues",
+    researchDraftStart,
+  );
+  assert.ok(researchDraftStart >= 0 && researchDraftEnd > researchDraftStart);
+  const researchDraft = page.slice(researchDraftStart, researchDraftEnd);
+  assert.match(researchDraft, /\.\.\.currentIntake/);
+  assert.doesNotMatch(
+    researchDraft,
+    /\b(?:sellingPrice|stock|weightKg|packageLengthCm|packageWidthCm|packageHeightCm|shippingFeeKrw|shippingRule|packagingRule):/,
+  );
   assert.match(page, /텍스트·가격·재고뿐 아니라 원본·대표·역할별 사진을 교체/);
   assert.match(page, /외부 채널에는 자동 게시하지 않습니다/);
   assert.match(page, /disabled=\{remoteListingState !== "ready" \|\| productRevision\?\.status === "pending"/);
@@ -450,7 +461,10 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /invalidatedExistingContext && competitorResearchState !== "stale"/);
   assert.match(page, /setCompetitorResearchState\(invalidatedExistingContext \? "stale" : "idle"\)/);
   assert.match(page, /const nextCompetitorRetryPath = buildCompetitorResearchRetryPath\(nextIntake\)/);
-  assert.match(page, /shouldInvalidateCompetitorResearch\(String\(key\), intake\[key\], value\)[\s\S]{0,700}productResearchGenerationRef\.current \+= 1/);
+  assert.match(page, /clearUnchangedResearchAppliedValues\([\s\S]{0,180}researchAppliedValuesRef\.current/);
+  assert.match(page, /researchAppliedValuesRef\.current = collectResearchAppliedValues\(/);
+  assert.match(page, /shouldInvalidateCompetitorResearch\(String\(key\), currentIntake\[key\], value\)/);
+  assert.match(page, /researchAppliedValuesRef\.current = \{\};[\s\S]{0,600}productResearchGenerationRef\.current \+= 1/);
   assert.match(page, /productResearchInputRef\.current\.trim\(\) !== researchInput/);
   assert.match(page, /competitorResearchControllerRef\.current\?\.abort\(new DOMException\("상품 식별 입력이 변경되었습니다\./);
   assert.match(page, /query: \(intake\.productName \|\| intake\.researchInput\)\.trim\(\)\.slice\(0, 160\)/);

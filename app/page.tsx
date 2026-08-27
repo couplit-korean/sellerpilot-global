@@ -134,6 +134,10 @@ import {
   type CompetitorResearchUiState,
 } from "./_publishing/competitor-research-polling";
 import {
+  clearUnchangedResearchAppliedValues,
+  collectResearchAppliedValues,
+} from "./_publishing/product-research-provenance";
+import {
   confirmedProductResearchValue,
   ProductResearchNotFoundError,
   ProductResearchTerminalError,
@@ -2107,7 +2111,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const productResearchControllerRef = useRef<AbortController | null>(null);
   const productResearchGenerationRef = useRef(0);
   const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
+  const intakeRef = useRef(intake);
   const productResearchInputRef = useRef(intake.researchInput);
+  const researchAppliedValuesRef = useRef<Partial<ProductIntakeDraft>>({});
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
   const [uploadError, setUploadError] = useState("");
   const [researchingProduct, setResearchingProduct] = useState(false);
@@ -2128,6 +2134,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [analyzedProductName, setAnalyzedProductName] = useState(initialProduct?.name ?? "");
   const [analyzedProductId, setAnalyzedProductId] = useState<string | null>(initialProduct?.id ?? null);
   const resolvedProductId = analyzedProductId ?? initialProduct?.id ?? null;
+
+  useEffect(() => {
+    intakeRef.current = intake;
+  }, [intake]);
   const [categoryDraftRef] = useState(() => crypto.randomUUID());
   const [publishRefreshVersion, setPublishRefreshVersion] = useState(0);
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
@@ -2216,15 +2226,22 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const setIntakeField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
+    const currentIntake = intakeRef.current;
+    let nextIntake: ProductIntakeDraft = { ...currentIntake, [key]: value };
     if (key === "researchInput") productResearchInputRef.current = String(value);
-    if (shouldInvalidateCompetitorResearch(String(key), intake[key], value)) {
+    if (shouldInvalidateCompetitorResearch(String(key), currentIntake[key], value)) {
       const interruptedResearch = Boolean(productResearchControllerRef.current);
       const invalidatedExistingContext = interruptedResearch
         || researchResult !== null
         || competitorResearchState !== "idle"
         || researchCompetitors.length > 0
         || firstDraftGenerated;
-      const nextIntake = { ...intake, [key]: value };
+      nextIntake = clearUnchangedResearchAppliedValues(
+        nextIntake,
+        emptyProductIntake,
+        researchAppliedValuesRef.current,
+      );
+      researchAppliedValuesRef.current = {};
       const nextCompetitorRetryPath = buildCompetitorResearchRetryPath(nextIntake);
       productResearchControllerRef.current?.abort(new DOMException("상품 식별 입력이 변경되었습니다.", "AbortError"));
       productResearchControllerRef.current = null;
@@ -2243,7 +2260,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       setFirstDraftGenerated(false);
       if (invalidatedExistingContext && competitorResearchState !== "stale") notify("상품 식별정보가 변경되어 이전 상품의 가격·1차 확인 근거를 제거했습니다. 변경한 정보로 가격을 다시 확인해 주세요.");
     }
-    setIntake((current) => ({ ...current, [key]: value }));
+    intakeRef.current = nextIntake;
+    setIntake(nextIntake);
     setManualErrors((current) => {
       if (!current[key]) return current;
       const next = { ...current };
@@ -2483,32 +2501,32 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           || productResearchGenerationRef.current !== productResearchGeneration) return;
       const suggestion = result.suggestedFields;
       const firstReadableSource = result.sources.find((source) => source.status === "read")?.url ?? "";
-      setIntake((current) => ({
-        ...current,
-        productName: current.productName.trim() || suggestion.productName || "",
-        sellerSku: current.sellerSku.trim() || `AUTO-${new Date().toISOString().slice(2, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
-        categoryHint: current.categoryHint.trim() || suggestion.categoryHint || "",
-        brandName: current.brandName.trim() || confirmedProductResearchValue(suggestion.brandName),
-        manufacturer: current.manufacturer.trim() || confirmedProductResearchValue(suggestion.manufacturer),
-        countryOfOrigin: current.countryOfOrigin.trim() || confirmedProductResearchValue(suggestion.countryOfOrigin),
-        material: current.material.trim() || confirmedProductResearchValue(suggestion.material),
-        packageContents: current.packageContents.trim() || normalizeProductSaleConfiguration(suggestion.packageContents),
-        description: current.description.trim() || confirmedProductResearchValue(suggestion.description),
-        productUrl: current.productUrl.trim() || firstReadableSource,
-        gtinStatus: current.gtin || !suggestion.gtin ? current.gtinStatus : "HAS_GTIN",
-        gtin: current.gtin || suggestion.gtin || "",
-        sellingPrice: current.sellingPrice,
-        stock: current.stock,
-        weightKg: current.weightKg,
-        packageLengthCm: current.packageLengthCm,
-        packageWidthCm: current.packageWidthCm,
-        packageHeightCm: current.packageHeightCm,
-        shippingFeeKrw: current.shippingFeeKrw,
-        shippingRule: current.shippingRule,
-        packagingRule: current.packagingRule,
-      }));
+      const currentIntake = intakeRef.current;
+      const nextIntake: ProductIntakeDraft = {
+        ...currentIntake,
+        productName: currentIntake.productName.trim() || suggestion.productName || "",
+        sellerSku: currentIntake.sellerSku.trim() || `AUTO-${new Date().toISOString().slice(2, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
+        categoryHint: currentIntake.categoryHint.trim() || suggestion.categoryHint || "",
+        brandName: currentIntake.brandName.trim() || confirmedProductResearchValue(suggestion.brandName),
+        manufacturer: currentIntake.manufacturer.trim() || confirmedProductResearchValue(suggestion.manufacturer),
+        countryOfOrigin: currentIntake.countryOfOrigin.trim() || confirmedProductResearchValue(suggestion.countryOfOrigin),
+        material: currentIntake.material.trim() || confirmedProductResearchValue(suggestion.material),
+        packageContents: currentIntake.packageContents.trim() || normalizeProductSaleConfiguration(suggestion.packageContents),
+        description: currentIntake.description.trim() || confirmedProductResearchValue(suggestion.description),
+        productUrl: currentIntake.productUrl.trim() || firstReadableSource,
+        gtinStatus: currentIntake.gtin || !suggestion.gtin ? currentIntake.gtinStatus : "HAS_GTIN",
+        gtin: currentIntake.gtin || suggestion.gtin || "",
+      };
+      researchAppliedValuesRef.current = collectResearchAppliedValues(
+        currentIntake,
+        nextIntake,
+        ["productName", "sellerSku", "categoryHint", "brandName", "manufacturer", "countryOfOrigin", "material", "packageContents", "description", "productUrl", "gtinStatus", "gtin"],
+        researchAppliedValuesRef.current,
+      );
+      intakeRef.current = nextIntake;
+      setIntake(nextIntake);
       setResearchResult(result);
-      const competitorQuery = suggestion.productName || intake.productName || researchInput;
+      const competitorQuery = suggestion.productName || nextIntake.productName || researchInput;
       const competitorParams = new URLSearchParams({ query: competitorQuery.slice(0, 500) });
       for (const searchQuery of result.searchQueries) competitorParams.append("alias", searchQuery.query.slice(0, 160));
       runCompetitorResearchPolling(
