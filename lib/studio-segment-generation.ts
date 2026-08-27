@@ -7,6 +7,7 @@ type JsonObject = { [key: string]: JsonValue };
 
 const masterOutputFields = ["mode", "product", "design", "thumbnail", "warnings"] as const;
 const maximumLocalizedChunkSize = 4;
+export const maximumStudioLocalizedRepairPasses = 2;
 
 type LocalizedMarketKey = keyof typeof requiredLocalizedMarkets;
 type LocalizedChannel = LocalizedMarketKey extends `${infer Channel}:${string}` ? Channel : never;
@@ -342,6 +343,16 @@ export function planStudioLocalizedChunks(
     chunks.push(Object.freeze(canonicalStudioLocalizedTargets.slice(offset, offset + chunkSize)));
   }
   return Object.freeze(chunks);
+}
+
+export function nextStudioLocalizedRepairPass(completedRepairPasses: number): 1 | 2 | null {
+  if (!Number.isInteger(completedRepairPasses)
+      || completedRepairPasses < 0
+      || completedRepairPasses > maximumStudioLocalizedRepairPasses) {
+    throw new StudioSegmentContractError("invalid-plan", "Localized repair pass count is invalid.");
+  }
+  if (completedRepairPasses === maximumStudioLocalizedRepairPasses) return null;
+  return (completedRepairPasses + 1) as 1 | 2;
 }
 
 export function localizedSegmentCoverageIssue(

@@ -34,6 +34,7 @@ import {
   createStudioMasterInvocationBudget,
   localizedSegmentCoverageIssue,
   mergeStudioSegmentOutputs,
+  nextStudioLocalizedRepairPass,
   planStudioLocalizedChunks,
   planStudioSegmentRepair,
   studioIssuesForLocalizedChunk,
@@ -3598,26 +3599,76 @@ async function generateSegmentedStudioResult({
   let localizedOutputs = await settleStudioSegmentBatch(
     chunks.map((_, chunkIndex) => invokeLocalized(chunkIndex)),
   );
-  const coverageRepairIndexes = localizedOutputs.flatMap((segment, chunkIndex) => (
-    localizedSegmentCoverageIssue(segment, chunks[chunkIndex]) ? [chunkIndex] : []
-  ));
-  if (coverageRepairIndexes.length) {
+  const allLocalizedChunkIndexes = chunks.map((_, chunkIndex) => chunkIndex);
+  const localizedRepairPasses = Array.from({ length: chunks.length }, () => 0);
+  const normalizedLocalizedChunkIndexes = (indexes) => [...new Set(indexes)].sort((left, right) => left - right);
+  const localizedCoverageIssuesFor = (indexes) => normalizedLocalizedChunkIndexes(indexes).flatMap((chunkIndex) => {
+    const issue = localizedSegmentCoverageIssue(localizedOutputs[chunkIndex], chunks[chunkIndex]);
+    return issue ? [{ chunkIndex, issue }] : [];
+  });
+  const assertLocalizedRepairCapacity = (indexes, issuesForChunk) => {
+    const exhausted = normalizedLocalizedChunkIndexes(indexes).filter((chunkIndex) => (
+      nextStudioLocalizedRepairPass(localizedRepairPasses[chunkIndex]) === null
+    ));
+    if (!exhausted.length) return;
+    const details = exhausted.map((chunkIndex) => (
+      "chunk " + (chunkIndex + 1) + ": " + (issuesForChunk(chunkIndex) || "검증 오류를 보정할 회차가 남아 있지 않습니다.")
+    )).join("\n");
+    throw new Error(("AI 현지화 보정 횟수 소진 · " + details).slice(0, 500));
+  };
+  const repairLocalizedChunks = async (indexes, issuesForChunk) => {
+    const chunkIndexes = normalizedLocalizedChunkIndexes(indexes);
+    if (!chunkIndexes.length) return chunkIndexes;
+    assertLocalizedRepairCapacity(chunkIndexes, issuesForChunk);
+    const allocations = chunkIndexes.map((chunkIndex) => {
+      const repairPass = nextStudioLocalizedRepairPass(localizedRepairPasses[chunkIndex]);
+      if (repairPass === null) {
+        throw new Error("AI 현지화 보정 횟수 계산이 허용 범위를 벗어났습니다.");
+      }
+      localizedRepairPasses[chunkIndex] = repairPass;
+      return { chunkIndex, repairPass };
+    });
     const repairedEntries = await settleStudioSegmentBatch(
-      coverageRepairIndexes.map(async (chunkIndex) => {
-        const issues = localizedSegmentCoverageIssue(localizedOutputs[chunkIndex], chunks[chunkIndex]);
-        const repaired = await invokeLocalized(chunkIndex, { draft: localizedOutputs[chunkIndex], issues, repairPass: 1 });
+      allocations.map(async ({ chunkIndex, repairPass }) => {
+        const repaired = await invokeLocalized(chunkIndex, {
+          draft: localizedOutputs[chunkIndex],
+          issues: issuesForChunk(chunkIndex),
+          repairPass,
+        });
         return [chunkIndex, repaired];
       }),
     );
     localizedOutputs = [...localizedOutputs];
     repairedEntries.forEach(([chunkIndex, repaired]) => { localizedOutputs[chunkIndex] = repaired; });
-    const unresolvedCoverage = coverageRepairIndexes.flatMap((chunkIndex) => {
+    return chunkIndexes;
+  };
+  const restoreExactLocalizedCoverage = async (indexes, phase) => {
+    const coverageFailures = localizedCoverageIssuesFor(indexes);
+    if (!coverageFailures.length) return;
+    const failedIndexes = coverageFailures.map(({ chunkIndex }) => chunkIndex);
+    await repairLocalizedChunks(failedIndexes, (chunkIndex) => {
       const issue = localizedSegmentCoverageIssue(localizedOutputs[chunkIndex], chunks[chunkIndex]);
-      return issue ? [`chunk ${chunkIndex + 1}: ${issue}`] : [];
+      return [phase, issue].filter(Boolean).join("\n");
     });
+    const unresolvedCoverage = localizedCoverageIssuesFor(failedIndexes);
     if (unresolvedCoverage.length) {
-      throw new Error(`AI 현지화 대상 범위 보정 실패 · ${unresolvedCoverage.join("\n")}`.slice(0, 500));
+      const details = unresolvedCoverage.map(({ chunkIndex, issue }) => (
+        "chunk " + (chunkIndex + 1) + ": " + issue
+      )).join("\n");
+      throw new Error(("AI 현지화 대상 범위 최종 보정 실패 · " + details).slice(0, 500));
     }
+  };
+  const coverageRepairIndexes = localizedOutputs.flatMap((segment, chunkIndex) => (
+    localizedSegmentCoverageIssue(segment, chunks[chunkIndex]) ? [chunkIndex] : []
+  ));
+  if (coverageRepairIndexes.length) {
+    await repairLocalizedChunks(coverageRepairIndexes, (chunkIndex) => (
+      localizedSegmentCoverageIssue(localizedOutputs[chunkIndex], chunks[chunkIndex])
+    ));
+    await restoreExactLocalizedCoverage(
+      coverageRepairIndexes,
+      "첫 대상 범위 보정에서도 exact_targets가 맞지 않았습니다. 두 번째이자 마지막 회차에서 아래 대상을 정확히 복구하세요.",
+    );
   }
 
   let parsed = parseMergedStudioSegments(masterOutput, localizedOutputs);
@@ -3625,6 +3676,20 @@ async function generateSegmentedStudioResult({
 
   const repairPlan = planStudioSegmentRepair(parsed.error.issues, chunks);
   if (repairPlan.repairMaster) {
+    allLocalizedChunkIndexes.forEach((chunkIndex) => repairPlan.localizedChunkIndexes.add(chunkIndex));
+  }
+  const primaryRepairIndexes = [...repairPlan.localizedChunkIndexes];
+  const primaryIssuesForChunk = (chunkIndex) => {
+    const exactChunkIssues = issuesForLocalizedChunk(parsed.error.issues, chunks, chunkIndex);
+    return [
+      repairPlan.repairMaster
+        ? "마스터가 의미 검증을 거쳐 수정됩니다. immutable_master_json에 맞춰 해당 청크 전체를 다시 현지화하세요."
+        : "",
+      exactChunkIssues,
+    ].filter(Boolean).join("\n");
+  };
+  if (repairPlan.repairMaster) {
+    assertLocalizedRepairCapacity(primaryRepairIndexes, primaryIssuesForChunk);
     masterOutput = await invokeStudioSegment({
       jobDir,
       schema: masterSchema,
@@ -3645,25 +3710,14 @@ async function generateSegmentedStudioResult({
       stage: "studio-master-repair",
     });
     masterOutput = withReferenceWarnings(masterOutput, referenceWarnings);
-    chunks.forEach((_, index) => repairPlan.localizedChunkIndexes.add(index));
   }
 
-  if (repairPlan.localizedChunkIndexes.size) {
-    const repairedEntries = await settleStudioSegmentBatch(
-      [...repairPlan.localizedChunkIndexes].map(async (chunkIndex) => {
-        const exactChunkIssues = issuesForLocalizedChunk(parsed.error.issues, chunks, chunkIndex);
-        const issues = [
-          repairPlan.repairMaster
-            ? "마스터가 의미 검증을 거쳐 수정됐습니다. immutable_master_json에 맞춰 해당 청크 전체를 다시 현지화하세요."
-            : "",
-          exactChunkIssues,
-        ].filter(Boolean).join("\n");
-        const repaired = await invokeLocalized(chunkIndex, { draft: localizedOutputs[chunkIndex], issues, repairPass: 1 });
-        return [chunkIndex, repaired];
-      }),
+  if (primaryRepairIndexes.length) {
+    await repairLocalizedChunks(primaryRepairIndexes, primaryIssuesForChunk);
+    await restoreExactLocalizedCoverage(
+      primaryRepairIndexes,
+      "첫 의미 보정이 exact_targets를 바꿨습니다. 남은 회차에서 원래 channel·market·locale 조합을 정확히 복구하세요.",
     );
-    localizedOutputs = [...localizedOutputs];
-    repairedEntries.forEach(([chunkIndex, repaired]) => { localizedOutputs[chunkIndex] = repaired; });
   }
 
   parsed = parseMergedStudioSegments(masterOutput, localizedOutputs);
@@ -3671,6 +3725,20 @@ async function generateSegmentedStudioResult({
     const residualIssues = parsed.error.issues;
     const residualRepairPlan = planStudioSegmentRepair(residualIssues, chunks);
     if (residualRepairPlan.repairMaster) {
+      allLocalizedChunkIndexes.forEach((chunkIndex) => residualRepairPlan.localizedChunkIndexes.add(chunkIndex));
+    }
+    const residualRepairIndexes = [...residualRepairPlan.localizedChunkIndexes];
+    const residualIssuesForChunk = (chunkIndex) => {
+      const exactChunkIssues = issuesForLocalizedChunk(residualIssues, chunks, chunkIndex);
+      return residualRepairPlan.repairMaster
+        ? [
+          "마스터가 두 번째이자 마지막 의미 검증 보정을 거칩니다. immutable_master_json만 사실 근거로 사용해 해당 청크 전체를 다시 현지화하고, 지원되지 않은 섭취량과 효능 주장을 완전히 제거하세요.",
+          exactChunkIssues,
+        ].filter(Boolean).join("\n")
+        : exactChunkIssues;
+    };
+    if (residualRepairPlan.repairMaster) {
+      assertLocalizedRepairCapacity(residualRepairIndexes, residualIssuesForChunk);
       masterOutput = await invokeStudioSegment({
         jobDir,
         schema: masterSchema,
@@ -3694,29 +3762,14 @@ async function generateSegmentedStudioResult({
         stage: "studio-master-repair-2",
       });
       masterOutput = withReferenceWarnings(masterOutput, referenceWarnings);
-      chunks.forEach((_, index) => residualRepairPlan.localizedChunkIndexes.add(index));
     }
 
-    if (residualRepairPlan.localizedChunkIndexes.size) {
-      const repairedEntries = await settleStudioSegmentBatch(
-        [...residualRepairPlan.localizedChunkIndexes].map(async (chunkIndex) => {
-          const exactChunkIssues = issuesForLocalizedChunk(residualIssues, chunks, chunkIndex);
-          const issues = residualRepairPlan.repairMaster
-            ? [
-              "마스터가 두 번째이자 마지막 의미 검증 보정을 거쳤습니다. immutable_master_json만 사실 근거로 사용해 해당 청크 전체를 다시 현지화하고, 지원되지 않은 섭취량과 효능 주장을 완전히 제거하세요.",
-              exactChunkIssues,
-            ].filter(Boolean).join("\n")
-            : exactChunkIssues;
-          const repaired = await invokeLocalized(chunkIndex, {
-            draft: localizedOutputs[chunkIndex],
-            issues,
-            repairPass: 2,
-          });
-          return [chunkIndex, repaired];
-        }),
+    if (residualRepairIndexes.length) {
+      await repairLocalizedChunks(residualRepairIndexes, residualIssuesForChunk);
+      await restoreExactLocalizedCoverage(
+        residualRepairIndexes,
+        "마지막 의미 보정이 exact_targets를 바꿨습니다. 남은 회차가 있으면 원래 대상 조합을 복구하고, 없으면 아래 오류로 최종 실패합니다.",
       );
-      localizedOutputs = [...localizedOutputs];
-      repairedEntries.forEach(([chunkIndex, repaired]) => { localizedOutputs[chunkIndex] = repaired; });
     }
 
     parsed = parseMergedStudioSegments(masterOutput, localizedOutputs);

@@ -31,7 +31,8 @@ test("parallel segment batches settle every sibling before surfacing a failure",
   assert.match(helper, /settled\.find\(\(entry\) => entry\.status === "rejected"\)/);
   assert.match(helper, /if \(firstFailure\) throw firstFailure\.reason/);
   assert.doesNotMatch(helper, /Promise\.all\(/);
-  assert.ok((source.match(/await settleStudioSegmentBatch\(/g) ?? []).length >= 3);
+  assert.ok((source.match(/await settleStudioSegmentBatch\(/g) ?? []).length >= 2);
+  assert.ok((source.match(/await repairLocalizedChunks\(/g) ?? []).length >= 4);
 });
 
 test("master and localized phases use derived schemas, isolated invocation, and restricted stages", async () => {
@@ -114,29 +115,40 @@ test("semantic repair is limited to the master or affected localized chunks", as
   assert.match(source, /if \(repairPlan\.repairMaster\)/);
   assert.match(source, /const exactChunkIssues = issuesForLocalizedChunk\(parsed\.error\.issues, chunks, chunkIndex\)/);
   assert.match(source, /repairPlan\.repairMaster[\s\S]{0,260}exactChunkIssues/);
-  assert.match(source, /chunks\.forEach\(\(_, index\) => repairPlan\.localizedChunkIndexes\.add\(index\)\)/);
-  assert.match(source, /const unresolvedCoverage = coverageRepairIndexes\.flatMap/);
-  assert.match(source, /AI 현지화 대상 범위 보정 실패/);
+  assert.match(source, /allLocalizedChunkIndexes\.forEach\(\(chunkIndex\) => repairPlan\.localizedChunkIndexes\.add\(chunkIndex\)\)/);
+  assert.match(source, /assertLocalizedRepairCapacity\(primaryRepairIndexes, primaryIssuesForChunk\)[\s\S]{0,180}segmentId: "studio-master-repair"/);
+  assert.match(source, /await repairLocalizedChunks\(primaryRepairIndexes, primaryIssuesForChunk\)[\s\S]{0,220}await restoreExactLocalizedCoverage/);
+  assert.match(source, /AI 현지화 대상 범위 최종 보정 실패/);
   assert.match(source, /AI 분할 결과 검증 실패/);
 });
 
-test("one finite residual repair uses isolated second-pass artifacts and settles every localized sibling", async () => {
+test("every coverage and semantic repair shares one finite two-pass localized budget", async () => {
   const source = await readFile(workerUrl, "utf8");
+  const generationStart = source.indexOf("async function generateSegmentedStudioResult(");
   const residualStart = source.indexOf("const residualIssues = parsed.error.issues");
   const terminalFailure = source.indexOf("AI 분할 결과 검증 실패", residualStart);
   const residual = source.slice(residualStart, terminalFailure);
+  const generation = source.slice(generationStart, terminalFailure);
 
+  assert.ok(generationStart > 0);
   assert.ok(residualStart > 0);
+  assert.match(generation, /const localizedRepairPasses = Array\.from\(\{ length: chunks\.length \}, \(\) => 0\)/);
+  assert.match(generation, /nextStudioLocalizedRepairPass\(localizedRepairPasses\[chunkIndex\]\)/);
+  assert.match(generation, /localizedRepairPasses\[chunkIndex\] = repairPass/);
+  assert.match(generation, /const repairLocalizedChunks = async \(indexes, issuesForChunk\)/);
+  assert.match(generation, /await settleStudioSegmentBatch\([\s\S]{0,220}repairPass/);
+  assert.match(generation, /await repairLocalizedChunks\(coverageRepairIndexes,[\s\S]{0,260}await restoreExactLocalizedCoverage\(\s*coverageRepairIndexes/);
   assert.match(residual, /const residualRepairPlan = planStudioSegmentRepair\(residualIssues, chunks\)/);
   assert.match(residual, /if \(residualRepairPlan\.repairMaster\)/);
   assert.match(residual, /segmentId: "studio-master-repair-2"/);
   assert.match(residual, /stage: "studio-master-repair-2"/);
-  assert.match(residual, /chunks\.forEach\(\(_, index\) => residualRepairPlan\.localizedChunkIndexes\.add\(index\)\)/);
-  assert.match(residual, /await settleStudioSegmentBatch\(/);
-  assert.match(residual, /draft: localizedOutputs\[chunkIndex\]/);
-  assert.match(residual, /repairPass: 2/);
+  assert.match(residual, /allLocalizedChunkIndexes\.forEach\(\(chunkIndex\) => residualRepairPlan\.localizedChunkIndexes\.add\(chunkIndex\)\)/);
+  assert.match(residual, /assertLocalizedRepairCapacity\(residualRepairIndexes, residualIssuesForChunk\)[\s\S]{0,180}segmentId: "studio-master-repair-2"/);
+  assert.match(residual, /await repairLocalizedChunks\(residualRepairIndexes, residualIssuesForChunk\)/);
+  assert.match(residual, /await restoreExactLocalizedCoverage\(\s*residualRepairIndexes/);
   assert.match(residual, /parsed = parseMergedStudioSegments\(masterOutput, localizedOutputs\)/);
-  assert.equal((residual.match(/repairPass: 2/g) ?? []).length, 1, "the residual localized pass must be finite");
+  assert.doesNotMatch(generation, /while\s*\([^)]*localizedSegmentCoverageIssue/);
+  assert.equal((generation.match(/nextStudioLocalizedRepairPass\(/g) ?? []).length, 2);
   assert.equal((residual.match(/studio-master-repair-2/g) ?? []).length, 2, "the residual master pass has one segment and one stage");
 });
 

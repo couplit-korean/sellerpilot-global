@@ -8,6 +8,7 @@ import {
   createStudioMasterOutputSchema,
   localizedSegmentCoverageIssue,
   mergeStudioSegmentOutputs,
+  nextStudioLocalizedRepairPass,
   planStudioMasterAttemptTimeouts,
   planStudioLocalizedChunks,
   planStudioSegmentRepair,
@@ -148,11 +149,27 @@ test("localized target coverage is checked again on the repaired segment", () =>
     localizedListings: targets.slice(0, -1).map(listing),
   };
   assert.match(localizedSegmentCoverageIssue(incomplete, targets), /exact_targets/);
+  const schemaEnumCrossProductMismatch = {
+    localizedListings: targets.map((target, index) => ({
+      ...listing(target),
+      locale: targets[(index + 1) % targets.length].locale,
+    })),
+  };
+  assert.match(localizedSegmentCoverageIssue(schemaEnumCrossProductMismatch, targets), /exact_targets/);
 
   const repaired = {
     localizedListings: targets.map(listing),
   };
   assert.equal(localizedSegmentCoverageIssue(repaired, targets), "");
+});
+
+test("localized repair passes share one finite two-pass budget", () => {
+  assert.equal(nextStudioLocalizedRepairPass(0), 1);
+  assert.equal(nextStudioLocalizedRepairPass(1), 2);
+  assert.equal(nextStudioLocalizedRepairPass(2), null);
+  expectContractError("invalid-plan", () => nextStudioLocalizedRepairPass(-1));
+  expectContractError("invalid-plan", () => nextStudioLocalizedRepairPass(3));
+  expectContractError("invalid-plan", () => nextStudioLocalizedRepairPass(1.5));
 });
 
 test("master schema is derived from the full schema without localized listings or mutation", () => {
