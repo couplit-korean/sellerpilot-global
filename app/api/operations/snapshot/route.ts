@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
+import { sellerSafeAiJobFailure } from "../../../../lib/ai-worker-error-safety";
 import { activeChannelKeys } from "../../../../lib/channels/catalog";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
@@ -115,7 +116,20 @@ export async function GET(request: Request) {
   payload.syncStatus = Array.isArray(syncStatus) ? syncStatus : [];
   payload.aiRuntime = aiRuntime && typeof aiRuntime === "object" && !Array.isArray(aiRuntime) ? aiRuntime : null;
   payload.externalActions = Array.isArray(externalActions) ? externalActions : [];
-  payload.registrationActivities = Array.isArray(registrationActivities) ? registrationActivities : [];
+  payload.registrationActivities = (Array.isArray(registrationActivities) ? registrationActivities : []).map((activity) => {
+    if (!activity || typeof activity !== "object" || Array.isArray(activity)) return activity;
+    const row = activity as Record<string, unknown>;
+    const id = typeof row.id === "string" ? row.id : "";
+    const channels = Array.isArray(row.channels) ? row.channels : [];
+    const isAiActivity = id.startsWith("job:")
+      || id.startsWith("revision:")
+      || id.startsWith("asset:")
+      || channels.length === 0;
+    return {
+      ...row,
+      message: isAiActivity && row.message ? sellerSafeAiJobFailure(row.message) : row.message,
+    };
+  });
   payload.registrationActivityState = registrationActivitiesError ? "unavailable" : "ready";
   payload.analytics = analytics && typeof analytics === "object" && !Array.isArray(analytics)
     ? analytics
