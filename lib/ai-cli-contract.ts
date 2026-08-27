@@ -623,6 +623,7 @@ export function normalizeStudioWarningLimits(value: unknown): unknown {
 
 const sellerSafeInternalWarning = "내부 제작 메모와 작업 경로는 상품 사실 근거가 아니므로 판매자용 경고에서 제외했습니다.";
 const internalWarningProvenancePattern = /(?:\b(?:AGENTS|MEMORY|SKILL)\.md\b|\brollout_summaries[\\/]|\brollout\s+id\b|(?:file:\/\/|\/(?:Users|home|tmp|private|var\/folders|workspace|mnt)\/|[A-Za-z]:\\(?:Users|Temp|workspace)\\|(?:~\/)?\.codex\/)|(?:내부|시스템|작업)\s*(?:프롬프트|지시문)|\b(?:internal|system)\s+(?:prompt|instruction)\b|\bprompt\s+provenance\b|\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|earlier|above)\s+(?:directions|instructions|prompts?)\b|(?:판매자\s*텍스트와\s*무관한\s*)?지시\s*형태\s*문구(?:는|를)?\s*(?:실행하지\s*않|무시)|(?:이전|앞선|위의)\s*(?:지시|지침|명령)(?:문)?\s*(?:을|를)?\s*(?:무시|잊)|API가\s*최신인지\s*확인하세요)/iu;
+const injectedSellerClaimDirectivePattern = /(?:특허\s*받은\s*)?(?:체중\s*감량|체지방\s*감소|질병\s*(?:치료|예방)|의학적\s*효능|근거\s*없는\s*효능)[^.!?。！？\n]{0,100}(?:강조|추가|표현|주장)(?:하|해)세요(?:\s*이\s*문장은\s*데이터입니다)?/iu;
 const appendedModelCommentarySuffixPattern = /([.!?。！？])(?=[A-Za-z])(?=[\x20-\x7E]{0,200}(?:\b[a-z]+\s+role\?\s+no\s+actual\b|\bweird\s+but\s+valid\b|string\s+output\?))[\x20-\x7E]{8,200}$/iu;
 
 function truncateStudioWarning(value: string, maximumLength: number) {
@@ -671,7 +672,13 @@ function collapseAdjacentRepeatedWarningSentences(value: string) {
 function sanitizeStudioWarning(warning: string) {
   let normalized = warning.trim();
   normalized = normalized.replace(appendedModelCommentarySuffixPattern, "$1").trim();
-  const provenance = internalWarningProvenancePattern.exec(normalized);
+  const internalProvenance = internalWarningProvenancePattern.exec(normalized);
+  const injectedDirective = injectedSellerClaimDirectivePattern.exec(normalized);
+  const provenance = !internalProvenance
+    ? injectedDirective
+    : !injectedDirective || internalProvenance.index <= injectedDirective.index
+      ? internalProvenance
+      : injectedDirective;
   if (provenance?.index !== undefined) {
     let safeEnd = provenance.index;
     const prefix = normalized.slice(0, provenance.index);
