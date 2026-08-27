@@ -28,6 +28,7 @@ import {
 import {
   createStudioLocalizedChunkOutputSchema,
   createStudioMasterOutputSchema,
+  createStudioMasterInvocationBudget,
   mergeStudioSegmentOutputs,
   planStudioLocalizedChunks,
   studioMasterDetailImageRoleIssue,
@@ -67,7 +68,7 @@ import {
   supportReplyResultSchema,
   supportReplyWorkerRequestSchema,
 } from "../lib/ai-cli-contract.ts";
-import { buildMarketplaceStyleLearningBrief } from "../lib/marketplace-style-learning.ts";
+import { buildMarketplaceMasterStyleBrief } from "../lib/marketplace-style-learning.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
 import { downloadMarketplaceImage } from "../lib/channels/marketplace-images.ts";
@@ -189,7 +190,10 @@ const pollMs = Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS 
 const maxIdlePollMs = Math.max(pollMs, Number(process.env.SELLERPILOT_AI_WORKER_MAX_IDLE_POLL_MS ?? 30_000));
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
-const studioMasterTimeoutMs = Math.max(12 * 60_000, Number(process.env.SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS ?? 25 * 60_000));
+const studioMasterTimeoutMs = Math.min(
+  25 * 60_000,
+  Math.max(12 * 60_000, Number(process.env.SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS ?? 25 * 60_000)),
+);
 const studioLocalizedTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS ?? 12 * 60_000));
 const imageGenerationTimeoutMs = Math.max(15 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 20 * 60_000));
 const backgroundAuditTimeoutMs = Math.max(60_000, Number(process.env.SELLERPILOT_BACKGROUND_AUDIT_TIMEOUT_MS ?? 2 * 60_000));
@@ -207,7 +211,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.42";
+const workerVersion = "sellerpilot-cli-worker/1.43";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -591,6 +595,12 @@ async function persistWorkerCompletion(path, payload, label, graceMs = WORKER_CO
 
 const codexOutputLimitBytes = 1024 * 1024;
 const codexTerminationGraceMs = 5_000;
+const studioMasterInvocationPolicy = Object.freeze({
+  artifactAttempts: 2,
+  reasoningEffort: "medium",
+  timeoutRetryReasoningEffort: "low",
+  retryTimedOutRun: true,
+});
 const codexEnvironmentAllowlist = [
   "HOME", "CODEX_HOME", "PATH", "TMPDIR", "USER", "LOGNAME", "SHELL",
   "LANG", "LC_ALL", "LC_CTYPE", "TERM", "XDG_CONFIG_HOME",
@@ -1846,7 +1856,7 @@ function buildStudioMasterPrompt(job, referenceText, competitorContext) {
   const competitorPriceEvidence = competitorContext
     ? promptData(competitorContext)
     : promptData({ query: "", providerStatuses: [], candidates: [] });
-  const styleLearningBrief = buildMarketplaceStyleLearningBrief(String(
+  const styleLearningBrief = buildMarketplaceMasterStyleBrief(String(
     job.request?.manualFields?.categoryHint
       || job.request?.manualFields?.productName
       || job.request?.description
@@ -1868,10 +1878,10 @@ function buildStudioMasterPrompt(job, referenceText, competitorContext) {
     "design.creativeStrategy에서 이 상품의 주 구매 결정 하나를 정의하고, 8개 designArchetype 중 가장 타당한 주축을 선택하세요. 카테고리가 같아도 상품의 형태·사용 순간·구성·증거가 다르면 다른 전개와 아트디렉션을 선택하세요.",
     `제작 변주 식별자: ${String(job.id || "sellerpilot").slice(0, 12)}. 상품 사실에 맞는 선택지가 여러 개일 때만 이 식별자를 사용해 색 대비, 레이아웃 시작점, 카메라 방향의 반복을 피하고, 사실과 맞지 않는 임의 스타일을 만들지는 마세요.`,
     "themeName, differentiationKey, artDirection은 상품명만 바꾸면 다른 상품에도 붙일 수 있는 '프리미엄·모던·감성·클린' 같은 일반론으로 쓰지 말고, 이 상품에서 확인된 물성·형태·사용 장면을 결합한 고유한 지시문으로 작성하세요.",
-    "hero와 최종 선택 안내를 제외한 design.sections를 정확히 16~20개 만드세요. 확인 정보가 충분하면 deep-dive 18~20개, 단순 상품도 long 16~17개로 구성하세요.",
+    "hero와 최종 선택 안내를 제외한 design.sections를 정확히 16~20개 만드세요. 단순 상품은 서로 다른 근거가 있는 질문 16개를 기본으로 하고, 별도의 확인 근거와 구매 결정이 실제로 더 있을 때만 17~20개로 확장하세요.",
     "긴 분량은 반복이 아니라 정보 범위로 확보하세요. 제품 분류, 숫자로 보는 핵심 사실, 대상과 비대상, 실제 형태, 핵심 특징, 근거, 사용 전 준비, 단계별 사용, 규격·구성, 옵션/호환, 관리·보관, 주의·제한, FAQ, 정보고시 중 상품에 해당하는 서로 다른 질문을 해결하세요.",
     "각 section의 buyerQuestion은 이전 섹션과 다른 실제 구매 질문이어야 하고 evidence에는 그 답을 뒷받침하는 입력 이미지 역할·판매자 확정 필드·참고 페이지 항목을 짧게 적으세요. 근거가 없으면 주장을 만들지 말고 확인 필요 사실로 표현하세요.",
-    "각 section body는 160자 이상, 3~6개의 짧고 구체적인 문장으로 작성하고 points는 본문을 되풀이하지 않는 보조 사실 3~6개만 작성하세요.",
+    "각 section body는 최소 160자를 유지하되 보통 160~360자의 3~4개 짧고 구체적인 문장으로 작성하고 points는 본문을 되풀이하지 않는 보조 사실 3~4개만 작성하세요.",
     "어느 두 섹션도 같은 장점·규격·사용법·주의사항을 표현만 바꿔 반복하면 안 됩니다. 이미 설명한 사실을 다음 섹션의 제목·본문·포인트·CTA에서 다시 요약하지 마세요.",
     "section type은 benefit, story, howto, proof, spec, caution, comparison, faq, notice를 내용에 맞게 사용하세요. howto, proof, spec, caution, comparison, faq는 각각 최소 한 번 포함하세요.",
     "section layout은 split, full-bleed, cards, steps, spec-grid, editorial 중 내용에 맞춰 고르고 전체에 최소 5종을 사용하세요. 같은 layout을 연속 사용하지 마세요.",
@@ -2898,18 +2908,36 @@ async function invokeStudioSegment({
   prompt,
   imageFiles = [],
   timeoutMs,
+  artifactAttempts = 2,
+  reasoningEffort = "medium",
+  timeoutRetryReasoningEffort = reasoningEffort,
+  retryTimedOutRun = false,
+  masterInvocationBudget = null,
   jobId,
   claimToken,
   leaseSignal,
   stage,
 }) {
+  if (!["low", "medium"].includes(reasoningEffort)
+      || !["low", "medium"].includes(timeoutRetryReasoningEffort)
+      || (!masterInvocationBudget && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
+      || (masterInvocationBudget && (typeof masterInvocationBudget.take !== "function"
+        || !Number.isSafeInteger(masterInvocationBudget.remainingLaunches)
+        || masterInvocationBudget.remainingLaunches < 0
+        || masterInvocationBudget.remainingLaunches > 2))
+      || !Number.isSafeInteger(artifactAttempts)
+      || artifactAttempts < 1
+      || artifactAttempts > 2) {
+    throw new Error("Studio segment 실행 정책이 올바르지 않습니다.");
+  }
   const schemaFile = join(jobDir, `${segmentId}.schema.json`);
   const resultFile = join(jobDir, `${segmentId}.result.json`);
   await writeFile(schemaFile, JSON.stringify(schema), { encoding: "utf8", mode: 0o600 });
   const argsBeforeOutput = Object.freeze([
     "exec",
     "--model", model,
-    "--config", 'model_reasoning_effort="medium"',
+  ]);
+  const argsAfterReasoning = Object.freeze([
     "--sandbox", "read-only",
     "--skip-git-repo-check",
     "--ephemeral",
@@ -2921,17 +2949,45 @@ async function invokeStudioSegment({
   for (const image of imageFiles) argsAfterOutput.push(`--image=${image.file}`);
   argsAfterOutput.push(prompt);
   Object.freeze(argsAfterOutput);
+  if (masterInvocationBudget?.remainingLaunches === 0) masterInvocationBudget.take();
+  const maximumAttempts = masterInvocationBudget
+    ? Math.min(artifactAttempts, masterInvocationBudget.remainingLaunches)
+    : artifactAttempts;
+  let useTimeoutRetryReasoning = false;
   const artifact = await runCodexJsonArtifact({
     canonicalPath: resultFile,
-    runAttempt: ({ candidatePath }) => runCodex([
-      ...argsBeforeOutput,
-      "--output-last-message", candidatePath,
-      ...argsAfterOutput,
-    ], timeoutMs, jobId, claimToken, {
-      leaseSignal,
-      stage,
-      heartbeatOwnedExternally: true,
-    }),
+    maximumAttempts,
+    retryRunError: retryTimedOutRun
+      ? (error, attempt) => {
+        const shouldRetry = attempt < maximumAttempts
+          && error instanceof Error
+          && error.message === "Codex CLI 실행 제한시간을 초과했습니다."
+          && (!masterInvocationBudget || masterInvocationBudget.remainingLaunches > 0);
+        if (shouldRetry) useTimeoutRetryReasoning = true;
+        return shouldRetry;
+      }
+      : undefined,
+    runAttempt: ({ candidatePath, attempt }) => {
+      const allocation = masterInvocationBudget?.take();
+      const attemptTimeoutMs = allocation?.timeoutMs ?? timeoutMs;
+      const attemptReasoningEffort = useTimeoutRetryReasoning
+        ? timeoutRetryReasoningEffort
+        : reasoningEffort;
+      if (useTimeoutRetryReasoning) {
+        console.warn(`[Studio 제한시간 재시도] ${jobId} · ${stage} · launch=${allocation?.launch ?? attempt}`);
+      }
+      return runCodex([
+        ...argsBeforeOutput,
+        "--config", `model_reasoning_effort="${attemptReasoningEffort}"`,
+        ...argsAfterReasoning,
+        "--output-last-message", candidatePath,
+        ...argsAfterOutput,
+      ], attemptTimeoutMs, jobId, claimToken, {
+        leaseSignal,
+        stage,
+        heartbeatOwnedExternally: true,
+      });
+    },
   });
   return artifact.value;
 }
@@ -3036,6 +3092,10 @@ async function generateSegmentedStudioResult({
   const chunks = planStudioLocalizedChunks(4);
   const localizedSchemas = chunks.map((targets) => createStudioLocalizedChunkOutputSchema(fullSchema, targets));
   const localizedGate = createConcurrencyGate(2);
+  const masterInvocationBudget = createStudioMasterInvocationBudget(
+    studioMasterTimeoutMs,
+    codexTerminationGraceMs,
+  );
 
   let masterOutput = await invokeStudioSegment({
     jobDir,
@@ -3043,7 +3103,8 @@ async function generateSegmentedStudioResult({
     segmentId: "studio-master",
     prompt: buildStudioMasterPrompt(job, referenceText, competitorContext),
     imageFiles,
-    timeoutMs: studioMasterTimeoutMs,
+    ...studioMasterInvocationPolicy,
+    masterInvocationBudget,
     jobId: job.id,
     claimToken,
     leaseSignal,
@@ -3065,7 +3126,8 @@ async function generateSegmentedStudioResult({
         initialMasterImageRoleIssue,
       ),
       imageFiles,
-      timeoutMs: studioMasterTimeoutMs,
+      ...studioMasterInvocationPolicy,
+      masterInvocationBudget,
       jobId: job.id,
       claimToken,
       leaseSignal,
@@ -3129,7 +3191,8 @@ async function generateSegmentedStudioResult({
         summarizeStudioIssues(parsed.error.issues.filter((issue) => issue.path[0] !== "localizedListings")),
       ),
       imageFiles,
-      timeoutMs: studioMasterTimeoutMs,
+      ...studioMasterInvocationPolicy,
+      masterInvocationBudget,
       jobId: job.id,
       claimToken,
       leaseSignal,
@@ -3173,7 +3236,8 @@ async function generateSegmentedStudioResult({
           ),
         ),
         imageFiles,
-        timeoutMs: studioMasterTimeoutMs,
+        ...studioMasterInvocationPolicy,
+        masterInvocationBudget,
         jobId: job.id,
         claimToken,
         leaseSignal,

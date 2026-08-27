@@ -64,6 +64,21 @@ test("one missing exit-zero artifact is retried without replacing the canonical 
   });
 });
 
+test("a caller can reduce the shared artifact and runner ceiling to one attempt", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    let attempts = 0;
+    await assert.rejects(
+      runCodexJsonArtifact({
+        canonicalPath: join(directory, "result.json"),
+        maximumAttempts: 1,
+        runAttempt: async () => { attempts += 1; },
+      }),
+      (error) => error instanceof CodexJsonArtifactError && error.code === "ARTIFACT_MISSING",
+    );
+    assert.equal(attempts, 1);
+  });
+});
+
 test("a runner rejection is propagated unchanged and is never retried", async () => {
   await withTemporaryDirectory(async (directory) => {
     const canonicalPath = join(directory, "result.json");
@@ -80,6 +95,44 @@ test("a runner rejection is propagated unchanged and is never retried", async ()
       (error) => error === timeout,
     );
     assert.equal(attempts, 1);
+  });
+});
+
+test("an opted-in timeout shares the same two-attempt ceiling as malformed artifacts", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const canonicalPath = join(directory, "result.json");
+    const timeout = new Error("bounded master timeout");
+    let attempts = 0;
+    const result = await runCodexJsonArtifact({
+      canonicalPath,
+      retryRunError: (error) => error === timeout,
+      runAttempt: async ({ candidatePath }) => {
+        attempts += 1;
+        if (attempts === 1) throw timeout;
+        await writeFile(candidatePath, JSON.stringify({ recovered: true }));
+      },
+    });
+    assert.equal(attempts, 2);
+    assert.equal(result.attempt, 2);
+    assert.deepEqual(result.value, { recovered: true });
+  });
+
+  await withTemporaryDirectory(async (directory) => {
+    const timeout = new Error("bounded master timeout");
+    let attempts = 0;
+    await assert.rejects(
+      runCodexJsonArtifact({
+        canonicalPath: join(directory, "result.json"),
+        retryRunError: (error) => error === timeout,
+        runAttempt: async ({ candidatePath }) => {
+          attempts += 1;
+          if (attempts === 1) throw timeout;
+          await writeFile(candidatePath, "{malformed");
+        },
+      }),
+      (error) => error instanceof CodexJsonArtifactError && error.code === "ARTIFACT_JSON",
+    );
+    assert.equal(attempts, 2, "timeout plus malformed output must not trigger a third run");
   });
 });
 
@@ -190,6 +243,14 @@ test("argument validation fails before invoking a runner", async () => {
   await assert.rejects(
     runCodexJsonArtifact({ canonicalPath: "/unused/result.json", runAttempt: null }),
     /runAttempt/,
+  );
+  await assert.rejects(
+    runCodexJsonArtifact({ canonicalPath: "/unused/result.json", runAttempt: async () => {}, retryRunError: true }),
+    /retryRunError/,
+  );
+  await assert.rejects(
+    runCodexJsonArtifact({ canonicalPath: "/unused/result.json", runAttempt: async () => {}, maximumAttempts: 3 }),
+    /maximumAttempts/,
   );
 });
 

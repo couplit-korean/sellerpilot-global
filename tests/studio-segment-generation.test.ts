@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   canonicalStudioLocalizedTargets,
   createStudioLocalizedChunkOutputSchema,
+  createStudioMasterInvocationBudget,
   createStudioMasterOutputSchema,
   mergeStudioSegmentOutputs,
+  planStudioMasterAttemptTimeouts,
   planStudioLocalizedChunks,
   studioMasterDetailImageRoleIssue,
   StudioSegmentContractError,
@@ -159,6 +161,39 @@ test("master image roles are fenced before localization with exact-once diagnost
   invalid.design.sections[0].imageAsset = "invented-detail-role";
   assert.match(studioMasterDetailImageRoleIssue(invalid), /invalid=invented-detail-role/);
   assert.match(studioMasterDetailImageRoleIssue({ design: {} }), /확인할 수 없습니다/);
+});
+
+test("master timeout planning stays within one wall-clock budget and at most two attempts", () => {
+  const totalTimeoutMs = 25 * 60_000;
+  const graceMs = 5_000;
+  const attempts = planStudioMasterAttemptTimeouts(totalTimeoutMs, graceMs);
+
+  assert.deepEqual(attempts, [14 * 60_000, (10 * 60_000) + 45_000]);
+  assert.equal(attempts.length, 2);
+  assert.ok(attempts.every((timeout) => timeout >= 8 * 60_000));
+  assert.ok(attempts.reduce((total, timeout) => total + timeout, graceMs * 3) <= totalTimeoutMs);
+  assert.equal(Object.isFrozen(attempts), true);
+
+  const singleAttemptPlan = planStudioMasterAttemptTimeouts(12 * 60_000, graceMs);
+  assert.deepEqual(singleAttemptPlan, [(11 * 60_000) + 50_000]);
+  assert.ok(singleAttemptPlan[0] + (graceMs * 2) <= 12 * 60_000);
+  assert.throws(() => planStudioMasterAttemptTimeouts((12 * 60_000) - 1, graceMs), /timeout budget/);
+  assert.throws(() => planStudioMasterAttemptTimeouts((25 * 60_000) + 1, graceMs), /timeout budget/);
+});
+
+test("one master invocation budget is shared by initial generation and every repair", () => {
+  const budget = createStudioMasterInvocationBudget(25 * 60_000, 5_000);
+
+  assert.equal(budget.maximumLaunches, 2);
+  assert.equal(budget.remainingLaunches, 2);
+  assert.deepEqual(budget.take(), { launch: 1, timeoutMs: 14 * 60_000 });
+  assert.equal(budget.remainingLaunches, 1);
+  assert.deepEqual(budget.take(), { launch: 2, timeoutMs: (10 * 60_000) + 45_000 });
+  assert.equal(budget.remainingLaunches, 0);
+  assert.throws(
+    () => budget.take(),
+    (error) => error instanceof StudioSegmentContractError && error.code === "budget-exhausted",
+  );
 });
 
 test("localized chunk schema stays within the Structured Outputs property limit", () => {

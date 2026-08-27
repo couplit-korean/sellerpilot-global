@@ -22,6 +22,7 @@ export type StudioLocalizedTarget = Readonly<{
 export type StudioSegmentContractErrorCode =
   | "invalid-schema"
   | "invalid-plan"
+  | "budget-exhausted"
   | "invalid-master"
   | "invalid-segment"
   | "unexpected-target"
@@ -92,6 +93,93 @@ export function studioMasterDetailImageRoleIssue(masterOutput: unknown): string 
     `missing=${missingRoles.join(",") || "none"}`,
     `invalid=${invalidRoles.join(",") || "none"}`,
   ].join(" ");
+}
+
+/**
+ * Splits one wall-clock master budget into at most two process attempts. The
+ * reserve covers SIGTERM/SIGKILL cleanup for both attempts plus bounded process
+ * scheduling overhead, so a hung first run cannot silently double the configured
+ * master execution deadline. Time waiting in the shared FIFO gate is excluded.
+ */
+export function planStudioMasterAttemptTimeouts(
+  totalTimeoutMs: number,
+  terminationGraceMs = 5_000,
+): readonly number[] {
+  const minimumTotalTimeoutMs = 12 * 60_000;
+  const minimumAttemptTimeoutMs = 8 * 60_000;
+  const maximumPrimaryTimeoutMs = 14 * 60_000;
+  const maximumTotalTimeoutMs = 25 * 60_000;
+  if (!Number.isSafeInteger(totalTimeoutMs)
+      || totalTimeoutMs < minimumTotalTimeoutMs
+      || totalTimeoutMs > maximumTotalTimeoutMs
+      || !Number.isSafeInteger(terminationGraceMs) || terminationGraceMs < 0) {
+    throw new StudioSegmentContractError("invalid-plan", "Studio master timeout budget is invalid.");
+  }
+
+  const singleAttemptReserveMs = terminationGraceMs * 2;
+  const singleAttemptTimeoutMs = totalTimeoutMs - singleAttemptReserveMs;
+  if (singleAttemptTimeoutMs < minimumAttemptTimeoutMs) {
+    throw new StudioSegmentContractError("invalid-plan", "Studio master timeout budget cannot cover termination.");
+  }
+
+  const terminationAndSchedulingReserveMs = terminationGraceMs * 3;
+  const usableTimeoutMs = totalTimeoutMs - terminationAndSchedulingReserveMs;
+  if (usableTimeoutMs < minimumAttemptTimeoutMs * 2) {
+    return Object.freeze([singleAttemptTimeoutMs]);
+  }
+
+  let primaryTimeoutMs = Math.min(maximumPrimaryTimeoutMs, Math.floor(usableTimeoutMs * 0.6));
+  let fallbackTimeoutMs = usableTimeoutMs - primaryTimeoutMs;
+  if (fallbackTimeoutMs < minimumAttemptTimeoutMs) {
+    fallbackTimeoutMs = minimumAttemptTimeoutMs;
+    primaryTimeoutMs = usableTimeoutMs - fallbackTimeoutMs;
+  }
+  if (primaryTimeoutMs < minimumAttemptTimeoutMs) return Object.freeze([singleAttemptTimeoutMs]);
+  return Object.freeze([primaryTimeoutMs, fallbackTimeoutMs]);
+}
+
+export type StudioMasterInvocationAllocation = Readonly<{
+  launch: number;
+  timeoutMs: number;
+}>;
+
+export type StudioMasterInvocationBudget = Readonly<{
+  maximumLaunches: number;
+  readonly remainingLaunches: number;
+  take: () => StudioMasterInvocationAllocation;
+}>;
+
+/**
+ * Owns the process-launch budget for one complete master artifact. Initial
+ * generation and every possible role/semantic repair must share this instance,
+ * otherwise each logical repair could silently start a fresh 25-minute window.
+ */
+export function createStudioMasterInvocationBudget(
+  totalTimeoutMs: number,
+  terminationGraceMs = 5_000,
+): StudioMasterInvocationBudget {
+  const attemptTimeouts = planStudioMasterAttemptTimeouts(totalTimeoutMs, terminationGraceMs);
+  let launchIndex = 0;
+  return Object.freeze({
+    maximumLaunches: attemptTimeouts.length,
+    get remainingLaunches() {
+      return attemptTimeouts.length - launchIndex;
+    },
+    take() {
+      if (launchIndex >= attemptTimeouts.length) {
+        throw new StudioSegmentContractError(
+          "budget-exhausted",
+          "Studio master execution budget is exhausted.",
+        );
+      }
+      const allocation = Object.freeze({
+        launch: launchIndex + 1,
+        timeoutMs: attemptTimeouts[launchIndex],
+      });
+      launchIndex += 1;
+      return allocation;
+    },
+  });
 }
 
 function schemaObject(value: unknown, path: string): JsonObject {

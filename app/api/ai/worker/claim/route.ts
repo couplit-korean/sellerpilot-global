@@ -68,7 +68,7 @@ export async function POST(request: Request) {
   if (!supportsLiveResultUploadAuthorization(version)) {
     return NextResponse.json({
       message: "AI 작업자를 최신 버전으로 재시작해 주세요.",
-      minimumVersion: "sellerpilot-cli-worker/1.42",
+      minimumVersion: "sellerpilot-cli-worker/1.43",
     }, {
       status: 426,
       headers: { "cache-control": "no-store, max-age=0" },

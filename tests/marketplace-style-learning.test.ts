@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   STYLE_LEARNING_VERSION,
+  buildMarketplaceMasterStyleBrief,
   buildMarketplaceStyleLearningBrief,
   categoryStyleProfiles,
   channelStyleProfiles,
@@ -51,6 +52,21 @@ test("prompt brief pins the learning version, category coverage and all channel 
   assert.match(brief, /패션 · 남성 상의/);
   assert.match(brief, /20개 × 제작 변형 10개 = 200개/);
   for (const channel of channelStyleProfiles) assert.match(brief, new RegExp(`\\[${channel.channel}\\]`));
+});
+
+test("master style brief preserves category evidence and every channel fence without repeated full profiles", () => {
+  const fullBrief = buildMarketplaceStyleLearningBrief("남성 후드 티셔츠");
+  const masterBrief = buildMarketplaceMasterStyleBrief("남성 후드 티셔츠");
+
+  assert.match(masterBrief, new RegExp(STYLE_LEARNING_VERSION.replaceAll(".", "\\.")));
+  assert.match(masterBrief, /패션 · 남성 상의/);
+  assert.match(masterBrief, /20개 × 제작 변형 10개 = 200개/);
+  assert.match(masterBrief, /카테고리 상세 배치/);
+  assert.match(masterBrief, /카테고리 촬영/);
+  assert.match(masterBrief, /필수 사실/);
+  for (const channel of channelStyleProfiles) assert.match(masterBrief, new RegExp(`\\[${channel.channel}\\]`));
+  assert.ok(Buffer.byteLength(masterBrief) < Buffer.byteLength(fullBrief) * 0.55);
+  assert.doesNotMatch(masterBrief, /국가·언어 매핑/);
 });
 
 test("official and observed sources are labeled and use secure links", () => {

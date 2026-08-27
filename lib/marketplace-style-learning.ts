@@ -619,6 +619,37 @@ export function buildMarketplaceStyleLearningBrief(categoryHint: string) {
   ].join("\n");
 }
 
+/**
+ * Keeps the master-generation context focused on reusable art direction and
+ * channel safety. The full registry remains available to the UI and audits;
+ * channel-specific description, thumbnail and shot repetition is intentionally
+ * deferred because the master output is channel-neutral.
+ */
+export function buildMarketplaceMasterStyleBrief(categoryHint: string) {
+  const category = matchStyleCategory(categoryHint);
+  const examples = learnedProductExamples.filter((item) => item.categoryId === category.id);
+  const channelLines = channelStyleProfiles.map((profile) => (
+    `[${profile.channel}] 제목: ${profile.titleFormula} 금지/검수: ${profile.guardrails.join(" / ")}`
+  ));
+  return [
+    `<sellerpilot_master_style version="${STYLE_LEARNING_VERSION}" researched_at="${STYLE_LEARNING_RESEARCH_DATE}">`,
+    `선택 카테고리: ${category.label} (${category.id})`,
+    examples.length
+      ? `학습 커버리지: 이 카테고리 상품 유형 20개 × 제작 변형 10개 = ${examples.length}개.`
+      : "학습 커버리지: 일반 상품 안전 모드 · 실제 상품 사진과 판매자 확정 정보 우선.",
+    `카테고리 문안: ${category.textStyle}`,
+    `카테고리 상세 배치: ${category.detailLayout.join(" → ")}`,
+    `카테고리 썸네일: ${category.thumbnailStyle}`,
+    `카테고리 촬영: ${category.shotList.join(", ")}`,
+    `필수 사실: ${category.requiredFacts.join(", ")}`,
+    `카테고리 금지/검수: ${category.guardrails.join(" / ")}`,
+    ...channelLines,
+    "공통 적용: 상품 사실과 공식 정책이 스타일보다 우선하며, 다른 판매자의 문장·이미지·브랜드 표현을 복사하지 않는다.",
+    "공통 적용: 가격·할인·배송·후기·판매량을 제작물에 고정하지 않고, 제품 외형·라벨·구성품을 바꾸지 않는다.",
+    "</sellerpilot_master_style>",
+  ].join("\n");
+}
+
 export function channelStyleFor(channel: ActiveChannelKey) {
   return channelStyleProfiles.find((profile) => profile.channel === channel);
 }

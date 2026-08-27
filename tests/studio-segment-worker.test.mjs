@@ -74,6 +74,37 @@ test("master detail image roles get one bounded repair before any localized gene
   assert.equal((source.match(/segmentId: "studio-master-repair-2"/g) ?? []).length, 1);
 });
 
+test("master generation uses a compact brief and one medium-to-low timeout fallback", async () => {
+  const source = await readFile(workerUrl, "utf8");
+  const invokeStart = source.indexOf("async function invokeStudioSegment(");
+  const invokeEnd = source.indexOf("\nfunction withReferenceWarnings", invokeStart);
+  const invocation = source.slice(invokeStart, invokeEnd);
+  const generationStart = source.indexOf("async function generateSegmentedStudioResult(");
+  const localizedStart = source.indexOf("const invokeLocalized =", generationStart);
+  const earlyMaster = source.slice(generationStart, localizedStart);
+  const localizedEnd = source.indexOf("let localizedOutputs =", localizedStart);
+  const localizedInvocation = source.slice(localizedStart, localizedEnd);
+
+  assert.match(source, /buildMarketplaceMasterStyleBrief\(/);
+  assert.doesNotMatch(source, /buildMarketplaceStyleLearningBrief\(/);
+  assert.match(source, /reasoningEffort: "medium"/);
+  assert.match(source, /timeoutRetryReasoningEffort: "low"/);
+  assert.match(source, /studioMasterTimeoutMs = Math\.min\(\s*25 \* 60_000,\s*Math\.max\(12 \* 60_000/);
+  assert.match(source, /createStudioMasterInvocationBudget\(\s*studioMasterTimeoutMs,\s*codexTerminationGraceMs/);
+  assert.match(invocation, /maximumAttempts = masterInvocationBudget[\s\S]*masterInvocationBudget\.remainingLaunches/);
+  assert.match(invocation, /attemptReasoningEffort = useTimeoutRetryReasoning[\s\S]*timeoutRetryReasoningEffort[\s\S]*reasoningEffort/);
+  assert.match(invocation, /model_reasoning_effort="\$\{attemptReasoningEffort\}"/);
+  assert.match(invocation, /error\.message === "Codex CLI 실행 제한시간을 초과했습니다\."/);
+  assert.match(invocation, /attempt < maximumAttempts/);
+  assert.doesNotMatch(invocation, /retryRunError:[\s\S]*JobCancelledError/);
+  assert.ok((earlyMaster.match(/masterInvocationBudget,/g) ?? []).length >= 2);
+  assert.equal((source.match(/\.\.\.studioMasterInvocationPolicy,\s*masterInvocationBudget,/g) ?? []).length, 4);
+  assert.doesNotMatch(localizedInvocation, /studioMasterInvocationPolicy/);
+  assert.match(localizedInvocation, /timeoutMs: studioLocalizedTimeoutMs/);
+  assert.match(source, /단순 상품은 서로 다른 근거가 있는 질문 16개를 기본/);
+  assert.match(source, /최소 160자를 유지하되 보통 160~360자/);
+});
+
 test("semantic repair is limited to the master or affected localized chunks", async () => {
   const source = await readFile(workerUrl, "utf8");
   assert.match(source, /function studioSegmentRepairPlan\(issues, chunks\)/);

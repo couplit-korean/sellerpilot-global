@@ -225,24 +225,33 @@ async function cleanCandidate(candidatePath) {
 
 /**
  * Runs Codex against a unique output path, validates the JSON artifact, and only
- * then atomically replaces the canonical result. The runner must reject for all
- * process, timeout, abort, and lease failures; those failures are never retried.
+ * then atomically replaces the canonical result. Runner failures are not retried
+ * unless a caller supplies a narrow retryRunError predicate. Artifact and opted-
+ * in runner retries share the same two-attempt ceiling.
  */
 export async function runCodexJsonArtifact({
   canonicalPath,
   runAttempt,
   maximumBytes = DEFAULT_MAXIMUM_JSON_ARTIFACT_BYTES,
+  maximumAttempts = JSON_ARTIFACT_ATTEMPTS,
+  retryRunError,
 }) {
   if (typeof canonicalPath !== "string" || canonicalPath.length === 0) {
     throw new TypeError("canonicalPath가 필요합니다.");
   }
   if (typeof runAttempt !== "function") throw new TypeError("runAttempt 함수가 필요합니다.");
+  if (retryRunError !== undefined && typeof retryRunError !== "function") {
+    throw new TypeError("retryRunError 함수가 올바르지 않습니다.");
+  }
+  if (!Number.isSafeInteger(maximumAttempts) || maximumAttempts < 1 || maximumAttempts > JSON_ARTIFACT_ATTEMPTS) {
+    throw new TypeError("maximumAttempts는 1 또는 2여야 합니다.");
+  }
   assertMaximumBytes(maximumBytes);
 
   const resolvedCanonicalPath = resolve(canonicalPath);
   const parent = await captureParent(dirname(resolvedCanonicalPath));
   let lastArtifactError = null;
-  for (let attempt = 1; attempt <= JSON_ARTIFACT_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
     const candidatePath = await allocateCandidatePath(parent.path, attempt);
     try {
       const runResult = await runAttempt(Object.freeze({ candidatePath, attempt }));
@@ -255,9 +264,12 @@ export async function runCodexJsonArtifact({
         runResult,
       });
     } catch (error) {
-      if (!isRetryableArtifactError(error)) throw error;
+      const retryableArtifact = isRetryableArtifactError(error);
+      const retryableRunner = !isArtifactError(error)
+        && retryRunError?.(error, attempt) === true;
+      if (!retryableArtifact && !retryableRunner) throw error;
       lastArtifactError = error;
-      if (attempt === JSON_ARTIFACT_ATTEMPTS) throw error;
+      if (attempt === maximumAttempts) throw error;
     } finally {
       await cleanCandidate(candidatePath);
     }
