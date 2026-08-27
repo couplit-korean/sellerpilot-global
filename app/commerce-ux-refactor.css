@@ -2607,12 +2607,16 @@ button {
 .product-revision-main b { font-size: 11px; }.product-revision-main small { color: #77857f; font-size: 9px; }
 .product-revision-source-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .product-revision-source-actions > label, .product-revision-source-actions > button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 5px; border: 1px solid #d9e4df; border-radius: 9px; color: #536d63; background: #fff; cursor: pointer; font-size: 9px; font-weight: 800; }
+.product-revision-source-actions.two-way { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .product-revision-role-grid { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .product-revision-role-grid > div { position: relative; min-width: 0; }
 .product-revision-role-grid label { display: grid; min-height: 112px; place-items: center; align-content: center; gap: 4px; overflow: hidden; border: 1px dashed #d5dfdb; border-radius: 10px; padding: 7px; color: #6b7c76; background: #fbfcfc; cursor: pointer; text-align: center; }
 .product-revision-role-grid .has-photo label { border-style: solid; border-color: #bdd8cc; background: #f6fbf8; }
 .product-revision-role-grid label > span { position: relative; display: block; width: 100%; height: 64px; overflow: hidden; border-radius: 7px; background: #edf2f0; }
 .product-revision-role-grid label > span img { object-fit: contain; }.product-revision-role-grid b { font-size: 9px; }.product-revision-role-grid small { color: #8a9691; font-size: 7px; }
+.product-revision-role-source-actions { margin-top: 5px; }
+.product-revision-role-grid label.product-revision-source-choice { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 5px; border: 1px solid #d9e4df; border-radius: 9px; padding: 0 6px; color: #536d63; background: #fff; cursor: pointer; font-size: 9px; font-weight: 800; }
+.product-revision-source-choice[aria-disabled="true"] { pointer-events: none; cursor: not-allowed; opacity: .55; }
 .product-revision-role-grid > div > button { position: absolute; z-index: 2; top: 4px; right: 4px; display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; color: #9e4434; background: rgb(255 255 255 / 92%); box-shadow: 0 2px 8px rgb(0 0 0 / 12%); }
 .product-revision-extras { display: grid; gap: 8px; }.product-revision-extras > label { display: flex; min-height: 50px; align-items: center; justify-content: center; gap: 8px; border: 1px dashed #cbd9d3; border-radius: 10px; color: #506e63; background: #f8fbfa; cursor: pointer; }
 .product-revision-extras > label > span { display: grid; gap: 2px; }.product-revision-extras b { font-size: 9px; }.product-revision-extras small { color: #83908b; font-size: 8px; }

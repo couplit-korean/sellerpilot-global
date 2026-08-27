@@ -244,6 +244,16 @@ test("revision route and UI preserve uncertain uploads and query the exact job",
   assert.match(picker, /selectionFence\.mount\(\)/);
   assert.match(picker, /역할별 사진보다 대표사진을 먼저 선택해 주세요/);
   assert.match(picker, /추가 사진보다 대표사진을 먼저 선택해 주세요/);
+  assert.match(picker, /id=\{`product-revision-\$\{role\.id\}-camera`\}[\s\S]{0,300}capture="environment"[\s\S]{0,300}disabled=\{roleDisabled\}[\s\S]{0,300}selectRole\(role\.id, event\)/);
+  assert.match(picker, /id=\{`product-revision-\$\{role\.id\}`\}[\s\S]{0,300}disabled=\{roleDisabled\}[\s\S]{0,300}selectRole\(role\.id, event\)/);
+  assert.match(picker, /aria-label=\{`\$\{role\.label\} 사진 촬영`\}/);
+  assert.match(picker, /aria-label=\{`\$\{role\.label\} 사진 앨범에서 선택`\}/);
+  assert.match(picker, /id="product-revision-extras-camera"[\s\S]{0,300}capture="environment"[\s\S]{0,300}disabled=\{extraInputDisabled\}[\s\S]{0,300}selectExtras\(event\)/);
+  assert.match(picker, /id="product-revision-extras"[\s\S]{0,300}multiple[\s\S]{0,300}disabled=\{extraInputDisabled\}[\s\S]{0,300}selectExtras\(event\)/);
+  assert.match(picker, /aria-label="추가 사진 촬영"/);
+  assert.match(picker, /aria-label="추가 사진 앨범에서 선택"/);
+  assert.match(picker, /const roleDisabled = disabled \|\| processing \|\| \(!photo && totalPhotoCount >= 100\)/);
+  assert.match(picker, /const extraInputDisabled = disabled \|\| processing \|\| totalPhotoCount >= 100/);
 });
 
 test("revision migration uses product-first locks, full FK indexes, retention, and no marketplace enqueue", async () => {
@@ -269,8 +279,14 @@ test("revision migration uses product-first locks, full FK indexes, retention, a
 });
 
 test("mobile edit picker keeps representative photo full-width and roles in a 2-column grid", async () => {
-  const css = await readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8");
+  const [css, commerceCss] = await Promise.all([
+    readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/commerce-ux-refactor.css", import.meta.url), "utf8"),
+  ]);
   assert.match(css, /\.product-revision-images\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.match(css, /\.product-revision-role-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(css, /\.product-revision-role-grid > div > button,[\s\S]*width:\s*44px;\s*height:\s*44px/);
+  assert.match(commerceCss, /\.product-revision-source-actions\.two-way\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(commerceCss, /\.product-revision-role-grid label\.product-revision-source-choice\s*\{[^}]*min-height:\s*44px/);
+  assert.match(css, /\.product-revision-source-actions > label,[\s\S]{0,180}min-height:\s*48px/);
 });

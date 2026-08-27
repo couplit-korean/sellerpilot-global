@@ -35,6 +35,7 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
   const mountedRef = useRef(true);
   const [selectionFence] = useState(createRevisionPhotoSelectionFence);
   const totalPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(rolePhotos).length + extraPhotos.length;
+  const extraInputDisabled = disabled || processing || totalPhotoCount >= 100;
 
   const release = useCallback((url: string) => {
     if (!objectUrlsRef.current.delete(url)) return;
@@ -227,21 +228,32 @@ export function ProductRevisionImagePicker({ disabled, onChange, onError }: {
     <div className="product-revision-role-grid">
       {revisionPhotoRoles.map((role) => {
         const photo = rolePhotos[role.id];
+        const roleDisabled = disabled || processing || (!photo && totalPhotoCount >= 100);
         return <div className={photo ? "has-photo" : ""} key={role.id}>
-          <label htmlFor={`product-revision-${role.id}`}>
-            <input id={`product-revision-${role.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled || processing || (!photo && totalPhotoCount >= 100)} onChange={(event) => void selectRole(role.id, event)} />
+          <input id={`product-revision-${role.id}-camera`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={roleDisabled} onChange={(event) => void selectRole(role.id, event)} />
+          <label htmlFor={`product-revision-${role.id}`} aria-disabled={roleDisabled}>
+            <input id={`product-revision-${role.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={roleDisabled} onChange={(event) => void selectRole(role.id, event)} />
             {photo ? <span><Image src={photo.url} alt={`교체할 ${role.label} 사진`} fill sizes="(max-width: 720px) 42vw, 120px" unoptimized /></span> : <ImagePlus size={17} />}
             <b>{role.label}</b><small>{photo ? "교체 · 다시 선택 가능" : "선택"}</small>
           </label>
+          <div className="product-revision-source-actions two-way product-revision-role-source-actions" aria-label={`${role.label} 사진 입력 방식`}>
+            <label className="product-revision-source-choice" htmlFor={`product-revision-${role.id}-camera`} aria-disabled={roleDisabled} aria-label={`${role.label} 사진 촬영`}><Camera size={14} />촬영</label>
+            <label className="product-revision-source-choice" htmlFor={`product-revision-${role.id}`} aria-disabled={roleDisabled} aria-label={`${role.label} 사진 앨범에서 선택`}><ImagePlus size={14} />앨범</label>
+          </div>
           {photo ? <button type="button" aria-label={`${role.label} 사진 제거`} disabled={disabled} onClick={() => removeRole(role.id)}><X size={12} /></button> : null}
         </div>;
       })}
     </div>
     <div className="product-revision-extras">
-      <label htmlFor="product-revision-extras" aria-disabled={disabled || processing || totalPhotoCount >= 100}>
-        <input id="product-revision-extras" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={disabled || processing || totalPhotoCount >= 100} onChange={(event) => void selectExtras(event)} />
+      <input id="product-revision-extras-camera" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={extraInputDisabled} onChange={(event) => void selectExtras(event)} />
+      <label htmlFor="product-revision-extras" aria-disabled={extraInputDisabled}>
+        <input id="product-revision-extras" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraInputDisabled} onChange={(event) => void selectExtras(event)} />
         {processing ? <LoaderCircle className="spin" size={17} /> : <ImagePlus size={17} />}<span><b>{processing ? "추가 사진 확인 중" : "추가 사진 여러 장"}</b><small>모바일 메모리 보호를 위해 3장씩 확인 · 전체 최대 100장</small></span>
       </label>
+      <div className="product-revision-source-actions two-way product-revision-extra-source-actions" aria-label="추가 사진 입력 방식">
+        <label className="product-revision-source-choice" htmlFor="product-revision-extras-camera" aria-disabled={extraInputDisabled} aria-label="추가 사진 촬영"><Camera size={14} />촬영</label>
+        <label className="product-revision-source-choice" htmlFor="product-revision-extras" aria-disabled={extraInputDisabled} aria-label="추가 사진 앨범에서 선택"><ImagePlus size={14} />앨범</label>
+      </div>
       {extraPhotos.length ? <div>{extraPhotos.map((photo, index) => <span key={`${photo.url}-${index}`}><Image src={photo.url} alt={`교체할 추가 상품 사진 ${index + 1}`} fill sizes="80px" unoptimized /><button type="button" aria-label={`추가 사진 ${index + 1} 제거`} disabled={disabled} onClick={() => removeExtra(index)}><X size={11} /></button></span>)}</div> : null}
     </div>
     <p className="product-revision-limitation"><b>채널 반영 제한</b> 새 사진과 AI 상세 결과는 중앙 상품에만 저장됩니다. 판매채널의 옵션·원격 SKU·이미지는 자동으로 추측하거나 변경하지 않으며, 채널 상품 수정에서 각 채널 지원 범위를 확인한 뒤 별도로 실행해야 합니다.</p>
