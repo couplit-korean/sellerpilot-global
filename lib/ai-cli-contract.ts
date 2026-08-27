@@ -608,7 +608,8 @@ export function normalizeStudioWarningLimits(value: unknown): unknown {
   const warnings = source.warnings
     .map((warning) => {
       if (typeof warning !== "string") return warning;
-      let normalized = warning.trim().slice(0, 400);
+      let normalized = sanitizeStudioWarning(warning);
+      normalized = normalized.slice(0, 400);
       if (/[\uD800-\uDBFF]$/.test(normalized)) normalized = normalized.slice(0, -1);
       return normalized;
     })
@@ -618,6 +619,58 @@ export function normalizeStudioWarningLimits(value: unknown): unknown {
     ...source,
     warnings,
   };
+}
+
+const sellerSafeInternalWarning = "내부 제작 메모와 작업 경로는 상품 사실 근거가 아니므로 판매자용 경고에서 제외했습니다.";
+const internalWarningProvenancePattern = /(?:\b(?:AGENTS|MEMORY|SKILL)\.md\b|\brollout_summaries[\\/]|\brollout\s+id\b|(?:file:\/\/|\/(?:Users|home|tmp|private|var\/folders|workspace|mnt)\/|[A-Za-z]:\\(?:Users|Temp|workspace)\\|(?:~\/)?\.codex\/)|(?:내부|시스템|작업)\s*(?:프롬프트|지시문)|\b(?:internal|system)\s+(?:prompt|instruction)\b|\bprompt\s+provenance\b|API가\s*최신인지\s*확인하세요)/iu;
+
+function warningSentenceSegments(value: string) {
+  const segments: string[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    const decimalPoint = character === "." && /\d/u.test(value[index - 1] ?? "") && /\d/u.test(value[index + 1] ?? "");
+    if (decimalPoint || !/[.!?。！？]/u.test(character)) continue;
+    segments.push(value.slice(start, index + 1).trim());
+    start = index + 1;
+  }
+  if (start < value.length) segments.push(value.slice(start).trim());
+  return segments.filter(Boolean);
+}
+
+function collapseAdjacentRepeatedWarningSentences(value: string) {
+  const segments = warningSentenceSegments(value);
+  if (segments.length < 2) return value;
+  const retained: string[] = [];
+  let previousKey = "";
+  let changed = false;
+  for (const segment of segments) {
+    const key = segment.replace(/\s+/gu, " ").toLocaleLowerCase();
+    if (key === previousKey) {
+      changed = true;
+      continue;
+    }
+    retained.push(segment);
+    previousKey = key;
+  }
+  return changed ? retained.join(" ") : value;
+}
+
+function sanitizeStudioWarning(warning: string) {
+  let normalized = warning.trim();
+  const provenance = internalWarningProvenancePattern.exec(normalized);
+  if (provenance?.index !== undefined) {
+    let safeEnd = provenance.index;
+    const prefix = normalized.slice(0, provenance.index);
+    if (!/^API가\s*최신인지\s*확인하세요/iu.test(provenance[0])) {
+      const sentenceBoundaries = [...prefix.matchAll(/[.!?。！？]\s+/gu)];
+      const lastBoundary = sentenceBoundaries.at(-1);
+      if (lastBoundary?.index !== undefined) safeEnd = lastBoundary.index + lastBoundary[0].length;
+      else safeEnd = 0;
+    }
+    normalized = normalized.slice(0, safeEnd).trim() || sellerSafeInternalWarning;
+  }
+  return collapseAdjacentRepeatedWarningSentences(normalized);
 }
 
 /**
@@ -696,6 +749,12 @@ export function normalizeStudioLocalizedKeywordCoverage(value: unknown): unknown
     return { ...listing, keywords };
   });
   return changed ? { ...source, localizedListings } : value;
+}
+
+export function normalizeStudioResultForTerminalValidation(value: unknown): unknown {
+  return normalizeStudioLocalizedKeywordCoverage(normalizeStudioWarningLimits(
+    normalizeStudioSectionCount(normalizeStudioGeneralFoodSafety(value)),
+  ));
 }
 
 export const requiredLocalizedMarkets = {

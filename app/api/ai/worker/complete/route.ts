@@ -3,7 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
 import { sellerSafeAiJobFailure } from "../../../../../lib/ai-worker-error-safety";
-import { workerCompletionSchema } from "../../../../../lib/ai-cli-contract";
+import {
+  normalizeStudioResultForTerminalValidation,
+  workerCompletionSchema,
+} from "../../../../../lib/ai-cli-contract";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
 import {
   createBoundedSupabaseFetch,
@@ -51,6 +54,16 @@ function isLegacyWorkerSuccess(value: unknown): value is LegacyWorkerSuccess {
     && [...legacyLocalizedMarkets].every((market) => receivedMarkets.has(market));
 }
 
+function normalizeWorkerCompletionPayload(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const payload = value as Record<string, unknown>;
+  const result = payload.result;
+  if (!result || typeof result !== "object" || Array.isArray(result)
+      || (result as Record<string, unknown>).mode !== "cli") return value;
+  const normalizedResult = normalizeStudioResultForTerminalValidation(result);
+  return normalizedResult === result ? value : { ...payload, result: normalizedResult };
+}
+
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const workerToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
@@ -66,7 +79,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
   }
 
-  const payload = await request.json().catch(() => null);
+  const receivedPayload = await request.json().catch(() => null);
+  const payload = normalizeWorkerCompletionPayload(receivedPayload);
   const parsed = workerCompletionSchema.safeParse(payload);
   const completion = parsed.success ? parsed.data : isLegacyWorkerSuccess(payload) ? payload : null;
   if (!completion) {

@@ -9,7 +9,7 @@ import {
 } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r11-source-identity-16";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r12-food-room-recognition-16";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 

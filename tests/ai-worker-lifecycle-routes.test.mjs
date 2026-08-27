@@ -40,6 +40,18 @@ test("AI completion bounds Supabase calls and maps both lifecycle RPC failures",
   assert.match(source, /실행 중인 작업과 완료 요청이 일치하지 않습니다[^\n]+status: 409/);
   assert.match(source, /p_claim_token: completion\.claimToken/);
   assert.match(source, /aiGeneratedAssetPath\(completion\.jobId, asset, completion\.claimToken\)/);
+  assert.match(source, /const payload = normalizeWorkerCompletionPayload\(receivedPayload\)/);
+  assert.match(source, /normalizeStudioResultForTerminalValidation\(result\)/);
+  assert.ok(
+    source.indexOf("normalizeWorkerCompletionPayload(receivedPayload)")
+      < source.indexOf("workerCompletionSchema.safeParse(payload)"),
+    "studio results must be normalized before terminal schema validation",
+  );
+  assert.ok(
+    source.indexOf("workerCompletionSchema.safeParse(payload)")
+      < source.indexOf('serviceClient.rpc("sellerpilot_complete_ai_job"'),
+    "normalized studio results must be schema-validated before DB storage",
+  );
 });
 
 test("AI result upload authorization signs only an exact live claim path", async () => {

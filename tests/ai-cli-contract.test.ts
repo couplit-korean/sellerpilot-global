@@ -5,6 +5,7 @@ import {
   cliStudioResultSchema,
   normalizeStudioGeneralFoodSafety,
   normalizeStudioLocalizedKeywordCoverage,
+  normalizeStudioResultForTerminalValidation,
   normalizeStudioSectionCount,
   normalizeStudioWarningLimits,
   productResearchJobRequestSchema,
@@ -1245,6 +1246,45 @@ test("AI studio warning limits are normalized deterministically before terminal 
   assert.equal(normalized.warnings[0].startsWith("경"), true);
   assert.equal(normalized.warnings.includes(""), false);
   const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
+test("AI studio warnings remove ACV internal provenance without losing seller-facing product cautions", () => {
+  const result = validResult();
+  const productWarning = "외박스 사진만 제공되어 실제 낱포 디자인과 내용물 형태는 확인되지 않았다. 상세 이미지 제작 전에 개봉 구성과 내용물 실사 촬영이 필요하다.";
+  result.warnings = [
+    `${productWarning} 최근 라벨 보존 원칙에 따라 원본 OCR과 실물 표시를 우선했다. 메모 근거: MEMORY.md 33-45 및 rollout_summaries/2026-08-26-internal.md, rollout id 01a03cc7-e111-77a2-bb2d-32ac33d8dd3c를 참조했다.`,
+    "용량은 판매 로트의 평면 라벨에서 다시 확인해야 한다. 내부 프롬프트 /Users/operator/private/studio-master.prompt.md를 참고했다.",
+  ];
+
+  const normalized = normalizeStudioWarningLimits(result) as ReturnType<typeof validResult>;
+  assert.match(normalized.warnings[0], /외박스 사진만 제공되어/);
+  assert.match(normalized.warnings[0], /원본 OCR과 실물 표시를 우선했다/);
+  assert.doesNotMatch(normalized.warnings[0], /MEMORY\.md|rollout_summaries|rollout\s+id/iu);
+  assert.equal(normalized.warnings[1], "용량은 판매 로트의 평면 라벨에서 다시 확인해야 한다.");
+  assert.equal(normalized.warnings.some((warning) => /\/Users\/|내부 프롬프트|\.prompt\.md/iu.test(warning)), false);
+  assert.deepEqual(normalizeStudioWarningLimits(normalized), normalized, "warning sanitation must be idempotent");
+});
+
+test("AI studio warnings remove the repeated Lotte API suffix and keep the label caution", () => {
+  const result = validResult();
+  const labelWarning = "알레르기 영역에서 표시 문구가 보이지만, 최종 게시 전 최신 판매 로트의 평면 라벨로 다시 대조해야 합니다. 국가별 번역본은 현지 표시 규정 검수가 필요합니다.";
+  result.warnings = [`${labelWarning}${"API가 최신인지 확인하세요.".repeat(16)}API가 최신인`];
+
+  const normalized = normalizeStudioWarningLimits(result) as ReturnType<typeof validResult>;
+  assert.equal(normalized.warnings[0], labelWarning);
+  assert.doesNotMatch(normalized.warnings[0], /API가 최신/);
+  assert.deepEqual(normalizeStudioWarningLimits(normalized), normalized, "warning sanitation must be idempotent");
+});
+
+test("AI studio warning normalization collapses only adjacent duplicate sentences", () => {
+  const result = validResult();
+  result.warnings = ["표시 라벨을 확인하세요. 표시 라벨을 확인하세요. 판매 로트도 확인하세요."];
+  const normalized = normalizeStudioWarningLimits(result) as ReturnType<typeof validResult>;
+  assert.equal(normalized.warnings[0], "표시 라벨을 확인하세요. 판매 로트도 확인하세요.");
+
+  const fullNormalization = normalizeStudioResultForTerminalValidation(normalized);
+  const parsed = cliStudioResultSchema.safeParse(fullNormalization);
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
 

@@ -144,12 +144,17 @@ test("studio result normalization applies general-food safety before structural 
   const helperStart = contract.indexOf("export function normalizeStudioSectionCount(value: unknown)");
   const helperEnd = contract.indexOf("\nfunction boundedTitleKeyword", helperStart);
   const helper = contract.slice(helperStart, helperEnd);
+  const terminalHelperStart = contract.indexOf("export function normalizeStudioResultForTerminalValidation(value: unknown)");
+  const terminalHelperEnd = contract.indexOf("\nexport const requiredLocalizedMarkets", terminalHelperStart);
+  const terminalHelper = contract.slice(terminalHelperStart, terminalHelperEnd);
 
   assert.match(helper, /sections\.length < 16 \|\| sections\.length > 20/);
   assert.match(helper, /targetSectionCount: sections\.length/);
-  assert.match(source, /normalizeStudioSectionCount\(normalizeStudioGeneralFoodSafety\(merged\)\)/);
-  assert.match(source, /normalizeStudioSectionCount\(normalizeStudioGeneralFoodSafety\(job\.request\?\.sourceResult\)\)/);
-  assert.equal((source.match(/normalizeStudioGeneralFoodSafety\(/g) ?? []).length, 2);
+  assert.match(terminalHelper, /normalizeStudioLocalizedKeywordCoverage\(normalizeStudioWarningLimits\(/);
+  assert.match(terminalHelper, /normalizeStudioSectionCount\(normalizeStudioGeneralFoodSafety\(value\)\)/);
+  assert.match(source, /normalizeStudioResultForTerminalValidation\(merged\)/);
+  assert.match(source, /normalizeStudioResultForTerminalValidation\(job\.request\?\.sourceResult\)/);
+  assert.equal((source.match(/normalizeStudioResultForTerminalValidation\(/g) ?? []).length, 2);
 });
 
 test("repair prompts fail closed on unsupported general-food intake and efficacy claims", async () => {
