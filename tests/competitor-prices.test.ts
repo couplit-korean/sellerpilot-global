@@ -394,6 +394,12 @@ test("competitor relevance fails closed on GTIN, exact model, accessory, edition
   assert.equal(competitorCandidateRelevance(candidate({ title: "Apple AirPods Pro 2 compatible charging case" }), ["Apple AirPods Pro 2"]), 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Apple iPhone 15 Pro 128GB" }), ["Apple iPhone 15 128GB", "Apple iPhone 15 Pro 128GB"]), 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Apple AirPods Pro 2 compatible charging case" }), ["Apple AirPods Pro 2", "Apple AirPods Pro 2 compatible case"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu VMAX 142/S-P Kellogg's Chex Choco Korean Promo Card Sealed",
+  }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
+  assert.ok(competitorCandidateRelevance(candidate({
+    title: "Pokemon Pikachu VMAX Korean Promo Card Sealed",
+  }), ["Pokemon Pikachu VMAX Korean Promo Card"]) > 0);
   assert.ok(competitorCandidateRelevance(candidate({ title: "Coca Cola Zero 355ml 24 cans" }), ["Coca Cola Zero 355ml 24 cans"]) > 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Coca Cola Zero Cherry 355ml 24 cans" }), ["Coca Cola Zero 355ml 24 cans"]), 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Coca Cola Limited Edition 355ml" }), ["Coca Cola Cherry Limited Edition 355ml"]), 0);

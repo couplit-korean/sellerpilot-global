@@ -208,10 +208,10 @@ test("the scheduler sends provider-level outcomes to the snapshot completion RPC
 });
 
 test("the matcher-version forward migration hides legacy automatic observations without deleting manual evidence", async () => {
-  const migration = await readFile(
-    new URL("../supabase/migrations/20260827212726_fence_competitor_matcher_version.sql", import.meta.url),
-    "utf8",
-  );
+  const [migration, v2Migration] = await Promise.all([
+    readFile(new URL("../supabase/migrations/20260827212726_fence_competitor_matcher_version.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20260828003000_fence_competitor_matcher_v2.sql", import.meta.url), "utf8"),
+  ]);
   assert.match(migration, /add column if not exists matcher_version text/);
   assert.match(migration, /provider = 'manual'[\s\S]*matcher_version = 'strict-2026-08-27-v1'/);
   assert.match(migration, /cp\.provider = 'manual'[\s\S]*cp\.matcher_version = 'strict-2026-08-27-v1'[\s\S]*interval '7 days'/);
@@ -220,6 +220,12 @@ test("the matcher-version forward migration hides legacy automatic observations 
   assert.match(migration, /matcher_version=excluded\.matcher_version/);
   assert.match(migration, /revoke all on function public\.sellerpilot_service_record_competitor_prices\(uuid,jsonb\)[\s\S]*from public,anon,authenticated,service_role[\s\S]*grant execute[\s\S]*to service_role/);
   assert.doesNotMatch(migration, /delete from sellerpilot_private\.competitor_price_observations[\s\S]*matcher_version/);
+  assert.match(v2Migration, /pg_get_functiondef/);
+  assert.match(v2Migration, /strict-2026-08-27-v1/);
+  assert.match(v2Migration, /strict-2026-08-28-v2/);
+  assert.match(v2Migration, /expected competitor matcher version was not found/);
+  assert.match(v2Migration, /drop index if exists sellerpilot_private\.competitor_prices_current_matcher_idx/);
+  assert.doesNotMatch(v2Migration, /delete from sellerpilot_private\.competitor_price_observations/);
 });
 
 test("the provider snapshot migration removes the ambiguous three-argument completion RPC", async () => {

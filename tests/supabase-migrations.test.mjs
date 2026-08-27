@@ -293,6 +293,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260827235328_expire_stale_non_cs_ai_jobs.sql",
       "20260828001000_expose_product_readiness_facts.sql",
       "20260828002000_fix_stale_ai_service_secret_guard.sql",
+      "20260828003000_fence_competitor_matcher_v2.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -3426,7 +3427,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       marketplace: competitorMarketplaces[index % competitorMarketplaces.length],
       price: 10_000 + index,
       currency: "KRW",
-      matcherVersion: "strict-2026-08-27-v1",
+      matcherVersion: "strict-2026-08-28-v2",
     }));
     await setClaims(db, "service_role");
     assert.equal(
@@ -3454,7 +3455,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         db,
         `select public.sellerpilot_service_record_competitor_prices(
           $1,
-          '[{"externalId":"competitor-invalid-market","title":"잘못된 채널 후보","url":"https://marketplace.example.test/products/invalid","imageUrl":"","mallName":"알 수 없는 판매처","marketplace":"unknown-market","price":9999,"matcherVersion":"strict-2026-08-27-v1"}]'::jsonb
+          '[{"externalId":"competitor-invalid-market","title":"잘못된 채널 후보","url":"https://marketplace.example.test/products/invalid","imageUrl":"","mallName":"알 수 없는 판매처","marketplace":"unknown-market","price":9999,"matcherVersion":"strict-2026-08-28-v2"}]'::jsonb
         )`,
         [aiProductId],
       ),
@@ -3473,7 +3474,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         db,
         `select public.sellerpilot_service_record_competitor_prices(
           $1,
-          '[{"provider":"ebay_browse","externalId":"competitor-1","title":"Kellogg Choco Chex 570g","url":"https://www.ebay.com/itm/competitor-1","imageUrl":"","mallName":"eBay","marketplace":"ebay","price":12.5,"currency":"USD","matcherVersion":"strict-2026-08-27-v1"}]'::jsonb
+          '[{"provider":"ebay_browse","externalId":"competitor-1","title":"Kellogg Choco Chex 570g","url":"https://www.ebay.com/itm/competitor-1","imageUrl":"","mallName":"eBay","marketplace":"ebay","price":12.5,"currency":"USD","matcherVersion":"strict-2026-08-28-v2"}]'::jsonb
         )`,
         [aiProductId],
       ),
@@ -3835,7 +3836,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         db,
         `select public.sellerpilot_service_complete_competitor_price_refresh(
           $1, $2,
-          '[{"provider":"elevenst_product_search","externalId":"durable-competitor-1","title":"첵스초코 570g","url":"https://www.11st.co.kr/products/123","imageUrl":"","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW","matcherVersion":"strict-2026-08-27-v1"},{"provider":"brave_marketplace_web","externalId":"www.temu.com:601099999999999","title":"Kellogg Choco Chex 570g","url":"https://www.temu.com/kellogg-choco-chex-g-601099999999999.html","imageUrl":"","mallName":"Temu","marketplace":"temu","price":11.5,"currency":"USD","matcherVersion":"strict-2026-08-27-v1"}]'::jsonb,
+          '[{"provider":"elevenst_product_search","externalId":"durable-competitor-1","title":"첵스초코 570g","url":"https://www.11st.co.kr/products/123","imageUrl":"","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW","matcherVersion":"strict-2026-08-28-v2"},{"provider":"brave_marketplace_web","externalId":"www.temu.com:601099999999999","title":"Kellogg Choco Chex 570g","url":"https://www.temu.com/kellogg-choco-chex-g-601099999999999.html","imageUrl":"","mallName":"Temu","marketplace":"temu","price":11.5,"currency":"USD","matcherVersion":"strict-2026-08-28-v2"}]'::jsonb,
           '[{"provider":"naver_shopping","status":"unavailable","count":0,"marketplaces":["smartstore"]},{"provider":"elevenst_product_search","status":"searched","count":1,"marketplaces":["elevenst"]},{"provider":"ebay_browse","status":"failed","count":0,"marketplaces":["ebay"]},{"provider":"brave_marketplace_web","status":"searched","count":1,"marketplaces":["shopee","lazada","temu"]}]'::jsonb
         )`,
         [aiProductId, resumedCompetitorClaim.claim_token],
@@ -3869,7 +3870,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(
       await scalar(
         db,
-        "select count(*)::integer from sellerpilot_private.competitor_price_observations where product_id = $1 and matcher_version = 'strict-2026-08-27-v1' and external_id in ('durable-competitor-1', 'www.temu.com:601099999999999')",
+        "select count(*)::integer from sellerpilot_private.competitor_price_observations where product_id = $1 and matcher_version = 'strict-2026-08-28-v2' and external_id in ('durable-competitor-1', 'www.temu.com:601099999999999')",
         [aiProductId],
       ),
       2,

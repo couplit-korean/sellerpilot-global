@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 export type CompetitorMarketplace = "smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other";
 export type CompetitorSearchProvider = "naver_shopping" | "elevenst_product_search" | "ebay_browse" | "brave_marketplace_web";
 
-export const COMPETITOR_MATCHER_VERSION = "strict-2026-08-27-v1" as const;
+export const COMPETITOR_MATCHER_VERSION = "strict-2026-08-28-v2" as const;
 
 export type CompetitorPriceCandidate = {
   provider: CompetitorSearchProvider;
@@ -521,6 +521,14 @@ const accessoryTerms = {
   replacement: ["replacement", "replacement part", "spare part", "compatible", "호환", "교체용", "부품", "交換用", "互換", "替换", "替換", "兼容", "อะไหล่", "ใช้ร่วมกับ", "thay thế", "tương thích", "pengganti", "kompatibel", "repuesto", "compatível", "compatível"],
   accessory: ["accessory", "accessories", "adapter", "charger", "charging cable", "strap", "holder", "stand", "액세서리", "어댑터", "충전기", "케이블", "스트랩", "거치대", "アクセサリー", "アダプター", "充電器", "ケーブル", "ストラップ", "配件", "轉接器", "充電器", "数据线", "支架", "อุปกรณ์เสริม", "ที่ชาร์จ", "สายชาร์จ", "ขาตั้ง", "phụ kiện", "bộ sạc", "cáp sạc", "giá đỡ", "aksesori", "adaptor", "pengecas", "kabel", "dudukan", "accesorio", "adaptador", "cargador", "soporte", "acessório", "carregador", "suporte"],
   refill_sample: ["refill", "sample", "tester", "empty bottle", "리필", "샘플", "테스터", "빈용기", "詰め替え", "リフィル", "サンプル", "补充装", "補充裝", "小样", "小樣", "รีฟิล", "ตัวอย่าง", "isi ulang", "sampel", "recarga", "muestra", "refil", "amostra"],
+  collectible_card: [
+    "trading card", "promo card", "promotional card", "collectible card", "pokemon card", "photo card", "photocard", "card single",
+    "트레이딩 카드", "프로모 카드", "프로모션 카드", "수집 카드", "포켓몬 카드", "포토 카드", "포토카드",
+    "トレーディングカード", "プロモカード", "コレクションカード", "ポケモンカード", "フォトカード",
+    "交易卡", "促销卡", "促銷卡", "收藏卡", "宝可梦卡", "寶可夢卡", "小卡",
+    "การ์ดสะสม", "โปเกมอนการ์ด", "thẻ bài", "thẻ sưu tập", "kartu koleksi", "kartu pokemon",
+    "tarjeta coleccionable", "carta promocional", "cartão colecionável", "cartão promocional",
+  ],
 } as const;
 
 const variantTerms = {
