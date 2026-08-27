@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pollCompetitorResearch } from "../app/_publishing/competitor-research-polling";
+import {
+  buildCompetitorResearchRetryPath,
+  competitorResearchEmptySlot,
+  competitorResearchAttemptTimeoutMs,
+  isCompetitorResearchBlockingAnalysis,
+  pollCompetitorResearch,
+  shouldInvalidateCompetitorResearch,
+} from "../app/_publishing/competitor-research-polling";
 
 type Provider = { status: "pending" | "searched"; count: number };
 type Item = { id: string };
@@ -11,6 +18,65 @@ function jsonResponse(status: number, body: unknown) {
     headers: { "content-type": "application/json" },
   });
 }
+
+test("only an active or pending competitor lookup blocks product analysis", () => {
+  assert.equal(competitorResearchAttemptTimeoutMs, 45_000);
+  assert.ok(competitorResearchAttemptTimeoutMs > 32_000);
+  assert.equal(isCompetitorResearchBlockingAnalysis("loading"), true);
+  assert.equal(isCompetitorResearchBlockingAnalysis("pending"), true);
+  assert.equal(isCompetitorResearchBlockingAnalysis("pending", true), false);
+  assert.equal(isCompetitorResearchBlockingAnalysis("stale"), true);
+  assert.equal(isCompetitorResearchBlockingAnalysis("stale", true), false);
+  assert.equal(isCompetitorResearchBlockingAnalysis("loading", true), true);
+  assert.equal(isCompetitorResearchBlockingAnalysis("idle"), false);
+  assert.equal(isCompetitorResearchBlockingAnalysis("ready"), false);
+  assert.equal(isCompetitorResearchBlockingAnalysis("unavailable"), false);
+});
+
+test("empty price slots distinguish in-flight, unavailable, and settled searches", () => {
+  assert.deepEqual(competitorResearchEmptySlot("loading"), { label: "동일 상품 확인 중", value: "확인 중", loading: true });
+  assert.deepEqual(competitorResearchEmptySlot("pending"), { label: "동일 상품 확인 중", value: "확인 중", loading: true });
+  assert.deepEqual(competitorResearchEmptySlot("stale"), { label: "식별정보 변경 · 재확인 필요", value: "재확인", loading: false });
+  assert.deepEqual(competitorResearchEmptySlot("unavailable"), { label: "가격 정보 확인 불가", value: "—", loading: false });
+  assert.deepEqual(competitorResearchEmptySlot("ready"), { label: "동일 상품을 찾지 못함", value: "—", loading: false });
+});
+
+test("product identity edits invalidate stale research while price and stock edits do not", () => {
+  assert.equal(shouldInvalidateCompetitorResearch("researchInput", "product-a", "product-b"), true);
+  assert.equal(shouldInvalidateCompetitorResearch("productName", "A", "B"), true);
+  assert.equal(shouldInvalidateCompetitorResearch("gtin", "8800000000001", "8800000000002"), true);
+  assert.equal(shouldInvalidateCompetitorResearch("productName", "A", "A"), false);
+  assert.equal(shouldInvalidateCompetitorResearch("sellingPrice", 10_000, 11_000), false);
+  assert.equal(shouldInvalidateCompetitorResearch("stock", 3, 5), false);
+});
+
+test("stale price retry conditions include corrected brand, GTIN, and sale configuration", () => {
+  const base = {
+    researchInput: "https://supplier.example/item/1",
+    productName: "Sample cereal 500g",
+    categoryHint: "cereal",
+    brandName: "Brand A",
+    manufacturer: "Maker A",
+    packageContents: "상품 1개",
+    condition: "NEW",
+    gtinStatus: "HAS_GTIN",
+    gtin: "8800000000001",
+  };
+  const basePath = buildCompetitorResearchRetryPath(base);
+  const brandPath = buildCompetitorResearchRetryPath({ ...base, brandName: "Brand B" });
+  const gtinPath = buildCompetitorResearchRetryPath({ ...base, gtin: "8800000000002" });
+  const bundlePath = buildCompetitorResearchRetryPath({ ...base, packageContents: "상품 1+1" });
+  const queryFor = (path: string) => new URL(path, "https://sellerpilot.test").searchParams.get("query") ?? "";
+
+  assert.notEqual(basePath, brandPath);
+  assert.notEqual(basePath, gtinPath);
+  assert.notEqual(basePath, bundlePath);
+  assert.match(queryFor(brandPath), /Brand B/);
+  assert.match(queryFor(gtinPath), /8800000000002/);
+  assert.match(queryFor(bundlePath), /상품 1\+1/);
+  assert.doesNotMatch(queryFor(buildCompetitorResearchRetryPath({ ...base, gtinStatus: "NO_GTIN" })), /8800000000001/);
+  assert.equal(buildCompetitorResearchRetryPath({}), "");
+});
 
 test("competitor research polls a pending gateway result and publishes the settled snapshot", async () => {
   let calls = 0;

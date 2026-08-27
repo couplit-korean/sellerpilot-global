@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { sellerSafeAiJobFailure } from "../lib/ai-worker-error-safety";
+import { StudioSegmentContractError } from "../lib/studio-segment-generation";
 
 test("AI worker failure messages never expose prompts, credentials, or local runtime paths", () => {
   assert.equal(
@@ -32,5 +33,39 @@ test("AI worker failure messages preserve concise actionable Korean validation e
   assert.equal(
     sellerSafeAiJobFailure(new Error("hero 이미지 업로드 실패: 일시적인 저장소 응답입니다.")),
     "hero 이미지 업로드 실패: 일시적인 저장소 응답입니다.",
+  );
+});
+
+test("AI worker failure messages preserve only allowlisted studio contract diagnostics", () => {
+  assert.equal(
+    sellerSafeAiJobFailure(new StudioSegmentContractError(
+      "budget-exhausted",
+      "Studio master execution budget is exhausted.",
+    )),
+    "AI 마스터 기획 보정 시간이 모두 사용되었습니다. 입력 사진과 설명을 확인한 뒤 다시 실행해 주세요. [studio-budget-exhausted]",
+  );
+  assert.equal(
+    sellerSafeAiJobFailure(sellerSafeAiJobFailure(new StudioSegmentContractError(
+      "budget-exhausted",
+      "Studio master execution budget is exhausted.",
+    ))),
+    "AI 마스터 기획 보정 시간이 모두 사용되었습니다. 입력 사진과 설명을 확인한 뒤 다시 실행해 주세요. [studio-budget-exhausted]",
+    "the completion route's second sanitization pass must preserve the safe diagnostic",
+  );
+  assert.equal(
+    sellerSafeAiJobFailure(new StudioSegmentContractError(
+      "duplicate-target",
+      "Duplicate localized target: shopee:MY.",
+    )),
+    "AI 현지화 대상이 중복되어 완료하지 못했습니다. 다시 실행해 주세요. [studio-duplicate-target]",
+  );
+
+  const untrusted = Object.assign(new Error("/Users/private/operator secret=do-not-display"), {
+    name: "StudioSegmentContractError",
+    code: "unrecognized-provider-error",
+  });
+  assert.equal(
+    sellerSafeAiJobFailure(untrusted),
+    "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.",
   );
 });

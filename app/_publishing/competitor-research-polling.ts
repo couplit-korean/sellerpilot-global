@@ -1,5 +1,93 @@
 export type CompetitorResearchProviderSnapshot = { status?: unknown };
 
+export type CompetitorResearchUiState = "idle" | "loading" | "ready" | "pending" | "stale" | "unavailable";
+
+// The admin route allows provider work for 32 seconds. Leave enough room for
+// authentication, response transfer, and mobile-network jitter before the
+// browser aborts an otherwise valid response.
+export const competitorResearchAttemptTimeoutMs = 45_000;
+
+const competitorResearchIdentityFields = new Set([
+  "researchInput",
+  "productName",
+  "categoryHint",
+  "brandName",
+  "manufacturer",
+  "packageContents",
+  "condition",
+  "gtinStatus",
+  "gtin",
+]);
+
+type CompetitorResearchRetryIdentity = Partial<Record<
+  | "researchInput"
+  | "productName"
+  | "categoryHint"
+  | "brandName"
+  | "manufacturer"
+  | "packageContents"
+  | "condition"
+  | "gtinStatus"
+  | "gtin",
+  string
+>>;
+
+function normalizedIdentityPart(value: unknown, maximumLength: number) {
+  return typeof value === "string"
+    ? value.replace(/\s+/g, " ").trim().slice(0, maximumLength)
+    : "";
+}
+
+export function buildCompetitorResearchRetryPath(identity: CompetitorResearchRetryIdentity) {
+  const brand = normalizedIdentityPart(identity.brandName, 80);
+  const manufacturer = normalizedIdentityPart(identity.manufacturer, 80);
+  const productName = normalizedIdentityPart(identity.productName, 160);
+  const packageContents = normalizedIdentityPart(identity.packageContents, 40);
+  const condition = normalizedIdentityPart(identity.condition, 24);
+  const gtin = identity.gtinStatus === "NO_GTIN" ? "" : normalizedIdentityPart(identity.gtin, 14);
+  const researchInput = normalizedIdentityPart(identity.researchInput, 160);
+  const primaryParts = [brand, manufacturer !== brand ? manufacturer : "", productName, packageContents, condition !== "NEW" ? condition : "", gtin].filter(Boolean);
+  const primary = (primaryParts.join(" ") || researchInput).slice(0, 500);
+  if (primary.length < 2) return "";
+
+  const params = new URLSearchParams({ query: primary });
+  const aliases = [
+    normalizedIdentityPart(identity.categoryHint, 120),
+    !/^https?:\/\//i.test(researchInput) ? researchInput : "",
+  ].filter((value, index, values) => value.length >= 2 && value !== primary && values.indexOf(value) === index);
+  for (const alias of aliases.slice(0, 12)) params.append("alias", alias);
+  return `/api/admin/competitor-prices?${params.toString()}`;
+}
+
+export function shouldInvalidateCompetitorResearch(
+  field: string,
+  currentValue: unknown,
+  nextValue: unknown,
+) {
+  return competitorResearchIdentityFields.has(field) && !Object.is(currentValue, nextValue);
+}
+
+export function competitorResearchEmptySlot(state: Exclude<CompetitorResearchUiState, "idle">) {
+  if (state === "loading" || state === "pending") {
+    return { label: "동일 상품 확인 중", value: "확인 중", loading: true } as const;
+  }
+  if (state === "stale") {
+    return { label: "식별정보 변경 · 재확인 필요", value: "재확인", loading: false } as const;
+  }
+  if (state === "unavailable") {
+    return { label: "가격 정보 확인 불가", value: "—", loading: false } as const;
+  }
+  return { label: "동일 상품을 찾지 못함", value: "—", loading: false } as const;
+}
+
+export function isCompetitorResearchBlockingAnalysis(
+  state: CompetitorResearchUiState,
+  pendingWithoutPricesConfirmed = false,
+) {
+  return state === "loading"
+    || ((state === "pending" || state === "stale") && !pendingWithoutPricesConfirmed);
+}
+
 export type CompetitorResearchPollSnapshot<Item extends object, Provider extends object> = {
   items: Item[];
   providers: Provider[];
@@ -89,11 +177,11 @@ export async function pollCompetitorResearch<Item extends object, Provider exten
   initialSnapshot,
   maxAttempts = 3,
   delayMs = 1_500,
-  perAttemptTimeoutMs = 20_000,
+  perAttemptTimeoutMs = competitorResearchAttemptTimeoutMs,
 }: CompetitorResearchPollOptions<Item, Provider>): Promise<CompetitorResearchPollSnapshot<Item, Provider>> {
   const attempts = Math.max(1, Math.min(Number.isFinite(maxAttempts) ? Math.trunc(maxAttempts) : 3, 3));
   const attemptTimeout = Math.max(1_000, Math.min(
-    Number.isFinite(perAttemptTimeoutMs) ? Math.trunc(perAttemptTimeoutMs) : 20_000,
+    Number.isFinite(perAttemptTimeoutMs) ? Math.trunc(perAttemptTimeoutMs) : competitorResearchAttemptTimeoutMs,
     60_000,
   ));
   let latest: CompetitorResearchPollSnapshot<Item, Provider> = {
@@ -161,7 +249,7 @@ export function createCompetitorResearchPollingCoordinator<
   onSnapshot,
   maxAttempts = 3,
   delayMs = 1_500,
-  perAttemptTimeoutMs = 20_000,
+  perAttemptTimeoutMs = competitorResearchAttemptTimeoutMs,
 }: CompetitorResearchPollingCoordinatorOptions<Item, Provider>) {
   let mounted = true;
   let activeController: AbortController | null = null;

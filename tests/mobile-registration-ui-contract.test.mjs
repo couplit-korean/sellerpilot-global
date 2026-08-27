@@ -4,6 +4,7 @@ import test from "node:test";
 
 const pageUrl = new URL("../app/page.tsx", import.meta.url);
 const mobileStylesUrl = new URL("../app/mobile-optimization.css", import.meta.url);
+const commerceStylesUrl = new URL("../app/commerce-ux-refactor.css", import.meta.url);
 
 test("registration keeps product research before required seller fields and uses the shared sale dropdown", async () => {
   const page = await readFile(pageUrl, "utf8");
@@ -45,4 +46,27 @@ test("the same narrow registration and preview contract covers both target phone
   assert.match(mobileStyles, /\.registration-card > footer > button\s*\{[^}]*min-width:\s*0;[^}]*min-height:\s*44px/);
   assert.match(mobileStyles, /\.detail-preview-scroll\s*\{[^}]*overflow:\s*visible;[^}]*touch-action:\s*pan-y/);
   assert.match(mobileStyles, /\.detail-preview-canvas img\s*\{[^}]*pointer-events:\s*none/);
+  assert.match(mobileStyles, /@media \(max-width: 720px\)[\s\S]*?\.registration-status\.long-analysis-connected,[\s\S]*?\.registration-status\.long-analysis-attention\s*\{[^}]*width:\s*100%;[^}]*white-space:\s*normal/);
+});
+
+test("mobile product analysis visibly waits for an in-flight competitor lookup without deadlocking unavailable results", async () => {
+  const page = await readFile(pageUrl, "utf8");
+  const mobileStyles = await readFile(mobileStylesUrl, "utf8");
+  const commerceStyles = await readFile(commerceStylesUrl, "utf8");
+
+  assert.match(page, /const competitorResearchBlocksAnalysis = isCompetitorResearchBlockingAnalysis\([\s\S]{0,160}pendingCompetitorBypassConfirmed/);
+  assert.match(page, /if \(competitorResearchBlocksAnalysis\) \{[\s\S]{0,260}동일 상품 가격 확인이 끝난 뒤 상품 분석을 시작/);
+  assert.match(page, /disabled=\{running \|\| researchingProduct \|\| competitorResearchBlocksAnalysis \|\| Boolean\(queuedJobId\)\}/);
+  assert.match(page, /동일상품 가격 확인 대기/);
+  assert.match(page, /가격 확인 중/);
+  assert.match(page, /가격 없이 계속/);
+  assert.match(page, /setPendingCompetitorBypassConfirmed\(true\)/);
+  assert.match(page, /setCompetitorResearchState\(invalidatedExistingContext \? "stale" : "idle"\)/);
+  assert.match(page, /상품 식별정보가 변경되었습니다/);
+  assert.match(commerceStyles, /@media \(max-width: 560px\)[\s\S]*?\.competitor-retry-actions\s*\{[^}]*width:\s*100%;[^}]*flex-direction:\s*column/);
+  assert.match(commerceStyles, /@media \(max-width: 720px\)[\s\S]*?\.analysis-start-bar\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*max\(8px, env\(safe-area-inset-bottom\)\)/);
+  assert.match(mobileStyles, /@media \(max-width: 720px\)[\s\S]*?\.analysis-start-bar\s*\{[^}]*bottom:\s*max\(8px, env\(safe-area-inset-bottom\)\)/);
+  assert.match(mobileStyles, /\.upload-panel\.panel\s*\{[^}]*overflow:\s*visible/);
+  assert.match(page, /AI 작업 큐에서 계속 처리되므로 다른 상품을 바로 올릴 수 있습니다/);
+  assert.doesNotMatch(page, /서버에서 계속 처리되므로/);
 });

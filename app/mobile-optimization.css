@@ -905,6 +905,10 @@
     padding: 14px;
   }
 
+  .upload-panel.panel {
+    overflow: visible;
+  }
+
   .main-drop-zone {
     min-height: 230px;
   }
@@ -2428,6 +2432,23 @@
     padding-inline: 8px;
     font-size: 10px;
     white-space: nowrap;
+  }
+
+  .registration-status.long-analysis-connected,
+  .registration-status.long-analysis-attention {
+    width: 100%;
+    min-height: 44px;
+    justify-content: flex-start;
+    padding: 7px 9px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .registration-progress.long-analysis-connected small,
+  .registration-progress.long-analysis-attention small {
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   .registration-product { gap: 8px; }
