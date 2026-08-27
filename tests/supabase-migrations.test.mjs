@@ -287,6 +287,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260827025330_harden_shopee_shipment_lineage_and_ack_semantics.sql",
       "20260827075654_cross_product_setting_comparisons.sql",
       "20260827181100_allow_legacy_ai_cross_product_bridge.sql",
+      "20260827193102_enable_brave_marketplace_competitor_provider.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -597,6 +598,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_complete_tracx_mutation(uuid,text,text,text,text)",
       "public.sellerpilot_service_sweep_stale_lazada_replies()",
       "public.sellerpilot_service_claim_due_competitor_products(integer,integer)",
+      "public.sellerpilot_service_record_competitor_prices(uuid,jsonb)",
       "public.sellerpilot_service_complete_competitor_price_refresh(uuid,uuid,jsonb,jsonb)",
       "public.sellerpilot_service_release_competitor_price_refresh(uuid,uuid)",
       "public.sellerpilot_enqueue_competitor_search_job(uuid,text,jsonb,integer,uuid,uuid)",
@@ -3690,17 +3692,108 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [aiProductId],
     );
 
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_record_competitor_prices($1, null::jsonb)",
+        [aiProductId],
+      ),
+      /invalid competitor prices/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, null::jsonb,
+          '[{"provider":"elevenst_product_search","status":"searched","count":0,"marketplaces":["elevenst"]}]'::jsonb
+        )`,
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb, null::jsonb)",
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb, '[]'::jsonb)",
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, '[]'::jsonb,
+          '[{"provider":"elevenst_product_search","status":"pending","count":0,"marketplaces":["elevenst"]}]'::jsonb
+        )`,
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, '[]'::jsonb,
+          '[{"provider":"elevenst_product_search","status":"failed","count":0,"marketplaces":["elevenst"]}]'::jsonb
+        )`,
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, '[]'::jsonb,
+          '[{"provider":"elevenst_product_search","status":"searched","count":1,"marketplaces":["elevenst"]}]'::jsonb
+        )`,
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, '[]'::jsonb,
+          '[{"provider":"elevenst_product_search","status":"searched","count":0,"marketplaces":["elevenst"]},{"provider":"elevenst_product_search","status":"failed","count":0,"marketplaces":["elevenst"]}]'::jsonb
+        )`,
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2,
+          '[{"provider":"brave_marketplace_web","externalId":"unsearched-item","title":"Kellogg Choco Chex 570g","url":"https://www.temu.com/kellogg-choco-chex-g-601099999999998.html","imageUrl":"","mallName":"Temu","marketplace":"temu","price":11.5,"currency":"USD"}]'::jsonb,
+          '[{"provider":"brave_marketplace_web","status":"failed","count":0,"marketplaces":["shopee","lazada","temu"]}]'::jsonb
+        )`,
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.competitor_price_refresh_claims where product_id = $1 and claim_token = $2",
+        [aiProductId, resumedCompetitorClaim.claim_token],
+      ),
+      1,
+    );
+
     assert.equal(
       await scalar(
         db,
         `select public.sellerpilot_service_complete_competitor_price_refresh(
           $1, $2,
-          '[{"provider":"elevenst_product_search","externalId":"durable-competitor-1","title":"첵스초코 570g","url":"https://www.11st.co.kr/products/123","imageUrl":"","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW"}]'::jsonb,
-          '[{"provider":"naver_shopping","status":"unavailable","count":0,"marketplaces":["smartstore"]},{"provider":"elevenst_product_search","status":"searched","count":1,"marketplaces":["elevenst"]},{"provider":"ebay_browse","status":"failed","count":0,"marketplaces":["ebay"]}]'::jsonb
+          '[{"provider":"elevenst_product_search","externalId":"durable-competitor-1","title":"첵스초코 570g","url":"https://www.11st.co.kr/products/123","imageUrl":"","mallName":"11번가","marketplace":"elevenst","price":7900,"currency":"KRW"},{"provider":"brave_marketplace_web","externalId":"www.temu.com:601099999999999","title":"Kellogg Choco Chex 570g","url":"https://www.temu.com/kellogg-choco-chex-g-601099999999999.html","imageUrl":"","mallName":"Temu","marketplace":"temu","price":11.5,"currency":"USD"}]'::jsonb,
+          '[{"provider":"naver_shopping","status":"unavailable","count":0,"marketplaces":["smartstore"]},{"provider":"elevenst_product_search","status":"searched","count":1,"marketplaces":["elevenst"]},{"provider":"ebay_browse","status":"failed","count":0,"marketplaces":["ebay"]},{"provider":"brave_marketplace_web","status":"searched","count":1,"marketplaces":["shopee","lazada","temu"]}]'::jsonb
         )`,
         [aiProductId, resumedCompetitorClaim.claim_token],
       ),
-      1,
+      2,
     );
     assert.equal(
       await scalar(
@@ -3744,12 +3837,16 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [aiProductId],
     );
     assert.equal(freshCompetitorOperations.competitorPrices.some((item) => item.title === "수동 기준 가격"), true);
+    assert.equal(freshCompetitorOperations.competitorPrices.some((item) => item.title === "Kellogg Choco Chex 570g"), true);
     assert.equal(freshCompetitorOperations.competitorPrices.some((item) => item.title === "오래된 eBay 결과"), false);
     await setClaims(db, "service_role");
     assert.equal(
       await scalar(
         db,
-        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb, '[]'::jsonb)",
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, '[]'::jsonb,
+          '[{"provider":"elevenst_product_search","status":"searched","count":0,"marketplaces":["elevenst"]}]'::jsonb
+        )`,
         [aiProductId, competitorClaimToken],
       ),
       -1,
@@ -3831,7 +3928,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(
       await scalar(
         db,
-        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb, '[]'::jsonb)",
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, '[]'::jsonb,
+          '[{"provider":"elevenst_product_search","status":"searched","count":0,"marketplaces":["elevenst"]}]'::jsonb
+        )`,
         [aiProductId, expiringCompetitorClaim.claim_token],
       ),
       -1,
@@ -3847,10 +3947,21 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(
       await scalar(
         db,
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, '[]'::jsonb,
+          '[{"provider":"elevenst_product_search","status":"searched","count":0,"marketplaces":["elevenst"]}]'::jsonb
+        )`,
+        [aiProductId, reclaimedCompetitorClaim.claim_token],
+      ),
+      0,
+    );
+    assert.equal(
+      await scalar(
+        db,
         "select public.sellerpilot_service_release_competitor_price_refresh($1, $2)",
         [aiProductId, reclaimedCompetitorClaim.claim_token],
       ),
-      true,
+      false,
     );
     await setClaims(db);
     const elevenstAttempt = await scalar(

@@ -26,6 +26,7 @@ export async function GET(request: Request) {
     const registry = await competitorProviderRegistry(admin.serviceClient, {
       elevenstTimeoutMs: COMPETITOR_ELEVENST_WAIT_MS,
       searchElevenstViaGateway: executeCompetitorSearchViaChannelGateway,
+      enableMarketplaceWeb: true,
     });
     const result = await searchCompetitorProviders(registry, query.data, aliases.data, 30, COMPETITOR_PROVIDER_BUDGET_MS);
     const items = result.items.map((item) => ({

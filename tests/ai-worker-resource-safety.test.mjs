@@ -53,7 +53,10 @@ test("Codex subprocesses use a bounded FIFO gate and measure timeout only after 
   const runEnd = source.indexOf("\nconst loginStatus", runStart);
   const runCodex = source.slice(runStart, runEnd);
 
-  assert.match(source, /SELLERPILOT_IMAGE_TIMEOUT_MS \?\? 20 \* 60_000/);
+  assert.match(source, /SELLERPILOT_IMAGE_TIMEOUT_MS \?\? 25 \* 60_000/);
+  assert.match(source, /imageGenerationTimeoutMs = Math\.min\(\s*30 \* 60_000/);
+  assert.match(source, /Math\.max\(\s*15 \* 60_000/);
+  assert.match(source, /Number\.isFinite\(configuredImageGenerationTimeoutMs\)/);
   assert.match(source, /SELLERPILOT_ANALYSIS_TIMEOUT_MS \?\? 12 \* 60_000/);
   assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 35 \* 60_000/);
   assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);

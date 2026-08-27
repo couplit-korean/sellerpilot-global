@@ -910,14 +910,14 @@ function detailFieldValue(value: unknown) {
 
 type CompetitorDisplayItem = { id: string; marketplace?: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string };
 type CompetitorMarketplace = "smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other";
-type CompetitorProvider = "naver_shopping" | "elevenst_product_search" | "ebay_browse";
+type CompetitorProvider = "naver_shopping" | "elevenst_product_search" | "ebay_browse" | "brave_marketplace_web";
 type CompetitorResearchItem = CompetitorDisplayItem & { provider: CompetitorProvider; marketplace: CompetitorMarketplace; externalId: string; verifiedSameProduct: true };
 type CompetitorProviderDisplayStatus = { provider: CompetitorProvider; status: "searched" | "unavailable" | "failed" | "pending"; count: number; marketplaces: CompetitorMarketplace[] };
 
 function CompetitorPriceSlots({ items, providers = [], state = "ready", compact = false, retryAvailable = false, onRetry }: { items: CompetitorDisplayItem[]; providers?: CompetitorProviderDisplayStatus[]; state?: "loading" | "ready" | "pending" | "unavailable"; compact?: boolean; retryAvailable?: boolean; onRetry?: () => void }) {
   const marketplaceOrder: string[] = [...activeChannelKeys];
   const marketplaceLabels: Record<string, string> = Object.fromEntries(Object.entries(channels).map(([key, channel]) => [key, channel.name]));
-  const providerLabels: Record<CompetitorProviderDisplayStatus["provider"], string> = { naver_shopping: "네이버 쇼핑 검색", elevenst_product_search: "11번가 상품검색", ebay_browse: "eBay Browse" };
+  const providerLabels: Record<CompetitorProviderDisplayStatus["provider"], string> = { naver_shopping: "네이버 쇼핑 검색", elevenst_product_search: "11번가 상품검색", ebay_browse: "eBay Browse", brave_marketplace_web: "Shopee·Lazada·Temu 웹 검색" };
   marketplaceLabels.other = "기타 판매처";
   const groups = marketplaceOrder.map((marketplace) => ({ marketplace, items: items.filter((item) => (item.marketplace || "other") === marketplace).slice(0, 3) }));
   const otherItems = items.filter((item) => !marketplaceOrder.includes(item.marketplace || "other")).slice(0, 3);
@@ -1992,7 +1992,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const selectedChannels = useMemo(() => connectedChannelKeys.filter((key) => channelSelection[key] !== false), [channelSelection, connectedChannelKeys]);
   const studioCompetitorContext = useMemo<StudioCompetitorContext>(() => ({
     query: (competitorResearchRetryInput || intake.productName || intake.researchInput).trim().slice(0, 160),
-    providerStatuses: competitorProviders.slice(0, 3).map((provider) => ({
+    providerStatuses: competitorProviders.slice(0, 4).map((provider) => ({
       provider: provider.provider,
       status: provider.status,
       count: provider.count,

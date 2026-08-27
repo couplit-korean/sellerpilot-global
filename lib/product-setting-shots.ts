@@ -73,6 +73,37 @@ const settingShotRetryProfiles = [
   },
 ] as const;
 
+const settingShotRetryRepairDirectives: Readonly<Record<string, string>> = {
+  "audit-confidence": "render every required fixed architectural cue, material boundary, light direction and depth junction with enough clarity for a high-confidence whole-frame audit; haze, ambiguous crops and implied off-frame evidence are forbidden",
+  "safety-merchandise": "remove every saleable object and every product-like silhouette from the complete plate, including distant, blurred, miniature and partly hidden forms",
+  "safety-package-container": "remove every bottle, can, jar, pouch, carton, packet, tube, retail box and generic container silhouette from the complete plate",
+  "safety-label-text": "remove every label-like panel, logo, barcode, certification mark, QR code and readable or pseudo-readable package text",
+  "safety-human": "remove every person, hand, arm, face, reflection and human-shaped shadow from the complete plate",
+  "reserved-zone": "keep the exact normalized rectangle declared by the enclosing prompt at the identical left, top, width and height; never move, resize, crop or reinterpret it, and keep its full interior free of fixtures, cues, vertical edges, object clusters, strong shadows, reflections and product-shaped traces; only the quiet continuous support-or-backing plane required by the declared contact mode may pass through it, with the surface-supported contact boundary occurring only at the exact declared bottom edge",
+  "assigned-environment": "make the assigned real-life room function immediately recognizable from at least two visible fixed architectural structures named by its trusted room-recognition contract; color, material or one generic shelf cannot substitute for those structures",
+  "assigned-location": "show the retry's exact assigned functional room and its required fixed recognition structures while rebuilding the surrounding floor-plan, doorway/cabinet junctions and vanishing geometry from the designated new architectural side",
+  "assigned-location-key": "make the retry location contract unambiguous enough that the trusted location key, rather than unknown or a prior location family, is the only defensible audit result",
+  "assigned-time-light": "show the retry's exact time-of-day through one visible source direction, matching color temperature and unmistakable cast-shadow length/direction; a generic evenly lit room fails",
+  "assigned-time-light-key": "make the retry light signature unambiguous enough that the trusted moment key, rather than unknown or a prior light family, is the only defensible audit result",
+  "assigned-surface": "show a broad integrated plane with the retry's exact material, readable texture and grain direction outside the quiet product zone; a recolor of the prior material or an ambiguous generic slab fails",
+  "assigned-surface-key": "make the retry surface family unambiguous enough that the trusted surface key, rather than unknown or a prior material family, is the only defensible audit result",
+  "assigned-camera": "prove the retry's exact camera family and azimuth transform with multiple fixed architectural convergence lines and a visibly changed near/middle/rear relationship; a crop, mirror or small lateral shift fails",
+  "assigned-camera-key": "make the retry camera transform unambiguous enough that the trusted camera key, rather than unknown or a prior perspective family, is the only defensible audit result",
+  "assigned-palette": "make the retry palette a coherent consequence of its assigned surface and light, visibly separated from every blacklisted cream/beige or prior palette family rather than applying a simple tint",
+  "assigned-palette-key": "make the retry palette family unambiguous enough that the trusted palette key, rather than unknown or a prior palette family, is the only defensible audit result",
+  "assigned-spatial-depth": "expose separate foreground, middle and rear fixed architectural planes with readable occlusion and convergence; a flat wall, shallow niche or isolated shelf fails",
+  "assigned-spatial-depth-key": "make the retry depth structure unambiguous enough that the trusted spatial-depth key, rather than unknown or a prior depth family, is the only defensible audit result",
+  "assigned-fixed-cue": "show exactly the retry's mandatory slot-specific fixed cue as real integrated architecture outside the entire reserved product rectangle; a renamed, reshaped or relocated version of a rejected cue fails",
+  "overall-layout": "rebuild the complete architectural composition, convergence, negative-space direction, fixed-cue placement and near/middle/rear hierarchy; changing only color, crop, one fixture or product-zone surroundings fails",
+  location: "retain the exact assigned room function but use visibly different fixed-room geometry and access/cabinet/window relationships from every comparison plate",
+  "time-light": "use the retry's different source side, time treatment, shadow direction and shadow length so no comparison plate shares its lighting signature",
+  surface: "use the retry's different integrated material family, texture scale and grain direction so no comparison plate shares its support-plane appearance",
+  palette: "separate hue family, value range and light-surface interaction from every comparison plate; a global recolor alone fails",
+  "spatial-depth": "use a different foreground/middle/rear arrangement and vanishing-depth hierarchy from every comparison plate",
+  camera: "use a clearly different architectural side, azimuth, perspective convergence and focal-depth relationship from every comparison plate",
+  "fixed-cue": "use the retry's unique fixed architectural cue outside the reserved zone and do not reuse, rename or slightly reshape any cue from a comparison plate",
+};
+
 const retryAuditFeedbackFields = [
   "failedDimensions",
   "hardNegativeLocationKeys",
@@ -90,7 +121,7 @@ function sanitizedRetryAuditValues(field: keyof SettingShotRetryAuditFeedback, v
     ? /^[a-z][a-z-]{0,31}$/
     : /^[a-z0-9][a-z0-9-]{0,63}$/;
   return [...new Set(values.filter((value): value is string => typeof value === "string" && pattern.test(value)))]
-    .slice(0, field === "failedDimensions" ? 16 : 24);
+    .slice(0, 24);
 }
 
 export function mergeSettingShotRetryAuditFeedback(
@@ -181,7 +212,7 @@ export function buildSettingShotRetryVariant(
     moment: `${retryMoment}; the previous candidate's time and light direction are fully blacklisted`,
     surface: `an integrated ${retrySurface} plane; the previous candidate's material and grain direction are fully blacklisted`,
     supportingObjects: `${profile.supportingObjects}; retain the mandatory functional room-recognition structures from ${setting.location}, but do not treat those common structures as the slot-specific unique cue; the previous candidate's unique cue arrangement is blacklisted`,
-    staging: `${profile.staging}; preserve ${assetId}'s immutable pixel mask and role anchor (${setting.staging}) while fully blacklisting the previous background support-or-backing geometry, depth and negative-space hierarchy`,
+    staging: `keep ${assetId}'s exact reserved product rectangle at its original left, top, width and height, fully quiet and unobstructed; only the surrounding architecture outside that immutable rectangle changes. ${profile.staging}; preserve the source-product pixel mask and role anchor (${setting.staging}) while fully blacklisting the previous background support-or-backing geometry, depth and negative-space hierarchy`,
     camera: `${setting.camera}; within this exact assigned camera family, ${profile.camera}`,
     separation: {
       location: `${key}-place`,
@@ -220,6 +251,9 @@ export function buildSettingShotRetryGuidance(
   ]
     .filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].length > 0)
     .map(([dimension, values]) => `${dimension}=${values.join("|")}`);
+  const auditDirectedRepairs = [...new Set(failedDimensions
+    .map((dimension) => settingShotRetryRepairDirectives[dimension])
+    .filter((directive): directive is string => Boolean(directive)))];
   return [
     `Deterministic setting-shot retry ${boundedRetry} of ${settingShotRetryProfiles.length} for ${assetId}.`,
     `HARD ROLE BLACKLIST: ${blacklist}. Do not reuse any blacklisted role's room geometry, light direction, surface family, fixed cue, background support-or-backing geometry around the immutable product zone, staging relationship, negative-space direction, depth hierarchy, camera azimuth or focal perspective.`,
@@ -227,9 +261,14 @@ export function buildSettingShotRetryGuidance(
     failedDimensions.length
       ? `Validated prior audit failure dimensions: ${failedDimensions.join(", ")}. Make each named visual dimension unmistakably different from every blacklisted role while still satisfying this retry's trusted assignment.`
       : "The prior candidate did not provide safe high-confidence dimension feedback; replace every scene dimension according to this deterministic retry contract.",
+    auditDirectedRepairs.length
+      ? `AUDIT-DIRECTED REPAIR GATE: ${auditDirectedRepairs.map((directive, index) => `${index + 1}) ${directive}`).join("; ")}.`
+      : "AUDIT-DIRECTED REPAIR GATE: no narrow repair is trusted, so regenerate the complete plate from the deterministic six-axis replacement contract.",
     hardNegativeSignatures.length
       ? `STRUCTURED FAILED-PLATE BLACKLIST (schema-validated semantic keys only): ${hardNegativeSignatures.join("; ")}. These identify forbidden visual families from all earlier rejected candidates, not words to render in the image.`
       : "No validated failed-plate semantic keys are available; rely on the complete deterministic replacement contract.",
+    "IMMUTABLE RESERVED-ZONE GATE: the exact normalized rectangle declared by the enclosing prompt never moves, resizes or changes aspect ratio on a retry. Keep its complete interior visually quiet and unobstructed; place the retry-specific fixed cue and all busy room-recognition junctions outside it. For a surface-supported slot, only a continuous quiet support plane may cross the rectangle and it must meet the product at the exact declared bottom contact line; for a suspended-or-planar slot, keep one coherent backing plane and do not invent a contact surface.",
+    "FULL SIX-AXIS REPLACEMENT GATE: even when only one audit dimension failed, this candidate must visibly satisfy the newly assigned room geometry, time/light, integrated surface, camera/convergence, fixed architectural cue and surrounding layout/depth, and each must remain clearly distinct from every supplied rejected or cross-slot plate. Repairing one axis while repeating another is a failure.",
     "FORBIDDEN STRUCTURAL EQUIVALENCE: never rename or slightly reshape the specifically rejected slot-specific cue. Ordinary cabinet fronts, worktop-to-backsplash junctions, doorway or window frames needed to prove the assigned real room may remain, but they cannot substitute for the new unique cue and the overall layout, light, surface, depth and camera must still change materially.",
     "The retry assignment preserves the original real-life room function and its required recognition evidence while replacing the rejected composition; it never changes the hard shot class or product facts. Rotunda, gallery, showroom, abstract chamber, display niche and pedestal-set interpretations are forbidden.",
     "Generate only the empty architectural plate. The verified product is composited afterward from unchanged source pixels; never invent, redraw or anticipate package text, logos, labels, quantities or product parts.",

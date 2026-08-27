@@ -13,7 +13,7 @@ import {
 } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r13-real-life-cross-product-16";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r14-audit-directed-retry-16";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -259,7 +259,7 @@ export function buildAssetImagePrompt(
       `Background environment: ${preset.scene}`,
       `Mandatory empty-environment assignment: ${safeEnvironmentAssignment}. Make it readable with fixed architecture, built-in surfaces, natural light direction and spatial depth. Slot-specific non-merchandise environmental cue (${safeContract?.prop.key ?? "fixed-architectural-detail"}): ${safeContract?.prop.description ?? "one fixed architectural detail"}. Deliberately omit every retail product, small saleable prop, serving item, loose ingredient, use-result object and container from the product setting plan; those cannot be trusted before source-pixel compositing.`,
       `Hard series visual split: visibly auditable time-light ${safeContract?.moment.key ?? "distinct-visible-time-light"} (${safeContract?.moment.description ?? "a clearly distinct time-of-day lighting pattern"}); palette-family ${safeContract?.palette.key ?? "distinct-category-palette"} (${safeContract?.palette.description ?? "a clearly distinct palette"}); spatial-depth ${safeContract?.spatialDepth.key ?? "distinct-spatial-depth"} (${safeContract?.spatialDepth.description ?? "a clearly distinct depth layout"}). A beige/cream generic room or shelf repeated across slots fails even if the fixture geometry changes.`,
-      `Reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height} as a visually quiet product-placement zone. ${contactInstruction}`,
+      `IMMUTABLE PRODUCT-ZONE CONTRACT: reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height} as a visually quiet product-placement zone. Never move, resize, crop or reinterpret this exact rectangle during a retry. Keep the mandatory fixed cue, room-recognition junctions, fixtures, dominant shadows and busy geometry outside its complete interior; only the coherent quiet support-or-backing plane required by the trusted contact mode may continue through it. ${contactInstruction}`,
       "HARD IDENTITY FIREWALL: generate only an empty background plate. No source product, staged saleable good, package, pouch, carton, bottle, can, jar, tube, label, logo, barcode, certification mark, printed text, small movable consumer prop, loose unit, ingredient, serving, accessory or hand may appear anywhere. The declared fixed non-merchandise cue and other necessary fixed architectural context are allowed, but every contextual cue must be visually distinct from the other slots.",
       "The real product will be composited afterward from a verified transparent source-pixel cutout. Never anticipate, reconstruct, trace, imitate or redraw any part of it. Do not pre-render a product-shaped shadow, reflection, silhouette, footprint or imprint; the empty support plane itself must remain physically coherent.",
       `Composition must remain materially different from: ${mustDifferFrom}. ${seriesExclusion(preset.id)}`,

@@ -62,13 +62,16 @@ const blockedRemoteInventory = (reason: string) => fieldSupport("blocked", "inve
 
 const centralProductEditFields: Record<ProductEditFieldKey, ProductEditFieldSupport> = {
   productName: fieldSupport("supported", "local.update", ["productName"], "중앙 상품명 원장에 저장합니다."),
-  description: fieldSupport("supported", "local.update", ["description"], "중앙 상품 설명 원장에 저장합니다."),
+  description: fieldSupport("supported", "local.update", [
+    "researchInput", "description", "productUrl",
+  ], "상품 링크·조사 입력, 상품 설명, 원본 URL을 중앙 상품 원장에 저장합니다."),
   options: fieldSupport("blocked", "local.update", [], "현재 중앙 상품 편집 스키마에는 옵션 조합 원장이 없어 임의 옵션을 만들거나 덮어쓰지 않습니다."),
   saleConfiguration: fieldSupport("supported", "local.update", ["packageContents"], "판매구성 1개·1+1 값을 중앙 상품 정보에 저장합니다."),
   requiredInformation: fieldSupport("supported", "local.update", [
     "sellerSku", "categoryHint", "brandName", "manufacturer", "countryOfOrigin", "material", "condition", "gtinStatus", "gtin",
     "weightKg", "packageLengthCm", "packageWidthCm", "packageHeightCm",
-  ], "등록 때 사용하는 판매자 필수정보를 중앙 상품 정보에 저장합니다."),
+    "shippingFeeKrw", "shippingRule", "packagingRule", "imageRightsConfirmed", "productFactsConfirmed",
+  ], "등록 때 사용하는 판매자 필수정보·포장·배송·권리 확인값을 중앙 상품 정보에 저장합니다."),
   images: fieldSupport("blocked", "local.update", [], "상품 이미지 교체는 생성 자산·원본 자산의 영구 경로와 역할을 함께 갱신해야 하므로 현재 텍스트 편집 API에서 분리했습니다."),
   price: fieldSupport("supported", "local.update", ["sellingPrice", "currency"], "중앙 판매가와 통화를 저장합니다."),
   inventory: fieldSupport("supported", "local.update", ["stock"], "중앙 실재고를 예약재고보다 낮지 않게 저장합니다."),

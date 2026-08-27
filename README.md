@@ -71,6 +71,14 @@ pnpm test
 
 Supabase·Vercel·채널 계정 적용 순서는 [운영 배포·인증 체크리스트](docs/운영_배포_인증_체크리스트.md)를 따릅니다.
 
+## 선택형 해외 마켓 동일상품 검색
+
+Shopee·Lazada·Temu 판매자 API는 판매자 본인 상품 관리에 사용하며 마켓 전체 검색으로 대체하지 않습니다. 해외 마켓 동일상품 후보가 필요하면 서버 전용 `BRAVE_SEARCH_API_KEY`를 설정하고 경쟁가 공급자 registry의 `enableMarketplaceWeb` 옵션을 명시적으로 켭니다. 이 공급자는 Brave Web Search의 공식 `site:` 검색만 사용하며, Shopee·Lazada·Temu 공식 상품 호스트와 상품 URL 패턴을 다시 검증합니다. Brave 응답의 구조화 `product`/Schema.org 데이터에 가격이 있고, 통화가 명시되었거나 단일 통화를 사용하는 공식 국가 도메인으로 확인된 후보만 채널별 최대 3개까지 반환합니다. 검색 공급자를 설정하지 않았거나 구조화 가격·통화를 확인하지 못하면 추정값을 만들지 않고 공란 상태를 유지합니다.
+
+- API 문서: [Brave Web Search](https://api-dashboard.search.brave.com/api-reference/web/search/get)
+- 검색 연산자: [Brave Search Operators](https://api-dashboard.search.brave.com/documentation/resources/search-operators)
+- 키는 서버 환경에만 저장하며 URL, 응답, 애플리케이션 로그에 포함하지 않습니다.
+
 ## 디자인 기반
 
 - 스마트스토어 판매자센터의 정산·클레임 상태 중심 구성

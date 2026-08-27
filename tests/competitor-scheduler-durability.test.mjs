@@ -54,6 +54,8 @@ test("competitor scheduler migration owns due products and deduplicates exact 11
   assert.match(adminRoute, /authenticateAdminRequest\(request, \{ timeoutMs: COMPETITOR_RPC_TIMEOUT_MS \}\)/);
   assert.match(adminRoute, /COMPETITOR_PROVIDER_BUDGET_MS = 32_000/);
   assert.match(internalRoute, /COMPETITOR_PROVIDER_BUDGET_MS = 32_000/);
+  assert.match(adminRoute, /enableMarketplaceWeb: true/);
+  assert.match(internalRoute, /enableMarketplaceWeb: true/);
   assert.match(internalRoute, /productId: product\.product_id, claimToken: product\.claim_token/);
   assert.match(competitorLibrary, /provider\.search\(effectivePrimary, effectiveAliases, displayPerQuery, context\)/);
   assert.ok((competitorLibrary.match(/AbortSignal\.timeout\(15_000\)/g) ?? []).length >= 3);

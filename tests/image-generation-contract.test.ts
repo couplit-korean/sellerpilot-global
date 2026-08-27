@@ -264,6 +264,8 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.ok(variants.every((variant) => variant.camera.includes("assigned camera family")));
   assert.ok(variants.every((variant) => variant.camera.includes("role-required height")));
   assert.ok(variants.every((variant) => !/contact plane|contact geometry/i.test(variant.staging)));
+  assert.ok(variants.every((variant) => /exact reserved product rectangle at its original left, top, width and height/.test(variant.staging)));
+  assert.ok(variants.every((variant) => /fully quiet and unobstructed/.test(variant.staging)));
   assert.ok(variants.every((variant) => /mandatory functional room-recognition structures/.test(variant.supportingObjects)));
   assert.ok(variants.every((variant) => /exact assigned real-life room/.test(variant.location)));
   assert.ok(variants.every((variant) => /at least two functional room-recognition structures/.test(variant.location)));
@@ -325,9 +327,57 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.doesNotMatch(guidance, /unsafe key/);
   assert.match(guidance, /unchanged source pixels/);
   assert.match(guidance, /immutable product zone/);
+  assert.match(guidance, /IMMUTABLE RESERVED-ZONE GATE/);
+  assert.match(guidance, /FULL SIX-AXIS REPLACEMENT GATE/);
   assert.doesNotMatch(guidance, /blacklisted role's product zone|product zone moves|move the product zone/i);
   assert.doesNotMatch(guidance, /contact plane|contact geometry/i);
   assert.doesNotMatch(guidance, /bathroom vanity|bedroom nightstand/);
+});
+
+test("audit-directed retries explicitly repair reserved-zone, assigned-scene and series failures without weakening the full gate", () => {
+  const base = buildProductSettingShotPlan("food-staples", "사조 살코기 참치 일반식품 통조림").portrait;
+  const retry = buildSettingShotRetryVariant(base, "portrait", 2);
+  const guidance = buildSettingShotRetryGuidance(
+    "portrait",
+    ["wide", "rejected-portrait-1"],
+    2,
+    retry,
+    {
+      failedDimensions: [
+        "reserved-zone",
+        "assigned-environment",
+        "assigned-location",
+        "assigned-camera",
+        "assigned-fixed-cue",
+        "overall-layout",
+        "location",
+        "time-light",
+        "surface",
+        "camera",
+        "fixed-cue",
+      ],
+      hardNegativeLocationKeys: ["generic-beige-room"],
+      hardNegativeMomentKeys: ["flat-neutral-fill"],
+      hardNegativeSurfaceKeys: ["beige-stone"],
+      hardNegativeCameraKeys: ["near-front-crop"],
+      hardNegativeCueKeys: ["right-wall-return"],
+    },
+  );
+
+  assert.match(guidance, /AUDIT-DIRECTED REPAIR GATE/);
+  assert.match(guidance, /identical left, top, width and height/);
+  assert.match(guidance, /only at the exact declared bottom edge/);
+  assert.match(guidance, /at least two visible fixed architectural structures/);
+  assert.match(guidance, /exact assigned functional room/);
+  assert.match(guidance, /multiple fixed architectural convergence lines/);
+  assert.match(guidance, /mandatory slot-specific fixed cue.*outside the entire reserved product rectangle/);
+  assert.match(guidance, /rebuild the complete architectural composition/);
+  assert.match(guidance, /different source side, time treatment, shadow direction and shadow length/);
+  assert.match(guidance, /different integrated material family, texture scale and grain direction/);
+  assert.match(guidance, /different architectural side, azimuth, perspective convergence and focal-depth relationship/);
+  assert.match(guidance, /Repairing one axis while repeating another is a failure/);
+  assert.match(guidance, /STRUCTURED FAILED-PLATE BLACKLIST.*location=generic-beige-room.*time-light=flat-neutral-fill.*surface=beige-stone.*camera=near-front-crop.*fixed-cue\/supporting-object=right-wall-return/);
+  assert.doesNotMatch(guidance, /ignore the audit|relax|best effort|approximately clear/i);
 });
 
 test("every retry index keeps all eight setting slots visually and semantically separated", () => {
@@ -427,8 +477,14 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /retryConflictAssetIds/);
   assert.match(worker, /failedDimensions/);
   assert.match(worker, /auditError\.retryAuditFeedback = \{/);
-  assert.match(worker, /hardNegativeMomentKeys: \[parsed\.data\.observedMomentKey\]/);
+  assert.match(worker, /hardNegativeMomentKeys: validatedObservedKey\(parsed\.data\.observedMomentKey\)/);
   assert.match(worker, /hardNegativeCueKeys: parsed\.data\.observedNonMerchandiseProps/);
+  assert.match(worker, /reservedZoneClear: "reserved-zone"/);
+  assert.match(worker, /parsed\.data\.assignedCameraSatisfied && parsed\.data\.observedCameraKey !== expectedEnvironmentKeys\.camera[\s\S]{0,100}"assigned-camera-key"/);
+  assert.match(worker, /final acceptance, which remains guarded by assertSafeBackgroundSemanticAudit/);
+  const retryComparisonGate = worker.match(/const safeForRetryComparison = parsed\.data\.confidence[\s\S]*?&& !parsed\.data\.humanPresent;/)?.[0] ?? "";
+  assert.match(retryComparisonGate, /confidence === "high"/);
+  assert.doesNotMatch(retryComparisonGate, /reservedZoneClear|assignedLocationSatisfied|assignedCameraSatisfied/);
   assert.match(worker, /expectedPropDescription: backgroundContract\.prop\.description/);
   assert.match(worker, /retryAuditFeedback = mergeSettingShotRetryAuditFeedback\(/);
   assert.match(worker, /\.\.\.retryConflictAssetIds,[\s\S]*error\?\.conflictingAssetIds/);

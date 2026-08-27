@@ -48,6 +48,7 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
     registry = await competitorProviderRegistry(serviceClient, {
       elevenstTimeoutMs: COMPETITOR_ELEVENST_WAIT_MS,
       searchElevenstViaGateway: executeCompetitorSearchViaChannelGateway,
+      enableMarketplaceWeb: true,
     });
   } catch {
     console.error("competitor provider registry database lookup failed");

@@ -44,13 +44,13 @@ export type StudioPhoto = { name: string; url: string; file: File; role: string;
 export type StudioCompetitorContext = {
   query: string;
   providerStatuses: Array<{
-    provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse";
+    provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse" | "brave_marketplace_web";
     status: "searched" | "pending" | "failed" | "unavailable";
     count: number;
     marketplaces: Array<"smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other">;
   }>;
   candidates: Array<{
-    provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse";
+    provider: "naver_shopping" | "elevenst_product_search" | "ebay_browse" | "brave_marketplace_web";
     marketplace: "smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other";
     externalId: string;
     title: string;

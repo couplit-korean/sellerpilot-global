@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { activeChannelKeys } from "../lib/channels/catalog";
 import { remoteEditMutationId } from "../app/product-publish-workbench";
+import { emptyProductIntake } from "../lib/product-intake";
 import {
   centralProductEditFieldSupport,
   channelProductEditFieldSupport,
@@ -23,6 +24,12 @@ test("중앙 편집과 원격 편집의 실제 지원 필드를 분리한다", (
   assert.equal(central.inventory.state, "supported");
   assert.equal(central.options.state, "blocked");
   assert.equal(central.images.state, "blocked");
+  const centrallyWritableFields = new Set(Object.values(central).flatMap((field) => field.writablePaths));
+  assert.deepEqual(
+    [...centrallyWritableFields].sort(),
+    Object.keys(emptyProductIntake).sort(),
+    "이미지 리비전과 별도 옵션 원장을 제외한 등록 입력값은 중앙 전체 수정에서 모두 보존되어야 합니다.",
+  );
 
   for (const channel of ["qoo10", "shopee", "lazada", "coupang", "smartstore"] as const) {
     const remote = channelProductEditFieldSupport(channel);
@@ -164,6 +171,8 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(source, /remoteProductEditIdempotencyKey/);
   assert.match(source, /new URL\("\/api\/admin\/channel-operations", request\.url\)/);
   assert.match(source, /AbortSignal\.timeout\(58_000\)/);
+  assert.match(source, /operation: z\.literal\("listing\.update"\)/);
+  assert.doesNotMatch(source, /z\.enum\(\["listing\.update", "price\.update"\]\)/);
   assert.doesNotMatch(source, /randomUUID/);
   assert.doesNotMatch(source, /operation:\s*"price\.update" as const/);
   assert.match(workbench, /fetch\(`\/api\/admin\/products\/\$\{requestedProductId\}\/remote-edit`/);

@@ -21,7 +21,10 @@ const remoteEditSchema = z.object({
   credentialId: z.string().uuid(),
   listingId: z.string().uuid(),
   mutationId: z.string().uuid(),
-  operation: z.enum(["listing.update", "price.update"]),
+  // This endpoint is deliberately limited to the content mapper below.
+  // Price, option, and sale-configuration writes require separate provider
+  // identities and readback contracts and must not fall through as content.
+  operation: z.literal("listing.update"),
   confirmWrite: z.literal(true),
   arguments: z.record(z.string(), z.unknown())
     .refine((value) => JSON.stringify(value).length <= 128_000, "payload too large"),
@@ -169,9 +172,6 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       status: "blocked",
       mode: release.mode,
       message: release.reason,
-      field: body.data.operation === "price.update"
-        ? channelProductEditFieldSupport(listing.channel).price
-        : undefined,
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 

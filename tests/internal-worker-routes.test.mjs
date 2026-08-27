@@ -66,6 +66,7 @@ test("competitor scheduler bounds one durable claim and preserves pending gatewa
   assert.match(source, /const COMPETITOR_RPC_TIMEOUT_MS = 5_000/);
   assert.match(source, /const COMPETITOR_CLAIM_BATCH_SIZE = 1/);
   assert.match(source, /const COMPETITOR_PROVIDER_BUDGET_MS = 32_000/);
+  assert.match(source, /enableMarketplaceWeb: true/);
   assert.match(source, /sellerpilot_service_claim_due_competitor_products/);
   assert.match(source, /p_limit: COMPETITOR_CLAIM_BATCH_SIZE/);
   assert.doesNotMatch(source, /p_limit:\s*(?:[2-9]|[1-9][0-9]+)/);

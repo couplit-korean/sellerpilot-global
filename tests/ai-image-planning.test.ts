@@ -336,7 +336,10 @@ test("statutory-package products use a background-only identity firewall", () =>
   assert.ok(prompt.includes(`Slot-specific non-merchandise environmental cue (${contract.prop.key}): ${contract.prop.description}`));
   const placement = resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(foodResult));
   assert.notDeepEqual(placement, preset.identityPolicy.placement);
-  assert.match(prompt, new RegExp(`Reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height}`));
+  assert.match(prompt, new RegExp(`reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height}`));
+  assert.match(prompt, /IMMUTABLE PRODUCT-ZONE CONTRACT/);
+  assert.match(prompt, /Never move, resize, crop or reinterpret this exact rectangle during a retry/);
+  assert.match(prompt, /mandatory fixed cue, room-recognition junctions, fixtures, dominant shadows and busy geometry outside its complete interior/);
   assert.match(prompt, /Deliberately omit every retail product, small saleable prop/);
   assert.doesNotMatch(prompt, /투명 시리얼 볼과 접힌 흰 리넨/);
   assert.doesNotMatch(prompt, /롯데 과자/);

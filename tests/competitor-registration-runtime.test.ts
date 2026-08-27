@@ -215,3 +215,28 @@ test("the provider snapshot migration removes the ambiguous three-argument compl
   assert.match(migration, /drop function if exists public\.sellerpilot_service_complete_competitor_price_refresh\(uuid, uuid, jsonb\)/);
   assert.match(migration, /revoke all on function public\.sellerpilot_service_complete_competitor_price_refresh\(uuid, uuid, jsonb, jsonb\)[\s\S]*from public, anon, authenticated, service_role[\s\S]*grant execute[\s\S]*to service_role/);
 });
+
+test("the marketplace web provider forward migration preserves the durable snapshot fence", async () => {
+  const migration = await readFile(
+    new URL("../supabase/migrations/20260827193102_enable_brave_marketplace_competitor_provider.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(migration, /competitor_price_observations_provider_check[\s\S]*'brave_marketplace_web'/);
+  assert.match(migration, /v_provider not in \([\s\S]*'brave_marketplace_web'[\s\S]*'manual'/);
+  assert.match(migration, /jsonb_array_length\(p_providers\) > 4/);
+  assert.match(migration, /p_items is null[\s\S]*p_providers is null/);
+  assert.match(migration, /jsonb_array_length\(p_providers\) < 1/);
+  assert.doesNotMatch(migration, /'searched', 'unavailable', 'failed', 'pending'/);
+  assert.match(migration, /not exists \([\s\S]*provider\.value->>'status' = 'searched'/);
+  assert.match(migration, /count\(\*\) <> count\(distinct provider\.value->>'provider'\)/);
+  assert.match(migration, /jsonb_array_length\(p_items\) = 0[\s\S]*provider\.value->>'count'[\s\S]*<> '0'/);
+  assert.match(migration, /provider\.value->>'provider' = item\.value->>'provider'[\s\S]*provider\.value->>'status' = 'searched'/);
+  assert.match(migration, /provider\.value->>'provider'[\s\S]*'brave_marketplace_web'/);
+  assert.match(migration, /sellerpilot_service_record_competitor_prices[\s\S]*set search_path = ''/);
+  assert.match(migration, /sellerpilot_service_complete_competitor_price_refresh[\s\S]*set search_path = ''/);
+  const completion = migration.slice(migration.indexOf("sellerpilot_service_complete_competitor_price_refresh"));
+  assert.ok(completion.indexOf("from sellerpilot_private.products") < completion.indexOf("from sellerpilot_private.competitor_price_refresh_claims"));
+  assert.match(completion, /c\.claim_token = p_claim_token[\s\S]*for update/);
+  assert.match(completion, /observation\.checked_at < now\(\) - interval '7 days'/);
+  assert.match(completion, /revoke all[\s\S]*from public, anon, authenticated, service_role[\s\S]*grant execute[\s\S]*to service_role/);
+});

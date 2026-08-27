@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type CompetitorMarketplace = "smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other";
-export type CompetitorSearchProvider = "naver_shopping" | "elevenst_product_search" | "ebay_browse";
+export type CompetitorSearchProvider = "naver_shopping" | "elevenst_product_search" | "ebay_browse" | "brave_marketplace_web";
 
 export type CompetitorPriceCandidate = {
   provider: CompetitorSearchProvider;
@@ -28,6 +28,8 @@ type CredentialSecret = Record<string, unknown>;
 type NaverSearchCredentials = { clientId: string; clientSecret: string };
 type ElevenstSearchCredentials = { apiKey: string; credentialId?: string };
 type EbayBrowseCredentials = { clientId: string; clientSecret: string; marketplaceId: string; environment: "production" | "sandbox" };
+type BraveMarketplaceWebCredentials = { apiKey: string };
+export type MarketplaceWebMarketplace = Extract<CompetitorMarketplace, "shopee" | "lazada" | "temu">;
 export type CompetitorRefreshContext = { productId: string; claimToken: string };
 type SearchProvider = {
   id: CompetitorSearchProvider;
@@ -52,12 +54,62 @@ export type CompetitorProviderRegistryOptions = {
     timeoutMs?: number;
   }) => Promise<CompetitorPriceCandidate[]>;
   elevenstTimeoutMs?: number;
+  enableMarketplaceWeb?: boolean;
 };
 
 const providerMarketplaces: Record<CompetitorSearchProvider, CompetitorMarketplace[]> = {
   naver_shopping: ["smartstore", "coupang", "elevenst", "qoo10", "other"],
   elevenst_product_search: ["elevenst"],
   ebay_browse: ["ebay"],
+  brave_marketplace_web: ["shopee", "lazada", "temu"],
+};
+
+const BRAVE_WEB_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
+const BRAVE_MARKETPLACE_QUERY_LIMIT = 4;
+const BRAVE_MARKETPLACE_RESULT_LIMIT = 20;
+const BRAVE_MARKETPLACE_TIMEOUT_MS = 7_000;
+const marketplaceWebCurrencies = new Set([
+  "AUD", "BRL", "CAD", "CLP", "COP", "EUR", "GBP", "IDR", "JPY", "KRW", "MXN", "MYR", "PHP", "SGD", "THB", "TWD", "USD", "VND",
+]);
+
+type MarketplaceWebTarget = {
+  label: string;
+  roots: readonly string[];
+  currencyByRoot: Readonly<Record<string, string>>;
+};
+
+const marketplaceWebTargets: Record<MarketplaceWebMarketplace, MarketplaceWebTarget> = {
+  shopee: {
+    label: "Shopee",
+    roots: [
+      "shopee.sg", "shopee.com.my", "shopee.ph", "shopee.co.th", "shopee.vn", "shopee.co.id",
+      "shopee.tw", "shopee.com.br", "shopee.com.mx", "shopee.cl", "shopee.com.co",
+    ],
+    currencyByRoot: {
+      "shopee.sg": "SGD", "shopee.com.my": "MYR", "shopee.ph": "PHP", "shopee.co.th": "THB",
+      "shopee.vn": "VND", "shopee.co.id": "IDR", "shopee.tw": "TWD", "shopee.com.br": "BRL",
+      "shopee.com.mx": "MXN", "shopee.cl": "CLP", "shopee.com.co": "COP",
+    },
+  },
+  lazada: {
+    label: "Lazada",
+    roots: ["lazada.sg", "lazada.com.my", "lazada.com.ph", "lazada.co.th", "lazada.vn", "lazada.co.id"],
+    currencyByRoot: {
+      "lazada.sg": "SGD", "lazada.com.my": "MYR", "lazada.com.ph": "PHP", "lazada.co.th": "THB",
+      "lazada.vn": "VND", "lazada.co.id": "IDR",
+    },
+  },
+  temu: {
+    label: "Temu",
+    roots: ["temu.com"],
+    currencyByRoot: {},
+  },
+};
+
+const marketplaceWebImageRoots: Record<MarketplaceWebMarketplace, readonly string[]> = {
+  shopee: ["susercontent.com"],
+  lazada: ["alicdn.com", "lazcdn.com", "slatic.net"],
+  temu: ["kwcdn.com"],
 };
 
 function plainText(value: unknown) {
@@ -89,6 +141,167 @@ function normalizedSearchText(value: string) {
 
 function compactSearchText(value: string) {
   return normalizedSearchText(value).replaceAll(" ", "");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function officialMarketplaceRoot(hostname: string, marketplace: MarketplaceWebMarketplace) {
+  const normalized = hostname.toLocaleLowerCase().replace(/\.$/u, "");
+  return marketplaceWebTargets[marketplace].roots.find((root) => normalized === root || normalized.endsWith(`.${root}`)) ?? "";
+}
+
+function hostnameMatchesRoot(hostname: string, root: string) {
+  return hostname === root || hostname.endsWith(`.${root}`);
+}
+
+function isIpLiteral(hostname: string) {
+  const candidate = hostname.replace(/^\[|\]$/gu, "");
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/u.test(candidate) || candidate.includes(":");
+}
+
+export function canonicalMarketplaceWebImageUrl(value: unknown, marketplace: MarketplaceWebMarketplace) {
+  const candidate = validHttpUrl(value);
+  if (!candidate) return "";
+  const url = new URL(candidate);
+  const hostname = url.hostname.toLocaleLowerCase().replace(/\.$/u, "");
+  if (url.protocol !== "https:" || url.port || isIpLiteral(hostname)) return "";
+  const trustedRoots = [
+    ...marketplaceWebTargets[marketplace].roots,
+    ...marketplaceWebImageRoots[marketplace],
+  ];
+  if (!trustedRoots.some((root) => hostnameMatchesRoot(hostname, root))) return "";
+  return url.toString().slice(0, 4_000);
+}
+
+export function canonicalMarketplaceWebProductUrl(value: unknown, marketplace: MarketplaceWebMarketplace) {
+  const candidate = validHttpUrl(value);
+  if (!candidate) return "";
+  const url = new URL(candidate);
+  const root = officialMarketplaceRoot(url.hostname, marketplace);
+  if (!root || url.protocol !== "https:" || url.port) return "";
+
+  if (marketplace === "shopee") {
+    if (!(/-i\.\d+\.\d+(?:$|[/?])/iu.test(url.pathname) || /\/product\/\d+\/\d+(?:$|\/)/iu.test(url.pathname))) return "";
+    url.search = "";
+  } else if (marketplace === "lazada") {
+    if (!/-i\d+(?:-s\d+)?\.html?$/iu.test(url.pathname)) return "";
+    url.search = "";
+  } else {
+    const pathProduct = /-g-\d+\.html?$/iu.test(url.pathname);
+    const queryProduct = /\/goods\.html?$/iu.test(url.pathname) && /^\d{6,32}$/u.test(url.searchParams.get("goods_id") ?? "");
+    if (!pathProduct && !queryProduct) return "";
+    if (queryProduct) {
+      const goodsId = url.searchParams.get("goods_id") ?? "";
+      url.search = "";
+      url.searchParams.set("goods_id", goodsId);
+    } else {
+      url.search = "";
+    }
+  }
+  url.hash = "";
+  return url.toString().slice(0, 4_000);
+}
+
+function marketplaceWebExternalId(url: string, marketplace: MarketplaceWebMarketplace) {
+  const parsed = new URL(url);
+  const hostname = parsed.hostname.toLocaleLowerCase().replace(/\.$/u, "");
+  if (marketplace === "shopee") {
+    const productIds = parsed.pathname.match(/-i\.(\d+)\.(\d+)(?:$|\/)/iu)
+      ?? parsed.pathname.match(/\/product\/(\d+)\/(\d+)(?:$|\/)/iu);
+    if (productIds) return `${hostname}:${productIds[1]}-${productIds[2]}`.slice(0, 500);
+  }
+  if (marketplace === "lazada") {
+    const productId = parsed.pathname.match(/-i(\d+)(?:-s\d+)?\.html?$/iu)?.[1];
+    if (productId) return `${hostname}:${productId}`.slice(0, 500);
+  }
+  if (marketplace === "temu") {
+    const productId = parsed.pathname.match(/-g-(\d+)\.html?$/iu)?.[1] ?? parsed.searchParams.get("goods_id");
+    if (productId) return `${hostname}:${productId}`.slice(0, 500);
+  }
+  return `${hostname}:sha256:${createHash("sha256").update(url).digest("hex")}`.slice(0, 500);
+}
+
+function structuredRecords(value: unknown, maximum = 500) {
+  const records: Record<string, unknown>[] = [];
+  const seen = new Set<object>();
+  const visit = (candidate: unknown, depth: number) => {
+    if (records.length >= maximum || depth > 8 || !candidate) return;
+    if (Array.isArray(candidate)) {
+      for (const item of candidate.slice(0, 100)) visit(item, depth + 1);
+      return;
+    }
+    if (!isRecord(candidate) || seen.has(candidate)) return;
+    seen.add(candidate);
+    records.push(candidate);
+    for (const item of Object.values(candidate).slice(0, 100)) visit(item, depth + 1);
+  };
+  visit(value, 0);
+  return records;
+}
+
+function structuredValue(record: Record<string, unknown>, keys: readonly string[]) {
+  const expected = new Set(keys.map((key) => key.toLocaleLowerCase()));
+  const entry = Object.entries(record).find(([key]) => expected.has(key.toLocaleLowerCase()));
+  return entry?.[1];
+}
+
+function structuredPriceNumber(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 && value <= 1_000_000_000_000 ? value : null;
+  if (typeof value !== "string") return null;
+  const text = plainText(value).replace(/[\u00a0\s]/gu, " ").trim();
+  if (!text || text.length > 80) return null;
+  const matches = text.match(/\d[\d., ]*(?:\d|[.,]\d)/gu) ?? text.match(/\d+/gu) ?? [];
+  if (matches.length !== 1) return null;
+  let numeric = matches[0].replaceAll(" ", "");
+  const comma = numeric.lastIndexOf(",");
+  const dot = numeric.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    numeric = comma > dot ? numeric.replaceAll(".", "").replace(",", ".") : numeric.replaceAll(",", "");
+  } else if (comma >= 0) {
+    const decimalDigits = numeric.length - comma - 1;
+    numeric = decimalDigits > 0 && decimalDigits <= 2 ? numeric.replace(",", ".") : numeric.replaceAll(",", "");
+  } else if (dot >= 0) {
+    const decimalDigits = numeric.length - dot - 1;
+    if (decimalDigits === 3 && /^\d{1,3}(?:\.\d{3})+$/u.test(numeric)) numeric = numeric.replaceAll(".", "");
+  }
+  const parsed = Number(numeric);
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1_000_000_000_000 ? parsed : null;
+}
+
+function structuredCurrency(value: unknown, fallback: string) {
+  const text = plainText(value).trim().toUpperCase();
+  const explicit = text.match(/(?:^|[^A-Z])([A-Z]{3})(?:$|[^A-Z])/u)?.[1] ?? (/^[A-Z]{3}$/u.test(text) ? text : "");
+  if (marketplaceWebCurrencies.has(explicit)) return explicit;
+  if (/\bRM\b/u.test(text)) return "MYR";
+  if (/S\$/u.test(text)) return "SGD";
+  if (/\bRP\b/u.test(text)) return "IDR";
+  if (/NT\$/u.test(text)) return "TWD";
+  if (/R\$/u.test(text)) return "BRL";
+  if (/MX\$/u.test(text)) return "MXN";
+  if (/₱/u.test(text)) return "PHP";
+  if (/฿/u.test(text)) return "THB";
+  if (/₫/u.test(text)) return "VND";
+  if (/₩/u.test(text)) return "KRW";
+  return marketplaceWebCurrencies.has(fallback) ? fallback : "";
+}
+
+export function structuredMarketplaceWebPrice(result: Record<string, unknown>, fallbackCurrency = "") {
+  const records = structuredRecords([result.product, result.schemas]);
+  const prices: Array<{ price: number; currency: string }> = [];
+  for (const record of records) {
+    const rawPrice = structuredValue(record, ["price", "lowPrice", "salePrice", "currentPrice"]);
+    const price = structuredPriceNumber(rawPrice);
+    if (price === null) continue;
+    const currency = structuredCurrency(
+      structuredValue(record, ["priceCurrency", "currency", "currencyCode"]) ?? rawPrice,
+      fallbackCurrency,
+    );
+    if (!/^[A-Z]{3}$/u.test(currency)) continue;
+    prices.push({ price, currency });
+  }
+  return prices.sort((left, right) => left.price - right.price)[0] ?? null;
 }
 
 function meaningfulSearchTokens(value: string) {
@@ -234,6 +447,11 @@ export async function ebayBrowseCredentials(serviceClient: SupabaseClient): Prom
   return clientId && clientSecret && /^EBAY_[A-Z]{2,3}$/.test(marketplaceId)
     ? { clientId, clientSecret, marketplaceId, environment: "production" }
     : null;
+}
+
+export function braveMarketplaceWebCredentials(): BraveMarketplaceWebCredentials | null {
+  const apiKey = process.env.BRAVE_SEARCH_API_KEY?.trim() ?? "";
+  return /^[A-Za-z0-9_-]{20,500}$/u.test(apiKey) ? { apiKey } : null;
 }
 
 export function normalizedCompetitorQueries(primary: string, aliases: string[] = [], maximum = 8) {
@@ -400,11 +618,163 @@ export async function searchEbayBrowseVariants(primary: string, aliases: string[
   return successfulVariantSearches(queries, (query) => searchEbayBrowse(query, credentials, accessToken, displayPerQuery), "EBAY_BROWSE_SEARCH_FAILED");
 }
 
+export function braveMarketplaceSearchQuery(query: string, marketplace: MarketplaceWebMarketplace) {
+  // Brave documents multiple-domain filters as an unparenthesized uppercase
+  // OR chain. Product relevance and the canonical URL fence are still applied
+  // after search, so no result is trusted merely because the query matched.
+  const siteFilter = marketplaceWebTargets[marketplace].roots.map((root) => `site:${root}`).join(" OR ");
+  const siteWords = siteFilter.split(/\s+/u).length;
+  const maximumProductWords = Math.max(2, 50 - siteWords);
+  const maximumProductCharacters = Math.max(2, 400 - siteFilter.length - 1);
+  const productQuery = (normalizedCompetitorQueries(query, [], 1)[0] ?? "")
+    .split(/\s+/u)
+    .slice(0, maximumProductWords)
+    .join(" ")
+    .slice(0, maximumProductCharacters)
+    .trim();
+  if (productQuery.length < 2) throw new Error("BRAVE_MARKETPLACE_QUERY_INVALID");
+  return `${productQuery} ${siteFilter}`;
+}
+
+function braveSearchLanguage(query: string) {
+  if (/\p{Script=Hangul}/u.test(query)) return "ko";
+  if (/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(query)) return "ja";
+  if (/\p{Script=Thai}/u.test(query)) return "th";
+  if (/\p{Script=Han}/u.test(query)) return "zh";
+  if (/[ăâđêôơưàáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]/iu.test(query)) return "vi";
+  return "en";
+}
+
+function marketplaceQueryLanguageFamily(query: string) {
+  if (/\p{Script=Hangul}/u.test(query)) return "hangul";
+  if (/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(query)) return "kana";
+  if (/\p{Script=Thai}/u.test(query)) return "thai";
+  if (/\p{Script=Han}/u.test(query)) return "han";
+  if (braveSearchLanguage(query) === "vi") return "vietnamese";
+  if (/\p{Script=Latin}/u.test(query)) return "latin";
+  return "other";
+}
+
+function diverseMarketplaceQueries(primary: string, aliases: string[]) {
+  const available = normalizedCompetitorQueries(primary, aliases, 12);
+  if (available.length <= BRAVE_MARKETPLACE_QUERY_LIMIT) return available;
+  const selected = [available[0]];
+  const selectedValues = new Set(selected);
+  const primaryFamily = marketplaceQueryLanguageFamily(available[0]);
+  const familyOrder = ["latin", "thai", "vietnamese", "han", "hangul", "kana", "other"]
+    .filter((family) => family !== primaryFamily);
+  for (const family of familyOrder) {
+    const candidate = available.slice(1).find((query) => marketplaceQueryLanguageFamily(query) === family);
+    if (!candidate || selectedValues.has(candidate)) continue;
+    selected.push(candidate);
+    selectedValues.add(candidate);
+    if (selected.length >= BRAVE_MARKETPLACE_QUERY_LIMIT) return selected;
+  }
+  for (const candidate of available.slice(1)) {
+    if (selectedValues.has(candidate)) continue;
+    selected.push(candidate);
+    selectedValues.add(candidate);
+    if (selected.length >= BRAVE_MARKETPLACE_QUERY_LIMIT) break;
+  }
+  return selected;
+}
+
+export async function searchBraveMarketplaceWeb(
+  query: string,
+  credentials: BraveMarketplaceWebCredentials,
+  marketplace: MarketplaceWebMarketplace,
+  display = BRAVE_MARKETPLACE_RESULT_LIMIT,
+): Promise<CompetitorPriceCandidate[]> {
+  const url = new URL(BRAVE_WEB_SEARCH_ENDPOINT);
+  url.searchParams.set("q", braveMarketplaceSearchQuery(query, marketplace));
+  url.searchParams.set("country", "ALL");
+  url.searchParams.set("search_lang", braveSearchLanguage(query));
+  url.searchParams.set("count", String(Math.max(1, Math.min(display, BRAVE_MARKETPLACE_RESULT_LIMIT))));
+  url.searchParams.set("safesearch", "moderate");
+  url.searchParams.set("spellcheck", "false");
+  url.searchParams.set("text_decorations", "false");
+  url.searchParams.set("result_filter", "web");
+  url.searchParams.set("operators", "true");
+  const response = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    signal: AbortSignal.timeout(BRAVE_MARKETPLACE_TIMEOUT_MS),
+    headers: {
+      accept: "application/json",
+      "x-subscription-token": credentials.apiKey,
+      "user-agent": "SellerPilot-Competitor-Web-Search/1.0",
+    },
+  });
+  if (!response.ok) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
+  const payload = await response.json() as Record<string, unknown>;
+  const web = isRecord(payload.web) ? payload.web : {};
+  const results = Array.isArray(web.results) ? web.results.slice(0, Math.min(display, BRAVE_MARKETPLACE_RESULT_LIMIT)) : [];
+  return results.flatMap((rawResult) => {
+    if (!isRecord(rawResult)) return [];
+    const itemUrl = canonicalMarketplaceWebProductUrl(rawResult.url, marketplace);
+    if (!itemUrl) return [];
+    const parsedUrl = new URL(itemUrl);
+    const root = officialMarketplaceRoot(parsedUrl.hostname, marketplace);
+    const price = structuredMarketplaceWebPrice(rawResult, marketplaceWebTargets[marketplace].currencyByRoot[root] ?? "");
+    const title = plainText(rawResult.title).slice(0, 1_000);
+    if (!title || !price) return [];
+    const thumbnail = isRecord(rawResult.thumbnail) ? rawResult.thumbnail : {};
+    const candidate = {
+      provider: "brave_marketplace_web" as const,
+      externalId: marketplaceWebExternalId(itemUrl, marketplace).slice(0, 500),
+      title,
+      url: itemUrl,
+      imageUrl: canonicalMarketplaceWebImageUrl(thumbnail.original ?? thumbnail.src, marketplace),
+      mallName: `${marketplaceWebTargets[marketplace].label} · ${root}`.slice(0, 240),
+      marketplace,
+      price: price.price,
+      currency: price.currency,
+    } satisfies CompetitorPriceCandidate;
+    return competitorCandidateRelevance(candidate, [query]) > 0 ? [candidate] : [];
+  });
+}
+
+export async function searchBraveMarketplaceWebVariants(
+  primary: string,
+  aliases: string[],
+  credentials: BraveMarketplaceWebCredentials,
+  displayPerQuery = BRAVE_MARKETPLACE_RESULT_LIMIT,
+) {
+  const queries = diverseMarketplaceQueries(primary, aliases);
+  const settled = await Promise.allSettled((["shopee", "lazada", "temu"] as const).map(async (marketplace) => {
+    const candidates: CompetitorPriceCandidate[] = [];
+    let successfulQueries = 0;
+    for (const query of queries) {
+      try {
+        candidates.push(...await searchBraveMarketplaceWeb(query, credentials, marketplace, displayPerQuery));
+        successfulQueries += 1;
+      } catch {
+        continue;
+      }
+      const uniqueProducts = new Set(candidates.map((candidate) => marketplaceIdentity(candidate)));
+      if (uniqueProducts.size >= 3) break;
+    }
+    if (successfulQueries === 0) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
+    return candidates;
+  }));
+  if (settled.length > 0 && settled.every((result) => result.status === "rejected")) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
+  const candidates = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+  const relevant = candidates.filter((candidate) => competitorCandidateRelevance(candidate, queries) > 0);
+  const unique = new Map<string, CompetitorPriceCandidate>();
+  for (const candidate of relevant) {
+    const key = marketplaceIdentity(candidate);
+    const current = unique.get(key);
+    if (!current || (candidate.imageUrl && !current.imageUrl) || candidate.price < current.price) unique.set(key, candidate);
+  }
+  return groupCompetitorPrices([...unique.values()], 3);
+}
+
 export async function competitorProviderRegistry(
   serviceClient: SupabaseClient,
   options: CompetitorProviderRegistryOptions,
 ): Promise<CompetitorProviderRegistry> {
   const [naver, elevenst, ebay] = await Promise.all([naverSearchCredentials(serviceClient), elevenstSearchCredentials(serviceClient), ebayBrowseCredentials(serviceClient)]);
+  const marketplaceWeb = options.enableMarketplaceWeb ? braveMarketplaceWebCredentials() : null;
   const configured: SearchProvider[] = [];
   const unavailable: CompetitorProviderStatus[] = [];
   if (naver) configured.push({ id: "naver_shopping", marketplaces: providerMarketplaces.naver_shopping, search: (primary, aliases, display) => searchNaverShoppingVariants(primary, aliases, naver, display) });
@@ -428,6 +798,14 @@ export async function competitorProviderRegistry(
   else unavailable.push({ provider: "elevenst_product_search", status: "unavailable", count: 0, marketplaces: providerMarketplaces.elevenst_product_search });
   if (ebay) configured.push({ id: "ebay_browse", marketplaces: providerMarketplaces.ebay_browse, search: (primary, aliases, display) => searchEbayBrowseVariants(primary, aliases, ebay, display) });
   else unavailable.push({ provider: "ebay_browse", status: "unavailable", count: 0, marketplaces: providerMarketplaces.ebay_browse });
+  if (options.enableMarketplaceWeb) {
+    if (marketplaceWeb) configured.push({
+      id: "brave_marketplace_web",
+      marketplaces: providerMarketplaces.brave_marketplace_web,
+      search: (primary, aliases, display) => searchBraveMarketplaceWebVariants(primary, aliases, marketplaceWeb, display),
+    });
+    else unavailable.push({ provider: "brave_marketplace_web", status: "unavailable", count: 0, marketplaces: providerMarketplaces.brave_marketplace_web });
+  }
   return { configured, unavailable };
 }
 
@@ -441,6 +819,19 @@ function marketplaceIdentity(item: CompetitorPriceCandidate) {
     if (item.marketplace === "ebay") {
       const itemNo = url.pathname.match(/\/itm\/(?:[^/]+\/)?([^/?]+)/)?.[1];
       if (itemNo) return `ebay:${itemNo}`;
+    }
+    if (item.marketplace === "shopee") {
+      const itemNo = url.pathname.match(/-i\.\d+\.(\d+)(?:$|\/)/iu)?.[1]
+        ?? url.pathname.match(/\/product\/\d+\/(\d+)(?:$|\/)/iu)?.[1];
+      if (itemNo) return `shopee:${url.hostname.toLocaleLowerCase()}:${itemNo}`;
+    }
+    if (item.marketplace === "lazada") {
+      const itemNo = url.pathname.match(/-i(\d+)(?:-s\d+)?\.html?$/iu)?.[1];
+      if (itemNo) return `lazada:${url.hostname.toLocaleLowerCase()}:${itemNo}`;
+    }
+    if (item.marketplace === "temu") {
+      const itemNo = url.pathname.match(/-g-(\d+)\.html?$/iu)?.[1] ?? url.searchParams.get("goods_id");
+      if (itemNo) return `temu:${url.hostname.toLocaleLowerCase()}:${itemNo}`;
     }
     url.search = "";
     return `${item.marketplace}:${url.hostname}${url.pathname.replace(/\/$/, "")}`;

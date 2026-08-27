@@ -1687,6 +1687,87 @@ test("AI studio request canonicalizes HTTP 11st evidence before the second stage
   }), "");
 });
 
+test("AI studio request accepts four providers and fences marketplace web evidence to official product URLs", () => {
+  const officialCandidates = [
+    {
+      marketplace: "shopee",
+      url: "https://shopee.sg/Kellogg-Choco-Chex-i.123456.987654?sp_atk=tracking#reviews",
+      canonical: "https://shopee.sg/Kellogg-Choco-Chex-i.123456.987654",
+    },
+    {
+      marketplace: "lazada",
+      url: "https://www.lazada.com.my/products/kellogg-choco-chex-i123456-s987654.html?spm=tracking#reviews",
+      canonical: "https://www.lazada.com.my/products/kellogg-choco-chex-i123456-s987654.html",
+    },
+    {
+      marketplace: "temu",
+      url: "https://www.temu.com/goods.html?goods_id=601099999999999&utm_source=tracking#reviews",
+      canonical: "https://www.temu.com/goods.html?goods_id=601099999999999",
+    },
+  ] as const;
+
+  for (const candidate of officialCandidates) {
+    assert.equal(canonicalizeStudioCompetitorUrl({
+      provider: "brave_marketplace_web",
+      marketplace: candidate.marketplace,
+      url: candidate.url,
+    }), candidate.canonical);
+  }
+
+  for (const source of [
+    { provider: "brave_marketplace_web", marketplace: "shopee", url: "https://shopee.sg.evil.example/item-i.1.2" },
+    { provider: "brave_marketplace_web", marketplace: "lazada", url: "https://www.lazada.com.my/catalog/?q=chex" },
+    { provider: "brave_marketplace_web", marketplace: "temu", url: "https://www.temu.com/search_result.html?search_key=chex" },
+    { provider: "brave_marketplace_web", marketplace: "ebay", url: "https://www.ebay.com/itm/123" },
+    { provider: "ebay_browse", marketplace: "shopee", url: "https://shopee.sg/item-i.1.2" },
+    { provider: "brave_marketplace_web", marketplace: "shopee", url: "https://user:secret@shopee.sg/item-i.1.2" },
+  ]) {
+    assert.equal(canonicalizeStudioCompetitorUrl(source), "");
+  }
+
+  const base = {
+    jobId: "77777777-7777-4777-8777-777777777777",
+    manualFields: validRequiredIntake(),
+    imagePaths: ["user/job/input/001.jpg"],
+    imageSpecs: [sourcePreservingImageSpec()],
+  };
+  const providerStatuses = [
+    { provider: "naver_shopping", status: "searched", count: 0, marketplaces: ["smartstore"] },
+    { provider: "elevenst_product_search", status: "searched", count: 0, marketplaces: ["elevenst"] },
+    { provider: "ebay_browse", status: "searched", count: 0, marketplaces: ["ebay"] },
+    { provider: "brave_marketplace_web", status: "searched", count: 1, marketplaces: ["shopee", "lazada", "temu"] },
+  ] as const;
+  const competitorContext = {
+    query: "Kellogg Choco Chex 570g",
+    providerStatuses,
+    candidates: [{
+      provider: "brave_marketplace_web",
+      marketplace: "shopee",
+      externalId: "123456-987654",
+      title: "Kellogg Choco Chex 570g",
+      url: officialCandidates[0].canonical,
+      mallName: "Shopee",
+      price: 12.9,
+      currency: "SGD",
+      verifiedSameProduct: true,
+    }],
+  } as const;
+  const parsed = studioJobRequestSchema.safeParse({ ...base, competitorContext });
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+
+  assert.equal(studioJobRequestSchema.safeParse({
+    ...base,
+    competitorContext: { ...competitorContext, providerStatuses: [...providerStatuses, providerStatuses[0]] },
+  }).success, false);
+  assert.equal(studioJobRequestSchema.safeParse({
+    ...base,
+    competitorContext: {
+      ...competitorContext,
+      candidates: [{ ...competitorContext.candidates[0], url: "https://shopee.sg/search?keyword=chex" }],
+    },
+  }).success, false);
+});
+
 test("AI studio request accepts free-text research without a source URL", () => {
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "33333333-3333-4333-8333-333333333333",

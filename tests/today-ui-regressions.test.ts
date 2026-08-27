@@ -391,6 +391,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(competitorScheduler, /searchCompetitorProviders\([\s\S]{0,120}registry,[\s\S]{0,80}product\.query,[\s\S]{0,80}product\.aliases/);
   assert.match(competitorScheduler, /sellerpilot_service_complete_competitor_price_refresh/);
   assert.match(page, /status: "searched" \| "unavailable" \| "failed" \| "pending"/);
+  assert.match(page, /brave_marketplace_web: "Shopee·Lazada·Temu 웹 검색"/);
+  assert.match(page, /competitorProviders\.slice\(0, 4\)/);
   assert.match(page, /provider\.status === "pending" \? "조회 진행 중"/);
   assert.match(page, /competitorResearchControllerRef\.current\?\.abort\(\)/);
   assert.match(page, /pollCompetitorResearch/);

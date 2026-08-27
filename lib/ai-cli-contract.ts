@@ -10,6 +10,7 @@ import {
   isGeneralFoodClassification,
 } from "./product-classification";
 import { maximumStudioJobSourceBytes } from "./studio-source-photo-policy";
+import { canonicalizeStudioCompetitorUrl } from "./studio-competitor-evidence";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 const detailImageAssetSchema = z.enum(aiDetailAssetIds);
@@ -136,7 +137,7 @@ export const supportReplyWorkerRequestSchema = z.object({
   }).strict().nullable(),
 }).strict();
 
-const competitorProviderSchema = z.enum(["naver_shopping", "elevenst_product_search", "ebay_browse"]);
+const competitorProviderSchema = z.enum(["naver_shopping", "elevenst_product_search", "ebay_browse", "brave_marketplace_web"]);
 const competitorMarketplaceSchema = z.enum([
   "smartstore", "coupang", "elevenst", "qoo10", "shopee", "lazada", "ebay", "temu", "other",
 ]);
@@ -153,7 +154,7 @@ export const studioCompetitorContextSchema = z.object({
     status: z.enum(["searched", "unavailable", "failed", "pending"]),
     count: z.number().int().min(0).max(100_000),
     marketplaces: z.array(competitorMarketplaceSchema).max(9),
-  }).strict()).max(3),
+  }).strict()).max(4),
   candidates: z.array(z.object({
     provider: competitorProviderSchema,
     marketplace: competitorMarketplaceSchema,
@@ -164,7 +165,19 @@ export const studioCompetitorContextSchema = z.object({
     price: z.number().finite().positive().max(1_000_000_000_000),
     currency: z.string().regex(/^[A-Z]{3}$/),
     verifiedSameProduct: z.literal(true),
-  }).strict()).max(24),
+  }).strict().superRefine((value, context) => {
+    const marketplaceWebEvidence = value.provider === "brave_marketplace_web"
+      || value.marketplace === "shopee"
+      || value.marketplace === "lazada"
+      || value.marketplace === "temu";
+    if (marketplaceWebEvidence && !canonicalizeStudioCompetitorUrl(value)) {
+      context.addIssue({
+        code: "custom",
+        path: ["url"],
+        message: "Shopee, Lazada, Temu 경쟁가 근거는 공식 상품 URL이어야 합니다.",
+      });
+    }
+  })).max(24),
 }).strict();
 
 export const studioCoreSchema = z.object({

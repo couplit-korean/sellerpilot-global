@@ -198,7 +198,16 @@ const studioMasterTimeoutMs = Math.min(
   Math.max(12 * 60_000, Number(process.env.SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS ?? 35 * 60_000)),
 );
 const studioLocalizedTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS ?? 12 * 60_000));
-const imageGenerationTimeoutMs = Math.max(15 * 60_000, Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 20 * 60_000));
+const configuredImageGenerationTimeoutMs = Number(process.env.SELLERPILOT_IMAGE_TIMEOUT_MS ?? 25 * 60_000);
+const imageGenerationTimeoutMs = Math.min(
+  30 * 60_000,
+  Math.max(
+    15 * 60_000,
+    Number.isFinite(configuredImageGenerationTimeoutMs)
+      ? configuredImageGenerationTimeoutMs
+      : 25 * 60_000,
+  ),
+);
 const backgroundAuditTimeoutMs = Math.max(60_000, Number(process.env.SELLERPILOT_BACKGROUND_AUDIT_TIMEOUT_MS ?? 2 * 60_000));
 const configuredCodexConcurrency = Number(process.env.SELLERPILOT_CODEX_CONCURRENCY ?? 2);
 const codexConcurrencyLimit = Math.min(4, Math.max(1, Number.isFinite(configuredCodexConcurrency) ? Math.trunc(configuredCodexConcurrency) : 2));
@@ -2230,30 +2239,31 @@ async function auditGeneratedIdentityBackground({
     seriesCameraDistinct: "camera",
     seriesCueDistinct: "fixed-cue",
   };
-  const failedDimensions = Object.entries(retryDimensionFields)
-    .filter(([field]) => parsed.data[field] === false)
-    .map(([, dimension]) => dimension);
+  const failedDimensions = [...new Set([
+    ...(parsed.data.confidence !== "high" ? ["audit-confidence"] : []),
+    ...(parsed.data.merchandisePresent ? ["safety-merchandise"] : []),
+    ...(parsed.data.packageOrContainerPresent ? ["safety-package-container"] : []),
+    ...(parsed.data.labelBarcodeOrCertificationPresent ? ["safety-label-text"] : []),
+    ...(parsed.data.humanPresent ? ["safety-human"] : []),
+    ...Object.entries(retryDimensionFields)
+      .filter(([field]) => parsed.data[field] === false)
+      .map(([, dimension]) => dimension),
+    ...(parsed.data.assignedLocationSatisfied && parsed.data.observedLocationKey !== expectedEnvironmentKeys.location ? ["assigned-location-key"] : []),
+    ...(parsed.data.assignedMomentSatisfied && parsed.data.observedMomentKey !== expectedEnvironmentKeys.moment ? ["assigned-time-light-key"] : []),
+    ...(parsed.data.assignedSurfaceSatisfied && parsed.data.observedSurfaceKey !== expectedEnvironmentKeys.surface ? ["assigned-surface-key"] : []),
+    ...(parsed.data.assignedCameraSatisfied && parsed.data.observedCameraKey !== expectedEnvironmentKeys.camera ? ["assigned-camera-key"] : []),
+    ...(parsed.data.assignedPaletteSatisfied && parsed.data.observedPaletteKey !== expectedEnvironmentKeys.palette ? ["assigned-palette-key"] : []),
+    ...(parsed.data.spatialDepthPresent && parsed.data.observedSpatialDepthKey !== expectedEnvironmentKeys.spatialDepth ? ["assigned-spatial-depth-key"] : []),
+  ])];
+  const validatedObservedKey = (value) => value === "unknown" ? [] : [value];
+  // This flag controls only whether a rejected empty plate may be retained as a
+  // stricter visual blacklist for the next bounded retry. It never participates
+  // in final acceptance, which remains guarded by assertSafeBackgroundSemanticAudit.
   const safeForRetryComparison = parsed.data.confidence === "high"
     && !parsed.data.merchandisePresent
     && !parsed.data.packageOrContainerPresent
     && !parsed.data.labelBarcodeOrCertificationPresent
-    && !parsed.data.humanPresent
-    && parsed.data.reservedZoneClear
-    && parsed.data.assignedEnvironmentPresent
-    && parsed.data.assignedSupportingObjectsSatisfied
-    && parsed.data.assignedLocationSatisfied
-    && parsed.data.assignedMomentSatisfied
-    && parsed.data.assignedSurfaceSatisfied
-    && parsed.data.assignedCameraSatisfied
-    && parsed.data.assignedPaletteSatisfied
-    && parsed.data.spatialDepthPresent
-    && parsed.data.observedLocationKey === expectedEnvironmentKeys.location
-    && parsed.data.observedMomentKey === expectedEnvironmentKeys.moment
-    && parsed.data.observedSurfaceKey === expectedEnvironmentKeys.surface
-    && parsed.data.observedCameraKey === expectedEnvironmentKeys.camera
-    && parsed.data.observedPaletteKey === expectedEnvironmentKeys.palette
-    && parsed.data.observedSpatialDepthKey === expectedEnvironmentKeys.spatialDepth
-    && parsed.data.observedNonMerchandiseProps.includes(expectedPropKey);
+    && !parsed.data.humanPresent;
   try {
     assertSafeBackgroundSemanticAudit(
       parsed.data,
@@ -2269,12 +2279,12 @@ async function auditGeneratedIdentityBackground({
     auditError.failedDimensions = failedDimensions;
     auditError.retryAuditFeedback = {
       failedDimensions,
-      hardNegativeLocationKeys: [parsed.data.observedLocationKey],
-      hardNegativeMomentKeys: [parsed.data.observedMomentKey],
-      hardNegativeSurfaceKeys: [parsed.data.observedSurfaceKey],
-      hardNegativeCameraKeys: [parsed.data.observedCameraKey],
-      hardNegativePaletteKeys: [parsed.data.observedPaletteKey],
-      hardNegativeSpatialDepthKeys: [parsed.data.observedSpatialDepthKey],
+      hardNegativeLocationKeys: validatedObservedKey(parsed.data.observedLocationKey),
+      hardNegativeMomentKeys: validatedObservedKey(parsed.data.observedMomentKey),
+      hardNegativeSurfaceKeys: validatedObservedKey(parsed.data.observedSurfaceKey),
+      hardNegativeCameraKeys: validatedObservedKey(parsed.data.observedCameraKey),
+      hardNegativePaletteKeys: validatedObservedKey(parsed.data.observedPaletteKey),
+      hardNegativeSpatialDepthKeys: validatedObservedKey(parsed.data.observedSpatialDepthKey),
       hardNegativeCueKeys: parsed.data.observedNonMerchandiseProps,
     };
     auditError.safeForRetryComparison = safeForRetryComparison;
