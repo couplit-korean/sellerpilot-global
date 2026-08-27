@@ -2534,7 +2534,7 @@ button {
 .registration-activity-hero p { max-width: 720px; margin: 0; color: #bdd2cd; font-size: 10px; line-height: 1.65; }
 .registration-activity-hero > span { display: flex; gap: 8px; }
 .registration-activity-hero .credential-secondary { color: #dcece8; border-color: #4a716a; background: #294d47; }
-.registration-filter-strip { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; }
+.registration-filter-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 9px; }
 .registration-filter-strip button { display: flex; min-height: 54px; align-items: center; justify-content: space-between; border: 1px solid #dfe5e3; border-radius: 11px; padding: 0 14px; color: #6c7774; background: #fff; font-size: 10px; font-weight: 800; }
 .registration-filter-strip button b { display: grid; min-width: 26px; height: 26px; place-items: center; border-radius: 8px; background: #f0f3f2; }
 .registration-filter-strip button.active { color: #0b6e60; border-color: #9fd2c7; background: #eef9f6; }

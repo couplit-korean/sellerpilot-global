@@ -3,7 +3,7 @@ import type { OperationsSnapshot } from "../use-operations-snapshot";
 export type RegistrationActivity = OperationsSnapshot["registrationActivities"][number];
 export type RegistrationStatus = RegistrationActivity["status"];
 export type RegistrationActivityState = OperationsSnapshot["registrationActivityState"];
-export type RegistrationActivityFilter = "all" | "active" | "ready" | "completed" | "attention";
+export type RegistrationActivityFilter = "all" | "active" | "ready" | "completed" | "failed" | "blocked";
 const registrationChannelStatuses = Symbol("registrationChannelStatuses");
 export type RegistrationActivityEventState = Map<string, RegistrationStatus> & {
   [registrationChannelStatuses]?: ReadonlyMap<string, string>;
@@ -35,7 +35,12 @@ export function registrationActivityMatchesFilter(activity: RegistrationActivity
   if (filter === "active") return isRegistrationActivityRunning(activity.status);
   if (filter === "ready") return activity.status === "ready";
   if (filter === "completed") return activity.status === "completed";
-  return activity.status === "failed" || activity.status === "blocked";
+  return activity.status === filter;
+}
+
+export function registrationActivityFilterFromValue(value: unknown): RegistrationActivityFilter {
+  if (value === "active" || value === "ready" || value === "completed" || value === "failed" || value === "blocked") return value;
+  return "all";
 }
 
 export function registrationActivityDisplayElapsedSeconds(activity: RegistrationActivity) {

@@ -5,6 +5,7 @@ import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin
 import { sellerSafeAiJobFailure } from "../../../../lib/ai-worker-error-safety";
 import { activeChannelKeys } from "../../../../lib/channels/catalog";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
+import { reconcileRegistrationDashboardMetrics } from "../../../../lib/registration-dashboard-metrics";
 
 export const runtime = "nodejs";
 
@@ -71,7 +72,7 @@ export async function GET(request: Request) {
   if (error || credentialError || analyticsError || externalActionsError) {
     return NextResponse.json({ message: "운영 데이터를 불러오지 못했습니다." }, { status: 500 });
   }
-  const payload = data && typeof data === "object" && !Array.isArray(data)
+  let payload = data && typeof data === "object" && !Array.isArray(data)
     ? { ...(data as Record<string, unknown>) }
     : {};
 
@@ -131,6 +132,9 @@ export async function GET(request: Request) {
     };
   });
   payload.registrationActivityState = registrationActivitiesError ? "unavailable" : "ready";
+  if (!registrationActivitiesError) {
+    payload = reconcileRegistrationDashboardMetrics(payload, payload.registrationActivities as unknown[]);
+  }
   payload.analytics = analytics && typeof analytics === "object" && !Array.isArray(analytics)
     ? analytics
     : { from: range.data.from, to: range.data.to, summary: { revenueKrw: 0, sold: 0, orderCount: 0 }, daily: [], channels: [], products: [] };

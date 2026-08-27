@@ -6,6 +6,7 @@ import {
   isRegistrationActivityRunning,
   recoverableRegistrationActivityJobId,
   registrationActivityDisplayElapsedSeconds,
+  registrationActivityFilterFromValue,
   registrationActivityMatchesFilter,
   registrationActivityNotificationTransition,
   registrationActivityNotifications,
@@ -137,6 +138,12 @@ test("ready registration cards are completed analysis drafts, not running work",
   assert.equal(isRegistrationActivityRunning("ready"), false);
   assert.equal(registrationActivityMatchesFilter(ready, "active"), false);
   assert.equal(registrationActivityMatchesFilter(ready, "ready"), true);
+  assert.equal(registrationActivityMatchesFilter(activity("failed", "재시도 상품", "failed"), "failed"), true);
+  assert.equal(registrationActivityMatchesFilter(activity("blocked", "권한 상품", "blocked"), "failed"), false);
+  assert.equal(registrationActivityMatchesFilter(activity("blocked", "권한 상품", "blocked"), "blocked"), true);
+  assert.equal(registrationActivityFilterFromValue("failed"), "failed");
+  assert.equal(registrationActivityFilterFromValue("blocked"), "blocked");
+  assert.equal(registrationActivityFilterFromValue("attention"), "all");
   assert.equal(registrationActivityDisplayElapsedSeconds(ready), 35);
   assert.equal(registrationChannelStatusLabel("paused"), "중지");
   assert.equal(registrationChannelStatusLabel("scope_excluded"), "제외");
@@ -317,7 +324,10 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
     readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-push-manager.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(page, /onNavigate\("registration-activity"\)[^\n]*채널 등록 실패/);
+  assert.match(page, /onNavigate\("registration-activity", "failed"\)[^\n]*등록 재시도/);
+  assert.match(page, /params\.set\("status", nextRegistrationStatus\)/);
+  assert.match(page, /registrationActivityFilterFromValue\(params\.get\("status"\) \?\? \(typeof state\.status === "string" \? state\.status : null\)\)/);
+  assert.match(operationsSnapshotRoute, /reconcileRegistrationDashboardMetrics\(payload, payload\.registrationActivities/);
   assert.match(page, /activityState === "unavailable"[\s\S]*등록 진행 이력을 불러오지 못했습니다/);
   assert.match(page, /signal: AbortSignal\.any\(\[productResearchController\.signal, AbortSignal\.timeout\(30_000\)\]\)/);
   assert.match(page, /withPromiseTimeout\(new Promise<\{ width: number; height: number \}>[\s\S]*?15_000[\s\S]*?모바일에서 이미지를 읽는 시간이 너무 오래 걸렸습니다/);
@@ -335,6 +345,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /외부 채널에는 자동 게시하지 않습니다/);
   assert.match(publishWorkbench, /<select required value=\{context\.manualFields\.packageContents\}/);
   assert.doesNotMatch(publishWorkbench, /판매 구성품[^\n]*<input/);
+  assert.match(commerceStyles, /\.registration-filter-strip\s*\{[^}]*grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)/);
   assert.match(mobileStyles, /@media \(min-width: 901px\) and \(max-width: 1200px\)[\s\S]*?\.overview-toolbar[\s\S]*?flex-direction: column/);
   const narrowFixedSidebarMedia = cssMediaBody(mobileStyles, "(min-width: 901px) and (max-width: 1080px)");
   assert.match(narrowFixedSidebarMedia, /\.page-stack > \*,[\s\S]*?min-width: 0;[\s\S]*?max-width: 100%/);
@@ -399,6 +410,7 @@ test("390px registration, CS, preview, and notification surfaces keep their mobi
   assert.match(mobileStyles, /\.product-research-input button\s*\{[\s\S]{0,120}?width:\s*100%;[\s\S]{0,80}?max-width:\s*100%/);
   assert.match(mobileStyles, /\.registration-card-grid\s*\{[\s\S]{0,120}?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(mobileStyles, /\.registration-filter-strip button\s*\{[\s\S]{0,120}?min-height:\s*56px/);
+  assert.match(mobileStyles, /\.registration-filter-strip\s*\{[\s\S]{0,80}?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(mobileStyles, /\.pipeline-list > div\.interactive\s*\{[\s\S]{0,120}?min-height:\s*44px;[\s\S]{0,80}?touch-action:\s*manipulation/);
   assert.match(mobileStyles, /\.remove-photo-button,[\s\S]{0,100}?\.extra-photo-list > div > button\s*\{[\s\S]{0,100}?width:\s*44px;[\s\S]{0,80}?height:\s*44px/);
   assert.match(mobileStyles, /\.ticket-tabs\s*\{[\s\S]{0,100}?height:\s*auto;[\s\S]{0,80}?min-height:\s*44px/);

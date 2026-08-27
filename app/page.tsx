@@ -132,6 +132,7 @@ import {
   isRegistrationActivityRunning,
   recoverableRegistrationActivityJobId,
   registrationActivityDisplayElapsedSeconds,
+  registrationActivityFilterFromValue,
   registrationActivityMatchesFilter,
   registrationActivityNotificationTransition,
   registrationActivityProgress,
@@ -543,7 +544,7 @@ function ProductVisual({ src, size, alt = "상품 이미지" }: { src: string | 
 }
 
 function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMetrics, pipeline, analytics, salesRange, onSalesRangeChange, resolvedCsCount, operationsAvailable }: {
-  onNavigate: (view: View) => void;
+  onNavigate: (view: View, registrationStatus?: RegistrationActivityFilter) => void;
   displayProducts: DisplayProduct[];
   operationSummary: OperationsSnapshot["summary"] | null;
   channelMetrics: OperationsSnapshot["channelMetrics"];
@@ -570,9 +571,9 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
       .sort((left, right) => right.revenue30dKrw - left.revenue30dKrw || right.orderCount - left.orderCount || left.name.localeCompare(right.name, "ko"));
   }, [analytics, channelMetrics]);
   const summary = operationSummary ?? { revenue30dKrw: 0, sold30d: 0, orderCount: 0, paidOrderCount: 0, readyToShipCount: 0, openTicketCount: 0, lowStockCount: 0, productCount: 0, registrationErrorCount: 0, registrationBlockedCount: 0, activeCredentialCount: 0, registeredCredentialCount: 0, settlementRiskCount: 0 };
-  const livePipeline = pipeline ?? { aiRunning: 0, listingQueued: 0, listingPublished: 0, listingFailed: 0, listingBlocked: 0 };
+  const livePipeline: OperationsSnapshot["pipeline"] & { channelListingFailed?: number } = pipeline ?? { aiRunning: 0, listingQueued: 0, listingPublished: 0, listingFailed: 0, listingBlocked: 0 };
   const totalTasks = summary.paidOrderCount + summary.readyToShipCount + summary.openTicketCount + summary.registrationErrorCount;
-  const totalListings = livePipeline.listingPublished + livePipeline.listingFailed + livePipeline.listingBlocked;
+  const totalListings = livePipeline.listingPublished + (livePipeline.channelListingFailed ?? livePipeline.listingFailed) + livePipeline.listingBlocked;
   const successRate = totalListings > 0 ? (livePipeline.listingPublished / totalListings) * 100 : 0;
   const maxChannelRevenue = Math.max(1, ...activeMetrics.map((channel) => channel.revenue30dKrw));
   const currentDate = new Intl.DateTimeFormat("ko-KR", { month: "long", day: "numeric", weekday: "long" }).format(today);
@@ -611,7 +612,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
           <button onClick={() => onNavigate("orders")}><span className="task-tone order" /><small>통합 주문</small><b>{operationsAvailable ? summary.orderCount : "—"}</b><em>실주문 원장</em></button>
           <button onClick={() => onNavigate("orders")}><span className="task-tone shipping" /><small>출고 대기</small><b>{operationsAvailable ? summary.readyToShipCount : "—"}</b><em>채널 상태 동기화</em></button>
           <button onClick={() => onNavigate("cs")}><span className="task-tone claim" /><small>미처리 CS</small><b>{operationsAvailable ? summary.openTicketCount : "—"}</b><em>통합 문의함</em></button>
-          <button onClick={() => onNavigate("registration-activity")}><span className="task-tone error" /><small>재시도 오류</small><b>{operationsAvailable ? summary.registrationErrorCount : "—"}</b><em>권한 대기 {summary.registrationBlockedCount}건</em></button>
+          <button onClick={() => onNavigate("registration-activity", "failed")}><span className="task-tone error" /><small>재시도 오류</small><b>{operationsAvailable ? summary.registrationErrorCount : "—"}</b><em>권한 대기 {summary.registrationBlockedCount}건</em></button>
         </div>
         <aside className="briefing-settlement"><span>실제 연결 확인</span><strong>{operationsAvailable ? `${summary.activeCredentialCount} / ${enabledSalesChannelCount} 진단 통과` : "확인 중"}</strong><small>운영 키 {summary.registeredCredentialCount} / {enabledSalesChannelCount} · 미등록·미검증 채널을 전체 수에서 숨기지 않습니다.</small><button onClick={() => onNavigate("connections")}>채널 연결 관리<ChevronRight size={14} /></button></aside>
       </section>
@@ -669,10 +670,16 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
         </article>
 
         <article className="panel automation-status">
-          <div className="panel-heading"><div><span className="panel-kicker">오늘 자동 등록 작업</span><h3>상품 등록 현황</h3></div><button className="ghost-button" onClick={() => onNavigate("registration-activity")}>전체 보기<ChevronRight size={15} /></button></div>
+          <div className="panel-heading"><div><span className="panel-kicker">오늘 자동 등록 작업</span><h3>상품 등록 현황</h3></div><button className="ghost-button" onClick={() => onNavigate("registration-activity", "all")}>전체 보기<ChevronRight size={15} /></button></div>
           <div className="pipeline-summary"><div><strong>{totalListings}</strong><span>실제 등록 처리</span></div><i /><div><strong>{successRate.toFixed(1)}%</strong><span>등록 성공률</span></div></div>
           <div className="pipeline-list">
-            {[{ label: "AI 분석 중", value: livePipeline.aiRunning, tone: "violet", icon: WandSparkles }, { label: "채널 등록 대기", value: livePipeline.listingQueued, tone: "blue", icon: Upload }, { label: "등록 완료", value: livePipeline.listingPublished, tone: "green", icon: CheckCircle2 }, { label: "재시도 가능", value: livePipeline.listingFailed, tone: "red", icon: AlertCircle }, { label: "외부 권한 대기", value: livePipeline.listingBlocked, tone: "orange", icon: ShieldCheck }].map((item) => <div className="interactive" role="button" tabIndex={0} onClick={() => onNavigate("registration-activity")} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onNavigate("registration-activity"); }} key={item.label}><span className={`pipeline-icon ${item.tone}`}><item.icon size={16} /></span><span>{item.label}</span><strong>{item.value}<small>건</small></strong></div>)}
+            {[
+              { label: "AI 분석 중", value: livePipeline.aiRunning, tone: "violet", icon: WandSparkles, status: "active" },
+              { label: "채널 등록 대기", value: livePipeline.listingQueued, tone: "blue", icon: Upload, status: "active" },
+              { label: "등록 완료", value: livePipeline.listingPublished, tone: "green", icon: CheckCircle2, status: "completed" },
+              { label: "재시도 가능", value: livePipeline.listingFailed, tone: "red", icon: AlertCircle, status: "failed" },
+              { label: "외부 권한 대기", value: livePipeline.listingBlocked, tone: "orange", icon: ShieldCheck, status: "blocked" },
+            ].map((item) => <div className="interactive" role="button" tabIndex={0} onClick={() => onNavigate("registration-activity", item.status as RegistrationActivityFilter)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onNavigate("registration-activity", item.status as RegistrationActivityFilter); }} key={item.label}><span className={`pipeline-icon ${item.tone}`}><item.icon size={16} /></span><span>{item.label}</span><strong>{item.value}<small>건</small></strong></div>)}
           </div>
         </article>
       </section>
@@ -682,7 +689,7 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
           <div className="panel-heading"><div><span className="panel-kicker">운영 참고·조치</span><h3>재고·등록·CS 전체 현황</h3></div><span className="count-chip">{summary.lowStockCount + summary.registrationErrorCount + summary.registrationBlockedCount + summary.openTicketCount}</span></div>
           <div className="alert-list">
             <button onClick={() => onNavigate("products")}><span className="alert-icon danger"><Box size={16} /></span><span><b>재고주의 상품 {summary.lowStockCount}건</b><small>실재고와 재주문 기준으로 집계했습니다.</small></span><em>상품 보기<ChevronRight size={14} /></em></button>
-            <button onClick={() => onNavigate("registration-activity")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>채널 등록 실패 {summary.registrationErrorCount}건</b><small>카테고리·필수 속성·API 응답을 확인하세요.</small></span><em>오류 보기<ChevronRight size={14} /></em></button>
+            <button onClick={() => onNavigate("registration-activity", "failed")}><span className="alert-icon warning"><AlertCircle size={16} /></span><span><b>등록 재시도 {summary.registrationErrorCount}건</b><small>AI 분석·카테고리·필수 속성·API 응답을 확인하세요.</small></span><em>오류 보기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("remediation")}><span className="alert-icon warning"><ShieldCheck size={16} /></span><span><b>외부 판매 권한 대기 {summary.registrationBlockedCount}건</b><small>상품수정이 필요한 항목만 한 건씩 바로 처리합니다.</small></span><em>처리하기<ChevronRight size={14} /></em></button>
             <button onClick={() => onNavigate("cs")}><span className="alert-icon blue"><MessageCircleMore size={16} /></span><span><b>미처리 CS {summary.openTicketCount}건</b><small>각 채널에서 동기화된 실제 문의입니다.</small></span><em>답변하기<ChevronRight size={14} /></em></button>
           </div>
@@ -1847,11 +1854,13 @@ function formatRegistrationDuration(seconds: number) {
   return `${hours}시간 ${minutes % 60}분`;
 }
 
-function RegistrationActivityPage({ activities, activityState, displayProducts, loading, onRefresh, onOpenProduct, onRetryProduct, onRecoverAnalysis, onNewProduct, onExternalActions }: {
+function RegistrationActivityPage({ activities, activityState, displayProducts, loading, filter, onFilterChange, onRefresh, onOpenProduct, onRetryProduct, onRecoverAnalysis, onNewProduct, onExternalActions }: {
   activities: OperationsSnapshot["registrationActivities"];
   activityState: NonNullable<OperationsSnapshot["registrationActivityState"]>;
   displayProducts: DisplayProduct[];
   loading: boolean;
+  filter: RegistrationActivityFilter;
+  onFilterChange: (filter: RegistrationActivityFilter) => void;
   onRefresh: () => Promise<void>;
   onOpenProduct: (product: DisplayProduct) => void;
   onRetryProduct: (product: DisplayProduct) => void;
@@ -1859,7 +1868,6 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
   onNewProduct: () => void;
   onExternalActions: () => void;
 }) {
-  const [filter, setFilter] = useState<RegistrationActivityFilter>("all");
   const [refreshing, setRefreshing] = useState(false);
   const [recoveringActivityId, setRecoveringActivityId] = useState("");
   const productMap = useMemo(() => new Map(displayProducts.map((product) => [product.sourceId, product])), [displayProducts]);
@@ -1868,7 +1876,8 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
     active: activities.filter((item) => isRegistrationActivityRunning(item.status)).length,
     ready: activities.filter((item) => item.status === "ready").length,
     completed: activities.filter((item) => item.status === "completed").length,
-    attention: activities.filter((item) => ["failed", "blocked"].includes(item.status)).length,
+    failed: activities.filter((item) => item.status === "failed").length,
+    blocked: activities.filter((item) => item.status === "blocked").length,
   };
 
   const refresh = async () => {
@@ -1894,8 +1903,9 @@ function RegistrationActivityPage({ activities, activityState, displayProducts, 
         ["active", "현재 처리 중", counts.active],
         ["ready", "등록 준비", counts.ready],
         ["completed", "완료", counts.completed],
-        ["attention", "거절 · 확인 필요", counts.attention],
-      ] as const).map(([value, label, count]) => <button type="button" className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}><span>{label}</span><b>{count}</b></button>)}
+        ["failed", "재시도 필요", counts.failed],
+        ["blocked", "외부 권한 대기", counts.blocked],
+      ] as const).map(([value, label, count]) => <button type="button" className={filter === value ? "active" : ""} onClick={() => onFilterChange(value)} key={value}><span>{label}</span><b>{count}</b></button>)}
     </section>
     {activityState === "unavailable" ? <section className="panel registration-empty" role="alert"><AlertCircle size={28} /><b>등록 진행 이력을 불러오지 못했습니다.</b><small>다른 운영 데이터와 기존 알림 기준은 유지했습니다. 잠시 후 다시 확인하거나 직접 재시도해 주세요.</small><button type="button" className="credential-secondary" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{refreshing ? "다시 확인 중" : "등록 이력 다시 확인"}</button></section>
       : loading && activities.length === 0 ? <section className="panel registration-empty"><LoaderCircle className="spin" size={28} /><b>등록 이력을 불러오는 중입니다.</b></section>
@@ -3107,6 +3117,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
 
 function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>; userEmail: string }) {
   const [view, setView] = useState<View>("overview");
+  const [registrationActivityFilter, setRegistrationActivityFilter] = useState<RegistrationActivityFilter>("all");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [dismissedNotifications, setDismissedNotifications] = useState<Set<string>>(new Set());
@@ -3467,17 +3478,41 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     }
   }, [authenticatedOperationsFetch, notify, reloadOperations]);
 
-  const navigate = useCallback((next: View) => {
+  const navigate = useCallback((next: View, requestedRegistrationStatus?: RegistrationActivityFilter) => {
+    const nextRegistrationStatus = next === "registration-activity"
+      ? registrationActivityFilterFromValue(requestedRegistrationStatus)
+      : "all";
     setTargetedSearch(null);
     if (next === "publishing") {
       setPublishingProduct(null);
       setPublishingSession((current) => current + 1);
     }
     setView(next);
+    setRegistrationActivityFilter(nextRegistrationStatus);
     window.sessionStorage.setItem("sellerpilot:last-view:v1", next);
-    window.history.pushState({ view: next }, "", `${window.location.pathname}?view=${next}`);
+    const params = new URLSearchParams({ view: next });
+    const historyState: Record<string, unknown> = { view: next };
+    if (next === "registration-activity" && nextRegistrationStatus !== "all") {
+      params.set("status", nextRegistrationStatus);
+      historyState.status = nextRegistrationStatus;
+    }
+    window.history.pushState(historyState, "", `${window.location.pathname}?${params.toString()}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const changeRegistrationActivityFilter = useCallback((requestedStatus: RegistrationActivityFilter) => {
+    const nextStatus = registrationActivityFilterFromValue(requestedStatus);
+    setRegistrationActivityFilter(nextStatus);
+    const params = new URLSearchParams(window.location.search);
+    params.set("view", "registration-activity");
+    if (nextStatus === "all") params.delete("status");
+    else params.set("status", nextStatus);
+    const currentState = isRecord(window.history.state) ? window.history.state : {};
+    const nextState: Record<string, unknown> = { ...currentState, view: "registration-activity" };
+    delete nextState.status;
+    if (nextStatus !== "all") nextState.status = nextStatus;
+    window.history.replaceState(nextState, "", `${window.location.pathname}?${params.toString()}`);
   }, []);
 
   const recoverFailedProductAnalysis = useCallback(async (activity: RegistrationActivity) => {
@@ -3563,14 +3598,25 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       : initialParams.get("view") ?? window.sessionStorage.getItem("sellerpilot:last-view:v1") ?? "overview";
     const initialView = initialCandidate in pageMeta ? initialCandidate as View : "overview";
     const initialProductId = typeof initialState.productId === "string" ? initialState.productId : initialParams.get("productId");
+    const initialRegistrationStatus = initialView === "registration-activity"
+      ? registrationActivityFilterFromValue(initialParams.get("status") ?? (typeof initialState.status === "string" ? initialState.status : null))
+      : "all";
     if (!initialParams.has("view")) initialParams.set("view", initialView);
+    if (initialView !== "registration-activity" || initialRegistrationStatus === "all") initialParams.delete("status");
+    else initialParams.set("status", initialRegistrationStatus);
     window.sessionStorage.setItem("sellerpilot:last-view:v1", initialView);
+    const nextInitialState: Record<string, unknown> = { ...initialState, view: initialView, ...(initialProductId ? { productId: initialProductId } : {}) };
+    delete nextInitialState.status;
+    if (initialRegistrationStatus !== "all") nextInitialState.status = initialRegistrationStatus;
     window.history.replaceState(
-      { ...initialState, view: initialView, ...(initialProductId ? { productId: initialProductId } : {}) },
+      nextInitialState,
       "",
       `${window.location.pathname}?${initialParams.toString()}`,
     );
-    const initialViewTimer = window.setTimeout(() => setView(initialView), 0);
+    const initialViewTimer = window.setTimeout(() => {
+      setView(initialView);
+      setRegistrationActivityFilter(initialRegistrationStatus);
+    }, 0);
     const onPopState = (event: PopStateEvent) => {
       const state = isRecord(event.state) ? event.state : {};
       const params = new URLSearchParams(window.location.search);
@@ -3579,6 +3625,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
         : params.get("view") ?? window.sessionStorage.getItem("sellerpilot:last-view:v1") ?? "overview";
       const nextView = candidate in pageMeta ? candidate as View : "overview";
       const productId = typeof state.productId === "string" ? state.productId : params.get("productId");
+      const nextRegistrationStatus = nextView === "registration-activity"
+        ? registrationActivityFilterFromValue(params.get("status") ?? (typeof state.status === "string" ? state.status : null))
+        : "all";
       if (nextView === "product-detail" && productId) {
         const product = displayProductsRef.current.find((item) => item.sourceId === productId);
         if (product) setSelectedProduct(product);
@@ -3589,6 +3638,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       }
       window.sessionStorage.setItem("sellerpilot:last-view:v1", nextView);
       setView(nextView);
+      setRegistrationActivityFilter(nextRegistrationStatus);
       setSidebarOpen(false);
       window.scrollTo({ top: 0, behavior: "auto" });
     };
@@ -3606,8 +3656,14 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     if (!requestedView || !(requestedView in pageMeta)) return;
     const orderId = params.get("orderId");
     const productId = params.get("productId");
+    const requestedRegistrationStatus = requestedView === "registration-activity"
+      ? registrationActivityFilterFromValue(params.get("status"))
+      : "all";
+    if (requestedView !== "registration-activity" || requestedRegistrationStatus === "all") params.delete("status");
+    else params.set("status", requestedRegistrationStatus);
     const timer = window.setTimeout(() => {
       setView(requestedView);
+      setRegistrationActivityFilter(requestedRegistrationStatus);
       window.sessionStorage.setItem("sellerpilot:last-view:v1", requestedView);
       if (requestedView === "orders" && orderId) {
         const order = operations.data?.orders.find((item) => item.id === orderId);
@@ -3622,7 +3678,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
         if (product) setPublishingProduct({ id: product.sourceId, name: product.name });
       }
       window.history.replaceState(
-        { view: requestedView, ...(productId ? { productId } : {}) },
+        { view: requestedView, ...(productId ? { productId } : {}), ...(requestedRegistrationStatus !== "all" ? { status: requestedRegistrationStatus } : {}) },
         "",
         `${window.location.pathname}?${params.toString()}`,
       );
@@ -3640,10 +3696,10 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   }, []);
 
   const notificationItems = useMemo(() => [
-    { key: `low-stock:${operationSummary?.lowStockCount ?? 0}`, title: `재고주의 상품 ${operationSummary?.lowStockCount ?? 0}건`, detail: "운영 원장 실재고 기준", view: "products" as View, tone: "danger", icon: Box },
-    { key: `listing-errors:${operationSummary?.registrationErrorCount ?? 0}`, title: `등록 재시도 ${operationSummary?.registrationErrorCount ?? 0}건`, detail: "상품별 채널 오류와 소요시간을 확인하세요.", view: "registration-activity" as View, tone: "warning", icon: AlertCircle },
-    { key: `external-actions:${operationSummary?.registrationBlockedCount ?? 0}`, title: `외부 권한·상품수정 ${operationSummary?.registrationBlockedCount ?? 0}건`, detail: "판매자센터에서 한 건씩 보완", view: "remediation" as View, tone: "warning", icon: ShieldCheck },
-    { key: `open-cs:${operationSummary?.openTicketCount ?? 0}`, title: `미처리 CS ${operationSummary?.openTicketCount ?? 0}건`, detail: "답변 대기와 처리 중 문의", view: "cs" as View, tone: "blue", icon: MessageCircleMore },
+    { key: `low-stock:${operationSummary?.lowStockCount ?? 0}`, title: `재고주의 상품 ${operationSummary?.lowStockCount ?? 0}건`, detail: "운영 원장 실재고 기준", view: "products" as View, registrationStatus: undefined, tone: "danger", icon: Box },
+    { key: `listing-errors:${operationSummary?.registrationErrorCount ?? 0}`, title: `등록 재시도 ${operationSummary?.registrationErrorCount ?? 0}건`, detail: "AI 분석과 상품별 채널 오류·소요시간을 확인하세요.", view: "registration-activity" as View, registrationStatus: "failed" as RegistrationActivityFilter, tone: "warning", icon: AlertCircle },
+    { key: `external-actions:${operationSummary?.registrationBlockedCount ?? 0}`, title: `외부 권한·상품수정 ${operationSummary?.registrationBlockedCount ?? 0}건`, detail: "판매자센터에서 한 건씩 보완", view: "remediation" as View, registrationStatus: undefined, tone: "warning", icon: ShieldCheck },
+    { key: `open-cs:${operationSummary?.openTicketCount ?? 0}`, title: `미처리 CS ${operationSummary?.openTicketCount ?? 0}건`, detail: "답변 대기와 처리 중 문의", view: "cs" as View, registrationStatus: undefined, tone: "blue", icon: MessageCircleMore },
   ].filter((item) => !dismissedNotifications.has(item.key) && !item.title.includes(" 0건")), [dismissedNotifications, operationSummary]);
 
   const selectUnifiedSearchResult = useCallback((result: UnifiedSearchResult) => {
@@ -3663,7 +3719,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
-    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} displayProducts={displayProducts} loading={operations.state === "loading"} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={recoverFailedProductAnalysis} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
+    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={recoverFailedProductAnalysis} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
     if (view === "product-detail") return activeSelectedProduct
       ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} onBack={() => window.history.back()} onEditChannels={() => retryProductPublishing(activeSelectedProduct)} onOpenActivity={() => navigate("registration-activity")} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
       : <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>{operations.state === "loading" ? "상품 상세정보를 불러오는 중입니다." : "상품을 찾지 못했습니다."}</b><small>{operations.state === "loading" ? "운영 상품 원장을 확인하고 있습니다." : "상품 목록에서 다시 선택해 주세요."}</small>{operations.state !== "loading" ? <button type="button" className="ghost-button" onClick={() => navigate("products")}>상품 목록으로</button> : null}</div>;
@@ -3710,7 +3766,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
           </div>
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
-          <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={operations.message}><Activity size={13} /><b>{operations.state === "database" ? "실데이터" : operations.state === "loading" ? "연결 확인" : "연결 오류"}</b><small>{operations.state === "database" ? "Supabase 운영 원장" : operations.message}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div className="notification-popover"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => setNotificationsOpen(false)}><X size={14} /></button></span></div>{notificationItems.map((item) => <div className="notification-item" role="button" tabIndex={0} key={item.key} onClick={() => { navigate(item.view); setNotificationsOpen(false); }} onKeyDown={(event) => { if (event.key === "Enter") { navigate(item.view); setNotificationsOpen(false); } }}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span><button type="button" aria-label={`${item.title} 알림 닫기`} onClick={(event) => { event.stopPropagation(); setDismissedNotifications((current) => new Set([...current, item.key])); }}><X size={13} /></button></div>)}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
+          <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={operations.message}><Activity size={13} /><b>{operations.state === "database" ? "실데이터" : operations.state === "loading" ? "연결 확인" : "연결 오류"}</b><small>{operations.state === "database" ? "Supabase 운영 원장" : operations.message}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((current) => !current)}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div className="notification-popover"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => setNotificationsOpen(false)}><X size={14} /></button></span></div>{notificationItems.map((item) => <div className="notification-item" role="button" tabIndex={0} key={item.key} onClick={() => { navigate(item.view, item.registrationStatus); setNotificationsOpen(false); }} onKeyDown={(event) => { if (event.key === "Enter") { navigate(item.view, item.registrationStatus); setNotificationsOpen(false); } }}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span><button type="button" aria-label={`${item.title} 알림 닫기`} onClick={(event) => { event.stopPropagation(); setDismissedNotifications((current) => new Set([...current, item.key])); }}><X size={13} /></button></div>)}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
           </header>
         </div>
         <div className="app-content">{content}</div>

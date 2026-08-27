@@ -177,7 +177,9 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(mobileStyles, /\.channel-list \.channel-row \.channel-metric:nth-of-type/);
   assert.match(page, /channel-metric channel-revenue/);
   assert.match(page, /channel-metric channel-orders/);
-  assert.match(page, /\?view=\$\{next\}/);
+  assert.match(page, /const params = new URLSearchParams\(\{ view: next \}\)/);
+  assert.match(page, /if \(next === "registration-activity" && nextRegistrationStatus !== "all"\) \{[\s\S]{0,180}params\.set\("status", nextRegistrationStatus\)/);
+  assert.match(page, /window\.history\.pushState\(historyState, "", `\$\{window\.location\.pathname\}\?\$\{params\.toString\(\)\}`\)/);
   assert.match(page, /사진 촬영/);
   assert.match(page, /앨범에서 선택/);
   assert.match(page, /상품 사실 설명/);
