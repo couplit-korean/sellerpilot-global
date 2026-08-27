@@ -291,6 +291,53 @@ test("marketplace web provider is opt-in and reports a missing Brave key as unav
   }
 });
 
+test("provider credential discovery isolates a Vault exception from an independent provider", async () => {
+  const original = process.env.BRAVE_SEARCH_API_KEY;
+  process.env.BRAVE_SEARCH_API_KEY = "B".repeat(32);
+  const serviceClient = {
+    rpc: async () => { throw new Error("synthetic Vault timeout"); },
+  };
+  try {
+    const registry = await competitorProviderRegistry(serviceClient as never, {
+      enableMarketplaceWeb: true,
+      searchElevenstViaGateway: async () => [],
+    });
+    assert.deepEqual(registry.configured.map((provider) => provider.id), ["brave_marketplace_web"]);
+    assert.deepEqual(registry.unavailable.map((provider) => [provider.provider, provider.status]), [
+      ["naver_shopping", "failed"],
+      ["elevenst_product_search", "failed"],
+      ["ebay_browse", "failed"],
+    ]);
+  } finally {
+    if (original === undefined) delete process.env.BRAVE_SEARCH_API_KEY;
+    else process.env.BRAVE_SEARCH_API_KEY = original;
+  }
+});
+
+test("provider credential discovery reports an RPC error separately from a missing credential", async () => {
+  const original = process.env.BRAVE_SEARCH_API_KEY;
+  process.env.BRAVE_SEARCH_API_KEY = "B".repeat(32);
+  const serviceClient = {
+    rpc: async (_functionName: string, parameters: { p_channel: string }) => parameters.p_channel === "elevenst"
+      ? { data: null, error: { code: "57014" } }
+      : { data: null, error: null },
+  };
+  try {
+    const registry = await competitorProviderRegistry(serviceClient as never, {
+      enableMarketplaceWeb: true,
+      searchElevenstViaGateway: async () => [],
+    });
+    assert.deepEqual(registry.unavailable.map((provider) => [provider.provider, provider.status]), [
+      ["naver_shopping", "unavailable"],
+      ["elevenst_product_search", "failed"],
+      ["ebay_browse", "unavailable"],
+    ]);
+  } finally {
+    if (original === undefined) delete process.env.BRAVE_SEARCH_API_KEY;
+    else process.env.BRAVE_SEARCH_API_KEY = original;
+  }
+});
+
 test("provider calls receive the same bounded query contract as the gateway enqueue RPC", async () => {
   let receivedPrimary = "";
   let receivedContext: unknown;

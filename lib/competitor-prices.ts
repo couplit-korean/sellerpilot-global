@@ -861,8 +861,9 @@ async function activeCredential(serviceClient: SupabaseClient, channel: string):
     p_channel: channel,
     p_environment: "production",
   });
+  if (error) throw new Error("COMPETITOR_CREDENTIAL_LOOKUP_FAILED");
   const active = data as ActiveCredential | null;
-  if (error || !active?.secret_payload || typeof active.secret_payload !== "object" || Array.isArray(active.secret_payload)) return null;
+  if (!active?.secret_payload || typeof active.secret_payload !== "object" || Array.isArray(active.secret_payload)) return null;
   return { credentialId: typeof active.credential_id === "string" ? active.credential_id : "", secret: active.secret_payload as CredentialSecret };
 }
 
@@ -1273,12 +1274,22 @@ export async function competitorProviderRegistry(
   serviceClient: SupabaseClient,
   options: CompetitorProviderRegistryOptions,
 ): Promise<CompetitorProviderRegistry> {
-  const [naver, elevenst, ebay] = await Promise.all([naverSearchCredentials(serviceClient), elevenstSearchCredentials(serviceClient), ebayBrowseCredentials(serviceClient)]);
+  // Credential discovery is intentionally isolated per provider. A transient
+  // Vault/RPC failure for one marketplace must not suppress an independently
+  // configured provider (for example Brave via environment variables).
+  const [naverResult, elevenstResult, ebayResult] = await Promise.allSettled([
+    naverSearchCredentials(serviceClient),
+    elevenstSearchCredentials(serviceClient),
+    ebayBrowseCredentials(serviceClient),
+  ]);
+  const naver = naverResult.status === "fulfilled" ? naverResult.value : null;
+  const elevenst = elevenstResult.status === "fulfilled" ? elevenstResult.value : null;
+  const ebay = ebayResult.status === "fulfilled" ? ebayResult.value : null;
   const marketplaceWeb = options.enableMarketplaceWeb ? braveMarketplaceWebCredentials() : null;
   const configured: SearchProvider[] = [];
   const unavailable: CompetitorProviderStatus[] = [];
   if (naver) configured.push({ id: "naver_shopping", marketplaces: providerMarketplaces.naver_shopping, search: (primary, aliases, display) => searchNaverShoppingVariants(primary, aliases, naver, display) });
-  else unavailable.push({ provider: "naver_shopping", status: "unavailable", count: 0, marketplaces: providerMarketplaces.naver_shopping });
+  else unavailable.push({ provider: "naver_shopping", status: naverResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.naver_shopping });
   if (elevenst) configured.push({
     id: "elevenst_product_search",
     marketplaces: providerMarketplaces.elevenst_product_search,
@@ -1295,9 +1306,9 @@ export async function competitorProviderRegistry(
         })
       : searchElevenstProductVariants(primary, aliases, elevenst, display),
   });
-  else unavailable.push({ provider: "elevenst_product_search", status: "unavailable", count: 0, marketplaces: providerMarketplaces.elevenst_product_search });
+  else unavailable.push({ provider: "elevenst_product_search", status: elevenstResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.elevenst_product_search });
   if (ebay) configured.push({ id: "ebay_browse", marketplaces: providerMarketplaces.ebay_browse, search: (primary, aliases, display) => searchEbayBrowseVariants(primary, aliases, ebay, display) });
-  else unavailable.push({ provider: "ebay_browse", status: "unavailable", count: 0, marketplaces: providerMarketplaces.ebay_browse });
+  else unavailable.push({ provider: "ebay_browse", status: ebayResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.ebay_browse });
   if (options.enableMarketplaceWeb) {
     if (marketplaceWeb) configured.push({
       id: "brave_marketplace_web",

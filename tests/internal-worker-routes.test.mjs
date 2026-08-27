@@ -5,6 +5,7 @@ import test from "node:test";
 const routeUrls = {
   channelSync: new URL("../app/api/internal/channel-sync/route.ts", import.meta.url),
   competitorPrices: new URL("../app/api/internal/competitor-prices/route.ts", import.meta.url),
+  competitorRefreshRuntime: new URL("../lib/competitor-refresh-runtime.ts", import.meta.url),
   kakaoNotifications: new URL("../app/api/internal/kakao-notifications/route.ts", import.meta.url),
   maintenance: new URL("../app/api/internal/maintenance/route.ts", import.meta.url),
   kakaoLibrary: new URL("../lib/kakao.ts", import.meta.url),
@@ -60,7 +61,10 @@ test("periodic channel sync preserves idempotent partial results and surfaces da
 });
 
 test("competitor scheduler bounds one durable claim and preserves pending gateway work", async () => {
-  const source = await readFile(routeUrls.competitorPrices, "utf8");
+  const [source, refreshRuntime] = await Promise.all([
+    readFile(routeUrls.competitorPrices, "utf8"),
+    readFile(routeUrls.competitorRefreshRuntime, "utf8"),
+  ]);
   assertBoundedSupabaseAndSeparatedAuth(source);
 
   assert.match(source, /const COMPETITOR_RPC_TIMEOUT_MS = 5_000/);
@@ -71,14 +75,16 @@ test("competitor scheduler bounds one durable claim and preserves pending gatewa
   assert.match(source, /p_limit: COMPETITOR_CLAIM_BATCH_SIZE/);
   assert.doesNotMatch(source, /p_limit:\s*(?:[2-9]|[1-9][0-9]+)/);
   assert.match(source, /sellerpilot_service_complete_competitor_price_refresh/);
-  assert.match(source, /p_providers: searched\.providers/);
+  assert.match(source, /p_providers: providers/);
   assert.match(source, /sellerpilot_service_release_competitor_price_refresh/);
   assert.doesNotMatch(source, /sellerpilot_service_due_competitor_products/);
   assert.doesNotMatch(source, /sellerpilot_service_record_competitor_prices/);
   assert.match(source, /competitor due-products RPC failed[\s\S]{0,240}status: 503/);
   assert.match(source, /if \(!Array\.isArray\(dueData\)\)[\s\S]{0,260}status: 503/);
-  assert.match(source, /saveError \|\| !Number\.isFinite\(savedCount\) \|\| savedCount < 0/);
-  assert.match(source, /if \(searched\.pending\)[\s\S]{0,260}pending: true/);
+  assert.match(source, /if \(saveError\) throw saveError/);
+  assert.match(refreshRuntime, /!Number\.isFinite\(savedCount\) \|\| savedCount < 0/);
+  assert.match(refreshRuntime, /if \(searched\.pending\)[\s\S]{0,260}pending: true/);
+  assert.match(refreshRuntime, /Completion may have committed before a response was lost/);
   assert.match(source, /status: infrastructureFailures > 0 \? 503 : pending \? 202 : results\.some\(\(item\) => !item\.ok\) \? 207 : 200/);
 });
 

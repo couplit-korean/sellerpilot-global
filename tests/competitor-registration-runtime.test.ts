@@ -193,18 +193,19 @@ test("channel transitions notify while the aggregate remains publishing without 
 });
 
 test("the scheduler sends provider-level outcomes to the snapshot completion RPC", async () => {
-  const source = await readFile(
-    new URL("../app/api/internal/competitor-prices/route.ts", import.meta.url),
-    "utf8",
-  );
+  const [source, runtime] = await Promise.all([
+    readFile(new URL("../app/api/internal/competitor-prices/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/competitor-refresh-runtime.ts", import.meta.url), "utf8"),
+  ]);
   const completion = source.slice(
     source.indexOf("sellerpilot_service_complete_competitor_price_refresh"),
     source.indexOf("const savedCount", source.indexOf("sellerpilot_service_complete_competitor_price_refresh")),
   );
   assert.match(source, /COMPETITOR_MATCHER_VERSION/);
   assert.match(source, /matcherVersion: COMPETITOR_MATCHER_VERSION/);
+  assert.match(runtime, /searched\.items\.map\(\(item\) => \(\{ \.\.\.item, matcherVersion \}\)\)/);
   assert.match(completion, /p_items: items/);
-  assert.match(completion, /p_providers: searched\.providers/);
+  assert.match(completion, /p_providers: providers/);
 });
 
 test("the matcher-version forward migration hides legacy automatic observations without deleting manual evidence", async () => {
