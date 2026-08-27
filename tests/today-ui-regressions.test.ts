@@ -275,6 +275,8 @@ test("toast queue preserves separate events for two seconds instead of replacing
   assert.equal(toastToneForMessage("상품 C: 채널 등록 준비"), "success");
   assert.equal(toastToneForMessage("3개 중 3개 등록 완료"), "success");
   assert.equal(toastToneForMessage("상품 처리 중단"), "warning");
+  assert.equal(toastToneForMessage("카테고리 힌트를 입력해 주세요."), "warning");
+  assert.equal(toastToneForMessage("대표사진 1장을 먼저 등록해 주세요."), "warning");
 });
 
 test("late product detail hydration never replaces an open or dirty edit draft", () => {
