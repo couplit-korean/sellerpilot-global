@@ -345,8 +345,11 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(guidance, /FULL SIX-AXIS REPLACEMENT GATE/);
   assert.match(guidance, /MANDATORY SCREEN-SPACE TOPOLOGY/);
   assert.match(guidance, /FORBIDDEN CAMERA\/TOPOLOGY/);
-  assert.match(guidance, /dominant blank half-frame/);
-  assert.match(guidance, /narrow functional-room reveal without two fixed cues/);
+  assert.match(guidance, /blank architecture extending materially outside the reserved rectangle/);
+  assert.match(guidance, /narrow functional-room reveal without two fixed cues in separate outer bands/);
+  assert.match(guidance, /OUTER-BAND RECONSTRUCTION GATE/);
+  assert.match(guidance, /Do not classify or repair blankness confined to the immutable quiet rectangle as a dominant wall or repeated topology/);
+  assert.match(guidance, /at least two non-collinear outer bands/);
   assert.doesNotMatch(guidance, /blacklisted role's product zone|product zone moves|move the product zone/i);
   assert.doesNotMatch(guidance, /contact plane|contact geometry/i);
   assert.doesNotMatch(guidance, /bathroom vanity|bedroom nightstand/);
@@ -389,7 +392,7 @@ test("audit-directed retries explicitly repair reserved-zone, assigned-scene and
   assert.match(guidance, /exact assigned functional room/);
   assert.match(guidance, /multiple fixed architectural convergence lines/);
   assert.match(guidance, /mandatory slot-specific fixed cue.*outside the entire reserved product rectangle/);
-  assert.match(guidance, /rebuild the complete architectural floor-plan/);
+  assert.match(guidance, /rebuild the complete outer-band architectural floor-plan/);
   assert.match(guidance, /different source side, time treatment, shadow direction and shadow length/);
   assert.match(guidance, /different integrated material family, texture scale and grain direction/);
   assert.match(guidance, /different architectural side, azimuth, perspective convergence and focal-depth relationship/);

@@ -17,7 +17,7 @@ import {
 } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r16-zone-feasible-retry-16";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r17-outer-band-audited-retry-16";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -243,6 +243,8 @@ export function buildAssetImagePrompt(
     const contactLine = Number((placement.top + placement.height).toFixed(4));
     const contactBandStart = Number(Math.max(0, contactLine - IDENTITY_BACKGROUND_CONTACT_TOLERANCE).toFixed(4));
     const contactBandEnd = Number(Math.min(1, contactLine + IDENTITY_BACKGROUND_CONTACT_TOLERANCE).toFixed(4));
+    const reservedRight = Number((placement.left + placement.width).toFixed(4));
+    const reservedBottom = Number((placement.top + placement.height).toFixed(4));
     const contactMode = contactModeOverride ?? resolveIdentityBackgroundContactMode(result, settingShot);
     const contactInstruction = contactMode === "surface-supported"
       ? `Its bottom edge at normalized y=${contactLine} is the authoritative product contact line: an integrated horizontal support plane must visibly cross the narrow y=${contactBandStart}..${contactBandEnd} tolerance band and continue below it, with clear backing architecture above it. Never leave the complete contact band as an uninterrupted wall, vertical panel or open air.`
@@ -266,6 +268,7 @@ export function buildAssetImagePrompt(
       `Mandatory empty-environment assignment: ${safeEnvironmentAssignment}. Make it readable with fixed architecture, built-in surfaces, natural light direction and spatial depth. Slot-specific non-merchandise environmental cue (${safeContract?.prop.key ?? "fixed-architectural-detail"}): ${safeContract?.prop.description ?? "one fixed architectural detail"}. Deliberately omit every retail product, small saleable prop, serving item, loose ingredient, use-result object and container from the product setting plan; those cannot be trusted before source-pixel compositing.`,
       `Hard series visual split: visibly auditable time-light ${safeContract?.moment.key ?? "distinct-visible-time-light"} (${safeContract?.moment.description ?? "a clearly distinct time-of-day lighting pattern"}); palette-family ${safeContract?.palette.key ?? "distinct-category-palette"} (${safeContract?.palette.description ?? "a clearly distinct palette"}); spatial-depth ${safeContract?.spatialDepth.key ?? "distinct-spatial-depth"} (${safeContract?.spatialDepth.description ?? "a clearly distinct depth layout"}). A beige/cream generic room or shelf repeated across slots fails even if the fixture geometry changes.`,
       `IMMUTABLE PRODUCT-ZONE CONTRACT: reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height} as a visually quiet product-placement zone. Never move, resize, crop or reinterpret this exact rectangle during a retry. Keep the mandatory slot-specific fixed cue, fixtures, dominant shadows and busy or high-contrast room-recognition junctions outside its complete interior. A broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone only when it remains subordinate to the later source-pixel product composite and cannot read as merchandise or a dominant obstruction; the independent pixel-density audit remains fail-closed. ${contactInstruction}`,
+      `OUTER-BAND ARCHITECTURE GATE: the uncovered bands are left x=0..${placement.left}, right x=${reservedRight}..1, top y=0..${placement.top}, bottom y=${reservedBottom}..1. The intentional quiet rectangle may occupy most of the pre-composite frame and must not be treated as a reason to squeeze the room into one narrow reveal. Make the assigned room, every hard room-recognition structure, the mandatory slot-specific cue and readable foreground/middle/rear convergence visible outside the rectangle across at least two non-collinear bands: one left/right side band and one top/bottom band. A blank wall extending materially outside the rectangle, or all functional evidence confined to one ambiguous side sliver, is a generation failure.`,
       "HARD IDENTITY FIREWALL: generate only an empty background plate. No source product, staged saleable good, package, pouch, carton, bottle, can, jar, tube, label, logo, barcode, certification mark, printed text, small movable consumer prop, loose unit, ingredient, serving, accessory or hand may appear anywhere. The declared fixed non-merchandise cue and other necessary fixed architectural context are allowed, but every contextual cue must be visually distinct from the other slots.",
       "The real product will be composited afterward from a verified transparent source-pixel cutout. Never anticipate, reconstruct, trace, imitate or redraw any part of it. Do not pre-render a product-shaped shadow, reflection, silhouette, footprint or imprint; the empty support plane itself must remain physically coherent.",
       `Composition must remain materially different from: ${mustDifferFrom}. ${seriesExclusion(preset.id)}`,

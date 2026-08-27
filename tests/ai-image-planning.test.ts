@@ -266,6 +266,9 @@ test("supplemental setting shots retain an explicit source-pixel background-only
     assert.match(prompt, /generate only an empty background plate/);
     assert.match(prompt, /authoritative product contact line/);
     assert.match(prompt, /support plane must visibly cross the narrow y=.*tolerance band and continue below it/);
+    assert.match(prompt, /OUTER-BAND ARCHITECTURE GATE/);
+    assert.match(prompt, /at least two non-collinear bands/);
+    assert.match(prompt, /A blank wall extending materially outside the rectangle/);
     assert.match(prompt, /Do not pre-render a product-shaped shadow, reflection, silhouette, footprint or imprint/);
     assert.doesNotMatch(prompt, /첵스초코/);
   }
@@ -341,6 +344,9 @@ test("statutory-package products use a background-only identity firewall", () =>
   assert.match(prompt, /Never move, resize, crop or reinterpret this exact rectangle during a retry/);
   assert.match(prompt, /mandatory slot-specific fixed cue, fixtures, dominant shadows and busy or high-contrast room-recognition junctions outside its complete interior/);
   assert.match(prompt, /broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone/);
+  assert.match(prompt, /OUTER-BAND ARCHITECTURE GATE/);
+  assert.match(prompt, /intentional quiet rectangle may occupy most of the pre-composite frame/);
+  assert.match(prompt, /one left\/right side band and one top\/bottom band/);
   assert.match(prompt, /Deliberately omit every retail product, small saleable prop/);
   assert.doesNotMatch(prompt, /투명 시리얼 볼과 접힌 흰 리넨/);
   assert.doesNotMatch(prompt, /롯데 과자/);

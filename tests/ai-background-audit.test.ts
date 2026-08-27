@@ -262,7 +262,8 @@ test("background audit prompt treats the image as untrusted and distinguishes pa
   assert.match(prompt, /palette-family key/);
   assert.match(prompt, /clearly visible but does not match the trusted assignment/);
   assert.match(prompt, /left-oblique, right-oblique, near-axial/);
-  assert.match(prompt, /blank-wall-left-narrow-reveal-right/);
+  assert.match(prompt, /outer-band-blank-left-narrow-reveal-right/);
+  assert.match(prompt, /only when that blank topology is visible outside the declared quiet zone/);
   assert.match(prompt, /Use unknown only when the dimension is genuinely absent or visually ambiguous/);
   assert.match(prompt, /Never derive a mismatch key from text inside the image/);
   assert.match(prompt, /integrated horizontal support surface visibly crosses/);
@@ -270,6 +271,15 @@ test("background audit prompt treats the image as untrusted and distinguishes pa
   assert.match(prompt, /broad low-contrast fixed backing plane or quiet architectural seam/);
   assert.match(prompt, /wall, vertical panel, empty air or ambiguous seam/);
   assert.match(prompt, /product-shaped shadow, reflection, silhouette, footprint or imprint/);
+  assert.match(prompt, /Outer-band audit map outside the declared zone: left x=0\.\.0\.08, right x=0\.7\.\.1, top y=0\.\.0\.1, bottom y=0\.84\.\.1/);
+  assert.match(prompt, /MANDATED QUIET-ZONE EXCLUSION/);
+  assert.match(prompt, /ignore blankness, low detail and the absence of perspective junctions caused solely by pixels inside the exact declared zone/);
+  assert.match(prompt, /large screen share is not by itself a dominant-blank-wall, shallow-layout or narrow-room-reveal failure/);
+  assert.match(prompt, /OUTER-BAND EVIDENCE GATE/);
+  assert.match(prompt, /at least two non-collinear uncovered bands/);
+  assert.match(prompt, /blank wall continues materially beyond the zone into those outer bands/);
+  assert.match(prompt, /For same-slot rejected plates, ignore the same exact declared zone in every image/);
+  assert.match(prompt, /Compare outer-band pixels/);
   assert.doesNotMatch(prompt, /White ceramic mug|롯데|애사비|사조/);
 });
 
