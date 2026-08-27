@@ -30,6 +30,7 @@ import {
   createStudioMasterOutputSchema,
   mergeStudioSegmentOutputs,
   planStudioLocalizedChunks,
+  studioMasterDetailImageRoleIssue,
 } from "../lib/studio-segment-generation.ts";
 import { assertStudioSourceFilesUnmodified, studioSourceDimensionsMatch } from "../lib/studio-source-integrity.ts";
 import {
@@ -3049,6 +3050,33 @@ async function generateSegmentedStudioResult({
     stage: "studio-master",
   });
   masterOutput = withReferenceWarnings(masterOutput, referenceWarnings);
+
+  const initialMasterImageRoleIssue = studioMasterDetailImageRoleIssue(masterOutput);
+  if (initialMasterImageRoleIssue) {
+    masterOutput = await invokeStudioSegment({
+      jobDir,
+      schema: masterSchema,
+      segmentId: "studio-master-image-role-repair",
+      prompt: buildStudioMasterRepairPrompt(
+        job,
+        referenceText,
+        competitorContext,
+        masterOutput,
+        initialMasterImageRoleIssue,
+      ),
+      imageFiles,
+      timeoutMs: studioMasterTimeoutMs,
+      jobId: job.id,
+      claimToken,
+      leaseSignal,
+      stage: "studio-master-image-role-repair",
+    });
+    masterOutput = withReferenceWarnings(masterOutput, referenceWarnings);
+    const repairedMasterImageRoleIssue = studioMasterDetailImageRoleIssue(masterOutput);
+    if (repairedMasterImageRoleIssue) {
+      throw new Error(`AI 마스터 이미지 역할 검증 실패 · ${repairedMasterImageRoleIssue}`.slice(0, 500));
+    }
+  }
 
   const invokeLocalized = (chunkIndex, { draft = null, issues = "", repairPass = 0 } = {}) => {
     if (![0, 1, 2].includes(repairPass)) throw new Error("현지화 보정 회차가 허용 범위를 벗어났습니다.");

@@ -1,4 +1,5 @@
 import { requiredLocalizedMarkets } from "./ai-cli-contract";
+import { aiDetailAssetIds } from "./ai-generated-assets";
 
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -40,6 +41,57 @@ export class StudioSegmentContractError extends Error {
 
 function isJsonObject(value: unknown): value is JsonObject {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Checks the master-only image-role invariant before localized generation.
+ * The full studio schema repeats this fence after segment merge; this early
+ * check prevents 27 localized listings from being generated from a master
+ * whose 12 detail images are already ambiguous.
+ */
+export function studioMasterDetailImageRoleIssue(masterOutput: unknown): string {
+  if (!isJsonObject(masterOutput) || !isJsonObject(masterOutput.design)
+      || !Array.isArray(masterOutput.design.sections)) {
+    return "design.sections에서 상세 이미지 역할을 확인할 수 없습니다.";
+  }
+
+  const requiredRoles = [...aiDetailAssetIds];
+  const requiredRoleSet = new Set<string>(requiredRoles);
+  const assignedRoles: string[] = [];
+  const invalidRoles: string[] = [];
+
+  masterOutput.design.sections.forEach((section, index) => {
+    if (!isJsonObject(section) || typeof section.imageAsset !== "string") {
+      invalidRoles.push(`sections.${index}`);
+      return;
+    }
+    if (section.imageAsset === "none") return;
+    if (!requiredRoleSet.has(section.imageAsset)) {
+      invalidRoles.push(section.imageAsset);
+      return;
+    }
+    assignedRoles.push(section.imageAsset);
+  });
+
+  const roleCounts = new Map(requiredRoles.map((role) => [role, 0] as const));
+  assignedRoles.forEach((role) => roleCounts.set(role, (roleCounts.get(role) ?? 0) + 1));
+  const duplicateRoles = requiredRoles.filter((role) => (roleCounts.get(role) ?? 0) > 1);
+  const missingRoles = requiredRoles.filter((role) => (roleCounts.get(role) ?? 0) === 0);
+
+  if (assignedRoles.length === requiredRoles.length
+      && duplicateRoles.length === 0
+      && missingRoles.length === 0
+      && invalidRoles.length === 0) {
+    return "";
+  }
+
+  return [
+    "design.sections의 12개 상세 이미지 역할은 각각 정확히 한 번만 배정해야 합니다.",
+    `assigned=${assignedRoles.length}/${requiredRoles.length}`,
+    `duplicates=${duplicateRoles.join(",") || "none"}`,
+    `missing=${missingRoles.join(",") || "none"}`,
+    `invalid=${invalidRoles.join(",") || "none"}`,
+  ].join(" ");
 }
 
 function schemaObject(value: unknown, path: string): JsonObject {

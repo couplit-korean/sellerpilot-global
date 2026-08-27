@@ -7,6 +7,7 @@ import {
   createStudioMasterOutputSchema,
   mergeStudioSegmentOutputs,
   planStudioLocalizedChunks,
+  studioMasterDetailImageRoleIssue,
   StudioSegmentContractError,
   type StudioLocalizedTarget,
 } from "../lib/studio-segment-generation";
@@ -113,6 +114,51 @@ test("master schema is derived from the full schema without localized listings o
   assert.equal(Object.hasOwn(properties, "localizedListings"), false);
   assert.equal(JSON.stringify(fullSchema), before);
   assertStrictObjects(masterSchema);
+});
+
+test("master image roles are fenced before localization with exact-once diagnostics", () => {
+  const exactMaster = {
+    design: {
+      sections: [
+        "detail-overview",
+        "detail-feature",
+        "detail-use",
+        "detail-package",
+        "detail-routine",
+        "detail-scale",
+        "detail-storage",
+        "detail-context",
+        "detail-material",
+        "detail-dimensions",
+        "detail-contents",
+        "detail-care",
+        "none",
+        "none",
+        "none",
+        "none",
+      ].map((imageAsset) => ({ imageAsset })),
+    },
+  };
+  assert.equal(studioMasterDetailImageRoleIssue(exactMaster), "");
+
+  const duplicatePackage = structuredClone(exactMaster);
+  duplicatePackage.design.sections[12].imageAsset = "detail-package";
+  const issue = studioMasterDetailImageRoleIssue(duplicatePackage);
+  assert.match(issue, /assigned=13\/12/);
+  assert.match(issue, /duplicates=detail-package/);
+  assert.match(issue, /missing=none/);
+
+  const duplicateAndMissing = structuredClone(exactMaster);
+  duplicateAndMissing.design.sections[1].imageAsset = "detail-package";
+  const replacementIssue = studioMasterDetailImageRoleIssue(duplicateAndMissing);
+  assert.match(replacementIssue, /assigned=12\/12/);
+  assert.match(replacementIssue, /duplicates=detail-package/);
+  assert.match(replacementIssue, /missing=detail-feature/);
+
+  const invalid = structuredClone(exactMaster);
+  invalid.design.sections[0].imageAsset = "invented-detail-role";
+  assert.match(studioMasterDetailImageRoleIssue(invalid), /invalid=invented-detail-role/);
+  assert.match(studioMasterDetailImageRoleIssue({ design: {} }), /확인할 수 없습니다/);
 });
 
 test("localized chunk schema stays within the Structured Outputs property limit", () => {

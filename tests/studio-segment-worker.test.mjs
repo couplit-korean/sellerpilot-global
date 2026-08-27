@@ -54,6 +54,26 @@ test("master and localized phases use derived schemas, isolated invocation, and 
   assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
 });
 
+test("master detail image roles get one bounded repair before any localized generation", async () => {
+  const source = await readFile(workerUrl, "utf8");
+  const generationStart = source.indexOf("async function generateSegmentedStudioResult(");
+  const localizedStart = source.indexOf("const invokeLocalized =", generationStart);
+  const earlyFence = source.slice(generationStart, localizedStart);
+
+  assert.match(earlyFence, /const initialMasterImageRoleIssue = studioMasterDetailImageRoleIssue\(masterOutput\)/);
+  assert.match(earlyFence, /if \(initialMasterImageRoleIssue\)/);
+  assert.match(earlyFence, /segmentId: "studio-master-image-role-repair"/);
+  assert.match(earlyFence, /stage: "studio-master-image-role-repair"/);
+  assert.match(earlyFence, /const repairedMasterImageRoleIssue = studioMasterDetailImageRoleIssue\(masterOutput\)/);
+  assert.match(earlyFence, /if \(repairedMasterImageRoleIssue\)[\s\S]*throw new Error/);
+  assert.equal((earlyFence.match(/segmentId: "studio-master-image-role-repair"/g) ?? []).length, 1);
+  assert.doesNotMatch(earlyFence, /while\s*\(|for\s*\(/);
+
+  assert.equal((source.match(/segmentId: "studio-master-image-role-repair"/g) ?? []).length, 1);
+  assert.equal((source.match(/segmentId: "studio-master-repair"/g) ?? []).length, 1);
+  assert.equal((source.match(/segmentId: "studio-master-repair-2"/g) ?? []).length, 1);
+});
+
 test("semantic repair is limited to the master or affected localized chunks", async () => {
   const source = await readFile(workerUrl, "utf8");
   assert.match(source, /function studioSegmentRepairPlan\(issues, chunks\)/);
