@@ -149,6 +149,7 @@ import {
 } from "../lib/channels/protocols.ts";
 
 const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
+const aiOnly = process.argv.includes("--ai-only");
 function loadWorkerToken(environmentName, keychainService) {
   const environmentToken = process.env[environmentName]?.trim();
   if (environmentToken) return environmentToken;
@@ -166,8 +167,8 @@ function loadWorkerToken(environmentName, keychainService) {
 }
 
 const aiWorkerToken = loadWorkerToken("SELLERPILOT_AI_WORKER_TOKEN", "SellerPilot AI Worker");
-const gatewayWorkerToken = loadWorkerToken("SELLERPILOT_GATEWAY_WORKER_TOKEN", "SellerPilot Gateway Worker");
-const schedulerWorkerToken = loadWorkerToken("SELLERPILOT_SCHEDULER_WORKER_TOKEN", "SellerPilot Scheduler Worker");
+const gatewayWorkerToken = aiOnly ? "" : loadWorkerToken("SELLERPILOT_GATEWAY_WORKER_TOKEN", "SellerPilot Gateway Worker");
+const schedulerWorkerToken = aiOnly ? "" : loadWorkerToken("SELLERPILOT_SCHEDULER_WORKER_TOKEN", "SellerPilot Scheduler Worker");
 const aiWorkerConfigured = isWorkerTokenConfigured(aiWorkerToken);
 const gatewayWorkerConfigured = isWorkerTokenConfigured(gatewayWorkerToken);
 const schedulerWorkerConfigured = isWorkerTokenConfigured(schedulerWorkerToken);
@@ -223,7 +224,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.52";
+const workerVersion = "sellerpilot-cli-worker/1.53";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -2851,7 +2852,7 @@ async function generateDistinctAsset({
       ? resolveIdentityBackgroundContactMode(result, baseSettingShot)
       : "surface-supported";
     const retrySettingShot = baseSettingShot && retryIndex > 0
-      ? buildSettingShotRetryVariant(baseSettingShot, preset.id, retryIndex)
+      ? buildSettingShotRetryVariant(baseSettingShot, preset.id, retryIndex, backgroundContactMode)
       : baseSettingShot;
     // Retry choreography changes the trusted architecture and apparent depth,
     // never this persisted source-composite mask. Its product-specific resolved
@@ -2872,6 +2873,7 @@ async function generateDistinctAsset({
           retryIndex,
           retrySettingShot,
           retryAuditFeedback,
+          backgroundContactMode,
         )
       : "";
     if (identityCutouts && preset.identityPolicy.mode !== "source-composite") {
@@ -4589,7 +4591,7 @@ async function processGatewayJob(job) {
   }
 }
 
-console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
+console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${aiOnly ? "ai-only" : "all-scopes"} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
 console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
 console.log(`Worker scopes · ai=${aiWorkerConfigured ? "configured" : "disabled"} · gateway=${gatewayWorkerConfigured ? "configured" : "disabled"} · scheduler=${schedulerWorkerConfigured ? "configured" : "disabled"}`);
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 8);

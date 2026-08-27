@@ -10,6 +10,7 @@
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext dev",
     "ai:worker": "node --import tsx scripts/ai-cli-worker.mjs",
     "ai:worker:install": "node scripts/install-ai-worker-launch-agent.mjs",
+    "ai:worker:install:ai-only": "node scripts/install-ai-worker-launch-agent.mjs --ai-only-runtime",
     "ai:worker:upgrade": "node scripts/install-ai-worker-launch-agent.mjs --runtime-only",
     "ai:worker:status": "node scripts/install-ai-worker-launch-agent.mjs --status",
     "ai:worker:temu-egress": "node --import tsx scripts/configure-temu-egress.mjs",

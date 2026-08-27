@@ -18,6 +18,8 @@ const DATA_REFRESH_INTERVAL_MS = 5 * 60_000;
 const RETRY_INTERVAL_MS = 30_000;
 const PRODUCT_IMAGE_REFRESH_INTERVAL_MS = 45 * 60_000;
 const PRODUCT_IMAGE_CLIENT_CACHE_MS = 55 * 60_000;
+const STALE_AI_RECOVERY_INTERVAL_MS = 5 * 60_000;
+const STALE_AI_RECOVERY_RETRY_MS = 30_000;
 export const operationsSnapshotRequestTimeoutMs = 30_000;
 
 export type OperationProduct = {
@@ -34,6 +36,21 @@ export type OperationProduct = {
   reserved: number;
   available: number;
   costKrw: number;
+  baseSellingPrice: number | null;
+  baseCurrency: string | null;
+  categoryHint: string | null;
+  confirmedCategories: Array<{
+    channelKey: string;
+    market: string;
+    categoryId: string;
+    categoryPath: string[];
+    confirmedAt: string | null;
+  }>;
+  marginState: "calculated" | "missing" | "invalid";
+  marginPercent: number | null;
+  marginChannelKey: string | null;
+  latestError: string | null;
+  latestErrorKind: "analysis" | "listing" | "external_action" | null;
   sold30d: number;
   revenue30dKrw: number;
   listingChannels: string[];
@@ -126,6 +143,7 @@ export type OperationTicket = {
 
 export type OperationMarginScenario = {
   id: string;
+  productId: string | null;
   name: string;
   channelKey: string;
   inputs: Record<string, unknown>;
@@ -135,6 +153,14 @@ export type OperationMarginScenario = {
 
 export type OperationsSnapshot = {
   generatedAt: string;
+  aiRecovery: {
+    status: "checking" | "passed" | "failed";
+    expiredCount: number;
+    message: string | null;
+    checkedAt: string | null;
+  };
+  productReadinessState: "checking" | "ready" | "unavailable";
+  productReadinessMessage: string | null;
   analytics: SalesAnalytics;
   aiRuntime: {
     worker: {
@@ -184,6 +210,8 @@ export type OperationsSnapshot = {
   orders: OperationOrder[];
   tickets: OperationTicket[];
   marginScenarios: OperationMarginScenario[];
+  marginScenarioState: "checking" | "ready" | "unavailable";
+  marginScenarioMessage: string | null;
   externalActions: Array<{
     listingId: string;
     productId: string;
@@ -251,6 +279,172 @@ export type OperationsSnapshot = {
   };
 };
 
+type ProductReadinessFact = Pick<OperationProduct,
+  | "baseSellingPrice"
+  | "baseCurrency"
+  | "categoryHint"
+  | "confirmedCategories"
+  | "marginState"
+  | "marginPercent"
+  | "marginChannelKey"
+  | "latestError"
+  | "latestErrorKind"
+> & { productId: string };
+
+type ProductReadinessResponse = {
+  facts: ProductReadinessFact[];
+  factsState: OperationsSnapshot["productReadinessState"];
+  factsMessage: string | null;
+  aiRecovery: OperationsSnapshot["aiRecovery"];
+  marginScenarios: OperationMarginScenario[];
+  marginScenarioState: OperationsSnapshot["marginScenarioState"];
+  marginScenarioMessage: string | null;
+};
+
+const pendingProductReadiness: ProductReadinessResponse = {
+  facts: [],
+  factsState: "checking",
+  factsMessage: null,
+  aiRecovery: {
+    status: "checking",
+    expiredCount: 0,
+    message: "상품 가격·마진·카테고리·오류 상태를 확인하고 있습니다.",
+    checkedAt: null,
+  },
+  marginScenarios: [],
+  marginScenarioState: "checking",
+  marginScenarioMessage: null,
+};
+
+function parseProductReadinessResponse(value: unknown): ProductReadinessResponse | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const payload = value as Record<string, unknown>;
+  const recovery = payload.aiRecovery;
+  if (!recovery || typeof recovery !== "object" || Array.isArray(recovery)) return null;
+  const recoveryRecord = recovery as Record<string, unknown>;
+  if ((recoveryRecord.status !== "checking" && recoveryRecord.status !== "passed" && recoveryRecord.status !== "failed")
+    || typeof recoveryRecord.expiredCount !== "number"
+    || !Number.isFinite(recoveryRecord.expiredCount)
+    || (recoveryRecord.message !== null && typeof recoveryRecord.message !== "string")
+    || (recoveryRecord.checkedAt !== null && typeof recoveryRecord.checkedAt !== "string")
+    || !Array.isArray(payload.facts)
+    || (payload.factsState !== "ready" && payload.factsState !== "unavailable")
+    || (payload.factsMessage !== null && typeof payload.factsMessage !== "string")
+    || !Array.isArray(payload.marginScenarios)
+    || (payload.marginScenarioState !== "ready" && payload.marginScenarioState !== "unavailable")
+    || (payload.marginScenarioMessage !== null && typeof payload.marginScenarioMessage !== "string")) return null;
+  return {
+    facts: payload.facts as ProductReadinessFact[],
+    factsState: payload.factsState,
+    factsMessage: payload.factsMessage,
+    aiRecovery: {
+      status: recoveryRecord.status,
+      expiredCount: Math.max(0, Math.trunc(recoveryRecord.expiredCount)),
+      message: recoveryRecord.message,
+      checkedAt: recoveryRecord.checkedAt,
+    },
+    marginScenarios: payload.marginScenarios as OperationMarginScenario[],
+    marginScenarioState: payload.marginScenarioState,
+    marginScenarioMessage: payload.marginScenarioMessage,
+  };
+}
+
+function mergeProductReadiness(
+  snapshot: OperationsSnapshot,
+  readiness: ProductReadinessResponse,
+): OperationsSnapshot {
+  const factsByProductId = new Map(readiness.facts
+    .filter((fact) => fact && typeof fact.productId === "string")
+    .map((fact) => [fact.productId, fact]));
+  return {
+    ...snapshot,
+    aiRecovery: readiness.aiRecovery.status === "checking" && snapshot.aiRecovery
+      ? snapshot.aiRecovery
+      : readiness.aiRecovery,
+    productReadinessState: readiness.factsState,
+    productReadinessMessage: readiness.factsMessage,
+    marginScenarios: readiness.marginScenarioState === "ready"
+      ? readiness.marginScenarios
+      : snapshot.marginScenarios,
+    marginScenarioState: readiness.marginScenarioState,
+    marginScenarioMessage: readiness.marginScenarioMessage,
+    products: snapshot.products.map((product) => {
+      const facts = readiness.factsState === "ready"
+        ? factsByProductId.get(product.id) ?? product
+        : product;
+      const confirmedCategories = Array.isArray(facts?.confirmedCategories)
+        ? facts.confirmedCategories.flatMap((category) => {
+            if (!category || typeof category !== "object") return [];
+            if (typeof category.channelKey !== "string"
+              || typeof category.market !== "string"
+              || typeof category.categoryId !== "string"
+              || !Array.isArray(category.categoryPath)
+              || !category.categoryPath.every((part) => typeof part === "string")
+              || (category.confirmedAt !== null && typeof category.confirmedAt !== "string")) return [];
+            return [category];
+          })
+        : [];
+      return {
+        ...product,
+        baseSellingPrice: typeof facts?.baseSellingPrice === "number" && Number.isFinite(facts.baseSellingPrice)
+          ? facts.baseSellingPrice
+          : null,
+        baseCurrency: typeof facts?.baseCurrency === "string" && /^[A-Z]{3}$/.test(facts.baseCurrency)
+          ? facts.baseCurrency
+          : null,
+        categoryHint: typeof facts?.categoryHint === "string" ? facts.categoryHint : null,
+        confirmedCategories,
+        marginState: facts?.marginState === "calculated" || facts?.marginState === "invalid"
+          ? facts.marginState
+          : "missing",
+        marginPercent: typeof facts?.marginPercent === "number" && Number.isFinite(facts.marginPercent)
+          ? facts.marginPercent
+          : null,
+        marginChannelKey: typeof facts?.marginChannelKey === "string" ? facts.marginChannelKey : null,
+        latestError: typeof facts?.latestError === "string" ? facts.latestError : null,
+        latestErrorKind: facts?.latestErrorKind === "analysis"
+          || facts?.latestErrorKind === "listing"
+          || facts?.latestErrorKind === "external_action"
+          ? facts.latestErrorKind
+          : null,
+      };
+    }),
+  };
+}
+
+function carryForwardProductReadiness(
+  snapshot: OperationsSnapshot,
+  previous: OperationsSnapshot | null,
+): OperationsSnapshot {
+  if (!previous) return snapshot;
+  const previousByProductId = new Map(previous.products.map((product) => [product.id, product]));
+  return {
+    ...snapshot,
+    aiRecovery: previous.aiRecovery,
+    productReadinessState: previous.productReadinessState,
+    productReadinessMessage: previous.productReadinessMessage,
+    marginScenarioState: previous.marginScenarioState,
+    marginScenarioMessage: previous.marginScenarioMessage,
+    marginScenarios: previous.marginScenarios,
+    products: snapshot.products.map((product) => {
+      const previousProduct = previousByProductId.get(product.id);
+      if (!previousProduct) return product;
+      return {
+        ...product,
+        baseSellingPrice: previousProduct.baseSellingPrice,
+        baseCurrency: previousProduct.baseCurrency,
+        categoryHint: previousProduct.categoryHint,
+        confirmedCategories: previousProduct.confirmedCategories,
+        marginState: previousProduct.marginState,
+        marginPercent: previousProduct.marginPercent,
+        marginChannelKey: previousProduct.marginChannelKey,
+        latestError: previousProduct.latestError,
+        latestErrorKind: previousProduct.latestErrorKind,
+      };
+    }),
+  };
+}
+
 type LoadState = "loading" | "database" | "unavailable";
 type LoadOptions = { force?: boolean; refreshProductImages?: boolean };
 
@@ -267,6 +461,7 @@ export function useOperationsSnapshot() {
   const productImageCacheRef = useRef(new Map<string, OperationProductImageCacheEntry>());
   const nextProductImageRefreshAtRef = useRef(0);
   const nextDataRefreshAtRef = useRef(new Map<string, number>());
+  const nextStaleAiRecoveryAtRef = useRef(0);
   const requestCoordinatorRef = useRef(new OperationsSnapshotRequestCoordinator());
   const lastSuccessfulRangeKeyRef = useRef("");
   const lastGoodDataRef = useRef<OperationsSnapshot | null>(null);
@@ -335,6 +530,40 @@ export function useOperationsSnapshot() {
           to: range.to,
           includeProductImages: refreshProductImages ? "1" : "0",
         });
+        const shouldRecoverStaleAi = startedAt >= nextStaleAiRecoveryAtRef.current;
+        const readinessBounded = createBoundedRequestSignal(
+          request.signal,
+          12_000,
+          "상품 가격·마진·카테고리 상태 확인이 12초를 초과했습니다.",
+        );
+        const readinessPromise = (async (): Promise<ProductReadinessResponse> => {
+          const readinessResponse = await authenticatedFetch(`/api/operations/product-readiness?recoverStale=${shouldRecoverStaleAi ? "1" : "0"}`, {
+            signal: readinessBounded.signal,
+          });
+          const readinessPayload = parseProductReadinessResponse(await waitForAbortablePromise(
+            readinessResponse.json().catch(() => null),
+            readinessBounded.signal,
+          ));
+          if (!readinessResponse.ok || !readinessPayload) {
+            throw new Error("상품 가격·마진·카테고리·오류 상태를 불러오지 못했습니다.");
+          }
+          return readinessPayload;
+        })().catch((error): ProductReadinessResponse => ({
+          facts: [],
+          factsState: "unavailable",
+          factsMessage: "상품 가격·마진·카테고리·오류 상태를 불러오지 못했습니다. 마지막 정상 상태가 있으면 유지합니다.",
+          aiRecovery: {
+            status: shouldRecoverStaleAi ? "failed" : "checking",
+            expiredCount: 0,
+            message: shouldRecoverStaleAi && error instanceof Error
+              ? `${error.message} 장기 AI 분석 자동 복구 상태도 확인하지 못했습니다.`
+              : shouldRecoverStaleAi ? "장기 AI 분석 자동 복구 상태를 확인하지 못했습니다." : null,
+            checkedAt: shouldRecoverStaleAi ? new Date(startedAt).toISOString() : null,
+          },
+          marginScenarios: [],
+          marginScenarioState: "unavailable",
+          marginScenarioMessage: "저장된 마진 계산 이력을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.",
+        })).finally(() => readinessBounded.dispose());
         const response = await authenticatedFetch(`/api/operations/snapshot?${params}`, {
           signal: bounded.signal,
         });
@@ -354,12 +583,17 @@ export function useOperationsSnapshot() {
           throw new OperationsSnapshotLoadError(payload.message ?? "운영 데이터를 불러오지 못했습니다.", isTransient);
         }
 
+        const basePayload = mergeProductReadiness(
+          carryForwardProductReadiness(payload, lastGoodDataRef.current),
+          pendingProductReadiness,
+        );
         const merged = mergeOperationProductImages(
-          payload.products,
+          basePayload.products,
           productImageCacheRef.current,
           startedAt,
           PRODUCT_IMAGE_CLIENT_CACHE_MS,
         );
+        const baseData = { ...basePayload, products: merged.products };
         coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
           if (refreshProductImages) {
             nextProductImageRefreshAtRef.current = startedAt + PRODUCT_IMAGE_REFRESH_INTERVAL_MS;
@@ -369,11 +603,23 @@ export function useOperationsSnapshot() {
 
           nextDataRefreshAtRef.current.set(request.key, startedAt + DATA_REFRESH_INTERVAL_MS);
           lastSuccessfulRangeKeyRef.current = request.key;
-          const nextData = { ...payload, products: merged.products };
-          lastGoodDataRef.current = nextData;
-          setData(nextData);
+          lastGoodDataRef.current = baseData;
+          setData(baseData);
           setState("database");
           setMessage("Supabase 운영 DB · 실데이터만 표시 · 5분 자동 갱신");
+        });
+
+        const readiness = await readinessPromise;
+        if (shouldRecoverStaleAi) {
+          nextStaleAiRecoveryAtRef.current = Date.now() + (readiness.aiRecovery.status === "passed"
+            ? STALE_AI_RECOVERY_INTERVAL_MS
+            : STALE_AI_RECOVERY_RETRY_MS);
+        }
+        if (!isSelectedRequest()) return;
+        const readyData = mergeProductReadiness(baseData, readiness);
+        coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
+          lastGoodDataRef.current = readyData;
+          setData(readyData);
         });
       } catch (error) {
         if (!isSelectedRequest()) return;

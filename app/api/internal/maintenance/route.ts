@@ -19,6 +19,16 @@ type AiStorageCleanupClaim = {
   paths: string[];
 };
 
+type StaleAiJobRecovery = {
+  ok: boolean;
+  queuedExpired: number;
+  runningExpired: number;
+  total: number;
+};
+
+const STALE_AI_QUEUED_TIMEOUT_MS = 24 * 60 * 60_000;
+const STALE_AI_RECOVERY_LIMIT = 100;
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function aiStorageCleanupClaim(value: unknown): AiStorageCleanupClaim | null {
@@ -72,6 +82,39 @@ async function cleanupPrunedAiStorage(serviceClient: SupabaseClient) {
     throw new Error("storage_cleanup_completion_invalid");
   }
   return { claimed: claim.paths.length, removed, requeued, failed: Boolean(removeError) };
+}
+
+function staleAiJobRecovery(value: unknown): Omit<StaleAiJobRecovery, "ok"> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("invalid_stale_ai_job_recovery");
+  }
+  const candidate = value as Record<string, unknown>;
+  const queuedExpired = Number(candidate.queuedExpired);
+  const runningExpired = Number(candidate.runningExpired);
+  const total = Number(candidate.total);
+  if (!Number.isInteger(queuedExpired)
+      || queuedExpired < 0
+      || !Number.isInteger(runningExpired)
+      || runningExpired < 0
+      || !Number.isInteger(total)
+      || total !== queuedExpired + runningExpired
+      || total > STALE_AI_RECOVERY_LIMIT) {
+    throw new Error("invalid_stale_ai_job_recovery");
+  }
+  return { queuedExpired, runningExpired, total };
+}
+
+async function expireStaleAiJobs(serviceClient: SupabaseClient): Promise<StaleAiJobRecovery> {
+  try {
+    const { data, error } = await serviceClient.rpc("sellerpilot_service_expire_stale_ai_jobs", {
+      p_queued_before: new Date(Date.now() - STALE_AI_QUEUED_TIMEOUT_MS).toISOString(),
+      p_limit: STALE_AI_RECOVERY_LIMIT,
+    });
+    if (error) throw new Error("stale_ai_job_recovery_failed");
+    return { ok: true, ...staleAiJobRecovery(data) };
+  } catch {
+    return { ok: false, queuedExpired: 0, runningExpired: 0, total: 0 };
+  }
 }
 
 type ActiveCredential = {
@@ -172,6 +215,10 @@ export async function GET(request: Request) {
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  // Run independently of OAuth and retention work. A missing AI worker must
+  // not leave registration cards in `analyzing` forever, and a recovery error
+  // must not prevent the unrelated cleanup steps below from being attempted.
+  const staleAiJobsRecovery = await expireStaleAiJobs(serviceClient);
   let lazadaToken: Awaited<ReturnType<typeof queueRefreshIfNeeded>>;
   let ebayToken: Awaited<ReturnType<typeof queueRefreshIfNeeded>>;
   let shopeeToken: Awaited<ReturnType<typeof queueRefreshIfNeeded>>;
@@ -182,7 +229,10 @@ export async function GET(request: Request) {
       queueRefreshIfNeeded(serviceClient, "ebay"),
     ]);
   } catch {
-    return NextResponse.json({ message: "채널 OAuth 토큰 자동 갱신을 완료하지 못했습니다." }, { status: 502 });
+    return NextResponse.json({
+      message: "채널 OAuth 토큰 자동 갱신을 완료하지 못했습니다.",
+      staleAiJobsRecovery,
+    }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
   }
   const retentionDays = 30;
   const completedBefore = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
@@ -221,7 +271,10 @@ export async function GET(request: Request) {
       || tracxSweepError
       || lazadaReplySweepError
       || pendingWorkerTokenExpiryError) {
-    return NextResponse.json({ message: "30일 보관기간 정리를 완료하지 못했습니다." }, { status: 500 });
+    return NextResponse.json({
+      message: "30일 보관기간 정리를 완료하지 못했습니다.",
+      staleAiJobsRecovery,
+    }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
   const rows = (data ?? []) as PrunedJob[];
@@ -238,6 +291,7 @@ export async function GET(request: Request) {
       retentionDays,
       jobsPruned: rows.length,
       storageQueued: storagePaths.length,
+      staleAiJobsRecovery,
     }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
   }
   if (storageCleanup.failed) {
@@ -249,9 +303,36 @@ export async function GET(request: Request) {
       storageClaimed: storageCleanup.claimed,
       storageRemoved: storageCleanup.removed,
       storageRequeued: storageCleanup.requeued,
+      staleAiJobsRecovery,
     }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
   }
   const push = await dispatchPendingPushNotifications(serviceClient, 100).catch(() => ({ configured: true, claimed: 0, sent: 0, failed: 1 }));
+
+  if (!staleAiJobsRecovery.ok) {
+    return NextResponse.json({
+      ok: false,
+      message: "멈춘 AI 분석 작업의 자동 복구를 완료하지 못했습니다. 다른 정리 작업 결과는 아래에 보존했습니다.",
+      retentionDays,
+      jobsPruned: rows.length,
+      storageQueued: storagePaths.length,
+      storageClaimed: storageCleanup.claimed,
+      storageRemoved: storageCleanup.removed,
+      storageRequeued: storageCleanup.requeued,
+      staleAiJobsRecovery,
+      personalData,
+      runtimeData,
+      kakaoReconciliationRequired,
+      kakaoOauthReconciliationRequired,
+      tracxReconciliationRequired,
+      lazadaReplyReconciliationRequired,
+      pendingWorkerTokensExpired,
+      shopeeToken: shopeeToken.status,
+      lazadaToken: lazadaToken.status,
+      ebayToken: ebayToken.status,
+      push: { configured: push.configured, sent: push.sent, failed: push.failed },
+      completedAt: new Date().toISOString(),
+    }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
+  }
 
   return NextResponse.json({
     ok: true,
@@ -261,6 +342,7 @@ export async function GET(request: Request) {
     storageClaimed: storageCleanup.claimed,
     storageRemoved: storageCleanup.removed,
     storageRequeued: storageCleanup.requeued,
+    staleAiJobsRecovery,
     personalData,
     runtimeData,
     kakaoReconciliationRequired,

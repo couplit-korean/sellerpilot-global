@@ -1,0 +1,144 @@
+.mediaBlock {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(220px, .65fr);
+  gap: clamp(18px, 4vw, 48px);
+  align-items: center;
+  padding: clamp(26px, 6vw, 72px) clamp(20px, 8vw, 92px);
+  color: #24372e;
+  background: #f5f2ea;
+}
+
+.mediaBlock.dark {
+  color: #fff;
+  background: #24372e;
+}
+
+.stage {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgb(36 55 46 / 16%);
+  border-radius: 20px;
+  background: #e8ece7;
+  aspect-ratio: 4 / 3;
+}
+
+.dark .stage {
+  border-color: rgb(255 255 255 / 22%);
+  background: #18261f;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.placeholder {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  padding: 24px;
+  color: currentColor;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.modeBadge {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 0 11px;
+  border: 1px solid rgb(255 255 255 / 42%);
+  border-radius: 999px;
+  color: #fff;
+  background: rgb(20 31 26 / 72%);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  backdrop-filter: blur(8px);
+}
+
+.copy {
+  min-width: 0;
+}
+
+.copy > span {
+  display: inline-flex;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #436052;
+  background: rgb(125 155 139 / 16%);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .1em;
+}
+
+.dark .copy > span {
+  color: #dceadf;
+  background: rgb(255 255 255 / 10%);
+}
+
+.copy h2 {
+  margin: 16px 0 0;
+  font-size: clamp(22px, 3.6vw, 38px);
+  line-height: 1.2;
+  letter-spacing: -.045em;
+  overflow-wrap: anywhere;
+}
+
+.copy p {
+  margin: 14px 0 0;
+  opacity: .76;
+  font-size: 11px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+
+.copy small {
+  display: block;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid currentColor;
+  opacity: .58;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+@media (max-width: 720px) {
+  .mediaBlock {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+    padding: 28px 16px;
+  }
+
+  .stage {
+    border-radius: 14px;
+  }
+
+  .modeBadge {
+    right: 8px;
+    bottom: 8px;
+    min-height: 32px;
+  }
+
+  .copy h2 {
+    font-size: 23px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mediaBlock,
+  .stage,
+  .image {
+    scroll-behavior: auto;
+    animation: none;
+    transition: none;
+  }
+}

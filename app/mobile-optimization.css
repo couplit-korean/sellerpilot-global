@@ -2145,6 +2145,168 @@
   .registration-card dd { font-size: 8px; }
 }
 
+/* Keep the product-linked calculator control consistent across desktop and
+   mobile Safari. The explanatory copy must wrap instead of widening the form. */
+.margin-product-field input,
+.margin-product-field select {
+  width: 100%;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 36px 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  outline: 0;
+  color: #465064;
+  background-color: #fff;
+  font: 700 11px/1 var(--font-geist-sans), sans-serif;
+}
+
+.margin-product-field select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #6b7280 50%),
+    linear-gradient(135deg, #6b7280 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) calc(50% - 2px),
+    calc(100% - 11px) calc(50% - 2px);
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px;
+}
+
+.margin-product-field input:focus,
+.margin-product-field select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgb(8 116 102 / 10%);
+}
+
+.margin-product-field > small {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  color: #737d8f;
+  font-size: 8px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.registration-status.long-analysis-connected {
+  color: #176b57;
+  background: #e7f6f0;
+}
+
+.registration-status.long-analysis-attention {
+  color: #9a4f08;
+  background: #fff1d6;
+}
+
+.registration-progress.long-analysis-attention small {
+  color: #8a470b;
+  font-weight: 700;
+}
+
+/* Product readiness adds multiple verified facts to the first product column.
+   Let rows grow on narrow screens instead of overlapping the fixed-height
+   operations table contract. The remaining ledger columns stay horizontally
+   scrollable so no numeric field is silently dropped. */
+@media (max-width: 900px) {
+  .product-table tbody tr {
+    height: auto;
+    min-height: 116px;
+  }
+
+  .product-table td {
+    height: auto;
+    min-height: 116px;
+    padding-block: 12px;
+    vertical-align: top;
+  }
+
+  .product-table td:first-child {
+    white-space: normal;
+  }
+
+  .product-table .product-cell {
+    min-width: 340px;
+    align-items: flex-start;
+    white-space: normal;
+  }
+
+  .product-table .product-cell > span {
+    min-width: 0;
+  }
+
+  .product-table .product-cell b,
+  .product-table .product-cell small {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .product-table .product-cell small {
+    margin-top: 4px;
+    line-height: 1.45;
+  }
+
+  .product-table .product-list-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    color: #b42318;
+    font-family: var(--font-geist-sans), sans-serif;
+    font-weight: 650;
+  }
+
+  .product-table .product-list-error svg {
+    flex: 0 0 auto;
+    margin-top: 1px;
+  }
+}
+
+@media (max-width: 390px) {
+  .product-table {
+    min-width: 760px;
+  }
+
+  .product-table .product-cell {
+    min-width: 300px;
+    max-width: 320px;
+  }
+
+  .registration-status.long-analysis-connected,
+  .registration-status.long-analysis-attention {
+    width: 100%;
+    min-height: 44px;
+    justify-content: flex-start;
+    padding: 7px 9px;
+    line-height: 1.35;
+    white-space: normal;
+  }
+
+  .registration-progress.long-analysis-connected small,
+  .registration-progress.long-analysis-attention small {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 720px) {
+  .product-detail-ledger > div {
+    align-items: flex-start;
+  }
+
+  .product-detail-ledger dd {
+    max-width: 68%;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-align: right;
+    text-overflow: clip;
+    white-space: normal;
+  }
+}
+
 /* 2026-08-24 mobile completion pass for the registration, pricing, edit,
    notification, category suggestion, and AI-detail surfaces changed today. */
 @media (max-width: 720px) {
@@ -2617,4 +2779,80 @@
   .registration-card dt { font-size: 8px; }
   .registration-card dd { font-size: 9px; }
   .competitor-market-groups .competitor-price-grid { grid-auto-columns: minmax(244px, 84vw); }
+}
+
+/* Keep live operational health visible on phones. Earlier visual layers hide
+   both the worker rail entry and database/error badge below 720px. */
+@media (max-width: 720px) {
+  .commerce-service-rail {
+    min-height: 40px;
+    gap: 8px;
+    padding-right: var(--mobile-gutter);
+    padding-left: var(--mobile-gutter);
+  }
+
+  .commerce-service-rail strong,
+  .commerce-service-rail span:nth-of-type(2),
+  .commerce-service-rail span:nth-of-type(3),
+  .commerce-service-rail span:nth-of-type(4) {
+    display: inline-flex;
+    min-height: 32px;
+    align-items: center;
+  }
+
+  .commerce-service-rail span:nth-of-type(4) {
+    flex: 0 0 auto;
+    padding: 0 8px;
+    border: 1px solid rgb(255 255 255 / 16%);
+    border-radius: 999px;
+    background: rgb(255 255 255 / 7%);
+    font-weight: 700;
+  }
+
+  .topbar-actions .demo-data-badge {
+    display: grid;
+    width: 88px;
+    min-width: 88px;
+    min-height: 44px;
+    grid-template-columns: 13px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-content: center;
+    gap: 1px 5px;
+    padding: 4px 6px;
+    white-space: normal;
+  }
+
+  .topbar-actions .demo-data-badge > svg {
+    grid-row: 1 / -1;
+  }
+
+  .topbar-actions .demo-data-badge b,
+  .topbar-actions .demo-data-badge small {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar-actions .demo-data-badge b {
+    font-size: 9px;
+    line-height: 1.15;
+  }
+
+  .topbar-actions .demo-data-badge small {
+    font-size: 7px;
+    line-height: 1.15;
+  }
+}
+
+@media (max-width: 390px) {
+  .topbar-actions .demo-data-badge {
+    width: 76px;
+    min-width: 76px;
+  }
+
+  .topbar-title h1 {
+    max-width: min(18vw, 68px);
+  }
 }

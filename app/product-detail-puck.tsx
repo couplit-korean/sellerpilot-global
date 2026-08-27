@@ -3,8 +3,10 @@
 
 import { Puck, Render, type Config, type Data } from "@puckeditor/core";
 import { X } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { validateDetailAnimatedGif } from "../lib/product-media-contract";
 import { resolveProductDetailAssets } from "./_publishing/product-detail-persistence";
+import mediaStyles from "./product-detail-media.module.css";
 import type { DetailLayout, DetailMotion, DetailSection, ProductStudioResult } from "./product-studio-types";
 
 type VerificationStatus = "verified" | "needs-review";
@@ -114,6 +116,13 @@ type DetailComponents = {
     evidence: string;
     verificationStatus: VerificationStatus;
   };
+  AnimatedGifBlock: {
+    gifUrl: string;
+    posterUrl: string;
+    alt: string;
+    caption: string;
+    tone: "light" | "dark";
+  };
   StoryBlock: {
     sectionType: DetailSectionType;
     eyebrow: string;
@@ -145,7 +154,7 @@ export type ProductDetailSource = Pick<ProductStudioResult, "product" | "design"
 
 const detailConfig: Config<DetailComponents> = {
   categories: {
-    story: { title: "상세페이지 블록", components: ["HeroBlock", "VerificationRibbonBlock", "BenefitBlock", "ImageStoryBlock", "StoryBlock", "CtaBlock"], defaultExpanded: true },
+    story: { title: "상세페이지 블록", components: ["HeroBlock", "VerificationRibbonBlock", "BenefitBlock", "ImageStoryBlock", "AnimatedGifBlock", "StoryBlock", "CtaBlock"], defaultExpanded: true },
   },
   components: {
     HeroBlock: {
@@ -248,6 +257,24 @@ const detailConfig: Config<DetailComponents> = {
         </section>
       ),
     },
+    AnimatedGifBlock: {
+      label: "상세페이지 GIF (채널 전송 제외)",
+      fields: {
+        gifUrl: { type: "text", label: "HTTPS GIF URL (.gif, 필수)" },
+        posterUrl: { type: "text", label: "HTTPS 정적 poster URL (JPG/PNG/WebP/AVIF, 필수)" },
+        alt: { type: "text", label: "대체텍스트 (필수)" },
+        caption: { type: "textarea", label: "설명 캡션 (필수)" },
+        tone: { type: "radio", label: "배경", options: [{ label: "밝게", value: "light" }, { label: "어둡게", value: "dark" }] },
+      },
+      defaultProps: {
+        gifUrl: "",
+        posterUrl: "",
+        alt: "상품 사용 장면",
+        caption: "상품의 동작과 사용 방식을 정적 이미지와 함께 확인하세요.",
+        tone: "light",
+      },
+      render: (props) => <AnimatedGifMedia {...props} />,
+    },
     StoryBlock: {
       label: "스토리 · 정보",
       fields: {
@@ -278,6 +305,76 @@ const detailConfig: Config<DetailComponents> = {
 
 function CheckMark() {
   return <span aria-hidden="true">✓</span>;
+}
+
+function useAllowsDetailAnimation() {
+  const [allowsAnimation, setAllowsAnimation] = useState(false);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updatePreference = () => setAllowsAnimation(!preference.matches);
+    updatePreference();
+    if (typeof preference.addEventListener === "function") {
+      preference.addEventListener("change", updatePreference);
+      return () => preference.removeEventListener("change", updatePreference);
+    }
+    preference.addListener(updatePreference);
+    return () => preference.removeListener(updatePreference);
+  }, []);
+  return allowsAnimation;
+}
+
+function AnimatedGifMedia({ gifUrl, posterUrl, alt, caption, tone }: DetailComponents["AnimatedGifBlock"]) {
+  const media = useMemo(
+    () => validateDetailAnimatedGif({ gifUrl, posterUrl, alt, caption }),
+    [alt, caption, gifUrl, posterUrl],
+  );
+  const allowsAnimation = useAllowsDetailAnimation();
+  const [failedGifUrl, setFailedGifUrl] = useState("");
+  const [failedPosterUrl, setFailedPosterUrl] = useState("");
+  const gifFailed = Boolean(media.gifUrl && failedGifUrl === media.gifUrl);
+  const posterFailed = Boolean(media.posterUrl && failedPosterUrl === media.posterUrl);
+  const showAnimation = media.canAnimate && allowsAnimation && !gifFailed;
+  const showPoster = Boolean(media.posterUrl) && !posterFailed;
+  const mediaState = showAnimation
+    ? "animated"
+    : !showPoster
+      ? "poster-unavailable"
+      : media.canAnimate && !allowsAnimation
+        ? "reduced-motion"
+        : gifFailed
+          ? "gif-load-failed"
+          : "validation-failed";
+  const status = mediaState === "animated"
+    ? "상세페이지에서만 재생됩니다. 판매채널 이미지 전송과는 별도입니다."
+    : mediaState === "reduced-motion"
+      ? "동작 줄이기 설정에 따라 정적 poster로 표시합니다."
+      : mediaState === "gif-load-failed"
+        ? "GIF를 불러오지 못해 정적 poster로 표시합니다."
+        : mediaState === "poster-unavailable"
+          ? "유효한 HTTPS 정적 poster URL이 필요합니다."
+          : "GIF URL·poster·대체텍스트·캡션을 확인해 정적 poster로 표시합니다.";
+
+  return (
+    <figure className={`${mediaStyles.mediaBlock} ${tone === "dark" ? mediaStyles.dark : ""}`} data-media-state={mediaState}>
+      <div className={mediaStyles.stage}>
+        {showAnimation && media.gifUrl ? (
+          <img className={mediaStyles.image} src={media.gifUrl} alt={media.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedGifUrl(media.gifUrl ?? "")} />
+        ) : showPoster && media.posterUrl ? (
+          <img className={mediaStyles.image} src={media.posterUrl} alt={media.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedPosterUrl(media.posterUrl ?? "")} />
+        ) : (
+          <span className={mediaStyles.placeholder} role="img" aria-label={media.alt}>정적 poster URL을 확인해 주세요.</span>
+        )}
+        <span className={mediaStyles.modeBadge}>{showAnimation ? "ANIMATED GIF" : "STATIC POSTER"}</span>
+      </div>
+      <figcaption className={mediaStyles.copy}>
+        <span>DETAIL MOTION</span>
+        <h2>{media.caption || "상품 동작 안내"}</h2>
+        <p>{media.alt}</p>
+        <small>{status}</small>
+      </figcaption>
+    </figure>
+  );
 }
 
 function VerificationCell({ label, value, surface }: { label: string; value: string; surface: string }) {

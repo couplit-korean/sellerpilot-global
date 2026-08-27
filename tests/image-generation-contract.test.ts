@@ -348,11 +348,81 @@ test("setting-shot retries deterministically replace all six scene dimensions wi
   assert.match(guidance, /blank architecture extending materially outside the reserved rectangle/);
   assert.match(guidance, /narrow functional-room reveal without two fixed cues in separate outer bands/);
   assert.match(guidance, /OUTER-BAND RECONSTRUCTION GATE/);
+  assert.match(guidance, /FUNCTIONAL-ROOM PIXEL-PROOF GATE/);
+  assert.match(guidance, /two independent fixed room-recognition structures/);
+  assert.match(guidance, /third, separately identifiable integrated architectural element/);
+  assert.match(guidance, /continuous horizontal support boundary fully inside/);
+  assert.match(guidance, /leaving no wall, vertical panel, open-air or diagonal-boundary pixels in the below-boundary region/);
   assert.match(guidance, /Do not classify or repair blankness confined to the immutable quiet rectangle as a dominant wall or repeated topology/);
   assert.match(guidance, /at least two non-collinear outer bands/);
   assert.doesNotMatch(guidance, /blacklisted role's product zone|product zone moves|move the product zone/i);
   assert.doesNotMatch(guidance, /contact plane|contact geometry/i);
   assert.doesNotMatch(guidance, /bathroom vanity|bedroom nightstand/);
+});
+
+test("surface-supported retries use horizontal functional materials instead of wet-room-like planes", () => {
+  const plan = buildProductSettingShotPlan("food-staples", "롯샌 순우유맛 크림 샌드 과자");
+  const useRetry = buildSettingShotRetryVariant(plan["detail-use"], "detail-use", 2);
+  const wideRetry = buildSettingShotRetryVariant(plan.wide, "wide", 3);
+
+  assert.match(useRetry.surface, /integrated horizontal dining or work ledge/);
+  assert.match(useRetry.surface, /continuous physical support plane/);
+  assert.doesNotMatch(useRetry.surface, /cobalt glazed tile/);
+  assert.match(wideRetry.surface, /continuous horizontal worktop/);
+  assert.match(wideRetry.surface, /exact bottom tolerance band/);
+  assert.match(wideRetry.location, /fronto-parallel support\/backing seam/);
+  assert.match(wideRetry.location, /normalized end-to-end slope no greater than 0\.005/);
+  assert.match(wideRetry.location, /Within that x-span, every pixel from the seam through the frame bottom/);
+  assert.doesNotMatch(wideRetry.location, /lower support-plane edge converge/);
+
+  const suspendedWideRetry = buildSettingShotRetryVariant(plan.wide, "wide", 2, "suspended-or-planar");
+  assert.doesNotMatch(suspendedWideRetry.location, /WIDE SURFACE-SUPPORT SCREEN-SPACE INVARIANT/);
+  assert.match(suspendedWideRetry.location, /coherent hanging or backing plane/);
+  assert.match(suspendedWideRetry.surface, /woven architectural backing panel/);
+  assert.match(suspendedWideRetry.surface, /never a tabletop, shelf, ledge, pedestal or bottom contact line/);
+  assert.doesNotMatch(`${suspendedWideRetry.location} ${suspendedWideRetry.surface} ${suspendedWideRetry.camera}`, /worktop|work bench|support-plane|contact bridge/i);
+});
+
+test("wide surface-supported retry guidance keeps perspective edges out of the contact bridge", () => {
+  const plan = buildProductSettingShotPlan("food-staples", "롯샌 순우유맛 크림 샌드 과자");
+  const retry = buildSettingShotRetryVariant(plan.wide, "wide", 2, "surface-supported");
+  const guidance = buildSettingShotRetryGuidance("wide", ["rejected-wide-1"], 2, retry, null, "surface-supported");
+
+  assert.match(guidance, /fronto-parallel support\/backing seam/);
+  assert.match(guidance, /no column, threshold, cabinet side, worktop side, diagonal boundary, wall or open-air region/);
+  assert.match(guidance, /below-seam x-span/);
+  assert.match(guidance, /Inspect this invariant before saving/);
+  assert.doesNotMatch(guidance, /lower support-plane edge converge/);
+});
+
+test("wide suspended retry guidance never asks for a support surface", () => {
+  const plan = buildProductSettingShotPlan("men-clothing", "남성용 재킷");
+  const retry = buildSettingShotRetryVariant(plan.wide, "wide", 2, "suspended-or-planar");
+  const guidance = buildSettingShotRetryGuidance("wide", ["rejected-wide-1"], 2, retry, null, "suspended-or-planar");
+
+  assert.match(guidance, /one coherent, unobstructed hanging or backing plane/);
+  assert.match(guidance, /Never invent a tabletop, shelf, ledge, pedestal or bottom contact line/);
+  assert.doesNotMatch(guidance, /continuous horizontal support boundary|support-plane convergence|contact-bridge instruction/i);
+});
+
+test("all suspended setting retries keep every slot free of support-surface contradictions", () => {
+  const plan = buildProductSettingShotPlan("men-clothing", "벽걸이형 남성용 재킷");
+  for (const assetId of settingShotAssetIds) {
+    for (const retryIndex of [1, 2, 3]) {
+      const retry = buildSettingShotRetryVariant(plan[assetId], assetId, retryIndex, "suspended-or-planar");
+      const guidance = buildSettingShotRetryGuidance(
+        assetId,
+        [`rejected-${assetId}-1`],
+        retryIndex,
+        retry,
+        { failedDimensions: ["reserved-zone", "surface"] },
+        "suspended-or-planar",
+      );
+      const contract = `${retry.location} ${retry.surface} ${retry.supportingObjects} ${retry.camera} ${guidance}`;
+      assert.match(contract, /coherent, unobstructed hanging or backing plane/);
+      assert.doesNotMatch(contract, /worktop|work bench|support-plane|continuous horizontal support boundary|contact-bridge instruction/i);
+    }
+  }
 });
 
 test("audit-directed retries explicitly repair reserved-zone, assigned-scene and series failures without weakening the full gate", () => {
@@ -387,7 +457,7 @@ test("audit-directed retries explicitly repair reserved-zone, assigned-scene and
 
   assert.match(guidance, /AUDIT-DIRECTED REPAIR GATE/);
   assert.match(guidance, /identical left, top, width and height/);
-  assert.match(guidance, /declared bottom edge within the enclosing prompt's narrow tolerance band/);
+  assert.match(guidance, /continuous horizontal support boundary fully inside the enclosing prompt's narrow contact tolerance band/);
   assert.match(guidance, /at least two visible fixed architectural structures/);
   assert.match(guidance, /exact assigned functional room/);
   assert.match(guidance, /multiple fixed architectural convergence lines/);
@@ -487,7 +557,8 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(claimRoute, /candidate\.id === assetId \? `previous:\$\{candidate\.id\}` : candidate\.id/);
   assert.match(worker, /existingShots\.length !== imagePresets\.length/);
   assert.match(worker, /match=\$\{duplicate\.exact \? "sha256" : "dhash"\}/);
-  assert.match(worker, /buildSettingShotRetryVariant\(baseSettingShot, preset\.id, retryIndex\)/);
+  assert.match(worker, /buildSettingShotRetryVariant\(baseSettingShot, preset\.id, retryIndex, backgroundContactMode\)/);
+  assert.match(worker, /buildSettingShotRetryGuidance\([\s\S]{0,260}retryAuditFeedback,[\s\S]{0,80}backgroundContactMode/);
   assert.match(worker, /never this persisted source-composite mask/);
   assert.match(worker, /const generationPreset = backgroundOnly[\s\S]{0,320}placement: resolveProductIdentityPlacement\(preset, resolveProductSceneIdentityText\(result\)\)/);
   assert.match(worker, /resolveProductIdentityPlacement\(targetPreset, sceneIdentityText\)[\s\S]{0,120}resolveProductIdentityPlacement\(comparisonPreset, sceneIdentityText\)/);

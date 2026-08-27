@@ -367,7 +367,9 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /registrationActivityFilterFromValue\(params\.get\("status"\) \?\? \(typeof state\.status === "string" \? state\.status : null\)\)/);
   assert.match(operationsSnapshotRoute, /reconcileRegistrationDashboardMetrics\(payload, payload\.registrationActivities/);
   assert.match(page, /activityState === "unavailable"[\s\S]*등록 진행 이력을 불러오지 못했습니다/);
-  assert.match(page, /signal: AbortSignal\.any\(\[productResearchController\.signal, AbortSignal\.timeout\(30_000\)\]\)/);
+  assert.match(page, /const enqueueScope = createPageAbortScope\(\[productResearchController\.signal\], 30_000/);
+  assert.match(page, /signal: enqueueScope\.signal/);
+  assert.doesNotMatch(page, /AbortSignal\.timeout\(/);
   assert.match(page, /withPromiseTimeout\(new Promise<\{ width: number; height: number \}>[\s\S]*?15_000[\s\S]*?모바일에서 이미지를 읽는 시간이 너무 오래 걸렸습니다/);
   assert.match(page, /settleWithConcurrency\(selected, 3,/);
   assert.match(page, /모바일 메모리를 보호하며 3장씩 처리/);
@@ -431,8 +433,11 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /authenticatedJsonWithDeadline<[\s\S]{0,320}`\/api\/ai\/jobs\/\$\{monitoredJobId\}`[\s\S]{0,180}requestBudgetMs/);
   assert.match(page, /await abortableBrowserDelay\(delayMs, regenerationSignal\)/);
   assert.doesNotMatch(page, /await new Promise\(\(resolve\) => window\.setTimeout\(resolve, 3_000\)\)/);
-  assert.match(page, /AbortSignal\.any\(\[productResearchController\.signal, AbortSignal\.timeout\(30_000\)\]\)/);
-  assert.match(page, /waitForAbortablePromise\(createSupabaseClient\(\)\.auth\.getSession\(\), sessionSignal\)/);
+  assert.match(page, /typeof AbortSignal\.any === "function"/);
+  assert.match(page, /fallbackListeners[\s\S]{0,500}removeEventListener\("abort", listener\)/);
+  assert.match(page, /enqueueScope\.dispose\(\)/);
+  assert.match(page, /waitForAbortablePromise\(createSupabaseClient\(\)\.auth\.getSession\(\), sessionScope\.signal\)/);
+  assert.match(page, /\.finally\(\(\) => sessionScope\.dispose\(\)\)/);
   assert.match(page, /if \(researchingProduct\)[\s\S]{0,160}1차 상품정보 확인을 마치거나 중단/);
   assert.match(page, /disabled=\{running \|\| researchingProduct \|\| Boolean\(queuedJobId\)\}/);
   assert.match(page, /payload\.status === "succeeded"[\s\S]{0,220}throw new ProductResearchTerminalError/);

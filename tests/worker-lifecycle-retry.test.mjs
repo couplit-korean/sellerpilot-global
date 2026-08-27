@@ -123,7 +123,10 @@ test("continuous transient failures stop inside the configured grace window", as
 test("worker uses lifecycle retry for heartbeat and both completion endpoints", async () => {
   const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.52"/);
+  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.53"/);
+  assert.match(source, /const aiOnly = process\.argv\.includes\("--ai-only"\)/);
+  assert.match(source, /const gatewayWorkerToken = aiOnly \? "" : loadWorkerToken/);
+  assert.match(source, /const schedulerWorkerToken = aiOnly \? "" : loadWorkerToken/);
   assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 35 \* 60_000/);
   assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
   assert.match(source, /stage: "studio-master-repair"/);

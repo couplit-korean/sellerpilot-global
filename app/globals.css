@@ -1190,7 +1190,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .topbar { min-height: 62px; padding: 0 14px; }
   .topbar-title p { display: none; }
   .topbar-title h1 { font-size: 15px; }
-  .demo-data-badge { display: none; }
+  .demo-data-badge { display: inline-flex; min-height: 44px; }
   .user-menu > span:nth-child(2), .user-menu > svg { display: none; }
   .app-content { padding: 15px 14px max(30px, env(safe-area-inset-bottom)); }
   .page-stack { gap: 12px; }

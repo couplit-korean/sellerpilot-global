@@ -17,7 +17,7 @@ import {
 } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.27-r17-outer-band-audited-retry-16";
+export const AI_ASSET_PROMPT_VERSION = "2026.08.28-r20-contact-mode-separated";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 

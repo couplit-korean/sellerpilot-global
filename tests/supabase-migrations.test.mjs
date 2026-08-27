@@ -26,6 +26,7 @@ const ABANDONED_PRODUCT_REVISION_JOB_ID = "231326b1-884d-4757-bcae-2a50ce559839"
 const PRIVATE_RESEARCH_RETRY_JOB_ID = "2b90a2d7-3754-4b65-89c6-c386967a90cc";
 const RETRY_CLOCK_JOB_ID = "55261a19-9394-4d0c-a8b5-8d6d53dc88f0";
 const SHARED_PRODUCT_ID = "4a346497-84c8-4ccd-bf14-8f06f990a2f7";
+const READINESS_FAILED_JOB_ID = "617d6da4-d646-4625-ad8a-0c18eab7f3c6";
 const TOKEN_HASH = "a".repeat(64);
 const SECOND_WORKER_TOKEN_HASH = "e".repeat(64);
 const AI_SCOPED_TOKEN_HASH = "b".repeat(64);
@@ -289,6 +290,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260827181100_allow_legacy_ai_cross_product_bridge.sql",
       "20260827193102_enable_brave_marketplace_competitor_provider.sql",
       "20260827212726_fence_competitor_matcher_version.sql",
+      "20260827235328_expire_stale_non_cs_ai_jobs.sql",
+      "20260828001000_expose_product_readiness_facts.sql",
     ]);
     for (const name of migrationNames) {
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -5559,7 +5562,66 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     await setClaims(db);
 
+    // Product readiness facts must remain product-specific and ledger-backed.
+    // Historical category confirmations can coexist under different source_ref
+    // values, so the snapshot must select only the newest row per channel/market.
+    await db.query(
+      `update sellerpilot_private.products
+          set product_facts = coalesce(product_facts, '{}'::jsonb) ||
+              '{"sellingPrice":21500,"currency":"KRW","categoryHint":"일반식품"}'::jsonb
+        where id = $1`,
+      [aiProductId],
+    );
+    await db.query(
+      `update sellerpilot_private.products
+          set product_facts = coalesce(product_facts, '{}'::jsonb) ||
+              '{"sellingPrice":"19.95","currency":"usd","categoryHint":"테스트 상품군"}'::jsonb
+        where id = $1`,
+      [SHARED_PRODUCT_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, status, request_payload, error_message, created_by,
+         created_at, completed_at, updated_at
+       ) values (
+         $1, 'product_research', 'failed', jsonb_build_object('source_product_id', $2::text),
+         'SECRET RAW PROVIDER ERROR MUST NOT REACH OPERATIONS SNAPSHOT', $3,
+         now() + interval '2 seconds', now() + interval '2 seconds', now() + interval '2 seconds'
+       )`,
+      [READINESS_FAILED_JOB_ID, aiProductId, ADMIN_ID],
+    );
+    const readinessListingId = await scalar(
+      db,
+      `insert into sellerpilot_private.product_listings (
+         owner_id, product_id, channel_key, status, currency, price,
+         failure_class, last_error, updated_at
+       ) values (
+         $1, $2, 'qoo10', 'failed', 'JPY', 2100,
+         'external_action', 'SECRET RAW LISTING ERROR MUST NOT REACH READINESS FACTS',
+         now() + interval '1 second'
+       ) returning id`,
+      [ADMIN_ID, aiProductId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.product_category_assignments (
+         owner_id, product_id, source_ref, product_name, channel, environment,
+         market, category_id, category_path, is_leaf, confidence,
+         classification_source, status, confirmed_at, created_at, updated_at
+       ) values
+         ($1, $2, 'readiness-qoo10-old', 'AI readiness product', 'qoo10', 'production',
+          'JP', 'OLD-CATEGORY', array['이전','카테고리'], true, 1,
+          'seller_selected', 'confirmed', now() - interval '2 hours', now() - interval '2 hours', now() - interval '2 hours'),
+         ($1, $2, 'readiness-qoo10-new', 'AI readiness product', 'qoo10', 'production',
+          'JP', 'NEW-CATEGORY', array['최신','카테고리'], true, 1,
+          'seller_selected', 'confirmed', now() - interval '1 hour', now() - interval '1 hour', now() - interval '1 hour'),
+         ($1, $2, 'readiness-shopee-new', 'AI readiness product', 'shopee', 'production',
+          'MY', 'SHOPEE-CATEGORY', array['Shopee','Confirmed'], true, 1,
+          'seller_selected', 'confirmed', now() - interval '30 minutes', now() - interval '30 minutes', now() - interval '30 minutes')`,
+      [ADMIN_ID, aiProductId],
+    );
+
     const snapshot = await scalar(db, "select public.sellerpilot_get_operations_snapshot()");
+    const readinessFacts = await scalar(db, "select public.sellerpilot_get_product_readiness_facts()");
     assert.equal(snapshot.products.length, 2);
     assert.equal(snapshot.orders.length, 2);
     assert.equal(snapshot.tickets.length, 2);
@@ -5574,7 +5636,39 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(aiProduct.status, "low_stock");
     assert.deepEqual(aiProduct.listingChannels, ["C"]);
     assert.equal(aiProduct.aiHeroPath, revisionResult.asset_storage_paths.hero);
+    const aiReadiness = readinessFacts.find((facts) => facts.productId === aiProductId);
+    assert.equal(aiReadiness.baseSellingPrice, 21500);
+    assert.equal(aiReadiness.baseCurrency, "KRW");
+    assert.equal(aiReadiness.categoryHint, "일반식품");
+    assert.equal(aiReadiness.marginState, "missing");
+    assert.equal(aiReadiness.latestError, "AI 상품 분석 실패 · 등록 진행에서 다시 시도해 주세요.");
+    assert.equal(aiReadiness.latestErrorKind, "analysis");
+    assert.equal(JSON.stringify(aiReadiness).includes("SECRET RAW PROVIDER ERROR"), false);
+    assert.equal(JSON.stringify(aiReadiness).includes("SECRET RAW LISTING ERROR"), false);
+    assert.equal(
+      new Set(aiReadiness.confirmedCategories.map((category) => `${category.channelKey}:${category.market}`)).size,
+      aiReadiness.confirmedCategories.length,
+    );
+    assert.deepEqual(
+      aiReadiness.confirmedCategories
+        .filter((category) => category.channelKey === "qoo10" || category.channelKey === "shopee")
+        .map((category) => [category.channelKey, category.market, category.categoryId]),
+      [["qoo10", "JP", "NEW-CATEGORY"], ["shopee", "MY", "SHOPEE-CATEGORY"]],
+    );
     assert.equal(snapshot.products.some((product) => product.id === SHARED_PRODUCT_ID), true);
+    const sharedReadiness = readinessFacts.find((facts) => facts.productId === SHARED_PRODUCT_ID);
+    assert.equal(sharedReadiness.baseSellingPrice, 19.95);
+    assert.equal(sharedReadiness.baseCurrency, "USD");
+    assert.equal(sharedReadiness.categoryHint, "테스트 상품군");
+    assert.deepEqual(sharedReadiness.confirmedCategories, []);
+    await db.query(
+      "update sellerpilot_private.product_listings set updated_at = now() + interval '3 seconds' where id = $1",
+      [readinessListingId],
+    );
+    const listingNewerReadiness = await scalar(db, "select public.sellerpilot_get_product_readiness_facts()");
+    const listingNewerAiFacts = listingNewerReadiness.find((facts) => facts.productId === aiProductId);
+    assert.equal(listingNewerAiFacts.latestError, "채널 카테고리·권한 확인이 필요합니다.");
+    assert.equal(listingNewerAiFacts.latestErrorKind, "external_action");
     const sharedPublishContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [SHARED_PRODUCT_ID]);
     assert.equal(sharedPublishContext.product.id, SHARED_PRODUCT_ID);
     assert.equal(sharedPublishContext.ownerId, SECOND_ADMIN_ID);
@@ -5876,15 +5970,88 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       { status: "resolved", reply_draft: "확인했습니다", reply_delivery_status: "succeeded" },
     );
 
-    const marginScenarioId = await scalar(
+    const legacyMarginScenarioId = await scalar(
         db,
-        "select public.sellerpilot_save_margin_scenario('마진 검증', 'qoo10', '{\"cost\":10000}'::jsonb, '{\"margin\":22.5}'::jsonb)",
+        `select public.sellerpilot_save_margin_scenario(
+          '다른 관리자 생성 상품', 'qoo10',
+          '{"cost":10000,"productName":"다른 관리자 생성 상품"}'::jsonb,
+          '{"margin":22.5}'::jsonb
+        )`,
     );
-    assert.match(marginScenarioId, /^[0-9a-f-]{36}$/i);
+    assert.match(legacyMarginScenarioId, /^[0-9a-f-]{36}$/i);
+    const linkedMarginScenarioId = await scalar(
+      db,
+      `select public.sellerpilot_save_margin_scenario(
+        '공유 상품 직접 계산', 'qoo10',
+        jsonb_build_object('cost', 12000, 'productId', $1::text),
+        '{"margin":18.25}'::jsonb
+      )`,
+      [SHARED_PRODUCT_ID],
+    );
+    assert.match(linkedMarginScenarioId, /^[0-9a-f-]{36}$/i);
+    await db.query(
+      "update sellerpilot_private.margin_scenarios set created_at = now() - interval '2 days' where id = $1",
+      [linkedMarginScenarioId],
+    );
+    const noiseMarginScenarioIds = [];
+    for (let index = 0; index < 6; index += 1) {
+      const scenarioId = await scalar(
+        db,
+        `select public.sellerpilot_save_margin_scenario(
+          $1, 'qoo10', jsonb_build_object('productId', $2::text), jsonb_build_object('margin', $3::numeric)
+        )`,
+        [`최근 계산 ${index + 1}`, aiProductId, 20 + index],
+      );
+      noiseMarginScenarioIds.push(scenarioId);
+      await db.query(
+        "update sellerpilot_private.margin_scenarios set created_at = now() + ($2::integer * interval '1 second') where id = $1",
+        [scenarioId, index],
+      );
+    }
     const marginScenarios = await scalar(db, "select public.sellerpilot_list_margin_scenarios(5)");
-    assert.equal(marginScenarios.length, 1);
-    assert.equal(marginScenarios[0].channelKey, "qoo10");
-    assert.equal(await scalar(db, "select public.sellerpilot_delete_margin_scenario($1)", [marginScenarioId]), true);
+    assert.equal(marginScenarios.length, 5);
+    assert.equal(marginScenarios.some((scenario) => scenario.id === linkedMarginScenarioId), false);
+    const marginReadiness = await scalar(db, "select public.sellerpilot_get_product_readiness_facts()");
+    const sharedMarginReadiness = marginReadiness.find((facts) => facts.productId === SHARED_PRODUCT_ID);
+    const aiMarginReadiness = marginReadiness.find((facts) => facts.productId === aiProductId);
+    assert.equal(sharedMarginReadiness.marginState, "calculated");
+    assert.equal(sharedMarginReadiness.marginPercent, 18.25);
+    assert.equal(sharedMarginReadiness.marginChannelKey, "qoo10");
+    assert.equal(aiMarginReadiness.marginState, "calculated");
+    assert.equal(aiMarginReadiness.marginPercent, 25);
+
+    await setClaims(db, "authenticated", SECOND_ADMIN_ID);
+    const sharedAdminScenarios = await scalar(db, "select public.sellerpilot_list_margin_scenarios(50)");
+    assert.equal(sharedAdminScenarios.some((scenario) => scenario.id === linkedMarginScenarioId && scenario.productId === SHARED_PRODUCT_ID), true);
+    assert.equal(sharedAdminScenarios.some((scenario) => scenario.id === legacyMarginScenarioId && scenario.productId === null), true);
+    assert.equal(await scalar(db, "select public.sellerpilot_delete_margin_scenario($1)", [noiseMarginScenarioIds[0]]), true);
+    assert.deepEqual(
+      (await db.query(
+        `select owner_id::text, safe_detail->>'scenario_owner_id' as scenario_owner_id
+           from sellerpilot_private.operation_audit
+          where action = 'scenario_deleted' and entity_id = $1
+          order by occurred_at desc limit 1`,
+        [noiseMarginScenarioIds[0]],
+      )).rows,
+      [{ owner_id: SECOND_ADMIN_ID, scenario_owner_id: ADMIN_ID }],
+    );
+    await setClaims(db, "authenticated", NON_ADMIN_ID);
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_save_margin_scenario(
+          '비관리자 계산', 'qoo10', jsonb_build_object('productId', $1::text), '{"margin":1}'::jsonb
+        )`,
+        [aiProductId],
+      ),
+      /invalid margin scenario/,
+    );
+    await setClaims(db);
+    assert.equal(await scalar(db, "select public.sellerpilot_delete_margin_scenario($1)", [legacyMarginScenarioId]), true);
+    assert.equal(await scalar(db, "select public.sellerpilot_delete_margin_scenario($1)", [linkedMarginScenarioId]), true);
+    for (const scenarioId of noiseMarginScenarioIds.slice(1)) {
+      assert.equal(await scalar(db, "select public.sellerpilot_delete_margin_scenario($1)", [scenarioId]), true);
+    }
     const elevenstMarginScenarioId = await scalar(
       db,
       "select public.sellerpilot_save_margin_scenario('11번가 마진 검증', 'elevenst', '{\"cost\":12000}'::jsonb, '{\"margin\":20}'::jsonb)",
@@ -5899,7 +6066,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(await scalar(db, "select public.sellerpilot_cancel_ai_job($1)", [CANCEL_JOB_ID]), true);
     assert.equal(await scalar(db, "select public.sellerpilot_retry_ai_job($1)", [CANCEL_JOB_ID]), true);
     const jobs = await db.query("select * from public.sellerpilot_list_ai_jobs(10)");
-    assert.equal(jobs.rows.length, 7);
+    assert.equal(jobs.rows.length, 8);
     assert.equal(jobs.rows.some((job) => job.id === PRODUCT_REVISION_JOB_ID && job.status === "succeeded"), true);
     assert.equal(jobs.rows.some((job) => job.id === STALE_PRODUCT_REVISION_JOB_ID && job.status === "succeeded"), true);
     assert.equal(jobs.rows.some((job) => job.id === DUPLICATE_SKU_JOB_ID && job.status === "succeeded"), true);

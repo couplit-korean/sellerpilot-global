@@ -202,9 +202,10 @@ test("revision route and UI preserve uncertain uploads and query the exact job",
   assert.match(page, /\[408, 425, 429\]\.includes\(response\.status\) \|\| response\.status >= 500/);
   assert.match(page, /revision\?jobId=\$\{encodeURIComponent\(candidateJobId\)\}/);
   assert.match(page, /confirmationPending: true/);
-  assert.match(page, /AbortSignal\.timeout\(30_000\)/);
+  assert.match(page, /const retryScope = createPageAbortScope\(\[\], 30_000/);
+  assert.match(page, /finally \{[\s\S]{0,100}retryScope\.dispose\(\)/);
   assert.match(page, /productRevisionMonitorMaximumAgeMs = 30 \* 60 \* 1_000/);
-  assert.match(page, /AbortSignal\.timeout\(15_000\)/);
+  assert.match(page, /const pollScope = createPageAbortScope\(\[signal\], 15_000/);
   assert.match(page, /status: "monitoring_deferred"/);
   assert.match(page, /onOpenActivity=\{\(\) => navigate\("registration-activity"\)\}/);
   assert.match(page, /authenticatedJsonWithDeadline/);

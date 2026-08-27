@@ -18,6 +18,7 @@ const sourceRoot = process.cwd();
 const runtimeRoot = join(homedir(), "Library", "Application Support", "SellerPilot", "worker-runtime");
 const workerPath = join(runtimeRoot, "scripts", "ai-cli-worker.mjs");
 const guiDomain = `gui/${process.getuid?.() ?? 0}`;
+const aiOnlyRuntimeRequested = process.argv.includes("--ai-only-runtime");
 
 function command(program, args, options = {}) {
   return execFileSync(program, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...options }).trim();
@@ -303,6 +304,8 @@ async function assertLaunchAgentRunning() {
 if (process.platform !== "darwin") throw new Error("이 설치기는 macOS LaunchAgent 전용입니다.");
 
 if (process.argv.includes("--status")) {
+  const installedPlist = await readFile(plistPath, "utf8").catch(() => "");
+  const aiOnlyRuntime = installedPlist.includes("<string>--ai-only</string>");
   const tokenStatuses = workerTokenScopes.map((definition) => ({
     ...definition,
     present: isWorkerTokenConfigured(keychainToken(definition.service)),
@@ -314,10 +317,14 @@ if (process.argv.includes("--status")) {
     // launchctl returns non-zero when the agent has not been bootstrapped.
   }
   console.log(`SellerPilot AI 작업자: ${launchStatus}`);
-  for (const token of tokenStatuses) console.log(`${token.label} 키체인 토큰: ${token.present ? "저장됨" : "없음"}`);
+  console.log(`작업자 모드: ${aiOnlyRuntime ? "AI 전용 · 게이트웨이/스케줄러 비활성" : "전체 범위"}`);
+  for (const token of tokenStatuses) {
+    const intentionallyDisabled = aiOnlyRuntime && token.scope !== "ai";
+    console.log(`${token.label} 키체인 토큰: ${intentionallyDisabled ? "AI 전용 모드에서 사용 안 함" : token.present ? "저장됨" : "없음"}`);
+  }
   console.log(`Temu 작업자 허용 IP: ${keychainTemuEgressIps() ? "설정됨" : "없음"}`);
   console.log(`서버: ${sellerpilotUrl}`);
-  process.exit(launchStatus === "미설치" || tokenStatuses.some((token) => !token.present) ? 1 : 0);
+  process.exit(launchStatus === "미설치" || tokenStatuses.some((token) => !token.present && (!aiOnlyRuntime || token.scope === "ai")) ? 1 : 0);
 }
 
 async function install() {
@@ -325,13 +332,26 @@ async function install() {
   const rotateAll = process.argv.includes("--rotate-token");
   const rotatesOne = workerTokenScopes.some((definition) => process.argv.includes(definition.rotateFlag));
   const runtimeOnly = process.argv.includes("--runtime-only");
+  const installedPlist = await readFile(plistPath, "utf8").catch(() => "");
+  const installedAiOnlyRuntime = installedPlist.includes("<string>--ai-only</string>");
+  const aiOnlyRuntime = aiOnlyRuntimeRequested || (runtimeOnly && installedAiOnlyRuntime);
+  if ((runtimeOnly && aiOnlyRuntimeRequested)
+      || (aiOnlyRuntimeRequested && (tokenSetId || rotateAll || rotatesOne))) {
+    throw new Error("AI 전용 런타임 설치는 전체 범위 런타임 업그레이드 또는 토큰 교체 옵션과 함께 사용할 수 없습니다.");
+  }
   if (runtimeOnly && (tokenSetId || rotateAll || rotatesOne)) {
     throw new Error("런타임 전용 업그레이드와 토큰 교체 옵션은 함께 사용할 수 없습니다.");
   }
-  const missingScopes = workerTokenScopes
+  const requiredTokenScopes = aiOnlyRuntime
+    ? workerTokenScopes.filter((definition) => definition.scope === "ai")
+    : workerTokenScopes;
+  const missingScopes = requiredTokenScopes
     .filter((definition) => !isWorkerTokenConfigured(keychainToken(definition.service)))
     .map((definition) => definition.label);
   if (missingScopes.length) {
+    if (aiOnlyRuntime) {
+      throw new Error(`AI 전용 작업자를 설치하려면 AI 작업 키체인 토큰이 필요합니다. 누락: ${missingScopes.join(", ")}`);
+    }
     if (runtimeOnly) {
       throw new Error(`런타임 업그레이드 전에 전용 작업자 토큰을 모두 설치해 주세요. 누락: ${missingScopes.join(", ")}`);
     }
@@ -360,7 +380,7 @@ async function install() {
   let wasInstalled = false;
 
   try {
-    if (!runtimeOnly) {
+    if (!runtimeOnly && !aiOnlyRuntime) {
       for (const definition of workerTokenScopes) {
         const previousToken = keychainToken(definition.service);
         const token = rotateAll || !isWorkerTokenConfigured(previousToken)
@@ -381,7 +401,7 @@ async function install() {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>${label}</string>
-  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>--import</string><string>tsx</string><string>${xml(workerPath)}</string></array>
+  <key>ProgramArguments</key><array><string>${xml(process.execPath)}</string><string>--import</string><string>tsx</string><string>${xml(workerPath)}</string>${aiOnlyRuntime ? "<string>--ai-only</string>" : ""}</array>
   <key>WorkingDirectory</key><string>${xml(runtimeRoot)}</string>
   <key>EnvironmentVariables</key><dict><key>SELLERPILOT_URL</key><string>${xml(sellerpilotUrl)}</string></dict>
   <key>RunAtLoad</key><true/>
@@ -501,5 +521,7 @@ async function install() {
 await install();
 
 console.log("SellerPilot AI 작업자를 설치하고 시작했습니다.");
+const installedModePlist = await readFile(plistPath, "utf8").catch(() => "");
+console.log(`작업자 모드: ${installedModePlist.includes("<string>--ai-only</string>") ? "AI 전용 · 게이트웨이/스케줄러 비활성" : "전체 범위"}`);
 console.log(`상태 확인: npm run ai:worker:status`);
 console.log(`로그: ${join(logDirectory, "ai-worker.log")}`);

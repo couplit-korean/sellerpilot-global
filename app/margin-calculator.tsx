@@ -17,7 +17,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { channels, type ChannelKey } from "./channel-config";
-import type { OperationMarginScenario } from "./use-operations-snapshot";
+import type { OperationMarginScenario, OperationProduct } from "./use-operations-snapshot";
 
 type MarginForm = {
   sellingPrice: number;
@@ -58,6 +58,7 @@ type MarginResult = ChannelProfile & {
 
 type SavedScenario = {
   id: string;
+  productId: string | null;
   product: string;
   channelKey: ChannelKey;
   sellingPrice: number;
@@ -111,6 +112,15 @@ function formatLocalPrice(valueInKrw: number, channel: ChannelProfile) {
   if (channel.currency === "KRW") return `${channel.symbol}${wonFormatter.format(Math.round(localValue))}`;
   if (channel.currency === "JPY") return `${channel.symbol}${wonFormatter.format(Math.ceil(localValue / 10) * 10)}`;
   return `${channel.symbol}${localValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatProductBasePrice(product: OperationProduct | null) {
+  if (!product || (product.baseSellingPrice === null && !product.baseCurrency)) return "기준 판매가 미입력";
+  if (product.baseSellingPrice === null) return `가격 미입력 · ${product.baseCurrency}`;
+  if (!product.baseCurrency) {
+    return `${product.baseSellingPrice.toLocaleString("ko-KR", { maximumFractionDigits: 2 })} · 통화 미입력`;
+  }
+  return `${product.baseSellingPrice.toLocaleString("ko-KR", { maximumFractionDigits: 2 })} ${product.baseCurrency}`;
 }
 
 function roundSellingPrice(value: number) {
@@ -189,6 +199,7 @@ function savedScenarioFromOperation(scenario: unknown): SavedScenario | null {
   const createdDate = new Date(createdAt);
   return {
     id: typeof raw.id === "string" && raw.id ? raw.id : `invalid-${channelKey}-${createdAt || "unknown"}`,
+    productId: typeof raw.productId === "string" && raw.productId ? raw.productId : null,
     product: typeof raw.name === "string" && raw.name.trim() ? raw.name : "상품명 미입력",
     channelKey,
     sellingPrice: numeric(inputs.sellingPrice),
@@ -198,12 +209,15 @@ function savedScenarioFromOperation(scenario: unknown): SavedScenario | null {
   };
 }
 
-export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
+export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenarioMessage, products, onChanged }: {
   notify: (message: string) => void;
   scenarios: OperationMarginScenario[];
+  scenarioState: "checking" | "ready" | "unavailable";
+  scenarioMessage: string | null;
+  products: OperationProduct[];
   onChanged?: () => void;
 }) {
-  const [productName, setProductName] = useState("");
+  const [selectedProductId, setSelectedProductId] = useState("");
   const [form, setForm] = useState<MarginForm>(() => ({ ...defaultMarginForm }));
   const [feeOverrides, setFeeOverrides] = useState<Record<ChannelKey, number>>(() => ({ ...defaultFeeOverrides }));
   const [paymentFeeOverrides, setPaymentFeeOverrides] = useState<Record<ChannelKey, number>>(() => ({ ...defaultPaymentFeeOverrides }));
@@ -235,6 +249,7 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
   const results = useMemo(() => calculateMargins(form, feeOverrides, paymentFeeOverrides, calculationProfiles), [calculationProfiles, form, feeOverrides, paymentFeeOverrides]);
   const selectedResult = results.find((result) => result.key === selectedChannel) ?? results[0];
   const selectedChannelInfo = channels[selectedChannel];
+  const selectedProduct = products.find((product) => product.id === selectedProductId) ?? null;
   const targetProgress = Math.max(0, Math.min(100, (selectedResult.margin / Math.max(form.targetMargin, 1)) * 100));
   const savedScenarios = useMemo(() => {
     const operationScenarios = (Array.isArray(scenarios) ? scenarios : [])
@@ -251,12 +266,20 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
   };
 
   const resetInputs = () => {
-    setProductName("");
+    setSelectedProductId("");
     setForm({ ...defaultMarginForm });
     setFeeOverrides({ ...defaultFeeOverrides });
     setPaymentFeeOverrides({ ...defaultPaymentFeeOverrides });
     setSelectedChannel("qoo10");
     notify("마진 계산 입력값을 초기화했습니다.");
+  };
+
+  const selectProduct = (productId: string) => {
+    setSelectedProductId(productId);
+    const product = products.find((item) => item.id === productId);
+    if (product?.baseCurrency === "KRW" && product.baseSellingPrice !== null) {
+      changeFormValue("sellingPrice", product.baseSellingPrice);
+    }
   };
 
   const applyRecommendedPrice = () => {
@@ -269,10 +292,12 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
   const saveScenario = async () => {
     if (savingScenario) return;
     if (!selectedResult.feeReady) return notify(`${selectedChannelInfo.name}의 실제 적용 수수료를 입력한 뒤 저장해 주세요.`);
+    if (!selectedProduct) return notify("마진 계산을 연결할 실제 상품을 먼저 선택해 주세요.");
     const now = new Date();
     const saved: SavedScenario = {
       id: `${selectedChannel}-${now.getTime()}`,
-      product: productName.trim() || "상품명 미입력",
+      productId: selectedProduct.id,
+      product: selectedProduct.name,
       channelKey: selectedChannel,
       sellingPrice: form.sellingPrice,
       profit: selectedResult.profit,
@@ -291,7 +316,7 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
           action: "margin_save",
           name: saved.product,
           channelKey: selectedChannel,
-          inputs: { ...form, platformFee: selectedResult.platformFee, paymentFee: selectedResult.paymentFee },
+          inputs: { ...form, productId: selectedProduct.id, platformFee: selectedResult.platformFee, paymentFee: selectedResult.paymentFee },
           result: {
             profit: selectedResult.profit,
             margin: selectedResult.margin,
@@ -361,7 +386,7 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
         <article className="panel margin-input-panel">
           <div className="panel-heading margin-panel-heading"><div><span className="panel-kicker">COST INPUT</span><h3>상품 원가 · 비용 입력</h3></div><button type="button" className="filter-button" onClick={resetInputs}><RefreshCw size={14} />입력값 초기화</button></div>
 
-          <label className="margin-product-field" htmlFor="margin-product-name"><span>계산 상품</span><input id="margin-product-name" value={productName} onChange={(event) => setProductName(event.target.value)} /></label>
+          <label className="margin-product-field" htmlFor="margin-product-id"><span>계산 상품</span><select id="margin-product-id" value={selectedProductId} onChange={(event) => selectProduct(event.target.value)}><option value="">실상품 원장에서 선택</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · {product.sku}</option>)}</select><small>{formatProductBasePrice(selectedProduct)} · 상품 이름이 아닌 원장 ID로 계산 결과를 연결합니다.</small></label>
 
           <div className="margin-field-section">
             <div className="margin-section-title"><span className="metric-icon violet"><CircleDollarSign size={17} /></span><div><b>판매가 기준</b><small>현재 계획가와 시장 참고가를 원화로 입력하세요.</small></div></div>
@@ -425,7 +450,7 @@ export function MarginCalculatorPage({ notify, scenarios, onChanged }: {
 
       <section className="panel saved-margin-panel">
         <div className="panel-heading"><div><span className="panel-kicker">RECENT CALCULATIONS</span><h3>최근 저장한 계산</h3></div><small>운영 DB 저장 후 최근 5개를 화면에 표시합니다.</small></div>
-        <div className="saved-margin-list">{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.mark}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제`} onClick={() => void deleteScenario(scenario)}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</div>
+        <div className="saved-margin-list">{scenarioState === "unavailable" ? <div className="live-empty-state" role="alert"><AlertCircle size={25} /><b>저장된 계산 이력을 불러오지 못했습니다.</b><small>{scenarioMessage ?? "잠시 후 다시 확인해 주세요."}</small></div> : scenarioState === "checking" && savedScenarios.length === 0 ? <div className="live-empty-state" role="status"><RefreshCw size={25} /><b>저장된 계산 이력을 확인하고 있습니다.</b><small>상품·주문 원장은 먼저 사용할 수 있습니다.</small></div> : <>{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.mark}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}{scenario.productId ? " · 상품 연결됨" : " · 기존 미연결 계산"}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제`} onClick={() => void deleteScenario(scenario)}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</>}</div>
         <div className="margin-disclaimer"><AlertCircle size={15} /><span><b>입력값 기반 예상 계산입니다.</b> 채널 수수료는 카테고리·판매자 등급·프로모션 기간에 따라 달라질 수 있으므로 등록 직전 채널 API 메타정보와 대조해야 합니다.</span></div>
       </section>
     </div>

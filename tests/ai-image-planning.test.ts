@@ -385,7 +385,9 @@ test("food dining background prompts require built-in dining cues and ban bathro
   assert.match(prompt, /built-in banquette back/);
   assert.match(prompt, /floor-to-ceiling wet-room tile/);
   assert.match(prompt, /retail showroom, abstract gallery, generic empty shelf/);
-  assert.match(prompt, /cobalt glazed tile/);
+  assert.match(prompt, /blue-grey linoleum on an integrated horizontal dining or work ledge/);
+  assert.match(prompt, /continuous physical support plane/);
+  assert.doesNotMatch(prompt, /cobalt glazed tile/);
 
   const generalSetting = resolveProductSettingShot(result, "detail-use");
   assert.ok(generalSetting);

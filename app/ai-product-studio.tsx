@@ -92,6 +92,12 @@ type StudioJobWaitOptions = {
   onAccepted?: () => void;
   preserveMissingAdmission?: boolean;
 };
+type StudioAbortScope = {
+  signal: AbortSignal;
+  timeoutSignal: AbortSignal | null;
+  didTimeout: () => boolean;
+  cleanup: () => void;
+};
 
 const studioUploadTimeoutMs = 45_000;
 const studioJobAdmissionGraceMs = 30_000;
@@ -127,6 +133,68 @@ function clearActiveStudioJob(jobId: string) {
 
 function throwIfStudioJobAborted(signal: AbortSignal) {
   if (signal.aborted) throw signal.reason ?? studioJobAbortError();
+}
+
+export function createStudioAbortScope(
+  sourceSignals: readonly AbortSignal[],
+  timeoutMs?: number,
+  nativeTimeoutSignal: AbortSignal | null = null,
+): StudioAbortScope {
+  let fallbackTimeoutId: number | null = null;
+  let timeoutSignal = nativeTimeoutSignal;
+  if (timeoutMs !== undefined && !timeoutSignal) {
+    const timeoutController = new AbortController();
+    fallbackTimeoutId = window.setTimeout(() => {
+      timeoutController.abort(new DOMException("요청 제한시간을 초과했습니다.", "TimeoutError"));
+    }, timeoutMs);
+    timeoutSignal = timeoutController.signal;
+  }
+
+  let timedOut = Boolean(timeoutSignal?.aborted);
+  const markTimedOut = () => {
+    timedOut = true;
+  };
+  timeoutSignal?.addEventListener("abort", markTimedOut, { once: true });
+
+  const signals = timeoutSignal ? [...sourceSignals, timeoutSignal] : [...sourceSignals];
+  let removeFallbackListeners = () => {};
+  let signal: AbortSignal;
+  if (signals.length === 1) {
+    [signal] = signals;
+  } else if (typeof AbortSignal.any === "function") {
+    signal = AbortSignal.any(signals);
+  } else {
+    const combinedController = new AbortController();
+    const abortFromSource = (source: AbortSignal) => {
+      if (!combinedController.signal.aborted) {
+        combinedController.abort(source.reason ?? studioJobAbortError());
+      }
+    };
+    const listeners = signals.map((source) => {
+      const listener = () => abortFromSource(source);
+      if (source.aborted) abortFromSource(source);
+      else source.addEventListener("abort", listener, { once: true });
+      return { source, listener };
+    });
+    removeFallbackListeners = () => {
+      for (const { source, listener } of listeners) source.removeEventListener("abort", listener);
+    };
+    signal = combinedController.signal;
+  }
+
+  let cleaned = false;
+  return {
+    signal,
+    timeoutSignal,
+    didTimeout: () => timedOut,
+    cleanup: () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (fallbackTimeoutId !== null) window.clearTimeout(fallbackTimeoutId);
+      timeoutSignal?.removeEventListener("abort", markTimedOut);
+      removeFallbackListeners();
+    },
+  };
 }
 
 function delay(ms: number, signal: AbortSignal) {
@@ -169,14 +237,18 @@ async function fetchJsonWithStudioJobTimeout<Payload>(
 
 async function getStudioSessionWithDeadline(parentSignal: AbortSignal, timeoutMessage: string) {
   throwIfStudioJobAborted(parentSignal);
-  const timeoutSignal = AbortSignal.timeout(15_000);
-  const signal = AbortSignal.any([parentSignal, timeoutSignal]);
+  const nativeTimeoutSignal = typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(15_000)
+    : null;
+  const abortScope = createStudioAbortScope([parentSignal], 15_000, nativeTimeoutSignal);
   try {
-    return await waitForAbortablePromise(createClient().auth.getSession(), signal);
+    return await waitForAbortablePromise(createClient().auth.getSession(), abortScope.signal);
   } catch (error) {
     if (parentSignal.aborted) throw parentSignal.reason ?? studioJobAbortError();
-    if (timeoutSignal.aborted) throw new Error(timeoutMessage);
+    if (abortScope.didTimeout()) throw new Error(timeoutMessage);
     throw error;
+  } finally {
+    abortScope.cleanup();
   }
 }
 
@@ -926,7 +998,10 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     if (!sourceProductId) return;
     const controller = new AbortController();
     const lifecycleSignal = lifecycleControllerRef.current?.signal;
-    const signal = lifecycleSignal ? AbortSignal.any([controller.signal, lifecycleSignal]) : controller.signal;
+    const abortScope = lifecycleSignal
+      ? createStudioAbortScope([controller.signal, lifecycleSignal])
+      : null;
+    const signal = abortScope?.signal ?? controller.signal;
     void (async () => {
       try {
         const { data: sessionData } = await getStudioSessionWithDeadline(
@@ -953,7 +1028,10 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         }
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      abortScope?.cleanup();
+    };
   }, [notify, sourceProductId]);
 
   const saveDetailPage = useCallback(async (next: ProductDetailData) => {

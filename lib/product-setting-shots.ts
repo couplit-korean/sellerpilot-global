@@ -60,10 +60,10 @@ const settingShotRetryProfiles = [
   },
   {
     key: "offset-access-threshold",
-    location: "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with an offset access aisle entirely readable in the larger uncovered side band: one fixed functional wall system, the ceiling return and the lower support-plane edge converge toward a rear threshold outside the reserved quiet rectangle, while a second room-recognition structure occupies the opposite uncovered perimeter",
+    location: "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with an offset access aisle entirely readable in the larger uncovered side band: one fixed functional wall system, the ceiling return and a full-height opening converge toward a rear threshold outside the reserved quiet rectangle, while a second room-recognition structure occupies the opposite uncovered perimeter",
     supportingObjects: "one room-appropriate fixed access threshold or cabinet toe-kick return on the rear axis of the uncovered side aisle; it must remain outside the reserved zone, belong to the functional room system and never become a display plinth",
     staging: "around the reserved quiet rectangle, use a long offset side aisle and a rear plane visible above or beside it; do not force paired structures or a central threshold through the rectangle",
-    camera: "AUTHORITATIVE replacement camera: use a near-axial architectural view aligned to the uncovered side aisle at the role-required height and framing, rotated roughly 155 degrees from the base axis; the outer wall, ceiling return and lower support-plane convergence lines must meet at the offset rear threshold without any major edge crossing the reserved quiet rectangle",
+    camera: "AUTHORITATIVE replacement camera: use a near-axial architectural view aligned to the uncovered side aisle at the role-required height and framing, rotated roughly 155 degrees from the base axis; the outer wall, ceiling return and full-height opening convergence lines must meet at the offset rear threshold without any major edge crossing the reserved quiet rectangle",
     forbiddenTopology: "the base vertical three-quarter axis; a frame-centred threshold hidden behind the reserved quiet rectangle; paired left and right built-ins whose major edges cross the reserved rectangle; blank architecture extending materially outside the reserved rectangle; a narrow functional-room reveal without two fixed cues in separate outer bands; or the opposite-side L-shaped topology from retry 1",
   },
   {
@@ -71,10 +71,30 @@ const settingShotRetryProfiles = [
     location: "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with a third-corner cross-axis layout: a broad full-height opening with an integrated transom or vent spans the larger uncovered side band while a perpendicular built-in, storage bank or work-surface return occupies an uncovered upper or lower perimeter, exposing two distinct vanishing directions around the reserved quiet rectangle",
     supportingObjects: "one fixed rectangular ventilation or transom panel integrated above the broad full-height opening in the uncovered side band; it must stay outside the reserved zone and be visibly attached to the real wall, doorway or storage system rather than floating as decoration",
     staging: "around the reserved quiet rectangle, use crossing side and rear planes with a long perimeter path from the uncovered foreground to the uncovered rear opening; neither the offset aisle nor the previous side-heavy hierarchy may remain",
-    camera: "AUTHORITATIVE replacement camera: move to a third architectural corner at the role-required height and framing, rotate roughly 245 degrees from the base axis, and look across the uncovered broad opening toward the perpendicular upper-or-lower built-in return so two non-symmetric vanishing directions and long near/middle/rear separation remain visible around the reserved quiet rectangle",
+    camera: "AUTHORITATIVE replacement camera: move to a third architectural corner at the role-required height and framing, rotate roughly 245 degrees from the base axis, and look across the uncovered broad opening toward the assigned perpendicular built-in or storage return in its uncovered outer band so two non-symmetric vanishing directions and long near/middle/rear separation remain visible around the reserved quiet rectangle",
     forbiddenTopology: "the base vertical three-quarter axis; blank architecture extending materially outside the reserved quiet rectangle with a narrow functional-room reveal; a one-sided daylight strip without two fixed room cues; any major opening or return edge cutting through the reserved quiet rectangle; the offset side aisle from retry 2; the opposite-side L-shaped bay from retry 1; or a crop, mirror, recolour or fixture-only edit of a rejected plate",
   },
 ] as const;
+
+const wideSurfaceSupportedRetryLocations = [
+  "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with an L-shaped built-in or work-surface bay seen from the opposite side; anchor a full-height doorway or opening in the larger uncovered outer side band and use only wall, ceiling and opening edges outside the reserved x-span to prove two-point depth",
+  "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with an offset access aisle entirely readable in the larger uncovered side band: a fixed functional wall system and ceiling return converge toward a rear threshold outside the reserved x-span, while a second room-recognition structure occupies the opposite uncovered perimeter",
+  "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with a third-corner cross-axis layout: a broad full-height opening with an integrated transom or vent spans the larger uncovered side band while a perpendicular built-in or storage bank remains entirely in an uncovered side or upper band; only wall, ceiling and opening edges outside the reserved x-span may carry perspective convergence",
+] as const;
+
+const suspendedRetryLocations = [
+  "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with an L-shaped full-height storage or backing-wall bay seen from the opposite side; anchor a full-height doorway or opening in the larger uncovered outer band and preserve one coherent hanging or backing plane through the reserved rectangle",
+  "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with an offset access aisle entirely readable in the larger uncovered side band: a fixed wall system, ceiling return and full-height opening converge toward a rear threshold outside the reserved rectangle, while one coherent hanging or backing plane remains unobstructed through it",
+  "stay inside the assigned functional room and keep at least two room-recognition structures, but replace the base floor-plan with a third-corner cross-axis layout: a broad full-height opening with an integrated transom or vent spans the larger uncovered side band while a perpendicular full-height storage or backing-wall return occupies the opposite uncovered band without entering the reserved rectangle",
+] as const;
+
+const suspendedRetryCues = [
+  "one ordinary rectangular built-in task-light recess integrated into the full-height wall or storage bay in the larger uncovered outer band beside the reserved zone; it is secondary to the room's doorway, window or storage evidence",
+  "one room-appropriate fixed access threshold or full-height cabinet-jamb return on the rear axis of the uncovered side aisle; it stays outside the reserved zone and belongs to the functional room system",
+  "one fixed rectangular ventilation or transom panel integrated above the broad full-height opening in the uncovered side band; it stays outside the reserved zone and remains attached to the real wall, doorway or storage system",
+] as const;
+
+const wideSurfaceSupportedTopology = "WIDE SURFACE-SUPPORT SCREEN-SPACE INVARIANT: across the complete reserved x-span, render one fronto-parallel support/backing seam inside the exact declared contact band with normalized end-to-end slope no greater than 0.005. Within that x-span, every pixel from the seam through the frame bottom must be the assigned support material. Wall, ceiling and opening edges outside the reserved x-span may prove perspective depth, but no column, threshold, cabinet side, worktop side, diagonal boundary, wall or open-air region may enter that below-seam x-span. Inspect this invariant before saving; if it is not exact, discard the whole plate and regenerate it";
 
 const retryCameraEnvelopeByAsset: Readonly<Record<SettingShotAssetId, string>> = {
   portrait: "portrait-orientation framing at the role-required height (low for this slot)",
@@ -102,9 +122,9 @@ const settingShotRetryRepairDirectives: Readonly<Record<string, string>> = {
   "safety-package-container": "remove every bottle, can, jar, pouch, carton, packet, tube, retail box and generic container silhouette from the complete plate",
   "safety-label-text": "remove every label-like panel, logo, barcode, certification mark, QR code and readable or pseudo-readable package text",
   "safety-human": "remove every person, hand, arm, face, reflection and human-shaped shadow from the complete plate",
-  "reserved-zone": "keep the exact normalized rectangle declared by the enclosing prompt at the identical left, top, width and height; never move, resize, crop or reinterpret it, and keep its full interior free of fixtures, slot-specific cues, object clusters, strong shadows, reflections and product-shaped traces. A broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone only when it cannot compete with the composited product; the independent pixel-density gate still rejects busy geometry. For a surface-supported slot, align the support boundary to the declared bottom edge within the enclosing prompt's narrow tolerance band",
-  "assigned-environment": "make the assigned real-life room function immediately recognizable from at least two visible fixed architectural structures named by its trusted room-recognition contract; color, material or one generic shelf cannot substitute for those structures",
-  "assigned-location": "show the retry's exact assigned functional room and its required fixed recognition structures while rebuilding the surrounding floor-plan, doorway/cabinet junctions and vanishing geometry from the designated new architectural side",
+  "reserved-zone": "keep the exact normalized rectangle declared by the enclosing prompt at the identical left, top, width and height; never move, resize, crop or reinterpret it, and keep its full interior free of fixtures, slot-specific cues, object clusters, strong shadows, reflections and product-shaped traces. A broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone only when it cannot compete with the composited product; the independent pixel-density gate still rejects busy geometry. For a surface-supported slot, draw one continuous horizontal support boundary fully inside the enclosing prompt's narrow contact tolerance band across the complete width of the reserved rectangle, continue the assigned support material below it, and leave no wall, vertical panel or air pixels below that boundary inside the rectangle",
+  "assigned-environment": "make the assigned real-life room function immediately recognizable from at least two visible fixed architectural structures named by its trusted room-recognition contract, placed in separate non-collinear outer bands; color, material or one generic shelf cannot substitute for those structures",
+  "assigned-location": "show the retry's exact assigned functional room and its required fixed recognition structures in separate outer bands while rebuilding the surrounding floor-plan, doorway/cabinet junctions and vanishing geometry from the designated new architectural side",
   "assigned-location-key": "make the retry location contract unambiguous enough that the trusted location key, rather than unknown or a prior location family, is the only defensible audit result",
   "assigned-time-light": "show the retry's exact time-of-day through one visible source direction, matching color temperature and unmistakable cast-shadow length/direction; a generic evenly lit room fails",
   "assigned-time-light-key": "make the retry light signature unambiguous enough that the trusted moment key, rather than unknown or a prior light family, is the only defensible audit result",
@@ -116,7 +136,7 @@ const settingShotRetryRepairDirectives: Readonly<Record<string, string>> = {
   "assigned-palette-key": "make the retry palette family unambiguous enough that the trusted palette key, rather than unknown or a prior palette family, is the only defensible audit result",
   "assigned-spatial-depth": "expose separate foreground, middle and rear fixed architectural planes with readable occlusion and convergence; a flat wall, shallow niche or isolated shelf fails",
   "assigned-spatial-depth-key": "make the retry depth structure unambiguous enough that the trusted spatial-depth key, rather than unknown or a prior depth family, is the only defensible audit result",
-  "assigned-fixed-cue": "show exactly the retry's mandatory slot-specific fixed cue as real integrated architecture outside the entire reserved product rectangle and attach it to the retry profile's required doorway, built-in or room system; a renamed, reshaped, relocated or isolated version of a rejected cue fails",
+  "assigned-fixed-cue": "show exactly the retry's mandatory slot-specific fixed cue as real integrated architecture outside the entire reserved product rectangle and attach it to the retry profile's required doorway, built-in or room system; it must be separately identifiable from the two fixed structures that prove the functional room, and a renamed, reshaped, relocated or isolated version of a rejected cue fails",
   "overall-layout": "rebuild the complete outer-band architectural floor-plan, convergence, negative-space direction, fixed-cue placement and near/middle/rear hierarchy around the immutable quiet rectangle; blank architecture extending materially outside that rectangle, one ambiguous side reveal, changing only color, crop or one fixture fails. Never count blankness confined to the mandated rectangle itself as a repeated layout",
   location: "retain the exact assigned room function but use visibly different fixed-room geometry and access/cabinet/window relationships from every comparison plate",
   "time-light": "use the retry's different source side, time treatment, shadow direction and shadow length so no comparison plate shares its lighting signature",
@@ -125,6 +145,11 @@ const settingShotRetryRepairDirectives: Readonly<Record<string, string>> = {
   "spatial-depth": "use a different foreground/middle/rear arrangement and vanishing-depth hierarchy from every comparison plate",
   camera: "use a clearly different architectural side, azimuth, perspective convergence and focal-depth relationship from every comparison plate",
   "fixed-cue": "use the retry's unique fixed architectural cue outside the reserved zone and do not reuse, rename or slightly reshape any cue from a comparison plate",
+};
+
+const suspendedRetryRepairDirectives: Readonly<Record<string, string>> = {
+  "reserved-zone": "keep the exact normalized rectangle declared by the enclosing prompt at the identical left, top, width and height; never move, resize, crop or reinterpret it. Keep one coherent, unobstructed hanging or backing plane across its complete interior, with every fixture, junction, shadow, reflection and product-shaped trace outside it; never invent a tabletop, shelf, ledge, pedestal or bottom contact line",
+  surface: "use a different integrated backing material family, texture scale and grain direction from every comparison plate while retaining one coherent unobstructed backing plane across the complete reserved rectangle",
 };
 
 const retryAuditFeedbackFields = [
@@ -206,13 +231,38 @@ const retryMomentsByAsset: Record<SettingShotAssetId, readonly [string, string, 
 
 const retrySurfacesByAsset: Record<SettingShotAssetId, readonly [string, string, string]> = {
   portrait: ["dark cleft slate", "ivory fine-chip terrazzo", "blue-grey oxidized zinc"],
-  wide: ["ribbed pale ceramic tile", "smoked structural glass", "charred end-grain timber"],
+  wide: [
+    "ribbed pale ceramic inset forming a continuous horizontal worktop",
+    "smoked structural glass laminated over a fixed horizontal work bench",
+    "charred end-grain timber forming a continuous horizontal worktop",
+  ],
   "detail-overview": ["brushed stainless steel", "deep green soapstone", "sealed dark cork composite"],
-  "detail-use": ["black saddle leather over a fixed slab", "cobalt glazed tile", "pale honed limestone"],
+  "detail-use": [
+    "matte black saddle-leather laminate on a built-in dining-height or task-height support plane",
+    "blue-grey linoleum on an integrated horizontal dining or work ledge",
+    "pale honed limestone on a fixed horizontal dining or work ledge",
+  ],
   "detail-routine": ["matte red architectural brick", "satin-finished brass sheet", "bright white quartz"],
   "detail-scale": ["fine grey cast concrete", "cross-cut white oak", "frosted laminated glass"],
   "detail-storage": ["powder-coated perforated steel", "honed black basalt", "sealed woven-canvas laminate"],
   "detail-context": ["dark mineral composite", "mint enamelled steel", "warm unglazed terracotta"],
+};
+
+const wideSuspendedRetrySurfaces = [
+  "matte charcoal limewash backing wall",
+  "cool blue-grey woven architectural backing panel",
+  "warm oxidized-copper architectural backing plane",
+] as const;
+
+const suspendedRetrySurfacesByAsset: Readonly<Record<SettingShotAssetId, readonly [string, string, string]>> = {
+  portrait: ["dark cleft-slate backing wall", "ivory fine-chip terrazzo wall panel", "blue-grey oxidized-zinc wall panel"],
+  wide: wideSuspendedRetrySurfaces,
+  "detail-overview": ["brushed stainless wall cladding", "deep-green soapstone backing panel", "sealed dark-cork acoustic backing"],
+  "detail-use": ["matte black saddle-leather wall panel", "blue-grey linoleum backing wall", "pale honed-limestone backing slab"],
+  "detail-routine": ["matte red architectural-brick backing wall", "satin-finished brass wall sheet", "bright white quartz backing panel"],
+  "detail-scale": ["fine-grey cast-concrete backing wall", "cross-cut white-oak wall panel", "frosted laminated-glass backing plane"],
+  "detail-storage": ["powder-coated perforated-steel backing panel", "honed black-basalt wall slab", "sealed woven-canvas backing panel"],
+  "detail-context": ["dark mineral-composite backing wall", "mint enamelled-steel wall panel", "warm unglazed-terracotta backing plane"],
 };
 
 function boundedSettingShotRetry(retry: number) {
@@ -223,19 +273,31 @@ export function buildSettingShotRetryVariant(
   setting: ProductSettingShot,
   assetId: SettingShotAssetId,
   retry: number,
+  contactMode: "surface-supported" | "suspended-or-planar" = "surface-supported",
 ) {
   const boundedRetry = boundedSettingShotRetry(retry);
   const profile = settingShotRetryProfiles[boundedRetry - 1];
   const retryMoment = retryMomentsByAsset[assetId][boundedRetry - 1];
-  const retrySurface = retrySurfacesByAsset[assetId][boundedRetry - 1];
+  const isSuspended = contactMode === "suspended-or-planar";
+  const retrySurface = isSuspended
+    ? suspendedRetrySurfacesByAsset[assetId][boundedRetry - 1]
+    : retrySurfacesByAsset[assetId][boundedRetry - 1];
   const key = `retry-${boundedRetry}-${assetId}`;
   const functionalRoom = setting.location.split(";")[0]?.trim() || setting.location.trim();
+  const isWideSurfaceSupported = assetId === "wide" && contactMode === "surface-supported";
+  const retryLocation = isWideSurfaceSupported
+    ? wideSurfaceSupportedRetryLocations[boundedRetry - 1]
+    : isSuspended
+      ? suspendedRetryLocations[boundedRetry - 1]
+      : profile.location;
   return {
     label: `${setting.label} · 재생성 ${boundedRetry}`,
-    location: `assigned functional room=${functionalRoom}; ${profile.location}. The base location text supplies room function only: its floor-plan, wall occupancy, opening side, negative-space axis and viewpoint are blacklisted. Never turn it into a rotunda, gallery, showroom, abstract chamber, display niche or pedestal set`,
+    location: `assigned functional room=${functionalRoom}; ${retryLocation}. ${isWideSurfaceSupported ? wideSurfaceSupportedTopology : ""} The base location text supplies room function only: its floor-plan, wall occupancy, opening side, negative-space axis and viewpoint are blacklisted. Never turn it into a rotunda, gallery, showroom, abstract chamber, display niche or pedestal set`,
     moment: `${retryMoment}; the previous candidate's time and light direction are fully blacklisted`,
-    surface: `an integrated ${retrySurface} plane; the previous candidate's material and grain direction are fully blacklisted`,
-    supportingObjects: `${profile.supportingObjects}; retain the mandatory functional room-recognition structures required by assigned functional room ${functionalRoom}, but do not reuse the base floor-plan or treat those common structures as the slot-specific unique cue; the previous candidate's unique cue arrangement is blacklisted`,
+    surface: contactMode === "surface-supported"
+      ? `an integrated ${retrySurface}; this is the continuous physical support plane whose horizontal boundary crosses the complete reserved rectangle inside its exact bottom tolerance band and whose assigned material continues below that boundary; the previous candidate's material and grain direction are fully blacklisted`
+      : `an integrated ${retrySurface}; this is one coherent, unobstructed hanging or backing plane across the entire reserved rectangle, never a tabletop, shelf, ledge, pedestal or bottom contact line; the previous candidate's material and grain direction are fully blacklisted`,
+    supportingObjects: `${isSuspended ? suspendedRetryCues[boundedRetry - 1] : profile.supportingObjects}; retain the mandatory functional room-recognition structures required by assigned functional room ${functionalRoom}, but do not reuse the base floor-plan or treat those common structures as the slot-specific unique cue; the previous candidate's unique cue arrangement is blacklisted`,
     staging: `keep ${assetId}'s exact reserved product rectangle at its original left, top, width and height, fully quiet and unobstructed; only the surrounding architecture outside that immutable rectangle changes. ${profile.staging}; preserve the source-product pixel mask and persisted rectangle only, and do not import the base staging direction, background support-or-backing geometry, depth or negative-space hierarchy`,
     camera: resolveSettingShotRetryCameraDescription(assetId, boundedRetry),
     separation: {
@@ -255,9 +317,18 @@ export function buildSettingShotRetryGuidance(
   retry: number,
   settingVariant: ProductSettingShot,
   auditFeedback?: SettingShotRetryAuditFeedback | null,
+  contactMode: "surface-supported" | "suspended-or-planar" = "surface-supported",
 ) {
   const boundedRetry = boundedSettingShotRetry(retry);
   const profile = settingShotRetryProfiles[boundedRetry - 1];
+  const screenSpaceTopology = contactMode === "suspended-or-planar"
+    ? suspendedRetryLocations[boundedRetry - 1]
+    : assetId === "wide"
+      ? `${wideSurfaceSupportedRetryLocations[boundedRetry - 1]}. ${wideSurfaceSupportedTopology}`
+      : profile.location;
+  const reservedZoneContactGate = contactMode === "surface-supported"
+    ? "Render exactly one continuous horizontal support boundary fully inside the enclosing prompt's declared bottom contact tolerance band across the complete reserved x-span. Within that x-span, the assigned support material must continue from the boundary through the frame bottom, leaving no wall, vertical panel, open-air or diagonal-boundary pixels in the below-boundary region; no other major perspective edge may enter the reserved rectangle."
+    : "Keep one coherent, unobstructed hanging or backing plane across the complete reserved rectangle. Never invent a tabletop, shelf, ledge, pedestal or bottom contact line, and keep every fixture edge or depth junction outside the rectangle.";
   const conflicts = [...new Set(conflictingAssetIds)]
     .filter((value) => /^[a-z0-9][a-z0-9:-]{0,63}$/.test(value))
     .slice(0, settingShotAssetIds.length);
@@ -276,13 +347,18 @@ export function buildSettingShotRetryGuidance(
     .filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].length > 0)
     .map(([dimension, values]) => `${dimension}=${values.join("|")}`);
   const auditDirectedRepairs = [...new Set(failedDimensions
-    .map((dimension) => settingShotRetryRepairDirectives[dimension])
+    .map((dimension) => contactMode === "suspended-or-planar"
+      ? suspendedRetryRepairDirectives[dimension] ?? settingShotRetryRepairDirectives[dimension]
+      : settingShotRetryRepairDirectives[dimension])
     .filter((directive): directive is string => Boolean(directive)))];
+  const structuralEquivalenceGate = contactMode === "suspended-or-planar"
+    ? "Ordinary wall panels, full-height cabinet fronts, doorway or window frames needed to prove the assigned real room may remain, but they cannot substitute for the new unique cue and the overall layout, light, surface, depth and camera must still change materially."
+    : "Ordinary cabinet fronts, worktop-to-backsplash junctions, doorway or window frames needed to prove the assigned real room may remain, but they cannot substitute for the new unique cue and the overall layout, light, surface, depth and camera must still change materially.";
   return [
     `Deterministic setting-shot retry ${boundedRetry} of ${settingShotRetryProfiles.length} for ${assetId}.`,
     `HARD ROLE BLACKLIST: ${blacklist}. Do not reuse any blacklisted role's room geometry, light direction, surface family, fixed cue, background support-or-backing geometry around the immutable product zone, staging relationship, negative-space direction, depth hierarchy, camera azimuth or focal perspective.`,
     `Retry transform ${profile.key} replaces all six scene dimensions together while retaining the product-category function and hard shot class: location=${settingVariant.location}; time/light=${settingVariant.moment}; surface=${settingVariant.surface}; fixed cue=${settingVariant.supportingObjects}; product placement=${settingVariant.staging}; camera=${settingVariant.camera}.`,
-    `MANDATORY SCREEN-SPACE TOPOLOGY: ${profile.location}. FORBIDDEN CAMERA/TOPOLOGY: ${profile.forbiddenTopology}. If the forbidden topology is visible anywhere in the candidate, reject the composition and render a new plate instead of repairing it.`,
+    `MANDATORY SCREEN-SPACE TOPOLOGY: ${screenSpaceTopology}. FORBIDDEN CAMERA/TOPOLOGY: ${profile.forbiddenTopology}. If the forbidden topology is visible anywhere in the candidate, reject the composition and render a new plate instead of repairing it.`,
     failedDimensions.length
       ? `Validated prior audit failure dimensions: ${failedDimensions.join(", ")}. Make each named visual dimension unmistakably different from every blacklisted role while still satisfying this retry's trusted assignment.`
       : "The prior candidate did not provide safe high-confidence dimension feedback; replace every scene dimension according to this deterministic retry contract.",
@@ -292,10 +368,11 @@ export function buildSettingShotRetryGuidance(
     hardNegativeSignatures.length
       ? `STRUCTURED FAILED-PLATE BLACKLIST (schema-validated semantic keys only): ${hardNegativeSignatures.join("; ")}. These identify forbidden visual families from all earlier rejected candidates, not words to render in the image.`
       : "No validated failed-plate semantic keys are available; rely on the complete deterministic replacement contract.",
-    "IMMUTABLE RESERVED-ZONE GATE: the exact normalized rectangle declared by the enclosing prompt never moves, resizes or changes aspect ratio on a retry. Keep its complete interior visually quiet and unobstructed; place the retry-specific fixed cue, fixtures and all busy or high-contrast room-recognition junctions outside it. A broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone only when it remains subordinate to the later source-pixel product composite and passes the independent pixel-density gate. For a surface-supported slot, align a continuous quiet support plane with the declared bottom contact tolerance band; for a suspended-or-planar slot, keep one coherent backing plane and do not invent a contact surface.",
+    `IMMUTABLE RESERVED-ZONE GATE: the exact normalized rectangle declared by the enclosing prompt never moves, resizes or changes aspect ratio on a retry. Keep its complete interior visually quiet and unobstructed; place the retry-specific fixed cue, fixtures and all busy or high-contrast room-recognition junctions outside it. A broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone only when it remains subordinate to the later source-pixel product composite and passes the independent pixel-density gate. ${reservedZoneContactGate}`,
+    "FUNCTIONAL-ROOM PIXEL-PROOF GATE: outside the immutable rectangle, show at least two independent fixed room-recognition structures required by the trusted functional-room contract in separate non-collinear outer bands. The retry-specific fixed cue is a third, separately identifiable integrated architectural element attached to the assigned doorway, built-in or room system; it cannot substitute for either room-recognition structure. Material, palette, an empty slab or a generic enclosure never proves the room. If the room could read as a wet room, gallery, showroom, abstract chamber, empty corridor or other trusted-contract look-alike, discard it and render the assigned functional room again.",
     "OUTER-BAND RECONSTRUCTION GATE: use the exact left, right, top and bottom uncovered bands declared by the enclosing prompt. Do not classify or repair blankness confined to the immutable quiet rectangle as a dominant wall or repeated topology. Instead, put the assigned room-recognition structures, unique fixed cue and perspective-depth evidence across at least two non-collinear outer bands; blank architecture extending outside the rectangle or all evidence squeezed into one ambiguous sliver still fails.",
     "FULL SIX-AXIS REPLACEMENT GATE: even when only one audit dimension failed, this candidate must visibly satisfy the newly assigned room geometry, time/light, integrated surface, camera/convergence, fixed architectural cue and surrounding layout/depth, and each must remain clearly distinct from every supplied rejected or cross-slot plate. Repairing one axis while repeating another is a failure.",
-    "FORBIDDEN STRUCTURAL EQUIVALENCE: never rename or slightly reshape the specifically rejected slot-specific cue. Ordinary cabinet fronts, worktop-to-backsplash junctions, doorway or window frames needed to prove the assigned real room may remain, but they cannot substitute for the new unique cue and the overall layout, light, surface, depth and camera must still change materially.",
+    `FORBIDDEN STRUCTURAL EQUIVALENCE: never rename or slightly reshape the specifically rejected slot-specific cue. ${structuralEquivalenceGate}`,
     "The retry assignment preserves the original real-life room function and its required recognition evidence while replacing the rejected composition; it never changes the hard shot class or product facts. Rotunda, gallery, showroom, abstract chamber, display niche and pedestal-set interpretations are forbidden.",
     "Generate only the empty architectural plate. The verified product is composited afterward from unchanged source pixels; never invent, redraw or anticipate package text, logos, labels, quantities or product parts.",
   ].join("\n");
