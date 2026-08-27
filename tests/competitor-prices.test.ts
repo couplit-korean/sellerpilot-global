@@ -416,6 +416,18 @@ test("competitor relevance fails closed on GTIN, exact model, accessory, edition
     title: "Yu-Gi-Oh Kellogg's Chex Choco Korean Promo Sealed",
   }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
   assert.equal(competitorCandidateRelevance(candidate({
+    title: "宝可梦 Kellogg Chex Choco 促销 未开封",
+  }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({
+    title: "皮卡丘 Kellogg Chex Choco 收藏 未开封",
+  }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({
+    title: "Pokémon Kellogg Chex Choco Promocional Sellado",
+  }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({
+    title: "Pokémon Kellogg Chex Choco Coleccionable Sellado",
+  }), ["첵스초코", "Chex Choco", "Kellogg Choco Chex"]), 0);
+  assert.equal(competitorCandidateRelevance(candidate({
     title: "Pokemon Pikachu VMAX 142/S-P Kellogg's Chex Choco Korean Promo Card Sealed",
   }), ["Kellogg Chex Choco Promo Pack"]), 0);
   assert.ok(competitorCandidateRelevance(candidate({

@@ -595,7 +595,7 @@ function collectorFamilyEvidence(value: string) {
   const normalized = normalizedSearchText(value);
   const compact = compactSearchText(value);
   return /(?:^|\s)(?:pokemon|pokémon|pikachu|charizard|vmax|vstar|yu\s+gi\s+oh|yugioh)(?:\s|$)/iu.test(normalized)
-    || /포켓몬|피카츄|리자몽|ポケモン|ピカチュウ|喷火龙|噴火龍/u.test(compact);
+    || /포켓몬|피카츄|리자몽|유희왕|ポケモン|ピカチュウ|リザードン|遊戯王|宝可梦|寶可夢|皮卡丘|喷火龙|噴火龍|游戏王|遊戲王|โปเกมอน/u.test(compact);
 }
 
 function genericCardWord(value: string) {
@@ -606,15 +606,19 @@ function genericCardWord(value: string) {
 }
 
 function collectibleListingSignature(value: string) {
-  const normalized = normalizedSearchText(value);
-  const compact = compactSearchText(value);
   const explicitCard = accessoryCategories(value).has("collectible_card");
   if (explicitCard) return true;
-  const promotional = /(?:^|\s)(?:promo|promotional)(?:\s|$)/iu.test(normalized)
-    || compact.includes("プロモ") || compact.includes("프로모");
-  const collectible = /(?:^|\s)collectibles?(?:\s|$)/iu.test(normalized)
-    || compact.includes("コレクション") || compact.includes("수집품") || compact.includes("收藏");
-  return (promotional || collectible) && collectorFamilyEvidence(value);
+  const modifiers = phraseCategories(value, {
+    promotional: [
+      "promo", "promotional", "promocional", "프로모", "프로모션", "プロモ", "促销", "促銷",
+      "โปรโมชั่น", "khuyến mãi", "promosi",
+    ],
+    collectible: [
+      "collectible", "collectibles", "coleccionable", "coleccionables", "colecionável", "colecionavel",
+      "수집품", "コレクション", "收藏", "สะสม", "sưu tập", "koleksi",
+    ],
+  });
+  return modifiers.size > 0 && collectorFamilyEvidence(value);
 }
 
 function productVariantCategories(value: string) {
