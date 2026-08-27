@@ -76,20 +76,25 @@ test("macOS installer atomically activates the pending set only after staged lau
   }
 
   assert.match(installer, /workerTokenScopes\.map\(\(definition\) => \(\{/);
-  assert.match(installer, /tokenStatuses\.some\(\(token\) => !token\.present && \(!aiOnlyRuntime \|\| token\.scope === "ai"\)\)/);
+  assert.match(installer, /tokenStatuses\.some\(\(token\) => !token\.present && \(!restrictedRuntime \|\| token\.scope === "ai"\)\)/);
   assert.match(installer, /const runtimeOnly = process\.argv\.includes\("--runtime-only"\)/);
   assert.match(installer, /const aiOnlyRuntimeRequested = process\.argv\.includes\("--ai-only-runtime"\)/);
-  assert.match(installer, /const installedAiOnlyRuntime = installedPlist\.includes\("<string>--ai-only<\/string>"\)/);
-  assert.match(installer, /const aiOnlyRuntime = aiOnlyRuntimeRequested \|\| \(runtimeOnly && installedAiOnlyRuntime\)/);
-  assert.match(installer, /if \(\(runtimeOnly && aiOnlyRuntimeRequested\)/);
+  assert.match(installer, /const productOnlyRuntimeRequested = process\.argv\.includes\("--product-only-runtime"\)/);
+  assert.match(installer, /if \(plist\.includes\("<string>--product-only<\/string>"\)\) return "product-only"/);
+  assert.match(installer, /if \(plist\.includes\("<string>--ai-only<\/string>"\)\) return "ai-only"/);
+  assert.match(installer, /const installedRuntimeMode = workerRuntimeModeFromPlist\(installedPlist\)/);
+  assert.match(installer, /const runtimeMode = runtimeOnly \? installedRuntimeMode : requestedRuntimeMode/);
+  assert.match(installer, /if \(\(runtimeOnly && restrictedRuntimeRequested\)/);
   assert.match(installer, /\^spw_\[A-Za-z0-9_-\]\{43\}\$/);
   assert.match(installer, /if \(runtimeOnly && \(tokenSetId \|\| rotateAll \|\| rotatesOne\)\)/);
   assert.match(installer, /const missingScopes = requiredTokenScopes[\s\S]*?!isWorkerTokenConfigured\(keychainToken\(definition\.service\)\)/);
   assert.match(installer, /if \(runtimeOnly\) \{[\s\S]*?런타임 업그레이드 전에 전용 작업자 토큰을 모두 설치/);
   assert.match(installer, /if \(!tokenSetId\) \{[\s\S]*?최초 설치는 웹에서 발급된 전체 명령/);
-  assert.match(installer, /if \(!runtimeOnly && !aiOnlyRuntime\) \{[\s\S]*?for \(const definition of workerTokenScopes\)/);
-  assert.match(installer, /requiredTokenScopes = aiOnlyRuntime[\s\S]*?definition\.scope === "ai"/);
-  assert.match(installer, /<string>--ai-only<\/string>/);
+  assert.match(installer, /if \(!runtimeOnly && !restrictedRuntime\) \{[\s\S]*?for \(const definition of workerTokenScopes\)/);
+  assert.match(installer, /requiredTokenScopes = restrictedRuntime[\s\S]*?definition\.scope === "ai"/);
+  assert.match(installer, /runtimeMode === "product-only"[\s\S]*?"--product-only"[\s\S]*?runtimeMode === "ai-only"[\s\S]*?"--ai-only"/);
+  assert.match(installer, /workerRuntimeArgument \? `<string>\$\{xml\(workerRuntimeArgument\)\}<\/string>` : ""/);
+  assert.match(installer, /workerRuntimeModeLabel\(runtimeMode\)/);
   assert.match(installer, /for \(const definition of workerTokenScopes\)/);
   assert.match(installer, /process\.argv\.includes\(definition\.rotateFlag\)/);
   assert.match(installer, /commandLineValue\("--token-set"\)/);
