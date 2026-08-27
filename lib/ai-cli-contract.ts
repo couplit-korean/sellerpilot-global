@@ -623,6 +623,7 @@ export function normalizeStudioWarningLimits(value: unknown): unknown {
 
 const sellerSafeInternalWarning = "내부 제작 메모와 작업 경로는 상품 사실 근거가 아니므로 판매자용 경고에서 제외했습니다.";
 const internalWarningProvenancePattern = /(?:\b(?:AGENTS|MEMORY|SKILL)\.md\b|\brollout_summaries[\\/]|\brollout\s+id\b|(?:file:\/\/|\/(?:Users|home|tmp|private|var\/folders|workspace|mnt)\/|[A-Za-z]:\\(?:Users|Temp|workspace)\\|(?:~\/)?\.codex\/)|(?:내부|시스템|작업)\s*(?:프롬프트|지시문)|\b(?:internal|system)\s+(?:prompt|instruction)\b|\bprompt\s+provenance\b|API가\s*최신인지\s*확인하세요)/iu;
+const appendedModelCommentarySuffixPattern = /([.!?。！？])(?=[A-Za-z])(?=[\x20-\x7E]{0,200}(?:\b[a-z]+\s+role\?\s+no\s+actual\b|\bweird\s+but\s+valid\b|string\s+output\?))[\x20-\x7E]{8,200}$/iu;
 
 function warningSentenceSegments(value: string) {
   const segments: string[] = [];
@@ -658,6 +659,7 @@ function collapseAdjacentRepeatedWarningSentences(value: string) {
 
 function sanitizeStudioWarning(warning: string) {
   let normalized = warning.trim();
+  normalized = normalized.replace(appendedModelCommentarySuffixPattern, "$1").trim();
   const provenance = internalWarningProvenancePattern.exec(normalized);
   if (provenance?.index !== undefined) {
     let safeEnd = provenance.index;

@@ -1317,6 +1317,21 @@ test("AI studio warnings remove the repeated Lotte API suffix and keep the label
   assert.deepEqual(normalizeStudioWarningLimits(normalized), normalized, "warning sanitation must be idempotent");
 });
 
+test("AI studio warnings remove appended model commentary without erasing the seller caution", () => {
+  const result = validResult();
+  const sellerCaution = "판매자 countryOfOrigin ‘대한민국’은 완제품 기준 입력으로 보이지만, 이미지의 원재료 표시에는 원료별 복수 국가가 기재되어 있습니다. 대한민국을 모든 원재료의 원산지로 표현하면 안 됩니다.";
+  result.warnings = [
+    `${sellerCaution}mapufacturer role? no actual weird but valid string output? okay] `,
+    "최종 판매 로트의 영문 표기 [Manufacturer: Sample Foods]도 확인하세요.",
+  ];
+
+  const normalized = normalizeStudioWarningLimits(result) as ReturnType<typeof validResult>;
+  assert.equal(normalized.warnings[0], sellerCaution);
+  assert.equal(normalized.warnings[1], "최종 판매 로트의 영문 표기 [Manufacturer: Sample Foods]도 확인하세요.");
+  assert.doesNotMatch(normalized.warnings[0], /mapufacturer|weird but valid|string output|okay\]/iu);
+  assert.deepEqual(normalizeStudioWarningLimits(normalized), normalized, "warning sanitation must be idempotent");
+});
+
 test("AI studio warning normalization collapses only adjacent duplicate sentences", () => {
   const result = validResult();
   result.warnings = ["표시 라벨을 확인하세요. 표시 라벨을 확인하세요. 판매 로트도 확인하세요."];
