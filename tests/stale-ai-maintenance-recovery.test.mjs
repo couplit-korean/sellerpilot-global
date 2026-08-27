@@ -7,6 +7,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260827235328_expire_stale_non_cs_ai_jobs.sql",
   import.meta.url,
 );
+const opaqueSecretGuardFixUrl = new URL(
+  "../supabase/migrations/20260828002000_fix_stale_ai_service_secret_guard.sql",
+  import.meta.url,
+);
 const maintenanceRouteUrl = new URL("../app/api/internal/maintenance/route.ts", import.meta.url);
 
 const ids = {
@@ -26,6 +30,15 @@ const ids = {
 async function scalar(db, sql, params = []) {
   const result = await db.query(sql, params);
   return Object.values(result.rows[0] ?? {})[0];
+}
+
+async function serviceScalar(db, sql, params = []) {
+  await db.exec("set role service_role");
+  try {
+    return await scalar(db, sql, params);
+  } finally {
+    await db.exec("reset role");
+  }
 }
 
 test("scheduled maintenance expires only bounded stale non-CS AI work and remains idempotent", async () => {
@@ -62,6 +75,7 @@ test("scheduled maintenance expires only bounded stale non-CS AI work and remain
       );
     `);
     await db.exec(await readFile(migrationUrl, "utf8"));
+    await db.exec(await readFile(opaqueSecretGuardFixUrl, "utf8"));
 
     assert.equal(await scalar(
       db,
@@ -76,14 +90,14 @@ test("scheduled maintenance expires only bounded stale non-CS AI work and remain
       "select has_function_privilege('service_role', 'public.sellerpilot_service_expire_stale_ai_jobs(timestamptz,integer)', 'EXECUTE')",
     ), true);
 
-    await scalar(db, "select set_config('request.jwt.claim.role', 'anon', false)");
+    await db.exec("set role anon");
     await assert.rejects(
       scalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 day', 2)"),
-      /service role required/,
+      /permission denied/,
     );
-    await scalar(db, "select set_config('request.jwt.claim.role', 'service_role', false)");
+    await db.exec("reset role");
     await assert.rejects(
-      scalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 hour', 2)"),
+      serviceScalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 hour', 2)"),
       /at least six hours/,
     );
 
@@ -132,7 +146,7 @@ test("scheduled maintenance expires only bounded stale non-CS AI work and remain
     ]);
 
     assert.deepEqual(
-      await scalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 day', 2)"),
+      await serviceScalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 day', 2)"),
       { queuedExpired: 0, runningExpired: 2, total: 2 },
     );
     assert.equal(
@@ -155,15 +169,15 @@ test("scheduled maintenance expires only bounded stale non-CS AI work and remain
     assert.match(expiredRunning.error_message, /기존 입력으로 다시 시도/);
 
     assert.deepEqual(
-      await scalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 day', 2)"),
+      await serviceScalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 day', 2)"),
       { queuedExpired: 2, runningExpired: 0, total: 2 },
     );
     assert.deepEqual(
-      await scalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 day', 2)"),
+      await serviceScalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 day', 2)"),
       { queuedExpired: 1, runningExpired: 0, total: 1 },
     );
     assert.deepEqual(
-      await scalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 day', 2)"),
+      await serviceScalar(db, "select public.sellerpilot_service_expire_stale_ai_jobs(now() - interval '1 day', 2)"),
       { queuedExpired: 0, runningExpired: 0, total: 0 },
     );
     assert.equal(
@@ -184,14 +198,16 @@ test("scheduled maintenance expires only bounded stale non-CS AI work and remain
       { id: ids.supportRunningNullLeaseOld, status: "running" },
     ]);
   } finally {
+    await db.exec("reset role").catch(() => undefined);
     await db.close();
   }
 });
 
 test("maintenance reports stale AI recovery failures after continuing independent cleanup", async () => {
-  const [route, migration] = await Promise.all([
+  const [route, migration, opaqueSecretGuardFix] = await Promise.all([
     readFile(maintenanceRouteUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
+    readFile(opaqueSecretGuardFixUrl, "utf8"),
   ]);
 
   assert.match(route, /STALE_AI_QUEUED_TIMEOUT_MS = 24 \* 60 \* 60_000/);
@@ -218,4 +234,8 @@ test("maintenance reports stale AI recovery failures after continuing independen
   assert.match(migration, /'retryable', true/);
   assert.match(migration, /revoke all on function public\.sellerpilot_service_expire_stale_ai_jobs[\s\S]*from public, anon, authenticated/);
   assert.match(migration, /grant execute on function public\.sellerpilot_service_expire_stale_ai_jobs[\s\S]*to service_role/);
+  assert.match(opaqueSecretGuardFix, /pg_get_functiondef/);
+  assert.match(opaqueSecretGuardFix, /expected legacy role guard was not found/);
+  assert.match(opaqueSecretGuardFix, /revoke all on function[\s\S]*from public, anon, authenticated/);
+  assert.match(opaqueSecretGuardFix, /grant execute on function[\s\S]*to service_role/);
 });
