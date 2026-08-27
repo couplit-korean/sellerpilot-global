@@ -234,23 +234,42 @@ function generalFoodCopySegments(copy: string) {
   return segments.length ? segments : [copy];
 }
 
+function hasUnsupportedGeneralFoodIntake(copy: string, evidence?: unknown) {
+  if (!hasPrescriptiveIntakeInstruction(copy)) return false;
+  if (hasDirectIntakeEvidence(copy, evidence)) return false;
+  return generalFoodCopySegments(copy).some((segment) => {
+    const semanticCopy = segment.trim();
+    if (!hasPrescriptiveIntakeInstruction(semanticCopy)) return false;
+    return !hasDirectIntakeEvidence(semanticCopy, evidence)
+      || !hasDirectIntakeEvidence(semanticCopy, semanticCopy);
+  });
+}
+
 function removeUnsupportedGeneralFoodSegments(copy: string, evidence?: unknown) {
   const segments = generalFoodCopySegments(copy);
   // Match the validator's whole-field evidence contract before considering
-  // individual sentences. A body can contain a package count in one sentence
-  // and a label-backed intake direction in another; validating only the
-  // direction sentence would preserve it even though the complete field still
-  // fails closed because every measured token is not present in the evidence.
-  const fieldHasUnsupportedIntake = hasPrescriptiveIntakeInstruction(copy)
-    && !hasDirectIntakeEvidence(copy, evidence);
+  // individual sentences. The only bounded exception is a sentence that
+  // explicitly attributes exact intake tokens to the label and also matches
+  // the section evidence; bare directions keep the whole-field fence.
+  const fieldHasUnsupportedIntake = hasUnsupportedGeneralFoodIntake(copy, evidence);
   let changed = false;
   const retained = segments.filter((segment) => {
     const semanticCopy = segment.trim();
     if (!semanticCopy || /^[.!?。！？;；]+$/u.test(semanticCopy)) return true;
     const unsupportedEfficacy = hasUnsupportedGeneralFoodEfficacyClaim(semanticCopy);
     const prescriptiveIntake = hasPrescriptiveIntakeInstruction(semanticCopy);
+    const segmentHasDirectIntakeEvidence = hasDirectIntakeEvidence(semanticCopy, evidence);
+    // A factual sentence can quote the package directions directly while a
+    // later sentence states a different measured fact such as net weight. In
+    // that bounded case, require both the inline provenance marker and an
+    // exact token match against the section evidence instead of treating the
+    // unrelated measurement as part of the intake claim. Bare directions do
+    // not receive this exception and continue to use the whole-field fence.
+    const inlineLabelBackedIntake = prescriptiveIntake
+      && hasDirectIntakeEvidence(semanticCopy, semanticCopy)
+      && segmentHasDirectIntakeEvidence;
     const unsupportedIntake = prescriptiveIntake
-      && (fieldHasUnsupportedIntake || !hasDirectIntakeEvidence(semanticCopy, evidence));
+      && (!segmentHasDirectIntakeEvidence || (fieldHasUnsupportedIntake && !inlineLabelBackedIntake));
     if (!unsupportedEfficacy && !unsupportedIntake) return true;
     changed = true;
     return false;
@@ -260,8 +279,8 @@ function removeUnsupportedGeneralFoodSegments(copy: string, evidence?: unknown) 
   // clauses. If sentence-level removal cannot isolate that instruction, clear
   // the field so the existing localized body fallback can neutralize it; other
   // field types remain structurally invalid instead of bypassing the validator.
-  if (hasPrescriptiveIntakeInstruction(normalized)
-    && !hasDirectIntakeEvidence(normalized, evidence)) return "";
+  const hasResidualUnsupportedIntake = hasUnsupportedGeneralFoodIntake(normalized, evidence);
+  if (hasResidualUnsupportedIntake) return "";
   return normalized;
 }
 
@@ -845,7 +864,7 @@ function validateGeneralFoodClaim(
   if (hasUnsupportedGeneralFoodEfficacyClaim(copy)) {
     context.addIssue({ code: "custom", path, message: "일반식품에는 건강기능식품 효능·질병 예방 표현을 사용할 수 없습니다." });
   }
-  if (hasPrescriptiveIntakeInstruction(copy) && !hasDirectIntakeEvidence(copy, evidence)) {
+  if (hasUnsupportedGeneralFoodIntake(copy, evidence)) {
     context.addIssue({ code: "custom", path, message: "일반식품 섭취량은 동일 수치가 있는 라벨·제조사 근거와 함께 제시해야 합니다." });
   }
 }

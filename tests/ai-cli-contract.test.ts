@@ -643,6 +643,24 @@ test("ACV package count after a completed sentence is not treated as a Korean in
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
 
+test("ACV inline label directions survive unrelated net weight in the same factual body", () => {
+  const result = generalFoodSafetyResult();
+  const section = result.design.sections[7];
+  section.buyerQuestion = "제조사 포장에 직접 적힌 섭취 안내는 무엇인가요?";
+  section.evidence = "입력 이미지 3에 ‘섭취방법 1일 1회 1포를 씹어서 섭취하십시오’라고 직접 표시됨.";
+  section.body = "포장에는 ‘1일 1회 1포를 씹어서 섭취하십시오’라고 직접 표시되어 있습니다. 이 수치와 방법은 제조사 라벨에서 함께 확인한 안내이며, 15g이라는 낱개 중량을 바탕으로 새로 계산하거나 확대 해석한 값이 아닙니다. 개별 포장을 연 뒤 내용물을 씹는 제품으로 안내하되, 제공된 자료에 없는 희석·가열·증량 방법이나 별도의 섭취 기간은 추가하지 않습니다.";
+  assert.ok(section.body.length >= 160);
+  const sourceSnapshot = JSON.stringify(result);
+
+  const normalized = normalizeStudioGeneralFoodSafety(result) as ReturnType<typeof validResult>;
+  assert.strictEqual(normalized, result);
+  assert.equal(JSON.stringify(result), sourceSnapshot);
+  assert.match(normalized.design.sections[7].body, /1일 1회 1포/u);
+  assert.match(normalized.design.sections[7].body, /15g/u);
+  const parsed = cliStudioResultSchema.safeParse(normalized);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+});
+
 test("Lotte Thai non-health-product wording remains an explicit bounded negation", () => {
   const description = "บิสกิตแซนด์ทรงกลมลายดอกไม้ประกบครีมสีขาว แบ่งบรรจุเป็น 6 ซองย่อย ซองละ 52.5 กรัม รวม 315 กรัม ฉลากด้านหน้าระบุว่ามีนมพาสเจอร์ไรส์ 0.1% และนมผงขาดมันเนย 0.05% ผลิตภัณฑ์นี้จัดเป็นขนมทั่วไป ไม่ใช่อาหารเพื่อสุขภาพหรือผลิตภัณฑ์สำหรับป้องกันหรือรักษาโรค";
   assert.equal(hasUnsupportedGeneralFoodEfficacyClaim(description), false);
