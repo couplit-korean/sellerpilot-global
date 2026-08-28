@@ -455,6 +455,10 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.equal(1097 - 224 - 44 >= 780, true);
   assert.equal(1200 - 224 - 44 >= 780, true);
   assert.doesNotMatch(mobileStyles, /@media \(max-width: 360px\)[\s\S]*?\.user-menu\s*\{\s*display:\s*none/);
+  assert.match(page, /<label className="search-field"><Search[\s\S]{0,180}aria-label="상품 검색"/);
+  assert.match(mobileStyles, /\.data-toolbar \.search-field,[\s\S]{0,120}min-height:\s*44px/);
+  assert.match(mobileStyles, /\.data-toolbar \.filter-select \{ min-width: 0; display: grid; grid-template-columns: 18px minmax\(0, 1fr\) 14px; min-height: 44px; align-items: center; \}/);
+  assert.doesNotMatch(mobileStyles, /\.data-toolbar \.filter-select:nth-of-type/);
   assert.match(mobilePushManager, /mobilePushDismissedKey/);
   assert.match(mobilePushManager, /sessionStorage\.setItem\(mobilePushDismissedKey, "1"\)/);
   assert.match(mobilePushManager, /className="mobile-push-gate-dismiss"[\s\S]*?나중에/);

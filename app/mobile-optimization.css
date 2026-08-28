@@ -1613,8 +1613,7 @@
   .custom-date-range input { width: 100%; }
   .product-sales-range { align-items: stretch; flex-direction: column; padding: 13px var(--mobile-gutter); }
   .data-toolbar .search-field { grid-column: 1 / -1; }
-  .data-toolbar .filter-select { min-width: 0; }
-  .data-toolbar .filter-select:nth-of-type(1), .data-toolbar .filter-select:nth-of-type(2) { display: grid; grid-template-columns: 18px minmax(0, 1fr) 14px; min-height: 44px; align-items: center; }
+  .data-toolbar .filter-select { min-width: 0; display: grid; grid-template-columns: 18px minmax(0, 1fr) 14px; min-height: 44px; align-items: center; }
   .channel-sales-stack { min-width: 135px; }
   .sales-calendar-panel { padding: 14px 10px; }
   .sales-calendar-panel > .panel-heading { align-items: flex-start; }
