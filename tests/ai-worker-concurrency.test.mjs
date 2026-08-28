@@ -21,7 +21,7 @@ test("worker defaults and hard caps reserve nine AI and Codex slots with three l
   assert.match(worker, /const codexExecutionGate = createConcurrencyGate\(codexConcurrencyLimit\)/);
   assert.match(worker, /const nonProductCodexExecutionGate = createConcurrencyGate\(2\)/);
   assert.match(worker, /const localizedGate = createConcurrencyGate\(3\)/);
-  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.58"/);
+  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.59"/);
   assert.match(installer, /<key>SELLERPILOT_AI_WORKER_CONCURRENCY<\/key><string>9<\/string>/);
   assert.match(installer, /<key>SELLERPILOT_CODEX_CONCURRENCY<\/key><string>9<\/string>/);
 });

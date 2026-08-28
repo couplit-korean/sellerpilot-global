@@ -94,6 +94,11 @@ import {
   SHOT_DHASH_ROWS,
 } from "../lib/image-shot-uniqueness.ts";
 import {
+  isMissingGeneratedImageOutput,
+  isObviousGeneratedImageDecodeFailure,
+  RetryableGeneratedImageOutputError,
+} from "../lib/generated-image-output-retry.ts";
+import {
   runDeterministicProductImageBatches,
 } from "../lib/product-image-batch-coordinator.ts";
 import {
@@ -244,7 +249,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.58";
+const workerVersion = "sellerpilot-cli-worker/1.59";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -2117,13 +2122,23 @@ async function draftSupportReply(job, jobDir, leaseSignal) {
 }
 
 async function normalizeGeneratedAsset(outputFile, preset) {
-  const outputStats = await lstat(outputFile);
+  let outputStats;
+  try {
+    outputStats = await lstat(outputFile);
+  } catch (error) {
+    if (isMissingGeneratedImageOutput(error)) {
+      throw new RetryableGeneratedImageOutputError("missing-output", preset.id);
+    }
+    throw error;
+  }
   if (!outputStats.isFile()
       || outputStats.isSymbolicLink()
       || outputStats.nlink !== 1
-      || outputStats.size < 1
       || outputStats.size > maximumStudioSourceDownloadBytes) {
     throw new Error(`${preset.id} 생성 이미지 파일 크기가 안전 한도를 벗어났습니다.`);
+  }
+  if (outputStats.size < 1) {
+    throw new RetryableGeneratedImageOutputError("empty-output", preset.id);
   }
   const [outputRealPath, parentRealPath] = await Promise.all([realpath(outputFile), realpath(dirname(outputFile))]);
   if (dirname(outputRealPath) !== parentRealPath) {
@@ -2154,15 +2169,34 @@ async function normalizeGeneratedAsset(outputFile, preset) {
   } finally {
     await sourceHandle.close();
   }
-  const inputMetadata = await sharp(source, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels }).metadata();
+  let inputMetadata;
+  try {
+    inputMetadata = await sharp(source, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels }).metadata();
+  } catch (error) {
+    if (isObviousGeneratedImageDecodeFailure(error)) {
+      throw new RetryableGeneratedImageOutputError("undecodable-output", preset.id);
+    }
+    throw error;
+  }
   if (!inputMetadata.width || !inputMetadata.height || inputMetadata.width * inputMetadata.height > maximumStudioSourcePixels) {
+    if (!inputMetadata.width || !inputMetadata.height) {
+      throw new RetryableGeneratedImageOutputError("undecodable-output", preset.id);
+    }
     throw new Error(`${preset.id} 생성 이미지 픽셀 수가 안전 한도를 초과합니다.`);
   }
-  const normalized = await sharp(source, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels })
-    .rotate()
-    .resize(preset.width, preset.height, { fit: "cover", position: "centre" })
-    .png({ compressionLevel: 9, adaptiveFiltering: true })
-    .toBuffer();
+  let normalized;
+  try {
+    normalized = await sharp(source, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels })
+      .rotate()
+      .resize(preset.width, preset.height, { fit: "cover", position: "centre" })
+      .png({ compressionLevel: 9, adaptiveFiltering: true })
+      .toBuffer();
+  } catch (error) {
+    if (isObviousGeneratedImageDecodeFailure(error)) {
+      throw new RetryableGeneratedImageOutputError("undecodable-output", preset.id);
+    }
+    throw error;
+  }
   const metadata = await sharp(normalized).metadata();
   if (metadata.width !== preset.width || metadata.height !== preset.height || metadata.format !== "png") {
     throw new Error(`${preset.id} 이미지 규격 검증 실패`);
@@ -3112,7 +3146,17 @@ async function generateDistinctAsset({
         noveltyGuidance = `Image generation timeout retry ${attempt}: the prior invocation produced no accepted image. Generate the same trusted role from a fresh composition and follow the deterministic retry contract; do not infer any visual property from the timed-out invocation.`;
         continue;
       }
-      let generated = await normalizeGeneratedAsset(outputFile, generationPreset);
+      let generated;
+      try {
+        generated = await normalizeGeneratedAsset(outputFile, generationPreset);
+      } catch (error) {
+        const retryableMissingOrUndecodableOutput = attempt < maximumAttempt
+          && error instanceof RetryableGeneratedImageOutputError;
+        if (!retryableMissingOrUndecodableOutput) throw error;
+        console.warn(`[이미지 산출물 재시도] ${jobId} · ${preset.id} · attempt=${attempt} · reason=${error.reason}`);
+        noveltyGuidance = `Image output retry ${attempt}: the prior Codex invocation exited without a decodable image artifact. Generate the same trusted role from a fresh composition and follow the deterministic retry contract; do not infer any visual property from the unusable output.`;
+        continue;
+      }
       const compositeSource = backgroundOnly ? identityCutouts.assetSources[preset.id] : null;
       if (backgroundOnly && !compositeSource) throw new Error(`${preset.id} 설정샷의 검증 원본 배정이 없습니다.`);
       if (backgroundOnly) {

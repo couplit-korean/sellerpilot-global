@@ -76,6 +76,30 @@ test("all nine product groups enforce six semantic setting-shot boundaries", () 
   }
 });
 
+test("worker retries only missing or decoder-rejected Codex image artifacts inside the existing role budget", async () => {
+  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const normalizeStart = worker.indexOf("async function normalizeGeneratedAsset(");
+  const normalizeEnd = worker.indexOf("function createAssetGenerationRetryState(", normalizeStart);
+  const normalizeSource = worker.slice(normalizeStart, normalizeEnd);
+  const generateStart = worker.indexOf("async function generateDistinctAsset(");
+  const generateEnd = worker.indexOf("async function prepareProductImageBatchLoserRetry(", generateStart);
+  const generateSource = worker.slice(generateStart, generateEnd);
+
+  assert.ok(normalizeStart > 0 && normalizeEnd > normalizeStart);
+  assert.match(normalizeSource, /isMissingGeneratedImageOutput\(error\)[\s\S]*RetryableGeneratedImageOutputError\("missing-output", preset\.id\)/);
+  assert.match(normalizeSource, /outputStats\.size < 1[\s\S]*RetryableGeneratedImageOutputError\("empty-output", preset\.id\)/);
+  assert.match(normalizeSource, /isObviousGeneratedImageDecodeFailure\(error\)[\s\S]*RetryableGeneratedImageOutputError\("undecodable-output", preset\.id\)/);
+  assert.match(generateSource, /attempt < maximumAttempt[\s\S]{0,160}error instanceof RetryableGeneratedImageOutputError/);
+  assert.match(generateSource, /\[이미지 산출물 재시도\][\s\S]{0,240}reason=\$\{error\.reason\}[\s\S]{0,400}continue/);
+  assert.match(generateSource, /for \(let attempt = startingAttempt; attempt <= maximumAttempt; attempt \+= 1\)/);
+  assert.match(generateSource, /maximumAttempt > MAXIMUM_SHOT_GENERATION_ATTEMPTS/);
+
+  const outputRetryCatchEnd = generateSource.indexOf("const compositeSource", generateSource.indexOf("retryableMissingOrUndecodableOutput"));
+  const deterministicQualityStart = generateSource.indexOf("assertIdentityBackgroundPlate", outputRetryCatchEnd);
+  assert.ok(outputRetryCatchEnd > 0 && deterministicQualityStart > outputRetryCatchEnd);
+  assert.doesNotMatch(generateSource.slice(0, outputRetryCatchEnd), /assertIdentityBackgroundPlate|auditGeneratedIdentityBackground|verifyGeneratedLabelFidelity/);
+});
+
 test("different real food products receive deterministic cross-product variation in every corresponding setting slot", () => {
   const products = [
     {
