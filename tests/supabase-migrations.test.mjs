@@ -36,7 +36,7 @@ const LEGACY_CROSS_TOKEN_HASH = "f".repeat(64);
 const PENDING_AI_TOKEN_HASH = "1".repeat(64);
 const PENDING_GATEWAY_TOKEN_HASH = "2".repeat(64);
 const PENDING_SCHEDULER_TOKEN_HASH = "3".repeat(64);
-const LEGACY_SCOPE_RETIREMENT_MIGRATION = "20260828143000_remove_legacy_combined_worker_scope.sql";
+const LEGACY_SCOPE_RETIREMENT_MIGRATION = "20260828150000_remove_legacy_combined_worker_scope.sql";
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -302,6 +302,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828135100_fix_server_product_research_secret_guard.sql",
       "20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql",
       "20260828142500_list_latest_product_margin_scenarios.sql",
+      "20260828143500_harden_worker_token_activation_lease_fence.sql",
+      "20260828144000_bind_ebay_asq_marketplace_and_rate_limit.sql",
+      "20260828145000_compact_legacy_periodic_gateway_reads.sql",
+      "20260828145500_persist_elevenst_listing_update_snapshots.sql",
       LEGACY_SCOPE_RETIREMENT_MIGRATION,
     ]);
     for (const name of migrationNames) {
@@ -6620,6 +6624,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       legacyScopeRetirementSql,
       /count\(distinct token\.scope\) = 3/,
     );
+    assert.match(legacyScopeRetirementSql, /token\.last_seen_at is not null/);
+    assert.match(legacyScopeRetirementSql, /token\.last_seen_at >= token\.activated_at/);
     assert.match(legacyScopeRetirementSql, /token\.scope = p_scope/);
     assert.doesNotMatch(
       legacyScopeRetirementSql,
@@ -6635,7 +6641,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     await assert.rejects(
       db.exec(legacyScopeRetirementSql),
-      /active scoped worker token set required before retiring legacy_combined/,
+      /active heartbeat-verified scoped worker token set required before retiring legacy_combined/,
     );
     await db.exec("rollback").catch(() => undefined);
     assert.deepEqual(
@@ -6702,6 +6708,77 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [Object.values(pendingProof)],
       )).rows.map((row) => row.scopes),
       [["ai", "gateway", "scheduler"]],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.ai_cli_worker_tokens
+          where token_hash = any($1::text[])
+            and last_seen_at is not null
+            and last_seen_at >= activated_at`,
+        [Object.values(pendingProof)],
+      ),
+      0,
+    );
+    await assert.rejects(
+      db.exec(legacyScopeRetirementSql),
+      (error) => {
+        assert.equal(error.code, "55000");
+        assert.match(
+          error.message,
+          /active heartbeat-verified scoped worker token set required before retiring legacy_combined/,
+        );
+        return true;
+      },
+    );
+    await db.exec("rollback").catch(() => undefined);
+    assert.deepEqual(
+      (await db.query(
+        `select status, revoked_at is null as not_revoked
+           from sellerpilot_private.ai_cli_worker_tokens
+          where token_hash = $1`,
+        [TOKEN_HASH],
+      )).rows,
+      [{ status: "active", not_revoked: true }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.worker_token_has_scope($1, 'gateway', true)",
+        [TOKEN_HASH],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.ai_cli_audit
+          where action = 'token_revoked'
+            and safe_detail->>'reason' = 'legacy_combined_retired'`,
+      ),
+      0,
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_worker_tokens
+          set last_seen_at = activated_at
+        where token_hash = any($1::text[])
+          and status = 'active'
+          and scope in ('ai', 'gateway', 'scheduler')`,
+      [Object.values(pendingProof)],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.ai_cli_worker_tokens
+          where token_hash = any($1::text[])
+            and last_seen_at is not null
+            and last_seen_at >= activated_at`,
+        [Object.values(pendingProof)],
+      ),
+      3,
     );
 
     await setClaims(db, "service_role");

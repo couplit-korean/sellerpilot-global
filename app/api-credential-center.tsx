@@ -143,6 +143,16 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
     if (channel === "qoo10") return { params: { search_start_dt: "", search_end_dt: "", proc_status: "S1" } };
     if (channel === "coupang") return { kind: "product", query: { inquiryStartAt: "", inquiryEndAt: "", answeredType: "NOANSWER", pageNum: 1, pageSize: 50 } };
     if (channel === "lazada") return { bootstrap: true, startTime: Date.now(), pageSize: 20, sessionLimit: 100 };
+    if (channel === "ebay") {
+      const end = new Date();
+      return {
+        startCreationTime: new Date(end.getTime() - 14 * 86_400_000).toISOString(),
+        endCreationTime: end.toISOString(),
+        pageNumber: 1,
+        entriesPerPage: 200,
+        marketplaceId: "EBAY_US",
+      };
+    }
     return { query: {} };
   }
   if (operation === "listing.create") {
@@ -554,7 +564,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
   const [resultJson, setResultJson] = useState("");
   const isWrite = writeOperations.has(operation);
   const availableOperations = channelOperationOptions.filter((item) => {
-    return channelOperationAvailable(target.channel.key, item.value);
+    return channelOperationAvailable(target.channel.key, item.value, target.credential.environment);
   });
 
   const changeOperation = (nextOperation: ChannelOperationName) => {
@@ -611,7 +621,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
   };
 
   return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal operation-console" role="dialog" aria-modal="true" aria-label={`${target.channel.name} API 실행 검수`} onSubmit={execute}>
-    <header><div><span>{target.channel.mark}</span><div><small>PROTECTED LIVE API CONSOLE</small><h3>{target.channel.name} API 실행 검수</h3></div></div><button type="button" onClick={onClose} aria-label="닫기"><X size={18} /></button></header>
+    <header><div><span>{target.channel.mark}</span><div><small>PROTECTED MARKETPLACE API CONSOLE</small><h3>{target.channel.name} API 실행 검수</h3></div></div><button type="button" onClick={onClose} aria-label="닫기"><X size={18} /></button></header>
     <div className="operation-console-warning"><ShieldCheck size={18} /><span><b>Vault 키를 브라우저에 노출하지 않고 서버에서 조회 API만 호출합니다.</b><small>상품·재고·발송 쓰기는 정확한 상품·주문 원장을 선택하는 전용 화면에서만 실행합니다. 비밀키는 아래 JSON에 입력하지 마세요.</small></span></div>
     <div className="operation-console-body">
       <div className="operation-console-controls"><label><span>실행 작업</span><select value={operation} onChange={(event) => changeOperation(event.target.value as ChannelOperationName)}>{availableOperations.map((item) => <option value={item.value} key={item.value}>{item.label} · {item.value}</option>)}</select></label><label><span>중복 방지 키</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} minLength={16} maxLength={160} /></label></div>

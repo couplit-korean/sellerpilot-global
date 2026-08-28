@@ -1,4 +1,5 @@
-import { ebayAsqProductionVerified, type ActiveChannelKey } from "./catalog";
+import type { ActiveChannelKey } from "./catalog";
+import { ebayAsqMarketplaceId, type EbayAsqMarketplaceId } from "./ebay-asq";
 
 function coupangDailyDate(value: Date) {
   // Coupang's v5 daily order query requires the market UTC offset after the
@@ -118,17 +119,28 @@ export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()) {
   return [{ periodicKey: "orders", arguments: base }];
 }
 
-export function ebayAsqInquirySyncArguments(now = new Date()) {
+export function ebayAsqInquirySyncArguments(
+  now = new Date(),
+  marketplaceId?: EbayAsqMarketplaceId,
+) {
   const from = new Date(now.getTime() - 14 * 86_400_000);
   return {
     startCreationTime: from.toISOString(),
     endCreationTime: now.toISOString(),
     pageNumber: 1,
-    entriesPerPage: 200,
+    entriesPerPage: 25,
+    ...(marketplaceId ? { marketplaceId: ebayAsqMarketplaceId(marketplaceId) } : {}),
   };
 }
 
-export function inquirySyncArguments(channel: ActiveChannelKey, now = new Date()): Record<string, unknown>[] {
+export function inquirySyncArguments(
+  channel: ActiveChannelKey,
+  now = new Date(),
+  releaseContext: {
+    environment?: "sandbox" | "production";
+    marketplaceId?: EbayAsqMarketplaceId;
+  } = {},
+): Record<string, unknown>[] {
   // Coupang documents a seven-day maximum, but the provider counts both end
   // points in some markets. Six elapsed days avoids an eight-calendar-day
   // window around timezone boundaries.
@@ -160,8 +172,8 @@ export function inquirySyncArguments(channel: ActiveChannelKey, now = new Date()
       updateAtEnd: now.getTime(),
     }];
   }
-  if (channel === "ebay" && ebayAsqProductionVerified) {
-    return [ebayAsqInquirySyncArguments(now)];
+  if (channel === "ebay") {
+    return [ebayAsqInquirySyncArguments(now, releaseContext.marketplaceId)];
   }
   return [];
 }

@@ -52,9 +52,9 @@ test("studio completion reconciles only the validated intake snapshot for its ex
   assert.match(finishBlock, /error instanceof StudioJobTerminalError[\s\S]{0,180}submittedIntakesByJobIdRef\.current\.delete\(job\.jobId\)/);
 });
 
-test("a failed orphan analysis retries only its existing AI job before opening recovery", async () => {
+test("failed AI cards retry only their existing job and open studio recovery only when needed", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
-  const start = page.indexOf("const recoverFailedProductAnalysis");
+  const start = page.indexOf("const resumeFailedAiActivity");
   const end = page.indexOf("const editExternalActionProduct", start);
   const recovery = page.slice(start, end);
 
@@ -62,6 +62,9 @@ test("a failed orphan analysis retries only its existing AI job before opening r
   assert.match(recovery, /studioJobRecoveryStorageValue/);
   assert.match(recovery, /authenticatedOperationsFetch\("\/api\/admin\/ai-jobs"/);
   assert.match(recovery, /JSON\.stringify\(\{ jobId, action: "retry" \}\)/);
+  assert.match(recovery, /const needsStudioRecovery = studioRecoveryJobId === jobId/);
+  assert.match(recovery, /activity\.id\.startsWith\("revision:"\)/);
+  assert.match(recovery, /activity\.id\.startsWith\("asset:"\)/);
   assert.match(recovery, /navigate\("publishing"\)/);
   assert.doesNotMatch(recovery, /channel-operations|listing\.create|listing\.update/);
 });

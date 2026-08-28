@@ -351,8 +351,11 @@ export function renderQoo10DetailDescription(value: unknown, urls: string[], alt
   return injectMarketplaceDetailImages(source, urls, altTexts, roles, true);
 }
 
-function appendDetailImages(value: unknown, urls: string[], altTexts: string[], roles: string[]) {
-  return injectMarketplaceDetailImages(value, urls, altTexts, roles);
+export function upsertMarketplaceDetailImages(value: unknown, urls: string[], altTexts: string[], roles: string[]) {
+  const source = (typeof value === "string" ? value : "")
+    .replace(/<section\b[^>]*\bdata-sellerpilot-detail-images=(?:"true"|'true')[^>]*>[\s\S]*?<\/section>/gi, "")
+    .trimEnd();
+  return injectMarketplaceDetailImages(source, urls, altTexts, roles);
 }
 
 export function buildCoupangMarketplaceContents(
@@ -431,6 +434,16 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
 
   const assets = record(next.sellerpilotAssets);
   delete next.sellerpilotAssets;
+  const elevenstProductPatch = channel === "elevenst" ? record(next.productPatch) : null;
+  const elevenstMediaFields = ["prdImage01", "prdImage02", "prdImage03", "prdImage04", "htmlDetail"] as const;
+  if (channel === "elevenst"
+      && elevenstProductPatch
+      && !elevenstMediaFields.some((field) => Object.hasOwn(elevenstProductPatch, field))) {
+    // 11st updates replace the complete Product document. A title/brand/etc.
+    // patch must not opportunistically renormalize images or append detail
+    // panels that were not part of the requested mutable projection.
+    return next;
+  }
   if (!assets || (
     assets.detailAssetMode !== "dedicated"
     || new Set(strings(assets.detailImageUrls)).size < marketplaceChannelDetailImageCount
@@ -478,13 +491,13 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
         const sku = record(skuValue);
         if (sku) sku.Images = { Image: listingImages };
       }
-      attributes.description = appendDetailImages(attributes.description, details, detailImageAltTexts, detailImageRoles);
+      attributes.description = upsertMarketplaceDetailImages(attributes.description, details, detailImageAltTexts, detailImageRoles);
     }
     if (channel === "smartstore") {
       const body = record(next.body);
       const originProduct = record(body?.originProduct);
       if (!originProduct) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-      originProduct.detailContent = appendDetailImages(originProduct.detailContent, details, detailImageAltTexts, detailImageRoles);
+      originProduct.detailContent = upsertMarketplaceDetailImages(originProduct.detailContent, details, detailImageAltTexts, detailImageRoles);
     }
     return next;
   }
@@ -532,18 +545,38 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
 
   if (channel === "elevenst") {
     const product = record(next.product);
+    const productPatch = record(next.productPatch);
     if (!product) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    const normalized = gallery.length ? uniqueStrings([...gallery, ...details]).slice(0, 4) : await normalizeList([
-      product.prdImage01,
-      product.prdImage02,
-      product.prdImage03,
-      product.prdImage04,
-    ], 4, "gallery-square");
-    if (!normalized.length) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    normalized.forEach((url, index) => {
-      product[`prdImage0${index + 1}`] = url;
-    });
-    product.htmlDetail = appendDetailImages(product.htmlDetail, details, detailImageAltTexts, detailImageRoles);
+    const imageFields = ["prdImage01", "prdImage02", "prdImage03", "prdImage04"] as const;
+    const requestedImageFields = productPatch
+      ? imageFields.filter((field) => Object.hasOwn(productPatch, field))
+      : imageFields;
+    let normalized: string[] = [];
+    if (requestedImageFields.some((field) => productPatch?.[field] !== "" && productPatch?.[field] !== null)) {
+      normalized = gallery.length ? uniqueStrings([...gallery, ...details]).slice(0, 4) : await normalizeList([
+        product.prdImage01,
+        product.prdImage02,
+        product.prdImage03,
+        product.prdImage04,
+      ], 4, "gallery-square");
+      if (!normalized.length) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
+    }
+    for (const field of requestedImageFields) {
+      const index = imageFields.indexOf(field);
+      const requestedValue = productPatch?.[field];
+      if (productPatch && (requestedValue === "" || requestedValue === null)) {
+        product[field] = requestedValue;
+      } else {
+        const url = normalized[index];
+        if (!url) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
+        product[field] = url;
+      }
+      if (productPatch) productPatch[field] = product[field];
+    }
+    if (!productPatch || Object.hasOwn(productPatch, "htmlDetail")) {
+      product.htmlDetail = upsertMarketplaceDetailImages(product.htmlDetail, details, detailImageAltTexts, detailImageRoles);
+      if (productPatch) productPatch.htmlDetail = product.htmlDetail;
+    }
     return next;
   }
 
@@ -572,8 +605,8 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     ? uniqueStrings([...gallery, ...details]).slice(0, 12)
     : await normalizeList(product.imageUrls, 12, "gallery-square");
   product.imageUrls = normalized;
-  product.description = appendDetailImages(product.description, details, detailImageAltTexts, detailImageRoles);
+  product.description = upsertMarketplaceDetailImages(product.description, details, detailImageAltTexts, detailImageRoles);
   const offer = record(next.offer);
-  if (offer) offer.listingDescription = appendDetailImages(offer.listingDescription, details, detailImageAltTexts, detailImageRoles);
+  if (offer) offer.listingDescription = upsertMarketplaceDetailImages(offer.listingDescription, details, detailImageAltTexts, detailImageRoles);
   return next;
 }

@@ -180,6 +180,7 @@ import {
   isRegistrationActivityRunning,
   isRegistrationImageActivity,
   recoverableRegistrationActivityJobId,
+  retryableRegistrationActivityJobId,
   registrationActivityDisplayStatusLabel,
   registrationActivityDisplayElapsedSeconds,
   registrationActivityFilterFromValue,
@@ -2367,7 +2368,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
       : filtered.length > 0 ? <section className="registration-card-grid">{filtered.map((activity) => {
         const status = registrationStatusMeta[activity.status];
         const product = activity.productId ? productMap.get(activity.productId) : undefined;
-        const recoveryJobId = recoverableRegistrationActivityJobId(activity);
+        const retryableJobId = retryableRegistrationActivityJobId(activity);
         const isActive = isRegistrationActivityRunning(activity.status);
         const expanded = isActive && expandedActivityId === activity.id;
         const isImageOperation = isRegistrationImageActivity(activity);
@@ -2395,13 +2396,13 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
         return <article className={`panel registration-card ${activity.status}${isCancelled ? " cancelled" : ""}`} key={activity.id}>
           <header><span className={`registration-status ${activity.status}${isCancelled ? " cancelled" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}>{longAnalysis === "attention" ? <AlertTriangle size={14} /> : longAnalysis === "connected" ? <Activity size={14} /> : isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : isCancelled ? <Square size={14} /> : <AlertCircle size={14} />}{longAnalysis === "connected" ? "장기 분석 진행 중 · 작업자 연결됨" : longAnalysis === "attention" ? "장기 대기 · AI 작업자 확인 필요" : displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
           {isActive ? <button type="button" className="registration-card-inspect" aria-expanded={expanded} aria-controls={`registration-live-${activity.id}`} onClick={() => setExpandedActivityId((current) => current === activity.id ? "" : activity.id)}><span className="registration-product"><span>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</span><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></span><span className="registration-inspect-label">{expanded ? "상태 접기" : "실시간 상태 보기"}<ChevronDown size={14} /></span></button> : <div className="registration-product"><div>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</div><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></div>}
-          <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{recoveryJobId ? "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {longAnalysis ? "실제 lease를 읽을 수 없어 완료 여부는 추정하지 않습니다." : progress.label}</small></div>
+          <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{retryableJobId ? activity.id.startsWith("revision:") ? "같은 상품 수정 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : activity.id.startsWith("asset:") ? "같은 이미지 재제작 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {longAnalysis ? "실제 lease를 읽을 수 없어 완료 여부는 추정하지 않습니다." : progress.label}</small></div>
           <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
           <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">권한 {activity.blockedCount}</b></div>
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} 실시간 작업 상태`}><header><span><Activity size={14} /><b>현재 작업 상태</b></span><em>10초마다 운영 원장 갱신</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl>{activity.channels.length > 0 ? <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div> : <p>{statusDetail} {progress.label}</p>}</section>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{recoveryJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : "기존 입력으로 AI 분석 재개"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !recoveryJobId ? <span /> : null}</footer>
+          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "기존 입력으로 AI 분석 재개"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;
@@ -3941,6 +3942,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
   const activityStatusRef = useRef<RegistrationActivityEventState | null>(null);
   const operationEventRef = useRef<OperationEventState | null>(null);
   const aiRecoveryEventKeysRef = useRef(new Set<string>());
+  const supportReplyControllerRef = useRef<AbortController | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<DisplayProduct | null>(null);
   const [publishingProduct, setPublishingProduct] = useState<{ id: string; name: string } | null>(null);
   const [publishingSession, setPublishingSession] = useState(0);
@@ -3964,7 +3966,18 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
   const meta = pageMeta[view];
   const workspaceRouteScope = userWorkspaceStorageKey(userId) ?? "";
 
-  useEffect(() => { viewRef.current = view; }, [view]);
+  useEffect(() => {
+    viewRef.current = view;
+    if (view !== "cs") {
+      supportReplyControllerRef.current?.abort(new DOMException("CS 화면을 떠나 답변 초안 확인을 종료합니다.", "AbortError"));
+      supportReplyControllerRef.current = null;
+    }
+  }, [view]);
+
+  useEffect(() => () => {
+    supportReplyControllerRef.current?.abort(new DOMException("운영 화면이 닫혀 답변 초안 확인을 종료합니다.", "AbortError"));
+    supportReplyControllerRef.current = null;
+  }, []);
 
   const rememberWorkspaceView = useCallback((nextView: View) => {
     try {
@@ -4349,8 +4362,23 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
 
   const generateSupportReply = useCallback(async (ticket: DisplayTicket, targetLocale: SupportLocale) => {
     const jobId = crypto.randomUUID();
+    supportReplyControllerRef.current?.abort(new DOMException("새 답변 초안 요청으로 교체됐습니다.", "AbortError"));
+    const controller = new AbortController();
+    supportReplyControllerRef.current = controller;
+    const fetchSupportReply = async (input: string, init?: RequestInit) => {
+      const bounded = createPageAbortScope(
+        [controller.signal],
+        30_000,
+        "문의 답변 작업 확인이 30초를 초과했습니다. 다시 시도해 주세요.",
+      );
+      try {
+        return await operations.authenticatedFetch(input, { ...init, signal: bounded.signal });
+      } finally {
+        bounded.dispose();
+      }
+    };
     try {
-      const queued = await operations.authenticatedFetch("/api/ai/support-reply", {
+      const queued = await fetchSupportReply("/api/ai/support-reply", {
         method: "POST",
         body: JSON.stringify({ jobId, ticketId: ticket.sourceId, targetLocale, tone: "polite" }),
       });
@@ -4359,8 +4387,8 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       notify("ChatGPT CLI가 문의 원문과 연결된 원장 정보가 있는지 확인하고 있습니다.");
 
       for (let attempt = 0; attempt < 120; attempt += 1) {
-        await new Promise((resolveDelay) => window.setTimeout(resolveDelay, 2_000));
-        const response = await operations.authenticatedFetch(`/api/ai/jobs/${jobId}`);
+        await abortableBrowserDelay(2_000, controller.signal);
+        const response = await fetchSupportReply(`/api/ai/jobs/${jobId}`);
         const payload = await response.json().catch(() => null) as null | {
           status?: string;
           error?: string;
@@ -4377,8 +4405,11 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       }
       throw new Error("CLI 작업이 대기 중입니다. 작업자 연결 상태를 확인한 뒤 다시 시도해 주세요.");
     } catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return null;
       notify(error instanceof Error ? error.message : "CLI 답변 초안을 만들지 못했습니다.");
       return null;
+    } finally {
+      if (supportReplyControllerRef.current === controller) supportReplyControllerRef.current = null;
     }
   }, [notify, operations]);
 
@@ -4474,28 +4505,32 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     window.history.replaceState(nextState, "", `${window.location.pathname}?${params.toString()}`);
   }, [workspaceRouteScope]);
 
-  const recoverFailedProductAnalysis = useCallback(async (activity: RegistrationActivity) => {
-    const jobId = recoverableRegistrationActivityJobId(activity);
+  const resumeFailedAiActivity = useCallback(async (activity: RegistrationActivity) => {
+    const jobId = retryableRegistrationActivityJobId(activity);
     if (!jobId) {
-      notify("기존 입력으로 복구할 수 있는 AI 상품 분석 작업이 아닙니다.");
+      notify("같은 작업 ID와 저장 입력으로 재개할 수 있는 AI 작업이 아닙니다.");
       return;
     }
+    const studioRecoveryJobId = recoverableRegistrationActivityJobId(activity);
+    const needsStudioRecovery = studioRecoveryJobId === jobId;
     let previousStorageValue: string | null = null;
-    try {
-      previousStorageValue = window.sessionStorage.getItem(activeStudioJobStorageKey);
-      const recoveryStorageValue = studioJobRecoveryStorageValue(previousStorageValue, jobId, Date.now());
-      if (!recoveryStorageValue) {
-        notify("AI 상품 분석 작업 ID를 확인하지 못해 재시도를 시작하지 않았습니다.");
+    if (needsStudioRecovery) {
+      try {
+        previousStorageValue = window.sessionStorage.getItem(activeStudioJobStorageKey);
+        const recoveryStorageValue = studioJobRecoveryStorageValue(previousStorageValue, jobId, Date.now());
+        if (!recoveryStorageValue) {
+          notify("AI 상품 분석 작업 ID를 확인하지 못해 재개를 시작하지 않았습니다.");
+          return;
+        }
+        window.sessionStorage.setItem(activeStudioJobStorageKey, recoveryStorageValue);
+      } catch {
+        notify("모바일 브라우저에 기존 작업 복구 상태를 저장하지 못해 재개를 시작하지 않았습니다.");
         return;
       }
-      window.sessionStorage.setItem(activeStudioJobStorageKey, recoveryStorageValue);
-    } catch {
-      notify("모바일 브라우저에 기존 작업 복구 상태를 저장하지 못해 재시도를 시작하지 않았습니다.");
-      return;
     }
 
     let response: Response;
-    const retryScope = createPageAbortScope([], 30_000, "AI 분석 재시도 확인 시간이 초과되었습니다.");
+    const retryScope = createPageAbortScope([], 30_000, "AI 작업 재개 확인 시간이 초과되었습니다.");
     try {
       response = await authenticatedOperationsFetch("/api/admin/ai-jobs", {
         method: "POST",
@@ -4503,34 +4538,44 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
         body: JSON.stringify({ jobId, action: "retry" }),
       });
     } catch {
-      notify("AI 분석 재시도 응답을 확인하지 못했습니다. 새 작업을 만들지 않고 기존 작업 ID 상태를 상품 등록 화면에서 확인합니다.");
-      navigate("publishing");
+      notify(`AI 작업 재개 응답을 확인하지 못했습니다. 새 작업을 만들지 않고 기존 작업 ${jobId.slice(0, 8)} 상태만 확인합니다.`);
+      if (needsStudioRecovery) navigate("publishing");
+      else await refreshOperations().catch(() => undefined);
       return;
     } finally {
       retryScope.dispose();
     }
-    const payload = await response.json().catch(() => ({ message: "AI 분석 재시도 응답을 읽지 못했습니다." })) as { message?: string };
+    const payload = await response.json().catch(() => ({ message: "AI 작업 재개 응답을 읽지 못했습니다." })) as { message?: string };
     if ([408, 425, 429].includes(response.status) || response.status >= 500) {
-      notify(`AI 분석 재시도 응답이 불명확합니다. 새 작업을 만들지 않고 기존 작업 ${jobId.slice(0, 8)} 상태만 확인합니다.`);
-      navigate("publishing");
+      notify(`AI 작업 재개 응답이 불명확합니다. 새 작업을 만들지 않고 기존 작업 ${jobId.slice(0, 8)} 상태만 확인합니다.`);
+      if (needsStudioRecovery) navigate("publishing");
+      else await refreshOperations().catch(() => undefined);
       return;
     }
     if (!response.ok && response.status !== 409) {
-      try {
-        if (previousStorageValue === null) window.sessionStorage.removeItem(activeStudioJobStorageKey);
-        else window.sessionStorage.setItem(activeStudioJobStorageKey, previousStorageValue);
-      } catch {
-        notify("AI 상품 분석 재시도에 실패했고 모바일 브라우저의 복구 상태도 되돌리지 못했습니다. 새 작업이나 외부 채널 등록은 실행하지 않았습니다.");
-        return;
+      if (needsStudioRecovery) {
+        try {
+          if (previousStorageValue === null) window.sessionStorage.removeItem(activeStudioJobStorageKey);
+          else window.sessionStorage.setItem(activeStudioJobStorageKey, previousStorageValue);
+        } catch {
+          notify("AI 상품 분석 재개에 실패했고 모바일 브라우저의 복구 상태도 되돌리지 못했습니다. 새 작업이나 외부 채널 등록은 실행하지 않았습니다.");
+          return;
+        }
       }
-      notify(payload.message ?? "AI 상품 분석을 다시 시작하지 못했습니다.");
+      notify(payload.message ?? "AI 작업을 다시 시작하지 못했습니다.");
       return;
     }
+    const resumedKind = activity.id.startsWith("revision:")
+      ? "같은 상품 수정"
+      : activity.id.startsWith("asset:")
+        ? "같은 이미지 재제작"
+        : "동일한 AI 분석";
     notify(response.ok
-      ? "저장된 기존 사진·입력으로 동일한 AI 분석만 다시 시작했습니다. 외부 판매채널 등록은 실행하지 않습니다."
-      : "기존 AI 작업이 이미 실행 중이거나 완료되어 새 작업을 만들지 않고 동일 작업 상태를 확인합니다.");
-    navigate("publishing");
-  }, [authenticatedOperationsFetch, navigate, notify]);
+      ? `저장된 입력으로 ${resumedKind} 작업을 다시 시작했습니다. 외부 판매채널 등록은 실행하지 않습니다.`
+      : payload.message ?? "기존 AI 작업이 이미 실행 중이거나 완료되어 새 작업을 만들지 않고 동일 작업 상태를 확인합니다.");
+    if (needsStudioRecovery) navigate("publishing");
+    else await refreshOperations();
+  }, [authenticatedOperationsFetch, navigate, notify, refreshOperations]);
 
   const stopRegistrationActivity = useCallback(async (activity: RegistrationActivity) => {
     if (!isRegistrationActivityRunning(activity.status)) {
@@ -4849,7 +4894,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenCs={(status) => openCs("all", status)} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
-    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={recoverFailedProductAnalysis} onStopActivity={stopRegistrationActivity} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
+    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={resumeFailedAiActivity} onStopActivity={stopRegistrationActivity} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
     if (view === "product-detail") return activeSelectedProduct
       ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} marginScenarios={operations.data?.marginScenarios ?? []} onBack={() => window.history.back()} onEditChannels={() => retryProductPublishing(activeSelectedProduct)} onOpenActivity={() => navigate("registration-activity")} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
       : <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>{operations.state === "loading" ? "상품 상세정보를 불러오는 중입니다." : "상품을 찾지 못했습니다."}</b><small>{operations.state === "loading" ? "운영 상품 원장을 확인하고 있습니다." : "상품 목록에서 다시 선택해 주세요."}</small>{operations.state !== "loading" ? <button type="button" className="ghost-button" onClick={() => navigate("products")}>상품 목록으로</button> : null}</div>;

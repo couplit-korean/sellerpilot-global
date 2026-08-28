@@ -8,6 +8,7 @@ import {
   isRegistrationActivityRunning,
   isRegistrationImageActivity,
   recoverableRegistrationActivityJobId,
+  retryableRegistrationActivityJobId,
   registrationActivityDisplayStatusLabel,
   registrationActivityDisplayElapsedSeconds,
   registrationActivityFilterFromValue,
@@ -195,14 +196,24 @@ test("ready registration cards are completed analysis drafts, not running work",
   assert.equal(registrationChannelStatusLabel("scope_excluded"), "제외");
 });
 
-test("only a failed orphan product-studio card exposes its exact recoverable job id", () => {
+test("failed AI cards expose the exact retryable job while only orphan studio jobs need browser recovery", () => {
   const jobId = "11111111-1111-4111-8111-111111111111";
   const orphan = activity(`job:${jobId}`, "실패한 AI 상품", "failed");
   orphan.productId = null;
   assert.equal(recoverableRegistrationActivityJobId(orphan), jobId);
+  assert.equal(retryableRegistrationActivityJobId(orphan), jobId);
   assert.equal(recoverableRegistrationActivityJobId({ ...orphan, status: "ready" }), null);
   assert.equal(recoverableRegistrationActivityJobId({ ...orphan, productId: jobId }), null);
   assert.equal(recoverableRegistrationActivityJobId({ ...orphan, id: "job:not-a-uuid" }), null);
+
+  const revision = activity(`revision:${jobId}`, "중지한 상품 수정", "failed");
+  const asset = activity(`asset:${jobId}`, "중지한 이미지 재제작", "failed");
+  assert.equal(recoverableRegistrationActivityJobId(revision), null);
+  assert.equal(recoverableRegistrationActivityJobId(asset), null);
+  assert.equal(retryableRegistrationActivityJobId(revision), jobId);
+  assert.equal(retryableRegistrationActivityJobId(asset), jobId);
+  assert.equal(retryableRegistrationActivityJobId({ ...revision, status: "analyzing" }), null);
+  assert.equal(retryableRegistrationActivityJobId({ ...revision, id: `product:${jobId}` }), null);
 });
 
 test("registration progress uses terminal channel results and never invents an AI percentage", () => {

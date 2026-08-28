@@ -3,6 +3,7 @@ import type { ActiveChannelKey } from "./catalog";
 import type { ChannelOperationResult } from "./operations";
 import { normalizeLazadaImHistory } from "./lazada-im";
 import { coupangContactCenterParentAnswerId } from "./inquiry-reply";
+import { ebayAsqMarketplaceId } from "./ebay-asq";
 import { canonicalNormalizationTimestamp, createTimestampNormalizer } from "./normalization-time";
 
 export type NormalizedChannelInquiry = {
@@ -136,11 +137,17 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, 
 
 function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) {
   return list(data.memberMessages).map((row): NormalizedChannelInquiry | null => {
+    let marketplaceId: string;
+    try {
+      marketplaceId = ebayAsqMarketplaceId(row.marketplaceId);
+    } catch {
+      return null;
+    }
     const messageId = text(row.messageId);
     const itemId = text(row.itemId);
     const recipientId = text(row.senderId);
     const message = text(row.body);
-    if (!messageId || !/^\d{1,19}$/.test(itemId) || !recipientId || !message) return null;
+    if (!messageId || !/^[1-9]\d{0,18}$/.test(itemId) || !recipientId || !message) return null;
     const messageStatus = text(row.messageStatus).toLowerCase();
     return {
       externalTicketId: `ebay:${messageId}`,
@@ -150,7 +157,7 @@ function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) 
       status: messageStatus === "answered" ? "resolved" : "waiting",
       priority: 3,
       receivedAt: iso(row.creationDate, row.lastModifiedDate),
-      replyContext: { itemId, parentMessageId: messageId, recipientId },
+      replyContext: { itemId, parentMessageId: messageId, recipientId, marketplaceId },
     };
   }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
 }

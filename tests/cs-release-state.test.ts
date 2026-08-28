@@ -35,8 +35,8 @@ test("ticket selection uses the internal source id even when external ticket ids
   assert.equal(selectedCsTicket([], "source-a"), null);
 });
 
-test("verified marketplace reply channels use one gateway while unsupported channels keep internal drafts", () => {
-  for (const channel of ["qoo10", "lazada", "coupang", "smartstore"]) {
+test("server-gated marketplace reply channels use one gateway while unsupported channels keep internal drafts", () => {
+  for (const channel of ["qoo10", "lazada", "coupang", "smartstore", "ebay"]) {
     assert.deepEqual(csReplySavePlan(`ticket-${channel}`, channel, "reply"), {
       endpoint: "/api/admin/cs/reply",
       body: { ticketId: `ticket-${channel}`, reply: "reply" },

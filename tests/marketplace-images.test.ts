@@ -11,6 +11,7 @@ import {
   prepareMarketplaceImages,
   renderMarketplaceDetailImages,
   renderQoo10DetailDescription,
+  upsertMarketplaceDetailImages,
 } from "../lib/channels/marketplace-images";
 
 test("marketplace image guard rejects private targets and stops oversized streams", async () => {
@@ -57,6 +58,36 @@ test("marketplace detail markup renders every verified panel with safe public UR
   assert.match(html, /data-sellerpilot-detail-images="true"/);
   assert.match(html, /a=1&amp;b=2/);
   assert.match(html, /alt="Overview &amp; package"/);
+});
+
+test("marketplace detail image upsert replaces its generated section instead of duplicating it", () => {
+  const urls = ["https://cdn.example.com/detail-1.jpg", "https://cdn.example.com/detail-2.jpg"];
+  const once = upsertMarketplaceDetailImages("<p>Merchant detail</p>", urls, ["One", "Two"], []);
+  const twice = upsertMarketplaceDetailImages(once, urls, ["One", "Two"], []);
+  assert.equal(twice, once);
+  assert.equal((twice.match(/data-sellerpilot-detail-images="true"/g) ?? []).length, 1);
+  assert.equal((twice.match(/<img /g) ?? []).length, 2);
+});
+
+test("11st title-only update does not require or mutate marketplace image assets", async () => {
+  const product = {
+    prdNm: "수정 상품",
+    prdImage01: "https://cdn.example.com/existing.jpg",
+    htmlDetail: '<p>Existing detail</p><section data-sellerpilot-detail-images="true"><img src="https://cdn.example.com/existing-detail.jpg" /></section>',
+  };
+  const prepared = await prepareMarketplaceImages({} as SupabaseClient, "elevenst", {
+    sellerpilotAssets: { intentionallyInvalidForMediaWrite: true },
+    product: structuredClone(product),
+    productPatch: { prdNm: "수정 상품" },
+    productNo: "123456789",
+    sellerpilotSnapshotMutableFingerprint: "a".repeat(64),
+  });
+  assert.deepEqual(prepared, {
+    product,
+    productPatch: { prdNm: "수정 상품" },
+    productNo: "123456789",
+    sellerpilotSnapshotMutableFingerprint: "a".repeat(64),
+  });
 });
 
 test("Qoo10 detail markup uses conservative div and image tags", () => {

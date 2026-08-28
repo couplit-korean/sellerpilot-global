@@ -63,6 +63,23 @@ const supportedCertificationGroups = new Set(["01:03", "02:03", "03:03", "04:05"
 const verifiedSimpleListingCategoryId = "1341821";
 const placeholderValue = /^(?:알\s*수\s*없음|모름|미정|unknown|n\/?a|none|null|undefined|-+)$/iu;
 
+export const elevenstListingUpdateFields = [
+  "prdNm",
+  "brand",
+  "orgnNmVal",
+  "prdStatCd",
+  "prdImage01",
+  "prdImage02",
+  "prdImage03",
+  "prdImage04",
+  "htmlDetail",
+  "asDetail",
+  "rtngExchDetail",
+  "ProductNotification",
+] as const;
+
+const elevenstListingUpdateFieldSet = new Set<string>(elevenstListingUpdateFields);
+
 function object(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`ELEVENST_CONTRACT_OBJECT_REQUIRED:${field}`);
@@ -234,4 +251,29 @@ export function validateElevenstListingProduct(value: unknown): Record<string, u
   validateProductNotification(product);
 
   return product;
+}
+
+export function elevenstListingUpdatePatchFromProduct(value: unknown) {
+  const product = object(value, "product");
+  return Object.fromEntries(elevenstListingUpdateFields.flatMap((field) =>
+    Object.hasOwn(product, field) && product[field] !== undefined
+      ? [[field, structuredClone(product[field])]]
+      : []));
+}
+
+export function mergeElevenstListingUpdateProduct(snapshotValue: unknown, patchValue: unknown) {
+  const snapshot = validateElevenstListingProduct(structuredClone(snapshotValue));
+  const patch = object(patchValue, "productPatch");
+  const unknownField = Object.keys(patch).find((field) => !elevenstListingUpdateFieldSet.has(field));
+  if (unknownField) throw new Error(`ELEVENST_UPDATE_FIELD_UNVERIFIED:${unknownField}`);
+  if (!Object.keys(patch).length) throw new Error("ELEVENST_UPDATE_CONTENT_REQUIRED");
+  return validateElevenstListingProduct({ ...structuredClone(snapshot), ...structuredClone(patch) });
+}
+
+export function elevenstListingUpdateProjection(value: unknown) {
+  const product = object(value, "product");
+  return Object.fromEntries(elevenstListingUpdateFields.flatMap((field) =>
+    Object.hasOwn(product, field) && product[field] !== undefined
+      ? [[field, structuredClone(product[field])]]
+      : []));
 }

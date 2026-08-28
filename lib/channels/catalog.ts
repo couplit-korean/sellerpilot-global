@@ -3,8 +3,6 @@ export const activeChannelKeys = ["qoo10", "shopee", "lazada", "coupang", "eleve
 // The Trading API ASQ connector is implemented for Sandbox verification, but
 // production reads and replies remain fail-closed until a two-user eBay
 // Sandbox flow and a real seller-account readback have both been recorded.
-export const ebayAsqProductionVerified = false;
-
 export type ActiveChannelKey = (typeof activeChannelKeys)[number];
 export type ChannelCapabilityKey =
   | "connection"
@@ -223,7 +221,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       categories: polling("카테고리 조회 API의 말단 카테고리를 주기 동기화"),
       imageUpload: api("상품 등록 시 공개 HTTPS 이미지 URL을 11번가가 다운로드"),
       listingCreate: api("POST /rest/prodservices/product → 판매자 상품 재조회 검증"),
-      listingUpdate: vendorDocsRequired("판매자 상품 수정 API 문서·서비스 권한 확인 전 실행 차단"),
+      listingUpdate: api("PUT /rest/prodservices/product/{prdNo} → 동일 prdNo 사전·사후 조회 검증"),
       listingStop: api("PUT /rest/prodstatservice/stat/stopdisplay/{prdNo}"),
       price: vendorDocsRequired("판매자 가격 API 문서·서비스 권한 확인 필요"),
       inventory: vendorDocsRequired("판매자 재고 API 문서·서비스 권한 확인 필요"),
@@ -339,7 +337,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       orders: polling("Fulfillment getOrders · 완료된 checkout 주문만"),
       shipment: api("createShippingFulfillment"),
       claims: api("Fulfillment refunds·payment disputes + Post-Order 범위"),
-      inquiries: polling("Trading API 상품 문의(ASQ) 구현 · Sandbox/실계정 검증 전 운영 차단"),
+      inquiries: polling("Trading API GetMemberMessages 조회 + AddMemberMessageRTQ 답변"),
       settlements: polling("Finances API 권한 추가 시 지급·거래 조회"),
       webhooks: webhook("Notification API 구독을 보조 신호로 사용하고 주문 폴링으로 보정"),
     },

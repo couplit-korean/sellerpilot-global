@@ -241,8 +241,8 @@ test("unpublished, identity-less, and unreleased update targets are blocked", ()
     () => prepareListingUpdateArguments("temu", {}, listing),
     /LISTING_UPDATE_NOT_RELEASED:temu/,
   );
-  assert.throws(
-    () => prepareListingUpdateArguments("elevenst", {}, listing),
-    /LISTING_UPDATE_NOT_RELEASED:elevenst/,
+  assert.deepEqual(
+    prepareListingUpdateArguments("elevenst", { product: { prdNm: "수정 상품" } }, listing),
+    { productNo: "123456789", productPatch: { prdNm: "수정 상품" } },
   );
 });

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   coupangRequest,
   ebayRequest,
@@ -19,14 +20,19 @@ import {
 } from "./protocols";
 import {
   channelCatalog,
-  ebayAsqProductionVerified,
   type ActiveChannelKey,
   type ChannelCapabilityKey,
 } from "./catalog";
 import { qoo10ProductionPlace, qoo10ResultMessage } from "./qoo10";
+import {
+  ebayAsqMarketplaceId,
+  ebayAsqMarketplaceIdFromSiteCode,
+  type EbayAsqMarketplaceId,
+} from "./ebay-asq";
 import { validateElevenstListingProduct } from "./elevenst-listing";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import {
+  elevenstListingUpdateProjectionDigestInput,
   listingUpdateRemoteIdentity,
   mergeCoupangListingUpdateBody,
   mergeListingUpdatePatch,
@@ -115,6 +121,22 @@ type ExecuteInput = {
 
 const MAX_PROVIDER_SYNC_PAGES = 20;
 const MAX_PROVIDER_SYNC_CONTINUATIONS = 50;
+const EBAY_ASQ_PAGES_PER_JOB = 2;
+const EBAY_ASQ_ENTRIES_PER_PAGE = 25;
+const EBAY_LISTING_SITE_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
+const EBAY_LISTING_SITE_CACHE_MAX = 2_000;
+const ebayListingSiteCache = new Map<string, { marketplaceId: EbayAsqMarketplaceId; expiresAt: number }>();
+
+function rememberEbayListingSite(cacheKey: string, marketplaceId: EbayAsqMarketplaceId) {
+  if (ebayListingSiteCache.size >= EBAY_LISTING_SITE_CACHE_MAX) {
+    const oldest = ebayListingSiteCache.keys().next().value;
+    if (typeof oldest === "string") ebayListingSiteCache.delete(oldest);
+  }
+  ebayListingSiteCache.set(cacheKey, {
+    marketplaceId,
+    expiresAt: Date.now() + EBAY_LISTING_SITE_CACHE_TTL_MS,
+  });
+}
 
 function boundedPageSize(value: unknown, fallback: number, max: number) {
   const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
@@ -543,7 +565,7 @@ function elevenstSearchPayload(productNo: string) {
   })}`;
 }
 
-function elevenstVerifiedStep(name: string, remote: RemoteResponse, verified = true) {
+function elevenstVerifiedStep(name: string, remote: RemoteResponse, verified = true): ChannelOperationStep {
   const remoteStep = step(name, remote);
   const accepted = remote.data.accepted === true && verified;
   return {
@@ -810,6 +832,99 @@ async function executeElevenst(input: ExecuteInput) {
     const operationResult = result(input, steps, productNo);
     operationResult.publicUrl = `https://www.11st.co.kr/products/${pathSegment(productNo)}`;
     return operationResult;
+  }
+  if (input.operation === "listing.update") {
+    const productNo = pathSegment(stringArgument(input.arguments, "productNo"));
+    let product: Record<string, unknown>;
+    let snapshotMutableFingerprint: string;
+    try {
+      product = validateElevenstListingProduct(objectValue(input.arguments, "product"));
+      snapshotMutableFingerprint = stringArgument(input.arguments, "sellerpilotSnapshotMutableFingerprint");
+      if (!/^[a-f0-9]{64}$/u.test(snapshotMutableFingerprint)) {
+        throw new Error("ELEVENST_UPDATE_SNAPSHOT_FINGERPRINT_INVALID");
+      }
+    } catch (error) {
+      return result(input, [elevenstPrewriteFailureStep("product-contract-validation", error)]);
+    }
+    const sellerProductCode = String(product.sellerPrdCd ?? "").trim();
+    const readExactProduct = () => elevenstSellerXmlRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `/rest/prodmarketservice/prodmarket/${productNo}`,
+    });
+
+    let beforeRemote: RemoteResponse;
+    try {
+      beforeRemote = await readExactProduct();
+    } catch (error) {
+      return result(input, [elevenstPrewriteFailureStep("product-update-preflight", error, 503)], decodeURIComponent(productNo));
+    }
+    const beforeProduct = beforeRemote.data.product && typeof beforeRemote.data.product === "object" && !Array.isArray(beforeRemote.data.product)
+      ? beforeRemote.data.product as Record<string, unknown>
+      : {};
+    const identityVerified = beforeRemote.data.accepted === true
+      && String(beforeRemote.data.productNo ?? beforeProduct.prdNo ?? "") === decodeURIComponent(productNo)
+      && String(beforeProduct.sellerPrdCd ?? "") === sellerProductCode;
+    const beforeMutableFingerprint = Object.keys(beforeProduct).length
+      ? createHash("sha256")
+        .update(elevenstListingUpdateProjectionDigestInput(beforeProduct))
+        .digest("hex")
+      : "";
+    const snapshotVerified = beforeMutableFingerprint === snapshotMutableFingerprint;
+    const beforeVerified = identityVerified && snapshotVerified;
+    const beforeStep = elevenstVerifiedStep("product-update-preflight", beforeRemote, beforeVerified);
+    beforeStep.data = {
+      ...beforeStep.data,
+      sellerpilotSnapshotMutableProjectionMatched: snapshotVerified,
+      ...((identityVerified && !snapshotVerified)
+        ? {
+            error: "ELEVENST_UPDATE_SNAPSHOT_DRIFT",
+            message: "11번가 원격 상품 내용이 마지막 신뢰 스냅샷과 달라 전체 XML 수정을 차단했습니다. 판매자센터 상태를 조정하고 새 신뢰 스냅샷을 만든 뒤 다시 시도해 주세요.",
+            sellerpilotReconciliationRequired: true,
+            sellerpilotVerification: "ELEVENST_UPDATE_SNAPSHOT_DRIFT",
+          }
+        : {}),
+    };
+    if (!beforeStep.ok) return result(input, [beforeStep], decodeURIComponent(productNo));
+
+    const updateRemote = await elevenstSellerXmlRequest({
+      payload: input.payload,
+      method: "PUT",
+      path: `/rest/prodservices/product/${productNo}`,
+      body: elevenstProductPayload(input.arguments),
+    });
+    const updateVerified = updateRemote.response.status === 200
+      && String(updateRemote.data.resultCode ?? "") === "200"
+      && String(updateRemote.data.productNo ?? "") === decodeURIComponent(productNo);
+    const updateStep = elevenstVerifiedStep("product-update", updateRemote, updateVerified);
+    if (updateRemote.response.ok && updateRemote.data.accepted === true) {
+      updateStep.data.sellerpilotMutation = "accepted";
+    }
+    if (!updateStep.ok) return result(input, [beforeStep, updateStep], decodeURIComponent(productNo));
+
+    let readbackRemote: RemoteResponse | null = null;
+    let readbackVerified = false;
+    for (let attempt = 0; attempt < 3 && !readbackVerified; attempt += 1) {
+      if (attempt > 0) await operationDelay(800 * attempt);
+      try {
+        readbackRemote = await readExactProduct();
+      } catch {
+        readbackRemote = elevenstUnavailableRemote("11번가 상품 수정 후 재조회 응답을 확인하지 못했습니다.");
+        continue;
+      }
+      const readbackProduct = readbackRemote.data.product && typeof readbackRemote.data.product === "object" && !Array.isArray(readbackRemote.data.product)
+        ? readbackRemote.data.product as Record<string, unknown>
+        : {};
+      const identityVerified = readbackRemote.data.accepted === true
+        && String(readbackRemote.data.productNo ?? readbackProduct.prdNo ?? "") === decodeURIComponent(productNo)
+        && String(readbackProduct.sellerPrdCd ?? "") === sellerProductCode;
+      const contentVerified = verifyListingUpdateReadback("elevenst", input.arguments, readbackRemote.data);
+      readbackVerified = identityVerified && contentVerified.ok;
+      readbackRemote.data.sellerpilotMismatches = contentVerified.mismatches.slice(0, 50);
+    }
+    if (!readbackRemote) throw new Error("ELEVENST_READBACK_MISSING");
+    const readbackStep = elevenstVerifiedStep("listing-readback", readbackRemote, readbackVerified);
+    return result(input, [beforeStep, updateStep, readbackStep], decodeURIComponent(productNo));
   }
   if (input.operation === "listing.stop") {
     const productNo = pathSegment(stringArgument(input.arguments, "productNo"));
@@ -3073,6 +3188,7 @@ async function executeEbay(input: ExecuteInput) {
     ], decodedSku);
   }
   if (input.operation === "inquiries.list") {
+    const marketplaceId = ebayAsqMarketplaceId(input.arguments.marketplaceId);
     const startCreationTime = ebayTradingTimestampArgument(input.arguments, "startCreationTime");
     const endCreationTime = ebayTradingTimestampArgument(input.arguments, "endCreationTime");
     const startTimestamp = Date.parse(startCreationTime);
@@ -3080,30 +3196,104 @@ async function executeEbay(input: ExecuteInput) {
     if (startTimestamp >= endTimestamp || endTimestamp - startTimestamp > 31 * 86_400_000) {
       throw new Error("CHANNEL_ARGUMENT_INVALID:inquiryTimeRange");
     }
-    const entriesPerPage = integerArgument(input.arguments, "entriesPerPage", { min: 25, max: 200 });
-    if (![25, 50, 100, 200].includes(entriesPerPage)) {
+    const requestedEntriesPerPage = integerArgument(input.arguments, "entriesPerPage", { min: 25, max: 200 });
+    if (![25, 50, 100, 200].includes(requestedEntriesPerPage)) {
       throw new Error("CHANNEL_ARGUMENT_INVALID:entriesPerPage");
     }
+    // A 25-message page is the smallest provider-supported size. Two pages
+    // keep the normalized transaction below the durable 1 MB envelope even
+    // when every documented 4,000-character question is present. Remaining
+    // pages are continued atomically by the gateway completion transaction.
+    const entriesPerPage = EBAY_ASQ_ENTRIES_PER_PAGE;
     let pageNumber = integerArgument(input.arguments, "pageNumber", { min: 1, max: 1_000_000 });
     const steps: ChannelOperationStep[] = [];
-    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
+    for (let pageIndex = 0; pageIndex < EBAY_ASQ_PAGES_PER_JOB; pageIndex += 1) {
       const requestXml = `<?xml version="1.0" encoding="utf-8"?><GetMemberMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents"><MailMessageType>AskSellerQuestion</MailMessageType><StartCreationTime>${ebayTradingXmlEscape(startCreationTime)}</StartCreationTime><EndCreationTime>${ebayTradingXmlEscape(endCreationTime)}</EndCreationTime><Pagination><EntriesPerPage>${entriesPerPage}</EntriesPerPage><PageNumber>${pageNumber}</PageNumber></Pagination></GetMemberMessagesRequest>`;
       const remote = await ebayTradingRequest({
         payload: input.payload,
         environment: input.environment,
         callName: "GetMemberMessages",
+        marketplaceId,
         body: requestXml,
       });
-      const inquiryStep = step(pageIndex === 0 ? "inquiries" : `inquiries:${pageIndex + 1}`, remote);
+      const messages = objectArray(remote.data.memberMessages);
+      const exactMessages: Record<string, unknown>[] = [];
+      let verifiedItemCount = 0;
+      const pageSites = new Map<string, EbayAsqMarketplaceId>();
+      for (const message of messages) {
+        const itemId = String(message.itemId ?? "").trim();
+        if (!/^[1-9]\d{0,18}$/.test(itemId)) {
+          steps.push({
+            name: "inquiry-listing-site-verification",
+            ok: false,
+            status: 422,
+            data: { code: "EBAY_ASQ_ITEM_ID_UNVERIFIED" },
+          });
+          return result(input, steps);
+        }
+        let exactMarketplaceId = pageSites.get(itemId);
+        if (!exactMarketplaceId) {
+          const cacheKey = `${input.environment}:${itemId}`;
+          const cached = ebayListingSiteCache.get(cacheKey);
+          if (cached && cached.expiresAt > Date.now()) {
+            exactMarketplaceId = cached.marketplaceId;
+          } else {
+            ebayListingSiteCache.delete(cacheKey);
+            const itemXml = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${ebayTradingXmlEscape(itemId)}</ItemID><OutputSelector>ItemID</OutputSelector><OutputSelector>Site</OutputSelector></GetItemRequest>`;
+            const itemRemote = await ebayTradingRequest({
+              payload: input.payload,
+              environment: input.environment,
+              callName: "GetItem",
+              marketplaceId,
+              body: itemXml,
+            });
+            const itemStep = step("inquiry-listing-site-readback", itemRemote);
+            const providerItem = objectValue(itemRemote.data, "item", false);
+            const providerItemId = String(providerItem.itemId ?? "").trim();
+            try {
+              exactMarketplaceId = ebayAsqMarketplaceIdFromSiteCode(providerItem.site);
+            } catch {
+              exactMarketplaceId = undefined;
+            }
+            if (!itemStep.ok || providerItemId !== itemId || !exactMarketplaceId) {
+              steps.push({
+                name: "inquiry-listing-site-verification",
+                ok: false,
+                status: itemStep.status || 422,
+                requestId: itemStep.requestId,
+                data: { code: "EBAY_ASQ_LISTING_SITE_UNVERIFIED" },
+              });
+              return result(input, steps);
+            }
+            rememberEbayListingSite(cacheKey, exactMarketplaceId);
+          }
+          pageSites.set(itemId, exactMarketplaceId);
+          verifiedItemCount += 1;
+        }
+        exactMessages.push({ ...message, marketplaceId: exactMarketplaceId });
+      }
+      const exactPageRemote = {
+        ...remote,
+        data: { ...remote.data, memberMessages: exactMessages },
+      } satisfies RemoteResponse;
+      const inquiryStep = step(pageIndex === 0 ? "inquiries" : `inquiries:${pageIndex + 1}`, exactPageRemote);
       steps.push(inquiryStep);
       if (!inquiryStep.ok) break;
-      const messages = objectArray(remote.data.memberMessages);
+      steps.push({
+        name: `inquiry-listing-sites:${pageIndex + 1}`,
+        ok: true,
+        status: 200,
+        data: {
+          verifiedItemCount,
+          sellerpilotVerification: "EBAY_ASQ_LISTING_SITES_VERIFIED",
+        },
+      });
       const pagination = objectValue(remote.data, "paginationResult", false);
       const totalPages = finiteCount(pagination.totalNumberOfPages);
       const hasMore = remote.data.hasMoreItems === true || (totalPages !== null && pageNumber < totalPages);
       if (!hasMore || messages.length === 0) break;
       const nextPageNumber = pageNumber + 1;
-      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+      if (pageIndex === EBAY_ASQ_PAGES_PER_JOB - 1) {
         return paginationResult(input, steps, {
           ...input.arguments,
           pageNumber: nextPageNumber,
@@ -3115,8 +3305,9 @@ async function executeEbay(input: ExecuteInput) {
     return result(input, steps);
   }
   if (input.operation === "inquiries.reply") {
-    const itemId = ebayTradingTextArgument(input.arguments, "itemId", { maxLength: 19, pattern: /^\d{1,19}$/ });
-    const parentMessageId = ebayTradingTextArgument(input.arguments, "parentMessageId", { maxLength: 240 });
+    const marketplaceId = ebayAsqMarketplaceId(input.arguments.marketplaceId);
+    const itemId = ebayTradingTextArgument(input.arguments, "itemId", { maxLength: 19, pattern: /^[1-9]\d{0,18}$/ });
+    const parentMessageId = ebayTradingTextArgument(input.arguments, "parentMessageId", { maxLength: 230 });
     const recipientId = ebayTradingTextArgument(input.arguments, "recipientId", { maxLength: 240 });
     const reply = ebayTradingTextArgument(input.arguments, "reply", { maxLength: 2_000 });
     const requestXml = `<?xml version="1.0" encoding="utf-8"?><AddMemberMessageRTQRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${ebayTradingXmlEscape(itemId)}</ItemID><MemberMessage><Body>${ebayTradingXmlEscape(reply)}</Body><DisplayToPublic>false</DisplayToPublic><ParentMessageID>${ebayTradingXmlEscape(parentMessageId)}</ParentMessageID><RecipientID>${ebayTradingXmlEscape(recipientId)}</RecipientID></MemberMessage></AddMemberMessageRTQRequest>`;
@@ -3124,6 +3315,7 @@ async function executeEbay(input: ExecuteInput) {
       payload: input.payload,
       environment: input.environment,
       callName: "AddMemberMessageRTQ",
+      marketplaceId,
       body: requestXml,
     });
     return result(input, [step("inquiry-reply", remote)], parentMessageId);
@@ -3175,12 +3367,6 @@ async function executeEbay(input: ExecuteInput) {
 }
 
 export async function executeChannelOperation(input: ExecuteInput): Promise<ChannelOperationResult> {
-  if (input.channel === "ebay"
-      && (input.operation === "inquiries.list" || input.operation === "inquiries.reply")
-      && input.environment === "production"
-      && !ebayAsqProductionVerified) {
-    throw new Error("CHANNEL_RELEASE_VERIFICATION_REQUIRED:ebay-asq");
-  }
   ensureProviderSupport(input.channel, input.operation);
   const safeInput = input.operation === "listing.update"
     ? {

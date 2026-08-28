@@ -48,6 +48,11 @@ export function recoverableRegistrationActivityJobId(activity: RegistrationActiv
   return activity.id.match(studioJobActivityIdPattern)?.[1] ?? null;
 }
 
+export function retryableRegistrationActivityJobId(activity: RegistrationActivity) {
+  if (activity.status !== "failed") return null;
+  return activity.id.match(controllableAiActivityIdPattern)?.[1] ?? null;
+}
+
 export function controllableRegistrationActivityJobId(activity: RegistrationActivity) {
   if (activity.status !== "analyzing") return null;
   return activity.id.match(controllableAiActivityIdPattern)?.[1] ?? null;

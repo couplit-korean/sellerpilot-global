@@ -320,6 +320,44 @@
   text-align: center;
 }
 
+.failureBlock {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 15px;
+  padding: 14px;
+  border: 1px solid #efc7c3;
+  border-radius: 11px;
+  color: #8f342e;
+  background: #fff4f2;
+}
+
+.failureBlock > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.failureBlock > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.failureBlock b,
+.failureBlock small {
+  overflow-wrap: anywhere;
+}
+
+.failureBlock b {
+  font-size: 11px;
+}
+
+.failureBlock small {
+  color: #8f5f5a;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
 .limitation {
   margin: 12px 0 0;
   padding: 11px 12px;

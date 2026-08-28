@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { inspectListingDraft } from "../lib/channels/listing-preflight";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
+import { elevenstListingUpdateProjectionDigestInput } from "../lib/channels/listing-update";
 import { executeChannelOperation } from "../lib/channels/operations";
 import { elevenstCategoryRequest, elevenstSellerXmlRequest } from "../lib/channels/protocols";
-import { elevenstSaleDateRange, validateElevenstListingProduct } from "../lib/channels/elevenst-listing";
+import {
+  elevenstSaleDateRange,
+  mergeElevenstListingUpdateProduct,
+  validateElevenstListingProduct,
+} from "../lib/channels/elevenst-listing";
 
 const apiKey = "A".repeat(32);
 const categoryXml = `<?xml version="1.0" encoding="euc-kr"?><ns2:categorys xmlns:ns2="urn:test">
@@ -63,6 +69,36 @@ function completeProduct(overrides: Record<string, unknown> = {}) {
     },
     ...overrides,
   };
+}
+
+function exactProductXml(productNo: string, product: Record<string, unknown>) {
+  const escape = (value: unknown) => String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+  const scalarFields = [
+    "sellerPrdCd", "prdNm", "brand", "orgnNmVal", "prdStatCd",
+    "prdImage01", "prdImage02", "prdImage03", "prdImage04",
+    "asDetail", "rtngExchDetail",
+  ];
+  const scalars = scalarFields.flatMap((field) => product[field] === undefined || product[field] === ""
+    ? []
+    : [`<${field}>${escape(product[field])}</${field}>`]).join("");
+  const notification = product.ProductNotification as { type?: unknown; item?: Array<{ code?: unknown; name?: unknown }> } | undefined;
+  const notificationXml = notification
+    ? `<ProductNotification><type>${escape(notification.type)}</type>${(notification.item ?? [])
+      .map((item) => `<item><code>${escape(item.code)}</code><name>${escape(item.name)}</name></item>`)
+      .join("")}</ProductNotification>`
+    : "";
+  return `<Product><prdNo>${productNo}</prdNo>${scalars}<htmlDetail><![CDATA[${String(product.htmlDetail)}]]></htmlDetail>${notificationXml}</Product>`;
+}
+
+function trustedSnapshotFingerprint(product: Record<string, unknown>) {
+  return createHash("sha256")
+    .update(elevenstListingUpdateProjectionDigestInput(product))
+    .digest("hex");
 }
 
 test("11st public category request reconstructs official leaf paths without a credential", async () => {
@@ -526,6 +562,157 @@ test("11st readback timeout preserves the observed create step for reconciliatio
     assert.equal(result.steps[1]?.status, 503);
     assert.equal(gatewayJobCompletionStatus(result.operation, result.ok, result.steps), "reconciliation_required");
     assert.equal(calls.filter((call) => call.url.endsWith("/rest/prodservices/product")).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st listing update preserves the trusted full document and verifies the exact product before and after PUT", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body: string }> = [];
+  const snapshot = completeProduct({ prdNm: "수정 전 상품", htmlDetail: "<p>수정 전 설명</p>" });
+  const patch = { prdNm: "수정 후 상품", htmlDetail: "<p>수정 후 설명</p>" };
+  const product = mergeElevenstListingUpdateProduct(snapshot, patch);
+  let exactReadCount = 0;
+  globalThis.fetch = async (input, init) => {
+    const call = { url: String(input), method: String(init?.method ?? "GET"), body: String(init?.body ?? "") };
+    calls.push(call);
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/123456789")) {
+      exactReadCount += 1;
+      return new Response(exactProductXml("123456789", exactReadCount === 1 ? snapshot : product), { status: 200 });
+    }
+    if (call.url.endsWith("/rest/prodservices/product/123456789")) {
+      return new Response("<ClientMessage><message>updated</message><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
+    }
+    throw new Error(`unexpected request: ${call.url}`);
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.update",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: {
+        productNo: "123456789",
+        productPatch: patch,
+        product,
+        sellerpilotSnapshotMutableFingerprint: trustedSnapshotFingerprint(snapshot),
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "123456789");
+    assert.deepEqual(result.steps.map((step) => step.name), ["product-update-preflight", "product-update", "listing-readback"]);
+    assert.deepEqual(calls.map((call) => call.method), ["GET", "PUT", "GET"]);
+    assert.match(calls[1].body, /<prdNm>수정 후 상품<\/prdNm>/);
+    assert.match(calls[1].body, /<selPrc>10000<\/selPrc>/, "가격은 신뢰 원본에서 보존해야 합니다.");
+    assert.match(calls[1].body, /<prdSelQty>1<\/prdSelQty>/, "재고는 신뢰 원본에서 보존해야 합니다.");
+    assert.match(calls[1].body, /<dlvCstPayTypCd>03<\/dlvCstPayTypCd>/, "배송 정책은 신뢰 원본에서 보존해야 합니다.");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st accepted update with stale exact readback requires reconciliation instead of reporting success", async () => {
+  const originalFetch = globalThis.fetch;
+  const snapshot = completeProduct({ prdNm: "수정 전 상품", htmlDetail: "<p>수정 전 설명</p>" });
+  const patch = { prdNm: "수정 후 상품" };
+  const product = mergeElevenstListingUpdateProduct(snapshot, patch);
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/rest/prodmarketservice/prodmarket/123456789")) {
+      return new Response(exactProductXml("123456789", snapshot), { status: 200 });
+    }
+    return new Response("<ClientMessage><message>updated</message><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.update",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: {
+        productNo: "123456789",
+        productPatch: patch,
+        product,
+        sellerpilotSnapshotMutableFingerprint: trustedSnapshotFingerprint(snapshot),
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.steps[1]?.name, "product-update");
+    assert.equal(result.steps[1]?.ok, true);
+    assert.equal(result.steps[2]?.name, "listing-readback");
+    assert.equal(result.steps[2]?.ok, false);
+    assert.equal(gatewayJobCompletionStatus(result.operation, result.ok, result.steps), "reconciliation_required");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st update blocks a stale trusted snapshot before PUT and requires reconciliation", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  const snapshot = completeProduct({ prdNm: "스냅샷 상품", htmlDetail: "<p>스냅샷 설명</p>" });
+  const remoteCurrent = completeProduct({ prdNm: "판매자센터 수동 변경", htmlDetail: "<p>스냅샷 설명</p>" });
+  const patch = { htmlDetail: "<p>새 설명</p>" };
+  const product = mergeElevenstListingUpdateProduct(snapshot, patch);
+  globalThis.fetch = async (input, init) => {
+    calls.push({ url: String(input), method: String(init?.method ?? "GET") });
+    return new Response(exactProductXml("123456789", remoteCurrent), { status: 200 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.update",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: {
+        productNo: "123456789",
+        productPatch: patch,
+        product,
+        sellerpilotSnapshotMutableFingerprint: trustedSnapshotFingerprint(snapshot),
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(calls.map((call) => call.method), ["GET"]);
+    assert.equal(result.steps[0]?.data.sellerpilotSnapshotMutableProjectionMatched, false);
+    assert.equal(result.steps[0]?.data.sellerpilotReconciliationRequired, true);
+    assert.equal(gatewayJobCompletionStatus(result.operation, result.ok, result.steps), "reconciliation_required");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st update requires exact HTTP 200 even when a different 2xx carries resultCode 200", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  const snapshot = completeProduct({ prdNm: "수정 전 상품" });
+  const patch = { prdNm: "수정 후 상품" };
+  const product = mergeElevenstListingUpdateProduct(snapshot, patch);
+  globalThis.fetch = async (input, init) => {
+    const call = { url: String(input), method: String(init?.method ?? "GET") };
+    calls.push(call);
+    if (call.method === "GET") return new Response(exactProductXml("123456789", snapshot), { status: 200 });
+    return new Response("<ClientMessage><message>accepted</message><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 202 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.update",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: {
+        productNo: "123456789",
+        productPatch: patch,
+        product,
+        sellerpilotSnapshotMutableFingerprint: trustedSnapshotFingerprint(snapshot),
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(calls.map((call) => call.method), ["GET", "PUT"]);
+    assert.equal(result.steps[1]?.status, 202);
+    assert.equal(result.steps[1]?.ok, false);
+    assert.equal(result.steps[1]?.data.sellerpilotMutation, "accepted");
+    assert.equal(gatewayJobCompletionStatus(result.operation, result.ok, result.steps), "reconciliation_required");
   } finally {
     globalThis.fetch = originalFetch;
   }

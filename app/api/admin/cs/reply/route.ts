@@ -7,6 +7,7 @@ import {
 } from "../../../../../lib/channels/gateway";
 import { buildInquiryReplyArguments, supportsInquiryReply } from "../../../../../lib/channels/inquiry-reply";
 import type { ActiveChannelKey } from "../../../../../lib/channels/catalog";
+import { ebayAsqMarketplaceId } from "../../../../../lib/channels/ebay-asq";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -24,6 +25,8 @@ function failureMessage(error: unknown) {
   if (message.includes("CHANNEL_GATEWAY_REPLY_RECONCILIATION_REQUIRED")) return "이 문의의 이전 답변 접수 여부를 먼저 판매자센터에서 확인해야 합니다.";
   if (/CREDENTIALS_MISSING|TOKEN_EXCHANGE_FAILED|ACCESS_TOKEN_MISSING/.test(message)) return "판매채널 인증값이 누락됐거나 만료됐습니다.";
   if (message.includes("CHANNEL_GATEWAY_REPLY_CONFLICT")) return "이 문의에는 다른 답변이 이미 전송 중이거나 전송 완료됐습니다. 판매자센터와 문의 상태를 확인해 주세요.";
+  if (message.includes("EBAY_ASQ_RATE_LIMITED_75_PER_60_SECONDS")) return "eBay 판매자 계정의 분당 답변 한도에 도달했습니다. 60초 뒤 다시 시도해 주세요.";
+  if (message.includes("EBAY_ASQ_PROVIDER_COOLDOWN_100_SECONDS")) return "eBay가 답변 호출을 일시 차단했습니다. 마지막 한도 오류로부터 100초 뒤 다시 시도해 주세요.";
   if (message.includes("CHANNEL_GATEWAY_TIMEOUT")) return "판매채널 답변 작업이 아직 끝나지 않았습니다. 잠시 후 문의 상태를 다시 확인해 주세요.";
   if (message.includes("CHANNEL_GATEWAY")) return "고정 IP 채널 작업자에서 답변을 처리하지 못했습니다.";
   return "판매채널에서 CS 답변을 처리하지 못했습니다.";
@@ -43,11 +46,26 @@ export async function POST(request: Request) {
     ? rows[0] as Record<string, unknown>
     : null;
   const channel = typeof ticket?.channel_key === "string" ? ticket.channel_key as ActiveChannelKey : null;
+  const environment = ticket?.environment === "sandbox" || ticket?.environment === "production"
+    ? ticket.environment
+    : null;
   const externalTicketId = typeof ticket?.external_ticket_id === "string" ? ticket.external_ticket_id : "";
   const replyContext = ticket?.reply_context && typeof ticket.reply_context === "object" && !Array.isArray(ticket.reply_context)
     ? ticket.reply_context as Record<string, unknown>
     : {};
-  if (contextError || !ticket || !channel || !supportsInquiryReply(channel)) {
+  let marketplaceBound = false;
+  try {
+    marketplaceBound = Boolean(ebayAsqMarketplaceId(replyContext.marketplaceId));
+  } catch {
+    marketplaceBound = false;
+  }
+  const ebayRelease = {
+    providerCertified: ticket?.seller_account_key_source === "provider_certified_v1",
+    sellerAccountVerified: typeof ticket?.seller_account_verified_at === "string"
+      && !Number.isNaN(Date.parse(ticket.seller_account_verified_at)),
+    marketplaceBound,
+  };
+  if (contextError || !ticket || !channel || !environment || !supportsInquiryReply(channel, environment, ebayRelease)) {
     return NextResponse.json({ message: "이 판매채널은 SellerPilot에서 실제 CS 답변 전송을 지원하지 않습니다." }, { status: 409 });
   }
   if (ticket.status === "resolved") {
@@ -68,7 +86,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: result.safeMessage }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
     }
 
-    return NextResponse.json({ ok: true, channel, safeMessage: result.safeMessage }, {
+    return NextResponse.json({ ok: true, channel, environment, safeMessage: result.safeMessage }, {
       headers: { "cache-control": "no-store, max-age=0" },
     });
   } catch (error) {
@@ -84,7 +102,11 @@ export async function POST(request: Request) {
     }
     const message = error instanceof Error ? error.message : "";
     return NextResponse.json({ message: failureMessage(error) }, {
-      status: /CHANNEL_GATEWAY_REPLY_(?:CONFLICT|LINEAGE_UNBOUND|RECONCILIATION_REQUIRED)/.test(message) ? 409 : 422,
+      status: /EBAY_ASQ_(?:RATE_LIMITED_75_PER_60_SECONDS|PROVIDER_COOLDOWN_100_SECONDS)/.test(message)
+        ? 429
+        : /CHANNEL_GATEWAY_REPLY_(?:CONFLICT|LINEAGE_UNBOUND|RECONCILIATION_REQUIRED)/.test(message)
+          ? 409
+          : 422,
       headers: { "cache-control": "no-store, max-age=0" },
     });
   }

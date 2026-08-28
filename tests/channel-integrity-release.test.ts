@@ -3,11 +3,11 @@ import test from "node:test";
 import { channelOperationAvailable } from "../lib/channels/operation-availability";
 import { shipmentVerificationSummary, shipmentWriteAvailability } from "../lib/channels/shipment-release";
 
-test("11번가 성공 listing.create와 미검증 수정·발송 작업을 분리한다", () => {
+test("11번가 검증된 상품 등록·전체 원본 기반 수정과 미검증 발송 작업을 분리한다", () => {
   assert.equal(channelOperationAvailable("elevenst", "listing.create"), true);
   assert.equal(channelOperationAvailable("elevenst", "listing.stop"), true);
   assert.equal(channelOperationAvailable("elevenst", "orders.list"), true);
-  assert.equal(channelOperationAvailable("elevenst", "listing.update"), false);
+  assert.equal(channelOperationAvailable("elevenst", "listing.update"), true);
   assert.equal(channelOperationAvailable("elevenst", "price.update"), false);
   assert.equal(channelOperationAvailable("elevenst", "inventory.update"), false);
   assert.equal(channelOperationAvailable("elevenst", "orders.get"), false);
@@ -26,10 +26,9 @@ test("문의·배송 UI가 구현되지 않은 외부 쓰기를 실행 가능으
 });
 
 test("상품 전체 수정은 원격 식별값과 readback 경로가 검증된 채널만 연다", () => {
-  for (const channel of ["qoo10", "shopee", "lazada", "coupang", "smartstore"] as const) {
+  for (const channel of ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore"] as const) {
     assert.equal(channelOperationAvailable(channel, "listing.update"), true, channel);
   }
-  assert.equal(channelOperationAvailable("elevenst", "listing.update"), false);
   assert.equal(channelOperationAvailable("temu", "listing.update"), false);
   assert.equal(channelOperationAvailable("ebay", "listing.update"), false);
 });

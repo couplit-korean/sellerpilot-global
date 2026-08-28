@@ -109,6 +109,18 @@ function ApiUsageGrid({ usage }: { usage: SupabaseApiUsage }) {
   );
 }
 
+function ProviderLoadFailure({ provider, message }: { provider: "Vercel" | "Supabase"; message: string }) {
+  return (
+    <div className={styles.failureBlock} role="alert">
+      <ShieldAlert size={18} aria-hidden="true" />
+      <span>
+        <b>{provider} 사용량을 확인할 수 없습니다.</b>
+        <small>{message || "서버 연결 상태를 확인한 뒤 다시 시도해 주세요."}</small>
+      </span>
+    </div>
+  );
+}
+
 export function PlatformUsagePage() {
   const [payload, setPayload] = useState<PlatformUsagePayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -168,6 +180,7 @@ export function PlatformUsagePage() {
           onClick={() => {
             setLoading(true);
             setError("");
+            setPayload(null);
             setRefreshSequence((value) => value + 1);
           }}
           disabled={loading}
@@ -194,11 +207,11 @@ export function PlatformUsagePage() {
               <small>DEPLOYMENT &amp; COMPUTE</small>
               <h3 id="vercel-usage-heading">Vercel</h3>
             </span>
-            {payload && (
+            {payload ? (
               <span className={`${styles.stateBadge} ${styles[payload.vercel.state]}`}>
                 {providerIcon(payload.vercel.state)} {providerStateLabel[payload.vercel.state]}
               </span>
-            )}
+            ) : !loading ? <span className={`${styles.stateBadge} ${styles.unavailable}`}>{providerIcon("unavailable")} 조회 실패</span> : null}
           </header>
 
           {payload ? (
@@ -228,7 +241,9 @@ export function PlatformUsagePage() {
                 Vercel 공식 API는 실제 사용량·비용을 제공하지만 모든 서비스의 계약상 총한도를 함께 제공하지 않습니다. 확인되지 않은 백분율은 표시하지 않습니다.
               </p>
             </>
-          ) : <div className={styles.loadingBlock}>Vercel 공식 API 확인 중</div>}
+          ) : loading
+            ? <div className={styles.loadingBlock}>Vercel 공식 API 확인 중</div>
+            : <ProviderLoadFailure provider="Vercel" message={error} />}
         </section>
 
         <section className={styles.providerCard} aria-labelledby="supabase-usage-heading">
@@ -238,11 +253,11 @@ export function PlatformUsagePage() {
               <small>DATABASE &amp; BACKEND</small>
               <h3 id="supabase-usage-heading">Supabase</h3>
             </span>
-            {payload && (
+            {payload ? (
               <span className={`${styles.stateBadge} ${styles[payload.supabase.state]}`}>
                 {providerIcon(payload.supabase.state)} {providerStateLabel[payload.supabase.state]}
               </span>
-            )}
+            ) : !loading ? <span className={`${styles.stateBadge} ${styles.unavailable}`}>{providerIcon("unavailable")} 조회 실패</span> : null}
           </header>
 
           {payload ? (
@@ -297,7 +312,9 @@ export function PlatformUsagePage() {
                 </ul>
               </div>
             </>
-          ) : <div className={styles.loadingBlock}>Supabase 공식 API 확인 중</div>}
+          ) : loading
+            ? <div className={styles.loadingBlock}>Supabase 공식 API 확인 중</div>
+            : <ProviderLoadFailure provider="Supabase" message={error} />}
         </section>
       </div>
     </div>

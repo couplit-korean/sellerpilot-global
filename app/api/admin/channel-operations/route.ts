@@ -18,8 +18,13 @@ import {
   ChannelGatewayRemoteFailedError,
   executeViaChannelGateway,
 } from "../../../../lib/channels/gateway";
-import { channelOperationAvailable } from "../../../../lib/channels/operation-availability";
-import { listingUpdateRemoteIdentity, listingWriteOperation } from "../../../../lib/channels/listing-update";
+import { channelOperationRelease } from "../../../../lib/channels/operation-availability";
+import { mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elevenst-listing";
+import {
+  elevenstListingUpdateProjectionDigestInput,
+  listingUpdateRemoteIdentity,
+  listingWriteOperation,
+} from "../../../../lib/channels/listing-update";
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
 import { marketplaceChannelDetailImageCount } from "../../../../lib/channels/marketplace-image-contract";
@@ -101,12 +106,6 @@ export async function POST(request: NextRequest) {
   }
   if (capability.mode === "vendor_docs_required") {
     return NextResponse.json({ message: capability.note, mode: "vendor_docs_required" }, { status: 409 });
-  }
-  if (!channelOperationAvailable(channel, operation)) {
-    return NextResponse.json({
-      message: "현재 원격 식별값과 응답 재검증까지 완료된 채널 작업만 실행할 수 있습니다.",
-      mode: "release_verification_required",
-    }, { status: 409 });
   }
   if (writeChannelOperations.has(operation) && !parsed.data.confirmWrite) {
     return NextResponse.json({ message: "외부 판매채널을 변경하는 작업은 실행 확인이 필요합니다." }, { status: 428 });
@@ -262,6 +261,54 @@ export async function POST(request: NextRequest) {
   }
 
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
+  const operationRelease = channelOperationRelease(channel, operation, environment);
+  if (!operationRelease.available) {
+    return NextResponse.json({
+      message: operationRelease.reason,
+      mode: operationRelease.mode,
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  let effectiveArguments = parsed.data.arguments;
+  if (channel === "elevenst" && operation === "listing.update") {
+    const productNo = listingUpdateRemoteIdentity(channel, parsed.data.arguments);
+    const { data: snapshotData, error: snapshotError } = await serviceClient.rpc(
+      "sellerpilot_service_get_elevenst_listing_snapshot",
+      {
+        p_listing_id: parsed.data.resourceListingId!,
+        p_credential_id: parsed.data.credentialId,
+        p_remote_id: productNo,
+      },
+    );
+    const snapshot = snapshotData && typeof snapshotData === "object" && !Array.isArray(snapshotData)
+      ? snapshotData as Record<string, unknown>
+      : null;
+    if (snapshotError || !snapshot || !snapshot.product) {
+      return NextResponse.json({
+        message: "11번가 최초 등록 원본을 검증할 수 없어 전체 상품 XML을 임의로 재구성하지 않았습니다.",
+        mode: "elevenst_update_snapshot_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    try {
+      const product = mergeElevenstListingUpdateProduct(snapshot.product, parsed.data.arguments.productPatch);
+      const sellerpilotSnapshotMutableFingerprint = createHash("sha256")
+        .update(elevenstListingUpdateProjectionDigestInput(snapshot.product))
+        .digest("hex");
+      effectiveArguments = {
+        ...(parsed.data.arguments.sellerpilotAssets === undefined
+          ? {}
+          : { sellerpilotAssets: structuredClone(parsed.data.arguments.sellerpilotAssets) }),
+        productNo,
+        productPatch: structuredClone(parsed.data.arguments.productPatch),
+        product,
+        sellerpilotSnapshotMutableFingerprint,
+      };
+    } catch {
+      return NextResponse.json({
+        message: "11번가에서 안전하게 수정할 수 있는 상품명·설명·필수정보·이미지 값만 입력해 주세요.",
+        mode: "elevenst_update_patch_invalid",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   const effectiveCurrency = boundListingCurrency ?? parsed.data.currency;
   const effectivePrice = boundListingPrice ?? parsed.data.price;
   const requestFingerprint = createHash("sha256")
@@ -279,7 +326,7 @@ export async function POST(request: NextRequest) {
       price: effectivePrice ?? null,
       market: parsed.data.market,
       targetId: parsed.data.targetId,
-      arguments: parsed.data.arguments,
+      arguments: effectiveArguments,
     }))
     .digest("hex");
   const { data: claimData, error: claimError } = await userClient.rpc("sellerpilot_claim_channel_operation", {
@@ -394,8 +441,8 @@ export async function POST(request: NextRequest) {
   if (usesChannelGateway) {
     try {
       const gatewayArguments = operation === "listing.create" || operation === "listing.update"
-        ? await prepareMarketplaceImages(serviceClient, channel, parsed.data.arguments)
-        : parsed.data.arguments;
+        ? await prepareMarketplaceImages(serviceClient, channel, effectiveArguments)
+        : effectiveArguments;
       const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
         ? {
             ...channelWriteResource({
@@ -571,8 +618,8 @@ export async function POST(request: NextRequest) {
   try {
     const executionPayload = secretPayload as Record<string, unknown>;
     const operationArguments = operation === "listing.create" || operation === "listing.update"
-      ? await prepareMarketplaceImages(serviceClient, channel, parsed.data.arguments)
-      : parsed.data.arguments;
+      ? await prepareMarketplaceImages(serviceClient, channel, effectiveArguments)
+      : effectiveArguments;
     const rawResult = await executeChannelOperation({
       channel,
       operation,

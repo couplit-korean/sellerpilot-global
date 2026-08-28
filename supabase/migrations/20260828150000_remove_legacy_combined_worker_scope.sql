@@ -1,5 +1,6 @@
 -- Retire the temporary combined worker credential only after a replacement
--- three-scope token set is active. Fresh databases with no usable legacy token
+-- three-scope token set is active and every scoped worker has proved liveness
+-- after activation. Only a genuinely fresh database with no worker-token rows
 -- may install the strict boundary without manufacturing worker credentials.
 
 begin;
@@ -12,35 +13,38 @@ lock table sellerpilot_private.ai_cli_worker_tokens in share row exclusive mode;
 do $migration$
 declare
   v_now timestamptz := clock_timestamp();
-  v_usable_legacy integer;
+  v_token_rows integer;
+  v_replacement_set_count integer;
   v_running_legacy_ai_jobs integer;
   v_running_legacy_gateway_jobs integer;
   v_replacement_set_id uuid;
 begin
   select count(*)::integer
-    into v_usable_legacy
-    from sellerpilot_private.ai_cli_worker_tokens token
-   where token.scope = 'legacy_combined'
-     and token.status = 'active'
-     and token.expires_at > v_now;
+    into v_token_rows
+    from sellerpilot_private.ai_cli_worker_tokens;
 
-  if v_usable_legacy > 0 then
-    select token.rotation_set_id
-      into v_replacement_set_id
-      from sellerpilot_private.ai_cli_worker_tokens token
-     where token.scope in ('ai', 'gateway', 'scheduler')
-       and token.status = 'active'
-       and token.expires_at > v_now
-       and token.rotation_set_id is not null
-       and token.activated_at is not null
-     group by token.rotation_set_id
-    having count(*) = 3
-       and count(distinct token.scope) = 3
-     limit 1;
+  if v_token_rows > 0 then
+    select count(*)::integer,
+           min(candidate.rotation_set_id::text)::uuid
+      into v_replacement_set_count, v_replacement_set_id
+      from (
+        select token.rotation_set_id
+          from sellerpilot_private.ai_cli_worker_tokens token
+         where token.scope in ('ai', 'gateway', 'scheduler')
+           and token.status = 'active'
+           and token.expires_at > v_now
+           and token.rotation_set_id is not null
+           and token.activated_at is not null
+           and token.last_seen_at is not null
+           and token.last_seen_at >= token.activated_at
+         group by token.rotation_set_id
+        having count(*) = 3
+           and count(distinct token.scope) = 3
+      ) candidate;
 
-    if v_replacement_set_id is null then
+    if v_replacement_set_count <> 1 or v_replacement_set_id is null then
       raise exception
-        'active scoped worker token set required before retiring legacy_combined'
+        'active heartbeat-verified scoped worker token set required before retiring legacy_combined'
         using errcode = '55000';
     end if;
   end if;
@@ -55,7 +59,6 @@ begin
     join sellerpilot_private.ai_cli_worker_tokens token
       on token.id = job.worker_token_id
    where token.scope = 'legacy_combined'
-     and token.status <> 'revoked'
      and job.status = 'running';
 
   select count(*)::integer
@@ -64,7 +67,6 @@ begin
     join sellerpilot_private.ai_cli_worker_tokens token
       on token.id = job.worker_token_id
    where token.scope = 'legacy_combined'
-     and token.status <> 'revoked'
      and job.status = 'running';
 
   if v_running_legacy_ai_jobs > 0 or v_running_legacy_gateway_jobs > 0 then

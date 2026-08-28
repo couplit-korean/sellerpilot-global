@@ -81,6 +81,7 @@ import {
 import { buildMarketplaceMasterStyleBrief } from "../lib/marketplace-style-learning.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
+import { ebayAsqOperationMarketplaceId } from "../lib/channels/ebay-asq.ts";
 import { downloadMarketplaceImage } from "../lib/channels/marketplace-images.ts";
 import { searchElevenstProductVariants } from "../lib/competitor-prices.ts";
 import { executeProviderListingLineageVerification } from "../lib/channels/listing-lineage-verification.ts";
@@ -4913,6 +4914,13 @@ async function processGatewayJob(job) {
   const assertGatewayLeaseHealthy = () => gatewayHeartbeat.assertHealthy();
   const markExternalWriteStarted = async () => {
     await assertGatewayLeaseHealthy();
+    await persistWorkerCompletion(
+      "/api/channel-gateway/worker/begin-mutation",
+      { jobId: job.id, claimToken },
+      "채널 외부 호출 경계 저장 실패",
+      GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
+    );
+    await assertGatewayLeaseHealthy();
     externalWriteStarted = true;
   };
   const markExternalMutationStarted = async () => {
@@ -5097,6 +5105,16 @@ async function processGatewayJob(job) {
         const ensured = await ensureEbayAccessToken(credential, job.environment, undefined, markExternalMutationStarted, rememberCredentialRefresh, true);
         credential = ensured.payload;
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
+        if (job.operation === "inquiries.list") {
+          operationArguments = {
+            ...operationArguments,
+            marketplaceId: ebayAsqOperationMarketplaceId({
+              periodic: typeof job.request?.periodicKey === "string",
+              credentialMarketplaceId: credential.marketplace_id,
+              requestedMarketplaceId: operationArguments.marketplaceId,
+            }),
+          };
+        }
       }
       if (job.operation === "listing.create" || job.operation === "listing.update") {
         if (job.channel === "shopee") {
@@ -5118,7 +5136,9 @@ async function processGatewayJob(job) {
         console.log(`[Lazada category debug] query=${String(operationArguments.query || "").slice(0, 160)}`);
       }
       await assertGatewayLeaseHealthy();
-      externalWriteStarted ||= writeChannelOperations.has(job.operation);
+      if (writeChannelOperations.has(job.operation)) {
+        await markExternalWriteStarted();
+      }
       result = await executeChannelOperation({
         channel: job.channel,
         operation: job.operation,

@@ -41,6 +41,11 @@ test("platform usage route is admin-only, bounded and honest about missing conne
   assert.match(component, /확인되지 않은 백분율은 표시하지 않습니다/);
   assert.match(component, /과금 quota가 아닌 현재 디스크 사용률입니다/);
   assert.match(component, /cache: "no-store"/);
+  assert.match(component, /setPayload\(null\)/);
+  assert.match(component, /!loading \? <span className=\{`\$\{styles\.stateBadge\} \$\{styles\.unavailable\}`\}/);
+  assert.match(component, /ProviderLoadFailure provider="Vercel" message=\{error\}/);
+  assert.match(component, /ProviderLoadFailure provider="Supabase" message=\{error\}/);
+  assert.match(css, /\.failureBlock b,\s*\.failureBlock small\s*\{[^}]*overflow-wrap:\s*anywhere/);
   assert.match(css, /@media \(max-width: 330px\)/);
   assert.match(css, /overflow-wrap: anywhere/);
   assert.match(css, /min-height: 44px/);

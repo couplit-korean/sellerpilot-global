@@ -1,4 +1,8 @@
 import type { ActiveChannelKey } from "./catalog";
+import {
+  elevenstListingUpdatePatchFromProduct,
+  elevenstListingUpdateProjection,
+} from "./elevenst-listing";
 
 export type ListingUpdateReference = {
   remoteId: string | null;
@@ -124,6 +128,12 @@ const releasedListingContent: Partial<Record<ActiveChannelKey, Partial<Record<Pr
     requiredInformation: fieldSupport("partial", "listing.update", ["body.originProduct.leafCategoryId", "body.originProduct.detailAttribute.originAreaInfo"], "카테고리와 원산지만 수정하며 판매·노출·배송·A/S 정책은 기존 원격 값을 보존합니다."),
     images: fieldSupport("supported", "listing.update", ["body.originProduct.images"], "대표·추가 이미지를 원상품에 병합하고 originProductNo에서 다시 확인합니다."),
   },
+  elevenst: {
+    productName: fieldSupport("supported", "listing.update", ["productPatch.prdNm"], "검증된 최초 등록 원본에 상품명만 병합하고 같은 prdNo에서 다시 확인합니다."),
+    description: fieldSupport("supported", "listing.update", ["productPatch.htmlDetail"], "검증된 최초 등록 원본에 상세 HTML만 병합하고 같은 prdNo에서 다시 확인합니다."),
+    requiredInformation: fieldSupport("partial", "listing.update", ["productPatch.brand", "productPatch.orgnNmVal", "productPatch.prdStatCd", "productPatch.asDetail", "productPatch.rtngExchDetail", "productPatch.ProductNotification"], "브랜드·원산지·상품상태·고시 내용을 수정하되 카테고리·인증·판매·배송 정책은 최초 등록 원본을 그대로 보존합니다."),
+    images: fieldSupport("supported", "listing.update", ["productPatch.prdImage01", "productPatch.prdImage02", "productPatch.prdImage03", "productPatch.prdImage04"], "대표·추가 이미지를 최초 등록 원본에 병합하고 같은 prdNo에서 다시 확인합니다."),
+  },
 };
 
 function cloneFieldMap(source: Record<ProductEditFieldKey, ProductEditFieldSupport>) {
@@ -139,7 +149,7 @@ export function centralProductEditFieldSupport() {
 
 export function channelProductEditFieldSupport(channel: ActiveChannelKey) {
   const listingReason = channel === "elevenst"
-    ? "중앙 상품 원장 저장값은 유지합니다. 11번가 판매자 전용 수정 명세와 readback이 확정되지 않아 원격 상품 수정을 차단하며 외부 채널 수동 반영이 필요합니다."
+    ? "중앙 상품 원장 저장값은 유지합니다. 검증된 최초 등록 원본이 없는 기존 상품은 전체 XML을 추측하지 않고 원격 수정을 차단합니다."
     : channel === "temu"
       ? "중앙 상품 원장 저장값은 유지합니다. Temu 판매자별 수정 스키마와 SKU 식별값이 원장에 확정되지 않아 원격 상품 수정을 차단하며 외부 채널 수동 반영이 필요합니다."
       : channel === "ebay"
@@ -276,7 +286,9 @@ export function listingUpdateRemoteIdentity(channel: ActiveChannelKey, arguments
           ? [body.sellerProductId]
           : channel === "smartstore"
             ? [argumentsValue.originProductNo]
-            : [];
+            : channel === "elevenst"
+              ? [argumentsValue.productNo]
+              : [];
   const identities = [...new Set(candidates.map(identityValue).filter(Boolean))];
   if (identities.length !== 1) {
     throw new Error(identities.length ? "LISTING_UPDATE_IDENTITY_MISMATCH" : "LISTING_UPDATE_IDENTITY_REQUIRED");
@@ -447,6 +459,23 @@ export function prepareListingUpdateArguments(
     };
   }
 
+  if (channel === "elevenst") {
+    const suppliedPatch = recordValue(createArguments.productPatch);
+    const suppliedProduct = recordValue(createArguments.product);
+    const hasSuppliedPatch = Object.keys(suppliedPatch).length > 0;
+    return {
+      ...optionalArgument(createArguments, "sellerpilotAssets"),
+      ...optionalArgument(createArguments, "sellerpilotSnapshotMutableFingerprint"),
+      productNo: remoteId,
+      productPatch: hasSuppliedPatch
+        ? structuredClone(suppliedPatch)
+        : elevenstListingUpdatePatchFromProduct(createArguments.product),
+      ...(hasSuppliedPatch && Object.keys(suppliedProduct).length
+        ? { product: structuredClone(suppliedProduct) }
+        : {}),
+    };
+  }
+
   throw new Error(`LISTING_UPDATE_NOT_RELEASED:${channel}`);
 }
 
@@ -483,6 +512,26 @@ function normalizedComparable(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value as Record<string, unknown>)
     .filter(([, item]) => item !== undefined)
     .map(([key, item]) => [key, normalizedComparable(item)]));
+}
+
+function canonicalComparableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalComparableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalComparableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Stable, representation-normalized input for the server-side SHA-256 that
+ * binds an 11st full-overwrite update to the last trusted Product snapshot.
+ * The exact GET must yield the same mutable projection before a PUT is sent.
+ */
+export function elevenstListingUpdateProjectionDigestInput(value: unknown) {
+  return canonicalComparableJson(normalizedComparable(elevenstListingUpdateProjection(value)));
 }
 
 function subsetMismatches(expectedValue: unknown, actualValue: unknown, path = ""): string[] {
@@ -582,6 +631,7 @@ function expectedListingUpdateProjection(channel: ActiveChannelKey, argumentsVal
     return { ...definedEntries(body, coupangMutableProductFields), ...(items.length ? { items } : {}) };
   }
   if (channel === "smartstore") return safeSmartstoreBody(argumentsValue.body);
+  if (channel === "elevenst") return recordValue(argumentsValue.productPatch);
   return {};
 }
 
@@ -615,6 +665,7 @@ function actualListingUpdateProjection(channel: ActiveChannelKey, argumentsValue
   if (channel === "lazada") return lazadaReadbackProjection(remoteData);
   if (channel === "coupang") return Object.keys(recordValue(remoteData.data)).length ? recordValue(remoteData.data) : remoteData;
   if (channel === "smartstore") return remoteData;
+  if (channel === "elevenst") return recordValue(remoteData.product);
   return {};
 }
 

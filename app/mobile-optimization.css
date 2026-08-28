@@ -2985,6 +2985,15 @@
     --mobile-gutter: 8px;
   }
 
+  /* globals.css historically kept a 320px document floor. Galaxy Fold cover
+     screens expose less than that after the vertical scrollbar is reserved,
+     which widened every otherwise responsive grid and clipped the right side.
+     Scope the override to the cover breakpoint so wider phone contracts remain
+     unchanged while 280px-class viewports use their real available width. */
+  body {
+    min-width: 0;
+  }
+
   .app-content {
     padding-right: max(var(--mobile-gutter), env(safe-area-inset-right));
     padding-left: max(var(--mobile-gutter), env(safe-area-inset-left));

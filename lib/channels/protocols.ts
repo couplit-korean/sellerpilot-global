@@ -1056,9 +1056,12 @@ export function ebayEnvironment(environment: "sandbox" | "production") {
 const ebayTradingSiteIds: Readonly<Record<string, string>> = {
   EBAY_US: "0",
   EBAY_CA: "2",
+  EBAY_CA_FR: "210",
   EBAY_GB: "3",
   EBAY_AU: "15",
   EBAY_AT: "16",
+  EBAY_BE_FR: "23",
+  EBAY_BE_NL: "123",
   EBAY_FR: "71",
   EBAY_DE: "77",
   EBAY_IT: "101",
@@ -1067,17 +1070,21 @@ const ebayTradingSiteIds: Readonly<Record<string, string>> = {
   EBAY_CH: "193",
   EBAY_HK: "201",
   EBAY_IE: "205",
+  EBAY_IN: "203",
   EBAY_MY: "207",
   EBAY_PH: "211",
   EBAY_PL: "212",
   EBAY_SG: "216",
 };
 
-const ebayTradingCalls = new Set(["GetMemberMessages", "AddMemberMessageRTQ"]);
+const ebayTradingCalls = new Set(["GetMemberMessages", "GetItem", "AddMemberMessageRTQ"]);
+// 1475 is the latest published Trading API release with a resolvable official
+// XSD. Do not advance this header from search-index text alone.
+const ebayTradingCompatibilityLevel = "1475";
 const EBAY_TRADING_RESPONSE_LIMIT_BYTES = 2_000_000;
 
 export function ebayTradingSiteId(marketplaceId: string) {
-  const normalized = marketplaceId.trim().toUpperCase() || "EBAY_US";
+  const normalized = marketplaceId.trim().toUpperCase();
   const siteId = ebayTradingSiteIds[normalized];
   if (!siteId) throw new Error("EBAY_TRADING_SITE_UNSUPPORTED");
   return siteId;
@@ -1332,7 +1339,7 @@ function ebayXmlNonNegativeInteger(node: EbayXmlNode, name: string) {
   return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-export function parseEbayTradingResponse(callName: "GetMemberMessages" | "AddMemberMessageRTQ", xml: string) {
+export function parseEbayTradingResponse(callName: "GetMemberMessages" | "GetItem" | "AddMemberMessageRTQ", xml: string) {
   if (!ebayTradingCalls.has(callName)
       || !xml
       || Buffer.byteLength(xml, "utf8") > EBAY_TRADING_RESPONSE_LIMIT_BYTES
@@ -1359,6 +1366,17 @@ export function parseEbayTradingResponse(callName: "GetMemberMessages" | "AddMem
   };
   if (callName === "AddMemberMessageRTQ") return base;
 
+  if (callName === "GetItem") {
+    const item = ebayXmlChild(root, "Item");
+    return {
+      ...base,
+      item: {
+        itemId: item ? ebayXmlText(item, "ItemID").slice(0, 19) : "",
+        site: item ? ebayXmlText(item, "Site").slice(0, 80) : "",
+      },
+    };
+  }
+
   const memberMessage = ebayXmlChild(root, "MemberMessage");
   const exchanges = memberMessage ? ebayXmlChildren(memberMessage, "MemberMessageExchange") : [];
   if (exchanges.length > 500) invalidEbayTradingResponse();
@@ -1371,7 +1389,10 @@ export function parseEbayTradingResponse(callName: "GetMemberMessages" | "AddMem
       messageId: question ? ebayXmlText(question, "MessageID").slice(0, 230) : "",
       senderId: question ? ebayXmlText(question, "SenderID").slice(0, 240) : "",
       subject: question ? ebayXmlText(question, "Subject").slice(0, 500) : "",
-      body: question ? ebayXmlText(question, "Body").slice(0, 20_000) : "",
+      // eBay documents Question.Body as at most 4,000 characters for schema
+      // versions >=653. Keeping that bound also keeps each durable page below
+      // the gateway transaction payload ceiling.
+      body: question ? ebayXmlText(question, "Body").slice(0, 4_000) : "",
       messageStatus: ebayXmlText(exchange, "MessageStatus").slice(0, 80),
       creationDate: ebayXmlText(exchange, "CreationDate").slice(0, 80),
       lastModifiedDate: ebayXmlText(exchange, "LastModifiedDate").slice(0, 80),
@@ -1415,7 +1436,8 @@ async function readBoundedEbayTradingText(response: Response) {
 export async function ebayTradingRequest(input: {
   payload: SecretPayload;
   environment: "sandbox" | "production";
-  callName: "GetMemberMessages" | "AddMemberMessageRTQ";
+  callName: "GetMemberMessages" | "GetItem" | "AddMemberMessageRTQ";
+  marketplaceId: string;
   body: string;
 }) {
   const accessToken = textValue(input.payload, "access_token");
@@ -1434,13 +1456,34 @@ export async function ebayTradingRequest(input: {
       accept: "text/xml",
       "content-type": "text/xml;charset=UTF-8",
       "x-ebay-api-call-name": input.callName,
-      "x-ebay-api-compatibility-level": "1475",
-      "x-ebay-api-siteid": ebayTradingSiteId(textValue(input.payload, "marketplace_id") || "EBAY_US"),
+      "x-ebay-api-compatibility-level": ebayTradingCompatibilityLevel,
+      "x-ebay-api-siteid": ebayTradingSiteId(input.marketplaceId),
       "x-ebay-api-iaf-token": accessToken,
       "user-agent": "SellerPilot-eBay-Trading-CS/1.0",
     },
     body: input.body,
   });
+  if (response.status === 429) {
+    // Trading application errors are normally XML, but an edge/proxy rate
+    // response is allowed to be empty or HTML. Preserve a bounded, provider-
+    // independent 429 result so the durable ASQ cooldown cannot be lost to an
+    // XML parse failure after the reply mutation boundary has been recorded.
+    await response.body?.cancel().catch(() => undefined);
+    return {
+      response,
+      data: {
+        Ack: "Failure",
+        code: "FAILURE",
+        errors: [{
+          errorCode: "HTTP_429",
+          classification: "SystemError",
+          severity: "Error",
+          message: "eBay Trading API rate limit exceeded.",
+        }],
+      },
+      text: "",
+    } satisfies RemoteResponse;
+  }
   const text = await readBoundedEbayTradingText(response);
   const data = parseEbayTradingResponse(input.callName, text);
   return { response, data, text } satisfies RemoteResponse;
@@ -1513,7 +1556,7 @@ export async function fetchEbayTradingUserIdentity(input: {
       accept: "text/xml",
       "content-type": "text/xml;charset=UTF-8",
       "x-ebay-api-call-name": "GetUser",
-      "x-ebay-api-compatibility-level": "1475",
+      "x-ebay-api-compatibility-level": ebayTradingCompatibilityLevel,
       "x-ebay-api-siteid": "0",
       "x-ebay-api-iaf-token": input.accessToken,
       "user-agent": "SellerPilot-eBay-Account-Identity/1.0",
@@ -1648,6 +1691,26 @@ export async function elevenstSellerXmlRequest(input: {
     || elevenstNamespacedXmlValue(xml, "AuthMessage");
   const productNo = elevenstNamespacedXmlValue(xml, "productNo")
     || elevenstNamespacedXmlValue(xml, "prdNo");
+  const productNode = elevenstXmlNodes(xml, "Product")[0] ?? "";
+  const productScalarFields = [
+    "prdNo", "sellerPrdCd", "prdNm", "brand", "orgnNmVal", "prdStatCd",
+    "prdImage01", "prdImage02", "prdImage03", "prdImage04", "htmlDetail",
+    "asDetail", "rtngExchDetail",
+  ] as const;
+  const product = Object.fromEntries(productScalarFields.flatMap((field) => {
+    const value = productNode ? elevenstNamespacedXmlValue(productNode, field) : "";
+    return value ? [[field, value]] : [];
+  })) as Record<string, unknown>;
+  const notificationNode = productNode ? elevenstXmlNodes(productNode, "ProductNotification")[0] ?? "" : "";
+  if (notificationNode) {
+    const type = elevenstNamespacedXmlValue(notificationNode, "type");
+    const items = elevenstXmlNodes(notificationNode, "item").flatMap((itemNode) => {
+      const code = elevenstNamespacedXmlValue(itemNode, "code");
+      const name = elevenstNamespacedXmlValue(itemNode, "name");
+      return code && name ? [{ code, name }] : [];
+    });
+    if (type && items.length) product.ProductNotification = { type, item: items };
+  }
   const products = elevenstXmlNodes(xml, "product").slice(0, 500).map((node) => ({
     productNo: elevenstNamespacedXmlValue(node, "prdNo"),
     sellerProductCode: elevenstNamespacedXmlValue(node, "sellerPrdCd"),
@@ -1662,6 +1725,7 @@ export async function elevenstSellerXmlRequest(input: {
       ...(resultCode ? { resultCode: resultCode.slice(0, 80) } : {}),
       ...(resultMessage ? { resultMessage: resultMessage.slice(0, 300) } : {}),
       ...(productNo ? { productNo: productNo.slice(0, 80) } : {}),
+      ...(Object.keys(product).length ? { product } : {}),
       products,
     },
   } satisfies RemoteResponse;

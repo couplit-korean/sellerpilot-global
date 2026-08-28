@@ -1,15 +1,30 @@
-import { ebayAsqProductionVerified, type ActiveChannelKey } from "./catalog";
+import type { ActiveChannelKey } from "./catalog";
+import { ebayAsqMarketplaceId } from "./ebay-asq";
 
 export const implementedInquiryReplyChannels = ["qoo10", "lazada", "coupang", "smartstore", "ebay"] as const;
 
 export type InquiryReplyChannel = (typeof implementedInquiryReplyChannels)[number];
 
-export const inquiryReplyChannels: readonly InquiryReplyChannel[] = ebayAsqProductionVerified
-  ? implementedInquiryReplyChannels
-  : implementedInquiryReplyChannels.filter((channel) => channel !== "ebay");
+export type EbayInquiryReplyRelease = {
+  providerCertified: boolean;
+  sellerAccountVerified: boolean;
+  marketplaceBound: boolean;
+};
 
-export function supportsInquiryReply(channel: ActiveChannelKey): channel is InquiryReplyChannel {
-  return (inquiryReplyChannels as readonly string[]).includes(channel);
+export const inquiryReplyChannels: readonly InquiryReplyChannel[] = implementedInquiryReplyChannels;
+
+export function supportsInquiryReply(
+  channel: ActiveChannelKey,
+  environment: "sandbox" | "production" = "production",
+  ebayRelease?: EbayInquiryReplyRelease,
+): channel is InquiryReplyChannel {
+  if (channel === "ebay") {
+    return (environment === "sandbox" || environment === "production")
+      && ebayRelease?.providerCertified === true
+      && ebayRelease.sellerAccountVerified === true
+      && ebayRelease.marketplaceBound === true;
+  }
+  return (implementedInquiryReplyChannels as readonly string[]).includes(channel);
 }
 
 export function coupangContactCenterParentAnswerId(value: unknown) {
@@ -42,6 +57,16 @@ function hasForbiddenEbayControl(value: string) {
     return code === 0x7f
       || (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d);
   });
+}
+
+function hasEbayHtmlLikeMarkup(value: string) {
+  let normalized = value;
+  for (let iteration = 0; iteration < 2; iteration += 1) {
+    normalized = normalized
+      .replace(/&(?:amp;)?lt;|&#0*60;|&#x0*3c;/gi, "<")
+      .replace(/&(?:amp;)?gt;|&#0*62;|&#x0*3e;/gi, ">");
+  }
+  return /<\/?[A-Za-z][^>]*>/.test(normalized);
 }
 
 export function buildInquiryReplyArguments(
@@ -90,7 +115,6 @@ export function buildInquiryReplyArguments(
   }
 
   if (channel === "ebay") {
-    const parentMessageId = ticketId.startsWith("ebay:") ? ticketId.slice("ebay:".length).trim() : "";
     const contextParentMessageId = typeof replyContext.parentMessageId === "string"
       || typeof replyContext.parentMessageId === "number"
       ? String(replyContext.parentMessageId).trim()
@@ -101,19 +125,26 @@ export function buildInquiryReplyArguments(
     const recipientId = typeof replyContext.recipientId === "string" || typeof replyContext.recipientId === "number"
       ? String(replyContext.recipientId).trim()
       : "";
-    if (!parentMessageId
-        || parentMessageId.length > 230
-        || contextParentMessageId !== parentMessageId
-        || !/^\d{1,19}$/.test(itemId)
+    let marketplaceId: string;
+    try {
+      marketplaceId = ebayAsqMarketplaceId(replyContext.marketplaceId);
+    } catch {
+      throw new Error("INQUIRY_REPLY_INVALID:ebayReplyContext");
+    }
+    if (!/^ebay:[a-f0-9]{64}$/.test(ticketId)
+        || !contextParentMessageId
+        || contextParentMessageId.length > 230
+        || !/^[1-9]\d{0,18}$/.test(itemId)
         || !recipientId
         || recipientId.length > 240
-        || hasForbiddenEbayControl(parentMessageId)
+        || hasForbiddenEbayControl(contextParentMessageId)
         || hasForbiddenEbayControl(recipientId)
         || hasForbiddenEbayControl(replyText)
+        || hasEbayHtmlLikeMarkup(replyText)
         || replyText.length > 2_000) {
       throw new Error("INQUIRY_REPLY_INVALID:ebayReplyContext");
     }
-    return { itemId, parentMessageId, recipientId, reply: replyText };
+    return { itemId, parentMessageId: contextParentMessageId, recipientId, marketplaceId, reply: replyText };
   }
 
   const match = /^qoo10:(MSG|HELP|ITEM):(\d+):(\d+)$/i.exec(ticketId);

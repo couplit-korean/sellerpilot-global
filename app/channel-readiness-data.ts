@@ -160,8 +160,9 @@ export const channelReadiness: ChannelReadiness[] = [
     checks: [
       { label: "판매자센터 화면 대조", state: "partial", evidence: "CHANGHEE 프로필에서 기록된 원격 상품번호의 Seller Office 화면 대조 증거 필요" },
       { label: "OPEN API 계정", state: "verified", evidence: "운영 OPEN API Key와 등록 IP로 판매자 상품 읽기·등록 호출 정상" },
-      { label: "검증된 상품 API 범위", state: "verified", evidence: "상품 등록·판매중지 구현 · listing.create 원격 재조회 성공" },
-      { label: "미검증 상품 변경 범위", state: "blocked", evidence: "상품 수정·가격·재고는 공식 문서·서비스 권한 확인 전 실행 차단" },
+      { label: "검증된 상품 API 범위", state: "verified", evidence: "상품 등록·콘텐츠 수정·판매중지 구현 · 정확한 prdNo 사전·사후 재조회" },
+      { label: "상품 콘텐츠 수정", state: "verified", evidence: "성공 등록 전체 Product 원본을 보존하고 상품명·설명·필수정보·이미지만 병합 · 가격·재고·배송정책 유지" },
+      { label: "미검증 가격·재고 변경", state: "blocked", evidence: "가격·재고 전용 readback과 서비스 권한 확인 전 자동 실행 차단" },
       { label: "검증된 주문 API 범위", state: "verified", evidence: "결제완료 주문 목록 주기조회 구현 · 현재 수집 주문 0건" },
       { label: "미검증 발송 범위", state: "blocked", evidence: "eligible 실주문 0건 · 발주·송장 공식 엔드포인트와 서비스 권한 검증 전 자동 실행 차단" },
       { label: "서비스 등록", state: "verified", evidence: "등록 IP에서 판매자 전용 상품 API 호출 및 listing.create 성공" },

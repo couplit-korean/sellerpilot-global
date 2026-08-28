@@ -30,7 +30,8 @@ test("11번가는 운영 읽기·등록 성공과 아직 검증되지 않은 상
   assert.equal(elevenst.consoleVerified, false);
   assert.equal(elevenst.apiReadPassed, true);
   assert.equal(elevenst.checks.find((check) => check.label === "실상품 등록·재조회")?.state, "verified");
-  assert.equal(elevenst.checks.find((check) => check.label === "미검증 상품 변경 범위")?.state, "blocked");
+  assert.equal(elevenst.checks.find((check) => check.label === "상품 콘텐츠 수정")?.state, "verified");
+  assert.equal(elevenst.checks.find((check) => check.label === "미검증 가격·재고 변경")?.state, "blocked");
   assert.equal(elevenst.checks.find((check) => check.label === "미검증 발송 범위")?.state, "blocked");
   assert.match(elevenst.summary, /listing\.create가 HTTP 200/);
   assert.doesNotMatch(elevenst.summary, /성공 이력 없음/);

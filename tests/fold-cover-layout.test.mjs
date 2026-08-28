@@ -23,6 +23,7 @@ test("Galaxy Fold cover widths compact the header without removing controls", as
   const styles = await readFile(stylesUrl, "utf8");
   const cover = mediaBody(styles, "(max-width: 344px)");
 
+  assert.match(cover, /body\s*\{[^}]*min-width:\s*0/);
   assert.match(cover, /\.topbar-title\s*\{[^}]*min-width:\s*44px;[^}]*flex:\s*1 1 auto/);
   assert.match(cover, /\.topbar-title > div\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*1 1 auto/);
   assert.match(cover, /\.topbar-actions\s*\{[^}]*min-width:\s*182px;[^}]*flex:\s*0 0 182px/);

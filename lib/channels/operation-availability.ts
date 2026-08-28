@@ -1,4 +1,4 @@
-import { channelCatalog, ebayAsqProductionVerified, type ActiveChannelKey, type ChannelCapabilityKey } from "./catalog";
+import { channelCatalog, type ActiveChannelKey, type ChannelCapabilityKey } from "./catalog";
 import type { ChannelOperationName } from "./operations";
 
 const operationCapabilities: Record<ChannelOperationName, ChannelCapabilityKey> = {
@@ -25,6 +25,7 @@ const elevenstImplementedOperations = new Set<ChannelOperationName>([
   "categories.attributes",
   "categories.validate",
   "listing.create",
+  "listing.update",
   "listing.stop",
   "orders.list",
 ]);
@@ -39,6 +40,7 @@ const releasedListingUpdateChannels = new Set<ActiveChannelKey>([
   "shopee",
   "lazada",
   "coupang",
+  "elevenst",
   "smartstore",
 ]);
 
@@ -48,21 +50,25 @@ export type ChannelOperationRelease = {
   reason: string;
 };
 
+export type ChannelEnvironment = "sandbox" | "production";
+
 const listingUpdateBlockedReasons: Partial<Record<ActiveChannelKey, string>> = {
-  elevenst: "11번가 상품 수정은 판매자 전용 수정 명세와 원격 readback이 확정되지 않아 차단했습니다.",
+  elevenst: "11번가 상품 수정은 검증된 최초 등록 원본과 정확한 prdNo readback을 사용할 수 없는 기존 상품에 한해 차단합니다.",
   temu: "Temu 상품 수정은 판매자별 수정 스키마와 SKU 식별값을 원장에 확정하기 전까지 차단했습니다.",
   ebay: "eBay 상품 수정에는 offer ID와 SKU가 모두 필요하지만 현재 상품 원장에는 게시 listing ID만 보존되므로 차단했습니다.",
 };
 
-export function channelOperationRelease(channel: ActiveChannelKey, operation: ChannelOperationName): ChannelOperationRelease {
+export function channelOperationRelease(
+  channel: ActiveChannelKey,
+  operation: ChannelOperationName,
+  environment: ChannelEnvironment = "production",
+): ChannelOperationRelease {
   const capability = channelCatalog[channel].capabilities[operationCapabilities[operation]];
-  if (channel === "ebay"
-      && (operation === "inquiries.list" || operation === "inquiries.reply")
-      && !ebayAsqProductionVerified) {
+  if (channel === "ebay" && operation === "inquiries.reply") {
     return {
       available: false,
       mode: "release_verification_required",
-      reason: "eBay Trading API 상품 문의(ASQ)는 구현됐지만 Sandbox 2계정 왕복과 실판매자 계정 조회 검증 전이라 운영 실행을 차단했습니다.",
+      reason: `eBay ASQ 답변은 계정·마켓·문의 계보가 검증된 ${environment === "sandbox" ? "Sandbox" : "운영"} 티켓의 전용 CS 경로에서만 실행할 수 있습니다.`,
     };
   }
   if (capability.mode === "unsupported" || capability.mode === "vendor_docs_required") {
@@ -117,6 +123,10 @@ export function channelOperationRelease(channel: ActiveChannelKey, operation: Ch
   return { available: true, mode: "available", reason: capability.note };
 }
 
-export function channelOperationAvailable(channel: ActiveChannelKey, operation: ChannelOperationName) {
-  return channelOperationRelease(channel, operation).available;
+export function channelOperationAvailable(
+  channel: ActiveChannelKey,
+  operation: ChannelOperationName,
+  environment: ChannelEnvironment = "production",
+) {
+  return channelOperationRelease(channel, operation, environment).available;
 }

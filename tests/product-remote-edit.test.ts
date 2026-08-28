@@ -48,7 +48,9 @@ test("중앙 편집과 원격 편집의 실제 지원 필드를 분리한다", (
   assert.equal(channelProductEditFieldSupport("temu").inventory.state, "supported");
   assert.equal(channelProductEditFieldSupport("ebay").inventory.state, "blocked");
   assert.match(channelProductEditFieldSupport("ebay").inventory.reason, /SKU/);
-  assert.equal(channelProductEditFieldSupport("elevenst").productName.state, "blocked");
+  assert.equal(channelProductEditFieldSupport("elevenst").productName.state, "supported");
+  assert.equal(channelProductEditFieldSupport("elevenst").requiredInformation.state, "partial");
+  assert.equal(channelProductEditFieldSupport("elevenst").inventory.state, "blocked");
 });
 
 test("가격 readback이 없는 채널은 API 구현 유무와 무관하게 출시 차단한다", () => {
@@ -73,7 +75,7 @@ test("중앙 저장과 원격 전체 수정의 수동 반영 필드를 구조적
   assert.deepEqual(qoo10.manualFields, ["options", "saleConfiguration", "requiredInformation", "price"]);
   assert.match(qoo10.message, /중앙 원장|수동 반영/);
 
-  for (const channel of ["elevenst", "temu", "ebay"] as const) {
+  for (const channel of ["temu", "ebay"] as const) {
     const plan = productEditRemotePlan(channel, channelOperationAvailable(channel, "listing.update"));
     assert.equal(plan.state, "manual_external_update_required", channel);
     assert.equal(plan.listingUpdateAvailable, false, channel);
@@ -81,12 +83,26 @@ test("중앙 저장과 원격 전체 수정의 수동 반영 필드를 구조적
     assert.match(plan.message, /원격 상품 쓰기를 실행하지 않습니다/, channel);
     assert.match(plan.message, /외부 채널 수동 반영/, channel);
   }
+  const elevenst = productEditRemotePlan("elevenst", channelOperationAvailable("elevenst", "listing.update"));
+  assert.equal(elevenst.state, "verified_partial_remote_update_available");
+  assert.equal(elevenst.listingUpdateAvailable, true);
+  assert.deepEqual(elevenst.remotelyWritableFields, ["productName", "description", "images"]);
+  assert.deepEqual(elevenst.partiallyWritableFields, ["requiredInformation"]);
   assert.deepEqual(productEditRemotePlan("temu", false).remotelyWritableFields, ["inventory"]);
   assert.deepEqual(productEditRemotePlan("ebay", false).remotelyWritableFields, []);
 });
 
-test("검증되지 않은 11번가·Temu·eBay 수정 payload는 원격 쓰기 형태로 만들지 않는다", () => {
-  for (const channel of ["elevenst", "temu", "ebay"] as const) {
+test("11번가는 전체 원본 병합용 내용 patch만 만들고 Temu·eBay 미검증 수정은 차단한다", () => {
+  assert.deepEqual(
+    prepareListingUpdateArguments("elevenst", {
+      product: { prdNm: "수정 상품", htmlDetail: "<p>수정 설명</p>", selPrc: "999999", prdSelQty: "999" },
+    }, publishedListing),
+    {
+      productNo: publishedListing.remoteId,
+      productPatch: { prdNm: "수정 상품", htmlDetail: "<p>수정 설명</p>" },
+    },
+  );
+  for (const channel of ["temu", "ebay"] as const) {
     assert.throws(
       () => prepareListingUpdateArguments(channel, { body: { title: "수정 상품" } }, publishedListing),
       new RegExp(`LISTING_UPDATE_NOT_RELEASED:${channel}`),

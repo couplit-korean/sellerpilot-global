@@ -327,13 +327,14 @@ const trustedMutationSteps: Readonly<Record<string, ReadonlySet<string>>> = {
 export function gatewayResultHasObservedMutation(
   operation: string,
   ok: boolean,
-  steps: ReadonlyArray<{ name: string; ok: boolean; status?: number }>,
+  steps: ReadonlyArray<{ name: string; ok: boolean; status?: number; data?: Record<string, unknown> }>,
 ): boolean {
   if (ok || !writeChannelOperations.has(operation as ChannelOperationName)) return false;
   const trusted = trustedMutationSteps[operation];
   if (!trusted) return false;
   return steps.some((step) => {
     const providerOutcomeUncertain = step.ok
+      || step.data?.sellerpilotMutation === "accepted"
       || step.status === 408
       || (typeof step.status === "number" && step.status >= 500 && step.status <= 599);
     if (!providerOutcomeUncertain) return false;
@@ -346,8 +347,11 @@ export function gatewayResultHasObservedMutation(
 export function gatewayJobCompletionStatus(
   operation: string,
   ok: boolean,
-  steps: ReadonlyArray<{ name: string; ok: boolean; status?: number }> = [],
+  steps: ReadonlyArray<{ name: string; ok: boolean; status?: number; data?: Record<string, unknown> }> = [],
 ): "succeeded" | "failed" | "reconciliation_required" {
+  if (!ok && steps.some((step) => step.data?.sellerpilotReconciliationRequired === true)) {
+    return "reconciliation_required";
+  }
   if (gatewayResultHasObservedMutation(operation, ok, steps)) return "reconciliation_required";
   if (!ok && (operation === "orders.list" || operation === "inquiries.list")) return "failed";
   return "succeeded";

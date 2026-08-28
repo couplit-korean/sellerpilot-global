@@ -346,6 +346,11 @@ export async function executeInquiryReplyViaChannelGateway(input: {
     if (/INQUIRY_REPLY_RECONCILIATION_REQUIRED|INQUIRY_REPLY_LEGACY_IN_PROGRESS/.test(enqueueError.message)) {
       throw new Error("CHANNEL_GATEWAY_REPLY_RECONCILIATION_REQUIRED");
     }
+    if (/EBAY_ASQ_(?:RATE_LIMITED_75_PER_60_SECONDS|PROVIDER_COOLDOWN_100_SECONDS)/.test(enqueueError.message)) {
+      throw new Error(enqueueError.message.includes("PROVIDER_COOLDOWN")
+        ? "EBAY_ASQ_PROVIDER_COOLDOWN_100_SECONDS"
+        : "EBAY_ASQ_RATE_LIMITED_75_PER_60_SECONDS");
+    }
     if (enqueueError.message.includes("active channel credential required")) {
       throw new Error("CREDENTIALS_MISSING");
     }

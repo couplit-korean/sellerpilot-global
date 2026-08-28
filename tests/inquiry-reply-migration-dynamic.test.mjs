@@ -8,6 +8,7 @@ const TOKEN_HASH = "9".repeat(64);
 const LINEAGE_MIGRATION = "20260825111810_harden_inquiry_reply_account_lineage.sql";
 const PRE_LINEAGE_MIGRATION = "20260825111800_bind_listing_seller_accounts.sql";
 const EBAY_ASQ_MIGRATION = "20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql";
+const EBAY_ASQ_SITE_MIGRATION = "20260828144000_bind_ebay_asq_marketplace_and_rate_limit.sql";
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -590,6 +591,7 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
   const itemId = "110005795324";
   const parentMessageId = "MSG-188558-v1";
   const recipientId = "v1|buyer public:user_123";
+  const marketplaceId = "EBAY_US";
   const externalTicketId = `ebay:${parentMessageId}`;
   const reply = "Thanks for your question. This item is available.";
 
@@ -612,6 +614,7 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
         itemId: item,
         parentMessageId: parent,
         recipientId: recipient,
+        marketplaceId,
         ignoredProviderField: "must not persist",
       },
     } : {}),
@@ -627,11 +630,17 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
       itemId: item,
       parentMessageId: parent,
       recipientId: recipient,
+      marketplaceId,
       reply: body,
     },
   });
 
-  const rotateEbayCredential = async ({ attested, suffix, environment = "sandbox" }) => {
+  const rotateEbayCredential = async ({
+    attested,
+    suffix,
+    environment = "sandbox",
+    providerSubject = "ebay:eias:TEST-EIAS-ASQ-ACCOUNT",
+  }) => {
     await setClaims(db, attested ? "service_role" : "authenticated");
     return scalar(
       db,
@@ -647,7 +656,7 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
         refresh_token: `ebay-refresh-token-${suffix}`,
         ...(attested ? {
           provider_account_identity_version: "v1",
-          provider_account_subject: "ebay:eias:TEST-EIAS-ASQ-ACCOUNT",
+          provider_account_subject: providerSubject,
         } : {}),
       }), environment],
     );
@@ -673,6 +682,7 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
     const sourceCredentialId = await rotateEbayCredential({
       attested: true,
       suffix: "source",
+      environment: "production",
     });
     await setClaims(db, "service_role");
     assert.equal(
@@ -690,25 +700,54 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
               seller_account_key
          from sellerpilot_private.support_tickets
         where owner_id = $1 and channel_key = 'ebay'
-          and external_ticket_id = $2`,
-      [ADMIN_ID, externalTicketId],
+          and reply_context->>'parentMessageId' = $2`,
+      [ADMIN_ID, parentMessageId],
     )).rows[0];
-    assert.equal(ticket.external_ticket_id, externalTicketId);
+    assert.match(ticket.external_ticket_id, /^ebay:[a-f0-9]{64}$/);
+    assert.notEqual(ticket.external_ticket_id, externalTicketId);
     assert.equal(ticket.source_credential_id, sourceCredentialId);
     assert.deepEqual(ticket.reply_context, {
       itemId,
       parentMessageId,
       recipientId,
+      marketplaceId,
     });
 
-    // A partial provider read cannot erase the certified route.
+    const secondAccountCredentialId = await rotateEbayCredential({
+      attested: true,
+      suffix: "second-account",
+      environment: "production",
+      providerSubject: "ebay:eias:SECOND-ASQ-ACCOUNT",
+    });
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [secondAccountCredentialId, inquiry()],
+      ),
+      1,
+    );
+    const accountScopedTickets = (await db.query(
+      `select external_ticket_id, seller_account_key
+         from sellerpilot_private.support_tickets
+        where owner_id = $1 and channel_key = 'ebay'
+          and reply_context->>'parentMessageId' = $2
+        order by external_ticket_id`,
+      [ADMIN_ID, parentMessageId],
+    )).rows;
+    assert.equal(accountScopedTickets.length, 2);
+    assert.notEqual(accountScopedTickets[0].external_ticket_id, accountScopedTickets[1].external_ticket_id);
+    assert.notEqual(accountScopedTickets[0].seller_account_key, accountScopedTickets[1].seller_account_key);
+
+    // A partial provider read cannot erase or create a reply route.
     assert.equal(
       await scalar(
         db,
         "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
         [sourceCredentialId, inquiry({ includeContext: false })],
       ),
-      1,
+      0,
     );
     assert.deepEqual(
       await scalar(
@@ -716,7 +755,7 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
         "select reply_context from sellerpilot_private.support_tickets where id = $1",
         [ticket.id],
       ),
-      { itemId, parentMessageId, recipientId },
+      { itemId, parentMessageId, recipientId, marketplaceId },
     );
 
     await assert.rejects(
@@ -739,20 +778,24 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
           recipient: "buyer\nid",
         })],
       ),
-      1,
+      0,
     );
-    const invalidTicket = (await db.query(
-      `select id::text as id, reply_context
-         from sellerpilot_private.support_tickets
-        where owner_id = $1 and channel_key = 'ebay'
-          and external_ticket_id = $2`,
-      [ADMIN_ID, invalidExternalTicketId],
-    )).rows[0];
-    assert.deepEqual(invalidTicket.reply_context, {});
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.support_tickets
+          where owner_id = $1 and channel_key = 'ebay'
+            and reply_context->>'parentMessageId' = 'MSG-188559-v1'`,
+        [ADMIN_ID],
+      ),
+      0,
+    );
 
     const activeCredentialId = await rotateEbayCredential({
       attested: true,
       suffix: "active-rotation",
+      environment: "production",
     });
     await setClaims(db, "service_role");
 
@@ -814,16 +857,6 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
       ),
       /eBay ASQ context mismatch/,
     );
-    await assert.rejects(
-      scalar(
-        db,
-        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
-          $1, 'ebay', $2, $3::jsonb
-        )`,
-        [invalidTicket.id, reply, replyPayload({ parent: "MSG-188559-v1" })],
-      ),
-      /eBay ASQ context mismatch/,
-    );
     const oversizedReply = "x".repeat(2001);
     await assert.rejects(
       scalar(
@@ -832,6 +865,16 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
           $1, 'ebay', $2, $3::jsonb
         )`,
         [ticket.id, oversizedReply, replyPayload({ body: oversizedReply })],
+      ),
+      /invalid inquiry reply gateway job/,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [ticket.id, "Use <b>HTML</b>", replyPayload({ body: "Use <b>HTML</b>" })],
       ),
       /invalid inquiry reply gateway job/,
     );
@@ -850,6 +893,7 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
       itemId,
       parentMessageId,
       recipientId,
+      marketplaceId,
       reply,
     });
     assert.equal(job.request_payload.sellerpilotTicketId, ticket.id);
@@ -881,6 +925,30 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
     const claim = await claimOnlyQueuedReply(db);
     assert.equal(claim.id, firstJobId);
     assert.equal(claim.channel, "ebay");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1, $2, $3)",
+        ["f".repeat(64), claim.id, claim.claim_token],
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1, $2, $3)",
+        [TOKEN_HASH, claim.id, claim.claim_token],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select provider_mutation_started_at is not null from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [claim.id],
+      ),
+      true,
+    );
     assert.equal(await completeReply(db, claim, {
       ok: true,
       channel: "ebay",
@@ -900,7 +968,7 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
         reply_delivery_status: "succeeded",
         reply_draft: reply,
         has_resolved_at: true,
-        reply_context: { itemId, parentMessageId, recipientId },
+        reply_context: { itemId, parentMessageId, recipientId, marketplaceId },
       }],
     );
 
@@ -921,7 +989,7 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
       [{
         status: "resolved",
         reply_delivery_status: "succeeded",
-        reply_context: { itemId, parentMessageId, recipientId },
+        reply_context: { itemId, parentMessageId, recipientId, marketplaceId },
       }],
     );
 
@@ -943,8 +1011,12 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
         db,
         `select id from sellerpilot_private.support_tickets
           where owner_id = $1 and channel_key = 'ebay'
-            and external_ticket_id = $2`,
-        [ADMIN_ID, `ebay:${boundaryParentMessageId}`],
+            and reply_context->>'parentMessageId' = $2
+            and seller_account_key = (
+              select seller_account_key
+                from sellerpilot_private.channel_credentials where id = $3
+            )`,
+        [ADMIN_ID, boundaryParentMessageId, activeCredentialId],
       );
     })();
     const boundaryReply = "x".repeat(2000);
@@ -967,30 +1039,90 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
       "inquiries.reply",
     );
 
-    const productionParentMessageId = "MSG-PRODUCTION-RELEASE-BLOCK";
-    const productionCredentialId = await rotateEbayCredential({
-      attested: true,
-      suffix: "production-release-block",
-      environment: "production",
-    });
-    await setClaims(db, "service_role");
+    const cooldownClaim = await claimOnlyQueuedReply(db);
+    assert.equal(cooldownClaim.id, boundaryJobId);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1, $2, $3)",
+        [TOKEN_HASH, cooldownClaim.id, cooldownClaim.claim_token],
+      ),
+      true,
+    );
+    assert.equal(await completeReply(db, cooldownClaim, {
+      ok: false,
+      channel: "ebay",
+      operation: "inquiries.reply",
+      steps: [{
+        name: "inquiry-reply",
+        ok: false,
+        status: 429,
+        data: {
+          Ack: "Failure",
+          code: "FAILURE",
+          errors: [{
+            errorCode: "HTTP_429",
+            classification: "SystemError",
+            severity: "Error",
+            message: "eBay Trading API rate limit exceeded.",
+          }],
+        },
+      }],
+      safeMessage: "eBay inquiries.reply 작업이 원격 오류로 종료됐습니다.",
+    }), true);
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select response_payload->'steps'->0 from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [boundaryJobId],
+      ),
+      {
+        name: "inquiry-reply",
+        ok: false,
+        status: 429,
+        data: {
+          Ack: "Failure",
+          code: "FAILURE",
+          errors: [{
+            errorCode: "HTTP_429",
+            classification: "SystemError",
+            severity: "Error",
+            message: "eBay Trading API rate limit exceeded.",
+          }],
+        },
+      },
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set started_at = clock_timestamp() - interval '61 seconds',
+              provider_mutation_started_at = clock_timestamp() - interval '61 seconds',
+              completed_at = clock_timestamp() - interval '61 seconds'
+        where id = $1`,
+      [boundaryJobId],
+    );
+
+    const cooldownParentMessageId = "MSG-PROVIDER-COOLDOWN-BLOCK";
     assert.equal(
       await scalar(
         db,
         "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
-        [productionCredentialId, inquiry({
-          external: `ebay:${productionParentMessageId}`,
-          parent: productionParentMessageId,
+        [activeCredentialId, inquiry({
+          external: `ebay:${cooldownParentMessageId}`,
+          parent: cooldownParentMessageId,
         })],
       ),
       1,
     );
-    const productionTicketId = await scalar(
+    const cooldownTicketId = await scalar(
       db,
       `select id from sellerpilot_private.support_tickets
         where owner_id = $1 and channel_key = 'ebay'
-          and external_ticket_id = $2`,
-      [ADMIN_ID, `ebay:${productionParentMessageId}`],
+          and reply_context->>'parentMessageId' = $2
+          and seller_account_key = (
+            select seller_account_key
+              from sellerpilot_private.channel_credentials where id = $3
+          )`,
+      [ADMIN_ID, cooldownParentMessageId, activeCredentialId],
     );
     await assert.rejects(
       scalar(
@@ -998,11 +1130,135 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
         `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
           $1, 'ebay', $2, $3::jsonb
         )`,
-        [productionTicketId, reply, replyPayload({
-          parent: productionParentMessageId,
+        [cooldownTicketId, reply, replyPayload({ parent: cooldownParentMessageId })],
+      ),
+      /EBAY_ASQ_PROVIDER_COOLDOWN_100_SECONDS/,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set started_at = clock_timestamp() - interval '101 seconds',
+              provider_mutation_started_at = clock_timestamp() - interval '101 seconds',
+              completed_at = clock_timestamp() - interval '101 seconds'
+        where id = $1`,
+      [boundaryJobId],
+    );
+
+    await setClaims(db, "authenticated");
+    assert.deepEqual(
+      (await db.query(
+        `select environment, seller_account_key_source,
+                seller_account_verified_at is not null as seller_account_verified,
+                reply_context
+           from public.sellerpilot_get_ticket_reply_dispatch_context($1)`,
+        [ticket.id],
+      )).rows,
+      [{
+        environment: "production",
+        seller_account_key_source: "provider_certified_v1",
+        seller_account_verified: true,
+        reply_context: { itemId, parentMessageId, recipientId, marketplaceId },
+      }],
+    );
+
+    await setClaims(db, "service_role");
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         credential_id, attempt_id, channel, operation, environment,
+         request_payload, status, created_by, started_at, completed_at
+       )
+       select $1, null, 'ebay', 'inquiries.reply', 'production',
+              jsonb_build_object(
+                'arguments', jsonb_build_object('reply', 'rate-window-ledger-row'),
+                'sellerpilotTicketId', gen_random_uuid()
+              ),
+              'failed', $2, clock_timestamp(), clock_timestamp()
+         from generate_series(1, 74)`,
+      [activeCredentialId, ADMIN_ID],
+    );
+
+    const rateParentMessageId = "MSG-RATE-WINDOW-BLOCK";
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [activeCredentialId, inquiry({
+          external: `ebay:${rateParentMessageId}`,
+          parent: rateParentMessageId,
         })],
       ),
-      /EBAY_ASQ_RELEASE_VERIFICATION_REQUIRED/,
+      1,
+    );
+    const rateTicketId = await scalar(
+      db,
+      `select id from sellerpilot_private.support_tickets
+        where owner_id = $1 and channel_key = 'ebay'
+          and reply_context->>'parentMessageId' = $2
+          and seller_account_key = (
+            select seller_account_key
+              from sellerpilot_private.channel_credentials where id = $3
+          )`,
+      [ADMIN_ID, rateParentMessageId, activeCredentialId],
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [rateTicketId, reply, replyPayload({ parent: rateParentMessageId })],
+      ),
+      /EBAY_ASQ_RATE_LIMITED_75_PER_60_SECONDS/,
+    );
+
+    const sandboxParentMessageId = "MSG-SANDBOX-REPLY-ALLOWED";
+    const sandboxCredentialId = await rotateEbayCredential({
+      attested: true,
+      suffix: "sandbox-reply-allowed",
+      environment: "sandbox",
+    });
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [sandboxCredentialId, inquiry({
+          external: `ebay:${sandboxParentMessageId}`,
+          parent: sandboxParentMessageId,
+        })],
+      ),
+      1,
+    );
+    const sandboxTicketId = await scalar(
+      db,
+      `select id from sellerpilot_private.support_tickets
+        where owner_id = $1 and channel_key = 'ebay'
+          and reply_context->>'parentMessageId' = $2
+          and seller_account_key = (
+            select seller_account_key
+              from sellerpilot_private.channel_credentials where id = $3
+          )`,
+      [ADMIN_ID, sandboxParentMessageId, sandboxCredentialId],
+    );
+    const sandboxReplyJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'ebay', $2, $3::jsonb
+      )`,
+      [sandboxTicketId, reply, replyPayload({
+        parent: sandboxParentMessageId,
+      })],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select environment, seller_account_key
+           from sellerpilot_private.channel_gateway_jobs where id = $1`,
+        [sandboxReplyJobId],
+      )).rows,
+      [{ environment: "sandbox", seller_account_key: await scalar(
+        db,
+        "select seller_account_key from sellerpilot_private.channel_credentials where id = $1",
+        [sandboxCredentialId],
+      ) }],
     );
 
     const source = await readFile(
@@ -1012,6 +1268,14 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
     assert.match(source, /p_channel <> 'ebay'[\s\S]*sellerpilot_11820_enqueue_reply_unsafe/);
     assert.match(source, /length\(v_reply\) > 2000/);
     assert.match(source, /seller_account_key_source = 'provider_certified_v1'/);
+    const siteSource = await readFile(
+      new URL(`../supabase/migrations/${EBAY_ASQ_SITE_MIGRATION}`, import.meta.url),
+      "utf8",
+    );
+    assert.match(siteSource, /seller_account_verified_at is not null/);
+    assert.doesNotMatch(siteSource, /EBAY_ASQ_SANDBOX_REPLY_UNSUPPORTED/);
+    assert.match(siteSource, /c\.environment = v_source_credential\.environment/);
+    assert.match(siteSource, /EBAY_ASQ_RATE_LIMITED_75_PER_60_SECONDS/);
   } finally {
     await db.close();
   }

@@ -178,7 +178,9 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.ok(finalCompletion > gatewayProcess.indexOf("await stopGatewayHeartbeat()"));
   assert.match(gatewayProcess, /effectiveError = heartbeatError/);
   assert.match(gatewayProcess, /effectiveError instanceof WorkerRequestTerminalError[\s\S]*\[채널 상태 보존\]/);
-  assert.match(gatewayProcess, /externalWriteStarted \|\|= writeChannelOperations\.has\(job\.operation\)/);
+  assert.match(gatewayProcess, /const markExternalWriteStarted = async \(\) => \{[\s\S]*"\/api\/channel-gateway\/worker\/begin-mutation"[\s\S]*await assertGatewayLeaseHealthy\(\);[\s\S]*externalWriteStarted = true/);
+  assert.match(gatewayProcess, /if \(writeChannelOperations\.has\(job\.operation\)\) \{[\s\S]*await markExternalWriteStarted\(\);[\s\S]*executeChannelOperation/);
+  assert.doesNotMatch(gatewayProcess, /externalWriteStarted \|\|= writeChannelOperations\.has\(job\.operation\)/);
   assert.match(gatewayProcess, /status: "reconciliation_required"/);
   assert.match(gatewayProcess, /"\/api\/channel-gateway\/worker\/credential-refresh"/);
   assert.match(gatewayProcess, /action: "begin"[\s\S]*action: "stage"/);

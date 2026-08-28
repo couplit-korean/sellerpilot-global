@@ -32,11 +32,18 @@ const pendingSetResultSchema = z.object({
   tokenSetId: z.string().uuid(),
   activationExpiresAt: z.string(),
 });
-const tokenSetMutationResultSchema = z.object({
-  status: z.enum(["activated", "active", "aborted", "expired", "invalid"]),
-  tokenSetId: z.string().uuid().optional(),
-  replayed: z.boolean().optional(),
-});
+const tokenSetMutationResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("leases_active"),
+    aiRunning: z.number().int().nonnegative(),
+    gatewayRunning: z.number().int().nonnegative(),
+  }).strict(),
+  z.object({
+    status: z.enum(["activated", "active", "aborted", "expired", "invalid"]),
+    tokenSetId: z.string().uuid().optional(),
+    replayed: z.boolean().optional(),
+  }),
+]);
 
 function tokenHash(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -123,6 +130,14 @@ async function mutatePendingTokenSet(request: Request, action: "activate" | "abo
   const result = tokenSetMutationResultSchema.safeParse(data);
   if (error || !result.success || result.data.status === "invalid") {
     return NextResponse.json({ message: "작업자 토큰 세트가 요청과 일치하지 않습니다." }, { status: 409 });
+  }
+  if (result.data.status === "leases_active") {
+    return NextResponse.json({
+      status: result.data.status,
+      aiRunning: result.data.aiRunning,
+      gatewayRunning: result.data.gatewayRunning,
+      message: `기존 통합 작업자가 실행 중인 작업을 처리하고 있어 토큰을 교체하지 않았습니다. AI ${result.data.aiRunning}건, 채널 ${result.data.gatewayRunning}건이 끝난 뒤 다시 시도해 주세요.`,
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
   if (action === "activate") {
     if (result.data.status !== "activated") {
