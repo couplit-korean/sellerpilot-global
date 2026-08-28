@@ -6,6 +6,11 @@ import { executeChannelOperation } from "../../../../lib/channels/operations";
 import { inquirySyncRequests, normalizeChannelInquiries } from "../../../../lib/channels/inquiry-sync";
 import { shouldBootstrapLazadaIm } from "../../../../lib/channels/lazada-im-bootstrap";
 import { normalizeChannelOrders, orderSyncRequests } from "../../../../lib/channels/order-sync";
+import {
+  configuredServerlessStaticEgressChannels,
+  hasServerlessStaticEgressFor,
+  SERVERLESS_STATIC_EGRESS_REQUIRED,
+} from "../../../../lib/channels/serverless-static-egress";
 import { createPromiseGate } from "../../../../lib/promise-pool";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
@@ -20,7 +25,7 @@ const schema = z.object({
 
 const historyBackfillResultSchema = z.object({
   runId: z.string().uuid(),
-  status: z.enum(["queued", "running", "succeeded", "failed"]),
+  status: z.enum(["queued", "running", "succeeded", "failed", "blocked"]),
   historyDays: z.number().int().min(7).max(30),
   fromDate: z.string(),
   toDate: z.string(),
@@ -35,6 +40,7 @@ const historyBackfillResultSchema = z.object({
   startedAt: z.string(),
   updatedAt: z.string(),
   completedAt: z.string().nullable(),
+  blockedReason: z.literal(SERVERLESS_STATIC_EGRESS_REQUIRED).optional(),
   reused: z.boolean().optional(),
   retriedJobs: z.number().int().nonnegative().optional(),
 });
@@ -74,7 +80,7 @@ function periodicEnqueueSummary(values: unknown[]) {
   const statuses = values.map((value) => value && typeof value === "object" && !Array.isArray(value)
     ? String((value as Record<string, unknown>).status ?? "")
     : "");
-  if (statuses.some((status) => !["queued", "already_pending", "not_connected", "reconnect_required", "reconciliation_required"].includes(status))) {
+  if (statuses.some((status) => !["queued", "already_pending", "not_connected", "reconnect_required", "reconciliation_required", "fixed_egress_required"].includes(status))) {
     throw new Error("periodic_sync_enqueue_invalid");
   }
   return {
@@ -82,6 +88,8 @@ function periodicEnqueueSummary(values: unknown[]) {
       ? "reconnect_required" as const
       : statuses.includes("reconciliation_required")
         ? "reconciliation_required" as const
+        : statuses.includes("fixed_egress_required")
+          ? "fixed_egress_required" as const
         : statuses.includes("not_connected")
           ? "not_connected" as const
           : statuses.includes("queued")
@@ -93,6 +101,9 @@ function periodicEnqueueSummary(values: unknown[]) {
 }
 
 function historyBackfillMessage(result: HistoryBackfillResult) {
+  if (result.status === "blocked" || result.blockedReason === SERVERLESS_STATIC_EGRESS_REQUIRED) {
+    return "쿠팡·스마트스토어 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 과거 문의 작업을 접수하거나 재시도하지 않습니다.";
+  }
   if (result.status === "succeeded") {
     return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의 ${result.succeededJobs}건의 읽기 작업이 모두 반영됐습니다.`;
   }
@@ -148,7 +159,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: false,
       delegated: true,
-      message: "자동 주문·문의 동기화는 중복 실행 없이 로컬 스케줄러에서 처리합니다.",
+      message: "자동 주문·문의 동기화는 중복 실행 없이 서버 스케줄러에서 처리합니다.",
     }, {
       // A non-success response also stops already-open legacy tabs from
       // scheduling three follow-up snapshot reloads for this retired path.
@@ -163,6 +174,54 @@ export async function POST(request: Request) {
     return NextResponse.json({
       message: "과거 문의 다시 불러오기는 쿠팡과 네이버 스마트스토어만 함께 선택할 수 있습니다.",
     }, { status: 400 });
+  }
+  if (parsed.data.historyDays !== undefined) {
+    const staticEgressChannels = configuredServerlessStaticEgressChannels();
+    const envReady = hasServerlessStaticEgressFor(staticEgressChannels, ["coupang", "smartstore"]);
+    const { data: databasePolicy, error: databasePolicyError } = envReady
+      ? await admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status")
+      : { data: null, error: null };
+    const policy = databasePolicy && typeof databasePolicy === "object" && !Array.isArray(databasePolicy)
+      ? databasePolicy as Record<string, unknown>
+      : {};
+    const databaseReady = policy.coupang === true && policy.smartstore === true;
+    if (!envReady || databasePolicyError || !databaseReady) {
+      const blockedAt = new Date();
+      const seoulDate = (daysAgo: number) => new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Seoul",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(blockedAt.getTime() - daysAgo * 86_400_000));
+      return NextResponse.json({
+        ok: false,
+        staticEgressReady: false,
+        blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+        historyBackfill: {
+          runId: "00000000-0000-4000-8000-000000000000",
+          status: "blocked",
+          blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+          historyDays: parsed.data.historyDays,
+          fromDate: seoulDate(parsed.data.historyDays - 1),
+          toDate: seoulDate(0),
+          channels: ["coupang", "smartstore"],
+          expectedInitialJobs: 0,
+          totalJobs: 0,
+          queuedJobs: 0,
+          runningJobs: 0,
+          succeededJobs: 0,
+          failedJobs: 0,
+          progressPercent: 0,
+          startedAt: blockedAt.toISOString(),
+          updatedAt: blockedAt.toISOString(),
+          completedAt: blockedAt.toISOString(),
+        },
+        message: "쿠팡·스마트스토어 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 30일 작업을 접수하거나 재시도하지 않습니다.",
+      }, {
+        status: 409,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
+    }
   }
   const syncNormalizationTimestamp = new Date().toISOString();
 
@@ -371,6 +430,7 @@ export async function POST(request: Request) {
       || result.status === "not_connected"
       || result.status === "reconnect_required"
       || result.status === "reconciliation_required"
+      || result.status === "fixed_egress_required"
   ));
   return NextResponse.json({
     ok: !needsAttention,
@@ -379,7 +439,9 @@ export async function POST(request: Request) {
     results,
     inquiryResults,
     push: { configured: push.configured, sent: push.sent, failed: push.failed },
-    message: needsAttention
+    message: [...results, ...inquiryResults].some((result) => result.status === "fixed_egress_required")
+      ? "쿠팡·스마트스토어 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 해당 조회를 자동 재시도하지 않습니다."
+      : needsAttention
       ? "동기화를 요청했지만 일부 채널은 연결·재연동 또는 외부 처리 결과의 수동 확인이 필요합니다. 채널별 상태를 확인해 주세요."
       : "연결된 판매채널의 주문·고객 문의 동기화를 요청했습니다.",
   }, {

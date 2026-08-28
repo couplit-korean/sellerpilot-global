@@ -141,6 +141,20 @@ export function createNaverClientSecretSign(clientId: string, clientSecret: stri
   return Buffer.from(hashed, "utf8").toString("base64");
 }
 
+function naverTokenExchangeFailure(response: Response, remote: RemoteResponse) {
+  const providerCode = textValue(remote.data, "code").toUpperCase();
+  if (response.status === 403 && providerCode === "GW.IP_NOT_ALLOWED") {
+    return "NAVER_IP_NOT_ALLOWED";
+  }
+  if (response.status === 401 || providerCode === "GW.AUTHN") {
+    return "NAVER_AUTH_FAILED";
+  }
+  if (response.status >= 500) {
+    return "NAVER_PROVIDER_UNAVAILABLE";
+  }
+  return "NAVER_TOKEN_EXCHANGE_FAILED";
+}
+
 export async function fetchNaverAccessToken(payload: SecretPayload) {
   const clientId = textValue(payload, "client_id");
   const clientSecret = textValue(payload, "client_secret");
@@ -150,10 +164,16 @@ export async function fetchNaverAccessToken(payload: SecretPayload) {
     throw new Error("NAVER_CREDENTIALS_MISSING");
   }
   const timestamp = Date.now();
+  let clientSecretSign: string;
+  try {
+    clientSecretSign = createNaverClientSecretSign(clientId, clientSecret, timestamp);
+  } catch {
+    throw new Error("NAVER_AUTH_FAILED");
+  }
   const body = new URLSearchParams({
     client_id: clientId,
     timestamp: String(timestamp),
-    client_secret_sign: createNaverClientSecretSign(clientId, clientSecret, timestamp),
+    client_secret_sign: clientSecretSign,
     grant_type: "client_credentials",
     type,
   });
@@ -171,7 +191,9 @@ export async function fetchNaverAccessToken(payload: SecretPayload) {
   });
   const remote = await readRemoteResponse(response);
   const accessToken = textValue(remote.data, "access_token");
-  if (!response.ok || !accessToken) throw new Error("NAVER_TOKEN_EXCHANGE_FAILED");
+  if (!response.ok || !accessToken) {
+    throw new Error(naverTokenExchangeFailure(response, remote));
+  }
   return {
     accessToken,
     expiresIn: Number(remote.data.expires_in ?? 10_800),

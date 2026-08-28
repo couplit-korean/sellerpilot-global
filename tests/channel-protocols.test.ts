@@ -84,6 +84,35 @@ test("Naver self-store token uses SELF without account_id", async () => {
   }
 });
 
+for (const tokenFailure of [
+  { status: 403, body: { code: "GW.IP_NOT_ALLOWED", message: "private provider detail" }, expected: "NAVER_IP_NOT_ALLOWED" },
+  { status: 401, body: { code: "GW.AUTHN", message: "private provider detail" }, expected: "NAVER_AUTH_FAILED" },
+  { status: 503, body: { code: "GW.BLOCK.02", message: "private provider detail" }, expected: "NAVER_PROVIDER_UNAVAILABLE" },
+  { status: 400, body: { code: "PRIVATE_PROVIDER_CODE", message: "private provider detail" }, expected: "NAVER_TOKEN_EXCHANGE_FAILED" },
+] as const) {
+  test(`Naver token failure ${tokenFailure.status} is reduced to ${tokenFailure.expected}`, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => Response.json(tokenFailure.body, { status: tokenFailure.status });
+    try {
+      await assert.rejects(
+        fetchNaverAccessToken({
+          client_id: "client",
+          client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze",
+          token_type: "SELF",
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.equal(error.message, tokenFailure.expected);
+          assert.doesNotMatch(error.message, /private provider detail|PRIVATE_PROVIDER_CODE/);
+          return true;
+        },
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
 test("Qoo10 uses current QAPI endpoint and qualified method name", () => {
   const url = buildQoo10Url({
     apiKey: "hidden-key",

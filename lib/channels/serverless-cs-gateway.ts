@@ -17,6 +17,10 @@ import {
   runWithChannelRequestSignal,
   type CredentialRefreshSnapshot,
 } from "./protocols";
+import {
+  SERVERLESS_STATIC_EGRESS_CHANNELS,
+  type ServerlessStaticEgressChannel,
+} from "./serverless-static-egress";
 
 export const SERVERLESS_CS_GATEWAY_VERSION = "sellerpilot-vercel-cs-gateway/1.0";
 export const SERVERLESS_CS_EXECUTION_TIMEOUT_MS = 180_000;
@@ -52,6 +56,12 @@ const NO_STORE_HEADERS = {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SERVERLESS_CS_CHANNELS = new Set<string>(SERVERLESS_CS_CURRENT_INQUIRY_CHANNELS);
 const SERVERLESS_CS_OPERATIONS = new Set(["inquiries.list", "inquiries.reply"]);
+const SAFE_NAVER_EXECUTION_ERRORS = new Set([
+  "NAVER_IP_NOT_ALLOWED",
+  "NAVER_AUTH_FAILED",
+  "NAVER_PROVIDER_UNAVAILABLE",
+  "NAVER_TOKEN_EXCHANGE_FAILED",
+]);
 
 type RpcError = { code?: string | null } | null;
 type RpcResult = { data: unknown; error: RpcError };
@@ -75,6 +85,7 @@ export type ServerlessCsProviderExecutionInput = {
 
 export type ServerlessCsGatewayDependencies = {
   cronSecret?: string;
+  staticEgressChannels?: readonly ServerlessStaticEgressChannel[];
   rpc?: (name: string, arguments_?: Record<string, unknown>) => Promise<RpcResult>;
   executeProvider?: (input: ServerlessCsProviderExecutionInput) => Promise<ChannelOperationResult>;
   executionTimeoutMs?: number;
@@ -90,6 +101,7 @@ export type ServerlessCsEnqueueSummary = {
   notConnected: number;
   reconnectRequired: number;
   reconciliationRequired: number;
+  fixedEgressRequired: number;
   failed: number;
 };
 
@@ -139,9 +151,14 @@ function isMissingRpc(error: RpcError) {
   return error?.code === "PGRST202" || error?.code === "42883";
 }
 
-function isEligibleClaim(claim: GatewayClaim): claim is ServerlessCsClaim {
-  return SERVERLESS_CS_CHANNELS.has(claim.channel)
-    && SERVERLESS_CS_OPERATIONS.has(claim.operation);
+function isEligibleClaim(
+  claim: GatewayClaim,
+  staticEgressChannels: readonly ServerlessStaticEgressChannel[] = [],
+): claim is ServerlessCsClaim {
+  if (!SERVERLESS_CS_CHANNELS.has(claim.channel)
+      || !SERVERLESS_CS_OPERATIONS.has(claim.operation)) return false;
+  return !(SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[]).includes(claim.channel)
+    || staticEgressChannels.includes(claim.channel as ServerlessStaticEgressChannel);
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
@@ -162,6 +179,12 @@ function safeExecutionError(error: unknown, signal: AbortSignal) {
       || (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) {
     return "serverless_cs_runtime_timeout";
   }
+  if (error instanceof Error) {
+    if (error.message === "NAVER_CREDENTIALS_MISSING") return "NAVER_AUTH_FAILED";
+    if (SAFE_NAVER_EXECUTION_ERRORS.has(error.message)) {
+      return error.message;
+    }
+  }
   return "serverless_cs_execution_failed";
 }
 
@@ -178,8 +201,15 @@ async function callRpc(
   }
 }
 
-export function serverlessCsCurrentInquiryEnqueues(now = new Date()) {
-  return SERVERLESS_CS_CURRENT_INQUIRY_CHANNELS.flatMap((channel) =>
+export function serverlessCsCurrentInquiryEnqueues(
+  now = new Date(),
+  staticEgressChannels: readonly ServerlessStaticEgressChannel[] = [],
+) {
+  const enabledStaticEgress = new Set(staticEgressChannels);
+  return SERVERLESS_CS_CURRENT_INQUIRY_CHANNELS
+    .filter((channel) => !(SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[]).includes(channel)
+      || enabledStaticEgress.has(channel as ServerlessStaticEgressChannel))
+    .flatMap((channel) =>
     inquirySyncRequests(channel, now).map((payload) => ({
       channel,
       operation: "inquiries.list" as const,
@@ -214,6 +244,7 @@ type PeriodicEnqueueStatus =
   | "not_connected"
   | "reconnect_required"
   | "reconciliation_required"
+  | "fixed_egress_required"
   | "failed";
 
 const PERIODIC_ENQUEUE_STATUSES = new Set<PeriodicEnqueueStatus>([
@@ -222,6 +253,7 @@ const PERIODIC_ENQUEUE_STATUSES = new Set<PeriodicEnqueueStatus>([
   "not_connected",
   "reconnect_required",
   "reconciliation_required",
+  "fixed_egress_required",
   "failed",
 ]);
 
@@ -230,6 +262,7 @@ async function enqueueCurrentInquirySyncs(
 ): Promise<ServerlessCsEnqueueSummary> {
   const requests = serverlessCsCurrentInquiryEnqueues(
     dependencies.now?.() ?? new Date(),
+    dependencies.staticEgressChannels,
   );
   const statuses = await mapWithConcurrency(
     requests,
@@ -260,6 +293,7 @@ async function enqueueCurrentInquirySyncs(
     notConnected: statuses.filter((status) => status === "not_connected").length,
     reconnectRequired: statuses.filter((status) => status === "reconnect_required").length,
     reconciliationRequired: statuses.filter((status) => status === "reconciliation_required").length,
+    fixedEgressRequired: statuses.filter((status) => status === "fixed_egress_required").length,
     failed: statuses.filter((status) => status === "failed").length,
   };
 }
@@ -597,7 +631,7 @@ export async function runOneServerlessCsGatewayJob(
     logError("claim_contract", { status: 503 });
     return jsonResponse({ message: "채널 작업 계약을 확인하지 못했습니다." }, 503);
   }
-  if (!isEligibleClaim(parsed.data)) {
+  if (!isEligibleClaim(parsed.data, dependencies.staticEgressChannels)) {
     logError("claim_scope", { status: 503, channel: parsed.data.channel, operation: parsed.data.operation });
     return jsonResponse({ message: "서버리스 CS 작업 범위를 확인하지 못했습니다." }, 503);
   }
@@ -796,7 +830,8 @@ function aggregateDrainResponse(
   const responseStatus = allEnqueuesFailed ? 503 : workerResponseStatus;
   const enqueueHealthy = enqueue.failed === 0
     && enqueue.reconnectRequired === 0
-    && enqueue.reconciliationRequired === 0;
+    && enqueue.reconciliationRequired === 0
+    && enqueue.fixedEgressRequired === 0;
   const jobs = workers
     .filter((worker) => worker.claimed === 1)
     .map(({ status: jobStatus, jobId, channel, operation }) => ({

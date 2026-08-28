@@ -420,6 +420,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828145950_extend_serverless_cs_qoo10_inquiries.sql",
       LEGACY_SCOPE_RETIREMENT_MIGRATION,
       "20260828194000_fix_serverless_cs_vault_lookup_lock.sql",
+      "20260828200500_gate_serverless_static_egress.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -7337,6 +7338,190 @@ test("Korean inquiry history runs are durable, idempotent, paginated, retryable,
       ),
       "queued",
     );
+  } finally {
+    await db.close();
+  }
+});
+
+test("static egress gate blocks fixed-IP claims and truthfully closes queued Korean history reads", async () => {
+  const db = new PGlite();
+  const migrationName = "20260828200500_gate_serverless_static_egress.sql";
+  const serverlessHash = "6".repeat(64);
+  try {
+    await db.exec(supabaseCompatibilityLayer);
+    const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
+    const migrationNames = (await readdir(migrationUrl))
+      .filter((name) => name.endsWith(".sql") && name !== migrationName)
+      .sort();
+    for (const name of migrationNames) {
+      if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
+      await db.exec(withoutUnavailableExtensions(
+        await readFile(new URL(name, migrationUrl), "utf8"),
+      ));
+    }
+
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'static-egress-admin@example.test')",
+      [ADMIN_ID],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Static Egress Admin')",
+      [ADMIN_ID],
+    );
+    await setClaims(db);
+    for (const channel of ["coupang", "smartstore"]) {
+      await scalar(
+        db,
+        `select public.sellerpilot_rotate_credential(
+          $1, 'production', $2::jsonb,
+          now() + interval '180 days', 90, 30, 0
+        )`,
+        [channel, JSON.stringify({
+          access_key: `${channel}-access`,
+          secret_key: `${channel}-secret`,
+          vendor_id: `${channel}-vendor`,
+          client_id: `${channel}-client`,
+          client_secret: `${channel}-client-secret`,
+          token_type: "SELF",
+        })],
+      );
+    }
+    const activeRun = await scalar(
+      db,
+      "select public.sellerpilot_start_inquiry_history_backfill(30)",
+    );
+    assert.equal(activeRun.status, "queued");
+    assert.equal(activeRun.queuedJobs, 27);
+
+    await db.exec(await readFile(new URL(migrationName, migrationUrl), "utf8"));
+    const blocked = await scalar(
+      db,
+      "select public.sellerpilot_get_inquiry_history_backfill($1)",
+      [activeRun.runId],
+    );
+    assert.equal(blocked.status, "blocked");
+    assert.equal(blocked.blockedReason, "STATIC_EGRESS_REQUIRED");
+    assert.equal(blocked.queuedJobs, 0);
+    assert.equal(blocked.runningJobs, 0);
+    assert.equal(blocked.failedJobs, 0);
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message, count(*)::integer as count
+           from sellerpilot_private.channel_gateway_jobs
+          where request_payload #>> '{arguments,sellerpilotHistoryRunId}' = $1
+          group by status, error_message`,
+        [activeRun.runId],
+      )).rows,
+      [{ status: "failed", error_message: "STATIC_EGRESS_REQUIRED", count: 27 }],
+    );
+    const jobCountBeforeRetry = await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs",
+    );
+    await assert.rejects(
+      scalar(db, "select public.sellerpilot_start_inquiry_history_backfill(30)"),
+      /STATIC_EGRESS_REQUIRED/,
+    );
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.channel_gateway_jobs"),
+      jobCountBeforeRetry,
+    );
+
+    await setClaims(db, "service_role");
+    const blockedEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'coupang', 'inquiries.list',
+        '{"periodicKey":"inquiries:static-egress-test","arguments":{"kind":"product","query":{"pageNum":1}}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(blockedEnqueue.status, "fixed_egress_required");
+    assert.equal(blockedEnqueue.blockedReason, "STATIC_EGRESS_REQUIRED");
+    assert.deepEqual(
+      await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
+      { coupang: false, smartstore: false },
+    );
+    const jobCountBeforeBlockedReply = await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs",
+    );
+    for (const channel of ["coupang", "smartstore"]) {
+      await assert.rejects(
+        scalar(
+          db,
+          `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+            '11111111-1111-4111-8111-111111111111', $1,
+            '전송하지 않는 테스트 답변', '{}'::jsonb
+          )`,
+          [channel],
+        ),
+        /STATIC_EGRESS_REQUIRED/,
+      );
+    }
+    assert.equal(
+      await scalar(db, "select count(*)::integer from sellerpilot_private.channel_gateway_jobs"),
+      jobCountBeforeBlockedReply,
+    );
+
+    await db.query(
+      "update sellerpilot_private.serverless_static_egress_policy set enabled = true, updated_at = clock_timestamp()",
+    );
+    const queued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'coupang', 'inquiries.list',
+        '{"periodicKey":"inquiries:static-egress-enabled","arguments":{"kind":"product","query":{"pageNum":1}}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(queued.status, "queued");
+    const genericGatewayHash = "7".repeat(64);
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+         label, token_hash, fingerprint, status, scope, expires_at, created_by
+       ) values ('generic gateway must not claim Korean CS', $1, '777777777777',
+         'active', 'gateway', clock_timestamp() + interval '1 day', $2)`,
+      [genericGatewayHash, ADMIN_ID],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_channel_gateway_job($1, 'static-egress/generic-no-fallback')",
+        [genericGatewayHash],
+      ),
+      null,
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+         label, token_hash, fingerprint, status, scope, expires_at, created_by
+       ) values ('static egress serverless worker', $1, '666666666666',
+         'active', 'serverless_cs', clock_timestamp() + interval '1 day', $2)`,
+      [serverlessHash, ADMIN_ID],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_cs_job($1, 'static-egress/no-header')",
+        [serverlessHash],
+      ),
+      null,
+    );
+    await scalar(
+      db,
+      `select set_config(
+        'request.headers',
+        '{"x-sellerpilot-static-egress-channels":"coupang,smartstore"}',
+        false
+      )`,
+    );
+    const claimed = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_cs_job($1, 'static-egress/enabled')",
+      [serverlessHash],
+    );
+    assert.equal(claimed.id, queued.jobId);
+    assert.equal(claimed.channel, "coupang");
   } finally {
     await db.close();
   }

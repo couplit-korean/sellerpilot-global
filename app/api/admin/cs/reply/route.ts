@@ -8,6 +8,12 @@ import {
 import { buildInquiryReplyArguments, supportsInquiryReply } from "../../../../../lib/channels/inquiry-reply";
 import type { ActiveChannelKey } from "../../../../../lib/channels/catalog";
 import { ebayAsqMarketplaceId } from "../../../../../lib/channels/ebay-asq";
+import {
+  configuredServerlessStaticEgressChannels,
+  hasServerlessStaticEgressFor,
+  SERVERLESS_STATIC_EGRESS_REQUIRED,
+  type ServerlessStaticEgressChannel,
+} from "../../../../../lib/channels/serverless-static-egress";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -19,6 +25,9 @@ const schema = z.object({
 
 function failureMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "";
+  if (message.includes("CHANNEL_GATEWAY_STATIC_EGRESS_REQUIRED")) {
+    return "Vercel 고정 egress IP를 판매채널에 등록하고 서버 설정을 활성화한 뒤 다시 시도해 주세요.";
+  }
   if (message.includes("COUPANG_WING_USER_ID_MISSING")) return "쿠팡 API Vault에 WING 실사용자 ID를 입력해 주세요.";
   if (message.startsWith("INQUIRY_REPLY_INVALID:")) return "채널 문의 원문 식별값이 없어 실제 답변을 보낼 수 없습니다. 문의를 새로고침해 주세요.";
   if (message.includes("CHANNEL_GATEWAY_REPLY_LINEAGE_UNBOUND")) return "이 문의를 수집한 판매자 계정 연결을 확인할 수 없습니다. 문의를 새로고침한 뒤 다시 시도해 주세요.";
@@ -72,6 +81,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "이미 처리 완료된 문의입니다. 중복 답변은 전송하지 않았습니다." }, { status: 409 });
   }
 
+  if (
+    (channel === "coupang" || channel === "smartstore")
+    && !hasServerlessStaticEgressFor(
+      configuredServerlessStaticEgressChannels(),
+      [channel as ServerlessStaticEgressChannel],
+    )
+  ) {
+    return NextResponse.json({
+      message: "Vercel 고정 egress IP를 판매채널에 등록하고 서버 설정을 활성화한 뒤 다시 시도해 주세요.",
+      blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+      staticEgressReady: false,
+    }, {
+      status: 409,
+      headers: { "cache-control": "no-store, max-age=0" },
+    });
+  }
+
   try {
     const replyArguments = buildInquiryReplyArguments(channel, externalTicketId, parsed.data.reply, replyContext);
     const result = await executeInquiryReplyViaChannelGateway({
@@ -104,7 +130,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: failureMessage(error) }, {
       status: /EBAY_ASQ_(?:RATE_LIMITED_75_PER_60_SECONDS|PROVIDER_COOLDOWN_100_SECONDS)/.test(message)
         ? 429
-        : /CHANNEL_GATEWAY_REPLY_(?:CONFLICT|LINEAGE_UNBOUND|RECONCILIATION_REQUIRED)/.test(message)
+        : /CHANNEL_GATEWAY_(?:STATIC_EGRESS_REQUIRED|REPLY_(?:CONFLICT|LINEAGE_UNBOUND|RECONCILIATION_REQUIRED))/.test(message)
           ? 409
           : 422,
       headers: { "cache-control": "no-store, max-age=0" },

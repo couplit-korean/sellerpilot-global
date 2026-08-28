@@ -270,6 +270,10 @@ test("CS route updates the internal ledger only after a remote success", () => {
   assert.match(route, /remoteSent: true/);
   assert.doesNotMatch(route, /executeChannelOperation/);
   assert.doesNotMatch(route, /sellerpilot_update_ticket/);
+  assert.match(route, /CHANNEL_GATEWAY_STATIC_EGRESS_REQUIRED/);
+  assert.match(route, /SERVERLESS_STATIC_EGRESS_REQUIRED/);
+  assert.match(route, /staticEgressReady: false/);
+  assert.match(route, /status: 409/);
   assert.match(migration, /sellerpilot_enqueue_inquiry_reply_gateway_job/);
   assert.match(migration, /for update/);
   assert.match(migration, /INQUIRY_REPLY_CONFLICT/);

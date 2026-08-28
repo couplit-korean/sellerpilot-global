@@ -337,6 +337,9 @@ export async function executeInquiryReplyViaChannelGateway(input: {
     },
   );
   if (enqueueError) {
+    if (enqueueError.message.includes("STATIC_EGRESS_REQUIRED")) {
+      throw new Error("CHANNEL_GATEWAY_STATIC_EGRESS_REQUIRED");
+    }
     if (/INQUIRY_REPLY_CONFLICT|INQUIRY_REPLY_ALREADY_RESOLVED/.test(enqueueError.message)) {
       throw new Error("CHANNEL_GATEWAY_REPLY_CONFLICT");
     }

@@ -4,6 +4,10 @@ import { NextResponse } from "next/server";
 import { activeChannelKeys, type ActiveChannelKey } from "../../../../lib/channels/catalog";
 import { inquirySyncRequests } from "../../../../lib/channels/inquiry-sync";
 import { orderSyncRequests } from "../../../../lib/channels/order-sync";
+import {
+  configuredServerlessStaticEgressChannels,
+  SERVERLESS_STATIC_EGRESS_CHANNELS,
+} from "../../../../lib/channels/serverless-static-egress";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 import {
@@ -28,7 +32,7 @@ type QueueResult = {
 type PeriodicSyncResult = {
   channel: ActiveChannelKey;
   operation: "orders.list" | "inquiries.list";
-  status: "queued" | "already_pending" | "not_connected" | "reconnect_required" | "reconciliation_required" | "failed";
+  status: "queued" | "already_pending" | "not_connected" | "reconnect_required" | "reconciliation_required" | "fixed_egress_required" | "failed";
   infrastructureFailure?: true;
 };
 
@@ -65,12 +69,21 @@ async function mapWithConcurrency<T, R>(
 
 async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
   const now = new Date();
+  const configuredStaticEgress = new Set(configuredServerlessStaticEgressChannels());
+  const blockedInquiryResults: PeriodicSyncResult[] = [];
   const queueRequests = activeChannelKeys.flatMap((channel) => [
     ...orderSyncRequests(channel, now).map((payload) => ({ channel, operation: "orders.list" as const, payload })),
-    ...periodicInquiryRequests(channel, now).map((payload) => ({ channel, operation: "inquiries.list" as const, payload })),
+    ...periodicInquiryRequests(channel, now).flatMap((payload) => {
+      if ((SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[]).includes(channel)
+          && !configuredStaticEgress.has(channel as "coupang" | "smartstore")) {
+        blockedInquiryResults.push({ channel, operation: "inquiries.list", status: "fixed_egress_required" });
+        return [];
+      }
+      return [{ channel, operation: "inquiries.list" as const, payload }];
+    }),
   ]);
 
-  const results = await mapWithConcurrency(queueRequests, PERIODIC_SYNC_ENQUEUE_CONCURRENCY, async ({ channel, operation, payload }): Promise<PeriodicSyncResult> => {
+  const queuedResults = await mapWithConcurrency(queueRequests, PERIODIC_SYNC_ENQUEUE_CONCURRENCY, async ({ channel, operation, payload }): Promise<PeriodicSyncResult> => {
     try {
       const { data, error } = await serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
         p_channel: channel,
@@ -81,7 +94,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
       if (error) return { channel, operation, status: "failed", infrastructureFailure: true };
       const result = data && typeof data === "object" && !Array.isArray(data) ? data as QueueResult : {};
       const status = result.status;
-      if (status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required" && status !== "reconciliation_required") {
+      if (status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required" && status !== "reconciliation_required" && status !== "fixed_egress_required") {
         return { channel, operation, status: "failed", infrastructureFailure: true };
       }
       return { channel, operation, status };
@@ -89,6 +102,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
       return { channel, operation, status: "failed", infrastructureFailure: true };
     }
   });
+  const results = [...blockedInquiryResults, ...queuedResults];
 
   const push = await dispatchPendingPushNotifications(serviceClient, 100)
     .catch(() => ({ configured: true, claimed: 0, sent: 0, failed: 1 }));
@@ -96,6 +110,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   const pending = results.filter((result) => result.status === "already_pending").length;
   const reconnectRequired = results.filter((result) => result.status === "reconnect_required").length;
   const reconciliationRequired = results.filter((result) => result.status === "reconciliation_required").length;
+  const fixedEgressRequired = results.filter((result) => result.status === "fixed_egress_required").length;
   const failed = results.filter((result) => result.status === "failed").length;
   const infrastructureFailures = results.filter((result) => result.infrastructureFailure).length;
   const databaseWideFailure = results.length > 0 && infrastructureFailures === results.length;
@@ -107,12 +122,13 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   }
 
   return NextResponse.json({
-    ok: failed === 0 && reconnectRequired === 0 && reconciliationRequired === 0,
+    ok: failed === 0 && reconnectRequired === 0 && reconciliationRequired === 0 && fixedEgressRequired === 0,
     scheduledAt: now.toISOString(),
     queued,
     pending,
     reconnectRequired,
     reconciliationRequired,
+    fixedEgressRequired,
     failed,
     infrastructureFailures,
     results,
@@ -120,7 +136,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   }, {
     status: databaseWideFailure
       ? 503
-      : infrastructureFailures > 0 || reconnectRequired > 0 || reconciliationRequired > 0
+      : infrastructureFailures > 0 || reconnectRequired > 0 || reconciliationRequired > 0 || fixedEgressRequired > 0
         ? 207
         : 200,
     headers: { "cache-control": "no-store, max-age=0" },
