@@ -3008,7 +3008,7 @@
   }
 
   .commerce-service-rail {
-    gap: 8px;
+    gap: 4px;
     overflow-x: auto;
     padding-right: max(var(--mobile-gutter), env(safe-area-inset-right));
     padding-left: max(var(--mobile-gutter), env(safe-area-inset-left));
@@ -3029,9 +3029,14 @@
   }
 
   .commerce-service-rail strong {
-    min-width: 94px;
+    min-width: 82px;
     margin-left: calc(var(--mobile-gutter) * -1);
     padding-left: var(--mobile-gutter);
+  }
+
+  .commerce-service-rail span:nth-of-type(4) {
+    padding-right: 4px;
+    padding-left: 4px;
   }
 
   .topbar {
