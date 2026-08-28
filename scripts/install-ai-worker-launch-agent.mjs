@@ -9,7 +9,6 @@ const workerTokenScopes = [
   { scope: "gateway", label: "판매채널 게이트웨이", service: "SellerPilot Gateway Worker", rotateFlag: "--rotate-gateway-token" },
   { scope: "scheduler", label: "스케줄러", service: "SellerPilot Scheduler Worker", rotateFlag: "--rotate-scheduler-token" },
 ];
-const temuEgressService = "SellerPilot Temu Egress IPs";
 const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
 const launchAgents = join(homedir(), "Library", "LaunchAgents");
 const logDirectory = join(homedir(), "Library", "Logs", "SellerPilot");
@@ -52,14 +51,6 @@ function keychainToken(service) {
 
 function isWorkerTokenConfigured(token) {
   return typeof token === "string" && /^spw_[A-Za-z0-9_-]{43}$/.test(token);
-}
-
-function keychainTemuEgressIps() {
-  try {
-    return command("/usr/bin/security", ["find-generic-password", "-s", temuEgressService, "-a", sellerpilotUrl, "-w"]);
-  } catch {
-    return "";
-  }
 }
 
 function storeKeychainToken(service, token) {
@@ -340,7 +331,6 @@ if (process.argv.includes("--status")) {
       : "AI 전용 모드에서 사용 안 함";
     console.log(`${token.label} 키체인 토큰: ${intentionallyDisabled ? disabledStatus : token.present ? "저장됨" : "없음"}`);
   }
-  console.log(`Temu 작업자 허용 IP: ${keychainTemuEgressIps() ? "설정됨" : "없음"}`);
   console.log(`서버: ${sellerpilotUrl}`);
   process.exit(launchStatus === "미설치" || tokenStatuses.some((token) => !token.present && (!restrictedRuntime || token.scope === "ai")) ? 1 : 0);
 }

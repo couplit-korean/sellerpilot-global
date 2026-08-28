@@ -171,6 +171,31 @@ test("margin exchange-rate request propagates owner cancellation and parses a va
   assert.equal(marginExchangeRateRefreshMs, 60_000);
 });
 
+test("margin exchange-rate parsing rejects duplicate currencies and invalid units instead of calculating with guessed rates", async () => {
+  const responseFor = (rates: Array<{ code: string; unit: number; value: number }>) => async () => new Response(JSON.stringify({
+    source: "synthetic provider",
+    frequency: "minute-market",
+    fetchedAt: "2026-08-28T01:02:03.000Z",
+    rates,
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  const validRates = [
+    { code: "USD", unit: 1, value: 1_400 },
+    { code: "JPY", unit: 100, value: 880 },
+    { code: "SGD", unit: 1, value: 1_100 },
+    { code: "MYR", unit: 1, value: 350 },
+  ];
+
+  await assert.rejects(fetchMarginReferenceRates({
+    signal: new AbortController().signal,
+    fetcher: responseFor([...validRates, { code: "USD", unit: 1, value: 1_401 }]),
+  }), /중복 통화/);
+
+  await assert.rejects(fetchMarginReferenceRates({
+    signal: new AbortController().signal,
+    fetcher: responseFor(validRates.map((rate) => rate.code === "JPY" ? { ...rate, unit: 0 } : rate)),
+  }), /필수 기준환율이 누락/);
+});
+
 test("margin exchange-rate lifecycle deduplicates interval requests and cancels unmounted work before state writes", async () => {
   const source = await readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8");
   const effectStart = source.indexOf("let active = true", source.indexOf("const rateRequestRef"));

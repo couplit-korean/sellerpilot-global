@@ -7,8 +7,8 @@ export const maximumStudioJobSourceBytes = 200 * 1024 * 1024;
 export const maximumStudioSourceImagePixels = 16_000_000;
 export const maximumStudioSourceImageDimension = 50_000;
 export const minimumStudioSourceImageDimension = 600;
-export const studioPhotoPreparationConcurrency = 2;
-export const studioPhotoUploadConcurrency = 2;
+export const studioPhotoPreparationConcurrency = 3;
+export const studioPhotoUploadConcurrency = 3;
 
 export function isStudioSourceImageMediaType(value: string): value is StudioSourceImageMediaType {
   return studioSourceImageMediaTypes.includes(value as StudioSourceImageMediaType);

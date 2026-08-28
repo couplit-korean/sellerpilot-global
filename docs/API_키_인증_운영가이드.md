@@ -8,7 +8,7 @@
 - 인증 방식: Supabase Auth 이메일·비밀번호, 관리자 초대 전용
 - 비밀 보관: Supabase Vault, 버전별 불변 저장
 
-비밀키 원문은 Git, 브라우저 저장소, 화면, 감사 로그에 남기지 않는다. Vercel에는 Supabase 서버 접근용 Secret Key만 서버 전용 환경변수로 보관하고, 판매 채널 키는 웹 관리 화면에서 Vault로 저장한다. AI는 OpenAI API Key 대신 Mac의 ChatGPT OAuth 기반 Codex CLI 작업자로 실행한다.
+비밀키 원문은 Git, 브라우저 저장소, 화면, 감사 로그에 남기지 않는다. Vercel에는 Supabase 서버 접근용 Secret Key와 범위가 `ai`인 Worker Token만 sensitive 서버 환경변수로 보관하고, 판매 채널 키는 웹 관리 화면에서 Vault로 저장한다. 상품 스튜디오는 OpenAI API Key나 Mac 로그인에 의존하지 않고 Vercel이 자동 제공하는 단기 OIDC로 AI Gateway를 호출한다.
 
 ## 키 교체 표준 절차
 
@@ -31,7 +31,7 @@
 | Lazada | App Key, App Secret, Access Token, Refresh Token, 국가 | Access 30일, Refresh 180일 | `/seller/get` 읽기 API |
 | 쿠팡 | Vendor ID, Access Key, Secret Key | 180일, 만료 14일 전 재발급 | 등록상품 목록 `maxPerPage=1` |
 | 네이버 스마트스토어 | Application ID, Application Secret, SELLER, 판매자 UID | Access Token 180분, 서버 자동 재발급 | `/v1/seller/account` |
-| AI 작업자 | 웹에서 1회 표시되는 Worker Token | 30·90·180·365일 선택 | 15초 상태 갱신, 작업 claim/complete 왕복, Codex CLI 결과 검사 |
+| 서버 AI 스튜디오 | Vercel sensitive `SELLERPILOT_AI_WORKER_TOKEN`, 자동 제공 `VERCEL_OIDC_TOKEN` | Worker Token 30·90·180·365일, OIDC는 단기 자동 갱신 | AI scope 지문 일치, claim/heartbeat/receipt, 16개 이미지·34개 시장 terminal 검사 |
 
 ## 2026-08-16 실제 연동 상태
 
@@ -40,8 +40,8 @@
 - Lazada: 일회성 state 검증, code URL 제거, 토큰 교환, Vault 버전 저장, 72시간 전 Access Token 자동 갱신까지 코드로 구현했다. 실계정 토큰 교환은 고정 송신 IP 허용 후 검증한다.
 - 쿠팡: Couplit WING 실판매자 로그인과 업체코드 표시를 확인했다. 추가판매정보의 OpenAPI 키 화면은 비밀번호 재확인이 필요하며, 공식 정책은 발급 후 180일·만료 14일 전 재발급이다.
 - 네이버: Couplet Seoul 통합매니저 로그인과 Commerce API센터 접근을 확인했다. SellerPilot 개발업체 계정 양식은 준비됐고 이메일 인증·자동화 입력 방지·필수 약관 동의 후 애플리케이션을 등록해야 한다. 판매자 데이터 호출은 `SELF`가 아니라 `SELLER`와 판매자 UID를 사용한다.
-- ChatGPT CLI: OpenAI API 결제·Project Key와 분리했다. Mac의 `codex login` 인증은 로컬에만 남고 웹은 해시된 Worker Token으로 작업 큐만 전달한다.
-- Supabase: 비공개 `sellerpilot-ai` Storage와 CLI 작업 큐·토큰 지문·감사 기록을 운영 DB에 적용한다. 익명·일반 사용자는 원문 또는 작업자 함수를 실행할 수 없다.
+- Vercel AI Gateway: OpenAI API Key를 저장하지 않는다. 운영 함수에는 Vercel이 발급하는 `VERCEL_OIDC_TOKEN`이 자동 주입되고, SellerPilot은 AI scope Worker Token의 SHA-256 지문으로 Supabase claim 소유권을 별도 확인한다.
+- Supabase: 비공개 `sellerpilot-ai` Storage와 AI 작업 큐·토큰 지문·claim receipt·감사 기록을 운영 DB에 적용한다. 익명·일반 사용자는 원문 또는 작업자 함수를 실행할 수 없다.
 
 ## Supabase·Vercel 플랫폼 키 갱신
 
@@ -52,6 +52,8 @@
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
    - `SUPABASE_SECRET_KEY`
+   - `SELLERPILOT_AI_WORKER_TOKEN` (AI scope, sensitive; 원문 조회·로그 금지)
+   - `VERCEL_OIDC_TOKEN`은 Vercel이 함수에 자동 제공하므로 수동 값을 만들거나 Git에 저장하지 않는다.
 3. Production과 Preview에 저장하고 재배포한다.
 4. 로그인, 키 목록 조회, 연결 검사를 확인한다.
 5. 정상 확인 후 Supabase의 이전 Secret Key를 폐기한다.
@@ -69,7 +71,8 @@ Secret Key는 절대 `NEXT_PUBLIC_` 접두사를 사용하지 않는다. 새 키
 - [x] 키 버전·만료·경고·유예·감사기록
 - [x] Qoo10/Shopee/Lazada 읽기 연결 검사 구현
 - [x] Shopee/Lazada OAuth state 검증·콜백 처리·만료 전 자동 갱신 구현
-- [x] ChatGPT CLI 작업자 토큰 발급·교체·만료·상태·처리 건수 UI 구현
+- [x] 범위 분리 작업자 토큰 발급·교체·만료·상태·처리 건수 UI 구현
+- [x] Vercel OIDC 서버 상품 스튜디오 claim·heartbeat·멱등 완료와 16개 이미지·26개국 계약 구현
 - [x] 연결 검사 응답의 비밀·원문 로그 차단
 - [ ] Couplit Supabase 계정 전환 후 Security/Performance Advisor 재검증
 - [ ] Couplit Supabase 프로젝트 생성 후 Vercel Publishable/Secret 환경변수 연결
@@ -78,7 +81,7 @@ Secret Key는 절대 `NEXT_PUBLIC_` 접두사를 사용하지 않는다. 새 키
 - [ ] Qoo10 승인 테스트 상품번호로 읽기 API 실검수
 - [ ] Shopee Partner Key를 Vault에 입력하고 Main account 콜백에서 8개 숍 토큰 교환·읽기 API 실검수
 - [ ] Lazada 고정 송신 IP 구성 후 운영 토큰을 Vault에 등록하고 실호출 통과
-- [ ] 운영 Mac에서 Worker Token 연결 후 Codex CLI 분석과 codex-image 실호출 통과
+- [ ] JEONGHUN 프로필에서 Vercel Production의 AI scope sensitive token 배치와 OIDC 서버 실호출을 확인하고, 16개 asset·34개 시장 결과를 운영 원장에서 검수
 - [ ] 웹훅 서명·중복 방지·재전송 E2E 검수
 
 남은 항목은 외부 발급·고정 IP·유료 사용 한도가 확정된 뒤 실행한다. 키를 화면이나 문서로 전달하지 말고 반드시 운영 화면의 일회성 입력창을 사용한다.

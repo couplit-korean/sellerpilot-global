@@ -635,6 +635,13 @@ body:has(.notification-popover) .mobile-push-chip {
 
   .notification-popover .notification-item {
     grid-template-columns: minmax(0, 1fr) 44px;
+    padding-block: 0;
+  }
+
+  .notification-popover .notification-item > .notification-item-open {
+    min-height: 44px;
+    height: 100%;
+    align-self: stretch;
   }
 
   .notification-popover .notification-item > .notification-item-dismiss {

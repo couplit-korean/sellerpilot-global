@@ -40,7 +40,7 @@ test("studio completion reconciles only the validated intake snapshot for its ex
 
   assert.ok(finishStart >= 0 && finishEnd > finishStart);
   assert.ok(generateStart >= 0 && generateEnd > generateStart);
-  assert.match(studio, /const maximumSubmittedIntakeSnapshots = 8/);
+  assert.match(studio, /const maximumSubmittedIntakeSnapshots = 9/);
   assert.match(studio, /submittedIntakesByJobIdRef = useRef\(new Map<string, ProductIntakeDraft>\(\)\)/);
   assert.match(studio, /const submittedIntakes = submittedIntakesByJobIdRef\.current;[\s\S]{0,280}jobMonitors\.abortAll\(\);\s*submittedIntakes\.clear\(\)/);
   assert.match(generateBlock, /while \(submittedIntakes\.size >= maximumSubmittedIntakeSnapshots\)/);

@@ -456,8 +456,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .analysis-overlay > i span { display: block; width: 64%; height: 100%; border-radius: inherit; background: #b5b4ff; animation: loadPulse 1.1s ease-in-out infinite alternate; }
 .upload-error { display: flex; align-items: center; gap: 6px; margin: 9px 0 0; color: var(--danger); font-size: 8px; font-weight: 700; }
 .option-photo-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; margin-top: 13px; }
-.option-slot-wrap { position: relative; min-width: 0; aspect-ratio: 1.04; }
-.option-photo-slot { position: relative; display: flex; width: 100%; height: 100%; overflow: hidden; align-items: center; justify-content: center; flex-direction: column; border: 1px dashed #d2d6e0; border-radius: 10px; color: #7c8598; background: #fafbfc; cursor: pointer; }
+.option-slot-wrap { position: relative; display: grid; min-width: 0; height: auto; grid-template-rows: minmax(124px, auto) auto; align-content: start; gap: 5px; aspect-ratio: auto; }
+.option-photo-slot { position: relative; display: flex; width: 100%; height: auto; min-height: 124px; overflow: hidden; align-items: center; justify-content: center; flex-direction: column; border: 1px dashed #d2d6e0; border-radius: 10px; color: #7c8598; background: #fafbfc; cursor: pointer; aspect-ratio: 1.04; }
 .option-photo-slot:hover { color: var(--primary); border-color: #aaaaf3; background: #f7f7ff; }
 .option-photo-slot > span:not(.slot-photo-label) { display: grid; width: 31px; height: 31px; place-items: center; border-radius: 8px; color: var(--primary); background: white; box-shadow: 0 4px 12px rgb(31 39 65 / 7%); }
 .option-photo-slot > b { margin-top: 8px; color: #596377; font-size: 8px; }

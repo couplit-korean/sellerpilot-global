@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const pageUrl = new URL("../app/page.tsx", import.meta.url);
+const globalStylesUrl = new URL("../app/globals.css", import.meta.url);
 const mobileStylesUrl = new URL("../app/mobile-optimization.css", import.meta.url);
 const commerceStylesUrl = new URL("../app/commerce-ux-refactor.css", import.meta.url);
 
@@ -67,6 +68,7 @@ test("the same narrow registration and preview contract covers both target phone
 
 test("mobile product analysis visibly waits for an in-flight competitor lookup without deadlocking unavailable results", async () => {
   const page = await readFile(pageUrl, "utf8");
+  const globalStyles = await readFile(globalStylesUrl, "utf8");
   const mobileStyles = await readFile(mobileStylesUrl, "utf8");
   const commerceStyles = await readFile(commerceStylesUrl, "utf8");
 
@@ -82,7 +84,7 @@ test("mobile product analysis visibly waits for an in-flight competitor lookup w
   assert.match(commerceStyles, /@media \(max-width: 560px\)[\s\S]*?\.competitor-retry-actions\s*\{[^}]*width:\s*100%;[^}]*flex-direction:\s*column/);
   assert.match(commerceStyles, /@media \(max-width: 720px\)[\s\S]*?\.analysis-start-bar\s*\{[^}]*position:\s*sticky/);
   assert.match(mobileStyles, /Fold-safe mobile overlay lanes[\s\S]*?\.analysis-start-bar\s*\{[^}]*position:\s*static;[^}]*bottom:\s*auto !important/);
-  assert.match(mobileStyles, /Fold-safe mobile overlay lanes[\s\S]*?\.option-slot-wrap\s*\{[^}]*grid-template-rows:\s*minmax\(124px, auto\) auto/);
+  assert.match(globalStyles, /\.option-slot-wrap\s*\{[^}]*grid-template-rows:\s*minmax\(124px, auto\) auto/);
   assert.match(mobileStyles, /\.upload-panel\.panel\s*\{[^}]*overflow:\s*visible/);
   assert.match(page, /AI 작업 큐에서 계속 처리되므로 다른 상품을 바로 올릴 수 있습니다/);
   assert.doesNotMatch(page, /서버에서 계속 처리되므로/);

@@ -80,7 +80,7 @@ test("AI result upload authorization signs only an exact live claim path", async
   assert.match(claimSource, /supportsLiveResultUploadAuthorization\(version\)/);
   assert.ok(
     claimSource.indexOf("supportsLiveResultUploadAuthorization(version)")
-      < claimSource.indexOf('serviceClient.rpc("sellerpilot_claim_ai_job"'),
+      < claimSource.indexOf('serviceClient.rpc("sellerpilot_claim_local_ai_job"'),
   );
   assert.match(migration, /token\.scope in \('ai', 'legacy_combined'\)/);
   assert.match(migration, /job\.status = 'running'/);

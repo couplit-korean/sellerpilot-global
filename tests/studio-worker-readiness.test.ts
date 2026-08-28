@@ -47,25 +47,30 @@ test("product studio route and clients fail closed without turning explicit work
     readFile(new URL("../app/api/ai/product-studio/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/product-studio/regenerate/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/products/[id]/revision/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/studio-worker-readiness-server.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/server-product-studio-runtime.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   ]);
 
-  const readinessCheck = route.indexOf("enqueueGuard.readiness = await readStudioWorkerReadiness(admin)");
+  const readinessCheck = route.indexOf("enqueueGuard.readiness = await readServerProductStudioReadiness(admin)");
   const enqueueCall = route.indexOf('admin.userClient.rpc("sellerpilot_create_ai_job"');
   assert.ok(readinessCheck > 0 && readinessCheck < enqueueCall);
   assert.match(route, /code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,180}workerAvailable: false/);
   assert.match(route, /export async function GET\(request: Request\)/);
   assert.doesNotMatch(route, /fingerprint|token_hash|last_seen_at/);
   assert.match(readinessServer, /sellerpilot_ai_runtime_status/);
-  assert.match(readinessServer, /withPromiseTimeout\([\s\S]{0,220}10_000/);
-  assert.match(regenerateRoute, /readStudioWorkerReadiness\(admin\)[\s\S]{0,260}code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,220}status: 503/);
+  assert.match(readinessServer, /VERCEL_OIDC_TOKEN/);
+  assert.match(readinessServer, /SELLERPILOT_AI_WORKER_TOKEN/);
+  assert.match(readinessServer, /snapshot\.scope !== "ai"/);
+  assert.match(regenerateRoute, /readServerProductStudioReadiness\(admin\)[\s\S]{0,260}code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,220}status: 503/);
   assert.ok(
-    revisionRoute.indexOf("const readiness = await readStudioWorkerReadiness(admin)")
+    revisionRoute.indexOf("const readiness = await readServerProductStudioReadiness(admin)")
       < revisionRoute.indexOf('admin.userClient.rpc("sellerpilot_create_product_revision_job"'),
   );
   assert.match(revisionRoute, /code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,220}cleanupPending: !cleaned[\s\S]{0,220}status: 503/);
+  assert.match(route, /after\(wakeServerProductStudioAfterResponse\)/);
+  assert.match(regenerateRoute, /after\(wakeServerProductStudioAfterResponse\)/);
+  assert.match(revisionRoute, /after\(wakeServerProductStudioAfterResponse\)/);
 
   const terminalWorkerRejection = studio.indexOf('queued.code === "AI_WORKER_UNAVAILABLE"');
   const ambiguousAdmission = studio.indexOf("const ambiguousResponse");

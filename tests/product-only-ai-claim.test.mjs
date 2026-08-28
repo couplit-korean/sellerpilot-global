@@ -99,7 +99,7 @@ test("product-only claim is a separate rolling-compatible route contract", async
 
   assert.match(route, /body\.scope !== undefined && body\.scope !== "product"/);
   assert.match(route, /const productOnlyClaim = body\.scope === "product"/);
-  assert.match(route, /productOnlyClaim\s*\? await serviceClient\.rpc\("sellerpilot_claim_product_ai_job", claimArguments\)\s*:\s*await serviceClient\.rpc\("sellerpilot_claim_ai_job", claimArguments\)/);
+  assert.match(route, /productOnlyClaim\s*\? await serviceClient\.rpc\("sellerpilot_claim_product_ai_job", claimArguments\)\s*:\s*await serviceClient\.rpc\("sellerpilot_claim_local_ai_job", claimArguments\)/);
 
   assert.match(worker, /const productOnly = process\.argv\.includes\("--product-only"\)/);
   assert.match(worker, /const aiOnly = process\.argv\.includes\("--ai-only"\) \|\| productOnly/);

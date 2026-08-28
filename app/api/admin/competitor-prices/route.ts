@@ -10,6 +10,7 @@ export const maxDuration = 60;
 const COMPETITOR_ELEVENST_WAIT_MS = 20_000;
 const COMPETITOR_PROVIDER_BUDGET_MS = 32_000;
 const COMPETITOR_RPC_TIMEOUT_MS = 5_000;
+const NO_STORE_HEADERS = { "cache-control": "no-store, max-age=0" } as const;
 
 const querySchema = z.string().trim().min(2).max(500);
 const aliasesSchema = z.array(z.string().trim().min(2).max(160)).max(12);
@@ -19,9 +20,9 @@ export async function GET(request: Request) {
   if (isAdminApiError(admin)) return admin;
   const requestUrl = new URL(request.url);
   const query = querySchema.safeParse(requestUrl.searchParams.get("query") ?? "");
-  if (!query.success) return NextResponse.json({ message: "가격 비교 검색어를 2자 이상 입력해 주세요." }, { status: 400 });
+  if (!query.success) return NextResponse.json({ message: "가격 비교 검색어를 2자 이상 입력해 주세요." }, { status: 400, headers: NO_STORE_HEADERS });
   const aliases = aliasesSchema.safeParse(requestUrl.searchParams.getAll("alias"));
-  if (!aliases.success) return NextResponse.json({ message: "다국어 검색어 형식을 확인해 주세요." }, { status: 400 });
+  if (!aliases.success) return NextResponse.json({ message: "다국어 검색어 형식을 확인해 주세요." }, { status: 400, headers: NO_STORE_HEADERS });
   try {
     const registry = await competitorProviderRegistry(admin.serviceClient, {
       elevenstTimeoutMs: COMPETITOR_ELEVENST_WAIT_MS,
@@ -53,10 +54,10 @@ export async function GET(request: Request) {
         aliases: aliases.data,
         items,
         providers: result.providers,
-      }, { status: result.pending ? 202 : result.configured ? 502 : 503, headers: { "cache-control": "no-store, max-age=0" } });
+      }, { status: result.pending ? 202 : result.configured ? 502 : 503, headers: NO_STORE_HEADERS });
     }
-    return NextResponse.json({ query: query.data, aliases: aliases.data, items, providers: result.providers }, { headers: { "cache-control": "no-store, max-age=0" } });
+    return NextResponse.json({ query: query.data, aliases: aliases.data, items, providers: result.providers }, { headers: NO_STORE_HEADERS });
   } catch {
-    return NextResponse.json({ message: "동일 상품 가격 정보를 불러오지 못했습니다.", items: [], providers: [] }, { status: 502 });
+    return NextResponse.json({ message: "동일 상품 가격 정보를 불러오지 못했습니다.", items: [], providers: [] }, { status: 502, headers: NO_STORE_HEADERS });
   }
 }

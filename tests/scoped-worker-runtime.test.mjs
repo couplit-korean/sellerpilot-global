@@ -11,9 +11,9 @@ const packageUrl = new URL("../package.json", import.meta.url);
 const channelGatewayDocUrl = new URL("../docs/channel-gateway-worker.md", import.meta.url);
 
 const scopes = [
-  ["ai", "SellerPilot AI Worker", "--rotate-ai-token"],
-  ["gateway", "SellerPilot Gateway Worker", "--rotate-gateway-token"],
-  ["scheduler", "SellerPilot Scheduler Worker", "--rotate-scheduler-token"],
+  ["ai", "Vercel sensitive env · SELLERPILOT_AI_WORKER_TOKEN", "SellerPilot AI Worker", "--rotate-ai-token"],
+  ["gateway", "SellerPilot Gateway Worker", "SellerPilot Gateway Worker", "--rotate-gateway-token"],
+  ["scheduler", "SellerPilot Scheduler Worker", "SellerPilot Scheduler Worker", "--rotate-scheduler-token"],
 ];
 
 test("runtime UI issues one pending three-scope worker token set", async () => {
@@ -28,11 +28,11 @@ test("runtime UI issues one pending three-scope worker token set", async () => {
   assert.match(runtimeCard, /status\.workers\[scope\]/);
   assert.match(runtimeCard, /status\.workers\.legacy_combined/);
   assert.match(runtimeCard, /scope === "ai" \? status\.worker : null/);
-  assert.match(runtimeCard, /JSON\.stringify\(\{ label: "SellerPilot Mac Worker", expiresInDays \}\)/);
+  assert.match(runtimeCard, /JSON\.stringify\(\{ label: "SellerPilot Scoped Runtime", expiresInDays \}\)/);
   assert.match(runtimeCard, /payload\.tokens\?\.\[definition\.scope\]\?\.token\.startsWith\("spw_"\)/);
   assert.match(runtimeCard, /npm run ai:worker:install:ai-only -- --rotate-token --token-set \$\{issued\.tokenSetId\}/);
   assert.match(runtimeCard, /issued\.tokens\[definition\.scope\]\.token/);
-  assert.match(runtimeCard, /aria-label="CLI 작업자 권한 선택"/);
+  assert.match(runtimeCard, /aria-label="운영 런타임 권한 선택"/);
   assert.match(runtimeCard, /aria-pressed=\{selectedScope === definition\.scope\}/);
 
   const issueTokenStart = runtimeCard.indexOf("const issueToken = async");
@@ -51,9 +51,9 @@ test("runtime UI issues one pending three-scope worker token set", async () => {
   assert.match(operationsCss, /\.cli-token-confirm-dialog::backdrop/);
   assert.match(operationsCss, /\.cli-token-confirm-actions button \{[^}]*min-height: 44px;/);
 
-  for (const [scope, service, rotateFlag] of scopes) {
+  for (const [scope, runtimeService, , rotateFlag] of scopes) {
     assert.match(runtimeCard, new RegExp(`scope: "${scope}"`));
-    assert.match(runtimeCard, new RegExp(`keychainService: "${service}"`));
+    assert.match(runtimeCard, new RegExp(`keychainService: "${runtimeService}"`));
     assert.match(runtimeCard, new RegExp(`rotateFlag: "${rotateFlag}"`));
   }
 
@@ -75,9 +75,9 @@ test("macOS installer atomically activates the pending set only after staged lau
   ]);
   const packageJson = JSON.parse(packageSource);
 
-  for (const [scope, service, rotateFlag] of scopes) {
+  for (const [scope, , installerService, rotateFlag] of scopes) {
     assert.match(installer, new RegExp(`scope: "${scope}"`));
-    assert.match(installer, new RegExp(`service: "${service}"`));
+    assert.match(installer, new RegExp(`service: "${installerService}"`));
     assert.match(installer, new RegExp(`rotateFlag: "${rotateFlag}"`));
   }
 

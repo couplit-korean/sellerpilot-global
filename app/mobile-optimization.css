@@ -2463,11 +2463,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .option-slot-wrap {
-    min-height: 0;
-    aspect-ratio: auto;
-  }
-
   .option-photo-slot {
     min-height: 124px;
     aspect-ratio: 1;
@@ -3441,31 +3436,34 @@
     padding-bottom: calc(104px + env(safe-area-inset-bottom));
   }
 
+  body:has(.toast) .app-content {
+    padding-bottom: calc(104px + var(--mobile-toast-lane-height) + env(safe-area-inset-bottom));
+  }
+
+  .style-learning-table-wrap {
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .style-learning-table-wrap > .style-learning-table {
+    min-width: 900px;
+    max-width: none;
+  }
+
+  .style-learning-table td a {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
   .upload-panel > .analysis-start-bar,
   .analysis-start-bar {
     position: static;
     z-index: auto;
     inset: auto;
     bottom: auto !important;
-  }
-
-  .option-slot-wrap {
-    display: grid;
-    height: auto;
-    grid-template-rows: minmax(124px, auto) auto;
-    align-content: start;
-    gap: 5px;
-    aspect-ratio: auto;
-  }
-
-  .option-photo-slot {
-    height: auto;
-    min-height: 124px;
-    aspect-ratio: 1;
-  }
-
-  .photo-source-actions.compact {
-    margin-top: 0;
   }
 
   .mobile-push-page-spacer {

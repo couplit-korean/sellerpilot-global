@@ -41,10 +41,10 @@ const localizedDetailSectionSchema = z.object({
   imageAltText: z.string().min(1).max(180),
 });
 
-const localizedListingSchema = z.object({
+export const localizedListingSchema = z.object({
   channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
-  market: z.enum(["JP", "SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID", "KR", "US", "GB", "DE", "AU", "CA", "FR", "IT", "ES"]),
-  locale: z.enum(["ja-JP", "en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID", "ko-KR", "en-US", "en-GB", "de-DE", "en-AU", "en-CA", "fr-FR", "it-IT", "es-ES"]),
+  market: z.enum(["JP", "SG", "MY", "PH", "VN", "TH", "TW", "BR", "MX", "ID", "KR", "US", "GB", "DE", "AU", "CA", "FR", "IT", "ES", "AT", "BE", "CH", "HK", "IE", "NL", "PL"]),
+  locale: z.enum(["ja-JP", "en-SG", "ms-MY", "en-PH", "vi-VN", "th-TH", "zh-TW", "pt-BR", "es-MX", "id-ID", "ko-KR", "en-US", "en-GB", "de-DE", "en-AU", "en-CA", "fr-FR", "it-IT", "es-ES", "de-AT", "nl-BE", "de-CH", "zh-HK", "en-IE", "nl-NL", "pl-PL"]),
   title: z.string().min(1).max(120),
   shortDescription: z.string().min(1).max(500),
   description: z.string().min(1).max(2_000),
@@ -238,9 +238,26 @@ export const studioCoreSchema = z.object({
     subline: z.string().min(1).max(120),
     badge: z.string().min(1).max(60),
   }),
-  localizedListings: z.array(localizedListingSchema).length(27),
+  localizedListings: z.array(localizedListingSchema).length(34),
   warnings: z.array(z.string().min(1).max(400)).max(5),
 });
+
+/**
+ * Server-side structured generation intentionally splits the large Studio
+ * result into one master document and bounded localization chunks.  Keeping
+ * these schemas next to the terminal contract prevents the Vercel runner from
+ * accepting a weaker shape than the legacy worker.
+ */
+export const studioMasterResultSchema = studioCoreSchema
+  .omit({ localizedListings: true })
+  .extend({ mode: z.literal("cli") });
+
+export function studioLocalizedChunkResultSchema(length: number) {
+  if (!Number.isSafeInteger(length) || length < 1 || length > 4) {
+    throw new Error("상품 상세 현지화 청크는 1~4개 대상이어야 합니다.");
+  }
+  return z.object({ localizedListings: z.array(localizedListingSchema).length(length) }).strict();
+}
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -422,6 +439,16 @@ const generalFoodLocaleFallbacks: Readonly<Record<string, GeneralFoodLocaleFallb
     summary: "Nutzen Sie das bereitgestellte Produktmaterial zu {identity} als Referenz und vergleichen Sie es vor dem Kauf mit dem Namen auf der tatsächlichen Verpackung.",
     body: "Nutzen Sie das bereitgestellte Produktmaterial zu {identity} nur als Referenz zur Identifizierung. Vergleichen Sie vor dem Kauf den Produktnamen und den sichtbaren Text auf der tatsächlichen Verpackung und fragen Sie beim Verkäufer nach Angaben, die im bereitgestellten Material nicht bestätigt sind.",
   },
+  nl: {
+    genericIdentity: "dit product",
+    summary: "Gebruik het aangeleverde productmateriaal voor {identity} als referentie en vergelijk het vóór aankoop met de productnaam op de werkelijke verpakking.",
+    body: "Gebruik het aangeleverde materiaal voor {identity} uitsluitend als identificatiereferentie. Vergelijk vóór aankoop de productnaam en zichtbare tekst met de werkelijke verpakking en vraag de verkoper naar gegevens die niet in het aangeleverde materiaal zijn bevestigd.",
+  },
+  pl: {
+    genericIdentity: "ten produkt",
+    summary: "Użyj dostarczonych materiałów produktu {identity} jako odniesienia i przed zakupem porównaj je z nazwą widoczną na rzeczywistym opakowaniu.",
+    body: "Używaj dostarczonych materiałów produktu {identity} wyłącznie jako odniesienia do identyfikacji. Przed zakupem porównaj nazwę produktu i widoczny tekst z rzeczywistym opakowaniem, a dane niepotwierdzone w materiałach sprawdź u sprzedawcy.",
+  },
   it: {
     genericIdentity: "questo prodotto",
     summary: "Consultare il materiale fornito per {identity} e confrontarlo con il nome visibile sulla confezione reale prima dell’acquisto.",
@@ -481,6 +508,14 @@ const localizedEvidenceFallbacks: Readonly<Record<string, {
   de: {
     classification: "Diese Klassifizierung folgt dem zugehörigen Nachweis im Quelldatensatz des Verkäufers; vor der Veröffentlichung muss nur diese lokalisierte Formulierung geprüft werden.",
     section: "Nachweisnotiz {index} folgt dem zugehörigen Nachweis im Quelldatensatz des Verkäufers; vor der Veröffentlichung muss nur diese lokalisierte Formulierung geprüft werden.",
+  },
+  nl: {
+    classification: "Deze classificatie volgt het bijbehorende bewijs in het bronbestand van de verkoper; alleen deze gelokaliseerde formulering moet vóór publicatie worden gecontroleerd.",
+    section: "Bewijsnotitie {index} volgt het bijbehorende bewijs in het bronbestand van de verkoper; alleen deze gelokaliseerde formulering moet vóór publicatie worden gecontroleerd.",
+  },
+  pl: {
+    classification: "Ta klasyfikacja opiera się na odpowiadającym jej dowodzie w źródłowym rejestrze sprzedawcy; przed publikacją należy sprawdzić tylko to zlokalizowane sformułowanie.",
+    section: "Notatka dowodowa {index} opiera się na odpowiadającym jej dowodzie w źródłowym rejestrze sprzedawcy; przed publikacją należy sprawdzić tylko to zlokalizowane sformułowanie.",
   },
   it: {
     classification: "Questa classificazione segue la prova corrispondente nel record di origine del venditore; prima della pubblicazione deve essere verificata solo questa formulazione localizzata.",
@@ -1115,6 +1150,13 @@ export const requiredLocalizedMarkets = {
   "ebay:FR": "fr-FR",
   "ebay:IT": "it-IT",
   "ebay:ES": "es-ES",
+  "ebay:AT": "de-AT",
+  "ebay:BE": "nl-BE",
+  "ebay:CH": "de-CH",
+  "ebay:HK": "zh-HK",
+  "ebay:IE": "en-IE",
+  "ebay:NL": "nl-NL",
+  "ebay:PL": "pl-PL",
   "temu:KR": "ko-KR",
 } as const;
 
@@ -1122,7 +1164,7 @@ function hasExpectedScript(locale: string, value: string) {
   if (locale === "ko-KR") return /\p{Script=Hangul}/u.test(value);
   if (locale === "ja-JP") return /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(value);
   if (locale === "th-TH") return /\p{Script=Thai}/u.test(value);
-  if (locale === "zh-TW") return /\p{Script=Han}/u.test(value);
+  if (locale === "zh-TW" || locale === "zh-HK") return /\p{Script=Han}/u.test(value);
   return /[A-Za-z]/u.test(value);
 }
 

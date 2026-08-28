@@ -1207,7 +1207,7 @@ button {
 
 .photo-source-actions.compact {
   gap: 5px;
-  margin-top: 5px;
+  margin-top: 0;
 }
 
 .photo-source-actions.compact > label {

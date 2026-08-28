@@ -27,6 +27,8 @@ const PRIVATE_RESEARCH_RETRY_JOB_ID = "2b90a2d7-3754-4b65-89c6-c386967a90cc";
 const RETRY_CLOCK_JOB_ID = "55261a19-9394-4d0c-a8b5-8d6d53dc88f0";
 const SHARED_PRODUCT_ID = "4a346497-84c8-4ccd-bf14-8f06f990a2f7";
 const READINESS_FAILED_JOB_ID = "617d6da4-d646-4625-ad8a-0c18eab7f3c6";
+const LOCAL_NON_PRODUCT_CLAIM_JOB_ID = "4e28db19-c6bf-47e7-b5ce-6e1f73ca3f9d";
+const LOCAL_PRODUCT_FENCE_JOB_ID = "a8727399-727f-483c-b4bd-f2c9fd236da1";
 const TOKEN_HASH = "a".repeat(64);
 const SECOND_WORKER_TOKEN_HASH = "e".repeat(64);
 const AI_SCOPED_TOKEN_HASH = "b".repeat(64);
@@ -7754,10 +7756,35 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     for (const claimSql of [
       "select public.sellerpilot_claim_channel_gateway_job($1, 'migration-test/legacy-retired')",
       "select public.sellerpilot_claim_ai_job($1, 'migration-test/legacy-retired')",
+      "select public.sellerpilot_claim_local_ai_job($1, 'migration-test/legacy-retired')",
       "select public.sellerpilot_claim_product_ai_job($1, 'migration-test/legacy-retired')",
     ]) {
       await assert.rejects(db.query(claimSql, [TOKEN_HASH]), /invalid worker token/);
     }
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, request_payload, status, available_at, created_at, created_by
+       ) values
+         ($1, 'support_reply', '{}'::jsonb, 'queued', timestamp with time zone '2000-01-01', timestamp with time zone '2000-01-01', $3),
+         ($2, 'product_studio', '{}'::jsonb, 'queued', timestamp with time zone '1999-01-01', timestamp with time zone '1999-01-01', $3)`,
+      [LOCAL_NON_PRODUCT_CLAIM_JOB_ID, LOCAL_PRODUCT_FENCE_JOB_ID, ADMIN_ID],
+    );
+    const localNonProductClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_local_ai_job($1, 'migration-test/local-non-product')",
+      [pendingProof.ai],
+    );
+    assert.equal(localNonProductClaim.id, LOCAL_NON_PRODUCT_CLAIM_JOB_ID);
+    assert.equal(localNonProductClaim.kind, "support_reply");
+    assert.equal(localNonProductClaim.claim_scope, "local_non_product");
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.ai_cli_jobs where id = $1",
+        [LOCAL_PRODUCT_FENCE_JOB_ID],
+      ),
+      "queued",
+    );
     assert.equal(
       await scalar(
         db,
@@ -7769,6 +7796,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(
         db,
         "select has_function_privilege('service_role', 'public.sellerpilot_claim_product_ai_job(text,text)', 'EXECUTE')",
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_claim_local_ai_job(text,text)', 'EXECUTE')",
       ),
       true,
     );

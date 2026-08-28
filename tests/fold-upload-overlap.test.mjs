@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const mobileStylesUrl = new URL("../app/mobile-optimization.css", import.meta.url);
+const globalStylesUrl = new URL("../app/globals.css", import.meta.url);
+const commerceStylesUrl = new URL("../app/commerce-ux-refactor.css", import.meta.url);
 const interactionStylesUrl = new URL("../app/interaction-layers.css", import.meta.url);
 const pushManagerUrl = new URL("../app/mobile-push-manager.tsx", import.meta.url);
 const pageUrl = new URL("../app/page.tsx", import.meta.url);
@@ -15,17 +17,19 @@ function foldSafeContract(styles) {
 }
 
 test("280 through 412 CSS pixel registration cards reserve a real row for camera and album actions", async () => {
-  const [styles, page] = await Promise.all([
+  const [styles, globalStyles, commerceStyles, page] = await Promise.all([
     readFile(mobileStylesUrl, "utf8"),
+    readFile(globalStylesUrl, "utf8"),
+    readFile(commerceStylesUrl, "utf8"),
     readFile(pageUrl, "utf8"),
   ]);
   const { contract } = foldSafeContract(styles);
 
   for (const width of [280, 320, 344, 390, 412]) assert.ok(width <= 720);
-  assert.match(contract, /@media \(max-width: 720px\)/);
-  assert.match(contract, /\.option-slot-wrap\s*\{[^}]*display:\s*grid;[^}]*height:\s*auto;[^}]*grid-template-rows:\s*minmax\(124px, auto\) auto;[^}]*aspect-ratio:\s*auto/);
-  assert.match(contract, /\.option-photo-slot\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*124px;[^}]*aspect-ratio:\s*1/);
-  assert.match(contract, /\.photo-source-actions\.compact\s*\{[^}]*margin-top:\s*0/);
+  assert.match(globalStyles, /\.option-slot-wrap\s*\{[^}]*display:\s*grid;[^}]*height:\s*auto;[^}]*grid-template-rows:\s*minmax\(124px, auto\) auto;[^}]*aspect-ratio:\s*auto/);
+  assert.match(globalStyles, /\.option-photo-slot\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*124px;[^}]*aspect-ratio:\s*1\.04/);
+  assert.match(commerceStyles, /\.photo-source-actions\.compact\s*\{[^}]*margin-top:\s*0/);
+  assert.doesNotMatch(contract, /\.option-slot-wrap\s*\{/);
   assert.ok(page.indexOf('className="option-photo-slot"') < page.indexOf('className="photo-source-actions compact"'));
   assert.match(page, /id=\{`option-photo-\$\{slot\.id\}-camera`\}[\s\S]{0,320}capture="environment"/);
   assert.match(page, /htmlFor=\{`option-photo-\$\{slot\.id\}-camera`\}[\s\S]{0,120}<Camera/);

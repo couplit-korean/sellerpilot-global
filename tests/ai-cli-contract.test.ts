@@ -113,6 +113,13 @@ const localized = [
   ["ebay", "FR", "fr-FR", "Tasse à expresso en céramique blanche"],
   ["ebay", "IT", "it-IT", "Tazzina da espresso in ceramica bianca"],
   ["ebay", "ES", "es-ES", "Taza de espresso de cerámica blanca"],
+  ["ebay", "AT", "de-AT", "Weiße Keramik-Espressotasse"],
+  ["ebay", "BE", "nl-BE", "Wit keramisch espressokopje"],
+  ["ebay", "CH", "de-CH", "Weiße Keramik-Espressotasse"],
+  ["ebay", "HK", "zh-HK", "白色陶瓷濃縮咖啡杯"],
+  ["ebay", "IE", "en-IE", "White Ceramic Espresso Cup"],
+  ["ebay", "NL", "nl-NL", "Wit keramisch espressokopje"],
+  ["ebay", "PL", "pl-PL", "Biała ceramiczna filiżanka do espresso"],
   ["temu", "KR", "ko-KR", "화이트 도자기 에스프레소 컵"],
 ] as const;
 
@@ -204,7 +211,7 @@ function validResult() {
   };
 }
 
-test("AI studio contract accepts all 27 exact channel-market locales", () => {
+test("AI studio contract accepts all 34 exact channel-market locales", () => {
   const parsed = cliStudioResultSchema.safeParse(validResult());
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
@@ -1047,6 +1054,48 @@ const canonicalIntakeExamples = {
     mixed: "Nehmen Sie nicht 2 Kapseln täglich, aber nehmen Sie 3 Kapseln täglich.",
     evidence: "Das Etikett des Herstellers nennt 2 Kapseln täglich.",
   },
+  "de-AT": {
+    intake: "Nehmen Sie 2 Kapseln täglich.",
+    negated: "Nehmen Sie nicht 2 Kapseln täglich.",
+    mixed: "Nehmen Sie nicht 2 Kapseln täglich, aber nehmen Sie 3 Kapseln täglich.",
+    evidence: "Das Etikett des Herstellers nennt 2 Kapseln täglich.",
+  },
+  "de-CH": {
+    intake: "Nehmen Sie 2 Kapseln täglich.",
+    negated: "Nehmen Sie nicht 2 Kapseln täglich.",
+    mixed: "Nehmen Sie nicht 2 Kapseln täglich, aber nehmen Sie 3 Kapseln täglich.",
+    evidence: "Das Etikett des Herstellers nennt 2 Kapseln täglich.",
+  },
+  "nl-BE": {
+    intake: "Neem dagelijks 2 capsules.",
+    negated: "Neem niet dagelijks 2 capsules.",
+    mixed: "Neem niet dagelijks 2 capsules, maar neem dagelijks 3 capsules.",
+    evidence: "Het etiket van de fabrikant vermeldt dagelijks 2 capsules.",
+  },
+  "nl-NL": {
+    intake: "Neem dagelijks 2 capsules.",
+    negated: "Neem niet dagelijks 2 capsules.",
+    mixed: "Neem niet dagelijks 2 capsules, maar neem dagelijks 3 capsules.",
+    evidence: "Het etiket van de fabrikant vermeldt dagelijks 2 capsules.",
+  },
+  "zh-HK": {
+    intake: "每日服用2粒。",
+    negated: "請勿每日服用2粒。",
+    mixed: "請勿每日服用2粒，但每日服用3粒。",
+    evidence: "製造商標籤標示每日服用2粒。",
+  },
+  "en-IE": {
+    intake: "Take 2 capsules daily.",
+    negated: "Do not take 2 capsules daily.",
+    mixed: "Do not take 2 capsules daily, but take 3 capsules daily.",
+    evidence: "The manufacturer label states 2 capsules daily.",
+  },
+  "pl-PL": {
+    intake: "Przyjmuj 2 kapsułki dziennie.",
+    negated: "Nie przyjmuj 2 kapsułek dziennie.",
+    mixed: "Nie przyjmuj 2 kapsułek dziennie, ale przyjmuj 3 kapsułki dziennie.",
+    evidence: "Etykieta producenta wskazuje 2 kapsułki dziennie.",
+  },
   "it-IT": {
     intake: "Assumere 2 capsule al giorno.",
     negated: "Non assumere 2 capsule al giorno.",
@@ -1074,11 +1123,18 @@ const localizedPackageCountExamples = {
   "pt-BR": "A embalagem contém 60 cápsulas.",
   "fr-FR": "L’emballage contient 60 capsules.",
   "de-DE": "Die Packung enthält 60 Kapseln.",
+  "de-AT": "Die Packung enthält 60 Kapseln.",
+  "de-CH": "Die Packung enthält 60 Kapseln.",
+  "nl-BE": "De verpakking bevat 60 capsules.",
+  "nl-NL": "De verpakking bevat 60 capsules.",
+  "zh-HK": "包裝內共有60粒。",
+  "en-IE": "The package contains 60 capsules.",
+  "pl-PL": "Opakowanie zawiera 60 kapsułek.",
   "it-IT": "La confezione contiene 60 capsule.",
 } as const;
 
-test("all 27 canonical listings enforce localized numeric daily intake evidence", () => {
-  assert.equal(localized.length, 27);
+test("all 34 canonical listings enforce localized numeric daily intake evidence", () => {
+  assert.equal(localized.length, 34);
   for (const [, , locale] of localized) assert.ok(locale in canonicalIntakeExamples, locale);
 
   const unsafe = generalFoodSafetyResult();
@@ -1149,7 +1205,7 @@ test("all 27 canonical listings enforce localized numeric daily intake evidence"
   });
 });
 
-test("general-food normalization clears residual intake at detailSections[2].body for all 27 locales", () => {
+test("general-food normalization clears residual intake at detailSections[2].body for all 34 listings", () => {
   const result = generalFoodSafetyResult();
   result.localizedListings.forEach((listing) => {
     const intake = canonicalIntakeExamples[listing.locale];
@@ -1189,8 +1245,8 @@ test("general-food normalization clears residual intake at detailSections[2].bod
   assert.strictEqual(normalizeStudioGeneralFoodSafety(normalized), normalized);
 });
 
-test("general-food fallback restores only safety-shortened summaries and bodies across all 27 listings", () => {
-  assert.equal(new Set(localized.map(([, , locale]) => locale.split("-")[0])).size, 13);
+test("general-food fallback restores only safety-shortened summaries and bodies across all 34 listings", () => {
+  assert.equal(new Set(localized.map(([, , locale]) => locale.split("-")[0])).size, 15);
   const result = generalFoodSafetyResult();
   const originalSnapshot = JSON.stringify(result);
   const warningsReference = result.warnings;

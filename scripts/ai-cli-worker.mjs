@@ -1,7 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, lstat, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -148,7 +147,6 @@ import { executeChannelOperation, writeChannelOperations } from "../lib/channels
 import {
   assertShopeeShopProfileTarget,
 } from "../lib/channels/provider-account-identity.ts";
-import { evaluateTemuEgressIp, parseTemuEgressAllowlist } from "../lib/channels/temu-egress-policy.ts";
 import {
   ensureEbayAccessToken,
   ensureLazadaAccessToken,
@@ -191,24 +189,6 @@ const schedulerWorkerToken = aiOnly ? "" : loadWorkerToken("SELLERPILOT_SCHEDULE
 const aiWorkerConfigured = isWorkerTokenConfigured(aiWorkerToken);
 const gatewayWorkerConfigured = isWorkerTokenConfigured(gatewayWorkerToken);
 const schedulerWorkerConfigured = isWorkerTokenConfigured(schedulerWorkerToken);
-function loadTemuEgressAllowlist() {
-  const environmentValue = process.env.SELLERPILOT_TEMU_EGRESS_IPS?.trim();
-  if (environmentValue) return parseTemuEgressAllowlist(environmentValue);
-  if (process.platform !== "darwin") return [];
-  try {
-    const stored = execFileSync("/usr/bin/security", [
-      "find-generic-password",
-      "-s", "SellerPilot Temu Egress IPs",
-      "-a", sellerpilotUrl,
-      "-w",
-    ], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return parseTemuEgressAllowlist(stored);
-  } catch {
-    return [];
-  }
-}
-
-const temuEgressAllowlist = loadTemuEgressAllowlist();
 const gatewayPolling = gatewayOnly ? resolveGatewayPolling() : null;
 const pollMs = gatewayPolling?.pollMs
   ?? Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS ?? 5_000));
@@ -251,8 +231,6 @@ const workerVersion = "sellerpilot-cli-worker/1.59";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
-const temuEgressCacheMs = Math.max(30_000, Number(process.env.SELLERPILOT_TEMU_EGRESS_CHECK_MS ?? 5 * 60_000));
-let temuEgressCache = { checkedAt: 0, currentIp: "" };
 let idlePollMs = pollMs;
 let gatewayClaimBackoffUntil = 0;
 let gatewayClaimBackoffStatus = 0;
@@ -317,34 +295,6 @@ async function waitForIdleWork() {
   const waitMs = jitterWorkerPollMs(idlePollMs);
   idlePollMs = nextWorkerIdlePollMs(idlePollMs, pollMs, maxIdlePollMs);
   await delay(waitMs);
-}
-
-async function currentPublicIp() {
-  if (Date.now() - temuEgressCache.checkedAt < temuEgressCacheMs && temuEgressCache.currentIp) {
-    return temuEgressCache.currentIp;
-  }
-  for (const url of ["https://api.ipify.org", "https://checkip.amazonaws.com"]) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-      const value = (await response.text()).trim();
-      if (response.ok && isIP(value) !== 0) {
-        temuEgressCache = { checkedAt: Date.now(), currentIp: value };
-        return value;
-      }
-    } catch {
-      // Try the next independent public-IP service.
-    }
-  }
-  return "";
-}
-
-async function assertTemuEgressAllowed() {
-  if (!temuEgressAllowlist.length) {
-    const decision = evaluateTemuEgressIp(temuEgressAllowlist, "");
-    throw new Error(`${decision.code}: ${decision.message}`);
-  }
-  const decision = evaluateTemuEgressIp(temuEgressAllowlist, await currentPublicIp());
-  if (!decision.ok) throw new Error(`${decision.code}: ${decision.message}`);
 }
 
 function workerScopeForPath(path) {
@@ -4145,7 +4095,9 @@ async function processGatewayJob(job) {
   try {
     await gatewayHeartbeat.start();
     await assertGatewayLeaseHealthy();
-    if (job.channel === "temu") await assertTemuEgressAllowed();
+    if (job.channel === "temu") {
+      throw new Error("TEMU_SERVERLESS_ONLY: Temu channel operations are restricted to the Vercel serverless gateway.");
+    }
     let result;
     await assertGatewayLeaseHealthy();
     if (job.operation === "oauth.exchange") {
@@ -4425,7 +4377,6 @@ const workerMode = gatewayOnly ? "gateway-only" : productOnly ? "product-only" :
 console.log(gatewayOnly
   ? `SellerPilot channel gateway worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · poll=${pollMs}ms`
   : `SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
-console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
 console.log(`Worker scopes · ai=${aiWorkerConfigured ? "configured" : "disabled"} · gateway=${gatewayWorkerConfigured ? "configured" : "disabled"} · scheduler=${schedulerWorkerConfigured ? "configured" : "disabled"}`);
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 9);
 const maxAiConcurrency = Math.min(9, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 9));

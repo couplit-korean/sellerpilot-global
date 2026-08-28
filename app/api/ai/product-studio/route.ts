@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from "../../../../lib/admin-api";
 import { rejectedUploadPaths } from "../../../../lib/ai-upload-guard";
 import { studioJobRequestSchema } from "../../../../lib/ai-cli-contract";
@@ -6,8 +6,8 @@ import { withPromiseTimeout } from "../../../../lib/promise-timeout";
 import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } from "../../../../lib/studio-image-paths";
 import { createSignedStudioImageDownloader, verifyPreservedStudioImages } from "../../../../lib/studio-image-validation";
 import { resolveStudioAdmission } from "../../../../lib/studio-job-admission";
-import { resolveStudioWorkerReadiness, type StudioWorkerReadiness } from "../../../../lib/studio-worker-readiness";
-import { readStudioWorkerReadiness } from "../../../../lib/studio-worker-readiness-server";
+import { wakeServerProductStudioAfterResponse, readServerProductStudioReadiness } from "../../../../lib/server-product-studio-runtime";
+import type { StudioWorkerReadiness } from "../../../../lib/studio-worker-readiness";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -15,7 +15,7 @@ export const maxDuration = 300;
 export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
-  const readiness = await readStudioWorkerReadiness(admin);
+  const readiness = await readServerProductStudioReadiness(admin);
   return NextResponse.json(readiness, {
     status: readiness.reason === "status_unavailable" ? 503 : 200,
     headers: { "cache-control": "no-store, max-age=0" },
@@ -107,12 +107,17 @@ export async function POST(request: Request) {
   };
   const enqueueGuard: { checked: boolean; readiness: StudioWorkerReadiness } = {
     checked: false,
-    readiness: resolveStudioWorkerReadiness(null, { statusAvailable: false }),
+    readiness: {
+      available: false,
+      reason: "status_unavailable",
+      message: "서버 AI 제작 상태를 아직 확인하지 않았습니다.",
+      checkedAt: new Date().toISOString(),
+    },
   };
   const admission = await resolveStudioAdmission({
     jobId: parsed.data.jobId,
     createJob: async () => {
-      enqueueGuard.readiness = await readStudioWorkerReadiness(admin);
+      enqueueGuard.readiness = await readServerProductStudioReadiness(admin);
       enqueueGuard.checked = true;
       if (!enqueueGuard.readiness.available) {
         return { data: null, error: { code: "AI_WORKER_UNAVAILABLE" } };
@@ -139,14 +144,15 @@ export async function POST(request: Request) {
   });
 
   if (admission.outcome === "accepted") {
+    after(wakeServerProductStudioAfterResponse);
     return NextResponse.json({
-      mode: "cli",
+      mode: "server",
       jobId: parsed.data.jobId,
       status: "queued",
       reconciled: admission.reconciled,
       message: admission.reconciled
         ? "작업 큐 응답은 끊겼지만 같은 작업 ID가 접수된 것을 확인해 업로드를 보존했습니다."
-        : "ChatGPT CLI 작업자에게 상품 분석과 이미지 제작을 요청했습니다.",
+        : "서버 AI에 상품 분석과 이미지 제작을 요청했습니다.",
     }, {
       status: 202,
       headers: { "cache-control": "no-store, max-age=0" },

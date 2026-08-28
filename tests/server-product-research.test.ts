@@ -421,7 +421,7 @@ test("Hobby deployment moves product-research scheduling out of Vercel cron", as
   };
   assert.match(route, /export const runtime = "nodejs"/);
   assert.match(route, /export const maxDuration = 300/);
-  assert.match(route, /runServerProductResearchCron/);
+  assert.match(route, /runServerProductRecoverySchedule/);
   assert.doesNotMatch(route, /\bafter\s*\(/);
   assert.doesNotMatch(route, /product_studio|image|channel-gateway|shipping|listing/i);
   assert.equal(Object.hasOwn(vercel, "crons"), false);

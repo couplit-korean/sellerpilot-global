@@ -22,25 +22,21 @@ Qoo10 Japan, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBa
 - Supabase Vault 기반 8개 활성 판매채널의 키 버전, 만료일, 교체주기, 사전경고, 롤백 유예, 연결검사, 감사기록 관리
 - Qoo10 QAPI, Shopee Open Platform, Lazada OAuth, 쿠팡 HMAC, 네이버 Commerce OAuth, eBay User OAuth, Temu Partner API 프로토콜과 채널별 기능 지원표
 - 8개 활성 채널의 공식 카테고리·상품·가격·재고·주문·배송 실행 계층, 관리자 검수 UI와 멱등키 기반 중복 방지 원장. 운영키나 승인 범위가 없는 기능은 실행 전에 차단하고 실제 연결로 표시하지 않음
-- ChatGPT OAuth 기반 로컬 Codex CLI 작업자와 `codex-image`를 이용한 상품 분석·상세페이지 기획·대표 연출컷과 3종 썸네일 생성
+- Vercel AI Gateway OIDC 기반 서버 상품 스튜디오를 이용한 상품 분석, 16~20개 상세 섹션, 16개 검증 이미지와 26개국 현지화 생성
 
-## ChatGPT CLI AI 작업자
+## Vercel 서버 AI 스튜디오
 
-SellerPilot은 OpenAI API Key를 사용하지 않습니다. ChatGPT OAuth와 로컬 이미지 도구가 필요한 AI 이미지 제작만 ChatGPT에 로그인된 Mac 작업자에서 실행합니다. 관리자가 `API 관리` 화면에서 범위가 분리된 일회성 토큰 세트를 발급하고 설치를 확인해야 기존 토큰이 원자적으로 폐기되며, 토큰 원문과 ChatGPT 자격정보는 macOS 키체인 밖으로 저장하거나 전송하지 않습니다. 운영에서는 AI 전용 런타임을 사용하고, 판매채널 작업은 아래의 Vercel 서버 경로가 지원하는 범위에서 로컬 작업자로 자동 우회하지 않습니다.
+상품 스튜디오의 운영 주경로는 Mac이나 로컬 Codex 바이너리가 아니라 Vercel Node 런타임입니다. Vercel이 자동 제공하는 단기 `VERCEL_OIDC_TOKEN`으로 AI Gateway를 호출하며 OpenAI API Key를 저장하지 않습니다. Supabase의 기존 비공개 작업 큐, 범위가 `ai`인 Worker Token 지문, claim token, heartbeat와 완료 receipt를 그대로 사용합니다. 서버 전용 Worker Token 원문은 `SELLERPILOT_AI_WORKER_TOKEN` sensitive 환경변수에만 두며 브라우저·응답·로그에 표시하지 않습니다.
 
-```bash
-codex login status
-npm run ai:worker:install:ai-only -- --rotate-token --token-set <API 관리 화면의 세트 ID>
-npm run ai:worker:status
-```
+상품 생성은 300초 함수 제한 안에서 한 claim으로 처리합니다. 설정샷 8개는 원본 상품 이미지를 참조한 빈 배경 생성 후 검증된 원본 cutout을 합성하며 `3+3+2` wave로 제한합니다. 나머지 8개 근거·카탈로그 이미지는 서버 Sharp 파이프라인으로 생성합니다. 16개 이미지 전체가 동일상품·수량·브랜드 대소문자·용량/단위 OCR, 배경 잔상, 잘린 가장자리와 시각 중복 검사를 모두 통과해야만 성공합니다. 16~20개 마스터 섹션과 34개 채널·시장 행(고유 26개국)도 전부 검증되어야 terminal success가 됩니다.
 
-설치기는 세 범위 토큰을 원자적으로 교체하되 처음부터 자동실행 프로세스를 `--ai-only` 모드로 기동합니다. 판매채널·스케줄러 토큰은 세트 활성화 증명에만 사용되고 로컬 프로세스가 해당 큐를 가져오지 않습니다. `ai:worker:status`에서 `AI 전용 모드`를 확인하기 전에는 운영 전환이 완료된 것으로 보지 않습니다.
+응답 이후에는 Next.js `after()`가 큐 drain을 깨우고, 기존 Supabase 상품조사 스케줄 호출도 미완료 작업을 복구합니다. 별도 Vercel Cron이나 새 큐 서비스는 요구하지 않습니다. 시간 초과, 모델 실패, OCR 불일치, segmentation 신뢰도 부족, 이미지 중복 또는 16개/34개 결과 누락은 성공으로 바꾸지 않고 같은 claim을 `failed`로 원자 완료합니다. 로컬 CLI 도구는 개발·이전 호환용일 뿐 운영 상품 스튜디오의 필수 조건이 아닙니다.
 
-Vercel은 비공개 Supabase 작업 큐, 지원되는 상품 등록·수정·중지, 재고·배송, Shopee·Lazada·eBay OAuth 교환, 문의 동기화·답변, 서명된 이미지 URL과 판매채널용 이미지 전송 준비를 처리합니다. 작업은 채널·operation 허용표, claim token, lease heartbeat, 외부 mutation fence와 원자적 완료 원장을 모두 통과해야 하며, 결과가 불명확하면 재전송하지 않고 `reconciliation_required`로 남깁니다. ChatGPT OAuth 자격은 Mac 밖으로 전송하거나 저장하지 않습니다. AI 이미지 생성은 설치된 [`wjb127/codex-image`](https://github.com/wjb127/codex-image) 스킬과 Codex 내장 `image_gen`만 사용하며, 실패한 작업을 예시 결과로 바꾸지 않습니다.
+Vercel은 비공개 Supabase 작업 큐, 지원되는 상품 등록·수정·중지, 재고·배송, Shopee·Lazada·eBay OAuth 교환, 문의 동기화·답변, 서명된 이미지 URL과 판매채널용 이미지 전송 준비를 처리합니다. 작업은 채널·operation 허용표, claim token, lease heartbeat, 외부 mutation fence와 원자적 완료 원장을 모두 통과해야 하며, 결과가 불명확하면 재전송하지 않고 `reconciliation_required`로 남깁니다. AI Gateway OIDC와 범위 분리 Worker Token은 판매채널 자격증명과 분리하며 실패한 작업을 예시 결과로 바꾸지 않습니다.
 
 Temu는 모바일·웹 클라이언트나 로컬 AI 작업자가 직접 호출하지 않습니다. 모든 요청은 SellerPilot API와 Supabase 원장을 거치며, Vercel Static IP가 Temu 개발자센터에 등록되고 데이터베이스 정책과 요청별 egress attestation까지 일치할 때만 서버가 실행합니다. 설정이 없거나 IP를 검증하지 못하면 Temu 작업은 외부 호출 전에 `STATIC_EGRESS_REQUIRED`로 차단되고 다른 작업자로 자동 우회하지 않습니다. 같은 이중 차단은 쿠팡·스마트스토어·11번가에도 적용합니다.
 
-기본 모델은 Codex CLI의 `gpt-5.6-sol`이며 필요할 때만 `SELLERPILOT_CODEX_MODEL` 환경변수로 바꿀 수 있습니다. 작업자는 시작할 때 `codex login status`가 `Logged in using ChatGPT`인지 확인하고, 셸에 남아 있는 `OPENAI_API_KEY`는 자식 프로세스에 전달하지 않습니다.
+서버 상품 스튜디오는 텍스트·구조화 생성에 `openai/gpt-5.4-mini`, 빈 설정 배경에 `openai/gpt-image-2`를 AI Gateway를 통해 사용합니다. 운영 성공은 모델 응답이 아니라 저장된 16개 asset과 완전한 현지화 결과의 terminal contract 검증으로 판정합니다.
 - 서비스 전체 흐름을 설명하는 화면형 스토리보드
 - PPT 31장 기반 175개 항목의 개발 상태와 실계정 검수 상태를 분리한 인수 대시보드
 - Coinbase Data API의 현재 시장 참고 환율을 서버에서 60초 단위로 조회하고, 장애 시 Frankfurter v2 중앙은행·기관 일일 기준값으로 명시적으로 대체하는 환율 위젯

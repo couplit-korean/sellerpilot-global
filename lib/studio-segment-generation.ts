@@ -53,7 +53,7 @@ function isJsonObject(value: unknown): value is JsonObject {
 /**
  * Checks the master-only image-role invariant before localized generation.
  * The full studio schema repeats this fence after segment merge; this early
- * check prevents 27 localized listings from being generated from a master
+ * check prevents 34 localized listings from being generated from a master
  * whose 12 detail images are already ambiguous.
  */
 export function studioMasterDetailImageRoleIssue(masterOutput: unknown): string {
@@ -80,7 +80,7 @@ export function studioMasterDetailImageRoleIssue(masterOutput: unknown): string 
     assignedRoles.push(section.imageAsset);
   });
 
-  const roleCounts = new Map(requiredRoles.map((role) => [role, 0] as const));
+  const roleCounts = new Map<string, number>(requiredRoles.map((role) => [role, 0]));
   assignedRoles.forEach((role) => roleCounts.set(role, (roleCounts.get(role) ?? 0) + 1));
   const duplicateRoles = requiredRoles.filter((role) => (roleCounts.get(role) ?? 0) > 1);
   const missingRoles = requiredRoles.filter((role) => (roleCounts.get(role) ?? 0) === 0);
@@ -325,7 +325,8 @@ function validatePlannedTarget(target: StudioLocalizedTarget, seen: Set<string>)
 }
 
 /**
- * Returns the canonical 27 marketplace targets in deterministic chunks. A
+ * Returns the canonical 34 marketplace targets (26 unique countries) in
+ * deterministic chunks. A
  * segment is intentionally capped at four targets to bound structured output.
  */
 export function planStudioLocalizedChunks(

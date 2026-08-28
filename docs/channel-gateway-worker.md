@@ -45,7 +45,8 @@ drain이며, 주문 동기화 route는 문의를 중복 enqueue하지 않는다.
 `SELLERPILOT_SERVERLESS_STATIC_EGRESS_CHANNELS`에 쉼표로 넣고, 같은 채널을
 Supabase의 static-egress 정책에도 활성화한다. 환경변수, DB 정책, 요청 attestation
 중 하나라도 다르면 외부 호출 전에 `STATIC_EGRESS_REQUIRED`로 차단하며 로컬
-worker로 우회하지 않는다.
+worker로 우회하지 않는다. 특히 Temu는 로컬 Mac 공인 IP 조회, AWS check-IP,
+키체인 allowlist 경로를 사용하지 않으며 Vercel 서버리스 gateway에서만 실행한다.
 
 ## 배포 순서
 

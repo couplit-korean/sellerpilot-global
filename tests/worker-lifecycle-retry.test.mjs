@@ -175,6 +175,9 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.match(source, /terminalStatuses: \[401, 404, 409\]/);
   assert.match(source, /setInterval\(scheduleTouch, AI_HEARTBEAT_INTERVAL_MS\)/);
   assert.match(gatewayProcess, /await gatewayHeartbeat\.start\(\)/);
+  assert.match(gatewayProcess, /if \(job\.channel === "temu"\) \{\s*throw new Error\("TEMU_SERVERLESS_ONLY:/);
+  assert.ok(gatewayProcess.indexOf("TEMU_SERVERLESS_ONLY") < gatewayProcess.indexOf("let result;"));
+  assert.doesNotMatch(source, /api\.ipify\.org|checkip\.amazonaws\.com|SELLERPILOT_TEMU_EGRESS_IPS|SellerPilot Temu Egress IPs/);
   assert.ok((gatewayProcess.match(/await assertGatewayLeaseHealthy\(\)/g) ?? []).length >= 10);
   assert.match(gatewayProcess, /prepareMarketplaceListingArguments\(\{[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*beginProviderMutation: markExternalWriteStarted/);
   assert.match(listingRuntime, /prepareShopeeGlobalListing\(input\)[\s\S]*mediaMutationObserved: true/);
@@ -199,6 +202,15 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.match(oauthRuntime, /if \(job\.channel === "ebay"\)[\s\S]*exchangeEbayOAuth/);
   assert.match(gatewayProcess, /terminalOwnershipLoss[\s\S]*\[401, 404, 409\]/);
   assert.ok((gatewayProcess.match(/GATEWAY_COMPLETION_TRANSIENT_GRACE_MS/g) ?? []).length >= 2);
+});
+
+test("Temu has no local Mac egress setup command or keychain status path", async () => {
+  const [packageJson, installer] = await Promise.all([
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/install-ai-worker-launch-agent.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.doesNotMatch(packageJson, /ai:worker:temu-egress|configure-temu-egress/);
+  assert.doesNotMatch(installer, /Temu Egress IPs|Temu 작업자 허용 IP|keychainTemuEgressIps/);
 });
 
 test("live QA script cannot rotate OAuth credentials outside the gateway", async () => {

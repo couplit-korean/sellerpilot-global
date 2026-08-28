@@ -83,7 +83,7 @@ export async function POST(request: Request) {
   };
   const { data, error } = productOnlyClaim
     ? await serviceClient.rpc("sellerpilot_claim_product_ai_job", claimArguments)
-    : await serviceClient.rpc("sellerpilot_claim_ai_job", claimArguments);
+    : await serviceClient.rpc("sellerpilot_claim_local_ai_job", claimArguments);
   if (error) {
     const status = workerRpcErrorStatus(error);
     console.error("AI worker claim RPC failed", { code: error.code ?? "unknown", status });

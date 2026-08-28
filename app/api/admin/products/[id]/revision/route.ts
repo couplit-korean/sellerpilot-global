@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from "../../../../../../lib/admin-api";
 import { productRevisionJobRequestSchema } from "../../../../../../lib/ai-cli-contract";
 import { withPromiseTimeout } from "../../../../../../lib/promise-timeout";
 import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } from "../../../../../../lib/studio-image-paths";
 import { createSignedStudioImageDownloader, verifyPreservedStudioImages } from "../../../../../../lib/studio-image-validation";
-import { readStudioWorkerReadiness } from "../../../../../../lib/studio-worker-readiness-server";
+import { readServerProductStudioReadiness, wakeServerProductStudioAfterResponse } from "../../../../../../lib/server-product-studio-runtime";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -90,7 +90,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return true;
   };
 
-  const readiness = await readStudioWorkerReadiness(admin);
+  const readiness = await readServerProductStudioReadiness(admin);
   if (!readiness.available) {
     const cleaned = await abandonAndCleanupIfUncreated();
     return NextResponse.json({
@@ -163,6 +163,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         message: "상품 사진 수정 접수 결과가 불명확합니다. 같은 작업 ID로 상태를 확인해 주세요.",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
+    after(wakeServerProductStudioAfterResponse);
     return NextResponse.json({
       jobId: parsed.data.jobId,
       productId: productId.data,

@@ -42,6 +42,8 @@ type ClaimNegationLanguage =
   | "pt"
   | "fr"
   | "de"
+  | "nl"
+  | "pl"
   | "it"
   | "none";
 
@@ -83,11 +85,13 @@ const generalFoodEfficacyPatterns: readonly GeneralFoodEfficacyRule[] = [
   { language: "pt", pattern: /(?:melhor|apoi|reduz|previn)[a-záàâãçéêíóôõú]*[^.!?。！？;；,，、\n]{0,40}?(?:imunidade|glicose|pressão\s*arterial|colesterol|gordura\s*corporal|fadiga|fígado|intestin)/giu },
   { language: "fr", pattern: /(?:amélior|soutien|rédui|préven)[a-zàâçéèêëîïôûùüÿœ]*[^.!?。！？;；,，、\n]{0,40}?(?:immunité|glycémie|tension\s*artérielle|cholestérol|graisse|fatigue|foie|intestin)/giu },
   { language: "de", pattern: /(?:verbesser|unterstütz|reduzier|vorbeug)[a-zäöüß]*[^.!?。！？;；,，、\n]{0,40}?(?:immunsystem|blutzucker|blutdruck|cholesterin|körperfett|müdigkeit|leber|darm)/giu },
+  { language: "nl", pattern: /(?:verbeter|ondersteun|verminder|verlaag|voorkom)[a-zà-ÿ]*[^.!?。！？;；,，、\n]{0,40}?(?:immuun|bloedsuiker|bloeddruk|cholesterol|lichaamsvet|vermoeidheid|lever|darm|spijsverter)/giu },
+  { language: "pl", pattern: /(?:popraw|wspier|zmniejsz|obniż|zapobieg)[a-ząćęłńóśźż]*[^.!?。！？;；,，、\n]{0,40}?(?:odporność|cukier\s*we\s*krwi|ciśnienie|cholesterol|tkank[aę]\s*tłuszczow[aą]|zmęczenie|wątrob|jelit|trawien)/giu },
   { language: "it", pattern: /(?:miglior|support|riduc|preven)[a-zàèéìíîòóùú]*[^.!?。！？;；,，、\n]{0,40}?(?:immunità|glicemia|pressione|colesterolo|grasso|stanchezza|fegato|intestin)/giu },
 ];
 
 const measuredIntakeAmountSource = "(?:\\d+(?:[.,]\\d+)?|한|두|세|one|two|three|一|二|三)";
-const measuredIntakeUnitSource = "(?:tablets?|capsules?|sachets?|packets?|spoons?|servings?|times?|viên|lần|gói|muỗng|thìa|khẩu\\s*phần|tablet|kapsul|kali|bungkus|sendok|porsi|เม็ด|แคปซูล|ครั้ง|ซอง|ช้อน|หน่วยบริโภค|cápsulas?|comprimidos?|tabletas?|sobres?|cucharadas?|porciones?|veces?|cápsulas?|comprimidos?|tabletes?|sachês?|saquetas?|colheres?|porções?|vezes?|capsules?|comprimés?|sachets?|cuillères?|portions?|fois|kapseln?|tabletten?|beutel|löffel|portionen?|mal|capsule?|compresse?|bustine?|cucchiai?|porzioni?|volte?|회|정|캡슐|포|봉|스푼|개|回|次|錠|粒|包|杯|mg|kg|ml|g|l)";
+const measuredIntakeUnitSource = "(?:tablets?|capsules?|sachets?|packets?|spoons?|servings?|times?|viên|lần|gói|muỗng|thìa|khẩu\\s*phần|tablet|kapsul|kali|bungkus|sendok|porsi|เม็ด|แคปซูล|ครั้ง|ซอง|ช้อน|หน่วยบริโภค|cápsulas?|comprimidos?|tabletas?|sobres?|cucharadas?|porciones?|veces?|cápsulas?|comprimidos?|tabletes?|sachês?|saquetas?|colheres?|porções?|vezes?|capsules?|comprimés?|sachets?|cuillères?|portions?|fois|kapseln?|tabletten?|beutel|löffel|portionen?|mal|kapsuł(?:ka|ki|kę|ek|kami|kom)|table(?:tka|tki|tkę|tek)|sasze(?:tka|tki|tkę|tek)|porcj(?:a|e|ę|i)?|razy?|capsule?|compresse?|bustine?|cucchiai?|porzioni?|volte?|회|정|캡슐|포|봉|스푼|개|回|次|錠|粒|包|杯|mg|kg|ml|g|l)";
 const measuredIntakeSource = `${measuredIntakeAmountSource}\\s*${measuredIntakeUnitSource}`;
 const koreanIntakeClauseGapSource = "[^.!?。！？;；\\n]";
 const koreanIntakeHeadingSource = "(?:섭취\\s*량|복용\\s*량|권장\\s*(?:섭취\\s*)?량)";
@@ -116,14 +120,18 @@ const prescriptiveIntakePatterns: readonly GeneralFoodEfficacyRule[] = [
   { language: "fr", pattern: new RegExp(`(?:prendre|prenez|consommer|consommez|ingérer|ingérez)[^.!?;；,，\\n]{0,20}?${measuredIntakeSource}[^.!?;；,，\\n]{0,24}?(?:par\\s*jour|chaque\\s*jour|quotidiennement)`, "giu") },
   { language: "de", pattern: new RegExp(`(?:täglich|pro\\s*tag|jeden\\s*tag)[^.!?;；,，\\n]{0,24}?${measuredIntakeSource}`, "giu") },
   { language: "de", pattern: new RegExp(`(?:einnehmen|nehmen|verzehren)[^.!?;；,，\\n]{0,20}?${measuredIntakeSource}[^.!?;；,，\\n]{0,24}?(?:täglich|pro\\s*tag|jeden\\s*tag)`, "giu") },
+  { language: "nl", pattern: new RegExp(`(?:dagelijks|per\\s*dag|elke\\s*dag)[^.!?;；,，\\n]{0,24}?${measuredIntakeSource}`, "giu") },
+  { language: "nl", pattern: new RegExp(`(?:nemen|neem|consumeren|consumeer)[^.!?;；,，\\n]{0,20}?${measuredIntakeSource}[^.!?;；,，\\n]{0,24}?(?:dagelijks|per\\s*dag|elke\\s*dag)`, "giu") },
+  { language: "pl", pattern: new RegExp(`(?:dziennie|na\\s*dzień|każdego\\s*dnia)[^.!?;；,，\\n]{0,24}?${measuredIntakeSource}`, "giu") },
+  { language: "pl", pattern: new RegExp(`(?:przyjmować|przyjmuj|zażywać|zażyj|spożywać|spożyj)[^.!?;；,，\\n]{0,20}?${measuredIntakeSource}[^.!?;；,，\\n]{0,24}?(?:dziennie|na\\s*dzień|każdego\\s*dnia)`, "giu") },
   { language: "it", pattern: new RegExp(`(?:al\\s*giorno|ogni\\s*giorno|quotidianamente)[^.!?;；,，\\n]{0,24}?${measuredIntakeSource}`, "giu") },
   { language: "it", pattern: new RegExp(`(?:assumere|assumi|prendere|prendi|consumare|consuma)[^.!?;；,，\\n]{0,20}?${measuredIntakeSource}[^.!?;；,，\\n]{0,24}?(?:al\\s*giorno|ogni\\s*giorno|quotidianamente)`, "giu") },
 ];
 
-const directIntakeEvidencePattern = /(?:라벨|표시사항|포장|제조사|판매자\s*확정|섭취방법|복용방법|label|package|manufacturer|seller[- ]confirmed|directions|instructions|serving\s*size|ラベル|包装|用法|製造元|メーカー|標示|包裝|用量|製造商|制造商|nhãn|bao\s*bì|nhà\s*sản\s*xuất|hướng\s*dẫn|khẩu\s*phần|kemasan|produsen|petunjuk|takaran\s*saji|pembungkusan|pengeluar|arahan|saiz\s*hidangan|ฉลาก|บรรจุภัณฑ์|ผู้ผลิต|คำแนะนำ|วิธีรับประทาน|ขนาดรับประทาน|etikett|hersteller|etiqueta|fabricante|étiquette|fabricant|etichetta|produttore|rótulo)/iu;
+const directIntakeEvidencePattern = /(?:라벨|표시사항|포장|제조사|판매자\s*확정|섭취방법|복용방법|label|package|manufacturer|seller[- ]confirmed|directions|instructions|serving\s*size|ラベル|包装|用法|製造元|メーカー|標示|包裝|用量|製造商|制造商|nhãn|bao\s*bì|nhà\s*sản\s*xuất|hướng\s*dẫn|khẩu\s*phần|kemasan|produsen|petunjuk|takaran\s*saji|pembungkusan|pengeluar|arahan|saiz\s*hidangan|ฉลาก|บรรจุภัณฑ์|ผู้ผลิต|คำแนะนำ|วิธีรับประทาน|ขนาดรับประทาน|etikett?|hersteller|verpakking|fabrikant|aanwijzingen|etykieta|opakowanie|producent|instrukcja|etiqueta|fabricante|étiquette|fabricant|etichetta|produttore|rótulo)/iu;
 const measuredIntakeTokenPattern = new RegExp(measuredIntakeSource, "giu");
 
-const healthClaimClauseBoundaryPattern = /[.!?。！？;；,，、\n]|하지만|그러나|반면|지만|しかし|一方|ものの|但是|然而|不過|不过|แต่|อย่างไรก็ตาม|\b(?:but|however|nhưng|tuy\s*nhiên|tetapi|namun|walaupun|pero|sin\s+embargo|mas|porém|contudo|mais|cependant|aber|jedoch|sondern|ma|però|tuttavia)\b/giu;
+const healthClaimClauseBoundaryPattern = /[.!?。！？;；,，、\n]|하지만|그러나|반면|지만|しかし|一方|ものの|但是|然而|不過|不过|แต่|อย่างไรก็ตาม|\b(?:but|however|nhưng|tuy\s*nhiên|tetapi|namun|walaupun|pero|sin\s+embargo|mas|porém|contudo|mais|cependant|aber|jedoch|sondern|maar|echter|ale|jednak|ma|però|tuttavia)\b/giu;
 
 function claimClauseContext(value: string, start: number, end: number) {
   let clauseStart = 0;
@@ -196,6 +204,16 @@ function isExplicitlyNegatedHealthClaim(
       || /\b(?:nicht|nie|kein(?:e[rmns]?)?)\b/iu.test(matchedCopy);
     return negated && !/\bnicht\s+nur\b/iu.test(`${prefix} ${matchedCopy}`);
   }
+  if (language === "nl") {
+    const negated = /\b(?:niet|nooit|geen)(?:\s+[a-zà-ÿ]+){0,4}\s*$/iu.test(prefix)
+      || /\b(?:niet|nooit|geen)\b/iu.test(matchedCopy);
+    return negated && !/\bniet\s+alleen\b/iu.test(`${prefix} ${matchedCopy}`);
+  }
+  if (language === "pl") {
+    const negated = /\b(?:nie|nigdy|żaden|żadna|żadne)(?:\s+[a-ząćęłńóśźż]+){0,4}\s*$/iu.test(prefix)
+      || /\b(?:nie|nigdy|żaden|żadna|żadne)\b/iu.test(matchedCopy);
+    return negated && !/\bnie\s+tylko\b/iu.test(`${prefix} ${matchedCopy}`);
+  }
   const negated = /\b(?:non|mai)(?:\s+[a-zàèéìíîòóùú]+){0,4}\s*$/iu.test(prefix);
   return negated && !/\bnon\s+solo\b/iu.test(prefix);
 }
@@ -233,7 +251,7 @@ function isExplicitlyNegatedIntakeInstruction(
     return /(?:摂取|服用|飲用|飲む|食べる)(?:しない|しません|しなくてよい|する必要(?:が)?ない)/u.test(`${matchedCopy}${suffix}`);
   }
   if (language === "zh") {
-    return /(?:不要|不應|不应|無需|无需|不必)[^.!?。！？;；,，、\n]{0,24}(?:服用|食用|飲用|饮用|吃|喝|攝取|摄取)/u.test(`${prefix}${matchedCopy}`);
+    return /(?:不要|不應|不应|無需|无需|不必|請勿|请勿)[^.!?。！？;；,，、\n]{0,24}(?:服用|食用|飲用|饮用|吃|喝|攝取|摄取)/u.test(`${prefix}${matchedCopy}`);
   }
   if (language === "es") {
     return /\b(?:no|nunca|jamás)(?:\s+[a-záéíóúñü]+){0,4}\s*$/iu.test(prefix)
@@ -251,6 +269,14 @@ function isExplicitlyNegatedIntakeInstruction(
   if (language === "de") {
     return /\b(?:nicht|nie|kein(?:e[rmns]?)?)\b/iu.test(matchedCopy)
       && !/\bnicht\s+nur\b/iu.test(matchedCopy);
+  }
+  if (language === "nl") {
+    return /\b(?:niet|nooit|geen)\b/iu.test(`${prefix} ${matchedCopy}`)
+      && !/\bniet\s+alleen\b/iu.test(`${prefix} ${matchedCopy}`);
+  }
+  if (language === "pl") {
+    return /\b(?:nie|nigdy|żaden|żadna|żadne)\b/iu.test(`${prefix} ${matchedCopy}`)
+      && !/\bnie\s+tylko\b/iu.test(`${prefix} ${matchedCopy}`);
   }
   return /\b(?:non|mai)(?:\s+[a-zàèéìíîòóùú]+){0,4}\s*$/iu.test(prefix)
     && !/\bnon\s+solo\b/iu.test(prefix);

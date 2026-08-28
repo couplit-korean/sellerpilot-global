@@ -75,11 +75,11 @@ const workerScopeDefinitions: ReadonlyArray<{
 }> = [
   {
     scope: "ai",
-    label: "AI 작업",
+    label: "서버 AI 작업",
     shortLabel: "AI",
-    purpose: "상품 분석·이미지·답변 초안 큐만 처리합니다.",
-    tokenLabel: "SellerPilot Mac · AI Worker",
-    keychainService: "SellerPilot AI Worker",
+    purpose: "Vercel AI Gateway OIDC로 상품 분석·이미지 큐만 처리하며 Mac 작업자 상태에 의존하지 않습니다.",
+    tokenLabel: "Vercel · AI Studio Runner",
+    keychainService: "Vercel sensitive env · SELLERPILOT_AI_WORKER_TOKEN",
     rotateFlag: "--rotate-ai-token",
   },
   {
@@ -139,7 +139,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data } = await createClient().auth.getSession();
     const accessToken = data.session?.access_token;
-    if (!accessToken) throw new Error("CLI 작업자 관리는 관리자 로그인이 필요합니다.");
+    if (!accessToken) throw new Error("운영 런타임 관리는 관리자 로그인이 필요합니다.");
     return fetch(input, {
       ...init,
       headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}`, ...(init?.headers ?? {}) },
@@ -154,9 +154,9 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         authenticatedFetch("/api/admin/ai-worker-token"),
         authenticatedFetch("/api/admin/ai-jobs?limit=12"),
       ]);
-      const statusPayload = await statusResponse.json().catch(() => ({ message: "CLI 상태 응답을 읽지 못했습니다." })) as WorkerStatus & { message?: string };
+      const statusPayload = await statusResponse.json().catch(() => ({ message: "런타임 상태 응답을 읽지 못했습니다." })) as WorkerStatus & { message?: string };
       const jobsPayload = await jobsResponse.json().catch(() => ({ message: "작업 이력 응답을 읽지 못했습니다.", jobs: [] })) as { message?: string; jobs?: AiJob[] };
-      if (!statusResponse.ok) throw new Error(statusPayload.message ?? "CLI 상태를 불러오지 못했습니다.");
+      if (!statusResponse.ok) throw new Error(statusPayload.message ?? "런타임 상태를 불러오지 못했습니다.");
       setStatus(statusPayload);
       setError("");
       if (jobsResponse.ok) {
@@ -166,7 +166,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         setJobsError(jobsPayload.message ?? "작업 이력을 불러오지 못했습니다.");
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "CLI 상태를 불러오지 못했습니다.");
+      setError(loadError instanceof Error ? loadError.message : "런타임 상태를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -245,25 +245,25 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     try {
       const response = await authenticatedFetch("/api/admin/ai-worker-token", {
         method: "POST",
-        body: JSON.stringify({ label: "SellerPilot Mac Worker", expiresInDays }),
+        body: JSON.stringify({ label: "SellerPilot Scoped Runtime", expiresInDays }),
       });
       const payload = await response.json().catch(() => ({ message: "토큰 발급 응답을 읽지 못했습니다." })) as Partial<IssuedTokenSet>;
       const completeTokenSet = payload.tokens
         && workerScopeDefinitions.every((definition) => payload.tokens?.[definition.scope]?.token.startsWith("spw_"));
       if (!response.ok || !payload.tokenSetId || !completeTokenSet) {
-        throw new Error(payload.message ?? "CLI 작업자 토큰 세트를 발급하지 못했습니다.");
+        throw new Error(payload.message ?? "운영 런타임 토큰 세트를 발급하지 못했습니다.");
       }
       setIssued({
         tokenSetId: payload.tokenSetId,
         activationExpiresAt: payload.activationExpiresAt ?? "",
         expiresAt: payload.expiresAt ?? "",
-        message: payload.message ?? "새 CLI 작업자 토큰 세트가 대기 상태로 발급됐습니다.",
+        message: payload.message ?? "새 운영 런타임 토큰 세트가 대기 상태로 발급됐습니다.",
         tokens: payload.tokens as IssuedTokenSet["tokens"],
       });
       notify("세 범위 전용 토큰을 대기 상태로 발급했습니다. 설치 성공 전까지 기존 토큰은 유지됩니다.");
       await load();
     } catch (issueError) {
-      setError(issueError instanceof Error ? issueError.message : "CLI 작업자 토큰을 발급하지 못했습니다.");
+      setError(issueError instanceof Error ? issueError.message : "운영 런타임 토큰을 발급하지 못했습니다.");
     } finally {
       setIssuing(false);
     }
@@ -300,11 +300,11 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
 
   return <section className="cli-runtime-card">
     <header>
-      <div className="cli-runtime-title"><span><SquareTerminal size={18} /></span><div><small>CHATGPT CLI RUNTIME</small><h3>로컬 Codex AI 작업자</h3><p>ChatGPT OAuth는 Mac에만 남고, Vercel은 암호화된 작업 큐만 전달합니다.</p></div></div>
+      <div className="cli-runtime-title"><span><SquareTerminal size={18} /></span><div><small>VERCEL AI + SCOPED WORKERS</small><h3>서버 AI 스튜디오 런타임</h3><p>상품 스튜디오는 Vercel OIDC와 Supabase 비공개 큐에서 실행하며, 판매채널·스케줄러 권한은 별도 범위로 유지합니다.</p></div></div>
       <span className={`cli-runtime-state ${online ? "online" : "offline"}`}><i />{online ? `${selectedScopeDefinition.shortLabel} 연결` : selectedWorker ? `${selectedScopeDefinition.shortLabel} 대기` : `${selectedScopeDefinition.shortLabel} 토큰 미발급`}</span>
     </header>
 
-    <div className="cli-worker-scopes" role="group" aria-label="CLI 작업자 권한 선택">
+    <div className="cli-worker-scopes" role="group" aria-label="운영 런타임 권한 선택">
       {workerScopeDefinitions.map((definition) => {
         const scopeWorker = workerForScope(status, definition.scope);
         const scopeOnline = isOnline(scopeWorker?.last_seen_at ?? null);
@@ -322,10 +322,10 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     </div>
 
     <div className="cli-runtime-grid">
-      <article><Cpu size={16} /><span><small>{selectedScopeDefinition.label} 작업자</small><b>{selectedWorker?.label ?? "연결 필요"}</b><em>{selectedWorker?.last_version ?? "전용 토큰 저장 후 실행"}</em></span></article>
+      <article><Cpu size={16} /><span><small>{selectedScopeDefinition.label} 런타임</small><b>{selectedWorker?.label ?? "연결 필요"}</b><em>{selectedWorker?.last_version ?? (selectedScope === "ai" ? "Vercel 서버 실행 확인 대기" : "전용 토큰 저장 후 실행")}</em></span></article>
       <article><Clock3 size={16} /><span><small>마지막 신호</small><b>{formatDate(selectedWorker?.last_seen_at ?? null)}</b><em>{selectedWorker ? `토큰 ${selectedWorker.fingerprint} · 만료 ${formatDate(selectedWorker.expires_at)}` : `${selectedScopeDefinition.label} 토큰을 먼저 발급하세요`}</em></span></article>
       <article><RefreshCw size={16} /><span><small>현재 작업</small><b>{Number(status?.running ?? 0)} 실행 · {Number(status?.queued ?? 0)} 대기</b><em>15초마다 자동 갱신</em></span></article>
-      <article><CheckCircle2 size={16} /><span><small>오늘 처리</small><b>{Number(status?.succeeded_today ?? 0)} 성공 · {Number(status?.failed_today ?? 0)} 실패</b><em>상세페이지 분석 + codex-image</em></span></article>
+      <article><CheckCircle2 size={16} /><span><small>오늘 처리</small><b>{Number(status?.succeeded_today ?? 0)} 성공 · {Number(status?.failed_today ?? 0)} 실패</b><em>16개 이미지 + 26개국 현지화 계약</em></span></article>
     </div>
 
     <div className="cli-runtime-actions">
@@ -356,7 +356,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         {jobs.map((job) => <article key={job.id} className="cli-job-row">
           <div className="cli-job-main">
             <span className={`cli-job-status ${job.status}`}>{jobStatusLabel[job.status]}</span>
-            <div><b>{job.product_description || jobKindLabel[job.kind] || "CLI 작업"}</b><small>{job.kind === "product_studio" ? `${job.image_count}개 이미지 · ` : ""}{job.attempt_count}회 시도 · {formatDate(job.created_at)}</small>{job.error_message && <em>{job.error_message}</em>}</div>
+            <div><b>{job.product_description || jobKindLabel[job.kind] || "AI 작업"}</b><small>{job.kind === "product_studio" ? `${job.image_count}개 이미지 · ` : ""}{job.attempt_count}회 시도 · {formatDate(job.created_at)}</small>{job.error_message && <em>{job.error_message}</em>}</div>
           </div>
           <div className="cli-job-controls">
             {job.status === "succeeded" && <><span className="cli-job-output">{job.has_hero ? "대표 이미지 포함" : job.kind === "support_reply" ? "답변 초안 완료" : job.has_result ? "분석 완료" : "완료"}</span>{job.kind === "product_studio" && <button type="button" onClick={() => void recoverProduct(job)} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <DatabaseZap size={13} />}상품 원장 연결</button>}</>}
@@ -373,11 +373,11 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       {workerScopeDefinitions.map((definition) => <p key={definition.scope}>
         <b>{definition.label}</b><code>{issued.tokens[definition.scope].token}</code>
         <button type="button" onClick={() => void copy(issued.tokens[definition.scope].token, `${definition.label} 전용 토큰을 복사했습니다.`)}><Copy size={13} />토큰 복사</button>
-        <small>Keychain: {definition.keychainService} · 지문 {issued.tokens[definition.scope].fingerprint}</small>
+        <small>{definition.scope === "ai" ? "서버 저장 위치" : "Keychain"}: {definition.keychainService} · 지문 {issued.tokens[definition.scope].fingerprint}</small>
       </p>)}
       <p><b>안전 설치·교체</b><code>{issuedInstallCommand}</code><button type="button" onClick={() => void copy(issuedInstallCommand, "CLI 작업자 안전 교체 명령을 복사했습니다.")}><Copy size={13} />명령 복사</button><small>{formatDate(issued.activationExpiresAt)} 전까지 실행하세요. 설치 실패 시 대기 토큰만 폐기되고 기존 작업자는 유지됩니다.</small></p>
     </div>}
     {error && <p className="cli-runtime-error"><AlertTriangle size={14} />{error}</p>}
-    {loading && !status && <div className="cli-runtime-loading"><LoaderCircle className="spin" size={15} />CLI 작업자 상태 확인 중</div>}
+    {loading && !status && <div className="cli-runtime-loading"><LoaderCircle className="spin" size={15} />운영 런타임 상태 확인 중</div>}
   </section>;
 }

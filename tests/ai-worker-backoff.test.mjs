@@ -115,7 +115,7 @@ test("AI claim route bounds Supabase RPCs and preserves 401 versus 503 semantics
   assert.match(route, /status: 426/);
   assert.ok(
     route.indexOf("supportsLiveResultUploadAuthorization(version)")
-      < route.indexOf('serviceClient.rpc("sellerpilot_claim_ai_job"'),
+      < route.indexOf('serviceClient.rpc("sellerpilot_claim_local_ai_job"'),
     "obsolete workers must be rejected before claiming a queued job",
   );
 });

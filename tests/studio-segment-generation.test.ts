@@ -96,11 +96,11 @@ function expectContractError(code: StudioSegmentContractError["code"], callback:
   });
 }
 
-test("studio segment plan reads all 27 canonical targets in chunks of at most four", () => {
+test("studio segment plan reads all 34 canonical targets in chunks of at most four", () => {
   const chunks = planStudioLocalizedChunks();
-  assert.deepEqual(chunks.map((chunk) => chunk.length), [4, 4, 4, 4, 4, 4, 3]);
+  assert.deepEqual(chunks.map((chunk) => chunk.length), [4, 4, 4, 4, 4, 4, 4, 4, 2]);
   assert.deepEqual(chunks.flat(), canonicalStudioLocalizedTargets);
-  assert.equal(new Set(chunks.flat().map(targetKey)).size, 27);
+  assert.equal(new Set(chunks.flat().map(targetKey)).size, 34);
   assert.equal(Object.isFrozen(chunks), true);
   chunks.forEach((chunk) => assert.equal(Object.isFrozen(chunk), true));
 

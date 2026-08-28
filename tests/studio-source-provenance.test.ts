@@ -80,7 +80,7 @@ test("paired upload preserves raw bytes before derivatives with bounded mobile c
   const calls: string[] = [];
   let active = 0;
   let maximumActive = 0;
-  const units = Array.from({ length: 5 }, (_, index) => ({
+  const units = Array.from({ length: 7 }, (_, index) => ({
     index,
     original: new Blob([`raw-${index}`], { type: "image/png" }),
     originalMediaType: "image/png",
@@ -91,7 +91,7 @@ test("paired upload preserves raw bytes before derivatives with bounded mobile c
     userId,
     jobId,
     units,
-    concurrency: 2,
+    concurrency: studioPhotoUploadConcurrency,
     signal: new AbortController().signal,
     upload: async (path) => {
       active += 1;
@@ -102,7 +102,7 @@ test("paired upload preserves raw bytes before derivatives with bounded mobile c
     },
     cleanup: async () => assert.fail("successful upload must not clean up"),
   });
-  assert.ok(maximumActive <= 2);
+  assert.equal(maximumActive, studioPhotoUploadConcurrency);
   for (let index = 0; index < units.length; index += 1) {
     const original = originalStudioImagePath(userId, jobId, index);
     const normalized = normalizedStudioImagePath(userId, jobId, index);
@@ -364,8 +364,8 @@ test("browser and server integration keep originals separate from previews and s
   assert.doesNotMatch(studio, /FileReader|readAsDataURL|blobToDataUrl/);
   assert.match(studio, /original:\s*sourceBatch\[offset\]\.file/);
   assert.match(studio, /originalMediaType:\s*sourceBatch\[offset\]\.file\.type/);
-  assert.equal(studioPhotoPreparationConcurrency, 2);
-  assert.equal(studioPhotoUploadConcurrency, 2);
+  assert.equal(studioPhotoPreparationConcurrency, 3);
+  assert.equal(studioPhotoUploadConcurrency, 3);
   assert.match(claimRoute, /sourceImagePathsForWorker\(paths, imageSpecs\)/);
   assert.match(claimRoute, /createSignedUrls\(sourcePaths, 10 \* 60\)/);
   assert.match(maintenance, /expandStudioCleanupStoragePaths\(claim\.paths\)/);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   buildCompetitorResearchRetryPath,
@@ -391,4 +392,10 @@ test("a timeout preserves the last valid partial competitor snapshot", async () 
   });
 
   assert.deepEqual(result, { ...partial, state: "unavailable", retryAvailable: true });
+});
+
+test("every authenticated competitor-price response explicitly disables intermediary caching", async () => {
+  const route = await readFile(new URL("../app/api/admin/competitor-prices/route.ts", import.meta.url), "utf8");
+  assert.match(route, /const NO_STORE_HEADERS = \{ "cache-control": "no-store, max-age=0" \}/);
+  assert.equal((route.match(/headers: NO_STORE_HEADERS/g) ?? []).length, 5);
 });

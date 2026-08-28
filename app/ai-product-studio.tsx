@@ -103,7 +103,7 @@ type StudioAbortScope = {
 const studioUploadTimeoutMs = 45_000;
 const studioJobAdmissionGraceMs = 30_000;
 const studioPreUploadOptimizationLimit = 9;
-const maximumSubmittedIntakeSnapshots = 8;
+const maximumSubmittedIntakeSnapshots = 9;
 
 class StudioJobTerminalError extends Error {}
 

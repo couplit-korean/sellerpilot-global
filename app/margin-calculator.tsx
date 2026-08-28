@@ -151,10 +151,18 @@ export async function fetchMarginReferenceRates({
     fallbackPayload: {},
   });
   if (!response.ok || !Array.isArray(payload.rates)) throw new Error("기준환율 응답 오류");
-  const normalizedRates = payload.rates.map((rate) => ({
-    code: rate.code,
-    value: rate.value / Math.max(rate.unit, 1),
-  })).filter((rate) => rate.code && Number.isFinite(rate.value) && rate.value > 0);
+  const requiredCodes = new Set<string>(requiredMarginExchangeRateCodes);
+  const normalizedRates = payload.rates.flatMap((rate) => {
+    if (!requiredCodes.has(rate.code)
+        || !Number.isFinite(rate.unit)
+        || rate.unit <= 0
+        || !Number.isFinite(rate.value)
+        || rate.value <= 0) return [];
+    return [{ code: rate.code, value: rate.value / rate.unit }];
+  });
+  if (new Set(normalizedRates.map((rate) => rate.code)).size !== normalizedRates.length) {
+    throw new Error("기준환율 응답에 중복 통화가 있습니다.");
+  }
   const normalizedByCode = new Map(normalizedRates.map((rate) => [rate.code, rate.value]));
   if (!requiredMarginExchangeRateCodes.every((code) => normalizedByCode.has(code))) {
     throw new Error("필수 기준환율이 누락되었습니다.");

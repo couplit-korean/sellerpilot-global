@@ -50,11 +50,15 @@ test("Supabase-scheduled GET routes accept only HMAC-derived auth and canary wit
     readFile(new URL("lib/internal-scheduler-auth.ts", root), "utf8"),
   ]);
 
-  assert.match(productRoute, /runServerProductResearchCron/);
+  assert.match(productRoute, /runServerProductRecoverySchedule/);
   assert.match(productRuntime, /cronSecret: process\.env\.CRON_SECRET/);
   assert.match(productRuntime, /releaseId: process\.env\.SELLERPILOT_RELEASE_SHA/);
   assert.match(productRuntime, /vercelGitCommitSha: process\.env\.VERCEL_GIT_COMMIT_SHA/);
   assert.match(productRuntime, /requireActiveRuntime: true/);
+  assert.match(productRuntime, /internalScheduleAuthorization\(/);
+  assert.match(productRuntime, /internalScheduleRequestMode\(request\)/);
+  assert.match(productRuntime, /internalScheduleCanaryPayload\(\{/);
+  assert.match(productRuntime, /runtimeStatusMatchesCurrentRelease\(runtime\.data,/);
   assert.match(productResearch, /internalScheduleAuthorization\([\s\S]{0,240}authorization === "missing"[\s\S]{0,240}503/);
   assert.match(productResearch, /authorization !== "authorized"[\s\S]{0,220}401/);
   assert.match(productResearch, /requestedMode === "invalid"[\s\S]{0,180}400/);

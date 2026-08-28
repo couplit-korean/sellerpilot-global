@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 import { aiGeneratedAssetIds } from "../../../../../lib/ai-generated-assets";
-import { readStudioWorkerReadiness } from "../../../../../lib/studio-worker-readiness-server";
+import { readServerProductStudioReadiness, wakeServerProductStudioAfterResponse } from "../../../../../lib/server-product-studio-runtime";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const requestSchema = z.object({
   jobId: z.string().uuid(),
@@ -21,7 +22,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "재제작할 이미지 정보를 확인해 주세요." }, { status: 400 });
   }
 
-  const readiness = await readStudioWorkerReadiness(admin);
+  const readiness = await readServerProductStudioReadiness(admin);
   if (!readiness.available) {
     return NextResponse.json({
       code: "AI_WORKER_UNAVAILABLE",
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
   if (error || typeof data !== "string") {
     return NextResponse.json({ message: "선택한 이미지 재제작 작업을 등록하지 못했습니다." }, { status: 500 });
   }
+  after(wakeServerProductStudioAfterResponse);
   return NextResponse.json({
     jobId: data,
     status: "queued",

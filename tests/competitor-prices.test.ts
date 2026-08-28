@@ -7,6 +7,7 @@ import {
   competitorCandidateRelevance,
   competitorProviderRegistry,
   groupCompetitorPrices,
+  naverSearchCredentials,
   normalizedCompetitorQueries,
   searchBraveMarketplaceWebVariants,
   searchCompetitorProviders,
@@ -288,6 +289,47 @@ test("marketplace web provider is opt-in and reports a missing Brave key as unav
   } finally {
     if (original === undefined) delete process.env.BRAVE_SEARCH_API_KEY;
     else process.env.BRAVE_SEARCH_API_KEY = original;
+  }
+});
+
+test("Naver Shopping search never reuses generic Smartstore commerce credentials", async () => {
+  const originalClientId = process.env.NAVER_SEARCH_CLIENT_ID;
+  const originalClientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET;
+  delete process.env.NAVER_SEARCH_CLIENT_ID;
+  delete process.env.NAVER_SEARCH_CLIENT_SECRET;
+  try {
+    const commerceOnlyClient = {
+      rpc: async () => ({
+        data: {
+          credential_id: "credential-one",
+          secret_payload: { client_id: "commerce-client", client_secret: "commerce-secret" },
+        },
+        error: null,
+      }),
+    };
+    assert.equal(await naverSearchCredentials(commerceOnlyClient as never), null);
+
+    const dedicatedSearchClient = {
+      rpc: async () => ({
+        data: {
+          credential_id: "credential-two",
+          secret_payload: {
+            naver_search_client_id: "dedicated-search-client",
+            naver_search_client_secret: "dedicated-search-secret",
+          },
+        },
+        error: null,
+      }),
+    };
+    assert.deepEqual(await naverSearchCredentials(dedicatedSearchClient as never), {
+      clientId: "dedicated-search-client",
+      clientSecret: "dedicated-search-secret",
+    });
+  } finally {
+    if (originalClientId === undefined) delete process.env.NAVER_SEARCH_CLIENT_ID;
+    else process.env.NAVER_SEARCH_CLIENT_ID = originalClientId;
+    if (originalClientSecret === undefined) delete process.env.NAVER_SEARCH_CLIENT_SECRET;
+    else process.env.NAVER_SEARCH_CLIENT_SECRET = originalClientSecret;
   }
 });
 

@@ -285,7 +285,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const operationsRoute = await readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8");
   const cliControlsMigration = await readFile(new URL("../supabase/migrations/20260816103854_ai_operations_controls.sql", import.meta.url), "utf8");
   assert.match(credentialPage, /Supabase Vault/);
-  assert.match(cliRuntimeCard, /로컬 Codex AI 작업자/);
+  assert.match(cliRuntimeCard, /서버 AI 스튜디오 런타임/);
   assert.match(cliRuntimeCard, /npm run ai:worker:install/);
   assert.match(cliWorker, /codex-image/);
   assert.match(cliWorker, /--enable", "image_generation/);
