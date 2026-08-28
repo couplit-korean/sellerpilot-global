@@ -54,6 +54,7 @@ function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalize
 }
 
 function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormalizer) {
+  const sourceKind = text(data.sellerpilotInquiryKind, "product");
   const nested = object(data.data);
   const root = Object.keys(nested).length ? nested : data;
   const rows = list(root.contents).length ? list(root.contents)
@@ -61,17 +62,33 @@ function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormal
       : list(data.data).length ? list(data.data)
         : list(data.contents);
   return rows.map((row): NormalizedChannelInquiry | null => {
-    const externalTicketId = text(row.questionId, row.inquiryNo);
-    const message = text(row.question, row.content);
+    const remoteTicketId = sourceKind === "customer"
+      ? text(row.inquiryNo)
+      : text(row.questionId);
+    const externalTicketId = sourceKind === "customer" && remoteTicketId
+      ? `customer:${remoteTicketId}`
+      : remoteTicketId;
+    const message = sourceKind === "customer"
+      ? text(row.inquiryContent)
+      : text(row.question);
     if (!externalTicketId || !message) return null;
     return {
       externalTicketId,
-      customerName: text(row.maskedWriterId, "네이버 고객"),
-      subject: text(row.productName, "스마트스토어 상품 문의"),
+      customerName: sourceKind === "customer"
+        ? text(row.customerName, row.customerId, "네이버 고객")
+        : text(row.maskedWriterId, "네이버 고객"),
+      subject: sourceKind === "customer"
+        ? text(row.title, row.category, row.productName, "스마트스토어 고객 문의")
+        : text(row.productName, "스마트스토어 상품 문의"),
       message,
-      status: row.answered === true || text(row.answer) ? "resolved" : "waiting",
+      status: row.answered === true || text(row.answer, row.answerContent) ? "resolved" : "waiting",
       priority: 3,
-      receivedAt: iso(row.createDate, row.createdAt),
+      receivedAt: sourceKind === "customer"
+        ? iso(row.inquiryRegistrationDateTime)
+        : iso(row.createDate),
+      replyContext: sourceKind === "customer"
+        ? { kind: "customer", inquiryNo: remoteTicketId }
+        : { kind: "product", questionId: remoteTicketId },
     };
   }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
 }
@@ -187,4 +204,4 @@ export function normalizeChannelInquiries(
   return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
 }
 
-export { inquirySyncArguments } from "./sync-arguments";
+export { inquiryHistorySyncRequests, inquirySyncArguments, inquirySyncRequests } from "./sync-arguments";

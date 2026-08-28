@@ -54,9 +54,9 @@ test("server-gated marketplace reply channels use one gateway while unsupported 
 
 test("channel verification separates inquiry receiving from remote reply capability", () => {
   assert.deepEqual(csChannelVerification("qoo10", "passed", 0), {
-    readLabel: "상품 문의 조회 성공 · 원장 0건",
+    readLabel: "상품 문의 최근 조회 작업 통과 · 누적 원장 0건",
     replyLabel: "답변: 보안 게이트웨이 원격 전송",
-    badge: "조회 성공",
+    badge: "최근 조회 통과",
     tone: "passed",
   });
   assert.equal(csChannelVerification("qoo10", "queued").badge, "조회 대기");
@@ -64,8 +64,9 @@ test("channel verification separates inquiry receiving from remote reply capabil
   assert.match(csChannelVerification("shopee", null).readLabel, /API 미연동/);
   assert.match(csChannelVerification("lazada", "passed").replyLabel, /보안 게이트웨이/);
   assert.match(csChannelVerification("temu", "passed").readLabel, /반품·환불 작업/);
-  assert.match(csChannelVerification("elevenst", "unsupported").replyLabel, /API 미지원/);
-  assert.equal(csChannelVerification("elevenst", "passed", 3).badge, "수신 미지원");
+  assert.match(csChannelVerification("elevenst", "unsupported").readLabel, /상품 Q&A·긴급알리미 수신 연동 전/);
+  assert.match(csChannelVerification("elevenst", "unsupported").replyLabel, /상세 계약·서비스 권한 검증 전/);
+  assert.equal(csChannelVerification("elevenst", "passed", 3).badge, "수신 미연결");
   assert.deepEqual(csChannelVerification("lazada", "failed", 0, "App does not have permission to access this api"), {
     readLabel: "Lazada IM 조회 거절 · 운영 앱 Buyer IM 권한 필요",
     replyLabel: "답변: 보안 게이트웨이 원격 전송",

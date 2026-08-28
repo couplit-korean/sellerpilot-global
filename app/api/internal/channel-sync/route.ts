@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { activeChannelKeys, type ActiveChannelKey } from "../../../../lib/channels/catalog";
-import { inquirySyncArguments } from "../../../../lib/channels/inquiry-sync";
+import { inquirySyncRequests } from "../../../../lib/channels/inquiry-sync";
 import { orderSyncRequests } from "../../../../lib/channels/order-sync";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 import { supabaseUrl } from "../../../../lib/supabase/config";
@@ -33,10 +33,7 @@ type PeriodicSyncResult = {
 };
 
 function periodicInquiryRequests(channel: ActiveChannelKey, now: Date) {
-  return inquirySyncArguments(channel, now).map((argumentsValue, index) => ({
-    periodicKey: `inquiries:${channel === "coupang" && typeof argumentsValue.kind === "string" ? argumentsValue.kind : index}`,
-    arguments: argumentsValue,
-  }));
+  return inquirySyncRequests(channel, now);
 }
 
 function serverClient() {

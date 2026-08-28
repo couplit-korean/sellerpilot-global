@@ -55,6 +55,111 @@ create or replace function vault.delete_secret(secret_id uuid)
 returns void
 language sql
 as $$ delete from vault.secrets where id = secret_id $$;
+create or replace function vault.update_secret(
+  secret_id uuid,
+  new_secret text default null,
+  new_name text default null,
+  new_description text default null
+)
+returns void
+language sql
+as $$
+  update vault.secrets
+     set secret = coalesce(new_secret, secret),
+         name = coalesce(new_name, name),
+         description = coalesce(new_description, description)
+   where id = secret_id
+$$;
+
+create schema if not exists net;
+create table if not exists net.http_request_queue (
+  id bigint generated always as identity primary key,
+  url text not null,
+  body jsonb,
+  params jsonb,
+  headers jsonb,
+  timeout_milliseconds integer
+);
+create table if not exists net._http_response (
+  id bigint primary key,
+  status_code integer,
+  content_type text,
+  headers jsonb,
+  content text,
+  timed_out boolean,
+  error_msg text,
+  created timestamptz not null default now()
+);
+create or replace function net.http_post(
+  url text,
+  body jsonb default '{}'::jsonb,
+  params jsonb default '{}'::jsonb,
+  headers jsonb default '{"Content-Type":"application/json"}'::jsonb,
+  timeout_milliseconds integer default 1000
+)
+returns bigint
+language plpgsql
+as $$
+declare v_id bigint;
+begin
+  insert into net.http_request_queue (
+    url, body, params, headers, timeout_milliseconds
+  ) values (
+    $1, $2, $3, $4, $5
+  ) returning id into v_id;
+  return v_id;
+end;
+$$;
+
+create schema if not exists cron;
+create table if not exists cron.job (
+  jobid bigint generated always as identity primary key,
+  jobname text not null unique,
+  schedule text not null,
+  command text not null,
+  active boolean not null default true
+);
+create table if not exists cron.job_run_details (
+  runid bigint generated always as identity primary key,
+  jobid bigint not null,
+  end_time timestamptz
+);
+create or replace function cron.schedule(
+  job_name text,
+  job_schedule text,
+  job_command text
+)
+returns bigint
+language plpgsql
+as $$
+declare v_job_id bigint;
+begin
+  insert into cron.job (jobname, schedule, command)
+  values (job_name, job_schedule, job_command)
+  on conflict (jobname) do update
+    set schedule = excluded.schedule,
+        command = excluded.command
+  returning jobid into v_job_id;
+  return v_job_id;
+end;
+$$;
+create or replace function cron.alter_job(
+  job_id bigint,
+  schedule text default null,
+  command text default null,
+  database text default null,
+  username text default null,
+  active boolean default null
+)
+returns void
+language sql
+as $$
+  update cron.job
+     set schedule = coalesce($2, cron.job.schedule),
+         command = coalesce($3, cron.job.command),
+         active = coalesce($6, cron.job.active)
+   where jobid = $1
+$$;
 
 create schema if not exists storage;
 create table if not exists storage.buckets (
@@ -87,7 +192,9 @@ as $$ select convert_to(md5(value || algorithm), 'UTF8') $$;
 function withoutUnavailableExtensions(sql) {
   return sql
     .replace(/^create extension if not exists pgcrypto;\s*$/gim, "")
-    .replace(/^create extension if not exists supabase_vault with schema vault;\s*$/gim, "");
+    .replace(/^create extension if not exists supabase_vault with schema vault;\s*$/gim, "")
+    .replace(/^create extension if not exists pg_cron with schema pg_catalog;\s*$/gim, "")
+    .replace(/^create extension if not exists pg_net with schema extensions;\s*$/gim, "");
 }
 
 async function createDatabase() {

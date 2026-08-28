@@ -1,11 +1,15 @@
 import type { ActiveChannelKey } from "./catalog";
 import { ebayAsqMarketplaceId, type EbayAsqMarketplaceId } from "./ebay-asq";
 
+function koreaCalendarDate(value: Date) {
+  return new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 function coupangDailyDate(value: Date) {
   // Coupang's v5 daily order query requires the market UTC offset after the
   // calendar date. A bare YYYY-MM-DD is rejected after the 2025 API
   // internationalization change.
-  return `${new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10)}+09:00`;
+  return `${koreaCalendarDate(value)}+09:00`;
 }
 
 function coupangTimeFrame(value: Date) {
@@ -145,21 +149,35 @@ export function inquirySyncArguments(
   // points in some markets. Six elapsed days avoids an eight-calendar-day
   // window around timezone boundaries.
   const from = new Date(now.getTime() - 6 * 86_400_000);
-  const fromDate = from.toISOString().slice(0, 10);
-  const toDate = now.toISOString().slice(0, 10);
+  const fromDate = koreaCalendarDate(from);
+  const toDate = koreaCalendarDate(now);
   if (channel === "coupang") return [
     { kind: "product", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, answeredType: "NOANSWER", pageNum: 1, pageSize: 50 } },
     { kind: "call-center", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, partnerCounselingStatus: "NO_ANSWER", pageNum: 1, pageSize: 30 } },
+    { kind: "call-center", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, partnerCounselingStatus: "TRANSFER", pageNum: 1, pageSize: 30 } },
   ];
-  if (channel === "smartstore") return [{
-    query: {
-      fromDate: from.toISOString(),
-      toDate: now.toISOString(),
-      answered: false,
-      page: 1,
-      size: 100,
+  if (channel === "smartstore") return [
+    {
+      kind: "product",
+      query: {
+        fromDate: from.toISOString(),
+        toDate: now.toISOString(),
+        answered: false,
+        page: 1,
+        size: 100,
+      },
     },
-  }];
+    {
+      kind: "customer",
+      query: {
+        startSearchDate: fromDate,
+        endSearchDate: toDate,
+        answered: false,
+        page: 1,
+        size: 200,
+      },
+    },
+  ];
   if (channel === "qoo10") return [{
     params: { search_start_dt: qoo10Date(from), search_end_dt: qoo10Date(now), proc_status: "S1" },
   }];
@@ -175,5 +193,116 @@ export function inquirySyncArguments(
   if (channel === "ebay") {
     return [ebayAsqInquirySyncArguments(now, releaseContext.marketplaceId)];
   }
+  return [];
+}
+
+function inquiryRequestKey(channel: ActiveChannelKey, argumentsValue: Record<string, unknown>, index: number) {
+  if (argumentsValue.bootstrap === true) return "inquiries:bootstrap";
+  const kind = typeof argumentsValue.kind === "string" ? argumentsValue.kind.trim() : "";
+  const query = argumentsValue.query && typeof argumentsValue.query === "object" && !Array.isArray(argumentsValue.query)
+    ? argumentsValue.query as Record<string, unknown>
+    : {};
+  if (channel === "coupang") {
+    const status = String(query.answeredType ?? query.partnerCounselingStatus ?? "all").trim().toLowerCase();
+    return `inquiries:${kind || "product"}:${status || "all"}`;
+  }
+  if (channel === "smartstore") return `inquiries:${kind || "product"}`;
+  return `inquiries:${index}`;
+}
+
+export function inquirySyncRequests(
+  channel: ActiveChannelKey,
+  now = new Date(),
+  releaseContext: {
+    environment?: "sandbox" | "production";
+    marketplaceId?: EbayAsqMarketplaceId;
+  } = {},
+) {
+  return inquirySyncArguments(channel, now, releaseContext).map((argumentsValue, index) => ({
+    periodicKey: inquiryRequestKey(channel, argumentsValue, index),
+    arguments: argumentsValue,
+  }));
+}
+
+function calendarDay(value: string) {
+  return new Date(`${value}T00:00:00.000Z`);
+}
+
+/**
+ * Creates a bounded, read-only history refresh for the Korean channels whose
+ * public seller APIs expose inquiry history. Coupang is split into at most
+ * seven inclusive calendar days per request, while Smartstore supports the
+ * requested range directly. 11st is deliberately absent: its official public
+ * service overview advertises Product Q&A and Emergency Notification APIs,
+ * but the authenticated developer guide is still required to verify the exact
+ * seller endpoint, request/response contract, pagination, date window, and
+ * whether the connected key is registered for those services. Do not infer a
+ * provider contract from the overview alone.
+ */
+export function inquiryHistorySyncRequests(
+  channel: ActiveChannelKey,
+  now = new Date(),
+  historyDays = 30,
+) {
+  if (!Number.isInteger(historyDays) || historyDays < 7 || historyDays > 30) {
+    throw new Error("INQUIRY_HISTORY_RANGE_INVALID");
+  }
+  const lastDay = calendarDay(koreaCalendarDate(now));
+  const firstDay = new Date(lastDay.getTime() - (historyDays - 1) * 86_400_000);
+
+  if (channel === "coupang") {
+    const requests: Array<{ periodicKey: string; arguments: Record<string, unknown> }> = [];
+    for (let start = firstDay; start.getTime() <= lastDay.getTime(); start = new Date(start.getTime() + 7 * 86_400_000)) {
+      const end = new Date(Math.min(start.getTime() + 6 * 86_400_000, lastDay.getTime()));
+      const inquiryStartAt = start.toISOString().slice(0, 10);
+      const inquiryEndAt = end.toISOString().slice(0, 10);
+      requests.push({
+        periodicKey: `inquiries:history:${inquiryStartAt}:${inquiryEndAt}:product:all`,
+        arguments: {
+          kind: "product",
+          query: { inquiryStartAt, inquiryEndAt, answeredType: "ALL", pageNum: 1, pageSize: 50 },
+        },
+      });
+      for (const partnerCounselingStatus of ["NONE", "ANSWER", "NO_ANSWER", "TRANSFER"] as const) {
+        requests.push({
+          periodicKey: `inquiries:history:${inquiryStartAt}:${inquiryEndAt}:call-center:${partnerCounselingStatus.toLowerCase()}`,
+          arguments: {
+            kind: "call-center",
+            query: { inquiryStartAt, inquiryEndAt, partnerCounselingStatus, pageNum: 1, pageSize: 30 },
+          },
+        });
+      }
+    }
+    return requests;
+  }
+
+  if (channel === "smartstore") {
+    const fromDate = new Date(firstDay.getTime());
+    const toDate = new Date(now.getTime());
+    return [{
+      periodicKey: `inquiries:history:${firstDay.toISOString().slice(0, 10)}:${lastDay.toISOString().slice(0, 10)}:product:all`,
+      arguments: {
+        kind: "product",
+        query: {
+          fromDate: `${fromDate.toISOString().slice(0, 10)}T00:00:00.000+09:00`,
+          toDate: toDate.toISOString(),
+          page: 1,
+          size: 100,
+        },
+      },
+    }, {
+      periodicKey: `inquiries:history:${firstDay.toISOString().slice(0, 10)}:${lastDay.toISOString().slice(0, 10)}:customer:all`,
+      arguments: {
+        kind: "customer",
+        query: {
+          startSearchDate: firstDay.toISOString().slice(0, 10),
+          endSearchDate: lastDay.toISOString().slice(0, 10),
+          page: 1,
+          size: 200,
+        },
+      },
+    }];
+  }
+
   return [];
 }

@@ -86,6 +86,111 @@ create or replace function vault.delete_secret(secret_id uuid)
 returns void
 language sql
 as $$ delete from vault.secrets where id = secret_id $$;
+create or replace function vault.update_secret(
+  secret_id uuid,
+  new_secret text default null,
+  new_name text default null,
+  new_description text default null
+)
+returns void
+language sql
+as $$
+  update vault.secrets
+     set secret = coalesce(new_secret, secret),
+         name = coalesce(new_name, name),
+         description = coalesce(new_description, description)
+   where id = secret_id
+$$;
+
+create schema if not exists net;
+create table if not exists net.http_request_queue (
+  id bigint generated always as identity primary key,
+  url text not null,
+  body jsonb,
+  params jsonb,
+  headers jsonb,
+  timeout_milliseconds integer
+);
+create table if not exists net._http_response (
+  id bigint primary key,
+  status_code integer,
+  content_type text,
+  headers jsonb,
+  content text,
+  timed_out boolean,
+  error_msg text,
+  created timestamptz not null default now()
+);
+create or replace function net.http_post(
+  url text,
+  body jsonb default '{}'::jsonb,
+  params jsonb default '{}'::jsonb,
+  headers jsonb default '{"Content-Type":"application/json"}'::jsonb,
+  timeout_milliseconds integer default 1000
+)
+returns bigint
+language plpgsql
+as $$
+declare v_id bigint;
+begin
+  insert into net.http_request_queue (
+    url, body, params, headers, timeout_milliseconds
+  ) values (
+    $1, $2, $3, $4, $5
+  ) returning id into v_id;
+  return v_id;
+end;
+$$;
+
+create schema if not exists cron;
+create table if not exists cron.job (
+  jobid bigint generated always as identity primary key,
+  jobname text not null unique,
+  schedule text not null,
+  command text not null,
+  active boolean not null default true
+);
+create table if not exists cron.job_run_details (
+  runid bigint generated always as identity primary key,
+  jobid bigint not null,
+  end_time timestamptz
+);
+create or replace function cron.schedule(
+  job_name text,
+  job_schedule text,
+  job_command text
+)
+returns bigint
+language plpgsql
+as $$
+declare v_job_id bigint;
+begin
+  insert into cron.job (jobname, schedule, command)
+  values (job_name, job_schedule, job_command)
+  on conflict (jobname) do update
+    set schedule = excluded.schedule,
+        command = excluded.command
+  returning jobid into v_job_id;
+  return v_job_id;
+end;
+$$;
+create or replace function cron.alter_job(
+  job_id bigint,
+  schedule text default null,
+  command text default null,
+  database text default null,
+  username text default null,
+  active boolean default null
+)
+returns void
+language sql
+as $$
+  update cron.job
+     set schedule = coalesce($2, cron.job.schedule),
+         command = coalesce($3, cron.job.command),
+         active = coalesce($6, cron.job.active)
+   where jobid = $1
+$$;
 
 create schema if not exists storage;
 create table if not exists storage.buckets (
@@ -118,7 +223,9 @@ as $$ select convert_to(md5(value || algorithm), 'UTF8') $$;
 function withoutUnavailableExtensions(sql) {
   return sql
     .replace(/^create extension if not exists pgcrypto;\s*$/gim, "")
-    .replace(/^create extension if not exists supabase_vault with schema vault;\s*$/gim, "");
+    .replace(/^create extension if not exists supabase_vault with schema vault;\s*$/gim, "")
+    .replace(/^create extension if not exists pg_cron with schema pg_catalog;\s*$/gim, "")
+    .replace(/^create extension if not exists pg_net with schema extensions;\s*$/gim, "");
 }
 
 async function setClaims(db, role = "authenticated", userId = ADMIN_ID) {
@@ -306,6 +413,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828144000_bind_ebay_asq_marketplace_and_rate_limit.sql",
       "20260828145000_compact_legacy_periodic_gateway_reads.sql",
       "20260828145500_persist_elevenst_listing_update_snapshots.sql",
+      "20260828145600_serverless_cs_claim_and_runtime_bootstrap.sql",
+      "20260828145700_schedule_serverless_cs_wakeup.sql",
+      "20260828145800_extend_smartstore_customer_inquiry_reply_fence.sql",
+      "20260828145900_durable_korean_inquiry_history_backfill.sql",
+      "20260828145950_extend_serverless_cs_qoo10_inquiries.sql",
       LEGACY_SCOPE_RETIREMENT_MIGRATION,
     ]);
     for (const name of migrationNames) {
@@ -6878,6 +6990,351 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         "select has_function_privilege('service_role', 'public.sellerpilot_claim_product_ai_job(text,text)', 'EXECUTE')",
       ),
       true,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("Korean inquiry history runs are durable, idempotent, paginated, retryable, and serverless-owned", async () => {
+  const db = new PGlite();
+  const legacyHash = "4".repeat(64);
+  const serverlessHash = "5".repeat(64);
+  try {
+    await db.exec(supabaseCompatibilityLayer);
+    const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
+    const migrationNames = (await readdir(migrationUrl))
+      .filter((name) => name.endsWith(".sql") && name < LEGACY_SCOPE_RETIREMENT_MIGRATION)
+      .sort();
+    for (const name of migrationNames) {
+      await db.exec(withoutUnavailableExtensions(
+        await readFile(new URL(name, migrationUrl), "utf8"),
+      ));
+    }
+
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'history-admin@example.test')",
+      [ADMIN_ID],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'History Admin')",
+      [ADMIN_ID],
+    );
+    await setClaims(db);
+    for (const channel of ["coupang", "smartstore"]) {
+      await scalar(
+        db,
+        `select public.sellerpilot_rotate_credential(
+          $1, 'production', $2::jsonb,
+          now() + interval '180 days', 90, 30, 0
+        )`,
+        [channel, JSON.stringify({
+          key: `${channel}-history-test-key`,
+          access_token: `${channel}-history-access`,
+          refresh_token: `${channel}-history-refresh`,
+          client_id: `${channel}-history-client`,
+          client_secret: `${channel}-history-secret`,
+        })],
+      );
+    }
+
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_start_inquiry_history_backfill(integer)', 'EXECUTE')",
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_start_inquiry_history_backfill(integer)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from information_schema.columns
+          where table_schema = 'sellerpilot_private'
+            and table_name = 'inquiry_history_backfill_runs'
+            and column_name ~ '(customer|message|body|subject|order|provider_response)'`,
+      ),
+      0,
+    );
+
+    const run = await scalar(
+      db,
+      "select public.sellerpilot_start_inquiry_history_backfill(30)",
+    );
+    assert.equal(run.status, "queued");
+    assert.equal(run.expectedInitialJobs, 27);
+    assert.equal(run.totalJobs, 27);
+    assert.equal(run.queuedJobs, 27);
+    assert.equal(run.succeededJobs, 0);
+    assert.equal(run.failedJobs, 0);
+    assert.equal(run.reused, false);
+    assert.equal(run.retriedJobs, 0);
+    assert.deepEqual(
+      (await db.query(
+        `select channel, count(*)::integer as count
+           from sellerpilot_private.channel_gateway_jobs
+          where request_payload #>> '{arguments,sellerpilotHistoryRunId}' = $1
+          group by channel
+          order by channel`,
+        [run.runId],
+      )).rows,
+      [
+        { channel: "coupang", count: 25 },
+        { channel: "smartstore", count: 2 },
+      ],
+    );
+
+    const reused = await scalar(
+      db,
+      "select public.sellerpilot_start_inquiry_history_backfill(30)",
+    );
+    assert.equal(reused.runId, run.runId);
+    assert.equal(reused.reused, true);
+    assert.equal(reused.retriedJobs, 0);
+    assert.equal(reused.totalJobs, 27);
+
+    // A seven-day range gives Coupang and Smartstore the same human-readable
+    // product slice key. Channel lineage must still keep both initial jobs
+    // distinct instead of rejecting the whole atomic backfill transaction.
+    const sevenDayRun = await scalar(
+      db,
+      "select public.sellerpilot_start_inquiry_history_backfill(7)",
+    );
+    assert.equal(sevenDayRun.expectedInitialJobs, 7);
+    assert.equal(sevenDayRun.totalJobs, 7);
+    assert.deepEqual(
+      (await db.query(
+        `select channel, count(*)::integer as count
+           from sellerpilot_private.channel_gateway_jobs
+          where request_payload #>> '{arguments,sellerpilotHistoryRunId}' = $1
+          group by channel
+          order by channel`,
+        [sevenDayRun.runId],
+      )).rows,
+      [
+        { channel: "coupang", count: 5 },
+        { channel: "smartstore", count: 2 },
+      ],
+    );
+
+    const parent = (await db.query(
+      `select id::text, credential_id::text, channel, operation, environment,
+              created_by::text
+         from sellerpilot_private.channel_gateway_jobs
+        where request_payload #>> '{arguments,sellerpilotHistoryRunId}' = $1
+        order by created_at, id
+        limit 1`,
+      [run.runId],
+    )).rows[0];
+    const continuationId = await scalar(
+      db,
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id, credential_id, attempt_id, channel, operation, environment,
+         request_payload, created_by
+       ) values (
+         gen_random_uuid(), $1::uuid, null, $2::text, $3::text, $4::text,
+         jsonb_build_object(
+           'arguments', jsonb_build_object('pageNum', 2),
+           'periodicKey', 'continuation:test-history',
+           'continuationOf', $5::text
+         ),
+         $6::uuid
+       ) returning id`,
+      [
+        parent.credential_id,
+        parent.channel,
+        parent.operation,
+        parent.environment,
+        parent.id,
+        parent.created_by,
+      ],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select request_payload #>> '{arguments,sellerpilotHistoryRunId}' as run_id,
+                request_payload #>> '{arguments,sellerpilotHistoryItemKey}' as item_key
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [continuationId],
+      )).rows,
+      [{
+        run_id: run.runId,
+        item_key: await scalar(
+          db,
+          `select request_payload #>> '{arguments,sellerpilotHistoryItemKey}'
+             from sellerpilot_private.channel_gateway_jobs
+            where id = $1`,
+          [parent.id],
+        ),
+      }],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded', completed_at = clock_timestamp()
+        where id = $1`,
+      [parent.id],
+    );
+    const firstSliceOnly = await scalar(
+      db,
+      "select public.sellerpilot_get_inquiry_history_backfill($1)",
+      [run.runId],
+    );
+    assert.equal(firstSliceOnly.status, "running");
+    assert.equal(firstSliceOnly.totalJobs, 28);
+    assert.equal(firstSliceOnly.succeededJobs, 1);
+    assert.equal(firstSliceOnly.queuedJobs, 27);
+    assert.equal(firstSliceOnly.completedAt, null);
+
+    const failedJobId = await scalar(
+      db,
+      `select id
+         from sellerpilot_private.channel_gateway_jobs
+        where request_payload #>> '{arguments,sellerpilotHistoryRunId}' = $1
+          and status = 'queued'
+        order by created_at, id
+        limit 1`,
+      [run.runId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'failed', attempt_count = 1,
+              error_message = 'bounded test read failure',
+              completed_at = clock_timestamp()
+        where id = $1`,
+      [failedJobId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded', completed_at = clock_timestamp()
+        where request_payload #>> '{arguments,sellerpilotHistoryRunId}' = $1
+          and status = 'queued'`,
+      [run.runId],
+    );
+    const failed = await scalar(
+      db,
+      "select public.sellerpilot_get_inquiry_history_backfill($1)",
+      [run.runId],
+    );
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.succeededJobs, 27);
+    assert.equal(failed.failedJobs, 1);
+    assert.notEqual(failed.completedAt, null);
+
+    const retried = await scalar(
+      db,
+      "select public.sellerpilot_start_inquiry_history_backfill(30)",
+    );
+    assert.equal(retried.runId, run.runId);
+    assert.equal(retried.reused, true);
+    assert.equal(retried.retriedJobs, 1);
+    assert.equal(retried.status, "running");
+    assert.equal(retried.queuedJobs, 1);
+    assert.equal(retried.failedJobs, 0);
+    assert.equal(retried.completedAt, null);
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded', completed_at = clock_timestamp()
+        where id = $1`,
+      [failedJobId],
+    );
+    const complete = await scalar(
+      db,
+      "select public.sellerpilot_get_inquiry_history_backfill($1)",
+      [run.runId],
+    );
+    assert.equal(complete.status, "succeeded");
+    assert.equal(complete.totalJobs, 28);
+    assert.equal(complete.succeededJobs, 28);
+    assert.equal(complete.progressPercent, 100);
+    assert.notEqual(complete.completedAt, null);
+
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+         label, token_hash, fingerprint, status, expires_at, created_by, scope
+       ) values
+         ('history legacy worker', $1, '444444444444', 'active',
+          clock_timestamp() + interval '1 day', $3, 'legacy_combined'),
+         ('history serverless worker', $2, '555555555555', 'active',
+          clock_timestamp() + interval '1 day', $3, 'serverless_cs')`,
+      [legacyHash, serverlessHash, ADMIN_ID],
+    );
+    await setClaims(db, "service_role");
+    const currentRead = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'coupang', 'inquiries.list',
+        '{"periodicKey":"inquiries:claim-isolation-current","arguments":{"kind":"product","query":{"pageNum":1}}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(currentRead.status, "queued");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_channel_gateway_job($1, 'history-test/generic-blocked')",
+        [legacyHash],
+      ),
+      null,
+    );
+    const serverlessClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_cs_job($1, 'history-test/serverless')",
+      [serverlessHash],
+    );
+    assert.equal(serverlessClaim.id, currentRead.jobId);
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded', worker_token_id = null,
+              claim_token = null, lease_expires_at = null,
+              completed_at = clock_timestamp()
+        where id = $1`,
+      [currentRead.jobId],
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_worker_tokens
+          set expires_at = clock_timestamp() - interval '1 second'
+        where token_hash = $1`,
+      [serverlessHash],
+    );
+    const blockedByExpiredActive = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'smartstore', 'inquiries.list',
+        '{"periodicKey":"inquiries:claim-isolation-expired","arguments":{"kind":"customer","query":{"page":1}}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(blockedByExpiredActive.status, "queued");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_channel_gateway_job($1, 'history-test/expired-serverless-blocks-generic')",
+        [legacyHash],
+      ),
+      null,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_claim_serverless_cs_job($1, 'history-test/expired-serverless')",
+        [serverlessHash],
+      ),
+      /invalid worker token/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [blockedByExpiredActive.jobId],
+      ),
+      "queued",
     );
   } finally {
     await db.close();

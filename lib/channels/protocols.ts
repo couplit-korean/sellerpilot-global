@@ -1,4 +1,5 @@
 import { createHash, createHmac } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { hashSync as bcryptHashSync } from "bcryptjs";
 import {
   assertProviderAccountIdentity,
@@ -29,6 +30,18 @@ export type RemoteResponse = {
   data: Record<string, unknown>;
   text: string;
 };
+
+const channelRequestSignalStorage = new AsyncLocalStorage<AbortSignal>();
+
+export function runWithChannelRequestSignal<T>(signal: AbortSignal, execute: () => Promise<T>) {
+  return channelRequestSignalStorage.run(signal, execute);
+}
+
+function boundedChannelRequestSignal(timeoutMs: number) {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  const ownerSignal = channelRequestSignalStorage.getStore();
+  return ownerSignal ? AbortSignal.any([ownerSignal, timeoutSignal]) : timeoutSignal;
+}
 
 export const lazadaApiEndpoints: Record<string, string> = {
   my: "https://api.lazada.com.my/rest",
@@ -103,7 +116,7 @@ export async function coupangRequest(input: {
   const response = await fetch(url, {
     method: input.method,
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/json",
       "content-type": "application/json;charset=UTF-8",
@@ -148,7 +161,7 @@ export async function fetchNaverAccessToken(payload: SecretPayload) {
   const response = await fetch("https://api.commerce.naver.com/external/v1/oauth2/token", {
     method: "POST",
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/json",
       "content-type": "application/x-www-form-urlencoded",
@@ -177,7 +190,7 @@ export async function naverRequest(input: {
   const response = await fetch(`https://api.commerce.naver.com/external${input.path}${query ? `?${query}` : ""}`, {
     method: input.method,
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/json",
       "content-type": "application/json",
@@ -225,7 +238,7 @@ export async function temuRequest(input: {
   const response = await fetch("https://openapi-b-global.temu.com/openapi/router", {
     method: "POST",
     cache: "no-store",
-    signal: AbortSignal.timeout(30_000),
+    signal: boundedChannelRequestSignal(30_000),
     headers: {
       accept: "application/json",
       "content-type": "application/json",
@@ -325,7 +338,7 @@ export async function exchangeShopeeOAuthToken(input: {
   const response = await fetch(url, {
     method: "POST",
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/json",
       "content-type": "application/json",
@@ -563,7 +576,7 @@ export async function shopeeRequest(input: {
   const response = await fetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
     method: input.method,
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/json",
       "content-type": "application/json",
@@ -592,7 +605,7 @@ export async function shopeePartnerRequest(input: {
   const response = await fetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
     method: "GET",
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: { accept: "application/json", "user-agent": "SellerPilot-Shopee-Partner/1.0" },
   });
   return readRemoteResponse(response);
@@ -623,7 +636,7 @@ export async function shopeeMerchantRequest(input: {
   const response = await fetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
     method: input.method,
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/json",
       "content-type": "application/json",
@@ -664,7 +677,7 @@ export async function lazadaRequest(input: {
     const response = await fetch(`${endpoint}${input.path}${method === "GET" ? `?${new URLSearchParams(params)}` : ""}`, {
       method,
       cache: "no-store",
-      signal: AbortSignal.timeout(15_000),
+      signal: boundedChannelRequestSignal(15_000),
       headers: {
         accept: "application/json",
         "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
@@ -705,7 +718,7 @@ export async function exchangeLazadaOAuthToken(input: {
   const response = await fetch(url, {
     method: "GET",
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: { accept: "application/json", "user-agent": "SellerPilot-Lazada-OAuth/1.1" },
   });
   return readRemoteResponse(response);
@@ -829,7 +842,7 @@ export async function qoo10Request(input: {
     method: "POST",
     body: JSON.stringify({ returnType: "json", ...(input.params ?? {}) }),
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/json",
       "content-type": "application/json; charset=utf-8",
@@ -878,7 +891,7 @@ export async function elevenstCategoryRequest() {
   const response = await fetch("https://api.11st.co.kr/rest/cateservice/category", {
     method: "GET",
     cache: "no-store",
-    signal: AbortSignal.timeout(20_000),
+    signal: boundedChannelRequestSignal(20_000),
     headers: {
       accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
       "user-agent": "SellerPilot-11st-Category-Connector/1.0",
@@ -947,7 +960,7 @@ export async function elevenstRequest(input: {
   const response = await fetch(url, {
     method: "GET",
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
       "user-agent": "SellerPilot-11st-OpenAPI-Connector/1.0",
@@ -995,7 +1008,7 @@ export async function elevenstOrderRequest(input: {
   const response = await fetch(url, {
     method: "GET",
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
       openapikey: apiKey,
@@ -1451,7 +1464,7 @@ export async function ebayTradingRequest(input: {
   const response = await fetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
     method: "POST",
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "text/xml",
       "content-type": "text/xml;charset=UTF-8",
@@ -1531,7 +1544,7 @@ export async function exchangeEbayOAuthToken(input: {
   const response = await fetch(`${ebayEnvironment(input.environment).api}/identity/v1/oauth2/token`, {
     method: "POST",
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/json",
       "content-type": "application/x-www-form-urlencoded",
@@ -1551,7 +1564,7 @@ export async function fetchEbayTradingUserIdentity(input: {
   const response = await fetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
     method: "POST",
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "text/xml",
       "content-type": "text/xml;charset=UTF-8",
@@ -1664,7 +1677,7 @@ export async function elevenstSellerXmlRequest(input: {
   const response = await fetch(`https://api.11st.co.kr${input.path}`, {
     method: input.method,
     cache: "no-store",
-    signal: AbortSignal.timeout(20_000),
+    signal: boundedChannelRequestSignal(20_000),
     headers: {
       accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
       "content-type": "text/xml;charset=UTF-8",
@@ -1745,7 +1758,7 @@ export async function ebayRequest(input: {
   const response = await fetch(`${ebayEnvironment(input.environment).api}${input.path}${query ? `?${query}` : ""}`, {
     method: input.method,
     cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
+    signal: boundedChannelRequestSignal(15_000),
     headers: {
       accept: "application/json",
       "accept-language": "en-US",

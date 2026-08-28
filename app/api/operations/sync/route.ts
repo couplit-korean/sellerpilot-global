@@ -3,19 +3,43 @@ import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
 import { isActiveChannelKey, type ActiveChannelKey } from "../../../../lib/channels/catalog";
 import { executeChannelOperation } from "../../../../lib/channels/operations";
-import { inquirySyncArguments, normalizeChannelInquiries } from "../../../../lib/channels/inquiry-sync";
+import { inquirySyncRequests, normalizeChannelInquiries } from "../../../../lib/channels/inquiry-sync";
 import { shouldBootstrapLazadaIm } from "../../../../lib/channels/lazada-im-bootstrap";
 import { normalizeChannelOrders, orderSyncRequests } from "../../../../lib/channels/order-sync";
 import { createPromiseGate } from "../../../../lib/promise-pool";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const schema = z.object({
   channels: z.array(z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"])).max(8).optional(),
   includeImBootstrap: z.boolean().default(false),
+  historyDays: z.number().int().min(7).max(30).optional(),
 });
+
+const historyBackfillResultSchema = z.object({
+  runId: z.string().uuid(),
+  status: z.enum(["queued", "running", "succeeded", "failed"]),
+  historyDays: z.number().int().min(7).max(30),
+  fromDate: z.string(),
+  toDate: z.string(),
+  channels: z.array(z.enum(["coupang", "smartstore"])).length(2),
+  expectedInitialJobs: z.number().int().nonnegative(),
+  totalJobs: z.number().int().nonnegative(),
+  queuedJobs: z.number().int().nonnegative(),
+  runningJobs: z.number().int().nonnegative(),
+  succeededJobs: z.number().int().nonnegative(),
+  failedJobs: z.number().int().nonnegative(),
+  progressPercent: z.number().int().min(0).max(100),
+  startedAt: z.string(),
+  updatedAt: z.string(),
+  completedAt: z.string().nullable(),
+  reused: z.boolean().optional(),
+  retriedJobs: z.number().int().nonnegative().optional(),
+});
+
+type HistoryBackfillResult = z.infer<typeof historyBackfillResultSchema>;
 
 type CredentialRow = {
   id: string;
@@ -46,18 +70,6 @@ function safeSyncFailure(error: unknown, fallback: string) {
   return sanitized ? `${fallback} · ${sanitized}` : fallback;
 }
 
-function periodicInquiryPayload(channel: ActiveChannelKey, argumentsValue: Record<string, unknown>, index: number) {
-  const suffix = argumentsValue.bootstrap === true
-    ? "bootstrap"
-    : channel === "coupang" && typeof argumentsValue.kind === "string"
-      ? argumentsValue.kind
-      : String(index);
-  return {
-    periodicKey: `inquiries:${suffix}`,
-    arguments: argumentsValue,
-  };
-}
-
 function periodicEnqueueSummary(values: unknown[]) {
   const statuses = values.map((value) => value && typeof value === "object" && !Array.isArray(value)
     ? String((value as Record<string, unknown>).status ?? "")
@@ -80,13 +92,59 @@ function periodicEnqueueSummary(values: unknown[]) {
   };
 }
 
+function historyBackfillMessage(result: HistoryBackfillResult) {
+  if (result.status === "succeeded") {
+    return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의 ${result.succeededJobs}건의 읽기 작업이 모두 반영됐습니다.`;
+  }
+  if (result.status === "failed") {
+    return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의 작업 중 ${result.failedJobs}건이 실패했습니다. 완료로 표시하지 않았으며 상태를 확인해 주세요.`;
+  }
+  if ((result.retriedJobs ?? 0) > 0) {
+    return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의의 안전한 읽기 실패 ${result.retriedJobs}건을 다시 접수했습니다. ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
+  }
+  return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의 읽기 작업 ${result.totalJobs}건을 접수했습니다. 서버에서 순차 처리되며 ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
+}
+
+export async function GET(request: Request) {
+  const admin = await authenticateAdminRequest(request, { timeoutMs: MANUAL_SYNC_RPC_TIMEOUT_MS });
+  if (isAdminApiError(admin)) return admin;
+
+  const requestedRunId = new URL(request.url).searchParams.get("runId");
+  const parsedRunId = requestedRunId === null
+    ? { success: true as const, data: null }
+    : z.string().uuid().safeParse(requestedRunId);
+  if (!parsedRunId.success) {
+    return NextResponse.json({ message: "과거 문의 작업 ID를 확인해 주세요." }, { status: 400 });
+  }
+
+  const { data, error } = await admin.userClient.rpc(
+    "sellerpilot_get_inquiry_history_backfill",
+    { p_run_id: parsedRunId.data },
+  );
+  if (error) {
+    return NextResponse.json({ message: "과거 문의 작업 상태를 읽지 못했습니다." }, { status: 500 });
+  }
+  if (data === null) {
+    return NextResponse.json({ ok: true, historyBackfill: null }, {
+      headers: { "cache-control": "no-store, max-age=0" },
+    });
+  }
+  const parsedResult = historyBackfillResultSchema.safeParse(data);
+  if (!parsedResult.success) {
+    return NextResponse.json({ message: "과거 문의 작업 상태 형식을 확인하지 못했습니다." }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true, historyBackfill: parsedResult.data }, {
+    headers: { "cache-control": "no-store, max-age=0" },
+  });
+}
+
 export async function POST(request: Request) {
   const admin = await authenticateAdminRequest(request, { timeoutMs: MANUAL_SYNC_RPC_TIMEOUT_MS });
   if (isAdminApiError(admin)) return admin;
 
   const parsed = schema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ message: "동기화 채널 요청을 확인해 주세요." }, { status: 400 });
-  if (!parsed.data.includeImBootstrap) {
+  if (!parsed.data.includeImBootstrap && parsed.data.historyDays === undefined) {
     return NextResponse.json({
       ok: false,
       delegated: true,
@@ -97,6 +155,14 @@ export async function POST(request: Request) {
       status: 409,
       headers: { "cache-control": "no-store, max-age=0" },
     });
+  }
+  if (parsed.data.historyDays !== undefined
+      && (parsed.data.channels?.length !== 2
+        || !parsed.data.channels.includes("coupang")
+        || !parsed.data.channels.includes("smartstore"))) {
+    return NextResponse.json({
+      message: "과거 문의 다시 불러오기는 쿠팡과 네이버 스마트스토어만 함께 선택할 수 있습니다.",
+    }, { status: 400 });
   }
   const syncNormalizationTimestamp = new Date().toISOString();
 
@@ -110,6 +176,48 @@ export async function POST(request: Request) {
     .filter((row): row is CredentialRow => Boolean(row) && typeof row === "object" && typeof row.id === "string" && typeof row.channel === "string")
     .filter((row) => row.status === "active" && row.environment === "production" && isActiveChannelKey(row.channel) && requested.has(row.channel))
     .filter((row, index, rows) => rows.findIndex((candidate) => candidate.channel === row.channel) === index);
+  if (parsed.data.historyDays !== undefined
+      && (!credentials.some((credential) => credential.channel === "coupang")
+        || !credentials.some((credential) => credential.channel === "smartstore"))) {
+    return NextResponse.json({
+      ok: false,
+      connectedChannels: credentials.map((credential) => credential.channel),
+      message: "쿠팡과 네이버 스마트스토어 운영 자격증명이 모두 활성 상태여야 과거 문의를 다시 불러올 수 있습니다.",
+    }, {
+      status: 409,
+      headers: { "cache-control": "no-store, max-age=0" },
+    });
+  }
+  if (parsed.data.historyDays !== undefined) {
+    const { data, error } = await admin.userClient.rpc(
+      "sellerpilot_start_inquiry_history_backfill",
+      { p_history_days: parsed.data.historyDays },
+    );
+    if (error) {
+      return NextResponse.json({
+        ok: false,
+        message: "쿠팡·스마트스토어 자격증명 소유자와 연결 상태를 확인한 뒤 다시 시도해 주세요.",
+      }, {
+        status: 409,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
+    }
+    const parsedResult = historyBackfillResultSchema.safeParse(data);
+    if (!parsedResult.success) {
+      return NextResponse.json({ message: "과거 문의 작업 접수 상태 형식을 확인하지 못했습니다." }, { status: 500 });
+    }
+    return NextResponse.json({
+      ok: parsedResult.data.status !== "failed",
+      requestedChannels: ["coupang", "smartstore"],
+      connectedChannels: credentials.map((credential) => credential.channel),
+      historyBackfill: parsedResult.data,
+      message: historyBackfillMessage(parsedResult.data),
+    }, {
+      status: parsedResult.data.status === "failed" ? 207 : 202,
+      headers: { "cache-control": "no-store, max-age=0" },
+    });
+  }
+
   const results = await Promise.all(credentials.map(async (credential) => {
     const channel = credential.channel as ActiveChannelKey;
     const requests = orderSyncRequests(channel);
@@ -196,8 +304,8 @@ export async function POST(request: Request) {
       allowLazadaBootstrap = consumed === true;
     }
     const requests = allowLazadaBootstrap
-      ? [{ bootstrap: true, startTime: Date.now(), pageSize: 20, sessionLimit: 100 }]
-      : inquirySyncArguments(channel);
+      ? [{ periodicKey: "inquiries:bootstrap", arguments: { bootstrap: true, startTime: Date.now(), pageSize: 20, sessionLimit: 100 } }]
+      : inquirySyncRequests(channel);
     if (!requests.length) {
       if (channel === "lazada") return { channel, status: "push_only" as const };
       await admin.serviceClient.rpc("sellerpilot_service_mark_channel_sync", {
@@ -212,10 +320,10 @@ export async function POST(request: Request) {
 
     try {
       if (gatewayChannels.has(channel)) {
-        const queued = await Promise.all(requests.map((argumentsValue, index) => runPeriodicEnqueueRpc(() => admin.serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
+        const queued = await Promise.all(requests.map((payload) => runPeriodicEnqueueRpc(() => admin.serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
           p_channel: channel,
           p_operation: "inquiries.list",
-          p_request_payload: periodicInquiryPayload(channel, argumentsValue, index),
+          p_request_payload: payload,
           p_min_interval_minutes: 5,
         }))));
         if (queued.some(({ error }) => Boolean(error))) throw new Error("inquiry_sync_enqueue_failed");
@@ -233,7 +341,7 @@ export async function POST(request: Request) {
         channel,
         operation: "inquiries.list",
         payload: secretPayload as Record<string, unknown>,
-        arguments: requests[0],
+        arguments: requests[0].arguments,
         environment: "production",
       });
       if (!operationResult.ok) throw new Error(operationResult.safeMessage);

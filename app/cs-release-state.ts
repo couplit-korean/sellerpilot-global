@@ -58,7 +58,7 @@ const channelReadCapabilities: Record<ActiveChannelKey, { subject: string; integ
   shopee: { subject: "구매자 채팅", integrated: false, replyLabel: "답변: 내부 초안만 · Chat API 미연동" },
   lazada: { subject: "Lazada IM", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
   coupang: { subject: "상품·콜센터 문의", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
-  elevenst: { subject: "판매자 문의", integrated: false, replyLabel: "답변: 현재 API 미지원 · 판매자센터 처리" },
+  elevenst: { subject: "상품 Q&A·긴급알리미", integrated: false, replyLabel: "답변: 미연결 · 공식 상세 계약·서비스 권한 검증 전" },
   smartstore: { subject: "상품·고객 문의", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
   ebay: { subject: "eBay 상품 문의(ASQ)", integrated: true, replyLabel: "답변: 검증된 계정·사이트·문의 계보만 보안 게이트웨이 전송" },
   temu: { subject: "반품·환불 작업", integrated: true, replyLabel: "답변: 내부 초안만 · 구매자 채팅 미연동" },
@@ -78,10 +78,23 @@ export function csChannelVerification(
   lastError: string | null = null,
 ): CsChannelVerification {
   const capability = channelReadCapabilities[channelKey];
+  if (channelKey === "elevenst" && (!capability.integrated || status === "unsupported")) {
+    return {
+      readLabel: `${capability.subject} 수신 연동 전`,
+      replyLabel: capability.replyLabel,
+      badge: "수신 미연결",
+      tone: "unsupported",
+    };
+  }
   if (!capability.integrated || status === "unsupported") {
     return { readLabel: `${capability.subject} 수신 API 미연동`, replyLabel: capability.replyLabel, badge: "수신 미지원", tone: "unsupported" };
   }
-  if (status === "passed") return { readLabel: `${capability.subject} 조회 성공 · 원장 ${Math.max(0, importedCount)}건`, replyLabel: capability.replyLabel, badge: "조회 성공", tone: "passed" };
+  if (status === "passed") return {
+    readLabel: `${capability.subject} 최근 조회 작업 통과 · 누적 원장 ${Math.max(0, importedCount)}건`,
+    replyLabel: capability.replyLabel,
+    badge: "최근 조회 통과",
+    tone: "passed",
+  };
   if (status === "failed") {
     const lazadaPermissionBlocked = channelKey === "lazada"
       && /(?:does not have permission|permission[^\n]{0,80}(?:api|access)|api[^\n]{0,80}permission)/i.test(lastError ?? "");

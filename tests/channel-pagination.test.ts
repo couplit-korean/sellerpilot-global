@@ -114,7 +114,7 @@ test("Lazada order sync returns one complete page and advances by continuation",
   }
 });
 
-test("Coupang order and inquiry sync follow nextToken and pageNum independently", async () => {
+test("Coupang order sync follows nextToken while inquiry sync follows one-page continuations", async () => {
   const originalFetch = globalThis.fetch;
   const orderTokens: string[] = [];
   const inquiryPages: string[] = [];
@@ -153,14 +153,33 @@ test("Coupang order and inquiry sync follow nextToken and pageNum independently"
     assert.deepEqual(orders.steps.map((item) => item.name), ["orders", "orders:2"]);
     assert.deepEqual(orderTokens, ["", "next-2"]);
     assert.equal(inquiries.ok, true);
-    assert.deepEqual(inquiries.steps.map((item) => item.name), ["inquiries", "inquiries:2"]);
+    assert.deepEqual(inquiries.steps.map((item) => item.name), ["inquiries"]);
+    assert.equal(inquiries.steps[0]?.data.sellerpilotInquiryKind, "product");
+    assert.equal((inquiries.continuation?.arguments.query as Record<string, unknown>).pageNum, 2);
+    assert.equal(inquiries.continuation?.arguments.sellerpilotPaginationDepth, 1);
+    assert.equal(gatewayWorkerCompletionSchema.safeParse({
+      jobId: "00000000-0000-4000-8000-000000000021",
+      claimToken: "00000000-0000-4000-8000-000000000022",
+      status: "succeeded",
+      result: inquiries,
+    }).success, true);
+    assert.deepEqual(inquiryPages, ["1"]);
+    const continuedInquiries = await executeChannelOperation({
+      channel: "coupang",
+      operation: "inquiries.list",
+      payload,
+      arguments: inquiries.continuation!.arguments,
+      environment: "production",
+    });
+    assert.deepEqual(continuedInquiries.steps.map((item) => item.name), ["inquiries"]);
+    assert.equal(continuedInquiries.continuation, undefined);
     assert.deepEqual(inquiryPages, ["1", "2"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("Smartstore order checkpoints and inquiry pages are exhausted", async () => {
+test("Smartstore order checkpoints are exhausted while inquiry pages use continuations", async () => {
   const originalFetch = globalThis.fetch;
   const orderQueries: URLSearchParams[] = [];
   const inquiryPages: string[] = [];
@@ -198,8 +217,98 @@ test("Smartstore order checkpoints and inquiry pages are exhausted", async () =>
     assert.equal(orderQueries[1]?.get("lastChangedFrom"), "2026-08-01T01:00:00Z");
     assert.equal(orderQueries[1]?.get("moreSequence"), "seq-2");
     assert.equal(inquiries.ok, true);
-    assert.deepEqual(inquiries.steps.map((item) => item.name), ["inquiries", "inquiries:2"]);
+    assert.deepEqual(inquiries.steps.map((item) => item.name), ["inquiries"]);
+    assert.equal((inquiries.continuation?.arguments.query as Record<string, unknown>).page, 2);
+    assert.equal(inquiries.continuation?.arguments.sellerpilotPaginationDepth, 1);
+    assert.equal(gatewayWorkerCompletionSchema.safeParse({
+      jobId: "00000000-0000-4000-8000-000000000023",
+      claimToken: "00000000-0000-4000-8000-000000000024",
+      status: "succeeded",
+      result: inquiries,
+    }).success, true);
+    assert.deepEqual(inquiryPages, ["1"]);
+    const continuedInquiries = await executeChannelOperation({
+      channel: "smartstore",
+      operation: "inquiries.list",
+      payload: naverPayload,
+      arguments: inquiries.continuation!.arguments,
+      environment: "production",
+    });
+    assert.deepEqual(continuedInquiries.steps.map((item) => item.name), ["inquiries"]);
+    assert.equal(continuedInquiries.continuation, undefined);
     assert.deepEqual(inquiryPages, ["1", "2"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Smartstore customer inquiries use the exact current query and one-page continuation", async () => {
+  const originalFetch = globalThis.fetch;
+  const inquiryRequests: URL[] = [];
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "token", expires_in: 10_800 });
+    inquiryRequests.push(url);
+    const page = Number(url.searchParams.get("page") ?? "1");
+    const content = page === 1
+      ? Array.from({ length: 10 }, (_, index) => ({ inquiryNo: 100 + index, inquiryContent: `문의 ${index + 1}` }))
+      : [{ inquiryNo: 200, inquiryContent: "마지막 문의" }];
+    return Response.json({ content, totalPages: 2 });
+  };
+  try {
+    const base = {
+      channel: "smartstore" as const,
+      operation: "inquiries.list" as const,
+      payload: naverPayload,
+      arguments: {
+        kind: "customer",
+        query: {
+          page: 1,
+          size: 10,
+          startSearchDate: "2026-08-01",
+          endSearchDate: "2026-08-02",
+          answered: false,
+        },
+      },
+      environment: "production" as const,
+    };
+    const first = await executeChannelOperation(base);
+    assert.equal(first.ok, true);
+    assert.deepEqual(first.steps.map((item) => item.name), ["inquiries"]);
+    assert.equal(first.steps[0]?.data.sellerpilotInquiryKind, "customer");
+    assert.deepEqual(
+      (first.steps[0]?.data.content as Record<string, unknown>[]).map((item) => item.inquiryNo),
+      Array.from({ length: 10 }, (_, index) => 100 + index),
+    );
+    assert.equal(inquiryRequests[0]?.pathname, "/external/v1/pay-user/inquiries");
+    assert.deepEqual(Object.fromEntries(inquiryRequests[0]?.searchParams ?? []), {
+      page: "1",
+      size: "10",
+      startSearchDate: "2026-08-01",
+      endSearchDate: "2026-08-02",
+      answered: "false",
+    });
+    assert.deepEqual(first.continuation?.arguments, {
+      kind: "customer",
+      query: {
+        page: 2,
+        size: 10,
+        startSearchDate: "2026-08-01",
+        endSearchDate: "2026-08-02",
+        answered: "false",
+      },
+      sellerpilotPaginationDepth: 1,
+    });
+    assert.equal(gatewayWorkerCompletionSchema.safeParse({
+      jobId: "00000000-0000-4000-8000-000000000025",
+      claimToken: "00000000-0000-4000-8000-000000000026",
+      status: "succeeded",
+      result: first,
+    }).success, true);
+
+    const second = await executeChannelOperation({ ...base, arguments: first.continuation!.arguments });
+    assert.equal(second.continuation, undefined);
+    assert.deepEqual(inquiryRequests.map((url) => url.searchParams.get("page")), ["1", "2"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -317,7 +426,7 @@ test("Lazada keeps every item detail within one 100-order page before continuing
   }
 });
 
-test("Coupang page cap persists nextToken and numbered inquiry continuation", async () => {
+test("Coupang page cap persists nextToken and inquiry jobs advance one page", async () => {
   const originalFetch = globalThis.fetch;
   const orderTokens: string[] = [];
   const inquiryPages: number[] = [];
@@ -362,15 +471,17 @@ test("Coupang page cap persists nextToken and numbered inquiry continuation", as
       environment: "production" as const,
     };
     const firstInquiries = await executeChannelOperation(inquiryBase);
-    assert.equal((firstInquiries.continuation?.arguments.query as Record<string, unknown>).pageNum, 21);
-    await executeChannelOperation({ ...inquiryBase, arguments: firstInquiries.continuation!.arguments });
-    assert.equal(inquiryPages.at(-1), 21);
+    assert.equal((firstInquiries.continuation?.arguments.query as Record<string, unknown>).pageNum, 2);
+    assert.deepEqual(inquiryPages, [1]);
+    const secondInquiries = await executeChannelOperation({ ...inquiryBase, arguments: firstInquiries.continuation!.arguments });
+    assert.equal((secondInquiries.continuation?.arguments.query as Record<string, unknown>).pageNum, 3);
+    assert.deepEqual(inquiryPages, [1, 2]);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("Smartstore cap persists exact more token and inquiry page", async () => {
+test("Smartstore cap persists exact more token and inquiry jobs advance one page", async () => {
   const originalFetch = globalThis.fetch;
   const orderSequences: string[] = [];
   const inquiryPages: number[] = [];
@@ -411,9 +522,11 @@ test("Smartstore cap persists exact more token and inquiry page", async () => {
       environment: "production" as const,
     };
     const firstInquiries = await executeChannelOperation(inquiryBase);
-    assert.equal((firstInquiries.continuation?.arguments.query as Record<string, unknown>).page, 21);
-    await executeChannelOperation({ ...inquiryBase, arguments: firstInquiries.continuation!.arguments });
-    assert.equal(inquiryPages.at(-1), 21);
+    assert.equal((firstInquiries.continuation?.arguments.query as Record<string, unknown>).page, 2);
+    assert.deepEqual(inquiryPages, [1]);
+    const secondInquiries = await executeChannelOperation({ ...inquiryBase, arguments: firstInquiries.continuation!.arguments });
+    assert.equal((secondInquiries.continuation?.arguments.query as Record<string, unknown>).page, 3);
+    assert.deepEqual(inquiryPages, [1, 2]);
   } finally {
     globalThis.fetch = originalFetch;
   }

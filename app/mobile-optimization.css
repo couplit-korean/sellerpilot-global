@@ -2736,6 +2736,14 @@
   .cs-filter-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .cs-filter-actions .filter-select { min-height: 44px; }
   .cs-filter-actions .filter-button { min-height: 44px; }
+  .cs-history-backfill { gap: 10px; padding: 14px 12px; }
+  .cs-history-backfill-heading { align-items: flex-start; }
+  .cs-history-backfill-heading b { font-size: 12px; }
+  .cs-history-backfill-heading small { font-size: 10px; }
+  .cs-history-backfill-heading em { padding-top: 2px; font-size: 12px; }
+  .cs-history-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; font-size: 10px; }
+  .cs-history-counts > span { display: flex; justify-content: space-between; border-radius: 7px; padding: 7px 8px; background: rgb(255 255 255 / 72%); }
+  .cs-history-counts > small { grid-column: 1 / -1; margin: 0; font-size: 10px; text-align: left; }
   .cs-channel-verification-grid > button { min-height: 72px; }
   .conversation-empty { grid-column: auto; min-height: 360px; }
   .readiness-inquiry-state { grid-template-columns: auto minmax(0, 1fr); }

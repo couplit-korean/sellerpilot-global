@@ -21,7 +21,7 @@ import {
   lazadaRequest,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
-import { inquirySyncArguments, orderSyncRequests } from "../lib/channels/sync-arguments";
+import { inquiryHistorySyncRequests, inquirySyncArguments, inquirySyncRequests, orderSyncRequests } from "../lib/channels/sync-arguments";
 import {
   buildShipmentAcknowledgeArguments,
   buildShipmentArguments,
@@ -163,8 +163,9 @@ test("Qoo10 unanswered inquiry sync uses the current CSCenter parameter names", 
   }]);
 });
 
-test("Smartstore inquiry sync sends the required W3C date range and unanswered filter", () => {
+test("Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys", () => {
   assert.deepEqual(inquirySyncArguments("smartstore", new Date("2026-08-20T07:00:00.000Z")), [{
+    kind: "product",
     query: {
       fromDate: "2026-08-14T07:00:00.000Z",
       toDate: "2026-08-20T07:00:00.000Z",
@@ -172,7 +173,100 @@ test("Smartstore inquiry sync sends the required W3C date range and unanswered f
       page: 1,
       size: 100,
     },
+  }, {
+    kind: "customer",
+    query: {
+      startSearchDate: "2026-08-14",
+      endSearchDate: "2026-08-20",
+      answered: false,
+      page: 1,
+      size: 200,
+    },
   }]);
+  assert.deepEqual(
+    inquirySyncRequests("smartstore", new Date("2026-08-20T07:00:00.000Z")).map((request) => request.periodicKey),
+    ["inquiries:product", "inquiries:customer"],
+  );
+});
+
+test("Coupang inquiry sync separates product, unanswered call-center, and transferred call-center queues", () => {
+  const requests = inquirySyncRequests("coupang", new Date("2026-08-20T07:00:00.000Z"));
+  assert.deepEqual(requests.map((request) => request.periodicKey), [
+    "inquiries:product:noanswer",
+    "inquiries:call-center:no_answer",
+    "inquiries:call-center:transfer",
+  ]);
+  assert.deepEqual(requests.map((request) => request.arguments), [
+    {
+      kind: "product",
+      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", answeredType: "NOANSWER", pageNum: 1, pageSize: 50 },
+    },
+    {
+      kind: "call-center",
+      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", partnerCounselingStatus: "NO_ANSWER", pageNum: 1, pageSize: 30 },
+    },
+    {
+      kind: "call-center",
+      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", partnerCounselingStatus: "TRANSFER", pageNum: 1, pageSize: 30 },
+    },
+  ]);
+});
+
+test("periodic Korean customer inquiry boundaries use Seoul calendar dates before UTC midnight", () => {
+  const beforeUtcMidnight = new Date("2026-08-19T16:30:00.000Z");
+  const coupang = inquirySyncArguments("coupang", beforeUtcMidnight);
+  assert.equal((coupang[0]?.query as Record<string, unknown>).inquiryStartAt, "2026-08-14");
+  assert.equal((coupang[0]?.query as Record<string, unknown>).inquiryEndAt, "2026-08-20");
+
+  const smartstore = inquirySyncArguments("smartstore", beforeUtcMidnight);
+  const customer = smartstore.find((request) => request.kind === "customer");
+  assert.equal((customer?.query as Record<string, unknown>).startSearchDate, "2026-08-14");
+  assert.equal((customer?.query as Record<string, unknown>).endSearchDate, "2026-08-20");
+});
+
+test("Korean inquiry history refresh is bounded to official windows and never invents an 11st API", () => {
+  const now = new Date("2026-08-20T07:00:00.000Z");
+  const coupang = inquiryHistorySyncRequests("coupang", now, 30);
+  assert.equal(coupang.length, 25);
+  assert.equal(coupang[0]?.periodicKey, "inquiries:history:2026-07-22:2026-07-28:product:all");
+  assert.equal(coupang.at(-1)?.periodicKey, "inquiries:history:2026-08-19:2026-08-20:call-center:transfer");
+  for (const request of coupang) {
+    const query = request.arguments.query as Record<string, unknown>;
+    const inclusiveDays = Math.round(
+      (Date.parse(`${String(query.inquiryEndAt)}T00:00:00.000Z`) - Date.parse(`${String(query.inquiryStartAt)}T00:00:00.000Z`))
+        / 86_400_000,
+    ) + 1;
+    assert.ok(inclusiveDays >= 1 && inclusiveDays <= 7);
+  }
+
+  assert.deepEqual(inquiryHistorySyncRequests("smartstore", now, 30), [{
+    periodicKey: "inquiries:history:2026-07-22:2026-08-20:product:all",
+    arguments: {
+      kind: "product",
+      query: {
+        fromDate: "2026-07-22T00:00:00.000+09:00",
+        toDate: "2026-08-20T07:00:00.000Z",
+        page: 1,
+        size: 100,
+      },
+    },
+  }, {
+    periodicKey: "inquiries:history:2026-07-22:2026-08-20:customer:all",
+    arguments: {
+      kind: "customer",
+      query: {
+        startSearchDate: "2026-07-22",
+        endSearchDate: "2026-08-20",
+        page: 1,
+        size: 200,
+      },
+    },
+  }]);
+  assert.deepEqual(inquiryHistorySyncRequests("elevenst", now, 30), []);
+  assert.throws(() => inquiryHistorySyncRequests("coupang", now, 31), /INQUIRY_HISTORY_RANGE_INVALID/);
+
+  const beforeUtcMidnight = inquiryHistorySyncRequests("coupang", new Date("2026-08-19T16:30:00.000Z"), 7);
+  assert.equal(beforeUtcMidnight[0]?.periodicKey, "inquiries:history:2026-08-14:2026-08-20:product:all");
 });
 
 test("Temu order and after-sales sync use the documented update checkpoints", () => {

@@ -23,7 +23,13 @@ test("marketplace ticket identifiers become provider reply arguments", () => {
     reply: "확인했습니다.",
   });
   assert.deepEqual(buildInquiryReplyArguments("smartstore", "456789", "확인했습니다."), {
+    kind: "product",
     questionId: "456789",
+    reply: "확인했습니다.",
+  });
+  assert.deepEqual(buildInquiryReplyArguments("smartstore", "customer:987654321", "확인했습니다."), {
+    kind: "customer",
+    inquiryNo: "987654321",
     reply: "확인했습니다.",
   });
   assert.equal(supportsInquiryReply("temu"), false);
@@ -35,6 +41,10 @@ test("marketplace ticket identifiers become provider reply arguments", () => {
   assert.throws(
     () => buildInquiryReplyArguments("coupang", "call-center:98765", "가", { parentAnswerId: "4321" }),
     /coupangReplyLength/,
+  );
+  assert.throws(
+    () => buildInquiryReplyArguments("smartstore", "customer:0", "확인했습니다."),
+    /smartstoreInquiryNo/,
   );
 });
 
@@ -204,6 +214,46 @@ test("Smartstore reply exchanges a token then updates the product Q&A", async ()
     assert.match(calls[1].url, /\/external\/v1\/contents\/qnas\/456789$/);
     assert.equal(calls[1].method, "PUT");
     assert.deepEqual(JSON.parse(calls[1].body), { answerContent: "확인했습니다." });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Smartstore customer reply accepts the official empty 200 response", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const call = { url: String(input), method: String(init?.method ?? "GET"), body: String(init?.body ?? "") };
+    calls.push(call);
+    if (call.url.includes("/oauth2/token")) return Response.json({ access_token: "test-token", expires_in: 10_800 });
+    return new Response(null, { status: 200 });
+  };
+  try {
+    const execute = () => executeChannelOperation({
+      channel: "smartstore",
+      operation: "inquiries.reply",
+      payload: {
+        client_id: "test-client",
+        client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze",
+        token_type: "SELF",
+      },
+      arguments: {
+        ...buildInquiryReplyArguments("smartstore", "customer:987654321", "확인했습니다."),
+        answerTemplateId: "template-123",
+      },
+      environment: "production",
+    });
+    const result = await execute();
+    assert.equal(result.ok, true);
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].url, /\/external\/v1\/pay-merchant\/inquiries\/987654321\/answer$/);
+    assert.equal(calls[1].method, "POST");
+    assert.deepEqual(JSON.parse(calls[1].body), {
+      answerComment: "확인했습니다.",
+      answerTemplateId: "template-123",
+    });
+    assert.equal(result.steps[0]?.data.sellerpilotInquiryKind, "customer");
+    assert.equal(result.steps[0]?.data.sellerpilotVerification, "SMARTSTORE_CUSTOMER_INQUIRY_REPLY_HTTP_ACK");
   } finally {
     globalThis.fetch = originalFetch;
   }

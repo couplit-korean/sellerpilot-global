@@ -3550,6 +3550,48 @@ type ShipmentResult = {
   results: Array<{ id: string; channel: string; ok: boolean; message: string; reconciliationRequired?: boolean }>;
 };
 
+type InquiryHistoryBackfill = {
+  runId: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  historyDays: number;
+  fromDate: string;
+  toDate: string;
+  channels: Array<"coupang" | "smartstore">;
+  expectedInitialJobs: number;
+  totalJobs: number;
+  queuedJobs: number;
+  runningJobs: number;
+  succeededJobs: number;
+  failedJobs: number;
+  progressPercent: number;
+  startedAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  reused?: boolean;
+  retriedJobs?: number;
+};
+
+function parseInquiryHistoryBackfill(value: unknown): InquiryHistoryBackfill | null {
+  if (!isRecord(value)
+      || typeof value.runId !== "string"
+      || !["queued", "running", "succeeded", "failed"].includes(String(value.status))
+      || !Array.isArray(value.channels)
+      || value.channels.length !== 2
+      || !value.channels.includes("coupang")
+      || !value.channels.includes("smartstore")) return null;
+  const numericKeys = [
+    "historyDays", "expectedInitialJobs", "totalJobs", "queuedJobs", "runningJobs",
+    "succeededJobs", "failedJobs", "progressPercent",
+  ] as const;
+  if (numericKeys.some((key) => typeof value[key] !== "number" || !Number.isInteger(value[key]) || Number(value[key]) < 0)
+      || typeof value.fromDate !== "string"
+      || typeof value.toDate !== "string"
+      || typeof value.startedAt !== "string"
+      || typeof value.updatedAt !== "string"
+      || value.completedAt !== null && typeof value.completedAt !== "string") return null;
+  return value as InquiryHistoryBackfill;
+}
+
 const fulfillmentRequestBatchSize = 3;
 
 function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery = "", initialOrderId = null }: {
@@ -3720,7 +3762,7 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
   );
 }
 
-function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStatus, onSync, syncing, syncStatus, initialQuery = "", initialTicketId = null, initialChannel = "all", initialStatus = "open", onFilterChange }: {
+function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStatus, onSync, onBackfill, syncing, syncStatus, historyBackfill, initialQuery = "", initialTicketId = null, initialChannel = "all", initialStatus = "open", onFilterChange }: {
   notify: (message: string) => void;
   displayTickets: DisplayTicket[];
   displayOrders: DisplayOrder[];
@@ -3728,8 +3770,10 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
   onDraft: (ticket: DisplayTicket, targetLocale: SupportLocale) => Promise<string | null>;
   onStatus: (ticket: DisplayTicket, status: "waiting" | "in_progress" | "resolved") => Promise<boolean>;
   onSync: () => Promise<void>;
+  onBackfill: () => Promise<void>;
   syncing: boolean;
   syncStatus: OperationsSnapshot["syncStatus"];
+  historyBackfill: InquiryHistoryBackfill | null;
   initialQuery?: string;
   initialTicketId?: string | null;
   initialChannel?: CsChannelFilter;
@@ -3799,6 +3843,13 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
     const state = rows[0] ?? null;
     return { channelKey, state };
   });
+  const historyBackfillActive = historyBackfill?.status === "queued" || historyBackfill?.status === "running";
+  const historyBackfillDays = historyBackfill?.historyDays ?? 30;
+  const historyBackfillTitle = historyBackfill?.status === "succeeded"
+    ? `${historyBackfillDays}일 문의 이력 반영 완료`
+    : historyBackfill?.status === "failed"
+      ? `${historyBackfillDays}일 문의 이력 일부 실패`
+      : `${historyBackfillDays}일 문의 이력 처리 중`;
   const applyFilters = (nextChannel: CsChannelFilter, nextStatus: CsStatusFilter) => {
     setMobileConversationOpen(false);
     onFilterChange(nextChannel, nextStatus, null);
@@ -3810,8 +3861,9 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
   return (
     <div className="page-stack cs-page">
       <section className="cs-summary"><button type="button" aria-pressed={resolvedInitialStatus === "open"} className={resolvedInitialStatus === "open" ? "active" : ""} onClick={() => applyFilters(initialChannel, "open")}><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{unresolvedCount}</strong></span></button><button type="button" aria-pressed={resolvedInitialStatus === "urgent"} className={resolvedInitialStatus === "urgent" ? "active" : ""} onClick={() => applyFilters(initialChannel, "urgent")}><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{channelTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></button><button type="button" aria-pressed={resolvedInitialStatus === "all"} className={resolvedInitialStatus === "all" ? "active" : ""} onClick={() => applyFilters(initialChannel, "all")}><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>전체 문의 · 주문</small><strong>{channelTickets.length} · {channelOrders.length}</strong></span></button><button type="button" aria-pressed={resolvedInitialStatus === "reconciliation"} className={resolvedInitialStatus === "reconciliation" ? "active" : ""} onClick={() => applyFilters(initialChannel, "reconciliation")}><span className="metric-icon blue"><Bot size={18} /></span><span><small>원장 확인 필요</small><strong>{channelTickets.filter((ticket) => ticket.replyDeliveryStatus === "reconciliation_required").length}</strong></span></button></section>
-      <section className="panel-heading table-title cs-live-heading"><div><span className="panel-kicker">LIVE INQUIRIES</span><h3>{lastSuccess ? `최근 동기화 ${relativeTime(lastSuccess)}` : "채널 문의 동기화 대기"}{failedCount ? ` · ${failedCount}개 채널 확인 필요` : ""}</h3></div><div className="cs-filter-actions"><label className="filter-select compact"><span className="sr-only">문의 채널 필터</span><select value={initialChannel} onChange={(event) => applyFilters(csChannelFilterFromValue(event.target.value), resolvedInitialStatus)}><option value="all">전체 채널</option>{activeChannelKeys.map((channelKey) => <option value={channelKey} key={channelKey}>{channels[channelKey].name}</option>)}</select><ChevronDown size={14} /></label><button className="filter-button" type="button" onClick={() => void onSync()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{syncing ? "요청 중" : "주문·문의 새로고침"}</button></div></section>
-      <section className="panel cs-channel-verification"><div className="panel-heading"><div><span className="panel-kicker">CHANNEL VERIFICATION</span><h3>채널별 문의 조회 · 답변 범위</h3></div><ShieldCheck size={18} /></div><div className="cs-channel-verification-grid">{inquiryChannelStates.map(({ channelKey, state }) => { const verification = csChannelVerification(channelKey, state?.status, state?.imported_count ?? 0, state?.last_error ?? null); return <button type="button" aria-pressed={initialChannel === channelKey} className={initialChannel === channelKey ? "active" : ""} key={channelKey} onClick={() => applyFilters(channelKey, resolvedInitialStatus)}><ChannelMark code={channels[channelKey].letter} /><span><b>{channels[channelKey].name}</b><small>{verification.readLabel}{state?.status === "passed" && state.last_succeeded_at ? ` · ${relativeTime(state.last_succeeded_at)}` : ""}</small><small>{verification.replyLabel}</small></span><em className={verification.tone}>{verification.badge}</em></button>; })}</div></section>
+      <section className="panel-heading table-title cs-live-heading"><div><span className="panel-kicker">LIVE INQUIRIES</span><h3>{lastSuccess ? `최근 동기화 ${relativeTime(lastSuccess)}` : "채널 문의 동기화 대기"}{failedCount ? ` · ${failedCount}개 채널 확인 필요` : ""}</h3></div><div className="cs-filter-actions"><label className="filter-select compact"><span className="sr-only">문의 채널 필터</span><select value={initialChannel} onChange={(event) => applyFilters(csChannelFilterFromValue(event.target.value), resolvedInitialStatus)}><option value="all">전체 채널</option>{activeChannelKeys.map((channelKey) => <option value={channelKey} key={channelKey}>{channels[channelKey].name}</option>)}</select><ChevronDown size={14} /></label><button className="filter-button" type="button" onClick={() => void onBackfill()} disabled={syncing}><Clock3 size={15} />쿠팡·스마트스토어 30일</button><button className="filter-button" type="button" onClick={() => void onSync()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{syncing ? "요청 중" : "주문·문의 새로고침"}</button></div></section>
+      {historyBackfill ? <section className={`panel cs-history-backfill ${historyBackfill.status}`} role="status" aria-live="polite"><div className="cs-history-backfill-heading"><span className="metric-icon blue">{historyBackfillActive ? <LoaderCircle className="spin" size={17} /> : historyBackfill.status === "succeeded" ? <CheckCircle2 size={17} /> : <AlertCircle size={17} />}</span><span><b>{historyBackfillTitle}</b><small>{historyBackfill.fromDate}~{historyBackfill.toDate} · 쿠팡·스마트스토어 · 전체 페이지 기준</small></span><em>{historyBackfill.progressPercent}%</em></div><div className="cs-history-progress" role="progressbar" aria-label={`${historyBackfill.historyDays}일 문의 이력 처리율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={historyBackfill.progressPercent}><i style={{ width: `${historyBackfill.progressPercent}%` }} /></div><div className="cs-history-counts"><span>완료 <b>{historyBackfill.succeededJobs}</b></span><span>대기 <b>{historyBackfill.queuedJobs}</b></span><span>처리 중 <b>{historyBackfill.runningJobs}</b></span><span className={historyBackfill.failedJobs ? "failed" : ""}>실패 <b>{historyBackfill.failedJobs}</b></span><small>총 {historyBackfill.totalJobs}개 작업 · 최초 범위 {historyBackfill.expectedInitialJobs}개{historyBackfill.status === "failed" ? " · 버튼을 다시 누르면 재전송 위험이 없는 실패 읽기만 재시도합니다." : historyBackfillActive ? " · 첫 작업 성공만으로 전체 완료 처리하지 않습니다." : " · 모든 페이지 반영을 확인했습니다."}</small></div></section> : null}
+      <section className="panel cs-channel-verification"><div className="panel-heading"><div><span className="panel-kicker">CHANNEL VERIFICATION</span><h3>채널별 문의 조회 · 답변 범위</h3></div><ShieldCheck size={18} /></div><div className="cs-channel-verification-grid">{inquiryChannelStates.map(({ channelKey, state }) => { const verification = csChannelVerification(channelKey, state?.status, state?.imported_count ?? 0, state?.last_error ?? null); const historyChannel = Boolean(historyBackfill && ["coupang", "smartstore"].includes(channelKey)); const historyOverride = historyChannel && historyBackfill?.status !== "succeeded" ? { readLabel: historyBackfill?.status === "failed" ? `${historyBackfill.historyDays}일 이력 일부 실패 · 성공 ${historyBackfill.succeededJobs}/${historyBackfill.totalJobs}` : `${historyBackfill?.historyDays ?? 30}일 이력 처리 중 · 성공 ${historyBackfill?.succeededJobs ?? 0}/${historyBackfill?.totalJobs ?? 0}`, badge: historyBackfill?.status === "failed" ? "재시도 필요" : "이력 처리 중", tone: historyBackfill?.status === "failed" ? "failed" : "unsupported" } as const : null; return <button type="button" aria-pressed={initialChannel === channelKey} className={initialChannel === channelKey ? "active" : ""} key={channelKey} onClick={() => applyFilters(channelKey, resolvedInitialStatus)}><ChannelMark code={channels[channelKey].letter} /><span><b>{channels[channelKey].name}</b><small>{historyOverride?.readLabel ?? verification.readLabel}{!historyOverride && state?.status === "passed" && state.last_succeeded_at ? ` · ${relativeTime(state.last_succeeded_at)}` : ""}</small><small>{verification.replyLabel}</small></span><em className={historyOverride?.tone ?? verification.tone}>{historyOverride?.badge ?? verification.badge}</em></button>; })}</div></section>
       {displayTickets.length === 0 ? <section className="panel live-empty-state large"><Inbox size={32} /><b>운영 원장에 실제 문의가 0건입니다.</b><small>지원·승인된 채널의 문의 조회가 성공하고 실제 문의가 있으면 고객 정보와 원문이 표시됩니다.</small><button className="ghost-button" type="button" onClick={() => void onSync()} disabled={syncing}>지금 확인</button></section> :
       <section className={`cs-workspace panel ${mobileConversationOpen || initialTicketId ? "mobile-conversation-open" : ""}`}>
         <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs" role="tablist" aria-label="문의 처리 상태">{([{ key: "waiting", label: "미답변" }, { key: "in_progress", label: "처리 중" }, { key: "resolved", label: "완료" }] as const).map((tab) => <button type="button" role="tab" aria-selected={resolvedInitialStatus === tab.key} key={tab.key} className={resolvedInitialStatus === tab.key ? "active" : ""} onClick={() => applyFilters(initialChannel, tab.key)}>{tab.label}{tab.key === "waiting" && <span>{channelTickets.filter((ticket) => csTicketMatchesFilter(ticket, "waiting")).length}</span>}</button>)}</div>{filteredTickets.map((ticket) => <button key={ticket.sourceId} className={`ticket-item ${selected?.sourceId === ticket.sourceId ? "active" : ""}`} onClick={() => selectTicket(ticket)}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.replyDeliveryStatus === "reconciliation_required" ? "원장 확인 필요" : ticket.status} /></div></button>)}{filteredTickets.length === 0 && <div className="ticket-list-empty"><Inbox size={24} /><b>이 조건의 문의가 없습니다.</b><small>다른 상태나 채널을 선택해 주세요.</small></div>}</aside>
@@ -4026,6 +4078,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
   const [publishingSession, setPublishingSession] = useState(0);
   const displayProductsRef = useRef<DisplayProduct[]>([]);
   const [syncingOrders, setSyncingOrders] = useState(false);
+  const [inquiryHistoryBackfill, setInquiryHistoryBackfill] = useState<InquiryHistoryBackfill | null>(null);
+  const activeInquiryHistoryRunsRef = useRef(new Set<string>());
+  const notifiedInquiryHistoryRunsRef = useRef(new Set<string>());
   const operations = useOperationsSnapshot();
   const refreshOperations = operations.refresh;
   const authenticatedOperationsFetch = operations.authenticatedFetch;
@@ -4491,18 +4546,27 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     }
   }, [notify, operations]);
 
-  const syncOrders = useCallback(async (silent = false) => {
+  const syncOrders = useCallback(async (silent = false, historyDays?: number) => {
     if (syncingOrdersRef.current) return;
     syncingOrdersRef.current = true;
     setSyncingOrders(true);
     try {
       const response = await authenticatedOperationsFetch("/api/operations/sync", {
         method: "POST",
-        body: JSON.stringify({ includeImBootstrap: !silent }),
+        body: JSON.stringify(historyDays
+          ? { channels: ["coupang", "smartstore"], historyDays }
+          : { includeImBootstrap: !silent }),
       });
-      const payload = await response.json().catch(() => ({ message: "주문 동기화 응답을 읽지 못했습니다." })) as { message?: string };
+      const payload = await response.json().catch(() => ({ message: "주문 동기화 응답을 읽지 못했습니다." })) as { message?: string; historyBackfill?: unknown };
       if (!response.ok) throw new Error(payload.message ?? "판매채널 주문 동기화를 시작하지 못했습니다.");
-      if (!silent) notify(payload.message ?? "연결된 판매채널의 실제 주문·고객 문의 조회를 시작했습니다. 결과는 자동 반영됩니다.");
+      if (historyDays) {
+        const parsedBackfill = parseInquiryHistoryBackfill(payload.historyBackfill);
+        if (!parsedBackfill) throw new Error("과거 문의 작업 접수 상태를 확인하지 못했습니다.");
+        setInquiryHistoryBackfill(parsedBackfill);
+      }
+      if (!silent) notify(payload.message ?? (historyDays
+        ? "한국 쇼핑몰의 과거 문의를 읽기 전용으로 다시 불러오기 시작했습니다."
+        : "연결된 판매채널의 실제 주문·고객 문의 조회를 시작했습니다. 결과는 자동 반영됩니다."));
       window.setTimeout(() => void reloadOperations(), 3_000);
       window.setTimeout(() => void reloadOperations(), 12_000);
       window.setTimeout(() => void reloadOperations(), 30_000);
@@ -4513,6 +4577,66 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       setSyncingOrders(false);
     }
   }, [authenticatedOperationsFetch, notify, reloadOperations]);
+
+  const refreshInquiryHistoryBackfill = useCallback(async (runId: string | null = null) => {
+    const params = runId ? `?runId=${encodeURIComponent(runId)}` : "";
+    try {
+      const response = await authenticatedOperationsFetch(`/api/operations/sync${params}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => null) as null | { historyBackfill?: unknown };
+      if (!response.ok || !payload) return false;
+      if (payload.historyBackfill === null) {
+        if (!runId) setInquiryHistoryBackfill(null);
+        return true;
+      }
+      const parsedBackfill = parseInquiryHistoryBackfill(payload.historyBackfill);
+      if (!parsedBackfill || runId && parsedBackfill.runId !== runId) return false;
+      setInquiryHistoryBackfill(parsedBackfill);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [authenticatedOperationsFetch]);
+
+  useEffect(() => {
+    if (view !== "cs") return;
+    const timer = window.setTimeout(() => {
+      void refreshInquiryHistoryBackfill();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [refreshInquiryHistoryBackfill, view]);
+
+  useEffect(() => {
+    if (view !== "cs" || !inquiryHistoryBackfill
+        || !["queued", "running"].includes(inquiryHistoryBackfill.status)) return;
+    activeInquiryHistoryRunsRef.current.add(inquiryHistoryBackfill.runId);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void refreshInquiryHistoryBackfill(inquiryHistoryBackfill.runId);
+      }
+    };
+    const interval = window.setInterval(refreshWhenVisible, 15_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [inquiryHistoryBackfill, refreshInquiryHistoryBackfill, view]);
+
+  useEffect(() => {
+    if (!inquiryHistoryBackfill
+        || !["succeeded", "failed"].includes(inquiryHistoryBackfill.status)
+        || !activeInquiryHistoryRunsRef.current.has(inquiryHistoryBackfill.runId)) return;
+    const notificationKey = `${inquiryHistoryBackfill.runId}:${inquiryHistoryBackfill.status}`;
+    if (notifiedInquiryHistoryRunsRef.current.has(notificationKey)) return;
+    notifiedInquiryHistoryRunsRef.current.add(notificationKey);
+    notify(inquiryHistoryBackfill.status === "succeeded"
+      ? `쿠팡·스마트스토어 ${inquiryHistoryBackfill.historyDays}일 문의 이력 ${inquiryHistoryBackfill.succeededJobs}개 작업을 모두 반영했습니다.`
+      : `쿠팡·스마트스토어 ${inquiryHistoryBackfill.historyDays}일 문의 이력 중 ${inquiryHistoryBackfill.failedJobs}개 작업은 실패해 완료 처리하지 않았습니다.`);
+    void reloadOperations();
+  }, [inquiryHistoryBackfill, notify, reloadOperations]);
 
   const navigate = useCallback((next: View, requestedRegistrationStatus?: RegistrationActivityFilter) => {
     const nextRegistrationStatus = next === "registration-activity"
@@ -4981,7 +5105,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} scenarioState={operations.data?.marginScenarioState ?? "checking"} scenarioMessage={operations.data?.marginScenarioMessage ?? null} products={operations.data?.products ?? []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
-    if (view === "cs") return <CsPage notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
+    if (view === "cs") return <CsPage notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} onBackfill={() => syncOrders(false, 30)} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
     if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} syncStatus={operations.data?.syncStatus ?? []} onOpenCs={(channel) => openCs(csChannelFilterFromValue(channel), "open")} />;
     if (view === "platform-usage") return <PlatformUsagePage />;
     if (view === "templates") return <TemplatesPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;

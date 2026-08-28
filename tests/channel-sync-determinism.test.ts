@@ -93,6 +93,56 @@ test("Shopee normalized orders preserve the credential-certified shop and mercha
   );
 });
 
+test("Smartstore product Q&A and customer inquiries keep disjoint provider identities", () => {
+  const productResult = result("smartstore", "inquiries.list", "inquiries", {
+    sellerpilotInquiryKind: "product",
+    contents: [{
+      questionId: 987654,
+      question: "상품 재입고 일정이 궁금합니다.",
+      productName: "테스트 상품",
+      maskedWriterId: "buy***",
+      answered: false,
+      createDate: "2026-08-25T12:34:56.000+09:00",
+    }],
+  });
+  const customerResult = result("smartstore", "inquiries.list", "inquiries", {
+    sellerpilotInquiryKind: "customer",
+    content: [{
+      inquiryNo: 987654,
+      category: "배송",
+      title: "배송 일정 문의",
+      inquiryContent: "언제 출고되나요?",
+      inquiryRegistrationDateTime: "2026-08-26T09:00:00.000+09:00",
+      answered: false,
+      orderId: "ORDER-1",
+      productName: "테스트 상품",
+      customerId: "buyer-1",
+      customerName: "구매자",
+    }],
+  });
+
+  assert.deepEqual(normalizeChannelInquiries("smartstore", productResult, NORMALIZATION_TIMESTAMP), [{
+    externalTicketId: "987654",
+    customerName: "buy***",
+    subject: "테스트 상품",
+    message: "상품 재입고 일정이 궁금합니다.",
+    status: "waiting",
+    priority: 3,
+    receivedAt: "2026-08-25T03:34:56.000Z",
+    replyContext: { kind: "product", questionId: "987654" },
+  }]);
+  assert.deepEqual(normalizeChannelInquiries("smartstore", customerResult, NORMALIZATION_TIMESTAMP), [{
+    externalTicketId: "customer:987654",
+    customerName: "구매자",
+    subject: "배송 일정 문의",
+    message: "언제 출고되나요?",
+    status: "waiting",
+    priority: 3,
+    receivedAt: "2026-08-26T00:00:00.000Z",
+    replyContext: { kind: "customer", inquiryNo: "987654" },
+  }]);
+});
+
 test("Temu deadline priority is identical across exact completion replays", () => {
   const referenceTime = new Date(NORMALIZATION_TIMESTAMP).getTime();
   const inquiryResult = result("temu", "inquiries.list", "inquiries", {

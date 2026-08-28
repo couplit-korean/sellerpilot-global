@@ -2263,6 +2263,27 @@ button {
 .order-detail-ledger dt { color: #8b94a3; }
 .order-detail-ledger dd { min-width: 0; color: #344054; font-weight: 700; overflow-wrap: anywhere; }
 
+.cs-history-backfill { display: grid; gap: 11px; padding: 16px 18px; border-color: #c8dfe8; background: #f7fbfd; }
+.cs-history-backfill.succeeded { border-color: #c5e1d6; background: #f5fbf8; }
+.cs-history-backfill.failed { border-color: #efd0c4; background: #fff8f5; }
+.cs-history-backfill-heading { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.cs-history-backfill-heading > span:nth-child(2) { min-width: 0; }
+.cs-history-backfill-heading b, .cs-history-backfill-heading small { display: block; }
+.cs-history-backfill-heading b { color: #344054; font-size: 11px; }
+.cs-history-backfill-heading small { margin-top: 3px; color: #758393; font-size: 8px; line-height: 1.45; overflow-wrap: anywhere; }
+.cs-history-backfill-heading em { color: #326b8c; font-family: var(--font-geist-mono), monospace; font-size: 13px; font-style: normal; font-weight: 850; }
+.cs-history-backfill.failed .cs-history-backfill-heading em { color: #a94d32; }
+.cs-history-backfill.succeeded .cs-history-backfill-heading em { color: #187455; }
+.cs-history-progress { width: 100%; height: 7px; overflow: hidden; border-radius: 99px; background: #dfebf0; }
+.cs-history-progress > i { display: block; width: 0; height: 100%; border-radius: inherit; background: #4e8caa; transition: width 180ms ease; }
+.cs-history-backfill.succeeded .cs-history-progress > i { background: #2f8a6b; }
+.cs-history-backfill.failed .cs-history-progress > i { background: #d27656; }
+.cs-history-counts { display: flex; min-width: 0; align-items: center; gap: 14px; color: #687687; font-size: 9px; }
+.cs-history-counts > span { white-space: nowrap; }
+.cs-history-counts b { color: #344054; font-variant-numeric: tabular-nums; }
+.cs-history-counts .failed, .cs-history-counts .failed b { color: #a94d32; }
+.cs-history-counts > small { min-width: 0; margin-left: auto; color: #7b8795; font-size: 8px; line-height: 1.45; text-align: right; overflow-wrap: anywhere; }
+
 .cs-channel-verification { padding: 18px 20px; }
 .cs-channel-verification-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .cs-channel-verification-grid article { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 1px solid #e7eaee; border-radius: 8px; padding: 11px; }

@@ -1,0 +1,1041 @@
+import assert from "node:assert/strict";
+import { createHash, createHmac } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { registerHooks } from "node:module";
+import test from "node:test";
+import type { ChannelOperationResult } from "../lib/channels/operations";
+import {
+  coupangRequest,
+  runWithChannelRequestSignal,
+} from "../lib/channels/protocols";
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === "server-only") {
+      return { shortCircuit: true, url: "data:text/javascript,export default {}" };
+    }
+    return nextResolve(specifier, context);
+  },
+});
+
+const {
+  SERVERLESS_CS_DRAIN_CONCURRENCY,
+  SERVERLESS_CS_ENQUEUE_CONCURRENCY,
+  SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES,
+  deriveServerlessCsGatewayCredentials,
+  executeServerlessCsProviderJob,
+  runServerlessCsGatewayDrain,
+  serverlessCsCurrentInquiryEnqueues,
+} = await import("../lib/channels/serverless-cs-gateway");
+
+const CRON_SECRET = "serverless-cs-gateway-cron-secret";
+const JOB_ID = "10000000-0000-4000-8000-000000000001";
+const CLAIM_TOKEN = "20000000-0000-4000-8000-000000000001";
+const CREDENTIAL_ID = "30000000-0000-4000-8000-000000000001";
+const PREPARED_CREDENTIAL_ID = "40000000-0000-4000-8000-000000000001";
+
+function authorizedRequest(extraHeaders: Record<string, string> = {}) {
+  const { wakeBearer } = deriveServerlessCsGatewayCredentials(CRON_SECRET);
+  return new Request("https://sellerpilot.example/api/internal/channel-gateway-drain", {
+    method: "POST",
+    headers: { authorization: `Bearer ${wakeBearer}`, ...extraHeaders },
+  });
+}
+
+function claim(
+  channel: "ebay" | "coupang" | "smartstore" | "qoo10" = "ebay",
+  operation: "inquiries.list" | "inquiries.reply" = "inquiries.list",
+) {
+  return {
+    id: JOB_ID,
+    claim_token: CLAIM_TOKEN,
+    credential_id: CREDENTIAL_ID,
+    channel,
+    operation,
+    environment: "sandbox" as const,
+    request: {
+      arguments: operation === "inquiries.reply"
+        ? channel === "ebay"
+          ? {
+            marketplaceId: "EBAY_US",
+            itemId: "123456789",
+            parentMessageId: "message-1",
+            recipientId: "buyer-1",
+            reply: "bounded test reply",
+          }
+          : channel === "coupang"
+            ? { inquiryId: "inquiry-1", kind: "product", reply: "bounded test reply" }
+            : channel === "smartstore"
+              ? { questionId: "question-1", reply: "bounded test reply" }
+              : {
+                params: {
+                  inq_type: "MSG",
+                  question_no: "12345678",
+                  seq_no: "87654321",
+                  contents: "bounded test reply",
+                },
+              }
+        : channel === "ebay"
+          ? {
+            marketplaceId: "EBAY_US",
+            startCreationTime: "2026-08-27T00:00:00.000Z",
+            endCreationTime: "2026-08-28T00:00:00.000Z",
+            entriesPerPage: 25,
+            pageNumber: 1,
+          }
+          : channel === "qoo10"
+            ? {
+              params: {
+                search_start_dt: "20260822",
+                search_end_dt: "20260828",
+                proc_status: "S1",
+              },
+            }
+            : { query: { pageNum: 1, pageSize: 25, page: 1, size: 25 } },
+    },
+    credential: channel === "ebay"
+      ? {
+        access_token: "private-ebay-access-token",
+        access_token_expires_at: "2099-01-01T00:00:00.000Z",
+        refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
+        marketplace_id: "EBAY_US",
+      }
+      : channel === "coupang"
+        ? {
+          access_key: "private-coupang-access-key",
+          secret_key: "private-coupang-secret-key",
+          vendor_id: "vendor-1",
+          requested_by: "wing-user",
+        }
+        : channel === "smartstore"
+          ? {
+            client_id: "private-smartstore-client",
+            client_secret: "private-smartstore-secret",
+            token_type: "SELLER",
+            account_id: "seller-account",
+          }
+          : { api_key: "private-qoo10-api-key" },
+    attempt_count: 1,
+  };
+}
+
+function inquiryListResult(
+  channel: "ebay" | "coupang" | "smartstore" | "qoo10" = "ebay",
+): ChannelOperationResult {
+  return {
+    ok: true,
+    channel,
+    operation: "inquiries.list",
+    steps: [{
+      name: "inquiries",
+      ok: true,
+      status: 200,
+      data: channel === "ebay"
+        ? {
+          memberMessages: [{
+            messageId: "message-1",
+            itemId: "123456789",
+            senderId: "buyer-1",
+            itemTitle: "Test item",
+            body: "Where is my item?",
+            messageStatus: "Unanswered",
+            creationDate: "2026-08-28T01:00:00.000Z",
+            marketplaceId: "EBAY_US",
+          }],
+        }
+        : channel === "qoo10"
+          ? {
+            ResultCode: 0,
+            ResultObject: [{
+              INQ_TYPE: "MSG",
+              QUESTION_NO: "12345678",
+              SEQ_NO: "87654321",
+              CONTENTS: "배송 상태를 알려 주세요.",
+              CUST_NM: "Qoo10 민감 구매자",
+              TITLE: "Qoo10 민감 문의 제목",
+              STATUS: "S1",
+              INQ_DT: "2026-08-28T01:23:45.000Z",
+            }],
+          }
+          : { content: [] },
+    }],
+    safeMessage: "Inquiry sync completed.",
+  };
+}
+
+function inquiryReplyResult(
+  channel: "ebay" | "coupang" | "smartstore" | "qoo10",
+): ChannelOperationResult {
+  return {
+    ok: true,
+    channel,
+    operation: "inquiries.reply",
+    steps: [{ name: "inquiry-reply", ok: true, status: 200, data: { accepted: true } }],
+    remoteId: "reply-parent-1",
+    safeMessage: "Inquiry reply accepted.",
+  };
+}
+
+function smartstoreCustomerInquiryResult(): ChannelOperationResult {
+  return {
+    ok: true,
+    channel: "smartstore",
+    operation: "inquiries.list",
+    steps: [{
+      name: "inquiries",
+      ok: true,
+      status: 200,
+      data: {
+        sellerpilotInquiryKind: "customer",
+        content: [{
+          inquiryNo: 987654321,
+          inquiryContent: "배송지를 변경할 수 있나요?",
+          customerName: "구매자",
+          title: "배송 문의",
+          answered: false,
+          inquiryRegistrationDateTime: "2026-08-28T01:23:45.000Z",
+        }],
+      },
+    }],
+    safeMessage: "Customer inquiry sync completed.",
+  };
+}
+
+function baseRpc(
+  claimedJob: ReturnType<typeof claim>,
+  calls: Array<{ name: string; arguments_: Record<string, unknown> }>,
+  overrides: Partial<Record<string, (arguments_: Record<string, unknown>) => { data: unknown; error: { code?: string } | null }>> = {},
+) {
+  let claimCount = 0;
+  return async (name: string, arguments_: Record<string, unknown> = {}) => {
+    calls.push({ name, arguments_ });
+    const override = overrides[name];
+    if (override) return override(arguments_);
+    if (name === "sellerpilot_service_enqueue_periodic_sync") {
+      return { data: { status: "already_pending" }, error: null };
+    }
+    if (name === "sellerpilot_claim_serverless_cs_job") {
+      claimCount += 1;
+      return { data: claimCount === 1 ? claimedJob : null, error: null };
+    }
+    if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
+    if (name === "sellerpilot_service_begin_serverless_cs_provider_mutation") return { data: true, error: null };
+    if (name === "sellerpilot_service_begin_serverless_cs_credential_refresh") return { data: true, error: null };
+    if (name === "sellerpilot_service_prepare_serverless_cs_credential_refresh") {
+      return { data: { status: "prepared", credential_id: PREPARED_CREDENTIAL_ID }, error: null };
+    }
+    if (name === "sellerpilot_service_serverless_cs_completion_context") {
+      return {
+        data: {
+          status: "running",
+          channel: claimedJob.channel,
+          operation: claimedJob.operation,
+          normalization_timestamp: "2026-08-28T00:00:00.000Z",
+        },
+        error: null,
+      };
+    }
+    if (name === "sellerpilot_service_complete_serverless_cs_transaction") {
+      return { data: { status: "completed" }, error: null };
+    }
+    return { data: null, error: { code: "unexpected_rpc" } };
+  };
+}
+
+test("serverless CS derivation matches the Supabase HMAC bootstrap contract", () => {
+  const credentials = deriveServerlessCsGatewayCredentials(CRON_SECRET);
+  const wakeBearer = createHmac("sha256", CRON_SECRET)
+    .update("sellerpilot:channel-gateway-drain:wake:v1", "utf8")
+    .digest("base64url");
+  const rawGatewayToken = `spw_${createHmac("sha256", CRON_SECRET)
+    .update("sellerpilot:channel-gateway-drain:gateway:v1", "utf8")
+    .digest("base64url")}`;
+  assert.equal(credentials.wakeBearer, wakeBearer);
+  assert.equal(credentials.wakeBearer.length, 43);
+  assert.equal(
+    credentials.gatewayTokenHash,
+    createHash("sha256").update(rawGatewayToken, "utf8").digest("hex"),
+  );
+  assert.match(credentials.gatewayTokenHash, /^[a-f0-9]{64}$/);
+  assert.deepEqual(
+    deriveServerlessCsGatewayCredentials(`  ${CRON_SECRET}\n`),
+    credentials,
+  );
+  assert.throws(
+    () => deriveServerlessCsGatewayCredentials(" \n "),
+    /serverless_cs_cron_secret_missing/,
+  );
+});
+
+test("derived wake authentication fails before any database claim", async () => {
+  let rpcCalls = 0;
+  const response = await runServerlessCsGatewayDrain(
+    new Request("https://sellerpilot.example/api/internal/channel-gateway-drain", {
+      method: "POST",
+      headers: { authorization: `Bearer ${CRON_SECRET}` },
+    }),
+    {
+      cronSecret: CRON_SECRET,
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: null, error: null };
+      },
+    },
+  );
+  assert.equal(response.status, 401);
+  assert.equal(rpcCalls, 0);
+});
+
+test("authenticated canary validates the route without claiming or executing a job", async () => {
+  let rpcCalls = 0;
+  let providerCalls = 0;
+  const response = await runServerlessCsGatewayDrain(
+    authorizedRequest({ "x-sellerpilot-drain-mode": "canary-v1" }),
+    {
+      cronSecret: CRON_SECRET,
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: null, error: null };
+      },
+      executeProvider: async () => {
+        providerCalls += 1;
+        return inquiryListResult("qoo10");
+      },
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    status: "canary",
+    claimed: 0,
+    processed: 0,
+  });
+  assert.equal(rpcCalls, 0);
+  assert.equal(providerCalls, 0);
+});
+
+test("canary mode still rejects missing or wrong wake authentication before database access", async () => {
+  let rpcCalls = 0;
+  const dependencies = {
+    cronSecret: CRON_SECRET,
+    rpc: async () => {
+      rpcCalls += 1;
+      return { data: null, error: null };
+    },
+  };
+  for (const authorization of [null, "Bearer wrong-wake-secret"]) {
+    const headers = new Headers({ "x-sellerpilot-drain-mode": "canary-v1" });
+    if (authorization) headers.set("authorization", authorization);
+    const response = await runServerlessCsGatewayDrain(
+      new Request("https://sellerpilot.example/api/internal/channel-gateway-drain", {
+        method: "POST",
+        headers,
+      }),
+      dependencies,
+    );
+    assert.equal(response.status, 401);
+  }
+  assert.equal(rpcCalls, 0);
+});
+
+test("an unknown explicit drain mode fails closed without claiming", async () => {
+  let rpcCalls = 0;
+  const response = await runServerlessCsGatewayDrain(
+    authorizedRequest({ "x-sellerpilot-drain-mode": "canray-v1" }),
+    {
+      cronSecret: CRON_SECRET,
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: null, error: null };
+      },
+    },
+  );
+  assert.equal(response.status, 400);
+  assert.equal(rpcCalls, 0);
+});
+
+test("normal drain enqueues only current supported inquiries before two bounded claims", async () => {
+  const fixedNow = new Date("2026-08-28T07:00:00.000Z");
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  let activeEnqueues = 0;
+  let maxActiveEnqueues = 0;
+  let completedEnqueues = 0;
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    now: () => fixedNow,
+    rpc: async (name, arguments_ = {}) => {
+      calls.push({ name, arguments_ });
+      if (name === "sellerpilot_service_enqueue_periodic_sync") {
+        activeEnqueues += 1;
+        maxActiveEnqueues = Math.max(maxActiveEnqueues, activeEnqueues);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        activeEnqueues -= 1;
+        completedEnqueues += 1;
+        return { data: { status: "already_pending" }, error: null };
+      }
+      assert.equal(completedEnqueues, 7);
+      return { data: null, error: null };
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    status: "idle",
+    claimed: 0,
+    processed: 0,
+    capacity: 2,
+    enqueue: {
+      attempted: 7,
+      queued: 0,
+      pending: 7,
+      notConnected: 0,
+      reconnectRequired: 0,
+      reconciliationRequired: 0,
+      failed: 0,
+    },
+    jobs: [],
+  });
+  const enqueues = calls.filter(({ name }) => name === "sellerpilot_service_enqueue_periodic_sync");
+  assert.equal(enqueues.length, 7);
+  assert.equal(maxActiveEnqueues, SERVERLESS_CS_ENQUEUE_CONCURRENCY);
+  assert.ok(maxActiveEnqueues >= 2 && maxActiveEnqueues <= 4);
+  assert.equal(
+    calls.filter(({ name }) => name === "sellerpilot_claim_serverless_cs_job").length,
+    SERVERLESS_CS_DRAIN_CONCURRENCY,
+  );
+  assert.equal(
+    SERVERLESS_CS_DRAIN_CONCURRENCY * 5 > serverlessCsCurrentInquiryEnqueues(fixedNow).length,
+    true,
+  );
+  assert.equal(SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES, 5);
+  assert.deepEqual(
+    enqueues.map(({ arguments_ }) => arguments_.p_channel).sort(),
+    ["coupang", "coupang", "coupang", "ebay", "qoo10", "smartstore", "smartstore"],
+  );
+  assert.ok(enqueues.every(({ arguments_ }) =>
+    arguments_.p_operation === "inquiries.list"
+      && arguments_.p_min_interval_minutes === 5));
+  assert.deepEqual(
+    enqueues.map(({ arguments_ }) => {
+      const payload = arguments_.p_request_payload as { periodicKey: string };
+      return `${arguments_.p_channel}:${payload.periodicKey}`;
+    }).sort(),
+    [
+      "coupang:inquiries:call-center:no_answer",
+      "coupang:inquiries:call-center:transfer",
+      "coupang:inquiries:product:noanswer",
+      "ebay:inquiries:0",
+      "qoo10:inquiries:0",
+      "smartstore:inquiries:customer",
+      "smartstore:inquiries:product",
+    ],
+  );
+  const serializedEnqueues = JSON.stringify(enqueues);
+  assert.doesNotMatch(serializedEnqueues, /orders\.list|inquiries:history|lazada|shopee|elevenst|temu/i);
+  const ebayEnqueue = enqueues.find(({ arguments_ }) => arguments_.p_channel === "ebay");
+  assert.equal(
+    (ebayEnqueue?.arguments_.p_request_payload as { periodicKey?: string })?.periodicKey,
+    "inquiries:0",
+  );
+});
+
+test("missing generic claim RPC falls back only to the eBay compatibility alias", async () => {
+  const names: string[] = [];
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: async (name) => {
+      names.push(name);
+      if (name === "sellerpilot_service_enqueue_periodic_sync") {
+        return { data: { status: "already_pending" }, error: null };
+      }
+      return name === "sellerpilot_claim_serverless_cs_job"
+        ? { data: null, error: { code: "PGRST202" } }
+        : { data: null, error: null };
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.equal(names.filter((name) => name === "sellerpilot_claim_serverless_cs_job").length, 2);
+  assert.equal(names.filter((name) => name === "sellerpilot_claim_ebay_asq_serverless_job").length, 2);
+});
+
+test("one enqueue failure is safely aggregated and does not block an existing queued job", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const logged: unknown[] = [];
+  let providerCalls = 0;
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(claim("qoo10", "inquiries.list"), calls, {
+      sellerpilot_service_enqueue_periodic_sync: (arguments_) =>
+        arguments_.p_channel === "qoo10"
+          ? { data: null, error: { code: "private_provider_body_must_not_escape" } }
+          : { data: { status: "already_pending" }, error: null },
+    }),
+    logError: (...values) => logged.push(values),
+    executeProvider: async () => {
+      providerCalls += 1;
+      return inquiryListResult("qoo10");
+    },
+  });
+  const responseText = await response.text();
+  const body = JSON.parse(responseText) as {
+    ok: boolean;
+    status: string;
+    processed: number;
+    needsAttention?: boolean;
+    enqueue: { failed: number; pending: number };
+  };
+  assert.equal(response.status, 200);
+  assert.equal(body.ok, false);
+  assert.equal(body.status, "succeeded");
+  assert.equal(body.processed, 1);
+  assert.equal(body.needsAttention, true);
+  assert.deepEqual(body.enqueue, {
+    attempted: 7,
+    queued: 0,
+    pending: 6,
+    notConnected: 0,
+    reconnectRequired: 0,
+    reconciliationRequired: 0,
+    failed: 1,
+  });
+  assert.equal(providerCalls, 1);
+  assert.deepEqual(logged, [["enqueue", { status: 503, failed: 1, total: 7 }]]);
+  assert.doesNotMatch(responseText, /Qoo10 민감 구매자|배송 상태를 알려 주세요|private_provider_body/);
+  assert.doesNotMatch(JSON.stringify(logged), /private_provider_body/);
+});
+
+test("a total enqueue transport outage is visible as 503 after bounded drain attempts", async () => {
+  let claimCalls = 0;
+  const logged: unknown[] = [];
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: async (name) => {
+      if (name === "sellerpilot_service_enqueue_periodic_sync") {
+        return { data: null, error: { code: "transport_error" } };
+      }
+      if (name === "sellerpilot_claim_serverless_cs_job") {
+        claimCalls += 1;
+        return { data: null, error: null };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+    logError: (...values) => logged.push(values),
+  });
+
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    status: "idle",
+    claimed: 0,
+    processed: 0,
+    capacity: 2,
+    enqueue: {
+      attempted: 7,
+      queued: 0,
+      pending: 0,
+      notConnected: 0,
+      reconnectRequired: 0,
+      reconciliationRequired: 0,
+      failed: 7,
+    },
+    needsAttention: true,
+    jobs: [],
+  });
+  assert.equal(claimCalls, 2);
+  assert.deepEqual(logged, [["enqueue", { status: 503, failed: 7, total: 7 }]]);
+});
+
+test("two fenced workers run concurrently and provide more capacity than five-minute generation", async () => {
+  const firstJob = claim("qoo10", "inquiries.list");
+  const secondJob = claim("ebay", "inquiries.list");
+  secondJob.id = "10000000-0000-4000-8000-000000000002";
+  secondJob.claim_token = "20000000-0000-4000-8000-000000000002";
+  secondJob.credential_id = "30000000-0000-4000-8000-000000000002";
+  const jobs = [firstJob, secondJob];
+  const byId = new Map(jobs.map((job) => [job.id, job]));
+  let claimIndex = 0;
+  let activeProviders = 0;
+  let maxActiveProviders = 0;
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: async (name, arguments_ = {}) => {
+      calls.push({ name, arguments_ });
+      if (name === "sellerpilot_service_enqueue_periodic_sync") {
+        return { data: { status: "already_pending" }, error: null };
+      }
+      if (name === "sellerpilot_claim_serverless_cs_job") {
+        const job = jobs[claimIndex] ?? null;
+        claimIndex += 1;
+        return { data: job, error: null };
+      }
+      if (name === "sellerpilot_touch_serverless_cs_job") {
+        return { data: "running", error: null };
+      }
+      if (name === "sellerpilot_service_serverless_cs_completion_context") {
+        const job = byId.get(String(arguments_.p_job_id));
+        return {
+          data: job ? {
+            status: "running",
+            channel: job.channel,
+            operation: job.operation,
+            normalization_timestamp: "2026-08-28T00:00:00.000Z",
+          } : null,
+          error: null,
+        };
+      }
+      if (name === "sellerpilot_service_complete_serverless_cs_transaction") {
+        return { data: { status: "completed" }, error: null };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+    executeProvider: async ({ job }) => {
+      activeProviders += 1;
+      maxActiveProviders = Math.max(maxActiveProviders, activeProviders);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      activeProviders -= 1;
+      return inquiryListResult(job.channel);
+    },
+  });
+  const responseText = await response.text();
+  const body = JSON.parse(responseText) as {
+    status: string;
+    claimed: number;
+    processed: number;
+    capacity: number;
+    jobs: Array<{ channel: string }>;
+  };
+  assert.equal(response.status, 200);
+  assert.equal(body.status, "succeeded");
+  assert.equal(body.claimed, 2);
+  assert.equal(body.processed, 2);
+  assert.equal(body.capacity, 2);
+  assert.equal(maxActiveProviders, 2);
+  assert.deepEqual(body.jobs.map((job) => job.channel).sort(), ["ebay", "qoo10"]);
+  assert.ok(body.capacity * 5 > serverlessCsCurrentInquiryEnqueues(new Date()).length);
+  assert.equal(
+    calls.filter(({ name }) => name === "sellerpilot_claim_serverless_cs_job").length,
+    2,
+  );
+  assert.doesNotMatch(responseText, /Qoo10 민감 구매자|배송 상태를 알려 주세요|Where is my item\?|buyer-1/);
+});
+
+test("inquiry list completion normalizes provider data in the atomic transaction", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(claim("ebay", "inquiries.list"), calls),
+    executeProvider: async () => inquiryListResult("ebay"),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    status: "succeeded",
+    claimed: 1,
+    processed: 1,
+    capacity: 2,
+    enqueue: {
+      attempted: 7,
+      queued: 0,
+      pending: 7,
+      notConnected: 0,
+      reconnectRequired: 0,
+      reconciliationRequired: 0,
+      failed: 0,
+    },
+    jobs: [{
+      status: "succeeded",
+      jobId: JOB_ID,
+      channel: "ebay",
+      operation: "inquiries.list",
+    }],
+  });
+  assert.equal(calls.filter(({ name }) => name === "sellerpilot_claim_serverless_cs_job").length, 2);
+  const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  assert.equal(complete?.arguments_.p_status, "succeeded");
+  assert.deepEqual(complete?.arguments_.p_normalized_inquiries, [{
+    externalTicketId: "ebay:message-1",
+    customerName: "buyer-1",
+    subject: "Test item",
+    message: "Where is my item?",
+    status: "waiting",
+    priority: 3,
+    receivedAt: "2026-08-28T01:00:00.000Z",
+    replyContext: {
+      itemId: "123456789",
+      parentMessageId: "message-1",
+      recipientId: "buyer-1",
+      marketplaceId: "EBAY_US",
+    },
+  }]);
+  assert.deepEqual(complete?.arguments_.p_response_payload, {
+    ok: true,
+    channel: "ebay",
+    operation: "inquiries.list",
+    steps: [{
+      name: "inquiries-normalized",
+      ok: true,
+      status: 200,
+      data: {
+        sellerpilotMarker: "normalized_inquiries_v1",
+        normalizedInquiryCount: 1,
+        providerStepCount: 1,
+      },
+    }],
+    safeMessage: "문의 동기화 결과를 정규화해 저장했습니다.",
+  });
+  const durableResponse = JSON.stringify(complete?.arguments_.p_response_payload);
+  assert.doesNotMatch(durableResponse, /Where is my item\?|buyer-1|Test item/);
+});
+
+test("Smartstore customer inquiry arguments and reply lineage survive direct execution and atomic completion", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const customerJob = claim("smartstore", "inquiries.list");
+  const customerArguments = {
+    kind: "customer",
+    query: {
+      startSearchDate: "2026-08-22",
+      endSearchDate: "2026-08-28",
+      answered: false,
+      page: 1,
+      size: 200,
+    },
+  };
+  customerJob.request.arguments = customerArguments;
+  let observedArguments: unknown;
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(customerJob, calls),
+    executeProvider: async ({ job }) => {
+      observedArguments = structuredClone(job.request.arguments);
+      return smartstoreCustomerInquiryResult();
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(observedArguments, customerArguments);
+  const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  assert.deepEqual(complete?.arguments_.p_normalized_inquiries, [{
+    externalTicketId: "customer:987654321",
+    customerName: "구매자",
+    subject: "배송 문의",
+    message: "배송지를 변경할 수 있나요?",
+    status: "waiting",
+    priority: 3,
+    receivedAt: "2026-08-28T01:23:45.000Z",
+    replyContext: { kind: "customer", inquiryNo: "987654321" },
+  }]);
+  const durableResponse = JSON.stringify(complete?.arguments_.p_response_payload);
+  assert.doesNotMatch(durableResponse, /배송지를 변경할 수 있나요\?|구매자|배송 문의|987654321/);
+});
+
+test("Qoo10 inquiry list keeps the verified one-call contract and stores only normalized PII", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const qoo10Job = claim("qoo10", "inquiries.list");
+  let observedDispatch: Record<string, unknown> | undefined;
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(qoo10Job, calls),
+    executeProvider: (input) => executeServerlessCsProviderJob(input, async (operationInput) => {
+      observedDispatch = {
+        channel: operationInput.channel,
+        operation: operationInput.operation,
+        arguments: structuredClone(operationInput.arguments),
+      };
+      return inquiryListResult("qoo10");
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(observedDispatch, {
+    channel: "qoo10",
+    operation: "inquiries.list",
+    arguments: {
+      params: {
+        search_start_dt: "20260822",
+        search_end_dt: "20260828",
+        proc_status: "S1",
+      },
+    },
+  });
+  const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  assert.deepEqual(complete?.arguments_.p_normalized_inquiries, [{
+    externalTicketId: "qoo10:MSG:12345678:87654321",
+    customerName: "Qoo10 민감 구매자",
+    subject: "Qoo10 민감 문의 제목",
+    message: "배송 상태를 알려 주세요.",
+    status: "waiting",
+    priority: 3,
+    receivedAt: "2026-08-28T01:23:45.000Z",
+  }]);
+  const durableResponse = JSON.stringify(complete?.arguments_.p_response_payload);
+  assert.match(durableResponse, /normalized_inquiries_v1/);
+  assert.doesNotMatch(
+    durableResponse,
+    /Qoo10 민감 구매자|Qoo10 민감 문의 제목|배송 상태를 알려 주세요|12345678|87654321/,
+  );
+  assert.equal(
+    Object.hasOwn(complete?.arguments_.p_response_payload as object, "continuation"),
+    false,
+  );
+});
+
+test("Qoo10 inquiry list reconciliation also strips every raw customer field", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const uncertainResult = inquiryListResult("qoo10");
+  uncertainResult.ok = false;
+  uncertainResult.steps[0] = {
+    ...uncertainResult.steps[0],
+    ok: false,
+    status: 504,
+    data: {
+      ...uncertainResult.steps[0].data,
+      sellerpilotReconciliationRequired: true,
+    },
+  };
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(claim("qoo10", "inquiries.list"), calls),
+    executeProvider: async () => uncertainResult,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { status: string }).status, "reconciliation_required");
+  const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  assert.equal(complete?.arguments_.p_status, "reconciliation_required");
+  assert.equal(complete?.arguments_.p_normalized_inquiries, null);
+  const durableResponse = JSON.stringify(complete?.arguments_.p_response_payload);
+  assert.match(durableResponse, /normalized_inquiries_v1/);
+  assert.doesNotMatch(
+    durableResponse,
+    /Qoo10 민감 구매자|Qoo10 민감 문의 제목|배송 상태를 알려 주세요|12345678|87654321/,
+  );
+});
+
+test("direct Qoo10 reply keeps the existing provider arguments behind the mutation fence", async () => {
+  const job = claim("qoo10", "inquiries.reply");
+  const events: string[] = [];
+  const result = await executeServerlessCsProviderJob({
+    job,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => { events.push("lease"); },
+      beginProviderMutation: async () => { events.push("mutation-fence"); },
+      beginCredentialMutation: async () => { throw new Error("unexpected credential mutation"); },
+      stageCredentialRefresh: async () => { throw new Error("unexpected credential refresh"); },
+    },
+  }, async (input) => {
+    events.push("operation");
+    assert.deepEqual(input.arguments, job.request.arguments);
+    return inquiryReplyResult("qoo10");
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(events, ["lease", "mutation-fence", "operation"]);
+});
+
+test("direct Smartstore customer reply crosses the mutation fence before operation dispatch", async () => {
+  const job = claim("smartstore", "inquiries.reply");
+  job.request.arguments = {
+    kind: "customer",
+    inquiryNo: "987654321",
+    reply: "bounded test reply",
+  };
+  const events: string[] = [];
+  const result = await executeServerlessCsProviderJob({
+    job,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => { events.push("lease"); },
+      beginProviderMutation: async () => { events.push("mutation-fence"); },
+      beginCredentialMutation: async () => { throw new Error("unexpected credential mutation"); },
+      stageCredentialRefresh: async () => { throw new Error("unexpected credential refresh"); },
+    },
+  }, async (input) => {
+    events.push("operation");
+    assert.deepEqual(input.arguments, job.request.arguments);
+    return inquiryReplyResult("smartstore");
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(events, ["lease", "mutation-fence", "operation"]);
+});
+
+for (const channel of ["ebay", "coupang", "smartstore", "qoo10"] as const) {
+  test(`${channel} inquiry reply crosses the exact mutation fence before execution`, async () => {
+    const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+    let fenceObserved = false;
+    const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+      cronSecret: CRON_SECRET,
+      rpc: baseRpc(claim(channel, "inquiries.reply"), calls),
+      executeProvider: async ({ hooks }) => {
+        await hooks.beginProviderMutation();
+        fenceObserved = calls.some(({ name }) => name === "sellerpilot_service_begin_serverless_cs_provider_mutation");
+        return inquiryReplyResult(channel);
+      },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(fenceObserved, true);
+    assert.equal((await response.json() as { status: string }).status, "succeeded");
+    const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+    assert.deepEqual(complete?.arguments_.p_response_payload, inquiryReplyResult(channel));
+  });
+}
+
+test("eBay credential mutation is fenced and staged before atomic completion", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const refresh = {
+    payload: {
+      access_token: "private-refreshed-access-token",
+      refresh_token: "private-refresh-token",
+    },
+    expiresAt: "2099-01-01T00:00:00.000Z",
+  };
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(claim("ebay", "inquiries.list"), calls),
+    executeProvider: async ({ hooks }) => {
+      await hooks.beginCredentialMutation();
+      await hooks.stageCredentialRefresh(refresh);
+      return inquiryListResult("ebay");
+    },
+  });
+  assert.equal(response.status, 200);
+  const names = calls.map(({ name }) => name);
+  assert.ok(names.indexOf("sellerpilot_service_begin_serverless_cs_credential_refresh")
+    < names.indexOf("sellerpilot_service_prepare_serverless_cs_credential_refresh"));
+  assert.ok(names.indexOf("sellerpilot_service_prepare_serverless_cs_credential_refresh")
+    < names.indexOf("sellerpilot_service_complete_serverless_cs_transaction"));
+  const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  assert.deepEqual(complete?.arguments_.p_credential_refresh, refresh);
+});
+
+test("an error after the reply fence completes as reconciliation without leaking diagnostics", async () => {
+  const privateDiagnostic = "private provider body and secret token";
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const logged: unknown[] = [];
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(claim("coupang", "inquiries.reply"), calls),
+    logError: (...values) => logged.push(values),
+    executeProvider: async ({ hooks }) => {
+      await hooks.beginProviderMutation();
+      throw new Error(privateDiagnostic);
+    },
+  });
+  const responseText = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(responseText, /reconciliation_required/);
+  assert.doesNotMatch(responseText, new RegExp(privateDiagnostic));
+  assert.doesNotMatch(JSON.stringify(logged), new RegExp(privateDiagnostic));
+  const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  assert.equal(complete?.arguments_.p_status, "reconciliation_required");
+  assert.equal(complete?.arguments_.p_error_message, "serverless_cs_execution_failed");
+});
+
+test("atomic completion retries the exact same payload once after an uncertain response", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  let completionCalls = 0;
+  const resultWithContinuation = inquiryListResult("smartstore");
+  resultWithContinuation.continuation = {
+    reason: "page_cap_reached",
+    arguments: {
+      kind: "product",
+      query: { page: 2, size: 25 },
+      sellerpilotPaginationDepth: 1,
+    },
+  };
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(claim("smartstore", "inquiries.list"), calls, {
+      sellerpilot_service_complete_serverless_cs_transaction: () => {
+        completionCalls += 1;
+        return completionCalls === 1
+          ? { data: null, error: { code: "request_failed" } }
+          : { data: { status: "completed" }, error: null };
+      },
+    }),
+    executeProvider: async () => resultWithContinuation,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(completionCalls, 2);
+  const completions = calls.filter(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  assert.deepEqual(completions[0].arguments_, completions[1].arguments_);
+  assert.deepEqual(
+    (completions[0].arguments_.p_response_payload as ChannelOperationResult).continuation,
+    resultWithContinuation.continuation,
+  );
+});
+
+test("request deadline composition is isolated across concurrent provider executions", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (_input, init) => {
+      const signal = init?.signal;
+      return new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          resolve(new Response(JSON.stringify({ data: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }));
+        }, 30);
+        signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(signal.reason);
+        }, { once: true });
+      });
+    };
+
+    const firstOwner = new AbortController();
+    const secondOwner = new AbortController();
+    const payload = {
+      access_key: "access-key",
+      secret_key: "secret-key",
+      vendor_id: "vendor-id",
+    };
+    const first = runWithChannelRequestSignal(firstOwner.signal, () => coupangRequest({
+      payload,
+      method: "GET",
+      path: "/test/first",
+    }));
+    const second = runWithChannelRequestSignal(secondOwner.signal, () => coupangRequest({
+      payload,
+      method: "GET",
+      path: "/test/second",
+    }));
+    firstOwner.abort(new Error("first-owner-timeout"));
+    await assert.rejects(first, /first-owner-timeout/);
+    assert.equal((await second).response.status, 200);
+
+    const shortOwner = AbortSignal.timeout(5);
+    await assert.rejects(
+      runWithChannelRequestSignal(shortOwner, () => coupangRequest({
+        payload,
+        method: "GET",
+        path: "/test/composed-timeout",
+      })),
+      (error) => error instanceof Error && error.name === "TimeoutError",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("bounded drain route is direct, two-job, Node-only, and excludes child workers and 11st", async () => {
+  const [route, gateway, protocols] = await Promise.all([
+    readFile(new URL("../app/api/internal/channel-gateway-drain/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/serverless-cs-gateway.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/protocols.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(route, /export const runtime = "nodejs"/);
+  assert.match(route, /export const dynamic = "force-dynamic"/);
+  assert.match(route, /export const maxDuration = 300/);
+  assert.match(route, /export async function POST/);
+  assert.match(gateway, /SERVERLESS_CS_EXECUTION_TIMEOUT_MS = 180_000/);
+  assert.match(gateway, /SERVERLESS_CS_ENQUEUE_CONCURRENCY = 3/);
+  assert.match(gateway, /SERVERLESS_CS_DRAIN_CONCURRENCY = 2/);
+  assert.match(gateway, /sellerpilot_claim_serverless_cs_job/);
+  assert.match(gateway, /sellerpilot_claim_ebay_asq_serverless_job/);
+  assert.match(gateway, /"qoo10",[\s\S]*"coupang",[\s\S]*"smartstore",[\s\S]*"ebay"/);
+  assert.doesNotMatch(`${route}\n${gateway}`, /child_process|\bspawn\s*\(|SELLERPILOT_URL|ai-cli-worker/);
+  assert.doesNotMatch(gateway, /elevenst/i);
+  assert.match(protocols, /AsyncLocalStorage<AbortSignal>/);
+  assert.match(protocols, /AbortSignal\.any\(\[ownerSignal, timeoutSignal\]\)/);
+});

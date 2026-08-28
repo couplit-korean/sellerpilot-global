@@ -121,21 +121,31 @@ type ExecuteInput = {
 
 const MAX_PROVIDER_SYNC_PAGES = 20;
 const MAX_PROVIDER_SYNC_CONTINUATIONS = 50;
-const EBAY_ASQ_PAGES_PER_JOB = 2;
 const EBAY_ASQ_ENTRIES_PER_PAGE = 25;
+const EBAY_ASQ_GET_ITEM_CONCURRENCY = 4;
 const EBAY_LISTING_SITE_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
 const EBAY_LISTING_SITE_CACHE_MAX = 2_000;
 const ebayListingSiteCache = new Map<string, { marketplaceId: EbayAsqMarketplaceId; expiresAt: number }>();
 
-function rememberEbayListingSite(cacheKey: string, marketplaceId: EbayAsqMarketplaceId) {
+function rememberEbayListingSite(cacheKey: string, marketplaceId: EbayAsqMarketplaceId, now = Date.now()) {
   if (ebayListingSiteCache.size >= EBAY_LISTING_SITE_CACHE_MAX) {
     const oldest = ebayListingSiteCache.keys().next().value;
     if (typeof oldest === "string") ebayListingSiteCache.delete(oldest);
   }
   ebayListingSiteCache.set(cacheKey, {
     marketplaceId,
-    expiresAt: Date.now() + EBAY_LISTING_SITE_CACHE_TTL_MS,
+    expiresAt: now + EBAY_LISTING_SITE_CACHE_TTL_MS,
   });
+}
+
+function cachedEbayListingSite(cacheKey: string, now: number) {
+  const cached = ebayListingSiteCache.get(cacheKey);
+  if (!cached) return undefined;
+  if (cached.expiresAt <= now) {
+    ebayListingSiteCache.delete(cacheKey);
+    return undefined;
+  }
+  return cached.marketplaceId;
 }
 
 function boundedPageSize(value: unknown, fallback: number, max: number) {
@@ -210,6 +220,30 @@ function stringMap(source: Record<string, unknown>, key: string, required = fals
 
 function queryParams(source: Record<string, unknown>, key = "query") {
   return new URLSearchParams(stringMap(source, key));
+}
+
+function integerQueryArgument(
+  query: URLSearchParams,
+  key: string,
+  options: { fallback: number; min: number; max: number },
+) {
+  const raw = query.get(key);
+  const parsed = raw === null ? options.fallback : Number(raw);
+  if (!Number.isInteger(parsed) || parsed < options.min || parsed > options.max) {
+    throw new Error(`CHANNEL_ARGUMENT_INVALID:query.${key}`);
+  }
+  return parsed;
+}
+
+function calendarDateQueryArgument(query: URLSearchParams, key: string) {
+  const value = query.get(key)?.trim() ?? "";
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? new Date(`${value}T00:00:00.000Z`)
+    : null;
+  if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new Error(`CHANNEL_ARGUMENT_INVALID:query.${key}`);
+  }
+  return value;
 }
 
 function pathSegment(value: string) {
@@ -307,6 +341,114 @@ function inventoryQuantityVerificationStep(
       sellerpilotVerification: verified ? "INVENTORY_QUANTITY_VERIFIED" : "INVENTORY_QUANTITY_MISMATCH",
     },
   };
+}
+
+type EbayListingSiteResolution = {
+  itemId: string;
+  cacheKey: string;
+  marketplaceId: EbayAsqMarketplaceId;
+  cacheHit: boolean;
+};
+
+type EbayListingSiteFailure = {
+  failure: ChannelOperationStep;
+};
+
+async function resolveEbayListingSites(
+  input: ExecuteInput,
+  requestMarketplaceId: EbayAsqMarketplaceId,
+  itemIds: string[],
+): Promise<{ resolutions: EbayListingSiteResolution[] } | EbayListingSiteFailure> {
+  const lookupTime = Date.now();
+  const lookups: Array<EbayListingSiteResolution | EbayListingSiteFailure | undefined> = new Array(itemIds.length);
+  let nextIndex = 0;
+  let stopScheduling = false;
+  let requestThrew = false;
+  let requestError: unknown;
+
+  const worker = async () => {
+    while (!stopScheduling && !requestThrew) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= itemIds.length) return;
+
+      const itemId = itemIds[index];
+      const cacheKey = `${input.environment}:${itemId}`;
+      const cachedMarketplaceId = cachedEbayListingSite(cacheKey, lookupTime);
+      if (cachedMarketplaceId) {
+        lookups[index] = {
+          itemId,
+          cacheKey,
+          marketplaceId: cachedMarketplaceId,
+          cacheHit: true,
+        };
+        continue;
+      }
+
+      try {
+        const itemXml = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${ebayTradingXmlEscape(itemId)}</ItemID><OutputSelector>ItemID</OutputSelector><OutputSelector>Site</OutputSelector></GetItemRequest>`;
+        const itemRemote = await ebayTradingRequest({
+          payload: input.payload,
+          environment: input.environment,
+          callName: "GetItem",
+          marketplaceId: requestMarketplaceId,
+          body: itemXml,
+        });
+        const itemStep = step("inquiry-listing-site-readback", itemRemote);
+        const providerItem = objectValue(itemRemote.data, "item", false);
+        const providerItemId = String(providerItem.itemId ?? "").trim();
+        let exactMarketplaceId: EbayAsqMarketplaceId | undefined;
+        try {
+          exactMarketplaceId = ebayAsqMarketplaceIdFromSiteCode(providerItem.site);
+        } catch {
+          exactMarketplaceId = undefined;
+        }
+        if (!itemStep.ok || providerItemId !== itemId || !exactMarketplaceId) {
+          lookups[index] = {
+            failure: {
+              name: "inquiry-listing-site-verification",
+              ok: false,
+              status: itemStep.status || 422,
+              requestId: itemStep.requestId,
+              data: { code: "EBAY_ASQ_LISTING_SITE_UNVERIFIED" },
+            },
+          };
+          stopScheduling = true;
+          return;
+        }
+        lookups[index] = {
+          itemId,
+          cacheKey,
+          marketplaceId: exactMarketplaceId,
+          cacheHit: false,
+        };
+      } catch (error) {
+        if (!requestThrew) {
+          requestThrew = true;
+          requestError = error;
+        }
+        return;
+      }
+    }
+  };
+
+  const workerCount = Math.min(EBAY_ASQ_GET_ITEM_CONCURRENCY, itemIds.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  if (requestThrew) throw requestError;
+
+  const failure = lookups.find((lookup): lookup is EbayListingSiteFailure => Boolean(lookup && "failure" in lookup));
+  if (failure) return failure;
+  const resolutions = lookups.filter((lookup): lookup is EbayListingSiteResolution => Boolean(lookup && "marketplaceId" in lookup));
+  if (resolutions.length !== itemIds.length) throw new Error("EBAY_ASQ_LISTING_SITE_LOOKUP_INCOMPLETE");
+
+  // Parallel response timing must not affect cache eviction order or expiry.
+  // Commit only after the whole page is verified, in the provider message order.
+  for (const resolution of resolutions) {
+    if (!resolution.cacheHit) {
+      rememberEbayListingSite(resolution.cacheKey, resolution.marketplaceId, lookupTime);
+    }
+  }
+  return { resolutions };
 }
 
 function listingUpdateReadbackStep(
@@ -2173,32 +2315,28 @@ async function executeCoupang(input: ExecuteInput) {
     const kind = stringArgument(input.arguments, "kind", false);
     const path = kind === "call-center" ? `${orderBase}/callCenterInquiries` : `${orderBase}/onlineInquiries`;
     const pageSize = boundedPageSize(baseQuery.get("pageSize"), kind === "call-center" ? 30 : 50, 50);
-    let pageNum = Math.max(1, finiteCount(baseQuery.get("pageNum")) ?? 1);
-    const steps: ChannelOperationStep[] = [];
-    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
-      const query = new URLSearchParams(baseQuery);
-      query.set("pageNum", String(pageNum));
-      query.set("pageSize", String(pageSize));
-      const remote = await coupangRequest({ payload: input.payload, method: "GET", path, query });
-      const inquiryStep = step(pageIndex === 0 ? "inquiries" : `inquiries:${pageNum}`, remote);
-      inquiryStep.data = { ...inquiryStep.data, sellerpilotInquiryKind: kind || "product" };
-      steps.push(inquiryStep);
-      if (!inquiryStep.ok) break;
-      const count = providerRecordCount(remote.data, ["content", "inquiries", "onlineInquiries", "callCenterInquiries"]);
-      const data = nestedObject(remote.data.data);
-      const pagination = nestedObject(data.pagination);
-      const totalPages = finiteCount(pagination.totalPages ?? data.totalPages ?? remote.data.totalPages);
-      if (count === 0 || count < pageSize || (totalPages !== null && pageNum >= totalPages)) break;
-      const nextPageNum = pageNum + 1;
-      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
-        return paginationResult(input, steps, {
-          ...input.arguments,
-          query: { ...stringMap(input.arguments, "query"), pageNum: nextPageNum, pageSize },
-        });
-      }
-      pageNum = nextPageNum;
+    const pageNum = Math.max(1, finiteCount(baseQuery.get("pageNum")) ?? 1);
+    // One complete provider page is the durable serverless unit. A successful
+    // full page advances through the existing atomic continuation contract.
+    const query = new URLSearchParams(baseQuery);
+    query.set("pageNum", String(pageNum));
+    query.set("pageSize", String(pageSize));
+    const remote = await coupangRequest({ payload: input.payload, method: "GET", path, query });
+    const inquiryStep = step("inquiries", remote);
+    inquiryStep.data = { ...inquiryStep.data, sellerpilotInquiryKind: kind || "product" };
+    const steps = [inquiryStep];
+    if (!inquiryStep.ok) return result(input, steps);
+    const count = providerRecordCount(remote.data, ["content", "inquiries", "onlineInquiries", "callCenterInquiries"]);
+    const data = nestedObject(remote.data.data);
+    const pagination = nestedObject(data.pagination);
+    const totalPages = finiteCount(pagination.totalPages ?? data.totalPages ?? remote.data.totalPages);
+    if (count === 0 || count < pageSize || (totalPages !== null && pageNum >= totalPages)) {
+      return result(input, steps);
     }
-    return result(input, steps);
+    return paginationResult(input, steps, {
+      ...input.arguments,
+      query: { ...stringMap(input.arguments, "query"), pageNum: pageNum + 1, pageSize },
+    });
   }
   if (input.operation === "inquiries.reply") {
     const inquiryId = pathSegment(stringArgument(input.arguments, "inquiryId"));
@@ -2475,41 +2613,113 @@ async function executeSmartstore(input: ExecuteInput) {
     return result(input, steps);
   }
   if (input.operation === "inquiries.list") {
-    const baseQuery = queryParams(input.arguments);
-    const pageSize = boundedPageSize(baseQuery.get("size"), 100, 100);
-    let page = Math.max(1, finiteCount(baseQuery.get("page")) ?? 1);
-    const steps: ChannelOperationStep[] = [];
-    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
-      const query = new URLSearchParams(baseQuery);
-      query.set("page", String(page));
-      query.set("size", String(pageSize));
-      const remote = await request({ method: "GET", path: "/v1/contents/qnas", query });
-      const inquiryStep = step(pageIndex === 0 ? "inquiries" : `inquiries:${page}`, remote);
-      steps.push(inquiryStep);
-      if (!inquiryStep.ok) break;
-      const count = providerRecordCount(remote.data, ["contents", "content", "qnas"]);
-      const root = Object.keys(nestedObject(remote.data.data)).length ? nestedObject(remote.data.data) : remote.data;
-      const totalPages = finiteCount(root.totalPages);
-      if (count === 0 || count < pageSize || (totalPages !== null && page >= totalPages)) break;
-      const nextPage = page + 1;
-      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
-        return paginationResult(input, steps, {
-          ...input.arguments,
-          query: { ...stringMap(input.arguments, "query"), page: nextPage, size: pageSize },
-        });
-      }
-      page = nextPage;
+    const kind = stringArgument(input.arguments, "kind", false) || "product";
+    if (kind !== "product" && kind !== "customer") {
+      throw new Error("CHANNEL_ARGUMENT_INVALID:kind");
     }
-    return result(input, steps);
+    const baseQuery = queryParams(input.arguments);
+    if (kind === "customer") {
+      const page = integerQueryArgument(baseQuery, "page", { fallback: 1, min: 1, max: 1_000_000 });
+      const pageSize = integerQueryArgument(baseQuery, "size", { fallback: 10, min: 10, max: 200 });
+      const startSearchDate = calendarDateQueryArgument(baseQuery, "startSearchDate");
+      const endSearchDate = calendarDateQueryArgument(baseQuery, "endSearchDate");
+      if (startSearchDate > endSearchDate) {
+        throw new Error("CHANNEL_ARGUMENT_INVALID:query.inquiryTimeRange");
+      }
+      const answeredValue = baseQuery.get("answered");
+      const answered = answeredValue?.trim().toLowerCase();
+      if (answeredValue !== null && answered !== "true" && answered !== "false") {
+        throw new Error("CHANNEL_ARGUMENT_INVALID:query.answered");
+      }
+      const query = new URLSearchParams({
+        page: String(page),
+        size: String(pageSize),
+        startSearchDate,
+        endSearchDate,
+      });
+      if (answered) query.set("answered", answered);
+      const remote = await request({ method: "GET", path: "/v1/pay-user/inquiries", query });
+      const inquiryStep = step("inquiries", remote);
+      inquiryStep.data = { ...inquiryStep.data, sellerpilotInquiryKind: "customer" };
+      const steps = [inquiryStep];
+      if (!inquiryStep.ok) return result(input, steps);
+      const count = providerRecordCount(remote.data, ["content"]);
+      const totalPages = finiteCount(remote.data.totalPages);
+      if (count === 0 || count < pageSize || (totalPages !== null && page >= totalPages)) {
+        return result(input, steps);
+      }
+      return paginationResult(input, steps, {
+        ...input.arguments,
+        kind: "customer",
+        query: {
+          page: page + 1,
+          size: pageSize,
+          startSearchDate,
+          endSearchDate,
+          ...(answered ? { answered } : {}),
+        },
+      });
+    }
+
+    const pageSize = boundedPageSize(baseQuery.get("size"), 100, 100);
+    const page = Math.max(1, finiteCount(baseQuery.get("page")) ?? 1);
+    // Keep token exchange plus Q&A retrieval bounded to one provider page;
+    // callers that need a full sync follow the returned durable continuation.
+    const query = new URLSearchParams(baseQuery);
+    query.set("page", String(page));
+    query.set("size", String(pageSize));
+    const remote = await request({ method: "GET", path: "/v1/contents/qnas", query });
+    const inquiryStep = step("inquiries", remote);
+    inquiryStep.data = { ...inquiryStep.data, sellerpilotInquiryKind: "product" };
+    const steps = [inquiryStep];
+    if (!inquiryStep.ok) return result(input, steps);
+    const count = providerRecordCount(remote.data, ["contents", "content", "qnas"]);
+    const root = Object.keys(nestedObject(remote.data.data)).length ? nestedObject(remote.data.data) : remote.data;
+    const totalPages = finiteCount(root.totalPages);
+    if (count === 0 || count < pageSize || (totalPages !== null && page >= totalPages)) {
+      return result(input, steps);
+    }
+    return paginationResult(input, steps, {
+      ...input.arguments,
+      kind: "product",
+      query: { ...stringMap(input.arguments, "query"), page: page + 1, size: pageSize },
+    });
   }
   if (input.operation === "inquiries.reply") {
+    const kind = stringArgument(input.arguments, "kind", false) || "product";
+    if (kind === "customer") {
+      const inquiryNo = stringArgument(input.arguments, "inquiryNo");
+      if (!/^[1-9]\d{0,18}$/.test(inquiryNo)) throw new Error("CHANNEL_ARGUMENT_INVALID:inquiryNo");
+      const reply = stringArgument(input.arguments, "reply");
+      const answerTemplateId = stringArgument(input.arguments, "answerTemplateId", false);
+      const remote = await request({
+        method: "POST",
+        path: `/v1/pay-merchant/inquiries/${pathSegment(inquiryNo)}/answer`,
+        body: {
+          answerComment: reply,
+          ...(answerTemplateId ? { answerTemplateId } : {}),
+        },
+      });
+      const replyStep = step("inquiry-reply", remote);
+      replyStep.data = {
+        ...replyStep.data,
+        sellerpilotInquiryKind: "customer",
+        sellerpilotVerification: replyStep.ok
+          ? "SMARTSTORE_CUSTOMER_INQUIRY_REPLY_HTTP_ACK"
+          : "SMARTSTORE_CUSTOMER_INQUIRY_REPLY_REJECTED",
+      };
+      return result(input, [replyStep], inquiryNo);
+    }
+    if (kind !== "product") throw new Error("CHANNEL_ARGUMENT_INVALID:kind");
     const questionId = pathSegment(stringArgument(input.arguments, "questionId"));
     const remote = await request({
       method: "PUT",
       path: `/v1/contents/qnas/${questionId}`,
       body: { answerContent: stringArgument(input.arguments, "reply") },
     });
-    return result(input, [step("inquiry-reply", remote)], decodeURIComponent(questionId));
+    const replyStep = step("inquiry-reply", remote);
+    replyStep.data = { ...replyStep.data, sellerpilotInquiryKind: "product" };
+    return result(input, [replyStep], decodeURIComponent(questionId));
   }
   if (input.operation === "orders.get") {
     const productOrderId = stringArgument(input.arguments, "productOrderId");
@@ -3200,109 +3410,67 @@ async function executeEbay(input: ExecuteInput) {
     if (![25, 50, 100, 200].includes(requestedEntriesPerPage)) {
       throw new Error("CHANNEL_ARGUMENT_INVALID:entriesPerPage");
     }
-    // A 25-message page is the smallest provider-supported size. Two pages
-    // keep the normalized transaction below the durable 1 MB envelope even
-    // when every documented 4,000-character question is present. Remaining
-    // pages are continued atomically by the gateway completion transaction.
+    // A 25-message page is the smallest provider-supported size. One provider
+    // page per gateway job keeps the read inside the serverless budget; the
+    // next page is continued atomically by the gateway completion transaction.
     const entriesPerPage = EBAY_ASQ_ENTRIES_PER_PAGE;
-    let pageNumber = integerArgument(input.arguments, "pageNumber", { min: 1, max: 1_000_000 });
-    const steps: ChannelOperationStep[] = [];
-    for (let pageIndex = 0; pageIndex < EBAY_ASQ_PAGES_PER_JOB; pageIndex += 1) {
-      const requestXml = `<?xml version="1.0" encoding="utf-8"?><GetMemberMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents"><MailMessageType>AskSellerQuestion</MailMessageType><StartCreationTime>${ebayTradingXmlEscape(startCreationTime)}</StartCreationTime><EndCreationTime>${ebayTradingXmlEscape(endCreationTime)}</EndCreationTime><Pagination><EntriesPerPage>${entriesPerPage}</EntriesPerPage><PageNumber>${pageNumber}</PageNumber></Pagination></GetMemberMessagesRequest>`;
-      const remote = await ebayTradingRequest({
-        payload: input.payload,
-        environment: input.environment,
-        callName: "GetMemberMessages",
-        marketplaceId,
-        body: requestXml,
-      });
-      const messages = objectArray(remote.data.memberMessages);
-      const exactMessages: Record<string, unknown>[] = [];
-      let verifiedItemCount = 0;
-      const pageSites = new Map<string, EbayAsqMarketplaceId>();
-      for (const message of messages) {
-        const itemId = String(message.itemId ?? "").trim();
-        if (!/^[1-9]\d{0,18}$/.test(itemId)) {
-          steps.push({
-            name: "inquiry-listing-site-verification",
-            ok: false,
-            status: 422,
-            data: { code: "EBAY_ASQ_ITEM_ID_UNVERIFIED" },
-          });
-          return result(input, steps);
-        }
-        let exactMarketplaceId = pageSites.get(itemId);
-        if (!exactMarketplaceId) {
-          const cacheKey = `${input.environment}:${itemId}`;
-          const cached = ebayListingSiteCache.get(cacheKey);
-          if (cached && cached.expiresAt > Date.now()) {
-            exactMarketplaceId = cached.marketplaceId;
-          } else {
-            ebayListingSiteCache.delete(cacheKey);
-            const itemXml = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${ebayTradingXmlEscape(itemId)}</ItemID><OutputSelector>ItemID</OutputSelector><OutputSelector>Site</OutputSelector></GetItemRequest>`;
-            const itemRemote = await ebayTradingRequest({
-              payload: input.payload,
-              environment: input.environment,
-              callName: "GetItem",
-              marketplaceId,
-              body: itemXml,
-            });
-            const itemStep = step("inquiry-listing-site-readback", itemRemote);
-            const providerItem = objectValue(itemRemote.data, "item", false);
-            const providerItemId = String(providerItem.itemId ?? "").trim();
-            try {
-              exactMarketplaceId = ebayAsqMarketplaceIdFromSiteCode(providerItem.site);
-            } catch {
-              exactMarketplaceId = undefined;
-            }
-            if (!itemStep.ok || providerItemId !== itemId || !exactMarketplaceId) {
-              steps.push({
-                name: "inquiry-listing-site-verification",
-                ok: false,
-                status: itemStep.status || 422,
-                requestId: itemStep.requestId,
-                data: { code: "EBAY_ASQ_LISTING_SITE_UNVERIFIED" },
-              });
-              return result(input, steps);
-            }
-            rememberEbayListingSite(cacheKey, exactMarketplaceId);
-          }
-          pageSites.set(itemId, exactMarketplaceId);
-          verifiedItemCount += 1;
-        }
-        exactMessages.push({ ...message, marketplaceId: exactMarketplaceId });
-      }
-      const exactPageRemote = {
-        ...remote,
-        data: { ...remote.data, memberMessages: exactMessages },
-      } satisfies RemoteResponse;
-      const inquiryStep = step(pageIndex === 0 ? "inquiries" : `inquiries:${pageIndex + 1}`, exactPageRemote);
-      steps.push(inquiryStep);
-      if (!inquiryStep.ok) break;
-      steps.push({
-        name: `inquiry-listing-sites:${pageIndex + 1}`,
+    const pageNumber = integerArgument(input.arguments, "pageNumber", { min: 1, max: 1_000_000 });
+    const requestXml = `<?xml version="1.0" encoding="utf-8"?><GetMemberMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents"><MailMessageType>AskSellerQuestion</MailMessageType><StartCreationTime>${ebayTradingXmlEscape(startCreationTime)}</StartCreationTime><EndCreationTime>${ebayTradingXmlEscape(endCreationTime)}</EndCreationTime><Pagination><EntriesPerPage>${entriesPerPage}</EntriesPerPage><PageNumber>${pageNumber}</PageNumber></Pagination></GetMemberMessagesRequest>`;
+    const remote = await ebayTradingRequest({
+      payload: input.payload,
+      environment: input.environment,
+      callName: "GetMemberMessages",
+      marketplaceId,
+      body: requestXml,
+    });
+    const providerInquiryStep = step("inquiries", remote);
+    if (!providerInquiryStep.ok) return result(input, [providerInquiryStep]);
+
+    const messages = objectArray(remote.data.memberMessages);
+    const itemIds = messages.map((message) => String(message.itemId ?? "").trim());
+    if (itemIds.some((itemId) => !/^[1-9]\d{0,18}$/.test(itemId))) {
+      return result(input, [{
+        name: "inquiry-listing-site-verification",
+        ok: false,
+        status: 422,
+        data: { code: "EBAY_ASQ_ITEM_ID_UNVERIFIED" },
+      }]);
+    }
+
+    const uniqueItemIds = [...new Set(itemIds)];
+    const siteLookup = await resolveEbayListingSites(input, marketplaceId, uniqueItemIds);
+    if ("failure" in siteLookup) return result(input, [siteLookup.failure]);
+    const pageSites = new Map(siteLookup.resolutions.map((resolution) => [resolution.itemId, resolution.marketplaceId]));
+    const exactMessages = messages.map((message, index) => {
+      const exactMarketplaceId = pageSites.get(itemIds[index]);
+      if (!exactMarketplaceId) throw new Error("EBAY_ASQ_LISTING_SITE_LOOKUP_INCOMPLETE");
+      return { ...message, marketplaceId: exactMarketplaceId };
+    });
+    const exactPageRemote = {
+      ...remote,
+      data: { ...remote.data, memberMessages: exactMessages },
+    } satisfies RemoteResponse;
+    const steps: ChannelOperationStep[] = [
+      step("inquiries", exactPageRemote),
+      {
+        name: "inquiry-listing-sites:1",
         ok: true,
         status: 200,
         data: {
-          verifiedItemCount,
+          verifiedItemCount: uniqueItemIds.length,
           sellerpilotVerification: "EBAY_ASQ_LISTING_SITES_VERIFIED",
         },
-      });
-      const pagination = objectValue(remote.data, "paginationResult", false);
-      const totalPages = finiteCount(pagination.totalNumberOfPages);
-      const hasMore = remote.data.hasMoreItems === true || (totalPages !== null && pageNumber < totalPages);
-      if (!hasMore || messages.length === 0) break;
-      const nextPageNumber = pageNumber + 1;
-      if (pageIndex === EBAY_ASQ_PAGES_PER_JOB - 1) {
-        return paginationResult(input, steps, {
-          ...input.arguments,
-          pageNumber: nextPageNumber,
-          entriesPerPage,
-        });
-      }
-      pageNumber = nextPageNumber;
-    }
-    return result(input, steps);
+      },
+    ];
+    const pagination = objectValue(remote.data, "paginationResult", false);
+    const totalPages = finiteCount(pagination.totalNumberOfPages);
+    const hasMore = remote.data.hasMoreItems === true || (totalPages !== null && pageNumber < totalPages);
+    if (!hasMore || messages.length === 0) return result(input, steps);
+    return paginationResult(input, steps, {
+      ...input.arguments,
+      pageNumber: pageNumber + 1,
+      entriesPerPage,
+    });
   }
   if (input.operation === "inquiries.reply") {
     const marketplaceId = ebayAsqMarketplaceId(input.arguments.marketplaceId);

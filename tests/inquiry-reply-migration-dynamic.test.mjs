@@ -9,6 +9,15 @@ const LINEAGE_MIGRATION = "20260825111810_harden_inquiry_reply_account_lineage.s
 const PRE_LINEAGE_MIGRATION = "20260825111800_bind_listing_seller_accounts.sql";
 const EBAY_ASQ_MIGRATION = "20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql";
 const EBAY_ASQ_SITE_MIGRATION = "20260828144000_bind_ebay_asq_marketplace_and_rate_limit.sql";
+const SERVERLESS_CS_MIGRATIONS = new Set([
+  "20260828145600_serverless_cs_claim_and_runtime_bootstrap.sql",
+  "20260828145700_schedule_serverless_cs_wakeup.sql",
+  // These two forward migrations rewrite the dedicated serverless claimant
+  // created by 145600. This fixture intentionally excludes that runtime, so
+  // its dependent prioritization/Qoo10 extensions must be excluded as a unit.
+  "20260828145900_durable_korean_inquiry_history_backfill.sql",
+  "20260828145950_extend_serverless_cs_qoo10_inquiries.sql",
+]);
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -114,6 +123,7 @@ async function migrationEntries() {
 async function applyMigrations(db, { through } = {}) {
   const { migrationUrl, names } = await migrationEntries();
   for (const name of names) {
+    if (SERVERLESS_CS_MIGRATIONS.has(name)) continue;
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
     await db.exec(withoutUnavailableExtensions(sql));
     if (name === through) break;
@@ -232,6 +242,176 @@ async function completeReply(db, claim, result) {
     [TOKEN_HASH, claim.id, claim.claim_token, JSON.stringify(result)],
   );
 }
+
+test("Smartstore product and customer inquiry replies keep disjoint exact ticket identities", async () => {
+  const db = await createDatabase();
+  try {
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'smartstore-cs@example.test')",
+      [ADMIN_ID],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Smartstore CS Admin')",
+      [ADMIN_ID],
+    );
+    await setClaims(db);
+    const credentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'smartstore', 'production',
+        '{"client_id":"smartstore-test-client","client_secret":"smartstore-test-secret"}'::jsonb,
+        now() + interval '30 days', 90, 30, 7
+      )`,
+    );
+
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_ingest_inquiries(
+          $1, 'smartstore', $2::jsonb
+        )`,
+        [credentialId, JSON.stringify([
+          {
+            externalTicketId: "456789",
+            customerName: "상품문의 고객",
+            subject: "스마트스토어 상품 문의",
+            message: "상품 문의입니다.",
+            status: "waiting",
+            priority: 3,
+            receivedAt: "2026-08-28T05:00:00.000Z",
+          },
+          {
+            externalTicketId: "customer:987654",
+            customerName: "고객문의 고객",
+            subject: "스마트스토어 고객 문의",
+            message: "고객 문의입니다.",
+            status: "waiting",
+            priority: 3,
+            receivedAt: "2026-08-28T05:01:00.000Z",
+          },
+        ])],
+      ),
+      2,
+    );
+
+    const productTicketId = await scalar(
+      db,
+      `select id from sellerpilot_private.support_tickets
+        where channel_key = 'smartstore' and external_ticket_id = '456789'`,
+    );
+    const customerTicketId = await scalar(
+      db,
+      `select id from sellerpilot_private.support_tickets
+        where channel_key = 'smartstore' and external_ticket_id = 'customer:987654'`,
+    );
+
+    const productReply = "상품 문의 답변입니다.";
+    const productJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'smartstore', $2::text,
+        jsonb_build_object('arguments', jsonb_build_object(
+          'questionId', '456789', 'reply', $2::text
+        ))
+      )`,
+      [productTicketId, productReply],
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select request_payload->'arguments' from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [productJobId],
+      ),
+      { questionId: "456789", reply: productReply },
+    );
+
+    const customerReply = "고객 문의 답변입니다.";
+    const customerJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'smartstore', $2::text,
+        jsonb_build_object('arguments', jsonb_build_object(
+          'kind', 'customer', 'inquiryNo', '987654', 'reply', $2::text
+        ))
+      )`,
+      [customerTicketId, customerReply],
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select request_payload->'arguments' from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [customerJobId],
+      ),
+      { kind: "customer", inquiryNo: "987654", reply: customerReply },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select not (request_payload->'arguments' ? 'questionId')
+           from sellerpilot_private.channel_gateway_jobs where id = $1`,
+        [customerJobId],
+      ),
+      true,
+    );
+
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'smartstore', $2::text,
+          jsonb_build_object('arguments', jsonb_build_object(
+            'kind', 'customer', 'inquiryNo', '456789', 'reply', $2::text
+          ))
+        )`,
+        [customerTicketId, customerReply],
+      ),
+      /inquiry reply ticket payload mismatch/,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'smartstore', $2::text,
+          jsonb_build_object('arguments', jsonb_build_object(
+            'kind', 'customer', 'inquiryNo', '987654',
+            'questionId', '456789', 'reply', $2::text
+          ))
+        )`,
+        [customerTicketId, customerReply],
+      ),
+      /SMARTSTORE_CUSTOMER_INQUIRY_REPLY_ID_MISMATCH/,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'smartstore', $2::text,
+          jsonb_build_object('arguments', jsonb_build_object(
+            'questionId', 'customer:987654', 'reply', $2::text
+          ))
+        )`,
+        [customerTicketId, customerReply],
+      ),
+      /SMARTSTORE_PRODUCT_INQUIRY_REPLY_ID_MISMATCH/,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'smartstore', $2::text,
+          jsonb_build_object('arguments', jsonb_build_object(
+            'kind', null, 'questionId', '456789', 'reply', $2::text
+          ))
+        )`,
+        [productTicketId, productReply],
+      ),
+      /SMARTSTORE_INQUIRY_REPLY_KIND_INVALID/,
+    );
+  } finally {
+    await db.close();
+  }
+});
 
 test("inquiry reply gateway deduplicates, conflicts, and atomically resolves a successful ticket", async () => {
   const db = await createDatabase();

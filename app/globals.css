@@ -621,6 +621,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .bulk-order-bar small { color: #939baa; font-size: 8px; }
 
 /* CS */
+.cs-filter-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
 .cs-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .cs-summary > div { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: white; }
 .cs-summary small, .cs-summary strong { display: block; }
@@ -1241,6 +1242,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .bulk-order-bar { flex-wrap: wrap; padding: 10px 12px; }
   .bulk-order-bar small { display: none; }
   .shipment-release-status { padding: 11px 12px; }
+  .cs-live-heading { min-height: 0; align-items: stretch; flex-direction: column; gap: 10px; padding: 12px; }
+  .cs-filter-actions { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .cs-filter-actions .filter-select { grid-column: 1 / -1; width: 100%; }
+  .cs-filter-actions .filter-button { min-height: 42px; justify-content: center; white-space: normal; }
   .cs-workspace { grid-template-columns: 1fr; }
   .ticket-list { display: block; max-height: 360px; overflow-y: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .conversation { min-height: 590px; }

@@ -72,6 +72,28 @@ function getItemXml(itemId = "1234567890123456789", site = "UK") {
   return `<?xml version="1.0" encoding="utf-8"?><GetItemResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><Item><ItemID>${itemId}</ItemID><Site>${site}</Site></Item></GetItemResponse>`;
 }
 
+function memberMessagesForItemsXml(itemIds: string[], page = 1, totalPages = 1) {
+  const exchanges = itemIds.map((itemId, index) => `
+      <e:MemberMessageExchange>
+        <e:Item><e:ItemID>${itemId}</e:ItemID><e:Title>Item ${index + 1}</e:Title></e:Item>
+        <e:Question>
+          <e:SenderID>buyer-${index + 1}</e:SenderID>
+          <e:Subject>Question ${index + 1}</e:Subject>
+          <e:Body>Body ${index + 1}</e:Body>
+          <e:MessageID>bounded-message-${index + 1}</e:MessageID>
+        </e:Question>
+        <e:MessageStatus>Unanswered</e:MessageStatus>
+        <e:CreationDate>2026-08-27T01:02:${String(index).padStart(2, "0")}.000Z</e:CreationDate>
+        <e:LastModifiedDate>2026-08-27T01:03:${String(index).padStart(2, "0")}.000Z</e:LastModifiedDate>
+      </e:MemberMessageExchange>`).join("");
+  return `<?xml version="1.0" encoding="utf-8"?>
+    <e:GetMemberMessagesResponse xmlns:e="urn:ebay:apis:eBLBaseComponents">
+      <e:Ack>Success</e:Ack><e:MemberMessage>${exchanges}</e:MemberMessage>
+      <e:PaginationResult><e:TotalNumberOfPages>${totalPages}</e:TotalNumberOfPages><e:TotalNumberOfEntries>${itemIds.length * totalPages}</e:TotalNumberOfEntries></e:PaginationResult>
+      <e:HasMoreItems>${page < totalPages}</e:HasMoreItems>
+    </e:GetMemberMessagesResponse>`;
+}
+
 const hashedEbayTicketId = `ebay:${"a".repeat(64)}`;
 
 test("eBay Trading XML parser keeps only the ASQ fields needed by the support ledger", () => {
@@ -197,7 +219,7 @@ test("eBay ASQ sandbox sync uses OAuth IAF headers and normalizes exact reply li
   }
 });
 
-test("eBay ASQ pagination persists the first unprocessed Trading API page", async () => {
+test("eBay ASQ processes one Trading API page per job and persists the next page", async () => {
   const originalFetch = globalThis.fetch;
   const pages: number[] = [];
   globalThis.fetch = async (input, init) => {
@@ -216,23 +238,83 @@ test("eBay ASQ pagination persists the first unprocessed Trading API page", asyn
     }), { status: 200 });
   };
   try {
-    const result = await executeChannelOperation({
+    const first = await executeChannelOperation({
       channel: "ebay",
       operation: "inquiries.list",
       payload: { access_token: "token", marketplace_id: "EBAY_US" },
       arguments: ebayAsqInquirySyncArguments(new Date("2026-08-28T00:00:00.000Z"), "EBAY_US"),
       environment: "sandbox",
     });
-    assert.equal(result.ok, true);
-    assert.deepEqual(pages, [1, 2]);
-    assert.equal(result.continuation?.arguments.pageNumber, 3);
-    assert.equal(result.continuation?.arguments.sellerpilotPaginationDepth, 1);
+    assert.equal(first.ok, true);
+    assert.deepEqual(pages, [1]);
+    assert.equal(first.continuation?.arguments.pageNumber, 2);
+    assert.equal(first.continuation?.arguments.sellerpilotPaginationDepth, 1);
     assert.equal(gatewayWorkerCompletionSchema.safeParse({
       jobId: "51fc7348-3e07-45ba-94c7-62e5244b511b",
       claimToken: "f0308779-b8dd-4fbb-8cad-f55fe0d33f2d",
       status: "succeeded",
-      result,
+      result: first,
     }).success, true);
+    const second = await executeChannelOperation({
+      channel: "ebay",
+      operation: "inquiries.list",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: first.continuation!.arguments,
+      environment: "sandbox",
+    });
+    assert.deepEqual(pages, [1, 2]);
+    assert.equal(second.continuation?.arguments.pageNumber, 3);
+    assert.equal(second.continuation?.arguments.sellerpilotPaginationDepth, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay ASQ bounds GetItem concurrency and preserves provider order through the site cache", async () => {
+  const originalFetch = globalThis.fetch;
+  const itemIds = Array.from({ length: 25 }, (_, index) => String(7_000_000_000_000_000_000n + BigInt(index)));
+  let activeGetItems = 0;
+  let maximumGetItemConcurrency = 0;
+  let getItemCalls = 0;
+  let memberMessageCalls = 0;
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    if (request.headers.get("x-ebay-api-call-name") === "GetMemberMessages") {
+      memberMessageCalls += 1;
+      return new Response(memberMessagesForItemsXml(itemIds), { status: 200 });
+    }
+    const itemId = /<ItemID>(\d+)<\/ItemID>/.exec(String(init?.body ?? ""))?.[1] ?? "";
+    const itemIndex = itemIds.indexOf(itemId);
+    getItemCalls += 1;
+    activeGetItems += 1;
+    maximumGetItemConcurrency = Math.max(maximumGetItemConcurrency, activeGetItems);
+    await new Promise((resolve) => setTimeout(resolve, itemIds.length - itemIndex));
+    activeGetItems -= 1;
+    return new Response(getItemXml(itemId, "US"), { status: 200 });
+  };
+  try {
+    const execute = () => executeChannelOperation({
+      channel: "ebay",
+      operation: "inquiries.list",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: ebayAsqInquirySyncArguments(new Date("2026-08-28T00:00:00.000Z"), "EBAY_US"),
+      environment: "production",
+    });
+    const first = await execute();
+    const firstMessages = first.steps.find((item) => item.name === "inquiries")?.data.memberMessages as Record<string, unknown>[];
+    assert.equal(first.ok, true);
+    assert.deepEqual(firstMessages.map((message) => message.itemId), itemIds);
+    assert.deepEqual(firstMessages.map((message) => message.marketplaceId), itemIds.map(() => "EBAY_US"));
+    assert.equal(first.steps.find((item) => item.name === "inquiry-listing-sites:1")?.data.verifiedItemCount, itemIds.length);
+    assert.equal(maximumGetItemConcurrency, 4);
+    assert.equal(getItemCalls, itemIds.length);
+
+    const second = await execute();
+    const secondMessages = second.steps.find((item) => item.name === "inquiries")?.data.memberMessages as Record<string, unknown>[];
+    assert.equal(second.ok, true);
+    assert.deepEqual(secondMessages, firstMessages);
+    assert.equal(memberMessageCalls, 2);
+    assert.equal(getItemCalls, itemIds.length);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -442,9 +524,9 @@ test("eBay ASQ exposes reads and lineage-gated RTQ replies in both official envi
   }), true);
   assert.equal(csReplySavePlan("ticket", "ebay", "reply").remote, true);
   assert.deepEqual(csChannelVerification("ebay", "passed", 3), {
-    readLabel: "eBay 상품 문의(ASQ) 조회 성공 · 원장 3건",
+    readLabel: "eBay 상품 문의(ASQ) 최근 조회 작업 통과 · 누적 원장 3건",
     replyLabel: "답변: 검증된 계정·사이트·문의 계보만 보안 게이트웨이 전송",
-    badge: "조회 성공",
+    badge: "최근 조회 통과",
     tone: "passed",
   });
 });
