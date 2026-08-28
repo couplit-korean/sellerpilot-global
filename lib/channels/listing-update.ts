@@ -27,6 +27,18 @@ export type ProductEditFieldSupport = {
   reason: string;
 };
 
+export type ProductEditRemotePlan = {
+  state: "verified_remote_update_available" | "verified_partial_remote_update_available" | "manual_external_update_required";
+  listingUpdateAvailable: boolean;
+  centralWrite: "separate";
+  remoteWrite: "not_automatic";
+  manualRequired: boolean;
+  remotelyWritableFields: ProductEditFieldKey[];
+  partiallyWritableFields: ProductEditFieldKey[];
+  manualFields: ProductEditFieldKey[];
+  message: string;
+};
+
 function fieldSupport(
   state: ProductEditFieldState,
   operation: ProductEditFieldOperation,
@@ -40,21 +52,21 @@ const blockedRemotePrice = () => fieldSupport(
   "blocked",
   "price.update",
   [],
-  "원격 가격 쓰기 뒤 동일 상품의 통화·가격 readback이 아직 없어 자동 수정을 차단했습니다.",
+  "중앙 판매가·통화에는 저장되지만 원격 쓰기 뒤 동일 상품의 통화·가격 readback이 없어 자동 수정을 차단했습니다. 외부 채널은 수동 반영이 필요합니다.",
 );
 
 const blockedRemoteOptions = () => fieldSupport(
   "blocked",
   "listing.update",
   [],
-  "옵션 ID·SKU별 원격 매칭 원장이 없어 기존 옵션을 추측해서 수정하지 않습니다.",
+  "옵션 ID·SKU별 중앙·원격 매칭 원장이 없어 기존 옵션을 추측해서 수정하지 않습니다. 외부 채널 옵션은 수동 반영이 필요합니다.",
 );
 
 const blockedRemoteSaleConfiguration = () => fieldSupport(
   "blocked",
   "listing.update",
   [],
-  "1개·1+1 판매구성은 중앙 상품 정보에는 저장되지만 기존 원격 옵션/SKU 구조를 바꾸지 않습니다.",
+  "1개·1+1 판매구성은 중앙 상품 정보에는 저장되지만 기존 원격 옵션/SKU 구조를 바꾸지 않습니다. 외부 채널은 수동 반영이 필요합니다.",
 );
 
 const blockedRemoteContent = (reason: string) => fieldSupport("blocked", "listing.update", [], reason);
@@ -127,12 +139,12 @@ export function centralProductEditFieldSupport() {
 
 export function channelProductEditFieldSupport(channel: ActiveChannelKey) {
   const listingReason = channel === "elevenst"
-    ? "11번가 판매자 전용 수정 명세와 readback이 확정되지 않아 원격 상품 수정을 차단했습니다."
+    ? "중앙 상품 원장 저장값은 유지합니다. 11번가 판매자 전용 수정 명세와 readback이 확정되지 않아 원격 상품 수정을 차단하며 외부 채널 수동 반영이 필요합니다."
     : channel === "temu"
-      ? "Temu 판매자별 수정 스키마와 SKU 식별값이 원장에 확정되지 않아 원격 상품 수정을 차단했습니다."
+      ? "중앙 상품 원장 저장값은 유지합니다. Temu 판매자별 수정 스키마와 SKU 식별값이 원장에 확정되지 않아 원격 상품 수정을 차단하며 외부 채널 수동 반영이 필요합니다."
       : channel === "ebay"
-        ? "eBay offer ID와 SKU가 상품 원장에 함께 보존되지 않아 게시 listing ID만으로 수정하지 않습니다."
-        : "이 채널의 안전한 상품 수정 경로가 출시되지 않았습니다.";
+        ? "중앙 상품 원장 저장값은 유지합니다. eBay offer ID와 SKU가 상품 원장에 함께 보존되지 않아 게시 listing ID만으로 수정하지 않으며 외부 채널 수동 반영이 필요합니다."
+        : "중앙 상품 원장 저장값은 유지합니다. 이 채널의 안전한 상품 수정 경로가 출시되지 않아 외부 채널 수동 반영이 필요합니다.";
   const released = releasedListingContent[channel] ?? {};
   const inventory = verifiedInventoryChannels.has(channel)
     ? fieldSupport("supported", "inventory.update", ["quantity"], "정확한 원격 상품을 지정해 수량을 쓰고 같은 상품의 재고를 readback합니다.")
@@ -150,6 +162,33 @@ export function channelProductEditFieldSupport(channel: ActiveChannelKey) {
     inventory,
   };
   return cloneFieldMap(result);
+}
+
+export function productEditRemotePlan(
+  channel: ActiveChannelKey,
+  listingUpdateAvailable: boolean,
+): ProductEditRemotePlan {
+  const fields = channelProductEditFieldSupport(channel);
+  const remotelyWritableFields = productEditFieldKeys.filter((key) => fields[key].state === "supported");
+  const partiallyWritableFields = productEditFieldKeys.filter((key) => fields[key].state === "partial");
+  const manualFields = productEditFieldKeys.filter((key) => fields[key].state !== "supported");
+  return {
+    state: !listingUpdateAvailable
+      ? "manual_external_update_required"
+      : manualFields.length
+        ? "verified_partial_remote_update_available"
+        : "verified_remote_update_available",
+    listingUpdateAvailable,
+    centralWrite: "separate",
+    remoteWrite: "not_automatic",
+    manualRequired: manualFields.length > 0 || !listingUpdateAvailable,
+    remotelyWritableFields,
+    partiallyWritableFields,
+    manualFields,
+    message: listingUpdateAvailable
+      ? "중앙 원장 저장과 외부 쓰기는 분리됩니다. 지원 필드는 명시적 확인 후 검증된 원격 수정으로 반영하고, 중앙만·일부 지원 필드는 외부 채널 수동 반영이 필요합니다."
+      : "중앙 상품 원장 저장값은 유지되며 이 채널에는 원격 상품 쓰기를 실행하지 않습니다. 외부 채널 수동 반영이 필요합니다.",
+  };
 }
 
 export function remoteProductEditIdempotencyKey(input: {

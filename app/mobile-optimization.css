@@ -472,6 +472,13 @@
     border: 0;
   }
 
+  .exchange-title > small {
+    max-width: 100%;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
   .exchange-rate-list {
     display: grid;
     width: 100%;

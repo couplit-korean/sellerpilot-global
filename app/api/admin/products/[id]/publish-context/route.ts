@@ -181,5 +181,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       message: duplicateSku ? "이미 사용 중인 판매자 SKU입니다." : reservedStock ? "재고는 예약 재고보다 적게 저장할 수 없습니다." : "상품 정보를 저장하지 못했습니다.",
     }, { status: duplicateSku || reservedStock ? 409 : 500 });
   }
-  return NextResponse.json({ ok: true, fields: fields.data }, { headers: { "cache-control": "no-store, max-age=0" } });
+  return NextResponse.json({
+    ok: true,
+    fields: fields.data,
+    centralSaved: true,
+    centralSaveScope: "product_details_without_inventory",
+    inventoryWritePerformed: false,
+    remoteWritePerformed: false,
+    remoteUpdateStatus: "not_attempted",
+    message: "재고를 제외한 상품 정보를 중앙 원장에 저장했습니다. 재고 적용과 외부 판매채널 수정은 자동 실행하지 않았으며, 채널별 원격 수정 지원 범위를 확인해 중앙만·일부 지원 필드는 외부 채널에 수동 반영해야 합니다.",
+  }, { headers: { "cache-control": "no-store, max-age=0" } });
 }

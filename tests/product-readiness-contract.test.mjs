@@ -98,7 +98,8 @@ test("product list, detail, and calculator label only ledger-backed values", asy
   assert.match(page, /marginState === "invalid"[\s\S]{0,100}return "계산 불가"/);
   assert.match(calculator, /<select id="margin-product-id"/);
   assert.match(calculator, /가격 미입력 · \$\{product\.baseCurrency\}/);
-  assert.match(calculator, /inputs: \{ \.\.\.form, productId: selectedProduct\.id/);
+  assert.match(calculator, /inputs: \{[\s\S]{0,120}\.\.\.form,[\s\S]{0,120}productId: selectedProduct\.id/);
+  assert.match(calculator, /currency: selectedResult\.currency,[\s\S]{0,120}rateToKrw: selectedResult\.rateToKrw,[\s\S]{0,120}exchangeRateBasis: rateBasis/);
   assert.match(calculator, /scenarioState === "unavailable"[\s\S]{0,220}저장된 계산 이력을 불러오지 못했습니다/);
   assert.doesNotMatch(calculator, /setProductName|margin-product-name/);
   assert.match(mobileStyles, /\.margin-product-field input,[\s\S]{0,80}\.margin-product-field select[\s\S]{0,180}min-height: 44px/);

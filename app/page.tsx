@@ -506,12 +506,68 @@ function relativeTime(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" }).format(new Date(value));
 }
 
-const initialExchangeRates = [
-  { code: "USD", unit: 1, value: 1378.4, change: 0.24 },
-  { code: "JPY", unit: 100, value: 931.12, change: -0.18 },
-  { code: "SGD", unit: 1, value: 1072.65, change: 0.08 },
-  { code: "MYR", unit: 1, value: 325.84, change: -0.11 },
+type DashboardExchangeRate = {
+  code: string;
+  unit: number;
+  value: number | null;
+  change: number | null;
+};
+
+type DashboardExchangeRatePayloadRow = Omit<DashboardExchangeRate, "value"> & {
+  value: number;
+};
+
+type DashboardExchangeRatePayload = {
+  source?: string;
+  frequency?: "minute-market" | "daily-reference-fallback";
+  asOf?: string;
+  providerAsOf?: string | null;
+  fetchedAt?: string;
+  fallback?: boolean;
+  changeBasis?: "latest-daily-reference" | "previous-daily-reference" | "unavailable";
+  rates?: DashboardExchangeRatePayloadRow[];
+};
+
+const dashboardExchangeRateRefreshMs = 60_000;
+const dashboardExchangeRateTimeoutMs = 12_000;
+const dashboardExchangeRateCodes = new Set(["USD", "JPY", "SGD", "MYR"]);
+
+const initialExchangeRates: DashboardExchangeRate[] = [
+  { code: "USD", unit: 1, value: null, change: null },
+  { code: "JPY", unit: 100, value: null, change: null },
+  { code: "SGD", unit: 1, value: null, change: null },
+  { code: "MYR", unit: 1, value: null, change: null },
 ];
+
+function formatExchangeRateTimestamp(value: string | null | undefined) {
+  if (!value) return "시각 확인 중";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function validatedDashboardExchangeRates(rates: DashboardExchangeRatePayloadRow[] | undefined): DashboardExchangeRate[] | null {
+  if (!Array.isArray(rates) || rates.length !== dashboardExchangeRateCodes.size) return null;
+  const seen = new Set<string>();
+  for (const rate of rates) {
+    if (!dashboardExchangeRateCodes.has(rate.code)
+        || seen.has(rate.code)
+        || !Number.isFinite(rate.unit)
+        || rate.unit <= 0
+        || !Number.isFinite(rate.value)
+        || rate.value <= 0
+        || (rate.change !== null && !Number.isFinite(rate.change))) return null;
+    seen.add(rate.code);
+  }
+  return rates;
+}
 
 function ChannelMark({ code, size = "md" }: { code: string; size?: "sm" | "md" | "lg" }) {
   const config = channelByCode.get(code) ?? channels.qoo10;
@@ -652,8 +708,12 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   operationsAvailable: boolean;
 }) {
   const [exchangeRates, setExchangeRates] = useState(initialExchangeRates);
-  const [rateUpdatedAt, setRateUpdatedAt] = useState("화면 기준값");
-  const [rateSource, setRateSource] = useState("실데이터 확인 중");
+  const [rateUpdatedAt, setRateUpdatedAt] = useState("실데이터 확인 중");
+  const [rateSource, setRateSource] = useState("현재 환율을 처음 수신하기 전입니다.");
+  const [rateRefreshing, setRateRefreshing] = useState(false);
+  const exchangeRateRequestRef = useRef<AbortController | null>(null);
+  const exchangeRateMountedRef = useRef(false);
+  const exchangeRateReceivedRef = useRef(false);
   const [today] = useState(() => new Date());
   const monthlyTopProducts = useMemo(() => [...displayProducts].sort((a, b) => b.sales - a.sales).slice(0, 10), [displayProducts]);
   const activeMetrics = useMemo(() => {
@@ -678,25 +738,65 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
   const periodOrders = analytics?.summary.orderCount ?? 0;
 
   const refreshExchangeRates = useCallback(async () => {
-    setRateSource("기준 환율 확인 중");
+    if (exchangeRateRequestRef.current) return;
+    const controller = new AbortController();
+    exchangeRateRequestRef.current = controller;
+    if (exchangeRateMountedRef.current) setRateRefreshing(true);
     try {
-      const response = await fetch("/api/exchange-rates", { cache: "no-store" });
-      if (!response.ok) throw new Error("exchange-rate request failed");
-      const payload = await response.json() as { source: string; asOf: string; rates: typeof initialExchangeRates };
-      setExchangeRates(payload.rates);
-      setRateUpdatedAt(payload.asOf);
-      setRateSource(`${payload.source} · 일일 기준`);
+      const { response, payload } = await fetchJsonWithDeadline<DashboardExchangeRatePayload>({
+        fetcher: fetch,
+        input: "/api/exchange-rates",
+        init: { cache: "no-store" },
+        parentSignal: controller.signal,
+        timeoutMs: dashboardExchangeRateTimeoutMs,
+        fallbackPayload: {},
+      });
+      const validatedRates = validatedDashboardExchangeRates(payload.rates);
+      if (!response.ok || !validatedRates) throw new Error("exchange-rate request failed");
+      if (!exchangeRateMountedRef.current || controller.signal.aborted) return;
+      exchangeRateReceivedRef.current = true;
+      setExchangeRates(validatedRates);
+      const receivedAt = formatExchangeRateTimestamp(payload.fetchedAt);
+      if (payload.frequency === "daily-reference-fallback" || payload.fallback) {
+        setRateUpdatedAt(`기준일 ${payload.asOf ?? "확인 중"} · 수신 ${receivedAt}`);
+        setRateSource(`${payload.source ?? "일일 기준환율"} · 1분 조회의 대체값 · 직전 기준일 대비`);
+      } else {
+        const providerAt = formatExchangeRateTimestamp(payload.providerAsOf ?? payload.asOf);
+        setRateUpdatedAt(`공급자 갱신 ${providerAt} · 수신 ${receivedAt}`);
+        const comparison = payload.changeBasis === "latest-daily-reference" ? "최근 일일 기준 대비" : "등락 비교 대기";
+        setRateSource(`${payload.source ?? "현재 환율"} · 60초 자동 조회 · ${comparison}`);
+      }
     } catch {
-      setRateSource("연결 실패 · 화면 기준값 유지");
+      if (exchangeRateMountedRef.current && !controller.signal.aborted) {
+        if (!exchangeRateReceivedRef.current) {
+          setRateSource("현재 환율 최초 수신 실패 · 수치를 표시하지 않고 다시 조회 중");
+        } else {
+          setRateSource((current) => current.includes("최근 자동 갱신 실패")
+            ? current
+            : `${current} · 최근 자동 갱신 실패(직전 실수신값 유지)`);
+        }
+      }
+    } finally {
+      if (exchangeRateRequestRef.current === controller) exchangeRateRequestRef.current = null;
+      if (exchangeRateMountedRef.current) setRateRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
+    exchangeRateMountedRef.current = true;
     const initialRefresh = window.setTimeout(() => void refreshExchangeRates(), 0);
-    const interval = window.setInterval(() => void refreshExchangeRates(), 3_600_000);
+    const interval = window.setInterval(() => void refreshExchangeRates(), dashboardExchangeRateRefreshMs);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshExchangeRates();
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
+      exchangeRateMountedRef.current = false;
       window.clearTimeout(initialRefresh);
       window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      exchangeRateRequestRef.current?.abort(new DOMException("대시보드가 닫혀 환율 요청을 취소했습니다.", "AbortError"));
+      exchangeRateRequestRef.current = null;
     };
   }, [refreshExchangeRates]);
 
@@ -713,10 +813,10 @@ function OverviewPage({ onNavigate, displayProducts, operationSummary, channelMe
         <aside className="briefing-settlement"><span>실제 연결 확인</span><strong>{operationsAvailable ? `${summary.activeCredentialCount} / ${enabledSalesChannelCount} 진단 통과` : "확인 중"}</strong><small>운영 키 {summary.registeredCredentialCount} / {enabledSalesChannelCount} · 미등록·미검증 채널을 전체 수에서 숨기지 않습니다.</small><button onClick={() => onNavigate("connections")}>채널 연결 관리<ChevronRight size={14} /></button></aside>
       </section>
       <section className="overview-toolbar">
-        <article className="exchange-widget" aria-label="현재 환율">
+        <article className="exchange-widget" aria-label="환율 조회">
           <div className="exchange-title"><span><i />기준 환율</span><small>KRW 기준 · {rateUpdatedAt}</small><small>{rateSource}</small></div>
-          <div className="exchange-rate-list">{exchangeRates.map((rate) => <div className="exchange-rate" key={rate.code}><small>{rate.code} {rate.unit}</small><strong>₩{rate.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong><em className={rate.change >= 0 ? "up" : "down"}>{rate.change >= 0 ? "▲" : "▼"} {Math.abs(rate.change).toFixed(2)}%</em></div>)}</div>
-          <button type="button" className="exchange-refresh" aria-label="환율 새로고침" title="환율 새로고침" onClick={refreshExchangeRates}><RefreshCw size={14} /></button>
+          <div className="exchange-rate-list">{exchangeRates.map((rate) => <div className="exchange-rate" key={rate.code}><small>{rate.code} {rate.unit}</small><strong>{rate.value === null ? "—" : `₩${rate.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</strong>{rate.value === null ? <em className="neutral">확인 중</em> : rate.change === null ? <em className="neutral">비교 대기</em> : <em className={rate.change >= 0 ? "up" : "down"}>{rate.change >= 0 ? "▲" : "▼"} {Math.abs(rate.change).toFixed(2)}%</em>}</div>)}</div>
+          <button type="button" className="exchange-refresh" aria-label="환율 새로고침" title="환율 새로고침" aria-busy={rateRefreshing} disabled={rateRefreshing} onClick={() => void refreshExchangeRates()}><RefreshCw size={14} /></button>
         </article>
         <div className="overview-date-actions"><SalesRangeControl range={salesRange} onChange={onSalesRangeChange} /></div>
       </section>

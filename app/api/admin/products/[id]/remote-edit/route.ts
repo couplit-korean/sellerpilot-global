@@ -9,6 +9,7 @@ import {
   listingUpdateRemoteIdentity,
   listingWriteOperation,
   prepareListingUpdateArguments,
+  productEditRemotePlan,
   remoteProductEditIdempotencyKey,
 } from "../../../../../../lib/channels/listing-update";
 import { channelOperationRelease } from "../../../../../../lib/channels/operation-availability";
@@ -99,6 +100,7 @@ function listingExecutionBlock(listing: ListingRecord) {
 function listingAvailability(listing: ListingRecord) {
   const release = channelOperationRelease(listing.channel, "listing.update");
   const executionBlock = listingExecutionBlock(listing);
+  const remotePlan = productEditRemotePlan(listing.channel, release.available);
   return {
     listingId: listing.id,
     channel: listing.channel,
@@ -110,6 +112,7 @@ function listingAvailability(listing: ListingRecord) {
     mode: release.available ? executionBlock?.mode ?? release.mode : release.mode,
     reason: release.available ? executionBlock?.message ?? release.reason : release.reason,
     fields: channelProductEditFieldSupport(listing.channel),
+    remotePlan,
   };
 }
 
@@ -167,11 +170,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const release = channelOperationRelease(listing.channel, body.data.operation);
   if (!release.available) {
+    const remotePlan = productEditRemotePlan(listing.channel, false);
     return NextResponse.json({
       ok: false,
       status: "blocked",
       mode: release.mode,
-      message: release.reason,
+      centralWritePerformed: false,
+      remoteWritePerformed: false,
+      manualRequired: true,
+      remotePlan,
+      message: `${release.reason} ${remotePlan.message}`,
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
@@ -202,11 +210,16 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
   const mutablePaths = listingUpdateMutablePaths(listing.channel, argumentsValue);
   if (!mutablePaths.length) {
+    const remotePlan = productEditRemotePlan(listing.channel, true);
     return NextResponse.json({
       ok: false,
       status: "blocked",
       mode: "mutable_content_required",
-      message: "이 채널에서 수정 가능한 상품명·설명·필수정보·이미지 값이 요청에 없습니다.",
+      centralWritePerformed: false,
+      remoteWritePerformed: false,
+      manualRequired: true,
+      remotePlan,
+      message: "이 채널에서 자동 수정 가능한 상품명·설명·필수정보·이미지 값이 요청에 없습니다. 중앙 원장 저장값은 유지되며 판매구성·가격·옵션 등은 외부 채널 수동 반영이 필요합니다.",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 

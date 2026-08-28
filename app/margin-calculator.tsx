@@ -38,7 +38,7 @@ type ChannelProfile = {
   key: ChannelKey;
   currency: "JPY" | "SGD" | "MYR" | "KRW" | "USD";
   symbol: string;
-  rateToKrw: number;
+  rateToKrw: number | null;
   platformFee: number | null;
   paymentFee: number;
   requiresManualFee?: boolean;
@@ -46,6 +46,8 @@ type ChannelProfile = {
 
 type MarginResult = ChannelProfile & {
   feeReady: boolean;
+  exchangeRateReady: boolean;
+  calculationReady: boolean;
   fixedCosts: number;
   variableRate: number;
   variableCost: number;
@@ -54,7 +56,7 @@ type MarginResult = ChannelProfile & {
   breakEvenPrice: number;
   recommendedPrice: number;
   marketGapRate: number;
-  status: "자동 등록 가능" | "가격 조정 권장" | "마진 기준 확인";
+  status: "자동 등록 가능" | "가격 조정 권장" | "마진 기준 확인" | "환율 확인 필요";
 };
 
 type SavedScenario = {
@@ -69,13 +71,13 @@ type SavedScenario = {
 };
 
 const marginChannelProfiles: ChannelProfile[] = [
-  { key: "qoo10", currency: "JPY", symbol: "¥", rateToKrw: 8.7789, platformFee: 10, paymentFee: 2 },
-  { key: "shopee", currency: "SGD", symbol: "S$", rateToKrw: 1098.9, platformFee: 10, paymentFee: 2.18 },
-  { key: "lazada", currency: "MYR", symbol: "RM", rateToKrw: 344.83, platformFee: 10, paymentFee: 3 },
+  { key: "qoo10", currency: "JPY", symbol: "¥", rateToKrw: null, platformFee: 10, paymentFee: 2 },
+  { key: "shopee", currency: "SGD", symbol: "S$", rateToKrw: null, platformFee: 10, paymentFee: 2.18 },
+  { key: "lazada", currency: "MYR", symbol: "RM", rateToKrw: null, platformFee: 10, paymentFee: 3 },
   { key: "coupang", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: 10.8, paymentFee: 0 },
   { key: "elevenst", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: null, paymentFee: 0, requiresManualFee: true },
   { key: "smartstore", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: 5.63, paymentFee: 0 },
-  { key: "ebay", currency: "USD", symbol: "$", rateToKrw: 1388.89, platformFee: 12.35, paymentFee: 2.9 },
+  { key: "ebay", currency: "USD", symbol: "$", rateToKrw: null, platformFee: 12.35, paymentFee: 2.9 },
   { key: "temu", currency: "KRW", symbol: "₩", rateToKrw: 1, platformFee: null, paymentFee: 0, requiresManualFee: true },
 ];
 
@@ -103,12 +105,33 @@ const defaultPaymentFeeOverrides = Object.fromEntries(
 
 const wonFormatter = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 });
 export const marginExchangeRateTimeoutMs = 12_000;
+export const marginExchangeRateRefreshMs = 60_000;
+const requiredMarginExchangeRateCodes = ["USD", "JPY", "SGD", "MYR"] as const;
 
 type MarginExchangeRatePayload = {
   source?: string;
+  frequency?: "minute-market" | "daily-reference-fallback";
   asOf?: string;
-  rates?: Array<{ code: string; unit: number; value: number }>;
+  providerAsOf?: string | null;
+  fetchedAt?: string;
+  fallback?: boolean;
+  changeBasis?: "latest-daily-reference" | "previous-daily-reference" | "unavailable";
+  rates?: Array<{ code: string; unit: number; value: number; change?: number | null }>;
 };
+
+function formatMarginExchangeRateTimestamp(value: string | null | undefined) {
+  if (!value) return "시각 확인 중";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
+}
 
 export async function fetchMarginReferenceRates({
   signal,
@@ -128,9 +151,21 @@ export async function fetchMarginReferenceRates({
     fallbackPayload: {},
   });
   if (!response.ok || !Array.isArray(payload.rates)) throw new Error("기준환율 응답 오류");
+  const normalizedRates = payload.rates.map((rate) => ({
+    code: rate.code,
+    value: rate.value / Math.max(rate.unit, 1),
+  })).filter((rate) => rate.code && Number.isFinite(rate.value) && rate.value > 0);
+  const normalizedByCode = new Map(normalizedRates.map((rate) => [rate.code, rate.value]));
+  if (!requiredMarginExchangeRateCodes.every((code) => normalizedByCode.has(code))) {
+    throw new Error("필수 기준환율이 누락되었습니다.");
+  }
+  const receivedAt = formatMarginExchangeRateTimestamp(payload.fetchedAt);
+  const basis = payload.frequency === "daily-reference-fallback" || payload.fallback
+    ? `${payload.source ?? "일일 기준환율"} · 일일 기준 대체값 ${payload.asOf ?? "기준일 확인 중"} · 수신 ${receivedAt}`
+    : `${payload.source ?? "현재 환율"} · 60초 자동 조회 · 공급자 갱신 ${formatMarginExchangeRateTimestamp(payload.providerAsOf ?? payload.asOf)} · 수신 ${receivedAt}`;
   return {
-    rates: Object.fromEntries(payload.rates.map((rate) => [rate.code, rate.value / Math.max(rate.unit, 1)])),
-    basis: `${payload.source ?? "기준환율"} · ${payload.asOf ?? "기준일 확인 중"}`,
+    rates: Object.fromEntries(requiredMarginExchangeRateCodes.map((code) => [code, normalizedByCode.get(code)!])),
+    basis,
   };
 }
 
@@ -140,6 +175,7 @@ function formatWon(value: number) {
 }
 
 function formatLocalPrice(valueInKrw: number, channel: ChannelProfile) {
+  if (channel.rateToKrw === null || !Number.isFinite(channel.rateToKrw) || channel.rateToKrw <= 0) return "환율 확인 중";
   const localValue = valueInKrw / channel.rateToKrw;
   if (channel.currency === "KRW") return `${channel.symbol}${wonFormatter.format(Math.round(localValue))}`;
   if (channel.currency === "JPY") return `${channel.symbol}${wonFormatter.format(Math.ceil(localValue / 10) * 10)}`;
@@ -221,16 +257,25 @@ export function calculateMargins(form: MarginForm, feeOverrides: Record<ChannelK
     const platformFee = feeOverrides[channel.key];
     const paymentFee = paymentFeeOverrides[channel.key];
     const feeReady = platformFee !== null && (!channel.requiresManualFee || platformFee > 0);
+    const exchangeRateReady = channel.currency === "KRW"
+      || (channel.rateToKrw !== null && Number.isFinite(channel.rateToKrw) && channel.rateToKrw > 0);
+    const calculationReady = feeReady && exchangeRateReady;
     const variableRate = (platformFee ?? 0) + paymentFee + form.taxRate + form.adRate + form.reserveRate;
     const variableCost = form.sellingPrice * (variableRate / 100);
-    const profit = form.sellingPrice - fixedCosts - variableCost;
-    const margin = form.sellingPrice > 0 ? (profit / form.sellingPrice) * 100 : 0;
+    const calculatedProfit = form.sellingPrice - fixedCosts - variableCost;
+    const calculatedMargin = form.sellingPrice > 0 ? (calculatedProfit / form.sellingPrice) * 100 : 0;
     const breakEvenDenominator = 1 - variableRate / 100;
     const targetDenominator = breakEvenDenominator - form.targetMargin / 100;
-    const breakEvenPrice = breakEvenDenominator > 0 ? roundSellingPrice(fixedCosts / breakEvenDenominator) : 0;
-    const recommendedPrice = targetDenominator > 0 ? roundSellingPrice(fixedCosts / targetDenominator) : 0;
-    const marketGapRate = form.marketReferencePrice > 0 ? ((recommendedPrice - form.marketReferencePrice) / form.marketReferencePrice) * 100 : 0;
-    const status = !feeReady || !recommendedPrice
+    const calculatedBreakEvenPrice = breakEvenDenominator > 0 ? roundSellingPrice(fixedCosts / breakEvenDenominator) : 0;
+    const calculatedRecommendedPrice = targetDenominator > 0 ? roundSellingPrice(fixedCosts / targetDenominator) : 0;
+    const profit = calculationReady ? calculatedProfit : 0;
+    const margin = calculationReady ? calculatedMargin : 0;
+    const breakEvenPrice = calculationReady ? calculatedBreakEvenPrice : 0;
+    const recommendedPrice = calculationReady ? calculatedRecommendedPrice : 0;
+    const marketGapRate = calculationReady && form.marketReferencePrice > 0 ? ((recommendedPrice - form.marketReferencePrice) / form.marketReferencePrice) * 100 : 0;
+    const status = !exchangeRateReady
+      ? "환율 확인 필요"
+      : !feeReady || !recommendedPrice
       ? "마진 기준 확인"
       : margin >= form.targetMargin
       ? "자동 등록 가능"
@@ -238,7 +283,7 @@ export function calculateMargins(form: MarginForm, feeOverrides: Record<ChannelK
         ? "가격 조정 권장"
         : "마진 기준 확인";
 
-    return { ...channel, platformFee, paymentFee, feeReady, fixedCosts, variableRate, variableCost, profit, margin, breakEvenPrice, recommendedPrice, marketGapRate, status };
+    return { ...channel, platformFee, paymentFee, feeReady, exchangeRateReady, calculationReady, fixedCosts, variableRate, variableCost, profit, margin, breakEvenPrice, recommendedPrice, marketGapRate, status };
   });
 }
 
@@ -287,42 +332,63 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   const [deletedScenarioIds, setDeletedScenarioIds] = useState<Set<string>>(() => new Set());
   const [savingScenario, setSavingScenario] = useState(false);
   const [referenceRates, setReferenceRates] = useState<Record<string, number>>({});
-  const [rateBasis, setRateBasis] = useState("기준환율 확인 중");
+  const [rateBasis, setRateBasis] = useState("실시간 환율 수신 전 · 해외 채널 계산 잠김");
   const rateRequestRef = useRef<AbortController | null>(null);
+  const rateReceivedRef = useRef(false);
   useEffect(() => {
-    rateRequestRef.current?.abort(new DOMException("새 기준환율 요청을 시작합니다.", "AbortError"));
-    const controller = new AbortController();
-    rateRequestRef.current = controller;
     let active = true;
     const loadRates = async () => {
-      const loaded = await fetchMarginReferenceRates({ signal: controller.signal });
-      if (!active || controller.signal.aborted) return;
-      setReferenceRates(loaded.rates);
-      setRateBasis(loaded.basis);
+      if (rateRequestRef.current) return;
+      const controller = new AbortController();
+      rateRequestRef.current = controller;
+      try {
+        const loaded = await fetchMarginReferenceRates({ signal: controller.signal });
+        if (!active || controller.signal.aborted) return;
+        rateReceivedRef.current = true;
+        setReferenceRates(loaded.rates);
+        setRateBasis(loaded.basis);
+      } catch {
+        if (active && !controller.signal.aborted) {
+          if (!rateReceivedRef.current) {
+            setRateBasis("실시간 환율 최초 수신 실패 · 해외 채널 계산 잠김");
+          } else {
+            setRateBasis((current) => current.includes("최근 자동 갱신 실패")
+              ? current
+              : `${current} · 최근 자동 갱신 실패(직전 실수신값 유지)`);
+          }
+        }
+      } finally {
+        if (rateRequestRef.current === controller) rateRequestRef.current = null;
+      }
     };
-    void loadRates().catch(() => {
-      if (active && !controller.signal.aborted) setRateBasis("최근 기준환율 대체값 · API 재확인 필요");
-    }).finally(() => {
-      if (rateRequestRef.current === controller) rateRequestRef.current = null;
-    });
+    void loadRates();
+    const interval = window.setInterval(() => void loadRates(), marginExchangeRateRefreshMs);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void loadRates();
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       active = false;
-      if (rateRequestRef.current === controller) rateRequestRef.current = null;
-      controller.abort(new DOMException("마진 계산 화면이 닫혀 기준환율 요청을 취소했습니다.", "AbortError"));
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      rateRequestRef.current?.abort(new DOMException("마진 계산 화면이 닫혀 기준환율 요청을 취소했습니다.", "AbortError"));
+      rateRequestRef.current = null;
     };
   }, []);
   const calculationProfiles = useMemo(() => marginChannelProfiles.map((profile) => ({
     ...profile,
-    rateToKrw: profile.currency === "KRW" ? 1 : referenceRates[profile.currency] ?? profile.rateToKrw,
+    rateToKrw: profile.currency === "KRW" ? 1 : referenceRates[profile.currency] ?? null,
   })), [referenceRates]);
   const results = useMemo(() => calculateMargins(form, feeOverrides, paymentFeeOverrides, calculationProfiles), [calculationProfiles, form, feeOverrides, paymentFeeOverrides]);
   const selectedResult = results.find((result) => result.key === selectedChannel) ?? results[0];
   const selectedChannelInfo = channels[selectedChannel];
   const selectedProduct = products.find((product) => product.id === selectedProductId) ?? null;
-  const targetProgress = selectedResult.feeReady
+  const targetProgress = selectedResult.calculationReady
     ? Math.max(0, Math.min(100, (selectedResult.margin / Math.max(form.targetMargin, 1)) * 100))
     : 0;
   const manualFeeMessage = `${selectedChannelInfo.name} 플랫폼 수수료를 직접 입력하세요.`;
+  const exchangeRateMessage = `${selectedResult.currency} 실시간 환율을 수신한 뒤 계산할 수 있습니다.`;
+  const calculationBlockedMessage = !selectedResult.exchangeRateReady ? exchangeRateMessage : manualFeeMessage;
   const savedScenarios = useMemo(() => {
     const operationScenarios = (Array.isArray(scenarios) ? scenarios : [])
       .map(savedScenarioFromOperation)
@@ -355,6 +421,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   };
 
   const applyRecommendedPrice = () => {
+    if (!selectedResult.exchangeRateReady) return notify(exchangeRateMessage);
     if (!selectedResult.feeReady) return notify(manualFeeMessage);
     if (!selectedResult.recommendedPrice) return;
     changeFormValue("sellingPrice", selectedResult.recommendedPrice);
@@ -363,7 +430,8 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
 
   const saveScenario = async () => {
     if (savingScenario) return;
-    if (!selectedResult.feeReady || selectedResult.platformFee === null) return notify(`${manualFeeMessage} 입력 후 계산 결과를 저장할 수 있습니다.`);
+    if (!selectedResult.exchangeRateReady) return notify(`${exchangeRateMessage} 실환율 없는 계산은 저장하지 않습니다.`);
+    if (!selectedResult.calculationReady || selectedResult.platformFee === null) return notify(`${manualFeeMessage} 입력 후 계산 결과를 저장할 수 있습니다.`);
     if (!selectedProduct) return notify("마진 계산을 연결할 실제 상품을 먼저 선택해 주세요.");
     const now = new Date();
     const saved: SavedScenario = {
@@ -388,7 +456,15 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
           action: "margin_save",
           name: saved.product,
           channelKey: selectedChannel,
-          inputs: { ...form, productId: selectedProduct.id, platformFee: selectedResult.platformFee, paymentFee: selectedResult.paymentFee },
+          inputs: {
+            ...form,
+            productId: selectedProduct.id,
+            platformFee: selectedResult.platformFee,
+            paymentFee: selectedResult.paymentFee,
+            currency: selectedResult.currency,
+            rateToKrw: selectedResult.rateToKrw,
+            exchangeRateBasis: rateBasis,
+          },
           result: {
             profit: selectedResult.profit,
             margin: selectedResult.margin,
@@ -490,34 +566,35 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
               <MarginNumberField id="target-margin" label="목표 마진율" value={form.targetMargin} suffix="%" step={0.5} onChange={(value) => changeFormValue("targetMargin", value)} />
             </div>
             {!selectedResult.feeReady ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{manualFeeMessage} 입력 전에는 예상 손익·권장가·비용 배분을 표시하지 않습니다.</p> : null}
+            {!selectedResult.exchangeRateReady ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{exchangeRateMessage} 실환율 수신 전에는 해외채널 예상 손익·권장가·저장을 표시하지 않습니다.</p> : null}
           </div>
         </article>
 
         <div className="margin-result-column">
-          <article className={`margin-result-card ${selectedResult.feeReady && selectedResult.margin >= form.targetMargin ? "positive" : "warning"}`}>
-            <div className="margin-result-head"><div><span style={{ "--channel-color": selectedChannelInfo.color } as React.CSSProperties}>{selectedChannelInfo.mark}</span><div><small>{selectedChannelInfo.name} 예상 손익</small><b>{selectedResult.feeReady ? selectedResult.status : "계산 대기"}</b></div></div><em>{!selectedResult.feeReady ? <><AlertCircle size={15} />플랫폼 수수료 입력 필요</> : selectedResult.margin >= form.targetMargin ? <><CheckCircle2 size={15} />목표 마진 충족</> : <><AlertCircle size={15} />{(form.targetMargin - selectedResult.margin).toFixed(1)}%p 부족</>}</em></div>
-            <div className="margin-profit-value"><small>주문 1건 예상 순이익</small><strong>{selectedResult.feeReady ? formatWon(selectedResult.profit) : "계산 대기"}</strong><span>{selectedResult.feeReady ? `${formatLocalPrice(form.sellingPrice, selectedResult)} 판매 기준` : manualFeeMessage}</span></div>
-            <div className="margin-progress"><div><span>예상 마진율</span><b>{selectedResult.feeReady ? `${selectedResult.margin.toFixed(1)}%` : "—"}</b></div><span><i style={{ width: `${targetProgress}%` }} /></span><small>{selectedResult.feeReady ? `목표 ${form.targetMargin.toFixed(1)}% · 변동비율 ${selectedResult.variableRate.toFixed(2)}%` : "플랫폼 수수료 입력 후 계산됩니다."}</small></div>
-            <div className="margin-result-actions"><button type="button" onClick={applyRecommendedPrice} disabled={!selectedResult.feeReady || !selectedResult.recommendedPrice} title={!selectedResult.feeReady ? manualFeeMessage : undefined}><Target size={15} />권장 판매가 적용</button><button type="button" onClick={() => void saveScenario()} disabled={savingScenario || !selectedResult.feeReady} title={!selectedResult.feeReady ? manualFeeMessage : undefined}><Save size={15} />{savingScenario ? "저장 중" : "계산 결과 저장"}</button></div>
+          <article className={`margin-result-card ${selectedResult.calculationReady && selectedResult.margin >= form.targetMargin ? "positive" : "warning"}`}>
+            <div className="margin-result-head"><div><span style={{ "--channel-color": selectedChannelInfo.color } as React.CSSProperties}>{selectedChannelInfo.mark}</span><div><small>{selectedChannelInfo.name} 예상 손익</small><b>{selectedResult.calculationReady ? selectedResult.status : "계산 대기"}</b></div></div><em>{!selectedResult.exchangeRateReady ? <><AlertCircle size={15} />실시간 환율 확인 필요</> : !selectedResult.feeReady ? <><AlertCircle size={15} />플랫폼 수수료 입력 필요</> : selectedResult.margin >= form.targetMargin ? <><CheckCircle2 size={15} />목표 마진 충족</> : <><AlertCircle size={15} />{(form.targetMargin - selectedResult.margin).toFixed(1)}%p 부족</>}</em></div>
+            <div className="margin-profit-value"><small>주문 1건 예상 순이익</small><strong>{selectedResult.calculationReady ? formatWon(selectedResult.profit) : "계산 대기"}</strong><span>{selectedResult.calculationReady ? `${formatLocalPrice(form.sellingPrice, selectedResult)} 판매 기준` : calculationBlockedMessage}</span></div>
+            <div className="margin-progress"><div><span>예상 마진율</span><b>{selectedResult.calculationReady ? `${selectedResult.margin.toFixed(1)}%` : "—"}</b></div><span><i style={{ width: `${targetProgress}%` }} /></span><small>{selectedResult.calculationReady ? `목표 ${form.targetMargin.toFixed(1)}% · 변동비율 ${selectedResult.variableRate.toFixed(2)}%` : `${calculationBlockedMessage} 계산은 잠겨 있습니다.`}</small></div>
+            <div className="margin-result-actions"><button type="button" onClick={applyRecommendedPrice} disabled={!selectedResult.calculationReady || !selectedResult.recommendedPrice} title={!selectedResult.calculationReady ? calculationBlockedMessage : undefined}><Target size={15} />권장 판매가 적용</button><button type="button" onClick={() => void saveScenario()} disabled={savingScenario || !selectedResult.calculationReady} title={!selectedResult.calculationReady ? calculationBlockedMessage : undefined}><Save size={15} />{savingScenario ? "저장 중" : "계산 결과 저장"}</button></div>
           </article>
 
           <section className="margin-summary-grid">
-            <article className="panel"><span className="metric-icon violet"><Target size={17} /></span><div><small>목표 마진 권장 판매가</small><strong>{selectedResult.feeReady ? formatWon(selectedResult.recommendedPrice) : "—"}</strong><em>{selectedResult.feeReady ? formatLocalPrice(selectedResult.recommendedPrice, selectedResult) : manualFeeMessage}</em></div></article>
-            <article className="panel"><span className="metric-icon blue"><TrendingUp size={17} /></span><div><small>손익분기 판매가</small><strong>{selectedResult.feeReady ? formatWon(selectedResult.breakEvenPrice) : "—"}</strong><em>{selectedResult.feeReady ? "이 가격부터 손실 없음" : "수수료 입력 후 계산"}</em></div></article>
-            <article className="panel"><span className="metric-icon orange"><Percent size={17} /></span><div><small>시장 참고가 대비 권장가</small><strong>{selectedResult.feeReady ? `${selectedResult.marketGapRate >= 0 ? "+" : ""}${selectedResult.marketGapRate.toFixed(1)}%` : "—"}</strong><em>{selectedResult.feeReady ? selectedResult.marketGapRate <= 8 ? "시장 범위 내" : "시장성 재검토 필요" : "수수료 입력 후 계산"}</em></div></article>
+            <article className="panel"><span className="metric-icon violet"><Target size={17} /></span><div><small>목표 마진 권장 판매가</small><strong>{selectedResult.calculationReady ? formatWon(selectedResult.recommendedPrice) : "—"}</strong><em>{selectedResult.calculationReady ? formatLocalPrice(selectedResult.recommendedPrice, selectedResult) : calculationBlockedMessage}</em></div></article>
+            <article className="panel"><span className="metric-icon blue"><TrendingUp size={17} /></span><div><small>손익분기 판매가</small><strong>{selectedResult.calculationReady ? formatWon(selectedResult.breakEvenPrice) : "—"}</strong><em>{selectedResult.calculationReady ? "이 가격부터 손실 없음" : calculationBlockedMessage}</em></div></article>
+            <article className="panel"><span className="metric-icon orange"><Percent size={17} /></span><div><small>시장 참고가 대비 권장가</small><strong>{selectedResult.calculationReady ? `${selectedResult.marketGapRate >= 0 ? "+" : ""}${selectedResult.marketGapRate.toFixed(1)}%` : "—"}</strong><em>{selectedResult.calculationReady ? selectedResult.marketGapRate <= 8 ? "시장 범위 내" : "시장성 재검토 필요" : calculationBlockedMessage}</em></div></article>
           </section>
 
           <article className="panel margin-breakdown">
-            <div className="panel-heading"><div><span className="panel-kicker">COST BREAKDOWN</span><h3>판매가 1건 배분</h3></div><b>{selectedResult.feeReady ? formatWon(form.sellingPrice) : "계산 대기"}</b></div>
-            {selectedResult.feeReady ? <><div className="margin-stack-bar" aria-label="판매가 비용 배분"><i className="fixed" style={{ width: `${Math.min(100, (selectedResult.fixedCosts / Math.max(form.sellingPrice, 1)) * 100)}%` }} /><i className="variable" style={{ width: `${Math.min(100, (selectedResult.variableCost / Math.max(form.sellingPrice, 1)) * 100)}%` }} /><i className={selectedResult.profit >= 0 ? "profit" : "loss"} style={{ width: `${Math.min(100, Math.abs(selectedResult.profit) / Math.max(form.sellingPrice, 1) * 100)}%` }} /></div>
-            <div className="margin-breakdown-list"><div><span><i className="fixed" />고정 원가</span><b>{formatWon(selectedResult.fixedCosts)}</b><small>{((selectedResult.fixedCosts / Math.max(form.sellingPrice, 1)) * 100).toFixed(1)}%</small></div><div><span><i className="variable" />수수료 · 변동비</span><b>{formatWon(selectedResult.variableCost)}</b><small>{selectedResult.variableRate.toFixed(1)}%</small></div><div><span><i className={selectedResult.profit >= 0 ? "profit" : "loss"} />순이익</span><b>{formatWon(selectedResult.profit)}</b><small>{selectedResult.margin.toFixed(1)}%</small></div></div></> : <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{manualFeeMessage} 비용 배분은 요율 확인 후 표시됩니다.</p>}
+            <div className="panel-heading"><div><span className="panel-kicker">COST BREAKDOWN</span><h3>판매가 1건 배분</h3></div><b>{selectedResult.calculationReady ? formatWon(form.sellingPrice) : "계산 대기"}</b></div>
+            {selectedResult.calculationReady ? <><div className="margin-stack-bar" aria-label="판매가 비용 배분"><i className="fixed" style={{ width: `${Math.min(100, (selectedResult.fixedCosts / Math.max(form.sellingPrice, 1)) * 100)}%` }} /><i className="variable" style={{ width: `${Math.min(100, (selectedResult.variableCost / Math.max(form.sellingPrice, 1)) * 100)}%` }} /><i className={selectedResult.profit >= 0 ? "profit" : "loss"} style={{ width: `${Math.min(100, Math.abs(selectedResult.profit) / Math.max(form.sellingPrice, 1) * 100)}%` }} /></div>
+            <div className="margin-breakdown-list"><div><span><i className="fixed" />고정 원가</span><b>{formatWon(selectedResult.fixedCosts)}</b><small>{((selectedResult.fixedCosts / Math.max(form.sellingPrice, 1)) * 100).toFixed(1)}%</small></div><div><span><i className="variable" />수수료 · 변동비</span><b>{formatWon(selectedResult.variableCost)}</b><small>{selectedResult.variableRate.toFixed(1)}%</small></div><div><span><i className={selectedResult.profit >= 0 ? "profit" : "loss"} />순이익</span><b>{formatWon(selectedResult.profit)}</b><small>{selectedResult.margin.toFixed(1)}%</small></div></div></> : <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{calculationBlockedMessage} 비용 배분은 기준 확인 후 표시됩니다.</p>}
           </article>
         </div>
       </section>
 
       <section className="panel margin-comparison-panel">
         <div className="panel-heading table-title"><div><span className="panel-kicker">8 CHANNEL COMPARISON</span><h3>동일 상품 · 채널별 예상 마진 비교</h3></div><span className="margin-sample-note">직접 입력 비용 · {rateBasis}</span></div>
-        <div className="table-wrap"><table className="data-table margin-table"><thead><tr><th>채널</th><th>계획 판매가</th><th>플랫폼 + 결제 수수료</th><th>총 변동비율</th><th>예상 순이익</th><th>예상 마진율</th><th>권장 판매가</th><th>자동 등록 판정</th><th /></tr></thead><tbody>{results.map((result) => { const channel = channels[result.key]; return <tr key={result.key} className={selectedChannel === result.key ? "selected" : ""}><td><button className="margin-channel-cell" onClick={() => setSelectedChannel(result.key)}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.mark}</span><b>{channel.name}</b><small>{result.currency}</small></button></td><td><b>{formatLocalPrice(form.sellingPrice, result)}</b><small>{formatWon(form.sellingPrice)}</small></td><td><b>{result.feeReady ? `${(result.platformFee ?? 0).toFixed(2)}% + ${result.paymentFee.toFixed(2)}%` : "직접 입력 필요"}</b></td><td><b>{result.feeReady ? `${result.variableRate.toFixed(2)}%` : "—"}</b></td><td><b className={result.profit >= 0 ? "profit-text" : "loss-text"}>{result.feeReady ? formatWon(result.profit) : "—"}</b></td><td><b className={result.margin >= form.targetMargin ? "profit-text" : "loss-text"}>{result.feeReady ? `${result.margin.toFixed(1)}%` : "—"}</b></td><td><b>{result.feeReady ? formatWon(result.recommendedPrice) : "—"}</b><small>{result.feeReady ? formatLocalPrice(result.recommendedPrice, result) : "요율 확인 후 계산"}</small></td><td><StatusPill status={result.status} /></td><td><button type="button" className="table-action" aria-label={`${channel.name} 계산 결과 보기`} onClick={() => setSelectedChannel(result.key)}><ArrowRight size={15} /></button></td></tr>; })}</tbody></table></div>
+        <div className="table-wrap"><table className="data-table margin-table"><thead><tr><th>채널</th><th>계획 판매가</th><th>플랫폼 + 결제 수수료</th><th>총 변동비율</th><th>예상 순이익</th><th>예상 마진율</th><th>권장 판매가</th><th>자동 등록 판정</th><th /></tr></thead><tbody>{results.map((result) => { const channel = channels[result.key]; return <tr key={result.key} className={selectedChannel === result.key ? "selected" : ""}><td><button className="margin-channel-cell" onClick={() => setSelectedChannel(result.key)}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.mark}</span><b>{channel.name}</b><small>{result.currency}</small></button></td><td><b>{result.exchangeRateReady ? formatLocalPrice(form.sellingPrice, result) : "환율 확인 중"}</b><small>{formatWon(form.sellingPrice)}</small></td><td><b>{result.feeReady ? `${(result.platformFee ?? 0).toFixed(2)}% + ${result.paymentFee.toFixed(2)}%` : "직접 입력 필요"}</b></td><td><b>{result.feeReady ? `${result.variableRate.toFixed(2)}%` : "—"}</b></td><td><b className={result.profit >= 0 ? "profit-text" : "loss-text"}>{result.calculationReady ? formatWon(result.profit) : "—"}</b></td><td><b className={result.margin >= form.targetMargin ? "profit-text" : "loss-text"}>{result.calculationReady ? `${result.margin.toFixed(1)}%` : "—"}</b></td><td><b>{result.calculationReady ? formatWon(result.recommendedPrice) : "—"}</b><small>{result.calculationReady ? formatLocalPrice(result.recommendedPrice, result) : result.exchangeRateReady ? "요율 확인 후 계산" : "실시간 환율 수신 후 계산"}</small></td><td><StatusPill status={result.status} /></td><td><button type="button" className="table-action" aria-label={`${channel.name} 계산 결과 보기`} onClick={() => setSelectedChannel(result.key)}><ArrowRight size={15} /></button></td></tr>; })}</tbody></table></div>
       </section>
 
       <section className="panel saved-margin-panel">

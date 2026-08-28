@@ -60,7 +60,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /이번 달 판매 TOP 10/);
   assert.match(page, /기준 환율/);
   assert.match(page, /환율 새로고침/);
-  assert.match(page, /3_600_000/);
+  assert.match(page, /const dashboardExchangeRateRefreshMs = 60_000/);
   assert.doesNotMatch(page, /Math\.random/);
   assert.doesNotMatch(page, /beforeunload|onbeforeunload/);
   assert.doesNotMatch(page, /sellerpilot-operation-sync-requested-at/);
@@ -72,8 +72,13 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /if \(view !== "registration-activity"\) return;[\s\S]{0,360}document\.visibilityState === "visible"[\s\S]{0,160}refreshOperations\(\)/);
   assert.match(page, /document\.addEventListener\("visibilitychange", refreshWhenVisible\)/);
   assert.match(page, /document\.removeEventListener\("visibilitychange", refreshWhenVisible\)/);
+  assert.match(exchangeRoute, /api\.coinbase\.com\/v2\/exchange-rates\?currency=KRW/);
   assert.match(exchangeRoute, /api\.frankfurter\.dev\/v2\/rates/);
-  assert.match(exchangeRoute, /daily-reference/);
+  assert.match(exchangeRoute, /minute-market/);
+  assert.match(exchangeRoute, /daily-reference-fallback/);
+  assert.match(exchangeRoute, /cache: "no-store"/);
+  assert.match(exchangeRoute, /s-maxage=\$\{minuteMarketCdnSeconds\}/);
+  assert.doesNotMatch(exchangeRoute, /stale-while-revalidate/);
   assert.match(page, /상품 관리/);
   assert.match(page, /상품 등록 센터/);
   assert.match(page, /마진 계산/);

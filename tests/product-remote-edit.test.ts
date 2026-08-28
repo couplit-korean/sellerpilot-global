@@ -9,6 +9,7 @@ import {
   channelProductEditFieldSupport,
   listingUpdateMutablePaths,
   prepareListingUpdateArguments,
+  productEditRemotePlan,
   remoteProductEditIdempotencyKey,
 } from "../lib/channels/listing-update";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
@@ -60,6 +61,38 @@ test("가격 readback이 없는 채널은 API 구현 유무와 무관하게 출�
   assert.match(channelOperationRelease("ebay", "listing.update").reason, /offer ID|SKU/);
   assert.equal(channelOperationAvailable("ebay", "listing.stop"), false);
   assert.match(channelOperationRelease("ebay", "listing.stop").reason, /offer ID|listing ID/);
+});
+
+test("중앙 저장과 원격 전체 수정의 수동 반영 필드를 구조적으로 구분한다", () => {
+  const qoo10 = productEditRemotePlan("qoo10", channelOperationAvailable("qoo10", "listing.update"));
+  assert.equal(qoo10.state, "verified_partial_remote_update_available");
+  assert.equal(qoo10.centralWrite, "separate");
+  assert.equal(qoo10.remoteWrite, "not_automatic");
+  assert.equal(qoo10.manualRequired, true);
+  assert.deepEqual(qoo10.partiallyWritableFields, ["requiredInformation"]);
+  assert.deepEqual(qoo10.manualFields, ["options", "saleConfiguration", "requiredInformation", "price"]);
+  assert.match(qoo10.message, /중앙 원장|수동 반영/);
+
+  for (const channel of ["elevenst", "temu", "ebay"] as const) {
+    const plan = productEditRemotePlan(channel, channelOperationAvailable(channel, "listing.update"));
+    assert.equal(plan.state, "manual_external_update_required", channel);
+    assert.equal(plan.listingUpdateAvailable, false, channel);
+    assert.equal(plan.manualRequired, true, channel);
+    assert.match(plan.message, /원격 상품 쓰기를 실행하지 않습니다/, channel);
+    assert.match(plan.message, /외부 채널 수동 반영/, channel);
+  }
+  assert.deepEqual(productEditRemotePlan("temu", false).remotelyWritableFields, ["inventory"]);
+  assert.deepEqual(productEditRemotePlan("ebay", false).remotelyWritableFields, []);
+});
+
+test("검증되지 않은 11번가·Temu·eBay 수정 payload는 원격 쓰기 형태로 만들지 않는다", () => {
+  for (const channel of ["elevenst", "temu", "ebay"] as const) {
+    assert.throws(
+      () => prepareListingUpdateArguments(channel, { body: { title: "수정 상품" } }, publishedListing),
+      new RegExp(`LISTING_UPDATE_NOT_RELEASED:${channel}`),
+      channel,
+    );
+  }
 });
 
 test("상품 수정 payload는 원격 identity를 원장에서 고정하고 가격·재고·옵션을 제거한다", () => {
@@ -165,6 +198,7 @@ test("동일한 편집 계약은 안정적인 UUID mutationId를 만들고 변�
 
 test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic gateway에 전달한다", () => {
   const source = readFileSync(new URL("../app/api/admin/products/[id]/remote-edit/route.ts", import.meta.url), "utf8");
+  const centralSaveRoute = readFileSync(new URL("../app/api/admin/products/[id]/publish-context/route.ts", import.meta.url), "utf8");
   const workbench = readFileSync(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
   assert.match(source, /context: \{ params: Promise<\{ id: string \}> \}/);
   assert.match(source, /listingRecords\(loaded\.context\.listings\)\.find\(\(item\) => item\.id === body\.data\.listingId\)/);
@@ -175,10 +209,23 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.doesNotMatch(source, /z\.enum\(\["listing\.update", "price\.update"\]\)/);
   assert.doesNotMatch(source, /randomUUID/);
   assert.doesNotMatch(source, /operation:\s*"price\.update" as const/);
+  assert.match(source, /productEditRemotePlan/);
+  assert.match(source, /centralWritePerformed:\s*false/);
+  assert.match(source, /remoteWritePerformed:\s*false/);
+  assert.match(source, /manualRequired:\s*true/);
+  assert.match(centralSaveRoute, /centralSaved:\s*true/);
+  assert.match(centralSaveRoute, /centralSaveScope:\s*"product_details_without_inventory"/);
+  assert.match(centralSaveRoute, /inventoryWritePerformed:\s*false/);
+  assert.match(centralSaveRoute, /remoteWritePerformed:\s*false/);
+  assert.match(centralSaveRoute, /remoteUpdateStatus:\s*"not_attempted"/);
+  assert.match(centralSaveRoute, /외부 판매채널 수정은 자동 실행하지 않았으며/);
   assert.match(workbench, /fetch\(`\/api\/admin\/products\/\$\{requestedProductId\}\/remote-edit`/);
   assert.match(workbench, /listingId: listing\.id/);
   assert.match(workbench, /mutationId: await remoteEditMutationId\(mutationContract\)/);
   assert.match(workbench, /className="remote-edit-support"/);
   assert.match(workbench, /remote-edit-support-reason/);
+  assert.match(workbench, /중앙 저장 · 외부채널 수동 반영 필요/);
+  assert.match(workbench, /operationRelease\.reason/);
+  assert.match(workbench, /productEditRemotePlan\(channel, operationAvailable\)/);
   assert.match(workbench, /channelTargetOptionValue\(item\)/);
 });

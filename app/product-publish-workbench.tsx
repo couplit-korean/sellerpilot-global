@@ -16,10 +16,11 @@ import {
   listingWriteOperation,
   prepareListingUpdateArguments,
   productEditFieldKeys,
+  productEditRemotePlan,
 } from "../lib/channels/listing-update";
 import { marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
-import { channelOperationAvailable } from "../lib/channels/operation-availability";
+import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10SellerCode } from "../lib/channels/qoo10";
 import {
   buildLocalizedBudgetedPlainDetail,
@@ -1299,9 +1300,11 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           : results[channel] ?? { phase: "idle" as const };
       const operation = listingWriteOperation(listing);
       const remoteUpdate = operation === "listing.update";
-      const operationAvailable = channelOperationAvailable(channel, operation);
+      const operationRelease = channelOperationRelease(channel, operation);
+      const operationAvailable = operationRelease.available;
       const capability = remoteUpdate ? definition.capabilities.listingUpdate : definition.capabilities.listingCreate;
       const editFieldSupport = remoteUpdate ? channelProductEditFieldSupport(channel) : null;
+      const remotePlan = remoteUpdate ? productEditRemotePlan(channel, operationAvailable) : null;
       const draftObject = parseDraft(drafts[channel]);
       const requirements = draftObject ? inspectListingDraft(channel, draftObject) : [];
       const blockingRequirements = requirements.filter((item) => item.status === "manual");
@@ -1311,9 +1314,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
         <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
-        {!operationAvailable ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "상품 콘텐츠 수정 검증 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${capability.note} · 원격 상품 식별값과 수정 후 조회 검증이 완료되기 전에는 외부 쓰기를 실행하지 않습니다.` : capability.note}</small></div> : <>
+        {!operationAvailable && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
+        {editFieldSupport && <div className="remote-edit-support" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>{productEditFieldKeys.map((field) => <span className={editFieldSupport[field].state} title={editFieldSupport[field].reason} key={field}><b>{productEditFieldLabels[field]}</b><small className="remote-edit-support-state">{productEditSupportLabel(editFieldSupport[field].state, centralEditFieldSupport[field].state)}</small><small className="remote-edit-support-reason">{editFieldSupport[field].reason}</small></span>)}</div>}
+        {operationAvailable && <>
           <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}대표+상세 {marketplaceChannelDetailImageCount}장</span></div>
-          {editFieldSupport && <div className="remote-edit-support" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>{productEditFieldKeys.map((field) => <span className={editFieldSupport[field].state} title={editFieldSupport[field].reason} key={field}><b>{productEditFieldLabels[field]}</b><small className="remote-edit-support-state">{productEditSupportLabel(editFieldSupport[field].state, centralEditFieldSupport[field].state)}</small><small className="remote-edit-support-reason">{editFieldSupport[field].reason}</small></span>)}</div>}
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
           {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
           {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>채널 JSON 형식 확인 필요</b><small>아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다.</small></div> : <div className="publish-required-fields">
