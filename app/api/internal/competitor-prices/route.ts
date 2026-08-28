@@ -72,13 +72,13 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
     logCompetitorRefreshFailure("provider_registry", { status: 503 });
     return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
   }
-  if (!registry.configured.length) {
+  const providerConfigurationMissing = registry.configured.length === 0;
+  if (providerConfigurationMissing) {
     logCompetitorRefreshFailure("provider_configuration", {
       status: 503,
       failedProviders: registry.unavailable.filter((provider) => provider.status === "failed").length,
       unavailableProviders: registry.unavailable.filter((provider) => provider.status === "unavailable").length,
     });
-    return NextResponse.json({ message: "공식 가격 검색 공급자를 확인하지 못했습니다.", providers: registry.unavailable }, { status: 503 });
   }
   let dueData: unknown;
   try {
@@ -163,13 +163,14 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
   }
   const pending = results.some((item) => item.pending);
   return NextResponse.json({
-    ok: infrastructureFailures === 0 && !pending && results.every((item) => item.ok),
+    ok: !providerConfigurationMissing && infrastructureFailures === 0 && !pending && results.every((item) => item.ok),
     pending,
+    providerConfigurationMissing,
     checked: results.length,
     infrastructureFailures,
     results,
   }, {
-    status: infrastructureFailures > 0 ? 503 : pending ? 202 : results.some((item) => !item.ok) ? 207 : 200,
+    status: providerConfigurationMissing || infrastructureFailures > 0 ? 503 : pending ? 202 : results.some((item) => !item.ok) ? 207 : 200,
     headers: { "cache-control": "no-store, max-age=0" },
   });
 }

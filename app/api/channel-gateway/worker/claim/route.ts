@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { gatewayClaimSchema } from "../../../../../lib/channels/gateway-contract";
+import { channelPriceUpdateRelease } from "../../../../../lib/channels/price-update-release";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
 import {
   createBoundedSupabaseFetch,
@@ -30,8 +31,9 @@ export async function POST(request: Request) {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: createBoundedSupabaseFetch() },
   });
+  const tokenHash = createHash("sha256").update(workerToken).digest("hex");
   const { data, error } = await serviceClient.rpc("sellerpilot_claim_channel_gateway_job", {
-    p_token_hash: createHash("sha256").update(workerToken).digest("hex"),
+    p_token_hash: tokenHash,
     p_worker_version: typeof body.version === "string" ? body.version.slice(0, 80) : "unknown",
   });
   if (error) {
@@ -42,5 +44,37 @@ export async function POST(request: Request) {
   if (!data) return new NextResponse(null, { status: 204 });
   const parsed = gatewayClaimSchema.safeParse(data);
   if (!parsed.success) return NextResponse.json({ message: "채널 작업 형식이 올바르지 않습니다." }, { status: 500 });
+  if (parsed.data.operation === "price.update") {
+    const release = channelPriceUpdateRelease(parsed.data.channel);
+    if (!release.available) {
+      const { data: completion, error: completionError } = await serviceClient.rpc(
+        "sellerpilot_service_complete_gateway_transaction",
+        {
+          p_token_hash: tokenHash,
+          p_job_id: parsed.data.id,
+          p_claim_token: parsed.data.claim_token,
+          p_status: "failed",
+          p_response_payload: null,
+          p_error_message: `PRICE_UPDATE_RELEASE_BLOCKED: ${release.reason}`,
+          p_credential_refresh: null,
+          p_normalized_orders: null,
+          p_normalized_inquiries: null,
+          p_diagnostic: null,
+        },
+      );
+      const completed = completion && typeof completion === "object" && !Array.isArray(completion)
+        ? completion as Record<string, unknown>
+        : null;
+      if (completionError || completed?.status !== "completed") {
+        const status = completionError ? workerRpcErrorStatus(completionError) : 503;
+        console.error("blocked price update claim could not be completed safely", {
+          code: completionError?.code ?? "invalid_contract",
+          status,
+        });
+        return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+      }
+      return new NextResponse(null, { status: 204 });
+    }
+  }
   return NextResponse.json(parsed.data, { headers: { "cache-control": "no-store, max-age=0" } });
 }

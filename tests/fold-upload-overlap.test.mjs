@@ -52,11 +52,11 @@ test("mobile registration, a long toast, push status and navigation do not share
   assert.match(contract, /body:has\(\.toast\)\s*\{[^}]*--mobile-toast-lane-height:\s*calc\(var\(--mobile-toast-max-height\) \+ 8px\)/);
   assert.match(contract, /\.toast\s*\{[^}]*bottom:\s*var\(--mobile-nav-clearance\) !important/);
   assert.match(contract, /\.toast\s*\{[^}]*max-height:\s*var\(--mobile-toast-max-height\);[^}]*overflow-y:\s*auto/);
-  assert.match(contract, /\.mobile-push-gate\.browser,\s*\.mobile-push-chip\s*\{[^}]*bottom:\s*calc\(var\(--mobile-nav-clearance\) \+ var\(--mobile-toast-lane-height\) \+ 8px\)/);
+  assert.match(contract, /\.app-main > \.mobile-push-gate\.browser,\s*\.app-main > \.mobile-push-chip\s*\{[^}]*position:\s*relative;[^}]*inset:\s*auto;[^}]*margin:\s*8px var\(--mobile-gutter\) 0/);
   assert.match(contract, /\.app-content\s*\{[^}]*padding-bottom:\s*calc\(104px \+ env\(safe-area-inset-bottom\)\)/);
-  assert.match(contract, /body:has\(\.mobile-push-gate\.browser\) \.app-content\s*\{[^}]*padding-bottom:\s*calc\(112px \+ min\(300px, 42svh\) \+ var\(--mobile-toast-lane-height\) \+ env\(safe-area-inset-bottom\)\)/);
   assert.match(pushManager, /state !== "subscribed"[\s\S]{0,120}window\.setTimeout\(dismissForSession, 2_000\)/);
   assert.match(pushManager, /className="mobile-push-chip-dismiss"[\s\S]{0,160}aria-label="주문 배송 알림 상태 닫기"/);
+  assert.doesNotMatch(pushManager, /mobile-push-page-spacer/);
   assert.match(interactionStyles, /\.toast > \.toast-copy > span\s*\{[^}]*overflow-wrap:\s*anywhere/);
   assert.match(interactionStyles, /\.mobile-push-gate\.browser\s*\{[^}]*max-height:\s*calc\(100dvh - var\(--mobile-nav-clearance, 78px\) - var\(--mobile-toast-lane-height, 0px\) - 16px\);[^}]*overflow-y:\s*auto/);
 });

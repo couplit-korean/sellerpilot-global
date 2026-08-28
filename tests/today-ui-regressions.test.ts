@@ -455,11 +455,11 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.equal(1097 - 224 - 44 >= 780, true);
   assert.equal(1200 - 224 - 44 >= 780, true);
   assert.doesNotMatch(mobileStyles, /@media \(max-width: 360px\)[\s\S]*?\.user-menu\s*\{\s*display:\s*none/);
-  assert.match(mobileStyles, /\.mobile-push-page-spacer[\s\S]*?height: 220px/);
   assert.match(mobilePushManager, /mobilePushDismissedKey/);
   assert.match(mobilePushManager, /sessionStorage\.setItem\(mobilePushDismissedKey, "1"\)/);
   assert.match(mobilePushManager, /className="mobile-push-gate-dismiss"[\s\S]*?나중에/);
-  assert.match(mobilePushManager, /className="mobile-push-page-spacer"/);
+  assert.doesNotMatch(mobilePushManager, /mobile-push-page-spacer/);
+  assert.doesNotMatch(mobileStyles, /\.mobile-push-page-spacer/);
   assert.match(mobilePushManager, /state !== "subscribed"[\s\S]{0,120}window\.setTimeout\(dismissForSession, 2_000\)/);
   assert.match(mobilePushManager, /className="mobile-push-chip-dismiss"[\s\S]{0,160}aria-label="주문 배송 알림 상태 닫기"/);
   assert.match(studio, /fetchJsonWithStudioJobTimeout\([\s\S]*?lifecycleController\.signal, 30_000/);
@@ -481,7 +481,9 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /runCompetitorResearchPolling\(competitorResearchRetryInput/);
   assert.match(page, /competitorResearchControllerRef\.current !== competitorController/);
   assert.match(page, /가격 다시 확인/);
-  assert.match(page, /PRODUCT_RESEARCH_PENDING_KEY/);
+  assert.match(page, /productResearchPendingStorageKey/);
+  assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput\)/);
+  assert.match(page, /JSON\.stringify\(\{ jobId, researchInput, ownerId \} satisfies PendingProductResearch\)/);
   assert.match(page, /productResearchControllerRef\.current\?\.abort\(\)/);
   assert.match(page, /detailRegenerationControllerRef = useRef<AbortController \| null>\(null\)/);
   assert.match(page, /detailRegenerationControllerRef\.current\?\.abort\(new DOMException\("상품 상세 화면이 닫혔습니다\.", "AbortError"\)\)/);

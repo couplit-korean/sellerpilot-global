@@ -198,9 +198,7 @@ export function MobilePushManager({ authenticatedFetch }: { authenticatedFetch: 
     return <div className="mobile-push-chip ready" role="status"><CheckCircle2 size={16} /><span><b>주문·배송 알림 사용 중</b><small>{message || "새 주문과 배송 상태를 즉시 알려드립니다."}</small></span>{subscription && <button type="button" onClick={() => void sendTest(subscription)} disabled={busy}>테스트</button>}<button type="button" className="mobile-push-chip-dismiss" onClick={dismissForSession} aria-label="주문 배송 알림 상태 닫기"><X size={14} /></button></div>;
   }
 
-  return <>
-    {!isStandalone && <div className="mobile-push-page-spacer" aria-hidden="true" />}
-    <section ref={standaloneGateRef} tabIndex={-1} className={`mobile-push-gate ${isStandalone ? "standalone" : "browser"}`} role="dialog" aria-label="Android 주문 배송 알림 설정" aria-modal={isStandalone || undefined}>
+  return <section ref={standaloneGateRef} tabIndex={-1} className={`mobile-push-gate ${isStandalone ? "standalone" : "browser"}`} role="dialog" aria-label="Android 주문 배송 알림 설정" aria-modal={isStandalone || undefined}>
       <button ref={standaloneGateDismissRef} type="button" className="mobile-push-gate-dismiss" onClick={dismissForSession} aria-label="알림 설정 나중에 하기" disabled={busy}><X size={15} />나중에</button>
       <div className="mobile-push-gate-icon">{state === "denied" || state === "error" ? <TriangleAlert size={23} /> : <BellRing size={23} />}</div>
       <div className="mobile-push-gate-copy">
@@ -213,6 +211,5 @@ export function MobilePushManager({ authenticatedFetch }: { authenticatedFetch: 
         {!isStandalone && <button type="button" className="secondary" onClick={() => void installApp()}><Download size={16} />앱 설치</button>}
         {!(["unsupported", "unconfigured"] as PushState[]).includes(state) && <button type="button" className="primary" onClick={() => void enableNotifications()} disabled={busy}>{busy ? <LoaderCircle className="spin" size={16} /> : <Smartphone size={16} />}알림 허용</button>}
       </div>
-    </section>
-  </>;
+  </section>;
 }

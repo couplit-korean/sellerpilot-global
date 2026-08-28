@@ -417,7 +417,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(releaseIntegrityMigration, /sellerpilot-kakao-notifications-v1'[\s\S]{0,80}'4-59\/5 \* \* \* \*'/);
   assert.match(cliWorker, /SELLERPILOT_CHANNEL_SYNC_MS/);
   assert.match(cliWorker, /\/api\/internal\/channel-sync/);
-  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.59/);
+  assert.match(cliWorker, /sellerpilot-cli-worker\/1\.60/);
   assert.match(cliWorker, /ensureEbayAccessToken/);
   assert.match(rotationHardeningMigration, /diagnostic_preserved/);
   assert.match(rotationHardeningMigration, /status = 'queued' and attempt_id is null/);

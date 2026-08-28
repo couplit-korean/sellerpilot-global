@@ -24,6 +24,7 @@ import {
   type ServerlessGatewayProviderExecutionInput,
   type ServerlessGatewayProviderResult,
 } from "./serverless-gateway-provider";
+import { channelPriceUpdateRelease } from "./price-update-release";
 import {
   SERVERLESS_STATIC_EGRESS_CHANNELS,
   type ServerlessStaticEgressChannel,
@@ -814,12 +815,30 @@ export async function runOneServerlessCsGatewayJob(
     logError("claim_contract", { status: 503 });
     return jsonResponse({ message: "채널 작업 계약을 확인하지 못했습니다." }, 503);
   }
-  if (!isEligibleClaim(parsed.data, dependencies.staticEgressChannels)) {
-    logError("claim_scope", { status: 503, channel: parsed.data.channel, operation: parsed.data.operation });
+
+  const job = parsed.data;
+  if (job.operation === "price.update") {
+    const priceRelease = channelPriceUpdateRelease(job.channel);
+    if (!priceRelease.available) {
+      return finishClaim(
+        dependencies,
+        gatewayTokenHash,
+        job,
+        {
+          jobId: job.id,
+          claimToken: job.claim_token,
+          status: "failed",
+          error: `PRICE_UPDATE_RELEASE_BLOCKED: ${priceRelease.reason}`,
+        },
+        logError,
+      );
+    }
+  }
+  if (!isEligibleClaim(job, dependencies.staticEgressChannels)) {
+    logError("claim_scope", { status: 503, channel: job.channel, operation: job.operation });
     return jsonResponse({ message: "서버리스 채널 작업 범위를 확인하지 못했습니다." }, 503);
   }
 
-  const job = parsed.data;
   const heartbeat = createClaimHeartbeat(dependencies, gatewayTokenHash, job);
   const runtimeSignal = AbortSignal.timeout(serverlessGatewayExecutionTimeoutMs(
     job.operation,

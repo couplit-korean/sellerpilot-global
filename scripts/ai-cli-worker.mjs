@@ -79,6 +79,7 @@ import {
 import { buildMarketplaceMasterStyleBrief } from "../lib/marketplace-style-learning.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
+import { channelPriceUpdateRelease } from "../lib/channels/price-update-release.ts";
 import { ebayAsqOperationMarketplaceId } from "../lib/channels/ebay-asq.ts";
 import { executeProviderOAuthExchange } from "../lib/channels/provider-oauth-runtime.ts";
 import { prepareMarketplaceListingArguments } from "../lib/channels/provider-listing-runtime.ts";
@@ -227,7 +228,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.59";
+const workerVersion = "sellerpilot-cli-worker/1.60";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -4097,6 +4098,12 @@ async function processGatewayJob(job) {
     await assertGatewayLeaseHealthy();
     if (job.channel === "temu") {
       throw new Error("TEMU_SERVERLESS_ONLY: Temu channel operations are restricted to the Vercel serverless gateway.");
+    }
+    if (job.operation === "price.update") {
+      const priceRelease = channelPriceUpdateRelease(job.channel);
+      if (!priceRelease.available) {
+        throw new Error(`PRICE_UPDATE_RELEASE_BLOCKED: ${priceRelease.reason}`);
+      }
     }
     let result;
     await assertGatewayLeaseHealthy();

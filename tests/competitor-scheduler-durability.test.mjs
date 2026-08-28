@@ -51,12 +51,20 @@ test("competitor scheduler migration owns due products and deduplicates exact 11
     /p_operation: "competitor\.search"/,
   );
   assert.match(adminRoute, /result\.pending \? 202/);
+  assert.match(adminRoute, /if \(result\.pending \|\| !result\.available\)/);
   assert.match(adminRoute, /authenticateAdminRequest\(request, \{ timeoutMs: COMPETITOR_RPC_TIMEOUT_MS \}\)/);
   assert.match(adminRoute, /COMPETITOR_PROVIDER_BUDGET_MS = 32_000/);
   assert.match(internalRoute, /COMPETITOR_PROVIDER_BUDGET_MS = 32_000/);
   assert.match(adminRoute, /enableMarketplaceWeb: true/);
   assert.match(internalRoute, /enableMarketplaceWeb: true/);
   assert.match(internalRoute, /productId: claimed\.productId, claimToken: claimed\.claimToken/);
+  assert.match(internalRoute, /const providerConfigurationMissing = registry\.configured\.length === 0/);
+  const missingProviderBranch = internalRoute.slice(
+    internalRoute.indexOf("if (providerConfigurationMissing)"),
+    internalRoute.indexOf("let dueData"),
+  );
+  assert.doesNotMatch(missingProviderBranch, /return NextResponse/);
+  assert.match(internalRoute, /status: providerConfigurationMissing \|\| infrastructureFailures > 0 \? 503/);
   assert.match(competitorLibrary, /provider\.search\(effectivePrimary, effectiveAliases, displayPerQuery, context\)/);
   assert.ok((competitorLibrary.match(/AbortSignal\.timeout\(15_000\)/g) ?? []).length >= 3);
 });

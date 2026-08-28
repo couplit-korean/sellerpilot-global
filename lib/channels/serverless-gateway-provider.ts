@@ -34,6 +34,7 @@ import {
 } from "./provider-oauth-runtime";
 import { prepareMarketplaceListingArguments } from "./provider-listing-runtime";
 import { verifyShopeeGlobalListingPostPublish } from "./provider-shopee-post-publish-runtime";
+import { channelPriceUpdateRelease } from "./price-update-release";
 
 const serverlessWriteMatrix = {
   "listing.create": new Set([
@@ -144,7 +145,7 @@ export function serverlessGatewayOperationAllowed(
   operation: GatewayClaim["operation"],
 ) {
   if (operation === "oauth.exchange") return serverlessOAuthChannels.has(channel);
-  if (operation === "price.update") return false;
+  if (operation === "price.update") return channelPriceUpdateRelease(channel).available;
   if (operation === "orders.list") return serverlessOrderChannels.has(channel);
   if (operation === "diagnostic.test") return allServerlessChannels.has(channel);
   if (operation === "shops.get") return serverlessShopDiscoveryChannels.has(channel);

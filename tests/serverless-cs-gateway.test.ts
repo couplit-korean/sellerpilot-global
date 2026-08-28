@@ -27,6 +27,7 @@ const {
   SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES,
   deriveServerlessCsGatewayCredentials,
   executeServerlessCsProviderJob,
+  runOneServerlessCsGatewayJob,
   runServerlessCsGatewayDrain,
   serverlessGatewayExecutionTimeoutMs,
   serverlessCsCurrentInquiryEnqueues,
@@ -606,6 +607,75 @@ test("fixed-egress claims fail closed before provider execution without runtime 
   });
   assert.equal(response.status, 503);
   assert.equal(providerCalls, 0);
+});
+
+test("blocked price updates are terminally failed before serverless provider execution", async () => {
+  const priceJob = {
+    ...claim("qoo10", "inquiries.list"),
+    operation: "price.update" as const,
+    request: {
+      arguments: {
+        params: {
+          ItemCode: "100001",
+          ItemPrice: 7_900,
+          ItemQty: 1,
+        },
+      },
+    },
+  };
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  let providerCalls = 0;
+  let claimCount = 0;
+  const response = await runOneServerlessCsGatewayJob({
+    rpc: async (name, arguments_ = {}) => {
+      calls.push({ name, arguments_ });
+      if (name === "sellerpilot_claim_serverless_gateway_job") {
+        claimCount += 1;
+        return { data: claimCount === 1 ? priceJob : null, error: null };
+      }
+      if (name === "sellerpilot_service_serverless_cs_completion_context") {
+        return {
+          data: {
+            status: "running",
+            channel: priceJob.channel,
+            operation: priceJob.operation,
+            normalization_timestamp: "2026-08-28T00:00:00.000Z",
+          },
+          error: null,
+        };
+      }
+      if (name === "sellerpilot_service_complete_serverless_cs_transaction") {
+        return { data: { status: "completed" }, error: null };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+    executeProvider: async () => {
+      providerCalls += 1;
+      return inquiryListResult("qoo10");
+    },
+  }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: false,
+    status: "failed",
+    claimed: 1,
+    processed: 1,
+    jobId: JOB_ID,
+    channel: "qoo10",
+    operation: "price.update",
+  });
+  assert.equal(providerCalls, 0);
+  assert.equal(
+    calls.some(({ name }) => name === "sellerpilot_service_begin_serverless_gateway_provider_mutation"),
+    false,
+  );
+  const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  assert.equal(complete?.arguments_.p_status, "failed");
+  assert.match(
+    String(complete?.arguments_.p_error_message),
+    /^PRICE_UPDATE_RELEASE_BLOCKED:/,
+  );
 });
 
 test("one enqueue failure is safely aggregated and does not block an existing queued job", async () => {
@@ -1232,7 +1302,8 @@ test("bounded drain route is direct, eight-job, Node-only, and excludes child wo
   assert.match(gateway, /"qoo10",[\s\S]*"coupang",[\s\S]*"smartstore",[\s\S]*"ebay"/);
   assert.doesNotMatch(`${route}\n${gateway}`, /child_process|\bspawn\s*\(|SELLERPILOT_URL|ai-cli-worker/);
   assert.match(provider, /"listing\.create"[\s\S]*"elevenst"/);
-  assert.match(provider, /if \(operation === "price\.update"\) return false/);
+  assert.match(provider, /import \{ channelPriceUpdateRelease \} from "\.\/price-update-release"/);
+  assert.match(provider, /if \(operation === "price\.update"\) return channelPriceUpdateRelease\(channel\)\.available/);
   assert.match(protocols, /AsyncLocalStorage<AbortSignal>/);
   assert.match(protocols, /AbortSignal\.any\(\[ownerSignal, timeoutSignal\]\)/);
 });

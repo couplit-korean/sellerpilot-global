@@ -94,7 +94,7 @@ test("competitor scheduler bounds one durable claim and preserves pending gatewa
   assert.match(refreshRuntime, /!Number\.isFinite\(savedCount\) \|\| savedCount < 0/);
   assert.match(refreshRuntime, /if \(searched\.pending\)[\s\S]{0,260}pending: true/);
   assert.match(refreshRuntime, /Completion may have committed before a response was lost/);
-  assert.match(source, /status: infrastructureFailures > 0 \? 503 : pending \? 202 : results\.some\(\(item\) => !item\.ok\) \? 207 : 200/);
+  assert.match(source, /status: providerConfigurationMissing \|\| infrastructureFailures > 0 \? 503 : pending \? 202 : results\.some\(\(item\) => !item\.ok\) \? 207 : 200/);
 });
 
 test("Kakao scheduler owns each delivery through a non-repeating send and reconciliation lifecycle", async () => {

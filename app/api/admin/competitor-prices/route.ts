@@ -43,7 +43,11 @@ export async function GET(request: Request) {
       currency: item.currency,
       verifiedSameProduct: true as const,
     }));
-    if (!result.available) {
+    // A partial response can contain confirmed prices while another provider
+    // is still running. Keep the response resumable (202) until every provider
+    // is terminal instead of making a partial result look settled merely
+    // because one provider already searched successfully.
+    if (result.pending || !result.available) {
       return NextResponse.json({
         message: result.pending
           ? "연결된 공식 가격 검색 공급자의 조회가 진행 중입니다."
@@ -54,9 +58,18 @@ export async function GET(request: Request) {
         aliases: aliases.data,
         items,
         providers: result.providers,
+        pending: result.pending,
+        configured: result.configured,
       }, { status: result.pending ? 202 : result.configured ? 502 : 503, headers: NO_STORE_HEADERS });
     }
-    return NextResponse.json({ query: query.data, aliases: aliases.data, items, providers: result.providers }, { headers: NO_STORE_HEADERS });
+    return NextResponse.json({
+      query: query.data,
+      aliases: aliases.data,
+      items,
+      providers: result.providers,
+      pending: false,
+      configured: result.configured,
+    }, { headers: NO_STORE_HEADERS });
   } catch {
     return NextResponse.json({ message: "동일 상품 가격 정보를 불러오지 못했습니다.", items: [], providers: [] }, { status: 502, headers: NO_STORE_HEADERS });
   }

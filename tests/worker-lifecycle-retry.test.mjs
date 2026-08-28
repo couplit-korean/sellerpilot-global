@@ -123,7 +123,7 @@ test("continuous transient failures stop inside the configured grace window", as
 test("worker uses lifecycle retry for heartbeat and both completion endpoints", async () => {
   const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.59"/);
+  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.60"/);
   assert.match(source, /runVisionCutoutWithTransientRetry\(\{[\s\S]*signal: leaseSignal/);
   assert.match(source, /\[원본 픽셀 보호 재시도\] mode=\$\{retryMode\} attempt=\$\{attempt\}/);
   assert.match(source, /const aiOnly = process\.argv\.includes\("--ai-only"\)/);

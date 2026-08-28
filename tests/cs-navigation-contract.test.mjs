@@ -31,7 +31,7 @@ test("CS navigation remains reachable from dashboard, channels and mobile", asyn
   assert.match(mobileStyles, /padding-bottom:\s*calc\(86px \+ env\(safe-area-inset-bottom\)\)/);
   assert.match(mobileStyles, /Fold-safe mobile overlay lanes[\s\S]*?\.analysis-start-bar\s*\{[^}]*position:\s*static;[^}]*bottom:\s*auto !important/);
   assert.match(mobileStyles, /--mobile-nav-clearance:\s*calc\(78px \+ env\(safe-area-inset-bottom\)\)/);
-  assert.match(mobileStyles, /\.mobile-push-gate\.browser,\s*\.mobile-push-chip\s*\{[^}]*bottom:\s*calc\(var\(--mobile-nav-clearance\) \+ var\(--mobile-toast-lane-height\) \+ 8px\)/);
+  assert.match(mobileStyles, /\.app-main > \.mobile-push-gate\.browser,\s*\.app-main > \.mobile-push-chip\s*\{[^}]*position:\s*relative;[^}]*inset:\s*auto/);
   assert.match(mobileStyles, /\.mobile-push-gate\.standalone\s*\{\s*z-index:\s*130;/);
   assert.match(mobileStyles, /min-height:\s*44px/);
 });

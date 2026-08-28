@@ -173,9 +173,13 @@ import {
 } from "./_publishing/product-research-provenance";
 import {
   confirmedProductResearchValue,
+  isProductResearchJobId,
+  pendingProductResearchForOwner,
+  productResearchPendingStorageKey,
   ProductResearchNotFoundError,
   ProductResearchTerminalError,
   shouldClearPendingProductResearch,
+  type PendingProductResearch,
 } from "./_publishing/product-research-lifecycle";
 import { csChannelVerification, csReplyDraftValue, csReplySavePlan, isRemoteCsReplyChannel, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
 import {
@@ -212,16 +216,12 @@ import {
   studioJobRecoveryStorageValue,
 } from "./_registration/studio-job-session";
 
-const PRODUCT_RESEARCH_PENDING_KEY = "sellerpilot:product-research-pending:v1";
-const PRODUCT_RESEARCH_JOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const configuredWorkspaceIdleMinutes = Number(process.env.NEXT_PUBLIC_SELLERPILOT_IDLE_TIMEOUT_MINUTES);
 const workspaceIdleTimeoutMs = clampWorkspaceIdleTimeoutMs(
   Number.isFinite(configuredWorkspaceIdleMinutes) && configuredWorkspaceIdleMinutes > 0
     ? configuredWorkspaceIdleMinutes * 60_000
     : undefined,
 );
-
-type PendingProductResearch = { jobId: string; researchInput: string };
 
 function abortableBrowserDelay(ms: number, signal: AbortSignal) {
   if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("요청이 취소되었습니다.", "AbortError"));
@@ -2809,7 +2809,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       productResearchControllerRef.current = null;
       productResearchGenerationRef.current += 1;
       setResearchingProduct(false);
-      window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
+      window.sessionStorage.removeItem(productResearchPendingStorageKey);
       competitorResearchControllerRef.current?.abort(new DOMException("상품 식별 입력이 변경되었습니다.", "AbortError"));
       competitorResearchControllerRef.current = null;
       setResearchResult(null);
@@ -3077,22 +3077,19 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       const { data: sessionData } = await waitForAbortablePromise(createSupabaseClient().auth.getSession(), sessionScope.signal)
         .finally(() => sessionScope.dispose());
       const accessToken = sessionData.session?.access_token;
-      if (!accessToken) throw new Error("AI 상품정보 수집을 실행하려면 관리자 로그인이 필요합니다.");
+      const ownerId = sessionData.session?.user.id;
+      if (!accessToken || !ownerId) throw new Error("AI 상품정보 수집을 실행하려면 관리자 로그인이 필요합니다.");
       if (productResearchController.signal.aborted) throw productResearchController.signal.reason;
       let pendingResearch: PendingProductResearch | null = null;
       try {
-        const stored = JSON.parse(window.sessionStorage.getItem(PRODUCT_RESEARCH_PENDING_KEY) ?? "null") as unknown;
-        if (isRecord(stored)
-            && typeof stored.jobId === "string"
-            && PRODUCT_RESEARCH_JOB_ID_PATTERN.test(stored.jobId)
-            && stored.researchInput === researchInput) {
-          pendingResearch = { jobId: stored.jobId, researchInput };
-        }
+        const stored = JSON.parse(window.sessionStorage.getItem(productResearchPendingStorageKey) ?? "null") as unknown;
+        pendingResearch = pendingProductResearchForOwner(stored, ownerId, researchInput);
+        if (stored !== null && !pendingResearch) window.sessionStorage.removeItem(productResearchPendingStorageKey);
       } catch {
-        window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
+        window.sessionStorage.removeItem(productResearchPendingStorageKey);
       }
       const jobId = pendingResearch?.jobId ?? crypto.randomUUID();
-      window.sessionStorage.setItem(PRODUCT_RESEARCH_PENDING_KEY, JSON.stringify({ jobId, researchInput } satisfies PendingProductResearch));
+      window.sessionStorage.setItem(productResearchPendingStorageKey, JSON.stringify({ jobId, researchInput, ownerId } satisfies PendingProductResearch));
       if (pendingResearch) {
         notify("이전에 접수한 상품정보 작업 상태를 다시 확인합니다.");
       } else {
@@ -3118,14 +3115,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         }
         if (response && queued) {
           if (response.status < 500 && (!response.ok || queued.jobId !== jobId)) {
-            window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
+            window.sessionStorage.removeItem(productResearchPendingStorageKey);
             throw new Error(queued.message || "AI 상품정보 수집 작업을 등록하지 못했습니다.");
           }
         }
         notify("AI가 링크 본문과 입력 텍스트에서 상세 상품정보를 조사하고 있습니다.");
       }
       const result = await waitForProductResearch(jobId, accessToken, productResearchController.signal);
-      window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
+      window.sessionStorage.removeItem(productResearchPendingStorageKey);
       if (!publishingMountedRef.current
           || productResearchController.signal.aborted
           || productResearchInputRef.current.trim() !== researchInput
@@ -3170,7 +3167,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify("1차 자동생성 초안을 만들었습니다. 확인되지 않은 값은 공란으로 유지했습니다. 실물 기준 필수값을 입력해 주세요.");
     } catch (error) {
       if (shouldClearPendingProductResearch(error)) {
-        window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
+        window.sessionStorage.removeItem(productResearchPendingStorageKey);
       }
       if (productResearchController.signal.aborted
           || productResearchGenerationRef.current !== productResearchGeneration
@@ -5003,7 +5000,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
         );
         if (!response.ok) throw new Error(payload.message ?? "상품의 AI 작업을 확인하지 못했습니다.");
         const candidate = payload.commerceOperations?.aiJobId;
-        if (typeof candidate === "string" && PRODUCT_RESEARCH_JOB_ID_PATTERN.test(candidate)) jobId = candidate;
+        if (isProductResearchJobId(candidate)) jobId = candidate;
       } catch (error) {
         notify(error instanceof Error ? error.message : "중지할 AI 작업을 확인하지 못했습니다.");
         return;
@@ -5383,6 +5380,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
           <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={[operations.message, productReadinessMessage, aiRecovery?.message].filter(Boolean).join(" · ")}><Activity size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button ref={notificationButtonRef} className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} aria-controls="sellerpilot-notifications" onClick={() => { if (notificationsOpen) closeNotifications(true); else setNotificationsOpen(true); }}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div id="sellerpilot-notifications" className="notification-popover" role="region" aria-label="실시간 알림"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => closeNotifications(true)}><X size={14} /></button></span></div>{notificationItems.map((item) => { const openItem = () => { if (item.view === "cs" && item.csStatus) openCs("all", item.csStatus); else navigate(item.view, item.registrationStatus); closeNotifications(false); }; return <div className="notification-item" key={item.key}><button type="button" className="notification-item-open" onClick={openItem}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span></button><button type="button" className="notification-item-dismiss" aria-label={`${item.title} 알림 닫기`} onClick={() => setDismissedNotifications((current) => new Set([...current, item.key]))}><X size={13} /></button></div>; })}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
           </header>
         </div>
+        <MobilePushManager authenticatedFetch={operations.authenticatedFetch} />
         <div className="app-content">{content}</div>
       </section>
 
@@ -5393,8 +5391,6 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
         <button type="button" className={view === "orders" ? "active" : ""} onClick={() => navigate("orders")}><ShoppingCart size={19} /><span>주문</span></button>
         <button type="button" className={view === "cs" ? "active" : ""} onClick={() => openCs("all", "open")}><Headphones size={19} /><span>CS</span></button>
       </nav>
-
-      <MobilePushManager authenticatedFetch={operations.authenticatedFetch} />
 
       {searchOpen && <div className="command-overlay"><div ref={searchDialogRef} tabIndex={-1} className="command-dialog" role="dialog" aria-modal="true" aria-label="통합 검색"><div className="command-input"><Search size={18} /><input ref={searchInputRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); return; } if (event.key !== "Enter") return; const first = unifiedSearchResults.products[0] ?? unifiedSearchResults.orders[0] ?? unifiedSearchResults.inquiries[0]; if (first) selectUnifiedSearchResult(first); }} placeholder="상품명, 주문번호, 고객명 또는 문의 내용 검색" aria-label="통합 검색어" /><button aria-label="검색창 닫기" onClick={() => setSearchOpen(false)}><X size={17} /></button></div>{searchQuery.trim() ? <div className="command-results" aria-live="polite">{unifiedSearchResultCount > 0 ? <>{([{ label: "상품", items: unifiedSearchResults.products, icon: Package }, { label: "주문", items: unifiedSearchResults.orders, icon: ShoppingCart }, { label: "문의", items: unifiedSearchResults.inquiries, icon: MessageCircleMore }] as const).map((group) => group.items.length > 0 && <section key={group.label}><span className="command-label">{group.label} <b>{group.items.length}</b></span>{group.items.map((result) => <button type="button" className="command-result" key={`${result.kind}-${result.id}`} onClick={() => selectUnifiedSearchResult(result)}><span className={`command-result-icon ${result.kind}`}><group.icon size={16} /></span><span><b>{result.title}</b><small>{result.subtitle}</small></span><em>{result.meta}</em><ArrowRight size={14} /></button>)}</section>)}</> : <div className="command-empty"><Search size={24} /><b>일치하는 상품·주문·문의가 없습니다.</b><small>상품명, SKU, 주문번호, 고객명 또는 문의 내용을 확인해 주세요.</small></div>}</div> : <><span className="command-label">빠른 이동</span>{navGroups[0].items.map((item) => { const Icon = "icon" in item ? item.icon : null; return Icon ? <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button> : null; })}</>}</div></div>}
       {accountOpen && <div className="account-security-overlay"><section ref={accountDialogRef} tabIndex={-1} className="account-security-dialog" role="dialog" aria-modal="true" aria-labelledby="account-security-title"><div className="account-security-head"><span><ShieldCheck size={18} /></span><div><h2 id="account-security-title">관리자 로그인 정보 변경</h2><p>현재 계정의 로그인 아이디를 admin으로 변경합니다.</p></div><button aria-label="계정 설정 닫기" onClick={() => setAccountOpen(false)} disabled={credentialChanging}><X size={17} /></button></div><div className="account-security-values"><div><small>새 아이디</small><strong>admin</strong></div><label><small>새 비밀번호</small><input ref={accountPasswordRef} type="password" value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} autoComplete="new-password" placeholder="보안 정책에 맞게 입력" /></label></div><p className="account-security-warning"><AlertTriangle size={16} />Supabase 보안 정책상 10자 이상이며 영문 대·소문자, 숫자, 특수문자를 모두 포함해야 합니다. 변경이 완료되면 현재 세션에서 로그아웃됩니다.</p>{credentialMessage && <p className="account-security-message">{credentialMessage}</p>}<button className="account-security-submit" type="button" onClick={() => void changeAdminCredentials()} disabled={credentialChanging || !newAdminPassword}>{credentialChanging ? <><LoaderCircle className="spin" size={17} />변경 중</> : <><KeyRound size={17} />admin 계정으로 변경</>}</button></section></div>}
@@ -5599,6 +5595,12 @@ export default function Home() {
 
   const logout = useCallback(async (options?: { preserveWorkspaceRoute?: boolean }) => {
     if (accountSwitchingRef.current) return;
+    try {
+      window.sessionStorage.removeItem(productResearchPendingStorageKey);
+    } catch {
+      // The server-side job remains recoverable from registration history when
+      // session storage is unavailable; never carry it into another account.
+    }
     if (!options?.preserveWorkspaceRoute) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }

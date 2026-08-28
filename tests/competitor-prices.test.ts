@@ -5,6 +5,7 @@ import {
   canonicalMarketplaceWebImageUrl,
   canonicalMarketplaceWebProductUrl,
   competitorCandidateRelevance,
+  competitorMarketplace,
   competitorProviderRegistry,
   groupCompetitorPrices,
   naverSearchCredentials,
@@ -41,6 +42,14 @@ test("competitor queries keep distinct multilingual product names and discard du
     "Kellogg's Choco Chex 570g",
     "ケロッグ チョコチェックス 570g",
   ]), ["첵스초코 570g", "Kellogg's Choco Chex 570g", "ケロッグ チョコチェックス 570g"]);
+});
+
+test("Naver catalog links keep the explicit seller marketplace and fail closed without one", () => {
+  const catalogUrl = "https://search.shopping.naver.com/catalog/123456789";
+  assert.equal(competitorMarketplace("11번가", catalogUrl), "elevenst");
+  assert.equal(competitorMarketplace("Qoo10", catalogUrl), "qoo10");
+  assert.equal(competitorMarketplace("네이버 스마트스토어", catalogUrl), "smartstore");
+  assert.equal(competitorMarketplace("", catalogUrl), "other");
 });
 
 test("competitor queries retain bounded channel-local language coverage after normalized deduplication", () => {
@@ -233,6 +242,42 @@ test("Brave marketplace web search exhausts distinct language families before re
     assert.deepEqual(languages.filter(({ marketplace }) => marketplace === "shopee").map(({ language }) => language), ["en", "pt-br", "es", "id"]);
     assert.deepEqual(languages.filter(({ marketplace }) => marketplace === "lazada").map(({ language }) => language), ["en", "ms", "th", "vi"]);
     assert.deepEqual(languages.filter(({ marketplace }) => marketplace === "temu").map(({ language }) => language), ["en", "zh", "ja", "pt-br"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Brave marketplace provider fails closed when one represented channel was never searched successfully", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const query = new URL(String(input)).searchParams.get("q") ?? "";
+    if (query.includes("site:lazada.sg")) throw new Error("synthetic Lazada search outage");
+    return Response.json({ web: { results: [] } });
+  };
+  try {
+    const registry: CompetitorProviderRegistry = {
+      configured: [{
+        id: "brave_marketplace_web",
+        marketplaces: ["shopee", "lazada", "temu"],
+        search: (primary, aliases, display) => searchBraveMarketplaceWebVariants(
+          primary,
+          aliases,
+          { apiKey: "B".repeat(32) },
+          display,
+        ),
+      }],
+      unavailable: [],
+    };
+    const result = await searchCompetitorProviders(registry, "Sajo lean tuna 95g 8 pack", []);
+    assert.equal(result.available, false);
+    assert.equal(result.pending, false);
+    assert.deepEqual(result.items, []);
+    assert.deepEqual(result.providers, [{
+      provider: "brave_marketplace_web",
+      status: "failed",
+      count: 0,
+      marketplaces: ["shopee", "lazada", "temu"],
+    }]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -999,6 +1044,28 @@ test("provider registry keeps missing providers explicit and deduplicates the sa
   ]);
 });
 
+test("Qoo10 query-parameter product ids keep distinct listings while deduplicating tracking variants", async () => {
+  const registry: CompetitorProviderRegistry = {
+    configured: [{
+      id: "naver_shopping",
+      marketplaces: ["qoo10"],
+      search: async () => [
+        candidate({ externalId: "q1", marketplace: "qoo10", url: "https://www.qoo10.jp/gmkt.inc/Goods/Goods.aspx?goodscode=100001&utm_source=first", price: 8_000 }),
+        candidate({ externalId: "q1-better", marketplace: "qoo10", url: "https://www.qoo10.jp/gmkt.inc/Goods/Goods.aspx?GoodsCode=100001&utm_source=second", imageUrl: "https://example.test/q1.jpg", price: 7_900 }),
+        candidate({ externalId: "q1-root-host", marketplace: "qoo10", url: "https://qoo10.jp/gmkt.inc/Goods/Goods.aspx?goodscode=100001", price: 8_050 }),
+        candidate({ externalId: "q1-mobile-host", marketplace: "qoo10", url: "https://m.qoo10.jp/gmkt.inc/Goods/Goods.aspx?goodscode=100001", price: 8_100 }),
+        candidate({ externalId: "q2", marketplace: "qoo10", url: "https://www.qoo10.jp/gmkt.inc/Goods/Goods.aspx?goodscode=100002", price: 8_100 }),
+        candidate({ externalId: "q3", marketplace: "qoo10", url: "https://www.qoo10.jp/gmkt.inc/Goods/Goods.aspx?goodscode=100003", price: 8_200 }),
+      ],
+    }],
+    unavailable: [],
+  };
+
+  const result = await searchCompetitorProviders(registry, "켈로그 첵스초코 570g", ["Kellogg Choco Chex 570g"]);
+  assert.deepEqual(result.items.map((item) => item.externalId), ["q1-better", "q2", "q3"]);
+  assert.equal(result.items.every((item) => item.marketplace === "qoo10"), true);
+});
+
 test("an unfinished local gateway search remains pending instead of being treated as a completed empty search", async () => {
   const pendingError = new Error("CHANNEL_GATEWAY_TIMEOUT");
   pendingError.name = "ChannelGatewayInProgressError";
@@ -1020,6 +1087,35 @@ test("an unfinished local gateway search remains pending instead of being treate
     count: 0,
     marketplaces: ["elevenst"],
   }]);
+});
+
+test("a completed provider never masks another provider that is still pending", async () => {
+  const pendingError = new Error("CHANNEL_GATEWAY_TIMEOUT");
+  pendingError.name = "ChannelGatewayInProgressError";
+  const registry: CompetitorProviderRegistry = {
+    configured: [
+      {
+        id: "naver_shopping",
+        marketplaces: ["smartstore", "coupang", "elevenst", "qoo10", "other"],
+        search: async () => [candidate({ marketplace: "smartstore", url: "https://smartstore.naver.com/store/products/1" })],
+      },
+      {
+        id: "elevenst_product_search",
+        marketplaces: ["elevenst"],
+        search: async () => { throw pendingError; },
+      },
+    ],
+    unavailable: [],
+  };
+
+  const result = await searchCompetitorProviders(registry, "켈로그 첵스초코 570g", [], 30, 50);
+  assert.equal(result.available, true);
+  assert.equal(result.pending, true);
+  assert.equal(result.items.length, 1);
+  assert.deepEqual(result.providers.map(({ provider, status }) => ({ provider, status })), [
+    { provider: "naver_shopping", status: "searched" },
+    { provider: "elevenst_product_search", status: "pending" },
+  ]);
 });
 
 test("the scheduler budget expiring around an 11st gateway poll also remains resumable", async () => {

@@ -952,15 +952,29 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
 }
 
 export function competitorMarketplace(mallName: string, productUrl: string): CompetitorMarketplace {
-  const value = `${mallName} ${productUrl}`.toLocaleLowerCase();
-  if (/네이버|스마트스토어|smart.?store|naver\.com/.test(value)) return "smartstore";
-  if (/쿠팡|coupang/.test(value)) return "coupang";
-  if (/11번가|11st/.test(value)) return "elevenst";
-  if (/qoo10/.test(value)) return "qoo10";
-  if (/shopee/.test(value)) return "shopee";
-  if (/lazada/.test(value)) return "lazada";
-  if (/ebay/.test(value)) return "ebay";
-  if (/temu/.test(value)) return "temu";
+  // Naver Shopping frequently returns its own catalog URL while `mallName`
+  // identifies the actual seller (for example 11st or Qoo10). Classify an
+  // explicit mall label first so the generic naver.com URL cannot relabel a
+  // marketplace observation as Smartstore.
+  const mall = mallName.toLocaleLowerCase();
+  if (/쿠팡|coupang/u.test(mall)) return "coupang";
+  if (/11번가|11st/u.test(mall)) return "elevenst";
+  if (/qoo10/u.test(mall)) return "qoo10";
+  if (/shopee/u.test(mall)) return "shopee";
+  if (/lazada/u.test(mall)) return "lazada";
+  if (/ebay/u.test(mall)) return "ebay";
+  if (/temu/u.test(mall)) return "temu";
+  if (/네이버|스마트스토어|smart.?store/u.test(mall)) return "smartstore";
+
+  const value = productUrl.toLocaleLowerCase();
+  if (/smartstore\.naver\.com|brand\.naver\.com/u.test(value)) return "smartstore";
+  if (/쿠팡|coupang/u.test(value)) return "coupang";
+  if (/11번가|11st/u.test(value)) return "elevenst";
+  if (/qoo10/u.test(value)) return "qoo10";
+  if (/shopee/u.test(value)) return "shopee";
+  if (/lazada/u.test(value)) return "lazada";
+  if (/ebay/u.test(value)) return "ebay";
+  if (/temu/u.test(value)) return "temu";
   return "other";
 }
 
@@ -1364,7 +1378,12 @@ export async function searchBraveMarketplaceWebVariants(
     if (successfulQueries === 0) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
     return candidates;
   }));
-  if (settled.length > 0 && settled.every((result) => result.status === "rejected")) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
+  // These are three independent channel searches represented by one durable
+  // provider status. The current DB/UI contract cannot truthfully encode a
+  // per-marketplace partial outage. Fail the provider closed when any channel
+  // had no successful request; otherwise that channel would be shown as a
+  // completed zero-match search even though it was never searched.
+  if (settled.some((result) => result.status === "rejected")) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
   const candidates = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
   const relevant = candidates.filter((candidate) => competitorCandidateRelevance(candidate, allQueries) > 0);
   const unique = new Map<string, CompetitorPriceCandidate>();
@@ -1438,6 +1457,13 @@ function marketplaceIdentity(item: CompetitorPriceCandidate) {
     if (item.marketplace === "ebay") {
       const itemNo = url.pathname.match(/\/itm\/(?:[^/]+\/)?([^/?]+)/)?.[1];
       if (itemNo) return `ebay:${itemNo}`;
+    }
+    if (item.marketplace === "qoo10") {
+      const goodsCode = [...url.searchParams.entries()].find(([key, value]) => (
+        /^(?:goodscode|goods_code)$/iu.test(key) && /^[a-z0-9_-]{3,80}$/iu.test(value)
+      ))?.[1];
+      const marketplaceHost = url.hostname.toLocaleLowerCase().replace(/^(?:www|m|mobile)\./u, "");
+      if (goodsCode) return `qoo10:${marketplaceHost}:${goodsCode.toLocaleLowerCase()}`;
     }
     if (item.marketplace === "shopee") {
       const itemNo = url.pathname.match(/-i\.\d+\.(\d+)(?:$|\/)/iu)?.[1]

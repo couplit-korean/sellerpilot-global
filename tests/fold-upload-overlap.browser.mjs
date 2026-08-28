@@ -44,9 +44,8 @@ function optionCard(index) {
 
 function fixtureHtml(styles) {
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>${styles.replaceAll("</style", "<\\/style")}</style></head>
-  <body><main class="app-content"><section class="panel upload-panel"><section class="option-photo-section"><div class="option-photo-grid">${Array.from({ length: 8 }, (_, index) => optionCard(index)).join("")}</div></section></section></main>
+  <body><section class="app-main"><section class="mobile-push-gate browser" data-push-gate><button type="button" class="mobile-push-gate-dismiss" data-gate-dismiss>나중에</button><div class="mobile-push-gate-icon">!</div><div class="mobile-push-gate-copy"><h2>주문 배송 알림</h2><p>사진 입력을 가리지 않는 인플로우 설정창입니다.</p></div><div class="mobile-push-gate-actions"><button type="button">알림 허용</button></div></section><div class="mobile-push-chip"><span>주문 배송 알림 사용 중</span></div><main class="app-content"><section class="panel upload-panel"><section class="option-photo-section"><div class="option-photo-grid">${Array.from({ length: 8 }, (_, index) => optionCard(index)).join("")}</div></section></section></main></section>
   <div class="toast"><div class="toast-copy"><span>등록 상태를 확인했습니다.</span></div></div>
-  <div class="mobile-push-chip"><span>주문 배송 알림 사용 중</span></div>
   <nav class="mobile-bottom-nav"><button>대시보드</button><button>상품</button><button class="active">등록</button><button>주문</button><button>CS</button></nav>
   </body></html>`;
 }
@@ -98,6 +97,29 @@ test("Fold widths keep every camera and album action in flow and touchable", { t
       const geometry = await page.locator(".option-slot-wrap").evaluateAll((cards) => ({
         viewportWidth: window.innerWidth,
         documentWidth: document.documentElement.scrollWidth,
+        pushGate: (() => {
+          const gate = document.querySelector(".app-main > .mobile-push-gate.browser");
+          const dismiss = gate?.querySelector("[data-gate-dismiss]");
+          if (!(gate instanceof HTMLElement) || !(dismiss instanceof HTMLElement)) throw new Error("fixture is missing the in-flow push gate");
+          const box = gate.getBoundingClientRect();
+          const dismissBox = dismiss.getBoundingClientRect();
+          const hit = document.elementFromPoint(dismissBox.left + dismissBox.width / 2, dismissBox.top + dismissBox.height / 2);
+          return {
+            position: getComputedStyle(gate).position,
+            top: box.top,
+            right: box.right,
+            bottom: box.bottom,
+            left: box.left,
+            dismiss: { top: dismissBox.top, right: dismissBox.right, bottom: dismissBox.bottom, left: dismissBox.left },
+            dismissHit: hit instanceof Element && Boolean(hit.closest("[data-gate-dismiss]")),
+          };
+        })(),
+        pushStatus: (() => {
+          const chip = document.querySelector(".app-main > .mobile-push-chip");
+          if (!(chip instanceof HTMLElement)) throw new Error("fixture is missing the in-flow push status");
+          const box = chip.getBoundingClientRect();
+          return { position: getComputedStyle(chip).position, top: box.top, bottom: box.bottom };
+        })(),
         cards: cards.map((card) => {
           const photo = card.querySelector(".option-photo-slot");
           const actions = card.querySelector(".photo-source-actions.compact");
@@ -122,6 +144,15 @@ test("Fold widths keep every camera and album action in flow and touchable", { t
 
       assert.equal(geometry.viewportWidth, width, `${width}px release fixture must use the exact CSS viewport`);
       assert.ok(geometry.documentWidth <= width, `${width}px registration fixture must not create horizontal overflow`);
+      assert.equal(geometry.pushGate.position, "relative", `${width}px push gate must remain in flow and anchor its dismiss button`);
+      assert.ok(geometry.pushGate.dismiss.top >= geometry.pushGate.top - 0.5, `${width}px push dismiss escapes above its gate`);
+      assert.ok(geometry.pushGate.dismiss.right <= geometry.pushGate.right + 0.5, `${width}px push dismiss escapes the right edge of its gate`);
+      assert.ok(geometry.pushGate.dismiss.bottom <= geometry.pushGate.bottom + 0.5, `${width}px push dismiss escapes below its gate`);
+      assert.ok(geometry.pushGate.dismiss.left >= geometry.pushGate.left - 0.5, `${width}px push dismiss escapes the left edge of its gate`);
+      assert.equal(geometry.pushGate.dismissHit, true, `${width}px push dismiss center must remain touchable`);
+      assert.equal(geometry.pushStatus.position, "relative", `${width}px push status must remain in document flow`);
+      assert.ok(geometry.pushGate.bottom <= geometry.pushStatus.top, `${width}px push gate must not cover the push status`);
+      assert.ok(geometry.pushStatus.bottom <= geometry.cards[0].cardTop, `${width}px push status must not cover the first photo row`);
       for (const [index, card] of geometry.cards.entries()) {
         assert.ok(card.actionTop >= card.photoBottom - 0.5, `${width}px card ${index + 1}: action row overlaps the photo row`);
         assert.ok(card.cardBottom >= card.actionBottom - 0.5, `${width}px card ${index + 1}: wrapper does not include its action row`);

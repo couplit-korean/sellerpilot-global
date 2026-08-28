@@ -6,6 +6,7 @@ import {
   type ChannelCapabilityKey,
 } from "./catalog";
 import type { ChannelOperationName } from "./operations";
+import { channelPriceUpdateRelease } from "./price-update-release";
 
 const operationCapabilities: Record<ChannelOperationName, ChannelCapabilityKey> = {
   "categories.list": "categories",
@@ -114,11 +115,7 @@ export function channelOperationRelease(
     };
   }
   if (operation === "price.update") {
-    return {
-      available: false,
-      mode: "release_verification_required",
-      reason: "가격 쓰기 뒤 동일 원격 상품의 통화·가격을 다시 조회해 일치 여부를 검증하는 경로가 아직 없어 가격 수정을 차단했습니다.",
-    };
+    return channelPriceUpdateRelease(channel);
   }
   if (channel === "shopee" && operation === "inquiries.list") {
     return { available: false, mode: "release_verification_required", reason: "Shopee Chat API 권한과 실제 메시지 readback이 확인되지 않아 차단했습니다." };

@@ -2,10 +2,32 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   confirmedProductResearchValue,
+  pendingProductResearchForOwner,
   ProductResearchNotFoundError,
   ProductResearchTerminalError,
   shouldClearPendingProductResearch,
 } from "../app/_publishing/product-research-lifecycle";
+
+const researchJobId = "46c1fb0c-59e3-4f07-a3b2-dc9ff05ea19a";
+
+test("pending product research recovery is scoped to the signed-in owner", () => {
+  const stored = { jobId: researchJobId, researchInput: "롯데 샌드", ownerId: "owner-a" };
+
+  assert.deepEqual(
+    pendingProductResearchForOwner(stored, "owner-a", "롯데 샌드"),
+    stored,
+  );
+  assert.equal(pendingProductResearchForOwner(stored, "owner-b", "롯데 샌드"), null);
+  assert.equal(pendingProductResearchForOwner(stored, "owner-a", "사조 참치"), null);
+  assert.equal(
+    pendingProductResearchForOwner({ jobId: researchJobId, researchInput: "롯데 샌드" }, "owner-a", "롯데 샌드"),
+    null,
+  );
+  assert.equal(
+    pendingProductResearchForOwner({ ...stored, jobId: "not-a-job-id" }, "owner-a", "롯데 샌드"),
+    null,
+  );
+});
 import { productResearchFailureMessage } from "../lib/product-research-failure";
 
 test("unverified research placeholders never become seller facts", () => {
