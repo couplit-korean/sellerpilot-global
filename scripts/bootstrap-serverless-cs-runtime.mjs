@@ -60,7 +60,12 @@ if (!requested.size || [...requested].some((argument) => !allowed.has(argument))
         p_scheduler_fingerprint: scheduler.fingerprint,
         p_wake_secret: wakeBearer,
       });
-      if (error || !data || data.configured !== true) throw new Error("serverless CS bootstrap failed");
+      if (error || !data || data.configured !== true) {
+        const safeCode = typeof error?.code === "string" && /^[A-Z0-9_.-]{1,32}$/i.test(error.code)
+          ? error.code
+          : "unknown";
+        throw new Error(`serverless CS bootstrap failed (${safeCode})`);
+      }
       report.bootstrap = { configured: true, version: data.version ?? "unknown" };
     }
 

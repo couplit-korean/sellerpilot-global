@@ -21,6 +21,8 @@ test("serverless CS bootstrap is project-bound, secret-safe, and canary-gated", 
   assert.match(source, /scheduler activation requires a successful canary in the same process/);
   assert.match(source, /sellerpilot_service_bootstrap_ebay_asq_serverless_runtime/);
   assert.match(source, /sellerpilot_service_set_serverless_cs_wakeup_active/);
+  assert.match(source, /safeCode/);
+  assert.doesNotMatch(source, /error\??\.message/);
   assert.doesNotMatch(source, /console\.log\([^)]*(?:cronSecret|wakeBearer|rawToken|serviceKey)/);
   assert.doesNotMatch(source, /writeFile|appendFile|["']\.env(?:\.local)?["']/);
 });

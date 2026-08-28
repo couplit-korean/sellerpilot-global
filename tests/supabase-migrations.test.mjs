@@ -419,6 +419,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828145900_durable_korean_inquiry_history_backfill.sql",
       "20260828145950_extend_serverless_cs_qoo10_inquiries.sql",
       LEGACY_SCOPE_RETIREMENT_MIGRATION,
+      "20260828194000_fix_serverless_cs_vault_lookup_lock.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;

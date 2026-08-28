@@ -17,6 +17,8 @@ const compatibilitySql = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
 do $$ begin create role authenticated noinherit; exception when duplicate_object then null; end $$;
 do $$ begin create role service_role noinherit; exception when duplicate_object then null; end $$;
+do $$ begin create role vault_owner noinherit; exception when duplicate_object then null; end $$;
+do $$ begin create role app_function_owner noinherit; exception when duplicate_object then null; end $$;
 
 create schema auth;
 create table auth.users (id uuid primary key);
@@ -470,19 +472,106 @@ test("serverless CS bootstrap, filtered claim, and paused pg_net wake remain sec
       "utf8",
     );
     await db.exec(claimMigration);
+    const bootstrapOwnerBefore = await scalar(
+      db,
+      `select pg_get_userbyid(procedure.proowner)
+         from pg_proc procedure
+        where procedure.oid =
+          'public.sellerpilot_service_bootstrap_ebay_asq_serverless_runtime(text,text,text,text,text)'::regprocedure`,
+    );
+    const vaultLookupFixMigration = await readFile(
+      new URL("../supabase/migrations/20260828194000_fix_serverless_cs_vault_lookup_lock.sql", import.meta.url),
+      "utf8",
+    );
+    await db.exec(vaultLookupFixMigration);
+    assert.equal(
+      await scalar(
+        db,
+        `select pg_get_userbyid(procedure.proowner)
+           from pg_proc procedure
+          where procedure.oid =
+            'public.sellerpilot_service_bootstrap_ebay_asq_serverless_runtime(text,text,text,text,text)'::regprocedure`,
+      ),
+      bootstrapOwnerBefore,
+    );
+    const bootstrapDefinition = await scalar(
+      db,
+      `select pg_get_functiondef(
+        'public.sellerpilot_service_bootstrap_ebay_asq_serverless_runtime(text,text,text,text,text)'::regprocedure
+      )`,
+    );
+    assert.doesNotMatch(
+      bootstrapDefinition,
+      /from\s+vault\.secrets\s+secret[\s\S]{0,240}\bfor\s+update\b/i,
+    );
     const qoo10ExtensionMigration = await readFile(
       new URL("../supabase/migrations/20260828145950_extend_serverless_cs_qoo10_inquiries.sql", import.meta.url),
       "utf8",
     );
     await db.exec(qoo10ExtensionMigration);
 
-    const bootstrap = await scalar(
-      db,
-      `select public.sellerpilot_service_bootstrap_ebay_asq_serverless_runtime(
-        $1, 'CCCCCCCCCCCC', $2, 'DDDDDDDDDDDD', $3
-      )`,
-      [GATEWAY_HASH, SCHEDULER_HASH, WAKE_SECRET],
+    await db.exec(`
+      alter table vault.secrets owner to vault_owner;
+      alter function vault.create_secret(text, text, text) owner to vault_owner;
+      alter function vault.create_secret(text, text, text) security definer;
+      alter function vault.update_secret(uuid, text, text, text) owner to vault_owner;
+      alter function vault.update_secret(uuid, text, text, text) security definer;
+      revoke all on function vault.create_secret(text, text, text) from public;
+      revoke all on function vault.update_secret(uuid, text, text, text) from public;
+      grant usage on schema vault to vault_owner, app_function_owner;
+      grant execute on function vault.create_secret(text, text, text) to app_function_owner;
+      grant execute on function vault.update_secret(uuid, text, text, text) to app_function_owner;
+      grant usage on schema sellerpilot_private to app_function_owner;
+      grant select on sellerpilot_private.admin_users to app_function_owner;
+      grant select on sellerpilot_private.channel_gateway_jobs to app_function_owner;
+      grant select, insert, update on sellerpilot_private.ai_cli_worker_tokens to app_function_owner;
+      grant insert on sellerpilot_private.ai_cli_audit to app_function_owner;
+      grant usage, select on all sequences in schema sellerpilot_private to app_function_owner;
+      grant select on vault.secrets to app_function_owner;
+      alter function public.sellerpilot_service_bootstrap_ebay_asq_serverless_runtime(
+        text, text, text, text, text
+      ) owner to app_function_owner;
+      grant usage on schema public to service_role;
+      grant execute on function public.sellerpilot_service_bootstrap_ebay_asq_serverless_runtime(
+        text, text, text, text, text
+      ) to service_role;
+      revoke all on vault.secrets from service_role, anon, authenticated;
+    `);
+    assert.equal(
+      await scalar(db, "select has_table_privilege('app_function_owner', 'vault.secrets', 'SELECT')"),
+      true,
     );
+    assert.equal(
+      await scalar(db, "select has_table_privilege('app_function_owner', 'vault.secrets', 'UPDATE')"),
+      false,
+    );
+    for (const role of ["service_role", "anon", "authenticated"]) {
+      assert.equal(
+        await scalar(db, `select has_table_privilege('${role}', 'vault.secrets', 'SELECT')`),
+        false,
+      );
+      assert.equal(
+        await scalar(db, `select has_table_privilege('${role}', 'vault.secrets', 'UPDATE')`),
+        false,
+      );
+    }
+
+    const bootstrapRuntime = async () => {
+      await db.exec("set role service_role");
+      try {
+        return await scalar(
+          db,
+          `select public.sellerpilot_service_bootstrap_ebay_asq_serverless_runtime(
+            $1, 'CCCCCCCCCCCC', $2, 'DDDDDDDDDDDD', $3
+          )`,
+          [GATEWAY_HASH, SCHEDULER_HASH, WAKE_SECRET],
+        );
+      } finally {
+        await db.exec("reset role");
+      }
+    };
+
+    const bootstrap = await bootstrapRuntime();
     assert.deepEqual(Object.keys(bootstrap).sort(), ["configured", "fingerprints", "version"]);
     assert.deepEqual(bootstrap.fingerprints, {
       gateway: "CCCCCCCCCCCC",
@@ -513,13 +602,7 @@ test("serverless CS bootstrap, filtered claim, and paused pg_net wake remain sec
       [{ name: "sellerpilot_serverless_cs_wake_v1", secret: WAKE_SECRET }],
     );
 
-    await scalar(
-      db,
-      `select public.sellerpilot_service_bootstrap_ebay_asq_serverless_runtime(
-        $1, 'CCCCCCCCCCCC', $2, 'DDDDDDDDDDDD', $3
-      )`,
-      [GATEWAY_HASH, SCHEDULER_HASH, WAKE_SECRET],
-    );
+    await bootstrapRuntime();
     assert.equal(
       await scalar(
         db,
