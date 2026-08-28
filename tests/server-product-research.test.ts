@@ -16,6 +16,7 @@ import {
   collectProductResearchReferences,
   extractProductResearchReferenceUrls,
   runServerProductResearchCron,
+  shouldTerminallyFailProductResearch,
 } from "../lib/server-product-research";
 
 const JOB_ID = "10000000-0000-4000-8000-000000000001";
@@ -145,6 +146,27 @@ test("gateway failures map only bounded metadata to DB-safe reasons", () => {
     assert.doesNotMatch(classified, /private/);
   }
   assert.equal(classifyProductResearchGatewayFailure(new Error("private"), true), "runtime_timeout");
+});
+
+test("permanent gateway failures stop instead of leaving mobile research polling indefinitely", () => {
+  for (const reason of [
+    "gateway_authentication_error",
+    "gateway_billing_required",
+    "gateway_forbidden",
+    "gateway_model_not_found",
+    "research_input_invalid",
+  ]) {
+    assert.equal(shouldTerminallyFailProductResearch(reason), true, reason);
+  }
+  for (const reason of [
+    "gateway_rate_limited",
+    "gateway_timeout",
+    "gateway_request_failed",
+    "gateway_result_invalid",
+    "runtime_timeout",
+  ]) {
+    assert.equal(shouldTerminallyFailProductResearch(reason), false, reason);
+  }
 });
 
 test("server product research makes fetched reference status authoritative", async () => {

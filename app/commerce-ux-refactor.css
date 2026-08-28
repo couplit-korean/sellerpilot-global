@@ -960,8 +960,17 @@ button {
 }
 
 .product-research-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   color: #b42318;
   font-size: 9px;
+  line-height: 1.5;
+}
+
+.product-research-error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .product-research-result {

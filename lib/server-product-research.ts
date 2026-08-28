@@ -72,6 +72,18 @@ export type ProductResearchGatewayFailureReason =
   | "gateway_result_invalid"
   | "runtime_timeout";
 
+const TERMINAL_PRODUCT_RESEARCH_FAILURE_REASONS = new Set([
+  "gateway_authentication_error",
+  "gateway_billing_required",
+  "gateway_forbidden",
+  "gateway_model_not_found",
+  "research_input_invalid",
+]);
+
+export function shouldTerminallyFailProductResearch(safeReason: string) {
+  return TERMINAL_PRODUCT_RESEARCH_FAILURE_REASONS.has(safeReason);
+}
+
 class ProductResearchExecutionError extends Error {
   readonly safeReason: string;
 
@@ -498,7 +510,7 @@ export async function runOneServerProductResearch(
     const safeReason = error instanceof ProductResearchExecutionError
       ? error.safeReason
       : "gateway_request_failed";
-    const terminal = safeReason === "research_input_invalid";
+    const terminal = shouldTerminallyFailProductResearch(safeReason);
     const released = await releaseClaim(
       dependencies,
       identity.id,

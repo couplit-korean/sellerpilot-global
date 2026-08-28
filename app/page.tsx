@@ -2589,6 +2589,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const researchAppliedValuesRef = useRef<Partial<ProductIntakeDraft>>({});
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
   const [uploadError, setUploadError] = useState("");
+  const [productResearchError, setProductResearchError] = useState("");
   const [researchingProduct, setResearchingProduct] = useState(false);
   const [researchResult, setResearchResult] = useState<ProductResearchResult | null>(null);
   const [researchCompetitors, setResearchCompetitors] = useState<CompetitorResearchItem[]>([]);
@@ -2786,7 +2787,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const setIntakeField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
     const currentIntake = intakeRef.current;
     let nextIntake: ProductIntakeDraft = { ...currentIntake, [key]: value };
-    if (key === "researchInput") productResearchInputRef.current = String(value);
+    if (key === "researchInput") {
+      productResearchInputRef.current = String(value);
+      setProductResearchError("");
+    }
     if (shouldInvalidateCompetitorResearch(String(key), currentIntake[key], value)) {
       const interruptedResearch = Boolean(productResearchControllerRef.current);
       const invalidatedExistingContext = interruptedResearch
@@ -3067,6 +3071,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setCompetitorResearchRetryAvailable(false);
     setResearchingProduct(true);
     setUploadError("");
+    setProductResearchError("");
     try {
       const sessionScope = createPageAbortScope([productResearchController.signal], 15_000, "관리자 로그인 확인 시간이 초과되었습니다.");
       const { data: sessionData } = await waitForAbortablePromise(createSupabaseClient().auth.getSession(), sessionScope.signal)
@@ -3152,6 +3157,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       intakeRef.current = nextIntake;
       setIntake(nextIntake);
       setResearchResult(result);
+      setProductResearchError("");
       const initialCompetitorResearchPath = buildCompetitorResearchRetryPath(
         nextIntake,
         result.searchQueries.map((searchQuery) => searchQuery.query),
@@ -3171,6 +3177,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           || !publishingMountedRef.current) return;
       const message = error instanceof Error ? error.message : "AI 상품정보 수집 중 오류가 발생했습니다.";
       setUploadError(message);
+      setProductResearchError(message);
       notify(message);
     } finally {
       if (productResearchControllerRef.current === productResearchController) {
@@ -3540,6 +3547,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>1차 자동생성</em></span><small>판매페이지·제조사 링크, 모델명, 바코드, 카톡으로 받은 상품 설명을 그대로 넣으세요.</small></div>
             <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : intake.researchInput.trim().length < 2 || running}>{researchingProduct ? <X size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "확인 중단" : "1차 자동생성"}</button></div>
             <small className="product-research-help">공개 근거를 우선 사용하고, 동일 상품 가격은 채널별 최대 3개를 함께 조회해 판매가 검토에 사용합니다.</small>
+            {productResearchError && <small className="product-research-error" role="alert"><AlertCircle size={14} />{productResearchError}</small>}
             {manualErrors.researchInput && <small className="product-research-error">{manualErrors.researchInput}</small>}
             {researchResult && <div className="product-research-result">
               <div><CheckCircle2 size={16} /><span><b>{researchResult.mode === "server-research" ? "Vercel 서버 AI 상세정보 반영 완료" : "로컬 CLI 상세정보 반영 완료"}</b><small>{researchResult.summary}</small></span><em>특징 {researchResult.details.features.length} · 규격 {researchResult.details.specifications.length}</em></div>
