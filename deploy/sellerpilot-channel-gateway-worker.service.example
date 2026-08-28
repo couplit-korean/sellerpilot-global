@@ -1,0 +1,26 @@
+[Unit]
+Description=SellerPilot channel gateway worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=sellerpilot
+Group=sellerpilot
+WorkingDirectory=/opt/sellerpilot
+Environment=NODE_ENV=production
+Environment=SELLERPILOT_GATEWAY_HEALTH_PORT=8080
+EnvironmentFile=/etc/sellerpilot/channel-gateway.env
+ExecStart=/usr/bin/node --import tsx scripts/ai-cli-worker.mjs --gateway-only
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=900
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

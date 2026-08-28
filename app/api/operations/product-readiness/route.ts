@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
+import {
+  latestMarginScenarioLimit,
+  recentMarginScenarioLimit,
+  resolveMarginScenarioRows,
+} from "../../../../lib/margin-scenario-data";
 
 export const runtime = "nodejs";
 
@@ -39,10 +44,15 @@ export async function GET(request: Request) {
   const recoveryError = recoveryResult?.error ?? null;
   const [
     { data: facts, error: factsError },
-    { data: marginScenarios, error: marginScenariosError },
+    { data: recentMarginScenarios, error: recentMarginScenariosError },
+    { data: latestMarginScenarios, error: latestMarginScenariosError },
   ] = await Promise.all([
     admin.userClient.rpc("sellerpilot_get_product_readiness_facts"),
-    admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: 5 }),
+    admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: recentMarginScenarioLimit }),
+    admin.userClient.rpc("sellerpilot_list_latest_margin_scenarios", {
+      p_product_id: null,
+      p_limit: latestMarginScenarioLimit,
+    }),
   ]);
   const aiRecovery: AiRecovery = {
     status: !shouldRecoverStaleAi ? "checking" : recoveryError ? "failed" : "passed",
@@ -55,7 +65,12 @@ export async function GET(request: Request) {
     checkedAt: shouldRecoverStaleAi ? new Date().toISOString() : null,
   };
   const factsUnavailable = Boolean(factsError) || !Array.isArray(facts);
-  const marginScenariosUnavailable = Boolean(marginScenariosError) || !Array.isArray(marginScenarios);
+  const marginScenarios = resolveMarginScenarioRows({
+    recentData: recentMarginScenarios,
+    recentError: recentMarginScenariosError,
+    latestData: latestMarginScenarios,
+    latestError: latestMarginScenariosError,
+  });
 
   return NextResponse.json({
     facts: factsUnavailable ? [] : facts,
@@ -64,11 +79,10 @@ export async function GET(request: Request) {
       ? "상품 가격·마진·카테고리·오류 상태를 불러오지 못했습니다. 마지막 정상 상태가 있으면 유지합니다."
       : null,
     aiRecovery,
-    marginScenarios: marginScenariosUnavailable ? [] : marginScenarios,
-    marginScenarioState: marginScenariosUnavailable ? "unavailable" : "ready",
-    marginScenarioMessage: marginScenariosUnavailable
-      ? "저장된 마진 계산 이력을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요."
-      : null,
+    marginScenarios: marginScenarios.rows,
+    marginScenarioState: marginScenarios.state,
+    marginScenarioCoverage: marginScenarios.coverage,
+    marginScenarioMessage: marginScenarios.message,
   }, {
     headers: { "cache-control": "no-store, max-age=0" },
   });

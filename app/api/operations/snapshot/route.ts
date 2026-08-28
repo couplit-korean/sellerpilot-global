@@ -4,6 +4,11 @@ import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
 import { sellerSafeAiJobFailure } from "../../../../lib/ai-worker-error-safety";
 import { activeChannelKeys } from "../../../../lib/channels/catalog";
+import {
+  latestMarginScenarioLimit,
+  recentMarginScenarioLimit,
+  resolveMarginScenarioRows,
+} from "../../../../lib/margin-scenario-data";
 import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
 import { reconcileRegistrationDashboardMetrics } from "../../../../lib/registration-dashboard-metrics";
 
@@ -59,9 +64,13 @@ export async function GET(request: Request) {
   const range = rangeSchema.safeParse({ from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined });
   if (!range.success) return NextResponse.json({ message: "매출 조회 기간을 확인해 주세요." }, { status: 400 });
 
-  const [{ data, error }, { data: marginScenarios }, { data: syncStatus }, { data: credentialRows, error: credentialError }, { data: aiRuntime }, { data: analytics, error: analyticsError }, { data: externalActions, error: externalActionsError }, { data: registrationActivities, error: registrationActivitiesError }] = await Promise.all([
+  const [{ data, error }, { data: recentMarginScenarios, error: recentMarginScenariosError }, { data: latestMarginScenarios, error: latestMarginScenariosError }, { data: syncStatus }, { data: credentialRows, error: credentialError }, { data: aiRuntime }, { data: analytics, error: analyticsError }, { data: externalActions, error: externalActionsError }, { data: registrationActivities, error: registrationActivitiesError }] = await Promise.all([
     admin.userClient.rpc("sellerpilot_get_operations_snapshot"),
-    admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: 5 }),
+    admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: recentMarginScenarioLimit }),
+    admin.userClient.rpc("sellerpilot_list_latest_margin_scenarios", {
+      p_product_id: null,
+      p_limit: latestMarginScenarioLimit,
+    }),
     admin.userClient.rpc("sellerpilot_get_channel_sync_status"),
     admin.userClient.rpc("sellerpilot_list_credentials"),
     admin.userClient.rpc("sellerpilot_ai_runtime_status"),
@@ -75,6 +84,12 @@ export async function GET(request: Request) {
   let payload = data && typeof data === "object" && !Array.isArray(data)
     ? { ...(data as Record<string, unknown>) }
     : {};
+  const marginScenarios = resolveMarginScenarioRows({
+    recentData: recentMarginScenarios,
+    recentError: recentMarginScenariosError,
+    latestData: latestMarginScenarios,
+    latestError: latestMarginScenariosError,
+  });
 
   const credentials = Array.isArray(credentialRows)
     ? credentialRows.filter((row): row is Record<string, unknown> => Boolean(row) && typeof row === "object" && !Array.isArray(row))
@@ -113,7 +128,10 @@ export async function GET(request: Request) {
       registeredCredentialCount: activeProductionByChannel.size,
     };
   }
-  payload.marginScenarios = Array.isArray(marginScenarios) ? marginScenarios : [];
+  payload.marginScenarios = marginScenarios.rows;
+  payload.marginScenarioState = marginScenarios.state;
+  payload.marginScenarioCoverage = marginScenarios.coverage;
+  payload.marginScenarioMessage = marginScenarios.message;
   payload.syncStatus = Array.isArray(syncStatus) ? syncStatus : [];
   payload.aiRuntime = aiRuntime && typeof aiRuntime === "object" && !Array.isArray(aiRuntime) ? aiRuntime : null;
   payload.externalActions = Array.isArray(externalActions) ? externalActions : [];

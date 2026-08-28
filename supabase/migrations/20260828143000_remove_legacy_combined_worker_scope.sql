@@ -13,6 +13,8 @@ do $migration$
 declare
   v_now timestamptz := clock_timestamp();
   v_usable_legacy integer;
+  v_running_legacy_ai_jobs integer;
+  v_running_legacy_gateway_jobs integer;
   v_replacement_set_id uuid;
 begin
   select count(*)::integer
@@ -41,6 +43,36 @@ begin
         'active scoped worker token set required before retiring legacy_combined'
         using errcode = '55000';
     end if;
+  end if;
+
+  -- Revoking a token while it owns a live lease can strand an AI completion or,
+  -- more seriously, lose the acknowledgement for an already-sent marketplace
+  -- write. The token-table lock above serializes this check with new claims.
+  -- Operators must drain the legacy worker before retrying this migration.
+  select count(*)::integer
+    into v_running_legacy_ai_jobs
+    from sellerpilot_private.ai_cli_jobs job
+    join sellerpilot_private.ai_cli_worker_tokens token
+      on token.id = job.worker_token_id
+   where token.scope = 'legacy_combined'
+     and token.status <> 'revoked'
+     and job.status = 'running';
+
+  select count(*)::integer
+    into v_running_legacy_gateway_jobs
+    from sellerpilot_private.channel_gateway_jobs job
+    join sellerpilot_private.ai_cli_worker_tokens token
+      on token.id = job.worker_token_id
+   where token.scope = 'legacy_combined'
+     and token.status <> 'revoked'
+     and job.status = 'running';
+
+  if v_running_legacy_ai_jobs > 0 or v_running_legacy_gateway_jobs > 0 then
+    raise exception
+      'legacy_combined worker leases must drain before token retirement (ai %, gateway %)',
+      v_running_legacy_ai_jobs,
+      v_running_legacy_gateway_jobs
+      using errcode = '55000';
   end if;
 
   with revoked as (

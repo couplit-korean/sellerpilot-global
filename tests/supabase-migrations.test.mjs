@@ -36,7 +36,7 @@ const LEGACY_CROSS_TOKEN_HASH = "f".repeat(64);
 const PENDING_AI_TOKEN_HASH = "1".repeat(64);
 const PENDING_GATEWAY_TOKEN_HASH = "2".repeat(64);
 const PENDING_SCHEDULER_TOKEN_HASH = "3".repeat(64);
-const LEGACY_SCOPE_RETIREMENT_MIGRATION = "20260828140000_remove_legacy_combined_worker_scope.sql";
+const LEGACY_SCOPE_RETIREMENT_MIGRATION = "20260828143000_remove_legacy_combined_worker_scope.sql";
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -300,8 +300,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828130000_isolate_product_ai_worker_claim.sql",
       "20260828135000_server_product_research_runtime.sql",
       "20260828135100_fix_server_product_research_secret_guard.sql",
-      LEGACY_SCOPE_RETIREMENT_MIGRATION,
       "20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql",
+      "20260828142500_list_latest_product_margin_scenarios.sql",
+      LEGACY_SCOPE_RETIREMENT_MIGRATION,
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -6096,6 +6097,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     const marginScenarios = await scalar(db, "select public.sellerpilot_list_margin_scenarios(5)");
     assert.equal(marginScenarios.length, 5);
     assert.equal(marginScenarios.some((scenario) => scenario.id === linkedMarginScenarioId), false);
+    const linkedProductMarginScenarios = await scalar(
+      db,
+      "select public.sellerpilot_list_latest_margin_scenarios($1, 50)",
+      [SHARED_PRODUCT_ID],
+    );
+    assert.deepEqual(
+      linkedProductMarginScenarios.map((scenario) => [scenario.channelKey, scenario.id]),
+      [["qoo10", linkedMarginScenarioId]],
+    );
     const marginReadiness = await scalar(db, "select public.sellerpilot_get_product_readiness_facts()");
     const sharedMarginReadiness = marginReadiness.find((facts) => facts.productId === SHARED_PRODUCT_ID);
     const aiMarginReadiness = marginReadiness.find((facts) => facts.productId === aiProductId);
@@ -6615,9 +6625,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       legacyScopeRetirementSql,
       /token\.scope\s+in\s*\(\s*p_scope\s*,\s*'legacy_combined'/i,
     );
+    assert.match(legacyScopeRetirementSql, /from sellerpilot_private\.ai_cli_jobs job/);
+    assert.match(legacyScopeRetirementSql, /from sellerpilot_private\.channel_gateway_jobs job/);
+    assert.match(legacyScopeRetirementSql, /job\.status = 'running'/);
+    assert.match(legacyScopeRetirementSql, /legacy_combined worker leases must drain before token retirement/);
     assert.doesNotMatch(
       legacyScopeRetirementSql,
-      /channel_gateway_jobs|support_tickets|inquiry_reply|complete_channel_gateway/i,
+      /support_tickets|inquiry_reply|complete_channel_gateway/i,
     );
     await assert.rejects(
       db.exec(legacyScopeRetirementSql),

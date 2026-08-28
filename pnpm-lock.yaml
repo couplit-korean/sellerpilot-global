@@ -47,6 +47,9 @@ importers:
       sharp:
         specifier: ^0.35.3
         version: 0.35.3(@types/node@22.19.19)
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.12
       web-push:
         specifier: ^3.6.7
         version: 3.6.7(supports-color@10.2.2)
@@ -111,9 +114,6 @@ importers:
       tailwindcss:
         specifier: 4.2.1
         version: 4.2.1
-      tsx:
-        specifier: ^4.23.12
-        version: 4.23.12
       typescript:
         specifier: 5.9.3
         version: 5.9.3

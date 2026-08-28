@@ -126,6 +126,13 @@ import {
   workerFailureBackoffMs,
 } from "./worker-claim-backoff.mjs";
 import { createConcurrencyGate } from "./worker-concurrency-gate.mjs";
+import {
+  createGatewayWorkerHealth,
+  resolveGatewayHealthPort,
+  resolveGatewayPolling,
+  resolveGatewayReadinessStaleMs,
+  startGatewayWorkerHealthServer,
+} from "./persistent-worker-health.mjs";
 import { runCodexJsonArtifact } from "./codex-json-artifact.mjs";
 import {
   AI_HEARTBEAT_INTERVAL_MS,
@@ -171,9 +178,16 @@ import {
   textValue,
 } from "../lib/channels/protocols.ts";
 
-const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
 const productOnly = process.argv.includes("--product-only");
+const gatewayOnly = process.argv.includes("--gateway-only");
 const aiOnly = process.argv.includes("--ai-only") || productOnly;
+if (gatewayOnly && aiOnly) {
+  throw new Error("--gateway-only cannot be combined with --ai-only or --product-only.");
+}
+if (gatewayOnly && !process.env.SELLERPILOT_URL?.trim()) {
+  throw new Error("SELLERPILOT_URL must explicitly identify the deployed control plane in gateway-only mode.");
+}
+const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
 function loadWorkerToken(environmentName, keychainService) {
   const environmentToken = process.env[environmentName]?.trim();
   if (environmentToken) return environmentToken;
@@ -190,7 +204,7 @@ function loadWorkerToken(environmentName, keychainService) {
   }
 }
 
-const aiWorkerToken = loadWorkerToken("SELLERPILOT_AI_WORKER_TOKEN", "SellerPilot AI Worker");
+const aiWorkerToken = gatewayOnly ? "" : loadWorkerToken("SELLERPILOT_AI_WORKER_TOKEN", "SellerPilot AI Worker");
 const gatewayWorkerToken = aiOnly ? "" : loadWorkerToken("SELLERPILOT_GATEWAY_WORKER_TOKEN", "SellerPilot Gateway Worker");
 const schedulerWorkerToken = aiOnly ? "" : loadWorkerToken("SELLERPILOT_SCHEDULER_WORKER_TOKEN", "SellerPilot Scheduler Worker");
 const aiWorkerConfigured = isWorkerTokenConfigured(aiWorkerToken);
@@ -214,8 +228,11 @@ function loadTemuEgressAllowlist() {
 }
 
 const temuEgressAllowlist = loadTemuEgressAllowlist();
-const pollMs = Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS ?? 5_000));
-const maxIdlePollMs = Math.max(pollMs, Number(process.env.SELLERPILOT_AI_WORKER_MAX_IDLE_POLL_MS ?? 30_000));
+const gatewayPolling = gatewayOnly ? resolveGatewayPolling() : null;
+const pollMs = gatewayPolling?.pollMs
+  ?? Math.max(2_000, Number(process.env.SELLERPILOT_AI_WORKER_POLL_MS ?? 5_000));
+const maxIdlePollMs = gatewayPolling?.maxIdlePollMs
+  ?? Math.max(pollMs, Number(process.env.SELLERPILOT_AI_WORKER_MAX_IDLE_POLL_MS ?? 30_000));
 const model = process.env.SELLERPILOT_CODEX_MODEL?.trim() || "gpt-5.6-sol";
 const analysisTimeoutMs = Math.max(8 * 60_000, Number(process.env.SELLERPILOT_ANALYSIS_TIMEOUT_MS ?? 12 * 60_000));
 const studioMasterTimeoutMs = Math.min(
@@ -271,25 +288,41 @@ class JobCancelledError extends Error {
   }
 }
 
-if (!aiWorkerConfigured) {
-  throw new Error("웹에서 발급한 CLI 작업자 토큰을 환경변수 또는 macOS 키체인 'SellerPilot AI Worker'에 저장해 주세요.");
+if (gatewayOnly && !gatewayWorkerConfigured) {
+  throw new Error("SELLERPILOT_GATEWAY_WORKER_TOKEN must contain an active gateway-scoped worker token.");
+}
+if (!gatewayOnly) {
+  if (!aiWorkerConfigured) {
+    throw new Error("웹에서 발급한 CLI 작업자 토큰을 환경변수 또는 macOS 키체인 'SellerPilot AI Worker'에 저장해 주세요.");
+  }
 }
 
-await access(codexBin);
-await access(studioSchemaPath);
-await access(researchSchemaPath);
-await access(supportReplySchemaPath);
-await access(backgroundAuditSchemaPath);
-await access(detailPageCategoryPromptPath);
-await access(imageLabelFidelityScriptPath);
-await access(codexImageSkillPath).catch(() => {
-  throw new Error("codex-image 스킬이 설치되지 않았습니다. wjb127/codex-image 스킬을 먼저 설치해 주세요.");
+if (!gatewayOnly) {
+  await access(codexBin);
+  await access(studioSchemaPath);
+  await access(researchSchemaPath);
+  await access(supportReplySchemaPath);
+  await access(backgroundAuditSchemaPath);
+  await access(detailPageCategoryPromptPath);
+  await access(imageLabelFidelityScriptPath);
+  await access(codexImageSkillPath).catch(() => {
+    throw new Error("codex-image 스킬이 설치되지 않았습니다. wjb127/codex-image 스킬을 먼저 설치해 주세요.");
+  });
+}
+
+const detailPageCategoryPrompts = gatewayOnly
+  ? {}
+  : JSON.parse(await readFile(detailPageCategoryPromptPath, "utf8"));
+
+let gatewayWorkerHealth = null;
+process.once("SIGINT", () => {
+  stopping = true;
+  gatewayWorkerHealth?.markStopping();
 });
-
-const detailPageCategoryPrompts = JSON.parse(await readFile(detailPageCategoryPromptPath, "utf8"));
-
-process.once("SIGINT", () => { stopping = true; });
-process.once("SIGTERM", () => { stopping = true; });
+process.once("SIGTERM", () => {
+  stopping = true;
+  gatewayWorkerHealth?.markStopping();
+});
 
 function delay(ms) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
@@ -842,9 +875,11 @@ async function runCodex(args, timeoutMs, jobId, claimToken, {
     : nonProductCodexExecutionGate.run(execute, { signal: leaseSignal });
 }
 
-const loginStatus = await runCodex(["login", "status"], 15_000);
-if (!`${loginStatus.stdout}\n${loginStatus.stderr}`.includes("Logged in using ChatGPT")) {
-  throw new Error("Codex CLI가 ChatGPT 계정으로 로그인되어 있지 않습니다. codex login을 먼저 실행해 주세요.");
+if (!gatewayOnly) {
+  const loginStatus = await runCodex(["login", "status"], 15_000);
+  if (!`${loginStatus.stdout}\n${loginStatus.stderr}`.includes("Logged in using ChatGPT")) {
+    throw new Error("Codex CLI가 ChatGPT 계정으로 로그인되어 있지 않습니다. codex login을 먼저 실행해 주세요.");
+  }
 }
 
 const trustedLegacyStudioImagePath = /^[0-9a-f-]{36}\/[0-9a-f-]{36}\/input\/[0-9]{3}\.(?:jpe?g|png|webp)$/i;
@@ -5249,8 +5284,10 @@ async function processGatewayJob(job) {
   }
 }
 
-const workerMode = productOnly ? "product-only" : aiOnly ? "ai-only" : "all-scopes";
-console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
+const workerMode = gatewayOnly ? "gateway-only" : productOnly ? "product-only" : aiOnly ? "ai-only" : "all-scopes";
+console.log(gatewayOnly
+  ? `SellerPilot channel gateway worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · poll=${pollMs}ms`
+  : `SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
 console.log(`Temu egress guard · ${temuEgressAllowlist.length ? "configured" : "not configured"}`);
 console.log(`Worker scopes · ai=${aiWorkerConfigured ? "configured" : "disabled"} · gateway=${gatewayWorkerConfigured ? "configured" : "disabled"} · scheduler=${schedulerWorkerConfigured ? "configured" : "disabled"}`);
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 9);
@@ -5259,8 +5296,29 @@ const configuredGatewayConcurrency = Number(process.env.SELLERPILOT_CHANNEL_WORK
 const maxGatewayConcurrency = Math.min(4, Math.max(1, Number.isFinite(configuredGatewayConcurrency) ? Math.trunc(configuredGatewayConcurrency) : 2));
 const activeAiJobs = new Set();
 const activeGatewayJobs = new Set();
+let gatewayHealthServer = null;
+if (gatewayOnly) {
+  gatewayWorkerHealth = createGatewayWorkerHealth({
+    version: workerVersion,
+    gatewayConfigured: gatewayWorkerConfigured,
+    schedulerConfigured: schedulerWorkerConfigured,
+    staleAfterMs: resolveGatewayReadinessStaleMs(),
+  });
+  const healthPort = resolveGatewayHealthPort({ once });
+  gatewayHealthServer = await startGatewayWorkerHealthServer({
+    health: gatewayWorkerHealth,
+    port: healthPort,
+    host: process.env.SELLERPILOT_GATEWAY_HEALTH_HOST?.trim() || "0.0.0.0",
+  });
+  if (gatewayHealthServer?.address) {
+    const address = gatewayHealthServer.address;
+    const listeningPort = typeof address === "object" && address ? address.port : healthPort;
+    console.log(`Gateway health server · port=${listeningPort} · liveness=/healthz · readiness=/readyz`);
+  }
+}
 do {
   try {
+    gatewayWorkerHealth?.markLoop();
     if (canRunPeriodicChannelSync({
       once,
       gatewayConfigured: gatewayWorkerConfigured,
@@ -5318,6 +5376,7 @@ do {
           method: "POST",
           body: JSON.stringify({ version: workerVersion }),
         });
+        gatewayWorkerHealth?.markGatewayResponse(gatewayResponse.status);
         if (gatewayResponse.ok && gatewayResponse.status !== 204) {
           markWorkerBusy();
           gatewayQueueIdle = false;
@@ -5328,8 +5387,10 @@ do {
           } else {
             const activeGatewayJob = processGatewayJob(gatewayJob).finally(() => {
               activeGatewayJobs.delete(activeGatewayJob);
+              gatewayWorkerHealth?.setActiveGatewayJobs(activeGatewayJobs.size);
             });
             activeGatewayJobs.add(activeGatewayJob);
+            gatewayWorkerHealth?.setActiveGatewayJobs(activeGatewayJobs.size);
           }
           gatewayClaimBackoffStatus = 0;
         }
@@ -5354,6 +5415,7 @@ do {
           gatewayClaimBackoffStatus = 0;
         }
       } catch (gatewayClaimError) {
+        gatewayWorkerHealth?.markGatewayError();
         gatewayQueueIdle = false;
         gatewayClaimBackoffUntil = Math.max(
           gatewayClaimBackoffUntil,
@@ -5370,6 +5432,11 @@ do {
     }
     if (once && activeGatewayJobs.size >= maxGatewayConcurrency) {
       await Promise.allSettled([...activeGatewayJobs]);
+      continue;
+    }
+    if (gatewayOnly) {
+      if (once) break;
+      await waitForIdleWork();
       continue;
     }
     if (Date.now() < authBackoffUntil.ai) {
@@ -5450,4 +5517,6 @@ do {
 if (activeGatewayJobs.size) await Promise.allSettled([...activeGatewayJobs]);
 if (activeAiJobs.size) await Promise.allSettled([...activeAiJobs]);
 if (periodicCompetitorRequest) await Promise.allSettled([periodicCompetitorRequest]);
-console.log("SellerPilot ChatGPT CLI worker 종료");
+gatewayWorkerHealth?.markStopping();
+await gatewayHealthServer?.close();
+console.log(`SellerPilot ${gatewayOnly ? "channel gateway" : "ChatGPT CLI"} worker 종료`);

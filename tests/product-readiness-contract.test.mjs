@@ -53,7 +53,12 @@ test("isolated product readiness read self-heals without blocking or wrapping th
   assert.match(route, /p_limit: STALE_AI_RECOVERY_LIMIT/);
   assert.match(route, /status: !shouldRecoverStaleAi \? "checking" : recoveryError \? "failed" : "passed"/);
   assert.match(route, /장기 AI 분석 작업의 자동 정리 상태를 확인하지 못했습니다/);
-  assert.match(route, /marginScenarioState: marginScenariosUnavailable \? "unavailable" : "ready"/);
+  assert.match(route, /sellerpilot_list_margin_scenarios", \{ p_limit: recentMarginScenarioLimit \}/);
+  assert.match(route, /sellerpilot_list_latest_margin_scenarios/);
+  assert.match(route, /resolveMarginScenarioRows/);
+  assert.match(route, /marginScenarioState: marginScenarios\.state/);
+  assert.match(route, /marginScenarioCoverage: marginScenarios\.coverage/);
+  assert.doesNotMatch(route, /sellerpilot_list_margin_scenarios", \{ p_limit: 5 \}/);
   assert.match(route, /"cache-control": "no-store, max-age=0"/);
   assert.match(route, /searchParams\.get\("recoverStale"\) !== "0"/);
   assert.match(route, /factsUnavailable = Boolean\(factsError\) \|\| !Array\.isArray\(facts\)/);

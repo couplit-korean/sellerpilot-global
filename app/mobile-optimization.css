@@ -2976,3 +2976,234 @@
     z-index: 130;
   }
 }
+
+/* Galaxy Fold cover displays can expose only 280-344 CSS pixels even though
+   the unfolded display uses the regular phone/tablet contract. Keep every
+   control reachable without changing the established 390px layout. */
+@media (max-width: 344px) {
+  :root {
+    --mobile-gutter: 8px;
+  }
+
+  .app-content {
+    padding-right: max(var(--mobile-gutter), env(safe-area-inset-right));
+    padding-left: max(var(--mobile-gutter), env(safe-area-inset-left));
+  }
+
+  .commerce-service-rail {
+    gap: 8px;
+    overflow-x: auto;
+    padding-right: max(var(--mobile-gutter), env(safe-area-inset-right));
+    padding-left: max(var(--mobile-gutter), env(safe-area-inset-left));
+    overscroll-behavior-inline: contain;
+    scroll-padding-inline: var(--mobile-gutter);
+    scrollbar-width: none;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .commerce-service-rail::-webkit-scrollbar {
+    display: none;
+  }
+
+  .commerce-service-rail strong,
+  .commerce-service-rail span {
+    flex: 0 0 auto;
+  }
+
+  .commerce-service-rail strong {
+    min-width: 94px;
+    margin-left: calc(var(--mobile-gutter) * -1);
+    padding-left: var(--mobile-gutter);
+  }
+
+  .topbar {
+    gap: 4px;
+    padding-right: max(var(--mobile-gutter), env(safe-area-inset-right));
+    padding-left: max(var(--mobile-gutter), env(safe-area-inset-left));
+  }
+
+  .topbar-title {
+    min-width: 44px;
+    flex: 1 1 auto;
+    gap: 4px;
+  }
+
+  .topbar-title > div {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .topbar-title h1 {
+    width: 100%;
+    max-width: none;
+    font-size: 12px;
+  }
+
+  .topbar-actions {
+    min-width: 182px;
+    flex: 0 0 182px;
+    justify-content: space-between;
+    gap: 2px;
+  }
+
+  .topbar-actions .demo-data-badge {
+    display: grid;
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    place-items: center;
+    padding: 0;
+  }
+
+  .topbar-actions .demo-data-badge > svg {
+    grid-row: auto;
+  }
+
+  .topbar-actions .demo-data-badge b,
+  .topbar-actions .demo-data-badge small {
+    display: none;
+  }
+
+  .notification-wrap,
+  .topbar-actions .global-search,
+  .topbar-actions .top-icon-button,
+  .topbar-actions .user-menu {
+    width: 44px;
+    min-width: 44px;
+    flex: 0 0 44px;
+  }
+
+  .page-stack > *,
+  .panel > *,
+  .panel-heading > *,
+  .analysis-start-bar > span,
+  .account-security-head > div,
+  .command-input input,
+  .cs-filter-actions > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .panel-heading h2,
+  .panel-heading h3,
+  .panel-heading p,
+  .account-security-head h2,
+  .account-security-head p {
+    overflow-wrap: anywhere;
+  }
+
+  .cs-filter-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cs-filter-actions .filter-button,
+  .cs-filter-actions .filter-select {
+    width: 100%;
+  }
+
+  .analysis-start-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .analysis-start-bar > button {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .registration-live-detail > header {
+    align-items: flex-start;
+    flex-direction: column;
+    overflow-wrap: anywhere;
+  }
+
+  .registration-card > footer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .registration-card > footer > button,
+  .registration-card > footer > span {
+    width: 100%;
+    min-width: 0;
+    grid-column: auto;
+    justify-content: center;
+    overflow-wrap: anywhere;
+    text-align: center;
+  }
+
+  .sales-calendar-panel {
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .sales-calendar-meta {
+    width: 100%;
+    justify-items: start;
+  }
+
+  .sales-calendar-grid {
+    width: 100%;
+    grid-template-columns: repeat(7, minmax(40px, 1fr));
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+    touch-action: pan-x pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sales-calendar-grid article,
+  .sales-calendar-grid .calendar-blank {
+    min-width: 40px;
+    scroll-snap-align: start;
+  }
+
+  .product-edit-dialog > footer,
+  .credential-modal > footer {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mobile-bottom-nav {
+    padding-right: max(2px, env(safe-area-inset-right));
+    padding-left: max(2px, env(safe-area-inset-left));
+  }
+
+  .mobile-bottom-nav button {
+    gap: 2px;
+    padding-right: 0;
+    padding-left: 0;
+    font-size: 9px;
+  }
+
+  .mobile-bottom-nav button span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 319px) {
+  .mobile-push-gate.browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mobile-push-gate.browser .mobile-push-gate-copy {
+    padding-right: 0;
+  }
+
+  .mobile-push-gate-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mobile-push-gate-actions button,
+  .mobile-push-gate-actions button:only-child {
+    width: 100%;
+    grid-column: auto;
+  }
+}

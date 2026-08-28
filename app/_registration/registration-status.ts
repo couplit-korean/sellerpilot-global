@@ -11,6 +11,7 @@ export type RegistrationActivityEventState = Map<string, RegistrationStatus> & {
 
 const runningRegistrationStatuses = new Set<RegistrationStatus>(["analyzing", "publishing"]);
 const studioJobActivityIdPattern = /^job:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
+const controllableAiActivityIdPattern = /^(?:job|revision|asset):([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i;
 
 export const registrationStatusMeta: Record<RegistrationStatus, { label: string; detail: string }> = {
   analyzing: { label: "AI 분석 중", detail: "사진과 상품 사실정보를 분석하고 있습니다." },
@@ -29,7 +30,12 @@ export function isRegistrationImageActivity(activity: Pick<RegistrationActivity,
   return activity.id.startsWith("revision:") || activity.id.startsWith("asset:");
 }
 
+export function isCancelledRegistrationActivity(activity: Pick<RegistrationActivity, "status" | "message">) {
+  return activity.status === "failed" && activity.message.trim() === "관리자가 작업을 취소했습니다.";
+}
+
 export function registrationActivityDisplayStatusLabel(activity: RegistrationActivity) {
+  if (isCancelledRegistrationActivity(activity)) return "작업 중지됨";
   if (activity.status === "failed") {
     if (activity.id.startsWith("asset:")) return "이미지 재제작 실패";
     if (activity.id.startsWith("revision:")) return "상품 수정 작업 실패";
@@ -40,6 +46,11 @@ export function registrationActivityDisplayStatusLabel(activity: RegistrationAct
 export function recoverableRegistrationActivityJobId(activity: RegistrationActivity) {
   if (activity.status !== "failed" || activity.productId !== null) return null;
   return activity.id.match(studioJobActivityIdPattern)?.[1] ?? null;
+}
+
+export function controllableRegistrationActivityJobId(activity: RegistrationActivity) {
+  if (activity.status !== "analyzing") return null;
+  return activity.id.match(controllableAiActivityIdPattern)?.[1] ?? null;
 }
 
 export function registrationActivityMatchesFilter(activity: RegistrationActivity, filter: RegistrationActivityFilter) {
@@ -81,6 +92,12 @@ export function registrationActivityProgress(activity: RegistrationActivity) {
       } as const;
     }
     if (activity.status === "failed") {
+      if (isCancelledRegistrationActivity(activity)) {
+        return {
+          percent: 0,
+          label: "관리자가 AI 작업을 중지했습니다. 외부 채널 전송은 시작하지 않았으며 기존 입력으로 다시 실행할 수 있습니다.",
+        } as const;
+      }
       return {
         percent: 0,
         label: isImageOperation

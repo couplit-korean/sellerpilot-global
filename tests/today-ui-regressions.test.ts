@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { salesRangeForPreset } from "../app/_dashboard/sales-range-control";
 import {
+  controllableRegistrationActivityJobId,
+  isCancelledRegistrationActivity,
   isRegistrationActivityRunning,
   isRegistrationImageActivity,
   recoverableRegistrationActivityJobId,
@@ -60,6 +62,15 @@ function cssMediaBody(source: string, condition: string) {
   assert.fail(`unclosed CSS media query: ${condition}`);
 }
 
+test("only active AI activities expose a direct cancellable job id", () => {
+  const jobId = "11111111-1111-4111-8111-111111111111";
+  assert.equal(controllableRegistrationActivityJobId(activity(`job:${jobId}`, "분석 중", "analyzing")), jobId);
+  assert.equal(controllableRegistrationActivityJobId(activity(`revision:${jobId}`, "수정 중", "analyzing")), jobId);
+  assert.equal(controllableRegistrationActivityJobId(activity(`asset:${jobId}`, "재제작 중", "analyzing")), jobId);
+  assert.equal(controllableRegistrationActivityJobId(activity(`job:${jobId}`, "게시 중", "publishing")), null);
+  assert.equal(controllableRegistrationActivityJobId(activity(`product:${jobId}`, "상품 분석", "analyzing")), null);
+});
+
 test("sale configuration has one shared dropdown contract", () => {
   assert.deepEqual(productSaleConfigurations, [
     { value: "상품 1개", label: "1개" },
@@ -108,6 +119,21 @@ test("image and revision failures use truthful activity-aware labels in cards an
     "이미지 실패 상품: 이미지 재제작 실패",
     "수정 실패 상품: 상품 수정 작업 실패",
   ]);
+});
+
+test("administrator cancellation is displayed as a resumable stop rather than an error", () => {
+  const cancelled = activity("job:44444444-4444-4444-8444-444444444444", "중지 상품", "failed");
+  cancelled.productId = null;
+  cancelled.channelCount = 0;
+  cancelled.message = "관리자가 작업을 취소했습니다.";
+
+  assert.equal(isCancelledRegistrationActivity(cancelled), true);
+  assert.equal(registrationActivityDisplayStatusLabel(cancelled), "작업 중지됨");
+  assert.deepEqual(registrationActivityProgress(cancelled), {
+    percent: 0,
+    label: "관리자가 AI 작업을 중지했습니다. 외부 채널 전송은 시작하지 않았으며 기존 입력으로 다시 실행할 수 있습니다.",
+  });
+  assert.deepEqual(registrationActivityNotifications(new Map(), [cancelled]), ["중지 상품: 작업 중지됨"]);
 });
 
 test("every per-channel registration transition is notified while the aggregate stays publishing", () => {
@@ -361,7 +387,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   ]);
   assert.match(page, /onNavigate\("registration-activity", "failed"\)[^\n]*등록·분석 재시도/);
   assert.match(page, /등록·분석 재시도/);
-  assert.match(page, /\["failed", "오류 전체", counts\.failed\]/);
+  assert.match(page, /\["failed", "오류 · 중지", counts\.failed\]/);
   assert.match(page, /대시보드의 등록·분석 재시도 수는 재시도 가능한 채널 대상과 AI 분석 작업 기준입니다/);
   assert.match(page, /상품 상세에서 이미지 재제작/);
   assert.match(page, /상품 상세에서 다시 수정/);

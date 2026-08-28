@@ -141,7 +141,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /id=\{`option-photo-\$\{slot\.id\}-camera`\}[^>]*capture="environment"/);
   assert.match(page, /id="extra-product-photo-camera"[^>]*capture="environment"/);
   assert.match(page, /preservePublishingCaptureContext/);
-  assert.match(page, /sellerpilot:last-view:v1", "publishing"/);
+  assert.match(page, /rememberWorkspaceView\("publishing"\)/);
+  assert.match(page, /userWorkspaceStorageKey\(userId\)/);
   const aiProductStudio = await readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8");
   const studioJobSession = await readFile(new URL("../app/_registration/studio-job-session.ts", import.meta.url), "utf8");
   const categoryWorkbench = await readFile(new URL("../app/category-classification-workbench.tsx", import.meta.url), "utf8");

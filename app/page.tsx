@@ -55,10 +55,12 @@ import {
   RefreshCw,
   Search,
   Send,
+  ServerCog,
   ShieldCheck,
   ShoppingBag,
   ShoppingCart,
   Sparkles,
+  Square,
   Store,
   TrendingUp,
   Trash2,
@@ -87,6 +89,7 @@ import {
 import { StyleLearningCenter } from "./style-learning-center";
 import { MarginCalculatorPage } from "./margin-calculator";
 import { MobilePushManager } from "./mobile-push-manager";
+import { PlatformUsagePage } from "./platform-usage-page";
 import { marketplaceListingLinkLabel, marketplaceListingUrl, type RemoteListingReference } from "./channel-links";
 import { channels, type ChannelKey } from "./channel-config";
 import { activeChannelKeys, isActiveChannelKey } from "../lib/channels/catalog";
@@ -94,6 +97,7 @@ import { shipmentVerificationSummary, shipmentWriteAvailability } from "../lib/c
 import {
   useOperationsSnapshot,
   type OperationsSnapshot,
+  type OperationMarginScenario,
   type OperationProduct,
   type OperationTicket,
   type SalesRange,
@@ -117,6 +121,19 @@ import { createAbortableConcurrencyGate } from "../lib/abortable-concurrency-gat
 import { createStudioPhotoEditSession } from "../lib/studio-photo-edit-session";
 import { deadlineAfter, deadlineIsActive, deadlineRemaining } from "../lib/time-deadline";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
+import {
+  editedProductSellingPriceKrw,
+  evaluateProductMarginLossWarnings,
+  latestProductMarginScenario,
+  type ProductMarginWarningEvaluation,
+} from "../lib/product-margin-loss-warning";
+import {
+  clampWorkspaceIdleTimeoutMs,
+  createUserWorkspaceRecord,
+  parseUserWorkspaceRecord,
+  serializeUserWorkspaceRecord,
+  userWorkspaceStorageKey,
+} from "../lib/user-workspace-session";
 import {
   adminVerificationState,
   nextAdminAccessState,
@@ -158,6 +175,8 @@ import {
 import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
 import { toastDurationMs, toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
+  controllableRegistrationActivityJobId,
+  isCancelledRegistrationActivity,
   isRegistrationActivityRunning,
   isRegistrationImageActivity,
   recoverableRegistrationActivityJobId,
@@ -180,6 +199,12 @@ import {
 
 const PRODUCT_RESEARCH_PENDING_KEY = "sellerpilot:product-research-pending:v1";
 const PRODUCT_RESEARCH_JOB_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const configuredWorkspaceIdleMinutes = Number(process.env.NEXT_PUBLIC_SELLERPILOT_IDLE_TIMEOUT_MINUTES);
+const workspaceIdleTimeoutMs = clampWorkspaceIdleTimeoutMs(
+  Number.isFinite(configuredWorkspaceIdleMinutes) && configuredWorkspaceIdleMinutes > 0
+    ? configuredWorkspaceIdleMinutes * 60_000
+    : undefined,
+);
 
 type PendingProductResearch = { jobId: string; researchInput: string };
 
@@ -258,6 +283,7 @@ type View =
   | "orders"
   | "cs"
   | "connections"
+  | "platform-usage"
   | "templates"
   | "notifications"
   | "qoo10"
@@ -285,6 +311,7 @@ const navGroups = [
       { id: "orders" as View, label: "주문 · 판매", icon: ShoppingCart },
       { id: "cs" as View, label: "CS 통합함", icon: Headphones },
       { id: "connections" as View, label: "채널 연결 · 상태", icon: ShieldCheck },
+      { id: "platform-usage" as View, label: "서버 사용량", icon: ServerCog },
       { id: "templates" as View, label: "템플릿 설정", icon: FileText },
       { id: "notifications" as View, label: "알림 설정", icon: Bell },
     ],
@@ -326,6 +353,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
   cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
   connections: { title: "채널 연결 · 상태", description: "판매채널 연결 상태, API 인증과 차단 요인을 한곳에서 관리합니다." },
+  "platform-usage": { title: "서버 사용량", description: "Vercel과 Supabase가 공식 API로 제공하는 현재 사용량과 연결 상태를 확인합니다." },
   templates: { title: "템플릿 설정", description: "자주 쓰는 배송비, 포장과 배송 규칙을 저장해 상품 등록에 즉시 적용합니다." },
   notifications: { title: "알림 설정", description: "웹과 가입한 사용자 본인의 카카오톡 알림을 업무 유형별로 설정합니다." },
   qoo10: { title: "Qoo10 Japan", description: "일본 스토어의 상품, 매출, 주문, CS 성과입니다." },
@@ -341,6 +369,32 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   acceptance: { title: "개발 · 실검수", description: "PPT 기반 175개 요구사항의 개발 상태와 실제 작동 증거를 분리해 관리합니다." },
   storyboard: { title: "서비스 스토리보드", description: "로그인부터 자동 등록, 판매, CS까지의 전체 사용자 흐름입니다." },
 };
+
+function storedWorkspaceView(userId: string) {
+  const key = userWorkspaceStorageKey(userId);
+  if (!key) return null;
+  try {
+    const restored = parseUserWorkspaceRecord({
+      raw: window.localStorage.getItem(key),
+      userId,
+      now: Date.now(),
+      idleTimeoutMs: workspaceIdleTimeoutMs,
+    });
+    return restored.record?.view && restored.record.view in pageMeta
+      ? restored.record.view as View
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistWorkspaceView(userId: string, view: View, now = Date.now()) {
+  const key = userWorkspaceStorageKey(userId);
+  const record = createUserWorkspaceRecord({ userId, view, now });
+  if (!key || !record) return false;
+  window.localStorage.setItem(key, serializeUserWorkspaceRecord(record));
+  return true;
+}
 
 const ticketChannelCodes: Record<string, string> = {
   Qoo10: "Q",
@@ -596,11 +650,13 @@ function credentialConnectionLabel(status: string | undefined) {
 function LoginScreen({
   onLogin,
   onPasswordReset,
+  notice,
   sessionCleanupState,
   onRetrySessionCleanup,
 }: {
   onLogin: (email: string, password: string) => Promise<string | null>;
   onPasswordReset: (email: string) => Promise<string | null>;
+  notice: string;
   sessionCleanupState: AccountSwitchCleanupState;
   onRetrySessionCleanup: () => void;
 }) {
@@ -671,6 +727,7 @@ function LoginScreen({
           <div className="field-row"><label className="field-label" htmlFor="password">비밀번호</label><button type="button" className="text-button" onClick={() => void requestPasswordReset()} disabled={sessionCleanupPending}>비밀번호 찾기</button></div>
           <div className="input-wrap"><LockKeyhole size={17} /><input id="password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={sessionCleanupPending} /><button type="button" className="password-toggle" aria-label={showPassword ? "비밀번호 숨기기" : "비밀번호 보기"} onClick={() => setShowPassword((current) => !current)} disabled={sessionCleanupPending}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
           <div className="remember-row"><span><Check size={12} /></span>이 브라우저에서 로그인 세션 유지</div>
+          {notice && <p className="login-session-notice" role="status"><Clock3 size={14} />{notice}</p>}
           {sessionCleanupState === "clearing" && <p className="login-error" role="status" aria-live="polite"><LoaderCircle className="spin" size={14} />이전 계정의 로컬 세션을 안전하게 정리하고 있습니다.</p>}
           {sessionCleanupState === "failed" && <p className="login-error" role="alert"><AlertCircle size={14} />이전 계정 세션을 정리하지 못했습니다. 다시 시도해 주세요.</p>}
           {error && <p className="login-error"><AlertCircle size={14} />{error}</p>}
@@ -838,7 +895,7 @@ function OverviewPage({ onNavigate, onOpenCs, displayProducts, operationSummary,
         <MetricCard label="미처리 CS" value={operationsAvailable ? summary.openTicketCount.toLocaleString() : "—"} detail={`재고주의 ${summary.lowStockCount}건`} icon={MessageCircleMore} tone="orange" onClick={() => onOpenCs("open")} />
       </section>
 
-      <RevenueCalendar days={analytics?.daily ?? []} range={salesRange} />
+      <RevenueCalendar days={analytics?.daily ?? []} range={salesRange} onRangeChange={onSalesRangeChange} />
 
       <section className="dashboard-cs-pair" aria-label="CS 처리 현황">
         <button className="panel" onClick={() => onOpenCs("open")}><span className="metric-icon orange"><Inbox size={18} /></span><span><small>미처리 CS</small><strong>{summary.openTicketCount.toLocaleString()}건</strong><em>답변 대기 · 처리 중</em></span><ChevronRight size={16} /></button>
@@ -1165,13 +1222,15 @@ function productEditDraft(product: DisplayProduct, fields: Record<string, unknow
   };
 }
 
-function ProductDetailEditDialog({ photoSessionId, draft, errors, saving, photosProcessing, revisionPhotoCount, onRevisionPhotosChange, onPhotosProcessingChange, onPhotoError, onChange, onClose, onSave }: {
+function ProductDetailEditDialog({ photoSessionId, draft, errors, saving, photosProcessing, revisionPhotoCount, marginEvaluations, marginCoverageMessage, onRevisionPhotosChange, onPhotosProcessingChange, onPhotoError, onChange, onClose, onSave }: {
   photoSessionId: number;
   draft: ProductIntakeDraft;
   errors: Record<string, string>;
   saving: boolean;
   photosProcessing: boolean;
   revisionPhotoCount: number;
+  marginEvaluations: ProductMarginWarningEvaluation[];
+  marginCoverageMessage: string | null;
   onRevisionPhotosChange: (sessionId: number, photos: StudioPhoto[]) => void;
   onPhotosProcessingChange: (sessionId: number, processing: boolean) => void;
   onPhotoError: (sessionId: number, message: string) => void;
@@ -1187,6 +1246,8 @@ function ProductDetailEditDialog({ photoSessionId, draft, errors, saving, photos
   const fieldError = (field: keyof ProductIntakeDraft) => errors[field]
     ? <small id={fieldErrorId(field)}>{errors[field]}</small>
     : null;
+  const marginWarnings = marginEvaluations.filter((evaluation) => evaluation.status === "ready" && evaluation.warning);
+  const unavailableMarginCount = marginEvaluations.filter((evaluation) => evaluation.status === "unavailable").length;
   return <div className="product-edit-overlay"><section className="product-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="product-edit-title">
     <header><div><span className="panel-kicker">FULL PRODUCT EDIT</span><h2 id="product-edit-title">등록 상품 전체 수정</h2><p>텍스트·가격·재고뿐 아니라 원본·대표·역할별 사진을 교체할 수 있습니다. 사진 수정은 같은 상품 원장에서 AI 상세를 다시 만들며 외부 채널에는 자동 게시하지 않습니다.</p></div><button type="button" aria-label="상품 수정 닫기" onClick={onClose} disabled={saving}><X size={18} /></button></header>
     <div className="product-edit-form manual-field-grid">
@@ -1205,6 +1266,9 @@ function ProductDetailEditDialog({ photoSessionId, draft, errors, saving, photos
       <label className={errors.gtinStatus ? "field-error" : ""}><span>바코드 상태</span><select {...fieldErrorAttributes("gtinStatus")} value={draft.gtinStatus} onChange={(event) => onChange("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select>{fieldError("gtinStatus")}</label>
       {(draft.gtinStatus === "HAS_GTIN" || errors.gtin) && <label className={errors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC</span><input {...fieldErrorAttributes("gtin")} inputMode="numeric" value={draft.gtin} onChange={(event) => onChange("gtin", event.target.value.replace(/\D/g, ""))} />{fieldError("gtin")}</label>}
       <div className="intake-group-heading"><span>03</span><div><b>가격·재고</b><small>가격은 중앙 원장에, 변경된 실재고는 연결 채널에도 반영합니다.</small></div></div>
+      {marginWarnings.length > 0 ? <section className="product-margin-loss-warning" role="alert"><header><AlertTriangle size={17} /><span><b>저장한 마진 기준보다 손해가 발생합니다.</b><small>현재 판매가·배송비를 저장할 때 영향을 받는 채널입니다.</small></span></header>{marginWarnings.map((evaluation) => evaluation.status === "ready" && evaluation.warning ? <article key={evaluation.channelKey}><ChannelMark code={channels[evaluation.channelKey as ChannelKey]?.letter ?? evaluation.channelKey} size="sm" /><span><b>{channels[evaluation.channelKey as ChannelKey]?.name ?? evaluation.channelKey}</b><small>{evaluation.warning.kind === "negative-margin" ? `예상 순손실 ${formatCompactWon(Math.abs(evaluation.edited.profit))}` : `저장 기준보다 예상 이익 ${formatCompactWon(evaluation.warning.profitLossKrw)} 감소`} · 마진 {evaluation.edited.margin.toFixed(1)}% ({evaluation.warning.marginDeltaPercentPoints.toFixed(1)}%p)</small></span></article> : null)}</section> : null}
+      {marginCoverageMessage ? <p className="product-margin-unavailable" role="status"><AlertCircle size={14} />{marginCoverageMessage}</p> : null}
+      {unavailableMarginCount > 0 ? <p className="product-margin-unavailable"><AlertCircle size={14} />저장 시나리오의 수수료·결과가 불완전한 {unavailableMarginCount}개 채널은 손익을 추정하지 않았습니다. 마진 계산에서 해당 채널 값을 먼저 저장해 주세요.</p> : null}
       <label className={errors.sellingPrice ? "field-error" : ""}><span>판매가</span><input {...fieldErrorAttributes("sellingPrice")} type="number" min="0.01" step="0.01" value={draft.sellingPrice} onChange={(event) => onChange("sellingPrice", Number(event.target.value))} />{fieldError("sellingPrice")}</label>
       <label className={errors.currency ? "field-error" : ""}><span>통화</span><select {...fieldErrorAttributes("currency")} value={draft.currency} onChange={(event) => onChange("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option key={value}>{value}</option>)}</select>{fieldError("currency")}</label>
       <label className={errors.stock ? "field-error" : ""}><span>실재고</span><input {...fieldErrorAttributes("stock")} type="number" min="0" step="1" value={draft.stock} onChange={(event) => onChange("stock", Number(event.target.value))} />{fieldError("stock")}</label>
@@ -1226,8 +1290,9 @@ function ProductDetailEditDialog({ photoSessionId, draft, errors, saving, photos
   </section></div>;
 }
 
-function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, authenticatedFetch, notify, onChanged }: {
+function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, onOpenActivity, authenticatedFetch, notify, onChanged }: {
   product: DisplayProduct;
+  marginScenarios: OperationsSnapshot["marginScenarios"];
   onBack: () => void;
   onEditChannels: () => void;
   onOpenActivity: () => void;
@@ -1263,6 +1328,37 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
   const [revisionPhotoSessionId, setRevisionPhotoSessionId] = useState(0);
   const [productRevision, setProductRevision] = useState<ProductRevisionState | null>(null);
   const [displayOverrides, setDisplayOverrides] = useState({ name: product.name, sku: product.sku, description: product.description, sourceUrl: product.sourceUrl });
+  const [productMarginData, setProductMarginData] = useState<{
+    scenarios: OperationMarginScenario[];
+    coverage: "loading" | "latest-per-product-channel" | "recent-fallback" | "unavailable";
+    message: string | null;
+  }>(() => ({
+    scenarios: marginScenarios.filter((scenario) => scenario.productId === product.sourceId),
+    coverage: "loading",
+    message: "상품별 최신 마진 기준을 확인 중입니다. 확인이 끝나기 전에는 누락 채널을 안전하다고 판단하지 않습니다.",
+  }));
+  const marginEvaluations = useMemo(() => {
+    if (!editDraft) return [];
+    const channelKeys = [...new Set(productMarginData.scenarios
+      .filter((scenario) => scenario.productId === product.sourceId)
+      .map((scenario) => scenario.channelKey))];
+    return evaluateProductMarginLossWarnings({
+      productId: product.sourceId,
+      scenarios: productMarginData.scenarios,
+      edits: channelKeys.map((channelKey) => {
+        const scenario = latestProductMarginScenario(product.sourceId, channelKey, productMarginData.scenarios);
+        return {
+          channelKey,
+          sellingPrice: editedProductSellingPriceKrw({
+            scenario,
+            sellingPrice: editDraft.sellingPrice,
+            currency: editDraft.currency,
+          }),
+          localShipping: editDraft.shippingFeeKrw,
+        };
+      }),
+    });
+  }, [editDraft, product.sourceId, productMarginData.scenarios]);
   const detailRegenerationControllerRef = useRef<AbortController | null>(null);
   const revisionSubmissionControllerRef = useRef<AbortController | null>(null);
   const revisionCompletionAnnouncedRef = useRef(new Set<string>());
@@ -1289,6 +1385,48 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
       }
     };
   }, [product.sourceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    const scope = createPageAbortScope([getProductDetailSignal(), controller.signal], 15_000, "상품별 마진 기준 확인 시간이 초과되었습니다.");
+    void authenticatedJsonWithDeadline<{
+      scenarios?: OperationMarginScenario[];
+      coverage?: "latest-per-product-channel" | "recent-fallback" | "unavailable";
+      message?: string | null;
+    }>(
+      authenticatedFetch,
+      `/api/admin/products/${product.sourceId}/margin-scenarios`,
+      { cache: "no-store" },
+      scope.signal,
+      15_000,
+      {},
+    ).then(({ response, payload }) => {
+      if (!response.ok || !Array.isArray(payload.scenarios)) throw new Error(payload.message ?? "상품별 마진 기준을 불러오지 못했습니다.");
+      if (cancelled) return;
+      const scenarios = payload.scenarios.filter((scenario) => scenario && typeof scenario === "object" && scenario.productId === product.sourceId);
+      const coverage = payload.coverage === "latest-per-product-channel" || payload.coverage === "recent-fallback"
+        ? payload.coverage
+        : "unavailable";
+      setProductMarginData({
+        scenarios,
+        coverage,
+        message: coverage === "latest-per-product-channel" ? null : payload.message ?? "최근 마진 이력만 확인되어 누락 채널은 손익을 추정하지 않습니다.",
+      });
+    }).catch((error) => {
+      if (cancelled || controller.signal.aborted) return;
+      setProductMarginData((current) => ({
+        ...current,
+        coverage: "unavailable",
+        message: error instanceof Error ? error.message : "상품별 마진 기준을 불러오지 못해 누락 채널은 손익을 추정하지 않습니다.",
+      }));
+    }).finally(() => scope.dispose());
+    return () => {
+      cancelled = true;
+      controller.abort(new DOMException("다른 상품의 마진 기준을 확인합니다.", "AbortError"));
+      scope.dispose();
+    };
+  }, [authenticatedFetch, getProductDetailSignal, product.sourceId]);
 
   useEffect(() => {
     editDialogOpenRef.current = editOpen;
@@ -2087,7 +2225,7 @@ function ProductDetailPage({ product, onBack, onEditChannels, onOpenActivity, au
 
       {remoteListingState === "ready" ? <SavedProductDetailPage key={product.sourceId} productId={product.sourceId} source={detailPageSource} initialDetailPage={savedDetailPage} assetUrls={savedDetailAssetUrls} authenticatedFetch={authenticatedFetch} notify={notify} /> : null}
 
-      {editOpen && editDraft && <ProductDetailEditDialog photoSessionId={revisionPhotoSessionId} draft={editDraft} errors={editErrors} saving={editSaving} photosProcessing={revisionPhotosProcessing} revisionPhotoCount={revisionPhotos.length} onRevisionPhotosChange={handleRevisionPhotosChange} onPhotosProcessingChange={handleRevisionPhotosProcessingChange} onPhotoError={(sessionId, message) => { if (!revisionPhotoSession.isCurrent(sessionId)) return; setEditErrors((current) => ({ ...current, form: message })); notify(message); }} onChange={setEditField} onClose={() => { if (!editSaving) { editDialogOpenRef.current = false; editDraftDirtyRef.current = false; invalidateRevisionPhotoSession(); setEditOpen(false); } }} onSave={() => void saveProductDetails()} />}
+      {editOpen && editDraft && <ProductDetailEditDialog photoSessionId={revisionPhotoSessionId} draft={editDraft} errors={editErrors} saving={editSaving} photosProcessing={revisionPhotosProcessing} revisionPhotoCount={revisionPhotos.length} marginEvaluations={marginEvaluations} marginCoverageMessage={productMarginData.message} onRevisionPhotosChange={handleRevisionPhotosChange} onPhotosProcessingChange={handleRevisionPhotosProcessingChange} onPhotoError={(sessionId, message) => { if (!revisionPhotoSession.isCurrent(sessionId)) return; setEditErrors((current) => ({ ...current, form: message })); notify(message); }} onChange={setEditField} onClose={() => { if (!editSaving) { editDialogOpenRef.current = false; editDraftDirtyRef.current = false; invalidateRevisionPhotoSession(); setEditOpen(false); } }} onSave={() => void saveProductDetails()} />}
 
     </div>
   );
@@ -2159,7 +2297,7 @@ function longRunningAnalysisState(
   return isFresh(activityUpdatedAt) && isFresh(workerLastSeenAt) ? "connected" : "attention";
 }
 
-function RegistrationActivityPage({ activities, activityState, aiRuntime, snapshotGeneratedAt, displayProducts, loading, filter, onFilterChange, onRefresh, onOpenProduct, onRetryProduct, onRecoverAnalysis, onNewProduct, onExternalActions }: {
+function RegistrationActivityPage({ activities, activityState, aiRuntime, snapshotGeneratedAt, displayProducts, loading, filter, onFilterChange, onRefresh, onOpenProduct, onRetryProduct, onRecoverAnalysis, onStopActivity, onNewProduct, onExternalActions }: {
   activities: OperationsSnapshot["registrationActivities"];
   activityState: NonNullable<OperationsSnapshot["registrationActivityState"]>;
   aiRuntime: OperationsSnapshot["aiRuntime"];
@@ -2172,11 +2310,14 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
   onOpenProduct: (product: DisplayProduct) => void;
   onRetryProduct: (product: DisplayProduct) => void;
   onRecoverAnalysis: (activity: RegistrationActivity) => Promise<void>;
+  onStopActivity: (activity: RegistrationActivity) => Promise<void>;
   onNewProduct: () => void;
   onExternalActions: () => void;
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [recoveringActivityId, setRecoveringActivityId] = useState("");
+  const [stoppingActivityId, setStoppingActivityId] = useState("");
+  const [expandedActivityId, setExpandedActivityId] = useState("");
   const productMap = useMemo(() => new Map(displayProducts.map((product) => [product.sourceId, product])), [displayProducts]);
   const filtered = activities.filter((activity) => registrationActivityMatchesFilter(activity, filter));
   const counts = {
@@ -2199,6 +2340,12 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
     try { await onRecoverAnalysis(activity); } finally { setRecoveringActivityId(""); }
   };
 
+  const stopActivity = async (activity: RegistrationActivity) => {
+    if (stoppingActivityId) return;
+    setStoppingActivityId(activity.id);
+    try { await onStopActivity(activity); } finally { setStoppingActivityId(""); }
+  };
+
   return <div className="page-stack registration-activity-page">
     <section className="registration-activity-hero">
       <div><span className="eyebrow dark"><Activity size={14} /> LIVE REGISTRATION LEDGER</span><h2>여러 상품의 등록을 동시에 확인하세요.</h2><p>AI 분석 시작부터 채널별 완료·거절까지 운영 원장 기준의 상태와 실제 경과 시간을 표시합니다.</p></div>
@@ -2210,11 +2357,11 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
         ["active", "현재 처리 중", counts.active],
         ["ready", "등록 준비", counts.ready],
         ["completed", "완료", counts.completed],
-        ["failed", "오류 전체", counts.failed],
+        ["failed", "오류 · 중지", counts.failed],
         ["blocked", "외부 권한 대기", counts.blocked],
       ] as const).map(([value, label, count]) => <button type="button" className={filter === value ? "active" : ""} onClick={() => onFilterChange(value)} key={value}><span>{label}</span><b>{count}</b></button>)}
     </section>
-    {filter === "failed" && <section className="panel registration-filter-context"><b>오류 집계 기준</b><p>대시보드의 등록·분석 재시도 수는 재시도 가능한 채널 대상과 AI 분석 작업 기준입니다. 이 탭은 이미지 재제작·상품 수정 실패까지 작업 카드 단위로 함께 표시합니다.</p></section>}
+    {filter === "failed" && <section className="panel registration-filter-context"><b>오류·중지 집계 기준</b><p>대시보드의 등록·분석 재시도 수는 재시도 가능한 채널 대상과 AI 분석 작업 기준입니다. 이 탭은 이미지 재제작·상품 수정 실패와 관리자가 안전하게 중지한 AI 작업을 카드 단위로 함께 표시합니다.</p></section>}
     {activityState === "unavailable" ? <section className="panel registration-empty" role="alert"><AlertCircle size={28} /><b>등록 진행 이력을 불러오지 못했습니다.</b><small>다른 운영 데이터와 기존 알림 기준은 유지했습니다. 잠시 후 다시 확인하거나 직접 재시도해 주세요.</small><button type="button" className="credential-secondary" onClick={() => void refresh()} disabled={refreshing}>{refreshing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{refreshing ? "다시 확인 중" : "등록 이력 다시 확인"}</button></section>
       : loading && activities.length === 0 ? <section className="panel registration-empty"><LoaderCircle className="spin" size={28} /><b>등록 이력을 불러오는 중입니다.</b></section>
       : filtered.length > 0 ? <section className="registration-card-grid">{filtered.map((activity) => {
@@ -2222,7 +2369,9 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
         const product = activity.productId ? productMap.get(activity.productId) : undefined;
         const recoveryJobId = recoverableRegistrationActivityJobId(activity);
         const isActive = isRegistrationActivityRunning(activity.status);
+        const expanded = isActive && expandedActivityId === activity.id;
         const isImageOperation = isRegistrationImageActivity(activity);
+        const isCancelled = isCancelledRegistrationActivity(activity);
         const longAnalysis = longRunningAnalysisState(activity, aiRuntime, snapshotGeneratedAt);
         const displayStatusLabel = registrationActivityDisplayStatusLabel(activity);
         const imageFailureActionLabel = activity.status === "failed" && activity.id.startsWith("asset:")
@@ -2236,20 +2385,23 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
           ? "30분 넘게 분석 중이며 최근 작업 신호와 AI 작업자 연결이 확인됩니다. 완료 시점은 추정하지 않습니다."
           : longAnalysis === "attention"
             ? "30분 넘게 새 작업 신호 또는 AI 작업자 연결이 확인되지 않습니다. 새로고침 후 작업자를 점검해 주세요."
+          : isCancelled
+          ? "관리자가 중지한 AI 작업입니다. 외부 채널 전송은 시작하지 않았고 기존 입력으로 다시 실행할 수 있습니다."
           : isImageOperation
           ? activity.status === "completed" ? "중앙 상품 이미지 작업이 완료되었습니다."
             : activity.status === "failed" ? "기존 상품과 판매채널 연결을 유지했습니다."
               : "AI 이미지 작업을 처리 중입니다."
           : status.detail;
-        return <article className={`panel registration-card ${activity.status}`} key={activity.id}>
-          <header><span className={`registration-status ${activity.status}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}>{longAnalysis === "attention" ? <AlertTriangle size={14} /> : longAnalysis === "connected" ? <Activity size={14} /> : isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}{longAnalysis === "connected" ? "장기 분석 진행 중 · 작업자 연결됨" : longAnalysis === "attention" ? "장기 대기 · AI 작업자 확인 필요" : displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
-          <div className="registration-product"><div>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</div><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></div>
+        return <article className={`panel registration-card ${activity.status}${isCancelled ? " cancelled" : ""}`} key={activity.id}>
+          <header><span className={`registration-status ${activity.status}${isCancelled ? " cancelled" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}>{longAnalysis === "attention" ? <AlertTriangle size={14} /> : longAnalysis === "connected" ? <Activity size={14} /> : isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : isCancelled ? <Square size={14} /> : <AlertCircle size={14} />}{longAnalysis === "connected" ? "장기 분석 진행 중 · 작업자 연결됨" : longAnalysis === "attention" ? "장기 대기 · AI 작업자 확인 필요" : displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
+          {isActive ? <button type="button" className="registration-card-inspect" aria-expanded={expanded} aria-controls={`registration-live-${activity.id}`} onClick={() => setExpandedActivityId((current) => current === activity.id ? "" : activity.id)}><span className="registration-product"><span>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</span><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></span><span className="registration-inspect-label">{expanded ? "상태 접기" : "실시간 상태 보기"}<ChevronDown size={14} /></span></button> : <div className="registration-product"><div>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</div><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></div>}
           <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{recoveryJobId ? "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {longAnalysis ? "실제 lease를 읽을 수 없어 완료 여부는 추정하지 않습니다." : progress.label}</small></div>
           <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
           <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">권한 {activity.blockedCount}</b></div>
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
+          {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} 실시간 작업 상태`}><header><span><Activity size={14} /><b>현재 작업 상태</b></span><em>10초마다 운영 원장 갱신</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl>{activity.channels.length > 0 ? <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div> : <p>{statusDetail} {progress.label}</p>}</section>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{recoveryJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : "기존 입력으로 AI 분석 재개"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !recoveryJobId ? <span /> : null}</footer>
+          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{recoveryJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : "기존 입력으로 AI 분석 재개"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !recoveryJobId ? <span /> : null}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;
@@ -2398,7 +2550,6 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const historyState = isRecord(window.history.state) ? window.history.state : {};
     const params = new URLSearchParams({ view: "publishing" });
     if (initialProduct?.id) params.set("productId", initialProduct.id);
-    window.sessionStorage.setItem("sellerpilot:last-view:v1", "publishing");
     window.history.replaceState(
       { ...historyState, view: "publishing", ...(initialProduct?.id ? { productId: initialProduct.id } : {}) },
       "",
@@ -3765,8 +3916,10 @@ type AiRecoveryNotificationEvent = {
   kind: "expired" | "failed";
 };
 
-function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>; userEmail: string }) {
+function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin }: { onLogout: () => Promise<void>; onIdleLogout: () => Promise<void>; userEmail: string; userId: string; freshLogin: boolean }) {
   const [view, setView] = useState<View>("overview");
+  const viewRef = useRef<View>("overview");
+  const workspaceRestoreReadyRef = useRef(false);
   const [registrationActivityFilter, setRegistrationActivityFilter] = useState<RegistrationActivityFilter>("all");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -3809,6 +3962,92 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const workerConnected = Boolean(workerLastSeenAt && operations.data?.generatedAt
     && Date.parse(operations.data.generatedAt) - Date.parse(workerLastSeenAt) < 10 * 60_000);
   const meta = pageMeta[view];
+  const workspaceRouteScope = userWorkspaceStorageKey(userId) ?? "";
+
+  useEffect(() => { viewRef.current = view; }, [view]);
+
+  const rememberWorkspaceView = useCallback((nextView: View) => {
+    try {
+      persistWorkspaceView(userId, nextView);
+    } catch {
+      // Private browsing or a full local storage quota must not block navigation.
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    const key = userWorkspaceStorageKey(userId);
+    if (!key) return;
+    workspaceRestoreReadyRef.current = false;
+    let logoutStarted = false;
+    let lastActivityAt = Date.now();
+    let lastPersistedAt = 0;
+    try {
+      const restored = parseUserWorkspaceRecord({
+        raw: window.localStorage.getItem(key),
+        userId,
+        now: lastActivityAt,
+        idleTimeoutMs: workspaceIdleTimeoutMs,
+      });
+      if (restored.record) lastActivityAt = restored.record.lastActivityAt;
+      if (restored.status === "expired" && !freshLogin) {
+        logoutStarted = true;
+        window.setTimeout(() => void onIdleLogout(), 0);
+        return;
+      }
+    } catch {
+      lastActivityAt = Date.now();
+    }
+
+    const persistActivity = (now: number) => {
+      lastActivityAt = now;
+      if (!workspaceRestoreReadyRef.current) return;
+      if (now - lastPersistedAt < 5_000) return;
+      lastPersistedAt = now;
+      try { persistWorkspaceView(userId, viewRef.current, now); } catch { /* Storage failure does not disable idle enforcement. */ }
+    };
+    const synchronizeStoredActivity = (raw: string | null, now = Date.now()) => {
+      try {
+        const restored = parseUserWorkspaceRecord({
+          raw,
+          userId,
+          now,
+          idleTimeoutMs: workspaceIdleTimeoutMs,
+        });
+        if (restored.record) lastActivityAt = Math.max(lastActivityAt, restored.record.lastActivityAt);
+      } catch {
+        // Malformed or unavailable storage never revives a session.
+      }
+    };
+    const expireIfIdle = () => {
+      synchronizeStoredActivity(window.localStorage.getItem(key));
+      if (logoutStarted || Date.now() - lastActivityAt < workspaceIdleTimeoutMs) return false;
+      logoutStarted = true;
+      void onIdleLogout();
+      return true;
+    };
+    const markActivity = () => {
+      if (expireIfIdle()) return;
+      persistActivity(Date.now());
+    };
+    persistActivity(Date.now());
+    const activityEvents: Array<keyof WindowEventMap> = ["pointerdown", "keydown", "touchstart", "wheel"];
+    for (const eventName of activityEvents) window.addEventListener(eventName, markActivity, { passive: true });
+    const visibilityChanged = () => {
+      if (document.visibilityState === "visible") markActivity();
+    };
+    const storageChanged = (event: StorageEvent) => {
+      if (event.storageArea === window.localStorage && event.key === key) synchronizeStoredActivity(event.newValue);
+    };
+    document.addEventListener("visibilitychange", visibilityChanged);
+    window.addEventListener("storage", storageChanged);
+    const interval = window.setInterval(expireIfIdle, 15_000);
+    return () => {
+      window.clearInterval(interval);
+      for (const eventName of activityEvents) window.removeEventListener(eventName, markActivity);
+      document.removeEventListener("visibilitychange", visibilityChanged);
+      window.removeEventListener("storage", storageChanged);
+    };
+  }, [freshLogin, onIdleLogout, userId]);
 
   useEffect(() => {
     if (!notificationsOpen) return;
@@ -4178,9 +4417,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     }
     setView(next);
     setRegistrationActivityFilter(nextRegistrationStatus);
-    window.sessionStorage.setItem("sellerpilot:last-view:v1", next);
+    rememberWorkspaceView(next);
     const params = new URLSearchParams({ view: next });
-    const historyState: Record<string, unknown> = { view: next };
+    const historyState: Record<string, unknown> = { view: next, workspaceScope: workspaceRouteScope };
     if (next === "registration-activity" && nextRegistrationStatus !== "all") {
       params.set("status", nextRegistrationStatus);
       historyState.status = nextRegistrationStatus;
@@ -4188,7 +4427,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     window.history.pushState(historyState, "", `${window.location.pathname}?${params.toString()}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+  }, [rememberWorkspaceView, workspaceRouteScope]);
 
   const openCs = useCallback((channel: CsChannelFilter = "all", status: CsStatusFilter = "open", ticketId: string | null = null) => {
     const nextChannel = csChannelFilterFromValue(channel);
@@ -4198,15 +4437,15 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     setTargetedSearch(null);
     setCsRoute({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
     setView("cs");
-    window.sessionStorage.setItem("sellerpilot:last-view:v1", "cs");
+    rememberWorkspaceView("cs");
     window.history.pushState(
-      { view: "cs", channel: nextChannel, status: nextStatus, ...(nextTicketId ? { ticketId: nextTicketId } : {}) },
+      { view: "cs", workspaceScope: workspaceRouteScope, channel: nextChannel, status: nextStatus, ...(nextTicketId ? { ticketId: nextTicketId } : {}) },
       "",
       `${window.location.pathname}?${params.toString()}`,
     );
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+  }, [rememberWorkspaceView, workspaceRouteScope]);
 
   const changeCsRoute = useCallback((channel: CsChannelFilter, status: CsStatusFilter, ticketId: string | null = null) => {
     const nextChannel = csChannelFilterFromValue(channel);
@@ -4215,11 +4454,11 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     const params = csNavigationParams({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
     setCsRoute({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
     window.history.replaceState(
-      { view: "cs", channel: nextChannel, status: nextStatus, ...(nextTicketId ? { ticketId: nextTicketId } : {}) },
+      { view: "cs", workspaceScope: workspaceRouteScope, channel: nextChannel, status: nextStatus, ...(nextTicketId ? { ticketId: nextTicketId } : {}) },
       "",
       `${window.location.pathname}?${params.toString()}`,
     );
-  }, []);
+  }, [workspaceRouteScope]);
 
   const changeRegistrationActivityFilter = useCallback((requestedStatus: RegistrationActivityFilter) => {
     const nextStatus = registrationActivityFilterFromValue(requestedStatus);
@@ -4229,11 +4468,11 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     if (nextStatus === "all") params.delete("status");
     else params.set("status", nextStatus);
     const currentState = isRecord(window.history.state) ? window.history.state : {};
-    const nextState: Record<string, unknown> = { ...currentState, view: "registration-activity" };
+    const nextState: Record<string, unknown> = { ...currentState, view: "registration-activity", workspaceScope: workspaceRouteScope };
     delete nextState.status;
     if (nextStatus !== "all") nextState.status = nextStatus;
     window.history.replaceState(nextState, "", `${window.location.pathname}?${params.toString()}`);
-  }, []);
+  }, [workspaceRouteScope]);
 
   const recoverFailedProductAnalysis = useCallback(async (activity: RegistrationActivity) => {
     const jobId = recoverableRegistrationActivityJobId(activity);
@@ -4293,47 +4532,108 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     navigate("publishing");
   }, [authenticatedOperationsFetch, navigate, notify]);
 
+  const stopRegistrationActivity = useCallback(async (activity: RegistrationActivity) => {
+    if (!isRegistrationActivityRunning(activity.status)) {
+      notify("이미 종료된 등록 작업입니다.");
+      return;
+    }
+    if (activity.status === "publishing") {
+      notify("판매채널 전송이 이미 시작된 작업은 원격 중복·불일치를 막기 위해 강제로 회수하지 않습니다. 카드의 채널별 현재 상태를 확인해 주세요.");
+      return;
+    }
+    let jobId = controllableRegistrationActivityJobId(activity);
+    if (!jobId && activity.productId) {
+      const controller = new AbortController();
+      const scope = createPageAbortScope([controller.signal], 15_000, "중지할 AI 작업 확인 시간이 초과되었습니다.");
+      try {
+        const { response, payload } = await authenticatedJsonWithDeadline<{
+          commerceOperations?: { aiJobId?: string | null };
+          message?: string;
+        }>(
+          authenticatedOperationsFetch,
+          `/api/admin/products/${activity.productId}/publish-context`,
+          { cache: "no-store" },
+          scope.signal,
+          15_000,
+          {},
+        );
+        if (!response.ok) throw new Error(payload.message ?? "상품의 AI 작업을 확인하지 못했습니다.");
+        const candidate = payload.commerceOperations?.aiJobId;
+        if (typeof candidate === "string" && PRODUCT_RESEARCH_JOB_ID_PATTERN.test(candidate)) jobId = candidate;
+      } catch (error) {
+        notify(error instanceof Error ? error.message : "중지할 AI 작업을 확인하지 못했습니다.");
+        return;
+      } finally {
+        scope.dispose();
+      }
+    }
+    if (!jobId) {
+      notify("이 카드에서 안전하게 중지할 수 있는 AI 작업 ID를 확인하지 못했습니다. 외부 채널 요청은 변경하지 않았습니다.");
+      return;
+    }
+    try {
+      const response = await authenticatedOperationsFetch("/api/admin/ai-jobs", {
+        method: "POST",
+        body: JSON.stringify({ jobId, action: "cancel" }),
+      });
+      const payload = await response.json().catch(() => ({ message: "작업 중지 응답을 읽지 못했습니다." })) as { message?: string };
+      if (!response.ok && response.status !== 409) throw new Error(payload.message ?? "AI 등록 작업을 중지하지 못했습니다.");
+      notify(response.ok ? "AI 작업 중지 요청을 접수했습니다. 작업자는 다음 lease 확인에서 안전하게 종료하며 외부 판매채널에는 새 전송을 시작하지 않습니다." : payload.message ?? "작업이 이미 종료되어 현재 상태를 다시 불러옵니다.");
+      await refreshOperations();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "AI 등록 작업을 중지하지 못했습니다.");
+    }
+  }, [authenticatedOperationsFetch, notify, refreshOperations]);
+
   const editExternalActionProduct = useCallback((action: OperationsSnapshot["externalActions"][number]) => {
     setPublishingProduct({ id: action.productId, name: action.productName });
     setPublishingSession((current) => current + 1);
     setView("publishing");
-    window.sessionStorage.setItem("sellerpilot:last-view:v1", "publishing");
-    window.history.pushState({ view: "publishing", productId: action.productId }, "", `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(action.productId)}`);
+    rememberWorkspaceView("publishing");
+    window.history.pushState({ view: "publishing", workspaceScope: workspaceRouteScope, productId: action.productId }, "", `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(action.productId)}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+  }, [rememberWorkspaceView, workspaceRouteScope]);
 
   const retryProductPublishing = useCallback((product: DisplayProduct) => {
     setPublishingProduct({ id: product.sourceId, name: product.name });
     setPublishingSession((current) => current + 1);
     setView("publishing");
-    window.sessionStorage.setItem("sellerpilot:last-view:v1", "publishing");
-    window.history.pushState({ view: "publishing", productId: product.sourceId }, "", `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(product.sourceId)}`);
+    rememberWorkspaceView("publishing");
+    window.history.pushState({ view: "publishing", workspaceScope: workspaceRouteScope, productId: product.sourceId }, "", `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(product.sourceId)}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+  }, [rememberWorkspaceView, workspaceRouteScope]);
 
   useEffect(() => {
     const initialParams = new URLSearchParams(window.location.search);
     const initialState = isRecord(window.history.state) ? window.history.state : {};
-    const initialCandidate = typeof initialState.view === "string"
+    const initialRouteCandidate = typeof initialState.view === "string"
       ? initialState.view
-      : initialParams.get("view") ?? window.sessionStorage.getItem("sellerpilot:last-view:v1") ?? "overview";
-    const initialView = initialCandidate in pageMeta ? initialCandidate as View : "overview";
-    const initialProductId = typeof initialState.productId === "string" ? initialState.productId : initialParams.get("productId");
-    const initialCsChannel = initialView === "cs"
+      : initialParams.get("view");
+    const storedCandidate = storedWorkspaceView(userId);
+    const initialRouteBelongsToUser = initialState.workspaceScope === workspaceRouteScope;
+    const initialCandidate = freshLogin && !initialRouteBelongsToUser
+      ? storedCandidate ?? "overview"
+      : initialRouteCandidate ?? storedCandidate ?? "overview";
+    const routeProductId = typeof initialState.productId === "string" ? initialState.productId : initialParams.get("productId");
+    const initialProductId = freshLogin && !initialRouteBelongsToUser ? null : routeProductId;
+    const validatedInitialView = initialCandidate in pageMeta ? initialCandidate as View : "overview";
+    const initialView = validatedInitialView === "product-detail" && !initialProductId ? "products" : validatedInitialView;
+    const initialCsChannel = initialView === "cs" && initialRouteBelongsToUser
       ? csChannelFilterFromValue(typeof initialState.channel === "string" ? initialState.channel : initialParams.get("channel"))
       : "all";
-    const initialCsStatus = initialView === "cs"
+    const initialCsStatus = initialView === "cs" && initialRouteBelongsToUser
       ? csStatusFilterFromValue(typeof initialState.status === "string" ? initialState.status : initialParams.get("status"))
       : "open";
-    const initialCsTicketId = initialView === "cs"
+    const initialCsTicketId = initialView === "cs" && initialRouteBelongsToUser
       ? (typeof initialState.ticketId === "string" ? initialState.ticketId : initialParams.get("ticketId"))
       : null;
-    const initialRegistrationStatus = initialView === "registration-activity"
+    const initialRegistrationStatus = initialView === "registration-activity" && initialRouteBelongsToUser
       ? registrationActivityFilterFromValue(initialParams.get("status") ?? (typeof initialState.status === "string" ? initialState.status : null))
       : "all";
-    if (!initialParams.has("view")) initialParams.set("view", initialView);
+    initialParams.set("view", initialView);
+    if (initialView !== "product-detail" && initialView !== "publishing") initialParams.delete("productId");
     if (initialView !== "registration-activity" || initialRegistrationStatus === "all") initialParams.delete("status");
     else initialParams.set("status", initialRegistrationStatus);
     if (initialView === "cs") {
@@ -4347,8 +4647,11 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       initialParams.delete("channel");
       initialParams.delete("ticketId");
     }
-    window.sessionStorage.setItem("sellerpilot:last-view:v1", initialView);
-    const nextInitialState: Record<string, unknown> = { ...initialState, view: initialView, ...(initialProductId ? { productId: initialProductId } : {}) };
+    viewRef.current = initialView;
+    rememberWorkspaceView(initialView);
+    workspaceRestoreReadyRef.current = true;
+    const nextInitialState: Record<string, unknown> = { ...initialState, view: initialView, workspaceScope: workspaceRouteScope, ...(initialProductId ? { productId: initialProductId } : {}) };
+    if (!initialProductId) delete nextInitialState.productId;
     delete nextInitialState.status;
     delete nextInitialState.channel;
     delete nextInitialState.ticketId;
@@ -4371,21 +4674,27 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     const onPopState = (event: PopStateEvent) => {
       const state = isRecord(event.state) ? event.state : {};
       const params = new URLSearchParams(window.location.search);
-      const candidate = typeof state.view === "string"
+      const routeCandidate = typeof state.view === "string"
         ? state.view
-        : params.get("view") ?? window.sessionStorage.getItem("sellerpilot:last-view:v1") ?? "overview";
-      const nextView = candidate in pageMeta ? candidate as View : "overview";
-      const productId = typeof state.productId === "string" ? state.productId : params.get("productId");
-      const nextCsChannel = nextView === "cs"
+        : params.get("view");
+      const routeBelongsToUser = state.workspaceScope === workspaceRouteScope;
+      const candidate = routeBelongsToUser
+        ? routeCandidate ?? storedWorkspaceView(userId) ?? "overview"
+        : storedWorkspaceView(userId) ?? "overview";
+      const routeProductId = typeof state.productId === "string" ? state.productId : params.get("productId");
+      const productId = routeBelongsToUser ? routeProductId : null;
+      const validatedView = candidate in pageMeta ? candidate as View : "overview";
+      const nextView = validatedView === "product-detail" && !productId ? "products" : validatedView;
+      const nextCsChannel = nextView === "cs" && routeBelongsToUser
         ? csChannelFilterFromValue(typeof state.channel === "string" ? state.channel : params.get("channel"))
         : "all";
-      const nextCsStatus = nextView === "cs"
+      const nextCsStatus = nextView === "cs" && routeBelongsToUser
         ? csStatusFilterFromValue(typeof state.status === "string" ? state.status : params.get("status"))
         : "open";
-      const nextCsTicketId = nextView === "cs"
+      const nextCsTicketId = nextView === "cs" && routeBelongsToUser
         ? (typeof state.ticketId === "string" ? state.ticketId : params.get("ticketId"))
         : null;
-      const nextRegistrationStatus = nextView === "registration-activity"
+      const nextRegistrationStatus = nextView === "registration-activity" && routeBelongsToUser
         ? registrationActivityFilterFromValue(params.get("status") ?? (typeof state.status === "string" ? state.status : null))
         : "all";
       if (nextView === "product-detail" && productId) {
@@ -4396,7 +4705,27 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
         const product = displayProductsRef.current.find((item) => item.sourceId === productId);
         if (product) setPublishingProduct({ id: product.sourceId, name: product.name });
       }
-      window.sessionStorage.setItem("sellerpilot:last-view:v1", nextView);
+      params.set("view", nextView);
+      if (nextView !== "product-detail" && nextView !== "publishing") params.delete("productId");
+      if (nextView !== "registration-activity" && nextView !== "cs") params.delete("status");
+      if (nextView !== "cs") {
+        params.delete("channel");
+        params.delete("ticketId");
+      }
+      window.history.replaceState(
+        {
+          view: nextView,
+          workspaceScope: workspaceRouteScope,
+          ...(productId ? { productId } : {}),
+          ...(nextView === "cs" && nextCsChannel !== "all" ? { channel: nextCsChannel } : {}),
+          ...(nextView === "cs" && nextCsStatus !== "open" ? { status: nextCsStatus } : {}),
+          ...(nextView === "cs" && nextCsTicketId ? { ticketId: nextCsTicketId } : {}),
+          ...(nextView === "registration-activity" && nextRegistrationStatus !== "all" ? { status: nextRegistrationStatus } : {}),
+        },
+        "",
+        `${window.location.pathname}?${params.toString()}`,
+      );
+      rememberWorkspaceView(nextView);
       setView(nextView);
       setRegistrationActivityFilter(nextRegistrationStatus);
       setCsRoute({ channel: nextCsChannel, status: nextCsStatus, ticketId: nextCsTicketId });
@@ -4409,14 +4738,19 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       window.removeEventListener("popstate", onPopState);
     };
   // Browser entries are app views; live product data is read through a ref.
-  }, []);
+  }, [freshLogin, rememberWorkspaceView, userId, workspaceRouteScope]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requestedView = params.get("view") as View | null;
-    if (!requestedView || !(requestedView in pageMeta)) return;
+    const requestedCandidate = params.get("view") as View | null;
+    if (!requestedCandidate || !(requestedCandidate in pageMeta)) return;
     const orderId = params.get("orderId");
     const productId = params.get("productId");
+    const requestedView = requestedCandidate === "product-detail" && !productId ? "products" : requestedCandidate;
+    if (requestedView !== requestedCandidate) {
+      params.set("view", requestedView);
+      params.delete("productId");
+    }
     const ticketId = requestedView === "cs" ? params.get("ticketId") : null;
     const requestedCsChannel = requestedView === "cs" ? csChannelFilterFromValue(params.get("channel")) : "all";
     const requestedCsStatus = requestedView === "cs" ? csStatusFilterFromValue(params.get("status")) : "open";
@@ -4433,7 +4767,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       setView(requestedView);
       setRegistrationActivityFilter(requestedRegistrationStatus);
       setCsRoute({ channel: requestedCsChannel, status: requestedCsStatus, ticketId });
-      window.sessionStorage.setItem("sellerpilot:last-view:v1", requestedView);
+      rememberWorkspaceView(requestedView);
       if (requestedView === "orders" && orderId) {
         const order = operations.data?.orders.find((item) => item.id === orderId);
         if (order) setTargetedSearch({ kind: "order", id: order.externalOrderId, query: order.externalOrderId });
@@ -4453,6 +4787,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       window.history.replaceState(
         {
           view: requestedView,
+          workspaceScope: workspaceRouteScope,
           ...(productId ? { productId } : {}),
           ...(requestedView === "cs" && requestedCsChannel !== "all" ? { channel: requestedCsChannel } : {}),
           ...(requestedView === "cs" && requestedCsStatus !== "open" ? { status: requestedCsStatus } : {}),
@@ -4464,16 +4799,16 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
       );
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [displayTickets, operations.data]);
+  }, [displayTickets, operations.data, rememberWorkspaceView, workspaceRouteScope]);
 
   const openProductDetails = useCallback((product: DisplayProduct) => {
     setSelectedProduct(product);
     setView("product-detail");
-    window.sessionStorage.setItem("sellerpilot:last-view:v1", "product-detail");
-    window.history.pushState({ view: "product-detail", productId: product.sourceId }, "", `${window.location.pathname}?view=product-detail&productId=${encodeURIComponent(product.sourceId)}`);
+    rememberWorkspaceView("product-detail");
+    window.history.pushState({ view: "product-detail", workspaceScope: workspaceRouteScope, productId: product.sourceId }, "", `${window.location.pathname}?view=product-detail&productId=${encodeURIComponent(product.sourceId)}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }, []);
+  }, [rememberWorkspaceView, workspaceRouteScope]);
 
   const notificationItems = useMemo(() => [
     { key: `low-stock:${operationSummary?.lowStockCount ?? 0}`, title: `재고주의 상품 ${operationSummary?.lowStockCount ?? 0}건`, detail: "운영 원장 실재고 기준", view: "products" as View, registrationStatus: undefined, csStatus: undefined, tone: "danger", icon: Box },
@@ -4514,9 +4849,9 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenCs={(status) => openCs("all", status)} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
-    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={recoverFailedProductAnalysis} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
+    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={recoverFailedProductAnalysis} onStopActivity={stopRegistrationActivity} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
     if (view === "product-detail") return activeSelectedProduct
-      ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} onBack={() => window.history.back()} onEditChannels={() => retryProductPublishing(activeSelectedProduct)} onOpenActivity={() => navigate("registration-activity")} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
+      ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} marginScenarios={operations.data?.marginScenarios ?? []} onBack={() => window.history.back()} onEditChannels={() => retryProductPublishing(activeSelectedProduct)} onOpenActivity={() => navigate("registration-activity")} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
       : <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>{operations.state === "loading" ? "상품 상세정보를 불러오는 중입니다." : "상품을 찾지 못했습니다."}</b><small>{operations.state === "loading" ? "운영 상품 원장을 확인하고 있습니다." : "상품 목록에서 다시 선택해 주세요."}</small>{operations.state !== "loading" ? <button type="button" className="ghost-button" onClick={() => navigate("products")}>상품 목록으로</button> : null}</div>;
     if (view === "remediation") return <ExternalActionsPage actions={operations.data?.externalActions ?? []} onEdit={editExternalActionProduct} onConnections={() => navigate("connections")} />;
     if (view === "publishing") return <PublishingPage key={`${publishingProduct?.id ?? "new-product"}-${publishingSession}`} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} onStartAnother={() => navigate("publishing")} onShowHistory={() => navigate("registration-activity")} />;
@@ -4525,6 +4860,7 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
     if (view === "cs") return <CsPage notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
     if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} syncStatus={operations.data?.syncStatus ?? []} onOpenCs={(channel) => openCs(csChannelFilterFromValue(channel), "open")} />;
+    if (view === "platform-usage") return <PlatformUsagePage />;
     if (view === "templates") return <TemplatesPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;
     if (view === "notifications") return <NotificationsPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;
     if (view === "acceptance") return <AcceptanceChecklistPage />;
@@ -4598,8 +4934,11 @@ function DashboardShell({ onLogout, userEmail }: { onLogout: () => Promise<void>
 
 export default function Home() {
   const [accessState, setAccessState] = useState<AdminAccessState>(isSupabaseConfigured ? "checking" : "signed_out");
+  const [userId, setUserId] = useState("");
   const [userEmail, setUserEmail] = useState("");
+  const [freshLoginUserId, setFreshLoginUserId] = useState("");
   const [accessErrorMessage, setAccessErrorMessage] = useState("");
+  const [loginNotice, setLoginNotice] = useState("");
   const [accessRetryKey, setAccessRetryKey] = useState(0);
   const [accountSwitchCleanup, setAccountSwitchCleanup] = useState<AccountSwitchCleanupState>("idle");
   const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "shopee" | "lazada" | "ebay"; code: string; state: string; shopId?: string; mainAccountId?: string } | null>(null);
@@ -4657,6 +4996,7 @@ export default function Home() {
         }
         if (!latestSession.session) {
           verifiedAdminUserId = "";
+          setUserId("");
           setUserEmail("");
           setAccessErrorMessage("");
           setAccessState("signed_out");
@@ -4672,6 +5012,7 @@ export default function Home() {
           return;
         }
         setUserEmail(session.user.email ?? "");
+        setUserId(session.user.id);
         setAccessErrorMessage("");
         if (verificationState === "admin") {
           verifiedAdminUserId = session.user.id;
@@ -4689,6 +5030,7 @@ export default function Home() {
       const generation = ++verificationGeneration;
       if (!session) {
         verifiedAdminUserId = "";
+        setUserId("");
         setUserEmail("");
         setAccessErrorMessage("");
         setAccessState("signed_out");
@@ -4712,7 +5054,9 @@ export default function Home() {
       if (event === "SIGNED_OUT") {
         verificationGeneration += 1;
         verifiedAdminUserId = "";
+        setUserId("");
         setUserEmail("");
+        setFreshLoginUserId("");
         setAccessErrorMessage("");
         setAccessState("signed_out");
         return;
@@ -4767,8 +5111,10 @@ export default function Home() {
       : loginId === "sample"
         ? "sample@couplit-official.test"
         : email.trim();
-    const { error } = await createSupabaseClient().auth.signInWithPassword({ email: normalizedEmail, password });
+    const { data, error } = await createSupabaseClient().auth.signInWithPassword({ email: normalizedEmail, password });
     if (error) return "아이디 또는 비밀번호를 확인해 주세요.";
+    setFreshLoginUserId(data.user.id);
+    setLoginNotice("");
     return null;
   };
 
@@ -4780,14 +5126,19 @@ export default function Home() {
     return error ? "재설정 메일을 보내지 못했습니다. 관리자에게 문의해 주세요." : null;
   };
 
-  const logout = async () => {
+  const logout = useCallback(async (options?: { preserveWorkspaceRoute?: boolean }) => {
     if (accountSwitchingRef.current) return;
+    if (!options?.preserveWorkspaceRoute) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
     accountSwitchingRef.current = true;
     setAccountSwitchCleanup("clearing");
     const showSignedOutImmediately = () => {
       setAccessErrorMessage("");
       setAccessState("signed_out");
+      setUserId("");
       setUserEmail("");
+      setFreshLoginUserId("");
     };
     if (!isSupabaseConfigured) {
       showSignedOutImmediately();
@@ -4804,7 +5155,12 @@ export default function Home() {
     } catch {
       setAccountSwitchCleanup("failed");
     }
-  };
+  }, []);
+
+  const idleLogout = useCallback(async () => {
+    setLoginNotice(`입력이 ${Math.round(workspaceIdleTimeoutMs / 60_000)}분 동안 없어 안전하게 로그아웃했습니다. 다시 로그인하면 마지막 작업 화면을 엽니다.`);
+    await logout({ preserveWorkspaceRoute: true });
+  }, [logout]);
 
   const retryAccountSwitchCleanup = () => {
     accountSwitchingRef.current = false;
@@ -4821,6 +5177,6 @@ export default function Home() {
     return <main className="login-shell"><section className="login-form-panel"><div className="login-card"><AlertTriangle size={26} /><h2>관리자 권한이 필요합니다.</h2><p>{userEmail || "현재 계정"}은 SellerPilot 관리자 명단에 없습니다. Supabase의 <b>sellerpilot_private.admin_users</b> 승인 후 접근할 수 있습니다.</p><button type="button" className="login-submit" onClick={() => void logout()}><LogOut size={16} />다른 계정으로 로그인</button></div></section></main>;
   }
   return accessState === "admin"
-    ? <><DashboardShell onLogout={logout} userEmail={userEmail} />{oauthNotice && <div className="toast"><KeyRound size={18} /><span>{oauthNotice}</span><button onClick={() => setOauthNotice("")}><X size={14} /></button></div>}</>
-    : <LoginScreen onLogin={login} onPasswordReset={resetPassword} sessionCleanupState={accountSwitchCleanup} onRetrySessionCleanup={retryAccountSwitchCleanup} />;
+    ? <><DashboardShell onLogout={logout} onIdleLogout={idleLogout} userEmail={userEmail} userId={userId} freshLogin={Boolean(userId && freshLoginUserId === userId)} />{oauthNotice && <div className="toast"><KeyRound size={18} /><span>{oauthNotice}</span><button onClick={() => setOauthNotice("")}><X size={14} /></button></div>}</>
+    : <LoginScreen onLogin={login} onPasswordReset={resetPassword} notice={loginNotice} sessionCleanupState={accountSwitchCleanup} onRetrySessionCleanup={retryAccountSwitchCleanup} />;
 }
