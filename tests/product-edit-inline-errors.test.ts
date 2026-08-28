@@ -82,3 +82,22 @@ test("invalid edit data still produces field-specific schema paths and sold-out 
   ]) assert.equal(paths.has(field), true, `${field} must remain a structured schema issue`);
   assert.equal(paths.has("stock"), false, "sold-out stock remains valid in the edit schema");
 });
+
+test("product margin edit warnings use listing channels and disclose unavailable baselines", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const detailStart = page.indexOf("function ProductDetailPage");
+  const detailEnd = page.indexOf("type UploadedPhoto", detailStart);
+  const detailPage = page.slice(detailStart, detailEnd);
+  const dialogStart = page.indexOf("function ProductDetailEditDialog");
+  const dialog = page.slice(dialogStart, detailStart);
+
+  assert.match(detailPage, /productMarginListingChannelKeys\(\{/);
+  assert.match(detailPage, /remoteListings\.map\(\(listing\) => listing\.channel\)/);
+  assert.match(detailPage, /commerceOperations\.listings\.map\(\(listing\) => listing\.channel\)/);
+  assert.match(detailPage, /listingChannelCodes: product\.channels/);
+  assert.match(detailPage, /edits: detailChannelKeys\.map\(\(channelKey\)/);
+  assert.doesNotMatch(detailPage, /const channelKeys = \[\.\.\.new Set\(productMarginData\.scenarios/);
+  assert.match(dialog, /unavailableMarginEvaluations\.map/);
+  assert.match(dialog, /수수료·이익을 임의로 채우지 않았습니다/);
+  assert.match(dialog, /productMarginUnavailableReasonMessage\(evaluation\.reason\)/);
+});

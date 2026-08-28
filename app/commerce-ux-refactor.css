@@ -2476,6 +2476,12 @@ button {
 .product-margin-loss-warning > article > span { display: grid; min-width: 0; gap: 2px; }
 .product-margin-loss-warning > article b { color: #71343a; font-size: 9px; }
 .product-margin-loss-warning > article small { color: #895d63; font-size: 8px; line-height: 1.45; overflow-wrap: anywhere; }
+.product-margin-baseline-unavailable { border-color: #ead6a7; background: #fff8e8; }
+.product-margin-baseline-unavailable > header { color: #8a621f; }
+.product-margin-baseline-unavailable > header small { color: #806b43; }
+.product-margin-baseline-unavailable > article { border-top-color: #eadfbe; }
+.product-margin-baseline-unavailable > article b { color: #71551f; }
+.product-margin-baseline-unavailable > article small { color: #806b43; }
 .product-margin-unavailable { grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 6px; margin: 0; border-radius: 9px; padding: 8px 10px; color: #8a621f; background: #fff8e8; font-size: 8px; line-height: 1.5; }
 .product-margin-unavailable svg { flex: 0 0 auto; margin-top: 1px; }
 .login-session-notice { display: flex; align-items: flex-start; gap: 7px; margin: 0; border: 1px solid #cfdcf0; border-radius: 9px; padding: 9px 10px; color: #365e91; background: #f3f7fc; font-size: 9px; line-height: 1.5; }

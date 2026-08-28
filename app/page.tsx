@@ -125,6 +125,7 @@ import {
   editedProductSellingPriceKrw,
   evaluateProductMarginLossWarnings,
   latestProductMarginScenario,
+  productMarginListingChannelKeys,
   type ProductMarginWarningEvaluation,
 } from "../lib/product-margin-loss-warning";
 import {
@@ -410,6 +411,7 @@ const ticketChannelCodes: Record<string, string> = {
 
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
 const enabledSalesChannelCount = Object.values(channels).filter((channel) => channel.enabled).length;
+const productMarginSalesChannels = activeChannelKeys.map((key) => ({ key, code: channels[key].letter }));
 type DisplayProduct = {
   id: string;
   sourceId: string;
@@ -1223,6 +1225,23 @@ function productEditDraft(product: DisplayProduct, fields: Record<string, unknow
   };
 }
 
+type ProductMarginUnavailableEvaluation = Extract<ProductMarginWarningEvaluation, { status: "unavailable" }>;
+
+function productMarginUnavailableReasonMessage(reason: ProductMarginUnavailableEvaluation["reason"]) {
+  switch (reason) {
+    case "missing-baseline":
+      return "저장된 마진 기준이 없어 손익을 계산하지 않았습니다. 마진 계산에서 이 상품·채널 기준을 먼저 저장해 주세요.";
+    case "invalid-baseline":
+      return "저장된 기준 판매가·원가·배송비 또는 손익 결과가 불완전해 계산하지 않았습니다.";
+    case "missing-or-invalid-fees":
+      return "저장된 플랫폼·결제·세금·광고·적립 수수료 중 누락되거나 잘못된 값이 있어 계산하지 않았습니다.";
+    case "inconsistent-baseline":
+      return "저장된 입력값과 손익 결과가 서로 일치하지 않아 계산하지 않았습니다.";
+    case "invalid-edit":
+      return "현재 판매가·통화·배송비를 저장 기준에 안전하게 적용할 수 없어 계산하지 않았습니다.";
+  }
+}
+
 function ProductDetailEditDialog({ photoSessionId, draft, errors, saving, photosProcessing, revisionPhotoCount, marginEvaluations, marginCoverageMessage, onRevisionPhotosChange, onPhotosProcessingChange, onPhotoError, onChange, onClose, onSave }: {
   photoSessionId: number;
   draft: ProductIntakeDraft;
@@ -1248,7 +1267,9 @@ function ProductDetailEditDialog({ photoSessionId, draft, errors, saving, photos
     ? <small id={fieldErrorId(field)}>{errors[field]}</small>
     : null;
   const marginWarnings = marginEvaluations.filter((evaluation) => evaluation.status === "ready" && evaluation.warning);
-  const unavailableMarginCount = marginEvaluations.filter((evaluation) => evaluation.status === "unavailable").length;
+  const unavailableMarginEvaluations = marginEvaluations.filter(
+    (evaluation): evaluation is ProductMarginUnavailableEvaluation => evaluation.status === "unavailable",
+  );
   return <div className="product-edit-overlay"><section className="product-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="product-edit-title">
     <header><div><span className="panel-kicker">FULL PRODUCT EDIT</span><h2 id="product-edit-title">등록 상품 전체 수정</h2><p>텍스트·가격·재고뿐 아니라 원본·대표·역할별 사진을 교체할 수 있습니다. 사진 수정은 같은 상품 원장에서 AI 상세를 다시 만들며 외부 채널에는 자동 게시하지 않습니다.</p></div><button type="button" aria-label="상품 수정 닫기" onClick={onClose} disabled={saving}><X size={18} /></button></header>
     <div className="product-edit-form manual-field-grid">
@@ -1269,7 +1290,7 @@ function ProductDetailEditDialog({ photoSessionId, draft, errors, saving, photos
       <div className="intake-group-heading"><span>03</span><div><b>가격·재고</b><small>가격은 중앙 원장에, 변경된 실재고는 연결 채널에도 반영합니다.</small></div></div>
       {marginWarnings.length > 0 ? <section className="product-margin-loss-warning" role="alert"><header><AlertTriangle size={17} /><span><b>저장한 마진 기준보다 손해가 발생합니다.</b><small>현재 판매가·배송비를 저장할 때 영향을 받는 채널입니다.</small></span></header>{marginWarnings.map((evaluation) => evaluation.status === "ready" && evaluation.warning ? <article key={evaluation.channelKey}><ChannelMark code={channels[evaluation.channelKey as ChannelKey]?.letter ?? evaluation.channelKey} size="sm" /><span><b>{channels[evaluation.channelKey as ChannelKey]?.name ?? evaluation.channelKey}</b><small>{evaluation.warning.kind === "negative-margin" ? `예상 순손실 ${formatCompactWon(Math.abs(evaluation.edited.profit))}` : `저장 기준보다 예상 이익 ${formatCompactWon(evaluation.warning.profitLossKrw)} 감소`} · 마진 {evaluation.edited.margin.toFixed(1)}% ({evaluation.warning.marginDeltaPercentPoints.toFixed(1)}%p)</small></span></article> : null)}</section> : null}
       {marginCoverageMessage ? <p className="product-margin-unavailable" role="status"><AlertCircle size={14} />{marginCoverageMessage}</p> : null}
-      {unavailableMarginCount > 0 ? <p className="product-margin-unavailable"><AlertCircle size={14} />저장 시나리오의 수수료·결과가 불완전한 {unavailableMarginCount}개 채널은 손익을 추정하지 않았습니다. 마진 계산에서 해당 채널 값을 먼저 저장해 주세요.</p> : null}
+      {unavailableMarginEvaluations.length > 0 ? <section className="product-margin-loss-warning product-margin-baseline-unavailable" role="status"><header><AlertCircle size={17} /><span><b>손익을 확인할 수 없는 판매 채널이 있습니다.</b><small>기준이 없거나 검증되지 않은 채널은 수수료·이익을 임의로 채우지 않았습니다.</small></span></header>{unavailableMarginEvaluations.map((evaluation) => <article key={evaluation.channelKey}><ChannelMark code={channels[evaluation.channelKey as ChannelKey]?.letter ?? evaluation.channelKey} size="sm" /><span><b>{channels[evaluation.channelKey as ChannelKey]?.name ?? evaluation.channelKey}</b><small>{productMarginUnavailableReasonMessage(evaluation.reason)}</small></span></article>)}</section> : null}
       <label className={errors.sellingPrice ? "field-error" : ""}><span>판매가</span><input {...fieldErrorAttributes("sellingPrice")} type="number" min="0.01" step="0.01" value={draft.sellingPrice} onChange={(event) => onChange("sellingPrice", Number(event.target.value))} />{fieldError("sellingPrice")}</label>
       <label className={errors.currency ? "field-error" : ""}><span>통화</span><select {...fieldErrorAttributes("currency")} value={draft.currency} onChange={(event) => onChange("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option key={value}>{value}</option>)}</select>{fieldError("currency")}</label>
       <label className={errors.stock ? "field-error" : ""}><span>실재고</span><input {...fieldErrorAttributes("stock")} type="number" min="0" step="1" value={draft.stock} onChange={(event) => onChange("stock", Number(event.target.value))} />{fieldError("stock")}</label>
@@ -1338,15 +1359,20 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
     coverage: "loading",
     message: "상품별 최신 마진 기준을 확인 중입니다. 확인이 끝나기 전에는 누락 채널을 안전하다고 판단하지 않습니다.",
   }));
+  const detailChannelKeys = useMemo(() => productMarginListingChannelKeys({
+    supportedChannels: productMarginSalesChannels,
+    listingChannelKeys: [
+      ...remoteListings.map((listing) => listing.channel),
+      ...commerceOperations.listings.map((listing) => listing.channel),
+    ],
+    listingChannelCodes: product.channels,
+  }), [commerceOperations.listings, product.channels, remoteListings]);
   const marginEvaluations = useMemo(() => {
     if (!editDraft) return [];
-    const channelKeys = [...new Set(productMarginData.scenarios
-      .filter((scenario) => scenario.productId === product.sourceId)
-      .map((scenario) => scenario.channelKey))];
     return evaluateProductMarginLossWarnings({
       productId: product.sourceId,
       scenarios: productMarginData.scenarios,
-      edits: channelKeys.map((channelKey) => {
+      edits: detailChannelKeys.map((channelKey) => {
         const scenario = latestProductMarginScenario(product.sourceId, channelKey, productMarginData.scenarios);
         return {
           channelKey,
@@ -1359,7 +1385,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
         };
       }),
     });
-  }, [editDraft, product.sourceId, productMarginData.scenarios]);
+  }, [detailChannelKeys, editDraft, product.sourceId, productMarginData.scenarios]);
   const detailRegenerationControllerRef = useRef<AbortController | null>(null);
   const revisionSubmissionControllerRef = useRef<AbortController | null>(null);
   const revisionCompletionAnnouncedRef = useRef(new Set<string>());
@@ -2096,11 +2122,6 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
     }
   };
 
-  const detailChannelKeys = useMemo(() => {
-    const listed = new Set(remoteListings.map((listing) => listing.channel));
-    const publishedCodes = new Set(product.channels);
-    return activeChannelKeys.filter((key) => listed.has(key) || publishedCodes.has(channels[key].letter));
-  }, [product.channels, remoteListings]);
   const manualFieldRows = [
     ["브랜드", detailFieldValue(detailContext.manualFields.brandName)],
     ["제조사·공급처", detailFieldValue(detailContext.manualFields.manufacturer)],

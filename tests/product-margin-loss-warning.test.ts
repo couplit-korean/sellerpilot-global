@@ -4,6 +4,7 @@ import {
   editedProductSellingPriceKrw,
   evaluateProductMarginLossWarning,
   evaluateProductMarginLossWarnings,
+  productMarginListingChannelKeys,
   type ProductMarginScenarioLike,
 } from "../lib/product-margin-loss-warning.ts";
 
@@ -105,6 +106,34 @@ test("keeps evaluations isolated by product and channel", () => {
   assert.equal(evaluations[1]?.scenarioId, "shopee-baseline");
   assert.equal(evaluations[2]?.status, "unavailable");
   assert.equal(evaluations[2]?.reason, "missing-baseline");
+});
+
+test("evaluates every listed product channel when complete latest coverage returns zero scenarios", () => {
+  const channelKeys = productMarginListingChannelKeys({
+    supportedChannels: [
+      { key: "qoo10", code: "Q" },
+      { key: "shopee", code: "S" },
+      { key: "lazada", code: "L" },
+      { key: "coupang", code: "C" },
+    ],
+    listingChannelKeys: ["lazada", "qoo10", "lazada", "unsupported"],
+    listingChannelCodes: ["S", "unknown"],
+  });
+  const evaluations = evaluateProductMarginLossWarnings({
+    productId: "product-a",
+    scenarios: [],
+    edits: channelKeys.map((channelKey) => ({
+      channelKey,
+      sellingPrice: 19_000,
+      localShipping: 700,
+    })),
+  });
+
+  assert.deepEqual(channelKeys, ["qoo10", "shopee", "lazada"]);
+  assert.deepEqual(evaluations.map((evaluation) => evaluation.channelKey), channelKeys);
+  assert.deepEqual(evaluations.map((evaluation) => evaluation.status), ["unavailable", "unavailable", "unavailable"]);
+  assert.deepEqual(evaluations.map((evaluation) => evaluation.reason), ["missing-baseline", "missing-baseline", "missing-baseline"]);
+  assert.ok(evaluations.every((evaluation) => evaluation.warning === null));
 });
 
 test("does not invent a known channel fee when the saved scenario omits one", () => {

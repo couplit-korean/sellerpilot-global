@@ -139,6 +139,27 @@ function scenarioTimestamp(scenario: ProductMarginScenarioLike) {
   return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
 }
 
+export function productMarginListingChannelKeys<ChannelKey extends string>({
+  supportedChannels,
+  listingChannelKeys,
+  listingChannelCodes,
+}: {
+  supportedChannels: readonly { key: ChannelKey; code: string }[];
+  listingChannelKeys: readonly string[];
+  listingChannelCodes: readonly string[];
+}) {
+  const listedKeys = new Set(listingChannelKeys);
+  const listedCodes = new Set(listingChannelCodes);
+  const includedKeys = new Set<ChannelKey>();
+  const channelKeys: ChannelKey[] = [];
+  for (const { key, code } of supportedChannels) {
+    if (includedKeys.has(key) || !listedKeys.has(key) && !listedCodes.has(code)) continue;
+    includedKeys.add(key);
+    channelKeys.push(key);
+  }
+  return channelKeys;
+}
+
 export function latestProductMarginScenario(
   productId: string,
   channelKey: string,
