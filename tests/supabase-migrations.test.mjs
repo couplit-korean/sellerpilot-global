@@ -298,6 +298,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828004000_persist_terminal_image_failure_context.sql",
       "20260828123100_allow_validated_animated_gif_detail_block.sql",
       "20260828130000_isolate_product_ai_worker_claim.sql",
+      "20260828135000_server_product_research_runtime.sql",
+      "20260828135100_fix_server_product_research_secret_guard.sql",
       LEGACY_SCOPE_RETIREMENT_MIGRATION,
     ]);
     for (const name of migrationNames) {

@@ -1,9 +1,11 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
 import { productResearchJobRequestSchema } from "../../../../lib/ai-cli-contract";
 import { createProductResearchJobWithLegacyFallback } from "../../../../lib/product-research-rpc-compatibility";
+import { wakeServerProductResearchAfterResponse } from "../../../../lib/server-product-research-runtime";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const admin = await authenticateAdminRequest(request);
@@ -24,14 +26,15 @@ export async function POST(request: Request) {
     },
   });
   if (error) {
-    return NextResponse.json({ message: "CLI 상품정보 수집 작업을 등록하지 못했습니다." }, { status: 500 });
+    return NextResponse.json({ message: "AI 상품정보 수집 작업을 등록하지 못했습니다." }, { status: 500 });
   }
 
+  after(wakeServerProductResearchAfterResponse);
   return NextResponse.json({
     mode: "cli-research",
     jobId: parsed.data.jobId,
     status: "queued",
-    message: "ChatGPT CLI가 상품 링크와 설명을 조사하고 있습니다.",
+    message: "AI가 상품 링크와 설명을 조사하고 있습니다.",
   }, {
     status: 202,
     headers: { "cache-control": "no-store, max-age=0" },

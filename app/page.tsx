@@ -2576,6 +2576,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     while (Date.now() < deadline) {
       if (signal.aborted) throw signal.reason ?? new DOMException("상품정보 확인이 취소되었습니다.", "AbortError");
       let response: Response;
+      let payload: {
+        status?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        result?: ProductResearchResult | null;
+        error?: string | null;
+        message?: string;
+      };
       const pollScope = createPageAbortScope([signal], 15_000, "상품정보 상태 확인 시간이 초과되었습니다.");
       try {
         response = await fetch(`/api/ai/jobs/${jobId}`, {
@@ -2583,6 +2589,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           cache: "no-store",
           signal: pollScope.signal,
         });
+        payload = await waitForAbortablePromise(
+          response.json().catch(() => ({ message: "AI 상품정보 상태를 읽지 못했습니다." })),
+          pollScope.signal,
+        ) as typeof payload;
         consecutiveFailures = 0;
       } catch {
         if (signal.aborted) throw signal.reason ?? new DOMException("상품정보 확인이 취소되었습니다.", "AbortError");
@@ -2593,14 +2603,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       } finally {
         pollScope.dispose();
       }
-      const payload = await response.json().catch(() => ({ message: "CLI 상품정보 상태를 읽지 못했습니다." })) as {
-        status?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
-        result?: ProductResearchResult | null;
-        error?: string | null;
-        message?: string;
-      };
       if (response.status === 404) throw new ProductResearchNotFoundError();
-      if (!response.ok) throw new Error(payload.message ?? "CLI 상품정보 작업 상태를 확인하지 못했습니다.");
+      if (!response.ok) throw new Error(payload.message ?? "AI 상품정보 작업 상태를 확인하지 못했습니다.");
       if (payload.status === "succeeded") {
         if (payload.result?.mode === "cli-research") return payload.result;
         throw new ProductResearchTerminalError("완료된 상품정보 작업의 결과 형식을 확인하지 못했습니다. 새 작업으로 다시 시도해 주세요.");
@@ -2610,7 +2614,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       }
       await abortableBrowserDelay(3_000, signal);
     }
-    throw new Error("CLI 상품정보 수집 대기시간이 20분을 초과했습니다.");
+    throw new Error("AI 상품정보 수집 대기시간이 20분을 초과했습니다.");
   };
 
   const runCompetitorResearchPolling = (
@@ -2705,7 +2709,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       const { data: sessionData } = await waitForAbortablePromise(createSupabaseClient().auth.getSession(), sessionScope.signal)
         .finally(() => sessionScope.dispose());
       const accessToken = sessionData.session?.access_token;
-      if (!accessToken) throw new Error("CLI 상품정보 수집을 실행하려면 관리자 로그인이 필요합니다.");
+      if (!accessToken) throw new Error("AI 상품정보 수집을 실행하려면 관리자 로그인이 필요합니다.");
       if (productResearchController.signal.aborted) throw productResearchController.signal.reason;
       let pendingResearch: PendingProductResearch | null = null;
       try {
@@ -2725,6 +2729,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         notify("이전에 접수한 상품정보 작업 상태를 다시 확인합니다.");
       } else {
         let response: Response | null = null;
+        let queued: { jobId?: string; message?: string } | null = null;
         const enqueueScope = createPageAbortScope([productResearchController.signal], 30_000, "상품정보 분석 접수 시간이 초과되었습니다.");
         try {
           response = await fetch("/api/ai/product-research", {
@@ -2734,19 +2739,22 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
             body: JSON.stringify({ jobId, researchInput }),
           });
+          queued = await waitForAbortablePromise(
+            response.json().catch(() => ({ message: "AI 상품정보 요청 응답을 읽지 못했습니다." })),
+            enqueueScope.signal,
+          ) as { jobId?: string; message?: string };
         } catch {
           if (productResearchController.signal.aborted) throw productResearchController.signal.reason;
         } finally {
           enqueueScope.dispose();
         }
-        if (response) {
-          const queued = await response.json().catch(() => ({ message: "CLI 상품정보 요청 응답을 읽지 못했습니다." })) as { jobId?: string; message?: string };
+        if (response && queued) {
           if (response.status < 500 && (!response.ok || queued.jobId !== jobId)) {
             window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
-            throw new Error(queued.message || "CLI 상품정보 수집 작업을 등록하지 못했습니다.");
+            throw new Error(queued.message || "AI 상품정보 수집 작업을 등록하지 못했습니다.");
           }
         }
-        notify("ChatGPT CLI가 링크 본문과 입력 텍스트에서 상세 상품정보를 조사하고 있습니다.");
+        notify("AI가 링크 본문과 입력 텍스트에서 상세 상품정보를 조사하고 있습니다.");
       }
       const result = await waitForProductResearch(jobId, accessToken, productResearchController.signal);
       window.sessionStorage.removeItem(PRODUCT_RESEARCH_PENDING_KEY);
@@ -2798,7 +2806,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (productResearchController.signal.aborted
           || productResearchGenerationRef.current !== productResearchGeneration
           || !publishingMountedRef.current) return;
-      const message = error instanceof Error ? error.message : "CLI 상품정보 수집 중 오류가 발생했습니다.";
+      const message = error instanceof Error ? error.message : "AI 상품정보 수집 중 오류가 발생했습니다.";
       setUploadError(message);
       notify(message);
     } finally {

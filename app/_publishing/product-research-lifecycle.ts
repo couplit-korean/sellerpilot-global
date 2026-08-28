@@ -1,13 +1,13 @@
 export class ProductResearchNotFoundError extends Error {
   constructor() {
-    super("요청한 CLI 상품정보 작업을 찾지 못했습니다.");
+    super("요청한 AI 상품정보 작업을 찾지 못했습니다.");
     this.name = "ProductResearchNotFoundError";
   }
 }
 
 export class ProductResearchTerminalError extends Error {
   constructor(message?: string | null) {
-    super(message?.trim() || "CLI 상품정보 수집이 완료되지 못했습니다.");
+    super(message?.trim() || "AI 상품정보 수집이 완료되지 못했습니다.");
     this.name = "ProductResearchTerminalError";
   }
 }

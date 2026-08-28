@@ -371,6 +371,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /activityState === "unavailable"[\s\S]*등록 진행 이력을 불러오지 못했습니다/);
   assert.match(page, /const enqueueScope = createPageAbortScope\(\[productResearchController\.signal\], 30_000/);
   assert.match(page, /signal: enqueueScope\.signal/);
+  assert.match(page, /response\.json\(\)\.catch\(\(\) => \(\{ message: "AI 상품정보 요청 응답을 읽지 못했습니다\." \}\)\)[\s\S]{0,100}enqueueScope\.signal/);
+  assert.match(page, /response\.json\(\)\.catch\(\(\) => \(\{ message: "AI 상품정보 상태를 읽지 못했습니다\." \}\)\)[\s\S]{0,100}pollScope\.signal/);
   assert.doesNotMatch(page, /AbortSignal\.timeout\(/);
   assert.match(page, /withPromiseTimeout\(new Promise<\{ width: number; height: number \}>[\s\S]*?15_000[\s\S]*?모바일에서 이미지를 읽는 시간이 너무 오래 걸렸습니다/);
   assert.match(page, /settleWithConcurrency\(candidates, 3,/);

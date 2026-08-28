@@ -144,7 +144,10 @@ function ipv6Value(address: string) {
   if (halves.length === 1 && left.length !== 8) return null;
   const groups = [...left, ...Array.from({ length: missing }, () => "0"), ...right];
   if (groups.length !== 8) return null;
-  return groups.reduce((value, group) => (value << 16n) | BigInt(Number.parseInt(group, 16)), 0n);
+  return groups.reduce(
+    (value, group) => (value << BigInt(16)) | BigInt(Number.parseInt(group, 16)),
+    BigInt(0),
+  );
 }
 
 function ipv6InPrefix(value: bigint, network: string, prefixLength: number) {

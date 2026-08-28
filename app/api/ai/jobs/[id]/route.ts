@@ -1,5 +1,9 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
+import { wakeServerProductResearchAfterResponse } from "../../../../../lib/server-product-research-runtime";
+
+export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const admin = await authenticateAdminRequest(request);
@@ -7,9 +11,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
   const { id } = await context.params;
   const { data, error } = await admin.userClient.rpc("sellerpilot_get_ai_job", { p_id: id });
-  if (error) return NextResponse.json({ message: "CLI 작업 상태를 읽지 못했습니다." }, { status: 500 });
+  if (error) return NextResponse.json({ message: "AI 작업 상태를 읽지 못했습니다." }, { status: 500 });
   if (!data || typeof data !== "object" || Array.isArray(data)) {
-    return NextResponse.json({ message: "요청한 CLI 작업을 찾지 못했습니다." }, { status: 404 });
+    return NextResponse.json({ message: "요청한 AI 작업을 찾지 못했습니다." }, { status: 404 });
   }
 
   const job = data as Record<string, unknown>;
@@ -31,6 +35,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       .createSignedUrl(result.hero_storage_path, 60 * 60);
     result.heroUrl = signed?.signedUrl ?? null;
     delete result.hero_storage_path;
+  }
+
+  if (job.kind === "product_research"
+      && (job.status === "queued" || job.status === "running")) {
+    after(wakeServerProductResearchAfterResponse);
   }
 
   return NextResponse.json({ ...job, result }, {
