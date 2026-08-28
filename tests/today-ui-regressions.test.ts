@@ -578,3 +578,24 @@ test("390px registration, CS, preview, and notification surfaces keep their mobi
   assert.match(mobileStyles, /\.toast-copy\s*\{[\s\S]{0,80}?min-width:\s*0/);
   assert.match(mobileStyles, /\.toast-copy > b,[\s\S]{0,80}?\.toast-copy > span\s*\{[\s\S]{0,80}?overflow-wrap:\s*anywhere/);
 });
+
+test("Fold secondary controls keep a real 44px touch target", async () => {
+  const [page, acceptance, globals, mobileStyles, interactionStyles] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/acceptance-checklist.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/interaction-layers.css", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(page, /<label className="search-field"><Search[\s\S]{0,220}aria-label="주문 검색"/);
+  assert.match(page, /<label className="order-checkbox-control"><input type="checkbox" aria-label="출고 가능 주문 전체 선택"/);
+  assert.match(page, /<label className="bulk-order-selection"><input type="checkbox" aria-label="출고 가능 주문 전체 선택"/);
+  assert.match(globals, /\.order-checkbox-control \{[^}]*width: 44px;[^}]*height: 44px/);
+  assert.match(globals, /\.bulk-order-selection \{[^}]*min-height: 44px/);
+  assert.match(mobileStyles, /\.bulk-order-bar > \.bulk-order-selection \{\s*width: 100%;\s*\}/);
+  assert.match(acceptance, /aria-label="인수 항목 검색"[\s\S]{0,180}placeholder="REQ-ID 또는 기능 검색"/);
+  assert.match(mobileStyles, /\.acceptance-search input \{\s*min-height: 44px;\s*\}/);
+  assert.match(interactionStyles, /\.template-form-grid \.template-default,[\s\S]{0,100}\.master-notification-toggle \{\s*min-height: 44px;\s*\}/);
+  assert.match(interactionStyles, /\.master-notification-toggle input \{\s*flex: 0 0 auto;\s*\}/);
+});

@@ -829,7 +829,7 @@
     padding: 10px;
   }
 
-  .bulk-order-bar > span:first-child {
+  .bulk-order-bar > .bulk-order-selection {
     width: 100%;
   }
 
@@ -1401,6 +1401,10 @@
   .acceptance-toolbar label {
     width: 100%;
     min-width: 0;
+    min-height: 44px;
+  }
+
+  .acceptance-search input {
     min-height: 44px;
   }
 

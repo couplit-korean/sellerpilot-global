@@ -99,7 +99,7 @@ export function AcceptanceChecklistPage() {
 
       <section className="panel acceptance-panel">
         <div className="acceptance-toolbar">
-          <div className="acceptance-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="REQ-ID 또는 기능 검색" /></div>
+          <div className="acceptance-search"><Search size={16} /><input aria-label="인수 항목 검색" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="REQ-ID 또는 기능 검색" /></div>
           <label><Filter size={15} /><select value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)} aria-label="검수 상태 필터"><option value="all">모든 상태</option><option value="partial">부분 구현</option><option value="not_started">미구현</option><option value="external">외부 준비 필요</option><option value="pending">실검수 대기</option><option value="done">개발 완료</option><option value="passed">실검수 완료</option><option value="excluded">범위 제외</option></select><ChevronDown size={14} /></label>
           <span>{visibleCount}개 표시</span>
         </div>

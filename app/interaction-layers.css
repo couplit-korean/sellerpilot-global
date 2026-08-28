@@ -534,6 +534,15 @@ body:has(.notification-popover) .mobile-push-chip {
     flex-basis: 44px;
   }
 
+  .template-form-grid .template-default,
+  .master-notification-toggle {
+    min-height: 44px;
+  }
+
+  .master-notification-toggle input {
+    flex: 0 0 auto;
+  }
+
   .mobile-push-gate.browser {
     max-height: calc(100dvh - var(--mobile-nav-clearance, 78px) - var(--mobile-toast-lane-height, 0px) - 16px);
     overflow-x: hidden;
