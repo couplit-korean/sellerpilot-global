@@ -3,6 +3,13 @@
  * Imported last so every operations page shares the same responsive contract.
  */
 
+/* The mobile navigation is rendered on every page, but must stay out of the
+   desktop flow. Its interactive layout is enabled in the phone breakpoint
+   below, in this imported stylesheet rather than a legacy visual layer. */
+.mobile-bottom-nav {
+  display: none;
+}
+
 /* Keep the fixed desktop sidebar through tablet widths, but stack the two
    dashboard controls once their intrinsic widths no longer fit beside it. */
 @media (min-width: 901px) and (max-width: 1200px) {
@@ -2893,5 +2900,79 @@
 
   .topbar-title h1 {
     max-width: min(18vw, 68px);
+  }
+}
+
+/* Persistent phone navigation shared by dashboard, product, registration,
+   order and CS workspaces. Keep content and transient notices above the iOS
+   and Android safe area instead of covering the last controls on the page. */
+@media (max-width: 720px) {
+  .app-content {
+    padding-bottom: calc(86px + env(safe-area-inset-bottom));
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    z-index: 110;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    min-height: calc(64px + env(safe-area-inset-bottom));
+    padding: 6px max(4px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+    border-top: 1px solid var(--line);
+    background: rgb(255 255 255 / 96%);
+    box-shadow: 0 -10px 30px rgb(24 50 36 / 12%);
+    backdrop-filter: blur(16px);
+  }
+
+  .mobile-bottom-nav button {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    min-height: 52px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px 2px;
+    border: 0;
+    color: #758078;
+    background: transparent;
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .mobile-bottom-nav button.active {
+    color: var(--primary);
+  }
+
+  .mobile-bottom-nav button.active::before {
+    position: absolute;
+    top: -6px;
+    width: 28px;
+    height: 3px;
+    border-radius: 0 0 4px 4px;
+    background: currentColor;
+    content: "";
+  }
+
+  .toast {
+    bottom: calc(78px + env(safe-area-inset-bottom));
+  }
+
+  .analysis-start-bar {
+    bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+
+  .mobile-push-gate.browser,
+  .mobile-push-chip {
+    z-index: 120;
+    bottom: calc(78px + env(safe-area-inset-bottom));
+  }
+
+  .mobile-push-gate.standalone {
+    z-index: 130;
   }
 }
