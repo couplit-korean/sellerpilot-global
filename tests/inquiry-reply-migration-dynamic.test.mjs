@@ -12,12 +12,13 @@ const EBAY_ASQ_SITE_MIGRATION = "20260828144000_bind_ebay_asq_marketplace_and_ra
 const SERVERLESS_CS_MIGRATIONS = new Set([
   "20260828145600_serverless_cs_claim_and_runtime_bootstrap.sql",
   "20260828145700_schedule_serverless_cs_wakeup.sql",
-  // These three forward migrations rewrite the dedicated serverless claimant
+  // These four forward migrations depend on the dedicated serverless runtime
   // created by 145600. This fixture intentionally excludes that runtime, so
-  // its dependent prioritization/Qoo10 extensions must be excluded as a unit.
+  // its dependent prioritization, gates, and cleanup stay excluded as a unit.
   "20260828145900_durable_korean_inquiry_history_backfill.sql",
   "20260828145950_extend_serverless_cs_qoo10_inquiries.sql",
   "20260828200500_gate_serverless_static_egress.sql",
+  "20260828201500_cleanup_static_egress_queued_reads.sql",
 ]);
 
 const supabaseCompatibilityLayer = String.raw`

@@ -421,6 +421,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       LEGACY_SCOPE_RETIREMENT_MIGRATION,
       "20260828194000_fix_serverless_cs_vault_lookup_lock.sql",
       "20260828200500_gate_serverless_static_egress.sql",
+      "20260828201500_cleanup_static_egress_queued_reads.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -7343,15 +7344,18 @@ test("Korean inquiry history runs are durable, idempotent, paginated, retryable,
   }
 });
 
-test("static egress gate blocks fixed-IP claims and truthfully closes queued Korean history reads", async () => {
+test("static egress gate closes history and pre-gate reads without touching replies or commerce ledgers", async () => {
   const db = new PGlite();
   const migrationName = "20260828200500_gate_serverless_static_egress.sql";
+  const cleanupMigrationName = "20260828201500_cleanup_static_egress_queued_reads.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
     const migrationNames = (await readdir(migrationUrl))
-      .filter((name) => name.endsWith(".sql") && name !== migrationName)
+      .filter((name) => name.endsWith(".sql")
+        && name !== migrationName
+        && name !== cleanupMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -7369,8 +7373,9 @@ test("static egress gate blocks fixed-IP claims and truthfully closes queued Kor
       [ADMIN_ID],
     );
     await setClaims(db);
+    const credentials = new Map();
     for (const channel of ["coupang", "smartstore"]) {
-      await scalar(
+      const credentialId = await scalar(
         db,
         `select public.sellerpilot_rotate_credential(
           $1, 'production', $2::jsonb,
@@ -7385,6 +7390,7 @@ test("static egress gate blocks fixed-IP claims and truthfully closes queued Kor
           token_type: "SELF",
         })],
       );
+      credentials.set(channel, credentialId);
     }
     const activeRun = await scalar(
       db,
@@ -7392,6 +7398,97 @@ test("static egress gate blocks fixed-IP claims and truthfully closes queued Kor
     );
     assert.equal(activeRun.status, "queued");
     assert.equal(activeRun.queuedJobs, 27);
+
+    const untouchedProductId = await scalar(
+      db,
+      `insert into sellerpilot_private.products (
+         owner_id, external_code, sku, name, status, on_hand, cost_krw, demo
+       ) values ($1, 'STATIC-EGRESS-PRODUCT', 'STATIC-EGRESS-SKU',
+         '고정 egress 정리 비대상 상품', 'active', 3, 1000, false)
+       returning id`,
+      [ADMIN_ID],
+    );
+    const untouchedOrderId = await scalar(
+      db,
+      `insert into sellerpilot_private.commerce_orders (
+         owner_id, external_order_id, channel_key, customer_name, product_id,
+         product_name, quantity, amount, currency, amount_krw, status, ordered_at, demo
+       ) values ($1, 'STATIC-EGRESS-ORDER', 'coupang', '정리 비대상 주문 고객', $2,
+         '고정 egress 정리 비대상 상품', 1, 3000, 'KRW', 3000, 'paid', now(), false)
+       returning id`,
+      [ADMIN_ID, untouchedProductId],
+    );
+
+    await setClaims(db, "service_role");
+    const coupangCredentialId = credentials.get("coupang");
+    assert.equal(typeof coupangCredentialId, "string");
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_ingest_inquiries(
+          $1, 'coupang', $2::jsonb
+        )`,
+        [coupangCredentialId, JSON.stringify([{
+          externalTicketId: "product:987654321",
+          customerName: "정리 비대상 문의 고객",
+          subject: "정리 비대상 답변",
+          message: "답변 작업은 그대로 남아야 합니다.",
+          status: "waiting",
+          priority: 2,
+          receivedAt: "2026-08-28T00:00:00.000Z",
+        }])],
+      ),
+      1,
+    );
+    const untouchedTicketId = await scalar(
+      db,
+      `select id
+         from sellerpilot_private.support_tickets
+        where owner_id = $1
+          and channel_key = 'coupang'
+          and external_ticket_id = 'product:987654321'`,
+      [ADMIN_ID],
+    );
+    const untouchedReplyJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'coupang', '정리 비대상 답변입니다.', $2::jsonb
+      )`,
+      [untouchedTicketId, JSON.stringify({
+        arguments: {
+          kind: "product",
+          inquiryId: "987654321",
+          reply: "정리 비대상 답변입니다.",
+        },
+      })],
+    );
+    const untaggedRead = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'coupang', 'inquiries.list',
+        '{"periodicKey":"inquiries:pre-gate-untagged-cleanup","arguments":{"kind":"product","query":{"pageNum":1}}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(untaggedRead.status, "queued");
+    const cleanupWorkerId = await scalar(
+      db,
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+       label, token_hash, fingerprint, status, scope, expires_at, created_by
+       ) values ('pre-gate cleanup ownership', $1, '888888888888', 'revoked',
+         'gateway', clock_timestamp() + interval '1 day', $2)
+       returning id`,
+      ["8".repeat(64), ADMIN_ID],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set worker_token_id = $2,
+              claim_token = '88888888-8888-4888-8888-888888888888',
+              lease_expires_at = clock_timestamp() + interval '10 minutes'
+        where id = $1 and status = 'queued'`,
+      [untaggedRead.jobId, cleanupWorkerId],
+    );
+    await setClaims(db);
 
     await db.exec(await readFile(new URL(migrationName, migrationUrl), "utf8"));
     const blocked = await scalar(
@@ -7413,6 +7510,104 @@ test("static egress gate blocks fixed-IP claims and truthfully closes queued Kor
         [activeRun.runId],
       )).rows,
       [{ status: "failed", error_message: "STATIC_EGRESS_REQUIRED", count: 27 }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [untaggedRead.jobId],
+      ),
+      "queued",
+    );
+
+    const cleanupSql = await readFile(new URL(cleanupMigrationName, migrationUrl), "utf8");
+    const historyBeforeCleanup = (await db.query(
+      `select status, blocked_reason, total_jobs, queued_jobs, running_jobs,
+              succeeded_jobs, failed_jobs, completed_at, updated_at
+         from sellerpilot_private.inquiry_history_backfill_runs
+        where id = $1`,
+      [activeRun.runId],
+    )).rows[0];
+    const replyBeforeCleanup = (await db.query(
+      `select status, error_message, worker_token_id, claim_token,
+              lease_expires_at, completed_at, updated_at
+         from sellerpilot_private.channel_gateway_jobs
+        where id = $1`,
+      [untouchedReplyJobId],
+    )).rows[0];
+    const ticketBeforeCleanup = await scalar(
+      db,
+      "select to_jsonb(ticket) from sellerpilot_private.support_tickets ticket where id = $1",
+      [untouchedTicketId],
+    );
+    const productBeforeCleanup = await scalar(
+      db,
+      "select to_jsonb(product) from sellerpilot_private.products product where id = $1",
+      [untouchedProductId],
+    );
+    const orderBeforeCleanup = await scalar(
+      db,
+      "select to_jsonb(orders) from sellerpilot_private.commerce_orders orders where id = $1",
+      [untouchedOrderId],
+    );
+
+    await db.exec(cleanupSql);
+    const cleanedRead = (await db.query(
+      `select status, error_message, worker_token_id, claim_token,
+              lease_expires_at, completed_at, updated_at
+         from sellerpilot_private.channel_gateway_jobs
+        where id = $1`,
+      [untaggedRead.jobId],
+    )).rows[0];
+    assert.equal(cleanedRead.status, "failed");
+    assert.equal(cleanedRead.error_message, "STATIC_EGRESS_REQUIRED");
+    assert.equal(cleanedRead.worker_token_id, null);
+    assert.equal(cleanedRead.claim_token, null);
+    assert.equal(cleanedRead.lease_expires_at, null);
+    assert.ok(cleanedRead.completed_at);
+    assert.deepEqual(
+      (await db.query(
+        `select status, blocked_reason, total_jobs, queued_jobs, running_jobs,
+                succeeded_jobs, failed_jobs, completed_at, updated_at
+           from sellerpilot_private.inquiry_history_backfill_runs
+          where id = $1`,
+        [activeRun.runId],
+      )).rows[0],
+      historyBeforeCleanup,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message, worker_token_id, claim_token,
+                lease_expires_at, completed_at, updated_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [untouchedReplyJobId],
+      )).rows[0],
+      replyBeforeCleanup,
+    );
+    assert.deepEqual(
+      await scalar(db, "select to_jsonb(ticket) from sellerpilot_private.support_tickets ticket where id = $1", [untouchedTicketId]),
+      ticketBeforeCleanup,
+    );
+    assert.deepEqual(
+      await scalar(db, "select to_jsonb(product) from sellerpilot_private.products product where id = $1", [untouchedProductId]),
+      productBeforeCleanup,
+    );
+    assert.deepEqual(
+      await scalar(db, "select to_jsonb(orders) from sellerpilot_private.commerce_orders orders where id = $1", [untouchedOrderId]),
+      orderBeforeCleanup,
+    );
+
+    await db.exec(cleanupSql);
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message, worker_token_id, claim_token,
+                lease_expires_at, completed_at, updated_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [untaggedRead.jobId],
+      )).rows[0],
+      cleanedRead,
     );
     const jobCountBeforeRetry = await scalar(
       db,
@@ -7520,7 +7715,10 @@ test("static egress gate blocks fixed-IP claims and truthfully closes queued Kor
       "select public.sellerpilot_claim_serverless_cs_job($1, 'static-egress/enabled')",
       [serverlessHash],
     );
-    assert.equal(claimed.id, queued.jobId);
+    assert.equal(
+      [untouchedReplyJobId, queued.jobId].includes(claimed.id),
+      true,
+    );
     assert.equal(claimed.channel, "coupang");
   } finally {
     await db.close();
