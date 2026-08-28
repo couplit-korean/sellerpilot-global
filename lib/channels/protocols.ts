@@ -1053,6 +1053,399 @@ export function ebayEnvironment(environment: "sandbox" | "production") {
     : { auth: "https://auth.ebay.com", api: "https://api.ebay.com" };
 }
 
+const ebayTradingSiteIds: Readonly<Record<string, string>> = {
+  EBAY_US: "0",
+  EBAY_CA: "2",
+  EBAY_GB: "3",
+  EBAY_AU: "15",
+  EBAY_AT: "16",
+  EBAY_FR: "71",
+  EBAY_DE: "77",
+  EBAY_IT: "101",
+  EBAY_NL: "146",
+  EBAY_ES: "186",
+  EBAY_CH: "193",
+  EBAY_HK: "201",
+  EBAY_IE: "205",
+  EBAY_MY: "207",
+  EBAY_PH: "211",
+  EBAY_PL: "212",
+  EBAY_SG: "216",
+};
+
+const ebayTradingCalls = new Set(["GetMemberMessages", "AddMemberMessageRTQ"]);
+const EBAY_TRADING_RESPONSE_LIMIT_BYTES = 2_000_000;
+
+export function ebayTradingSiteId(marketplaceId: string) {
+  const normalized = marketplaceId.trim().toUpperCase() || "EBAY_US";
+  const siteId = ebayTradingSiteIds[normalized];
+  if (!siteId) throw new Error("EBAY_TRADING_SITE_UNSUPPORTED");
+  return siteId;
+}
+
+export function ebayTradingXmlEscape(value: string) {
+  return value.replace(/[<>&'"]/g, (character) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    "'": "&apos;",
+    '"': "&quot;",
+  })[character] ?? character);
+}
+
+type EbayXmlNode = {
+  qualifiedName: string;
+  localName: string;
+  children: EbayXmlNode[];
+  textParts: string[];
+};
+
+const EBAY_XML_MAX_DEPTH = 64;
+const EBAY_XML_MAX_NODES = 50_000;
+
+function invalidEbayTradingResponse(): never {
+  throw new Error("EBAY_TRADING_RESPONSE_INVALID");
+}
+
+function validXmlCodePoint(value: number) {
+  return value === 0x09
+    || value === 0x0a
+    || value === 0x0d
+    || (value >= 0x20 && value <= 0xd7ff)
+    || (value >= 0xe000 && value <= 0xfffd)
+    || (value >= 0x10000 && value <= 0x10ffff);
+}
+
+function assertEbayXmlCharacters(value: string) {
+  for (const character of value) {
+    if (!validXmlCodePoint(character.codePointAt(0) ?? 0)) invalidEbayTradingResponse();
+  }
+}
+
+function decodeEbayXmlEntities(value: string) {
+  assertEbayXmlCharacters(value);
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < value.length) {
+    const entityStart = value.indexOf("&", cursor);
+    if (entityStart < 0) {
+      parts.push(value.slice(cursor));
+      break;
+    }
+    parts.push(value.slice(cursor, entityStart));
+    const entityEnd = value.indexOf(";", entityStart + 1);
+    if (entityEnd < 0 || entityEnd - entityStart > 16) invalidEbayTradingResponse();
+    const entity = value.slice(entityStart + 1, entityEnd);
+    const predefined: Readonly<Record<string, string>> = {
+      amp: "&",
+      lt: "<",
+      gt: ">",
+      quot: "\"",
+      apos: "'",
+    };
+    if (Object.hasOwn(predefined, entity)) {
+      parts.push(predefined[entity]);
+    } else {
+      const numeric = entity.startsWith("#x")
+        ? Number.parseInt(entity.slice(2), 16)
+        : entity.startsWith("#")
+          ? Number.parseInt(entity.slice(1), 10)
+          : Number.NaN;
+      const canonicalNumeric = entity.startsWith("#x")
+        ? /^#x[0-9A-Fa-f]+$/.test(entity)
+        : /^#[0-9]+$/.test(entity);
+      if (!canonicalNumeric || !Number.isInteger(numeric) || !validXmlCodePoint(numeric)) {
+        invalidEbayTradingResponse();
+      }
+      parts.push(String.fromCodePoint(numeric));
+    }
+    cursor = entityEnd + 1;
+  }
+  return parts.join("");
+}
+
+function ebayXmlTagEnd(xml: string, start: number) {
+  let quote = "";
+  for (let cursor = start; cursor < xml.length; cursor += 1) {
+    const character = xml[cursor];
+    if (quote) {
+      if (character === quote) quote = "";
+      continue;
+    }
+    if (character === "\"" || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === ">") return cursor;
+  }
+  return invalidEbayTradingResponse();
+}
+
+function ebayXmlLocalName(qualifiedName: string) {
+  return qualifiedName.slice(qualifiedName.lastIndexOf(":") + 1);
+}
+
+function validateEbayXmlStartTag(source: string) {
+  const nameMatch = /^([A-Za-z_][A-Za-z0-9_.:-]*)/.exec(source);
+  if (!nameMatch) invalidEbayTradingResponse();
+  const qualifiedName = nameMatch[1];
+  let cursor = qualifiedName.length;
+  let selfClosing = false;
+  const attributes = new Set<string>();
+  while (cursor < source.length) {
+    while (/\s/.test(source[cursor] ?? "")) cursor += 1;
+    if (cursor >= source.length) break;
+    if (source[cursor] === "/") {
+      if (source.slice(cursor + 1).trim()) invalidEbayTradingResponse();
+      selfClosing = true;
+      cursor = source.length;
+      break;
+    }
+    const attributeMatch = /^([A-Za-z_][A-Za-z0-9_.:-]*)/.exec(source.slice(cursor));
+    if (!attributeMatch || attributes.has(attributeMatch[1])) invalidEbayTradingResponse();
+    attributes.add(attributeMatch[1]);
+    cursor += attributeMatch[1].length;
+    while (/\s/.test(source[cursor] ?? "")) cursor += 1;
+    if (source[cursor] !== "=") invalidEbayTradingResponse();
+    cursor += 1;
+    while (/\s/.test(source[cursor] ?? "")) cursor += 1;
+    const quote = source[cursor];
+    if (quote !== "\"" && quote !== "'") invalidEbayTradingResponse();
+    const valueEnd = source.indexOf(quote, cursor + 1);
+    if (valueEnd < 0 || source.slice(cursor + 1, valueEnd).includes("<")) invalidEbayTradingResponse();
+    decodeEbayXmlEntities(source.slice(cursor + 1, valueEnd));
+    cursor = valueEnd + 1;
+  }
+  return { qualifiedName, selfClosing };
+}
+
+function parseEbayXml(xml: string, expectedRoot: string) {
+  const stack: EbayXmlNode[] = [];
+  let root: EbayXmlNode | null = null;
+  let cursor = 0;
+  let nodeCount = 0;
+
+  const appendText = (value: string, cdata = false) => {
+    if (!value) return;
+    if (!stack.length) {
+      if (value.trim()) invalidEbayTradingResponse();
+      return;
+    }
+    if (cdata) assertEbayXmlCharacters(value);
+    stack.at(-1)?.textParts.push(cdata ? value : decodeEbayXmlEntities(value));
+  };
+
+  while (cursor < xml.length) {
+    const markupStart = xml.indexOf("<", cursor);
+    if (markupStart < 0) {
+      appendText(xml.slice(cursor));
+      cursor = xml.length;
+      break;
+    }
+    appendText(xml.slice(cursor, markupStart));
+
+    if (xml.startsWith("<![CDATA[", markupStart)) {
+      const cdataEnd = xml.indexOf("]]>", markupStart + 9);
+      if (cdataEnd < 0) invalidEbayTradingResponse();
+      appendText(xml.slice(markupStart + 9, cdataEnd), true);
+      cursor = cdataEnd + 3;
+      continue;
+    }
+    if (xml.startsWith("<!--", markupStart)) {
+      const commentEnd = xml.indexOf("-->", markupStart + 4);
+      if (commentEnd < 0 || xml.slice(markupStart + 4, commentEnd).includes("--")) {
+        invalidEbayTradingResponse();
+      }
+      cursor = commentEnd + 3;
+      continue;
+    }
+    if (xml.startsWith("<?", markupStart)) {
+      const instructionEnd = xml.indexOf("?>", markupStart + 2);
+      const instruction = instructionEnd < 0 ? "" : xml.slice(markupStart + 2, instructionEnd).trim();
+      if (instructionEnd < 0
+          || !/^xml\s+version\s*=\s*(?:"1\.0"|'1\.0')(?:\s+encoding\s*=\s*(?:"utf-8"|'utf-8'))?(?:\s+standalone\s*=\s*(?:"(?:yes|no)"|'(?:yes|no)'))?\s*$/i.test(instruction)
+          || root
+          || stack.length) {
+        invalidEbayTradingResponse();
+      }
+      cursor = instructionEnd + 2;
+      continue;
+    }
+    if (xml.startsWith("<!", markupStart)) invalidEbayTradingResponse();
+
+    const tagEnd = ebayXmlTagEnd(xml, markupStart + 1);
+    const tagSource = xml.slice(markupStart + 1, tagEnd).trim();
+    if (tagSource.startsWith("/")) {
+      const qualifiedName = tagSource.slice(1).trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_.:-]*$/.test(qualifiedName)
+          || stack.at(-1)?.qualifiedName !== qualifiedName) {
+        invalidEbayTradingResponse();
+      }
+      stack.pop();
+    } else {
+      const { qualifiedName, selfClosing } = validateEbayXmlStartTag(tagSource);
+      const node: EbayXmlNode = {
+        qualifiedName,
+        localName: ebayXmlLocalName(qualifiedName),
+        children: [],
+        textParts: [],
+      };
+      nodeCount += 1;
+      if (nodeCount > EBAY_XML_MAX_NODES || stack.length + 1 > EBAY_XML_MAX_DEPTH) {
+        invalidEbayTradingResponse();
+      }
+      const parent = stack.at(-1);
+      if (parent) parent.children.push(node);
+      else if (root) invalidEbayTradingResponse();
+      else root = node;
+      if (!selfClosing) stack.push(node);
+    }
+    cursor = tagEnd + 1;
+  }
+
+  if (stack.length || !root || root.localName !== expectedRoot) invalidEbayTradingResponse();
+  return root;
+}
+
+function ebayXmlChildren(node: EbayXmlNode, name: string) {
+  return node.children.filter((child) => child.localName === name);
+}
+
+function ebayXmlChild(node: EbayXmlNode, name: string) {
+  const children = ebayXmlChildren(node, name);
+  if (children.length > 1) invalidEbayTradingResponse();
+  return children[0] ?? null;
+}
+
+function ebayXmlNodeText(node: EbayXmlNode | null) {
+  if (!node) return "";
+  if (node.children.length) invalidEbayTradingResponse();
+  return node.textParts.join("").trim();
+}
+
+function ebayXmlText(node: EbayXmlNode, name: string) {
+  return ebayXmlNodeText(ebayXmlChild(node, name));
+}
+
+function ebayXmlNonNegativeInteger(node: EbayXmlNode, name: string) {
+  const value = Number(ebayXmlText(node, name));
+  return Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+export function parseEbayTradingResponse(callName: "GetMemberMessages" | "AddMemberMessageRTQ", xml: string) {
+  if (!ebayTradingCalls.has(callName)
+      || !xml
+      || Buffer.byteLength(xml, "utf8") > EBAY_TRADING_RESPONSE_LIMIT_BYTES
+      || /<!DOCTYPE|<!ENTITY/i.test(xml)) {
+    throw new Error("EBAY_TRADING_RESPONSE_INVALID");
+  }
+  const expectedRoot = `${callName}Response`;
+  const root = parseEbayXml(xml, expectedRoot);
+
+  const ack = ebayXmlText(root, "Ack");
+  const accepted = ack === "Success" || ack === "Warning";
+  const errors = ebayXmlChildren(root, "Errors").slice(0, 20).map((entry) => ({
+    errorCode: ebayXmlText(entry, "ErrorCode").slice(0, 80),
+    classification: ebayXmlText(entry, "ErrorClassification").slice(0, 80),
+    severity: ebayXmlText(entry, "SeverityCode").slice(0, 80),
+    message: ebayXmlText(entry, "ShortMessage").slice(0, 500),
+  }));
+  const correlationId = ebayXmlText(root, "CorrelationID");
+  const base: Record<string, unknown> = {
+    Ack: ack,
+    code: accepted ? "SUCCESS" : "FAILURE",
+    ...(errors.length ? { errors } : {}),
+    ...(correlationId ? { requestId: correlationId.slice(0, 160) } : {}),
+  };
+  if (callName === "AddMemberMessageRTQ") return base;
+
+  const memberMessage = ebayXmlChild(root, "MemberMessage");
+  const exchanges = memberMessage ? ebayXmlChildren(memberMessage, "MemberMessageExchange") : [];
+  if (exchanges.length > 500) invalidEbayTradingResponse();
+  const memberMessages = exchanges.map((exchange) => {
+    const item = ebayXmlChild(exchange, "Item");
+    const question = ebayXmlChild(exchange, "Question");
+    return {
+      itemId: item ? ebayXmlText(item, "ItemID").slice(0, 240) : "",
+      itemTitle: item ? ebayXmlText(item, "Title").slice(0, 500) : "",
+      messageId: question ? ebayXmlText(question, "MessageID").slice(0, 230) : "",
+      senderId: question ? ebayXmlText(question, "SenderID").slice(0, 240) : "",
+      subject: question ? ebayXmlText(question, "Subject").slice(0, 500) : "",
+      body: question ? ebayXmlText(question, "Body").slice(0, 20_000) : "",
+      messageStatus: ebayXmlText(exchange, "MessageStatus").slice(0, 80),
+      creationDate: ebayXmlText(exchange, "CreationDate").slice(0, 80),
+      lastModifiedDate: ebayXmlText(exchange, "LastModifiedDate").slice(0, 80),
+    };
+  });
+  const paginationResult = ebayXmlChild(root, "PaginationResult");
+  return {
+    ...base,
+    memberMessages,
+    hasMoreItems: /^true$/i.test(ebayXmlText(root, "HasMoreItems")),
+    paginationResult: {
+      totalNumberOfPages: paginationResult ? ebayXmlNonNegativeInteger(paginationResult, "TotalNumberOfPages") : null,
+      totalNumberOfEntries: paginationResult ? ebayXmlNonNegativeInteger(paginationResult, "TotalNumberOfEntries") : null,
+    },
+  };
+}
+
+async function readBoundedEbayTradingText(response: Response) {
+  const declaredLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > EBAY_TRADING_RESPONSE_LIMIT_BYTES) {
+    throw new Error("EBAY_TRADING_RESPONSE_TOO_LARGE");
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > EBAY_TRADING_RESPONSE_LIMIT_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new Error("EBAY_TRADING_RESPONSE_TOO_LARGE");
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+export async function ebayTradingRequest(input: {
+  payload: SecretPayload;
+  environment: "sandbox" | "production";
+  callName: "GetMemberMessages" | "AddMemberMessageRTQ";
+  body: string;
+}) {
+  const accessToken = textValue(input.payload, "access_token");
+  if (!accessToken) throw new Error("EBAY_ACCESS_TOKEN_MISSING");
+  if (!ebayTradingCalls.has(input.callName)
+      || !new RegExp(`^<\\?xml[^>]*>\\s*<${input.callName}Request\\b`, "i").test(input.body)
+      || Buffer.byteLength(input.body, "utf8") > 64_000
+      || /<!DOCTYPE|<!ENTITY/i.test(input.body)) {
+    throw new Error("EBAY_TRADING_REQUEST_INVALID");
+  }
+  const response = await fetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
+    method: "POST",
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      accept: "text/xml",
+      "content-type": "text/xml;charset=UTF-8",
+      "x-ebay-api-call-name": input.callName,
+      "x-ebay-api-compatibility-level": "1475",
+      "x-ebay-api-siteid": ebayTradingSiteId(textValue(input.payload, "marketplace_id") || "EBAY_US"),
+      "x-ebay-api-iaf-token": accessToken,
+      "user-agent": "SellerPilot-eBay-Trading-CS/1.0",
+    },
+    body: input.body,
+  });
+  const text = await readBoundedEbayTradingText(response);
+  const data = parseEbayTradingResponse(input.callName, text);
+  return { response, data, text } satisfies RemoteResponse;
+}
+
 export function buildEbayConsentUrl(input: {
   environment: "sandbox" | "production";
   clientId: string;

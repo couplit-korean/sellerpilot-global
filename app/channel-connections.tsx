@@ -8,9 +8,11 @@ import type { OperationsSnapshot } from "./use-operations-snapshot";
 
 type ConnectionSection = "status" | "settings";
 
-export function ChannelConnectionsPage({ notify, channelMetrics }: {
+export function ChannelConnectionsPage({ notify, channelMetrics, syncStatus, onOpenCs }: {
   notify: (message: string) => void;
   channelMetrics: OperationsSnapshot["channelMetrics"];
+  syncStatus: OperationsSnapshot["syncStatus"];
+  onOpenCs: (channel: OperationsSnapshot["channelMetrics"][number]["channelKey"]) => void;
 }) {
   const [section, setSection] = useState<ConnectionSection>("status");
 
@@ -59,7 +61,7 @@ export function ChannelConnectionsPage({ notify, channelMetrics }: {
         role="tabpanel"
       >
         {section === "status"
-          ? <ChannelReadinessPage embedded channelMetrics={channelMetrics} />
+          ? <ChannelReadinessPage embedded channelMetrics={channelMetrics} syncStatus={syncStatus} onOpenCs={onOpenCs} />
           : <ApiCredentialCenter notify={notify} embedded />}
       </section>
     </div>

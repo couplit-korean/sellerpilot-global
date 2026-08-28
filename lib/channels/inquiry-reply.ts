@@ -1,8 +1,12 @@
-import type { ActiveChannelKey } from "./catalog";
+import { ebayAsqProductionVerified, type ActiveChannelKey } from "./catalog";
 
-export const inquiryReplyChannels = ["qoo10", "lazada", "coupang", "smartstore"] as const;
+export const implementedInquiryReplyChannels = ["qoo10", "lazada", "coupang", "smartstore", "ebay"] as const;
 
-export type InquiryReplyChannel = (typeof inquiryReplyChannels)[number];
+export type InquiryReplyChannel = (typeof implementedInquiryReplyChannels)[number];
+
+export const inquiryReplyChannels: readonly InquiryReplyChannel[] = ebayAsqProductionVerified
+  ? implementedInquiryReplyChannels
+  : implementedInquiryReplyChannels.filter((channel) => channel !== "ebay");
 
 export function supportsInquiryReply(channel: ActiveChannelKey): channel is InquiryReplyChannel {
   return (inquiryReplyChannels as readonly string[]).includes(channel);
@@ -30,6 +34,14 @@ function requiredText(value: string, name: string) {
   const normalized = value.trim();
   if (!normalized) throw new Error(`INQUIRY_REPLY_INVALID:${name}`);
   return normalized;
+}
+
+function hasForbiddenEbayControl(value: string) {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code === 0x7f
+      || (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d);
+  });
 }
 
 export function buildInquiryReplyArguments(
@@ -75,6 +87,33 @@ export function buildInquiryReplyArguments(
   if (channel === "smartstore") {
     if (!/^\d+$/.test(ticketId)) throw new Error("INQUIRY_REPLY_INVALID:smartstoreQuestionId");
     return { questionId: ticketId, reply: replyText };
+  }
+
+  if (channel === "ebay") {
+    const parentMessageId = ticketId.startsWith("ebay:") ? ticketId.slice("ebay:".length).trim() : "";
+    const contextParentMessageId = typeof replyContext.parentMessageId === "string"
+      || typeof replyContext.parentMessageId === "number"
+      ? String(replyContext.parentMessageId).trim()
+      : "";
+    const itemId = typeof replyContext.itemId === "string" || typeof replyContext.itemId === "number"
+      ? String(replyContext.itemId).trim()
+      : "";
+    const recipientId = typeof replyContext.recipientId === "string" || typeof replyContext.recipientId === "number"
+      ? String(replyContext.recipientId).trim()
+      : "";
+    if (!parentMessageId
+        || parentMessageId.length > 230
+        || contextParentMessageId !== parentMessageId
+        || !/^\d{1,19}$/.test(itemId)
+        || !recipientId
+        || recipientId.length > 240
+        || hasForbiddenEbayControl(parentMessageId)
+        || hasForbiddenEbayControl(recipientId)
+        || hasForbiddenEbayControl(replyText)
+        || replyText.length > 2_000) {
+      throw new Error("INQUIRY_REPLY_INVALID:ebayReplyContext");
+    }
+    return { itemId, parentMessageId, recipientId, reply: replyText };
   }
 
   const match = /^qoo10:(MSG|HELP|ITEM):(\d+):(\d+)$/i.exec(ticketId);

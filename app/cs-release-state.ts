@@ -8,9 +8,10 @@ export type CsReplyTicket = {
 export type CsReplyDrafts = Readonly<Record<string, string>>;
 
 export function selectedCsTicket<T extends { sourceId: string }>(tickets: readonly T[], selectedSourceId: string | null) {
-  return tickets.find((ticket) => ticket.sourceId === selectedSourceId)
-    ?? tickets[0]
-    ?? null;
+  if (selectedSourceId) {
+    return tickets.find((ticket) => ticket.sourceId === selectedSourceId) ?? null;
+  }
+  return tickets[0] ?? null;
 }
 
 export function csReplyDraftValue(drafts: CsReplyDrafts, ticket: CsReplyTicket | null) {
@@ -52,14 +53,14 @@ export function csReplySavePlan(ticketId: string, channelKey: string, reply: str
 
 type CsInquirySyncStatus = "never" | "queued" | "running" | "passed" | "failed" | "unsupported";
 
-const channelReadCapabilities: Record<ActiveChannelKey, { subject: string; integrated: boolean; replyLabel: string }> = {
+const channelReadCapabilities: Record<ActiveChannelKey, { subject: string; integrated: boolean; verificationPending?: boolean; replyLabel: string }> = {
   qoo10: { subject: "상품 문의", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
   shopee: { subject: "구매자 채팅", integrated: false, replyLabel: "답변: 내부 초안만 · Chat API 미연동" },
   lazada: { subject: "Lazada IM", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
   coupang: { subject: "상품·콜센터 문의", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
   elevenst: { subject: "판매자 문의", integrated: false, replyLabel: "답변: 현재 API 미지원 · 판매자센터 처리" },
   smartstore: { subject: "상품·고객 문의", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
-  ebay: { subject: "Seller Hub 문의", integrated: false, replyLabel: "답변: 현재 API 미지원 · Seller Hub 처리" },
+  ebay: { subject: "eBay 상품 문의(ASQ)", integrated: false, verificationPending: true, replyLabel: "답변: ASQ 구현 · Sandbox/실계정 검증 전 차단" },
   temu: { subject: "반품·환불 작업", integrated: true, replyLabel: "답변: 내부 초안만 · 구매자 채팅 미연동" },
 };
 
@@ -77,6 +78,14 @@ export function csChannelVerification(
   lastError: string | null = null,
 ): CsChannelVerification {
   const capability = channelReadCapabilities[channelKey];
+  if (capability.verificationPending) {
+    return {
+      readLabel: `${capability.subject} 구현 · Sandbox/실계정 검증 전`,
+      replyLabel: capability.replyLabel,
+      badge: "운영 검증 전",
+      tone: "unsupported",
+    };
+  }
   if (!capability.integrated || status === "unsupported") {
     return { readLabel: `${capability.subject} 수신 API 미연동`, replyLabel: capability.replyLabel, badge: "수신 미지원", tone: "unsupported" };
   }

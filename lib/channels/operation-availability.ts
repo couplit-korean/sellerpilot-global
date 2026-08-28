@@ -1,4 +1,4 @@
-import { channelCatalog, type ActiveChannelKey, type ChannelCapabilityKey } from "./catalog";
+import { channelCatalog, ebayAsqProductionVerified, type ActiveChannelKey, type ChannelCapabilityKey } from "./catalog";
 import type { ChannelOperationName } from "./operations";
 
 const operationCapabilities: Record<ChannelOperationName, ChannelCapabilityKey> = {
@@ -56,6 +56,15 @@ const listingUpdateBlockedReasons: Partial<Record<ActiveChannelKey, string>> = {
 
 export function channelOperationRelease(channel: ActiveChannelKey, operation: ChannelOperationName): ChannelOperationRelease {
   const capability = channelCatalog[channel].capabilities[operationCapabilities[operation]];
+  if (channel === "ebay"
+      && (operation === "inquiries.list" || operation === "inquiries.reply")
+      && !ebayAsqProductionVerified) {
+    return {
+      available: false,
+      mode: "release_verification_required",
+      reason: "eBay Trading API 상품 문의(ASQ)는 구현됐지만 Sandbox 2계정 왕복과 실판매자 계정 조회 검증 전이라 운영 실행을 차단했습니다.",
+    };
+  }
   if (capability.mode === "unsupported" || capability.mode === "vendor_docs_required") {
     return { available: false, mode: capability.mode, reason: capability.note };
   }
@@ -93,7 +102,7 @@ export function channelOperationRelease(channel: ActiveChannelKey, operation: Ch
   if (channel === "shopee" && operation === "inquiries.list") {
     return { available: false, mode: "release_verification_required", reason: "Shopee Chat API 권한과 실제 메시지 readback이 확인되지 않아 차단했습니다." };
   }
-  if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore"].includes(channel)) {
+  if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore", "ebay"].includes(channel)) {
     return { available: false, mode: "release_verification_required", reason: "이 채널은 현재 공식 문의 답변 API가 검증되지 않아 원격 전송을 차단했습니다." };
   }
   if (["ebay", "temu"].includes(channel) && operation === "shipment.acknowledge") {

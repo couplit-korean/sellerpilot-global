@@ -301,6 +301,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828135000_server_product_research_runtime.sql",
       "20260828135100_fix_server_product_research_secret_guard.sql",
       LEGACY_SCOPE_RETIREMENT_MIGRATION,
+      "20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;

@@ -2274,6 +2274,27 @@ button {
 .cs-channel-verification-grid em.failed { color: #b54708; background: #fff4e5; }
 .cs-channel-verification-grid em.unsupported { color: #667085; background: #f0f2f5; }
 
+.metric-card-button { width: 100%; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.metric-card-button:hover, .metric-card-button:focus-visible { border-color: #9dbbb0; background: #f8fcfa; }
+.cs-summary > button { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; color: inherit; background: white; text-align: left; }
+.cs-summary > button.active, .cs-summary > button:hover { border-color: #9dbbb0; background: #f5fbf8; box-shadow: inset 0 0 0 1px #d4e8e0; }
+.cs-filter-actions { display: flex; align-items: center; gap: 8px; }
+.cs-channel-verification-grid > button { display: grid; width: 100%; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 1px solid #e7eaee; border-radius: 8px; padding: 11px; color: inherit; background: #fff; text-align: left; }
+.cs-channel-verification-grid > button > span { display: grid; gap: 3px; }
+.cs-channel-verification-grid > button.active, .cs-channel-verification-grid > button:hover { border-color: #9dbbb0; background: #f5fbf8; }
+.ticket-list-empty { display: grid; min-height: 220px; place-items: center; align-content: center; gap: 7px; padding: 24px; color: #8b94a3; text-align: center; }
+.ticket-list-empty b { color: #52616e; font-size: 10px; }
+.ticket-list-empty small { font-size: 8px; line-height: 1.5; }
+.conversation-empty { grid-column: 2 / -1; min-height: 420px; }
+.conversation-empty .live-empty-state { min-height: 100%; }
+.readiness-inquiry-state { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid #e2e8e5; border-radius: 9px; padding: 10px; color: #65756e; background: #f8faf9; }
+.readiness-inquiry-state > span { display: grid; min-width: 0; gap: 2px; }
+.readiness-inquiry-state b { color: #34443d; font-size: 9px; }
+.readiness-inquiry-state small { overflow: hidden; color: #7d8a85; font-size: 8px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.readiness-inquiry-state.failed { border-color: #f0d2b4; color: #a8611f; background: #fff9f1; }
+.readiness-inquiry-state.passed { border-color: #cbe4d9; color: #187455; background: #f3fbf7; }
+.readiness-inquiry-state button { display: inline-flex; min-height: 36px; align-items: center; gap: 4px; border: 1px solid #cfdcd6; border-radius: 8px; padding: 0 9px; color: #315f50; background: white; font-size: 8px; font-weight: 800; white-space: nowrap; }
+
 .channel-name span.pending,
 .channel-hero em.pending { color: #b54708; }
 .score-grade.pending { color: #b54708; background: #fff4e5; }

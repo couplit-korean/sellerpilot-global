@@ -7,6 +7,7 @@ const ADMIN_ID = "40404b44-f364-4c52-98ca-9d6f7371d3a1";
 const TOKEN_HASH = "9".repeat(64);
 const LINEAGE_MIGRATION = "20260825111810_harden_inquiry_reply_account_lineage.sql";
 const PRE_LINEAGE_MIGRATION = "20260825111800_bind_listing_seller_accounts.sql";
+const EBAY_ASQ_MIGRATION = "20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql";
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -579,6 +580,438 @@ test("lineage rollout rejects a metadata-less historical remote success for manu
       db.exec(withoutUnavailableExtensions(source)),
       /historical inquiry reply jobs require manual reconciliation/,
     );
+  } finally {
+    await db.close();
+  }
+});
+
+test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomically resolved", async () => {
+  const db = await createDatabase();
+  const itemId = "110005795324";
+  const parentMessageId = "MSG-188558-v1";
+  const recipientId = "v1|buyer public:user_123";
+  const externalTicketId = `ebay:${parentMessageId}`;
+  const reply = "Thanks for your question. This item is available.";
+
+  const inquiry = ({
+    external = externalTicketId,
+    item = itemId,
+    parent = parentMessageId,
+    recipient = recipientId,
+    includeContext = true,
+  } = {}) => JSON.stringify([{
+    externalTicketId: external,
+    customerName: "eBay buyer",
+    subject: "Ask Seller a Question",
+    message: "Is this item still available?",
+    status: "waiting",
+    priority: 3,
+    receivedAt: "2026-08-28T01:00:00.000Z",
+    ...(includeContext ? {
+      replyContext: {
+        itemId: item,
+        parentMessageId: parent,
+        recipientId: recipient,
+        ignoredProviderField: "must not persist",
+      },
+    } : {}),
+  }]);
+
+  const replyPayload = ({
+    item = itemId,
+    parent = parentMessageId,
+    recipient = recipientId,
+    body = reply,
+  } = {}) => JSON.stringify({
+    arguments: {
+      itemId: item,
+      parentMessageId: parent,
+      recipientId: recipient,
+      reply: body,
+    },
+  });
+
+  const rotateEbayCredential = async ({ attested, suffix, environment = "sandbox" }) => {
+    await setClaims(db, attested ? "service_role" : "authenticated");
+    return scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'ebay', $2, $1::jsonb,
+        now() + interval '30 days', 90, 30, 7
+      )`,
+      [JSON.stringify({
+        client_id: `ebay-client-${suffix}`,
+        client_secret: `ebay-secret-${suffix}`,
+        ru_name: "sellerpilot-oauth-redirect",
+        access_token: `ebay-access-token-${suffix}`,
+        refresh_token: `ebay-refresh-token-${suffix}`,
+        ...(attested ? {
+          provider_account_identity_version: "v1",
+          provider_account_subject: "ebay:eias:TEST-EIAS-ASQ-ACCOUNT",
+        } : {}),
+      }), environment],
+    );
+  };
+
+  try {
+    await seedAdminAndCredential(db);
+
+    const unattestedCredentialId = await rotateEbayCredential({
+      attested: false,
+      suffix: "unattested",
+    });
+    await setClaims(db, "service_role");
+    await assert.rejects(
+      scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [unattestedCredentialId, inquiry()],
+      ),
+      /INQUIRY_SELLER_LINEAGE_UNATTESTED/,
+    );
+
+    const sourceCredentialId = await rotateEbayCredential({
+      attested: true,
+      suffix: "source",
+    });
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [sourceCredentialId, inquiry()],
+      ),
+      1,
+    );
+
+    const ticket = (await db.query(
+      `select id::text as id, external_ticket_id, reply_context,
+              source_credential_id::text as source_credential_id,
+              seller_account_key
+         from sellerpilot_private.support_tickets
+        where owner_id = $1 and channel_key = 'ebay'
+          and external_ticket_id = $2`,
+      [ADMIN_ID, externalTicketId],
+    )).rows[0];
+    assert.equal(ticket.external_ticket_id, externalTicketId);
+    assert.equal(ticket.source_credential_id, sourceCredentialId);
+    assert.deepEqual(ticket.reply_context, {
+      itemId,
+      parentMessageId,
+      recipientId,
+    });
+
+    // A partial provider read cannot erase the certified route.
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [sourceCredentialId, inquiry({ includeContext: false })],
+      ),
+      1,
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select reply_context from sellerpilot_private.support_tickets where id = $1",
+        [ticket.id],
+      ),
+      { itemId, parentMessageId, recipientId },
+    );
+
+    await assert.rejects(
+      scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [sourceCredentialId, inquiry({ recipient: "different_buyer" })],
+      ),
+      /INQUIRY_REPLY_CONTEXT_MISMATCH/,
+    );
+
+    const invalidExternalTicketId = "ebay:MSG-188559-v1";
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [sourceCredentialId, inquiry({
+          external: invalidExternalTicketId,
+          parent: "MSG-188559-v1",
+          recipient: "buyer\nid",
+        })],
+      ),
+      1,
+    );
+    const invalidTicket = (await db.query(
+      `select id::text as id, reply_context
+         from sellerpilot_private.support_tickets
+        where owner_id = $1 and channel_key = 'ebay'
+          and external_ticket_id = $2`,
+      [ADMIN_ID, invalidExternalTicketId],
+    )).rows[0];
+    assert.deepEqual(invalidTicket.reply_context, {});
+
+    const activeCredentialId = await rotateEbayCredential({
+      attested: true,
+      suffix: "active-rotation",
+    });
+    await setClaims(db, "service_role");
+
+    const firstJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'ebay', $2, $3::jsonb
+      )`,
+      [ticket.id, reply, replyPayload()],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [ticket.id, reply, replyPayload()],
+      ),
+      firstJobId,
+    );
+
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [ticket.id, "A different reply", replyPayload({ body: "A different reply" })],
+      ),
+      /INQUIRY_REPLY_CONFLICT/,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [ticket.id, reply, replyPayload({ item: "110005795325" })],
+      ),
+      /eBay ASQ context mismatch/,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [ticket.id, reply, replyPayload({ parent: "MSG-188559-v1" })],
+      ),
+      /eBay ASQ context mismatch/,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [ticket.id, reply, replyPayload({ recipient: "another_buyer" })],
+      ),
+      /eBay ASQ context mismatch/,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [invalidTicket.id, reply, replyPayload({ parent: "MSG-188559-v1" })],
+      ),
+      /eBay ASQ context mismatch/,
+    );
+    const oversizedReply = "x".repeat(2001);
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [ticket.id, oversizedReply, replyPayload({ body: oversizedReply })],
+      ),
+      /invalid inquiry reply gateway job/,
+    );
+
+    const job = (await db.query(
+      `select credential_id::text as credential_id, channel, operation,
+              request_payload, seller_account_key
+         from sellerpilot_private.channel_gateway_jobs where id = $1`,
+      [firstJobId],
+    )).rows[0];
+    assert.equal(job.credential_id, activeCredentialId);
+    assert.equal(job.channel, "ebay");
+    assert.equal(job.operation, "inquiries.reply");
+    assert.equal(job.seller_account_key, ticket.seller_account_key);
+    assert.deepEqual(job.request_payload.arguments, {
+      itemId,
+      parentMessageId,
+      recipientId,
+      reply,
+    });
+    assert.equal(job.request_payload.sellerpilotTicketId, ticket.id);
+    assert.match(job.request_payload.sellerpilotReplyFingerprint, /^[a-f0-9]{64}$/);
+    const credentialStates = (await db.query(
+      `select id::text as id, status, seller_account_key_source
+         from sellerpilot_private.channel_credentials
+        where id in ($1, $2)`,
+      [sourceCredentialId, activeCredentialId],
+    )).rows;
+    assert.deepEqual(
+      credentialStates.find((row) => row.id === sourceCredentialId),
+      {
+        id: sourceCredentialId,
+        status: "grace",
+        seller_account_key_source: "provider_certified_v1",
+      },
+    );
+    assert.deepEqual(
+      credentialStates.find((row) => row.id === activeCredentialId),
+      {
+        id: activeCredentialId,
+        status: "active",
+        seller_account_key_source: "provider_certified_v1",
+      },
+    );
+
+    await issueWorkerToken(db);
+    const claim = await claimOnlyQueuedReply(db);
+    assert.equal(claim.id, firstJobId);
+    assert.equal(claim.channel, "ebay");
+    assert.equal(await completeReply(db, claim, {
+      ok: true,
+      channel: "ebay",
+      operation: "inquiries.reply",
+      safeMessage: "eBay ASQ reply accepted",
+    }), true);
+    assert.deepEqual(
+      (await db.query(
+        `select status, reply_delivery_status, reply_draft,
+                resolved_at is not null as has_resolved_at,
+                reply_context
+           from sellerpilot_private.support_tickets where id = $1`,
+        [ticket.id],
+      )).rows,
+      [{
+        status: "resolved",
+        reply_delivery_status: "succeeded",
+        reply_draft: reply,
+        has_resolved_at: true,
+        reply_context: { itemId, parentMessageId, recipientId },
+      }],
+    );
+
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [sourceCredentialId, inquiry()],
+      ),
+      1,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, reply_delivery_status, reply_context
+           from sellerpilot_private.support_tickets where id = $1`,
+        [ticket.id],
+      )).rows,
+      [{
+        status: "resolved",
+        reply_delivery_status: "succeeded",
+        reply_context: { itemId, parentMessageId, recipientId },
+      }],
+    );
+
+    const boundaryParentMessageId = "MSG-2000-BODY-BOUNDARY";
+    const boundaryTicketId = await (async () => {
+      const payload = inquiry({
+        external: `ebay:${boundaryParentMessageId}`,
+        parent: boundaryParentMessageId,
+      });
+      assert.equal(
+        await scalar(
+          db,
+          "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+          [activeCredentialId, payload],
+        ),
+        1,
+      );
+      return scalar(
+        db,
+        `select id from sellerpilot_private.support_tickets
+          where owner_id = $1 and channel_key = 'ebay'
+            and external_ticket_id = $2`,
+        [ADMIN_ID, `ebay:${boundaryParentMessageId}`],
+      );
+    })();
+    const boundaryReply = "x".repeat(2000);
+    const boundaryJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'ebay', $2, $3::jsonb
+      )`,
+      [boundaryTicketId, boundaryReply, replyPayload({
+        parent: boundaryParentMessageId,
+        body: boundaryReply,
+      })],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select operation from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [boundaryJobId],
+      ),
+      "inquiries.reply",
+    );
+
+    const productionParentMessageId = "MSG-PRODUCTION-RELEASE-BLOCK";
+    const productionCredentialId = await rotateEbayCredential({
+      attested: true,
+      suffix: "production-release-block",
+      environment: "production",
+    });
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'ebay', $2::jsonb)",
+        [productionCredentialId, inquiry({
+          external: `ebay:${productionParentMessageId}`,
+          parent: productionParentMessageId,
+        })],
+      ),
+      1,
+    );
+    const productionTicketId = await scalar(
+      db,
+      `select id from sellerpilot_private.support_tickets
+        where owner_id = $1 and channel_key = 'ebay'
+          and external_ticket_id = $2`,
+      [ADMIN_ID, `ebay:${productionParentMessageId}`],
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'ebay', $2, $3::jsonb
+        )`,
+        [productionTicketId, reply, replyPayload({
+          parent: productionParentMessageId,
+        })],
+      ),
+      /EBAY_ASQ_RELEASE_VERIFICATION_REQUIRED/,
+    );
+
+    const source = await readFile(
+      new URL(`../supabase/migrations/${EBAY_ASQ_MIGRATION}`, import.meta.url),
+      "utf8",
+    );
+    assert.match(source, /p_channel <> 'ebay'[\s\S]*sellerpilot_11820_enqueue_reply_unsafe/);
+    assert.match(source, /length\(v_reply\) > 2000/);
+    assert.match(source, /seller_account_key_source = 'provider_certified_v1'/);
   } finally {
     await db.close();
   }

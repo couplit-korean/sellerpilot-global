@@ -134,6 +134,27 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, 
   }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
 }
 
+function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) {
+  return list(data.memberMessages).map((row): NormalizedChannelInquiry | null => {
+    const messageId = text(row.messageId);
+    const itemId = text(row.itemId);
+    const recipientId = text(row.senderId);
+    const message = text(row.body);
+    if (!messageId || !/^\d{1,19}$/.test(itemId) || !recipientId || !message) return null;
+    const messageStatus = text(row.messageStatus).toLowerCase();
+    return {
+      externalTicketId: `ebay:${messageId}`,
+      customerName: recipientId,
+      subject: text(row.itemTitle, row.subject, "eBay 상품 문의"),
+      message,
+      status: messageStatus === "answered" ? "resolved" : "waiting",
+      priority: 3,
+      receivedAt: iso(row.creationDate, row.lastModifiedDate),
+      replyContext: { itemId, parentMessageId: messageId, recipientId },
+    };
+  }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
+}
+
 export function normalizeChannelInquiries(
   channel: ActiveChannelKey,
   result: ChannelOperationResult,
@@ -154,7 +175,8 @@ export function normalizeChannelInquiries(
     : channel === "smartstore" ? normalizeSmartstore(data, iso)
       : channel === "qoo10" ? normalizeQoo10(data, iso)
         : channel === "temu" ? normalizeTemu(data, iso, referenceTimeMs)
-          : []);
+          : channel === "ebay" ? normalizeEbay(data, iso)
+            : []);
   return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
 }
 

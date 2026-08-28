@@ -10,6 +10,7 @@ import {
   ExternalLink,
   KeyRound,
   LockKeyhole,
+  MessageCircleMore,
   Radio,
   ServerCog,
   ShieldCheck,
@@ -40,14 +41,25 @@ const stateLabels: Record<ReadinessState, string> = {
   not_configured: "미구성",
 };
 
+function safeSyncErrorMessage(value: string | null) {
+  if (!value) return "";
+  const printable = Array.from(value, (character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint < 32 || codePoint === 127 ? " " : character;
+  }).join("");
+  return printable.replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
 function ReadinessBadge({ state }: { state: ReadinessState }) {
   const Icon = state === "verified" ? CheckCircle2 : state === "blocked" ? AlertTriangle : state === "partial" ? Clock3 : CircleDashed;
   return <span className={`readiness-badge ${state}`}><Icon size={12} />{stateLabels[state]}</span>;
 }
 
-export function ChannelReadinessPage({ embedded = false, channelMetrics = [] }: {
+export function ChannelReadinessPage({ embedded = false, channelMetrics = [], syncStatus = [], onOpenCs }: {
   embedded?: boolean;
   channelMetrics?: OperationsSnapshot["channelMetrics"];
+  syncStatus?: OperationsSnapshot["syncStatus"];
+  onOpenCs?: (channel: OperationsSnapshot["channelMetrics"][number]["channelKey"]) => void;
 }) {
   const capabilityKeys = Object.keys(capabilityLabels) as ChannelCapabilityKey[];
   const resolvedReadiness = channelReadiness.map((channel) => resolveChannelReadiness(
@@ -90,6 +102,9 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [] }: 
           const apiDefinition = isActiveChannelKey(channel.key) ? channelCatalog[channel.key] : null;
           const officialDocs = channel.officialDocs ?? apiDefinition?.officialDocs ?? [];
           const liveMetric = channelMetrics.find((metric) => metric.channelKey === channel.key);
+          const inquiryState = syncStatus
+            .filter((item) => item.channel_key === channel.key && item.data_type === "inquiries")
+            .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))[0] ?? null;
           return <article className={`readiness-channel-card ${channel.key}`} key={channel.key}>
             <header>
               <span className="readiness-channel-mark">{channels[channel.key].mark}</span>
@@ -97,6 +112,7 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [] }: 
               <ReadinessBadge state={channel.overall} />
             </header>
             <div className={`readiness-app-state ${liveMetric ? "live" : ""}`}><i />{channel.appState}</div>
+            <div className={`readiness-inquiry-state ${inquiryState?.status ?? "never"}`}><MessageCircleMore size={13} /><span><b>문의 동기화</b><small>{inquiryState ? `${inquiryState.status} · 원장 ${inquiryState.imported_count ?? 0}건${safeSyncErrorMessage(inquiryState.last_error) ? ` · ${safeSyncErrorMessage(inquiryState.last_error)}` : ""}` : "실행 기록 없음"}</small></span>{isActiveChannelKey(channel.key) && onOpenCs ? <button type="button" onClick={() => onOpenCs(channel.key)}>문의함 열기<ArrowRight size={12} /></button> : null}</div>
             <p className="readiness-channel-summary">{channel.summary}</p>
             <div className="readiness-doc-links">{officialDocs.map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}<ExternalLink size={11} /></a>)}</div>
             <div className="readiness-checks">

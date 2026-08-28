@@ -555,7 +555,8 @@
 
   .metric-card,
   .order-summary-grid > article,
-  .cs-summary > div {
+  .cs-summary > div,
+  .cs-summary > button {
     min-width: 0;
   }
 
@@ -1560,7 +1561,8 @@
 
   .metric-card,
   .order-summary-grid > article,
-  .cs-summary > div {
+  .cs-summary > div,
+  .cs-summary > button {
     min-height: 96px;
   }
 
@@ -2722,6 +2724,15 @@
   .ai-draft-head button {
     justify-content: center;
   }
+
+  .cs-live-heading { align-items: stretch; flex-direction: column; gap: 10px; }
+  .cs-filter-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+  .cs-filter-actions .filter-select { min-height: 44px; }
+  .cs-filter-actions .filter-button { min-height: 44px; }
+  .cs-channel-verification-grid > button { min-height: 72px; }
+  .conversation-empty { grid-column: auto; min-height: 360px; }
+  .readiness-inquiry-state { grid-template-columns: auto minmax(0, 1fr); }
+  .readiness-inquiry-state button { grid-column: 1 / -1; min-height: 44px; justify-content: center; }
 
   .detail-preview-toolbar b { font-size: 12px; }
   .detail-preview-toolbar small { font-size: 10px; line-height: 1.45; }

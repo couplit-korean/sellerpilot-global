@@ -1,5 +1,10 @@
 export const activeChannelKeys = ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"] as const;
 
+// The Trading API ASQ connector is implemented for Sandbox verification, but
+// production reads and replies remain fail-closed until a two-user eBay
+// Sandbox flow and a real seller-account readback have both been recorded.
+export const ebayAsqProductionVerified = false;
+
 export type ActiveChannelKey = (typeof activeChannelKeys)[number];
 export type ChannelCapabilityKey =
   | "connection"
@@ -334,7 +339,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       orders: polling("Fulfillment getOrders · 완료된 checkout 주문만"),
       shipment: api("createShippingFulfillment"),
       claims: api("Fulfillment refunds·payment disputes + Post-Order 범위"),
-      inquiries: unsupported("Sell REST API 공통 문의함으로 통합되지 않아 Seller Hub 보조"),
+      inquiries: polling("Trading API 상품 문의(ASQ) 구현 · Sandbox/실계정 검증 전 운영 차단"),
       settlements: polling("Finances API 권한 추가 시 지급·거래 조회"),
       webhooks: webhook("Notification API 구독을 보조 신호로 사용하고 주문 폴링으로 보정"),
     },

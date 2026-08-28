@@ -1,6 +1,8 @@
 import {
   coupangRequest,
   ebayRequest,
+  ebayTradingRequest,
+  ebayTradingXmlEscape,
   elevenstCategoryRequest,
   elevenstOrderRequest,
   elevenstSellerXmlRequest,
@@ -17,6 +19,7 @@ import {
 } from "./protocols";
 import {
   channelCatalog,
+  ebayAsqProductionVerified,
   type ActiveChannelKey,
   type ChannelCapabilityKey,
 } from "./catalog";
@@ -466,12 +469,41 @@ function ensureProviderSupport(channel: ActiveChannelKey, operation: ChannelOper
   if (["ebay", "temu"].includes(channel) && operation === "shipment.acknowledge") {
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
   }
-  if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore"].includes(channel)) {
+  if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore", "ebay"].includes(channel)) {
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
   }
   const capability = channelCatalog[channel].capabilities[channelOperationCapabilities[operation]];
   if (capability.mode === "unsupported") throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
   if (capability.mode === "vendor_docs_required") throw new Error(`CHANNEL_VENDOR_SPEC_REQUIRED:${operation}`);
+}
+
+function hasForbiddenEbayControl(value: string) {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code === 0x7f
+      || (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d);
+  });
+}
+
+function ebayTradingTextArgument(
+  source: Record<string, unknown>,
+  key: string,
+  options: { maxLength: number; pattern?: RegExp },
+) {
+  const value = stringArgument(source, key);
+  if (value.length > options.maxLength
+      || hasForbiddenEbayControl(value)
+      || (options.pattern && !options.pattern.test(value))) {
+    throw new Error(`CHANNEL_ARGUMENT_INVALID:${key}`);
+  }
+  return value;
+}
+
+function ebayTradingTimestampArgument(source: Record<string, unknown>, key: string) {
+  const value = ebayTradingTextArgument(source, key, { maxLength: 80 });
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) throw new Error(`CHANNEL_ARGUMENT_INVALID:${key}`);
+  return new Date(timestamp).toISOString();
 }
 
 function elevenstXmlEscape(value: string) {
@@ -3040,6 +3072,62 @@ async function executeEbay(input: ExecuteInput) {
       inventoryQuantityVerificationStep("inventory-readback", readback, quantity, shipToLocationAvailability.quantity),
     ], decodedSku);
   }
+  if (input.operation === "inquiries.list") {
+    const startCreationTime = ebayTradingTimestampArgument(input.arguments, "startCreationTime");
+    const endCreationTime = ebayTradingTimestampArgument(input.arguments, "endCreationTime");
+    const startTimestamp = Date.parse(startCreationTime);
+    const endTimestamp = Date.parse(endCreationTime);
+    if (startTimestamp >= endTimestamp || endTimestamp - startTimestamp > 31 * 86_400_000) {
+      throw new Error("CHANNEL_ARGUMENT_INVALID:inquiryTimeRange");
+    }
+    const entriesPerPage = integerArgument(input.arguments, "entriesPerPage", { min: 25, max: 200 });
+    if (![25, 50, 100, 200].includes(entriesPerPage)) {
+      throw new Error("CHANNEL_ARGUMENT_INVALID:entriesPerPage");
+    }
+    let pageNumber = integerArgument(input.arguments, "pageNumber", { min: 1, max: 1_000_000 });
+    const steps: ChannelOperationStep[] = [];
+    for (let pageIndex = 0; pageIndex < MAX_PROVIDER_SYNC_PAGES; pageIndex += 1) {
+      const requestXml = `<?xml version="1.0" encoding="utf-8"?><GetMemberMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents"><MailMessageType>AskSellerQuestion</MailMessageType><StartCreationTime>${ebayTradingXmlEscape(startCreationTime)}</StartCreationTime><EndCreationTime>${ebayTradingXmlEscape(endCreationTime)}</EndCreationTime><Pagination><EntriesPerPage>${entriesPerPage}</EntriesPerPage><PageNumber>${pageNumber}</PageNumber></Pagination></GetMemberMessagesRequest>`;
+      const remote = await ebayTradingRequest({
+        payload: input.payload,
+        environment: input.environment,
+        callName: "GetMemberMessages",
+        body: requestXml,
+      });
+      const inquiryStep = step(pageIndex === 0 ? "inquiries" : `inquiries:${pageIndex + 1}`, remote);
+      steps.push(inquiryStep);
+      if (!inquiryStep.ok) break;
+      const messages = objectArray(remote.data.memberMessages);
+      const pagination = objectValue(remote.data, "paginationResult", false);
+      const totalPages = finiteCount(pagination.totalNumberOfPages);
+      const hasMore = remote.data.hasMoreItems === true || (totalPages !== null && pageNumber < totalPages);
+      if (!hasMore || messages.length === 0) break;
+      const nextPageNumber = pageNumber + 1;
+      if (pageIndex === MAX_PROVIDER_SYNC_PAGES - 1) {
+        return paginationResult(input, steps, {
+          ...input.arguments,
+          pageNumber: nextPageNumber,
+          entriesPerPage,
+        });
+      }
+      pageNumber = nextPageNumber;
+    }
+    return result(input, steps);
+  }
+  if (input.operation === "inquiries.reply") {
+    const itemId = ebayTradingTextArgument(input.arguments, "itemId", { maxLength: 19, pattern: /^\d{1,19}$/ });
+    const parentMessageId = ebayTradingTextArgument(input.arguments, "parentMessageId", { maxLength: 240 });
+    const recipientId = ebayTradingTextArgument(input.arguments, "recipientId", { maxLength: 240 });
+    const reply = ebayTradingTextArgument(input.arguments, "reply", { maxLength: 2_000 });
+    const requestXml = `<?xml version="1.0" encoding="utf-8"?><AddMemberMessageRTQRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${ebayTradingXmlEscape(itemId)}</ItemID><MemberMessage><Body>${ebayTradingXmlEscape(reply)}</Body><DisplayToPublic>false</DisplayToPublic><ParentMessageID>${ebayTradingXmlEscape(parentMessageId)}</ParentMessageID><RecipientID>${ebayTradingXmlEscape(recipientId)}</RecipientID></MemberMessage></AddMemberMessageRTQRequest>`;
+    const remote = await ebayTradingRequest({
+      payload: input.payload,
+      environment: input.environment,
+      callName: "AddMemberMessageRTQ",
+      body: requestXml,
+    });
+    return result(input, [step("inquiry-reply", remote)], parentMessageId);
+  }
   if (input.operation === "orders.list") {
     const baseQuery = queryParams(input.arguments);
     const limit = boundedPageSize(baseQuery.get("limit"), 50, 200);
@@ -3087,6 +3175,12 @@ async function executeEbay(input: ExecuteInput) {
 }
 
 export async function executeChannelOperation(input: ExecuteInput): Promise<ChannelOperationResult> {
+  if (input.channel === "ebay"
+      && (input.operation === "inquiries.list" || input.operation === "inquiries.reply")
+      && input.environment === "production"
+      && !ebayAsqProductionVerified) {
+    throw new Error("CHANNEL_RELEASE_VERIFICATION_REQUIRED:ebay-asq");
+  }
   ensureProviderSupport(input.channel, input.operation);
   const safeInput = input.operation === "listing.update"
     ? {

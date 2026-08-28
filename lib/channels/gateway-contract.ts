@@ -90,11 +90,13 @@ const operationResultSchema = z.object({
               ? positiveInteger(query.page)
               : value.channel === "ebay" && value.operation === "orders.list"
                 ? nonNegativeInteger(query.offset)
-                : value.channel === "temu" && value.operation === "orders.list"
+                : value.channel === "ebay" && value.operation === "inquiries.list"
                   ? positiveInteger(next.pageNumber)
-                  : value.channel === "temu" && value.operation === "inquiries.list"
-                    ? positiveInteger(next.pageNo)
-                    : false;
+                  : value.channel === "temu" && value.operation === "orders.list"
+                    ? positiveInteger(next.pageNumber)
+                    : value.channel === "temu" && value.operation === "inquiries.list"
+                      ? positiveInteger(next.pageNo)
+                      : false;
   if (!valid) context.addIssue({ code: "custom", message: "invalid provider pagination continuation" });
 });
 

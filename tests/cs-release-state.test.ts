@@ -30,7 +30,8 @@ test("ticket selection uses the internal source id even when external ticket ids
     { sourceId: "source-b", id: "same-external-id" },
   ];
   assert.equal(selectedCsTicket(tickets, "source-b")?.sourceId, "source-b");
-  assert.equal(selectedCsTicket(tickets, "missing")?.sourceId, "source-a");
+  assert.equal(selectedCsTicket(tickets, null)?.sourceId, "source-a");
+  assert.equal(selectedCsTicket(tickets, "missing"), null);
   assert.equal(selectedCsTicket([], "source-a"), null);
 });
 

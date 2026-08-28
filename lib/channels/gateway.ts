@@ -322,7 +322,7 @@ export async function executeViaChannelGateway(input: {
 export async function executeInquiryReplyViaChannelGateway(input: {
   serviceClient: SupabaseClient;
   ticketId: string;
-  channel: "qoo10" | "lazada" | "coupang" | "smartstore";
+  channel: "qoo10" | "lazada" | "coupang" | "smartstore" | "ebay";
   reply: string;
   arguments: Record<string, unknown>;
   timeoutMs?: number;
