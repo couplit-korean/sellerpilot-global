@@ -12,14 +12,15 @@ test("Qoo10 pause actions use controllable in-app confirmations", async () => {
   assert.match(source, /qoo10StopConfirming\.remoteId === listing\.remoteId/);
 });
 
-test("channel write confirmations move focus, close on Escape, and restore their opener", async () => {
+test("inline channel write confirmations move focus without claiming modal isolation", async () => {
   const source = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
 
   assert.match(source, /confirmationOpenerRef\.current = document\.activeElement/);
-  assert.match(source, /querySelector<HTMLButtonElement>\("\.publish-confirm-execute"\)/);
+  assert.match(source, /querySelector<HTMLButtonElement>\("\.credential-secondary"\)/);
   assert.match(source, /event\.key !== "Escape"/);
   assert.match(source, /opener\?\.isConnected[\s\S]*?opener\.focus\(\)/);
-  assert.equal((source.match(/aria-modal="true"/g) ?? []).length, 3);
+  assert.equal((source.match(/className="publish-write-confirmation(?: channel)?" role="alertdialog"/g) ?? []).length, 3);
+  assert.equal((source.match(/className="publish-write-confirmation(?: channel)?"[^>]*aria-modal="true"/g) ?? []).length, 0);
 });
 
 test("Coupang listing preflight never creates an unconfirmed shipping place", async () => {

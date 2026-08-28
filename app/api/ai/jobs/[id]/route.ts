@@ -1,7 +1,6 @@
-import { after, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 import { productResearchFailureMessage } from "../../../../../lib/product-research-failure";
-import { wakeServerProductResearchAfterResponse } from "../../../../../lib/server-product-research-runtime";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -36,11 +35,6 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       .createSignedUrl(result.hero_storage_path, 60 * 60);
     result.heroUrl = signed?.signedUrl ?? null;
     delete result.hero_storage_path;
-  }
-
-  if (job.kind === "product_research"
-      && (job.status === "queued" || job.status === "running")) {
-    after(wakeServerProductResearchAfterResponse);
   }
 
   if (job.kind === "product_research" && typeof job.error === "string") {

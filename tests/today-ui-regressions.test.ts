@@ -460,6 +460,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(mobilePushManager, /sessionStorage\.setItem\(mobilePushDismissedKey, "1"\)/);
   assert.match(mobilePushManager, /className="mobile-push-gate-dismiss"[\s\S]*?나중에/);
   assert.match(mobilePushManager, /className="mobile-push-page-spacer"/);
+  assert.match(mobilePushManager, /state !== "subscribed"[\s\S]{0,120}window\.setTimeout\(dismissForSession, 2_000\)/);
+  assert.match(mobilePushManager, /className="mobile-push-chip-dismiss"[\s\S]{0,160}aria-label="주문 배송 알림 상태 닫기"/);
   assert.match(studio, /fetchJsonWithStudioJobTimeout\([\s\S]*?lifecycleController\.signal, 30_000/);
   assert.match(studio, /controller\.abort\(new DOMException\("요청 제한시간을 초과했습니다\.", "TimeoutError"\)\)/);
   assert.doesNotMatch(studio, /onRunningChange\(true\)[\s\S]{0,900}activeJobs/);

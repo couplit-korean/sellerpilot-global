@@ -23,13 +23,20 @@ function assertBoundedSupabaseAndSeparatedAuth(source) {
   assert.match(source, /global: \{ fetch: createBoundedSupabaseFetch\([^)]*\) \}/);
 
   const get = routeMethodSource(source, "GET", "POST");
-  const missingCron = get.indexOf("if (!cronSecret)");
-  const badCronAuth = get.indexOf("authorization") >= 0
-    ? get.indexOf("authorization", missingCron + 1)
-    : get.indexOf("request.headers.get(\"authorization\")", missingCron + 1);
-  assert.ok(missingCron >= 0 && badCronAuth > missingCron, "missing cron config must be checked before caller auth");
-  assert.match(get, /if \(!cronSecret\)[\s\S]{0,220}status: 503/);
-  assert.match(get, /Bearer \$\{cronSecret\}[\s\S]{0,220}status: 401/);
+  const authCall = get.indexOf("internalScheduleAuthorization(");
+  const missingCron = get.indexOf('authorization === "missing"');
+  const badCronAuth = get.indexOf('authorization !== "authorized"');
+  const mode = get.indexOf("internalScheduleRequestMode(request)");
+  const invalidMode = get.indexOf('requestedMode === "invalid"');
+  const canary = get.indexOf('requestedMode === "canary"');
+  assert.ok(authCall >= 0 && missingCron > authCall, "missing cron config must be checked before caller auth");
+  assert.ok(badCronAuth > missingCron, "wrong schedule bearer must be rejected after config validation");
+  assert.ok(mode > badCronAuth, "execution mode must be parsed only after authentication");
+  assert.ok(invalidMode > mode && canary > invalidMode, "unknown modes must fail closed before canary");
+  assert.match(get, /authorization === "missing"[\s\S]{0,220}status: 503/);
+  assert.match(get, /authorization !== "authorized"[\s\S]{0,220}status: 401/);
+  assert.match(get, /requestedMode === "invalid"[\s\S]{0,180}status: 400/);
+  assert.match(get, /requestedMode === "canary"[\s\S]{0,180}internalScheduleCanaryPayload\(\)/);
   assert.match(get, /if \(!serviceClient\)[\s\S]{0,220}status: 503/);
 
   const post = routeMethodSource(source, "POST");
@@ -50,6 +57,8 @@ test("periodic channel sync preserves idempotent partial results and surfaces da
   assertBoundedSupabaseAndSeparatedAuth(source);
 
   assert.match(source, /sellerpilot_service_enqueue_periodic_sync/);
+  assert.match(source, /operation: "orders\.list"/);
+  assert.doesNotMatch(source, /inquirySyncRequests|periodicInquiryRequests|blockedInquiryResults/);
   assert.match(source, /if \(error\) return \{ channel, operation, status: "failed", infrastructureFailure: true \}/);
   assert.match(source, /catch \{[\s\S]{0,180}infrastructureFailure: true/);
   assert.match(source, /status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required" && status !== "reconciliation_required"/);

@@ -10,6 +10,12 @@ import {
 } from "../../../../lib/competitor-refresh-runtime";
 import { supabaseUrl } from "../../../../lib/supabase/config";
 import { createBoundedSupabaseFetch, workerRpcErrorMessage } from "../../../../lib/worker-rpc";
+import {
+  internalScheduleAuthorization,
+  internalScheduleCanaryPayload,
+  internalScheduleRequestMode,
+  runtimeStatusMatchesCurrentRelease,
+} from "../../../../lib/internal-scheduler-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -170,14 +176,31 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
 
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
-  if (!cronSecret) {
+  const authorization = internalScheduleAuthorization(
+    request.headers.get("authorization"),
+    cronSecret,
+  );
+  if (authorization === "missing") {
     return NextResponse.json({ message: "경쟁가 조회 인증값이 설정되지 않았습니다." }, { status: 503 });
   }
-  if (request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
+  if (authorization !== "authorized") {
     return NextResponse.json({ message: "경쟁가 조회 인증이 필요합니다." }, { status: 401 });
+  }
+  const requestedMode = internalScheduleRequestMode(request);
+  if (requestedMode === "invalid") {
+    return NextResponse.json({ message: "경쟁가 조회 실행 모드를 확인하지 못했습니다." }, { status: 400 });
+  }
+  if (requestedMode === "canary") {
+    return NextResponse.json(internalScheduleCanaryPayload());
   }
   const serviceClient = serverClient();
   if (!serviceClient) return NextResponse.json({ message: "Supabase 서버 설정이 없습니다." }, { status: 503 });
+  const { data: runtimeStatus, error: runtimeStatusError } = await serviceClient.rpc(
+    "sellerpilot_service_serverless_cs_wakeup_status",
+  );
+  if (runtimeStatusError || !runtimeStatusMatchesCurrentRelease(runtimeStatus)) {
+    return NextResponse.json({ message: "서버 일정이 활성화되지 않았습니다." }, { status: 503 });
+  }
   return runCompetitorPrices(serviceClient);
 }
 

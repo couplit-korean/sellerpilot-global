@@ -29,6 +29,22 @@ export type ChannelReadinessLiveMetric = {
   credentialLastCheckedAt: string | null;
 };
 
+export type ChannelGatewaySyncMetric = {
+  channel_key: string;
+  data_type: "orders" | "inquiries";
+  status: string;
+  last_error: string | null;
+  updated_at?: string | null;
+};
+
+export type ChannelGatewayActivity = {
+  state: "passed" | "queued" | "running" | "failed" | "reconciliation_required";
+  readinessState: ReadinessState;
+  evidence: string;
+  blocker: string | null;
+  nextAction: string;
+};
+
 /**
  * 실제 콘솔에서 확인된 사실과 공식 개발자 문서로 확인한 구현 준비 상태를
  * 분리합니다. 앱 키, 시크릿, 판매자 식별자와 일회성 코드는 포함하지 않습니다.
@@ -295,14 +311,28 @@ function liveCredentialProjection(metric: ChannelReadinessLiveMetric) {
   }
   if (metric.credentialStatus !== "missing") {
     const failed = metric.credentialLastCheckStatus === "failed";
+    const manual = metric.credentialLastCheckStatus === "manual";
+    const statusText = failed
+      ? "최근 API 읽기 진단 실패"
+      : manual
+        ? "연결 원장 수동 확인 필요"
+        : "API 읽기 진단 필요";
     return {
-      state: failed ? "blocked" as const : "partial" as const,
+      state: failed || manual ? "blocked" as const : "partial" as const,
       apiReadPassed: false,
-      appState: `운영 DB 실시간 · Vault 키 등록 · ${failed ? "최근 API 읽기 진단 실패" : "API 읽기 진단 필요"} · ${checkedAt}`,
-      evidence: `현재 운영 Vault 자격증명 등록 · ${failed ? "최근 읽기 진단 실패" : "읽기 진단 미확정"} · ${checkedAt}`,
-      summary: `현재 운영 DB에는 자격증명이 등록돼 있지만 API 읽기 진단은 ${failed ? "실패했습니다" : "아직 통과하지 않았습니다"}. 마지막 콘솔 스냅샷만으로 현재 연결 성공을 주장하지 않습니다.`,
-      blocker: failed ? "현재 운영 자격증명의 API 읽기 진단 실패 원인 해소" : "현재 운영 자격증명의 API 읽기 진단 통과",
-      nextAction: failed ? "운영 자격증명 오류 확인 → API 읽기 진단 재실행" : "API 읽기 진단 실행",
+      appState: `운영 DB 실시간 · Vault 키 등록 · ${statusText} · ${checkedAt}`,
+      evidence: `현재 운영 Vault 자격증명 등록 · ${manual ? "연결 원장 수동 확인 필요" : failed ? "최근 읽기 진단 실패" : "읽기 진단 미확정"} · ${checkedAt}`,
+      summary: `현재 운영 DB에는 자격증명이 등록돼 있지만 ${manual ? "연결 원장을 수동 확인해야 합니다" : `API 읽기 진단은 ${failed ? "실패했습니다" : "아직 통과하지 않았습니다"}`}. 마지막 콘솔 스냅샷만으로 현재 연결 성공을 주장하지 않습니다.`,
+      blocker: manual
+        ? "현재 운영 연결 원장의 수동 확인 완료"
+        : failed
+          ? "현재 운영 자격증명의 API 읽기 진단 실패 원인 해소"
+          : "현재 운영 자격증명의 API 읽기 진단 통과",
+      nextAction: manual
+        ? "원격 판매자센터와 연결 원장 대조 → 연결 검사 재실행"
+        : failed
+          ? "운영 자격증명 오류 확인 → API 읽기 진단 재실행"
+          : "API 읽기 진단 실행",
     };
   }
   return {
@@ -316,11 +346,124 @@ function liveCredentialProjection(metric: ChannelReadinessLiveMetric) {
   };
 }
 
-export function resolveChannelReadiness(
+const reconciliationMarker = /reconcil|provider outcome|manual.required|원장 확인|수동 확인|외부 결과 확인/i;
+
+function normalizedGatewayState(metric: ChannelGatewaySyncMetric): ChannelGatewayActivity["state"] | null {
+  if (metric.status === "reconciliation_required"
+      || (metric.status === "failed" && reconciliationMarker.test(metric.last_error ?? ""))) {
+    return "reconciliation_required";
+  }
+  if (["queued", "running", "failed", "passed"].includes(metric.status)) {
+    return metric.status as ChannelGatewayActivity["state"];
+  }
+  return null;
+}
+
+const gatewayStatePriority: Record<ChannelGatewayActivity["state"], number> = {
+  reconciliation_required: 5,
+  failed: 4,
+  running: 3,
+  queued: 2,
+  passed: 1,
+};
+
+export function resolveChannelGatewayActivity(
+  channelKey: ChannelReadiness["key"],
+  metrics: readonly ChannelGatewaySyncMetric[],
+): ChannelGatewayActivity | undefined {
+  const rows = metrics.flatMap((metric) => {
+    if (metric.channel_key !== channelKey) return [];
+    const state = normalizedGatewayState(metric);
+    return state ? [{ metric, state }] : [];
+  });
+  if (rows.length === 0) return undefined;
+
+  const state = rows.reduce<ChannelGatewayActivity["state"]>((current, row) =>
+    gatewayStatePriority[row.state] > gatewayStatePriority[current] ? row.state : current, rows[0].state);
+  const dataLabels = rows
+    .filter((row) => row.state === state)
+    .map((row) => row.metric.data_type === "orders" ? "주문" : "문의");
+  const targets = [...new Set(dataLabels)].join("·");
+  if (state === "reconciliation_required") {
+    return {
+      state,
+      readinessState: "blocked",
+      evidence: `${targets} 게이트웨이 결과를 원격 판매자센터와 수동 대조해야 합니다. 자동 재실행하지 않습니다.`,
+      blocker: `${targets} 게이트웨이 원장 확인 필요`,
+      nextAction: `${targets} 원격 결과 대조 → 원장 조정 완료 후 동기화 재개`,
+    };
+  }
+  if (state === "failed") {
+    return {
+      state,
+      readinessState: "blocked",
+      evidence: `${targets} 게이트웨이의 최근 동기화가 실패했습니다.`,
+      blocker: `${targets} 게이트웨이 실패 원인 해소`,
+      nextAction: `${targets} 게이트웨이 오류 확인 → 안전한 읽기 동기화 재실행`,
+    };
+  }
+  if (state === "running" || state === "queued") {
+    const progress = state === "running" ? "실행 중" : "대기 중";
+    return {
+      state,
+      readinessState: "partial",
+      evidence: `${targets} 게이트웨이 작업이 ${progress}입니다. 완료 전에는 최신 데이터 연결을 주장하지 않습니다.`,
+      blocker: null,
+      nextAction: `${targets} 게이트웨이 ${progress} 결과 확인`,
+    };
+  }
+  return {
+    state,
+    readinessState: "verified",
+    evidence: `${targets} 게이트웨이의 최근 동기화가 정상 완료됐습니다.`,
+    blocker: null,
+    nextAction: `${targets} 게이트웨이 주기 동기화 유지`,
+  };
+}
+
+function mergeGatewayActivity(
   channel: ChannelReadiness,
-  metric?: ChannelReadinessLiveMetric,
+  gateway: ChannelGatewayActivity | undefined,
 ): ChannelReadiness {
-  if (!metric) return channel;
+  if (!gateway) return channel;
+  const gatewayCheck: ReadinessCheck = {
+    label: "현재 게이트웨이 작업",
+    state: gateway.readinessState,
+    evidence: gateway.evidence,
+  };
+  const pending = gateway.state === "queued" || gateway.state === "running";
+  const statusText = gateway.state === "reconciliation_required"
+    ? "원장 확인 필요"
+    : gateway.state === "failed"
+      ? "최근 실패"
+      : gateway.state === "running"
+        ? "실행 중"
+        : gateway.state === "queued"
+          ? "대기 중"
+          : "최근 완료";
+  return {
+    ...channel,
+    overall: gateway.readinessState === "blocked"
+      ? "blocked"
+      : pending && channel.overall === "verified"
+        ? "partial"
+        : channel.overall,
+    appState: `게이트웨이 ${statusText} · ${channel.appState}`,
+    summary: `${gateway.evidence} ${channel.summary}`,
+    checks: [gatewayCheck, ...channel.checks.filter((check) => check.label !== gatewayCheck.label)],
+    blockers: gateway.blocker && !channel.blockers.includes(gateway.blocker)
+      ? [gateway.blocker, ...channel.blockers]
+      : channel.blockers,
+    nextAction: pending || gateway.readinessState === "blocked"
+      ? `${gateway.nextAction} → ${channel.nextAction}`
+      : channel.nextAction,
+  };
+}
+
+function resolveCredentialReadiness(
+  channel: ChannelReadiness,
+  metric: ChannelReadinessLiveMetric,
+): ChannelReadiness {
   const live = liveCredentialProjection(metric);
   const liveCheck: ReadinessCheck = {
     label: "현재 운영 API 읽기",
@@ -372,6 +515,14 @@ export function resolveChannelReadiness(
     blockers: [...new Set(temuBlockers)],
     nextAction: temuNextAction,
   };
+}
+
+export function resolveChannelReadiness(
+  channel: ChannelReadiness,
+  metric?: ChannelReadinessLiveMetric,
+  gateway?: ChannelGatewayActivity,
+): ChannelReadiness {
+  return mergeGatewayActivity(metric ? resolveCredentialReadiness(channel, metric) : channel, gateway);
 }
 
 export const qoo10RegistrationMap = [

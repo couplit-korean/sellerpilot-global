@@ -20,6 +20,7 @@ const workerPath = join(runtimeRoot, "scripts", "ai-cli-worker.mjs");
 const guiDomain = `gui/${process.getuid?.() ?? 0}`;
 const aiOnlyRuntimeRequested = process.argv.includes("--ai-only-runtime");
 const productOnlyRuntimeRequested = process.argv.includes("--product-only-runtime");
+const localDevAllScopesRequested = process.argv.includes("--allow-local-dev-all-scopes");
 
 function workerRuntimeModeFromPlist(plist) {
   if (plist.includes("<string>--product-only</string>")) return "product-only";
@@ -369,6 +370,9 @@ async function install() {
       : "";
   if (runtimeOnly && restrictedRuntimeRequested) {
     throw new Error("제한 런타임 선택과 런타임 전용 업그레이드는 함께 사용할 수 없습니다.");
+  }
+  if (runtimeMode === "all-scopes" && !localDevAllScopesRequested) {
+    throw new Error("로컬 전체 범위 작업자는 개발 확인 전용입니다. 운영 설치는 --ai-only-runtime을 사용하고, 격리된 로컬 개발에서만 --allow-local-dev-all-scopes를 명시하세요.");
   }
   if (runtimeOnly && (tokenSetId || rotateAll || rotatesOne)) {
     throw new Error("런타임 전용 업그레이드와 토큰 교체 옵션은 함께 사용할 수 없습니다.");

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Noto_Sans_KR } from "next/font/google";
 import "@puckeditor/core/puck.css";
 import "./globals.css";
@@ -6,6 +6,7 @@ import "./operations-system.css";
 import "./commerce-ux-refactor.css";
 import "./style-learning-center.css";
 import "./mobile-optimization.css";
+import "./interaction-layers.css";
 
 const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
@@ -41,6 +42,13 @@ export const metadata: Metadata = {
     description: "한 번의 등록, 모든 마켓에.",
     images: ["/og-style-learning.png"],
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  interactiveWidget: "resizes-visual",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

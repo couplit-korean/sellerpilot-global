@@ -141,6 +141,25 @@ begin
   return v_id;
 end;
 $$;
+create or replace function net.http_get(
+  url text,
+  params jsonb default '{}'::jsonb,
+  headers jsonb default '{}'::jsonb,
+  timeout_milliseconds integer default 1000
+)
+returns bigint
+language plpgsql
+as $$
+declare v_id bigint;
+begin
+  insert into net.http_request_queue (
+    url, body, params, headers, timeout_milliseconds
+  ) values (
+    $1, null, $2, $3, $4
+  ) returning id into v_id;
+  return v_id;
+end;
+$$;
 
 create schema if not exists cron;
 create table if not exists cron.job (
@@ -226,6 +245,30 @@ function withoutUnavailableExtensions(sql) {
     .replace(/^create extension if not exists supabase_vault with schema vault;\s*$/gim, "")
     .replace(/^create extension if not exists pg_cron with schema pg_catalog;\s*$/gim, "")
     .replace(/^create extension if not exists pg_net with schema extensions;\s*$/gim, "");
+}
+
+// This one broad integration flow deliberately exercises the historical
+// pre-retirement combined-worker bridge and then applies 150000 itself near
+// the end. Keep only that historical fixture on the pre-final scope contract;
+// serverless-runtime-release-fence-migration.test.mjs applies and executes the
+// real final fence against both the observed production shape and live leases.
+function withoutFinalStrictWorkerScopeFence(sql) {
+  const start = sql.indexOf("-- BEGIN:strict-worker-scope-final-fence");
+  const endMarker = "-- END:strict-worker-scope-final-fence";
+  const end = sql.indexOf(endMarker, start);
+  assert.ok(start >= 0 && end > start, "final strict worker-scope fence must be present");
+  const historical = `${sql.slice(0, start)}${sql.slice(end + endMarker.length)}`
+    .replace(
+      "token.scope = 'gateway'\n         or (\n           token.scope = 'serverless_cs'",
+      "token.scope in ('gateway', 'legacy_combined')\n         or (\n           token.scope = 'serverless_cs'",
+    )
+    .replace(
+      "where token.token_hash = p_token_hash\n     and token.scope = 'ai'\n     and token.status = 'active'\n     and token.expires_at > clock_timestamp()\n   for update;",
+      "where token.token_hash = p_token_hash\n     and token.scope in ('ai', 'legacy_combined')\n     and token.status = 'active'\n     and token.expires_at > clock_timestamp()\n   for update;",
+    );
+  assert.match(historical, /token\.scope in \('gateway', 'legacy_combined'\)/);
+  assert.match(historical, /token\.scope in \('ai', 'legacy_combined'\)/);
+  return historical;
 }
 
 async function setClaims(db, role = "authenticated", userId = ADMIN_ID) {
@@ -426,7 +469,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
-      const sql = await readFile(new URL(name, migrationUrl), "utf8");
+      const source = await readFile(new URL(name, migrationUrl), "utf8");
+      const sql = name === "20260828210000_non_cs_release_integrity.sql"
+        ? withoutFinalStrictWorkerScopeFence(source)
+        : source;
       try {
         await db.exec(withoutUnavailableExtensions(sql));
       } catch (error) {

@@ -28,10 +28,15 @@ import {
   SERVERLESS_STATIC_EGRESS_CHANNELS,
   type ServerlessStaticEgressChannel,
 } from "./serverless-static-egress";
+import {
+  resolveRuntimeReleaseIdentity,
+  runtimeStatusMatchesCurrentRelease,
+} from "../internal-scheduler-auth";
 
 export const SERVERLESS_GATEWAY_VERSION = "sellerpilot-vercel-gateway/2.0";
 export const SERVERLESS_CS_GATEWAY_VERSION = SERVERLESS_GATEWAY_VERSION;
 export const SERVERLESS_CS_EXECUTION_TIMEOUT_MS = 180_000;
+export const SERVERLESS_GATEWAY_RETRY_SAFE_READ_TIMEOUT_MS = 50_000;
 export const SERVERLESS_CS_HEARTBEAT_INTERVAL_MS = 20_000;
 export const SERVERLESS_CS_DRAIN_MODE_HEADER = "x-sellerpilot-drain-mode";
 export const SERVERLESS_CS_CANARY_MODE = "canary-v1";
@@ -78,6 +83,18 @@ const SAFE_NAVER_EXECUTION_ERRORS = new Set([
   "NAVER_PROVIDER_UNAVAILABLE",
   "NAVER_TOKEN_EXCHANGE_FAILED",
 ]);
+const SERVERLESS_GATEWAY_RETRY_SAFE_READ_OPERATIONS = new Set<GatewayClaim["operation"]>([
+  "categories.list",
+  "categories.suggest",
+  "categories.attributes",
+  "categories.validate",
+  "orders.list",
+  "orders.get",
+  "inquiries.list",
+  "diagnostic.test",
+  "shops.get",
+  "competitor.search",
+]);
 
 type RpcError = { code?: string | null } | null;
 type RpcResult = { data: unknown; error: RpcError };
@@ -89,6 +106,9 @@ export type ServerlessCsProviderExecutionInput = ServerlessGatewayProviderExecut
 
 export type ServerlessCsGatewayDependencies = {
   cronSecret?: string;
+  releaseId?: string;
+  vercelGitCommitSha?: string;
+  requireActiveRuntime?: boolean;
   staticEgressChannels?: readonly ServerlessStaticEgressChannel[];
   rpc?: (name: string, arguments_?: Record<string, unknown>) => Promise<RpcResult>;
   executeProvider?: (
@@ -184,6 +204,27 @@ function safeExecutionError(error: unknown, signal: AbortSignal) {
     }
   }
   return "serverless_cs_execution_failed";
+}
+
+export function serverlessGatewayExecutionTimeoutMs(
+  operation: GatewayClaim["operation"],
+  configuredTimeoutMs?: number,
+) {
+  // Keep the retry-safe provider phase below the next minute wake. Claim and
+  // completion RPCs remain separately bounded so lease/finalization fences are
+  // never abandoned. Explicit OAuth, provider writes and listing lineage
+  // readback keep the full lease window because an interrupted external
+  // mutation must be reconciled rather than retried. If a read refreshes a
+  // credential, the existing mutation hook still moves any uncertain timeout
+  // to reconciliation_required.
+  const operationMaximum = SERVERLESS_GATEWAY_RETRY_SAFE_READ_OPERATIONS.has(operation)
+    ? SERVERLESS_GATEWAY_RETRY_SAFE_READ_TIMEOUT_MS
+    : SERVERLESS_CS_EXECUTION_TIMEOUT_MS;
+  const requestedTimeout = typeof configuredTimeoutMs === "number"
+      && Number.isFinite(configuredTimeoutMs)
+    ? Math.max(1_000, Math.floor(configuredTimeoutMs))
+    : operationMaximum;
+  return Math.min(operationMaximum, requestedTimeout);
 }
 
 async function callRpc(
@@ -780,12 +821,10 @@ export async function runOneServerlessCsGatewayJob(
 
   const job = parsed.data;
   const heartbeat = createClaimHeartbeat(dependencies, gatewayTokenHash, job);
-  const runtimeSignal = AbortSignal.timeout(
-    Math.min(
-      SERVERLESS_CS_EXECUTION_TIMEOUT_MS,
-      Math.max(1_000, dependencies.executionTimeoutMs ?? SERVERLESS_CS_EXECUTION_TIMEOUT_MS),
-    ),
-  );
+  const runtimeSignal = AbortSignal.timeout(serverlessGatewayExecutionTimeoutMs(
+    job.operation,
+    dependencies.executionTimeoutMs,
+  ));
   let heartbeatStopped = false;
   let externalMutationStarted = false;
   let providerMutationFenced = false;
@@ -1037,10 +1076,39 @@ export async function runServerlessCsGatewayDrain(
   }
   const requestedMode = request.headers.get(SERVERLESS_CS_DRAIN_MODE_HEADER);
   if (requestedMode === SERVERLESS_CS_CANARY_MODE) {
-    return jsonResponse({ ok: true, status: "canary", claimed: 0, processed: 0 });
+    const releaseIdentity = resolveRuntimeReleaseIdentity({
+      sellerpilotReleaseSha: dependencies.releaseId,
+      vercelGitCommitSha: dependencies.vercelGitCommitSha,
+    });
+    return jsonResponse({
+      ok: true,
+      status: "canary",
+      claimed: 0,
+      processed: 0,
+      ...(releaseIdentity.status === "valid"
+        ? { release: releaseIdentity.release }
+        : {}),
+      ...(releaseIdentity.status === "conflict"
+        ? { releaseError: "runtime_release_conflict" }
+        : {}),
+    });
   }
   if (requestedMode !== null) {
     return jsonResponse({ message: "채널 작업 실행 모드를 확인하지 못했습니다." }, 400);
+  }
+  if (dependencies.requireActiveRuntime) {
+    const runtimeStatus = await callRpc(
+      dependencies,
+      "sellerpilot_service_serverless_cs_wakeup_status",
+      {},
+    );
+    if (runtimeStatus.error
+        || !runtimeStatusMatchesCurrentRelease(runtimeStatus.data, {
+          sellerpilotReleaseSha: dependencies.releaseId,
+          vercelGitCommitSha: dependencies.vercelGitCommitSha,
+        })) {
+      return jsonResponse({ message: "서버 일정이 활성화되지 않았습니다." }, 503);
+    }
   }
   const logError = dependencies.logError ?? defaultLogError;
   const enqueue = await enqueueCurrentInquirySyncs(dependencies);

@@ -3,6 +3,7 @@
 import { AlertTriangle, Ban, CheckCircle2, Clock3, Copy, Cpu, DatabaseZap, History, KeyRound, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
+import { useModalInteraction } from "./use-modal-interaction";
 
 type WorkerScope = "ai" | "gateway" | "scheduler";
 
@@ -134,7 +135,6 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
   const [tokenRotationConfirming, setTokenRotationConfirming] = useState(false);
   const tokenRotationDialogRef = useRef<HTMLDialogElement | null>(null);
   const tokenRotationConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
-  const tokenRotationOpenerRef = useRef<HTMLElement | null>(null);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data } = await createClient().auth.getSession();
@@ -221,12 +221,12 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     const dialog = tokenRotationDialogRef.current;
     if (dialog?.open) dialog.close();
     setTokenRotationConfirming(false);
-    const opener = tokenRotationOpenerRef.current;
-    tokenRotationOpenerRef.current = null;
-    window.requestAnimationFrame(() => {
-      if (opener?.isConnected && !(opener instanceof HTMLButtonElement && opener.disabled)) opener.focus();
-    });
   }, []);
+
+  useModalInteraction(tokenRotationConfirming, tokenRotationDialogRef, closeTokenRotationConfirmation, {
+    dismissible: !issuing,
+    initialFocusRef: tokenRotationConfirmButtonRef,
+  });
 
   useEffect(() => {
     const dialog = tokenRotationDialogRef.current;
@@ -274,12 +274,10 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       void issueToken();
       return;
     }
-    tokenRotationOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setTokenRotationConfirming(true);
   };
 
   const confirmTokenRotation = () => {
-    tokenRotationOpenerRef.current = null;
     const dialog = tokenRotationDialogRef.current;
     if (dialog?.open) dialog.close();
     setTokenRotationConfirming(false);

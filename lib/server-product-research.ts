@@ -4,6 +4,12 @@ import {
   PublicReferenceFetchError,
   type PublicReferenceDocument,
 } from "./public-reference-fetch";
+import {
+  internalScheduleAuthorization,
+  internalScheduleCanaryPayload,
+  internalScheduleRequestMode,
+  runtimeStatusMatchesCurrentRelease,
+} from "./internal-scheduler-auth";
 
 // This is the same OIDC-authenticated model exercised by server-runtime-smoke.
 // Keep the runtime module independent so the product route does not bundle the
@@ -39,6 +45,9 @@ type RpcResult = { data: unknown; error: RpcError };
 
 export type ServerProductResearchDependencies = {
   cronSecret?: string;
+  releaseId?: string;
+  vercelGitCommitSha?: string;
+  requireActiveRuntime?: boolean;
   rpc?: (name: string, arguments_?: Record<string, unknown>) => Promise<RpcResult>;
   analyze?: (researchInput: string, signal: AbortSignal) => Promise<ServerProductResearchResult>;
   logError?: (stage: string, details: Record<string, string | number | boolean>) => void;
@@ -548,11 +557,38 @@ export async function runServerProductResearchCron(
   dependencies: ServerProductResearchDependencies,
 ) {
   const cronSecret = dependencies.cronSecret?.trim() ?? "";
-  if (!cronSecret) {
+  const authorization = internalScheduleAuthorization(
+    request.headers.get("authorization"),
+    cronSecret,
+  );
+  if (authorization === "missing") {
     return jsonResponse({ message: "상품정보 분석 인증값이 설정되지 않았습니다." }, 503);
   }
-  if (request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
+  if (authorization !== "authorized") {
     return jsonResponse({ message: "상품정보 분석 인증이 필요합니다." }, 401);
+  }
+  const requestedMode = internalScheduleRequestMode(request);
+  if (requestedMode === "invalid") {
+    return jsonResponse({ message: "상품정보 분석 실행 모드를 확인하지 못했습니다." }, 400);
+  }
+  if (requestedMode === "canary") {
+    return jsonResponse(internalScheduleCanaryPayload({
+      sellerpilotReleaseSha: dependencies.releaseId,
+      vercelGitCommitSha: dependencies.vercelGitCommitSha,
+    }));
+  }
+  if (dependencies.requireActiveRuntime) {
+    const runtimeStatus = await callRpc(
+      dependencies,
+      "sellerpilot_service_serverless_cs_wakeup_status",
+    );
+    if (runtimeStatus.error
+        || !runtimeStatusMatchesCurrentRelease(runtimeStatus.data, {
+          sellerpilotReleaseSha: dependencies.releaseId,
+          vercelGitCommitSha: dependencies.vercelGitCommitSha,
+        })) {
+      return jsonResponse({ message: "서버 일정이 활성화되지 않았습니다." }, 503);
+    }
   }
   return runOneServerProductResearch(dependencies);
 }

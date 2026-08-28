@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   channelReadiness,
   channelReadinessObservedAt,
+  resolveChannelGatewayActivity,
   resolveChannelReadiness,
   type ChannelReadinessLiveMetric,
 } from "../app/channel-readiness-data";
@@ -119,4 +120,57 @@ test("Temu live read 실패는 verified로 승격하지 않고 동일 실패를 
   assert.equal(resolved.checks.find((check) => check.label === "현재 운영 API 읽기")?.state, "blocked");
   assert.equal(resolved.blockers.some((blocker) => /API 읽기 진단 실패 원인 해소/.test(blocker)), true);
   assert.match(resolved.nextAction, /오류 확인.*API 읽기 진단 재실행/);
+});
+
+test("게이트웨이 대기·실행 상태는 자격증명 읽기 통과와 분리해 일부 준비로 표시한다", () => {
+  const ebay = channelReadiness.find((channel) => channel.key === "ebay");
+  assert.ok(ebay);
+  const gateway = resolveChannelGatewayActivity("ebay", [
+    { channel_key: "ebay", data_type: "orders", status: "queued", last_error: null },
+    { channel_key: "ebay", data_type: "inquiries", status: "running", last_error: null },
+  ]);
+  assert.ok(gateway);
+  assert.equal(gateway.state, "running");
+
+  const resolved = resolveChannelReadiness(ebay, liveMetric(), gateway);
+  assert.equal(resolved.apiReadPassed, true);
+  assert.equal(resolved.overall, "partial");
+  assert.match(resolved.appState, /게이트웨이 실행 중/);
+  assert.equal(resolved.checks.find((check) => check.label === "현재 게이트웨이 작업")?.state, "partial");
+  assert.match(resolved.summary, /완료 전에는 최신 데이터 연결을 주장하지 않습니다/);
+});
+
+test("게이트웨이 reconciliation marker는 읽기 통과보다 우선해 채널을 차단한다", () => {
+  const lazada = channelReadiness.find((channel) => channel.key === "lazada");
+  assert.ok(lazada);
+  const gateway = resolveChannelGatewayActivity("lazada", [{
+    channel_key: "lazada",
+    data_type: "orders",
+    status: "failed",
+    last_error: "provider outcome requires reconciliation",
+  }]);
+  assert.ok(gateway);
+  assert.equal(gateway.state, "reconciliation_required");
+
+  const resolved = resolveChannelReadiness(lazada, liveMetric(), gateway);
+  assert.equal(resolved.apiReadPassed, true);
+  assert.equal(resolved.overall, "blocked");
+  assert.match(resolved.appState, /게이트웨이 원장 확인 필요/);
+  assert.equal(resolved.checks.find((check) => check.label === "현재 게이트웨이 작업")?.state, "blocked");
+  assert.equal(resolved.blockers.some((blocker) => /주문 게이트웨이 원장 확인 필요/.test(blocker)), true);
+  assert.match(resolved.nextAction, /원격 결과 대조.*원장 조정 완료/);
+});
+
+test("자격증명 manual 판정은 단순 미확정이 아니라 연결 원장 차단으로 표시한다", () => {
+  const shopee = channelReadiness.find((channel) => channel.key === "shopee");
+  assert.ok(shopee);
+  const resolved = resolveChannelReadiness(shopee, liveMetric({
+    credentialStatus: "unverified",
+    credentialLastCheckStatus: "manual",
+  }));
+
+  assert.equal(resolved.overall, "blocked");
+  assert.equal(resolved.apiReadPassed, false);
+  assert.match(resolved.appState, /연결 원장 수동 확인 필요/);
+  assert.equal(resolved.blockers.some((blocker) => /연결 원장의 수동 확인 완료/.test(blocker)), true);
 });

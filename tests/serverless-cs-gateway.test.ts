@@ -21,11 +21,14 @@ registerHooks({
 const {
   SERVERLESS_CS_DRAIN_CONCURRENCY,
   SERVERLESS_CS_ENQUEUE_CONCURRENCY,
+  SERVERLESS_CS_EXECUTION_TIMEOUT_MS,
   SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES,
+  SERVERLESS_GATEWAY_RETRY_SAFE_READ_TIMEOUT_MS,
   SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES,
   deriveServerlessCsGatewayCredentials,
   executeServerlessCsProviderJob,
   runServerlessCsGatewayDrain,
+  serverlessGatewayExecutionTimeoutMs,
   serverlessCsCurrentInquiryEnqueues,
 } = await import("../lib/channels/serverless-cs-gateway");
 
@@ -287,6 +290,53 @@ test("derived wake authentication fails before any database claim", async () => 
   assert.equal(rpcCalls, 0);
 });
 
+test("retry-safe provider reads stay below one minute while mutations retain the full lease window", () => {
+  const retrySafeReads = [
+    "categories.list",
+    "categories.suggest",
+    "categories.attributes",
+    "categories.validate",
+    "orders.list",
+    "orders.get",
+    "inquiries.list",
+    "diagnostic.test",
+    "shops.get",
+    "competitor.search",
+  ] as const;
+  for (const operation of retrySafeReads) {
+    assert.equal(
+      serverlessGatewayExecutionTimeoutMs(operation),
+      SERVERLESS_GATEWAY_RETRY_SAFE_READ_TIMEOUT_MS,
+      operation,
+    );
+  }
+
+  const mutationOrUncertainOperations = [
+    "oauth.exchange",
+    "listing.lineage.verify",
+    "listing.create",
+    "listing.update",
+    "listing.stop",
+    "inventory.update",
+    "inquiries.reply",
+    "shipment.acknowledge",
+    "shipment.confirm",
+  ] as const;
+  for (const operation of mutationOrUncertainOperations) {
+    assert.equal(
+      serverlessGatewayExecutionTimeoutMs(operation),
+      SERVERLESS_CS_EXECUTION_TIMEOUT_MS,
+      operation,
+    );
+  }
+
+  assert.equal(serverlessGatewayExecutionTimeoutMs("orders.list", 300_000), 50_000);
+  assert.equal(serverlessGatewayExecutionTimeoutMs("listing.create", 300_000), 180_000);
+  assert.equal(serverlessGatewayExecutionTimeoutMs("orders.list", 12_345.9), 12_345);
+  assert.equal(serverlessGatewayExecutionTimeoutMs("listing.create", 12_345.9), 12_345);
+  assert.equal(serverlessGatewayExecutionTimeoutMs("orders.list", Number.NaN), 50_000);
+});
+
 test("authenticated canary validates the route without claiming or executing a job", async () => {
   let rpcCalls = 0;
   let providerCalls = 0;
@@ -313,6 +363,76 @@ test("authenticated canary validates the route without claiming or executing a j
   });
   assert.equal(rpcCalls, 0);
   assert.equal(providerCalls, 0);
+});
+
+test("authenticated canary exposes only a validated Vercel commit identity", async () => {
+  const release = "A".repeat(40);
+  const response = await runServerlessCsGatewayDrain(
+    authorizedRequest({ "x-sellerpilot-drain-mode": "canary-v1" }),
+    {
+      cronSecret: CRON_SECRET,
+      releaseId: release,
+      rpc: async () => ({ data: null, error: null }),
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    status: "canary",
+    claimed: 0,
+    processed: 0,
+    release: release.toLowerCase(),
+  });
+
+  const invalid = await runServerlessCsGatewayDrain(
+    authorizedRequest({ "x-sellerpilot-drain-mode": "canary-v1" }),
+    {
+      cronSecret: CRON_SECRET,
+      releaseId: "candidate-branch-name",
+      rpc: async () => ({ data: null, error: null }),
+    },
+  );
+  assert.deepEqual(await invalid.json(), {
+    ok: true,
+    status: "canary",
+    claimed: 0,
+    processed: 0,
+  });
+
+  const conflict = await runServerlessCsGatewayDrain(
+    authorizedRequest({ "x-sellerpilot-drain-mode": "canary-v1" }),
+    {
+      cronSecret: CRON_SECRET,
+      releaseId: "a".repeat(40),
+      vercelGitCommitSha: "b".repeat(40),
+      rpc: async () => ({ data: null, error: null }),
+    },
+  );
+  assert.deepEqual(await conflict.json(), {
+    ok: true,
+    status: "canary",
+    claimed: 0,
+    processed: 0,
+    releaseError: "runtime_release_conflict",
+  });
+});
+
+test("live drain rejects a runtime whose release does not match the active database release", async () => {
+  const calls: string[] = [];
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    releaseId: "a".repeat(40),
+    requireActiveRuntime: true,
+    rpc: async (name) => {
+      calls.push(name);
+      return {
+        data: { active: true, activeRelease: "b".repeat(40) },
+        error: null,
+      };
+    },
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(calls, ["sellerpilot_service_serverless_cs_wakeup_status"]);
 });
 
 test("canary mode still rejects missing or wrong wake authentication before database access", async () => {
@@ -1086,9 +1206,10 @@ test("request deadline composition is isolated across concurrent provider execut
 });
 
 test("bounded drain route is direct, eight-job, Node-only, and excludes child workers", async () => {
-  const [route, gateway, provider, protocols] = await Promise.all([
+  const [route, gateway, gatewayRuntime, provider, protocols] = await Promise.all([
     readFile(new URL("../app/api/internal/channel-gateway-drain/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/serverless-cs-gateway.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/serverless-cs-gateway-runtime.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/protocols.ts", import.meta.url), "utf8"),
   ]);
@@ -1097,9 +1218,14 @@ test("bounded drain route is direct, eight-job, Node-only, and excludes child wo
   assert.match(route, /export const maxDuration = 300/);
   assert.match(route, /export async function POST/);
   assert.match(gateway, /SERVERLESS_CS_EXECUTION_TIMEOUT_MS = 180_000/);
+  assert.match(gateway, /SERVERLESS_GATEWAY_RETRY_SAFE_READ_TIMEOUT_MS = 50_000/);
+  assert.match(gateway, /serverlessGatewayExecutionTimeoutMs\(/);
   assert.match(gateway, /SERVERLESS_CS_ENQUEUE_CONCURRENCY = 3/);
   assert.match(gateway, /SERVERLESS_CS_DRAIN_CONCURRENCY = 8/);
   assert.match(gateway, /SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES = 25/);
+  assert.match(gatewayRuntime, /releaseId: process\.env\.SELLERPILOT_RELEASE_SHA/);
+  assert.match(gatewayRuntime, /vercelGitCommitSha: process\.env\.VERCEL_GIT_COMMIT_SHA/);
+  assert.match(gatewayRuntime, /requireActiveRuntime: true/);
   assert.match(gateway, /sellerpilot_claim_serverless_gateway_job/);
   assert.match(gateway, /sellerpilot_claim_serverless_cs_job/);
   assert.match(gateway, /sellerpilot_claim_ebay_asq_serverless_job/);

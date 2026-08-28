@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import type { ServerProductResearchResult } from "../lib/ai-cli-contract";
 import {
+  deriveSupabaseInternalScheduleBearer,
+  INTERNAL_SCHEDULE_CANARY_HEADER,
+  INTERNAL_SCHEDULE_CANARY_MODE,
+} from "../lib/internal-scheduler-auth";
+import {
   analyzeServerProductResearch,
   buildServerProductResearchPrompt,
   classifyProductResearchGatewayFailure,
@@ -61,7 +66,7 @@ function validResult(): ServerProductResearchResult {
 
 function authorizedRequest() {
   return new Request("https://sellerpilot.example/api/internal/product-research", {
-    headers: { authorization: `Bearer ${SECRET}` },
+    headers: { authorization: `Bearer ${deriveSupabaseInternalScheduleBearer(SECRET)}` },
   });
 }
 
@@ -197,6 +202,102 @@ test("cron authentication fails before any database claim", async () => {
   assert.equal(rpcCalls, 0);
 });
 
+test("raw cron secret is rejected after moving every schedule to Supabase", async () => {
+  let rpcCalls = 0;
+  const response = await runServerProductResearchCron(
+    new Request("https://sellerpilot.example/api/internal/product-research", {
+      headers: { authorization: `Bearer ${SECRET}` },
+    }),
+    {
+      cronSecret: SECRET,
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: null, error: null };
+      },
+    },
+  );
+  assert.equal(response.status, 401);
+  assert.equal(rpcCalls, 0);
+});
+
+test("Supabase HMAC bearer canaries authenticate without claiming work", async () => {
+  let rpcCalls = 0;
+  const bearer = deriveSupabaseInternalScheduleBearer(SECRET);
+  const response = await runServerProductResearchCron(
+    new Request("https://sellerpilot.example/api/internal/product-research", {
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        [INTERNAL_SCHEDULE_CANARY_HEADER]: INTERNAL_SCHEDULE_CANARY_MODE,
+      },
+    }),
+    {
+      cronSecret: SECRET,
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: null, error: null };
+      },
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: "canary", executed: false });
+  assert.equal(rpcCalls, 0);
+});
+
+test("authenticated unknown schedule modes fail closed without claiming work", async () => {
+  let rpcCalls = 0;
+  const response = await runServerProductResearchCron(
+    new Request("https://sellerpilot.example/api/internal/product-research", {
+      headers: {
+        authorization: `Bearer ${deriveSupabaseInternalScheduleBearer(SECRET)}`,
+        [INTERNAL_SCHEDULE_CANARY_HEADER]: "canary-v2-typo",
+      },
+    }),
+    {
+      cronSecret: SECRET,
+      rpc: async () => {
+        rpcCalls += 1;
+        return { data: null, error: null };
+      },
+    },
+  );
+  assert.equal(response.status, 400);
+  assert.equal(rpcCalls, 0);
+});
+
+test("scheduled product research refuses live work while the Supabase runtime is inactive", async () => {
+  const calls: string[] = [];
+  const response = await runServerProductResearchCron(authorizedRequest(), {
+    cronSecret: SECRET,
+    requireActiveRuntime: true,
+    rpc: async (name) => {
+      calls.push(name);
+      return name === "sellerpilot_service_serverless_cs_wakeup_status"
+        ? { data: { active: false }, error: null }
+        : { data: null, error: { code: "unexpected_rpc" } };
+    },
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(calls, ["sellerpilot_service_serverless_cs_wakeup_status"]);
+});
+
+test("scheduled product research refuses live work from a different active release", async () => {
+  const calls: string[] = [];
+  const response = await runServerProductResearchCron(authorizedRequest(), {
+    cronSecret: SECRET,
+    releaseId: "a".repeat(40),
+    requireActiveRuntime: true,
+    rpc: async (name) => {
+      calls.push(name);
+      return {
+        data: { active: true, activeRelease: "b".repeat(40) },
+        error: null,
+      };
+    },
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(calls, ["sellerpilot_service_serverless_cs_wakeup_status"]);
+});
+
 test("cron processes one research job through claim, lease fence, and completion", async () => {
   const calls: string[] = [];
   const response = await runServerProductResearchCron(authorizedRequest(), {
@@ -310,7 +411,7 @@ test("completion is retried exactly once after an uncertain RPC response", async
   assert.equal(completionCalls, 2);
 });
 
-test("Pro deployment schedules a bounded product-research recovery route without replacing maintenance", async () => {
+test("Hobby deployment moves product-research scheduling out of Vercel cron", async () => {
   const [route, vercelSource] = await Promise.all([
     readFile(new URL("../app/api/internal/product-research/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../vercel.json", import.meta.url), "utf8"),
@@ -323,27 +424,10 @@ test("Pro deployment schedules a bounded product-research recovery route without
   assert.match(route, /runServerProductResearchCron/);
   assert.doesNotMatch(route, /\bafter\s*\(/);
   assert.doesNotMatch(route, /product_studio|image|channel-gateway|shipping|listing/i);
-  assert.deepEqual(vercel.crons, [
-    {
-      path: "/api/internal/maintenance",
-      schedule: "17 18 * * *",
-    },
-    {
-      path: "/api/internal/product-research",
-      schedule: "*/5 * * * *",
-    },
-    {
-      path: "/api/internal/channel-sync",
-      schedule: "1-59/5 * * * *",
-    },
-    {
-      path: "/api/internal/competitor-prices",
-      schedule: "3-59/5 * * * *",
-    },
-  ]);
+  assert.equal(Object.hasOwn(vercel, "crons"), false);
 });
 
-test("after wakeups are limited to authenticated enqueue and queued or running research polling", async () => {
+test("after wakeups are limited to the authenticated enqueue route", async () => {
   const [enqueueRoute, pollingRoute, internalRoute, allRoutes] = await Promise.all([
     readFile(new URL("../app/api/ai/product-research/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/jobs/[id]/route.ts", import.meta.url), "utf8"),
@@ -351,7 +435,7 @@ test("after wakeups are limited to authenticated enqueue and queued or running r
     routeSources(fileURLToPath(new URL("../app/api/", import.meta.url))),
   ]);
 
-  for (const route of [enqueueRoute, pollingRoute]) {
+  for (const route of [enqueueRoute]) {
     assert.match(route, /import \{ after, NextResponse \} from "next\/server"/);
     assert.match(route, /export const runtime = "nodejs"/);
     assert.match(route, /export const maxDuration = 300/);
@@ -361,17 +445,13 @@ test("after wakeups are limited to authenticated enqueue and queued or running r
   }
 
   assert.ok(enqueueRoute.indexOf("if (error)") < enqueueRoute.indexOf("after("));
-  assert.match(
-    pollingRoute,
-    /if \(job\.kind === "product_research"[\s\S]*?job\.status === "queued" \|\| job\.status === "running"[\s\S]*?after\(wakeServerProductResearchAfterResponse\);\s*\}/,
-  );
-  assert.ok(pollingRoute.indexOf("if (!data ||") < pollingRoute.indexOf("after("));
+  assert.doesNotMatch(pollingRoute, /wakeServerProductResearchAfterResponse|\bafter\s*\(/);
   assert.doesNotMatch(internalRoute, /\bafter\s*\(/);
   assert.deepEqual(
     allRoutes
       .filter(({ source }) => source.includes("after(wakeServerProductResearchAfterResponse)"))
       .map(({ path }) => path.slice(fileURLToPath(new URL("../", import.meta.url)).length))
       .sort(),
-    ["app/api/ai/jobs/[id]/route.ts", "app/api/ai/product-research/route.ts"],
+    ["app/api/ai/product-research/route.ts"],
   );
 });

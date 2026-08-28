@@ -22,6 +22,7 @@ function mediaBody(styles, query) {
 test("Galaxy Fold cover widths compact the header without removing controls", async () => {
   const styles = await readFile(stylesUrl, "utf8");
   const cover = mediaBody(styles, "(max-width: 344px)");
+  const narrowCover = mediaBody(styles, "(max-width: 319px)");
 
   assert.match(cover, /body\s*\{[^}]*min-width:\s*0/);
   assert.match(cover, /\.topbar-title\s*\{[^}]*min-width:\s*44px;[^}]*flex:\s*1 1 auto/);
@@ -30,6 +31,10 @@ test("Galaxy Fold cover widths compact the header without removing controls", as
   assert.match(cover, /\.topbar-actions \.demo-data-badge\s*\{[^}]*display:\s*grid;[^}]*width:\s*44px;[^}]*min-width:\s*44px/);
   assert.doesNotMatch(cover, /\.topbar-actions \.demo-data-badge\s*\{[^}]*display:\s*none/);
   assert.doesNotMatch(cover, /\.topbar-actions \.user-menu\s*\{[^}]*display:\s*none/);
+  assert.match(narrowCover, /\.topbar-actions\s*\{[^}]*min-width:\s*136px;[^}]*flex:\s*0 0 136px/);
+  assert.match(narrowCover, /\.topbar-actions \.demo-data-badge\s*\{[^}]*display:\s*none/);
+  assert.match(narrowCover, /\.topbar-title h1\s*\{[^}]*max-width:\s*none;[^}]*font-size:\s*12px/);
+  assert.doesNotMatch(narrowCover, /\.topbar-actions \.user-menu\s*\{[^}]*display:\s*none/);
 });
 
 test("cover-screen status, calendar and fixed actions stay reachable", async () => {
@@ -47,7 +52,9 @@ test("cover-screen status, calendar and fixed actions stay reachable", async () 
   assert.match(cover, /\.cs-filter-actions\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.match(cover, /\.analysis-start-bar\s*\{[^}]*flex-direction:\s*column/);
   assert.match(cover, /\.analysis-start-bar > button\s*\{[^}]*width:\s*100%;[^}]*min-height:\s*44px/);
-  assert.match(cover, /\.sales-calendar-grid\s*\{[^}]*grid-template-columns:\s*repeat\(7, minmax\(40px, 1fr\)\);[^}]*overflow-x:\s*auto/);
+  assert.match(styles, /\.sales-calendar-scroll\s*\{[^}]*overflow-x:\s*auto;[^}]*overscroll-behavior-inline:\s*contain/);
+  assert.match(styles, /\.sales-calendar-weekdays,\s*\.sales-calendar-grid\s*\{[^}]*min-width:\s*var\(--sales-calendar-min-width\);[^}]*grid-template-columns:\s*repeat\(7, minmax\(40px, 1fr\)\)/);
+  assert.match(styles, /\.sales-calendar-grid\s*\{[^}]*overflow:\s*visible/);
   assert.match(cover, /\.mobile-bottom-nav button span\s*\{[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap/);
   assert.match(legacyCover, /\.mobile-push-gate\.browser\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
 });

@@ -38,19 +38,19 @@ test("every registration card exposes keyboard and touch details without changin
 test("notification popover closes only on an outside pointer or Escape and cleans up both listeners", async () => {
   const page = await readFile(pageUrl, "utf8");
   const effectStart = page.indexOf("const closeOnOutside = (event: PointerEvent)");
-  const effectEnd = page.indexOf("}, [notificationsOpen]);", effectStart);
+  const effectEnd = page.indexOf("}, [closeNotifications, notificationsOpen]);", effectStart);
   assert.notEqual(effectStart, -1);
   assert.notEqual(effectEnd, -1);
   const effect = page.slice(effectStart, effectEnd);
 
-  assert.match(effect, /notificationRef\.current && !notificationRef\.current\.contains\(event\.target as Node\)\) setNotificationsOpen\(false\)/);
-  assert.match(effect, /event\.key === "Escape"\) setNotificationsOpen\(false\)/);
+  assert.match(effect, /notificationRef\.current && !notificationRef\.current\.contains\(event\.target as Node\)\) closeNotifications\(false\)/);
+  assert.match(effect, /event\.key !== "Escape"[\s\S]{0,100}closeNotifications\(true\)/);
   assert.match(effect, /document\.addEventListener\("pointerdown", closeOnOutside, true\)/);
   assert.match(effect, /document\.removeEventListener\("pointerdown", closeOnOutside, true\)/);
   assert.match(effect, /document\.addEventListener\("keydown", closeOnEscape\)/);
   assert.match(effect, /document\.removeEventListener\("keydown", closeOnEscape\)/);
   assert.match(page, /className="notification-wrap" ref=\{notificationRef\}/);
-  assert.match(page, /aria-label="알림" aria-expanded=\{notificationsOpen\}/);
+  assert.match(page, /aria-label="알림" aria-expanded=\{notificationsOpen\} aria-controls="sellerpilot-notifications"/);
 });
 
 test("the same narrow registration and preview contract covers both target phone widths", async () => {
@@ -80,8 +80,9 @@ test("mobile product analysis visibly waits for an in-flight competitor lookup w
   assert.match(page, /setCompetitorResearchState\(invalidatedExistingContext \? "stale" : "idle"\)/);
   assert.match(page, /상품 식별정보가 변경되었습니다/);
   assert.match(commerceStyles, /@media \(max-width: 560px\)[\s\S]*?\.competitor-retry-actions\s*\{[^}]*width:\s*100%;[^}]*flex-direction:\s*column/);
-  assert.match(commerceStyles, /@media \(max-width: 720px\)[\s\S]*?\.analysis-start-bar\s*\{[^}]*position:\s*sticky;[^}]*bottom:\s*max\(8px, env\(safe-area-inset-bottom\)\)/);
-  assert.match(mobileStyles, /@media \(max-width: 720px\)[\s\S]*?\.analysis-start-bar\s*\{[^}]*bottom:\s*max\(8px, env\(safe-area-inset-bottom\)\)/);
+  assert.match(commerceStyles, /@media \(max-width: 720px\)[\s\S]*?\.analysis-start-bar\s*\{[^}]*position:\s*sticky/);
+  assert.match(mobileStyles, /Fold-safe mobile overlay lanes[\s\S]*?\.analysis-start-bar\s*\{[^}]*position:\s*static;[^}]*bottom:\s*auto !important/);
+  assert.match(mobileStyles, /Fold-safe mobile overlay lanes[\s\S]*?\.option-slot-wrap\s*\{[^}]*grid-template-rows:\s*minmax\(124px, auto\) auto/);
   assert.match(mobileStyles, /\.upload-panel\.panel\s*\{[^}]*overflow:\s*visible/);
   assert.match(page, /AI 작업 큐에서 계속 처리되므로 다른 상품을 바로 올릴 수 있습니다/);
   assert.doesNotMatch(page, /서버에서 계속 처리되므로/);

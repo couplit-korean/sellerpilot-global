@@ -18,7 +18,6 @@ import {
 import {
   activeChannelKeys,
   capabilityLabels,
-  capabilityModeLabels,
   channelCatalog,
   isActiveChannelKey,
   type ChannelCapabilityKey,
@@ -29,9 +28,11 @@ import {
   channelReadinessObservedAt,
   integrationGates,
   qoo10RegistrationMap,
+  resolveChannelGatewayActivity,
   resolveChannelReadiness,
   type ReadinessState,
 } from "./channel-readiness-data";
+import { channelCapabilityReleasePresentation } from "../lib/channels/operation-availability";
 import type { OperationsSnapshot } from "./use-operations-snapshot";
 
 const stateLabels: Record<ReadinessState, string> = {
@@ -65,6 +66,7 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [], sy
   const resolvedReadiness = channelReadiness.map((channel) => resolveChannelReadiness(
     channel,
     channelMetrics.find((metric) => metric.channelKey === channel.key),
+    resolveChannelGatewayActivity(channel.key, syncStatus),
   ));
   const consoleVerifiedChannels = resolvedReadiness.filter((channel) => channel.consoleVerified);
   const hasLiveMetrics = channelMetrics.length > 0;
@@ -81,7 +83,7 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [], sy
         <div>
           <span className="readiness-eyebrow"><Radio size={14} /> LAST CONSOLE SNAPSHOT · {channelReadinessObservedAt} · LIVE DB MERGED</span>
           <h2>로그인됐다는 사실과<br /><em>API가 작동한다는 증거를 분리합니다.</em></h2>
-          <p>운영 대상 {resolvedReadiness.length}개 판매채널의 마지막 콘솔 스냅샷과 현재 Vault·API 읽기 진단을 분리해 병합합니다. 과거 심사 결과는 날짜가 붙은 이력으로만 표시하며 현재 운영 DB 근거를 덮어쓰지 않습니다.</p>
+          <p>운영 대상 {resolvedReadiness.length}개 판매채널의 마지막 콘솔 스냅샷과 현재 Vault·인증 키 읽기·주문/문의 게이트웨이 상태를 분리해 병합합니다. 과거 심사 결과는 날짜가 붙은 이력으로만 표시하며 현재 운영 DB 근거를 덮어쓰지 않습니다.</p>
         </div>
         <aside>
           <ShieldCheck size={20} />
@@ -94,7 +96,7 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [], sy
         <article><span>Vault 운영 키</span><strong>{registeredCredentials} / {resolvedReadiness.length}</strong><small>현재 운영 DB 실시간 집계</small></article>
         <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>문서·코드·화면 증거</small></article>
         <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>키·승인·고정 IP·Partner 앱</small></article>
-        <article className="danger"><span>현재 API 읽기 통과</span><strong>{apiReadPassed} / {resolvedReadiness.length}</strong><small>최근 운영 키 읽기 진단 기준</small></article>
+        <article className="danger"><span>인증 키 읽기 통과</span><strong>{apiReadPassed} / {resolvedReadiness.length}</strong><small>게이트웨이 진행·조정 상태와 별도 판정</small></article>
       </section>
 
       <section className="readiness-channel-grid">
@@ -137,13 +139,13 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [], sy
           <div><span className="panel-kicker">CHANNEL CAPABILITY ROUTING</span><h3>채널별 지원 방식 · 대체 흐름</h3></div>
           <span className="field-map-proof"><ShieldCheck size={14} />공식 문서 기준</span>
         </div>
-        <p className="capability-intro">같은 버튼을 무조건 호출하지 않습니다. API·주기조회·웹훅·미지원·문서승인 필요 상태를 먼저 판정하고, 미지원 동작은 해당 채널 콘솔로 안내합니다.</p>
+        <p className="capability-intro">공식 문서에 API가 있어도 현재 원격 식별·재조회·권한 검증이 끝나지 않은 기능은 출시 차단으로 표시합니다. 실제 실행 화면과 같은 release gate를 사용합니다.</p>
         <div className="table-wrap capability-table-wrap">
           <table className="capability-table">
             <thead><tr><th>기능</th>{activeChannelKeys.map((key) => <th key={key}>{channelCatalog[key].name}</th>)}</tr></thead>
             <tbody>{capabilityKeys.map((capability) => <tr key={capability}><td><b>{capabilityLabels[capability]}</b></td>{activeChannelKeys.map((key) => {
-              const item = channelCatalog[key].capabilities[capability];
-              return <td key={key}><span className={`capability-mode ${item.mode}`}>{capabilityModeLabels[item.mode]}</span><small>{item.note}</small></td>;
+              const item = channelCapabilityReleasePresentation(key, capability);
+              return <td key={key}><span className={`capability-mode ${item.mode}`}>{item.label}</span><small>{item.note}</small></td>;
             })}</tr>)}</tbody>
           </table>
         </div>

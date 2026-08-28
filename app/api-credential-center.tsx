@@ -20,13 +20,14 @@ import {
   Play,
   X,
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey, type ChannelDefinition } from "../lib/channels/catalog";
 import { channelOperationAvailable } from "../lib/channels/operation-availability";
 import { resolveShopeeConnectionStatus, type ShopeeConnectionStatus as ResolvedShopeeConnectionStatus } from "../lib/channels/shopee-connection-status";
 import { AiCliRuntimeCard } from "./ai-cli-runtime-card";
+import { useModalInteraction } from "./use-modal-interaction";
 
 type CredentialKey = ActiveChannelKey | "tracx";
 
@@ -481,6 +482,7 @@ function tracxOperationTemplate(operation: TracxConsoleOperation): Record<string
 }
 
 function TracxOperationConsole({ credential, onClose, notify }: { credential: Credential; onClose: () => void; notify: (message: string) => void }) {
+  const dialogRef = useRef<HTMLFormElement>(null);
   const [operation, setOperation] = useState<TracxConsoleOperation>("orders.list");
   const [argumentsJson, setArgumentsJson] = useState(() => JSON.stringify(tracxOperationTemplate("orders.list"), null, 2));
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
@@ -489,6 +491,7 @@ function TracxOperationConsole({ credential, onClose, notify }: { credential: Cr
   const [error, setError] = useState("");
   const [resultJson, setResultJson] = useState("");
   const isWrite = tracxConsoleOptions.find((item) => item.value === operation)?.write === true;
+  useModalInteraction(true, dialogRef, onClose, { dismissible: !running });
 
   const changeOperation = (next: TracxConsoleOperation) => {
     setOperation(next);
@@ -539,22 +542,23 @@ function TracxOperationConsole({ credential, onClose, notify }: { credential: Cr
     }
   };
 
-  return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal operation-console" role="dialog" aria-modal="true" aria-label="SmartShip 물류 API 실행 검수" onSubmit={execute}>
-    <header><div><span>TX</span><div><small>PROTECTED LOGISTICS API CONSOLE</small><h3>SmartShip 물류 API 실행 검수</h3></div></div><button type="button" onClick={onClose} aria-label="닫기"><X size={18} /></button></header>
+  return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (!running && event.currentTarget === event.target) onClose(); }}><form ref={dialogRef} tabIndex={-1} className="credential-modal operation-console" role="dialog" aria-modal="true" aria-label="SmartShip 물류 API 실행 검수" onSubmit={execute}>
+    <header><div><span>TX</span><div><small>PROTECTED LOGISTICS API CONSOLE</small><h3>SmartShip 물류 API 실행 검수</h3></div></div><button type="button" onClick={onClose} aria-label="닫기" disabled={running}><X size={18} /></button></header>
     <div className="operation-console-warning"><ShieldCheck size={18} /><span><b>TxAPI Key를 브라우저에 노출하지 않고 서버에서만 호출합니다.</b><small>조회 결과에는 실제 주문·수취 정보가 포함될 수 있으므로 관리자 화면에서만 확인하세요.</small></span></div>
-    <div className="operation-console-body">
+    <fieldset className="operation-console-body" disabled={running} aria-busy={running}>
       <div className="operation-console-controls"><label><span>실행 작업</span><select value={operation} onChange={(event) => changeOperation(event.target.value as TracxConsoleOperation)}>{tracxConsoleOptions.map((item) => <option value={item.value} key={item.value}>{item.label} · {item.value}</option>)}</select></label><label><span>중복 방지 키</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} minLength={16} maxLength={160} /></label></div>
       <label className="operation-json-field"><span>SmartShip 작업 인자 JSON</span><textarea value={argumentsJson} onChange={(event) => setArgumentsJson(event.target.value)} spellCheck={false} rows={11} /></label>
       <div className="operation-console-meta"><a href={tracxCredentialDefinition.officialDocs[1].url} target="_blank" rel="noreferrer">TxAPI 공식 가이드 열기</a><span>환경 · 운영 Production</span></div>
       {isWrite && <div className="operation-write-confirm"><input id="confirm-tracx-write" type="checkbox" checked={confirmWrite} onChange={(event) => setConfirmWrite(event.target.checked)} /><label htmlFor="confirm-tracx-write"><b>실제 SmartShip 외부 데이터 변경을 확인했습니다.</b><small>동일한 중복 방지 키로는 다시 실행되지 않습니다.</small></label></div>}
       {error && <p className="credential-form-error"><AlertTriangle size={14} />{error}</p>}
       {resultJson && <pre className="operation-console-result" aria-label="SmartShip API 실행 결과">{resultJson}</pre>}
-    </div>
-    <footer><button type="button" className="credential-secondary" onClick={onClose}>닫기</button><button type="submit" className="credential-primary" disabled={running || !idempotencyKey}>{running ? <LoaderCircle className="spin" size={14} /> : <Play size={14} />}{isWrite ? "확인 후 실행" : "읽기 실행"}</button></footer>
+    </fieldset>
+    <footer><button type="button" className="credential-secondary" onClick={onClose} disabled={running}>닫기</button><button type="submit" className="credential-primary" disabled={running || !idempotencyKey}>{running ? <LoaderCircle className="spin" size={14} /> : <Play size={14} />}{isWrite ? "확인 후 실행" : "읽기 실행"}</button></footer>
   </form></div>;
 }
 
 function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: { target: { channel: ChannelDefinition; credential: Credential }; onClose: () => void; onCredentialChanged: () => Promise<void>; notify: (message: string) => void }) {
+  const dialogRef = useRef<HTMLFormElement>(null);
   const [operation, setOperation] = useState<ChannelOperationName>("categories.list");
   const [argumentsJson, setArgumentsJson] = useState(() => JSON.stringify(operationTemplate(target.channel.key, "categories.list"), null, 2));
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
@@ -563,6 +567,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
   const [error, setError] = useState("");
   const [resultJson, setResultJson] = useState("");
   const isWrite = writeOperations.has(operation);
+  useModalInteraction(true, dialogRef, onClose, { dismissible: !running });
   const availableOperations = channelOperationOptions.filter((item) => {
     return channelOperationAvailable(target.channel.key, item.value, target.credential.environment);
   });
@@ -620,22 +625,23 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
     }
   };
 
-  return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal operation-console" role="dialog" aria-modal="true" aria-label={`${target.channel.name} API 실행 검수`} onSubmit={execute}>
-    <header><div><span>{target.channel.mark}</span><div><small>PROTECTED MARKETPLACE API CONSOLE</small><h3>{target.channel.name} API 실행 검수</h3></div></div><button type="button" onClick={onClose} aria-label="닫기"><X size={18} /></button></header>
+  return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (!running && event.currentTarget === event.target) onClose(); }}><form ref={dialogRef} tabIndex={-1} className="credential-modal operation-console" role="dialog" aria-modal="true" aria-label={`${target.channel.name} API 실행 검수`} onSubmit={execute}>
+    <header><div><span>{target.channel.mark}</span><div><small>PROTECTED MARKETPLACE API CONSOLE</small><h3>{target.channel.name} API 실행 검수</h3></div></div><button type="button" onClick={onClose} aria-label="닫기" disabled={running}><X size={18} /></button></header>
     <div className="operation-console-warning"><ShieldCheck size={18} /><span><b>Vault 키를 브라우저에 노출하지 않고 서버에서 조회 API만 호출합니다.</b><small>상품·재고·발송 쓰기는 정확한 상품·주문 원장을 선택하는 전용 화면에서만 실행합니다. 비밀키는 아래 JSON에 입력하지 마세요.</small></span></div>
-    <div className="operation-console-body">
+    <fieldset className="operation-console-body" disabled={running} aria-busy={running}>
       <div className="operation-console-controls"><label><span>실행 작업</span><select value={operation} onChange={(event) => changeOperation(event.target.value as ChannelOperationName)}>{availableOperations.map((item) => <option value={item.value} key={item.value}>{item.label} · {item.value}</option>)}</select></label><label><span>중복 방지 키</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} minLength={16} maxLength={160} /></label></div>
       <label className="operation-json-field"><span>채널별 작업 인자 JSON</span><textarea value={argumentsJson} onChange={(event) => setArgumentsJson(event.target.value)} spellCheck={false} rows={13} /></label>
       <div className="operation-console-meta"><a href={target.channel.officialDocs[0]?.url} target="_blank" rel="noreferrer">공식 개발자 문서 열기</a><span>환경 · {target.credential.environment === "production" ? "운영 Production" : "Sandbox"}</span></div>
       {isWrite && <div className="operation-write-confirm"><input id="confirm-channel-write" type="checkbox" checked={confirmWrite} onChange={(event) => setConfirmWrite(event.target.checked)} /><label htmlFor="confirm-channel-write"><b>실제 외부 데이터 변경을 확인했습니다.</b><small>동일한 중복 방지 키로는 다시 실행되지 않습니다.</small></label></div>}
       {error && <p className="credential-form-error"><AlertTriangle size={14} />{error}</p>}
       {resultJson && <pre className="operation-console-result" aria-label="API 실행 결과">{resultJson}</pre>}
-    </div>
-    <footer><button type="button" className="credential-secondary" onClick={onClose}>닫기</button><button type="submit" className="credential-primary" disabled={running || !idempotencyKey}>{running ? <LoaderCircle className="spin" size={14} /> : <Play size={14} />}{isWrite ? "확인 후 실행" : "읽기 실행"}</button></footer>
+    </fieldset>
+    <footer><button type="button" className="credential-secondary" onClick={onClose} disabled={running}>닫기</button><button type="submit" className="credential-primary" disabled={running || !idempotencyKey}>{running ? <LoaderCircle className="spin" size={14} /> : <Play size={14} />}{isWrite ? "확인 후 실행" : "읽기 실행"}</button></footer>
   </form></div>;
 }
 
 function CredentialEditor({ channel, current, onClose, onSaved }: { channel: CredentialDefinition; current?: Credential; onClose: () => void; onSaved: (message: string) => Promise<void> }) {
+  const dialogRef = useRef<HTMLFormElement>(null);
   const defaultExpiry = current?.expires_at ? current.expires_at.slice(0, 10) : "";
   const [form, setForm] = useState<Record<string, string>>({
     country: channel.key === "lazada" ? "my" : "",
@@ -650,6 +656,7 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cre
   const [graceDays, setGraceDays] = useState("7");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  useModalInteraction(true, dialogRef, onClose, { dismissible: !saving });
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -694,12 +701,12 @@ function CredentialEditor({ channel, current, onClose, onSaved }: { channel: Cre
     }
   };
 
-  return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><form className="credential-modal" role="dialog" aria-modal="true" aria-label={`${channel.name} 키 ${current ? "교체" : "등록"}`} onSubmit={submit}>
-    <header><div><span>{channel.mark}</span><div><small>ONE-TIME SECRET INPUT</small><h3>{channel.name} {current ? "키 교체" : "키 등록"}</h3></div></div><button type="button" onClick={onClose} aria-label="닫기"><X size={18} /></button></header>
+  return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (!saving && event.currentTarget === event.target) onClose(); }}><form ref={dialogRef} tabIndex={-1} className="credential-modal" role="dialog" aria-modal="true" aria-label={`${channel.name} 키 ${current ? "교체" : "등록"}`} onSubmit={submit}>
+    <header><div><span>{channel.mark}</span><div><small>ONE-TIME SECRET INPUT</small><h3>{channel.name} {current ? "키 교체" : "키 등록"}</h3></div></div><button type="button" onClick={onClose} aria-label="닫기" disabled={saving}><X size={18} /></button></header>
     <div className="secret-warning"><EyeOff size={17} /><span><b>기존 키는 표시하거나 자동 입력하지 않습니다.</b><small>새 값을 저장하면 원문은 즉시 Vault로 이동하고 이 화면에서는 폐기됩니다.</small></span></div>
-    <div className="credential-form-grid">{channel.fields.map((field) => <label key={field.key}><span>{field.label}{!current && !field.optional && <em>필수</em>}</span><div className="credential-input">{field.options ? <select value={form[field.key] ?? field.options[0]?.value ?? ""} onChange={(event) => setForm((currentForm) => ({ ...currentForm, [field.key]: event.target.value }))}>{field.options.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select> : <input type={field.secret ? "password" : "text"} value={form[field.key] ?? ""} onChange={(event) => setForm((currentForm) => ({ ...currentForm, [field.key]: event.target.value }))} placeholder={current ? `${field.label} 유지 시 비워두기` : field.placeholder} autoComplete="off" />}{field.secret && <LockKeyhole size={14} />}</div>{field.help && <small className="credential-field-help">{field.help}</small>}</label>)}</div>
-    <section className="rotation-settings"><h4><CalendarClock size={15} />키 수명 · 교체 일정</h4><div><label><span>환경</span><select value={environment} onChange={(event) => setEnvironment(event.target.value as "sandbox" | "production")}><option value="production">운영 Production</option><option value="sandbox">샌드박스</option></select></label><label><span>만료일</span><input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label><label><span>교체 주기</span><select value={rotationDays} onChange={(event) => setRotationDays(event.target.value)}><option value="30">30일</option><option value="60">60일</option><option value="90">90일</option><option value="180">180일</option></select></label><label><span>만료 경고</span><select value={warningDays} onChange={(event) => setWarningDays(event.target.value)}><option value="7">7일 전</option><option value="14">14일 전</option><option value="30">30일 전</option><option value="60">60일 전</option></select></label>{current && <label><span>이전 키 유예</span><select value={graceDays} onChange={(event) => setGraceDays(event.target.value)}><option value="0">즉시 폐기</option><option value="3">3일</option><option value="7">7일</option><option value="14">14일</option></select></label>}</div></section>
+    <fieldset className="credential-form-grid" disabled={saving} aria-busy={saving}>{channel.fields.map((field) => <label key={field.key}><span>{field.label}{!current && !field.optional && <em>필수</em>}</span><div className="credential-input">{field.options ? <select value={form[field.key] ?? field.options[0]?.value ?? ""} onChange={(event) => setForm((currentForm) => ({ ...currentForm, [field.key]: event.target.value }))}>{field.options.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select> : <input type={field.secret ? "password" : "text"} value={form[field.key] ?? ""} onChange={(event) => setForm((currentForm) => ({ ...currentForm, [field.key]: event.target.value }))} placeholder={current ? `${field.label} 유지 시 비워두기` : field.placeholder} autoComplete="off" />}{field.secret && <LockKeyhole size={14} />}</div>{field.help && <small className="credential-field-help">{field.help}</small>}</label>)}</fieldset>
+    <fieldset className="rotation-settings" disabled={saving} aria-busy={saving}><h4><CalendarClock size={15} />키 수명 · 교체 일정</h4><div><label><span>환경</span><select value={environment} onChange={(event) => setEnvironment(event.target.value as "sandbox" | "production")}><option value="production">운영 Production</option><option value="sandbox">샌드박스</option></select></label><label><span>만료일</span><input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label><label><span>교체 주기</span><select value={rotationDays} onChange={(event) => setRotationDays(event.target.value)}><option value="30">30일</option><option value="60">60일</option><option value="90">90일</option><option value="180">180일</option></select></label><label><span>만료 경고</span><select value={warningDays} onChange={(event) => setWarningDays(event.target.value)}><option value="7">7일 전</option><option value="14">14일 전</option><option value="30">30일 전</option><option value="60">60일 전</option></select></label>{current && <label><span>이전 키 유예</span><select value={graceDays} onChange={(event) => setGraceDays(event.target.value)}><option value="0">즉시 폐기</option><option value="3">3일</option><option value="7">7일</option><option value="14">14일</option></select></label>}</div></fieldset>
     {error && <p className="credential-form-error"><AlertTriangle size={14} />{error}</p>}
-    <footer><button type="button" className="credential-secondary" onClick={onClose}>취소</button><button type="submit" className="credential-primary" disabled={saving}>{saving ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />}Vault에 안전하게 저장</button></footer>
+    <footer><button type="button" className="credential-secondary" onClick={onClose} disabled={saving}>취소</button><button type="submit" className="credential-primary" disabled={saving}>{saving ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />}Vault에 안전하게 저장</button></footer>
   </form></div>;
 }

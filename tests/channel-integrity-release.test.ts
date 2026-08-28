@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { channelCatalog } from "../lib/channels/catalog";
-import { channelOperationAvailable } from "../lib/channels/operation-availability";
+import {
+  channelCapabilityReleasePresentation,
+  channelOperationAvailable,
+} from "../lib/channels/operation-availability";
 import { shipmentVerificationSummary, shipmentWriteAvailability } from "../lib/channels/shipment-release";
 
 test("11번가 검증된 상품 등록·전체 원본 기반 수정과 미검증 발송 작업을 분리한다", () => {
@@ -43,4 +46,27 @@ test("실발송 후보가 0건이면 검증 완료가 아니라 대상 부재로
   });
   assert.match(shipmentVerificationSummary(2).title, /후보 2건/);
   assert.match(shipmentVerificationSummary(2).detail, /판매채널 응답과 내부 원장 기록/);
+});
+
+test("채널 지원 표는 문서상 API와 실제 출시 가능 상태를 혼동하지 않는다", () => {
+  const shopeeChat = channelCapabilityReleasePresentation("shopee", "inquiries");
+  assert.equal(shopeeChat.releaseState, "blocked");
+  assert.equal(shopeeChat.label, "출시 차단");
+  assert.match(shopeeChat.note, /Chat API 권한.*차단/);
+
+  for (const [channel, capability] of [
+    ["temu", "listingUpdate"],
+    ["ebay", "listingUpdate"],
+    ["ebay", "listingStop"],
+  ] as const) {
+    const presentation = channelCapabilityReleasePresentation(channel, capability);
+    assert.equal(presentation.releaseState, "blocked", `${channel}:${capability}`);
+    assert.equal(presentation.label, "출시 차단", `${channel}:${capability}`);
+    assert.match(presentation.note, /차단/, `${channel}:${capability}`);
+  }
+
+  const temuAfterSales = channelCapabilityReleasePresentation("temu", "inquiries");
+  assert.equal(temuAfterSales.releaseState, "partial");
+  assert.equal(temuAfterSales.label, "조회만");
+  assert.match(temuAfterSales.note, /답변.*출시 차단/);
 });

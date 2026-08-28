@@ -7,6 +7,12 @@ Supabase queue/lease로 처리한다. Supabase의 분 단위 wake가
 token, lease, provider mutation fence와 원자적 완료 원장이 중복 외부 쓰기를
 막는다.
 
+Vercel Cron은 사용하지 않는다. Supabase Cron이 상품조사·주문 동기화·동일상품
+가격·카카오 알림을 5분 간격의 서로 다른 분에 호출하고 maintenance도 일 1회
+호출한다. 현재 문의 수집의 단일 소유자는 분 단위 gateway
+drain이며, 주문 동기화 route는 문의를 중복 enqueue하지 않는다. DB Vault에는 raw
+`CRON_SECRET`이 아니라 기존 gateway wake용 HMAC 파생 bearer만 저장한다.
+
 로컬 Mac은 `--ai-only` 모드에서 상품 분석·이미지 제작만 담당한다. 운영에서
 `pnpm gateway:worker`, `--gateway-only`, scheduler scope를 Mac에 상시 실행하지
 않는다. 해당 스크립트와 Docker/systemd 예시는 로컬 개발·복구 진단용으로만
@@ -44,27 +50,52 @@ worker로 우회하지 않는다.
 ## 배포 순서
 
 1. 정확한 운영 Supabase host와 Vercel 프로젝트를 각각 다시 확인한다.
-2. 전체 테스트와 Vercel production build를 통과시킨다.
-3. additive/forward 방식의 최종 migration
+2. 전체 테스트와 Vercel production build를 통과시켜 후보 배포를 만든다. 후보에는
+   비밀값이 아닌 정확한 커밋 SHA를 `SELLERPILOT_RELEASE_SHA`로 넣는다.
+3. 정확한 후보 URL과 같은 SHA를 지정한 no-work canary로 그 후보 자체를 검증한다.
+
+```sh
+SELLERPILOT_RUNTIME_ORIGIN=https://sellerpilot-global-<deployment>-project-e59d.vercel.app \
+SELLERPILOT_EXPECTED_RELEASE=<40자리-커밋-SHA> \
+pnpm gateway:serverless:configure -- --candidate-canary
+```
+
+4. **migration 전에** 현재 운영 gateway cron을 명시적으로 중지하고 status가
+   `active: false`인지 확인한다. 이렇게 해야 migration transaction이 진행되는 동안
+   기존 분 단위 cron이 외부 작업을 claim하는 창이 생기지 않는다.
+
+```sh
+pnpm gateway:serverless:configure -- --deactivate --status
+```
+
+5. 검증한 동일 후보를 Production으로 승격하고, Vercel cron inventory가 0건인지
+   확인한다. 다른 artifact를 새로 배포해 바꾸지 않는다.
+6. additive/forward 방식의 최종 migration
    `20260828210000_non_cs_release_integrity.sql`을 정확한 운영 프로젝트에 한 번만
-   적용한다.
-4. 검증된 커밋을 Vercel Production에 배포한다.
-5. 아래 명령으로 서버리스 token/wake 구성을 bootstrap하고, 외부 작업을 claim하지
-   않는 canary가 성공한 동일 실행에서만 scheduler를 활성화한다.
+   적용한다. migration은 gateway와 다섯 internal schedule을 모두 inactive로 남긴다.
+7. 아래 명령으로 서버리스 token/wake 구성을 bootstrap하고, gateway와 다섯
+   internal route의 no-work canary가 동일 release SHA로 모두 성공한 같은 실행에서만
+   scheduler를 활성화한다.
 
 ```sh
 pnpm gateway:serverless:configure -- --bootstrap
+SELLERPILOT_EXPECTED_RELEASE=<40자리-커밋-SHA> \
 pnpm gateway:serverless:configure -- --canary --activate --status
 ```
 
-bootstrap 스크립트는 운영 Supabase host가 예상값과 다르면 중단한다. canary는
-`claimed: 0`, `processed: 0`이어야 하며 판매채널 API를 호출하지 않는다.
+bootstrap 스크립트는 운영 Supabase host가 예상값과 다르면 중단한다. gateway
+canary는 `claimed: 0`, `processed: 0`, route canary는 `executed: false`여야 하며
+판매채널 API나 카카오 발송을 호출하지 않는다. DB의 10분짜리 canary receipt는
+같은 release의 실행에서 한 번만 소비되므로 이전 성공을 재사용해 scheduler를 켤 수
+없다. 기존 queued/running 상품·재고·출고·CS 답변·OAuth 작업이 있으면 활성화도
+거부한다. `reconciliation_required`는 별도 수치로 보고하며 자동 재전송하지 않는다.
 
 ## 운영 계약과 확인 항목
 
 - Vercel drain은 최대 8개 작업을 동시에 처리하고, 개별 provider 작업에는 180초
   timeout과 20초 heartbeat를 적용한다.
-- 주기 enqueue 최대치는 5분당 25건이며 분 단위 drain 용량이 이를 초과해야 한다.
+- 주기 주문 enqueue 최대치는 5분당 17건이다. 문의 enqueue는 gateway drain 한
+  경로만 소유하며 backlog는 운영 status로 검증한다.
   쿠팡의 읽기 동기화만 안전하게 2개 병렬 claim을 허용하고, 쓰기·OAuth는 채널별
   직렬 fence를 유지한다.
 - 만료된 읽기 lease는 재시도한다. 외부 mutation을 시작한 쓰기의 결과가 불명확하면

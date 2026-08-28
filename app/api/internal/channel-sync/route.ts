@@ -2,12 +2,7 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { activeChannelKeys, type ActiveChannelKey } from "../../../../lib/channels/catalog";
-import { inquirySyncRequests } from "../../../../lib/channels/inquiry-sync";
 import { orderSyncRequests } from "../../../../lib/channels/order-sync";
-import {
-  configuredServerlessStaticEgressChannels,
-  SERVERLESS_STATIC_EGRESS_CHANNELS,
-} from "../../../../lib/channels/serverless-static-egress";
 import {
   dispatchPendingPushNotifications,
   getPushPublicConfiguration,
@@ -18,11 +13,18 @@ import {
   createBoundedSupabaseFetch,
   workerRpcErrorMessage,
 } from "../../../../lib/worker-rpc";
+import {
+  internalScheduleAuthorization,
+  internalScheduleCanaryPayload,
+  internalScheduleRequestMode,
+  runtimeStatusMatchesCurrentRelease,
+} from "../../../../lib/internal-scheduler-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
-// At most 25 idempotent enqueue RPCs are produced. Five workers keep them to
-// five 8-second waves while avoiding the serverless drain's eight-claim spike.
+// The gateway drain is the single owner for current inquiries. This route
+// produces at most 17 idempotent order enqueue RPCs, avoiding duplicate
+// inquiry wakeups while preserving every channel/status order window.
 const PERIODIC_SYNC_ENQUEUE_CONCURRENCY = 5;
 const CHANNEL_SYNC_WORK_BUDGET_MS = 240_000;
 const CHANNEL_SYNC_RPC_START_RESERVE_MS = 10_000;
@@ -38,14 +40,10 @@ type QueueResult = {
 
 type PeriodicSyncResult = {
   channel: ActiveChannelKey;
-  operation: "orders.list" | "inquiries.list";
+  operation: "orders.list";
   status: "queued" | "already_pending" | "not_connected" | "reconnect_required" | "reconciliation_required" | "fixed_egress_required" | "failed";
   infrastructureFailure?: true;
 };
-
-function periodicInquiryRequests(channel: ActiveChannelKey, now: Date) {
-  return inquirySyncRequests(channel, now);
-}
 
 function serverClient() {
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
@@ -77,19 +75,12 @@ async function mapWithConcurrency<T, R>(
 async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
   const workDeadline = deadlineAfter(CHANNEL_SYNC_WORK_BUDGET_MS);
   const now = new Date();
-  const configuredStaticEgress = new Set(configuredServerlessStaticEgressChannels());
-  const blockedInquiryResults: PeriodicSyncResult[] = [];
-  const queueRequests = activeChannelKeys.flatMap((channel) => [
-    ...orderSyncRequests(channel, now).map((payload) => ({ channel, operation: "orders.list" as const, payload })),
-    ...periodicInquiryRequests(channel, now).flatMap((payload) => {
-      if ((SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[]).includes(channel)
-          && !configuredStaticEgress.has(channel as "coupang" | "smartstore")) {
-        blockedInquiryResults.push({ channel, operation: "inquiries.list", status: "fixed_egress_required" });
-        return [];
-      }
-      return [{ channel, operation: "inquiries.list" as const, payload }];
-    }),
-  ]);
+  const queueRequests = activeChannelKeys.flatMap((channel) =>
+    orderSyncRequests(channel, now).map((payload) => ({
+      channel,
+      operation: "orders.list" as const,
+      payload,
+    })));
 
   const queuedResults = await mapWithConcurrency(queueRequests, PERIODIC_SYNC_ENQUEUE_CONCURRENCY, async ({ channel, operation, payload }): Promise<PeriodicSyncResult> => {
     if (deadlineRemaining(workDeadline) < CHANNEL_SYNC_RPC_START_RESERVE_MS) {
@@ -113,7 +104,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
       return { channel, operation, status: "failed", infrastructureFailure: true };
     }
   });
-  const results = [...blockedInquiryResults, ...queuedResults];
+  const results = queuedResults;
 
   const pushDeferred = deadlineRemaining(workDeadline) < CHANNEL_SYNC_PUSH_START_RESERVE_MS;
   const push = pushDeferred
@@ -193,16 +184,32 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
 
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
-  const authorization = request.headers.get("authorization") ?? "";
-  if (!cronSecret) {
+  const authorization = internalScheduleAuthorization(
+    request.headers.get("authorization"),
+    cronSecret,
+  );
+  if (authorization === "missing") {
     return NextResponse.json({ message: "주기 동기화 인증값이 설정되지 않았습니다." }, { status: 503 });
   }
-  if (authorization !== `Bearer ${cronSecret}`) {
+  if (authorization !== "authorized") {
     return NextResponse.json({ message: "주기 동기화 인증이 필요합니다." }, { status: 401 });
+  }
+  const requestedMode = internalScheduleRequestMode(request);
+  if (requestedMode === "invalid") {
+    return NextResponse.json({ message: "주기 동기화 실행 모드를 확인하지 못했습니다." }, { status: 400 });
+  }
+  if (requestedMode === "canary") {
+    return NextResponse.json(internalScheduleCanaryPayload());
   }
   const serviceClient = serverClient();
   if (!serviceClient) {
     return NextResponse.json({ message: "Supabase 서버 연결이 완료되지 않았습니다." }, { status: 503 });
+  }
+  const { data: runtimeStatus, error: runtimeStatusError } = await serviceClient.rpc(
+    "sellerpilot_service_serverless_cs_wakeup_status",
+  );
+  if (runtimeStatusError || !runtimeStatusMatchesCurrentRelease(runtimeStatus)) {
+    return NextResponse.json({ message: "서버 일정이 활성화되지 않았습니다." }, { status: 503 });
   }
   return runPeriodicSync(serviceClient);
 }

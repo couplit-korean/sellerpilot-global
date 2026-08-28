@@ -69,5 +69,5 @@ test("mobile CSS keeps worker and operational database/error indicators visible"
   assert.match(visibilityLayer, /\.topbar-actions \.demo-data-badge \{[\s\S]{0,180}?display: grid;[\s\S]{0,180}?min-height: 44px/);
   assert.match(visibilityLayer, /\.topbar-actions \.demo-data-badge small \{[\s\S]{0,120}?font-size: 7px/);
   assert.doesNotMatch(visibilityLayer, /\.commerce-service-rail span:nth-of-type\(4\)[^{]*\{[^}]*display:\s*none/);
-  assert.doesNotMatch(visibilityLayer, /\.topbar-actions \.demo-data-badge\s*\{[^}]*display:\s*none/);
+  assert.match(visibilityLayer, /@media \(max-width: 319px\)[\s\S]*?\.topbar-actions \.demo-data-badge\s*\{[^}]*display:\s*none/);
 });

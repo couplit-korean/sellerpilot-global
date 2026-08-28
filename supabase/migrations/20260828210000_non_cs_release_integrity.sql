@@ -14,6 +14,43 @@ create index if not exists channel_gateway_jobs_expired_lease_idx
   on sellerpilot_private.channel_gateway_jobs (lease_expires_at, id)
   where status = 'running' and lease_expires_at is not null;
 
+-- A nominal read operation is not safe to retry once durable state proves that
+-- a credential refresh or provider mutation crossed its external side-effect
+-- boundary. Keep this predicate shared by stale recovery and the activation
+-- fence so an inconsistent operation label cannot hide uncertain provider work.
+create or replace function sellerpilot_private.gateway_job_requires_reconciliation(
+  p_operation text,
+  p_credential_refresh_in_flight boolean,
+  p_prepared_credential_id uuid,
+  p_credential_refresh_recovery_vault_id uuid,
+  p_oauth_exchange_completed boolean,
+  p_provider_mutation_started_at timestamptz
+)
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select coalesce(p_credential_refresh_in_flight, false)
+    or p_credential_refresh_recovery_vault_id is not null
+    or p_provider_mutation_started_at is not null
+    or (
+      p_operation = 'oauth.exchange'
+      and p_prepared_credential_id is not null
+      and not coalesce(p_oauth_exchange_completed, false)
+    )
+    or p_operation in (
+      'listing.create', 'listing.update', 'listing.stop',
+      'price.update', 'inventory.update', 'inquiries.reply',
+      'shipment.acknowledge', 'shipment.confirm'
+    )
+$$;
+
+revoke all on function sellerpilot_private.gateway_job_requires_reconciliation(
+  text, boolean, uuid, uuid, boolean, timestamptz
+) from public, anon, authenticated, service_role;
+
 create or replace function sellerpilot_private.valid_competitor_provider_snapshot(
   p_providers jsonb
 )
@@ -379,20 +416,14 @@ begin
       v_status := 'succeeded';
       v_message := null;
       v_oauth_completed := v_oauth_completed + 1;
-    elsif v_job.credential_refresh_in_flight
-       or (
-         v_job.operation = 'oauth.exchange'
-         and (
-           v_job.prepared_credential_id is not null
-           or v_job.credential_refresh_recovery_vault_id is not null
-         )
-       )
-       or v_job.provider_mutation_started_at is not null
-       or v_job.operation in (
-         'listing.create', 'listing.update', 'listing.stop',
-         'price.update', 'inventory.update', 'inquiries.reply',
-         'shipment.acknowledge', 'shipment.confirm'
-       ) then
+    elsif sellerpilot_private.gateway_job_requires_reconciliation(
+      v_job.operation,
+      v_job.credential_refresh_in_flight,
+      v_job.prepared_credential_id,
+      v_job.credential_refresh_recovery_vault_id,
+      v_job.oauth_exchange_completed,
+      v_job.provider_mutation_started_at
+    ) then
       v_status := 'reconciliation_required';
       v_message := 'Gateway write lease expired; provider outcome requires reconciliation.';
       v_reconciliation_required := v_reconciliation_required + 1;
@@ -907,7 +938,7 @@ as $$
        and token.status = 'active'
        and token.expires_at > clock_timestamp()
        and (
-         token.scope in ('gateway', 'legacy_combined')
+         token.scope = 'gateway'
          or (
            token.scope = 'serverless_cs'
            and (
@@ -2535,5 +2566,1345 @@ revoke all on function public.sellerpilot_service_reap_stale_push_deliveries(int
 grant execute on function public.sellerpilot_service_reap_stale_push_deliveries(integer)
   to service_role;
 -- END:push-delivery-lease-fence
+
+-- The server product-research route has an immediate post-enqueue wake and a
+-- Supabase recovery schedule. Keep the local AI worker focused on generated
+-- product assets so it cannot race that server-owned model and cost boundary.
+create or replace function public.sellerpilot_claim_product_ai_job(
+  p_token_hash text,
+  p_worker_version text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_token_id uuid;
+  v_job_id uuid;
+  v_claim_token uuid;
+  v_result jsonb;
+  v_context jsonb;
+begin
+  if coalesce(p_token_hash, '') !~ '^[a-f0-9]{64}$' then
+    raise exception 'invalid worker token' using errcode = '42501';
+  end if;
+
+  select token.id
+    into v_token_id
+    from sellerpilot_private.ai_cli_worker_tokens token
+   where token.token_hash = p_token_hash
+     and token.scope = 'ai'
+     and token.status = 'active'
+     and token.expires_at > clock_timestamp()
+   for update;
+  if v_token_id is null then
+    raise exception 'invalid worker token' using errcode = '42501';
+  end if;
+
+  update sellerpilot_private.ai_cli_worker_tokens token
+     set last_seen_at = clock_timestamp(),
+         last_version = left(nullif(trim(p_worker_version), ''), 80)
+   where token.id = v_token_id;
+
+  update sellerpilot_private.ai_cli_jobs job
+     set status = case when job.attempt_count >= 3 then 'failed' else 'queued' end,
+         error_message = case
+           when job.attempt_count >= 3 then 'CLI worker lease expired three times.'
+           else job.error_message
+         end,
+         worker_token_id = null,
+         claim_token = null,
+         lease_expires_at = null,
+         available_at = case
+           when job.attempt_count >= 3 then job.available_at
+           else clock_timestamp()
+         end,
+         completed_at = case
+           when job.attempt_count >= 3 then clock_timestamp()
+           else job.completed_at
+         end,
+         updated_at = clock_timestamp()
+   where job.kind in ('product_studio', 'product_asset_regeneration')
+     and job.status = 'running'
+     and job.lease_expires_at < clock_timestamp();
+
+  select job.id
+    into v_job_id
+    from sellerpilot_private.ai_cli_jobs job
+   where job.kind in ('product_studio', 'product_asset_regeneration')
+     and job.status = 'queued'
+     and job.available_at <= clock_timestamp()
+   order by job.available_at, job.created_at
+   for update skip locked
+   limit 1;
+  if v_job_id is null then return null; end if;
+
+  v_claim_token := gen_random_uuid();
+  update sellerpilot_private.ai_cli_jobs job
+     set status = 'running',
+         worker_token_id = v_token_id,
+         claim_token = v_claim_token,
+         attempt_count = job.attempt_count + 1,
+         lease_expires_at = clock_timestamp() + interval '15 minutes',
+         available_at = clock_timestamp(),
+         started_at = coalesce(job.started_at, clock_timestamp()),
+         updated_at = clock_timestamp()
+   where job.id = v_job_id
+     and job.status = 'queued';
+  if not found then
+    raise exception 'product AI job claim lost its row lock';
+  end if;
+
+  insert into sellerpilot_private.ai_cli_audit (
+    action, worker_token_id, job_id, safe_detail
+  ) values (
+    'job_claimed',
+    v_token_id,
+    v_job_id,
+    jsonb_build_object(
+      'worker_version', left(coalesce(p_worker_version, ''), 80),
+      'claim_scope', 'product'
+    )
+  );
+
+  select jsonb_build_object(
+           'id', job.id,
+           'claim_token', job.claim_token,
+           'kind', job.kind,
+           'request', job.request_payload,
+           'attempt_count', job.attempt_count,
+           'claim_scope', 'product'
+         ),
+         job.terminal_image_failure_context
+    into v_result, v_context
+    from sellerpilot_private.ai_cli_jobs job
+   where job.id = v_job_id
+     and job.status = 'running'
+     and job.worker_token_id = v_token_id
+     and job.claim_token = v_claim_token;
+  if not found then
+    raise exception 'claimed product AI job ownership mismatch';
+  end if;
+  if v_context is not null then
+    v_result := v_result || jsonb_build_object(
+      'terminal_image_failure_context', v_context
+    );
+  end if;
+  return v_result;
+end;
+$$;
+
+revoke all on function
+  public.sellerpilot_claim_product_ai_job(text, text)
+  from public, anon, authenticated;
+grant execute on function public.sellerpilot_claim_product_ai_job(text, text)
+  to service_role;
+comment on function public.sellerpilot_claim_product_ai_job(text, text) is
+  'Claims product studio and asset-regeneration jobs; product research is server-owned.';
+
+-- BEGIN:hobby-safe-internal-schedules
+-- Keep Vercel Cron empty and run all six periodic runtime routes from
+-- Supabase Cron. The database stores only the existing HMAC-derived wake
+-- bearer, never the raw Vercel CRON_SECRET. Every schedule is installed
+-- inactive and is activated together with the gateway wake only after the
+-- production no-work canaries succeed.
+
+-- Correct the earlier wake classifier: only an authentication/route contract
+-- error is permanent. Rate limits, request timeouts, 5xx responses and
+-- transport failures are retryable, with a five-minute 429 backoff so one
+-- transient provider response cannot either pause or hammer the scheduler.
+create or replace function sellerpilot_private.reconcile_serverless_cs_wakeups()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_delivered integer := 0;
+  v_retryable integer := 0;
+  v_permanent integer := 0;
+  v_stale integer := 0;
+begin
+  with resolved as (
+    update sellerpilot_private.serverless_cs_wake_requests wake
+       set outcome = case
+             when response.status_code between 200 and 299 then 'delivered'
+             when response.status_code in (401, 403, 404, 405, 410) then 'permanent_failure'
+             else 'retryable_failure'
+           end,
+           http_status = response.status_code,
+           timed_out = coalesce(response.timed_out, false),
+           safe_error_code = case
+             when response.status_code between 200 and 299 then null
+             when response.status_code in (401, 403) then 'wake_auth_rejected'
+             when response.status_code = 404 then 'wake_route_not_found'
+             when response.status_code = 405 then 'wake_method_not_allowed'
+             when response.status_code = 410 then 'wake_route_gone'
+             when response.status_code = 408 then 'wake_request_timeout'
+             when response.status_code = 425 then 'wake_too_early'
+             when response.status_code = 429 then 'wake_rate_limited'
+             when coalesce(response.timed_out, false) then 'network_timeout'
+             when response.error_msg is not null then 'network_transport_error'
+             when response.status_code is null then 'network_response_missing'
+             when response.status_code >= 500 then 'upstream_5xx'
+             else 'upstream_retryable'
+           end,
+           resolved_at = clock_timestamp()
+      from net._http_response response
+     where wake.request_id = response.id
+       and wake.outcome = 'queued'
+    returning wake.request_id, wake.outcome
+  ), deleted_responses as (
+    delete from net._http_response response
+     using resolved
+     where response.id = resolved.request_id
+    returning response.id
+  )
+  select
+    count(*) filter (where resolved.outcome = 'delivered')::integer,
+    count(*) filter (where resolved.outcome = 'retryable_failure')::integer,
+    count(*) filter (where resolved.outcome = 'permanent_failure')::integer
+    into v_delivered, v_retryable, v_permanent
+    from resolved;
+
+  with stale as (
+    update sellerpilot_private.serverless_cs_wake_requests wake
+       set outcome = 'retryable_failure',
+           timed_out = true,
+           safe_error_code = 'network_response_expired',
+           resolved_at = clock_timestamp()
+     where wake.outcome = 'queued'
+       and wake.requested_at < clock_timestamp() - interval '6 minutes'
+    returning wake.request_id
+  )
+  select count(*)::integer into v_stale from stale;
+
+  return jsonb_build_object(
+    'delivered', coalesce(v_delivered, 0),
+    'retryableFailures', coalesce(v_retryable, 0) + coalesce(v_stale, 0),
+    'permanentFailures', coalesce(v_permanent, 0)
+  );
+end;
+$$;
+
+create or replace function sellerpilot_private.schedule_serverless_cs_wakeup()
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_wake_secret text;
+  v_request_id bigint;
+  v_latest_outcome text;
+  v_latest_error text;
+  v_latest_requested_at timestamptz;
+  v_retry_after interval;
+  v_cron_job_id bigint;
+begin
+  perform pg_catalog.pg_advisory_xact_lock(193674993, 821065044);
+  perform sellerpilot_private.reconcile_serverless_cs_wakeups();
+
+  delete from sellerpilot_private.serverless_cs_wake_requests wake
+   where wake.outcome <> 'queued'
+     and wake.requested_at < clock_timestamp() - interval '30 days';
+
+  select job.jobid
+    into v_cron_job_id
+    from cron.job job
+   where job.jobname = 'sellerpilot-serverless-cs-wake-v1'
+   limit 1;
+  if v_cron_job_id is not null then
+    delete from cron.job_run_details run
+     where run.jobid = v_cron_job_id
+       and run.end_time < clock_timestamp() - interval '7 days';
+  end if;
+
+  if exists (
+    select 1 from sellerpilot_private.serverless_cs_wake_requests wake
+     where wake.outcome = 'queued'
+  ) then
+    return null;
+  end if;
+
+  select wake.outcome, wake.safe_error_code, wake.requested_at
+    into v_latest_outcome, v_latest_error, v_latest_requested_at
+    from sellerpilot_private.serverless_cs_wake_requests wake
+   order by wake.requested_at desc, wake.request_id desc
+   limit 1;
+
+  if v_latest_outcome = 'permanent_failure' then
+    if v_cron_job_id is not null then
+      perform cron.alter_job(job_id := v_cron_job_id, active := false);
+    end if;
+    return null;
+  end if;
+  if v_latest_outcome = 'retryable_failure' then
+    v_retry_after := case
+      when v_latest_error = 'wake_rate_limited' then interval '5 minutes'
+      else interval '1 minute'
+    end;
+    if v_latest_requested_at > clock_timestamp() - v_retry_after then
+      return null;
+    end if;
+  end if;
+
+  select decrypted.decrypted_secret
+    into v_wake_secret
+    from vault.secrets secret
+    join vault.decrypted_secrets decrypted on decrypted.id = secret.id
+   where secret.name = 'sellerpilot_serverless_cs_wake_v1'
+   order by secret.created_at desc, secret.id
+   limit 1;
+  if coalesce(v_wake_secret, '') !~ '^[A-Za-z0-9_-]{43}$' then
+    if v_cron_job_id is not null then
+      perform cron.alter_job(job_id := v_cron_job_id, active := false);
+    end if;
+    raise warning 'serverless CS wake secret unavailable; scheduler paused';
+    return null;
+  end if;
+
+  select net.http_post(
+    url := 'https://sellerpilot-global.vercel.app/api/internal/channel-gateway-drain',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || v_wake_secret,
+      'Content-Type', 'application/json',
+      'User-Agent', 'SellerPilot-Supabase-Cron/2',
+      'X-SellerPilot-Wake-Version', 'serverless_runtime_v2'
+    ),
+    body := '{}'::jsonb,
+    timeout_milliseconds := 240000
+  ) into v_request_id;
+
+  insert into sellerpilot_private.serverless_cs_wake_requests (
+    request_id, requested_at
+  ) values (
+    v_request_id, clock_timestamp()
+  );
+  return v_request_id;
+end;
+$$;
+
+revoke all on function sellerpilot_private.reconcile_serverless_cs_wakeups()
+  from public, anon, authenticated, service_role;
+revoke all on function sellerpilot_private.schedule_serverless_cs_wakeup()
+  from public, anon, authenticated, service_role;
+
+create table if not exists sellerpilot_private.internal_schedule_requests (
+  request_id bigint primary key,
+  route_key text not null check (
+    route_key in (
+      'product_research', 'channel_sync', 'competitor_prices',
+      'kakao_notifications', 'maintenance'
+    )
+  ),
+  requested_at timestamptz not null default clock_timestamp(),
+  resolved_at timestamptz,
+  outcome text not null default 'queued' check (
+    outcome in (
+      'queued', 'delivered', 'transient_failure', 'permanent_failure',
+      'permanent_failure_acknowledged'
+    )
+  ),
+  http_status integer,
+  timed_out boolean,
+  safe_error_code text,
+  check (
+    (outcome = 'queued' and resolved_at is null)
+    or (outcome <> 'queued' and resolved_at is not null)
+  )
+);
+
+create index if not exists internal_schedule_requests_route_latest_idx
+  on sellerpilot_private.internal_schedule_requests (
+    route_key, requested_at desc, request_id desc
+  );
+
+alter table sellerpilot_private.internal_schedule_requests enable row level security;
+revoke all on sellerpilot_private.internal_schedule_requests
+  from public, anon, authenticated, service_role;
+
+create or replace function sellerpilot_private.reconcile_internal_schedule_requests(
+  p_route_key text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_route_key is not null
+     and p_route_key not in (
+       'product_research', 'channel_sync', 'competitor_prices',
+       'kakao_notifications', 'maintenance'
+     ) then
+    raise exception 'invalid internal schedule route';
+  end if;
+
+  update sellerpilot_private.internal_schedule_requests request
+     set outcome = case
+           when response.status_code between 200 and 299 then 'delivered'
+           when response.status_code in (401, 403, 404, 405, 410) then 'permanent_failure'
+           else 'transient_failure'
+         end,
+         resolved_at = clock_timestamp(),
+         http_status = response.status_code,
+         timed_out = coalesce(response.timed_out, false),
+         safe_error_code = case
+           when response.status_code between 200 and 299 then null
+           when response.status_code in (401, 403) then 'schedule_auth_rejected'
+           when response.status_code = 404 then 'schedule_route_missing'
+           when response.status_code = 405 then 'schedule_method_not_allowed'
+           when response.status_code = 410 then 'schedule_route_gone'
+           when response.status_code = 408 then 'schedule_request_timeout'
+           when response.status_code = 425 then 'schedule_too_early'
+           when response.status_code = 429 then 'schedule_rate_limited'
+           when coalesce(response.timed_out, false) then 'schedule_timeout'
+           when response.status_code >= 500 then 'schedule_upstream_unavailable'
+           when response.error_msg is not null then 'schedule_transport_failed'
+           else 'schedule_invalid_response'
+         end
+    from net._http_response response
+   where request.request_id = response.id
+     and request.outcome = 'queued'
+     and (p_route_key is null or request.route_key = p_route_key);
+
+  delete from net._http_response response
+   using sellerpilot_private.internal_schedule_requests request
+   where response.id = request.request_id
+     and request.outcome <> 'queued'
+     and (p_route_key is null or request.route_key = p_route_key);
+
+  -- pg_net has a bounded under-five-minute request timeout. A response that is
+  -- still absent ten minutes later cannot still be executing, so release the
+  -- overlap guard without copying provider messages or response bodies.
+  update sellerpilot_private.internal_schedule_requests request
+     set outcome = 'transient_failure',
+         resolved_at = clock_timestamp(),
+         timed_out = true,
+         safe_error_code = 'schedule_response_missing'
+   where request.outcome = 'queued'
+     and request.requested_at < clock_timestamp() - interval '10 minutes'
+     and (p_route_key is null or request.route_key = p_route_key)
+     and not exists (
+       select 1 from net._http_response response
+        where response.id = request.request_id
+     );
+end;
+$$;
+
+create or replace function sellerpilot_private.schedule_internal_route(
+  p_route_key text
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_bearer text;
+  v_cron_job_id bigint;
+  v_job_name text;
+  v_latest_error text;
+  v_latest_outcome text;
+  v_latest_requested_at timestamptz;
+  v_retry_after interval;
+  v_request_id bigint;
+  v_url text;
+begin
+  if p_route_key not in (
+    'product_research', 'channel_sync', 'competitor_prices',
+    'kakao_notifications', 'maintenance'
+  ) then
+    raise exception 'invalid internal schedule route';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    193674993,
+    case p_route_key
+      when 'product_research' then 821065051
+      when 'channel_sync' then 821065052
+      when 'competitor_prices' then 821065053
+      when 'kakao_notifications' then 821065054
+      else 821065055
+    end
+  );
+  perform sellerpilot_private.reconcile_internal_schedule_requests(p_route_key);
+
+  delete from sellerpilot_private.internal_schedule_requests request
+   where request.route_key = p_route_key
+     and request.outcome <> 'queued'
+     and request.requested_at < clock_timestamp() - interval '30 days';
+
+  v_job_name := case p_route_key
+    when 'product_research' then 'sellerpilot-product-research-v1'
+    when 'channel_sync' then 'sellerpilot-channel-sync-v1'
+    when 'competitor_prices' then 'sellerpilot-competitor-prices-v1'
+    when 'kakao_notifications' then 'sellerpilot-kakao-notifications-v1'
+    else 'sellerpilot-maintenance-v1'
+  end;
+  v_url := case p_route_key
+    when 'product_research' then
+      'https://sellerpilot-global.vercel.app/api/internal/product-research'
+    when 'channel_sync' then
+      'https://sellerpilot-global.vercel.app/api/internal/channel-sync'
+    when 'competitor_prices' then
+      'https://sellerpilot-global.vercel.app/api/internal/competitor-prices'
+    when 'kakao_notifications' then
+      'https://sellerpilot-global.vercel.app/api/internal/kakao-notifications'
+    else
+      'https://sellerpilot-global.vercel.app/api/internal/maintenance'
+  end;
+
+  select job.jobid
+    into v_cron_job_id
+    from cron.job job
+   where job.jobname = v_job_name
+   limit 1;
+  if v_cron_job_id is null then
+    raise warning 'internal schedule is not installed: %', p_route_key;
+    return null;
+  end if;
+
+  delete from cron.job_run_details run
+   where run.jobid = v_cron_job_id
+     and run.end_time < clock_timestamp() - interval '7 days';
+
+  if exists (
+    select 1
+      from sellerpilot_private.internal_schedule_requests request
+     where request.route_key = p_route_key
+       and request.outcome = 'queued'
+  ) then
+    return null;
+  end if;
+
+  select request.outcome, request.safe_error_code, request.requested_at
+    into v_latest_outcome, v_latest_error, v_latest_requested_at
+    from sellerpilot_private.internal_schedule_requests request
+   where request.route_key = p_route_key
+   order by request.requested_at desc, request.request_id desc
+   limit 1;
+  if v_latest_outcome = 'permanent_failure' then
+    perform cron.alter_job(job_id := v_cron_job_id, active := false);
+    return null;
+  end if;
+  if v_latest_outcome = 'transient_failure' then
+    v_retry_after := case
+      when v_latest_error = 'schedule_rate_limited' then interval '5 minutes'
+      else interval '1 minute'
+    end;
+    if v_latest_requested_at > clock_timestamp() - v_retry_after then
+      return null;
+    end if;
+  end if;
+
+  select decrypted.decrypted_secret
+    into v_bearer
+    from vault.secrets secret
+    join vault.decrypted_secrets decrypted on decrypted.id = secret.id
+   where secret.name = 'sellerpilot_serverless_cs_wake_v1'
+   order by secret.created_at desc, secret.id
+   limit 1;
+  if coalesce(v_bearer, '') !~ '^[A-Za-z0-9_-]{43}$' then
+    perform cron.alter_job(job_id := v_cron_job_id, active := false);
+    raise warning 'internal schedule bearer unavailable; scheduler paused: %', p_route_key;
+    return null;
+  end if;
+
+  select net.http_get(
+    url := v_url,
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || v_bearer,
+      'User-Agent', 'SellerPilot-Supabase-Cron/2',
+      'X-SellerPilot-Schedule-Version', 'internal_schedule_v1'
+    ),
+    timeout_milliseconds := 285000
+  ) into v_request_id;
+
+  insert into sellerpilot_private.internal_schedule_requests (
+    request_id, route_key, requested_at
+  ) values (
+    v_request_id, p_route_key, clock_timestamp()
+  );
+  return v_request_id;
+end;
+$$;
+
+revoke all on function
+  sellerpilot_private.reconcile_internal_schedule_requests(text)
+  from public, anon, authenticated, service_role;
+revoke all on function sellerpilot_private.schedule_internal_route(text)
+  from public, anon, authenticated, service_role;
+
+select cron.schedule(
+  'sellerpilot-product-research-v1',
+  '*/5 * * * *',
+  $$select sellerpilot_private.schedule_internal_route('product_research');$$
+);
+select cron.schedule(
+  'sellerpilot-channel-sync-v1',
+  '1-59/5 * * * *',
+  $$select sellerpilot_private.schedule_internal_route('channel_sync');$$
+);
+select cron.schedule(
+  'sellerpilot-competitor-prices-v1',
+  '3-59/5 * * * *',
+  $$select sellerpilot_private.schedule_internal_route('competitor_prices');$$
+);
+select cron.schedule(
+  'sellerpilot-kakao-notifications-v1',
+  '4-59/5 * * * *',
+  $$select sellerpilot_private.schedule_internal_route('kakao_notifications');$$
+);
+select cron.schedule(
+  'sellerpilot-maintenance-v1',
+  '17 18 * * *',
+  $$select sellerpilot_private.schedule_internal_route('maintenance');$$
+);
+
+-- Applying the release cannot start any marketplace read or write. The
+-- bootstrap script reactivates all six schedules only after the deployed
+-- gateway and five internal routes return their no-work canary responses in
+-- the same process.
+select cron.alter_job(job_id := job.jobid, active := false)
+  from cron.job job
+ where job.jobname in (
+   'sellerpilot-serverless-cs-wake-v1',
+   'sellerpilot-product-research-v1',
+   'sellerpilot-channel-sync-v1',
+   'sellerpilot-competitor-prices-v1',
+   'sellerpilot-kakao-notifications-v1',
+   'sellerpilot-maintenance-v1'
+ );
+
+create table if not exists sellerpilot_private.serverless_runtime_canary_receipts (
+  id uuid primary key default gen_random_uuid(),
+  release_id text not null check (release_id ~ '^[0-9a-f]{40}$'),
+  version text not null default 'serverless_runtime_v2' check (
+    version = 'serverless_runtime_v2'
+  ),
+  created_at timestamptz not null default clock_timestamp(),
+  expires_at timestamptz not null default (
+    clock_timestamp() + interval '10 minutes'
+  ),
+  passed_at timestamptz,
+  consumed_at timestamptz,
+  check (expires_at > created_at),
+  check (passed_at is null or passed_at >= created_at),
+  check (consumed_at is null or (passed_at is not null and consumed_at >= passed_at))
+);
+
+alter table sellerpilot_private.serverless_runtime_canary_receipts
+  enable row level security;
+revoke all on sellerpilot_private.serverless_runtime_canary_receipts
+  from public, anon, authenticated, service_role;
+
+create or replace function public.sellerpilot_service_begin_serverless_runtime_canary(
+  p_release_id text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_active_count integer;
+  v_configured_count integer;
+  v_receipt_id uuid;
+begin
+  if coalesce(p_release_id, '') !~ '^[0-9a-f]{40}$' then
+    raise exception 'exact release id required' using errcode = '22023';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(193674993, 821065060);
+  select count(*)::integer,
+         count(*) filter (where job.active)::integer
+    into v_configured_count, v_active_count
+    from cron.job job
+   where job.jobname in (
+     'sellerpilot-serverless-cs-wake-v1',
+     'sellerpilot-product-research-v1',
+     'sellerpilot-channel-sync-v1',
+     'sellerpilot-competitor-prices-v1',
+     'sellerpilot-kakao-notifications-v1',
+     'sellerpilot-maintenance-v1'
+   );
+  if v_configured_count <> 6 or v_active_count <> 0 then
+    raise exception 'all serverless runtime schedules must be installed and inactive'
+      using errcode = '55000';
+  end if;
+  delete from sellerpilot_private.serverless_runtime_canary_receipts receipt
+   where receipt.expires_at < clock_timestamp() - interval '1 day';
+  insert into sellerpilot_private.serverless_runtime_canary_receipts (release_id)
+  values (p_release_id)
+  returning id into v_receipt_id;
+  return v_receipt_id;
+end;
+$$;
+
+create or replace function public.sellerpilot_service_complete_serverless_runtime_canary(
+  p_receipt_id uuid,
+  p_release_id text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_completed boolean;
+begin
+  if p_receipt_id is null or coalesce(p_release_id, '') !~ '^[0-9a-f]{40}$' then
+    return false;
+  end if;
+  update sellerpilot_private.serverless_runtime_canary_receipts receipt
+     set passed_at = coalesce(receipt.passed_at, clock_timestamp())
+   where receipt.id = p_receipt_id
+     and receipt.release_id = p_release_id
+     and receipt.passed_at is null
+     and receipt.consumed_at is null
+     and receipt.expires_at > clock_timestamp()
+  returning true into v_completed;
+  return coalesce(v_completed, false);
+end;
+$$;
+
+create or replace function sellerpilot_private.set_serverless_runtime_schedules_active(
+  p_active boolean
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_active_count integer;
+  v_configured_count integer;
+  v_has_bearer boolean;
+begin
+  if p_active is null then
+    raise exception 'scheduler state required';
+  end if;
+
+  select count(*)::integer,
+         count(*) filter (where job.active)::integer
+    into v_configured_count, v_active_count
+    from cron.job job
+   where job.jobname in (
+     'sellerpilot-serverless-cs-wake-v1',
+     'sellerpilot-product-research-v1',
+     'sellerpilot-channel-sync-v1',
+     'sellerpilot-competitor-prices-v1',
+     'sellerpilot-kakao-notifications-v1',
+     'sellerpilot-maintenance-v1'
+   );
+
+  if p_active and v_configured_count <> 6 then
+    raise exception 'serverless runtime schedules are not installed'
+      using errcode = '55000';
+  end if;
+
+  select exists (
+    select 1
+      from vault.secrets secret
+      join vault.decrypted_secrets decrypted on decrypted.id = secret.id
+     where secret.name = 'sellerpilot_serverless_cs_wake_v1'
+       and decrypted.decrypted_secret ~ '^[A-Za-z0-9_-]{43}$'
+  ) into v_has_bearer;
+  if p_active and not v_has_bearer then
+    raise exception 'serverless runtime bearer is not configured'
+      using errcode = '55000';
+  end if;
+
+  if p_active then
+    update sellerpilot_private.serverless_cs_wake_requests request
+       set outcome = 'permanent_failure_acknowledged'
+     where request.outcome = 'permanent_failure';
+    update sellerpilot_private.internal_schedule_requests request
+       set outcome = 'permanent_failure_acknowledged'
+     where request.outcome = 'permanent_failure';
+  end if;
+
+  perform cron.alter_job(job_id := job.jobid, active := p_active)
+    from cron.job job
+   where job.jobname in (
+     'sellerpilot-serverless-cs-wake-v1',
+     'sellerpilot-product-research-v1',
+     'sellerpilot-channel-sync-v1',
+     'sellerpilot-competitor-prices-v1',
+     'sellerpilot-kakao-notifications-v1',
+     'sellerpilot-maintenance-v1'
+   );
+
+  select count(*) filter (where job.active)::integer
+    into v_active_count
+    from cron.job job
+   where job.jobname in (
+     'sellerpilot-serverless-cs-wake-v1',
+     'sellerpilot-product-research-v1',
+     'sellerpilot-channel-sync-v1',
+     'sellerpilot-competitor-prices-v1',
+     'sellerpilot-kakao-notifications-v1',
+     'sellerpilot-maintenance-v1'
+   );
+
+  return jsonb_build_object(
+    'configured', v_configured_count = 6,
+    'version', 'serverless_runtime_v2',
+    'active', v_active_count = 6,
+    'scheduleCount', v_configured_count
+  );
+end;
+$$;
+
+create or replace function public.sellerpilot_service_set_serverless_cs_wakeup_active(
+  p_active boolean
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_active is null then
+    raise exception 'scheduler state required';
+  end if;
+  if p_active then
+    raise exception 'a fresh production canary receipt is required for activation'
+      using errcode = '55000';
+  end if;
+  return sellerpilot_private.set_serverless_runtime_schedules_active(false);
+end;
+$$;
+
+create or replace function public.sellerpilot_service_activate_serverless_runtime(
+  p_canary_receipt_id uuid,
+  p_release_id text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_receipt sellerpilot_private.serverless_runtime_canary_receipts%rowtype;
+  v_result jsonb;
+  v_unsafe_pending_mutations integer;
+begin
+  if p_canary_receipt_id is null or coalesce(p_release_id, '') !~ '^[0-9a-f]{40}$' then
+    raise exception 'production canary receipt required'
+      using errcode = '55000';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(193674993, 821065060);
+  lock table sellerpilot_private.channel_gateway_jobs in share row exclusive mode;
+  select receipt.*
+    into v_receipt
+    from sellerpilot_private.serverless_runtime_canary_receipts receipt
+   where receipt.id = p_canary_receipt_id
+     and receipt.release_id = p_release_id
+   for update;
+  if not found
+     or v_receipt.passed_at is null
+     or v_receipt.consumed_at is not null
+     or v_receipt.expires_at <= clock_timestamp() then
+    raise exception 'fresh completed production canary receipt required'
+      using errcode = '55000';
+  end if;
+
+  select count(*)::integer
+    into v_unsafe_pending_mutations
+    from sellerpilot_private.channel_gateway_jobs job
+   where job.status in ('queued', 'running')
+     and (
+       job.operation in (
+         'listing.create', 'listing.update', 'listing.stop', 'price.update',
+         'inventory.update', 'shipment.acknowledge', 'shipment.confirm',
+         'inquiries.reply', 'oauth.exchange'
+       )
+       or sellerpilot_private.gateway_job_requires_reconciliation(
+         job.operation,
+         job.credential_refresh_in_flight,
+         job.prepared_credential_id,
+         job.credential_refresh_recovery_vault_id,
+         job.oauth_exchange_completed,
+         job.provider_mutation_started_at
+       )
+     );
+  if v_unsafe_pending_mutations <> 0 then
+    raise exception 'pending marketplace mutations require explicit operator review'
+      using errcode = '55000';
+  end if;
+
+  v_result := sellerpilot_private.set_serverless_runtime_schedules_active(true);
+  update sellerpilot_private.serverless_runtime_canary_receipts receipt
+     set consumed_at = clock_timestamp()
+   where receipt.id = p_canary_receipt_id
+     and receipt.consumed_at is null;
+  return v_result || jsonb_build_object(
+    'canaryReceiptConsumed', true,
+    'activeRelease', p_release_id,
+    'unsafePendingMutations', 0
+  );
+end;
+$$;
+
+create or replace function public.sellerpilot_service_serverless_cs_wakeup_status()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_active_release text;
+  v_active_count integer;
+  v_configured_count integer;
+  v_internal jsonb;
+  v_last_wake jsonb;
+  v_reconciliation_required integer;
+  v_reconciliation_required_mutations integer;
+  v_unsafe_pending_mutations integer;
+begin
+  select count(*)::integer,
+         count(*) filter (where job.active)::integer
+    into v_configured_count, v_active_count
+    from cron.job job
+   where job.jobname in (
+     'sellerpilot-serverless-cs-wake-v1',
+     'sellerpilot-product-research-v1',
+     'sellerpilot-channel-sync-v1',
+     'sellerpilot-competitor-prices-v1',
+     'sellerpilot-kakao-notifications-v1',
+     'sellerpilot-maintenance-v1'
+   );
+
+  select count(*) filter (
+           where job.status in ('queued', 'running')
+             and (
+               job.operation in (
+                 'listing.create', 'listing.update', 'listing.stop', 'price.update',
+                 'inventory.update', 'shipment.acknowledge', 'shipment.confirm',
+                 'inquiries.reply', 'oauth.exchange'
+               )
+               or sellerpilot_private.gateway_job_requires_reconciliation(
+                 job.operation,
+                 job.credential_refresh_in_flight,
+                 job.prepared_credential_id,
+                 job.credential_refresh_recovery_vault_id,
+                 job.oauth_exchange_completed,
+                 job.provider_mutation_started_at
+               )
+             )
+         )::integer,
+         count(*) filter (where job.status = 'reconciliation_required')::integer,
+         count(*) filter (
+           where job.status = 'reconciliation_required'
+             and (
+               job.operation in (
+                 'listing.create', 'listing.update', 'listing.stop', 'price.update',
+                 'inventory.update', 'shipment.acknowledge', 'shipment.confirm',
+                 'inquiries.reply', 'oauth.exchange'
+               )
+               or sellerpilot_private.gateway_job_requires_reconciliation(
+                 job.operation,
+                 job.credential_refresh_in_flight,
+                 job.prepared_credential_id,
+                 job.credential_refresh_recovery_vault_id,
+                 job.oauth_exchange_completed,
+                 job.provider_mutation_started_at
+               )
+             )
+         )::integer
+    into v_unsafe_pending_mutations,
+         v_reconciliation_required,
+         v_reconciliation_required_mutations
+    from sellerpilot_private.channel_gateway_jobs job;
+
+  if v_active_count = 6 then
+    select receipt.release_id
+      into v_active_release
+      from sellerpilot_private.serverless_runtime_canary_receipts receipt
+     where receipt.consumed_at is not null
+     order by receipt.consumed_at desc, receipt.id desc
+     limit 1;
+  end if;
+
+  select case when wake.request_id is null then null else jsonb_build_object(
+           'requestedAt', wake.requested_at,
+           'resolvedAt', wake.resolved_at,
+           'outcome', wake.outcome,
+           'httpStatus', wake.http_status,
+           'timedOut', wake.timed_out,
+           'safeErrorCode', wake.safe_error_code
+         ) end
+    into v_last_wake
+    from (values (true)) singleton(present)
+    left join lateral (
+      select request.request_id, request.requested_at, request.resolved_at,
+             request.outcome, request.http_status, request.timed_out,
+             request.safe_error_code
+        from sellerpilot_private.serverless_cs_wake_requests request
+       order by request.requested_at desc, request.request_id desc
+       limit 1
+    ) wake on true;
+
+  select coalesce(jsonb_object_agg(
+           route.route_key,
+           jsonb_build_object(
+             'configured', job.jobid is not null,
+             'active', coalesce(job.active, false),
+             'lastOutcome', latest.outcome,
+             'lastHttpStatus', latest.http_status,
+             'lastRequestedAt', latest.requested_at
+           )
+         ), '{}'::jsonb)
+    into v_internal
+    from (values
+      ('product_research', 'sellerpilot-product-research-v1'),
+      ('channel_sync', 'sellerpilot-channel-sync-v1'),
+      ('competitor_prices', 'sellerpilot-competitor-prices-v1'),
+      ('kakao_notifications', 'sellerpilot-kakao-notifications-v1'),
+      ('maintenance', 'sellerpilot-maintenance-v1')
+    ) route(route_key, job_name)
+    left join cron.job job on job.jobname = route.job_name
+    left join lateral (
+      select request.outcome, request.http_status, request.requested_at
+        from sellerpilot_private.internal_schedule_requests request
+       where request.route_key = route.route_key
+       order by request.requested_at desc, request.request_id desc
+       limit 1
+    ) latest on true;
+
+  return jsonb_build_object(
+    'configured', v_configured_count = 6,
+    'version', 'serverless_runtime_v2',
+    'active', v_active_count = 6,
+    'scheduleCount', v_configured_count,
+    'activeRelease', v_active_release,
+    'unsafePendingMutations', coalesce(v_unsafe_pending_mutations, 0),
+    'reconciliationRequired', coalesce(v_reconciliation_required, 0),
+    'reconciliationRequiredMutations', coalesce(v_reconciliation_required_mutations, 0),
+    'lastWake', v_last_wake,
+    'internalSchedules', v_internal
+  );
+end;
+$$;
+
+revoke all on function sellerpilot_private.set_serverless_runtime_schedules_active(boolean)
+  from public, anon, authenticated, service_role;
+revoke all on function public.sellerpilot_service_begin_serverless_runtime_canary(text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.sellerpilot_service_begin_serverless_runtime_canary(text)
+  to service_role;
+revoke all on function
+  public.sellerpilot_service_complete_serverless_runtime_canary(uuid, text)
+  from public, anon, authenticated, service_role;
+grant execute on function
+  public.sellerpilot_service_complete_serverless_runtime_canary(uuid, text)
+  to service_role;
+revoke all on function
+  public.sellerpilot_service_set_serverless_cs_wakeup_active(boolean)
+  from public, anon, authenticated, service_role;
+grant execute on function
+  public.sellerpilot_service_set_serverless_cs_wakeup_active(boolean)
+  to service_role;
+revoke all on function public.sellerpilot_service_activate_serverless_runtime(uuid, text)
+  from public, anon, authenticated, service_role;
+grant execute on function public.sellerpilot_service_activate_serverless_runtime(uuid, text)
+  to service_role;
+revoke all on function public.sellerpilot_service_serverless_cs_wakeup_status()
+  from public, anon, authenticated, service_role;
+grant execute on function public.sellerpilot_service_serverless_cs_wakeup_status()
+  to service_role;
+
+comment on table sellerpilot_private.internal_schedule_requests is
+  'Secret-free pg_net ledger for Supabase-owned internal route schedules.';
+comment on function sellerpilot_private.schedule_internal_route(text) is
+  'Invokes one fixed Vercel internal route with the Vault HMAC bearer; cron commands contain no secret.';
+-- END:hobby-safe-internal-schedules
+
+-- BEGIN:strict-worker-scope-final-fence
+-- Production has not applied the earlier standalone legacy-scope retirement.
+-- Install the same terminal boundary in this final, not-yet-applied migration.
+-- The rotation lock serializes token-set activation. ACCESS EXCLUSIVE waits
+-- out token-authenticated transactions and prevents a new legacy claim without
+-- crossing the gateway completion lock's independent acquisition order.
+select pg_catalog.pg_advisory_xact_lock(193674993, 821065043);
+lock table sellerpilot_private.ai_cli_worker_tokens in access exclusive mode;
+
+do $strict_worker_scope$
+declare
+  v_now timestamptz := clock_timestamp();
+  v_ai_job record;
+  v_gateway_job record;
+  v_status text;
+  v_message text;
+begin
+  -- A product worker may already have uploaded partial output. Requeuing it
+  -- would duplicate generation and storage work, so stop it terminally and
+  -- leave an explicit, user-retryable failure instead of accepting a late
+  -- completion from the retired combined credential.
+  for v_ai_job in
+    select job.id, job.worker_token_id
+      from sellerpilot_private.ai_cli_jobs job
+      join sellerpilot_private.ai_cli_worker_tokens token
+        on token.id = job.worker_token_id
+     where token.scope = 'legacy_combined'
+       and job.status = 'running'
+     order by job.id
+     for update of job
+  loop
+    update sellerpilot_private.ai_cli_jobs job
+       set status = 'failed',
+           error_message = 'Legacy combined worker retired during release; retry this AI job explicitly.',
+           worker_token_id = null,
+           claim_token = null,
+           lease_expires_at = null,
+           completed_at = v_now,
+           updated_at = v_now
+     where job.id = v_ai_job.id
+       and job.status = 'running';
+
+    insert into sellerpilot_private.ai_cli_audit (
+      action, worker_token_id, job_id, safe_detail
+    ) values (
+      'job_failed',
+      v_ai_job.worker_token_id,
+      v_ai_job.id,
+      jsonb_build_object('reason', 'legacy_combined_release_retirement')
+    );
+  end loop;
+
+  -- Gateway reads that provably have not crossed a provider-mutation boundary
+  -- are safe to requeue. Writes and uncertain refreshes are quarantined for
+  -- reconciliation; a durably completed OAuth rotation remains succeeded.
+  for v_gateway_job in
+    select job.id,
+           job.credential_id,
+           job.attempt_id,
+           job.channel,
+           job.operation,
+           job.attempt_count,
+           job.response_payload,
+           job.oauth_request_vault_id,
+           job.oauth_exchange_completed,
+           job.credential_refresh_in_flight,
+           job.prepared_credential_id,
+           job.credential_refresh_recovery_vault_id,
+           job.provider_mutation_started_at
+      from sellerpilot_private.channel_gateway_jobs job
+      join sellerpilot_private.ai_cli_worker_tokens token
+        on token.id = job.worker_token_id
+     where token.scope = 'legacy_combined'
+       and job.status = 'running'
+     order by job.id
+     for update of job
+  loop
+    if v_gateway_job.oauth_exchange_completed
+       and not v_gateway_job.credential_refresh_in_flight then
+      v_status := 'succeeded';
+      v_message := null;
+    elsif sellerpilot_private.gateway_job_requires_reconciliation(
+      v_gateway_job.operation,
+      v_gateway_job.credential_refresh_in_flight,
+      v_gateway_job.prepared_credential_id,
+      v_gateway_job.credential_refresh_recovery_vault_id,
+      v_gateway_job.oauth_exchange_completed,
+      v_gateway_job.provider_mutation_started_at
+    ) then
+      v_status := 'reconciliation_required';
+      v_message := 'Legacy combined worker retired with provider outcome unresolved; manual reconciliation required.';
+    elsif v_gateway_job.attempt_count >= 4 then
+      v_status := 'failed';
+      v_message := 'Legacy combined worker retired after the gateway retry limit was reached.';
+    else
+      v_status := 'queued';
+      v_message := null;
+    end if;
+
+    update sellerpilot_private.channel_gateway_jobs job
+       set status = v_status,
+           worker_token_id = null,
+           claim_token = null,
+           lease_expires_at = null,
+           completed_at = case when v_status = 'queued' then null else v_now end,
+           error_message = v_message,
+           response_payload = case
+             when v_status = 'succeeded' then coalesce(
+               v_gateway_job.response_payload,
+               jsonb_build_object(
+                 'ok', true,
+                 'channel', v_gateway_job.channel,
+                 'operation', 'oauth.exchange',
+                 'safeMessage', 'OAuth credential was durably staged before legacy worker retirement.'
+               )
+             )
+             else job.response_payload
+           end,
+           updated_at = v_now
+     where job.id = v_gateway_job.id
+       and job.status = 'running';
+
+    if v_status <> 'queued'
+       and v_gateway_job.oauth_request_vault_id is not null then
+      delete from vault.secrets secret
+       where secret.id = v_gateway_job.oauth_request_vault_id;
+      update sellerpilot_private.channel_gateway_jobs job
+         set oauth_request_vault_id = null,
+             updated_at = v_now
+       where job.id = v_gateway_job.id;
+    end if;
+
+    if v_status in ('failed', 'reconciliation_required')
+       and v_gateway_job.attempt_id is not null then
+      update sellerpilot_private.channel_operation_attempts attempt
+         set status = case
+               when v_status = 'reconciliation_required' then 'manual_required'
+               else 'failed'
+             end,
+             http_status = case
+               when v_status = 'reconciliation_required' then 409
+               else 503
+             end,
+             safe_message = v_message,
+             completed_at = v_now
+       where attempt.id = v_gateway_job.attempt_id
+         and attempt.status in ('running', 'failed', 'manual_required');
+    end if;
+
+    if v_status = 'reconciliation_required'
+       and v_gateway_job.operation in (
+         'listing.create', 'listing.update', 'listing.stop'
+       )
+       and v_gateway_job.attempt_id is not null then
+      update sellerpilot_private.product_listings listing
+         set status = 'failed',
+             last_error = v_message,
+             failure_class = 'external_action',
+             updated_at = v_now
+       where listing.operation_attempt_id = v_gateway_job.attempt_id;
+    end if;
+
+    if v_status in ('failed', 'reconciliation_required')
+       and v_gateway_job.operation in ('orders.list', 'inquiries.list') then
+      perform public.sellerpilot_service_mark_channel_sync(
+        v_gateway_job.credential_id,
+        v_gateway_job.channel,
+        case
+          when v_gateway_job.operation = 'orders.list' then 'orders'
+          else 'inquiries'
+        end,
+        'failed',
+        v_message
+      );
+    end if;
+  end loop;
+
+  with revoked as (
+    update sellerpilot_private.ai_cli_worker_tokens token
+       set status = 'revoked',
+           revoked_at = coalesce(token.revoked_at, v_now)
+     where token.scope = 'legacy_combined'
+       and token.status <> 'revoked'
+     returning token.id, token.scope
+  )
+  insert into sellerpilot_private.ai_cli_audit (
+    action, worker_token_id, safe_detail
+  )
+  select
+    'token_revoked',
+    revoked.id,
+    jsonb_build_object(
+      'reason', 'legacy_combined_release_retirement',
+      'scope', revoked.scope
+    )
+  from revoked;
+end;
+$strict_worker_scope$;
+
+alter table sellerpilot_private.ai_cli_worker_tokens
+  drop constraint if exists ai_cli_worker_tokens_no_active_legacy_combined_check;
+
+alter table sellerpilot_private.ai_cli_worker_tokens
+  add constraint ai_cli_worker_tokens_no_active_legacy_combined_check
+  check (scope <> 'legacy_combined' or status <> 'active') not valid;
+
+alter table sellerpilot_private.ai_cli_worker_tokens
+  validate constraint ai_cli_worker_tokens_no_active_legacy_combined_check;
+
+-- Every capability lookup is exact after the legacy rows are terminal. The
+-- historical rows remain for audit lineage but can never authenticate again.
+create or replace function sellerpilot_private.worker_token_has_scope(
+  p_token_hash text,
+  p_scope text,
+  p_require_active boolean default true
+)
+returns boolean
+language sql
+stable
+set search_path = ''
+as $$
+  select coalesce(p_scope in ('ai', 'gateway', 'scheduler'), false)
+     and exists (
+       select 1
+         from sellerpilot_private.ai_cli_worker_tokens token
+        where token.token_hash = p_token_hash
+          and token.scope = p_scope
+          and (
+            not p_require_active
+            or (
+              token.status = 'active'
+              and token.expires_at > clock_timestamp()
+            )
+          )
+     )
+$$;
+
+revoke all on function sellerpilot_private.worker_token_has_scope(
+  text, text, boolean
+) from public, anon, authenticated, service_role;
+
+create or replace function public.sellerpilot_service_validate_worker_token(
+  p_token_hash text,
+  p_worker_version text default null
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_updated integer;
+begin
+  if coalesce(p_token_hash, '') !~ '^[a-f0-9]{64}$' then
+    return false;
+  end if;
+
+  update sellerpilot_private.ai_cli_worker_tokens token
+     set last_seen_at = clock_timestamp(),
+         last_version = left(nullif(trim(p_worker_version), ''), 80)
+   where token.token_hash = p_token_hash
+     and token.scope = 'scheduler'
+     and token.status = 'active'
+     and token.expires_at > clock_timestamp();
+  get diagnostics v_updated = row_count;
+  return v_updated = 1;
+end;
+$$;
+
+revoke all on function public.sellerpilot_service_validate_worker_token(
+  text, text
+) from public, anon, authenticated;
+grant execute on function public.sellerpilot_service_validate_worker_token(
+  text, text
+) to service_role;
+
+comment on function sellerpilot_private.worker_token_has_scope(
+  text, text, boolean
+) is 'Checks one exact worker capability; legacy_combined never satisfies a scope.';
+comment on function public.sellerpilot_service_validate_worker_token(text, text)
+  is 'Records liveness only for an exact active scheduler-scope token.';
+-- END:strict-worker-scope-final-fence
 
 commit;

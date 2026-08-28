@@ -1,7 +1,8 @@
 "use client";
 
 import { BellRing, CheckCircle2, Download, LoaderCircle, Smartphone, TriangleAlert, X } from "lucide-react";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useModalInteraction } from "./use-modal-interaction";
 
 type AuthenticatedFetch = (input: string, init?: RequestInit) => Promise<Response>;
 type PushState = "checking" | "available" | "subscribed" | "denied" | "unsupported" | "unconfigured" | "error";
@@ -58,6 +59,8 @@ export function MobilePushManager({ authenticatedFetch }: { authenticatedFetch: 
   const [dismissed, setDismissed] = useState(mobilePushDismissedForSession);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const standaloneGateRef = useRef<HTMLElement>(null);
+  const standaloneGateDismissRef = useRef<HTMLButtonElement>(null);
 
   const loadConfiguration = useCallback(async () => {
     const response = await authenticatedFetch("/api/admin/push-subscriptions");
@@ -112,6 +115,22 @@ export function MobilePushManager({ authenticatedFetch }: { authenticatedFetch: 
     }
     setDismissed(true);
   }, []);
+
+  const standaloneGateOpen = mounted
+    && isStandalone
+    && !dismissed
+    && state !== "checking"
+    && state !== "subscribed";
+  useModalInteraction(standaloneGateOpen, standaloneGateRef, dismissForSession, {
+    dismissible: !busy,
+    initialFocusRef: standaloneGateDismissRef,
+  });
+
+  useEffect(() => {
+    if (dismissed || state !== "subscribed") return;
+    const timer = window.setTimeout(dismissForSession, 2_000);
+    return () => window.clearTimeout(timer);
+  }, [dismissForSession, dismissed, state]);
 
   const sendTest = useCallback(async (current: PushSubscription) => {
     const response = await authenticatedFetch("/api/admin/push-notifications/test", {
@@ -174,15 +193,15 @@ export function MobilePushManager({ authenticatedFetch }: { authenticatedFetch: 
   }, [installPrompt]);
 
   if (!mounted || dismissed || (!isAndroid && !isStandalone)) return null;
-  if (state === "checking") return <div className="mobile-push-chip checking" role="status"><LoaderCircle className="spin" size={15} />앱 알림 확인 중</div>;
+  if (state === "checking") return <div className="mobile-push-chip checking" role="status"><LoaderCircle className="spin" size={15} /><span><b>앱 알림 확인 중</b></span><button type="button" className="mobile-push-chip-dismiss" onClick={dismissForSession} aria-label="앱 알림 상태 닫기"><X size={14} /></button></div>;
   if (state === "subscribed") {
-    return <div className="mobile-push-chip ready" role="status"><CheckCircle2 size={16} /><span><b>주문·배송 알림 사용 중</b><small>{message || "새 주문과 배송 상태를 즉시 알려드립니다."}</small></span>{subscription && <button type="button" onClick={() => void sendTest(subscription)} disabled={busy}>테스트</button>}</div>;
+    return <div className="mobile-push-chip ready" role="status"><CheckCircle2 size={16} /><span><b>주문·배송 알림 사용 중</b><small>{message || "새 주문과 배송 상태를 즉시 알려드립니다."}</small></span>{subscription && <button type="button" onClick={() => void sendTest(subscription)} disabled={busy}>테스트</button>}<button type="button" className="mobile-push-chip-dismiss" onClick={dismissForSession} aria-label="주문 배송 알림 상태 닫기"><X size={14} /></button></div>;
   }
 
   return <>
     {!isStandalone && <div className="mobile-push-page-spacer" aria-hidden="true" />}
-    <section className={`mobile-push-gate ${isStandalone ? "standalone" : "browser"}`} role="dialog" aria-label="Android 주문 배송 알림 설정" aria-modal={isStandalone}>
-      <button type="button" className="mobile-push-gate-dismiss" onClick={dismissForSession} aria-label="알림 설정 나중에 하기"><X size={15} />나중에</button>
+    <section ref={standaloneGateRef} tabIndex={-1} className={`mobile-push-gate ${isStandalone ? "standalone" : "browser"}`} role="dialog" aria-label="Android 주문 배송 알림 설정" aria-modal={isStandalone || undefined}>
+      <button ref={standaloneGateDismissRef} type="button" className="mobile-push-gate-dismiss" onClick={dismissForSession} aria-label="알림 설정 나중에 하기" disabled={busy}><X size={15} />나중에</button>
       <div className="mobile-push-gate-icon">{state === "denied" || state === "error" ? <TriangleAlert size={23} /> : <BellRing size={23} />}</div>
       <div className="mobile-push-gate-copy">
         <span>ANDROID APP · REQUIRED ALERTS</span>

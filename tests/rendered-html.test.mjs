@@ -246,7 +246,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(readinessPage, /consoleVerifiedChannels/);
   assert.doesNotMatch(readinessPage, /2 \/ 6|0 \/ 6|6개 활성 판매채널/);
   assert.match(readinessPage, /QSM 개별 상품등록 필드 맵/);
-  assert.match(readinessPage, /현재 API 읽기 통과/);
+  assert.match(readinessPage, /인증 키 읽기 통과/);
   assert.match(readinessPage, /apiReadPassed\} \/ \{resolvedReadiness\.length\}/);
   assert.match(readinessPage, /LAST CONSOLE SNAPSHOT/);
   assert.match(readinessPage, /LIVE DB MERGED/);
@@ -261,7 +261,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.doesNotMatch(readinessData, /불완전으로 Rejected/);
   assert.match(readinessData, /11번가 Seller Office · OPEN API/);
   assert.match(readinessData, /운영 API Key/);
-  assert.match(readinessPage, /현재 Vault·API 읽기 진단을 분리해 병합/);
+  assert.match(readinessPage, /현재 Vault·인증 키 읽기·주문\/문의 게이트웨이 상태를 분리해 병합/);
   assert.match(readinessData, /Access 30일 · Refresh 180일/);
   assert.match(readinessData, /대표 1장, 추가 최대 50장, 동영상 최대 1개/);
   assert.match(channelMapping, /Qoo10 QSM 실제 상품등록 필드/);
@@ -344,6 +344,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const gatewayClaimRoute = await readFile(new URL("../app/api/channel-gateway/worker/claim/route.ts", import.meta.url), "utf8");
   const syncArguments = await readFile(new URL("../lib/channels/sync-arguments.ts", import.meta.url), "utf8");
   const periodicSyncMigration = await readFile(new URL("../supabase/migrations/20260820170000_periodic_channel_sync.sql", import.meta.url), "utf8");
+  const releaseIntegrityMigration = await readFile(new URL("../supabase/migrations/20260828210000_non_cs_release_integrity.sql", import.meta.url), "utf8");
   const rotationHardeningMigration = await readFile(new URL("../supabase/migrations/20260821110000_harden_oauth_rotation_and_cleanup_lints.sql", import.meta.url), "utf8");
   const vercelConfig = await readFile(new URL("../vercel.json", import.meta.url), "utf8");
   const refreshMigration = await readFile(new URL("../supabase/migrations/20260816110000_lazada_token_refresh.sql", import.meta.url), "utf8");
@@ -403,6 +404,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /window\.setInterval\(refreshWhenVisible, 15_000\)/);
   assert.match(mobileStyles, /\.cs-history-counts[\s\S]{0,120}grid-template-columns: repeat\(2/);
   assert.match(periodicSyncRoute, /orderSyncRequests/);
+  assert.doesNotMatch(periodicSyncRoute, /inquirySyncRequests|periodicInquiryRequests|blockedInquiryResults/);
   assert.match(syncArguments, /"ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"/);
   assert.match(syncArguments, /"0", "3", "4", "5"/);
   assert.match(syncArguments, /SearchStartDate/);
@@ -410,7 +412,9 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(periodicSyncRoute, /dispatchPendingPushNotifications/);
   assert.match(periodicSyncMigration, /already_pending/);
   assert.match(periodicSyncMigration, /'qoo10', 'shopee', 'lazada', 'coupang', 'smartstore', 'ebay', 'temu'/);
-  assert.match(vercelConfig, /"path": "\/api\/internal\/channel-sync"[\s\S]{0,80}"schedule": "1-59\/5 \* \* \* \*"/);
+  assert.doesNotMatch(vercelConfig, /\/api\/internal\/(?:channel-sync|product-research|competitor-prices|kakao-notifications)/);
+  assert.match(releaseIntegrityMigration, /sellerpilot-channel-sync-v1'[\s\S]{0,80}'1-59\/5 \* \* \* \*'/);
+  assert.match(releaseIntegrityMigration, /sellerpilot-kakao-notifications-v1'[\s\S]{0,80}'4-59\/5 \* \* \* \*'/);
   assert.match(cliWorker, /SELLERPILOT_CHANNEL_SYNC_MS/);
   assert.match(cliWorker, /\/api\/internal\/channel-sync/);
   assert.match(cliWorker, /sellerpilot-cli-worker\/1\.59/);

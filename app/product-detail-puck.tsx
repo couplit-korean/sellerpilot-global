@@ -8,6 +8,7 @@ import { validateDetailAnimatedGif } from "../lib/product-media-contract";
 import { resolveProductDetailAssets } from "./_publishing/product-detail-persistence";
 import mediaStyles from "./product-detail-media.module.css";
 import type { DetailLayout, DetailMotion, DetailSection, ProductStudioResult } from "./product-studio-types";
+import { useModalInteraction } from "./use-modal-interaction";
 
 type VerificationStatus = "verified" | "needs-review";
 type DetailSectionType = DetailSection["type"];
@@ -451,55 +452,14 @@ export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data }: 
 export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, saving = false, onSave, onClose }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; saving?: boolean; onSave: (next: ProductDetailData) => void | Promise<void>; onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const onCloseRef = useRef(onClose);
-  const savingRef = useRef(saving);
   const initialData = useMemo(() => data ? resolveProductDetailAssets(data, assetUrls) : result ? createDetailData(result, imageUrl, assetUrls) : null, [assetUrls, data, imageUrl, result]);
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-  useEffect(() => {
-    savingRef.current = saving;
-  }, [saving]);
-  useEffect(() => {
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusFrame = window.requestAnimationFrame(() => (closeButtonRef.current ?? dialogRef.current)?.focus());
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (!savingRef.current) onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab" || !dialogRef.current) return;
-      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )].filter((element) => !element.hidden && element.getClientRects().length > 0);
-      if (!focusable.length) {
-        event.preventDefault();
-        dialogRef.current.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.cancelAnimationFrame(focusFrame);
-      window.removeEventListener("keydown", onKeyDown);
-      if (opener?.isConnected) opener.focus();
-    };
-  }, []);
+  useModalInteraction(Boolean(initialData), dialogRef, onClose, { dismissible: !saving, initialFocusRef: closeButtonRef });
 
   if (!initialData) return null;
   return (
     <div ref={dialogRef} tabIndex={-1} className="puck-editor-modal" role="dialog" aria-modal="true" aria-label="상세페이지 시각 편집기">
       <div className="puck-editor-top"><span><b>Puck 상세페이지 편집기</b><small>{saving ? "운영 원장에 저장 중입니다." : "블록을 드래그하고 오른쪽 속성에서 문구·색상을 수정하세요."}</small></span><button ref={closeButtonRef} type="button" aria-label="편집기 닫기" disabled={saving} onClick={onClose}><X size={18} /></button></div>
-      <div className="puck-editor-body" aria-busy={saving}><Puck config={detailConfig} data={initialData} onPublish={(next) => { if (!saving) void onSave(next); }} /></div>
+      <div className="puck-editor-body" aria-busy={saving} aria-disabled={saving || undefined} inert={saving || undefined}><Puck config={detailConfig} data={initialData} onPublish={(next) => { if (!saving) void onSave(next); }} /></div>
     </div>
   );
 }

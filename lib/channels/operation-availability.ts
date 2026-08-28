@@ -1,4 +1,10 @@
-import { channelCatalog, type ActiveChannelKey, type ChannelCapabilityKey } from "./catalog";
+import {
+  capabilityModeLabels,
+  channelCatalog,
+  type ActiveChannelKey,
+  type CapabilityMode,
+  type ChannelCapabilityKey,
+} from "./catalog";
 import type { ChannelOperationName } from "./operations";
 
 const operationCapabilities: Record<ChannelOperationName, ChannelCapabilityKey> = {
@@ -43,6 +49,15 @@ const releasedListingUpdateChannels = new Set<ActiveChannelKey>([
   "elevenst",
   "smartstore",
 ]);
+
+const releaseOperationByCapability: Partial<Record<ChannelCapabilityKey, ChannelOperationName>> = {
+  listingCreate: "listing.create",
+  listingUpdate: "listing.update",
+  listingStop: "listing.stop",
+  price: "price.update",
+  inventory: "inventory.update",
+  orders: "orders.list",
+};
 
 export type ChannelOperationRelease = {
   available: boolean;
@@ -129,4 +144,69 @@ export function channelOperationAvailable(
   environment: ChannelEnvironment = "production",
 ) {
   return channelOperationRelease(channel, operation, environment).available;
+}
+
+export type ChannelCapabilityReleasePresentation = {
+  mode: CapabilityMode;
+  label: string;
+  note: string;
+  releaseState: "available" | "partial" | "blocked";
+};
+
+/**
+ * The catalog records what a provider documents, while this projection records
+ * what SellerPilot can safely release today. Keep the readiness table on the
+ * latter so a documented API is never mistaken for an enabled production path.
+ */
+export function channelCapabilityReleasePresentation(
+  channel: ActiveChannelKey,
+  capability: ChannelCapabilityKey,
+  environment: ChannelEnvironment = "production",
+): ChannelCapabilityReleasePresentation {
+  const documented = channelCatalog[channel].capabilities[capability];
+  const operation = releaseOperationByCapability[capability];
+  if (operation) {
+    const release = channelOperationRelease(channel, operation, environment);
+    if (!release.available) {
+      return {
+        mode: release.mode === "vendor_docs_required" ? "vendor_docs_required" : "unsupported",
+        label: release.mode === "vendor_docs_required" ? capabilityModeLabels.vendor_docs_required : "출시 차단",
+        note: release.reason,
+        releaseState: "blocked",
+      };
+    }
+  }
+
+  if (capability === "inquiries") {
+    const listRelease = channelOperationRelease(channel, "inquiries.list", environment);
+    const replyRelease = channelOperationRelease(channel, "inquiries.reply", environment);
+    if (!listRelease.available && !replyRelease.available) {
+      return {
+        mode: listRelease.mode === "vendor_docs_required" || replyRelease.mode === "vendor_docs_required"
+          ? "vendor_docs_required"
+          : "unsupported",
+        label: listRelease.mode === "vendor_docs_required" || replyRelease.mode === "vendor_docs_required"
+          ? capabilityModeLabels.vendor_docs_required
+          : "출시 차단",
+        note: `조회 차단 · ${listRelease.reason} 답변 차단 · ${replyRelease.reason}`,
+        releaseState: "blocked",
+      };
+    }
+    if (listRelease.available !== replyRelease.available) {
+      const blocked = listRelease.available ? replyRelease : listRelease;
+      return {
+        mode: documented.mode,
+        label: listRelease.available ? "조회만" : "답변만",
+        note: `${documented.note} · ${listRelease.available ? "답변" : "조회"} 경로는 출시 차단 · ${blocked.reason}`,
+        releaseState: "partial",
+      };
+    }
+  }
+
+  return {
+    mode: documented.mode,
+    label: capabilityModeLabels[documented.mode],
+    note: documented.note,
+    releaseState: "available",
+  };
 }

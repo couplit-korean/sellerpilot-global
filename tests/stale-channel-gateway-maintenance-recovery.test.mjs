@@ -15,8 +15,9 @@ test("scheduled and opportunistic gateway recovery use a nonblocking lock and fa
   assert.match(block, /pg_try_advisory_xact_lock\(193674993, 821065043\)/);
   assert.doesNotMatch(block, /perform pg_catalog\.pg_advisory_xact_lock\(193674993, 82106504[23]\)/);
   assert.match(block, /status = 'running'[\s\S]*lease_expires_at is not null[\s\S]*lease_expires_at <= v_now/);
-  assert.match(block, /provider_mutation_started_at is not null/);
-  assert.match(block, /'listing\.create'[\s\S]*'inventory\.update'[\s\S]*'inquiries\.reply'[\s\S]*'shipment\.confirm'/);
+  assert.match(block, /gateway_job_requires_reconciliation\([\s\S]*v_job\.provider_mutation_started_at/);
+  assert.match(migration, /gateway_job_requires_reconciliation[\s\S]*provider_mutation_started_at is not null/);
+  assert.match(migration, /'listing\.create'[\s\S]*'inventory\.update'[\s\S]*'inquiries\.reply'[\s\S]*'shipment\.confirm'/);
   assert.match(block, /v_status := 'reconciliation_required'/);
   assert.match(block, /attempt_count >= 4[\s\S]*v_status := 'failed'/);
   assert.match(block, /else[\s\S]*v_status := 'queued'/);

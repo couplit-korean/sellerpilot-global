@@ -19,6 +19,9 @@ export function configuredServerProductResearchDependencies(): ServerProductRese
 
   return {
     cronSecret: process.env.CRON_SECRET,
+    releaseId: process.env.SELLERPILOT_RELEASE_SHA,
+    vercelGitCommitSha: process.env.VERCEL_GIT_COMMIT_SHA,
+    requireActiveRuntime: true,
     rpc: serviceClient
       ? async (name, arguments_ = {}) => {
         const { data, error } = await serviceClient.rpc(name, arguments_);

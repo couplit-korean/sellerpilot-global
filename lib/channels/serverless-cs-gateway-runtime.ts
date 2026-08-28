@@ -27,6 +27,9 @@ export function configuredServerlessCsGatewayDependencies(): ServerlessCsGateway
 
   return {
     cronSecret: process.env.CRON_SECRET,
+    releaseId: process.env.SELLERPILOT_RELEASE_SHA,
+    vercelGitCommitSha: process.env.VERCEL_GIT_COMMIT_SHA,
+    requireActiveRuntime: true,
     staticEgressChannels,
     rpc: serviceClient
       ? async (name, arguments_ = {}) => {

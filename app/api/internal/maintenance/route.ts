@@ -7,6 +7,12 @@ import {
   getPushPublicConfiguration,
 } from "../../../../lib/push-notifications";
 import { createBoundedSupabaseFetch } from "../../../../lib/worker-rpc";
+import {
+  internalScheduleAuthorization,
+  internalScheduleCanaryPayload,
+  internalScheduleRequestMode,
+  runtimeStatusMatchesCurrentRelease,
+} from "../../../../lib/internal-scheduler-auth";
 import { deadlineAfter, deadlineRemaining } from "../../../../lib/time-deadline";
 
 export const runtime = "nodejs";
@@ -378,12 +384,22 @@ async function queueRefreshIfNeeded(serviceClient: SupabaseClient, channel: Refr
 
 export async function GET(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
-  const authorization = request.headers.get("authorization") ?? "";
-  if (!cronSecret) {
+  const authorization = internalScheduleAuthorization(
+    request.headers.get("authorization"),
+    cronSecret,
+  );
+  if (authorization === "missing") {
     return NextResponse.json({ message: "정리 작업 인증값이 설정되지 않았습니다." }, { status: 503 });
   }
-  if (authorization !== `Bearer ${cronSecret}`) {
+  if (authorization !== "authorized") {
     return NextResponse.json({ message: "정리 작업 인증이 필요합니다." }, { status: 401 });
+  }
+  const requestedMode = internalScheduleRequestMode(request);
+  if (requestedMode === "invalid") {
+    return NextResponse.json({ message: "정리 작업 실행 모드를 확인하지 못했습니다." }, { status: 400 });
+  }
+  if (requestedMode === "canary") {
+    return NextResponse.json(internalScheduleCanaryPayload());
   }
 
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
@@ -395,6 +411,15 @@ export async function GET(request: Request) {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: createBoundedSupabaseFetch(MAINTENANCE_SUPABASE_TIMEOUT_MS) },
   });
+  const { data: runtimeStatus, error: runtimeStatusError } = await serviceClient.rpc(
+    "sellerpilot_service_serverless_cs_wakeup_status",
+  );
+  if (runtimeStatusError || !runtimeStatusMatchesCurrentRelease(runtimeStatus)) {
+    return NextResponse.json(
+      { message: "서버 일정이 활성화되지 않아 정리 작업을 실행하지 않았습니다." },
+      { status: 503, headers: { "cache-control": "no-store, max-age=0" } },
+    );
+  }
   const maintenanceDeadline = deadlineAfter(MAINTENANCE_WORK_BUDGET_MS);
   // Run independently of OAuth and retention work. A missing AI worker must
   // not leave registration cards in `analyzing` forever, and a recovery error

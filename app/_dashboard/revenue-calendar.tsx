@@ -63,28 +63,30 @@ function RevenueCalendarViewport({ days, range, onRangeChange }: RevenueCalendar
           </div>
         </div>
       </div>
-      <div className="sales-calendar-weekdays">
-        {weekdays.map((day) => <span key={day}>{day}</span>)}
-      </div>
-      <div className="sales-calendar-grid">
-        {Array.from({ length: calendarOffset }, (_, index) => (
-          <span className="calendar-blank" key={`blank-${index}`} />
-        ))}
-        {page?.cells.map(({ date, value }) => (
-          <article
-            className={`${date === today ? "today" : ""} ${value ? "" : "empty"}`.trim()}
-            key={date}
-            aria-current={date === today ? "date" : undefined}
-            aria-label={value ? `${date} 총매출 ${formatCompactWon(value.revenueKrw)}, 국내 ${formatCompactWon(value.domesticRevenueKrw)}, 해외 ${formatCompactWon(value.overseasRevenueKrw)}` : `${date} 매출 집계 없음`}
-          >
-            <time dateTime={date}>{Number(date.slice(8, 10))}{date === today ? <span className="sr-only">오늘</span> : null}</time>
-            <b className="sales-calendar-total">{value ? formatCompactWon(value.revenueKrw) : "—"}</b>
-            <div className="sales-calendar-breakdown">
-              <small className="domestic"><span>국내</span><em>{value ? formatCompactWon(value.domesticRevenueKrw) : "—"}</em></small>
-              <small className="overseas"><span>해외</span><em>{value ? formatCompactWon(value.overseasRevenueKrw) : "—"}</em></small>
-            </div>
-          </article>
-        )) ?? null}
+      <div className="sales-calendar-scroll" role="region" aria-label="요일과 날짜별 실매출 달력">
+        <div className="sales-calendar-weekdays">
+          {weekdays.map((day) => <span key={day}>{day}</span>)}
+        </div>
+        <div className="sales-calendar-grid">
+          {Array.from({ length: calendarOffset }, (_, index) => (
+            <span className="calendar-blank" key={`blank-${index}`} />
+          ))}
+          {page?.cells.map(({ date, value }) => (
+            <article
+              className={`${date === today ? "today" : ""} ${value ? "" : "empty"}`.trim()}
+              key={date}
+              aria-current={date === today ? "date" : undefined}
+              aria-label={value ? `${date} 총매출 ${formatCompactWon(value.revenueKrw)}, 국내 ${formatCompactWon(value.domesticRevenueKrw)}, 해외 ${formatCompactWon(value.overseasRevenueKrw)}` : `${date} 매출 집계 없음`}
+            >
+              <time dateTime={date}>{Number(date.slice(8, 10))}{date === today ? <span className="sr-only">오늘</span> : null}</time>
+              <b className="sales-calendar-total">{value ? formatCompactWon(value.revenueKrw) : "—"}</b>
+              <div className="sales-calendar-breakdown">
+                <small className="domestic"><span>국내</span><em>{value ? formatCompactWon(value.domesticRevenueKrw) : "—"}</em></small>
+                <small className="overseas"><span>해외</span><em>{value ? formatCompactWon(value.overseasRevenueKrw) : "—"}</em></small>
+              </div>
+            </article>
+          )) ?? null}
+        </div>
       </div>
     </section>
   );

@@ -3369,6 +3369,21 @@
 }
 
 @media (max-width: 319px) {
+  .topbar-actions {
+    min-width: 136px;
+    flex: 0 0 136px;
+  }
+
+  .topbar-actions .demo-data-badge {
+    display: none;
+  }
+
+  .topbar-title h1 {
+    max-width: none;
+    font-size: 12px;
+    line-height: 1.2;
+  }
+
   .mobile-push-gate.browser {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3385,5 +3400,383 @@
   .mobile-push-gate-actions button:only-child {
     width: 100%;
     grid-column: auto;
+  }
+}
+
+/* Fold-safe mobile overlay lanes.
+   The registration action is part of the document flow, while the navigation,
+   two-second toast, and optional push prompt each use a distinct bottom lane.
+   This final override intentionally follows every legacy mobile layer. */
+@media (max-width: 720px) {
+  body {
+    --mobile-nav-clearance: calc(78px + env(safe-area-inset-bottom));
+    --mobile-toast-max-height: clamp(84px, 24svh, 132px);
+    --mobile-toast-lane-height: 0px;
+  }
+
+  body:has(.toast) {
+    --mobile-toast-lane-height: calc(var(--mobile-toast-max-height) + 8px);
+  }
+
+  html {
+    scroll-padding-bottom: calc(104px + env(safe-area-inset-bottom));
+  }
+
+  .app-content {
+    padding-bottom: calc(104px + env(safe-area-inset-bottom));
+  }
+
+  .upload-panel > .analysis-start-bar,
+  .analysis-start-bar {
+    position: static;
+    z-index: auto;
+    inset: auto;
+    bottom: auto !important;
+  }
+
+  .option-slot-wrap {
+    display: grid;
+    height: auto;
+    grid-template-rows: minmax(124px, auto) auto;
+    align-content: start;
+    gap: 5px;
+    aspect-ratio: auto;
+  }
+
+  .option-photo-slot {
+    height: auto;
+    min-height: 124px;
+    aspect-ratio: 1;
+  }
+
+  .photo-source-actions.compact {
+    margin-top: 0;
+  }
+
+  .mobile-push-page-spacer {
+    display: none;
+  }
+
+  .toast {
+    bottom: var(--mobile-nav-clearance) !important;
+    max-height: var(--mobile-toast-max-height);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .mobile-push-gate.browser,
+  .mobile-push-chip {
+    bottom: calc(var(--mobile-nav-clearance) + var(--mobile-toast-lane-height) + 8px);
+  }
+
+  body:has(.mobile-push-chip) .app-content {
+    padding-bottom: calc(168px + var(--mobile-toast-lane-height) + env(safe-area-inset-bottom));
+  }
+
+  body:has(.mobile-push-gate.browser) .app-content {
+    padding-bottom: calc(112px + min(300px, 42svh) + var(--mobile-toast-lane-height) + env(safe-area-inset-bottom));
+  }
+
+  .mobile-push-chip > span {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .mobile-push-chip-dismiss {
+    width: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    flex: 0 0 36px;
+    padding: 0;
+    border-radius: 9px;
+    color: #657468;
+    background: #f1f5f2;
+  }
+}
+
+/* Shared interaction hierarchy for states that previously inherited only the
+   browser's default button/paragraph styling. */
+.login-submit {
+  display: inline-flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+  padding: 9px 14px;
+  border: 1px solid #087466;
+  border-radius: 8px;
+  color: #fff;
+  background: #087466;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  touch-action: manipulation;
+}
+
+.login-submit:hover {
+  background: #075f55;
+}
+
+.login-submit:focus-visible {
+  outline: 3px solid rgb(8 116 102 / 24%);
+  outline-offset: 2px;
+}
+
+.margin-manual-fee-warning {
+  display: flex;
+  min-height: 44px;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 11px 12px;
+  border: 1px solid #efcf9f;
+  border-radius: 8px;
+  color: #8b4e0e;
+  background: #fff8e9;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.margin-manual-fee-warning > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.studio-empty-preview {
+  display: grid;
+  min-height: 320px;
+  align-content: center;
+  justify-items: center;
+  gap: 9px;
+  padding: 28px 20px;
+  border: 1px dashed #cfd8d4;
+  border-radius: 10px;
+  color: #6d7b76;
+  background: #f8faf8;
+  text-align: center;
+}
+
+.studio-empty-preview > svg {
+  box-sizing: content-box;
+  padding: 12px;
+  border-radius: 999px;
+  color: #087466;
+  background: #e4f1ed;
+}
+
+.studio-empty-preview > b {
+  color: #34463f;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.studio-empty-preview > small {
+  max-width: 360px;
+  color: #7b8984;
+  font-size: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* Product toolbar actions stay out of the flex layout while open. */
+.product-data-panel {
+  overflow: visible;
+}
+
+.toolbar-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.toolbar-menu-popover {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: max-content;
+  min-width: 184px;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid #dce2df;
+  border-radius: 10px;
+  background: #fffefa;
+  box-shadow: 0 16px 38px rgb(24 44 39 / 18%);
+}
+
+.toolbar-menu-popover > button {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  padding: 0 12px;
+  border-radius: 7px;
+  color: #34463f;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 750;
+  text-align: left;
+  touch-action: manipulation;
+}
+
+.toolbar-menu-popover > button:hover,
+.toolbar-menu-popover > button:focus-visible {
+  color: #075f55;
+  background: #eaf3ef;
+  outline: 0;
+}
+
+/* The weekday row and date cells deliberately share one scroll container so a
+   Fold cover swipe can never offset the dates from their weekday headings. */
+.sales-calendar-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 900px) {
+  .table-wrap {
+    position: relative;
+  }
+
+  .product-table th:first-child,
+  .product-table td:first-child,
+  .margin-table th:first-child,
+  .margin-table td:first-child {
+    position: sticky;
+    z-index: 3;
+    left: 0;
+    background: #fffefa;
+    box-shadow: 8px 0 12px -12px rgb(24 44 39 / 55%);
+  }
+
+  .product-table th:first-child,
+  .margin-table th:first-child,
+  .order-table th:first-child,
+  .order-table th:nth-child(2),
+  .order-table th:last-child {
+    z-index: 5;
+    background: #f0f1ec;
+  }
+
+  .product-table td:first-child {
+    width: min(300px, calc(100vw - 88px));
+    max-width: min(300px, calc(100vw - 88px));
+  }
+
+  .product-table .product-cell {
+    min-width: min(300px, calc(100vw - 88px));
+    max-width: min(300px, calc(100vw - 88px));
+  }
+
+  .order-table th:first-child,
+  .order-table td:first-child {
+    position: sticky;
+    z-index: 4;
+    left: 0;
+    width: 48px;
+    min-width: 48px;
+    max-width: 48px;
+    background: #fffefa;
+  }
+
+  .order-table th:nth-child(2),
+  .order-table td:nth-child(2) {
+    position: sticky;
+    z-index: 3;
+    left: 48px;
+    min-width: 142px;
+    background: #fffefa;
+    box-shadow: 8px 0 12px -12px rgb(24 44 39 / 55%);
+  }
+
+  .order-table th:last-child,
+  .order-table td:last-child,
+  .margin-table th:last-child,
+  .margin-table td:last-child {
+    position: sticky;
+    z-index: 4;
+    right: 0;
+    width: 52px;
+    min-width: 52px;
+    background: #fffefa;
+    box-shadow: -8px 0 12px -12px rgb(24 44 39 / 55%);
+  }
+
+  .order-table th:first-child,
+  .order-table th:nth-child(2),
+  .order-table th:last-child,
+  .margin-table th:first-child,
+  .margin-table th:last-child {
+    background: #f0f1ec;
+  }
+
+  .margin-table tbody tr.selected td:first-child,
+  .margin-table tbody tr.selected td:last-child,
+  .order-table tbody tr.selected-row td:first-child,
+  .order-table tbody tr.selected-row td:nth-child(2),
+  .order-table tbody tr.selected-row td:last-child {
+    background: #f6f6ff;
+  }
+
+  .order-detail-link,
+  .margin-channel-cell,
+  .data-table .table-action {
+    min-height: 44px;
+  }
+
+  .data-table .table-action {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 720px) {
+  .toolbar-menu-popover {
+    position: fixed;
+    top: auto;
+    right: max(10px, env(safe-area-inset-right));
+    bottom: calc(var(--mobile-nav-clearance, 78px) + 8px);
+    left: max(10px, env(safe-area-inset-left));
+    width: auto;
+    min-width: 0;
+    padding: 8px;
+    border-radius: 14px;
+  }
+
+  .toolbar-menu-popover > button {
+    min-height: 48px;
+    justify-content: center;
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .sales-calendar-scroll {
+    --sales-calendar-min-width: 280px;
+    touch-action: pan-x pan-y;
+  }
+
+  .sales-calendar-weekdays,
+  .sales-calendar-grid {
+    width: max(100%, var(--sales-calendar-min-width));
+    min-width: var(--sales-calendar-min-width);
+    grid-template-columns: repeat(7, minmax(40px, 1fr));
+  }
+
+  .sales-calendar-grid {
+    overflow: visible;
+  }
+
+  .studio-empty-preview {
+    min-height: 240px;
+    padding: 24px 16px;
   }
 }

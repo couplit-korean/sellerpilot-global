@@ -1,0 +1,685 @@
+/*
+ * SellerPilot interaction layer contract
+ *
+ * Imported after every legacy stylesheet. Keep fixed navigation and transient
+ * notices below popovers, drawers and modal workspaces on desktop, phones and
+ * Galaxy Fold cover displays. Dynamic viewport units make the action rows
+ * reachable when the iOS/Android software keyboard reduces the visual viewport.
+ */
+
+:root {
+  --layer-mobile-navigation: 110;
+  --layer-transient-notice: 120;
+  --layer-push-prompt: 130;
+  --layer-popover: 200;
+  --layer-drawer-scrim: 240;
+  --layer-drawer: 250;
+  --layer-modal: 300;
+  --layer-editor-modal: 320;
+}
+
+/* Keep accessible names and programmatically-clicked file inputs in the
+   accessibility tree without allowing them to consume responsive layout. */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  clip-path: inset(50%) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+  margin: -1px !important;
+}
+
+.mobile-bottom-nav { z-index: var(--layer-mobile-navigation); }
+.toast { z-index: var(--layer-transient-notice); }
+.mobile-push-gate,
+.mobile-push-chip { z-index: var(--layer-push-prompt); }
+
+/* Only the toast rules needed by the rendered notice structure live here.
+   The broader customer-experience stylesheet is intentionally not imported. */
+.toast {
+  display: flex;
+  width: min(430px, calc(100vw - 32px));
+  min-height: 72px !important;
+  align-items: flex-start !important;
+  gap: 12px !important;
+  padding: 14px !important;
+  overflow: hidden;
+  border-width: 1px 1px 1px 4px !important;
+  border-radius: 16px !important;
+  color: #29362f !important;
+  background: rgb(255 255 255 / 98%) !important;
+  box-shadow: 0 22px 60px rgb(17 37 26 / 20%) !important;
+  font-size: 13px !important;
+  animation: sellerpilot-toast-in .22s ease-out both;
+}
+
+.toast > .toast-icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px !important;
+  place-items: center;
+  border-radius: 11px;
+}
+
+.toast > .toast-copy {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto !important;
+  padding-top: 1px;
+}
+
+.toast > .toast-copy > b,
+.toast > .toast-copy > span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.toast > .toast-copy > b {
+  margin-bottom: 3px;
+  color: #243129;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.toast > .toast-copy > span {
+  flex: none !important;
+  color: #66736b;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.55;
+}
+
+.toast > button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  color: #7b8780;
+  background: transparent;
+}
+
+.toast > button:hover { background: #f2f5f3; }
+.toast > button:focus-visible { outline: 3px solid rgb(20 108 67 / 18%); outline-offset: 1px; }
+.toast.notice-success { border-color: #b9ddca #dbe9e1 #dbe9e1 #188555 !important; }
+.toast.notice-success > .toast-icon { color: #147448; background: #eaf7ef; }
+.toast.notice-info { border-color: #bfd9ec #dde7ee #dde7ee #3478a5 !important; }
+.toast.notice-info > .toast-icon { color: #2f6f98; background: #edf6fc; }
+.toast.notice-warning { border-color: #ecd49c #eee4cf #eee4cf #cc8b18 !important; }
+.toast.notice-warning > .toast-icon { color: #a96800; background: #fff7e6; }
+.toast.notice-error { border-color: #edc2bd #efdfdd #efdfdd #cb4338 !important; }
+.toast.notice-error > .toast-icon { color: #b9372f; background: #fff0ef; }
+
+fieldset.product-edit-form,
+fieldset.shipment-draft-list,
+fieldset.operation-console-body,
+fieldset.credential-form-grid,
+fieldset.rotation-settings,
+fieldset.intake-confirmations {
+  min-inline-size: 0;
+  margin: 0;
+}
+
+fieldset.product-edit-form,
+fieldset.shipment-draft-list,
+fieldset.operation-console-body,
+fieldset.credential-form-grid {
+  border: 0;
+}
+
+fieldset.rotation-settings,
+fieldset.intake-confirmations {
+  border-right: 0;
+  border-left: 0;
+}
+
+fieldset.intake-confirmations {
+  border-bottom: 0;
+}
+
+.notification-popover .notification-item {
+  grid-template-columns: minmax(0, 1fr) 36px;
+}
+
+.notification-popover .notification-item > .notification-item-open {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.notification-popover .notification-item > .notification-item-open > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.notification-popover .notification-item > .notification-item-dismiss {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 8px;
+  color: #7d8796;
+  background: transparent;
+}
+
+.toolbar-menu-popover {
+  z-index: var(--layer-popover) !important;
+}
+
+@keyframes sellerpilot-toast-in {
+  from { opacity: 0; transform: translateY(10px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.app-header-stack:has(.notification-popover) {
+  z-index: var(--layer-popover);
+}
+
+.notification-popover {
+  z-index: var(--layer-popover);
+  max-height: min(640px, calc(100dvh - 96px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sidebar-scrim { z-index: var(--layer-drawer-scrim); }
+.sidebar { z-index: var(--layer-drawer); }
+
+.command-overlay,
+.account-security-overlay,
+.product-edit-overlay,
+.credential-modal-backdrop,
+.shipment-dialog-overlay {
+  z-index: var(--layer-modal);
+}
+
+.puck-editor-modal { z-index: var(--layer-editor-modal); }
+
+/* A modal or drawer owns the pointer surface. Navigation, push prompts and
+   transient toasts remain visible only where useful, but cannot receive a tap
+   through a translucent backdrop. */
+body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .mobile-bottom-nav,
+body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .mobile-push-gate,
+body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .mobile-push-chip,
+body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .toast,
+body:has(.notification-popover) .mobile-bottom-nav,
+body:has(.notification-popover) .mobile-push-gate,
+body:has(.notification-popover) .mobile-push-chip {
+  pointer-events: none;
+}
+
+/* Orders had responsive fragments but no complete base dialog shell. */
+.shipment-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background: rgb(14 25 23 / 62%);
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  backdrop-filter: blur(4px);
+  -webkit-overflow-scrolling: touch;
+}
+
+.shipment-dialog {
+  display: grid;
+  width: min(880px, 100%);
+  max-height: calc(100dvh - max(40px, env(safe-area-inset-top)) - max(40px, env(safe-area-inset-bottom)));
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  margin: auto;
+  border: 1px solid #ccd6d2;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 30px 90px rgb(0 0 0 / 28%);
+}
+
+.shipment-dialog.order-detail-dialog {
+  width: min(760px, 100%);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.shipment-dialog > header {
+  display: flex;
+  min-width: 0;
+  min-height: 72px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 18px;
+  border-bottom: 1px solid #e2e8e5;
+  background: #fff;
+}
+
+.shipment-dialog > header > div,
+.shipment-dialog > header > div > span:last-child {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.shipment-dialog > header > div > span:last-child {
+  display: block;
+}
+
+.shipment-dialog > header h3,
+.shipment-dialog > header small {
+  display: block;
+  margin: 0;
+}
+
+.shipment-dialog > header h3 {
+  color: #2d3d38;
+  font-size: 15px;
+}
+
+.shipment-dialog > header small {
+  margin-top: 4px;
+  color: #77847f;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.shipment-dialog > header > button {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  flex: 0 0 44px;
+}
+
+.shipment-dialog .shipment-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 12px 16px 0;
+  padding: 11px 12px;
+  border: 1px solid #e8cda3;
+  border-radius: 9px;
+  color: #76501e;
+  background: #fff9ef;
+}
+
+.shipment-dialog .shipment-warning > svg { flex: 0 0 auto; }
+.shipment-dialog .shipment-warning b,
+.shipment-dialog .shipment-warning small { display: block; }
+.shipment-dialog .shipment-warning b { font-size: 10px; }
+.shipment-dialog .shipment-warning small { margin-top: 4px; font-size: 9px; line-height: 1.5; }
+
+.shipment-draft-list,
+.order-detail-ledger {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.shipment-draft-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.shipment-draft-list article {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid #dde5e2;
+  border-radius: 10px;
+  background: #fafcfb;
+}
+
+.shipment-draft-list article > div {
+  display: flex;
+  min-width: 0;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 9px;
+}
+
+.shipment-draft-list article > div b,
+.shipment-draft-list article > div small,
+.shipment-draft-list label > span {
+  display: block;
+}
+
+.shipment-draft-list article > div small {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #78847f;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shipment-draft-list label { min-width: 0; }
+.shipment-draft-list label > span { min-height: 18px; color: #52615c; font-size: 9px; font-weight: 750; }
+.shipment-draft-list input,
+.shipment-draft-list select {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 5px;
+  padding: 0 10px;
+  border: 1px solid #b8c4c0;
+  border-radius: 7px;
+  color: #273934;
+  background: #fff;
+}
+
+.shipment-dialog > footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  border-top: 1px solid #e2e8e5;
+  background: #fff;
+}
+
+.shipment-dialog > footer button {
+  min-width: 128px;
+  min-height: 44px;
+  justify-content: center;
+}
+
+/* Every form-style modal uses the dynamic visual viewport and owns its scroll.
+   Sticky action rows stay reachable while the software keyboard is visible. */
+.command-overlay,
+.account-security-overlay,
+.credential-modal-backdrop,
+.product-edit-overlay {
+  max-height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.command-dialog,
+.account-security-dialog,
+.credential-modal,
+.product-edit-dialog {
+  max-height: calc(100dvh - max(24px, env(safe-area-inset-top)) - max(24px, env(safe-area-inset-bottom)));
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+
+.command-dialog,
+.account-security-dialog,
+.credential-modal {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.credential-modal > header,
+.credential-modal > footer {
+  position: sticky;
+  z-index: 1;
+  background: inherit;
+}
+
+.credential-modal > header { top: 0; }
+.credential-modal > footer {
+  bottom: 0;
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
+  background: #fff;
+}
+
+.product-edit-form { min-height: 0; overflow-y: auto; }
+.product-edit-dialog > footer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+
+@media (max-width: 720px) {
+  :root {
+    --mobile-header-safe-top: 0px;
+    --mobile-service-rail-height: 40px;
+    --mobile-topbar-height: 60px;
+    --mobile-header-clearance: calc(var(--mobile-header-safe-top) + var(--mobile-service-rail-height) + var(--mobile-topbar-height));
+  }
+
+  body {
+    --mobile-toast-max-height: clamp(84px, 24svh, 132px);
+  }
+
+  .app-header-stack {
+    background: #fff;
+  }
+
+  .commerce-service-rail { min-height: var(--mobile-service-rail-height); }
+  .topbar { min-height: var(--mobile-topbar-height); }
+
+  .toast {
+    max-height: var(--mobile-toast-max-height);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .toast > .toast-copy > span {
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  .toast > button {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .mobile-push-gate.browser {
+    max-height: calc(100dvh - var(--mobile-nav-clearance, 78px) - var(--mobile-toast-lane-height, 0px) - 16px);
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sales-calendar-pager > button,
+  .command-input > button,
+  .account-security-head > button,
+  .credential-modal > header > button,
+  .puck-editor-top > button,
+  .mobile-push-gate-actions button,
+  .mobile-push-chip button,
+  .cli-token-reveal button,
+  .cli-job-controls button,
+  .selection-toolbar button,
+  .bulk-order-bar > button:not(.table-action),
+  .story-scene > button,
+  .credential-source-links a,
+  .readiness-doc-links a,
+  .style-evidence-links a,
+  .operation-console-meta a {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .notification-popover .notification-item {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .notification-popover .notification-item > .notification-item-dismiss {
+    width: 44px;
+    height: 44px;
+  }
+
+  body:has(.toolbar-menu-popover) .mobile-bottom-nav {
+    pointer-events: none;
+  }
+
+  body:has(.toolbar-menu-popover) .toast,
+  body:has(.toolbar-menu-popover) .mobile-push-gate,
+  body:has(.toolbar-menu-popover) .mobile-push-chip {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .notification-popover {
+    top: calc(var(--mobile-header-clearance) + 8px);
+    bottom: calc(var(--mobile-nav-clearance, 78px) + 8px);
+    max-height: none;
+  }
+
+  .shipment-dialog-overlay {
+    align-items: flex-end;
+    padding: max(8px, env(safe-area-inset-top)) 0 0;
+  }
+
+  .shipment-dialog,
+  .shipment-dialog.order-detail-dialog {
+    width: 100%;
+    max-height: calc(100dvh - max(8px, env(safe-area-inset-top)));
+    margin: auto 0 0;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .shipment-draft-list article {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shipment-dialog > footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .shipment-dialog > footer button {
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+  }
+
+  .account-security-overlay,
+  .credential-modal-backdrop,
+  .product-edit-overlay {
+    align-items: flex-end;
+    padding: max(8px, env(safe-area-inset-top)) 0 0;
+  }
+
+  .account-security-dialog,
+  .credential-modal,
+  .product-edit-dialog {
+    width: 100%;
+    max-height: calc(100dvh - max(8px, env(safe-area-inset-top)));
+    min-height: 0;
+    margin: auto 0 0;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .account-security-dialog {
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+  }
+
+  .command-overlay {
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+
+  .command-dialog {
+    width: 100%;
+    max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
+  }
+
+  .puck-editor-modal {
+    max-height: 100dvh;
+    grid-template-rows: calc(58px + env(safe-area-inset-top)) minmax(0, 1fr);
+  }
+
+  .puck-editor-top {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .puck-editor-body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@media (max-width: 720px) and (display-mode: standalone) {
+  :root {
+    --mobile-header-safe-top: env(safe-area-inset-top);
+  }
+
+  .app-header-stack {
+    padding-top: var(--mobile-header-safe-top);
+    background: #fff;
+  }
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+@media (max-width: 344px) {
+  .shipment-dialog > header,
+  .shipment-dialog .shipment-warning,
+  .shipment-draft-list,
+  .shipment-dialog > footer {
+    padding-right: max(8px, env(safe-area-inset-right));
+    padding-left: max(8px, env(safe-area-inset-left));
+  }
+
+  .shipment-dialog > header h3 { font-size: 14px; }
+  .shipment-dialog > header small { font-size: 9px; }
+
+  .account-security-values {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* A Fold cover cannot display useful data between three sticky order
+     columns. Keep only the selection/identity edge pinned and let the order id
+     and row actions travel with the horizontally scrollable table. */
+  .order-table th:nth-child(2),
+  .order-table td:nth-child(2),
+  .order-table th:last-child,
+  .order-table td:last-child,
+  .margin-table th:last-child,
+  .margin-table td:last-child {
+    position: static;
+    z-index: auto;
+    right: auto;
+    left: auto;
+    box-shadow: none;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .shipment-dialog,
+  .shipment-dialog.order-detail-dialog,
+  .command-dialog,
+  .account-security-dialog,
+  .credential-modal,
+  .product-edit-dialog {
+    max-height: calc(100dvh - 8px);
+  }
+}

@@ -7,6 +7,7 @@ const operationsCssUrl = new URL("../app/operations-system.css", import.meta.url
 const tokenRouteUrl = new URL("../app/api/admin/ai-worker-token/route.ts", import.meta.url);
 const maintenanceRouteUrl = new URL("../app/api/internal/maintenance/route.ts", import.meta.url);
 const installerUrl = new URL("../scripts/install-ai-worker-launch-agent.mjs", import.meta.url);
+const packageUrl = new URL("../package.json", import.meta.url);
 const channelGatewayDocUrl = new URL("../docs/channel-gateway-worker.md", import.meta.url);
 
 const scopes = [
@@ -68,7 +69,11 @@ test("runtime UI issues one pending three-scope worker token set", async () => {
 });
 
 test("macOS installer atomically activates the pending set only after staged launch succeeds", async () => {
-  const installer = await readFile(installerUrl, "utf8");
+  const [installer, packageSource] = await Promise.all([
+    readFile(installerUrl, "utf8"),
+    readFile(packageUrl, "utf8"),
+  ]);
+  const packageJson = JSON.parse(packageSource);
 
   for (const [scope, service, rotateFlag] of scopes) {
     assert.match(installer, new RegExp(`scope: "${scope}"`));
@@ -81,11 +86,18 @@ test("macOS installer atomically activates the pending set only after staged lau
   assert.match(installer, /const runtimeOnly = process\.argv\.includes\("--runtime-only"\)/);
   assert.match(installer, /const aiOnlyRuntimeRequested = process\.argv\.includes\("--ai-only-runtime"\)/);
   assert.match(installer, /const productOnlyRuntimeRequested = process\.argv\.includes\("--product-only-runtime"\)/);
+  assert.match(installer, /const localDevAllScopesRequested = process\.argv\.includes\("--allow-local-dev-all-scopes"\)/);
   assert.match(installer, /if \(plist\.includes\("<string>--product-only<\/string>"\)\) return "product-only"/);
   assert.match(installer, /if \(plist\.includes\("<string>--ai-only<\/string>"\)\) return "ai-only"/);
   assert.match(installer, /const installedRuntimeMode = workerRuntimeModeFromPlist\(installedPlist\)/);
   assert.match(installer, /const runtimeMode = runtimeOnly \? installedRuntimeMode : requestedRuntimeMode/);
   assert.match(installer, /if \(runtimeOnly && restrictedRuntimeRequested\)/);
+  assert.match(installer, /if \(runtimeMode === "all-scopes" && !localDevAllScopesRequested\)/);
+  assert.match(installer, /운영 설치는 --ai-only-runtime을 사용하고, 격리된 로컬 개발에서만 --allow-local-dev-all-scopes를 명시/);
+  assert.equal(
+    packageJson.scripts["ai:worker:install"],
+    "node scripts/install-ai-worker-launch-agent.mjs --ai-only-runtime",
+  );
   assert.match(installer, /\^spw_\[A-Za-z0-9_-\]\{43\}\$/);
   assert.match(installer, /if \(runtimeOnly && \(tokenSetId \|\| rotateAll \|\| rotatesOne\)\)/);
   assert.match(installer, /const missingScopes = requiredTokenScopes[\s\S]*?!isWorkerTokenConfigured\(keychainToken\(definition\.service\)\)/);
