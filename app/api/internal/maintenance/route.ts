@@ -64,6 +64,7 @@ const STALE_AI_RECOVERY_LIMIT = 100;
 const STALE_GATEWAY_RECOVERY_LIMIT = 100;
 const STALE_PUSH_DELIVERY_RECOVERY_LIMIT = 100;
 const MAINTENANCE_SUPABASE_TIMEOUT_MS = 8_000;
+const RUNTIME_NOISE_RETENTION_DAYS = 7;
 const MAINTENANCE_WORK_BUDGET_MS = 240_000;
 const MAINTENANCE_RPC_STAGE_RESERVE_MS = 25_000;
 const MAINTENANCE_STORAGE_STAGE_RESERVE_MS = 45_000;
@@ -302,6 +303,44 @@ function maintenanceDeadlineResponse(
   }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
 }
 
+type MaintenanceRetentionStage =
+  | "ai_jobs_prune"
+  | "personal_data_prune"
+  | "runtime_noise_prune"
+  | "kakao_notification_sweep"
+  | "kakao_oauth_sweep"
+  | "tracx_mutation_sweep"
+  | "lazada_reply_sweep"
+  | "worker_token_expiry";
+
+function safeMaintenanceRpcErrorCode(error: unknown) {
+  if (!error || typeof error !== "object" || Array.isArray(error)) return "unknown";
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && /^[a-z0-9_.-]{1,32}$/i.test(code)
+    ? code
+    : "unknown";
+}
+
+function maintenanceRetentionFailureResponse(
+  stage: MaintenanceRetentionStage,
+  error: unknown,
+  staleAiJobsRecovery: StaleAiJobRecovery,
+  staleGatewayJobsRecovery: StaleGatewayJobRecovery,
+  stalePushDeliveryRecovery: StalePushDeliveryRecovery,
+) {
+  const code = safeMaintenanceRpcErrorCode(error);
+  console.error("maintenance retention RPC failed", { stage, code, status: 500 });
+  return NextResponse.json({
+    ok: false,
+    message: "보관기간 정리를 완료하지 못했습니다.",
+    stage,
+    code,
+    staleAiJobsRecovery,
+    staleGatewayJobsRecovery,
+    stalePushDeliveryRecovery,
+  }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
+}
+
 type ActiveCredential = {
   credential_id?: unknown;
   secret_payload?: unknown;
@@ -464,11 +503,11 @@ export async function GET(request: Request) {
   }
   const retentionDays = 30;
   const completedBefore = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-  const runtimeCompletedBefore = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+  const runtimeCompletedBefore = new Date(
+    Date.now() - RUNTIME_NOISE_RETENTION_DAYS * 86_400_000,
+  ).toISOString();
   const [
     { data, error },
-    { data: personalData, error: personalDataError },
-    { data: runtimeData, error: runtimeDataError },
     { data: kakaoReconciliationRequired, error: kakaoSweepError },
     { data: kakaoOauthReconciliationRequired, error: kakaoOauthSweepError },
     { data: tracxReconciliationRequired, error: tracxSweepError },
@@ -479,32 +518,40 @@ export async function GET(request: Request) {
       p_completed_before: completedBefore,
       p_limit: 200,
     }),
-    serviceClient.rpc("sellerpilot_prune_personal_data", {
-      p_completed_before: completedBefore,
-    }),
-    serviceClient.rpc("sellerpilot_service_prune_runtime_noise", {
-      p_completed_before: runtimeCompletedBefore,
-    }),
     serviceClient.rpc("sellerpilot_service_sweep_stale_kakao_notifications"),
     serviceClient.rpc("sellerpilot_service_sweep_kakao_oauth_callbacks"),
     serviceClient.rpc("sellerpilot_service_sweep_stale_tracx_mutations"),
     serviceClient.rpc("sellerpilot_service_sweep_stale_lazada_replies"),
     serviceClient.rpc("sellerpilot_service_expire_pending_worker_token_sets"),
   ]);
-  if (error
-      || personalDataError
-      || runtimeDataError
-      || kakaoSweepError
-      || kakaoOauthSweepError
-      || tracxSweepError
-      || lazadaReplySweepError
-      || pendingWorkerTokenExpiryError) {
-    return NextResponse.json({
-      message: "30일 보관기간 정리를 완료하지 못했습니다.",
+  // These two functions can delete overlapping terminal gateway rows. Keep
+  // them sequential while still attempting every independent retention sweep.
+  const { data: personalData, error: personalDataError } = await serviceClient.rpc(
+    "sellerpilot_prune_personal_data",
+    { p_completed_before: completedBefore },
+  );
+  const { data: runtimeData, error: runtimeDataError } = await serviceClient.rpc(
+    "sellerpilot_service_prune_runtime_noise",
+    { p_completed_before: runtimeCompletedBefore },
+  );
+  const retentionFailure = ([
+    ["ai_jobs_prune", error],
+    ["personal_data_prune", personalDataError],
+    ["runtime_noise_prune", runtimeDataError],
+    ["kakao_notification_sweep", kakaoSweepError],
+    ["kakao_oauth_sweep", kakaoOauthSweepError],
+    ["tracx_mutation_sweep", tracxSweepError],
+    ["lazada_reply_sweep", lazadaReplySweepError],
+    ["worker_token_expiry", pendingWorkerTokenExpiryError],
+  ] as const).find(([, candidate]) => candidate);
+  if (retentionFailure) {
+    return maintenanceRetentionFailureResponse(
+      retentionFailure[0],
+      retentionFailure[1],
       staleAiJobsRecovery,
       staleGatewayJobsRecovery,
       stalePushDeliveryRecovery,
-    }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
+    );
   }
 
   const rows = (data ?? []) as PrunedJob[];

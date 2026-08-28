@@ -52,3 +52,32 @@ test("maintenance reports bounded gateway recovery without blocking unrelated cl
   assert.match(route, /marketplaceStorageCleanup\.failed/);
   assert.match(route, /marketplaceStorageRequeued/);
 });
+
+test("maintenance serializes heavy retention RPCs and reports only safe failure metadata", async () => {
+  const route = await readFile(routeUrl, "utf8");
+  assert.match(route, /const RUNTIME_NOISE_RETENTION_DAYS = 7/);
+  assert.match(
+    route,
+    /Date\.now\(\) - RUNTIME_NOISE_RETENTION_DAYS \* 86_400_000/,
+  );
+
+  const remainingRetentionBatch = route.indexOf("const [", route.indexOf("runtimeCompletedBefore"));
+  const personalPrune = route.indexOf('await serviceClient.rpc(\n    "sellerpilot_prune_personal_data"');
+  const runtimePrune = route.indexOf('await serviceClient.rpc(\n    "sellerpilot_service_prune_runtime_noise"');
+  const batchEnd = route.indexOf("]);", remainingRetentionBatch);
+  assert.ok(personalPrune > 0, "personal-data retention must be awaited directly");
+  assert.ok(runtimePrune > personalPrune, "runtime-noise retention must run after personal-data retention");
+  assert.ok(batchEnd < personalPrune, "independent sweeps must still be attempted before serialized retention");
+  const batch = route.slice(remainingRetentionBatch, batchEnd);
+  assert.doesNotMatch(batch, /sellerpilot_prune_personal_data/);
+  assert.doesNotMatch(batch, /sellerpilot_service_prune_runtime_noise/);
+
+  const diagnosticLogLine = route.split("\n")
+    .find((line) => line.includes('console.error("maintenance retention RPC failed"'));
+  assert.equal(
+    diagnosticLogLine?.trim(),
+    'console.error("maintenance retention RPC failed", { stage, code, status: 500 });',
+  );
+  assert.match(route, /message: "보관기간 정리를 완료하지 못했습니다\."[\s\S]*stage,[\s\S]*code,/);
+  assert.match(route, /\^\[a-z0-9_.-\]\{1,32\}\$\/i/);
+});
