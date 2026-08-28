@@ -165,7 +165,7 @@ import {
   ProductResearchTerminalError,
   shouldClearPendingProductResearch,
 } from "./_publishing/product-research-lifecycle";
-import { csChannelVerification, csReplyDraftValue, csReplySavePlan, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
+import { csChannelVerification, csReplyDraftValue, csReplySavePlan, isRemoteCsReplyChannel, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
 import {
   csChannelFilterFromValue,
   csNavigationParams,
@@ -3802,7 +3802,7 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
   const filteredTickets = statusTickets.filter((ticket) => !query.trim() || matchesSearch(`${ticket.id} ${ticket.customer} ${ticket.channel} ${ticket.subject} ${ticket.preview}`, query));
   const selected = selectedCsTicket(initialTicketId ? statusTickets : filteredTickets, initialTicketId ? initialTicket?.sourceId ?? "__missing_ticket__" : null);
   const reply = csReplyDraftValue(replyDrafts, selected);
-  const remoteReplyChannel = Boolean(selected && ["qoo10", "lazada", "coupang", "smartstore"].includes(selected.channelKey));
+  const remoteReplyChannel = Boolean(selected && isRemoteCsReplyChannel(selected.channelKey));
   const setSelectedReply = (value: string) => {
     if (!selected) return;
     setReplyDrafts((current) => withCsReplyDraft(current, selected, value));

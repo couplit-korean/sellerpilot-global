@@ -15,6 +15,7 @@ test("CS navigation remains reachable from dashboard, channels and mobile", asyn
   assert.match(page, /displayTickets\.find\(\(ticket\) => ticket\.sourceId === initialTicketId\)/);
   assert.match(page, /kind: "inquiry",\s*id: ticket\.sourceId,/);
   assert.match(page, /onFilterChange\(initialChannel, resolvedInitialStatus, ticket\.sourceId\)/);
+  assert.match(page, /isRemoteCsReplyChannel\(selected\.channelKey\)/);
   assert.match(page, /initialTicketId \? statusTickets : filteredTickets/);
   assert.match(page, /displayTickets\.length === 0 \?/);
   assert.match(page, /requestedView !== "cs"/);

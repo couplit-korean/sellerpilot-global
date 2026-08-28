@@ -34,8 +34,14 @@ export type CsReplySavePlan = {
   remote: boolean;
 };
 
+const remoteCsReplyChannels = new Set(["qoo10", "lazada", "coupang", "smartstore", "ebay"]);
+
+export function isRemoteCsReplyChannel(channelKey: string) {
+  return remoteCsReplyChannels.has(channelKey);
+}
+
 export function csReplySavePlan(ticketId: string, channelKey: string, reply: string): CsReplySavePlan {
-  if (["qoo10", "lazada", "coupang", "smartstore", "ebay"].includes(channelKey)) {
+  if (isRemoteCsReplyChannel(channelKey)) {
     return {
       endpoint: "/api/admin/cs/reply",
       body: { ticketId, reply },

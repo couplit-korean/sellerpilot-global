@@ -4,6 +4,7 @@ import {
   csChannelVerification,
   csReplyDraftValue,
   csReplySavePlan,
+  isRemoteCsReplyChannel,
   selectedCsTicket,
   withCsReplyDraft,
   type CsReplyDrafts,
@@ -37,12 +38,16 @@ test("ticket selection uses the internal source id even when external ticket ids
 
 test("server-gated marketplace reply channels use one gateway while unsupported channels keep internal drafts", () => {
   for (const channel of ["qoo10", "lazada", "coupang", "smartstore", "ebay"]) {
+    assert.equal(isRemoteCsReplyChannel(channel), true);
     assert.deepEqual(csReplySavePlan(`ticket-${channel}`, channel, "reply"), {
       endpoint: "/api/admin/cs/reply",
       body: { ticketId: `ticket-${channel}`, reply: "reply" },
       completionMessage: "판매채널에 답변을 전송하고 처리 완료로 기록했습니다.",
       remote: true,
     });
+  }
+  for (const channel of ["shopee", "elevenst", "temu"]) {
+    assert.equal(isRemoteCsReplyChannel(channel), false);
   }
   assert.deepEqual(csReplySavePlan("ticket-s", "shopee", "draft"), {
     endpoint: "/api/operations/snapshot",
