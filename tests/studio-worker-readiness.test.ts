@@ -59,7 +59,10 @@ test("product studio route and clients fail closed without turning explicit work
   assert.match(route, /export async function GET\(request: Request\)/);
   assert.doesNotMatch(route, /fingerprint|token_hash|last_seen_at/);
   assert.match(readinessServer, /sellerpilot_ai_runtime_status/);
-  assert.match(readinessServer, /VERCEL_OIDC_TOKEN/);
+  assert.match(readinessServer, /getVercelOidcToken/);
+  assert.match(readinessServer, /AI_GATEWAY_API_KEY/);
+  assert.doesNotMatch(readinessServer, /process\.env\.VERCEL_OIDC_TOKEN/);
+  assert.match(readinessServer, /x-vercel-oidc-token/);
   assert.match(readinessServer, /SELLERPILOT_AI_WORKER_TOKEN/);
   assert.match(readinessServer, /snapshot\.scope !== "ai"/);
   assert.match(regenerateRoute, /readServerProductStudioReadiness\(admin\)[\s\S]{0,260}code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,220}status: 503/);

@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import { getVercelOidcToken } from "@vercel/oidc";
 import type { AdminApiContext } from "./admin-api";
 import {
   runOneServerProductStudio,
@@ -21,14 +22,25 @@ function configuredToken() {
 function runtimeConfiguration() {
   const token = configuredToken();
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
-  const oidc = process.env.VERCEL_OIDC_TOKEN?.trim() ?? "";
   return {
     token,
     tokenHash: token ? createHash("sha256").update(token).digest("hex") : "",
     secretKey,
-    oidcAvailable: Boolean(oidc),
-    configured: Boolean(supabaseUrl && secretKey && token && oidc),
+    configured: Boolean(supabaseUrl && secretKey && token),
   };
+}
+
+async function aiGatewayAuthenticationAvailable() {
+  // AI Gateway gives a configured API key priority. On Vercel Functions,
+  // OIDC is delivered through the request context's x-vercel-oidc-token
+  // header, not a runtime environment variable. The SDK resolves that same
+  // request-scoped token again when the model call runs inside after().
+  if (process.env.AI_GATEWAY_API_KEY?.trim()) return true;
+  try {
+    return Boolean(await getVercelOidcToken());
+  } catch {
+    return false;
+  }
 }
 
 function checkedStorageBytes(value: ArrayBuffer) {
@@ -117,7 +129,8 @@ export async function readServerProductStudioReadiness(
   admin: AdminApiContext,
 ): Promise<StudioWorkerReadiness> {
   const configuration = runtimeConfiguration();
-  if (!configuration.configured) {
+  const gatewayAuthenticated = await aiGatewayAuthenticationAvailable();
+  if (!configuration.configured || !gatewayAuthenticated) {
     return unavailable(
       "worker_missing",
       "서버 AI 제작 환경(OIDC·Supabase 큐·AI 작업자 토큰)이 아직 모두 연결되지 않았습니다.",
