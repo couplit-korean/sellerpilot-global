@@ -1,4 +1,4 @@
-import { productResearchResultSchema, type ProductResearchResult } from "./ai-cli-contract";
+import { serverProductResearchResultSchema, type ServerProductResearchResult } from "./ai-cli-contract";
 import {
   fetchPublicReferenceDocument,
   PublicReferenceFetchError,
@@ -40,7 +40,7 @@ type RpcResult = { data: unknown; error: RpcError };
 export type ServerProductResearchDependencies = {
   cronSecret?: string;
   rpc?: (name: string, arguments_?: Record<string, unknown>) => Promise<RpcResult>;
-  analyze?: (researchInput: string, signal: AbortSignal) => Promise<ProductResearchResult>;
+  analyze?: (researchInput: string, signal: AbortSignal) => Promise<ServerProductResearchResult>;
   logError?: (stage: string, details: Record<string, string | number | boolean>) => void;
 };
 
@@ -313,7 +313,7 @@ async function defaultGenerateProductResearch(prompt: string, signal: AbortSigna
       // A provider/model string lets ai@6 resolve the deployment's refreshed
       // VERCEL_OIDC_TOKEN automatically. Do not snapshot or forward it here.
       model: SERVER_PRODUCT_RESEARCH_MODEL,
-      output: Output.object({ schema: productResearchResultSchema }),
+      output: Output.object({ schema: serverProductResearchResultSchema }),
       prompt,
       maxOutputTokens: 16_384,
       // Gateway provider routing plus the durable DB job retry already cover
@@ -360,14 +360,14 @@ export async function analyzeServerProductResearch(
     if (error instanceof ProductResearchExecutionError) throw error;
     throw new ProductResearchExecutionError("gateway_request_failed");
   }
-  const parsed = productResearchResultSchema.safeParse(generated);
+  const parsed = serverProductResearchResultSchema.safeParse(generated);
   if (!parsed.success) throw new ProductResearchExecutionError("gateway_result_invalid");
 
   const warnings = [...new Set([
     ...references.flatMap((reference) => reference.warning ? [reference.warning] : []),
     ...parsed.data.warnings,
   ])].slice(0, 10);
-  return productResearchResultSchema.parse({
+  return serverProductResearchResultSchema.parse({
     ...parsed.data,
     // The server, not the model, is authoritative for which pages were read.
     sources: references.map(({ url, title, status }) => ({ url, title, status })),
@@ -482,7 +482,7 @@ export async function runOneServerProductResearch(
   }
 
   const runtimeSignal = AbortSignal.timeout(MAX_RESEARCH_RUNTIME_MS);
-  let result: ProductResearchResult;
+  let result: ServerProductResearchResult;
   try {
     result = await (dependencies.analyze ?? analyzeServerProductResearch)(researchInput, runtimeSignal);
   } catch (error) {

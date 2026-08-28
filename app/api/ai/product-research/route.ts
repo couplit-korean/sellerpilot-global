@@ -31,10 +31,10 @@ export async function POST(request: Request) {
 
   after(wakeServerProductResearchAfterResponse);
   return NextResponse.json({
-    mode: "cli-research",
+    mode: "server-research",
     jobId: parsed.data.jobId,
     status: "queued",
-    message: "AI가 상품 링크와 설명을 조사하고 있습니다.",
+    message: "Vercel 서버 AI가 상품 링크와 설명을 조사하고 있습니다.",
   }, {
     status: 202,
     headers: { "cache-control": "no-store, max-age=0" },

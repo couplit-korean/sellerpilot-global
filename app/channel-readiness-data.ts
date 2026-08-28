@@ -240,7 +240,7 @@ export const channelReadiness: ChannelReadiness[] = [
     overall: "partial",
     consoleVerified: true,
     apiReadPassed: true,
-    summary: "eBay Seller Hub에서 주문 0건과 활성 리스팅 18개를 대조했고, SellerPilot의 판매자 권한·판매한도 읽기 진단도 오늘 정상 통과했습니다. 메시지는 대부분 시스템 알림으로 확인됐으며 Sell API 공통 문의함 미지원은 별도 표시합니다.",
+    summary: "eBay Seller Hub에서 주문 0건과 활성 리스팅 18개를 대조했고, SellerPilot의 판매자 권한·판매한도 읽기 진단도 정상 통과했습니다. 상품 문의는 Trading API의 ASQ 조회·답변과 계보 검증까지 구현됐지만, 현재 운영 자격증명 검증·상시 작업자·실문의 E2E가 남아 있어 원격 CS 연결 완료로 표시하지 않습니다.",
     checks: [
       { label: "판매자센터 대조", state: "verified", evidence: "실주문 0 · 활성 리스팅 18 · 메시지 17(대부분 시스템 알림)" },
       { label: "OAuth 동의", state: "verified", evidence: "Production User OAuth 운영 Vault 연결" },
@@ -248,10 +248,10 @@ export const channelReadiness: ChannelReadiness[] = [
       { label: "판매자 진단", state: "verified", evidence: "GET /sell/account/v1/privilege/" },
       { label: "상품 워크플로", state: "verified", evidence: "Location → Inventory Item → Offer → Publish" },
       { label: "현재 읽기 진단", state: "verified", evidence: "2026-08-20 Seller 계정 권한과 판매한도 읽기 정상" },
-      { label: "통합 문의", state: "not_configured", evidence: "Sell REST API 공통 문의함 미지원 · Seller Hub 보조" },
+      { label: "상품 문의 ASQ", state: "partial", evidence: "Trading API GetMemberMessages·AddMemberMessageRTQ 및 계보 검증 구현 · 운영 작업자와 실문의 E2E 대기" },
     ],
-    blockers: ["Seller Hub 메시지와 통합 CS의 대체 조회 범위 확정", "마켓플레이스·Business Policy 기본값 확정"],
-    nextAction: "Fulfillment 주문 폴링 재대조 → Seller Hub 메시지 보조 동선 유지 → 승인된 Inventory/Offer 테스트",
+    blockers: ["상시 gateway/scheduler 작업자 연결과 운영 자격증명 GetUser 검증", "실제 ASQ 문의 수집과 사용자 승인 답변 E2E", "마켓플레이스·Business Policy 기본값 확정"],
+    nextAction: "상시 작업자 연결 → GetUser 계정 검증 → ASQ 문의 수집 확인 → 사용자 승인 답변 E2E",
   },
 ];
 

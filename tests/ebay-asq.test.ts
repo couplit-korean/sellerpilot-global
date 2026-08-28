@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import test from "node:test";
 import { csChannelVerification, csReplySavePlan } from "../app/cs-release-state";
+import { channelReadiness } from "../app/channel-readiness-data";
 import { gatewayJobCompletionStatus, gatewayWorkerCompletionSchema } from "../lib/channels/gateway-contract";
 import { buildInquiryReplyArguments, supportsInquiryReply } from "../lib/channels/inquiry-reply";
 import { ebayAsqOperationMarketplaceId } from "../lib/channels/ebay-asq";
@@ -24,6 +25,17 @@ const [{ normalizeChannelInquiries }, { executeInquiryReplyViaChannelGateway }] 
   import("../lib/channels/inquiry-sync"),
   import("../lib/channels/gateway"),
 ]);
+
+test("eBay readiness reports ASQ implementation without claiming live remote CS", () => {
+  const readiness = channelReadiness.find((channel) => channel.key === "ebay");
+  assert.ok(readiness);
+  assert.equal(readiness.overall, "partial");
+  assert.equal(readiness.checks.some((check) => check.label === "상품 문의 ASQ" && check.state === "partial"), true);
+  assert.match(readiness.summary, /ASQ 조회·답변과 계보 검증까지 구현/);
+  assert.match(readiness.summary, /원격 CS 연결 완료로 표시하지 않습니다/);
+  assert.doesNotMatch(readiness.summary, /공통 문의함 미지원/);
+  assert.match(readiness.nextAction, /상시 작업자 연결/);
+});
 
 function memberMessagesXml(options: {
   ack?: "Success" | "Warning" | "Failure";

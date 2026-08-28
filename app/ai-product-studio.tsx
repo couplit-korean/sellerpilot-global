@@ -11,6 +11,7 @@ import { createClient } from "../lib/supabase/client";
 import { productIntakeSchema, type ProductIntakeDraft, type SourcePreservingProductImageSpec } from "../lib/product-intake";
 import { uploadStudioStorageObject } from "../lib/studio-direct-upload";
 import { assertStudioPhotoBatch, uploadStudioPhotoPairs } from "../lib/studio-photo-upload";
+import type { StudioWorkerReadiness } from "../lib/studio-worker-readiness";
 import {
   assertStudioSourceDimensions,
   assertStudioSourceFile,
@@ -461,12 +462,13 @@ const detailPresets = aiGeneratedAssetSpecs
 
 const generatedPreviewPresets = [...thumbnailPresets, ...detailPresets];
 
-export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, onRunningChange, notify, onJobQueued, onResultReady }: {
+export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady }: {
   mainPhoto: StudioPhoto | null;
   photos: StudioPhoto[];
   manualFields: ProductIntakeDraft;
   competitorContext: StudioCompetitorContext;
   requestId: number;
+  workerReadiness: StudioWorkerReadiness | null;
   onRunningChange: (running: boolean) => void;
   notify: (message: string) => void;
   onJobQueued?: (jobId: string) => void;
@@ -708,6 +710,14 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       onRunningChange(false);
       return;
     }
+    if (workerReadiness?.available !== true) {
+      const message = workerReadiness?.message
+        ?? "AI 제작 작업자 연결 상태를 확인하고 있습니다. 확인이 끝난 뒤 다시 시도해 주세요.";
+      setLastError(message);
+      notify(message);
+      onRunningChange(false);
+      return;
+    }
     // A rapid duplicate event during the first upload still belongs to the
     // active operation, so its parent busy state must remain true.
     if (generating || generateInFlightRef.current) return;
@@ -775,7 +785,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       setQueuedOwnJobId(jobId);
       setSubmissionPhase("submitting");
       let response: Response;
-      let queued: { jobId?: string; message?: string };
+      let queued: { jobId?: string; code?: string; message?: string };
       try {
         enqueueStarted = true;
         ({ response, payload: queued } = await fetchJsonWithStudioJobTimeout("/api/ai/product-studio", {
@@ -792,6 +802,13 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         return;
       }
       throwIfStudioJobAborted(lifecycleController.signal);
+      if (!response.ok && queued.code === "AI_WORKER_UNAVAILABLE") {
+        terminallyRejected = true;
+        clearActiveStudioJob(jobId);
+        submittedIntakesByJobIdRef.current.delete(jobId);
+        releaseOwnJob(jobId);
+        throw new StudioJobTerminalError(queued.message ?? "AI 제작 작업자가 연결되지 않아 상품 분석을 시작하지 않았습니다.");
+      }
       const ambiguousResponse = response.status === 408
         || response.status === 425
         || response.status === 429
@@ -837,7 +854,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         onRunningChange(false);
       }
     }
-  }, [announceOwnJob, competitorContext, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, studioSessionId]);
+  }, [announceOwnJob, competitorContext, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, studioSessionId, workerReadiness]);
 
   const retryOwnJobStatus = useCallback(async () => {
     const jobId = queuedOwnJobIdRef.current;
@@ -973,6 +990,19 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     handledRequest.current = requestId;
     void generate();
   }, [generate, requestId]);
+
+  useEffect(() => {
+    if (workerReadiness?.available !== false
+        || !queuedOwnJobId
+        || submissionPhase !== "monitoring") return;
+    const stopMonitoring = window.setTimeout(() => {
+      jobMonitors.abortAll(new DOMException(workerReadiness.message, "AbortError"));
+      setSubmissionPhase("uncertain");
+      setLastError(workerReadiness.message);
+      notify(`${workerReadiness.message} 기존 작업 ID는 유지하며 자동 상태 확인을 중단했습니다.`);
+    }, 0);
+    return () => window.clearTimeout(stopMonitoring);
+  }, [jobMonitors, notify, queuedOwnJobId, submissionPhase, workerReadiness]);
 
   useEffect(() => {
     if (recoveryStarted.current || requestId) return;
@@ -1127,7 +1157,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
         <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>로컬 ChatGPT CLI가 사진과 설명을 분석하고, codex-image와 Puck 편집 흐름으로 결과를 만듭니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result ? "CLI 실데이터" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "서버 처리 중" : "실행 대기"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || generating || Boolean(queuedOwnJobId)}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : "다시 생성"}</button></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result ? "CLI 실데이터" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "서버 처리 중" : !workerReadiness ? "작업자 확인 중" : !workerReadiness.available ? "작업자 연결 필요" : "실행 대기"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || workerReadiness?.available !== true || generating || Boolean(queuedOwnJobId)} title={workerReadiness?.available === false ? workerReadiness.message : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !workerReadiness ? "작업자 확인 중" : !workerReadiness.available ? "AI 작업자 연결 필요" : "다시 생성"}</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>

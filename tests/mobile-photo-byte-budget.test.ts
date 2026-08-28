@@ -173,7 +173,7 @@ test("new product delayed decodes reserve bytes and block immediate analysis unt
   assert.match(page, /const onAbort = \(\) => \{[\s\S]{0,220}image\.src = "";[\s\S]{0,120}releasePhotoUrl\(url\)/);
   assert.match(submit, /photoSelectionsProcessingCountRef\.current > 0 \|\| photoSelectionBudget\.hasPending\(\)/);
   assert.ok(submit.indexOf("photoSelectionsProcessingCountRef.current > 0") < submit.indexOf("productIntakeSchema.safeParse"));
-  assert.match(page, /disabled=\{running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| competitorResearchBlocksAnalysis/);
+  assert.match(page, /disabled=\{!studioWorkerAvailable \|\| running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| competitorResearchBlocksAnalysis/);
   assert.match(page, /photoSelectionsProcessing \? <><LoaderCircle className="spin" size=\{17\} \/>사진 확인 중/);
 });
 

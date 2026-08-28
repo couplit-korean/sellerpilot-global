@@ -6,9 +6,32 @@ import { withPromiseTimeout } from "../../../../lib/promise-timeout";
 import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } from "../../../../lib/studio-image-paths";
 import { createSignedStudioImageDownloader, verifyPreservedStudioImages } from "../../../../lib/studio-image-validation";
 import { resolveStudioAdmission } from "../../../../lib/studio-job-admission";
+import { resolveStudioWorkerReadiness, type StudioWorkerReadiness } from "../../../../lib/studio-worker-readiness";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+async function readStudioWorkerReadiness(admin: AdminApiContext): Promise<StudioWorkerReadiness> {
+  const runtimeStatus = await withPromiseTimeout(
+    admin.userClient.rpc("sellerpilot_ai_runtime_status"),
+    10_000,
+    "AI 작업자 연결 상태 확인 제한시간을 초과했습니다.",
+  ).catch(() => null);
+  if (!runtimeStatus || runtimeStatus.error) {
+    return resolveStudioWorkerReadiness(null, { statusAvailable: false });
+  }
+  return resolveStudioWorkerReadiness(runtimeStatus.data);
+}
+
+export async function GET(request: Request) {
+  const admin = await authenticateAdminRequest(request);
+  if (isAdminApiError(admin)) return admin;
+  const readiness = await readStudioWorkerReadiness(admin);
+  return NextResponse.json(readiness, {
+    status: readiness.reason === "status_unavailable" ? 503 : 200,
+    headers: { "cache-control": "no-store, max-age=0" },
+  });
+}
 
 async function studioValidationDownloader(paths: string[], admin: AdminApiContext) {
   return createSignedStudioImageDownloader({
@@ -93,17 +116,28 @@ export async function POST(request: Request) {
     image_paths: uploadedPaths,
     image_specs: parsed.data.imageSpecs,
   };
+  const enqueueGuard: { checked: boolean; readiness: StudioWorkerReadiness } = {
+    checked: false,
+    readiness: resolveStudioWorkerReadiness(null, { statusAvailable: false }),
+  };
   const admission = await resolveStudioAdmission({
     jobId: parsed.data.jobId,
-    createJob: () => withPromiseTimeout(
-      admin.userClient.rpc("sellerpilot_create_ai_job", {
-        p_id: parsed.data.jobId,
-        p_kind: "product_studio",
-        p_request_payload: requestPayload,
-      }),
-      15_000,
-      "CLI 작업 큐 등록 제한시간을 초과했습니다.",
-    ),
+    createJob: async () => {
+      enqueueGuard.readiness = await readStudioWorkerReadiness(admin);
+      enqueueGuard.checked = true;
+      if (!enqueueGuard.readiness.available) {
+        return { data: null, error: { code: "AI_WORKER_UNAVAILABLE" } };
+      }
+      return withPromiseTimeout(
+        admin.userClient.rpc("sellerpilot_create_ai_job", {
+          p_id: parsed.data.jobId,
+          p_kind: "product_studio",
+          p_request_payload: requestPayload,
+        }),
+        15_000,
+        "CLI 작업 큐 등록 제한시간을 초과했습니다.",
+      );
+    },
     readExactJob: () => withPromiseTimeout(
       admin.userClient.rpc("sellerpilot_get_ai_job", { p_id: parsed.data.jobId }),
       15_000,
@@ -134,6 +168,15 @@ export async function POST(request: Request) {
       jobId: parsed.data.jobId,
       reconciliationRequired: true,
       message: "상품 분석 접수 여부를 확정하지 못했습니다. 업로드를 보존하고 같은 작업 ID만 확인합니다.",
+    }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  if (enqueueGuard.checked && !enqueueGuard.readiness.available) {
+    return NextResponse.json({
+      code: "AI_WORKER_UNAVAILABLE",
+      jobId: parsed.data.jobId,
+      workerAvailable: false,
+      cleanupPending: admission.cleanupPending,
+      message: enqueueGuard.readiness.message,
     }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
   }
   return NextResponse.json({

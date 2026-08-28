@@ -113,6 +113,7 @@ import { createRevisionPhotoSelectionFence, releaseStaleRevisionPhoto } from "..
 import { settleWithConcurrency } from "../lib/promise-pool";
 import { assertStudioPhotoBatch } from "../lib/studio-photo-upload";
 import { withPromiseTimeout } from "../lib/promise-timeout";
+import type { StudioWorkerReadiness } from "../lib/studio-worker-readiness";
 import { fetchJsonWithDeadline } from "../lib/bounded-json-request";
 import { classifyExactJobAdmission } from "../lib/exact-job-admission";
 import { assertStudioSourceDimensions, assertStudioSourceFile } from "../lib/studio-source-photo-policy";
@@ -2471,6 +2472,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [firstDraftGenerated, setFirstDraftGenerated] = useState(false);
   const [queuedJobId, setQueuedJobId] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
+  const [studioWorkerReadiness, setStudioWorkerReadiness] = useState<StudioWorkerReadiness | null>(null);
   const [analyzedProductName, setAnalyzedProductName] = useState(initialProduct?.name ?? "");
   const [analyzedProductId, setAnalyzedProductId] = useState<string | null>(initialProduct?.id ?? null);
   const resolvedProductId = analyzedProductId ?? initialProduct?.id ?? null;
@@ -2585,6 +2587,52 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       const payload = await response.json() as { templates?: CommerceTemplate[] };
       setCommerceTemplates(Array.isArray(payload.templates) ? payload.templates : []);
     }).catch(() => null);
+  }, [authenticatedFetch]);
+
+  useEffect(() => {
+    let disposed = false;
+    const loadStudioWorkerReadiness = async () => {
+      try {
+        const response = await authenticatedFetch("/api/ai/product-studio", { cache: "no-store" });
+        const payload = await response.json().catch(() => null) as Partial<StudioWorkerReadiness> | null;
+        if (disposed) return;
+        const validReason = payload?.reason === "ready"
+          || payload?.reason === "worker_missing"
+          || payload?.reason === "heartbeat_missing"
+          || payload?.reason === "heartbeat_stale"
+          || payload?.reason === "status_unavailable";
+        if (response.ok
+            && typeof payload?.available === "boolean"
+            && validReason
+            && typeof payload.message === "string"
+            && typeof payload.checkedAt === "string") {
+          setStudioWorkerReadiness(payload as StudioWorkerReadiness);
+          return;
+        }
+        setStudioWorkerReadiness({
+          available: false,
+          reason: "status_unavailable",
+          message: typeof payload?.message === "string"
+            ? payload.message
+            : "AI 제작 작업자 연결 상태를 확인할 수 없어 상품 분석을 시작할 수 없습니다.",
+          checkedAt: new Date().toISOString(),
+        });
+      } catch {
+        if (disposed) return;
+        setStudioWorkerReadiness({
+          available: false,
+          reason: "status_unavailable",
+          message: "AI 제작 작업자 연결 상태를 확인할 수 없어 상품 분석을 시작할 수 없습니다.",
+          checkedAt: new Date().toISOString(),
+        });
+      }
+    };
+    void loadStudioWorkerReadiness();
+    const interval = window.setInterval(() => void loadStudioWorkerReadiness(), 15_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
   }, [authenticatedFetch]);
 
   const applyCommerceTemplate = (template: CommerceTemplate) => {
@@ -2789,7 +2837,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (response.status === 404) throw new ProductResearchNotFoundError();
       if (!response.ok) throw new Error(payload.message ?? "AI 상품정보 작업 상태를 확인하지 못했습니다.");
       if (payload.status === "succeeded") {
-        if (payload.result?.mode === "cli-research") return payload.result;
+        if (payload.result?.mode === "server-research" || payload.result?.mode === "cli-research") return payload.result;
         throw new ProductResearchTerminalError("gateway_result_invalid");
       }
       if (payload.status === "failed" || payload.status === "cancelled") {
@@ -3217,6 +3265,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const startAutomation = () => {
     if (running || automationStartInFlightRef.current) return;
+    if (studioWorkerReadiness?.available !== true) {
+      const message = studioWorkerReadiness?.message
+        ?? "AI 제작 작업자 연결 상태를 확인하고 있습니다. 확인이 끝난 뒤 다시 시도해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
     if (photoSelectionsProcessingCountRef.current > 0 || photoSelectionBudget.hasPending()) {
       const message = "선택한 상품 사진 확인이 끝난 뒤 상품 분석을 시작해 주세요.";
       setUploadError(message);
@@ -3270,6 +3325,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const totalPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length;
+  const studioWorkerAvailable = studioWorkerReadiness?.available === true;
   const intakeReady = productIntakeSchema.safeParse(intake).success;
   const intakeCompletionItems = [
     intake.researchInput.trim().length >= 2,
@@ -3354,7 +3410,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <small className="product-research-help">공개 근거를 우선 사용하고, 동일 상품 가격은 채널별 최대 3개를 함께 조회해 판매가 검토에 사용합니다.</small>
             {manualErrors.researchInput && <small className="product-research-error">{manualErrors.researchInput}</small>}
             {researchResult && <div className="product-research-result">
-              <div><CheckCircle2 size={16} /><span><b>CLI 상세정보 반영 완료</b><small>{researchResult.summary}</small></span><em>특징 {researchResult.details.features.length} · 규격 {researchResult.details.specifications.length}</em></div>
+              <div><CheckCircle2 size={16} /><span><b>{researchResult.mode === "server-research" ? "Vercel 서버 AI 상세정보 반영 완료" : "로컬 CLI 상세정보 반영 완료"}</b><small>{researchResult.summary}</small></span><em>특징 {researchResult.details.features.length} · 규격 {researchResult.details.specifications.length}</em></div>
               {(researchResult.details.features.length > 0 || researchResult.details.specifications.length > 0) && <section className="product-research-detail-grid">
                 {researchResult.details.features.length > 0 && <article><b>확인된 특징</b><ul>{researchResult.details.features.slice(0, 6).map((feature) => <li key={feature}>{feature}</li>)}</ul></article>}
                 {researchResult.details.specifications.length > 0 && <article><b>상세 규격·근거</b><dl>{researchResult.details.specifications.slice(0, 8).map((specification) => <div key={`${specification.label}-${specification.value}`}><dt>{specification.label}</dt><dd>{specification.value}<small>{specification.evidence}</small></dd></div>)}</dl></article>}
@@ -3401,10 +3457,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               <label htmlFor="image-rights-confirmed" className={manualErrors.imageRightsConfirmed ? "field-error" : ""}><input id="image-rights-confirmed" aria-label="이미지와 상품 자료 사용 권한 확인" type="checkbox" checked={intake.imageRightsConfirmed} onChange={(event) => setIntakeField("imageRightsConfirmed", event.target.checked)} /><span><b>이미지·상품 자료 사용 권한</b><small>본인 촬영, 공급사 승인 또는 오픈라이선스 자료임을 확인합니다.</small></span></label>
               <label htmlFor="product-facts-confirmed" className={manualErrors.productFactsConfirmed ? "field-error" : ""}><input id="product-facts-confirmed" aria-label="상품 사실정보 확인" type="checkbox" checked={intake.productFactsConfirmed} onChange={(event) => setIntakeField("productFactsConfirmed", event.target.checked)} /><span><b>상품 사실정보 확인</b><small>원산지·소재·구성·규격이 실물과 일치합니다.</small></span></label>
             </div>
-            <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·CLI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
+            <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·AI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
           </section>
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && !researchingProduct && !competitorResearchBlocksAnalysis && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격 확인 대기" : ""}</span><button type="button" onClick={startAutomation} disabled={running || researchingProduct || photoSelectionsProcessing || competitorResearchBlocksAnalysis || Boolean(queuedJobId)}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && studioWorkerAvailable && !researchingProduct && !competitorResearchBlocksAnalysis && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격 확인 대기" : ""}<br /><small role="status">{studioWorkerReadiness?.message ?? "AI 제작 작업자 연결 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!studioWorkerAvailable || running || researchingProduct || photoSelectionsProcessing || competitorResearchBlocksAnalysis || Boolean(queuedJobId)} title={!studioWorkerAvailable ? studioWorkerReadiness?.message ?? "AI 제작 작업자 연결 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />작업자 확인 중</> : !studioWorkerAvailable ? <><AlertCircle size={17} />AI 작업자 연결 필요</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
@@ -3420,6 +3476,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         manualFields={intake}
         competitorContext={studioCompetitorContext}
         requestId={studioRequestId}
+        workerReadiness={studioWorkerReadiness}
         onRunningChange={(nextRunning) => {
           automationStartInFlightRef.current = nextRunning;
           setRunning(nextRunning);

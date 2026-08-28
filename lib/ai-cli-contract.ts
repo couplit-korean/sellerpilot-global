@@ -57,8 +57,7 @@ const localizedListingSchema = z.object({
 const nullableResearchText = (maximum: number) => z.string().trim().min(1).max(maximum).nullable();
 const researchSearchLocaleSchema = z.enum(["ko-KR", "en-US", "ja-JP", "zh-TW", "ms-MY", "id-ID", "vi-VN", "th-TH", "pt-BR", "es-MX"]);
 
-export const productResearchResultSchema = z.object({
-  mode: z.literal("cli-research"),
+const productResearchResultBaseSchema = z.object({
   summary: z.string().trim().min(20).max(2_000),
   suggestedFields: z.object({
     productName: nullableResearchText(160),
@@ -96,6 +95,19 @@ export const productResearchResultSchema = z.object({
   })).max(5),
   warnings: z.array(z.string().trim().min(1).max(500)).max(10),
 });
+
+export const cliProductResearchResultSchema = productResearchResultBaseSchema.extend({
+  mode: z.literal("cli-research"),
+});
+
+export const serverProductResearchResultSchema = productResearchResultBaseSchema.extend({
+  mode: z.literal("server-research"),
+});
+
+export const productResearchResultSchema = z.discriminatedUnion("mode", [
+  cliProductResearchResultSchema,
+  serverProductResearchResultSchema,
+]);
 
 export const productResearchJobRequestSchema = z.object({
   jobId: z.string().uuid(),
@@ -1437,4 +1449,5 @@ export const workerCompletionSchema = z.union([
 
 export type CliStudioResult = z.infer<typeof cliStudioResultSchema>;
 export type ProductResearchResult = z.infer<typeof productResearchResultSchema>;
+export type ServerProductResearchResult = z.infer<typeof serverProductResearchResultSchema>;
 export type SupportReplyResult = z.infer<typeof supportReplyResultSchema>;

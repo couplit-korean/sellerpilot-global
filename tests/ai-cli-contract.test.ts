@@ -12,6 +12,7 @@ import {
   normalizeStudioWarningLimits,
   productResearchJobRequestSchema,
   productResearchResultSchema,
+  serverProductResearchResultSchema,
   studioJobRequestSchema,
   supportReplyJobRequestSchema,
   supportReplyResultSchema,
@@ -1696,12 +1697,16 @@ function validResearchResult() {
   };
 }
 
-test("product research contract accepts a link or free-text CLI request", () => {
+test("product research contract distinguishes Vercel server results from legacy CLI results", () => {
   assert.equal(productResearchJobRequestSchema.safeParse({
     jobId: "22222222-2222-4222-8222-222222222222",
     researchInput: "Model ABC-100, stainless steel bottle, 500 ml",
   }).success, true);
   assert.equal(productResearchResultSchema.safeParse(validResearchResult()).success, true);
+  const serverResult = { ...validResearchResult(), mode: "server-research" as const };
+  assert.equal(productResearchResultSchema.safeParse(serverResult).success, true);
+  assert.equal(serverProductResearchResultSchema.safeParse(serverResult).success, true);
+  assert.equal(serverProductResearchResultSchema.safeParse(validResearchResult()).success, false);
 });
 
 test("product research search locales stay aligned across Zod and worker JSON schema", () => {

@@ -3,7 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import type { ProductResearchResult } from "../lib/ai-cli-contract";
+import type { ServerProductResearchResult } from "../lib/ai-cli-contract";
 import {
   analyzeServerProductResearch,
   buildServerProductResearchPrompt,
@@ -30,9 +30,9 @@ async function routeSources(directory: string): Promise<Array<{ path: string; so
   return sources;
 }
 
-function validResult(): ProductResearchResult {
+function validResult(): ServerProductResearchResult {
   return {
-    mode: "cli-research",
+    mode: "server-research",
     summary: "입력 자료에서 확인된 상품 사실과 누락 정보를 안전하게 구분한 조사 결과입니다.",
     suggestedFields: {
       productName: "테스트 상품",
