@@ -109,6 +109,9 @@ test("mobile-only hidden labels and compact controls retain accessible 44px targ
 
   assert.match(styles, /\.sr-only\s*\{[^}]*position:\s*absolute !important;[^}]*width:\s*1px !important;[^}]*clip-path:\s*inset\(50%\) !important;[^}]*margin:\s*-1px !important/);
   assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.sales-calendar-pager > button,[\s\S]*?\.command-input > button,[\s\S]*?\.credential-modal > header > button,[\s\S]*?\.cli-token-reveal button,[\s\S]*?\.bulk-order-bar > button:not\(\.table-action\),[\s\S]*?\.operation-console-meta a\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px/);
+  assert.match(styles, /\.command-dialog > button,[\s\S]*?\.command-result,[\s\S]*?\.account-security-submit,[\s\S]*?\.operation-console-meta a\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px/);
+  assert.match(styles, /\.sidebar nav button,[\s\S]*?\.sidebar-foot button,[\s\S]*?\.briefing-settlement button,[\s\S]*?\.table-footer button,[\s\S]*?\.category-empty button,[\s\S]*?\.kakao-connect-button\s*\{[^}]*min-height:\s*44px/);
+  assert.match(styles, /\.table-footer button\s*\{[^}]*min-width:\s*44px/);
   assert.match(styles, /\.notification-popover \.notification-item\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 44px/);
   assert.match(styles, /\.notification-popover \.notification-item > \.notification-item-dismiss\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
   assert.match(styles, /\.sidebar-head > button,[\s\S]*?\.mobile-back,[\s\S]*?\.template-card-grid article > div > button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);

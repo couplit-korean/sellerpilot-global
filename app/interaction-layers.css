@@ -545,7 +545,10 @@ body:has(.notification-popover) .mobile-push-chip {
 
   .sales-calendar-pager > button,
   .command-input > button,
+  .command-dialog > button,
+  .command-result,
   .account-security-head > button,
+  .account-security-submit,
   .credential-modal > header > button,
   .puck-editor-top > button,
   .mobile-push-gate-actions button,
@@ -561,6 +564,21 @@ body:has(.notification-popover) .mobile-push-chip {
   .operation-console-meta a {
     min-width: 44px;
     min-height: 44px;
+  }
+
+  .sidebar nav button,
+  .sidebar-foot button,
+  .briefing-settlement button,
+  .table-footer button,
+  .category-empty button,
+  .category-confirm,
+  .category-manual-verify,
+  .kakao-connect-button {
+    min-height: 44px;
+  }
+
+  .table-footer button {
+    min-width: 44px;
   }
 
   .sidebar-head > button,
