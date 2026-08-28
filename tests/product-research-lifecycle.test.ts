@@ -6,6 +6,7 @@ import {
   ProductResearchTerminalError,
   shouldClearPendingProductResearch,
 } from "../app/_publishing/product-research-lifecycle";
+import { productResearchFailureMessage } from "../lib/product-research-failure";
 
 test("unverified research placeholders never become seller facts", () => {
   assert.equal(confirmedProductResearchValue("공급처 확인 필요"), "");
@@ -16,9 +17,53 @@ test("unverified research placeholders never become seller facts", () => {
 test("terminal worker failures always release the pending product research job", () => {
   const arbitraryWorkerFailure = new ProductResearchTerminalError("원격 본문 파싱 단계에서 실패했습니다.");
 
-  assert.equal(arbitraryWorkerFailure.message, "원격 본문 파싱 단계에서 실패했습니다.");
+  assert.equal(
+    arbitraryWorkerFailure.message,
+    "AI 상품정보 분석 서버에 일시적으로 연결하지 못했습니다. 잠시 후 같은 입력으로 다시 시도해 주세요.",
+  );
   assert.equal(shouldClearPendingProductResearch(arbitraryWorkerFailure), true);
   assert.equal(shouldClearPendingProductResearch(new ProductResearchNotFoundError()), true);
+});
+
+test("terminal gateway reasons become actionable Korean messages without technical leakage", () => {
+  const cases = [
+    ["Server product research failed: gateway_authentication_error", "운영 연결"],
+    ["Server product research failed: gateway_billing_required", "결제·사용량"],
+    ["gateway_forbidden", "권한 설정"],
+    ["gateway_model_not_found", "모델 설정"],
+    ["gateway_rate_limited", "요청이 몰려"],
+    ["gateway_timeout", "응답이 지연"],
+    ["gateway_request_failed", "일시적으로 연결"],
+  ] as const;
+  for (const [reason, expected] of cases) {
+    const failure = new ProductResearchTerminalError(reason);
+    assert.match(failure.message, new RegExp(expected));
+    assert.doesNotMatch(failure.message, /gateway_|Server product research failed/i);
+  }
+  assert.doesNotMatch(
+    new ProductResearchTerminalError("secret provider response body").message,
+    /secret|provider response/i,
+  );
+});
+
+test("API-redacted product research failures keep their exact meaning in the browser", () => {
+  for (const reason of [
+    "gateway_authentication_error",
+    "gateway_billing_required",
+    "gateway_forbidden",
+    "gateway_model_not_found",
+    "gateway_rate_limited",
+    "gateway_timeout",
+  ]) {
+    const apiMessage = productResearchFailureMessage(reason);
+    const browserFailure = new ProductResearchTerminalError(apiMessage);
+    assert.equal(browserFailure.message, apiMessage);
+    assert.doesNotMatch(browserFailure.message, /gateway_|Server product research failed/i);
+  }
+  assert.notEqual(
+    new ProductResearchTerminalError("공급자 비공개 원문").message,
+    "공급자 비공개 원문",
+  );
 });
 
 test("transient polling failures preserve the pending product research job for safe recovery", () => {
@@ -27,8 +72,9 @@ test("transient polling failures preserve the pending product research job for s
 });
 
 test("a succeeded job with an invalid result is represented as a terminal failure", () => {
-  const invalidResult = new ProductResearchTerminalError("완료된 상품정보 작업의 결과 형식을 확인하지 못했습니다.");
+  const invalidResult = new ProductResearchTerminalError("gateway_result_invalid");
 
   assert.equal(invalidResult.name, "ProductResearchTerminalError");
+  assert.match(invalidResult.message, /반환한 상품정보 형식/);
   assert.equal(shouldClearPendingProductResearch(invalidResult), true);
 });

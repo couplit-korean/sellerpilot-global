@@ -103,13 +103,12 @@ test("each explicit action invokes only its exact synthetic runner", async () =>
   assert.deepEqual(calls, ["gateway", "sandbox"]);
 });
 
-test("OIDC smoke injects only the ephemeral token and never returns or rethrows it", async () => {
-  const secretToken = "header.synthetic-secret.signature";
-  let receivedToken = "";
+test("OIDC smoke delegates token resolution to AI SDK and never accepts or returns credentials", async () => {
+  let requestInput: Record<string, unknown> = {};
   const successful = await runSyntheticAiGatewaySmoke({
-    getOidcToken: async () => secretToken,
-    request: async ({ oidcToken, model }) => {
-      receivedToken = oidcToken;
+    request: async (input) => {
+      requestInput = input;
+      const { model } = input;
       assert.equal(model, AI_GATEWAY_SMOKE_MODEL);
       return { status: "ok", runtime: "vercel-function-oidc" };
     },
@@ -118,19 +117,18 @@ test("OIDC smoke injects only the ephemeral token and never returns or rethrows 
       return () => tick += 5;
     })(),
   });
-  assert.equal(receivedToken, secretToken);
-  assert.equal(JSON.stringify(successful).includes(secretToken), false);
+  assert.deepEqual(requestInput, { model: AI_GATEWAY_SMOKE_MODEL });
   assert.equal(successful.auth, "vercel_oidc");
 
+  const providerSecret = "private-provider-response";
   await assert.rejects(
     runSyntheticAiGatewaySmoke({
-      getOidcToken: async () => secretToken,
-      request: async () => { throw new Error(`provider leaked ${secretToken}`); },
+      request: async () => { throw new Error(providerSecret); },
     }),
     (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.equal(error.message, "gateway_request_failed");
-      assert.equal(error.message.includes(secretToken), false);
+      assert.equal(error.message.includes(providerSecret), false);
       return true;
     },
   );
@@ -138,23 +136,21 @@ test("OIDC smoke injects only the ephemeral token and never returns or rethrows 
   const response = await handleServerRuntimeSmoke(request("POST", { action: "ai_gateway_smoke" }), {
     runtimeSmokeSecret: "test-runtime-smoke-secret",
     runners: {
-      aiGateway: async () => { throw new Error(`unexpected ${secretToken}`); },
+      aiGateway: async () => { throw new Error(`unexpected ${providerSecret}`); },
       sandbox: async () => ({}),
     },
   });
   assert.equal(response.status, 502);
-  assert.equal((await response.text()).includes(secretToken), false);
+  assert.equal((await response.text()).includes(providerSecret), false);
 });
 
 test("AI Gateway failures expose only allowlisted status, name, and code diagnostics", async () => {
-  const secretToken = "header.synthetic-secret.signature";
   const providerSecret = "private-provider-response";
   let captured: unknown;
   try {
     await runSyntheticAiGatewaySmoke({
-      getOidcToken: async () => secretToken,
       request: async () => {
-        throw Object.assign(new Error(`${providerSecret} ${secretToken}`), {
+        throw Object.assign(new Error(providerSecret), {
           name: "GatewayFailedDependencyError",
           type: "failed_dependency",
           statusCode: 424,
@@ -175,13 +171,11 @@ test("AI Gateway failures expose only allowlisted status, name, and code diagnos
     status: 424,
   });
   assert.equal(JSON.stringify(failure.diagnostic).includes(providerSecret), false);
-  assert.equal(JSON.stringify(failure.diagnostic).includes(secretToken), false);
 
   const response = await handleServerRuntimeSmoke(request("POST", { action: "ai_gateway_smoke" }), {
     runtimeSmokeSecret: "test-runtime-smoke-secret",
     runners: {
       aiGateway: () => runSyntheticAiGatewaySmoke({
-        getOidcToken: async () => secretToken,
         request: async () => {
           throw Object.assign(new Error(providerSecret), {
             name: "GatewayFailedDependencyError",
@@ -196,12 +190,35 @@ test("AI Gateway failures expose only allowlisted status, name, and code diagnos
   const responseText = await response.text();
   assert.equal(response.status, 502);
   assert.equal(responseText.includes(providerSecret), false);
-  assert.equal(responseText.includes(secretToken), false);
   assert.deepEqual(JSON.parse(responseText).diagnostic, failure.diagnostic);
+
+  const authenticationResponse = await handleServerRuntimeSmoke(
+    request("POST", { action: "ai_gateway_smoke" }),
+    {
+      runtimeSmokeSecret: "test-runtime-smoke-secret",
+      runners: {
+        aiGateway: () => runSyntheticAiGatewaySmoke({
+          request: async () => {
+            throw Object.assign(new Error(providerSecret), {
+              name: "GatewayAuthenticationError",
+              type: "authentication_error",
+              statusCode: 401,
+            });
+          },
+        }),
+        sandbox: async () => ({}),
+      },
+    },
+  );
+  assert.equal(authenticationResponse.status, 503);
+  assert.deepEqual((await authenticationResponse.json()).diagnostic, {
+    name: "GatewayAuthenticationError",
+    code: "authentication_error",
+    status: 401,
+  });
 
   await assert.rejects(
     runSyntheticAiGatewaySmoke({
-      getOidcToken: async () => secretToken,
       request: async () => {
         throw Object.assign(new Error(providerSecret), {
           name: "GatewayInternalServerError",
@@ -220,6 +237,28 @@ test("AI Gateway failures expose only allowlisted status, name, and code diagnos
       return true;
     },
   );
+
+  for (const name of [
+    "AI_NoObjectGeneratedError",
+    "NoObjectGeneratedError",
+    "AI_NoOutputGeneratedError",
+  ]) {
+    await assert.rejects(
+      runSyntheticAiGatewaySmoke({
+        request: async () => {
+          throw Object.assign(new Error(providerSecret), { name });
+        },
+      }),
+      (error: unknown) => {
+        const structuredOutputFailure = error as Error & { diagnostic?: Record<string, unknown> };
+        assert.deepEqual(structuredOutputFailure.diagnostic, {
+          name,
+          code: "no_output",
+        });
+        return true;
+      },
+    );
+  }
 });
 
 test("sandbox smoke runs one fixed Linux Node command with denied egress and always stops", async () => {
@@ -401,9 +440,8 @@ test("source contract excludes static AI keys, auth caches, databases, claims, a
   assert.equal(typeof manifest.dependencies?.["@vercel/sandbox"], "string");
   assert.equal(typeof manifest.dependencies?.["@vercel/oidc"], "string");
   assert.equal(typeof manifest.dependencies?.ai, "string");
-  assert.match(helper, /getVercelOidcToken/);
-  assert.match(helper, /apiKey: input\.oidcToken/);
-  assert.match(helper, /"ai-gateway-auth-method": "oidc"/);
+  assert.match(helper, /model: input\.model/);
+  assert.doesNotMatch(helper, /getVercelOidcToken|createGateway|apiKey:|ai-gateway-auth-method/);
   assert.match(helper, /maxOutputTokens: 256/);
   assert.doesNotMatch(helper, /zeroDataRetention|disallowPromptTraining/);
   assert.match(helper, /networkPolicy: "deny-all"/);

@@ -497,6 +497,10 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /query: \(intake\.productName \|\| intake\.researchInput\)\.trim\(\)\.slice\(0, 160\)/);
   assert.match(page, /payload\.status === "succeeded"[\s\S]{0,220}throw new ProductResearchTerminalError/);
   assert.match(page, /throw new ProductResearchTerminalError\(payload\.error\)/);
+  assert.match(
+    await readFile(new URL("../app/api/ai/jobs/[id]/route.ts", import.meta.url), "utf8"),
+    /job\.kind === "product_research"[\s\S]{0,180}productResearchFailureMessage\(job\.error\)/,
+  );
   assert.match(page, /shouldClearPendingProductResearch\(error\)/);
   assert.match(page, /확인 중단/);
   assert.match(commerceStyles, /\.competitor-retry button \{[^}]*min-height: 44px/);

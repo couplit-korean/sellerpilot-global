@@ -1,5 +1,6 @@
 import { after, NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
+import { productResearchFailureMessage } from "../../../../../lib/product-research-failure";
 import { wakeServerProductResearchAfterResponse } from "../../../../../lib/server-product-research-runtime";
 
 export const runtime = "nodejs";
@@ -40,6 +41,10 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (job.kind === "product_research"
       && (job.status === "queued" || job.status === "running")) {
     after(wakeServerProductResearchAfterResponse);
+  }
+
+  if (job.kind === "product_research" && typeof job.error === "string") {
+    job.error = productResearchFailureMessage(job.error);
   }
 
   return NextResponse.json({ ...job, result }, {

@@ -23,8 +23,7 @@ type AiGatewaySmokeOutput = {
 };
 
 export type AiGatewaySmokeDependencies = {
-  getOidcToken: () => Promise<string>;
-  request: (input: { oidcToken: string; model: string }) => Promise<AiGatewaySmokeOutput>;
+  request: (input: { model: string }) => Promise<AiGatewaySmokeOutput>;
   now?: () => number;
 };
 
@@ -82,7 +81,6 @@ type RuntimeSmokeHandlerOptions = {
 };
 
 type SmokeErrorCode =
-  | "oidc_unavailable"
   | "gateway_request_failed"
   | "gateway_response_invalid"
   | "sandbox_unavailable"
@@ -104,6 +102,8 @@ type SmokeDiagnostic = {
     | "GatewayResponseError"
     | "GatewayTimeoutError"
     | "AI_APICallError"
+    | "AI_NoObjectGeneratedError"
+    | "NoObjectGeneratedError"
     | "AI_NoOutputGeneratedError"
     | "APIError"
     | "SandboxTerminalError"
@@ -158,6 +158,8 @@ const gatewayDiagnosticNames = new Set<SmokeDiagnostic["name"]>([
   "GatewayResponseError",
   "GatewayTimeoutError",
   "AI_APICallError",
+  "AI_NoObjectGeneratedError",
+  "NoObjectGeneratedError",
   "AI_NoOutputGeneratedError",
   "AbortError",
   "TimeoutError",
@@ -169,9 +171,15 @@ const gatewayDiagnosticCodes = new Set<SmokeDiagnostic["code"]>([
   "internal_server_error",
   "invalid_request_error",
   "model_not_found",
+  "no_output",
   "rate_limit_exceeded",
   "response_error",
   "timeout_error",
+]);
+const structuredOutputDiagnosticNames = new Set<SmokeDiagnostic["name"]>([
+  "AI_NoObjectGeneratedError",
+  "NoObjectGeneratedError",
+  "AI_NoOutputGeneratedError",
 ]);
 
 function errorChain(error: unknown) {
@@ -203,7 +211,10 @@ function gatewayDiagnostic(error: unknown): SmokeDiagnostic {
   const gatewayRecord = chain.find((record) => (
     typeof record.type === "string" && gatewayDiagnosticCodes.has(record.type as SmokeDiagnostic["code"])
   ) || (
-    typeof record.name === "string" && record.name.startsWith("Gateway")
+    typeof record.name === "string" && (
+      record.name.startsWith("Gateway")
+        || structuredOutputDiagnosticNames.has(record.name as SmokeDiagnostic["name"])
+    )
   ));
   const record = gatewayRecord ?? chain[0] ?? {};
   const name = typeof record.name === "string" && gatewayDiagnosticNames.has(record.name as SmokeDiagnostic["name"])
@@ -227,7 +238,9 @@ function gatewayDiagnostic(error: unknown): SmokeDiagnostic {
                   : name === "GatewayResponseError" ? "response_error"
                     : name === "GatewayTimeoutError" || name === "AbortError" || name === "TimeoutError"
                       ? "timeout_error"
-                      : name === "AI_NoOutputGeneratedError" ? "no_output"
+                      : name === "AI_NoObjectGeneratedError"
+                          || name === "NoObjectGeneratedError"
+                          || name === "AI_NoOutputGeneratedError" ? "no_output"
                         : "unknown");
   return { name, code, ...(status ? { status } : {}) };
 }
@@ -336,22 +349,15 @@ async function withTimeoutSignal<T>(timeoutMs: number, action: (signal: AbortSig
   }
 }
 
-async function defaultOidcToken() {
-  const { getVercelOidcToken } = await import("@vercel/oidc");
-  return getVercelOidcToken({ expirationBufferMs: 30_000 });
-}
-
-async function defaultAiGatewayRequest(input: { oidcToken: string; model: string }): Promise<AiGatewaySmokeOutput> {
-  const [{ createGateway, generateText, Output }, { z }] = await Promise.all([
+async function defaultAiGatewayRequest(input: { model: string }): Promise<AiGatewaySmokeOutput> {
+  const [{ generateText, Output }, { z }] = await Promise.all([
     import("ai"),
     import("zod"),
   ]);
-  const oidcGateway = createGateway({
-    apiKey: input.oidcToken,
-    headers: { "ai-gateway-auth-method": "oidc" },
-  });
   const result = await generateText({
-    model: oidcGateway(input.model),
+    // A provider/model string lets ai@6 resolve the deployment's refreshed
+    // VERCEL_OIDC_TOKEN automatically. Never snapshot or forward it here.
+    model: input.model,
     output: Output.object({
       schema: z.object({
         status: z.literal("ok"),
@@ -374,25 +380,14 @@ async function defaultAiGatewayRequest(input: { oidcToken: string; model: string
 
 export async function runSyntheticAiGatewaySmoke(
   dependencies: AiGatewaySmokeDependencies = {
-    getOidcToken: defaultOidcToken,
     request: defaultAiGatewayRequest,
   },
 ) {
   const now = dependencies.now ?? Date.now;
   const startedAt = now();
-  let oidcToken: string;
-  try {
-    oidcToken = await dependencies.getOidcToken();
-  } catch {
-    throw new SmokeExecutionError("oidc_unavailable");
-  }
-  if (!oidcToken || oidcToken.length > 16_384) {
-    throw new SmokeExecutionError("oidc_unavailable");
-  }
-
   let output: AiGatewaySmokeOutput;
   try {
-    output = await dependencies.request({ oidcToken, model: AI_GATEWAY_SMOKE_MODEL });
+    output = await dependencies.request({ model: AI_GATEWAY_SMOKE_MODEL });
   } catch (error) {
     throw new SmokeExecutionError("gateway_request_failed", gatewayDiagnostic(error));
   }
@@ -568,11 +563,13 @@ function executionFailure(action: Exclude<RuntimeSmokeAction, "readiness">, erro
     : action === "ai_gateway_smoke"
       ? "gateway_request_failed"
       : "sandbox_command_failed";
-  const status = code === "oidc_unavailable" || code === "sandbox_unavailable" ? 503 : 502;
+  const diagnostic = error instanceof SmokeExecutionError ? error.diagnostic : undefined;
+  const status = code === "sandbox_unavailable" || diagnostic?.code === "authentication_error"
+    ? 503
+    : 502;
   const message = action === "ai_gateway_smoke"
     ? "Vercel OIDC 기반 AI Gateway 합성 점검을 완료하지 못했습니다."
     : "격리된 Linux Sandbox 합성 점검을 완료하지 못했습니다.";
-  const diagnostic = error instanceof SmokeExecutionError ? error.diagnostic : undefined;
   return json({
     ok: false,
     action,

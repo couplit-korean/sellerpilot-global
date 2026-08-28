@@ -1,3 +1,5 @@
+import { productResearchFailureMessage } from "../../lib/product-research-failure";
+
 export class ProductResearchNotFoundError extends Error {
   constructor() {
     super("요청한 AI 상품정보 작업을 찾지 못했습니다.");
@@ -7,7 +9,7 @@ export class ProductResearchNotFoundError extends Error {
 
 export class ProductResearchTerminalError extends Error {
   constructor(message?: string | null) {
-    super(message?.trim() || "AI 상품정보 수집이 완료되지 못했습니다.");
+    super(productResearchFailureMessage(message));
     this.name = "ProductResearchTerminalError";
   }
 }

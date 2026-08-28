@@ -14,8 +14,11 @@ export const SERVER_PRODUCT_RESEARCH_VERSION = "sellerpilot-vercel-product-resea
 const MAX_REFERENCE_COUNT = 5;
 const MAX_REFERENCE_TEXT_CHARACTERS = 18_000;
 const MAX_REFERENCE_PROMPT_CHARACTERS = 60_000;
-const MAX_RESEARCH_RUNTIME_MS = 240_000;
-const AI_GATEWAY_TIMEOUT_MS = 205_000;
+// Vercel Fluid Compute currently gives this route a 300 second hard ceiling.
+// Reserve enough time after analysis for claim-fenced release/completion RPCs
+// even after a cold start or a delayed enqueue response.
+const MAX_RESEARCH_RUNTIME_MS = 210_000;
+const AI_GATEWAY_TIMEOUT_MS = 175_000;
 const NO_STORE_HEADERS = {
   "cache-control": "no-store, max-age=0",
   "content-type": "application/json; charset=utf-8",
@@ -48,6 +51,17 @@ export type ProductResearchGenerationDependencies = {
   ) => Promise<PublicReferenceDocument>;
   generate?: (prompt: string, signal: AbortSignal) => Promise<unknown>;
 };
+
+export type ProductResearchGatewayFailureReason =
+  | "gateway_authentication_error"
+  | "gateway_billing_required"
+  | "gateway_forbidden"
+  | "gateway_model_not_found"
+  | "gateway_rate_limited"
+  | "gateway_timeout"
+  | "gateway_request_failed"
+  | "gateway_result_invalid"
+  | "runtime_timeout";
 
 class ProductResearchExecutionError extends Error {
   readonly safeReason: string;
@@ -234,30 +248,78 @@ export function buildServerProductResearchPrompt(
   ].join("\n");
 }
 
-async function defaultGenerateProductResearch(prompt: string, signal: AbortSignal) {
-  let oidcToken: string;
-  try {
-    const { getVercelOidcToken } = await import("@vercel/oidc");
-    oidcToken = await getVercelOidcToken({ expirationBufferMs: 30_000 });
-  } catch {
-    throw new ProductResearchExecutionError("oidc_unavailable");
-  }
-  if (!oidcToken || oidcToken.length > 16_384) {
-    throw new ProductResearchExecutionError("oidc_unavailable");
-  }
+function errorRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
 
+export function classifyProductResearchGatewayFailure(
+  error: unknown,
+  signalAborted = false,
+): ProductResearchGatewayFailureReason {
+  if (signalAborted) return "runtime_timeout";
+
+  const queue: unknown[] = [error];
+  const seen = new Set<unknown>();
+  let inspected = 0;
+  while (queue.length > 0 && inspected < 12) {
+    const candidate = queue.shift();
+    if (candidate == null || seen.has(candidate)) continue;
+    seen.add(candidate);
+    inspected += 1;
+    const record = errorRecord(candidate);
+    if (!record) continue;
+
+    switch (record.name) {
+      case "GatewayAuthenticationError": return "gateway_authentication_error";
+      // ai@6 deliberately redacts GatewayAuthenticationError to this generic
+      // name in production; it is produced only by its auth wrapper.
+      case "GatewayError": return "gateway_authentication_error";
+      case "GatewayForbiddenError": return "gateway_forbidden";
+      case "GatewayModelNotFoundError": return "gateway_model_not_found";
+      case "GatewayRateLimitError": return "gateway_rate_limited";
+      case "GatewayTimeoutError": return "gateway_timeout";
+      case "AI_NoObjectGeneratedError":
+      case "NoObjectGeneratedError": return "gateway_result_invalid";
+    }
+
+    const statusCode = typeof record.statusCode === "number" && Number.isInteger(record.statusCode)
+      ? record.statusCode
+      : null;
+    switch (statusCode) {
+      case 401: return "gateway_authentication_error";
+      case 402: return "gateway_billing_required";
+      case 403: return "gateway_forbidden";
+      case 404: return "gateway_model_not_found";
+      case 408:
+      case 504: return "gateway_timeout";
+      case 429: return "gateway_rate_limited";
+    }
+
+    // AI SDK retry failures retain their last provider error. Traverse only
+    // known error linkage fields and never inspect messages or response bodies.
+    if (record.lastError != null) queue.push(record.lastError);
+    if (Array.isArray(record.errors)) queue.push(...record.errors.slice(-3).reverse());
+    if (record.cause != null) queue.push(record.cause);
+  }
+  return "gateway_request_failed";
+}
+
+async function defaultGenerateProductResearch(prompt: string, signal: AbortSignal) {
   try {
-    const { createGateway, generateText, Output } = await import("ai");
-    const gateway = createGateway({
-      apiKey: oidcToken,
-      headers: { "ai-gateway-auth-method": "oidc" },
-    });
+    const { generateText, Output } = await import("ai");
     const result = await generateText({
-      model: gateway(SERVER_PRODUCT_RESEARCH_MODEL),
+      // A provider/model string lets ai@6 resolve the deployment's refreshed
+      // VERCEL_OIDC_TOKEN automatically. Do not snapshot or forward it here.
+      model: SERVER_PRODUCT_RESEARCH_MODEL,
       output: Output.object({ schema: productResearchResultSchema }),
       prompt,
       maxOutputTokens: 16_384,
-      maxRetries: 1,
+      // Gateway provider routing plus the durable DB job retry already cover
+      // transient failures. Avoid an opaque SDK retry consuming the function's
+      // finalization reserve.
+      maxRetries: 0,
       abortSignal: signal,
       timeout: { totalMs: AI_GATEWAY_TIMEOUT_MS },
       providerOptions: {
@@ -270,7 +332,9 @@ async function defaultGenerateProductResearch(prompt: string, signal: AbortSigna
     return result.output;
   } catch (error) {
     if (error instanceof ProductResearchExecutionError) throw error;
-    throw new ProductResearchExecutionError(signal.aborted ? "runtime_timeout" : "gateway_request_failed");
+    throw new ProductResearchExecutionError(
+      classifyProductResearchGatewayFailure(error, signal.aborted),
+    );
   }
 }
 

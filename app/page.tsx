@@ -2607,7 +2607,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (!response.ok) throw new Error(payload.message ?? "AI 상품정보 작업 상태를 확인하지 못했습니다.");
       if (payload.status === "succeeded") {
         if (payload.result?.mode === "cli-research") return payload.result;
-        throw new ProductResearchTerminalError("완료된 상품정보 작업의 결과 형식을 확인하지 못했습니다. 새 작업으로 다시 시도해 주세요.");
+        throw new ProductResearchTerminalError("gateway_result_invalid");
       }
       if (payload.status === "failed" || payload.status === "cancelled") {
         throw new ProductResearchTerminalError(payload.error);
