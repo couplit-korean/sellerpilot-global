@@ -195,7 +195,7 @@ test("gateway-only once claims the gateway without AI token or local Codex tools
   }
 });
 
-test("gateway-only deployment assets keep secrets external and require a persistent supervisor", async () => {
+test("legacy gateway-only assets keep secrets external but production stays Vercel-only", async () => {
   const [worker, packageJson, dockerfile, service, documentation] = await Promise.all([
     readFile(workerPath, "utf8"),
     readFile(resolve(projectRoot, "package.json"), "utf8"),
@@ -216,7 +216,9 @@ test("gateway-only deployment assets keep secrets external and require a persist
   assert.match(service, /Restart=always/);
   assert.match(service, /EnvironmentFile=\/etc\/sellerpilot\/channel-gateway\.env/);
   assert.doesNotMatch(service, /spw_[A-Za-z0-9_-]+/);
-  assert.match(documentation, /not the daemon\s+host/);
-  assert.match(documentation, /20260828141000_enable_ebay_asq_inquiry_reply_lineage\.sql/);
-  assert.match(documentation, /Do not report remote\s+CS as complete/);
+  assert.match(documentation, /POST \/api\/internal\/channel-gateway-drain/);
+  assert.match(documentation, /production fallback이 아니다/);
+  assert.match(documentation, /20260828210000_non_cs_release_integrity\.sql/);
+  assert.match(documentation, /실제 상품 게시·배송 확정·고객 답변 성공과\s+동일하지 않다/);
+  assert.doesNotMatch(documentation, /not the daemon\s+host/i);
 });

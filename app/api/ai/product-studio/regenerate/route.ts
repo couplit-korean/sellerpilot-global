@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 import { aiGeneratedAssetIds } from "../../../../../lib/ai-generated-assets";
+import { readStudioWorkerReadiness } from "../../../../../lib/studio-worker-readiness-server";
 
 export const runtime = "nodejs";
 
@@ -18,6 +19,15 @@ export async function POST(request: Request) {
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ message: "재제작할 이미지 정보를 확인해 주세요." }, { status: 400 });
+  }
+
+  const readiness = await readStudioWorkerReadiness(admin);
+  if (!readiness.available) {
+    return NextResponse.json({
+      code: "AI_WORKER_UNAVAILABLE",
+      workerAvailable: false,
+      message: readiness.message,
+    }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
   const { data, error } = await admin.userClient.rpc("sellerpilot_create_asset_regeneration_job", {

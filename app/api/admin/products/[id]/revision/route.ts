@@ -5,6 +5,7 @@ import { productRevisionJobRequestSchema } from "../../../../../../lib/ai-cli-co
 import { withPromiseTimeout } from "../../../../../../lib/promise-timeout";
 import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } from "../../../../../../lib/studio-image-paths";
 import { createSignedStudioImageDownloader, verifyPreservedStudioImages } from "../../../../../../lib/studio-image-validation";
+import { readStudioWorkerReadiness } from "../../../../../../lib/studio-worker-readiness-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -88,6 +89,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     await admin.serviceClient.storage.from("sellerpilot-ai").remove(allUploadedPaths);
     return true;
   };
+
+  const readiness = await readStudioWorkerReadiness(admin);
+  if (!readiness.available) {
+    const cleaned = await abandonAndCleanupIfUncreated();
+    return NextResponse.json({
+      code: "AI_WORKER_UNAVAILABLE",
+      workerAvailable: false,
+      cleanupPending: !cleaned,
+      message: readiness.message,
+    }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+  }
 
   const download = await studioRevisionValidationDownloader(allUploadedPaths, admin);
   const verified = download ? await verifyPreservedStudioImages({

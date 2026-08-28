@@ -110,11 +110,13 @@ export async function runClaimedCompetitorProductRefresh({
     };
   }
 
-  if (!searched.available) {
-    return releaseAfterSearchFailure(product, searched.providers, release, false);
-  }
-
-  const items = searched.items.map((item) => ({ ...item, matcherVersion }));
+  // A completed search with no available provider is still durable provider
+  // truth. Finish the fenced claim with an empty item snapshot so the UI can
+  // distinguish failed/unavailable providers from a successful zero-match
+  // search. Only an exception thrown by search itself takes the release path.
+  const items = searched.available
+    ? searched.items.map((item) => ({ ...item, matcherVersion }))
+    : [];
   try {
     const savedCount = await complete({ product, items, providers: searched.providers });
     if (!Number.isFinite(savedCount) || savedCount < 0) {
@@ -122,6 +124,13 @@ export async function runClaimedCompetitorProductRefresh({
         result: failedResult(product, searched.providers),
         infrastructureFailure: true,
         failureStage: "snapshot_complete",
+      };
+    }
+    if (!searched.available) {
+      return {
+        result: failedResult(product, searched.providers),
+        infrastructureFailure: false,
+        failureStage: null,
       };
     }
     return {

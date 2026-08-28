@@ -19,6 +19,22 @@ test("registration keeps product research before required seller fields and uses
   assert.equal(page.match(/productSaleConfigurations\.map\(/g)?.length, 2);
 });
 
+test("every registration card exposes keyboard and touch details without changing the active-card labels", async () => {
+  const page = await readFile(pageUrl, "utf8");
+  const cardStart = page.indexOf("const expanded = expandedActivityId === activity.id");
+  const cardEnd = page.indexOf("</article>;", cardStart);
+  assert.notEqual(cardStart, -1);
+  assert.notEqual(cardEnd, -1);
+  const card = page.slice(cardStart, cardEnd);
+
+  assert.doesNotMatch(card, /const expanded = isActive &&/);
+  assert.match(card, /<button type="button" className="registration-card-inspect" aria-expanded=\{expanded\} aria-controls=\{`registration-live-\$\{activity\.id\}`\}/);
+  assert.match(card, /isActive \? "실시간 상태 보기" : "작업 상세 보기"/);
+  assert.match(card, /isActive \? "현재 작업 상태" : "작업 상세"/);
+  assert.match(card, /<p>\{activity\.message \|\| statusDetail\} \{progress\.label\}<\/p>/);
+  assert.match(card, /channel\.message \|\| "채널 응답 대기"/);
+});
+
 test("notification popover closes only on an outside pointer or Escape and cleans up both listeners", async () => {
   const page = await readFile(pageUrl, "utf8");
   const effectStart = page.indexOf("const closeOnOutside = (event: PointerEvent)");

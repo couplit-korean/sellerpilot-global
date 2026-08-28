@@ -21,6 +21,10 @@ function status(lastSeenAt: string | null, scope: "ai" | "legacy_combined" = "ai
 }
 
 test("studio admission accepts only a fresh exact AI-scope heartbeat and returns no worker metadata", () => {
+  // The worker's normal idle poll can reach 30 seconds plus jitter and a claim
+  // request itself is bounded at 30 seconds. Admission must not flap during
+  // that healthy interval.
+  assert.ok(studioWorkerHeartbeatFreshnessMs > 61_000);
   const ready = resolveStudioWorkerReadiness(status(new Date(nowMs - 5_000).toISOString()), { nowMs });
   assert.equal(ready.available, true);
   assert.equal(ready.reason, "ready");
@@ -39,8 +43,11 @@ test("studio admission accepts only a fresh exact AI-scope heartbeat and returns
 });
 
 test("product studio route and clients fail closed without turning explicit worker absence into reconciliation polling", async () => {
-  const [route, studio, page] = await Promise.all([
+  const [route, regenerateRoute, revisionRoute, readinessServer, studio, page] = await Promise.all([
     readFile(new URL("../app/api/ai/product-studio/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/ai/product-studio/regenerate/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/products/[id]/revision/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/studio-worker-readiness-server.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
   ]);
@@ -51,6 +58,14 @@ test("product studio route and clients fail closed without turning explicit work
   assert.match(route, /code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,180}workerAvailable: false/);
   assert.match(route, /export async function GET\(request: Request\)/);
   assert.doesNotMatch(route, /fingerprint|token_hash|last_seen_at/);
+  assert.match(readinessServer, /sellerpilot_ai_runtime_status/);
+  assert.match(readinessServer, /withPromiseTimeout\([\s\S]{0,220}10_000/);
+  assert.match(regenerateRoute, /readStudioWorkerReadiness\(admin\)[\s\S]{0,260}code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,220}status: 503/);
+  assert.ok(
+    revisionRoute.indexOf("const readiness = await readStudioWorkerReadiness(admin)")
+      < revisionRoute.indexOf('admin.userClient.rpc("sellerpilot_create_product_revision_job"'),
+  );
+  assert.match(revisionRoute, /code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,220}cleanupPending: !cleaned[\s\S]{0,220}status: 503/);
 
   const terminalWorkerRejection = studio.indexOf('queued.code === "AI_WORKER_UNAVAILABLE"');
   const ambiguousAdmission = studio.indexOf("const ambiguousResponse");

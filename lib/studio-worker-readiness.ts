@@ -1,4 +1,8 @@
-export const studioWorkerHeartbeatFreshnessMs = 30_000;
+// An idle worker can legitimately wait for about 31 seconds (30-second
+// exponential backoff plus jitter) before the next claim updates last_seen_at.
+// Keep enough room for one bounded 30-second claim request as well, otherwise a
+// healthy worker is intermittently rejected exactly when the queue is idle.
+export const studioWorkerHeartbeatFreshnessMs = 90_000;
 const studioWorkerClockSkewToleranceMs = 5_000;
 
 export type StudioWorkerReadinessReason =
@@ -85,7 +89,7 @@ export function resolveStudioWorkerReadiness(
       || heartbeatAgeMs >= studioWorkerHeartbeatFreshnessMs) {
     return unavailableReadiness(
       "heartbeat_stale",
-      "AI 제작 작업자의 연결 신호가 30초 이상 지나 상품 분석을 시작하지 않았습니다. 작업자를 다시 실행해 주세요.",
+      "AI 제작 작업자의 연결 신호가 90초 이상 지나 상품 분석을 시작하지 않았습니다. 작업자를 다시 실행해 주세요.",
       nowMs,
     );
   }

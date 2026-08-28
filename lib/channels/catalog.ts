@@ -228,7 +228,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       orders: polling("등록 고정 IP에서 결제완료 주문을 최대 7일 단위로 주기 조회"),
       shipment: vendorDocsRequired("발주·송장 API 서비스 권한과 공식 엔드포인트 확인 필요"),
       claims: vendorDocsRequired("취소·반품 API 서비스 권한과 공식 엔드포인트 확인 필요"),
-      inquiries: unsupported("공개 개발 가이드와 API 검색에 판매자 문의 조회 API가 제공되지 않음"),
+      inquiries: vendorDocsRequired("공식 상품 API에 상품 Q&A 목록·답변 기능이 존재하며, 로그인 개발 가이드의 상세 계약과 현재 Key 서비스 권한 확인 필요"),
       settlements: vendorDocsRequired("정산 API 서비스 권한과 공식 엔드포인트 확인 필요"),
       webhooks: unsupported("공개 OPEN API 가이드에 판매자 주문·문의 웹훅이 확인되지 않음"),
     },

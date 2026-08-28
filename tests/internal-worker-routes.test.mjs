@@ -55,9 +55,9 @@ test("periodic channel sync preserves idempotent partial results and surfaces da
   assert.match(source, /status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required" && status !== "reconciliation_required"/);
   assert.match(source, /const reconnectRequired = results\.filter\(\(result\) => result\.status === "reconnect_required"\)\.length/);
   assert.match(source, /const reconciliationRequired = results\.filter\(\(result\) => result\.status === "reconciliation_required"\)\.length/);
-  assert.match(source, /ok: failed === 0 && reconnectRequired === 0 && reconciliationRequired === 0/);
+  assert.match(source, /ok: failed === 0\s*&& reconnectRequired === 0\s*&& reconciliationRequired === 0/);
   assert.match(source, /const databaseWideFailure = results\.length > 0 && infrastructureFailures === results\.length/);
-  assert.match(source, /status: databaseWideFailure[\s\S]{0,180}infrastructureFailures > 0 \|\| reconnectRequired > 0 \|\| reconciliationRequired > 0[\s\S]{0,80}\? 207/);
+  assert.match(source, /status: databaseWideFailure[\s\S]{0,260}infrastructureFailures > 0[\s\S]{0,160}reconciliationRequired > 0[\s\S]{0,120}pushRequiresAttention[\s\S]{0,80}\? 207/);
 });
 
 test("competitor scheduler bounds one durable claim and preserves pending gateway work", async () => {
@@ -144,6 +144,7 @@ test("Kakao scheduler owns each delivery through a non-repeating send and reconc
 
 test("maintenance sweeps ambiguous Kakao sends into reconciliation instead of retrying them", async () => {
   const source = await readFile(routeUrls.maintenance, "utf8");
+  assert.match(source, /global: \{ fetch: createBoundedSupabaseFetch\(MAINTENANCE_SUPABASE_TIMEOUT_MS\) \}/);
   assert.match(source, /sellerpilot_service_sweep_stale_kakao_notifications/);
   assert.match(source, /sellerpilot_service_sweep_stale_tracx_mutations/);
   assert.match(source, /sellerpilot_service_sweep_stale_lazada_replies/);

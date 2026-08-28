@@ -41,6 +41,9 @@ test("cover-screen status, calendar and fixed actions stay reachable", async () 
   assert.match(cover, /\.commerce-service-rail\s*\{[^}]*gap:\s*4px/);
   assert.match(cover, /\.commerce-service-rail strong\s*\{[^}]*min-width:\s*82px/);
   assert.match(cover, /\.commerce-service-rail span:nth-of-type\(4\)\s*\{[^}]*padding-right:\s*4px;[^}]*padding-left:\s*4px/);
+  assert.match(cover, /\.commerce-service-rail em\s*\{[^}]*display:\s*inline-flex;[^}]*max-width:\s*220px/);
+  assert.match(cover, /\.commerce-service-rail span,\s*\.commerce-service-rail em\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere/);
+  assert.doesNotMatch(cover, /\.commerce-service-rail (?:span|em)[^{]*\{[^}]*display:\s*none/);
   assert.match(cover, /\.cs-filter-actions\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.match(cover, /\.analysis-start-bar\s*\{[^}]*flex-direction:\s*column/);
   assert.match(cover, /\.analysis-start-bar > button\s*\{[^}]*width:\s*100%;[^}]*min-height:\s*44px/);

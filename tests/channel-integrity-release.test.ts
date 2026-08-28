@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { channelCatalog } from "../lib/channels/catalog";
 import { channelOperationAvailable } from "../lib/channels/operation-availability";
 import { shipmentVerificationSummary, shipmentWriteAvailability } from "../lib/channels/shipment-release";
 
@@ -13,6 +14,8 @@ test("11번가 검증된 상품 등록·전체 원본 기반 수정과 미검증
   assert.equal(channelOperationAvailable("elevenst", "orders.get"), false);
   assert.equal(channelOperationAvailable("elevenst", "shipment.confirm"), false);
   assert.equal(channelOperationAvailable("elevenst", "inquiries.list"), false);
+  assert.equal(channelCatalog.elevenst.capabilities.inquiries.mode, "vendor_docs_required");
+  assert.match(channelCatalog.elevenst.capabilities.inquiries.note, /공식.*상품 Q&A.*상세 계약/);
 });
 
 test("문의·배송 UI가 구현되지 않은 외부 쓰기를 실행 가능으로 노출하지 않는다", () => {

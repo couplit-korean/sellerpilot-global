@@ -386,7 +386,7 @@ test("product edit preserves sold-out stock and bounded promises cannot hang for
 });
 
 test("today dashboard routes and tablet overflow fix remain wired", async () => {
-  const [page, publishWorkbench, mobileStyles, commerceStyles, studio, competitorScheduler, operationsSnapshotRoute, mobilePushManager] = await Promise.all([
+  const [page, publishWorkbench, mobileStyles, commerceStyles, studio, competitorScheduler, operationsSnapshotRoute, mobilePushManager, competitorProviderSnapshot] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
@@ -395,6 +395,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
     readFile(new URL("../app/api/internal/competitor-prices/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-push-manager.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/competitor-provider-snapshot.ts", import.meta.url), "utf8"),
   ]);
   assert.match(page, /onNavigate\("registration-activity", "failed"\)[^\n]*등록·분석 재시도/);
   assert.match(page, /등록·분석 재시도/);
@@ -468,7 +469,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(operationsSnapshotRoute, /mutationError\.code === "23505"/);
   assert.match(competitorScheduler, /searchCompetitorProviders\([\s\S]{0,120}registry,[\s\S]{0,80}claimed\.query,[\s\S]{0,80}claimed\.aliases/);
   assert.match(competitorScheduler, /sellerpilot_service_complete_competitor_price_refresh/);
-  assert.match(page, /status: "searched" \| "unavailable" \| "failed" \| "pending"/);
+  assert.match(competitorProviderSnapshot, /status: CompetitorProviderTerminalStatus \| "pending"/);
   assert.match(page, /brave_marketplace_web: "Shopee·Lazada·Temu 웹 검색"/);
   assert.match(page, /competitorProviders\.slice\(0, 4\)/);
   assert.match(page, /provider\.status === "pending" \? "조회 진행 중"/);

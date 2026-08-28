@@ -160,7 +160,11 @@ test("worker uses lifecycle retry for heartbeat and both completion endpoints", 
 });
 
 test("gateway worker heartbeats for the full provider lifecycle and preserves state after ownership loss", async () => {
-  const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const [source, listingRuntime, oauthRuntime] = await Promise.all([
+    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/provider-listing-runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/provider-oauth-runtime.ts", import.meta.url), "utf8"),
+  ]);
   const gatewayProcessStart = source.indexOf("async function processGatewayJob(job)");
   const gatewayProcessEnd = source.indexOf("console.log(`SellerPilot ChatGPT CLI worker 시작", gatewayProcessStart);
   const gatewayProcess = source.slice(gatewayProcessStart, gatewayProcessEnd);
@@ -172,8 +176,10 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.match(source, /setInterval\(scheduleTouch, AI_HEARTBEAT_INTERVAL_MS\)/);
   assert.match(gatewayProcess, /await gatewayHeartbeat\.start\(\)/);
   assert.ok((gatewayProcess.match(/await assertGatewayLeaseHealthy\(\)/g) ?? []).length >= 10);
-  assert.match(gatewayProcess, /prepareShopeeGlobalListing\([\s\S]*assertGatewayLeaseHealthy/);
-  assert.match(gatewayProcess, /prepareLazadaListing\(credential, operationArguments, assertGatewayLeaseHealthy, markExternalWriteStarted\)/);
+  assert.match(gatewayProcess, /prepareMarketplaceListingArguments\(\{[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*beginProviderMutation: markExternalWriteStarted/);
+  assert.match(listingRuntime, /prepareShopeeGlobalListing\(input\)[\s\S]*mediaMutationObserved: true/);
+  assert.match(listingRuntime, /await input\.hooks\.assertLeaseHealthy\(\);[\s\S]*await input\.hooks\.beginProviderMutation\(\);[\s\S]*await fetch/);
+  assert.match(listingRuntime, /assertPublicReferenceUrl\(imageUrl, \{ signal: input\.signal \}\)[\s\S]*await input\.hooks\.beginProviderMutation\(\)[\s\S]*lazadaRequest/);
   assert.match(gatewayProcess, /await assertGatewayLeaseHealthy\(\);[\s\S]*await stopGatewayHeartbeat\(\);[\s\S]*persistWorkerCompletion/);
   assert.ok(finalCompletion > gatewayProcess.indexOf("await stopGatewayHeartbeat()"));
   assert.match(gatewayProcess, /effectiveError = heartbeatError/);
@@ -188,8 +194,9 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.match(gatewayProcess, /reconciliation_required"[\s\S]*credentialRefresh \? \{ credentialRefresh \}/);
   assert.match(gatewayProcess, /!credentialMutationInFlight && credentialRefresh/);
   assert.match(gatewayProcess, /markExternalMutationStarted/);
-  assert.match(gatewayProcess, /job\.channel === "ebay"\) result = await ebayOAuthResult/);
-  assert.match(source, /async function ebayOAuthResult[\s\S]*await onExternalMutationStart\(\)[\s\S]*exchangeEbayOAuthToken[\s\S]*await onCredentialRefresh/);
+  assert.match(gatewayProcess, /executeProviderOAuthExchange\(job, \{[\s\S]*beginCredentialMutation: markExternalMutationStarted[\s\S]*stageCredentialRefresh: rememberCredentialRefresh/);
+  assert.match(oauthRuntime, /async function exchangeEbayOAuth\([\s\S]*await beginCredentialMutation\(hooks\);[\s\S]*exchangeEbayOAuthToken[\s\S]*recoveryOnly: true[\s\S]*fetchEbayTradingUserIdentity[\s\S]*oauthComplete: true/);
+  assert.match(oauthRuntime, /if \(job\.channel === "ebay"\)[\s\S]*exchangeEbayOAuth/);
   assert.match(gatewayProcess, /terminalOwnershipLoss[\s\S]*\[401, 404, 409\]/);
   assert.ok((gatewayProcess.match(/GATEWAY_COMPLETION_TRANSIENT_GRACE_MS/g) ?? []).length >= 2);
 });

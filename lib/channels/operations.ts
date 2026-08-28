@@ -343,6 +343,73 @@ function inventoryQuantityVerificationStep(
   };
 }
 
+type SmartstoreOptionStockExpectation = {
+  kind: "combination" | "standard";
+  id: string;
+  quantity: number;
+};
+
+function smartstoreOptionStockExpectations(body: Record<string, unknown>) {
+  const optionInfo = objectValue(body, "optionInfo", false);
+  const groups = [
+    { kind: "combination" as const, values: objectArray(optionInfo.optionCombinations) },
+    { kind: "standard" as const, values: objectArray(optionInfo.optionStandards) },
+  ];
+  const expectations: SmartstoreOptionStockExpectation[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const option of group.values) {
+      const id = String(option.id ?? "").trim();
+      const quantity = Number(option.stockQuantity);
+      const key = `${group.kind}:${id}`;
+      if (!id || !Number.isInteger(quantity) || quantity < 0 || quantity > 99_999_999 || seen.has(key)) {
+        return [];
+      }
+      seen.add(key);
+      expectations.push({ kind: group.kind, id, quantity });
+    }
+  }
+  return expectations;
+}
+
+function smartstoreOptionStockReadbackStep(
+  remote: RemoteResponse,
+  expectations: SmartstoreOptionStockExpectation[],
+): ChannelOperationStep {
+  const verifiedStep = step("option-stock-readback", remote);
+  const originProduct = objectValue(remote.data, "originProduct", false);
+  const detailAttribute = objectValue(originProduct, "detailAttribute", false);
+  const optionInfo = objectValue(detailAttribute, "optionInfo", false);
+  const actualByKey = new Map<string, number>();
+  for (const group of [
+    { kind: "combination" as const, values: objectArray(optionInfo.optionCombinations) },
+    { kind: "standard" as const, values: objectArray(optionInfo.optionStandards) },
+  ]) {
+    for (const option of group.values) {
+      const id = String(option.id ?? "").trim();
+      const quantity = Number(option.stockQuantity);
+      if (id && Number.isFinite(quantity)) actualByKey.set(`${group.kind}:${id}`, quantity);
+    }
+  }
+  const mismatches = expectations.filter((expectation) => (
+    actualByKey.get(`${expectation.kind}:${expectation.id}`) !== expectation.quantity
+  ));
+  const verified = verifiedStep.ok && expectations.length > 0 && mismatches.length === 0;
+  return {
+    ...verifiedStep,
+    ok: verified,
+    data: {
+      ...verifiedStep.data,
+      expectedOptionCount: expectations.length,
+      verifiedOptionCount: expectations.length - mismatches.length,
+      sellerpilotVerification: verified
+        ? "INVENTORY_OPTION_QUANTITIES_VERIFIED"
+        : "INVENTORY_OPTION_QUANTITIES_MISMATCH",
+      sellerpilotMismatchOptionIds: mismatches.slice(0, 40).map((item) => item.id),
+    },
+  };
+}
+
 type EbayListingSiteResolution = {
   itemId: string;
   cacheKey: string;
@@ -2573,11 +2640,24 @@ async function executeSmartstore(input: ExecuteInput) {
         inventoryQuantityVerificationStep("inventory-readback", verificationRemote, quantity, verificationProduct.stockQuantity),
       ], decodeURIComponent(originProductNo));
     }
-    const body = input.arguments.body
-      ? objectValue(input.arguments, "body")
-      : { stockQuantity: quantity };
+    const body = objectValue(input.arguments, "body");
+    const expectations = smartstoreOptionStockExpectations(body);
+    if (!expectations.length) {
+      return result(input, [{
+        name: "option-stock-preflight",
+        ok: false,
+        status: 400,
+        data: { sellerpilotVerification: "INVENTORY_OPTION_EXPECTATIONS_INVALID" },
+      }], decodeURIComponent(originProductNo));
+    }
     const remote = await request({ method: "PUT", path: `/v1/products/origin-products/${originProductNo}/option-stock`, body });
-    return result(input, [step("option-stock", remote)], decodeURIComponent(originProductNo));
+    const writeStep = step("option-stock", remote);
+    if (!writeStep.ok) return result(input, [writeStep], decodeURIComponent(originProductNo));
+    const readbackRemote = await request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
+    return result(input, [
+      writeStep,
+      smartstoreOptionStockReadbackStep(readbackRemote, expectations),
+    ], decodeURIComponent(originProductNo));
   }
   if (input.operation === "orders.list") {
     const baseQuery = queryParams(input.arguments);

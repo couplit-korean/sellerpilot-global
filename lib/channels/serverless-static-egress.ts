@@ -1,4 +1,9 @@
-export const SERVERLESS_STATIC_EGRESS_CHANNELS = ["coupang", "smartstore"] as const;
+export const SERVERLESS_STATIC_EGRESS_CHANNELS = [
+  "coupang",
+  "smartstore",
+  "elevenst",
+  "temu",
+] as const;
 
 export type ServerlessStaticEgressChannel = (typeof SERVERLESS_STATIC_EGRESS_CHANNELS)[number];
 

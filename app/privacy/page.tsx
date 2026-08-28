@@ -9,7 +9,7 @@ export const metadata = {
 const sections = [
   ["1. 처리 목적", "SellerPilot은 판매자가 연결한 마켓플레이스의 상품 등록, 주문 처리, 배송 상태 확인, 고객 문의 대응, 보안 감사에 필요한 범위에서만 데이터를 처리합니다. 판매자와 마켓플레이스가 합의한 목적 외의 광고·프로파일링에는 사용하지 않습니다."],
   ["2. 처리하는 정보", "상품·SKU·가격·재고·주문번호·주문 상태와, 주문 이행에 필요한 경우 구매자 이름 및 마켓플레이스가 제공한 배송·연락 정보가 포함될 수 있습니다. 비밀번호와 API 비밀값은 암호화된 자격증명 저장소에 보관하며 일반 화면이나 작업 로그에 표시하지 않습니다."],
-  ["3. 처리 위치와 수탁자", "Temu처럼 고정 송신 IP가 필요한 마켓플레이스 API 호출은 대한민국에 위치한 운영자 관리 전용 작업자에서 처리합니다. 애플리케이션 요청과 작업 완료 결과는 Vercel의 미국 리전에서 처리하고, 운영 데이터와 암호화된 자격증명은 AWS 싱가포르 리전의 Supabase에 저장합니다. 각 처리 환경과 공급자는 서비스 제공·보안·장애 복구 목적에 한해 데이터를 처리합니다."],
+  ["3. 처리 위치와 수탁자", "애플리케이션 요청과 지원되는 마켓플레이스 API 작업은 운영 프로젝트의 Vercel 인프라에서 처리합니다. 고정 송신 IP가 필요한 채널은 Vercel Static IP, 데이터베이스 허용 정책, 요청별 송신 경로 확인이 모두 일치한 경우에만 전송하며, 하나라도 확인되지 않으면 호출하지 않습니다. AI 이미지 제작에 필요한 ChatGPT OAuth 처리는 운영자 관리 전용 작업자에서 수행하고 자격정보는 해당 기기의 암호화된 키체인 밖으로 전송하지 않습니다. 운영 데이터와 암호화된 채널 자격증명은 Supabase 싱가포르 리전에 저장합니다. 각 처리 환경과 공급자는 서비스 제공·보안·장애 복구 목적에 한해 데이터를 처리합니다."],
   ["4. 보유기간과 삭제", "배송 완료·취소·환불된 주문 및 해결된 고객 문의의 직접 식별자와 자유 입력 내용은 목적 종료 후 최대 30일 이내 자동 익명화합니다. 채널 작업자의 원격 응답 원문과 완료된 AI 작업 파일은 30일 이내 삭제합니다. 공개 상품 이미지는 해당 상품의 판매·오류 재처리에 필요한 동안 보관하고, 상품 삭제 요청과 연결된 정리 절차에 따라 제거합니다. 법령상 보존 의무가 있는 비개인 거래 증빙은 필요한 기간 동안 분리 보관할 수 있습니다."],
   ["5. 보호조치", "전송 구간은 TLS 1.2 이상을 사용하고, 저장된 채널 자격증명은 Vault에서 암호화합니다. 역할 기반 관리자 접근, 판매자별 데이터 분리, 쓰기 작업 재확인, 멱등성 키, 감사 로그, 정기 토큰 갱신과 30일 보관기간 정리를 적용합니다."],
   ["6. 정보주체의 권리", "정보주체는 접근, 정정, 삭제, 처리 제한을 요청할 수 있습니다. 구매가 이루어진 마켓플레이스의 개인정보 문의 절차 또는 SellerPilot 운영자와 체결된 계약상 연락 창구로 요청하면, 해당 마켓플레이스와 협력해 신원을 확인하고 법정 기한 내 처리합니다."],
@@ -24,7 +24,7 @@ export default function PrivacyPage() {
       <span>Marketplace data protection</span>
     </header>
     <article>
-      <p className="privacy-kicker">PUBLIC POLICY · EFFECTIVE 2026-08-25</p>
+      <p className="privacy-kicker">PUBLIC POLICY · EFFECTIVE 2026-08-28</p>
       <h1>개인정보 처리 및<br />마켓플레이스 데이터 보호 정책</h1>
       <p className="privacy-lead">SellerPilot은 상품 등록과 주문 이행에 필요한 최소 데이터만 처리하고, 채널별 접근 권한과 보유기간을 기술적으로 제한합니다.</p>
       <div className="privacy-grid">
@@ -32,9 +32,9 @@ export default function PrivacyPage() {
       </div>
       <aside>
         <b>English summary</b>
-        <p>SellerPilot processes marketplace data only for listing, order fulfilment, support, and security. Marketplace API calls that require a fixed source IP run on an operator-managed worker in the Republic of Korea. Application requests and worker completion results are processed by Vercel in the United States, while operational data and encrypted credentials are stored by Supabase on AWS infrastructure in Singapore. Direct identifiers in completed orders and resolved support cases, raw gateway responses, and completed AI work files are erased or anonymized within 30 days after their operational purpose ends. Public product images remain available while required for an active listing or error recovery and are removed through the product-deletion workflow. Data-subject requests are coordinated through the marketplace privacy channel or the operator’s contractual contact.</p>
+        <p>SellerPilot processes marketplace data only for listing, order fulfilment, support, and security. Application requests and supported marketplace API operations run on the production project&apos;s Vercel infrastructure. A fixed-source-IP channel is contacted only when Vercel Static IP routing, the database allow policy, and request-scoped egress attestation all agree; otherwise the operation is blocked. ChatGPT OAuth used for AI image production remains on an operator-managed worker and is not transmitted outside that device&apos;s encrypted keychain. Operational data and encrypted marketplace credentials are stored in the Supabase Singapore region. Direct identifiers in completed orders and resolved support cases, raw gateway responses, and completed AI work files are erased or anonymized within 30 days after their operational purpose ends. Public product images remain available while required for an active listing or error recovery and are removed through the product-deletion workflow. Data-subject requests are coordinated through the marketplace privacy channel or the operator&apos;s contractual contact.</p>
       </aside>
-      <footer><span>Policy version 1.1</span><span>Last reviewed: 2026-08-25</span></footer>
+      <footer><span>Policy version 1.2</span><span>Last reviewed: 2026-08-28</span></footer>
     </article>
   </main>;
 }

@@ -297,7 +297,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
 
   const online = isOnline(selectedWorker?.last_seen_at ?? null);
   const issuedInstallCommand = issued
-    ? `npm run ai:worker:install -- --rotate-token --token-set ${issued.tokenSetId}`
+    ? `npm run ai:worker:install:ai-only -- --rotate-token --token-set ${issued.tokenSetId}`
     : "";
 
   return <section className="cli-runtime-card">

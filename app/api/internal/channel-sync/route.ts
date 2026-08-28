@@ -8,19 +8,26 @@ import {
   configuredServerlessStaticEgressChannels,
   SERVERLESS_STATIC_EGRESS_CHANNELS,
 } from "../../../../lib/channels/serverless-static-egress";
-import { dispatchPendingPushNotifications } from "../../../../lib/push-notifications";
+import {
+  dispatchPendingPushNotifications,
+  getPushPublicConfiguration,
+} from "../../../../lib/push-notifications";
 import { supabaseUrl } from "../../../../lib/supabase/config";
+import { deadlineAfter, deadlineRemaining } from "../../../../lib/time-deadline";
 import {
   createBoundedSupabaseFetch,
   workerRpcErrorMessage,
 } from "../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
-// At most 22 idempotent enqueue RPCs are produced. Four workers keep the
-// 8-second per-RPC worst case within this route's 60-second execution budget
-// without recreating the previous eight-request database spike.
-const PERIODIC_SYNC_ENQUEUE_CONCURRENCY = 4;
+export const maxDuration = 300;
+// At most 25 idempotent enqueue RPCs are produced. Five workers keep them to
+// five 8-second waves while avoiding the serverless drain's eight-claim spike.
+const PERIODIC_SYNC_ENQUEUE_CONCURRENCY = 5;
+const CHANNEL_SYNC_WORK_BUDGET_MS = 240_000;
+const CHANNEL_SYNC_RPC_START_RESERVE_MS = 10_000;
+const CHANNEL_SYNC_PUSH_START_RESERVE_MS = 60_000;
+const CHANNEL_SYNC_PUSH_FINALIZATION_RESERVE_MS = 15_000;
 
 type QueueResult = {
   channel?: unknown;
@@ -68,6 +75,7 @@ async function mapWithConcurrency<T, R>(
 }
 
 async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serverClient>>) {
+  const workDeadline = deadlineAfter(CHANNEL_SYNC_WORK_BUDGET_MS);
   const now = new Date();
   const configuredStaticEgress = new Set(configuredServerlessStaticEgressChannels());
   const blockedInquiryResults: PeriodicSyncResult[] = [];
@@ -84,6 +92,9 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   ]);
 
   const queuedResults = await mapWithConcurrency(queueRequests, PERIODIC_SYNC_ENQUEUE_CONCURRENCY, async ({ channel, operation, payload }): Promise<PeriodicSyncResult> => {
+    if (deadlineRemaining(workDeadline) < CHANNEL_SYNC_RPC_START_RESERVE_MS) {
+      return { channel, operation, status: "failed", infrastructureFailure: true };
+    }
     try {
       const { data, error } = await serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
         p_channel: channel,
@@ -104,8 +115,29 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   });
   const results = [...blockedInquiryResults, ...queuedResults];
 
-  const push = await dispatchPendingPushNotifications(serviceClient, 100)
-    .catch(() => ({ configured: true, claimed: 0, sent: 0, failed: 1 }));
+  const pushDeferred = deadlineRemaining(workDeadline) < CHANNEL_SYNC_PUSH_START_RESERVE_MS;
+  const push = pushDeferred
+    ? {
+        configured: getPushPublicConfiguration().configured,
+        claimed: 0,
+        sent: 0,
+        failed: 0,
+        reconciliationRequired: 0,
+        deferred: 0,
+        finalizationFailed: 0,
+      }
+    : await dispatchPendingPushNotifications(serviceClient, 100, {
+        deadlineMs: workDeadline,
+        finalizationReserveMs: CHANNEL_SYNC_PUSH_FINALIZATION_RESERVE_MS,
+      }).catch(() => ({
+        configured: true,
+        claimed: 0,
+        sent: 0,
+        failed: 0,
+        reconciliationRequired: 0,
+        deferred: 0,
+        finalizationFailed: 1,
+      }));
   const queued = results.filter((result) => result.status === "queued").length;
   const pending = results.filter((result) => result.status === "already_pending").length;
   const reconnectRequired = results.filter((result) => result.status === "reconnect_required").length;
@@ -114,6 +146,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   const failed = results.filter((result) => result.status === "failed").length;
   const infrastructureFailures = results.filter((result) => result.infrastructureFailure).length;
   const databaseWideFailure = results.length > 0 && infrastructureFailures === results.length;
+  const pushRequiresAttention = push.reconciliationRequired > 0 || push.finalizationFailed > 0;
   if (infrastructureFailures > 0) {
     console.error("periodic channel sync enqueue RPC failures", {
       failed: infrastructureFailures,
@@ -122,7 +155,11 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
   }
 
   return NextResponse.json({
-    ok: failed === 0 && reconnectRequired === 0 && reconciliationRequired === 0 && fixedEgressRequired === 0,
+    ok: failed === 0
+      && reconnectRequired === 0
+      && reconciliationRequired === 0
+      && fixedEgressRequired === 0
+      && !pushRequiresAttention,
     scheduledAt: now.toISOString(),
     queued,
     pending,
@@ -132,11 +169,22 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
     failed,
     infrastructureFailures,
     results,
-    push: { configured: push.configured, sent: push.sent, failed: push.failed },
+    push: {
+      configured: push.configured,
+      sent: push.sent,
+      failed: push.failed,
+      reconciliationRequired: push.reconciliationRequired,
+      deferred: pushDeferred || push.deferred > 0,
+      finalizationFailed: push.finalizationFailed,
+    },
   }, {
     status: databaseWideFailure
       ? 503
-      : infrastructureFailures > 0 || reconnectRequired > 0 || reconciliationRequired > 0 || fixedEgressRequired > 0
+      : infrastructureFailures > 0
+          || reconnectRequired > 0
+          || reconciliationRequired > 0
+          || fixedEgressRequired > 0
+          || pushRequiresAttention
         ? 207
         : 200,
     headers: { "cache-control": "no-store, max-age=0" },

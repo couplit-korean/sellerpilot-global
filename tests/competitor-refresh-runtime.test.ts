@@ -72,20 +72,35 @@ test("synthetic pending gateway work retains its claim and never writes a partia
   assert.equal(outcome.infrastructureFailure, false);
 });
 
-test("synthetic unavailable search releases the claim without inventing an infrastructure outage", async () => {
+test("synthetic terminal provider failure completes an empty fenced snapshot without reporting success", async () => {
   let releaseCalls = 0;
+  let completeCalls = 0;
+  let completedItems: Array<CompetitorPriceCandidate & { matcherVersion: string }> = [
+    { ...item, matcherVersion: "should-be-replaced" },
+  ];
+  let completedProviders: CompetitorProviderStatus[] = [];
   const unavailableProvider: CompetitorProviderStatus = { ...searchedProvider, status: "failed", count: 0 };
   const outcome = await runClaimedCompetitorProductRefresh({
     product,
     unavailableProviders: [],
     matcherVersion: "strict-synthetic-v1",
-    search: async () => ({ items: [], providers: [unavailableProvider], available: false, pending: false }),
+    search: async () => ({ items: [item], providers: [unavailableProvider], available: false, pending: false }),
     release: async () => { releaseCalls += 1; return true; },
-    complete: async () => 0,
+    complete: async ({ items, providers }) => {
+      completeCalls += 1;
+      completedItems = items;
+      completedProviders = providers;
+      return 0;
+    },
   });
 
-  assert.equal(releaseCalls, 1);
+  assert.equal(releaseCalls, 0);
+  assert.equal(completeCalls, 1);
+  assert.deepEqual(completedItems, []);
+  assert.deepEqual(completedProviders, [unavailableProvider]);
   assert.equal(outcome.result.ok, false);
+  assert.equal(outcome.result.count, 0);
+  assert.deepEqual(outcome.result.providers, [unavailableProvider]);
   assert.equal(outcome.infrastructureFailure, false);
   assert.equal(outcome.failureStage, null);
 });

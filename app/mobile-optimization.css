@@ -10,6 +10,116 @@
   display: none;
 }
 
+.dashboard-product-readiness {
+  padding: 18px;
+}
+
+.dashboard-product-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-product-readiness-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: inherit;
+  background: #fff;
+  text-align: left;
+}
+
+.dashboard-product-readiness-card.has-error {
+  border-color: #efc8bc;
+  background: #fffaf8;
+}
+
+.dashboard-product-readiness-head {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+}
+
+.dashboard-product-readiness-head > span:nth-child(2),
+.dashboard-product-readiness-head b,
+.dashboard-product-readiness-head small {
+  min-width: 0;
+}
+
+.dashboard-product-readiness-head b,
+.dashboard-product-readiness-head small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-product-readiness-head b {
+  color: #394457;
+  font-size: 12px;
+}
+
+.dashboard-product-readiness-head small {
+  margin-top: 4px;
+  color: #8992a2;
+  font-size: 10px;
+}
+
+.dashboard-product-readiness-thumb {
+  position: relative;
+  display: block;
+  width: 42px;
+  height: 42px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #f3f5f7;
+}
+
+.dashboard-product-readiness-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 11px;
+}
+
+.dashboard-product-readiness-facts > span {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 7px;
+  background: #f5f7f8;
+}
+
+.dashboard-product-readiness-facts small,
+.dashboard-product-readiness-facts b {
+  display: block;
+}
+
+.dashboard-product-readiness-facts small {
+  color: #8d96a5;
+  font-size: 9px;
+}
+
+.dashboard-product-readiness-facts b {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #4d586b;
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-product-readiness-facts .fact-error {
+  background: #fff0eb;
+}
+
+.dashboard-product-readiness-facts .fact-error b {
+  color: #aa4c2d;
+}
+
 /* Keep the fixed desktop sidebar through tablet widths, but stack the two
    dashboard controls once their intrinsic widths no longer fit beside it. */
 @media (min-width: 901px) and (max-width: 1200px) {
@@ -149,6 +259,10 @@
 
   .app-content {
     width: 100%;
+  }
+
+  .dashboard-product-readiness-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .table-wrap,
@@ -2833,6 +2947,7 @@
   .registration-card dt { font-size: 8px; }
   .registration-card dd { font-size: 9px; }
   .competitor-market-groups .competitor-price-grid { grid-auto-columns: minmax(244px, 84vw); }
+  .dashboard-product-readiness-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Keep live operational health visible on phones. Earlier visual layers hide
@@ -2846,15 +2961,29 @@
   }
 
   .commerce-service-rail strong,
-  .commerce-service-rail span:nth-of-type(2),
-  .commerce-service-rail span:nth-of-type(3),
-  .commerce-service-rail span:nth-of-type(4) {
+  .commerce-service-rail span,
+  .commerce-service-rail em {
     display: inline-flex;
     min-height: 32px;
     align-items: center;
   }
 
+  .commerce-service-rail span,
+  .commerce-service-rail em {
+    max-width: 240px;
+    flex: 0 0 auto;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .commerce-service-rail em {
+    margin-left: 0;
+    padding-right: 4px;
+  }
+
   .commerce-service-rail span:nth-of-type(4) {
+    display: inline-flex;
     flex: 0 0 auto;
     padding: 0 8px;
     border: 1px solid rgb(255 255 255 / 16%);
@@ -3039,6 +3168,25 @@
     padding-left: 4px;
   }
 
+  .dashboard-product-readiness-card {
+    padding: 10px;
+  }
+
+  .commerce-service-rail span,
+  .commerce-service-rail em {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .commerce-service-rail em {
+    display: inline-flex;
+    max-width: 220px;
+    flex: 0 0 auto;
+    align-items: center;
+    margin-left: 0;
+    padding: 0 4px;
+  }
+
   .topbar {
     gap: 4px;
     padding-right: max(var(--mobile-gutter), env(safe-area-inset-right));
@@ -3207,6 +3355,16 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+}
+
+@media (max-width: 330px) {
+  .dashboard-product-readiness {
+    padding: 12px 10px;
+  }
+
+  .dashboard-product-readiness-facts {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -34,9 +34,13 @@ test("OAuth completion accepts and canonicalizes a timezone offset", () => {
       ok: true,
       channel: "shopee",
       operation: "oauth.exchange",
-      credentialPayload: { access_token: "new-access-token" },
       expiresAt: "2027-08-25T09:00:00+09:00",
       safeMessage: "Shopee OAuth 토큰 교환을 완료했습니다.",
+    },
+    credentialRefresh: {
+      payload: { access_token: "new-access-token" },
+      expiresAt: "2027-08-25T09:00:00+09:00",
+      oauthComplete: true,
     },
   });
 
@@ -125,7 +129,11 @@ test("channel gateway accepts a staged eBay OAuth completion", () => {
       ok: true,
       channel: "ebay",
       operation: "oauth.exchange",
-      credentialPayload: {
+      expiresAt: "2027-08-25T00:00:00.000Z",
+      safeMessage: "eBay OAuth 토큰 교환을 완료했습니다.",
+    },
+    credentialRefresh: {
+      payload: {
         client_id: "test-client",
         client_secret: "test-secret",
         ru_name: "test-redirect",
@@ -133,11 +141,36 @@ test("channel gateway accepts a staged eBay OAuth completion", () => {
         refresh_token: "new-refresh-token",
       },
       expiresAt: "2027-08-25T00:00:00.000Z",
-      safeMessage: "eBay OAuth 토큰 교환을 완료했습니다.",
+      oauthComplete: true,
     },
   });
 
   assert.equal(parsed.success, true);
+});
+
+test("OAuth completion rejects credentials in response payload or a missing terminal stage", () => {
+  const base = {
+    jobId: "51fc7348-3e07-45ba-94c7-62e5244b511b",
+    claimToken: "f0308779-b8dd-4fbb-8cad-f55fe0d33f2d",
+    status: "succeeded",
+    result: {
+      ok: true,
+      channel: "ebay",
+      operation: "oauth.exchange",
+      expiresAt: "2027-08-25T00:00:00.000Z",
+      safeMessage: "eBay OAuth 토큰 교환을 완료했습니다.",
+    },
+  } as const;
+  assert.equal(gatewayWorkerCompletionSchema.safeParse(base).success, false);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...base,
+    result: { ...base.result, credentialPayload: { access_token: "must-not-escape" } },
+    credentialRefresh: {
+      payload: { access_token: "staged-only" },
+      expiresAt: "2027-08-25T00:00:00.000Z",
+      oauthComplete: true,
+    },
+  }).success, false);
 });
 
 for (const status of ["failed", "reconciliation_required"] as const) {

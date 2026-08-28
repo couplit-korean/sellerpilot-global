@@ -13,7 +13,6 @@ import {
 } from "../lib/ai-generated-assets.ts";
 import { sellerSafeAiJobFailure } from "../lib/ai-worker-error-safety.ts";
 import {
-  assertPublicReferenceUrl as assertPublicUrl,
   fetchPublicReferenceDocument,
 } from "../lib/public-reference-fetch.ts";
 import {
@@ -82,7 +81,9 @@ import { buildMarketplaceMasterStyleBrief } from "../lib/marketplace-style-learn
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
 import { ebayAsqOperationMarketplaceId } from "../lib/channels/ebay-asq.ts";
-import { downloadMarketplaceImage } from "../lib/channels/marketplace-images.ts";
+import { executeProviderOAuthExchange } from "../lib/channels/provider-oauth-runtime.ts";
+import { prepareMarketplaceListingArguments } from "../lib/channels/provider-listing-runtime.ts";
+import { verifyShopeeGlobalListingPostPublish } from "../lib/channels/provider-shopee-post-publish-runtime.ts";
 import { searchElevenstProductVariants } from "../lib/competitor-prices.ts";
 import { executeProviderListingLineageVerification } from "../lib/channels/listing-lineage-verification.ts";
 import {
@@ -143,20 +144,9 @@ import {
   WORKER_COMPLETION_TRANSIENT_GRACE_MS,
   WorkerRequestTerminalError,
 } from "./worker-lifecycle-retry.mjs";
-import {
-  mergeShopeeRequiredAttributes,
-  normalizeCoupangAttributeValue,
-  normalizeTenWonAmount,
-  replaceMarketplaceImageUrls,
-} from "../lib/channels/listing-normalization.ts";
 import { executeChannelOperation, writeChannelOperations } from "../lib/channels/operations.ts";
 import {
   assertShopeeShopProfileTarget,
-  shopeeProviderAccountIdentity,
-  withLazadaProviderAccountIdentity,
-  withProviderAccountIdentity,
-  withoutProviderAccountIdentity,
-  withoutShopeeOAuthAccountState,
 } from "../lib/channels/provider-account-identity.ts";
 import { evaluateTemuEgressIp, parseTemuEgressAllowlist } from "../lib/channels/temu-egress-policy.ts";
 import {
@@ -164,17 +154,7 @@ import {
   ensureLazadaAccessToken,
   ensureShopeeAccessToken,
   ensureShopeeMerchantAccessToken,
-  buildShopeeSignature,
-  coupangRequest,
-  exchangeEbayOAuthToken,
-  exchangeLazadaOAuthToken,
-  exchangeShopeeOAuthToken,
-  fetchEbayTradingUserIdentity,
-  fetchNaverAccessToken,
   lazadaRequest,
-  naverRequest,
-  shopeeMerchantRequest,
-  shopeeEnvironment,
   shopeeRequest,
   textValue,
 } from "../lib/channels/protocols.ts";
@@ -1341,501 +1321,6 @@ async function prepareIdentityCutoutsForJob(result, imageFiles, jobDir, leaseSig
     fallbackName: manualProductName ? null : result.product.name,
   };
   return prepareSourceIdentityCutouts(result, imageFiles, jobDir, leaseSignal, identityAnchor);
-}
-
-function objectRecords(value, depth = 0) {
-  if (depth > 8 || value == null) return [];
-  if (Array.isArray(value)) return value.flatMap((item) => objectRecords(item, depth + 1));
-  if (typeof value !== "object") return [];
-  return [value, ...Object.values(value).flatMap((item) => objectRecords(item, depth + 1))];
-}
-
-async function publicImage(urlValue) {
-  try {
-    return await downloadMarketplaceImage(String(urlValue));
-  } catch {
-    throw new Error("판매채널 이미지 다운로드에 실패했습니다.");
-  }
-}
-
-async function uploadShopeeImage(payload, environment, imageUrl, assertLeaseHealthy, markExternalWriteStarted) {
-  const partnerId = textValue(payload, "partner_id");
-  const partnerKey = textValue(payload, "partner_key");
-  const shopId = textValue(payload, "shop_id");
-  const merchantId = textValue(payload, "merchant_id");
-  const accessToken = textValue(payload, "access_token");
-  const targetId = merchantId || shopId;
-  const targetKey = merchantId ? "merchant_id" : "shop_id";
-  if (!partnerId || !partnerKey || !targetId || !accessToken) throw new Error("SHOPEE_CREDENTIALS_MISSING");
-  const path = "/api/v2/media_space/upload_image";
-  await assertLeaseHealthy();
-  const image = await publicImage(imageUrl);
-  const extension = image.contentType === "image/png" ? "png" : image.contentType === "image/webp" ? "webp" : "jpg";
-  const upload = async (scope) => {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const query = scope === "partner"
-      ? new URLSearchParams({
-          partner_id: partnerId,
-          timestamp: String(timestamp),
-          sign: buildShopeeSignature({ partnerId, partnerKey, path, timestamp }),
-        })
-      : new URLSearchParams({
-          partner_id: partnerId,
-          timestamp: String(timestamp),
-          access_token: accessToken,
-          [targetKey]: targetId,
-          sign: buildShopeeSignature({
-            partnerId,
-            partnerKey,
-            path,
-            timestamp,
-            accessToken,
-            ...(merchantId ? { merchantId } : { shopId }),
-          }),
-        });
-    const form = new FormData();
-    form.append("image", new Blob([image.bytes], { type: image.contentType }), `sellerpilot.${extension}`);
-    await assertLeaseHealthy();
-    await markExternalWriteStarted();
-    const response = await fetch(`${shopeeEnvironment(environment)}${path}?${query}`, {
-      method: "POST",
-      body: form,
-      signal: AbortSignal.timeout(30_000),
-      headers: { accept: "application/json", "user-agent": "SellerPilot-Shopee-Media/1.0" },
-    });
-    return { response, data: await response.json().catch(() => ({})) };
-  };
-  await assertLeaseHealthy();
-  let remote = await upload("target");
-  if (remote.data?.error === "error_sign") {
-    await assertLeaseHealthy();
-    remote = await upload("partner");
-  }
-  const { response, data } = remote;
-  const imageId = String(data?.response?.image_info?.image_id ?? data?.response?.image_id ?? "").trim();
-  if (!response.ok || data?.error || !imageId) throw new Error(`Shopee 이미지 업로드 실패${data?.error ? ` · ${data.error}` : ""}`);
-  return imageId;
-}
-
-async function activeShopeeLogistics(payload, environment, assertLeaseHealthy) {
-  await assertLeaseHealthy();
-  const logisticsRemote = await shopeeRequest({
-    payload,
-    environment,
-    method: "GET",
-    path: "/api/v2/logistics/get_channel_list",
-  });
-  const logistics = objectRecords(logisticsRemote.data)
-    .flatMap((row) => {
-      const id = row.logistics_channel_id ?? row.logistic_id ?? row.channel_id;
-      const enabled = row.enabled ?? row.is_enabled ?? row.preferred;
-      return (typeof id === "string" || typeof id === "number") && enabled !== false && enabled !== 0
-        ? [{ logistic_id: Number(id), enabled: true }]
-        : [];
-    })
-    .filter((row, index, rows) => Number.isSafeInteger(row.logistic_id) && row.logistic_id > 0 && rows.findIndex((item) => item.logistic_id === row.logistic_id) === index);
-  if (!logisticsRemote.response.ok || logisticsRemote.data.error || !logistics.length) throw new Error("Shopee 활성 물류 채널을 확인하지 못했습니다.");
-  return logistics;
-}
-
-async function prepareShopeeListing(payload, environment, argumentsValue, assertLeaseHealthy, markExternalWriteStarted) {
-  const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 9) : [];
-  if (!imageUrls.length) throw new Error("Shopee 등록 이미지가 없습니다.");
-  const imageIds = [];
-  for (const imageUrl of imageUrls) {
-    await assertLeaseHealthy();
-    imageIds.push(await uploadShopeeImage(payload, environment, imageUrl, assertLeaseHealthy, markExternalWriteStarted));
-  }
-
-  const logistics = await activeShopeeLogistics(payload, environment, assertLeaseHealthy);
-  return {
-    ...argumentsValue,
-    body: {
-      ...(argumentsValue.body && typeof argumentsValue.body === "object" ? argumentsValue.body : {}),
-      image: { image_id_list: imageIds },
-      logistic_info: logistics,
-    },
-  };
-}
-
-async function prepareShopeeGlobalListing(merchantPayload, shopPayload, environment, argumentsValue, assertLeaseHealthy, markExternalWriteStarted) {
-  const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 9) : [];
-  if (!imageUrls.length) throw new Error("Shopee 등록 이미지가 없습니다.");
-  const imageIds = [];
-  // Media Space is authorized at shop dimension; the resulting IDs are accepted by GlobalProduct.
-  for (const imageUrl of imageUrls) {
-    await assertLeaseHealthy();
-    imageIds.push(await uploadShopeeImage(shopPayload, environment, imageUrl, assertLeaseHealthy, markExternalWriteStarted));
-  }
-  const logistics = await activeShopeeLogistics(shopPayload, environment, assertLeaseHealthy);
-  const body = argumentsValue.body && typeof argumentsValue.body === "object" ? argumentsValue.body : {};
-  const publish = argumentsValue.publish && typeof argumentsValue.publish === "object" ? structuredClone(argumentsValue.publish) : {};
-  const publishItem = publish.item && typeof publish.item === "object" ? publish.item : {};
-  const categoryId = Number(publishItem.category_id ?? body.category_id);
-  if (!Number.isSafeInteger(categoryId) || categoryId <= 0) throw new Error("Shopee 현지 숍 카테고리가 없습니다.");
-  await assertLeaseHealthy();
-  let attributeRemote = await shopeeRequest({
-    payload: shopPayload,
-    environment,
-    method: "GET",
-    path: "/api/v2/product/get_attribute_tree",
-    query: new URLSearchParams({ category_id_list: String(categoryId), language: "en" }),
-  });
-  if (!attributeRemote.response.ok || attributeRemote.data.error) {
-    await assertLeaseHealthy();
-    attributeRemote = await shopeeRequest({
-      payload: shopPayload,
-      environment,
-      method: "GET",
-      path: "/api/v2/product/get_attributes",
-      query: new URLSearchParams({ category_id: String(categoryId), language: "en" }),
-    });
-  }
-  const attributeRows = objectRecords(attributeRemote.data)
-    .filter((row) => row.attribute_id !== undefined);
-  const attributeMetadata = attributeRows
-    .filter((row) => row.attribute_id !== undefined && (row.is_mandatory !== undefined || row.mandatory !== undefined));
-  if (!attributeRemote.response.ok || attributeRemote.data.error) {
-    const code = String(attributeRemote.data.error ?? attributeRemote.response.status).replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 80);
-    throw new Error(`Shopee 현지 숍 필수 속성을 확인하지 못했습니다${code ? `: ${code}` : ""}`);
-  }
-  const productHint = `${String(publishItem.item_name ?? body.global_item_name ?? "")} ${String(publishItem.description ?? body.description ?? "")}`;
-  const suppliedAttributes = [
-    ...(Array.isArray(body.attribute_list) ? body.attribute_list : []),
-    ...(Array.isArray(publishItem.attribute_list) ? publishItem.attribute_list : []),
-  ];
-  const requiredAttributes = mergeShopeeRequiredAttributes(suppliedAttributes, attributeMetadata, productHint);
-  if (requiredAttributes.unresolved.length) throw new Error(`Shopee 필수 속성 선택값이 없습니다: ${requiredAttributes.unresolved.join(", ")}`);
-  if (requiredAttributes.autoFilled.length) console.log(`[Shopee attribute autofill] category=${categoryId} · ${requiredAttributes.autoFilled.join(" | ").slice(0, 600)}`);
-  publish.item = {
-    ...publishItem,
-    image: { image_id_list: imageIds },
-    logistic: logistics,
-    attribute_list: requiredAttributes.attributes,
-  };
-  return {
-    ...argumentsValue,
-    body: { ...body, image: { image_id_list: imageIds }, attribute_list: requiredAttributes.attributes },
-    publish,
-  };
-}
-
-function xmlEscape(value) {
-  return String(value).replace(/[<>&'"]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[character]);
-}
-
-async function prepareLazadaListing(payload, argumentsValue, assertLeaseHealthy, markExternalWriteStarted) {
-  const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 20) : [];
-  if (!imageUrls.length) throw new Error("Lazada 등록 이미지가 없습니다.");
-  const migrated = [];
-  for (const imageUrl of imageUrls) {
-    await assertLeaseHealthy();
-    await assertPublicUrl(new URL(imageUrl));
-    const xml = `<?xml version="1.0" encoding="UTF-8"?><Request><Image><Url>${xmlEscape(imageUrl)}</Url></Image></Request>`;
-    await markExternalWriteStarted();
-    const remote = await lazadaRequest({ payload, path: "/image/migrate", method: "POST", params: { payload: xml } });
-    const url = String(remote.data?.data?.image?.url ?? "").trim();
-    if (!remote.response.ok || String(remote.data?.code ?? "") !== "0" || !url) throw new Error(`Lazada 이미지 이관 실패${remote.data?.message ? ` · ${remote.data.message}` : ""}`);
-    migrated.push(url);
-  }
-  const request = argumentsValue.request && typeof argumentsValue.request === "object" ? structuredClone(argumentsValue.request) : {};
-  const product = request.Request?.Product;
-  if (!product || typeof product !== "object") throw new Error("CHANNEL_ARGUMENT_REQUIRED:request.Request.Product");
-  const replacements = new Map(imageUrls.map((source, index) => [source, migrated[index]]));
-  const migratedProduct = replaceMarketplaceImageUrls(product, replacements);
-  request.Request.Product = migratedProduct;
-  const listingImages = migrated.slice(0, 8);
-  migratedProduct.Images = { Image: listingImages };
-  const skus = Array.isArray(migratedProduct.Skus?.Sku) ? migratedProduct.Skus.Sku : [];
-  for (const sku of skus) if (sku && typeof sku === "object") sku.Images = { Image: listingImages };
-  return { ...argumentsValue, request };
-}
-
-async function prepareSmartstoreListing(payload, argumentsValue, assertLeaseHealthy, markExternalWriteStarted) {
-  const imageUrls = Array.isArray(argumentsValue.imageUrls) ? [...new Set(argumentsValue.imageUrls.map(String).filter(Boolean))].slice(0, 10) : [];
-  if (!imageUrls.length) throw new Error("네이버 등록 이미지가 없습니다.");
-  await assertLeaseHealthy();
-  const token = await fetchNaverAccessToken(payload);
-  let phone = textValue(payload, "after_service_phone");
-  if (!phone) {
-    await assertLeaseHealthy();
-    const addressRemote = await naverRequest({
-      accessToken: token.accessToken,
-      method: "GET",
-      path: "/v1/seller/addressbooks-for-page",
-      query: new URLSearchParams({ page: "1" }),
-    });
-    const addressBooks = Array.isArray(addressRemote.data?.addressBooks) ? addressRemote.data.addressBooks : [];
-    const address = addressBooks.find((item) => item?.addressType === "REPRESENTATIVE")
-      ?? addressBooks.find((item) => item?.addressType === "RELEASE")
-      ?? addressBooks[0];
-    phone = String(address?.phoneNumber1 ?? address?.phoneNumber2 ?? "").trim();
-    if (!addressRemote.response.ok || !phone) throw new Error("NAVER_AFTER_SERVICE_PHONE_MISSING");
-  }
-  const form = new FormData();
-  for (let index = 0; index < imageUrls.length; index += 1) {
-    await assertLeaseHealthy();
-    const image = await publicImage(imageUrls[index]);
-    const extension = image.contentType === "image/png" ? "png" : image.contentType === "image/webp" ? "webp" : "jpg";
-    form.append("imageFiles", new Blob([image.bytes], { type: image.contentType }), `sellerpilot-${index + 1}.${extension}`);
-  }
-  await assertLeaseHealthy();
-  await markExternalWriteStarted();
-  const uploadResponse = await fetch("https://api.commerce.naver.com/external/v1/product-images/upload", {
-    method: "POST",
-    body: form,
-    signal: AbortSignal.timeout(30_000),
-    headers: { accept: "application/json;charset=UTF-8", authorization: `Bearer ${token.accessToken}`, "user-agent": "SellerPilot-Naver-Media/1.0" },
-  });
-  const uploadData = await uploadResponse.json().catch(() => ({}));
-  const uploadedUrls = Array.isArray(uploadData.images) ? uploadData.images.map((image) => String(image?.url ?? "").trim()).filter(Boolean) : [];
-  if (!uploadResponse.ok || uploadedUrls.length !== imageUrls.length) throw new Error(`네이버 이미지 업로드 실패 · HTTP ${uploadResponse.status}`);
-  const body = argumentsValue.body && typeof argumentsValue.body === "object" ? structuredClone(argumentsValue.body) : {};
-  const originProduct = body.originProduct && typeof body.originProduct === "object" ? body.originProduct : {};
-  originProduct.salePrice = normalizeTenWonAmount(originProduct.salePrice);
-  const detailAttribute = originProduct.detailAttribute && typeof originProduct.detailAttribute === "object" ? originProduct.detailAttribute : {};
-  const existingProvidedNotice = detailAttribute.productInfoProvidedNotice && typeof detailAttribute.productInfoProvidedNotice === "object" ? detailAttribute.productInfoProvidedNotice : {};
-  const existingEtcNotice = existingProvidedNotice.etc && typeof existingProvidedNotice.etc === "object" ? existingProvidedNotice.etc : {};
-  const productName = String(originProduct.name ?? "상품상세 참조").trim() || "상품상세 참조";
-  const sellerCode = String(detailAttribute.sellerCodeInfo?.sellerManagementCode ?? productName).trim() || productName;
-  const providedNotice = String(existingProvidedNotice.productInfoProvidedNoticeType ?? "").trim()
-    ? existingProvidedNotice
-    : {
-        productInfoProvidedNoticeType: "ETC",
-        etc: {
-          returnCostReason: "상품상세 참조",
-          noRefundReason: "상품상세 참조",
-          qualityAssuranceStandard: "상품상세 참조",
-          compensationProcedure: "상품상세 참조",
-          troubleShootingContents: "상품상세 참조",
-          itemName: productName.slice(0, 50),
-          modelName: sellerCode.slice(0, 50),
-          certificateDetails: "해당사항 없음",
-          manufacturer: "상품상세 참조",
-          customerServicePhoneNumber: phone,
-        },
-      };
-  if (providedNotice.productInfoProvidedNoticeType === "ETC") {
-    providedNotice.etc = {
-      ...existingEtcNotice,
-      ...(providedNotice.etc && typeof providedNotice.etc === "object" ? providedNotice.etc : {}),
-      customerServicePhoneNumber: phone,
-    };
-    delete providedNotice.etc.afterServiceDirector;
-  }
-  originProduct.images = {
-    representativeImage: { url: uploadedUrls[0] },
-    optionalImages: uploadedUrls.slice(1).map((url) => ({ url })),
-  };
-  originProduct.detailAttribute = {
-    ...detailAttribute,
-    minorPurchasable: typeof detailAttribute.minorPurchasable === "boolean" ? detailAttribute.minorPurchasable : true,
-    productInfoProvidedNotice: providedNotice,
-    afterServiceInfo: {
-      afterServiceTelephoneNumber: phone,
-      afterServiceGuideContent: "상품 상세 설명과 스마트스토어 판매자 안내를 확인해 주세요.",
-    },
-  };
-  body.originProduct = originProduct;
-  const smartstoreChannelProduct = body.smartstoreChannelProduct && typeof body.smartstoreChannelProduct === "object" ? body.smartstoreChannelProduct : {};
-  body.smartstoreChannelProduct = {
-    ...smartstoreChannelProduct,
-    naverShoppingRegistration: smartstoreChannelProduct.naverShoppingRegistration === true,
-    channelProductDisplayStatusType: ["ON", "SUSPENSION"].includes(String(smartstoreChannelProduct.channelProductDisplayStatusType))
-      ? smartstoreChannelProduct.channelProductDisplayStatusType
-      : "ON",
-  };
-  return { ...argumentsValue, body };
-}
-
-function nestedContent(data) {
-  if (Array.isArray(data?.content)) return data.content;
-  if (Array.isArray(data?.data?.content)) return data.data.content;
-  if (Array.isArray(data?.data)) return data.data;
-  return [];
-}
-
-function coupangUsable(value) {
-  if (value === true || value === 1) return true;
-  const normalized = String(value ?? "").trim().toUpperCase();
-  return normalized === "TRUE" || normalized === "Y" || normalized === "YES" || normalized === "1";
-}
-
-function preferredKoreanAddress(addresses) {
-  if (!Array.isArray(addresses)) return null;
-  const korean = addresses.filter((address) => String(address?.countryCode ?? "").trim().toUpperCase() === "KR");
-  return korean.find((address) => String(address?.addressType ?? "").trim().toUpperCase().includes("ROADNAME"))
-    ?? korean.find((address) => String(address?.addressType ?? "").trim().toUpperCase() === "JIBUN")
-    ?? korean[0]
-    ?? null;
-}
-
-function safeCoupangCenterSummary(centers) {
-  return [
-    `total=${centers.length}`,
-    `usable=${centers.filter((center) => coupangUsable(center?.usable)).length}`,
-    `domestic=${centers.filter((center) => preferredKoreanAddress(center?.placeAddresses)).length}`,
-  ].join(",");
-}
-
-function positiveFee(center) {
-  for (const key of ["returnFee02kg", "returnFee05kg", "returnFee10kg", "returnFee20kg", "vendorCreditFee02kg", "vendorCreditFee05kg", "vendorCashFee02kg", "vendorCashFee05kg"]) {
-    const value = Number(center?.[key]);
-    if (Number.isFinite(value) && value > 0) return value;
-  }
-  return null;
-}
-
-function coupangAttributeValue(attribute, facts) {
-  const name = String(attribute?.attributeTypeName ?? "").replace(/\s+/g, "");
-  const usableUnits = Array.isArray(attribute?.usableUnits) ? attribute.usableUnits.map(String) : [];
-  const firstUnit = (...candidates) => candidates.find((unit) => usableUnits.includes(unit)) ?? "";
-  if (/총?수량|개수|구성수/.test(name)) {
-    const unit = firstUnit("개", "세트", "팩", "박스", "매") || String(attribute?.basicUnit ?? "개").replace(/^없음$/, "개");
-    return `1${unit}`;
-  }
-  if (/중량|무게/.test(name) && Number(facts?.weightKg) > 0) {
-    const unit = firstUnit("g", "kg");
-    return unit === "kg" ? `${Number(facts.weightKg)}kg` : `${Math.round(Number(facts.weightKg) * 1_000)}g`;
-  }
-  if (/크기|사이즈/.test(name) && Array.isArray(facts?.dimensionsCm) && facts.dimensionsCm.length === 3) {
-    return `${facts.dimensionsCm.map(Number).join("x")}cm`.slice(0, 30);
-  }
-  const material = String(facts?.material ?? "").trim();
-  if (/재질|소재/.test(name) && material && !/미확인|미기재/.test(material)) return material.slice(0, 30);
-  return "";
-}
-
-function coupangMetadata(data) {
-  const value = data?.data && typeof data.data === "object" && !Array.isArray(data.data) ? data.data : data;
-  return value && typeof value === "object" ? value : {};
-}
-
-function prepareCoupangItem(itemValue, metadata, facts) {
-  const item = itemValue && typeof itemValue === "object" ? structuredClone(itemValue) : {};
-  const metaAttributes = Array.isArray(metadata.attributes) ? metadata.attributes : [];
-  const supplied = new Map((Array.isArray(item.attributes) ? item.attributes : [])
-    .filter((attribute) => attribute && typeof attribute === "object")
-    .map((attribute) => [String(attribute.attributeTypeName ?? "").trim(), String(attribute.attributeValueName ?? "").trim()]));
-  const metadataByName = new Map(metaAttributes.map((attribute) => [String(attribute?.attributeTypeName ?? "").trim(), attribute]));
-  for (const [name, value] of supplied) supplied.set(name, normalizeCoupangAttributeValue(metadataByName.get(name), value));
-
-  const missing = [];
-  const mandatorySingles = metaAttributes.filter((attribute) => attribute?.required === "MANDATORY" && String(attribute?.groupNumber ?? "NONE") === "NONE" && attribute?.exposed === "EXPOSED");
-  for (const attribute of mandatorySingles) {
-    const name = String(attribute?.attributeTypeName ?? "").trim();
-    if (!name || supplied.get(name)) continue;
-    const derived = coupangAttributeValue(attribute, facts);
-    if (derived) supplied.set(name, derived);
-    else missing.push(name);
-  }
-  const groups = Map.groupBy(
-    metaAttributes.filter((attribute) => attribute?.required === "MANDATORY" && !["", "NONE"].includes(String(attribute?.groupNumber ?? "")) && attribute?.exposed === "EXPOSED"),
-    (attribute) => String(attribute.groupNumber),
-  );
-  for (const attributes of groups.values()) {
-    if (attributes.some((attribute) => supplied.get(String(attribute?.attributeTypeName ?? "").trim()))) continue;
-    const derivedAttribute = attributes.map((attribute) => [attribute, coupangAttributeValue(attribute, facts)]).find((entry) => entry[1]);
-    if (derivedAttribute) supplied.set(String(derivedAttribute[0].attributeTypeName).trim(), derivedAttribute[1]);
-    else missing.push(attributes.map((attribute) => String(attribute?.attributeTypeName ?? "").trim()).filter(Boolean).join(" 또는 "));
-  }
-  if (missing.length) throw new Error(`COUPANG_MANDATORY_ATTRIBUTES_MISSING:${missing.join(", ")}`);
-  item.attributes = [...supplied.entries()].map(([attributeTypeName, attributeValueName]) => ({
-    attributeTypeName,
-    attributeValueName,
-    ...(metadataByName.get(attributeTypeName)?.exposed ? { exposed: metadataByName.get(attributeTypeName).exposed } : {}),
-  }));
-
-  if (!Array.isArray(item.notices) || !item.notices.length) {
-    const noticeCategories = Array.isArray(metadata.noticeCategories) ? metadata.noticeCategories : [];
-    const noticeCategory = noticeCategories.find((category) => Array.isArray(category?.noticeCategoryDetailNames) && category.noticeCategoryDetailNames.some((detail) => detail?.required === "MANDATORY"))
-      ?? noticeCategories[0];
-    const details = Array.isArray(noticeCategory?.noticeCategoryDetailNames) ? noticeCategory.noticeCategoryDetailNames : [];
-    item.notices = details
-      .filter((detail) => detail?.required === "MANDATORY")
-      .map((detail) => ({
-        noticeCategoryName: String(noticeCategory.noticeCategoryName),
-        noticeCategoryDetailName: String(detail.noticeCategoryDetailName),
-        content: "상품상세 참조",
-      }));
-    if (!item.notices.length) throw new Error("COUPANG_NOTICE_METADATA_MISSING");
-  }
-
-  if (!Array.isArray(item.certifications) || !item.certifications.length) {
-    const mandatoryCertifications = (Array.isArray(metadata.certifications) ? metadata.certifications : []).filter((certification) => certification?.required === "MANDATORY");
-    const coded = mandatoryCertifications.filter((certification) => certification?.dataType === "CODE");
-    if (coded.length) throw new Error(`COUPANG_CERTIFICATION_REQUIRED:${coded.map((certification) => certification?.name || certification?.certificationType).join(", ")}`);
-    item.certifications = mandatoryCertifications.map((certification) => ({ certificationType: certification.certificationType, certificationCode: "" }));
-  }
-  return item;
-}
-
-async function prepareCoupangListing(payload, argumentsValue, assertLeaseHealthy) {
-  const requestedBy = textValue(payload, "requested_by");
-  if (!requestedBy) throw new Error("COUPANG_WING_USER_ID_MISSING");
-  const body = argumentsValue.body && typeof argumentsValue.body === "object" ? structuredClone(argumentsValue.body) : {};
-  const categoryCode = Number(body.displayCategoryCode);
-  if (!Number.isSafeInteger(categoryCode) || categoryCode <= 0) throw new Error("COUPANG_DISPLAY_CATEGORY_REQUIRED");
-  const vendorId = textValue(payload, "vendor_id");
-  await assertLeaseHealthy();
-  const [outboundRemote, returnRemote, metadataRemote] = await Promise.all([
-    coupangRequest({ payload, method: "GET", path: "/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound", query: new URLSearchParams({ pageSize: "50", pageNum: "1" }) }),
-    coupangRequest({ payload, method: "GET", path: `/v2/providers/openapi/apis/api/v5/vendors/${encodeURIComponent(vendorId)}/returnShippingCenters`, query: new URLSearchParams({ pageNum: "1", pageSize: "50" }) }),
-    coupangRequest({ payload, method: "GET", path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/${categoryCode}` }),
-  ]);
-  if (!outboundRemote.response.ok) throw new Error(`COUPANG_OUTBOUND_QUERY_FAILED:${outboundRemote.response.status}`);
-  if (!returnRemote.response.ok) throw new Error(`COUPANG_RETURN_CENTER_QUERY_FAILED:${returnRemote.response.status}`);
-  if (!metadataRemote.response.ok) throw new Error(`COUPANG_CATEGORY_METADATA_FAILED:${metadataRemote.response.status}`);
-
-  const outboundCenters = nestedContent(outboundRemote.data);
-  const returnCenters = nestedContent(returnRemote.data);
-  const outbound = outboundCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
-  const returnCenter = returnCenters.find((center) => coupangUsable(center?.usable) && preferredKoreanAddress(center?.placeAddresses));
-  if (!returnCenter) throw new Error(`COUPANG_USABLE_RETURN_CENTER_MISSING:${safeCoupangCenterSummary(returnCenters)}`);
-  if (!outbound) throw new Error(`COUPANG_USABLE_OUTBOUND_CENTER_MISSING:${safeCoupangCenterSummary(outboundCenters)}`);
-  const returnAddress = preferredKoreanAddress(returnCenter.placeAddresses);
-  const contractedDeliveryCode = String(returnCenter.deliverCode ?? "").trim();
-  const returnFee = positiveFee(returnCenter) ?? 3_000;
-  const returnCenterCode = contractedDeliveryCode
-    ? String(returnCenter.returnCenterCode)
-    : "NO_RETURN_CENTERCODE";
-  const metadata = coupangMetadata(metadataRemote.data);
-  const items = Array.isArray(body.items) ? body.items.map((item) => {
-    const prepared = prepareCoupangItem(item, metadata, argumentsValue.facts);
-    prepared.originalPrice = normalizeTenWonAmount(prepared.originalPrice);
-    prepared.salePrice = normalizeTenWonAmount(prepared.salePrice);
-    return prepared;
-  }) : [];
-  if (!items.length) throw new Error("COUPANG_ITEMS_MISSING");
-
-  return {
-    ...argumentsValue,
-    body: {
-      ...body,
-      vendorId,
-      displayProductName: body.displayProductName || body.sellerProductName,
-      saleStartedAt: body.saleStartedAt || new Date(Date.now() - 60_000).toISOString().slice(0, 19),
-      saleEndedAt: body.saleEndedAt || "2099-01-01T23:59:59",
-      deliveryCompanyCode: contractedDeliveryCode || "CJGLS",
-      deliveryChargeType: "FREE",
-      deliveryCharge: 0,
-      freeShipOverAmount: 0,
-      deliveryChargeOnReturn: returnFee,
-      remoteAreaDeliverable: "N",
-      unionDeliveryType: "UNION_DELIVERY",
-      outboundShippingPlaceCode: Number(outbound.outboundShippingPlaceCode),
-      returnCenterCode,
-      returnChargeName: String(returnCenter.shippingPlaceName),
-      companyContactNumber: String(returnAddress.companyContactNumber),
-      returnZipCode: String(returnAddress.returnZipCode),
-      returnAddress: String(returnAddress.returnAddress),
-      returnAddressDetail: String(returnAddress.returnAddressDetail),
-      returnCharge: returnFee,
-      vendorUserId: requestedBy,
-      requested: true,
-      items,
-    },
-  };
 }
 
 function htmlToText(html) {
@@ -4604,302 +4089,6 @@ async function processJob(job) {
   }
 }
 
-function numericIdList(value) {
-  const source = Array.isArray(value)
-    ? value
-    : typeof value === "string"
-      ? value.split(/[\s,]+/)
-      : [];
-  return [...new Set(source.map((item) => String(item)).filter((item) => /^\d+$/.test(item)))];
-}
-
-function collectNumericIds(value, keys, depth = 0) {
-  if (depth > 8 || value == null) return [];
-  if (Array.isArray(value)) return [...new Set(value.flatMap((item) => collectNumericIds(item, keys, depth + 1)))];
-  if (typeof value !== "object") return [];
-  const row = value;
-  const direct = Object.entries(row)
-    .filter(([key]) => keys.includes(key))
-    .flatMap(([, item]) => numericIdList(Array.isArray(item) ? item : [item]));
-  return [...new Set([...direct, ...Object.values(row).flatMap((item) => collectNumericIds(item, keys, depth + 1))])];
-}
-
-function futureExpiry(value, fallbackSeconds) {
-  const parsed = Number(value);
-  const seconds = Number.isFinite(parsed) && parsed > 0
-    ? Math.min(parsed, 10 * 365 * 86_400)
-    : fallbackSeconds;
-  return new Date(Date.now() + seconds * 1000).toISOString();
-}
-
-function tokenExpiry(data, fallbackSeconds) {
-  return futureExpiry(data.expire_in ?? data.expires_in, fallbackSeconds);
-}
-
-async function shopeeOAuthResult(job, onExternalMutationStart, onCredentialRefresh) {
-  const partnerId = textValue(job.credential, "partner_id");
-  const partnerKey = textValue(job.credential, "partner_key");
-  const code = String(job.request?.code ?? "").trim();
-  const mainAccountId = String(job.request?.mainAccountId ?? "").trim();
-  const shopId = String(job.request?.shopId ?? "").trim();
-  if (!partnerId || !partnerKey || !code || (!mainAccountId && !shopId)) throw new Error("Shopee OAuth 입력값이 부족합니다.");
-  await onExternalMutationStart();
-  const remote = await exchangeShopeeOAuthToken({
-    environment: job.environment,
-    partnerId,
-    partnerKey,
-    code,
-    ...(mainAccountId ? { mainAccountId } : { shopId }),
-  });
-  const accessToken = textValue(remote.data, "access_token");
-  const refreshToken = textValue(remote.data, "refresh_token");
-  const errorCode = textValue(remote.data, "error");
-  if (!remote.response.ok || errorCode || !accessToken || !refreshToken) throw new Error(`Shopee OAuth 토큰 교환 실패${errorCode ? ` · ${errorCode}` : ""}`);
-  const refreshTokenExpiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
-  const authorizationExpiresAt = String(job.request?.authorizationExpiresAt ?? "").trim()
-    || new Date(Date.now() + 365 * 86_400_000).toISOString();
-  const accountIdentity = shopeeProviderAccountIdentity(mainAccountId
-    ? { mainAccountId }
-    : { shopId });
-  const nextSecret = withProviderAccountIdentity(withoutShopeeOAuthAccountState(job.credential), accountIdentity);
-
-  if (mainAccountId) {
-    Object.assign(nextSecret, {
-      main_account_id: mainAccountId,
-      main_account_access_token: accessToken,
-      main_account_refresh_token: refreshToken,
-      authorization_expires_at: authorizationExpiresAt,
-    });
-    await onCredentialRefresh({
-      payload: withoutProviderAccountIdentity(nextSecret),
-      expiresAt: authorizationExpiresAt,
-      recoveryOnly: true,
-    });
-    const shopIds = collectNumericIds(remote.data, ["shop_id", "shopId", "shop_id_list"]);
-    const merchantIds = collectNumericIds(remote.data, ["merchant_id", "merchantId", "merchant_id_list"]);
-    if (!shopIds.length) throw new Error("Shopee 승인 계정의 Shop ID 목록이 없습니다.");
-    const targets = [];
-    for (const targetShopId of shopIds) {
-      await onExternalMutationStart();
-      const targetRemote = await exchangeShopeeOAuthToken({
-        environment: job.environment,
-        partnerId,
-        partnerKey,
-        refreshToken,
-        shopId: targetShopId,
-      });
-      const targetAccess = textValue(targetRemote.data, "access_token");
-      const targetRefresh = textValue(targetRemote.data, "refresh_token");
-      if (!targetRemote.response.ok || textValue(targetRemote.data, "error") || !targetAccess || !targetRefresh) throw new Error(`Shopee Shop ${targetShopId} 토큰 발급 실패`);
-      targets.push({
-        type: "shop",
-        id: targetShopId,
-        access_token: targetAccess,
-        refresh_token: targetRefresh,
-        access_token_expires_at: tokenExpiry(targetRemote.data, 14_400),
-        refresh_token_expires_at: refreshTokenExpiresAt,
-      });
-      const primaryShop = targets.find((target) => target.type === "shop");
-      const partialSecret = {
-        ...nextSecret,
-        main_account_id: mainAccountId,
-        main_account_access_token: accessToken,
-        main_account_refresh_token: refreshToken,
-        authorization_expires_at: authorizationExpiresAt,
-        shop_ids: shopIds,
-        merchant_ids: merchantIds,
-        shopee_targets: [...targets],
-        ...(primaryShop ? {
-          shop_id: primaryShop.id,
-          access_token: primaryShop.access_token,
-          refresh_token: primaryShop.refresh_token,
-          access_token_expires_at: primaryShop.access_token_expires_at,
-          refresh_token_expires_at: primaryShop.refresh_token_expires_at,
-        } : {}),
-      };
-      Object.assign(nextSecret, partialSecret);
-      await onCredentialRefresh({ payload: partialSecret, expiresAt: authorizationExpiresAt });
-    }
-    for (const merchantId of merchantIds) {
-      await onExternalMutationStart();
-      const targetRemote = await exchangeShopeeOAuthToken({
-        environment: job.environment,
-        partnerId,
-        partnerKey,
-        refreshToken,
-        merchantId,
-      });
-      const targetAccess = textValue(targetRemote.data, "access_token");
-      const targetRefresh = textValue(targetRemote.data, "refresh_token");
-      if (!targetRemote.response.ok || textValue(targetRemote.data, "error") || !targetAccess || !targetRefresh) throw new Error(`Shopee Merchant ${merchantId} 토큰 발급 실패`);
-      targets.push({
-        type: "merchant",
-        id: merchantId,
-        access_token: targetAccess,
-        refresh_token: targetRefresh,
-        access_token_expires_at: tokenExpiry(targetRemote.data, 14_400),
-        refresh_token_expires_at: refreshTokenExpiresAt,
-      });
-      const partialSecret = {
-        ...nextSecret,
-        main_account_id: mainAccountId,
-        main_account_access_token: accessToken,
-        main_account_refresh_token: refreshToken,
-        authorization_expires_at: authorizationExpiresAt,
-        shop_ids: shopIds,
-        merchant_ids: merchantIds,
-        shopee_targets: [...targets],
-      };
-      Object.assign(nextSecret, partialSecret);
-      await onCredentialRefresh({ payload: partialSecret, expiresAt: authorizationExpiresAt });
-    }
-    const primaryShop = targets.find((target) => target.type === "shop");
-    Object.assign(nextSecret, {
-      main_account_id: mainAccountId,
-      main_account_access_token: accessToken,
-      main_account_refresh_token: refreshToken,
-      shop_ids: shopIds,
-      merchant_ids: merchantIds,
-      shopee_targets: targets,
-      shop_id: primaryShop.id,
-      access_token: primaryShop.access_token,
-      refresh_token: primaryShop.refresh_token,
-      access_token_expires_at: primaryShop.access_token_expires_at,
-      refresh_token_expires_at: primaryShop.refresh_token_expires_at,
-    });
-  } else {
-    Object.assign(nextSecret, {
-      shop_id: shopId,
-      shop_ids: [shopId],
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      access_token_expires_at: tokenExpiry(remote.data, 14_400),
-      refresh_token_expires_at: refreshTokenExpiresAt,
-      shopee_targets: [{
-        type: "shop",
-        id: shopId,
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        access_token_expires_at: tokenExpiry(remote.data, 14_400),
-        refresh_token_expires_at: refreshTokenExpiresAt,
-      }],
-    });
-  }
-  nextSecret.authorization_expires_at = authorizationExpiresAt;
-  await onCredentialRefresh({
-    payload: { ...nextSecret },
-    expiresAt: authorizationExpiresAt,
-    oauthComplete: true,
-  });
-  return {
-    ok: true,
-    channel: "shopee",
-    operation: "oauth.exchange",
-    credentialPayload: nextSecret,
-    expiresAt: authorizationExpiresAt,
-    safeMessage: `Shopee ${numericIdList(nextSecret.shop_ids).length}개 숍 OAuth 토큰 교환을 완료했습니다.`,
-  };
-}
-
-async function lazadaOAuthResult(job, onExternalMutationStart, onCredentialRefresh) {
-  const appKey = textValue(job.credential, "app_key");
-  const appSecret = textValue(job.credential, "app_secret");
-  const code = String(job.request?.code ?? "").trim();
-  if (!appKey || !appSecret || !code) throw new Error("Lazada OAuth 입력값이 부족합니다.");
-  await onExternalMutationStart();
-  const remote = await exchangeLazadaOAuthToken({ appKey, appSecret, code });
-  const accessToken = textValue(remote.data, "access_token");
-  const refreshToken = textValue(remote.data, "refresh_token");
-  const responseCode = String(remote.data.code ?? "");
-  if (!remote.response.ok || !accessToken || !refreshToken || (responseCode && responseCode !== "0")) throw new Error(`Lazada OAuth 토큰 교환 실패${responseCode ? ` · ${responseCode}` : ""}`);
-  const accessExpiresAt = tokenExpiry(remote.data, 2_592_000);
-  const refreshExpiresAt = futureExpiry(remote.data.refresh_expires_in, 15_552_000);
-  const providerAccount = withLazadaProviderAccountIdentity({}, remote.data);
-  const requestedCountry = String(job.request?.country || "").trim().toLowerCase();
-  const providerCountry = textValue(remote.data, "country").toLowerCase();
-  const authorizedCountries = new Set(providerAccount.countryUserInfo.map((item) => item.country));
-  const country = authorizedCountries.has(providerCountry)
-    ? providerCountry
-    : authorizedCountries.has(requestedCountry)
-      ? requestedCountry
-      : providerAccount.countryUserInfo[0]?.country;
-  if (!country) throw new Error("LAZADA_ACCOUNT_IDENTITY_INVALID");
-  const result = {
-    ok: true,
-    channel: "lazada",
-    operation: "oauth.exchange",
-    credentialPayload: withProviderAccountIdentity({
-      ...job.credential,
-      country,
-      account_platform: providerAccount.accountPlatform,
-      country_user_info: providerAccount.countryUserInfo,
-      access_token: accessToken,
-      refresh_token: refreshToken,
-      access_token_expires_at: accessExpiresAt,
-      refresh_token_expires_at: refreshExpiresAt,
-    }, providerAccount.identity),
-    expiresAt: refreshExpiresAt,
-    safeMessage: "Lazada OAuth 토큰 교환을 완료했습니다.",
-  };
-  await onCredentialRefresh({ payload: result.credentialPayload, expiresAt: result.expiresAt, oauthComplete: true });
-  return result;
-}
-
-async function ebayOAuthResult(job, onExternalMutationStart, onCredentialRefresh) {
-  const clientId = textValue(job.credential, "client_id");
-  const clientSecret = textValue(job.credential, "client_secret");
-  const ruName = textValue(job.credential, "ru_name");
-  const code = String(job.request?.code ?? "").trim();
-  if (!clientId || !clientSecret || !ruName || !code) throw new Error("eBay OAuth 입력값이 부족합니다.");
-
-  await onExternalMutationStart();
-  const remote = await exchangeEbayOAuthToken({
-    environment: job.environment,
-    clientId,
-    clientSecret,
-    ruName,
-    code,
-  });
-  const accessToken = textValue(remote.data, "access_token");
-  const refreshToken = textValue(remote.data, "refresh_token");
-  if (!remote.response.ok || !accessToken || !refreshToken) {
-    throw new Error("eBay OAuth 토큰 교환 실패");
-  }
-
-  const accessExpiresAt = futureExpiry(remote.data.expires_in, 7_200);
-  const refreshExpiresAt = futureExpiry(remote.data.refresh_token_expires_in, 47_304_000);
-  const recoveryPayload = {
-    ...job.credential,
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    access_token_expires_at: accessExpiresAt,
-    refresh_token_expires_at: refreshExpiresAt,
-  };
-  await onCredentialRefresh({
-    payload: withoutProviderAccountIdentity(recoveryPayload),
-    expiresAt: refreshExpiresAt,
-    recoveryOnly: true,
-  });
-  const providerAccount = await fetchEbayTradingUserIdentity({
-    environment: job.environment,
-    accessToken,
-  });
-  await onExternalMutationStart();
-  const credentialPayload = withProviderAccountIdentity({
-    ...recoveryPayload,
-    ...(providerAccount.userId ? { ebay_user_id: providerAccount.userId } : {}),
-  }, providerAccount.identity);
-  await onCredentialRefresh({ payload: credentialPayload, expiresAt: refreshExpiresAt, oauthComplete: true });
-  return {
-    ok: true,
-    channel: "ebay",
-    operation: "oauth.exchange",
-    credentialPayload,
-    expiresAt: refreshExpiresAt,
-    safeMessage: "eBay OAuth 토큰 교환을 완료했습니다.",
-  };
-}
-
 async function processGatewayJob(job) {
   const claimToken = String(job?.claim_token ?? "");
   if (!UUID_PATTERN.test(claimToken)) {
@@ -4911,6 +4100,7 @@ async function processGatewayJob(job) {
   let listingMediaWriteObserved = false;
   let credentialMutationInFlight = false;
   let credentialRefresh;
+  const gatewayExecutionSignal = AbortSignal.timeout(180_000);
   const assertGatewayLeaseHealthy = () => gatewayHeartbeat.assertHealthy();
   const markExternalWriteStarted = async () => {
     await assertGatewayLeaseHealthy();
@@ -4959,10 +4149,11 @@ async function processGatewayJob(job) {
     let result;
     await assertGatewayLeaseHealthy();
     if (job.operation === "oauth.exchange") {
-      if (job.channel === "shopee") result = await shopeeOAuthResult(job, markExternalMutationStarted, rememberCredentialRefresh);
-      else if (job.channel === "lazada") result = await lazadaOAuthResult(job, markExternalMutationStarted, rememberCredentialRefresh);
-      else if (job.channel === "ebay") result = await ebayOAuthResult(job, markExternalMutationStarted, rememberCredentialRefresh);
-      else throw new Error("이 채널은 OAuth 교환 작업을 지원하지 않습니다.");
+      result = await executeProviderOAuthExchange(job, {
+        assertLeaseHealthy: assertGatewayLeaseHealthy,
+        beginCredentialMutation: markExternalMutationStarted,
+        stageCredentialRefresh: rememberCredentialRefresh,
+      });
     } else if (job.operation === "shops.get") {
       let remote;
       if (job.channel === "shopee") {
@@ -5075,17 +4266,6 @@ async function processGatewayJob(job) {
           const merchantEnsured = await ensureShopeeMerchantAccessToken(credential, job.environment, 10 * 60 * 1000, merchantId, markExternalMutationStarted, rememberCredentialRefresh, true);
           credential = merchantEnsured.payload;
           if (merchantEnsured.refreshed || credentialRefresh) credentialRefresh = { payload: merchantEnsured.payload, expiresAt: merchantEnsured.credentialExpiresAt };
-          if (job.operation === "listing.create" && operationArguments.resumeOnly !== true) {
-            operationArguments = await prepareShopeeGlobalListing(
-              credential,
-              shopeeShopCredential,
-              job.environment,
-              operationArguments,
-              assertGatewayLeaseHealthy,
-              markExternalWriteStarted,
-            );
-            listingMediaWriteObserved = true;
-          }
         } else {
           const shopId = String(operationArguments.shopId ?? operationArguments.shop_id ?? "").trim();
           await assertGatewayLeaseHealthy();
@@ -5117,20 +4297,21 @@ async function processGatewayJob(job) {
         }
       }
       if (job.operation === "listing.create" || job.operation === "listing.update") {
-        if (job.channel === "shopee") {
-          operationArguments = operationArguments.globalProduct === true
-            ? operationArguments
-            : await prepareShopeeListing(credential, job.environment, operationArguments, assertGatewayLeaseHealthy, markExternalWriteStarted);
-          if (operationArguments.globalProduct !== true) listingMediaWriteObserved = true;
-        } else if (job.channel === "lazada") {
-          operationArguments = await prepareLazadaListing(credential, operationArguments, assertGatewayLeaseHealthy, markExternalWriteStarted);
-          listingMediaWriteObserved = true;
-        } else if (job.channel === "smartstore") {
-          operationArguments = await prepareSmartstoreListing(credential, operationArguments, assertGatewayLeaseHealthy, markExternalWriteStarted);
-          listingMediaWriteObserved = true;
-        } else if (job.channel === "coupang" && job.operation === "listing.create") {
-          operationArguments = await prepareCoupangListing(credential, operationArguments, assertGatewayLeaseHealthy);
-        }
+        const preparedListing = await prepareMarketplaceListingArguments({
+          channel: job.channel,
+          operation: job.operation,
+          credential,
+          arguments: operationArguments,
+          environment: job.environment,
+          signal: gatewayExecutionSignal,
+          hooks: {
+            assertLeaseHealthy: assertGatewayLeaseHealthy,
+            beginProviderMutation: markExternalWriteStarted,
+          },
+          ...(shopeeShopCredential ? { shopeeShopCredential } : {}),
+        });
+        operationArguments = preparedListing.arguments;
+        listingMediaWriteObserved = preparedListing.mediaMutationObserved;
       }
       if (job.channel === "lazada" && job.operation === "categories.suggest") {
         console.log(`[Lazada category debug] query=${String(operationArguments.query || "").slice(0, 160)}`);
@@ -5158,83 +4339,19 @@ async function processGatewayJob(job) {
         const names = result.steps.flatMap((entry) => entry?.data?.data?.categorySuggestions ?? []).map((entry) => entry.categoryName).slice(0, 10);
         console.log(`[Lazada category debug] candidates=${names.join(" | ")}`);
       }
-      if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true && result.ok && result.remoteId && shopeeShopCredential) {
-        const readLocalItem = async () => {
-          await assertGatewayLeaseHealthy();
-          return shopeeRequest({
-            payload: shopeeShopCredential,
-            environment: job.environment,
-            method: "GET",
-            path: "/api/v2/product/get_item_base_info",
-            query: new URLSearchParams({ item_id_list: result.remoteId }),
-          });
-        };
-        const availableStock = (remote) => {
-          const items = remote.data?.response?.item_list;
-          const value = Array.isArray(items) ? items[0]?.stock_info_v2?.summary_info?.total_available_stock : undefined;
-          return Number.isFinite(Number(value)) ? Number(value) : null;
-        };
-        const globalAvailableStock = (remote) => {
-          const items = remote.data?.response?.global_item_list;
-          const stocks = Array.isArray(items) ? items[0]?.stock_info : undefined;
-          if (!Array.isArray(stocks)) return null;
-          return stocks.reduce((total, stock) => total + Number(stock?.normal_stock ?? 0), 0);
-        };
-        const requestedStock = Number(operationArguments.publish?.item?.seller_stock?.[0]?.stock ?? operationArguments.publish?.item?.normal_stock);
-        let localReadback = await readLocalItem();
-        let localOk = localReadback.response.ok && !localReadback.data.error;
-        result.steps.push({
-          name: "local-item-readback-initial",
-          ok: localOk,
-          status: localReadback.response.status,
-          data: localReadback.data,
+      if (job.channel === "shopee" && job.operation === "listing.create" && operationArguments.globalProduct === true && shopeeShopCredential) {
+        result = await verifyShopeeGlobalListingPostPublish({
+          result,
+          merchantCredential: credential,
+          shopCredential: shopeeShopCredential,
+          arguments: operationArguments,
+          environment: job.environment,
+          signal: gatewayExecutionSignal,
+          hooks: {
+            assertLeaseHealthy: assertGatewayLeaseHealthy,
+            beginProviderMutation: markExternalWriteStarted,
+          },
         });
-        if (localOk && Number.isFinite(requestedStock) && requestedStock >= 0 && availableStock(localReadback) !== requestedStock) {
-          await assertGatewayLeaseHealthy();
-          const stockRemote = await shopeeRequest({
-            payload: shopeeShopCredential,
-            environment: job.environment,
-            method: "POST",
-            path: "/api/v2/product/update_stock",
-            body: { item_id: Number(result.remoteId), stock_list: [{ seller_stock: [{ stock: requestedStock }] }] },
-          });
-          const failures = stockRemote.data?.response?.failure_list;
-          let stockOk = stockRemote.response.ok && !stockRemote.data.error && (!Array.isArray(failures) || failures.length === 0);
-          result.steps.push({ name: "local-stock-reconcile", ok: stockOk, status: stockRemote.response.status, data: stockRemote.data });
-          const cbscGlobalStockOnly = stockRemote.data?.error === "product.cnsc_shop_block";
-          if (!stockOk && cbscGlobalStockOnly) {
-            const globalItemId = String(operationArguments.globalItemId ?? "").trim();
-            if (globalItemId) {
-              await assertGatewayLeaseHealthy();
-              const globalStockRemote = await shopeeMerchantRequest({
-                payload: credential,
-                environment: job.environment,
-                method: "GET",
-                path: "/api/v2/global_product/get_global_item_info",
-                query: new URLSearchParams({ global_item_id_list: globalItemId }),
-              });
-              stockOk = globalStockRemote.response.ok && !globalStockRemote.data.error && globalAvailableStock(globalStockRemote) === requestedStock;
-              result.steps.push({ name: "global-stock-readback", ok: stockOk, status: globalStockRemote.response.status, data: globalStockRemote.data });
-              if (stockOk) result.steps[result.steps.length - 2].ok = true;
-            }
-          }
-          if (stockOk && !cbscGlobalStockOnly) {
-            localReadback = await readLocalItem();
-            localOk = localReadback.response.ok && !localReadback.data.error && availableStock(localReadback) === requestedStock;
-            result.steps.push({ name: "local-item-readback-final", ok: localOk, status: localReadback.response.status, data: localReadback.data });
-          } else if (stockOk) {
-            localOk = true;
-          } else {
-            localOk = false;
-          }
-        } else if (localOk && Number.isFinite(requestedStock)) {
-          localOk = availableStock(localReadback) === requestedStock;
-          result.steps[result.steps.length - 1].ok = localOk;
-        }
-        result.ok = result.ok && localOk;
-        result.safeMessage = result.ok
-          ? "Shopee 글로벌 상품 생성·국가별 발행·로컬 상품·재고 읽기 검증을 완료했습니다."
-          : "Shopee 글로벌 상품은 발행됐지만 로컬 상품·재고 재검증이 필요합니다.";
       }
     }
     const completionStatus = gatewayJobCompletionStatus(result.operation, result.ok, result.steps ?? []);

@@ -7,6 +7,7 @@ const operationsCssUrl = new URL("../app/operations-system.css", import.meta.url
 const tokenRouteUrl = new URL("../app/api/admin/ai-worker-token/route.ts", import.meta.url);
 const maintenanceRouteUrl = new URL("../app/api/internal/maintenance/route.ts", import.meta.url);
 const installerUrl = new URL("../scripts/install-ai-worker-launch-agent.mjs", import.meta.url);
+const channelGatewayDocUrl = new URL("../docs/channel-gateway-worker.md", import.meta.url);
 
 const scopes = [
   ["ai", "SellerPilot AI Worker", "--rotate-ai-token"],
@@ -28,7 +29,7 @@ test("runtime UI issues one pending three-scope worker token set", async () => {
   assert.match(runtimeCard, /scope === "ai" \? status\.worker : null/);
   assert.match(runtimeCard, /JSON\.stringify\(\{ label: "SellerPilot Mac Worker", expiresInDays \}\)/);
   assert.match(runtimeCard, /payload\.tokens\?\.\[definition\.scope\]\?\.token\.startsWith\("spw_"\)/);
-  assert.match(runtimeCard, /--rotate-token --token-set \$\{issued\.tokenSetId\}/);
+  assert.match(runtimeCard, /npm run ai:worker:install:ai-only -- --rotate-token --token-set \$\{issued\.tokenSetId\}/);
   assert.match(runtimeCard, /issued\.tokens\[definition\.scope\]\.token/);
   assert.match(runtimeCard, /aria-label="CLI 작업자 권한 선택"/);
   assert.match(runtimeCard, /aria-pressed=\{selectedScope === definition\.scope\}/);
@@ -84,14 +85,14 @@ test("macOS installer atomically activates the pending set only after staged lau
   assert.match(installer, /if \(plist\.includes\("<string>--ai-only<\/string>"\)\) return "ai-only"/);
   assert.match(installer, /const installedRuntimeMode = workerRuntimeModeFromPlist\(installedPlist\)/);
   assert.match(installer, /const runtimeMode = runtimeOnly \? installedRuntimeMode : requestedRuntimeMode/);
-  assert.match(installer, /if \(\(runtimeOnly && restrictedRuntimeRequested\)/);
+  assert.match(installer, /if \(runtimeOnly && restrictedRuntimeRequested\)/);
   assert.match(installer, /\^spw_\[A-Za-z0-9_-\]\{43\}\$/);
   assert.match(installer, /if \(runtimeOnly && \(tokenSetId \|\| rotateAll \|\| rotatesOne\)\)/);
   assert.match(installer, /const missingScopes = requiredTokenScopes[\s\S]*?!isWorkerTokenConfigured\(keychainToken\(definition\.service\)\)/);
   assert.match(installer, /if \(runtimeOnly\) \{[\s\S]*?런타임 업그레이드 전에 전용 작업자 토큰을 모두 설치/);
   assert.match(installer, /if \(!tokenSetId\) \{[\s\S]*?최초 설치는 웹에서 발급된 전체 명령/);
-  assert.match(installer, /if \(!runtimeOnly && !restrictedRuntime\) \{[\s\S]*?for \(const definition of workerTokenScopes\)/);
-  assert.match(installer, /requiredTokenScopes = restrictedRuntime[\s\S]*?definition\.scope === "ai"/);
+  assert.match(installer, /if \(!runtimeOnly && \(!restrictedRuntime \|\| Boolean\(tokenSetId\)\)\) \{[\s\S]*?for \(const definition of workerTokenScopes\)/);
+  assert.match(installer, /requiredTokenScopes = tokenSetId \|\| rotateAll[\s\S]*?workerTokenScopes[\s\S]*?definition\.scope === "ai"/);
   assert.match(installer, /runtimeMode === "product-only"[\s\S]*?"--product-only"[\s\S]*?runtimeMode === "ai-only"[\s\S]*?"--ai-only"/);
   assert.match(installer, /workerRuntimeArgument \? `<string>\$\{xml\(workerRuntimeArgument\)\}<\/string>` : ""/);
   assert.match(installer, /workerRuntimeModeLabel\(runtimeMode\)/);
@@ -163,4 +164,17 @@ test("macOS installer atomically activates the pending set only after staged lau
   assert.doesNotMatch(plistSource, /spw_/);
   assert.doesNotMatch(installer, /writeFile\([^\n]*(?:token|spw_)/i);
   assert.doesNotMatch(installer, /console\.log\([^\n]*(?:\$\{token\}|,\s*token\b)/);
+});
+
+test("production channel gateway documentation keeps the Vercel-only runtime boundary", async () => {
+  const documentation = await readFile(channelGatewayDocUrl, "utf8");
+
+  assert.match(documentation, /운영 판매채널 작업은 로컬 Mac의 장기 실행 worker가 아니라 Vercel Function과/);
+  assert.match(documentation, /POST \/api\/internal\/channel-gateway-drain/);
+  assert.match(documentation, /pnpm gateway:serverless:configure -- --canary --activate --status/);
+  assert.match(documentation, /`--ai-only` 모드/);
+  assert.match(documentation, /production fallback이 아니다/);
+  assert.match(documentation, /STATIC_EGRESS_REQUIRED/);
+  assert.doesNotMatch(documentation, /it is not the daemon host/i);
+  assert.doesNotMatch(documentation, /Keep at least one replica running continuously/i);
 });

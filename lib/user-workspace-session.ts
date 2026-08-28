@@ -1,3 +1,5 @@
+import { safeRelativeReturnPath } from "./safe-relative-return-path";
+
 export const sellerPilotWorkspaceViews = [
   "overview",
   "products",
@@ -35,13 +37,18 @@ export const maximumWorkspaceIdleTimeoutMs = 12 * 60 * 60_000;
 export const userWorkspaceStorageKeyPrefix = "sellerpilot:last-workspace:v1";
 
 const workspaceViewSet = new Set<string>(sellerPilotWorkspaceViews);
+const registrationActivityStatuses = new Set(["active", "ready", "completed", "failed", "blocked"]);
+const csStatuses = new Set(["all", "open", "waiting", "in_progress", "resolved", "urgent", "reconciliation"]);
+const csChannels = new Set(["qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay"]);
 const maximumStoredWorkspaceLength = 4_096;
 const maximumUserScopeLength = 1_024;
+const maximumWorkspaceRouteValueLength = 512;
 
 export type UserWorkspaceRecord = {
   version: 1;
   userScope: string;
   view: SellerPilotWorkspaceView;
+  route: string;
   lastActivityAt: number;
 };
 
@@ -51,6 +58,8 @@ export type WorkspaceIdleState = {
   remainingMs: number;
   expired: boolean;
 };
+
+export type WorkspaceInitialRouteSource = "scoped-current" | "stored" | "direct" | "default";
 
 export type UserWorkspaceRestoreResult =
   | {
@@ -95,6 +104,56 @@ export function parseSellerPilotWorkspaceView(value: unknown): SellerPilotWorksp
     : null;
 }
 
+function boundedWorkspaceRouteValue(value: string | null) {
+  if (!value || value.length > maximumWorkspaceRouteValueLength || value !== value.trim()) return null;
+  const hasControlCharacter = Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || codePoint === 127;
+  });
+  return hasControlCharacter ? null : value;
+}
+
+export function sanitizeUserWorkspaceRoute(
+  value: unknown,
+  fallbackView: SellerPilotWorkspaceView,
+) {
+  const parsedFallbackView = parseSellerPilotWorkspaceView(fallbackView) ?? "overview";
+  const fallback = `/?view=${encodeURIComponent(parsedFallbackView)}`;
+  if (typeof value !== "string" || value.length > maximumStoredWorkspaceLength) return fallback;
+
+  const safeRelative = safeRelativeReturnPath(value);
+  let url: URL;
+  try {
+    url = new URL(safeRelative, "https://sellerpilot.invalid");
+  } catch {
+    return fallback;
+  }
+  if (url.pathname !== "/") return fallback;
+
+  const params = new URLSearchParams({ view: parsedFallbackView });
+  if (parsedFallbackView === "product-detail" || parsedFallbackView === "publishing") {
+    const productId = boundedWorkspaceRouteValue(url.searchParams.get("productId"));
+    if (productId) params.set("productId", productId);
+  }
+  if (parsedFallbackView === "registration-activity") {
+    const status = url.searchParams.get("status");
+    if (status && registrationActivityStatuses.has(status)) params.set("status", status);
+  }
+  if (parsedFallbackView === "cs") {
+    const channel = url.searchParams.get("channel");
+    const status = url.searchParams.get("status");
+    const ticketId = boundedWorkspaceRouteValue(url.searchParams.get("ticketId"));
+    if (channel && csChannels.has(channel)) params.set("channel", channel);
+    if (status && csStatuses.has(status) && status !== "open") params.set("status", status);
+    if (ticketId) params.set("ticketId", ticketId);
+  }
+  if (parsedFallbackView === "orders") {
+    const orderId = boundedWorkspaceRouteValue(url.searchParams.get("orderId"));
+    if (orderId) params.set("orderId", orderId);
+  }
+  return `/?${params.toString()}`;
+}
+
 export function clampWorkspaceIdleTimeoutMs(value: unknown = defaultWorkspaceIdleTimeoutMs) {
   if (typeof value !== "number" || !Number.isFinite(value)) return defaultWorkspaceIdleTimeoutMs;
   return Math.min(
@@ -106,6 +165,33 @@ export function clampWorkspaceIdleTimeoutMs(value: unknown = defaultWorkspaceIdl
 export function userWorkspaceStorageKey(userId: string) {
   const scope = userScope(userId);
   return scope ? `${userWorkspaceStorageKeyPrefix}:${scope}` : null;
+}
+
+export function readUserWorkspaceStorage(read: () => string | null) {
+  try {
+    return read();
+  } catch {
+    return null;
+  }
+}
+
+export function selectWorkspaceInitialRouteSource({
+  freshLogin,
+  currentWorkspaceScope,
+  historyWorkspaceScope,
+  hasStoredRoute,
+}: {
+  freshLogin: boolean;
+  currentWorkspaceScope: string;
+  historyWorkspaceScope: unknown;
+  hasStoredRoute: boolean;
+}): WorkspaceInitialRouteSource {
+  if (!currentWorkspaceScope) return "default";
+  if (historyWorkspaceScope === currentWorkspaceScope) return "scoped-current";
+  if (freshLogin || typeof historyWorkspaceScope === "string") {
+    return hasStoredRoute ? "stored" : "default";
+  }
+  return "direct";
 }
 
 export function calculateWorkspaceIdleState(
@@ -123,16 +209,24 @@ export function calculateWorkspaceIdleState(
 export function createUserWorkspaceRecord({
   userId,
   view,
+  route,
   now,
 }: {
   userId: string;
   view: unknown;
+  route?: unknown;
   now: number;
 }): UserWorkspaceRecord | null {
   const scope = userScope(userId);
   const parsedView = parseSellerPilotWorkspaceView(view);
   if (!scope || !parsedView || !validTimestamp(now)) return null;
-  return { version: 1, userScope: scope, view: parsedView, lastActivityAt: now };
+  return {
+    version: 1,
+    userScope: scope,
+    view: parsedView,
+    route: sanitizeUserWorkspaceRoute(route, parsedView),
+    lastActivityAt: now,
+  };
 }
 
 export function serializeUserWorkspaceRecord(record: UserWorkspaceRecord) {
@@ -178,6 +272,7 @@ export function parseUserWorkspaceRecord({
     version: 1,
     userScope: expectedScope,
     view,
+    route: sanitizeUserWorkspaceRoute(value.route, view),
     lastActivityAt: value.lastActivityAt,
   };
   return { status: idle.expired ? "expired" : "ready", record, idle };

@@ -14,10 +14,16 @@ test("serverless static egress is disabled by default and on unknown values", ()
 });
 
 test("serverless static egress accepts only explicit supported channels", () => {
-  const configured = parseServerlessStaticEgressChannels("smartstore, coupang");
-  assert.deepEqual(configured, ["coupang", "smartstore"]);
-  assert.equal(hasServerlessStaticEgressFor(configured, ["coupang", "smartstore"]), true);
-  assert.equal(serverlessStaticEgressHeaderValue(configured), "coupang,smartstore");
+  const configured = parseServerlessStaticEgressChannels("temu, smartstore, elevenst, coupang");
+  assert.deepEqual(configured, ["coupang", "smartstore", "elevenst", "temu"]);
+  assert.equal(
+    hasServerlessStaticEgressFor(configured, ["coupang", "smartstore", "elevenst", "temu"]),
+    true,
+  );
+  assert.equal(
+    serverlessStaticEgressHeaderValue(configured),
+    "coupang,smartstore,elevenst,temu",
+  );
 });
 
 test("manual sync and the 30-day UI disclose static egress blocking without local fallback", async () => {

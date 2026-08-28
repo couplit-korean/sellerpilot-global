@@ -1,5 +1,4 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { ebayAsqOperationMarketplaceId } from "./ebay-asq";
 import {
   gatewayClaimSchema,
   gatewayJobCompletionStatus,
@@ -8,45 +7,61 @@ import {
   type GatewayWorkerCompletion,
 } from "./gateway-contract";
 import { inquirySyncRequests, normalizeChannelInquiries } from "./inquiry-sync";
+import { normalizeChannelOrders } from "./order-sync";
 import {
   executeChannelOperation,
+  writeChannelOperations,
+  type ChannelOperationName,
   type ChannelOperationResult,
 } from "./operations";
 import {
-  ensureEbayAccessToken,
-  runWithChannelRequestSignal,
   type CredentialRefreshSnapshot,
 } from "./protocols";
+import {
+  executeServerlessGatewayProviderJob,
+  serverlessGatewayOperationAllowed,
+  type ServerlessGatewayExecutionHooks,
+  type ServerlessGatewayProviderExecutionInput,
+  type ServerlessGatewayProviderResult,
+} from "./serverless-gateway-provider";
 import {
   SERVERLESS_STATIC_EGRESS_CHANNELS,
   type ServerlessStaticEgressChannel,
 } from "./serverless-static-egress";
 
-export const SERVERLESS_CS_GATEWAY_VERSION = "sellerpilot-vercel-cs-gateway/1.0";
+export const SERVERLESS_GATEWAY_VERSION = "sellerpilot-vercel-gateway/2.0";
+export const SERVERLESS_CS_GATEWAY_VERSION = SERVERLESS_GATEWAY_VERSION;
 export const SERVERLESS_CS_EXECUTION_TIMEOUT_MS = 180_000;
 export const SERVERLESS_CS_HEARTBEAT_INTERVAL_MS = 20_000;
 export const SERVERLESS_CS_DRAIN_MODE_HEADER = "x-sellerpilot-drain-mode";
 export const SERVERLESS_CS_CANARY_MODE = "canary-v1";
 export const SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES = 5;
 export const SERVERLESS_CS_ENQUEUE_CONCURRENCY = 3;
-export const SERVERLESS_CS_DRAIN_CONCURRENCY = 2;
+export const SERVERLESS_CS_DRAIN_CONCURRENCY = 8;
+export const SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES = 25;
 export const SERVERLESS_CS_CURRENT_INQUIRY_CHANNELS = [
   "qoo10",
+  "lazada",
   "coupang",
   "smartstore",
   "ebay",
+  "temu",
 ] as const;
 
 const WAKE_HMAC_LABEL = "sellerpilot:channel-gateway-drain:wake:v1";
 const GATEWAY_HMAC_LABEL = "sellerpilot:channel-gateway-drain:gateway:v1";
-const PRIMARY_CLAIM_RPC = "sellerpilot_claim_serverless_cs_job";
+const PRIMARY_CLAIM_RPC = "sellerpilot_claim_serverless_gateway_job";
+const LEGACY_CS_CLAIM_RPC = "sellerpilot_claim_serverless_cs_job";
 const LEGACY_EBAY_CLAIM_RPC = "sellerpilot_claim_ebay_asq_serverless_job";
 const TOUCH_RPC = "sellerpilot_touch_serverless_cs_job";
 const BEGIN_CREDENTIAL_REFRESH_RPC = "sellerpilot_service_begin_serverless_cs_credential_refresh";
 const PREPARE_CREDENTIAL_REFRESH_RPC = "sellerpilot_service_prepare_serverless_cs_credential_refresh";
-const BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_cs_provider_mutation";
+const BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_gateway_provider_mutation";
+const LEGACY_BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_cs_provider_mutation";
 const COMPLETION_CONTEXT_RPC = "sellerpilot_service_serverless_cs_completion_context";
 const COMPLETE_TRANSACTION_RPC = "sellerpilot_service_complete_serverless_cs_transaction";
+const COMPLETE_LISTING_LINEAGE_RPC = "sellerpilot_complete_listing_lineage_verification";
+const SANITIZED_ORDER_LIST_MARKER = "normalized_orders_v1";
 const SANITIZED_INQUIRY_LIST_MARKER = "normalized_inquiries_v1";
 const NO_STORE_HEADERS = {
   "cache-control": "no-store, max-age=0",
@@ -54,8 +69,9 @@ const NO_STORE_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SERVERLESS_CS_CHANNELS = new Set<string>(SERVERLESS_CS_CURRENT_INQUIRY_CHANNELS);
-const SERVERLESS_CS_OPERATIONS = new Set(["inquiries.list", "inquiries.reply"]);
+const SERVERLESS_GATEWAY_CHANNELS = new Set<GatewayClaim["channel"]>([
+  "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu",
+]);
 const SAFE_NAVER_EXECUTION_ERRORS = new Set([
   "NAVER_IP_NOT_ALLOWED",
   "NAVER_AUTH_FAILED",
@@ -65,29 +81,19 @@ const SAFE_NAVER_EXECUTION_ERRORS = new Set([
 
 type RpcError = { code?: string | null } | null;
 type RpcResult = { data: unknown; error: RpcError };
-type ServerlessCsClaim = GatewayClaim & {
-  channel: (typeof SERVERLESS_CS_CURRENT_INQUIRY_CHANNELS)[number];
-  operation: "inquiries.list" | "inquiries.reply";
-};
+type ServerlessGatewayClaim = GatewayClaim;
 
-export type ServerlessCsExecutionHooks = {
-  beginCredentialMutation: () => Promise<void>;
-  stageCredentialRefresh: (refresh: CredentialRefreshSnapshot) => Promise<void>;
-  beginProviderMutation: () => Promise<void>;
-  assertLeaseHealthy: () => Promise<void>;
-};
+export type ServerlessCsExecutionHooks = ServerlessGatewayExecutionHooks;
 
-export type ServerlessCsProviderExecutionInput = {
-  job: ServerlessCsClaim;
-  signal: AbortSignal;
-  hooks: ServerlessCsExecutionHooks;
-};
+export type ServerlessCsProviderExecutionInput = ServerlessGatewayProviderExecutionInput;
 
 export type ServerlessCsGatewayDependencies = {
   cronSecret?: string;
   staticEgressChannels?: readonly ServerlessStaticEgressChannel[];
   rpc?: (name: string, arguments_?: Record<string, unknown>) => Promise<RpcResult>;
-  executeProvider?: (input: ServerlessCsProviderExecutionInput) => Promise<ChannelOperationResult>;
+  executeProvider?: (
+    input: ServerlessCsProviderExecutionInput,
+  ) => Promise<ServerlessGatewayProviderResult>;
   executionTimeoutMs?: number;
   heartbeatIntervalMs?: number;
   now?: () => Date;
@@ -154,9 +160,8 @@ function isMissingRpc(error: RpcError) {
 function isEligibleClaim(
   claim: GatewayClaim,
   staticEgressChannels: readonly ServerlessStaticEgressChannel[] = [],
-): claim is ServerlessCsClaim {
-  if (!SERVERLESS_CS_CHANNELS.has(claim.channel)
-      || !SERVERLESS_CS_OPERATIONS.has(claim.operation)) return false;
+) {
+  if (!serverlessGatewayOperationAllowed(claim.channel, claim.operation)) return false;
   return !(SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[]).includes(claim.channel)
     || staticEgressChannels.includes(claim.channel as ServerlessStaticEgressChannel);
 }
@@ -165,13 +170,6 @@ function recordValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
-}
-
-function operationArguments(job: ServerlessCsClaim) {
-  const value = job.request.arguments;
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
 }
 
 function safeExecutionError(error: unknown, signal: AbortSignal) {
@@ -308,13 +306,15 @@ async function claimOneJob(
   };
   const primary = await callRpc(dependencies, PRIMARY_CLAIM_RPC, arguments_);
   if (!primary.error || !isMissingRpc(primary.error)) return primary;
+  const legacyCs = await callRpc(dependencies, LEGACY_CS_CLAIM_RPC, arguments_);
+  if (!legacyCs.error || !isMissingRpc(legacyCs.error)) return legacyCs;
   return callRpc(dependencies, LEGACY_EBAY_CLAIM_RPC, arguments_);
 }
 
 async function touchClaim(
   dependencies: ServerlessCsGatewayDependencies,
   gatewayTokenHash: string,
-  job: ServerlessCsClaim,
+  job: ServerlessGatewayClaim,
 ) {
   const touched = await callRpc(dependencies, TOUCH_RPC, {
     p_token_hash: gatewayTokenHash,
@@ -329,7 +329,7 @@ async function touchClaim(
 function createClaimHeartbeat(
   dependencies: ServerlessCsGatewayDependencies,
   gatewayTokenHash: string,
-  job: ServerlessCsClaim,
+  job: ServerlessGatewayClaim,
 ) {
   let heartbeatError: unknown = null;
   let heartbeatPromise: Promise<void> | null = null;
@@ -371,7 +371,7 @@ function createClaimHeartbeat(
 async function beginCredentialMutation(
   dependencies: ServerlessCsGatewayDependencies,
   gatewayTokenHash: string,
-  job: ServerlessCsClaim,
+  job: ServerlessGatewayClaim,
 ) {
   const begun = await callRpc(dependencies, BEGIN_CREDENTIAL_REFRESH_RPC, {
     p_token_hash: gatewayTokenHash,
@@ -385,7 +385,7 @@ async function beginCredentialMutation(
 async function stageCredentialRefresh(
   dependencies: ServerlessCsGatewayDependencies,
   gatewayTokenHash: string,
-  job: ServerlessCsClaim,
+  job: ServerlessGatewayClaim,
   refresh: CredentialRefreshSnapshot,
 ) {
   const staged = await callRpc(dependencies, PREPARE_CREDENTIAL_REFRESH_RPC, {
@@ -409,13 +409,17 @@ async function stageCredentialRefresh(
 async function beginProviderMutation(
   dependencies: ServerlessCsGatewayDependencies,
   gatewayTokenHash: string,
-  job: ServerlessCsClaim,
+  job: ServerlessGatewayClaim,
 ) {
-  const begun = await callRpc(dependencies, BEGIN_PROVIDER_MUTATION_RPC, {
+  const arguments_ = {
     p_token_hash: gatewayTokenHash,
     p_job_id: job.id,
     p_claim_token: job.claim_token,
-  });
+  };
+  let begun = await callRpc(dependencies, BEGIN_PROVIDER_MUTATION_RPC, arguments_);
+  if (begun.error && isMissingRpc(begun.error)) {
+    begun = await callRpc(dependencies, LEGACY_BEGIN_PROVIDER_MUTATION_RPC, arguments_);
+  }
   if (begun.error) throw new Error("gateway_provider_fence_unavailable");
   if (begun.data !== true) throw new GatewayOwnershipLostError();
 }
@@ -423,47 +427,121 @@ async function beginProviderMutation(
 export async function executeServerlessCsProviderJob(
   input: ServerlessCsProviderExecutionInput,
   operationExecutor: typeof executeChannelOperation = executeChannelOperation,
-): Promise<ChannelOperationResult> {
-  return runWithChannelRequestSignal(input.signal, async () => {
-    let credential = input.job.credential;
-    let arguments_ = operationArguments(input.job);
-    if (input.job.channel === "ebay") {
-      const ensured = await ensureEbayAccessToken(
-        credential,
-        input.job.environment,
-        undefined,
-        input.hooks.beginCredentialMutation,
-        input.hooks.stageCredentialRefresh,
-        true,
-      );
-      credential = ensured.payload;
-      if (input.job.operation === "inquiries.list") {
-        arguments_ = {
-          ...arguments_,
-          marketplaceId: ebayAsqOperationMarketplaceId({
-            periodic: typeof input.job.request.periodicKey === "string",
-            credentialMarketplaceId: credential.marketplace_id,
-            requestedMarketplaceId: arguments_.marketplaceId,
-          }),
-        };
-      }
-    }
-
-    await input.hooks.assertLeaseHealthy();
-    if (input.job.operation === "inquiries.reply") {
-      await input.hooks.beginProviderMutation();
-    }
-    return operationExecutor({
-      channel: input.job.channel,
-      operation: input.job.operation,
-      payload: credential,
-      arguments: arguments_,
-      environment: input.job.environment,
-    });
-  });
+): Promise<ServerlessGatewayProviderResult> {
+  return executeServerlessGatewayProviderJob(input, operationExecutor);
 }
 
 type CompletionResult = "completed" | "ownership_lost" | "unavailable";
+
+type SuccessfulGatewayResult = Extract<GatewayWorkerCompletion, { status: "succeeded" }>["result"];
+type ListingLineageResult = Extract<SuccessfulGatewayResult, { operation: "listing.lineage.verify" }>;
+
+function listingLineageFailureReason(message: string) {
+  if (message.includes("PROVIDER_ACCOUNT_IDENTITY_MISSING")) return "legacy_main_reconnect_required";
+  if (/PROVIDER_ACCOUNT_IDENTITY_MISMATCH|ACCOUNT_IDENTITY_VERIFICATION_FAILED/.test(message)) {
+    return "provider_identity_mismatch";
+  }
+  if (/SHOP_NOT_AUTHORIZED|TARGET_MISMATCH/.test(message)) return "target_mismatch";
+  if (message.includes("MARKET_MISMATCH")) return "market_mismatch";
+  if (message.includes("MARKETPLACE_SKU_MISSING")) return "marketplace_sku_missing";
+  if (message.includes("PROVIDER_RESOURCE_MISSING")) return "provider_resource_missing";
+  if (message.includes("OFFER_AMBIGUOUS")) return "provider_resource_ambiguous";
+  if (message.includes("REMOTE_ID_MISMATCH")) return "remote_id_mismatch";
+  if (/NOT_FOUND|404/.test(message)) return "provider_not_found";
+  return "provider_readback_rejected";
+}
+
+function listingLineageFailurePayload(channel: string, reason: string) {
+  return {
+    ok: false,
+    channel,
+    operation: "listing.lineage.verify",
+    evidenceVersion: "provider_listing_readback_v1",
+    reason,
+  };
+}
+
+function listingLineageSuccessPayload(result: ListingLineageResult) {
+  const evidence = result.evidence;
+  return {
+    ok: true,
+    channel: result.channel,
+    operation: result.operation,
+    evidenceVersion: "provider_listing_readback_v1",
+    expectedRemoteId: evidence.expectedRemoteId,
+    verifiedRemoteId: evidence.verifiedRemoteId,
+    market: evidence.market,
+    targetId: evidence.targetId,
+    verification: "exact_provider_readback",
+    ...("marketplaceSku" in evidence
+      && "providerResourceId" in evidence
+      && evidence.marketplaceSku
+      && evidence.providerResourceId
+      ? {
+        marketplaceSku: evidence.marketplaceSku,
+        providerResourceId: evidence.providerResourceId,
+      }
+      : {}),
+  };
+}
+
+async function completeListingLineageClaim(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+  completion: GatewayWorkerCompletion,
+): Promise<CompletionResult> {
+  let status: "succeeded" | "failed" | "retryable";
+  let responsePayload: Record<string, unknown> | null;
+  let errorMessage: string | null = null;
+  if (completion.status === "succeeded") {
+    if (completion.result.operation !== "listing.lineage.verify"
+        || completion.result.channel !== job.channel) {
+      return "ownership_lost";
+    }
+    const result = completion.result;
+    if (result.verificationStatus === "verified") {
+      status = "succeeded";
+      responsePayload = listingLineageSuccessPayload(result);
+    } else {
+      const reason = result.evidence.reasonCode === "EBAY_MARKETPLACE_SKU_MISSING"
+        ? "marketplace_sku_missing"
+        : "provider_resource_ambiguous";
+      status = "failed";
+      responsePayload = listingLineageFailurePayload(job.channel, reason);
+      errorMessage = reason;
+    }
+  } else if (completion.status === "reconciliation_required") {
+    status = "retryable";
+    responsePayload = null;
+    errorMessage = "provider_readback_retryable";
+  } else {
+    const reason = listingLineageFailureReason(completion.error);
+    status = "failed";
+    responsePayload = listingLineageFailurePayload(job.channel, reason);
+    errorMessage = reason;
+  }
+
+  const arguments_ = {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+    p_status: status,
+    p_response_payload: responsePayload,
+    p_error_message: errorMessage,
+  };
+  let completed = await callRpc(dependencies, COMPLETE_LISTING_LINEAGE_RPC, arguments_);
+  if (completed.error) {
+    completed = await callRpc(dependencies, COMPLETE_LISTING_LINEAGE_RPC, arguments_);
+  }
+  if (completed.error) return "unavailable";
+  const result = recordValue(completed.data);
+  if (result?.job_id !== job.id) return "ownership_lost";
+  if (result.status === "lease_lost") return "ownership_lost";
+  return ["bound", "queued", "manual_required"].includes(String(result.status))
+    ? "completed"
+    : "unavailable";
+}
 
 function sanitizedInquiryListResult(
   result: ChannelOperationResult,
@@ -489,10 +567,34 @@ function sanitizedInquiryListResult(
   };
 }
 
+function sanitizedOrderListResult(
+  result: ChannelOperationResult,
+  normalizedOrderCount: number,
+): ChannelOperationResult {
+  const finalProviderStatus = result.steps.at(-1)?.status ?? 200;
+  return {
+    ok: result.ok,
+    channel: result.channel,
+    operation: "orders.list",
+    steps: [{
+      name: "orders-normalized",
+      ok: result.ok,
+      status: finalProviderStatus,
+      data: {
+        sellerpilotMarker: SANITIZED_ORDER_LIST_MARKER,
+        normalizedOrderCount,
+        providerStepCount: result.steps.length,
+      },
+    }],
+    ...(result.continuation ? { continuation: result.continuation } : {}),
+    safeMessage: "주문 동기화 결과를 정규화해 저장했습니다.",
+  };
+}
+
 async function completionContext(
   dependencies: ServerlessCsGatewayDependencies,
   gatewayTokenHash: string,
-  job: ServerlessCsClaim,
+  job: ServerlessGatewayClaim,
 ) {
   const arguments_ = {
     p_token_hash: gatewayTokenHash,
@@ -509,7 +611,7 @@ async function completionContext(
 async function completeClaim(
   dependencies: ServerlessCsGatewayDependencies,
   gatewayTokenHash: string,
-  job: ServerlessCsClaim,
+  job: ServerlessGatewayClaim,
   completionInput: GatewayWorkerCompletion,
 ): Promise<CompletionResult> {
   const parsed = gatewayWorkerCompletionSchema.safeParse(completionInput);
@@ -525,27 +627,64 @@ async function completeClaim(
     return "ownership_lost";
   }
 
+  const completionProviderResult = parsed.data.status === "succeeded"
+    ? parsed.data.result
+    : parsed.data.status === "reconciliation_required"
+      ? parsed.data.result
+      : undefined;
+  if (completionProviderResult
+      && (completionProviderResult.channel !== job.channel
+        || completionProviderResult.operation !== job.operation)) {
+    return "ownership_lost";
+  }
+  if (job.operation === "listing.lineage.verify") {
+    return completeListingLineageClaim(
+      dependencies,
+      gatewayTokenHash,
+      job,
+      parsed.data,
+    );
+  }
+
+  let normalizedOrders: ReturnType<typeof normalizeChannelOrders> | null = null;
   let normalizedInquiries: ReturnType<typeof normalizeChannelInquiries> | null = null;
-  let storedResponse: ChannelOperationResult | null = null;
+  let storedResponse: unknown = null;
   if (parsed.data.status === "succeeded") {
-    storedResponse = parsed.data.result as ChannelOperationResult;
-    if (job.operation === "inquiries.list" && storedResponse.ok) {
+    storedResponse = parsed.data.result;
+    if (job.operation === "orders.list" || job.operation === "inquiries.list") {
+      const syncResponse = parsed.data.result as ChannelOperationResult;
+      if (!syncResponse.ok) return "unavailable";
       const normalizationTimestamp = typeof context.normalization_timestamp === "string"
         ? new Date(context.normalization_timestamp)
         : null;
       if (!normalizationTimestamp || Number.isNaN(normalizationTimestamp.getTime())) return "unavailable";
-      normalizedInquiries = normalizeChannelInquiries(
-        job.channel,
-        storedResponse,
-        normalizationTimestamp.toISOString(),
-      );
+      const stableNormalizationTimestamp = normalizationTimestamp.toISOString();
+      if (job.operation === "orders.list") {
+        normalizedOrders = normalizeChannelOrders(
+          job.channel,
+          syncResponse,
+          stableNormalizationTimestamp,
+        );
+      } else {
+        normalizedInquiries = normalizeChannelInquiries(
+          job.channel,
+          syncResponse,
+          stableNormalizationTimestamp,
+        );
+      }
     }
   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
-    storedResponse = parsed.data.result as ChannelOperationResult;
+    storedResponse = parsed.data.result;
+  }
+  if (job.operation === "orders.list" && storedResponse) {
+    storedResponse = sanitizedOrderListResult(
+      storedResponse as ChannelOperationResult,
+      normalizedOrders?.length ?? 0,
+    );
   }
   if (job.operation === "inquiries.list" && storedResponse) {
     storedResponse = sanitizedInquiryListResult(
-      storedResponse,
+      storedResponse as ChannelOperationResult,
       normalizedInquiries?.length ?? 0,
     );
   }
@@ -558,9 +697,12 @@ async function completeClaim(
     p_response_payload: storedResponse,
     p_error_message: parsed.data.status === "succeeded" ? null : parsed.data.error,
     p_credential_refresh: parsed.data.credentialRefresh ?? null,
-    p_normalized_orders: null,
+    p_normalized_orders: normalizedOrders,
     p_normalized_inquiries: normalizedInquiries,
-    p_diagnostic: null,
+    p_diagnostic: parsed.data.status === "succeeded"
+      && parsed.data.result.operation === "diagnostic.test"
+      ? parsed.data.result.diagnostic
+      : null,
   };
   let completed = await callRpc(
     dependencies,
@@ -582,7 +724,7 @@ async function completeClaim(
 
 function terminalResponse(
   status: GatewayWorkerCompletion["status"],
-  job: ServerlessCsClaim,
+  job: ServerlessGatewayClaim,
 ) {
   return jsonResponse({
     ok: status === "succeeded",
@@ -598,7 +740,7 @@ function terminalResponse(
 async function finishClaim(
   dependencies: ServerlessCsGatewayDependencies,
   gatewayTokenHash: string,
-  job: ServerlessCsClaim,
+  job: ServerlessGatewayClaim,
   completion: GatewayWorkerCompletion,
   logError: (stage: string, details: Record<string, string | number | boolean>) => void,
 ) {
@@ -633,7 +775,7 @@ export async function runOneServerlessCsGatewayJob(
   }
   if (!isEligibleClaim(parsed.data, dependencies.staticEgressChannels)) {
     logError("claim_scope", { status: 503, channel: parsed.data.channel, operation: parsed.data.operation });
-    return jsonResponse({ message: "서버리스 CS 작업 범위를 확인하지 못했습니다." }, 503);
+    return jsonResponse({ message: "서버리스 채널 작업 범위를 확인하지 못했습니다." }, 503);
   }
 
   const job = parsed.data;
@@ -646,6 +788,7 @@ export async function runOneServerlessCsGatewayJob(
   );
   let heartbeatStopped = false;
   let externalMutationStarted = false;
+  let providerMutationFenced = false;
   let credentialMutationInFlight = false;
   let credentialRefresh: CredentialRefreshSnapshot | undefined;
 
@@ -668,7 +811,10 @@ export async function runOneServerlessCsGatewayJob(
     },
     beginProviderMutation: async () => {
       await assertLeaseHealthy();
-      await beginProviderMutation(dependencies, gatewayTokenHash, job);
+      if (!providerMutationFenced) {
+        await beginProviderMutation(dependencies, gatewayTokenHash, job);
+        providerMutationFenced = true;
+      }
       await assertLeaseHealthy();
       externalMutationStarted = true;
     },
@@ -688,8 +834,22 @@ export async function runOneServerlessCsGatewayJob(
       signal: runtimeSignal,
       hooks,
     });
-    const completionStatus = gatewayJobCompletionStatus(result.operation, result.ok, result.steps);
-    const completion: GatewayWorkerCompletion = completionStatus === "failed"
+    const resultSteps = "steps" in result && Array.isArray(result.steps)
+      ? result.steps
+      : [];
+    const observedCompletionStatus = gatewayJobCompletionStatus(
+      result.operation,
+      result.ok,
+      resultSteps,
+    );
+    const completionStatus = result.operation === "diagnostic.test"
+      ? "succeeded"
+      : observedCompletionStatus === "reconciliation_required"
+        ? observedCompletionStatus
+        : !result.ok && !writeChannelOperations.has(result.operation as ChannelOperationName)
+          ? "failed"
+          : observedCompletionStatus;
+    const completionInput = completionStatus === "failed"
       ? {
         jobId: job.id,
         claimToken: job.claim_token,
@@ -703,7 +863,7 @@ export async function runOneServerlessCsGatewayJob(
           claimToken: job.claim_token,
           status: "reconciliation_required",
           error: result.safeMessage,
-          result,
+          result: result as ChannelOperationResult,
           ...(credentialRefresh ? { credentialRefresh } : {}),
         }
         : {
@@ -713,6 +873,9 @@ export async function runOneServerlessCsGatewayJob(
           result,
           ...(credentialRefresh ? { credentialRefresh } : {}),
         };
+    const parsedCompletion = gatewayWorkerCompletionSchema.safeParse(completionInput);
+    if (!parsedCompletion.success) throw new Error("SERVERLESS_GATEWAY_RESULT_CONTRACT_INVALID");
+    const completion = parsedCompletion.data;
     await assertLeaseHealthy();
     await stopHeartbeat();
     return finishClaim(dependencies, gatewayTokenHash, job, completion, logError);
@@ -730,7 +893,10 @@ export async function runOneServerlessCsGatewayJob(
       return jsonResponse({ message: "채널 작업 소유권이 변경되었습니다." }, 409);
     }
     const errorReason = safeExecutionError(effectiveError, runtimeSignal);
-    const completion: GatewayWorkerCompletion = externalMutationStarted
+    const retryableLineageReadback = job.operation === "listing.lineage.verify"
+      && effectiveError instanceof Error
+      && /LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR|fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|aborted|network/i.test(effectiveError.message);
+    const completion: GatewayWorkerCompletion = externalMutationStarted || retryableLineageReadback
       ? {
         jobId: job.id,
         claimToken: job.claim_token,
@@ -761,8 +927,8 @@ type SafeDrainWorkerSummary = {
   claimed: number;
   processed: number;
   jobId?: string;
-  channel?: ServerlessCsClaim["channel"];
-  operation?: ServerlessCsClaim["operation"];
+  channel?: ServerlessGatewayClaim["channel"];
+  operation?: ServerlessGatewayClaim["operation"];
 };
 
 const SAFE_DRAIN_WORKER_STATUSES = new Set<SafeDrainWorkerSummary["status"]>([
@@ -779,11 +945,14 @@ async function safeDrainWorkerSummary(response: Response): Promise<SafeDrainWork
     && SAFE_DRAIN_WORKER_STATUSES.has(body.status as SafeDrainWorkerSummary["status"])
     ? body.status as SafeDrainWorkerSummary["status"]
     : "unavailable";
-  const channel = typeof body?.channel === "string" && SERVERLESS_CS_CHANNELS.has(body.channel)
-    ? body.channel as ServerlessCsClaim["channel"]
+  const channel = typeof body?.channel === "string"
+    && SERVERLESS_GATEWAY_CHANNELS.has(body.channel as GatewayClaim["channel"])
+    ? body.channel as ServerlessGatewayClaim["channel"]
     : undefined;
-  const operation = body?.operation === "inquiries.list" || body?.operation === "inquiries.reply"
-    ? body.operation
+  const operation = typeof body?.operation === "string"
+    && channel
+    && serverlessGatewayOperationAllowed(channel, body.operation as GatewayClaim["operation"])
+    ? body.operation as ServerlessGatewayClaim["operation"]
     : undefined;
   const jobId = typeof body?.jobId === "string" && UUID_PATTERN.test(body.jobId)
     ? body.jobId

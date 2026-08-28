@@ -11,6 +11,10 @@ const shopeeAuthorizeRouteUrl = new URL("../app/api/admin/channel-credentials/sh
 const lazadaAuthorizeRouteUrl = new URL("../app/api/admin/channel-credentials/lazada/authorize/route.ts", import.meta.url);
 const gatewayContractUrl = new URL("../lib/channels/gateway-contract.ts", import.meta.url);
 const workerUrl = new URL("../scripts/ai-cli-worker.mjs", import.meta.url);
+const providerListingRuntimeUrl = new URL(
+  "../lib/channels/provider-listing-runtime.ts",
+  import.meta.url,
+);
 const credentialRefreshMigrationUrl = new URL(
   "../supabase/migrations/20260825104500_prepare_gateway_credential_refresh.sql",
   import.meta.url,
@@ -103,14 +107,26 @@ test("gateway completion accepts a terminal reconciliation state without disguis
 });
 
 test("listing media mutations are fenced before upload and preserved in structured reconciliation", async () => {
-  const [workerSource, routeSource] = await Promise.all([
+  const [workerSource, listingRuntimeSource, routeSource] = await Promise.all([
     readFile(workerUrl, "utf8"),
+    readFile(providerListingRuntimeUrl, "utf8"),
     readFile(completeRouteUrl, "utf8"),
   ]);
 
-  assert.match(workerSource, /media_space\/upload_image"[\s\S]{0,3000}await markExternalWriteStarted\(\);[\s\S]{0,300}const response = await fetch/);
-  assert.match(workerSource, /await markExternalWriteStarted\(\);\n\s*const remote = await lazadaRequest\(\{ payload, path: "\/image\/migrate", method: "POST"/);
-  assert.match(workerSource, /await markExternalWriteStarted\(\);\n\s*const uploadResponse = await fetch\("https:\/\/api\.commerce\.naver\.com\/external\/v1\/product-images\/upload"/);
+  const shopeeUpload = listingRuntimeSource.indexOf("async function uploadShopeeImage");
+  const shopeeFence = listingRuntimeSource.indexOf("await hooks.beginProviderMutation()", shopeeUpload);
+  const shopeeFetch = listingRuntimeSource.indexOf("const response = await fetch", shopeeFence);
+  const lazadaPrepare = listingRuntimeSource.indexOf("async function prepareLazadaListing");
+  const lazadaFence = listingRuntimeSource.indexOf("await input.hooks.beginProviderMutation()", lazadaPrepare);
+  const lazadaRequest = listingRuntimeSource.indexOf("const remote = await lazadaRequest", lazadaFence);
+  const smartstorePrepare = listingRuntimeSource.indexOf("async function prepareSmartstoreListing");
+  const smartstoreFence = listingRuntimeSource.indexOf("await input.hooks.beginProviderMutation()", smartstorePrepare);
+  const smartstoreUpload = listingRuntimeSource.indexOf("const uploadResponse = await fetch", smartstoreFence);
+  assert.equal(shopeeUpload >= 0 && shopeeUpload < shopeeFence && shopeeFence < shopeeFetch, true);
+  assert.equal(lazadaPrepare >= 0 && lazadaPrepare < lazadaFence && lazadaFence < lazadaRequest, true);
+  assert.equal(smartstorePrepare >= 0 && smartstorePrepare < smartstoreFence && smartstoreFence < smartstoreUpload, true);
+  assert.match(listingRuntimeSource, /downloadMarketplaceImage\(urlValue, signal\)/);
+  assert.match(listingRuntimeSource, /assertPublicReferenceUrl\(imageUrl, \{ signal: input\.signal \}\)/);
   assert.match(workerSource, /name: "listing-image-upload"[\s\S]*sellerpilotMutation: "accepted"/);
   assert.match(workerSource, /gatewayJobCompletionStatus\(result\.operation, result\.ok, result\.steps \?\? \[\]\)/);
   assert.match(workerSource, /status: "reconciliation_required", error: result\.safeMessage, result/);
@@ -124,7 +140,7 @@ test("gateway credential refresh preparation is ownership-bound and never forces
     readFile(completeRouteUrl, "utf8"),
     readFile(atomicCompletionMigrationUrl, "utf8"),
   ]);
-  const refreshSelection = source.indexOf("const credentialRefresh = oauthResult");
+  const refreshSelection = source.indexOf("const credentialRefresh = parsed.data.credentialRefresh");
   const atomicCompletion = source.indexOf('"sellerpilot_service_complete_gateway_transaction"');
 
   assert.notEqual(refreshSelection, -1);
@@ -137,6 +153,8 @@ test("gateway credential refresh preparation is ownership-bound and never forces
   assert.match(source.slice(atomicCompletion), /p_credential_refresh: credentialRefresh \?\? null/);
   assert.doesNotMatch(source, /sellerpilot_service_refresh_(?:shopee|lazada|ebay)/);
   assert.doesNotMatch(source, /sellerpilot_service_prepare_gateway_credential_refresh/);
+  assert.doesNotMatch(source, /oauthResult\.credentialPayload/);
+  assert.match(source, /oauthResult[\s\S]*\? \{ ok: true, channel: oauthResult\.channel, operation: oauthResult\.operation, safeMessage: oauthResult\.safeMessage \}/);
   assert.match(migration, /sellerpilot_service_prepare_gateway_credential_refresh\([\s\S]*v_preparation_status/);
   assert.match(migration, /sellerpilot_service_ingest_orders\([\s\S]*sellerpilot_service_ingest_inquiries\([\s\S]*sellerpilot_complete_channel_gateway_job\(/);
   assert.match(migration, /gateway_completion_receipts/);

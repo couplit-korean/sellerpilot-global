@@ -496,18 +496,23 @@ test("legacy eBay credential attests a valid access token with GetUser before be
 });
 
 test("gateway worker removes cross-account Shopee fallback and requires provider identity on live refresh", async () => {
-  const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const [worker, oauthRuntime, providerRuntime] = await Promise.all([
+    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/provider-oauth-runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url), "utf8"),
+  ]);
+  const source = `${worker}\n${oauthRuntime}\n${providerRuntime}`;
   assert.doesNotMatch(source, /get_shops_by_partner|shopeePartnerRequest/);
-  assert.match(source, /assertShopeeShopProfileTarget\(remote\.data, shopId\)/);
-  assert.match(source, /fetchEbayTradingUserIdentity\(/);
-  assert.match(source, /rememberCredentialRefresh, true\)/);
+  assert.match(providerRuntime, /assertShopeeShopProfileTarget\(remote\.data, shopId\)/);
+  assert.match(oauthRuntime, /fetchEbayTradingUserIdentity\(/);
+  assert.match(worker, /rememberCredentialRefresh, true\)/);
   assert.match(
-    source,
-    /async function shopeeOAuthResult[\s\S]*payload: withoutProviderAccountIdentity\(nextSecret\)[\s\S]*recoveryOnly: true/,
+    oauthRuntime,
+    /async function exchangeShopeeOAuth[\s\S]*payload: withoutProviderAccountIdentity\(nextSecret\)[\s\S]*recoveryOnly: true/,
   );
   assert.match(
-    source,
-    /async function ebayOAuthResult[\s\S]*exchangeEbayOAuthToken[\s\S]*withoutProviderAccountIdentity\(recoveryPayload\)[\s\S]*recoveryOnly: true[\s\S]*fetchEbayTradingUserIdentity[\s\S]*await onExternalMutationStart\(\)[\s\S]*oauthComplete: true/,
+    oauthRuntime,
+    /async function exchangeEbayOAuth[\s\S]*exchangeEbayOAuthToken[\s\S]*withoutProviderAccountIdentity\(recoveryPayload\)[\s\S]*recoveryOnly: true[\s\S]*fetchEbayTradingUserIdentity[\s\S]*beginCredentialMutation\(hooks\)[\s\S]*oauthComplete: true/,
   );
   assert.doesNotMatch(source, /console\.(?:log|error)[^\n]*provider_account_subject/);
 });

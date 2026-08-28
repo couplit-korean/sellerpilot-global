@@ -1,3 +1,5 @@
+import { productCurrencies } from "../../../lib/product-intake";
+
 type FrankfurterRate = {
   date: string;
   base: string;
@@ -38,8 +40,15 @@ type ExchangeRateSnapshot = {
 
 type ExchangeRateFetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
-const currencies = ["USD", "JPY", "SGD", "MYR"] as const;
-type CurrencyCode = (typeof currencies)[number];
+type CurrencyCode = (typeof productCurrencies)[number];
+type ProviderCurrencyCode = Exclude<CurrencyCode, "KRW">;
+
+// Keep the snapshot aligned with every currency accepted by product intake.
+// KRW is the identity row; providers are queried only for foreign currencies.
+const currencies: readonly CurrencyCode[] = productCurrencies;
+const providerCurrencies = productCurrencies.filter(
+  (code): code is ProviderCurrencyCode => code !== "KRW",
+);
 
 const coinbaseEndpoint = "https://api.coinbase.com/v2/exchange-rates?currency=KRW";
 const coinbaseDocumentationUrl = "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates";
@@ -88,6 +97,7 @@ async function loadCoinbaseMarketRates(fetcher: ExchangeRateFetcher) {
     throw new Error("Unexpected Coinbase exchange-rate payload");
   }
   const values = Object.fromEntries(currencies.map((code) => {
+    if (code === "KRW") return [code, 1];
     const quotedPerKrw = finitePositive(payload.data?.rates?.[code]);
     if (quotedPerKrw === null) throw new Error(`Missing Coinbase ${code} rate`);
     return [code, fixedRate(currencyUnit(code) / quotedPerKrw)];
@@ -104,7 +114,7 @@ async function loadFrankfurterDailyRates(fetcher: ExchangeRateFetcher, now: Date
   from.setUTCDate(from.getUTCDate() - 10);
   const endpoint = new URL("https://api.frankfurter.dev/v2/rates");
   endpoint.searchParams.set("base", "KRW");
-  endpoint.searchParams.set("quotes", currencies.join(","));
+  endpoint.searchParams.set("quotes", providerCurrencies.join(","));
   endpoint.searchParams.set("from", from.toISOString().slice(0, 10));
 
   const response = await fetcher(endpoint, {
@@ -117,7 +127,25 @@ async function loadFrankfurterDailyRates(fetcher: ExchangeRateFetcher, now: Date
   const rows = await response.json() as FrankfurterRate[];
   if (!Array.isArray(rows)) throw new Error("Unexpected Frankfurter exchange-rate payload");
 
+  const snapshotAsOf = rows
+    .filter((row) => row.base === "KRW" && providerCurrencies.includes(row.quote as ProviderCurrencyCode))
+    .map((row) => row.date)
+    .filter(Boolean)
+    .sort()
+    .at(-1);
+  if (!snapshotAsOf) throw new Error("Missing Frankfurter reference date");
+
   return currencies.map((code): DailyReferenceRate => {
+    if (code === "KRW") {
+      return {
+        code,
+        unit: 1,
+        value: 1,
+        previousValue: 1,
+        change: 0,
+        asOf: snapshotAsOf,
+      };
+    }
     const history = rows
       .filter((row) => row.base === "KRW" && row.quote === code && finitePositive(row.rate) !== null)
       .sort((left, right) => left.date.localeCompare(right.date));

@@ -7,21 +7,10 @@ import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } f
 import { createSignedStudioImageDownloader, verifyPreservedStudioImages } from "../../../../lib/studio-image-validation";
 import { resolveStudioAdmission } from "../../../../lib/studio-job-admission";
 import { resolveStudioWorkerReadiness, type StudioWorkerReadiness } from "../../../../lib/studio-worker-readiness";
+import { readStudioWorkerReadiness } from "../../../../lib/studio-worker-readiness-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
-
-async function readStudioWorkerReadiness(admin: AdminApiContext): Promise<StudioWorkerReadiness> {
-  const runtimeStatus = await withPromiseTimeout(
-    admin.userClient.rpc("sellerpilot_ai_runtime_status"),
-    10_000,
-    "AI 작업자 연결 상태 확인 제한시간을 초과했습니다.",
-  ).catch(() => null);
-  if (!runtimeStatus || runtimeStatus.error) {
-    return resolveStudioWorkerReadiness(null, { statusAvailable: false });
-  }
-  return resolveStudioWorkerReadiness(runtimeStatus.data);
-}
 
 export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);

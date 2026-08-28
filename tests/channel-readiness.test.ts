@@ -38,6 +38,20 @@ test("11번가는 운영 읽기·등록 성공과 아직 검증되지 않은 상
   assert.match(elevenst.nextAction, /원격 상품번호.*Seller Office/);
 });
 
+test("국내 채널은 운영 키 읽기 통과만으로 남은 기능 차단을 완료 상태로 숨기지 않는다", () => {
+  for (const key of ["coupang", "elevenst", "smartstore"] as const) {
+    const channel = channelReadiness.find((item) => item.key === key);
+    assert.ok(channel);
+
+    const resolved = resolveChannelReadiness(channel, liveMetric());
+
+    assert.equal(resolved.apiReadPassed, true);
+    assert.equal(resolved.overall, "partial");
+    assert.ok(resolved.blockers.length > 0);
+    assert.equal(resolved.checks.find((check) => check.label === "현재 운영 API 읽기")?.state, "verified");
+  }
+});
+
 test("Temu 정적 스냅샷은 과거 보완 요청을 현재 반려 상태처럼 표시하지 않는다", () => {
   const temu = temuReadiness();
 

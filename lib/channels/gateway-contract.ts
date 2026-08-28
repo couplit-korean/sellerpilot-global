@@ -251,10 +251,9 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
         ok: z.literal(true),
         channel: z.enum(["shopee", "lazada", "ebay"]),
         operation: z.literal("oauth.exchange"),
-        credentialPayload: credentialPayloadSchema,
         expiresAt: canonicalCredentialExpirySchema,
         safeMessage: z.string().min(1).max(1_000),
-      }),
+      }).strict(),
       z.object({
         ok: z.boolean(),
         channel: z.enum(["shopee", "lazada"]),
@@ -285,7 +284,16 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
     result: operationResultSchema.optional(),
     credentialRefresh: credentialRefreshSchema.optional(),
   }),
-]);
+]).superRefine((value, context) => {
+  if (value.status !== "succeeded" || value.result.operation !== "oauth.exchange") return;
+  if (!value.credentialRefresh || value.credentialRefresh.oauthComplete !== true) {
+    context.addIssue({
+      code: "custom",
+      path: ["credentialRefresh"],
+      message: "successful OAuth exchange requires a staged terminal credential refresh",
+    });
+  }
+});
 
 export type GatewayClaim = z.infer<typeof gatewayClaimSchema>;
 export type GatewayWorkerCompletion = z.infer<typeof gatewayWorkerCompletionSchema>;

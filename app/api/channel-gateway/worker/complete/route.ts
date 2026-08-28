@@ -149,9 +149,7 @@ export async function POST(request: Request) {
   const oauthResult = parsed.data.status === "succeeded" && parsed.data.result.operation === "oauth.exchange"
     ? parsed.data.result
     : null;
-  const credentialRefresh = oauthResult
-    ? { payload: oauthResult.credentialPayload, expiresAt: oauthResult.expiresAt, oauthComplete: true }
-    : parsed.data.credentialRefresh;
+  const credentialRefresh = parsed.data.credentialRefresh;
   if (credentialRefresh
       && job.channel !== "shopee"
       && job.channel !== "lazada"

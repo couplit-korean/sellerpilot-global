@@ -6,6 +6,18 @@
     {
       "path": "/api/internal/maintenance",
       "schedule": "17 18 * * *"
+    },
+    {
+      "path": "/api/internal/product-research",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/internal/channel-sync",
+      "schedule": "1-59/5 * * * *"
+    },
+    {
+      "path": "/api/internal/competitor-prices",
+      "schedule": "3-59/5 * * * *"
     }
   ]
 }

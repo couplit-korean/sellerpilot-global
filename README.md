@@ -26,18 +26,19 @@ Qoo10 Japan, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBa
 
 ## ChatGPT CLI AI 작업자
 
-SellerPilot은 OpenAI API Key를 사용하지 않습니다. 관리자가 `API 관리` 화면에서 AI·판매채널 게이트웨이·스케줄러용 일회성 토큰 세트를 발급한 뒤, 화면에 표시된 `--token-set` 설치 명령으로 ChatGPT에 로그인된 Mac의 자동실행 작업자를 교체합니다. 새 세트는 설치와 기동이 확인될 때까지 대기 상태이며, 성공할 때만 기존 세 토큰을 원자적으로 폐기합니다. 설치기는 토큰 원문을 macOS 키체인에만 저장합니다.
+SellerPilot은 OpenAI API Key를 사용하지 않습니다. ChatGPT OAuth와 로컬 이미지 도구가 필요한 AI 이미지 제작만 ChatGPT에 로그인된 Mac 작업자에서 실행합니다. 관리자가 `API 관리` 화면에서 범위가 분리된 일회성 토큰 세트를 발급하고 설치를 확인해야 기존 토큰이 원자적으로 폐기되며, 토큰 원문과 ChatGPT 자격정보는 macOS 키체인 밖으로 저장하거나 전송하지 않습니다. 운영에서는 AI 전용 런타임을 사용하고, 판매채널 작업은 아래의 Vercel 서버 경로가 지원하는 범위에서 로컬 작업자로 자동 우회하지 않습니다.
 
 ```bash
 codex login status
-npm run ai:worker:install -- --rotate-token --token-set <API 관리 화면의 세트 ID>
+npm run ai:worker:install:ai-only -- --rotate-token --token-set <API 관리 화면의 세트 ID>
 npm run ai:worker:status
-npm run ai:worker:temu-egress
 ```
 
-Vercel은 비공개 Supabase 작업 큐와 서명된 이미지 URL만 처리합니다. ChatGPT OAuth 자격은 Mac 밖으로 전송하거나 저장하지 않습니다. 이미지 생성은 설치된 [`wjb127/codex-image`](https://github.com/wjb127/codex-image) 스킬과 Codex 내장 `image_gen`만 사용합니다. 실패한 작업을 예시 결과로 바꾸지 않으며 운영 화면에서 재시도·취소할 수 있습니다.
+설치기는 세 범위 토큰을 원자적으로 교체하되 처음부터 자동실행 프로세스를 `--ai-only` 모드로 기동합니다. 판매채널·스케줄러 토큰은 세트 활성화 증명에만 사용되고 로컬 프로세스가 해당 큐를 가져오지 않습니다. `ai:worker:status`에서 `AI 전용 모드`를 확인하기 전에는 운영 전환이 완료된 것으로 보지 않습니다.
 
-Temu는 모바일·웹 클라이언트가 직접 호출하지 않습니다. 모든 사용자는 SellerPilot API로 요청하고, Temu API 호출은 허용된 채널 작업자에서만 실행됩니다. `ai:worker:temu-egress`는 현재 작업자의 공인 IP를 macOS 키체인에 저장하며, 실행 시 등록값과 실제 송신 IP가 다르면 Temu 작업만 `TEMU_EGRESS_IP_CHANGED`로 중지합니다. 작업자를 늘릴 때는 각 작업자의 고정 송신 IP를 Temu에 추가하거나 하나의 고정 egress 게이트웨이를 사용해야 합니다.
+Vercel은 비공개 Supabase 작업 큐, 지원되는 상품 등록·수정·중지, 재고·배송, Shopee·Lazada·eBay OAuth 교환, 문의 동기화·답변, 서명된 이미지 URL과 판매채널용 이미지 전송 준비를 처리합니다. 작업은 채널·operation 허용표, claim token, lease heartbeat, 외부 mutation fence와 원자적 완료 원장을 모두 통과해야 하며, 결과가 불명확하면 재전송하지 않고 `reconciliation_required`로 남깁니다. ChatGPT OAuth 자격은 Mac 밖으로 전송하거나 저장하지 않습니다. AI 이미지 생성은 설치된 [`wjb127/codex-image`](https://github.com/wjb127/codex-image) 스킬과 Codex 내장 `image_gen`만 사용하며, 실패한 작업을 예시 결과로 바꾸지 않습니다.
+
+Temu는 모바일·웹 클라이언트나 로컬 AI 작업자가 직접 호출하지 않습니다. 모든 요청은 SellerPilot API와 Supabase 원장을 거치며, Vercel Static IP가 Temu 개발자센터에 등록되고 데이터베이스 정책과 요청별 egress attestation까지 일치할 때만 서버가 실행합니다. 설정이 없거나 IP를 검증하지 못하면 Temu 작업은 외부 호출 전에 `STATIC_EGRESS_REQUIRED`로 차단되고 다른 작업자로 자동 우회하지 않습니다. 같은 이중 차단은 쿠팡·스마트스토어·11번가에도 적용합니다.
 
 기본 모델은 Codex CLI의 `gpt-5.6-sol`이며 필요할 때만 `SELLERPILOT_CODEX_MODEL` 환경변수로 바꿀 수 있습니다. 작업자는 시작할 때 `codex login status`가 `Logged in using ChatGPT`인지 확인하고, 셸에 남아 있는 `OPENAI_API_KEY`는 자식 프로세스에 전달하지 않습니다.
 - 서비스 전체 흐름을 설명하는 화면형 스토리보드

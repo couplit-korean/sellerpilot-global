@@ -332,7 +332,11 @@ export function resolveChannelReadiness(
   if (channel.key !== "temu") {
     return {
       ...channel,
-      overall: live.state,
+      // A successful credential read proves only that the current key can read
+      // one safe provider resource. It must not erase channel-level blockers
+      // such as unverified writes, missing fixed egress, or absent seller-console
+      // readback evidence.
+      overall: live.apiReadPassed ? channel.overall : live.state,
       apiReadPassed: live.apiReadPassed,
       appState: live.appState,
       summary: `${live.summary} ${historicalSummary}`,

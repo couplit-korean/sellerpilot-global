@@ -1,121 +1,82 @@
-# SellerPilot channel gateway worker
+# SellerPilot Vercel channel gateway
 
-The channel gateway is a long-running queue consumer. It claims one fenced job,
-keeps that claim alive while it talks to the marketplace, and then stores a
-terminal result. It must run under a persistent process supervisor. A Vercel
-Function remains the authenticated web/control plane, but it is not the daemon
-host because function instances have bounded lifetimes and may be recycled.
+운영 판매채널 작업은 로컬 Mac의 장기 실행 worker가 아니라 Vercel Function과
+Supabase queue/lease로 처리한다. Supabase의 분 단위 wake가
+`POST /api/internal/channel-gateway-drain`을 호출하고, 한 번의 호출이 제한된 수의
+작업을 claim·heartbeat·완료한다. 함수가 재시작되거나 응답이 유실되어도 claim
+token, lease, provider mutation fence와 원자적 완료 원장이 중복 외부 쓰기를
+막는다.
 
-## Runtime mode
+로컬 Mac은 `--ai-only` 모드에서 상품 분석·이미지 제작만 담당한다. 운영에서
+`pnpm gateway:worker`, `--gateway-only`, scheduler scope를 Mac에 상시 실행하지
+않는다. 해당 스크립트와 Docker/systemd 예시는 로컬 개발·복구 진단용으로만
+남아 있으며 production fallback이 아니다.
 
-Use Node.js 22 and the dedicated gateway mode:
+## 지원 범위
 
-```sh
-corepack enable
-pnpm install --prod --frozen-lockfile
-pnpm gateway:worker
-```
+최종 허용표의 단일 소스는 `lib/channels/serverless-gateway-provider.ts`다.
 
-`gateway:worker` is equivalent to:
+- 상품 쓰기: 채널별로 허용된 `listing.create`, `listing.update`,
+  `listing.stop`, `inventory.update`, `shipment.acknowledge`,
+  `shipment.confirm`
+- 주문: 8개 활성 채널의 `orders.list`; 11번가를 제외한 `orders.get`
+- 문의: Qoo10·Lazada·쿠팡·스마트스토어·eBay·Temu 조회, Qoo10·Lazada·쿠팡·
+  스마트스토어·eBay 답변
+- 카테고리·진단: 8개 활성 채널의 카테고리 조회/추천/속성/검증과 연결 진단
+- 별도 기능: Shopee·Lazada 숍 조회, Shopee·Lazada·eBay OAuth, 11번가
+  동일상품 검색, Qoo10·Shopee·Lazada·eBay 게시 lineage 확인
 
-```sh
-node --import tsx scripts/ai-cli-worker.mjs --gateway-only
-```
+`price.update`는 허용표에서 의도적으로 제외한다. 읽기 연결이 된 채널을 쓰기나
+답변까지 완료된 것처럼 표시하지 않는다.
 
-The container and systemd examples use that direct Node command, so the process
-supervisor does not need to invoke Corepack or pnpm after dependencies are
-installed.
+## 고정 egress 차단
 
-This mode does not claim AI jobs and does not require the ChatGPT/Codex binary,
-Swift OCR tools, or the local `codex-image` skill. Existing `ai:worker`,
-`--ai-only`, and `--product-only` behavior is unchanged.
+쿠팡·스마트스토어·11번가·Temu는 Vercel Static IP와 각 개발자센터의 허용 IP가
+실제로 일치할 때만 서버리스 실행을 켠다. Static IP는 유료 기능이므로 사용자
+승인 없이 구매하거나 활성화하지 않는다.
 
-The ordinary cross-platform `sharp` package remains a production dependency
-because listing gateway jobs normalize marketplace gallery images. That is not
-an AI image generator or a macOS runtime requirement; CS-only jobs do not invoke
-the normalization path.
+검증이 끝난 채널만 Production 환경변수
+`SELLERPILOT_SERVERLESS_STATIC_EGRESS_CHANNELS`에 쉼표로 넣고, 같은 채널을
+Supabase의 static-egress 정책에도 활성화한다. 환경변수, DB 정책, 요청 attestation
+중 하나라도 다르면 외부 호출 전에 `STATIC_EGRESS_REQUIRED`로 차단하며 로컬
+worker로 우회하지 않는다.
 
-## Required configuration
+## 배포 순서
 
-Store values in the host secret manager or a root-readable environment file.
-Never bake them into an image, service file, shell history, or repository.
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `SELLERPILOT_URL` | Yes in production | Exact deployed SellerPilot origin, for example the production HTTPS origin. |
-| `SELLERPILOT_GATEWAY_WORKER_TOKEN` | Yes | Active worker token with only the `gateway` scope. Startup fails closed when it is absent or malformed. |
-| `SELLERPILOT_SCHEDULER_WORKER_TOKEN` | For automatic sync | Separate `scheduler`-scoped token used to enqueue periodic order/inquiry sync and notification work. Queue consumption still works without it. |
-| `SELLERPILOT_TEMU_EGRESS_IPS` | Before any Temu job | Comma-separated allowlisted public egress IPs. Temu work fails closed when the current egress is not allowed. |
-| `SELLERPILOT_CHANNEL_WORKER_CONCURRENCY` | No | Concurrent gateway jobs, clamped to 1-4; default 2. |
-| `SELLERPILOT_GATEWAY_WORKER_POLL_MS` | No | Minimum idle claim interval, at least 2,000 ms; default 5,000 ms. |
-| `SELLERPILOT_GATEWAY_WORKER_MAX_IDLE_POLL_MS` | No | Maximum idle backoff; default 30,000 ms. |
-| `SELLERPILOT_GATEWAY_HEALTH_PORT` or `PORT` | No | Health HTTP port; default 8080. |
-| `SELLERPILOT_GATEWAY_HEALTH_HOST` | No | Bind host; default `0.0.0.0`. |
-| `SELLERPILOT_GATEWAY_READINESS_STALE_MS` | No | Maximum age of a successful claim API response; 60,000-3,600,000 ms, default 180,000 ms. |
-
-Do not reuse an AI worker token for gateway access. The server-side gateway
-claim RPC returns marketplace credentials only to an active gateway-scoped
-token.
-
-## Health contract
-
-- `GET /healthz` is liveness. It returns HTTP 200 while the process is alive,
-  including while it is draining after `SIGTERM`.
-- `GET /readyz` is readiness. It returns HTTP 200 only after the worker has
-  successfully contacted the gateway claim endpoint with a 2xx response and
-  that contact is still fresh. Missing/invalid gateway credentials, HTTP 401,
-  API failure, stale contact, and shutdown return HTTP 503.
-- Health JSON exposes mode, version, configured scope booleans, timestamps, and
-  active-job count. It never exposes tokens or marketplace credentials.
-
-The scheduler token is reported separately. A worker can be ready to consume
-already-enqueued CS replies without it, but automatic historical/order/inquiry
-sync is unavailable until the scheduler scope is configured.
-
-## Deployment options
-
-Use either:
-
-- `deploy/channel-gateway-worker.Dockerfile` on a persistent container/worker
-  service with restart policy, or
-- `deploy/sellerpilot-channel-gateway-worker.service.example` on a Node 22
-  host managed by systemd.
-
-The host needs stable outbound HTTPS. Temu also needs a stable public egress IP
-that exactly matches its developer-console allowlist. Keep at least one replica
-running continuously; database claim tokens and leases allow multiple gateway
-consumers, but designate only one replica for periodic scheduling when possible.
-
-Example checks after deployment:
+1. 정확한 운영 Supabase host와 Vercel 프로젝트를 각각 다시 확인한다.
+2. 전체 테스트와 Vercel production build를 통과시킨다.
+3. additive/forward 방식의 최종 migration
+   `20260828210000_non_cs_release_integrity.sql`을 정확한 운영 프로젝트에 한 번만
+   적용한다.
+4. 검증된 커밋을 Vercel Production에 배포한다.
+5. 아래 명령으로 서버리스 token/wake 구성을 bootstrap하고, 외부 작업을 claim하지
+   않는 canary가 성공한 동일 실행에서만 scheduler를 활성화한다.
 
 ```sh
-curl --fail http://127.0.0.1:8080/healthz
-curl --fail http://127.0.0.1:8080/readyz
+pnpm gateway:serverless:configure -- --bootstrap
+pnpm gateway:serverless:configure -- --canary --activate --status
 ```
 
-`--once` is available for a bounded smoke test (`pnpm gateway:worker:once`). It
-does not replace the supervised long-running process.
+bootstrap 스크립트는 운영 Supabase host가 예상값과 다르면 중단한다. canary는
+`claimed: 0`, `processed: 0`이어야 하며 판매채널 API를 호출하지 않는다.
 
-## Production release gate
+## 운영 계약과 확인 항목
 
-Code availability is not the same as an operating worker. Do not report remote
-CS as complete until all of these are independently verified:
+- Vercel drain은 최대 8개 작업을 동시에 처리하고, 개별 provider 작업에는 180초
+  timeout과 20초 heartbeat를 적용한다.
+- 주기 enqueue 최대치는 5분당 25건이며 분 단위 drain 용량이 이를 초과해야 한다.
+  쿠팡의 읽기 동기화만 안전하게 2개 병렬 claim을 허용하고, 쓰기·OAuth는 채널별
+  직렬 fence를 유지한다.
+- 만료된 읽기 lease는 재시도한다. 외부 mutation을 시작한 쓰기의 결과가 불명확하면
+  재전송하지 않고 `reconciliation_required`로 전환한다.
+- 주문·문의 원장은 정규화된 결과만 저장하며 provider 원문, 자격증명, OAuth secret,
+  고객 개인정보를 Vercel 응답·로그에 남기지 않는다.
+- 판매채널용 정규화 이미지는 content-addressed Storage 경로와 참조 원장으로
+  관리한다. 활성 listing/실행 중 attempt 참조를 보호하고, 30일이 지난 미참조 파일만
+  maintenance에서 재시도 가능한 cleanup queue로 삭제한다.
+- Runtime Log에서 cron 인증 실패, claim/heartbeat/complete 실패,
+  `reconciliation_required`, cleanup 재시도와 비밀값 노출 여부를 확인한다.
 
-1. The exact production Supabase project is linked and all pending gateway/eBay
-   migrations, including
-   `20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql`, are applied there.
-2. Fresh, separately scoped gateway and scheduler tokens are issued by that
-   production project and injected through the host secret manager.
-3. The persistent process reports both `/healthz` and `/readyz` healthy after a
-   restart and remains healthy under the supervisor.
-4. Provider Vault credentials, OAuth state, provider permissions, callback
-   origins, and outbound IP allowlists are verified for the same environment.
-5. A non-customer sandbox/read operation is claimed, heartbeated, completed,
-   and visible in the production ledger without a reconciliation fence.
-6. Each channel's actual reply capability is verified separately. A read-only
-   integration is not a reply integration. eBay ASQ production remains gated
-   until its provider lineage/release verification passes.
-
-If the database project, worker-token issuance, persistent host, provider
-permission, or stable egress is unavailable, the corresponding production
-outcome remains blocked even though the runtime code and local tests pass.
+코드 배포, `READY`, canary 성공은 실제 상품 게시·배송 확정·고객 답변 성공과
+동일하지 않다. 실제 외부 쓰기는 사용자가 정확히 승인한 대상과 범위가 있을 때만
+검증하고, 채널별 결과를 각각 보고한다.

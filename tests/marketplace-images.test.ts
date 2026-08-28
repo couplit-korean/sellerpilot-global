@@ -8,11 +8,70 @@ import {
   downloadMarketplaceImage,
   isPrivateMarketplaceAddress,
   normalizeMarketplaceImageBytes,
+  persistMarketplaceNormalizedAssets,
   prepareMarketplaceImages,
   renderMarketplaceDetailImages,
   renderQoo10DetailDescription,
   upsertMarketplaceDetailImages,
 } from "../lib/channels/marketplace-images";
+
+test("normalized marketplace assets are reserved before upload and marked only after readback", async () => {
+  const events: string[] = [];
+  const paths = [
+    `normalized/aa/${"a".repeat(64)}.jpg`,
+    `normalized/bb/${"b".repeat(64)}.jpg`,
+  ];
+  const serviceClient = {
+    rpc: async (name: string, argumentsValue: Record<string, unknown>) => {
+      events.push(`rpc:${name}`);
+      if (name === "sellerpilot_service_register_marketplace_normalized_asset_refs") {
+        assert.deepEqual(argumentsValue.p_paths, paths);
+      }
+      return { data: true, error: null };
+    },
+    storage: {
+      getBucket: async () => ({
+        data: { public: true, file_size_limit: 3 * 1024 * 1024 },
+        error: null,
+      }),
+      from: () => ({
+        upload: async (path: string) => {
+          events.push(`upload:${path}`);
+          return { data: { path }, error: null };
+        },
+      }),
+    },
+  } as unknown as SupabaseClient;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    events.push(`readback:${String(input)}`);
+    return new Response(Buffer.from("image"), {
+      status: 200,
+      headers: { "content-type": "image/jpeg" },
+    });
+  };
+  try {
+    await persistMarketplaceNormalizedAssets(serviceClient, "qoo10", {
+      attemptId: "11111111-1111-4111-8111-111111111111",
+      productId: "22222222-2222-4222-8222-222222222222",
+      market: "JP",
+      targetId: "shop-1",
+    }, paths.map((objectPath, index) => ({
+      objectPath,
+      bytes: Buffer.from(`image-${index}`),
+      publicUrl: `https://cdn.example.com/${index}.jpg`,
+    })));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const registerIndex = events.indexOf("rpc:sellerpilot_service_register_marketplace_normalized_asset_refs");
+  const firstUploadIndex = events.findIndex((event) => event.startsWith("upload:"));
+  const markIndex = events.indexOf("rpc:sellerpilot_service_mark_marketplace_normalized_assets_uploaded");
+  const lastReadbackIndex = events.reduce((latest, event, index) => event.startsWith("readback:") ? index : latest, -1);
+  assert.ok(registerIndex >= 0 && registerIndex < firstUploadIndex);
+  assert.ok(lastReadbackIndex >= firstUploadIndex && lastReadbackIndex < markIndex);
+});
 
 test("marketplace image guard rejects private targets and stops oversized streams", async () => {
   for (const address of [

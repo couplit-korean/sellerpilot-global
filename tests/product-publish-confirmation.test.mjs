@@ -23,12 +23,16 @@ test("channel write confirmations move focus, close on Escape, and restore their
 });
 
 test("Coupang listing preflight never creates an unconfirmed shipping place", async () => {
-  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const [worker, listingRuntime] = await Promise.all([
+    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/provider-listing-runtime.ts", import.meta.url), "utf8"),
+  ]);
 
-  assert.match(worker, /COUPANG_USABLE_OUTBOUND_CENTER_MISSING/);
-  assert.doesNotMatch(worker, /shippingPlaceName: "SellerPilot API 출고지"/);
-  assert.doesNotMatch(worker, /COUPANG_OUTBOUND_CREATE_FAILED/);
-  assert.match(worker, /job\.channel === "coupang" && job\.operation === "listing\.create"/);
+  assert.match(listingRuntime, /COUPANG_USABLE_OUTBOUND_CENTER_MISSING/);
+  assert.doesNotMatch(`${worker}\n${listingRuntime}`, /shippingPlaceName: "SellerPilot API 출고지"/);
+  assert.doesNotMatch(`${worker}\n${listingRuntime}`, /COUPANG_OUTBOUND_CREATE_FAILED/);
+  assert.match(worker, /prepareMarketplaceListingArguments\(\{/);
+  assert.match(listingRuntime, /input\.channel === "coupang" && input\.operation === "listing\.create"/);
 });
 
 test("eBay market listings use one market-specific SKU for inventory and offer", async () => {
@@ -51,4 +55,10 @@ test("eBay material aspects translate common Korean source values to English", a
 
   assert.match(workbench, /"세라믹": "Ceramic"/);
   assert.match(workbench, /Material: englishEbayMaterial\(assignment\?\.providedAttributes\.Material \|\| manual\.material\)/);
+});
+
+test("listing image normalization binds every uploaded asset to its claimed attempt and product", async () => {
+  const route = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
+  const lifecycleBindings = route.match(/prepareMarketplaceImages\(serviceClient, channel, effectiveArguments, \{[\s\S]{0,220}?attemptId,[\s\S]{0,220}?productId: parsed\.data\.productId![\s\S]{0,220}?market: parsed\.data\.market,[\s\S]{0,220}?targetId: parsed\.data\.targetId,[\s\S]{0,80}?\}\)/g) ?? [];
+  assert.equal(lifecycleBindings.length, 2);
 });

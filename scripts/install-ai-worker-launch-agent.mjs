@@ -367,24 +367,21 @@ async function install() {
     : runtimeMode === "ai-only"
       ? "--ai-only"
       : "";
-  if ((runtimeOnly && restrictedRuntimeRequested)
-      || (restrictedRuntimeRequested && (tokenSetId || rotateAll || rotatesOne))) {
-    throw new Error("제한 런타임 설치는 런타임 전용 업그레이드 또는 토큰 교체 옵션과 함께 사용할 수 없습니다.");
+  if (runtimeOnly && restrictedRuntimeRequested) {
+    throw new Error("제한 런타임 선택과 런타임 전용 업그레이드는 함께 사용할 수 없습니다.");
   }
   if (runtimeOnly && (tokenSetId || rotateAll || rotatesOne)) {
     throw new Error("런타임 전용 업그레이드와 토큰 교체 옵션은 함께 사용할 수 없습니다.");
   }
-  const requiredTokenScopes = restrictedRuntime
-    ? workerTokenScopes.filter((definition) => definition.scope === "ai")
-    : workerTokenScopes;
+  const requiredTokenScopes = tokenSetId || rotateAll
+    ? workerTokenScopes
+    : restrictedRuntime
+      ? workerTokenScopes.filter((definition) => definition.scope === "ai")
+      : workerTokenScopes;
   const missingScopes = requiredTokenScopes
     .filter((definition) => !isWorkerTokenConfigured(keychainToken(definition.service)))
     .map((definition) => definition.label);
   if (missingScopes.length) {
-    if (restrictedRuntime) {
-      const restrictedRuntimeLabel = runtimeMode === "product-only" ? "상품 AI 전용" : "AI 전용";
-      throw new Error(`${restrictedRuntimeLabel} 작업자를 설치하려면 AI 작업 키체인 토큰이 필요합니다. 누락: ${missingScopes.join(", ")}`);
-    }
     if (runtimeOnly) {
       throw new Error(`런타임 업그레이드 전에 전용 작업자 토큰을 모두 설치해 주세요. 누락: ${missingScopes.join(", ")}`);
     }
@@ -413,7 +410,7 @@ async function install() {
   let wasInstalled = false;
 
   try {
-    if (!runtimeOnly && !restrictedRuntime) {
+    if (!runtimeOnly && (!restrictedRuntime || Boolean(tokenSetId))) {
       for (const definition of workerTokenScopes) {
         const previousToken = keychainToken(definition.service);
         const token = rotateAll || !isWorkerTokenConfigured(previousToken)

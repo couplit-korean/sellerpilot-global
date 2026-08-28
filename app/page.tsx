@@ -121,6 +121,15 @@ import { createStudioPhotoSelectionBudget, type StudioPhotoBudgetReservation } f
 import { createAbortableConcurrencyGate } from "../lib/abortable-concurrency-gate";
 import { createStudioPhotoEditSession } from "../lib/studio-photo-edit-session";
 import { deadlineAfter, deadlineIsActive, deadlineRemaining } from "../lib/time-deadline";
+import {
+  competitorMarketplaceProviderState,
+  parseCompetitorProviderSnapshot,
+  savedCompetitorPriceState,
+  validCompetitorProviderFetchedAt,
+  type CompetitorMarketplaceId,
+  type CompetitorProviderDisplayStatus,
+  type CompetitorProviderId,
+} from "../lib/competitor-provider-snapshot";
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
 import {
   editedProductSellingPriceKrw,
@@ -133,6 +142,8 @@ import {
   clampWorkspaceIdleTimeoutMs,
   createUserWorkspaceRecord,
   parseUserWorkspaceRecord,
+  readUserWorkspaceStorage,
+  selectWorkspaceInitialRouteSource,
   serializeUserWorkspaceRecord,
   userWorkspaceStorageKey,
 } from "../lib/user-workspace-session";
@@ -373,7 +384,11 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   storyboard: { title: "서비스 스토리보드", description: "로그인부터 자동 등록, 판매, CS까지의 전체 사용자 흐름입니다." },
 };
 
-function storedWorkspaceView(userId: string) {
+function currentWorkspaceRelativeUrl() {
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+}
+
+function storedWorkspaceRoute(userId: string) {
   const key = userWorkspaceStorageKey(userId);
   if (!key) return null;
   try {
@@ -384,16 +399,16 @@ function storedWorkspaceView(userId: string) {
       idleTimeoutMs: workspaceIdleTimeoutMs,
     });
     return restored.record?.view && restored.record.view in pageMeta
-      ? restored.record.view as View
+      ? { view: restored.record.view as View, route: restored.record.route }
       : null;
   } catch {
     return null;
   }
 }
 
-function persistWorkspaceView(userId: string, view: View, now = Date.now()) {
+function persistWorkspaceView(userId: string, view: View, now = Date.now(), route: string = currentWorkspaceRelativeUrl()) {
   const key = userWorkspaceStorageKey(userId);
-  const record = createUserWorkspaceRecord({ userId, view, now });
+  const record = createUserWorkspaceRecord({ userId, view, route, now });
   if (!key || !record) return false;
   window.localStorage.setItem(key, serializeUserWorkspaceRecord(record));
   return true;
@@ -457,6 +472,13 @@ function productMarginLabel(product: Pick<DisplayProduct, "marginState" | "margi
   if (product.marginState === "invalid" || product.marginPercent === null) return "계산 불가";
   const channelName = product.marginChannelKey && channels[product.marginChannelKey as ChannelKey]?.name;
   return `${product.marginPercent.toFixed(1)}%${channelName ? ` · ${channelName}` : ""}`;
+}
+
+function dashboardProductCategoryLabel(product: Pick<DisplayProduct, "categoryHint" | "confirmedCategories">) {
+  const confirmedCategory = product.confirmedCategories
+    .map((category) => category.categoryPath.map((part) => part.trim()).filter(Boolean).join(" › ") || category.categoryId.trim())
+    .find(Boolean);
+  return confirmedCategory || product.categoryHint || "미입력";
 }
 
 type DisplayOrder = {
@@ -620,11 +642,12 @@ function formatExchangeRateTimestamp(value: string | null | undefined) {
 }
 
 function validatedDashboardExchangeRates(rates: DashboardExchangeRatePayloadRow[] | undefined): DashboardExchangeRate[] | null {
-  if (!Array.isArray(rates) || rates.length !== dashboardExchangeRateCodes.size) return null;
+  if (!Array.isArray(rates)) return null;
+  const dashboardRates = rates.filter((rate) => dashboardExchangeRateCodes.has(rate.code));
+  if (dashboardRates.length !== dashboardExchangeRateCodes.size) return null;
   const seen = new Set<string>();
-  for (const rate of rates) {
-    if (!dashboardExchangeRateCodes.has(rate.code)
-        || seen.has(rate.code)
+  for (const rate of dashboardRates) {
+    if (seen.has(rate.code)
         || !Number.isFinite(rate.unit)
         || rate.unit <= 0
         || !Number.isFinite(rate.value)
@@ -632,7 +655,7 @@ function validatedDashboardExchangeRates(rates: DashboardExchangeRatePayloadRow[
         || (rate.change !== null && !Number.isFinite(rate.change))) return null;
     seen.add(rate.code);
   }
-  return rates;
+  return dashboardRates;
 }
 
 function ChannelMark({ code, size = "md" }: { code: string; size?: "sm" | "md" | "lg" }) {
@@ -765,9 +788,10 @@ function ProductVisual({ src, size, alt = "상품 이미지" }: { src: string | 
     : <span className="product-image-missing" role="img" aria-label={`${alt} 없음`}><Package size={17} /><small>이미지 없음</small></span>;
 }
 
-function OverviewPage({ onNavigate, onOpenCs, displayProducts, operationSummary, channelMetrics, pipeline, analytics, salesRange, onSalesRangeChange, resolvedCsCount, operationsAvailable }: {
+function OverviewPage({ onNavigate, onOpenCs, onOpenProduct, displayProducts, operationSummary, channelMetrics, pipeline, analytics, salesRange, onSalesRangeChange, resolvedCsCount, operationsAvailable }: {
   onNavigate: (view: View, registrationStatus?: RegistrationActivityFilter) => void;
   onOpenCs: (status: CsStatusFilter) => void;
+  onOpenProduct: (product: DisplayProduct) => void;
   displayProducts: DisplayProduct[];
   operationSummary: OperationsSnapshot["summary"] | null;
   channelMetrics: OperationsSnapshot["channelMetrics"];
@@ -787,6 +811,11 @@ function OverviewPage({ onNavigate, onOpenCs, displayProducts, operationSummary,
   const exchangeRateReceivedRef = useRef(false);
   const [today] = useState(() => new Date());
   const monthlyTopProducts = useMemo(() => [...displayProducts].sort((a, b) => b.sales - a.sales).slice(0, 10), [displayProducts]);
+  const readinessProducts = useMemo(() => [...displayProducts]
+    .sort((left, right) => Number(Boolean(right.latestError)) - Number(Boolean(left.latestError))
+      || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+      || left.name.localeCompare(right.name, "ko"))
+    .slice(0, 4), [displayProducts]);
   const activeMetrics = useMemo(() => {
     const periodByChannel = new Map((analytics?.channels ?? []).map((channel) => [channel.channelKey, channel]));
     return channelMetrics
@@ -897,6 +926,11 @@ function OverviewPage({ onNavigate, onOpenCs, displayProducts, operationSummary,
         <MetricCard label="선택 기간 주문" value={operationsAvailable ? periodOrders.toLocaleString() : "—"} detail={`결제완료 ${summary.paidOrderCount} · 출고대기 ${summary.readyToShipCount}`} icon={ShoppingBag} tone="blue" />
         <MetricCard label="관리 상품" value={operationsAvailable ? summary.productCount.toLocaleString() : "—"} detail={`선택 기간 ${periodSold.toLocaleString()}개 판매`} icon={PackageCheck} tone="green" />
         <MetricCard label="미처리 CS" value={operationsAvailable ? summary.openTicketCount.toLocaleString() : "—"} detail={`재고주의 ${summary.lowStockCount}건`} icon={MessageCircleMore} tone="orange" onClick={() => onOpenCs("open")} />
+      </section>
+
+      <section className="panel dashboard-product-readiness" aria-label="상품별 가격 마진 카테고리 오류 요약">
+        <div className="panel-heading"><div><span className="panel-kicker">실상품 운영 요약</span><h3>상품별 가격 · 마진 · 카테고리 · 오류</h3></div><button type="button" className="ghost-button" onClick={() => onNavigate("products")}>상품 원장<ChevronRight size={15} /></button></div>
+        {operationsAvailable ? readinessProducts.length > 0 ? <div className="dashboard-product-readiness-grid">{readinessProducts.map((product) => <button type="button" className={`dashboard-product-readiness-card ${product.latestError ? "has-error" : ""}`} key={product.sourceId} onClick={() => onOpenProduct(product)} aria-label={`${product.name} 상품 상세정보 보기`}><span className="dashboard-product-readiness-head"><span className="dashboard-product-readiness-thumb"><ProductVisual src={product.image} size="42px" alt={product.name} /></span><span><b>{product.name}</b><small>{product.sku} · {product.status}</small></span><ChevronRight size={14} /></span><span className="dashboard-product-readiness-facts"><span><small>기준 판매가</small><b>{formatBaseSellingPrice(product)}</b></span><span><small>상품 직접 계산 마진</small><b>{productMarginLabel(product)}</b></span><span><small>상품군</small><b>{dashboardProductCategoryLabel(product)}</b></span><span className={product.latestError ? "fact-error" : ""}><small>최근 오류</small><b title={product.latestError ?? "최근 오류 없음"}>{product.latestError ?? "최근 오류 없음"}</b></span></span></button>)}</div> : <div className="live-empty-state compact"><PackageSearch size={23} /><b>실상품 데이터가 없습니다.</b><small>상품 등록 후 운영 원장에 저장되면 가격·마진·카테고리·오류를 함께 표시합니다.</small></div> : <div className="live-empty-state compact"><LoaderCircle className="spin" size={23} /><b>실상품 원장을 확인 중입니다.</b><small>응답 전에는 가격·마진·카테고리·오류를 0 또는 정상으로 표시하지 않습니다.</small></div>}
       </section>
 
       <RevenueCalendar days={analytics?.daily ?? []} range={salesRange} onRangeChange={onSalesRangeChange} />
@@ -1066,7 +1100,9 @@ type ProductCommerceOperations = {
     inventoryError: string | null; inventorySyncedAt: string | null; categoryId: string | null; categoryPath: string[] | null;
     categoryStatus: string | null; sold30d: number; revenue30dKrw: number;
   }>;
-  competitorPrices: Array<{ id: string; marketplace: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string; checkedAt: string }>;
+  competitorPrices: Array<{ id: string; marketplace: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string; checkedAt: string; provider: CompetitorProviderId | "manual" | null; preserved: boolean }>;
+  competitorProviders: CompetitorProviderDisplayStatus[];
+  competitorProvidersFetchedAt: string | null;
 };
 
 type InventorySyncContext = {
@@ -1161,7 +1197,7 @@ const emptyProductDetailContext: ProductDetailContext = {
 };
 
 const emptyProductCommerceOperations: ProductCommerceOperations = {
-  aiJobId: null, supplierName: "", comparisonMemo: "", competitorQuery: "", competitorMonitorEnabled: true, competitorCheckedAt: null, listings: [], competitorPrices: [],
+  aiJobId: null, supplierName: "", comparisonMemo: "", competitorQuery: "", competitorMonitorEnabled: true, competitorCheckedAt: null, listings: [], competitorPrices: [], competitorProviders: [], competitorProvidersFetchedAt: null,
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1174,32 +1210,68 @@ function detailFieldValue(value: unknown) {
   return null;
 }
 
-type CompetitorDisplayItem = { id: string; marketplace?: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string };
-type CompetitorMarketplace = "smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other";
-type CompetitorProvider = "naver_shopping" | "elevenst_product_search" | "ebay_browse" | "brave_marketplace_web";
+type CompetitorDisplayItem = { id: string; marketplace?: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string; provider?: CompetitorProviderId | "manual" | null; preserved?: boolean };
+type CompetitorMarketplace = CompetitorMarketplaceId;
+type CompetitorProvider = CompetitorProviderId;
 type CompetitorResearchItem = CompetitorDisplayItem & { provider: CompetitorProvider; marketplace: CompetitorMarketplace; externalId: string; verifiedSameProduct: true };
-type CompetitorProviderDisplayStatus = { provider: CompetitorProvider; status: "searched" | "unavailable" | "failed" | "pending"; count: number; marketplaces: CompetitorMarketplace[] };
 
 function CompetitorPriceSlots({ items, providers = [], state = "ready", compact = false, retryAvailable = false, onRetry, onProceedWithoutPrices }: { items: CompetitorDisplayItem[]; providers?: CompetitorProviderDisplayStatus[]; state?: Exclude<CompetitorResearchUiState, "idle">; compact?: boolean; retryAvailable?: boolean; onRetry?: () => void; onProceedWithoutPrices?: () => void }) {
-  const marketplaceOrder: string[] = [...activeChannelKeys];
+  const marketplaceOrder: CompetitorMarketplace[] = [...activeChannelKeys];
   const marketplaceLabels: Record<string, string> = Object.fromEntries(Object.entries(channels).map(([key, channel]) => [key, channel.name]));
   const providerLabels: Record<CompetitorProviderDisplayStatus["provider"], string> = { naver_shopping: "네이버 쇼핑 검색", elevenst_product_search: "11번가 상품검색", ebay_browse: "eBay Browse", brave_marketplace_web: "Shopee·Lazada·Temu 웹 검색" };
   marketplaceLabels.other = "기타 판매처";
-  const groups = marketplaceOrder.map((marketplace) => ({ marketplace, items: items.filter((item) => (item.marketplace || "other") === marketplace).slice(0, 3) }));
-  const otherItems = items.filter((item) => !marketplaceOrder.includes(item.marketplace || "other")).slice(0, 3);
+  const groups: Array<{ marketplace: CompetitorMarketplace; items: CompetitorDisplayItem[] }> = marketplaceOrder.map((marketplace) => ({ marketplace, items: items.filter((item) => (item.marketplace || "other") === marketplace).slice(0, 3) }));
+  const marketplaceOrderSet = new Set<string>(marketplaceOrder);
+  const otherItems = items.filter((item) => !marketplaceOrderSet.has(item.marketplace || "other")).slice(0, 3);
   if (otherItems.length) groups.push({ marketplace: "other", items: otherItems });
-  const emptySlot = competitorResearchEmptySlot(state);
+  const marketplaceGroups = groups.map((group) => ({
+    ...group,
+    providerState: competitorMarketplaceProviderState(group.marketplace, providers),
+  }));
+  const hasPreservedItems = items.some((item) => item.preserved === true);
+  const hasIncompleteMarketplace = marketplaceGroups.some((group) => group.providerState === "partial" || group.providerState === "unavailable");
+  const unavailableNotice = state === "stale"
+    ? null
+    : hasPreservedItems
+      ? "일부 공급자의 새 응답을 확인하지 못해 해당 가격은 이전 확인값으로 표시합니다."
+      : state === "unavailable"
+        ? items.length > 0
+          ? "가격 공급자의 새 응답은 확인하지 못했습니다. 수동 입력 가격만 표시합니다."
+          : "가격 조회 연결을 확인하지 못했습니다. 상품 등록은 계속할 수 있으며 값은 공란으로 유지됩니다."
+        : hasIncompleteMarketplace
+          ? "일부 판매처의 가격 조회 연결을 확인하지 못해 빈 가격은 확인 불가로 표시합니다."
+          : null;
   return <div className={`competitor-market-groups ${compact ? "compact" : ""}`}>
     {state === "loading" && <div className="competitor-loading"><LoaderCircle className="spin" size={17} />동일 상품 가격을 채널별로 찾고 있습니다.</div>}
     {state === "pending" && !retryAvailable && <div className="competitor-loading pending"><Clock3 size={17} />공식 채널 조회가 계속 진행 중입니다. 확인된 결과부터 표시합니다.</div>}
     {((retryAvailable && onRetry) || state === "stale") && <div className="competitor-retry" role="status"><span><Clock3 size={17} /><span><b>{state === "stale" ? "상품 식별정보가 변경되었습니다." : "자동 확인을 마쳤습니다."}</b><small>{state === "stale" ? "이전 상품의 가격 근거는 제거했습니다. 변경한 정보로 다시 확인하거나 공란으로 계속할 수 있습니다." : "공식 채널 작업이 늦게 끝날 수 있습니다. 다시 확인하거나, 현재 공란을 유지한 채 분석을 계속할 수 있습니다."}</small></span></span><div className="competitor-retry-actions">{retryAvailable && onRetry && <button type="button" onClick={onRetry}><RefreshCw size={15} />가격 다시 확인</button>}{(state === "pending" || state === "stale") && onProceedWithoutPrices && <button type="button" onClick={onProceedWithoutPrices}><ArrowRight size={15} />가격 없이 계속</button>}</div></div>}
     {providers.length > 0 && <div className="competitor-provider-summary" aria-label="가격 검색 공급자 상태">{providers.map((provider) => <span className={provider.status} key={provider.provider}><b>{providerLabels[provider.provider]}</b>{provider.status === "searched" ? `조회 완료 · 일치 ${provider.count}건` : provider.status === "pending" ? "조회 진행 중" : provider.status === "failed" ? "응답 실패" : "미연결"}</span>)}</div>}
-    {groups.map((group) => <section key={group.marketplace}><header><b>{marketplaceLabels[group.marketplace] ?? group.marketplace}</b><small>최대 3개</small></header><div className="competitor-price-grid">{Array.from({ length: 3 }, (_, index) => {
-      const item = group.items[index];
-      return item ? <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><span>{item.imageUrl ? <Image src={item.imageUrl} alt="" fill sizes="80px" unoptimized /> : <Package size={18} />}</span><div><small>{item.mallName || marketplaceLabels[group.marketplace] || "판매처"}</small><b>{item.title}</b><strong>{new Intl.NumberFormat("ko-KR", { style: "currency", currency: item.currency || "KRW", maximumFractionDigits: 0 }).format(item.price)}</strong></div><ExternalLink size={14} /></a>
-        : <div className="competitor-price-empty" key={`${group.marketplace}-empty-${index}`} aria-busy={emptySlot.loading}><span>{emptySlot.loading ? <LoaderCircle className="spin" size={16} /> : <Search size={16} />}</span><div><small>{marketplaceLabels[group.marketplace] ?? "판매처"}</small><b>{emptySlot.label}</b><strong>{emptySlot.value}</strong></div></div>;
-    })}</div></section>)}
-    {state === "unavailable" && <p className="competitor-unavailable"><AlertCircle size={14} />{items.length > 0 ? "새 응답을 확인하지 못해 이전에 확인된 가격을 유지했습니다." : "가격 조회 연결을 확인하지 못했습니다. 상품 등록은 계속할 수 있으며 값은 공란으로 유지됩니다."}</p>}
+    {marketplaceGroups.map((group) => {
+      const groupState: Exclude<CompetitorResearchUiState, "idle"> = state === "stale"
+        ? "stale"
+        : group.providerState === "partial" || group.providerState === "unavailable"
+          ? "unavailable"
+          : group.providerState === "loading"
+            ? state === "pending" ? "pending" : "loading"
+            : group.providerState ?? state;
+      const emptySlot = competitorResearchEmptySlot(groupState);
+      const preservedCount = group.items.filter((item) => item.preserved === true).length;
+      const groupSummary = preservedCount > 0
+        ? `${preservedCount}개 이전 확인값${group.providerState === "partial" ? " · 일부 확인 불가" : ""}`
+        : group.providerState === "partial"
+          ? "일부 공급자 확인 불가"
+          : groupState === "unavailable"
+            ? "공급자 확인 불가"
+            : state === "stale"
+              ? "이전 결과 만료"
+              : "최대 3개";
+      return <section key={group.marketplace}><header><b>{marketplaceLabels[group.marketplace] ?? group.marketplace}</b><small>{groupSummary}</small></header><div className="competitor-price-grid">{Array.from({ length: 3 }, (_, index) => {
+        const item = group.items[index];
+        return item ? <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><span>{item.imageUrl ? <Image src={item.imageUrl} alt="" fill sizes="80px" unoptimized /> : <Package size={18} />}</span><div><small>{item.mallName || marketplaceLabels[group.marketplace] || "판매처"}{item.preserved === true ? " · 이전 확인값" : ""}</small><b>{item.title}</b><strong>{new Intl.NumberFormat("ko-KR", { style: "currency", currency: item.currency || "KRW", maximumFractionDigits: 0 }).format(item.price)}</strong></div><ExternalLink size={14} /></a>
+          : <div className="competitor-price-empty" key={`${group.marketplace}-empty-${index}`} aria-busy={emptySlot.loading}><span>{emptySlot.loading ? <LoaderCircle className="spin" size={16} /> : <Search size={16} />}</span><div><small>{marketplaceLabels[group.marketplace] ?? "판매처"}</small><b>{emptySlot.label}</b><strong>{emptySlot.value}</strong></div></div>;
+      })}</div></section>;
+    })}
+    {unavailableNotice && <p className="competitor-unavailable"><AlertCircle size={14} />{unavailableNotice}</p>}
   </div>;
 }
 
@@ -1588,6 +1660,8 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
         const nextCommerceOperations = isRecord(payload.commerceOperations)
           ? payload.commerceOperations as unknown as ProductCommerceOperations
           : emptyProductCommerceOperations;
+        const competitorProviders = parseCompetitorProviderSnapshot(nextCommerceOperations.competitorProviders);
+        const competitorProvidersFetchedAt = validCompetitorProviderFetchedAt(nextCommerceOperations.competitorProvidersFetchedAt);
         const manualFields = isRecord(payload.manualFields) ? payload.manualFields : {};
         if (!cancelled) {
           setRemoteListings(listings);
@@ -1604,7 +1678,14 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
             dialogOpen: editDialogOpenRef.current,
             dirty: editDraftDirtyRef.current,
           }));
-          setCommerceOperations({ ...emptyProductCommerceOperations, ...nextCommerceOperations, listings: Array.isArray(nextCommerceOperations.listings) ? nextCommerceOperations.listings : [], competitorPrices: Array.isArray(nextCommerceOperations.competitorPrices) ? nextCommerceOperations.competitorPrices : [] });
+          setCommerceOperations({
+            ...emptyProductCommerceOperations,
+            ...nextCommerceOperations,
+            listings: Array.isArray(nextCommerceOperations.listings) ? nextCommerceOperations.listings : [],
+            competitorPrices: Array.isArray(nextCommerceOperations.competitorPrices) ? nextCommerceOperations.competitorPrices : [],
+            competitorProviders,
+            competitorProvidersFetchedAt,
+          });
           setSupplierName(nextCommerceOperations.supplierName ?? "");
           setComparisonMemo(nextCommerceOperations.comparisonMemo ?? "");
           setCompetitorQuery(nextCommerceOperations.competitorQuery ?? product.name);
@@ -2148,6 +2229,12 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
       ...(!generated.hero && firstSource ? { hero: firstSource } : {}),
     };
   }, [detailContext.generatedImages, detailContext.sourceImages]);
+  const competitorProviderSnapshotState = savedCompetitorPriceState(
+    commerceOperations.competitorProviders,
+    commerceOperations.competitorProvidersFetchedAt,
+  );
+  const competitorLastCheckedAt = commerceOperations.competitorProvidersFetchedAt
+    ?? commerceOperations.competitorCheckedAt;
 
   return (
     <div className="page-stack product-detail-page">
@@ -2203,8 +2290,8 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
 
       <section className="panel competitor-price-panel">
         <div className="panel-heading"><div><span className="panel-kicker">30분 자동 조회 · 채널별 최대 3개</span><h3>동일 상품 가격 비교</h3></div><span className={`live-label ${competitorMonitorEnabled ? "" : "paused"}`}><i />{competitorMonitorEnabled ? "자동 조회" : "조회 중지"}</span></div>
-        <div className="competitor-query-row"><label><span>검색어</span><input value={competitorQuery} disabled={!commerceNotesEditing} onChange={(event) => setCompetitorQuery(event.target.value)} placeholder={product.name} /></label><label className="monitor-toggle"><input type="checkbox" checked={competitorMonitorEnabled} disabled={!commerceNotesEditing} onChange={(event) => setCompetitorMonitorEnabled(event.target.checked)} /><span>상품 판매 중 30분마다 조회</span></label><small>최근 조회 {commerceOperations.competitorCheckedAt ? relativeTime(commerceOperations.competitorCheckedAt) : "대기"}</small></div>
-        <CompetitorPriceSlots items={commerceOperations.competitorPrices} state="ready" />
+        <div className="competitor-query-row"><label><span>검색어</span><input value={competitorQuery} disabled={!commerceNotesEditing} onChange={(event) => setCompetitorQuery(event.target.value)} placeholder={product.name} /></label><label className="monitor-toggle"><input type="checkbox" checked={competitorMonitorEnabled} disabled={!commerceNotesEditing} onChange={(event) => setCompetitorMonitorEnabled(event.target.checked)} /><span>상품 판매 중 30분마다 조회</span></label><small>최근 조회 {competitorLastCheckedAt ? relativeTime(competitorLastCheckedAt) : "대기"}</small></div>
+        <CompetitorPriceSlots items={commerceOperations.competitorPrices} providers={commerceOperations.competitorProviders} state={competitorProviderSnapshotState} />
       </section>
 
       <section className="product-detail-grid">
@@ -2392,7 +2479,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
         const product = activity.productId ? productMap.get(activity.productId) : undefined;
         const retryableJobId = retryableRegistrationActivityJobId(activity);
         const isActive = isRegistrationActivityRunning(activity.status);
-        const expanded = isActive && expandedActivityId === activity.id;
+        const expanded = expandedActivityId === activity.id;
         const isImageOperation = isRegistrationImageActivity(activity);
         const isCancelled = isCancelledRegistrationActivity(activity);
         const longAnalysis = longRunningAnalysisState(activity, aiRuntime, snapshotGeneratedAt);
@@ -2417,12 +2504,12 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
           : status.detail;
         return <article className={`panel registration-card ${activity.status}${isCancelled ? " cancelled" : ""}`} key={activity.id}>
           <header><span className={`registration-status ${activity.status}${isCancelled ? " cancelled" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}>{longAnalysis === "attention" ? <AlertTriangle size={14} /> : longAnalysis === "connected" ? <Activity size={14} /> : isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : isCancelled ? <Square size={14} /> : <AlertCircle size={14} />}{longAnalysis === "connected" ? "장기 분석 진행 중 · 작업자 연결됨" : longAnalysis === "attention" ? "장기 대기 · AI 작업자 확인 필요" : displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
-          {isActive ? <button type="button" className="registration-card-inspect" aria-expanded={expanded} aria-controls={`registration-live-${activity.id}`} onClick={() => setExpandedActivityId((current) => current === activity.id ? "" : activity.id)}><span className="registration-product"><span>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</span><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></span><span className="registration-inspect-label">{expanded ? "상태 접기" : "실시간 상태 보기"}<ChevronDown size={14} /></span></button> : <div className="registration-product"><div>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</div><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></div>}
+          <button type="button" className="registration-card-inspect" aria-expanded={expanded} aria-controls={`registration-live-${activity.id}`} onClick={() => setExpandedActivityId((current) => current === activity.id ? "" : activity.id)}><span className="registration-product"><span>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</span><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></span><span className="registration-inspect-label">{expanded ? (isActive ? "상태 접기" : "상세 접기") : (isActive ? "실시간 상태 보기" : "작업 상세 보기")}<ChevronDown size={14} /></span></button>
           <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{retryableJobId ? activity.id.startsWith("revision:") ? "같은 상품 수정 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : activity.id.startsWith("asset:") ? "같은 이미지 재제작 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {longAnalysis ? "실제 lease를 읽을 수 없어 완료 여부는 추정하지 않습니다." : progress.label}</small></div>
           <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
           <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">권한 {activity.blockedCount}</b></div>
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
-          {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} 실시간 작업 상태`}><header><span><Activity size={14} /><b>현재 작업 상태</b></span><em>10초마다 운영 원장 갱신</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl>{activity.channels.length > 0 ? <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div> : <p>{statusDetail} {progress.label}</p>}</section>}
+          {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} ${isActive ? "실시간 작업 상태" : "작업 상세"}`}><header><span><Activity size={14} /><b>{isActive ? "현재 작업 상태" : "작업 상세"}</b></span><em>{isActive ? "10초마다 운영 원장 갱신" : "종료 상태 · 채널 응답"}</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl><p>{activity.message || statusDetail} {progress.label}</p>{activity.channels.length > 0 && <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div>}</section>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
           <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "기존 입력으로 AI 분석 재개"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
         </article>;
@@ -4116,9 +4203,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     supportReplyControllerRef.current = null;
   }, []);
 
-  const rememberWorkspaceView = useCallback((nextView: View) => {
+  const rememberWorkspaceView = useCallback((nextView: View, route = currentWorkspaceRelativeUrl()) => {
     try {
-      persistWorkspaceView(userId, nextView);
+      persistWorkspaceView(userId, nextView, Date.now(), route);
     } catch {
       // Private browsing or a full local storage quota must not block navigation.
     }
@@ -4133,7 +4220,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     let lastPersistedAt = 0;
     try {
       const restored = parseUserWorkspaceRecord({
-        raw: window.localStorage.getItem(key),
+        raw: readUserWorkspaceStorage(() => window.localStorage.getItem(key)),
         userId,
         now: lastActivityAt,
         idleTimeoutMs: workspaceIdleTimeoutMs,
@@ -4153,7 +4240,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       if (!workspaceRestoreReadyRef.current) return;
       if (now - lastPersistedAt < 5_000) return;
       lastPersistedAt = now;
-      try { persistWorkspaceView(userId, viewRef.current, now); } catch { /* Storage failure does not disable idle enforcement. */ }
+      try { persistWorkspaceView(userId, viewRef.current, now, currentWorkspaceRelativeUrl()); } catch { /* Storage failure does not disable idle enforcement. */ }
     };
     const synchronizeStoredActivity = (raw: string | null, now = Date.now()) => {
       try {
@@ -4169,8 +4256,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       }
     };
     const expireIfIdle = () => {
-      synchronizeStoredActivity(window.localStorage.getItem(key));
-      if (logoutStarted || Date.now() - lastActivityAt < workspaceIdleTimeoutMs) return false;
+      const now = Date.now();
+      synchronizeStoredActivity(readUserWorkspaceStorage(() => window.localStorage.getItem(key)), now);
+      if (logoutStarted || now - lastActivityAt < workspaceIdleTimeoutMs) return false;
       logoutStarted = true;
       void onIdleLogout();
       return true;
@@ -4658,7 +4746,6 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     }
     setView(next);
     setRegistrationActivityFilter(nextRegistrationStatus);
-    rememberWorkspaceView(next);
     const params = new URLSearchParams({ view: next });
     const historyState: Record<string, unknown> = { view: next, workspaceScope: workspaceRouteScope };
     if (next === "registration-activity" && nextRegistrationStatus !== "all") {
@@ -4666,6 +4753,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       historyState.status = nextRegistrationStatus;
     }
     window.history.pushState(historyState, "", `${window.location.pathname}?${params.toString()}`);
+    rememberWorkspaceView(next);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [rememberWorkspaceView, workspaceRouteScope]);
@@ -4678,12 +4766,13 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     setTargetedSearch(null);
     setCsRoute({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
     setView("cs");
-    rememberWorkspaceView("cs");
+    const nextRoute = `${window.location.pathname}?${params.toString()}`;
     window.history.pushState(
       { view: "cs", workspaceScope: workspaceRouteScope, channel: nextChannel, status: nextStatus, ...(nextTicketId ? { ticketId: nextTicketId } : {}) },
       "",
-      `${window.location.pathname}?${params.toString()}`,
+      nextRoute,
     );
+    rememberWorkspaceView("cs", nextRoute);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [rememberWorkspaceView, workspaceRouteScope]);
@@ -4694,12 +4783,14 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     const nextTicketId = ticketId?.trim() || null;
     const params = csNavigationParams({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
     setCsRoute({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
+    const nextRoute = `${window.location.pathname}?${params.toString()}`;
     window.history.replaceState(
       { view: "cs", workspaceScope: workspaceRouteScope, channel: nextChannel, status: nextStatus, ...(nextTicketId ? { ticketId: nextTicketId } : {}) },
       "",
-      `${window.location.pathname}?${params.toString()}`,
+      nextRoute,
     );
-  }, [workspaceRouteScope]);
+    rememberWorkspaceView("cs", nextRoute);
+  }, [rememberWorkspaceView, workspaceRouteScope]);
 
   const changeRegistrationActivityFilter = useCallback((requestedStatus: RegistrationActivityFilter) => {
     const nextStatus = registrationActivityFilterFromValue(requestedStatus);
@@ -4712,8 +4803,10 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     const nextState: Record<string, unknown> = { ...currentState, view: "registration-activity", workspaceScope: workspaceRouteScope };
     delete nextState.status;
     if (nextStatus !== "all") nextState.status = nextStatus;
-    window.history.replaceState(nextState, "", `${window.location.pathname}?${params.toString()}`);
-  }, [workspaceRouteScope]);
+    const nextRoute = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(nextState, "", nextRoute);
+    rememberWorkspaceView("registration-activity", nextRoute);
+  }, [rememberWorkspaceView, workspaceRouteScope]);
 
   const resumeFailedAiActivity = useCallback(async (activity: RegistrationActivity) => {
     const jobId = retryableRegistrationActivityJobId(activity);
@@ -4844,8 +4937,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     setPublishingProduct({ id: action.productId, name: action.productName });
     setPublishingSession((current) => current + 1);
     setView("publishing");
+    const nextRoute = `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(action.productId)}`;
+    window.history.pushState({ view: "publishing", workspaceScope: workspaceRouteScope, productId: action.productId }, "", nextRoute);
     rememberWorkspaceView("publishing");
-    window.history.pushState({ view: "publishing", workspaceScope: workspaceRouteScope, productId: action.productId }, "", `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(action.productId)}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [rememberWorkspaceView, workspaceRouteScope]);
@@ -4854,38 +4948,56 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     setPublishingProduct({ id: product.sourceId, name: product.name });
     setPublishingSession((current) => current + 1);
     setView("publishing");
+    const nextRoute = `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(product.sourceId)}`;
+    window.history.pushState({ view: "publishing", workspaceScope: workspaceRouteScope, productId: product.sourceId }, "", nextRoute);
     rememberWorkspaceView("publishing");
-    window.history.pushState({ view: "publishing", workspaceScope: workspaceRouteScope, productId: product.sourceId }, "", `${window.location.pathname}?view=publishing&productId=${encodeURIComponent(product.sourceId)}`);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [rememberWorkspaceView, workspaceRouteScope]);
 
   useEffect(() => {
-    const initialParams = new URLSearchParams(window.location.search);
     const initialState = isRecord(window.history.state) ? window.history.state : {};
-    const initialRouteCandidate = typeof initialState.view === "string"
-      ? initialState.view
-      : initialParams.get("view");
-    const storedCandidate = storedWorkspaceView(userId);
-    const initialRouteBelongsToUser = initialState.workspaceScope === workspaceRouteScope;
-    const initialCandidate = freshLogin && !initialRouteBelongsToUser
-      ? storedCandidate ?? "overview"
-      : initialRouteCandidate ?? storedCandidate ?? "overview";
-    const routeProductId = typeof initialState.productId === "string" ? initialState.productId : initialParams.get("productId");
-    const initialProductId = freshLogin && !initialRouteBelongsToUser ? null : routeProductId;
+    const storedRoute = storedWorkspaceRoute(userId);
+    const initialRouteSource = selectWorkspaceInitialRouteSource({
+      freshLogin,
+      currentWorkspaceScope: workspaceRouteScope,
+      historyWorkspaceScope: initialState.workspaceScope,
+      hasStoredRoute: Boolean(storedRoute),
+    });
+    const restoringStoredRoute = initialRouteSource === "stored";
+    const trustingScopedHistory = initialRouteSource === "scoped-current";
+    const trustingDirectRoute = initialRouteSource === "direct";
+    const initialParams = new URLSearchParams(
+      restoringStoredRoute
+        ? new URL(storedRoute!.route, window.location.origin).search
+        : initialRouteSource === "default"
+          ? "view=overview"
+          : window.location.search,
+    );
+    const initialRouteCandidate = restoringStoredRoute
+      ? storedRoute?.view
+      : trustingScopedHistory && typeof initialState.view === "string"
+        ? initialState.view
+        : initialParams.get("view");
+    const initialCandidate = initialRouteCandidate ?? "overview";
+    const canRestoreScopedQuery = restoringStoredRoute || trustingScopedHistory || trustingDirectRoute;
+    const routeProductId = trustingScopedHistory && typeof initialState.productId === "string"
+      ? initialState.productId
+      : initialParams.get("productId");
+    const initialProductId = canRestoreScopedQuery ? routeProductId : null;
     const validatedInitialView = initialCandidate in pageMeta ? initialCandidate as View : "overview";
     const initialView = validatedInitialView === "product-detail" && !initialProductId ? "products" : validatedInitialView;
-    const initialCsChannel = initialView === "cs" && initialRouteBelongsToUser
-      ? csChannelFilterFromValue(typeof initialState.channel === "string" ? initialState.channel : initialParams.get("channel"))
+    const initialCsChannel = initialView === "cs" && canRestoreScopedQuery
+      ? csChannelFilterFromValue(trustingScopedHistory && typeof initialState.channel === "string" ? initialState.channel : initialParams.get("channel"))
       : "all";
-    const initialCsStatus = initialView === "cs" && initialRouteBelongsToUser
-      ? csStatusFilterFromValue(typeof initialState.status === "string" ? initialState.status : initialParams.get("status"))
+    const initialCsStatus = initialView === "cs" && canRestoreScopedQuery
+      ? csStatusFilterFromValue(trustingScopedHistory && typeof initialState.status === "string" ? initialState.status : initialParams.get("status"))
       : "open";
-    const initialCsTicketId = initialView === "cs" && initialRouteBelongsToUser
-      ? (typeof initialState.ticketId === "string" ? initialState.ticketId : initialParams.get("ticketId"))
+    const initialCsTicketId = initialView === "cs" && canRestoreScopedQuery
+      ? (trustingScopedHistory && typeof initialState.ticketId === "string" ? initialState.ticketId : initialParams.get("ticketId"))
       : null;
-    const initialRegistrationStatus = initialView === "registration-activity" && initialRouteBelongsToUser
-      ? registrationActivityFilterFromValue(initialParams.get("status") ?? (typeof initialState.status === "string" ? initialState.status : null))
+    const initialRegistrationStatus = initialView === "registration-activity" && canRestoreScopedQuery
+      ? registrationActivityFilterFromValue(initialParams.get("status") ?? (trustingScopedHistory && typeof initialState.status === "string" ? initialState.status : null))
       : "all";
     initialParams.set("view", initialView);
     if (initialView !== "product-detail" && initialView !== "publishing") initialParams.delete("productId");
@@ -4902,10 +5014,10 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       initialParams.delete("channel");
       initialParams.delete("ticketId");
     }
+    if (initialView !== "orders") initialParams.delete("orderId");
     viewRef.current = initialView;
-    rememberWorkspaceView(initialView);
-    workspaceRestoreReadyRef.current = true;
-    const nextInitialState: Record<string, unknown> = { ...initialState, view: initialView, workspaceScope: workspaceRouteScope, ...(initialProductId ? { productId: initialProductId } : {}) };
+    const trustedInitialState = trustingScopedHistory || trustingDirectRoute ? initialState : {};
+    const nextInitialState: Record<string, unknown> = { ...trustedInitialState, view: initialView, workspaceScope: workspaceRouteScope, ...(initialProductId ? { productId: initialProductId } : {}) };
     if (!initialProductId) delete nextInitialState.productId;
     delete nextInitialState.status;
     delete nextInitialState.channel;
@@ -4916,11 +5028,14 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       if (initialCsStatus !== "open") nextInitialState.status = initialCsStatus;
       if (initialCsTicketId) nextInitialState.ticketId = initialCsTicketId;
     }
+    const nextInitialRoute = `${window.location.pathname}?${initialParams.toString()}`;
     window.history.replaceState(
       nextInitialState,
       "",
-      `${window.location.pathname}?${initialParams.toString()}`,
+      nextInitialRoute,
     );
+    rememberWorkspaceView(initialView, nextInitialRoute);
+    workspaceRestoreReadyRef.current = true;
     const initialViewTimer = window.setTimeout(() => {
       setView(initialView);
       setRegistrationActivityFilter(initialRegistrationStatus);
@@ -4933,9 +5048,10 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
         ? state.view
         : params.get("view");
       const routeBelongsToUser = state.workspaceScope === workspaceRouteScope;
+      const storedView = storedWorkspaceRoute(userId)?.view;
       const candidate = routeBelongsToUser
-        ? routeCandidate ?? storedWorkspaceView(userId) ?? "overview"
-        : storedWorkspaceView(userId) ?? "overview";
+        ? routeCandidate ?? storedView ?? "overview"
+        : storedView ?? "overview";
       const routeProductId = typeof state.productId === "string" ? state.productId : params.get("productId");
       const productId = routeBelongsToUser ? routeProductId : null;
       const validatedView = candidate in pageMeta ? candidate as View : "overview";
@@ -4967,6 +5083,8 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
         params.delete("channel");
         params.delete("ticketId");
       }
+      if (nextView !== "orders") params.delete("orderId");
+      const nextRoute = `${window.location.pathname}?${params.toString()}`;
       window.history.replaceState(
         {
           view: nextView,
@@ -4978,9 +5096,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
           ...(nextView === "registration-activity" && nextRegistrationStatus !== "all" ? { status: nextRegistrationStatus } : {}),
         },
         "",
-        `${window.location.pathname}?${params.toString()}`,
+        nextRoute,
       );
-      rememberWorkspaceView(nextView);
+      rememberWorkspaceView(nextView, nextRoute);
       setView(nextView);
       setRegistrationActivityFilter(nextRegistrationStatus);
       setCsRoute({ channel: nextCsChannel, status: nextCsStatus, ticketId: nextCsTicketId });
@@ -5022,7 +5140,6 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       setView(requestedView);
       setRegistrationActivityFilter(requestedRegistrationStatus);
       setCsRoute({ channel: requestedCsChannel, status: requestedCsStatus, ticketId });
-      rememberWorkspaceView(requestedView);
       if (requestedView === "orders" && orderId) {
         const order = operations.data?.orders.find((item) => item.id === orderId);
         if (order) setTargetedSearch({ kind: "order", id: order.externalOrderId, query: order.externalOrderId });
@@ -5039,6 +5156,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
         const product = displayProductsRef.current.find((item) => item.sourceId === productId);
         if (product) setPublishingProduct({ id: product.sourceId, name: product.name });
       }
+      const nextRoute = `${window.location.pathname}?${params.toString()}`;
       window.history.replaceState(
         {
           view: requestedView,
@@ -5050,8 +5168,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
           ...(requestedView === "registration-activity" && requestedRegistrationStatus !== "all" ? { status: requestedRegistrationStatus } : {}),
         },
         "",
-        `${window.location.pathname}?${params.toString()}`,
+        nextRoute,
       );
+      rememberWorkspaceView(requestedView, nextRoute);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [displayTickets, operations.data, rememberWorkspaceView, workspaceRouteScope]);
@@ -5059,8 +5178,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
   const openProductDetails = useCallback((product: DisplayProduct) => {
     setSelectedProduct(product);
     setView("product-detail");
-    rememberWorkspaceView("product-detail");
-    window.history.pushState({ view: "product-detail", workspaceScope: workspaceRouteScope, productId: product.sourceId }, "", `${window.location.pathname}?view=product-detail&productId=${encodeURIComponent(product.sourceId)}`);
+    const nextRoute = `${window.location.pathname}?view=product-detail&productId=${encodeURIComponent(product.sourceId)}`;
+    window.history.pushState({ view: "product-detail", workspaceScope: workspaceRouteScope, productId: product.sourceId }, "", nextRoute);
+    rememberWorkspaceView("product-detail", nextRoute);
     setSidebarOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [rememberWorkspaceView, workspaceRouteScope]);
@@ -5102,7 +5222,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
   }, [displayProducts, displayTickets, openCs, openProductDetails]);
 
   const content = (() => {
-    if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenCs={(status) => openCs("all", status)} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
+    if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenCs={(status) => openCs("all", status)} onOpenProduct={openProductDetails} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
     if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={resumeFailedAiActivity} onStopActivity={stopRegistrationActivity} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
     if (view === "product-detail") return activeSelectedProduct
@@ -5413,7 +5533,7 @@ export default function Home() {
   }, []);
 
   const idleLogout = useCallback(async () => {
-    setLoginNotice(`입력이 ${Math.round(workspaceIdleTimeoutMs / 60_000)}분 동안 없어 안전하게 로그아웃했습니다. 다시 로그인하면 마지막 작업 화면을 엽니다.`);
+    setLoginNotice(`입력이 ${Math.round(workspaceIdleTimeoutMs / 60_000)}분 동안 없어 안전하게 로그아웃했습니다. 다시 로그인하면 저장된 마지막 화면과 필터만 엽니다. 저장하지 않은 입력 내용은 복원되지 않습니다.`);
     await logout({ preserveWorkspaceRoute: true });
   }, [logout]);
 

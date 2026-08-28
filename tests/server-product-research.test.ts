@@ -310,7 +310,7 @@ test("completion is retried exactly once after an uncertain RPC response", async
   assert.equal(completionCalls, 2);
 });
 
-test("Hobby deployment keeps only the daily maintenance cron and a bounded manual recovery route", async () => {
+test("Pro deployment schedules a bounded product-research recovery route without replacing maintenance", async () => {
   const [route, vercelSource] = await Promise.all([
     readFile(new URL("../app/api/internal/product-research/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../vercel.json", import.meta.url), "utf8"),
@@ -323,10 +323,24 @@ test("Hobby deployment keeps only the daily maintenance cron and a bounded manua
   assert.match(route, /runServerProductResearchCron/);
   assert.doesNotMatch(route, /\bafter\s*\(/);
   assert.doesNotMatch(route, /product_studio|image|channel-gateway|shipping|listing/i);
-  assert.deepEqual(vercel.crons, [{
-    path: "/api/internal/maintenance",
-    schedule: "17 18 * * *",
-  }]);
+  assert.deepEqual(vercel.crons, [
+    {
+      path: "/api/internal/maintenance",
+      schedule: "17 18 * * *",
+    },
+    {
+      path: "/api/internal/product-research",
+      schedule: "*/5 * * * *",
+    },
+    {
+      path: "/api/internal/channel-sync",
+      schedule: "1-59/5 * * * *",
+    },
+    {
+      path: "/api/internal/competitor-prices",
+      schedule: "3-59/5 * * * *",
+    },
+  ]);
 });
 
 test("after wakeups are limited to authenticated enqueue and queued or running research polling", async () => {

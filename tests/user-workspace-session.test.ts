@@ -9,10 +9,55 @@ import {
   minimumWorkspaceIdleTimeoutMs,
   parseSellerPilotWorkspaceView,
   parseUserWorkspaceRecord,
+  readUserWorkspaceStorage,
   recordUserWorkspaceActivity,
+  sanitizeUserWorkspaceRoute,
+  selectWorkspaceInitialRouteSource,
   serializeUserWorkspaceRecord,
   userWorkspaceStorageKey,
 } from "../lib/user-workspace-session.ts";
+
+test("selects only account-scoped history while preserving intentional direct links", () => {
+  const currentWorkspaceScope = userWorkspaceStorageKey("admin-a")!;
+  const otherWorkspaceScope = userWorkspaceStorageKey("admin-b")!;
+
+  assert.equal(selectWorkspaceInitialRouteSource({
+    freshLogin: true,
+    currentWorkspaceScope,
+    historyWorkspaceScope: otherWorkspaceScope,
+    hasStoredRoute: true,
+  }), "stored");
+  assert.equal(selectWorkspaceInitialRouteSource({
+    freshLogin: true,
+    currentWorkspaceScope,
+    historyWorkspaceScope: otherWorkspaceScope,
+    hasStoredRoute: false,
+  }), "default");
+  assert.equal(selectWorkspaceInitialRouteSource({
+    freshLogin: true,
+    currentWorkspaceScope,
+    historyWorkspaceScope: undefined,
+    hasStoredRoute: false,
+  }), "default");
+  assert.equal(selectWorkspaceInitialRouteSource({
+    freshLogin: false,
+    currentWorkspaceScope,
+    historyWorkspaceScope: undefined,
+    hasStoredRoute: false,
+  }), "direct");
+  assert.equal(selectWorkspaceInitialRouteSource({
+    freshLogin: false,
+    currentWorkspaceScope,
+    historyWorkspaceScope: currentWorkspaceScope,
+    hasStoredRoute: false,
+  }), "scoped-current");
+  assert.equal(selectWorkspaceInitialRouteSource({
+    freshLogin: false,
+    currentWorkspaceScope,
+    historyWorkspaceScope: otherWorkspaceScope,
+    hasStoredRoute: false,
+  }), "default");
+});
 
 test("parses only exact SellerPilot views", () => {
   assert.equal(parseSellerPilotWorkspaceView("publishing"), "publishing");
@@ -57,17 +102,79 @@ test("calculates activity expiry at the default thirty-minute boundary", () => {
   assert.equal(calculateWorkspaceIdleState(2_000, 1_000), null);
 });
 
+test("keeps idle expiry enforceable when local storage reads throw", () => {
+  const raw = readUserWorkspaceStorage(() => {
+    throw new DOMException("Storage access is blocked", "SecurityError");
+  });
+  const localLastActivityAt = 1_000;
+  const now = localLastActivityAt + defaultWorkspaceIdleTimeoutMs;
+
+  assert.equal(raw, null);
+  assert.equal(calculateWorkspaceIdleState(localLastActivityAt, now)?.expired, true);
+});
+
 test("round-trips a user-scoped last workspace without cross-user restoration", () => {
-  const record = createUserWorkspaceRecord({ userId: "admin-a", view: "margin", now: 10_000 });
+  const record = createUserWorkspaceRecord({
+    userId: "admin-a",
+    view: "registration-activity",
+    route: "/?view=registration-activity&status=failed&code=oauth-secret",
+    now: 10_000,
+  });
   assert.ok(record);
   const raw = serializeUserWorkspaceRecord(record!);
   const sameUser = parseUserWorkspaceRecord({ raw, userId: "admin-a", now: 20_000 });
   const otherUser = parseUserWorkspaceRecord({ raw, userId: "admin-b", now: 20_000 });
 
   assert.equal(sameUser.status, "ready");
-  assert.equal(sameUser.record?.view, "margin");
+  assert.equal(sameUser.record?.view, "registration-activity");
+  assert.equal(sameUser.record?.route, "/?view=registration-activity&status=failed");
+  assert.equal(sameUser.record?.route.includes("oauth-secret"), false);
   assert.equal(otherUser.status, "invalid");
   assert.equal(otherUser.record, null);
+});
+
+test("keeps only bounded query state supported by the selected workspace view", () => {
+  assert.equal(
+    sanitizeUserWorkspaceRoute("/?view=product-detail&productId=product-123&status=failed&ticketId=secret", "product-detail"),
+    "/?view=product-detail&productId=product-123",
+  );
+  assert.equal(
+    sanitizeUserWorkspaceRoute("/?view=registration-activity&status=blocked&productId=ignored", "registration-activity"),
+    "/?view=registration-activity&status=blocked",
+  );
+  assert.equal(
+    sanitizeUserWorkspaceRoute("/?view=cs&channel=coupang&status=reconciliation&ticketId=ticket-9&code=secret", "cs"),
+    "/?view=cs&channel=coupang&status=reconciliation&ticketId=ticket-9",
+  );
+  assert.equal(
+    sanitizeUserWorkspaceRoute("/?view=orders&orderId=order-42&productId=ignored", "orders"),
+    "/?view=orders&orderId=order-42",
+  );
+});
+
+test("rejects cross-origin and path escape attempts from persisted workspace routes", () => {
+  for (const route of [
+    "https://evil.example/?view=products",
+    "//evil.example/?view=products",
+    "/\\evil.example/?view=products",
+    "/%2f%2fevil.example/?view=products",
+    "/another-page?view=products",
+  ]) {
+    assert.equal(sanitizeUserWorkspaceRoute(route, "products"), "/?view=products");
+  }
+});
+
+test("legacy records without a route restore only their validated view", () => {
+  const raw = JSON.stringify({
+    version: 1,
+    userScope: "admin-a",
+    view: "margin",
+    lastActivityAt: 10_000,
+  });
+  const restored = parseUserWorkspaceRecord({ raw, userId: "admin-a", now: 20_000 });
+
+  assert.equal(restored.status, "ready");
+  assert.equal(restored.record?.route, "/?view=margin");
 });
 
 test("reports malformed, future, and expired stored sessions without side effects", () => {

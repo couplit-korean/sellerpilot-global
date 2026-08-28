@@ -441,7 +441,12 @@ export async function POST(request: NextRequest) {
   if (usesChannelGateway) {
     try {
       const gatewayArguments = operation === "listing.create" || operation === "listing.update"
-        ? await prepareMarketplaceImages(serviceClient, channel, effectiveArguments)
+        ? await prepareMarketplaceImages(serviceClient, channel, effectiveArguments, {
+            attemptId,
+            productId: parsed.data.productId!,
+            market: parsed.data.market,
+            targetId: parsed.data.targetId,
+          })
         : effectiveArguments;
       const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
         ? {
@@ -618,7 +623,12 @@ export async function POST(request: NextRequest) {
   try {
     const executionPayload = secretPayload as Record<string, unknown>;
     const operationArguments = operation === "listing.create" || operation === "listing.update"
-      ? await prepareMarketplaceImages(serviceClient, channel, effectiveArguments)
+      ? await prepareMarketplaceImages(serviceClient, channel, effectiveArguments, {
+          attemptId,
+          productId: parsed.data.productId!,
+          market: parsed.data.market,
+          targetId: parsed.data.targetId,
+        })
       : effectiveArguments;
     const rawResult = await executeChannelOperation({
       channel,

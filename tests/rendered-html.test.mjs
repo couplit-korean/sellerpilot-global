@@ -365,7 +365,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(periodicSyncRoute, /sellerpilot_service_enqueue_periodic_sync/);
   assert.match(periodicSyncRoute, /sellerpilot_service_validate_worker_token/);
   assert.match(periodicSyncRoute, /createBoundedSupabaseFetch/);
-  assert.match(periodicSyncRoute, /PERIODIC_SYNC_ENQUEUE_CONCURRENCY = 4/);
+  assert.match(periodicSyncRoute, /PERIODIC_SYNC_ENQUEUE_CONCURRENCY = 5/);
   assert.match(periodicSyncRoute, /mapWithConcurrency\(queueRequests, PERIODIC_SYNC_ENQUEUE_CONCURRENCY/);
   assert.match(periodicSyncRoute, /reconciliationRequired/);
   assert.match(gatewayClaimRoute, /workerRpcErrorStatus/);
@@ -410,7 +410,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(periodicSyncRoute, /dispatchPendingPushNotifications/);
   assert.match(periodicSyncMigration, /already_pending/);
   assert.match(periodicSyncMigration, /'qoo10', 'shopee', 'lazada', 'coupang', 'smartstore', 'ebay', 'temu'/);
-  assert.doesNotMatch(vercelConfig, /"schedule": "\*\/5 \* \* \* \*"/);
+  assert.match(vercelConfig, /"path": "\/api\/internal\/channel-sync"[\s\S]{0,80}"schedule": "1-59\/5 \* \* \* \*"/);
   assert.match(cliWorker, /SELLERPILOT_CHANNEL_SYNC_MS/);
   assert.match(cliWorker, /\/api\/internal\/channel-sync/);
   assert.match(cliWorker, /sellerpilot-cli-worker\/1\.59/);

@@ -17,8 +17,22 @@ const maxInputBytes = 10 * 1024 * 1024;
 const maxOutputBytes = 3 * 1024 * 1024;
 const outputSize = 1200;
 const detailMaxDimension = 1600;
+const marketplaceUploadConcurrency = 4;
 
 export type MarketplaceImageNormalizationMode = "gallery-square" | "detail-ratio";
+
+export type MarketplaceImageLifecycleReference = {
+  attemptId: string;
+  productId: string;
+  market: string;
+  targetId: string;
+};
+
+export type PreparedMarketplaceNormalizedAsset = {
+  objectPath: string;
+  bytes: Buffer;
+  publicUrl: string;
+};
 
 function embeddedIpv4Address(address: string) {
   let normalized = address.toLowerCase().split("%", 1)[0];
@@ -135,8 +149,14 @@ export async function collectBoundedMarketplaceImage(
   return Buffer.concat(chunks, total);
 }
 
-export async function downloadMarketplaceImage(sourceUrl: string) {
+export async function downloadMarketplaceImage(sourceUrl: string, ownerSignal?: AbortSignal) {
+  ownerSignal?.throwIfAborted();
   const target = await assertPublicImageUrl(sourceUrl);
+  ownerSignal?.throwIfAborted();
+  const timeoutSignal = AbortSignal.timeout(20_000);
+  const requestSignal = ownerSignal
+    ? AbortSignal.any([ownerSignal, timeoutSignal])
+    : timeoutSignal;
   return new Promise<{ bytes: Buffer; contentType: string }>((resolveDownload, rejectDownload) => {
     let settled = false;
     const finish = (error: Error | null, result?: { bytes: Buffer; contentType: string }) => {
@@ -160,7 +180,7 @@ export async function downloadMarketplaceImage(sourceUrl: string) {
       },
       agent: false,
       servername: isIP(target.hostname) ? undefined : target.hostname,
-      signal: AbortSignal.timeout(20_000),
+      signal: requestSignal,
     }, (response) => {
       const status = response.statusCode ?? 0;
       const contentType = String(response.headers["content-type"] ?? "").split(";", 1)[0].toLowerCase();
@@ -220,23 +240,82 @@ export async function normalizeMarketplaceImageBytes(source: Buffer, mode: Marke
   return Buffer.from(output);
 }
 
-async function publishNormalizedImage(serviceClient: SupabaseClient, sourceUrl: string, mode: MarketplaceImageNormalizationMode) {
+async function prepareNormalizedImage(serviceClient: SupabaseClient, sourceUrl: string, mode: MarketplaceImageNormalizationMode) {
   const normalized = await normalizeMarketplaceImageBytes(await downloadImage(sourceUrl), mode);
-  await ensureMarketplaceImageBucket(serviceClient);
   const digest = createHash("sha256").update(normalized).digest("hex");
   const objectPath = `normalized/${digest.slice(0, 2)}/${digest}.jpg`;
-  const { error: uploadError } = await serviceClient.storage
-    .from(marketplaceImageBucket)
-    .upload(objectPath, normalized, { cacheControl: "31536000", contentType: "image/jpeg", upsert: true });
-  if (uploadError) throw new Error("MARKETPLACE_IMAGE_UPLOAD_FAILED");
   const { data } = serviceClient.storage.from(marketplaceImageBucket).getPublicUrl(objectPath);
   if (!data.publicUrl || data.publicUrl.length > 500) throw new Error("MARKETPLACE_IMAGE_PUBLIC_URL_INVALID");
-  const verify = await fetch(data.publicUrl, { redirect: "error", signal: AbortSignal.timeout(15_000) });
-  await verify.body?.cancel();
-  if (!verify.ok || !(verify.headers.get("content-type") ?? "").toLowerCase().startsWith("image/jpeg")) {
-    throw new Error("MARKETPLACE_IMAGE_READBACK_FAILED");
+  return { objectPath, bytes: normalized, publicUrl: data.publicUrl } satisfies PreparedMarketplaceNormalizedAsset;
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<void>,
+) {
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      await task(item);
+    }
+  });
+  await Promise.all(workers);
+}
+
+export async function persistMarketplaceNormalizedAssets(
+  serviceClient: SupabaseClient,
+  channel: ActiveChannelKey,
+  lifecycle: MarketplaceImageLifecycleReference,
+  assets: PreparedMarketplaceNormalizedAsset[],
+) {
+  const uniqueAssets = [...new Map(assets.map((asset) => [asset.objectPath, asset])).values()];
+  if (!uniqueAssets.length) return;
+  if (uniqueAssets.length > 32
+      || !lifecycle.attemptId
+      || !lifecycle.productId
+      || uniqueAssets.some((asset) => !/^normalized\/[0-9a-f]{2}\/[0-9a-f]{64}\.jpg$/.test(asset.objectPath))) {
+    throw new Error("MARKETPLACE_IMAGE_LIFECYCLE_INVALID");
   }
-  return data.publicUrl;
+
+  const paths = uniqueAssets.map((asset) => asset.objectPath);
+  const { data: registered, error: registerError } = await serviceClient.rpc(
+    "sellerpilot_service_register_marketplace_normalized_asset_refs",
+    {
+      p_attempt_id: lifecycle.attemptId,
+      p_product_id: lifecycle.productId,
+      p_channel: channel,
+      p_market: lifecycle.market,
+      p_target_id: lifecycle.targetId,
+      p_paths: paths,
+    },
+  );
+  if (registerError || registered !== true) throw new Error("MARKETPLACE_IMAGE_REFERENCE_REGISTER_FAILED");
+
+  await ensureMarketplaceImageBucket(serviceClient);
+  await runWithConcurrency(uniqueAssets, marketplaceUploadConcurrency, async (asset) => {
+    const { error: uploadError } = await serviceClient.storage
+      .from(marketplaceImageBucket)
+      .upload(asset.objectPath, asset.bytes, {
+        cacheControl: "31536000",
+        contentType: "image/jpeg",
+        upsert: true,
+      });
+    if (uploadError) throw new Error("MARKETPLACE_IMAGE_UPLOAD_FAILED");
+    const verify = await fetch(asset.publicUrl, { redirect: "error", signal: AbortSignal.timeout(15_000) });
+    await verify.body?.cancel();
+    if (!verify.ok || !(verify.headers.get("content-type") ?? "").toLowerCase().startsWith("image/jpeg")) {
+      throw new Error("MARKETPLACE_IMAGE_READBACK_FAILED");
+    }
+  });
+
+  const { data: marked, error: markError } = await serviceClient.rpc(
+    "sellerpilot_service_mark_marketplace_normalized_assets_uploaded",
+    { p_attempt_id: lifecycle.attemptId, p_paths: paths },
+  );
+  if (markError || marked !== true) throw new Error("MARKETPLACE_IMAGE_UPLOAD_MARK_FAILED");
 }
 
 function record(value: unknown) {
@@ -415,21 +494,36 @@ export function buildCoupangMarketplaceContents(
       ];
 }
 
-export async function prepareMarketplaceImages(serviceClient: SupabaseClient, channel: ActiveChannelKey, argumentsValue: Record<string, unknown>) {
+export async function prepareMarketplaceImages(
+  serviceClient: SupabaseClient,
+  channel: ActiveChannelKey,
+  argumentsValue: Record<string, unknown>,
+  lifecycle?: MarketplaceImageLifecycleReference,
+) {
   const next = structuredClone(argumentsValue);
-  const normalizedBySource = new Map<string, string>();
+  const normalizedBySource = new Map<string, Promise<PreparedMarketplaceNormalizedAsset>>();
+  const preparedAssets: PreparedMarketplaceNormalizedAsset[] = [];
   const normalize = async (sourceUrl: string, mode: MarketplaceImageNormalizationMode) => {
     const cacheKey = `${mode}:${sourceUrl}`;
     const cached = normalizedBySource.get(cacheKey);
-    if (cached) return cached;
-    const outputUrl = await publishNormalizedImage(serviceClient, sourceUrl, mode);
-    normalizedBySource.set(cacheKey, outputUrl);
-    return outputUrl;
+    if (cached) return (await cached).publicUrl;
+    const pending = prepareNormalizedImage(serviceClient, sourceUrl, mode);
+    normalizedBySource.set(cacheKey, pending);
+    const prepared = await pending;
+    preparedAssets.push(prepared);
+    return prepared.publicUrl;
   };
   const normalizeList = async (value: unknown, limit: number, mode: MarketplaceImageNormalizationMode) => {
     const unique = [...new Set(strings(value))].slice(0, limit);
     if (!unique.length) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
     return Promise.all(unique.map((sourceUrl) => normalize(sourceUrl, mode)));
+  };
+  const finish = async () => {
+    if (preparedAssets.length) {
+      if (!lifecycle) throw new Error("MARKETPLACE_IMAGE_LIFECYCLE_REQUIRED");
+      await persistMarketplaceNormalizedAssets(serviceClient, channel, lifecycle, preparedAssets);
+    }
+    return next;
   };
 
   const assets = record(next.sellerpilotAssets);
@@ -464,7 +558,7 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     if (!params || !sourceUrl) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
     params.StandardImage = gallery[0] ?? await normalize(sourceUrl, "gallery-square");
     params.ItemDescription = renderQoo10DetailDescription(params.ItemDescription, details, detailImageAltTexts, detailImageRoles);
-    return next;
+    return finish();
   }
 
   if (channel === "shopee" || channel === "lazada" || channel === "smartstore") {
@@ -499,7 +593,7 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
       if (!originProduct) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
       originProduct.detailContent = upsertMarketplaceDetailImages(originProduct.detailContent, details, detailImageAltTexts, detailImageRoles);
     }
-    return next;
+    return finish();
   }
 
   if (channel === "coupang") {
@@ -540,7 +634,7 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
       }
     }
     if (!count) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    return next;
+    return finish();
   }
 
   if (channel === "elevenst") {
@@ -577,7 +671,7 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
       product.htmlDetail = upsertMarketplaceDetailImages(product.htmlDetail, details, detailImageAltTexts, detailImageRoles);
       if (productPatch) productPatch.htmlDetail = product.htmlDetail;
     }
-    return next;
+    return finish();
   }
 
   if (channel === "temu") {
@@ -595,7 +689,7 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
       const sku = record(skuValue);
       if (sku) sku.images = normalized;
     }
-    return next;
+    return finish();
   }
 
   const inventoryItem = record(next.inventoryItem);
@@ -608,5 +702,5 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   product.description = upsertMarketplaceDetailImages(product.description, details, detailImageAltTexts, detailImageRoles);
   const offer = record(next.offer);
   if (offer) offer.listingDescription = upsertMarketplaceDetailImages(offer.listingDescription, details, detailImageAltTexts, detailImageRoles);
-  return next;
+  return finish();
 }

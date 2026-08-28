@@ -216,11 +216,14 @@ test("maintenance reports stale AI recovery failures after continuing independen
   assert.match(route, /p_queued_before: new Date\(Date\.now\(\) - STALE_AI_QUEUED_TIMEOUT_MS\)\.toISOString\(\)/);
   assert.match(route, /p_limit: STALE_AI_RECOVERY_LIMIT/);
   assert.ok(
-    route.indexOf("const staleAiJobsRecovery = await expireStaleAiJobs(serviceClient)")
+    route.indexOf("expireStaleAiJobs(serviceClient)")
       < route.indexOf("queueRefreshIfNeeded(serviceClient, \"shopee\")"),
     "stale AI recovery must be attempted even when a later OAuth maintenance step fails",
   );
-  assert.match(route, /if \(!staleAiJobsRecovery\.ok\)[\s\S]{0,1600}status: 502/);
+  assert.match(
+    route,
+    /if \(!staleAiJobsRecovery\.ok \|\| !staleGatewayJobsRecovery\.ok \|\| !stalePushDeliveryRecovery\.ok\)[\s\S]{0,2000}status: 502/,
+  );
   assert.match(route, /다른 정리 작업 결과는 아래에 보존했습니다/);
   assert.match(route, /total !== queuedExpired \+ runningExpired/);
 

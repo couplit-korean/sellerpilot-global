@@ -180,6 +180,77 @@ test("Smartstore full-product stock update is read back before success", async (
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("Smartstore option stock update verifies every requested option by stable ID", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    calls.push(`${init?.method}:${url.pathname}`);
+    if (url.pathname.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "token", expires_in: 10_800 });
+    if (init?.method === "PUT") return Response.json({});
+    return Response.json({
+      originProduct: {
+        detailAttribute: {
+          optionInfo: {
+            optionCombinations: [{ id: 101, stockQuantity: 17 }],
+            optionStandards: [{ id: 202, stockQuantity: 9 }],
+          },
+        },
+      },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "smartstore", operation: "inventory.update", environment: "production",
+      payload: { client_id: "client", client_secret: "$2b$10$abcdefghijklmnopqrstuu", token_type: "SELF" },
+      arguments: {
+        originProductNo: "123456789",
+        quantity: 17,
+        body: {
+          optionInfo: {
+            optionCombinations: [{ id: 101, stockQuantity: 17 }],
+            optionStandards: [{ id: 202, stockQuantity: 9 }],
+          },
+        },
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(calls.slice(-2), [
+      "PUT:/external/v1/products/origin-products/123456789/option-stock",
+      "GET:/external/v2/products/origin-products/123456789",
+    ]);
+    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "INVENTORY_OPTION_QUANTITIES_VERIFIED");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("Smartstore option stock write is not reported successful when readback differs", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "token", expires_in: 10_800 });
+    if (init?.method === "PUT") return Response.json({});
+    return Response.json({
+      originProduct: {
+        detailAttribute: { optionInfo: { optionCombinations: [{ id: 101, stockQuantity: 16 }] } },
+      },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "smartstore", operation: "inventory.update", environment: "production",
+      payload: { client_id: "client", client_secret: "$2b$10$abcdefghijklmnopqrstuu", token_type: "SELF" },
+      arguments: {
+        originProductNo: "123456789",
+        quantity: 17,
+        body: { optionInfo: { optionCombinations: [{ id: 101, stockQuantity: 17 }] } },
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "INVENTORY_OPTION_QUANTITIES_MISMATCH");
+    assert.deepEqual(result.steps.at(-1)?.data.sellerpilotMismatchOptionIds, ["101"]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("Temu inventory verifies quantity through goods detail", async () => {
   const originalFetch = globalThis.fetch;
   let call = 0;

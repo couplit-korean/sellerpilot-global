@@ -2,51 +2,81 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { GET } from "../app/api/exchange-rates/route";
+import { productCurrencies } from "../lib/product-intake";
 
-const dailyRows = [
-  { date: "2026-08-26", base: "KRW", quote: "USD", rate: 1 / 1_380 },
-  { date: "2026-08-27", base: "KRW", quote: "USD", rate: 1 / 1_400 },
-  { date: "2026-08-26", base: "KRW", quote: "JPY", rate: 100 / 920 },
-  { date: "2026-08-27", base: "KRW", quote: "JPY", rate: 100 / 940 },
-  { date: "2026-08-26", base: "KRW", quote: "SGD", rate: 1 / 1_080 },
-  { date: "2026-08-27", base: "KRW", quote: "SGD", rate: 1 / 1_100 },
-  { date: "2026-08-26", base: "KRW", quote: "MYR", rate: 1 / 330 },
-  { date: "2026-08-27", base: "KRW", quote: "MYR", rate: 1 / 350 },
-];
+type TestCurrencyCode = (typeof productCurrencies)[number];
+type TestProviderCurrencyCode = Exclude<TestCurrencyCode, "KRW">;
+
+const providerCurrencyCodes = productCurrencies.filter(
+  (code): code is TestProviderCurrencyCode => code !== "KRW",
+);
+const previousKrwPerUnit: Record<TestCurrencyCode, number> = {
+  KRW: 1, JPY: 9.2, USD: 1_380, SGD: 1_080, MYR: 330, PHP: 23.5, VND: 0.05,
+  THB: 38, TWD: 41, BRL: 245, MXN: 70, IDR: 0.08, EUR: 1_500,
+};
+const latestKrwPerUnit: Record<TestCurrencyCode, number> = {
+  KRW: 1, JPY: 9.4, USD: 1_400, SGD: 1_100, MYR: 350, PHP: 24, VND: 0.05,
+  THB: 40, TWD: 43, BRL: 250, MXN: 72, IDR: 0.09, EUR: 1_520,
+};
+const marketKrwPerUnit: Record<TestCurrencyCode, number> = {
+  KRW: 1, JPY: 9.5, USD: 1_410, SGD: 1_110, MYR: 355, PHP: 24.2, VND: 0.05,
+  THB: 41, TWD: 44, BRL: 252, MXN: 73, IDR: 0.09, EUR: 1_530,
+};
+
+const dailyRows = providerCurrencyCodes.flatMap((quote) => [
+  { date: "2026-08-26", base: "KRW", quote, rate: 1 / previousKrwPerUnit[quote] },
+  { date: "2026-08-27", base: "KRW", quote, rate: 1 / latestKrwPerUnit[quote] },
+]);
 
 const marketPayload = {
   data: {
     currency: "KRW",
-    rates: {
-      USD: String(1 / 1_410),
-      JPY: String(100 / 950),
-      SGD: String(1 / 1_110),
-      MYR: String(1 / 355),
-    },
+    rates: Object.fromEntries(providerCurrencyCodes.map((code) => [code, String(1 / marketKrwPerUnit[code])])),
   },
 };
 
-function providerFetcher({ marketStatus = 200, dailyStatus = 200 } = {}) {
+function expectedSnapshotRows(values: Record<TestCurrencyCode, number>) {
+  return productCurrencies.map((code) => {
+    const unit = code === "JPY" ? 100 : 1;
+    return { code, unit, value: Number((unit * values[code]).toFixed(2)) };
+  });
+}
+
+function providerFetcher({
+  marketStatus = 200,
+  dailyStatus = 200,
+  omitMarketCurrency,
+  omitDailyCurrency,
+}: {
+  marketStatus?: number;
+  dailyStatus?: number;
+  omitMarketCurrency?: TestProviderCurrencyCode;
+  omitDailyCurrency?: TestProviderCurrencyCode;
+} = {}) {
   const revalidations: number[] = [];
   const cacheModes: Array<{ provider: "coinbase" | "frankfurter"; cache: RequestCache | undefined }> = [];
+  const dailyRequests: string[] = [];
   const fetcher = async (input: string | URL, init?: RequestInit) => {
     const revalidate = (init as RequestInit & { next?: { revalidate?: number } } | undefined)?.next?.revalidate;
     if (typeof revalidate === "number") revalidations.push(revalidate);
     const url = String(input);
     if (url.includes("api.coinbase.com")) {
       cacheModes.push({ provider: "coinbase", cache: init?.cache });
-      return Response.json(marketPayload, {
+      const rates = Object.fromEntries(Object.entries(marketPayload.data.rates)
+        .filter(([code]) => code !== omitMarketCurrency));
+      return Response.json({ data: { ...marketPayload.data, rates } }, {
         status: marketStatus,
         headers: { "last-modified": "Fri, 28 Aug 2026 01:01:40 GMT" },
       });
     }
     if (url.includes("api.frankfurter.dev")) {
       cacheModes.push({ provider: "frankfurter", cache: init?.cache });
-      return Response.json(dailyRows, { status: dailyStatus });
+      dailyRequests.push(url);
+      return Response.json(dailyRows.filter((row) => row.quote !== omitDailyCurrency), { status: dailyStatus });
     }
     throw new Error(`unexpected URL ${url}`);
   };
-  return { fetcher, revalidations, cacheModes };
+  return { fetcher, revalidations, cacheModes, dailyRequests };
 }
 
 async function requestSnapshot(fetcher: ReturnType<typeof providerFetcher>["fetcher"]) {
@@ -74,7 +104,7 @@ async function requestSnapshot(fetcher: ReturnType<typeof providerFetcher>["fetc
 }
 
 test("minute exchange rates use the official keyless Coinbase response inside the one-minute refresh boundary", async () => {
-  const { fetcher, revalidations, cacheModes } = providerFetcher();
+  const { fetcher, revalidations, cacheModes, dailyRequests } = providerFetcher();
   const { response, snapshot } = await requestSnapshot(fetcher);
 
   assert.equal(snapshot.source, "Coinbase Data API");
@@ -84,12 +114,8 @@ test("minute exchange rates use the official keyless Coinbase response inside th
   assert.ok(!Number.isNaN(new Date(snapshot.fetchedAt).getTime()));
   assert.equal(response.headers.get("cache-control"), "public, max-age=0, s-maxage=55");
   assert.equal(snapshot.changeBasis, "latest-daily-reference");
-  assert.deepEqual(snapshot.rates.map(({ code, unit, value }) => ({ code, unit, value })), [
-    { code: "USD", unit: 1, value: 1_410 },
-    { code: "JPY", unit: 100, value: 950 },
-    { code: "SGD", unit: 1, value: 1_110 },
-    { code: "MYR", unit: 1, value: 355 },
-  ]);
+  assert.deepEqual(snapshot.rates.map(({ code, unit, value }) => ({ code, unit, value })), expectedSnapshotRows(marketKrwPerUnit));
+  assert.deepEqual(new URL(dailyRequests[0]).searchParams.get("quotes")?.split(","), providerCurrencyCodes);
   assert.deepEqual(revalidations, [3_600]);
   assert.deepEqual(cacheModes, [
     { provider: "coinbase", cache: "no-store" },
@@ -107,13 +133,23 @@ test("Coinbase failure falls back to the existing daily reference rates without 
   assert.equal(snapshot.providerAsOf, null);
   assert.equal(snapshot.asOf, "2026-08-27");
   assert.equal(snapshot.changeBasis, "previous-daily-reference");
-  assert.deepEqual(snapshot.rates.map(({ code, value }) => ({ code, value })), [
-    { code: "USD", value: 1_400 },
-    { code: "JPY", value: 940 },
-    { code: "SGD", value: 1_100 },
-    { code: "MYR", value: 350 },
-  ]);
+  assert.deepEqual(
+    snapshot.rates.map(({ code, unit, value }) => ({ code, unit, value })),
+    expectedSnapshotRows(latestKrwPerUnit),
+  );
   assert.ok(snapshot.rates.every((rate) => typeof rate.change === "number"));
+});
+
+test("a partial current provider response never invents a missing market rate", async () => {
+  const { fetcher } = providerFetcher({ omitMarketCurrency: "EUR" });
+  const { snapshot } = await requestSnapshot(fetcher);
+
+  assert.equal(snapshot.frequency, "daily-reference-fallback");
+  assert.equal(snapshot.fallback, true);
+  assert.deepEqual(
+    snapshot.rates.map(({ code, unit, value }) => ({ code, unit, value })),
+    expectedSnapshotRows(latestKrwPerUnit),
+  );
 });
 
 test("a valid minute response remains usable when the daily comparison provider is unavailable", async () => {
@@ -139,6 +175,7 @@ test("both exchange-rate UIs poll every minute with in-flight and unmount fences
   assert.match(route, /daily-reference-fallback/);
 
   assert.match(page, /const dashboardExchangeRateRefreshMs = 60_000/);
+  assert.match(page, /const dashboardRates = rates\.filter\(\(rate\) => dashboardExchangeRateCodes\.has\(rate\.code\)\)/);
   assert.match(page, /if \(exchangeRateRequestRef\.current\) return/);
   assert.match(page, /!exchangeRateMountedRef\.current \|\| controller\.signal\.aborted/);
   assert.match(page, /exchangeRateReceivedRef\.current = true/);

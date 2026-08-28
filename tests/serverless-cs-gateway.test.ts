@@ -21,6 +21,7 @@ registerHooks({
 const {
   SERVERLESS_CS_DRAIN_CONCURRENCY,
   SERVERLESS_CS_ENQUEUE_CONCURRENCY,
+  SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES,
   SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES,
   deriveServerlessCsGatewayCredentials,
   executeServerlessCsProviderJob,
@@ -214,12 +215,12 @@ function baseRpc(
     if (name === "sellerpilot_service_enqueue_periodic_sync") {
       return { data: { status: "already_pending" }, error: null };
     }
-    if (name === "sellerpilot_claim_serverless_cs_job") {
+    if (name === "sellerpilot_claim_serverless_gateway_job") {
       claimCount += 1;
       return { data: claimCount === 1 ? claimedJob : null, error: null };
     }
     if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
-    if (name === "sellerpilot_service_begin_serverless_cs_provider_mutation") return { data: true, error: null };
+    if (name === "sellerpilot_service_begin_serverless_gateway_provider_mutation") return { data: true, error: null };
     if (name === "sellerpilot_service_begin_serverless_cs_credential_refresh") return { data: true, error: null };
     if (name === "sellerpilot_service_prepare_serverless_cs_credential_refresh") {
       return { data: { status: "prepared", credential_id: PREPARED_CREDENTIAL_ID }, error: null };
@@ -354,7 +355,7 @@ test("an unknown explicit drain mode fails closed without claiming", async () =>
   assert.equal(rpcCalls, 0);
 });
 
-test("normal drain enqueues only current supported inquiries before two bounded claims", async () => {
+test("normal drain enqueues only current supported inquiries before eight bounded claims", async () => {
   const fixedNow = new Date("2026-08-28T07:00:00.000Z");
   const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
   let activeEnqueues = 0;
@@ -383,7 +384,7 @@ test("normal drain enqueues only current supported inquiries before two bounded 
     status: "idle",
     claimed: 0,
     processed: 0,
-    capacity: 2,
+    capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
       attempted: 2,
       queued: 0,
@@ -401,12 +402,17 @@ test("normal drain enqueues only current supported inquiries before two bounded 
   assert.equal(maxActiveEnqueues, Math.min(SERVERLESS_CS_ENQUEUE_CONCURRENCY, enqueues.length));
   assert.ok(maxActiveEnqueues >= 2 && maxActiveEnqueues <= 4);
   assert.equal(
-    calls.filter(({ name }) => name === "sellerpilot_claim_serverless_cs_job").length,
+    calls.filter(({ name }) => name === "sellerpilot_claim_serverless_gateway_job").length,
     SERVERLESS_CS_DRAIN_CONCURRENCY,
   );
   assert.equal(
     SERVERLESS_CS_DRAIN_CONCURRENCY * 5 > serverlessCsCurrentInquiryEnqueues(fixedNow).length,
     true,
+  );
+  assert.equal(SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES, 25);
+  assert.ok(
+    SERVERLESS_CS_DRAIN_CONCURRENCY * 5
+      > SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES,
   );
   assert.equal(SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES, 5);
   assert.deepEqual(
@@ -435,7 +441,7 @@ test("normal drain enqueues only current supported inquiries before two bounded 
   );
 });
 
-test("missing generic claim RPC falls back only to the eBay compatibility alias", async () => {
+test("missing generic claim RPC falls back to the inquiries-only compatibility claimant", async () => {
   const names: string[] = [];
   const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
     cronSecret: CRON_SECRET,
@@ -444,14 +450,16 @@ test("missing generic claim RPC falls back only to the eBay compatibility alias"
       if (name === "sellerpilot_service_enqueue_periodic_sync") {
         return { data: { status: "already_pending" }, error: null };
       }
-      return name === "sellerpilot_claim_serverless_cs_job"
-        ? { data: null, error: { code: "PGRST202" } }
-        : { data: null, error: null };
+      if (name === "sellerpilot_claim_serverless_gateway_job") {
+        return { data: null, error: { code: "PGRST202" } };
+      }
+      return { data: null, error: null };
     },
   });
   assert.equal(response.status, 200);
-  assert.equal(names.filter((name) => name === "sellerpilot_claim_serverless_cs_job").length, 2);
-  assert.equal(names.filter((name) => name === "sellerpilot_claim_ebay_asq_serverless_job").length, 2);
+  assert.equal(names.filter((name) => name === "sellerpilot_claim_serverless_gateway_job").length, SERVERLESS_CS_DRAIN_CONCURRENCY);
+  assert.equal(names.filter((name) => name === "sellerpilot_claim_serverless_cs_job").length, SERVERLESS_CS_DRAIN_CONCURRENCY);
+  assert.equal(names.filter((name) => name === "sellerpilot_claim_ebay_asq_serverless_job").length, 0);
 });
 
 test("explicit static egress enables Coupang and Smartstore current reads", () => {
@@ -536,7 +544,7 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
       if (name === "sellerpilot_service_enqueue_periodic_sync") {
         return { data: null, error: { code: "transport_error" } };
       }
-      if (name === "sellerpilot_claim_serverless_cs_job") {
+      if (name === "sellerpilot_claim_serverless_gateway_job") {
         claimCalls += 1;
         return { data: null, error: null };
       }
@@ -551,7 +559,7 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
     status: "idle",
     claimed: 0,
     processed: 0,
-    capacity: 2,
+    capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
       attempted: 2,
       queued: 0,
@@ -565,11 +573,11 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
     needsAttention: true,
     jobs: [],
   });
-  assert.equal(claimCalls, 2);
+  assert.equal(claimCalls, SERVERLESS_CS_DRAIN_CONCURRENCY);
   assert.deepEqual(logged, [["enqueue", { status: 503, failed: 2, total: 2 }]]);
 });
 
-test("two fenced workers run concurrently and provide more capacity than five-minute generation", async () => {
+test("two fenced jobs run concurrently within eight-worker drain capacity", async () => {
   const firstJob = claim("qoo10", "inquiries.list");
   const secondJob = claim("ebay", "inquiries.list");
   secondJob.id = "10000000-0000-4000-8000-000000000002";
@@ -588,7 +596,7 @@ test("two fenced workers run concurrently and provide more capacity than five-mi
       if (name === "sellerpilot_service_enqueue_periodic_sync") {
         return { data: { status: "already_pending" }, error: null };
       }
-      if (name === "sellerpilot_claim_serverless_cs_job") {
+      if (name === "sellerpilot_claim_serverless_gateway_job") {
         const job = jobs[claimIndex] ?? null;
         claimIndex += 1;
         return { data: job, error: null };
@@ -633,13 +641,13 @@ test("two fenced workers run concurrently and provide more capacity than five-mi
   assert.equal(body.status, "succeeded");
   assert.equal(body.claimed, 2);
   assert.equal(body.processed, 2);
-  assert.equal(body.capacity, 2);
+  assert.equal(body.capacity, SERVERLESS_CS_DRAIN_CONCURRENCY);
   assert.equal(maxActiveProviders, 2);
   assert.deepEqual(body.jobs.map((job) => job.channel).sort(), ["ebay", "qoo10"]);
   assert.ok(body.capacity * 5 > serverlessCsCurrentInquiryEnqueues(new Date()).length);
   assert.equal(
-    calls.filter(({ name }) => name === "sellerpilot_claim_serverless_cs_job").length,
-    2,
+    calls.filter(({ name }) => name === "sellerpilot_claim_serverless_gateway_job").length,
+    SERVERLESS_CS_DRAIN_CONCURRENCY,
   );
   assert.doesNotMatch(responseText, /Qoo10 민감 구매자|배송 상태를 알려 주세요|Where is my item\?|buyer-1/);
 });
@@ -657,7 +665,7 @@ test("inquiry list completion normalizes provider data in the atomic transaction
     status: "succeeded",
     claimed: 1,
     processed: 1,
-    capacity: 2,
+    capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
       attempted: 2,
       queued: 0,
@@ -675,7 +683,10 @@ test("inquiry list completion normalizes provider data in the atomic transaction
       operation: "inquiries.list",
     }],
   });
-  assert.equal(calls.filter(({ name }) => name === "sellerpilot_claim_serverless_cs_job").length, 2);
+  assert.equal(
+    calls.filter(({ name }) => name === "sellerpilot_claim_serverless_gateway_job").length,
+    SERVERLESS_CS_DRAIN_CONCURRENCY,
+  );
   const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
   assert.equal(complete?.arguments_.p_status, "succeeded");
   assert.deepEqual(complete?.arguments_.p_normalized_inquiries, [{
@@ -855,7 +866,7 @@ test("direct Qoo10 reply keeps the existing provider arguments behind the mutati
     return inquiryReplyResult("qoo10");
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(events, ["lease", "mutation-fence", "operation"]);
+  assert.deepEqual(events, ["lease", "mutation-fence", "lease", "operation"]);
 });
 
 test("direct Smartstore customer reply crosses the mutation fence before operation dispatch", async () => {
@@ -881,7 +892,7 @@ test("direct Smartstore customer reply crosses the mutation fence before operati
     return inquiryReplyResult("smartstore");
   });
   assert.equal(result.ok, true);
-  assert.deepEqual(events, ["lease", "mutation-fence", "operation"]);
+  assert.deepEqual(events, ["lease", "mutation-fence", "lease", "operation"]);
 });
 
 for (const channel of ["ebay", "coupang", "smartstore", "qoo10"] as const) {
@@ -894,7 +905,7 @@ for (const channel of ["ebay", "coupang", "smartstore", "qoo10"] as const) {
       rpc: baseRpc(claim(channel, "inquiries.reply"), calls),
       executeProvider: async ({ hooks }) => {
         await hooks.beginProviderMutation();
-        fenceObserved = calls.some(({ name }) => name === "sellerpilot_service_begin_serverless_cs_provider_mutation");
+        fenceObserved = calls.some(({ name }) => name === "sellerpilot_service_begin_serverless_gateway_provider_mutation");
         return inquiryReplyResult(channel);
       },
     });
@@ -1074,10 +1085,11 @@ test("request deadline composition is isolated across concurrent provider execut
   }
 });
 
-test("bounded drain route is direct, two-job, Node-only, and excludes child workers and 11st", async () => {
-  const [route, gateway, protocols] = await Promise.all([
+test("bounded drain route is direct, eight-job, Node-only, and excludes child workers", async () => {
+  const [route, gateway, provider, protocols] = await Promise.all([
     readFile(new URL("../app/api/internal/channel-gateway-drain/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/serverless-cs-gateway.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/protocols.ts", import.meta.url), "utf8"),
   ]);
   assert.match(route, /export const runtime = "nodejs"/);
@@ -1086,12 +1098,15 @@ test("bounded drain route is direct, two-job, Node-only, and excludes child work
   assert.match(route, /export async function POST/);
   assert.match(gateway, /SERVERLESS_CS_EXECUTION_TIMEOUT_MS = 180_000/);
   assert.match(gateway, /SERVERLESS_CS_ENQUEUE_CONCURRENCY = 3/);
-  assert.match(gateway, /SERVERLESS_CS_DRAIN_CONCURRENCY = 2/);
+  assert.match(gateway, /SERVERLESS_CS_DRAIN_CONCURRENCY = 8/);
+  assert.match(gateway, /SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES = 25/);
+  assert.match(gateway, /sellerpilot_claim_serverless_gateway_job/);
   assert.match(gateway, /sellerpilot_claim_serverless_cs_job/);
   assert.match(gateway, /sellerpilot_claim_ebay_asq_serverless_job/);
   assert.match(gateway, /"qoo10",[\s\S]*"coupang",[\s\S]*"smartstore",[\s\S]*"ebay"/);
   assert.doesNotMatch(`${route}\n${gateway}`, /child_process|\bspawn\s*\(|SELLERPILOT_URL|ai-cli-worker/);
-  assert.doesNotMatch(gateway, /elevenst/i);
+  assert.match(provider, /"listing\.create"[\s\S]*"elevenst"/);
+  assert.match(provider, /if \(operation === "price\.update"\) return false/);
   assert.match(protocols, /AsyncLocalStorage<AbortSignal>/);
   assert.match(protocols, /AbortSignal\.any\(\[ownerSignal, timeoutSignal\]\)/);
 });
