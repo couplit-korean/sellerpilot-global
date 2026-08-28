@@ -455,6 +455,48 @@ body:has(.notification-popover) .mobile-push-chip {
 .product-edit-form { min-height: 0; overflow-y: auto; }
 .product-edit-dialog > footer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
 
+/* Puck ships with a 100dvh editor shell. SellerPilot adds its own editor
+   header, so the embedded shell must consume the remaining grid row instead
+   of extending one header-height below the viewport. */
+.puck-editor-body [class*="_PuckLayout_"] {
+  height: 100% !important;
+  max-height: 100%;
+  min-height: 0;
+}
+
+.puck-editor-publish-action {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 13px;
+  color: #fff;
+  background: #176f56;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.puck-editor-publish-action:disabled { opacity: .58; cursor: wait; }
+.puck-editor-publish-action:focus-visible { outline: 3px solid rgb(23 111 86 / 24%); outline-offset: 2px; }
+
+/* The actual file input remains visually hidden, so surface its keyboard focus
+   on the visible photo region rather than on the 1px accessibility node. */
+.main-photo-section:has(input[type="file"]:focus-visible),
+.option-slot-wrap:has(input[type="file"]:focus-visible),
+.extra-photo-section:has(input[type="file"]:focus-visible),
+.product-revision-main:has(input[type="file"]:focus-visible),
+.product-revision-role-grid > div:has(input[type="file"]:focus-visible),
+.product-revision-extras:has(input[type="file"]:focus-visible) {
+  outline: 3px solid rgb(20 108 67 / 30%);
+  outline-offset: 3px;
+}
+
 @media (max-width: 720px) {
   :root {
     --mobile-header-safe-top: 0px;
@@ -519,6 +561,58 @@ body:has(.notification-popover) .mobile-push-chip {
   .operation-console-meta a {
     min-width: 44px;
     min-height: 44px;
+  }
+
+  .sidebar-head > button,
+  .mobile-back,
+  .saved-margin-list > article > button,
+  .template-card-grid article > div > button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .product-research-result nav a,
+  .product-link-input button,
+  .product-source-link,
+  .product-detail-asset-grid figcaption button,
+  .intake-template-picker button,
+  .product-channel-link,
+  .unavailable-channels summary,
+  .reply-tool-select,
+  .sales-range-control .segmented-control button,
+  .selected-date-range,
+  .custom-date-range,
+  .custom-date-range input,
+  .margin-field > div,
+  .margin-result-actions button,
+  .category-market-select select,
+  .publish-market-select select,
+  .category-manual-fallback input,
+  .category-attribute-list input,
+  .category-attribute-list select {
+    min-height: 44px;
+  }
+
+  .puck-editor-body button,
+  .puck-editor-body select,
+  .puck-editor-body [role="button"] {
+    min-height: 44px;
+  }
+
+  .puck-editor-body button,
+  .puck-editor-body [role="button"] {
+    min-width: 44px;
+  }
+
+  .puck-editor-body [class*="_ViewportControls-actionsInner_"] {
+    justify-content: flex-start;
+    margin-inline: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    touch-action: pan-x;
+    -webkit-overflow-scrolling: touch;
   }
 
   .notification-popover .notification-item {
@@ -656,13 +750,20 @@ body:has(.notification-popover) .mobile-push-chip {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* A Fold cover cannot display useful data between three sticky order
-     columns. Keep only the selection/identity edge pinned and let the order id
-     and row actions travel with the horizontally scrollable table. */
+  .puck-editor-body [class*="_PuckCanvas-inner_"],
+  .puck-editor-body [class*="_PuckCanvas-root_"] {
+    min-width: 0;
+  }
+
+  /* A Fold cover cannot display useful data between multiple sticky ledger
+     columns. Keep only the compact order selection edge pinned; the wider
+     order identity/actions and both margin edges travel with their tables. */
   .order-table th:nth-child(2),
   .order-table td:nth-child(2),
   .order-table th:last-child,
   .order-table td:last-child,
+  .margin-table th:first-child,
+  .margin-table td:first-child,
   .margin-table th:last-child,
   .margin-table td:last-child {
     position: static;

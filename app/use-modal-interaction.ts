@@ -66,6 +66,20 @@ export function acquireModalBodyScrollLock(body: ScrollLockBody) {
   };
 }
 
+export function resolveModalTabCycleTarget<T>(
+  focusable: readonly T[],
+  activeElement: unknown,
+  shiftKey: boolean,
+): T | null {
+  if (focusable.length === 0) return null;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (!focusable.includes(activeElement as T)) return shiftKey ? last : first;
+  if (shiftKey && activeElement === first) return last;
+  if (!shiftKey && activeElement === last) return first;
+  return null;
+}
+
 /**
  * Keeps the background inert to touch/scroll, restores the opener on close,
  * and prevents keyboard focus from escaping a SellerPilot modal.
@@ -122,14 +136,10 @@ export function useModalInteraction(
         dialog.focus({ preventScroll: true });
         return;
       }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      const cycleTarget = resolveModalTabCycleTarget(focusable, document.activeElement, event.shiftKey);
+      if (cycleTarget) {
         event.preventDefault();
-        last.focus({ preventScroll: true });
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus({ preventScroll: true });
+        cycleTarget.focus({ preventScroll: true });
       }
     };
 

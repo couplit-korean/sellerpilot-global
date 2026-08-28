@@ -55,6 +55,9 @@ test("cover-screen status, calendar and fixed actions stay reachable", async () 
   assert.match(styles, /\.sales-calendar-scroll\s*\{[^}]*overflow-x:\s*auto;[^}]*overscroll-behavior-inline:\s*contain/);
   assert.match(styles, /\.sales-calendar-weekdays,\s*\.sales-calendar-grid\s*\{[^}]*min-width:\s*var\(--sales-calendar-min-width\);[^}]*grid-template-columns:\s*repeat\(7, minmax\(40px, 1fr\)\)/);
   assert.match(styles, /\.sales-calendar-grid\s*\{[^}]*overflow:\s*visible/);
+  assert.match(cover, /\.sales-calendar-panel > \.panel-heading\s*\{[^}]*align-items:\s*stretch;[^}]*flex-direction:\s*column;[^}]*gap:\s*10px/);
+  assert.match(cover, /\.sales-calendar-meta\s*\{[^}]*width:\s*100%;[^}]*justify-items:\s*stretch/);
+  assert.match(cover, /\.sales-calendar-pager\s*\{[^}]*width:\s*100%;[^}]*grid-template-columns:\s*44px minmax\(0, 1fr\) 44px/);
   assert.match(cover, /\.mobile-bottom-nav button span\s*\{[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap/);
   assert.match(legacyCover, /\.mobile-push-gate\.browser\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
 });

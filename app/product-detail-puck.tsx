@@ -1,8 +1,8 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Puck blocks accept object/data URLs from the image studio */
 
-import { Puck, Render, type Config, type Data } from "@puckeditor/core";
-import { X } from "lucide-react";
+import { Puck, Render, usePuck, type Config, type Data, type Viewports } from "@puckeditor/core";
+import { Save, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { validateDetailAnimatedGif } from "../lib/product-media-contract";
 import { resolveProductDetailAssets } from "./_publishing/product-detail-persistence";
@@ -152,6 +152,13 @@ type DetailComponents = {
 
 export type ProductDetailData = Data<DetailComponents>;
 export type ProductDetailSource = Pick<ProductStudioResult, "product" | "design">;
+
+const productDetailEditorViewports: Viewports = [
+  { width: "100%", height: "auto", label: "현재 화면", icon: "Monitor" },
+  { width: 360, height: "auto", label: "모바일", icon: "Smartphone" },
+  { width: 768, height: "auto", label: "태블릿", icon: "Tablet" },
+  { width: 1280, height: "auto", label: "데스크톱", icon: "Monitor" },
+];
 
 const detailConfig: Config<DetailComponents> = {
   categories: {
@@ -449,6 +456,23 @@ export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data }: 
   return <Render config={detailConfig} data={renderData} />;
 }
 
+function ProductDetailPublishAction({ saving, onSave }: { saving: boolean; onSave: (next: ProductDetailData) => void | Promise<void> }) {
+  const { appState } = usePuck<typeof detailConfig>();
+  return (
+    <button
+      type="button"
+      className="puck-editor-publish-action"
+      disabled={saving}
+      onClick={() => {
+        if (!saving) void onSave(appState.data as ProductDetailData);
+      }}
+    >
+      <Save size={16} aria-hidden="true" />
+      {saving ? "저장 중" : "상세페이지 저장"}
+    </button>
+  );
+}
+
 export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, saving = false, onSave, onClose }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; saving?: boolean; onSave: (next: ProductDetailData) => void | Promise<void>; onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -459,7 +483,15 @@ export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, sa
   return (
     <div ref={dialogRef} tabIndex={-1} className="puck-editor-modal" role="dialog" aria-modal="true" aria-label="상세페이지 시각 편집기">
       <div className="puck-editor-top"><span><b>Puck 상세페이지 편집기</b><small>{saving ? "운영 원장에 저장 중입니다." : "블록을 드래그하고 오른쪽 속성에서 문구·색상을 수정하세요."}</small></span><button ref={closeButtonRef} type="button" aria-label="편집기 닫기" disabled={saving} onClick={onClose}><X size={18} /></button></div>
-      <div className="puck-editor-body" aria-busy={saving} aria-disabled={saving || undefined} inert={saving || undefined}><Puck config={detailConfig} data={initialData} onPublish={(next) => { if (!saving) void onSave(next); }} /></div>
+      <div className="puck-editor-body" aria-busy={saving} aria-disabled={saving || undefined} inert={saving || undefined}>
+        <Puck
+          config={detailConfig}
+          data={initialData}
+          viewports={productDetailEditorViewports}
+          overrides={{ headerActions: () => <ProductDetailPublishAction saving={saving} onSave={onSave} /> }}
+          onPublish={(next) => { if (!saving) void onSave(next); }}
+        />
+      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   acquireModalBodyScrollLock,
   hasActiveModalInteractionSurface,
   modalInteractionSurfaceSelector,
+  resolveModalTabCycleTarget,
 } from "../app/use-modal-interaction";
 
 test("nested modal body locks restore the original styles only after the final release", () => {
@@ -41,4 +42,18 @@ test("modal-surface detection includes active custom modals, native dialogs and 
   }), true);
   assert.deepEqual(seen, [modalInteractionSurfaceSelector]);
   assert.equal(hasActiveModalInteractionSurface({ querySelector: () => null }), false);
+});
+
+test("modal tab cycling recovers escaped focus and wraps both boundaries", () => {
+  const first = { id: "first" };
+  const middle = { id: "middle" };
+  const last = { id: "last" };
+  const focusable = [first, middle, last];
+
+  assert.equal(resolveModalTabCycleTarget(focusable, { id: "outside" }, false), first);
+  assert.equal(resolveModalTabCycleTarget(focusable, { id: "outside" }, true), last);
+  assert.equal(resolveModalTabCycleTarget(focusable, last, false), first);
+  assert.equal(resolveModalTabCycleTarget(focusable, first, true), last);
+  assert.equal(resolveModalTabCycleTarget(focusable, middle, false), null);
+  assert.equal(resolveModalTabCycleTarget([], middle, false), null);
 });

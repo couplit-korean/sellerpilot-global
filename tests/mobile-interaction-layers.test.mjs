@@ -111,6 +111,23 @@ test("mobile-only hidden labels and compact controls retain accessible 44px targ
   assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.sales-calendar-pager > button,[\s\S]*?\.command-input > button,[\s\S]*?\.credential-modal > header > button,[\s\S]*?\.cli-token-reveal button,[\s\S]*?\.bulk-order-bar > button:not\(\.table-action\),[\s\S]*?\.operation-console-meta a\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px/);
   assert.match(styles, /\.notification-popover \.notification-item\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) 44px/);
   assert.match(styles, /\.notification-popover \.notification-item > \.notification-item-dismiss\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
+  assert.match(styles, /\.sidebar-head > button,[\s\S]*?\.mobile-back,[\s\S]*?\.template-card-grid article > div > button\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
+  assert.match(styles, /\.product-research-result nav a,[\s\S]*?\.product-link-input button,[\s\S]*?\.product-detail-asset-grid figcaption button,[\s\S]*?\.reply-tool-select,[\s\S]*?\.category-attribute-list select\s*\{[^}]*min-height:\s*44px/);
+  assert.match(styles, /\.main-photo-section:has\(input\[type="file"\]:focus-visible\),[\s\S]*?\.product-revision-extras:has\(input\[type="file"\]:focus-visible\)\s*\{[^}]*outline:\s*3px solid/);
+});
+
+test("the embedded detail editor fits a Fold and exposes a semantic save action", async () => {
+  const [styles, puckEditor] = await Promise.all([
+    readFile(layerStylesUrl, "utf8"),
+    readFile(puckEditorUrl, "utf8"),
+  ]);
+
+  assert.match(puckEditor, /const productDetailEditorViewports: Viewports = \[\s*\{ width: "100%", height: "auto", label: "현재 화면"/);
+  assert.match(puckEditor, /<button\s+type="button"\s+className="puck-editor-publish-action"/);
+  assert.match(puckEditor, /overrides=\{\{ headerActions: \(\) => <ProductDetailPublishAction saving=\{saving\} onSave=\{onSave\} \/> \}\}/);
+  assert.match(styles, /\.puck-editor-body \[class\*="_PuckLayout_"\]\s*\{[^}]*height:\s*100% !important;[^}]*max-height:\s*100%;[^}]*min-height:\s*0/);
+  assert.match(styles, /\.puck-editor-body \[class\*="_ViewportControls-actionsInner_"\]\s*\{[^}]*justify-content:\s*flex-start;[^}]*overflow-x:\s*auto;[^}]*touch-action:\s*pan-x/);
+  assert.match(styles, /@media \(max-width: 344px\)[\s\S]*?\.puck-editor-body \[class\*="_PuckCanvas-inner_"\],[\s\S]*?\.puck-editor-body \[class\*="_PuckCanvas-root_"\]\s*\{[^}]*min-width:\s*0/);
 });
 
 test("true modals lock scroll, trap focus, close on Escape and restore the opener", async () => {

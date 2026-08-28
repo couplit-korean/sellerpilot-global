@@ -3312,9 +3312,24 @@
     padding-left: 6px;
   }
 
+  .sales-calendar-panel > .panel-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
   .sales-calendar-meta {
     width: 100%;
-    justify-items: start;
+    justify-items: stretch;
+  }
+
+  .sales-calendar-pager {
+    width: 100%;
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+  }
+
+  .sales-calendar-legend {
+    justify-content: flex-end;
   }
 
   .sales-calendar-grid {

@@ -62,7 +62,7 @@ test("narrow ledgers preserve one identity edge while 280, 320 and 344px covers 
   assert.match(styles, /\.order-table th:nth-child\(2\),\s*\.order-table td:nth-child\(2\)\s*\{[^}]*position:\s*sticky;[^}]*left:\s*48px/);
   assert.match(styles, /\.order-table th:last-child,[\s\S]*?\.margin-table td:last-child\s*\{[^}]*position:\s*sticky;[^}]*right:\s*0/);
   assert.match(styles, /\.data-table \.table-action\s*\{[^}]*width:\s*44px;[^}]*height:\s*44px/);
-  assert.match(interactionStyles, /@media \(max-width: 344px\)[\s\S]*?\.order-table th:nth-child\(2\),[\s\S]*?\.margin-table td:last-child\s*\{[^}]*position:\s*static;[^}]*right:\s*auto;[^}]*left:\s*auto;[^}]*box-shadow:\s*none/);
+  assert.match(interactionStyles, /@media \(max-width: 344px\)[\s\S]*?\.order-table th:nth-child\(2\),[\s\S]*?\.margin-table th:first-child,[\s\S]*?\.margin-table td:first-child,[\s\S]*?\.margin-table th:last-child,[\s\S]*?\.margin-table td:last-child\s*\{[^}]*position:\s*static;[^}]*right:\s*auto;[^}]*left:\s*auto;[^}]*box-shadow:\s*none/);
 });
 
 test("unstyled access, margin and studio states now have mobile-safe hierarchy", async () => {
