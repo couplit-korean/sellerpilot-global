@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { z } from "zod";
+import { createAbortableConcurrencyGate } from "./abortable-concurrency-gate";
 import {
   inspectAiGatewayFailure,
   type AiGatewayFailureDiagnostic,
@@ -49,10 +50,10 @@ import {
 } from "./studio-segment-generation";
 
 export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.2";
-export const SERVER_PRODUCT_STUDIO_TEXT_MODEL = "openai/gpt-5.4-mini";
+export const SERVER_PRODUCT_STUDIO_TEXT_MODEL = "openai/gpt-5.5";
 export const SERVER_PRODUCT_STUDIO_IMAGE_MODEL = "openai/gpt-image-2";
 export const SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE = 3;
-export const SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY = 9;
+export const SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY = 3;
 // Stay compatible with an unverified 300-second Vercel plan.  The runner
 // terminates fail-closed before this budget and never relies on an 800-second Pro limit.
 export const SERVER_PRODUCT_STUDIO_MAX_RUNTIME_MS = 235_000;
@@ -586,6 +587,116 @@ async function defaultSegmentSource(source: ServerStudioSource, signal: AbortSig
     tags: ["feature:product-segmentation"],
   });
   return { segmentation: result, segmentationSource: new Uint8Array(segmentationSource) };
+}
+
+function isReviewedImageRateLimit(error: unknown): error is ServerProductStudioError {
+  return error instanceof ServerProductStudioError
+    && error.safeReason === "gateway_rate_limited"
+    && serverStudioAllowsReviewedTransientFallback(error);
+}
+
+function isImageCircuitAbort(
+  error: unknown,
+  circuitFailure: ServerProductStudioError,
+) {
+  return error === circuitFailure
+    || (error instanceof DOMException && error.name === "AbortError")
+    || (error instanceof ServerProductStudioError && error.safeReason === "runtime_timeout");
+}
+
+/**
+ * Every provider call for one claimed Studio job passes through this one gate.
+ * Logical localization and asset waves remain unchanged, but nested lanes can
+ * no longer multiply their separate batch widths into one Gateway burst.
+ *
+ * Image work has an additional per-claim circuit. The first explicit 429 is
+ * stored as the authoritative image failure and aborts queued/in-flight image
+ * siblings before the gate releases that permit. This prevents another image
+ * call from starting during the release/drain microtask and lets the reviewed
+ * full-image fallback replace the final cohort atomically.
+ */
+function withServerStudioRemoteCallScope(
+  dependencies: ServerProductStudioDependencies,
+  claimSignal: AbortSignal,
+): ServerProductStudioDependencies {
+  const gate = createAbortableConcurrencyGate(SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY);
+  const imageController = new AbortController();
+  let imageRateLimitFailure: ServerProductStudioError | null = null;
+
+  const runRemote = async <Result>(input: {
+    path: "text" | "image";
+    signal: AbortSignal;
+    timeoutMs: number;
+    call: (signal: AbortSignal) => Promise<Result>;
+  }) => {
+    const queueSignal = input.path === "image"
+      ? AbortSignal.any([claimSignal, input.signal, imageController.signal])
+      : AbortSignal.any([claimSignal, input.signal]);
+    if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
+    try {
+      return await gate.run(async () => {
+        if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
+        const operationSignal = AbortSignal.any([
+          queueSignal,
+          AbortSignal.timeout(input.timeoutMs),
+        ]);
+        try {
+          const result = await input.call(operationSignal);
+          operationSignal.throwIfAborted();
+          if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
+          return result;
+        } catch (error) {
+          if (input.path === "image" && !imageRateLimitFailure && isReviewedImageRateLimit(error)) {
+            imageRateLimitFailure = error;
+            imageController.abort(error);
+          }
+          if (input.path === "image" && imageRateLimitFailure
+              && isImageCircuitAbort(error, imageRateLimitFailure)) {
+            throw imageRateLimitFailure;
+          }
+          throw error;
+        }
+      }, queueSignal);
+    } catch (error) {
+      if (input.path === "image" && imageRateLimitFailure
+          && isImageCircuitAbort(error, imageRateLimitFailure)) {
+        throw imageRateLimitFailure;
+      }
+      throw error;
+    }
+  };
+
+  const generateStructured = dependencies.generateStructured ?? defaultGenerateStructured;
+  const generateBackground = dependencies.generateBackground ?? defaultGenerateBackground;
+  const segmentSource = dependencies.segmentSource ?? defaultSegmentSource;
+  const auditImage = dependencies.auditImage ?? defaultAuditImage;
+  return {
+    ...dependencies,
+    generateStructured: (input) => runRemote({
+      path: "text",
+      signal: input.signal,
+      timeoutMs: TEXT_CALL_TIMEOUT_MS,
+      call: (signal) => generateStructured({ ...input, signal }),
+    }),
+    generateBackground: (input) => runRemote({
+      path: "image",
+      signal: input.signal,
+      timeoutMs: BACKGROUND_CALL_TIMEOUT_MS,
+      call: (signal) => generateBackground({ ...input, signal }),
+    }),
+    segmentSource: (source, signal) => runRemote({
+      path: "image",
+      signal,
+      timeoutMs: TEXT_CALL_TIMEOUT_MS,
+      call: (scopedSignal) => segmentSource(source, scopedSignal),
+    }),
+    auditImage: (input) => runRemote({
+      path: "image",
+      signal: input.signal,
+      timeoutMs: VISION_CALL_TIMEOUT_MS,
+      call: (signal) => auditImage({ ...input, signal }),
+    }),
+  };
 }
 
 export function buildServerStudioMasterPrompt(request: z.infer<typeof studioSourceRequestSchema>) {
@@ -1747,10 +1858,7 @@ async function resolveStudioCutout(
   const candidates = front ? [main, front] : [main];
   for (const source of candidates) {
     try {
-      const segmented = await (dependencies.segmentSource ?? defaultSegmentSource)(
-        source,
-        perCallSignal(signal, TEXT_CALL_TIMEOUT_MS),
-      );
+      const segmented = await (dependencies.segmentSource ?? defaultSegmentSource)(source, signal);
       return {
         cutout: new Uint8Array(await buildPortableProductCutout(segmented)),
         catalogFallbackSource: null,
@@ -2173,10 +2281,6 @@ function auditCandidateRejection(input: {
   } satisfies ServerStudioCandidateRejection;
 }
 
-function perCallSignal(signal: AbortSignal, timeoutMs: number) {
-  return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
-}
-
 async function generateCandidate(input: {
   result: z.infer<typeof studioMasterResultSchema>;
   asset: (typeof aiGeneratedAssetSpecs)[number];
@@ -2199,9 +2303,8 @@ async function generateCandidate(input: {
   const source = sourceResolution.source;
   const auditMode = sourceResolution.auditMode;
   const sceneRequired = auditMode === "scene-composite";
-  const backgroundSignal = perCallSignal(input.signal, BACKGROUND_CALL_TIMEOUT_MS);
   const generated = sceneRequired
-    ? await settingShotAsset({ ...input, signal: backgroundSignal })
+    ? await settingShotAsset(input)
     : {
       bytes: await buildServerSourceDerivedAsset(
         input.asset,
@@ -2226,7 +2329,7 @@ async function generateCandidate(input: {
     source: auditSource,
     candidate: bytes,
     auditMode,
-    signal: perCallSignal(input.signal, VISION_CALL_TIMEOUT_MS),
+    signal: input.signal,
   });
   const evaluation = evaluatePortableAudit(audit, auditMode);
   if (evaluation.failureDimensions.length) {
@@ -2574,13 +2677,22 @@ async function runFullStudioClaim(
   }
 
   await touchClaim(dependencies, claim.id, claim.claim_token);
-  const [masterGeneration, cutoutResolution, generated] = await Promise.all([
+  const [masterSettlement, cutoutSettlement, restoredSettlement] = await Promise.allSettled([
     generateStudioMaster(request, sources, dependencies, signal, reviewedFallbackFields),
     resolveStudioCutout(sources, dependencies, signal, Boolean(reviewedFallbackFields)),
     parsedRequest.mode === "preflight"
       ? restoreFirstDraftAssets(parsedRequest.data, dependencies.download, signal)
       : Promise.resolve(new Map<AiGeneratedAssetId, ServerStudioAsset>()),
-  ]);
+  ] as const);
+  // Never complete this claim or wake the next one while a provider branch
+  // from this claim is still alive. If several branches fail, reviewed asset
+  // integrity wins, followed by master copy and then cutout generation.
+  if (restoredSettlement.status === "rejected") throw restoredSettlement.reason;
+  if (masterSettlement.status === "rejected") throw masterSettlement.reason;
+  if (cutoutSettlement.status === "rejected") throw cutoutSettlement.reason;
+  const generated = restoredSettlement.value;
+  const masterGeneration = masterSettlement.value;
+  const cutoutResolution = cutoutSettlement.value;
   const gatewayFallbackDiagnostics: Array<{
     path: "master" | "localization" | "image";
     diagnostic: AiGatewayFailureDiagnostic;
@@ -2611,11 +2723,8 @@ async function runFullStudioClaim(
 
   // New registration restores the first six before these lanes start and only
   // generates the remaining ten. Legacy/revision work starts with an empty map
-  // and preserves the prior all-sixteen generation behavior. Both paths keep
-  // every remote lane below the same nine-call ceiling.
-  if (SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE * 3 > SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY) {
-    throw new ServerProductStudioError("server_studio_concurrency_contract_invalid", true);
-  }
+  // and preserves the prior all-sixteen generation behavior. The per-claim
+  // remote gate shared by all three lanes enforces the aggregate ceiling.
   const localizationPromise = generateStudioLocalizedResult(
     master,
     dependencies,
@@ -2819,7 +2928,7 @@ async function runRegenerationClaim(
     ? mainSource.bytes
     : await buildPortableProductCutout(await (dependencies.segmentSource ?? defaultSegmentSource)(
       mainSource,
-      perCallSignal(signal, TEXT_CALL_TIMEOUT_MS),
+      signal,
     ));
   const history = await loadRegenerationComparisonHistory(request.data, asset.id, dependencies, signal);
   await generateAssetSet({
@@ -2900,10 +3009,11 @@ export async function runOneServerProductStudio(dependencies: ServerProductStudi
     ? SERVER_PRODUCT_STUDIO_MAX_RUNTIME_MS
     : Math.max(1, Math.min(dependencies.runtimeTimeoutMs, SERVER_PRODUCT_STUDIO_MAX_RUNTIME_MS));
   const signal = AbortSignal.timeout(runtimeTimeoutMs);
+  const scopedDependencies = withServerStudioRemoteCallScope(dependencies, signal);
   try {
     const response = claim.data.kind === "product_asset_regeneration"
-      ? await runRegenerationClaim(claim.data, dependencies, signal)
-      : await runFullStudioClaim(claim.data, dependencies, signal, logError);
+      ? await runRegenerationClaim(claim.data, scopedDependencies, signal)
+      : await runFullStudioClaim(claim.data, scopedDependencies, signal, logError);
     await wakeNextStudioClaim(dependencies, logError, claim.data.kind);
     return response;
   } catch (error) {

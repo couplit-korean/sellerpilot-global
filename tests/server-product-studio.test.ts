@@ -21,6 +21,8 @@ import {
   normalizeServerStudioMasterContract,
   resolveServerAssetSource,
   runOneServerProductStudio,
+  SERVER_PRODUCT_STUDIO_IMAGE_MODEL,
+  SERVER_PRODUCT_STUDIO_TEXT_MODEL,
   ServerProductStudioError,
   serverStudioAllowsReviewedTransientFallback,
   serverStudioRequestMode,
@@ -53,6 +55,11 @@ const LOCALIZED_SECTION_ASSETS = [
   "detail-overview", "detail-feature", "detail-use", "detail-package",
   "detail-routine", "detail-contents", "detail-care", "detail-material",
 ] as const;
+
+test("server Studio uses GPT-5.5 for text and preserves GPT Image 2", () => {
+  assert.equal(SERVER_PRODUCT_STUDIO_TEXT_MODEL, "openai/gpt-5.5");
+  assert.equal(SERVER_PRODUCT_STUDIO_IMAGE_MODEL, "openai/gpt-image-2");
+});
 
 function testMasterResult() {
   const detailAssets = aiGeneratedAssetSpecs.filter((asset) => asset.role === "detail").map((asset) => asset.id);
@@ -356,13 +363,14 @@ async function firstDraftPreflightFixture(
 
 async function runReviewedTransientPipelineFixture(options: {
   requestMode?: "reviewed" | "marker-mismatch" | "legacy";
-  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient";
+  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient" | "image-rate-limit-circuit" | "queued-image-timeout-budget";
   transientReason?: string;
   corruptPreflightAssetId?: (typeof coreFirstDraftAssetIds)[number];
   duplicatePreflightAsset?: boolean;
   sourcePhotoHashMismatch?: boolean;
   uploadFailureReason?: string;
   runtimeTimeoutMs?: number;
+  remoteCallDelayMs?: number;
   transientDiagnostic?: AiGatewayFailureDiagnostic;
 } = {}) {
   const jobId = "41414141-4141-4141-8141-414141414141";
@@ -458,6 +466,15 @@ async function runReviewedTransientPipelineFixture(options: {
   let segmentationCalls = 0;
   let backgroundCalls = 0;
   let auditCalls = 0;
+  let activeRemoteCalls = 0;
+  let peakRemoteCalls = 0;
+  let imageRateLimitObserved = false;
+  let imageCallsStartedAfterRateLimit = 0;
+  const backgroundAssetIds: string[] = [];
+  const backgroundSignalsAbortedOnEntry: boolean[] = [];
+  const completionActiveRemoteCounts: number[] = [];
+  const wakeActiveRemoteCounts: number[] = [];
+  let wakeCalls = 0;
   const auditedCandidateDigests = new Map<string, string[]>();
   const transientReason = options.transientReason ?? "gateway_rate_limited";
   const transientError = () => new ServerProductStudioError(
@@ -466,6 +483,18 @@ async function runReviewedTransientPipelineFixture(options: {
     options.transientDiagnostic,
   );
   const providerScenario = options.providerScenario ?? "all-transient";
+  const observeRemoteCall = async <Result>(work: () => Promise<Result> | Result) => {
+    activeRemoteCalls += 1;
+    peakRemoteCalls = Math.max(peakRemoteCalls, activeRemoteCalls);
+    try {
+      if (options.remoteCallDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.remoteCallDelayMs));
+      }
+      return await work();
+    } finally {
+      activeRemoteCalls -= 1;
+    }
+  };
   const validSegmentation = {
     containsSingleProduct: true,
     touchesFrame: false,
@@ -499,6 +528,7 @@ async function runReviewedTransientPipelineFixture(options: {
       }
       if (name === "sellerpilot_touch_ai_job") return { data: "running", error: null };
       if (name === "sellerpilot_complete_ai_job_with_image_context") {
+        completionActiveRemoteCounts.push(activeRemoteCalls);
         completionCalls.push(structuredClone(arguments_));
       }
       return { data: true, error: null };
@@ -520,7 +550,7 @@ async function runReviewedTransientPipelineFixture(options: {
       uploaded.set(path, new Uint8Array(bytes));
       return "uploaded";
     },
-    generateStructured: async (input) => {
+    generateStructured: async (input) => observeRemoteCall(async () => {
       structuredCalls += 1;
       if (providerScenario === "all-transient") {
         throw transientError();
@@ -536,6 +566,11 @@ async function runReviewedTransientPipelineFixture(options: {
       structuredChunkCalls.push(chunkTag);
       localizedPrompts.push(input.prompt);
       const chunkNumber = Number(chunkTag.slice("chunk:".length));
+      if (providerScenario === "queued-image-timeout-budget" && chunkNumber <= 3) {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      } else if (providerScenario === "image-rate-limit-circuit" && chunkNumber <= 3) {
+        await new Promise((resolve) => setTimeout(resolve, chunkNumber === 1 ? 5 : 40));
+      }
       if ((providerScenario === "partial-localization-transient" && chunkTag === "chunk:2")
           || (providerScenario === "mixed-localization-transient" && chunkNumber >= 4)
           || (providerScenario === "race-contract-and-transient" && chunkTag === "chunk:2")) {
@@ -575,23 +610,38 @@ async function runReviewedTransientPipelineFixture(options: {
           };
         }),
       });
-    },
-    segmentSource: async () => {
+    }),
+    segmentSource: async () => observeRemoteCall(async () => {
       segmentationCalls += 1;
-      if (providerScenario !== "partial-image-transient") {
+      if (providerScenario !== "partial-image-transient"
+          && providerScenario !== "image-rate-limit-circuit"
+          && providerScenario !== "queued-image-timeout-budget") {
         throw transientError();
       }
       return { segmentation: validSegmentation, segmentationSource: sourceBytes };
-    },
-    generateBackground: async ({ asset }) => {
+    }),
+    generateBackground: async ({ asset, signal }) => observeRemoteCall(async () => {
+      backgroundSignalsAbortedOnEntry.push(signal.aborted);
+      if (imageRateLimitObserved) imageCallsStartedAfterRateLimit += 1;
       backgroundCalls += 1;
+      backgroundAssetIds.push(asset.id);
+      if (providerScenario === "image-rate-limit-circuit") {
+        imageRateLimitObserved = true;
+        throw transientError();
+      }
+      if (providerScenario === "queued-image-timeout-budget") {
+        throw transientError();
+      }
       if (providerScenario !== "partial-image-transient") {
         return assert.fail("reviewed segmentation fallback must not invoke image generation");
       }
       return patternedBackground(asset.width, asset.height, `partial:${asset.id}`, "#d7462f", true);
-    },
-    auditImage: async ({ assetId, candidate }) => {
+    }),
+    auditImage: async ({ assetId, candidate }) => observeRemoteCall(async () => {
+      if (imageRateLimitObserved) imageCallsStartedAfterRateLimit += 1;
       auditCalls += 1;
+      if (providerScenario === "image-rate-limit-circuit"
+          || providerScenario === "queued-image-timeout-budget") return passingPortableAudit();
       if (providerScenario !== "partial-image-transient") {
         return assert.fail("deterministic source-photo assets must not invoke remote vision audit");
       }
@@ -601,6 +651,10 @@ async function runReviewedTransientPipelineFixture(options: {
       ]);
       if (assetId === "detail-material") throw transientError();
       return passingPortableAudit();
+    }),
+    wakeNext: async () => {
+      wakeCalls += 1;
+      wakeActiveRemoteCounts.push(activeRemoteCalls);
     },
     logError: (stage, details) => logs.push({ stage, details }),
   });
@@ -621,6 +675,13 @@ async function runReviewedTransientPipelineFixture(options: {
     segmentationCalls,
     backgroundCalls,
     auditCalls,
+    peakRemoteCalls,
+    imageCallsStartedAfterRateLimit,
+    backgroundAssetIds,
+    backgroundSignalsAbortedOnEntry,
+    completionActiveRemoteCounts,
+    wakeActiveRemoteCounts,
+    wakeCalls,
     auditedCandidateDigests,
   };
 }
@@ -630,8 +691,12 @@ test("final server Studio restores six assets and plans only the remaining 2+8 r
   assert.deepEqual(plan.settingWaves, [2]);
   assert.deepEqual(plan.sourceAuditWaves, [3, 3, 2]);
   assert.deepEqual(plan.localizedWaves, [3, 3, 3]);
-  assert.equal(plan.maximumRemoteConcurrency, 9);
-  assert.ok(Math.max(...plan.settingWaves) + Math.max(...plan.sourceAuditWaves) + Math.max(...plan.localizedWaves) <= 9);
+  assert.equal(plan.maximumRemoteConcurrency, 3);
+  assert.ok([
+    ...plan.settingWaves,
+    ...plan.sourceAuditWaves,
+    ...plan.localizedWaves,
+  ].every((wave) => wave <= plan.maximumRemoteConcurrency));
 });
 
 test("new registration requires the complete preflight while revisions and queued legacy jobs remain executable", async () => {
@@ -1267,6 +1332,73 @@ test("a transient image failure after remote candidates exist discards every par
   }
 });
 
+test("the shared remote gate caps all lanes at three and one image 429 cancels queued siblings", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "image-rate-limit-circuit",
+  });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.equal(run.peakRemoteCalls, 3, "text and image lanes must remain concurrent up to the shared cap");
+  assert.deepEqual(
+    run.backgroundAssetIds,
+    ["detail-storage"],
+    "the first image 429 must cancel the queued sibling before it reaches the provider",
+  );
+  assert.equal(run.imageCallsStartedAfterRateLimit, 0);
+  assert.equal(run.backgroundCalls, 1, "the failed image must not receive a blind retry");
+
+  const completion = run.completionCalls.at(-1);
+  assert.equal(completion?.p_status, "succeeded");
+  const payload = completion?.p_result_payload as {
+    asset_storage_paths: Record<string, string>;
+    asset_audit_modes: Record<string, string>;
+    deterministic_fallback: { imageReason: string };
+  };
+  assert.equal(Object.keys(payload.asset_storage_paths).length, aiGeneratedAssetSpecs.length);
+  assert.equal(run.uploaded.size, aiGeneratedAssetSpecs.length);
+  assert.equal(payload.deterministic_fallback.imageReason, "gateway_rate_limited");
+
+  for (const assetId of coreFirstDraftAssetIds) {
+    const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+    assert.ok(spec);
+    const sourcePath = run.preflight.request.preflight_asset_storage_paths[assetId];
+    const restoredBytes = run.preflight.bytesByPath.get(sourcePath);
+    const uploadedBytes = run.uploaded.get(aiGeneratedAssetPath(run.jobId, spec, run.claimToken));
+    assert.ok(restoredBytes && uploadedBytes);
+    assert.deepEqual(uploadedBytes, restoredBytes, `${assetId} must remain byte-identical`);
+  }
+  for (const assetId of remainingFinalAssetIds) {
+    assert.equal(payload.asset_audit_modes[assetId], "source-photo-catalog");
+  }
+});
+
+test("a queued image receives its full operation timeout only after the shared gate grants a permit", async (context) => {
+  const originalTimeout = AbortSignal.timeout;
+  context.mock.method(AbortSignal, "timeout", (delay: number) => (
+    originalTimeout(delay === 40_000 ? 20 : delay)
+  ));
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "queued-image-timeout-budget",
+  });
+  assert.deepEqual(
+    await run.response.json(),
+    { ok: true, status: "succeeded", processed: 1 },
+    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
+  );
+  assert.equal(run.peakRemoteCalls, 3);
+  assert.equal(run.backgroundCalls, 1, "the first queued background must reach the provider before its 429 trips the circuit");
+  assert.equal(
+    run.backgroundSignalsAbortedOnEntry.every((aborted) => aborted === false),
+    true,
+    "the 20ms injected execution budget must start after, not during, the 60ms queue wait",
+  );
+  const payload = run.completionCalls.at(-1)?.p_result_payload as {
+    asset_storage_paths: Record<string, string>;
+    deterministic_fallback: { imageReason: string };
+  };
+  assert.equal(Object.keys(payload.asset_storage_paths).length, aiGeneratedAssetSpecs.length);
+  assert.equal(payload.deterministic_fallback.imageReason, "gateway_rate_limited");
+});
+
 test("reviewed general-food efficacy or intake claims remain fail-closed instead of entering the emergency fallback", () => {
   assert.throws(
     () => buildReviewedServerStudioFallbackMaster({
@@ -1290,12 +1422,17 @@ test("transient gateway failures remain terminal for marker-mismatched and legac
   }
 });
 
-test("reviewed transient fallback fails closed when one approved first-draft asset no longer matches its digest", async () => {
+test("a hard first-draft restore failure settles active providers before completion and next-claim wake", async () => {
   const run = await runReviewedTransientPipelineFixture({
     corruptPreflightAssetId: "portrait",
+    remoteCallDelayMs: 40,
   });
   assert.equal(run.response.status, 200);
   assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.peakRemoteCalls, 2, "master and segmentation should prove the initial provider overlap");
+  assert.deepEqual(run.completionActiveRemoteCounts, [0]);
+  assert.deepEqual(run.wakeActiveRemoteCounts, [0]);
+  assert.equal(run.wakeCalls, 1);
   assert.equal(run.uploaded.size, 0);
   assert.equal(run.completionCalls.length, 1);
   assert.equal(run.completionCalls[0].p_status, "failed");

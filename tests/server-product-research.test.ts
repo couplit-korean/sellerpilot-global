@@ -28,6 +28,8 @@ import {
   runOneServerProductResearch,
   runServerProductResearchCron,
   runServerProductResearchWakeBurst,
+  SERVER_PRODUCT_RESEARCH_IMAGE_MODEL,
+  SERVER_PRODUCT_RESEARCH_MODEL,
   SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY,
   SERVER_PRODUCT_RESEARCH_WAKE_WIDTH,
   shouldTerminallyFailProductResearch,
@@ -191,6 +193,8 @@ test("server product research treats seller and page text as escaped data", () =
 
 test("server product research uses AI SDK auto-OIDC without manually handling credentials", async () => {
   const source = await readFile(new URL("../lib/server-product-research.ts", import.meta.url), "utf8");
+  assert.equal(SERVER_PRODUCT_RESEARCH_MODEL, "openai/gpt-5.5");
+  assert.equal(SERVER_PRODUCT_RESEARCH_IMAGE_MODEL, "openai/gpt-image-2");
   assert.match(source, /model: SERVER_PRODUCT_RESEARCH_MODEL/);
   assert.match(source, /providerOptions:\s*\{[\s\S]*?gateway:\s*\{[\s\S]*?user:/);
   assert.match(source, /MAX_RESEARCH_RUNTIME_MS = 210_000/);
@@ -202,6 +206,7 @@ test("server product research uses AI SDK auto-OIDC without manually handling cr
   assert.match(source, /output: Output\.object\(\{ schema: portablePreflightSegmentationSchema \}\)/);
   assert.doesNotMatch(source, /createGateway|getVercelOidcToken|@vercel\/oidc|ai-gateway-auth-method/);
   assert.doesNotMatch(source, /apiKey:\s*oidcToken/);
+  assert.doesNotMatch(source, /openai\/gpt-5\.4-mini/);
 });
 
 test("server product research parses only one bounded JSON object", () => {
@@ -545,7 +550,7 @@ test("successful text research plus a segmentation failure still completes with 
   assert.equal(new Set(Object.values(completedLineage).map((item) => item.digest)).size, 6);
 });
 
-test("a mid-background model failure discards partial scenes and rebuilds all six from the source photo", async () => {
+test("one image 429 stops later model calls and rebuilds all six from the source photo", async () => {
   const source = await sharp({
     create: { width: 600, height: 600, channels: 3, background: { r: 35, g: 165, b: 105 } },
   }).png().toBuffer();
@@ -582,7 +587,7 @@ test("a mid-background model failure discards partial scenes and rebuilds all si
       }),
       generateBackground: async ({ asset }) => {
         backgroundCalls += 1;
-        if (backgroundCalls === 3) throw { statusCode: 503 };
+        if (backgroundCalls === 3) throw { statusCode: 429 };
         return new Uint8Array(await sharp({
           create: { width: asset.width, height: asset.height, channels: 3, background: "#e9ecef" },
         }).png().toBuffer());
@@ -590,7 +595,7 @@ test("a mid-background model failure discards partial scenes and rebuilds all si
     },
   });
 
-  assert.equal(backgroundCalls, 4, "the failed second batch must stop further image-model batches");
+  assert.equal(backgroundCalls, 3, "the first 429 must stop every later image-model call");
   assert.equal(uploads.size, coreFirstDraftAssetIds.length);
   assert.deepEqual(Object.keys(result.asset_storage_paths), [...coreFirstDraftAssetIds]);
   assert.equal(
@@ -749,7 +754,7 @@ test("a corrupt background result remains fail-closed instead of being relabeled
   assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
 });
 
-test("segmented preflight caps image-model work at two calls and records uploaded digests", async () => {
+test("segmented preflight caps each claim at one image call and records uploaded digests", async () => {
   const source = await sharp({
     create: { width: 600, height: 600, channels: 3, background: { r: 25, g: 125, b: 215 } },
   }).png().toBuffer();
@@ -799,9 +804,9 @@ test("segmented preflight caps image-model work at two calls and records uploade
     },
   });
 
-  assert.equal(SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY, 2);
+  assert.equal(SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY, 1);
   assert.equal(backgroundCalls, 6);
-  assert.equal(peak, 2);
+  assert.equal(peak, 1);
   assert.equal(uploaded.size, 6);
   for (const assetId of coreFirstDraftAssetIds) {
     const path = result.asset_storage_paths[assetId];
@@ -810,6 +815,86 @@ test("segmented preflight caps image-model work at two calls and records uploade
     assert.equal(result.preflightAssetLineage[assetId].auditMode, "segmented-source-composite");
     assert.equal(result.preflightAssetLineage[assetId].digest, createHash("sha256").update(bytes).digest("hex"));
   }
+});
+
+test("three first-stage claims keep image generation concurrent without exceeding three calls", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 95, g: 145, b: 205 } },
+  }).png().toBuffer();
+  const segmentationSource = await sharp(source).resize(1024, 1024).png().toBuffer();
+  const digest = createHash("sha256").update(source).digest("hex");
+  let active = 0;
+  let peak = 0;
+  let backgroundCalls = 0;
+  let firstWaveArrivals = 0;
+  let releaseFirstWave!: () => void;
+  const firstWaveReady = new Promise<void>((resolve) => {
+    releaseFirstWave = resolve;
+  });
+  const firstBackgroundByJob = new Set<string>();
+  const jobIds = [
+    "10000000-0000-4000-8000-000000000001",
+    "10000000-0000-4000-8000-000000000002",
+    "10000000-0000-4000-8000-000000000003",
+  ];
+  const results = await Promise.all(jobIds.map(async (jobId) => {
+    const base = preflightClaim(digest, source.byteLength).request;
+    const request = {
+      ...base,
+      image_paths: base.image_paths.map((path) => path.replace(JOB_ID, jobId)),
+      image_specs: base.image_specs.map((spec) => ({
+        ...spec,
+        originalPath: spec.originalPath.replace(JOB_ID, jobId),
+      })),
+    };
+    return generateServerProductResearchPreflightAssets({
+      jobId,
+      claimToken: CLAIM_TOKEN,
+      request,
+      signal: AbortSignal.timeout(30_000),
+      dependencies: {
+        download: async () => new Uint8Array(source),
+        upload: async () => "uploaded",
+        remove: async () => {},
+        segmentSource: async () => ({
+          segmentation: {
+            containsSingleProduct: true,
+            touchesFrame: false,
+            foregroundConfidence: 1,
+            edgeConfidence: 1,
+            polygons: [{
+              points: Array.from({ length: 12 }, (_, index) => ({
+                x: 0.5 + Math.cos((index / 12) * Math.PI * 2) * 0.3,
+                y: 0.5 + Math.sin((index / 12) * Math.PI * 2) * 0.3,
+              })),
+            }],
+          },
+          segmentationSource: new Uint8Array(segmentationSource),
+        }),
+        generateBackground: async ({ asset }) => {
+          backgroundCalls += 1;
+          active += 1;
+          peak = Math.max(peak, active);
+          if (!firstBackgroundByJob.has(jobId)) {
+            firstBackgroundByJob.add(jobId);
+            firstWaveArrivals += 1;
+            if (firstWaveArrivals === jobIds.length) releaseFirstWave();
+            await firstWaveReady;
+          }
+          active -= 1;
+          return new Uint8Array(await sharp({
+            create: { width: asset.width, height: asset.height, channels: 3, background: "#f4f4f4" },
+          }).png().toBuffer());
+        },
+      },
+    });
+  }));
+
+  assert.equal(SERVER_PRODUCT_RESEARCH_WAKE_WIDTH, 3);
+  assert.equal(backgroundCalls, 18);
+  assert.equal(peak, 3);
+  assert.equal(results.length, 3);
+  assert.equal(results.every((result) => Object.keys(result.asset_storage_paths).length === 6), true);
 });
 
 test("a hard preflight storage upload failure removes every canonical claim path without fallback", async () => {

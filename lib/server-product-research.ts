@@ -40,11 +40,16 @@ import { maximumStudioJobSourceBytes } from "./studio-source-photo-policy";
 // This is the same OIDC-authenticated model exercised by server-runtime-smoke.
 // Keep the runtime module independent so the product route does not bundle the
 // unrelated Vercel Sandbox synthetic-check implementation.
-export const SERVER_PRODUCT_RESEARCH_MODEL = "openai/gpt-5.4-mini";
+export const SERVER_PRODUCT_RESEARCH_MODEL = "openai/gpt-5.5";
 export const SERVER_PRODUCT_RESEARCH_IMAGE_MODEL = "openai/gpt-image-2";
 export const SERVER_PRODUCT_RESEARCH_VERSION = "sellerpilot-vercel-product-research/1.1";
 export const SERVER_PRODUCT_RESEARCH_WAKE_WIDTH = 3;
-export const SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY = 2;
+// Three first-stage claims may run together. Keep each claim to one image
+// request at a time so the intended aggregate image-model burst stays at
+// three instead of six. A transient provider failure immediately switches the
+// whole six-image cohort to the source-photo catalog path below; it is never
+// retried against AI Gateway.
+export const SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY = 1;
 
 const MAX_REFERENCE_COUNT = 5;
 const MAX_REFERENCE_TEXT_CHARACTERS = 18_000;

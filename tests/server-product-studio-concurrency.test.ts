@@ -12,18 +12,17 @@ const JOB_IDS = [
   "30000000-0000-4000-8000-000000000003",
 ];
 
-test("one final Studio job reuses the first six and stays below the nine-call ceiling", () => {
+test("one final Studio job reuses the first six behind one shared three-call ceiling", () => {
   const plan = serverStudioRemoteWorkPlan();
   assert.deepEqual(plan.settingWaves, [2]);
   assert.deepEqual(plan.sourceAuditWaves, [3, 3, 2]);
   assert.deepEqual(plan.localizedWaves, [3, 3, 3]);
-  assert.equal(plan.maximumRemoteConcurrency, 9);
-  assert.ok(
-    Math.max(...plan.settingWaves)
-      + Math.max(...plan.sourceAuditWaves)
-      + Math.max(...plan.localizedWaves)
-      <= plan.maximumRemoteConcurrency,
-  );
+  assert.equal(plan.maximumRemoteConcurrency, 3);
+  assert.ok([
+    ...plan.settingWaves,
+    ...plan.sourceAuditWaves,
+    ...plan.localizedWaves,
+  ].every((wave) => wave <= plan.maximumRemoteConcurrency));
 });
 
 test("three exact failed claims settle independently and each hands off one immediate next wake", async () => {
