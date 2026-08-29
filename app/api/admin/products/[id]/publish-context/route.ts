@@ -8,6 +8,7 @@ import {
   detailAnimatedGifMaximumUrlLength,
   validateDetailAnimatedGif,
 } from "../../../../../../lib/product-media-contract";
+import { validateStoredProductGeneratedAssetPaths } from "../../../../../../lib/studio-result-assets";
 
 export const runtime = "nodejs";
 
@@ -81,24 +82,52 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const productOwnerId = typeof payload.ownerId === "string" ? payload.ownerId : admin.user.id;
   const sourcePaths = stringList(payload.sourceImagePaths)
     .filter((path) => path.startsWith(`${productOwnerId}/`) && !path.includes(".."));
-  const generatedPaths = Object.entries(stringRecord(payload.generatedImagePaths))
-    .filter(([, path]) => path.startsWith("results/") && !path.includes(".."));
-  const allPaths = [...sourcePaths, ...generatedPaths.map(([, path]) => path)];
-  const { data: signed, error: signedError } = allPaths.length
-    ? await admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrls(allPaths, 2 * 60 * 60)
-    : { data: [], error: null };
-  if (signedError) return NextResponse.json({ message: "상품 이미지 접근 주소를 만들지 못했습니다." }, { status: 500 });
+  const rawGeneratedPaths = stringRecord(payload.generatedImagePaths);
+  const validatedGeneratedPaths = validateStoredProductGeneratedAssetPaths(rawGeneratedPaths);
+  const generatedPaths = validatedGeneratedPaths ?? [];
+  let generatedImagesStatus: "complete" | "missing" | "incomplete" | "unavailable" = Object.keys(rawGeneratedPaths).length === 0
+    ? "missing"
+    : validatedGeneratedPaths
+      ? "complete"
+      : "incomplete";
+  const [sourceSigning, generatedSigning] = await Promise.all([
+    sourcePaths.length
+      ? admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrls(sourcePaths, 2 * 60 * 60)
+      : Promise.resolve({ data: [], error: null }),
+    generatedPaths.length
+      ? admin.serviceClient.storage.from("sellerpilot-ai").createSignedUrls(generatedPaths.map(([, path]) => path), 2 * 60 * 60)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (sourceSigning.error) {
+    return NextResponse.json({ message: "상품 원본 이미지 접근 주소를 만들지 못했습니다." }, { status: 500 });
+  }
 
-  const sourceImages = sourcePaths.map((path, index) => ({ path, url: signed?.[index]?.signedUrl ?? null }));
-  const generatedImages = generatedPaths.map(([id, path], index) => ({
-    id,
-    path,
-    url: signed?.[sourcePaths.length + index]?.signedUrl ?? null,
-  }));
+  const sourceSigned = sourceSigning.data ?? [];
+  if (sourceSigned.length !== sourcePaths.length
+      || sourceSigned.some((item) => typeof item.signedUrl !== "string" || item.signedUrl.length === 0)) {
+    return NextResponse.json({ message: "상품 원본 이미지 연결을 잠시 확인하지 못했습니다." }, { status: 503 });
+  }
+  const generatedSigned = generatedSigning.data ?? [];
+  if (generatedImagesStatus === "complete"
+      && (generatedSigning.error
+        || generatedSigned.length !== generatedPaths.length
+        || generatedSigned.some((item) => typeof item.signedUrl !== "string" || item.signedUrl.length === 0))) {
+    generatedImagesStatus = "unavailable";
+  }
+  const sourceImages = sourcePaths.map((path, index) => ({ path, url: sourceSigned[index]!.signedUrl }));
+  const generatedImages = generatedImagesStatus === "complete"
+    ? generatedPaths.map(([id, path], index) => ({ id, path, url: generatedSigned[index]!.signedUrl }))
+    : [];
   delete payload.ownerId;
   delete payload.sourceImagePaths;
   delete payload.generatedImagePaths;
-  return NextResponse.json({ ...payload, commerceOperations: operationsError ? null : commerceOperations, sourceImages, generatedImages }, {
+  return NextResponse.json({
+    ...payload,
+    commerceOperations: operationsError ? null : commerceOperations,
+    sourceImages,
+    generatedImages,
+    generatedImagesStatus,
+  }, {
     headers: { "cache-control": "no-store, max-age=0" },
   });
 }

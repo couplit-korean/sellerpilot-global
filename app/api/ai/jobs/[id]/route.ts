@@ -8,6 +8,7 @@ import {
   validateSucceededProductResearchPreflight,
   validateVisibleSucceededProductResearchJob,
 } from "../../../../../lib/product-studio-lineage";
+import { validateFinalStudioAssetStoragePaths } from "../../../../../lib/studio-result-assets";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -88,6 +89,31 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
         url: signed[index]!.signedUrl,
       })),
     };
+    delete result.asset_storage_paths;
+  } else if (job.kind === "product_studio" && result?.mode === "cli") {
+    const entries = validateFinalStudioAssetStoragePaths(id, result.asset_storage_paths);
+    if (!entries) {
+      return NextResponse.json({
+        ...job,
+        status: "failed",
+        result: null,
+        error: sellerSafeAiJobFailure("generated_asset_set_incomplete"),
+      }, { headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const { data: signed, error: signingError } = await admin.serviceClient.storage
+      .from("sellerpilot-ai")
+      .createSignedUrls(entries.map(([, path]) => path), 60 * 60);
+    if (signingError
+        || !signed
+        || signed.length !== entries.length
+        || signed.some((item) => typeof item.signedUrl !== "string" || item.signedUrl.length === 0)) {
+      return NextResponse.json({ message: "상세페이지 이미지 연결을 잠시 확인하지 못했습니다. 같은 작업을 다시 확인해 주세요." }, {
+        status: 503,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
+    }
+    result.heroUrl = signed[entries.findIndex(([assetId]) => assetId === "hero")]!.signedUrl;
+    result.generatedImages = entries.map(([assetId], index) => ({ id: assetId, url: signed[index]!.signedUrl }));
     delete result.asset_storage_paths;
   } else if (result && result.asset_storage_paths && typeof result.asset_storage_paths === "object" && !Array.isArray(result.asset_storage_paths)) {
     const entries = Object.entries(result.asset_storage_paths as Record<string, unknown>)
