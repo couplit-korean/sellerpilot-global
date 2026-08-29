@@ -56,7 +56,7 @@ test("client cleanup is fenced to pre-enqueue or definite terminal rejection bou
   assert.match(studio, /enqueueStarted = true;[\s\S]*fetchJsonWithStudioJobTimeout\("\/api\/ai\/product-studio"/);
   assert.match(studio, /\(!enqueueStarted \|\| terminallyRejected\)[\s\S]*cleanupUnenqueuedStudioPhotos/);
   assert.match(studio, /preserveMissingAdmission: reconcileAdmission/);
-  assert.match(studio, /lifecycleController\.signal, 90_000,[\s\S]*CLI 작업 등록 응답/);
+  assert.match(studio, /lifecycleController\.signal, 90_000,[\s\S]*Supabase AI 작업 큐 접수 응답/);
   assert.match(route, /export const maxDuration = 300/);
   assert.equal((route.match(/createSignedUrls\(/g) ?? []).length, 1);
   assert.match(route, /verifyPreservedStudioImages/);

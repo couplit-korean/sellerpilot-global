@@ -28,7 +28,7 @@ test("legacy Shopee identity pauses only periodic order reads and exposes a reco
   assert.match(migration, /sellerpilot_list_shopee_connection_status/);
   assert.doesNotMatch(migration, /update[\s\S]{0,160}seller_account_key\s*=/i);
 
-  assert.match(route, /status: "queued" \| "already_pending" \| "not_connected" \| "reconnect_required" \| "reconciliation_required" \| "fixed_egress_required" \| "failed"/);
+  assert.match(route, /type PeriodicSyncStatus = "queued" \| "already_pending" \| "not_connected" \| "reconnect_required" \| "reconciliation_required" \| "fixed_egress_required" \| "failed"/);
   assert.match(route, /reconnectRequired/);
   assert.match(credentialCenter, /sellerpilot_list_shopee_connection_status/);
   assert.match(credentialCenter, /OAuth 재연동 필요/);

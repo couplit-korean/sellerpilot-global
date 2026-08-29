@@ -505,7 +505,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /const competitorResearchBlocksAnalysis = isCompetitorResearchBlockingAnalysis\([\s\S]{0,160}pendingCompetitorBypassConfirmed/);
   assert.match(page, /if \(competitorResearchBlocksAnalysis\)[\s\S]{0,260}동일 상품 가격 확인이 끝난 뒤 상품 분석을 시작/);
   assert.match(page, /disabled=\{!studioWorkerAvailable \|\| running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| competitorResearchBlocksAnalysis \|\| Boolean\(queuedJobId\)\}/);
-  assert.match(page, /AI 작업자 연결 필요/);
+  assert.match(page, /서버 AI 연결 필요/);
   assert.match(page, /가격 확인 중/);
   assert.match(page, /가격 없이 계속/);
   assert.match(page, /invalidatedExistingContext = interruptedResearch[\s\S]{0,180}competitorResearchState !== "idle"/);

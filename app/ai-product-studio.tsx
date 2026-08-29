@@ -542,7 +542,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         ({ response, payload } = await fetchJsonWithStudioJobTimeout(`/api/ai/jobs/${jobId}`, {
           headers: { authorization: `Bearer ${accessToken}` },
           cache: "no-store",
-        }, signal, 15_000, { message: "CLI 작업 상태 응답을 읽지 못했습니다." } as CliJobPayload & { message?: string }));
+        }, signal, 15_000, { message: "서버 AI 작업 상태 응답을 읽지 못했습니다." } as CliJobPayload & { message?: string }));
         consecutiveRequestFailures = 0;
       } catch (error) {
         if (signal.aborted || isStudioJobAbort(error)) throw signal.reason ?? error;
@@ -559,11 +559,11 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         }
         if (response.status === 404) {
           if (options.preserveMissingAdmission) {
-            throw new Error(payload.message ?? "CLI 작업 접수 여부를 아직 확정하지 못했습니다.");
+            throw new Error(payload.message ?? "Supabase AI 작업 큐 접수 여부를 아직 확정하지 못했습니다.");
           }
-          throw new StudioJobTerminalError(payload.message ?? "CLI 작업을 찾지 못했습니다.");
+          throw new StudioJobTerminalError(payload.message ?? "서버 AI 작업을 찾지 못했습니다.");
         }
-        throw new Error(payload.message ?? "CLI 작업 상태를 확인하지 못했습니다.");
+        throw new Error(payload.message ?? "서버 AI 작업 상태를 확인하지 못했습니다.");
       }
       if (!accepted) {
         accepted = true;
@@ -571,12 +571,12 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       }
       if (payload.status === "succeeded" && payload.result) return payload.result;
       if (payload.status === "failed" || payload.status === "cancelled") {
-        throw new StudioJobTerminalError(payload.error || "ChatGPT CLI 작업이 완료되지 못했습니다.");
+        throw new StudioJobTerminalError(payload.error || "Vercel OIDC 서버 AI 작업이 완료되지 못했습니다.");
       }
       onPhase?.(payload.status === "running" ? "running" : "queued");
       await delay(3_000, signal);
     }
-    throw new Error(`ChatGPT CLI 작업 자동 확인 상한 ${Math.round((options.maximumAgeMs ?? studioJobMaximumAgeMs) / 60_000)}분을 초과했습니다. 등록 이력과 작업자 연결 상태를 확인해 주세요.`);
+    throw new Error(`서버 AI 작업 자동 확인 상한 ${Math.round((options.maximumAgeMs ?? studioJobMaximumAgeMs) / 60_000)}분을 초과했습니다. 등록 이력과 서버 AI 연결 상태를 확인해 주세요.`);
   }, []);
 
   const finishStudioJob = useCallback(async (
@@ -644,8 +644,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       submittedIntakesByJobIdRef.current.delete(job.jobId);
       if (canDisplay()) onResultReady?.(nextResult, productId, job.jobId, submittedIntake);
       if (studioMountedRef.current) notify(recovered
-        ? `이전 상품의 ChatGPT CLI 작업을 백그라운드에서 복구해 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장을 등록 이력에 연결했습니다.`
-        : `ChatGPT CLI 분석, codex-image 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장 연결을 완료했습니다.`);
+        ? `이전 상품의 서버 AI 작업을 백그라운드에서 복구해 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장을 등록 이력에 연결했습니다.`
+        : `Vercel OIDC 서버 AI 분석, codex-image 이미지 ${aiGeneratedAssetSpecs.length}종과 상품 원장 연결을 완료했습니다.`);
     } finally {
       jobMonitors.end(job.jobId, monitor);
     }
@@ -792,7 +792,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
           method: "POST",
           headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
           body: JSON.stringify({ jobId, manualFields: validatedIntake.data, competitorContext, imagePaths, imageSpecs }),
-        }, lifecycleController.signal, 90_000, { message: "CLI 작업 등록 응답을 읽지 못했습니다." } as { jobId?: string; message?: string }));
+        }, lifecycleController.signal, 90_000, { message: "Supabase AI 작업 큐 접수 응답을 읽지 못했습니다." } as { jobId?: string; message?: string }));
       } catch (error) {
         if (isStudioJobAbort(error) || !studioMountedRef.current) throw error;
         setSubmissionPhase("reconciling");
@@ -1156,8 +1156,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   return (
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
-        <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>로컬 ChatGPT CLI가 사진과 설명을 분석하고, codex-image와 Puck 편집 흐름으로 결과를 만듭니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "CLI 제작 중" : "CLI 대기 중" : result ? "CLI 실데이터" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "서버 처리 중" : !workerReadiness ? "작업자 확인 중" : !workerReadiness.available ? "작업자 연결 필요" : "실행 대기"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || workerReadiness?.available !== true || generating || Boolean(queuedOwnJobId)} title={workerReadiness?.available === false ? workerReadiness.message : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !workerReadiness ? "작업자 확인 중" : !workerReadiness.available ? "AI 작업자 연결 필요" : "다시 생성"}</button></div>
+        <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>Vercel OIDC 서버 AI가 사진과 설명을 분석하고, Supabase 비공개 작업 큐와 codex-image·Puck 편집 흐름으로 결과를 만듭니다.</p></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "서버 AI 제작 중" : "Supabase 큐 대기 중" : result ? "서버 AI 실데이터" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "서버 처리 중" : !workerReadiness ? "서버 AI 확인 중" : !workerReadiness.available ? "서버 AI 연결 필요" : "실행 대기"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || workerReadiness?.available !== true || generating || Boolean(queuedOwnJobId)} title={workerReadiness?.available === false ? workerReadiness.message : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !workerReadiness ? "서버 AI 확인 중" : !workerReadiness.available ? "서버 AI 연결 필요" : "다시 생성"}</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>
@@ -1168,7 +1168,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       <div className="studio-workspace">
         <aside className="creative-rail">
           <div className="creative-rail-head"><span><b>자동 제작 썸네일</b><small>제품이 프레임의 70% 이상 보이는 마켓용 이미지</small></span><em>{creativeThumbnails.length || 3}종</em></div>
-          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" loading="lazy" decoding="async" /><span>CODEX IMAGE</span></div><b>CLI 상품 연출컷</b><small>ChatGPT OAuth · 원본 충실도 높음</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset("hero")} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === "hero" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>}
+          {aiHero && <article className="thumbnail-card ai"><div><img src={aiHero} alt="codex-image가 제작한 상품 연출컷" loading="lazy" decoding="async" /><span>CODEX IMAGE</span></div><b>서버 AI 상품 연출컷</b><small>Vercel OIDC · 원본 충실도 높음</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset("hero")} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === "hero" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>}
           <div className="thumbnail-grid">
             {creativeThumbnails.length ? creativeThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" style={thumbnailPreviewStyle(thumbnail)} onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 썸네일`} loading="lazy" decoding="async" /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : thumbnailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div style={thumbnailPreviewStyle(thumbnail)}><ImageIcon size={22} /><span>대표사진을 올리면 자동 제작</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
@@ -1176,15 +1176,15 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
           <div className="thumbnail-grid detail-assets">
             {detailThumbnails.length ? detailThumbnails.map((thumbnail) => <article className="thumbnail-card" key={thumbnail.id}><button type="button" className="thumbnail-preview" style={thumbnailPreviewStyle(thumbnail)} onClick={() => downloadImage(thumbnail)}><img src={thumbnail.dataUrl} alt={`${thumbnail.label} 자동 상세 이미지`} loading="lazy" decoding="async" /><span><Download size={13} />다운로드</span></button><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small><button type="button" className="asset-regenerate" onClick={() => void regenerateAsset(thumbnail.id)} disabled={Boolean(regeneratingAssetId) || generating || Boolean(uncertainRegenerationJobId)}>{regeneratingAssetId === thumbnail.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{uncertainRegenerationJobId ? "작업 확인 필요" : "이 이미지만 재제작"}</button></article>) : detailPresets.map((thumbnail) => <article className="thumbnail-card placeholder" key={thumbnail.id}><div style={thumbnailPreviewStyle(thumbnail)}><ImageIcon size={22} /><span>상세 전용 이미지 생성 대기</span></div><b>{thumbnail.label}</b><small>{thumbnail.ratio}</small></article>)}
           </div>
-          {result ? <div className="creative-summary"><span>CREATIVE DIRECTION</span><b>{result.design.themeName}</b><p>{result.product.oneLine}</p><div>{Object.values(result.design.palette).map((color) => <i key={color} style={{ background: color }} title={color} />)}</div></div> : <div className="creative-summary empty"><span>CLI RESULT</span><b>실제 분석 결과 대기</b><p>대표사진을 등록하고 분석을 시작하면 결과만 표시합니다.</p></div>}
+          {result ? <div className="creative-summary"><span>CREATIVE DIRECTION</span><b>{result.design.themeName}</b><p>{result.product.oneLine}</p><div>{Object.values(result.design.palette).map((color) => <i key={color} style={{ background: color }} title={color} />)}</div></div> : <div className="creative-summary empty"><span>SERVER AI RESULT</span><b>실제 분석 결과 대기</b><p>대표사진을 등록하고 분석을 시작하면 결과만 표시합니다.</p></div>}
         </aside>
 
         <article className="detail-preview-panel">
           <div className="detail-preview-toolbar"><span><MonitorSmartphone size={16} /><b>상세페이지 라이브 미리보기</b><small>모바일 우선 · 블록형 구성</small></span><button type="button" onClick={() => setEditorOpen(true)} disabled={!result || !sourceProductId || detailSaving}><PencilRuler size={15} />{sourceProductId ? "Puck으로 직접 편집" : "상품 원장 연결 중"}</button></div>
-          <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>실제 상세페이지 결과가 아직 없습니다.</b><small>대표사진과 상품 정보를 분석한 뒤 ChatGPT CLI 결과를 표시합니다.</small></div>}</div>
+          <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>실제 상세페이지 결과가 아직 없습니다.</b><small>대표사진과 상품 정보를 분석한 뒤 서버 AI 결과를 표시합니다.</small></div>}</div>
         </article>
       </div>
-      {lastError && <div className="studio-warning error"><b>{submissionPhase === "uncertain" || uncertainRegenerationJobId ? "접수 상태 확인 필요" : "실제 AI 작업 실패"}</b><p>{lastError}</p><small>{uncertainRegenerationJobId ? `새 재제작을 만들지 않고 기존 이미지 작업 ID ${uncertainRegenerationJobId}를 잠근 상태입니다. 등록 진행 중·히스토리에서 확인해 주세요.` : submissionPhase === "uncertain" ? `새 작업을 만들지 않고 기존 작업 ID ${queuedOwnJobId}를 잠근 상태입니다.` : "예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 CLI 작업자 상태를 확인해 주세요."}</small>{submissionPhase === "uncertain" && queuedOwnJobId && <button type="button" className="asset-regenerate" onClick={() => void retryOwnJobStatus()} disabled={generating}><RefreshCw size={13} />기존 작업 상태 다시 확인</button>}</div>}
+      {lastError && <div className="studio-warning error"><b>{submissionPhase === "uncertain" || uncertainRegenerationJobId ? "접수 상태 확인 필요" : "실제 AI 작업 실패"}</b><p>{lastError}</p><small>{uncertainRegenerationJobId ? `새 재제작을 만들지 않고 기존 이미지 작업 ID ${uncertainRegenerationJobId}를 잠근 상태입니다. 등록 진행 중·히스토리에서 확인해 주세요.` : submissionPhase === "uncertain" ? `새 작업을 만들지 않고 기존 작업 ID ${queuedOwnJobId}를 잠근 상태입니다.` : "예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 서버 AI 연결 상태를 확인해 주세요."}</small>{submissionPhase === "uncertain" && queuedOwnJobId && <button type="button" className="asset-regenerate" onClick={() => void retryOwnJobStatus()} disabled={generating}><RefreshCw size={13} />기존 작업 상태 다시 확인</button>}</div>}
       {result && result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
       {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} saving={detailSaving} onSave={saveDetailPage} onClose={() => { if (!detailSaving) setEditorOpen(false); }} />}
     </section>

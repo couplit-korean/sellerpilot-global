@@ -38,12 +38,67 @@ type QueueResult = {
   jobId?: unknown;
 };
 
+type PeriodicSyncStatus = "queued" | "already_pending" | "not_connected" | "reconnect_required" | "reconciliation_required" | "fixed_egress_required" | "failed";
+
+type PeriodicSyncReason =
+  | "ENQUEUED"
+  | "ALREADY_PENDING"
+  | "CREDENTIAL_NOT_CONNECTED"
+  | "CREDENTIAL_RECONNECT_REQUIRED"
+  | "MANUAL_RECONCILIATION_REQUIRED"
+  | "STATIC_EGRESS_REQUIRED"
+  | "DEADLINE_BUDGET_EXHAUSTED"
+  | "ENQUEUE_RPC_FAILED"
+  | "ENQUEUE_RPC_STATUS_INVALID"
+  | "ENQUEUE_RPC_TRANSPORT_FAILED"
+  | "PUSH_SEND_FAILED"
+  | "PUSH_RECONCILIATION_REQUIRED"
+  | "PUSH_FINALIZATION_FAILED";
+
 type PeriodicSyncResult = {
   channel: ActiveChannelKey;
-  operation: "orders.list";
-  status: "queued" | "already_pending" | "not_connected" | "reconnect_required" | "reconciliation_required" | "fixed_egress_required" | "failed";
+  status: PeriodicSyncStatus;
+  reason: PeriodicSyncReason;
   infrastructureFailure?: true;
 };
+
+type PeriodicSyncDiagnostic = {
+  channel: ActiveChannelKey | "push-notifications";
+  status: PeriodicSyncStatus;
+  reason: PeriodicSyncReason;
+};
+
+const PERIODIC_SYNC_STATUS_PRIORITY: Record<PeriodicSyncStatus, number> = {
+  already_pending: 0,
+  queued: 1,
+  not_connected: 2,
+  fixed_egress_required: 3,
+  reconnect_required: 4,
+  reconciliation_required: 5,
+  failed: 6,
+};
+
+function periodicSyncReason(status: Exclude<PeriodicSyncStatus, "failed">): PeriodicSyncReason {
+  if (status === "queued") return "ENQUEUED";
+  if (status === "already_pending") return "ALREADY_PENDING";
+  if (status === "not_connected") return "CREDENTIAL_NOT_CONNECTED";
+  if (status === "reconnect_required") return "CREDENTIAL_RECONNECT_REQUIRED";
+  if (status === "reconciliation_required") return "MANUAL_RECONCILIATION_REQUIRED";
+  return "STATIC_EGRESS_REQUIRED";
+}
+
+function safePeriodicSyncDiagnostics(results: readonly PeriodicSyncResult[]): PeriodicSyncDiagnostic[] {
+  return activeChannelKeys.flatMap((channel) => {
+    const selected = results
+      .filter((result) => result.channel === channel)
+      .reduce<PeriodicSyncResult | null>((current, result) => (
+        !current || PERIODIC_SYNC_STATUS_PRIORITY[result.status] > PERIODIC_SYNC_STATUS_PRIORITY[current.status]
+          ? result
+          : current
+      ), null);
+    return selected ? [{ channel, status: selected.status, reason: selected.reason }] : [];
+  });
+}
 
 function serverClient() {
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
@@ -84,7 +139,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
 
   const queuedResults = await mapWithConcurrency(queueRequests, PERIODIC_SYNC_ENQUEUE_CONCURRENCY, async ({ channel, operation, payload }): Promise<PeriodicSyncResult> => {
     if (deadlineRemaining(workDeadline) < CHANNEL_SYNC_RPC_START_RESERVE_MS) {
-      return { channel, operation, status: "failed", infrastructureFailure: true };
+      return { channel, status: "failed", reason: "DEADLINE_BUDGET_EXHAUSTED", infrastructureFailure: true };
     }
     try {
       const { data, error } = await serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
@@ -93,15 +148,15 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
         p_request_payload: payload,
         p_min_interval_minutes: 5,
       });
-      if (error) return { channel, operation, status: "failed", infrastructureFailure: true };
+      if (error) return { channel, status: "failed", reason: "ENQUEUE_RPC_FAILED", infrastructureFailure: true };
       const result = data && typeof data === "object" && !Array.isArray(data) ? data as QueueResult : {};
       const status = result.status;
       if (status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required" && status !== "reconciliation_required" && status !== "fixed_egress_required") {
-        return { channel, operation, status: "failed", infrastructureFailure: true };
+        return { channel, status: "failed", reason: "ENQUEUE_RPC_STATUS_INVALID", infrastructureFailure: true };
       }
-      return { channel, operation, status };
+      return { channel, status, reason: periodicSyncReason(status) };
     } catch {
-      return { channel, operation, status: "failed", infrastructureFailure: true };
+      return { channel, status: "failed", reason: "ENQUEUE_RPC_TRANSPORT_FAILED", infrastructureFailure: true };
     }
   });
   const results = queuedResults;
@@ -131,22 +186,57 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
       }));
   const queued = results.filter((result) => result.status === "queued").length;
   const pending = results.filter((result) => result.status === "already_pending").length;
+  const notConnected = results.filter((result) => result.status === "not_connected").length;
   const reconnectRequired = results.filter((result) => result.status === "reconnect_required").length;
   const reconciliationRequired = results.filter((result) => result.status === "reconciliation_required").length;
   const fixedEgressRequired = results.filter((result) => result.status === "fixed_egress_required").length;
   const failed = results.filter((result) => result.status === "failed").length;
   const infrastructureFailures = results.filter((result) => result.infrastructureFailure).length;
   const databaseWideFailure = results.length > 0 && infrastructureFailures === results.length;
-  const pushRequiresAttention = push.reconciliationRequired > 0 || push.finalizationFailed > 0;
-  if (infrastructureFailures > 0) {
-    console.error("periodic channel sync enqueue RPC failures", {
-      failed: infrastructureFailures,
-      total: results.length,
+  const pushRequiresAttention = push.failed > 0 || push.reconciliationRequired > 0 || push.finalizationFailed > 0;
+
+  const diagnostics = safePeriodicSyncDiagnostics(results);
+  if (push.reconciliationRequired > 0) {
+    diagnostics.push({
+      channel: "push-notifications",
+      status: "reconciliation_required",
+      reason: "PUSH_RECONCILIATION_REQUIRED",
+    });
+  } else if (push.finalizationFailed > 0) {
+    diagnostics.push({
+      channel: "push-notifications",
+      status: "failed",
+      reason: "PUSH_FINALIZATION_FAILED",
+    });
+  } else if (push.failed > 0) {
+    diagnostics.push({
+      channel: "push-notifications",
+      status: "failed",
+      reason: "PUSH_SEND_FAILED",
     });
   }
+  const responseStatus = databaseWideFailure
+    ? 503
+    : infrastructureFailures > 0
+        || notConnected > 0
+        || reconnectRequired > 0
+        || reconciliationRequired > 0
+        || fixedEgressRequired > 0
+        || pushRequiresAttention
+      ? 207
+      : 200;
+  if (responseStatus >= 500) {
+    console.error("periodic channel sync diagnostics", { diagnostics });
+  } else if (responseStatus === 207) {
+    console.warn("periodic channel sync diagnostics", { diagnostics });
+  } else {
+    console.info("periodic channel sync diagnostics", { diagnostics });
+  }
+  const safeResults = results.map(({ channel, status, reason }) => ({ channel, status, reason }));
 
   return NextResponse.json({
     ok: failed === 0
+      && notConnected === 0
       && reconnectRequired === 0
       && reconciliationRequired === 0
       && fixedEgressRequired === 0
@@ -154,12 +244,14 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
     scheduledAt: now.toISOString(),
     queued,
     pending,
+    notConnected,
     reconnectRequired,
     reconciliationRequired,
     fixedEgressRequired,
     failed,
     infrastructureFailures,
-    results,
+    results: safeResults,
+    diagnostics,
     push: {
       configured: push.configured,
       sent: push.sent,
@@ -169,15 +261,7 @@ async function runPeriodicSync(serviceClient: NonNullable<ReturnType<typeof serv
       finalizationFailed: push.finalizationFailed,
     },
   }, {
-    status: databaseWideFailure
-      ? 503
-      : infrastructureFailures > 0
-          || reconnectRequired > 0
-          || reconciliationRequired > 0
-          || fixedEgressRequired > 0
-          || pushRequiresAttention
-        ? 207
-        : 200,
+    status: responseStatus,
     headers: { "cache-control": "no-store, max-age=0" },
   });
 }

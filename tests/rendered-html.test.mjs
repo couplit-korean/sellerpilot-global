@@ -285,6 +285,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const operationsRoute = await readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8");
   const cliControlsMigration = await readFile(new URL("../supabase/migrations/20260816103854_ai_operations_controls.sql", import.meta.url), "utf8");
   assert.match(credentialPage, /Supabase Vault/);
+  assert.match(credentialPage, /AI는 Vercel OIDC 서버에서 실행하고 작업 상태는 Supabase 비공개 큐에 저장/);
+  assert.doesNotMatch(credentialPage, /Mac의 ChatGPT CLI/);
   assert.match(cliRuntimeCard, /서버 AI 스튜디오 런타임/);
   assert.match(cliRuntimeCard, /SERVER-ONLY VERCEL AI/);
   assert.match(cliRuntimeCard, /authenticatedFetch\("\/api\/ai\/product-studio"\)/);

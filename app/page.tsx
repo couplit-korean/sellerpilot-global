@@ -197,7 +197,6 @@ import {
   isCancelledRegistrationActivity,
   isRegistrationActivityRunning,
   isRegistrationImageActivity,
-  recoverableRegistrationActivityJobId,
   retryableRegistrationActivityJobId,
   registrationActivityDisplayStatusLabel,
   registrationActivityDisplayElapsedSeconds,
@@ -211,10 +210,6 @@ import {
   type RegistrationActivityEventState,
   type RegistrationActivityFilter,
 } from "./_registration/registration-status";
-import {
-  activeStudioJobStorageKey,
-  studioJobRecoveryStorageValue,
-} from "./_registration/studio-job-session";
 
 const configuredWorkspaceIdleMinutes = Number(process.env.NEXT_PUBLIC_SELLERPILOT_IDLE_TIMEOUT_MINUTES);
 const workspaceIdleTimeoutMs = clampWorkspaceIdleTimeoutMs(
@@ -2537,9 +2532,9 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
         const elapsedLabel = isActive ? "현재 경과시간" : isImageOperation ? "총 처리시간" : activity.status === "ready" ? "총 분석시간" : "총 등록시간";
         const progress = registrationActivityProgress(activity);
         const statusDetail = longAnalysis === "connected"
-          ? "30분 넘게 분석 중이며 최근 작업 신호와 AI 작업자 연결이 확인됩니다. 완료 시점은 추정하지 않습니다."
+          ? "30분 넘게 분석 중이며 최근 작업 신호와 서버 AI 연결이 확인됩니다. 완료 시점은 추정하지 않습니다."
           : longAnalysis === "attention"
-            ? "30분 넘게 새 작업 신호 또는 AI 작업자 연결이 확인되지 않습니다. 새로고침 후 작업자를 점검해 주세요."
+            ? "30분 넘게 새 작업 신호 또는 서버 AI 연결이 확인되지 않습니다. 새로고침 후 운영 연결 상태를 점검해 주세요."
           : isCancelled
           ? "관리자가 중지한 AI 작업입니다. 외부 채널 전송은 시작하지 않았고 기존 입력으로 다시 실행할 수 있습니다."
           : isImageOperation
@@ -2548,7 +2543,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
               : "AI 이미지 작업을 처리 중입니다."
           : status.detail;
         return <article className={`panel registration-card ${activity.status}${isCancelled ? " cancelled" : ""}`} key={activity.id}>
-          <header><span className={`registration-status ${activity.status}${isCancelled ? " cancelled" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}>{longAnalysis === "attention" ? <AlertTriangle size={14} /> : longAnalysis === "connected" ? <Activity size={14} /> : isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : isCancelled ? <Square size={14} /> : <AlertCircle size={14} />}{longAnalysis === "connected" ? "장기 분석 진행 중 · 작업자 연결됨" : longAnalysis === "attention" ? "장기 대기 · AI 작업자 확인 필요" : displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
+          <header><span className={`registration-status ${activity.status}${isCancelled ? " cancelled" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}>{longAnalysis === "attention" ? <AlertTriangle size={14} /> : longAnalysis === "connected" ? <Activity size={14} /> : isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : isCancelled ? <Square size={14} /> : <AlertCircle size={14} />}{longAnalysis === "connected" ? "장기 분석 진행 중 · 서버 AI 연결됨" : longAnalysis === "attention" ? "장기 대기 · 서버 AI 확인 필요" : displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
           <button type="button" className="registration-card-inspect" aria-expanded={expanded} aria-controls={`registration-live-${activity.id}`} onClick={() => setExpandedActivityId((current) => current === activity.id ? "" : activity.id)}><span className="registration-product"><span>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</span><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></span><span className="registration-inspect-label">{expanded ? (isActive ? "상태 접기" : "상세 접기") : (isActive ? "실시간 상태 보기" : "작업 상세 보기")}<ChevronDown size={14} /></span></button>
           <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{retryableJobId ? activity.id.startsWith("revision:") ? "같은 상품 수정 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : activity.id.startsWith("asset:") ? "같은 이미지 재제작 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {longAnalysis ? "실제 lease를 읽을 수 없어 완료 여부는 추정하지 않습니다." : progress.label}</small></div>
           <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
@@ -2556,7 +2551,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} ${isActive ? "실시간 작업 상태" : "작업 상세"}`}><header><span><Activity size={14} /><b>{isActive ? "현재 작업 상태" : "작업 상세"}</b></span><em>{isActive ? "10초마다 운영 원장 갱신" : "종료 상태 · 채널 응답"}</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl><p>{activity.message || statusDetail} {progress.label}</p>{activity.channels.length > 0 && <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div>}</section>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "기존 입력으로 AI 분석 재개"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
+          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "서버 저장 입력으로 AI 분석 재시도"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;
@@ -3564,12 +3559,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             {productResearchError && <small className="product-research-error" role="alert"><AlertCircle size={14} />{productResearchError}</small>}
             {manualErrors.researchInput && <small className="product-research-error">{manualErrors.researchInput}</small>}
             {researchResult && <div className="product-research-result">
-              <div><CheckCircle2 size={16} /><span><b>{researchResult.mode === "server-research" ? "Vercel 서버 AI 상세정보 반영 완료" : "로컬 CLI 상세정보 반영 완료"}</b><small>{researchResult.summary}</small></span><em>특징 {researchResult.details.features.length} · 규격 {researchResult.details.specifications.length}</em></div>
+              <div><CheckCircle2 size={16} /><span><b>{researchResult.mode === "server-research" ? "Vercel OIDC 서버 AI 상세정보 반영 완료" : "기존 AI 상세정보 반영 완료"}</b><small>{researchResult.summary}</small></span><em>특징 {researchResult.details.features.length} · 규격 {researchResult.details.specifications.length}</em></div>
               {(researchResult.details.features.length > 0 || researchResult.details.specifications.length > 0) && <section className="product-research-detail-grid">
                 {researchResult.details.features.length > 0 && <article><b>확인된 특징</b><ul>{researchResult.details.features.slice(0, 6).map((feature) => <li key={feature}>{feature}</li>)}</ul></article>}
                 {researchResult.details.specifications.length > 0 && <article><b>상세 규격·근거</b><dl>{researchResult.details.specifications.slice(0, 8).map((specification) => <div key={`${specification.label}-${specification.value}`}><dt>{specification.label}</dt><dd>{specification.value}<small>{specification.evidence}</small></dd></div>)}</dl></article>}
               </section>}
-              {researchResult.sources.length > 0 && <nav aria-label="CLI가 확인한 상품 출처">{researchResult.sources.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={source.url} className={source.status}><ExternalLink size={12} />{source.title}</a>)}</nav>}
+              {researchResult.sources.length > 0 && <nav aria-label="AI가 확인한 상품 출처">{researchResult.sources.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={source.url} className={source.status}><ExternalLink size={12} />{source.title}</a>)}</nav>}
               {researchResult.warnings.length > 0 && <p><AlertTriangle size={13} />{researchResult.warnings.join(" · ")}</p>}
             </div>}
             {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} onProceedWithoutPrices={proceedWithoutCompetitorPrices} compact />}
@@ -3614,14 +3609,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·AI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
           </section>
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && studioWorkerAvailable && !researchingProduct && !competitorResearchBlocksAnalysis && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격 확인 대기" : ""}<br /><small role="status">{studioWorkerReadiness?.message ?? "AI 제작 작업자 연결 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!studioWorkerAvailable || running || researchingProduct || photoSelectionsProcessing || competitorResearchBlocksAnalysis || Boolean(queuedJobId)} title={!studioWorkerAvailable ? studioWorkerReadiness?.message ?? "AI 제작 작업자 연결 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />작업자 확인 중</> : !studioWorkerAvailable ? <><AlertCircle size={17} />AI 작업자 연결 필요</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && studioWorkerAvailable && !researchingProduct && !competitorResearchBlocksAnalysis && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격 확인 대기" : ""}<br /><small role="status">{studioWorkerReadiness?.message ?? "Vercel OIDC 서버 AI 연결 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!studioWorkerAvailable || running || researchingProduct || photoSelectionsProcessing || competitorResearchBlocksAnalysis || Boolean(queuedJobId)} title={!studioWorkerAvailable ? studioWorkerReadiness?.message ?? "Vercel OIDC 서버 AI 연결 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 AI 확인 중</> : !studioWorkerAvailable ? <><AlertCircle size={17} />서버 AI 연결 필요</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
           <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 키가 연결된 채널만 선택할 수 있습니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
           <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 공식 API 등록 가능</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
           <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : connected ? "연결됨" : "키 필요"}</em></span>; })}</div></details>
-          <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>ChatGPT CLI 분석 완료</b><small>실제 작업 결과가 저장된 상품만 진행</small></span><em>필수</em></div><div className="automation-requirement"><span><b>상품별 병렬 처리</b><small>이전 상품 처리 중에도 다음 상품을 큐에 추가</small></span><em>동시</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
+          <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>서버 AI 분석 완료</b><small>실제 작업 결과가 저장된 상품만 진행</small></span><em>필수</em></div><div className="automation-requirement"><span><b>상품별 병렬 처리</b><small>이전 상품 처리 중에도 다음 상품을 큐에 추가</small></span><em>동시</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
         </aside>
       </section>
       <AiProductStudio
@@ -4188,7 +4183,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
     { no: "01", title: "관리자 로그인", desc: "ID·PW를 입력해 운영 데이터에 안전하게 접근", view: "overview" as View, icon: LockKeyhole, outcome: "권한별 대시보드 진입" },
     { no: "02", title: "통합 현황 파악", desc: "매출, 주문, 등록, CS와 월간 베스트 상품을 한 화면에서 확인", view: "overview" as View, icon: LayoutDashboard, outcome: "30초 안에 오늘의 우선순위 결정" },
     { no: "03", title: "사진으로 상품 등록", desc: "정면·라벨·바코드 사진을 올려 상품 사실정보 추출", view: "publishing" as View, icon: ImagePlus, outcome: "반복 입력 제거" },
-    { no: "04", title: "AI 상세·썸네일 제작", desc: "ChatGPT CLI 분석, codex-image 연출컷, 3종 썸네일과 편집 가능한 상세페이지 생성", view: "publishing" as View, icon: WandSparkles, outcome: "Puck 블록으로 직접 수정 가능한 초안" },
+    { no: "04", title: "AI 상세·썸네일 제작", desc: "Vercel OIDC 서버 AI 분석, codex-image 연출컷, 3종 썸네일과 편집 가능한 상세페이지 생성", view: "publishing" as View, icon: WandSparkles, outcome: "Puck 블록으로 직접 수정 가능한 초안" },
     { no: "05", title: "채널별 마진 검증", desc: "원가·수수료·환율·광고비를 반영해 목표 마진 판매가를 결정", view: "margin" as View, icon: Calculator, outcome: "팔아도 남는 가격 확정" },
     { no: "06", title: "8개 판매채널 등록", desc: "한 상품을 Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay·Temu 규격으로 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 사전검증과 오류 추적" },
     { no: "07", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
@@ -4438,7 +4433,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       ? {
           key: `ai-recovery:expired:${aiRecovery.checkedAt}:${aiRecovery.expiredCount}`,
           title: `장기 AI 분석 ${aiRecovery.expiredCount}건 자동 종료`,
-          detail: "작업자 연결 없이 멈춘 작업입니다. 등록 진행에서 기존 입력으로 재시도해 주세요.",
+          detail: "서버 AI 연결 없이 멈춘 작업입니다. 등록 진행에서 서버 저장 입력으로 재시도해 주세요.",
           kind: "expired" as const,
         }
       : aiRecovery.status === "failed"
@@ -4929,23 +4924,6 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       notify("같은 작업 ID와 저장 입력으로 재개할 수 있는 AI 작업이 아닙니다.");
       return;
     }
-    const studioRecoveryJobId = recoverableRegistrationActivityJobId(activity);
-    const needsStudioRecovery = studioRecoveryJobId === jobId;
-    let previousStorageValue: string | null = null;
-    if (needsStudioRecovery) {
-      try {
-        previousStorageValue = window.sessionStorage.getItem(activeStudioJobStorageKey);
-        const recoveryStorageValue = studioJobRecoveryStorageValue(previousStorageValue, jobId, Date.now());
-        if (!recoveryStorageValue) {
-          notify("AI 상품 분석 작업 ID를 확인하지 못해 재개를 시작하지 않았습니다.");
-          return;
-        }
-        window.sessionStorage.setItem(activeStudioJobStorageKey, recoveryStorageValue);
-      } catch {
-        notify("모바일 브라우저에 기존 작업 복구 상태를 저장하지 못해 재개를 시작하지 않았습니다.");
-        return;
-      }
-    }
 
     let response: Response;
     const retryScope = createPageAbortScope([], 30_000, "AI 작업 재개 확인 시간이 초과되었습니다.");
@@ -4957,8 +4935,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       });
     } catch {
       notify(`AI 작업 재개 응답을 확인하지 못했습니다. 새 작업을 만들지 않고 기존 작업 ${jobId.slice(0, 8)} 상태만 확인합니다.`);
-      if (needsStudioRecovery) navigate("publishing");
-      else await refreshOperations().catch(() => undefined);
+      await refreshOperations().catch(() => undefined);
       return;
     } finally {
       retryScope.dispose();
@@ -4966,20 +4943,10 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     const payload = await response.json().catch(() => ({ message: "AI 작업 재개 응답을 읽지 못했습니다." })) as { message?: string };
     if ([408, 425, 429].includes(response.status) || response.status >= 500) {
       notify(`AI 작업 재개 응답이 불명확합니다. 새 작업을 만들지 않고 기존 작업 ${jobId.slice(0, 8)} 상태만 확인합니다.`);
-      if (needsStudioRecovery) navigate("publishing");
-      else await refreshOperations().catch(() => undefined);
+      await refreshOperations().catch(() => undefined);
       return;
     }
     if (!response.ok && response.status !== 409) {
-      if (needsStudioRecovery) {
-        try {
-          if (previousStorageValue === null) window.sessionStorage.removeItem(activeStudioJobStorageKey);
-          else window.sessionStorage.setItem(activeStudioJobStorageKey, previousStorageValue);
-        } catch {
-          notify("AI 상품 분석 재개에 실패했고 모바일 브라우저의 복구 상태도 되돌리지 못했습니다. 새 작업이나 외부 채널 등록은 실행하지 않았습니다.");
-          return;
-        }
-      }
       notify(payload.message ?? "AI 작업을 다시 시작하지 못했습니다.");
       return;
     }
@@ -4989,11 +4956,10 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
         ? "같은 이미지 재제작"
         : "동일한 AI 분석";
     notify(response.ok
-      ? `저장된 입력으로 ${resumedKind} 작업을 다시 시작했습니다. 외부 판매채널 등록은 실행하지 않습니다.`
+      ? `서버에 저장된 입력으로 ${resumedKind} 작업을 Supabase 큐에 다시 접수했습니다. 이 화면에서 상태를 확인하며 외부 판매채널 등록은 실행하지 않습니다.`
       : payload.message ?? "기존 AI 작업이 이미 실행 중이거나 완료되어 새 작업을 만들지 않고 동일 작업 상태를 확인합니다.");
-    if (needsStudioRecovery) navigate("publishing");
-    else await refreshOperations();
-  }, [authenticatedOperationsFetch, navigate, notify, refreshOperations]);
+    await refreshOperations();
+  }, [authenticatedOperationsFetch, notify, refreshOperations]);
 
   const stopRegistrationActivity = useCallback(async (activity: RegistrationActivity) => {
     if (!isRegistrationActivityRunning(activity.status)) {

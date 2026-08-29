@@ -52,19 +52,21 @@ test("studio completion reconciles only the validated intake snapshot for its ex
   assert.match(finishBlock, /error instanceof StudioJobTerminalError[\s\S]{0,180}submittedIntakesByJobIdRef\.current\.delete\(job\.jobId\)/);
 });
 
-test("failed AI cards retry only their existing job and open studio recovery only when needed", async () => {
+test("failed AI cards retry only their existing server-stored input without opening an empty studio form", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const start = page.indexOf("const resumeFailedAiActivity");
   const end = page.indexOf("const editExternalActionProduct", start);
   const recovery = page.slice(start, end);
 
   assert.ok(start >= 0 && end > start);
-  assert.match(recovery, /studioJobRecoveryStorageValue/);
   assert.match(recovery, /authenticatedOperationsFetch\("\/api\/admin\/ai-jobs"/);
   assert.match(recovery, /JSON\.stringify\(\{ jobId, action: "retry" \}\)/);
-  assert.match(recovery, /const needsStudioRecovery = studioRecoveryJobId === jobId/);
   assert.match(recovery, /activity\.id\.startsWith\("revision:"\)/);
   assert.match(recovery, /activity\.id\.startsWith\("asset:"\)/);
-  assert.match(recovery, /navigate\("publishing"\)/);
+  assert.match(recovery, /await refreshOperations\(\)/);
+  assert.match(recovery, /서버에 저장된 입력으로/);
+  assert.doesNotMatch(recovery, /sessionStorage|activeStudioJobStorageKey|studioJobRecoveryStorageValue/);
+  assert.doesNotMatch(recovery, /navigate\("publishing"\)/);
+  assert.match(page, /서버 저장 입력으로 AI 분석 재시도/);
   assert.doesNotMatch(recovery, /channel-operations|listing\.create|listing\.update/);
 });

@@ -86,7 +86,7 @@ test("product studio route and clients fail closed without turning explicit work
   assert.match(studio, /workerReadiness\?\.available !== false[\s\S]{0,140}submissionPhase !== "monitoring"[\s\S]{0,180}jobMonitors\.abortAll/);
   assert.match(page, /authenticatedFetch\("\/api\/ai\/product-studio"/);
   assert.match(page, /disabled=\{!studioWorkerAvailable \|\| running/);
-  assert.match(page, /AI 작업자 연결 필요/);
+  assert.match(page, /서버 AI 연결 필요/);
 });
 
 test("product research identifies the Vercel OIDC server path without erasing legacy CLI compatibility", async () => {
@@ -98,6 +98,7 @@ test("product research identifies the Vercel OIDC server path without erasing le
   assert.match(route, /mode: "server-research"/);
   assert.match(route, /Vercel 서버 AI가 상품 링크와 설명을 조사/);
   assert.match(runtime, /Output\.object\(\{ schema: serverProductResearchResultSchema \}\)/);
-  assert.match(page, /researchResult\.mode === "server-research" \? "Vercel 서버 AI 상세정보 반영 완료" : "로컬 CLI 상세정보 반영 완료"/);
+  assert.match(page, /researchResult\.mode === "server-research" \? "Vercel OIDC 서버 AI 상세정보 반영 완료" : "기존 AI 상세정보 반영 완료"/);
   assert.doesNotMatch(page, /이미지·CLI 조사·판매자 확인값/);
+  assert.doesNotMatch(page, /"로컬 CLI 상세정보 반영 완료"/);
 });

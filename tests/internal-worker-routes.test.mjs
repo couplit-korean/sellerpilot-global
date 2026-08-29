@@ -59,14 +59,22 @@ test("periodic channel sync preserves idempotent partial results and surfaces da
   assert.match(source, /sellerpilot_service_enqueue_periodic_sync/);
   assert.match(source, /operation: "orders\.list"/);
   assert.doesNotMatch(source, /inquirySyncRequests|periodicInquiryRequests|blockedInquiryResults/);
-  assert.match(source, /if \(error\) return \{ channel, operation, status: "failed", infrastructureFailure: true \}/);
-  assert.match(source, /catch \{[\s\S]{0,180}infrastructureFailure: true/);
+  assert.match(source, /if \(error\) return \{ channel, status: "failed", reason: "ENQUEUE_RPC_FAILED", infrastructureFailure: true \}/);
+  assert.match(source, /catch \{[\s\S]{0,220}reason: "ENQUEUE_RPC_TRANSPORT_FAILED"[\s\S]{0,100}infrastructureFailure: true/);
   assert.match(source, /status !== "queued" && status !== "already_pending" && status !== "not_connected" && status !== "reconnect_required" && status !== "reconciliation_required"/);
+  assert.match(source, /const notConnected = results\.filter\(\(result\) => result\.status === "not_connected"\)\.length/);
   assert.match(source, /const reconnectRequired = results\.filter\(\(result\) => result\.status === "reconnect_required"\)\.length/);
   assert.match(source, /const reconciliationRequired = results\.filter\(\(result\) => result\.status === "reconciliation_required"\)\.length/);
-  assert.match(source, /ok: failed === 0\s*&& reconnectRequired === 0\s*&& reconciliationRequired === 0/);
+  assert.match(source, /ok: failed === 0\s*&& notConnected === 0\s*&& reconnectRequired === 0\s*&& reconciliationRequired === 0/);
   assert.match(source, /const databaseWideFailure = results\.length > 0 && infrastructureFailures === results\.length/);
-  assert.match(source, /status: databaseWideFailure[\s\S]{0,260}infrastructureFailures > 0[\s\S]{0,160}reconciliationRequired > 0[\s\S]{0,120}pushRequiresAttention[\s\S]{0,80}\? 207/);
+  assert.match(source, /const responseStatus = databaseWideFailure[\s\S]{0,260}infrastructureFailures > 0[\s\S]{0,120}notConnected > 0[\s\S]{0,180}reconciliationRequired > 0[\s\S]{0,140}pushRequiresAttention[\s\S]{0,80}\? 207/);
+  assert.match(source, /const pushRequiresAttention = push\.failed > 0 \|\| push\.reconciliationRequired > 0 \|\| push\.finalizationFailed > 0/);
+  assert.match(source, /safePeriodicSyncDiagnostics\(results\)/);
+  assert.match(source, /channel: "push-notifications"[\s\S]{0,160}reason: "PUSH_RECONCILIATION_REQUIRED"/);
+  assert.match(source, /const safeResults = results\.map\(\(\{ channel, status, reason \}\) => \(\{ channel, status, reason \}\)\)/);
+  assert.match(source, /console\.warn\("periodic channel sync diagnostics", \{ diagnostics \}\)/);
+  assert.match(source, /results: safeResults,[\s\S]{0,80}diagnostics,/);
+  assert.doesNotMatch(source, /diagnostics\.push\(\{[\s\S]{0,180}(?:payload|credential|secret|jobId)/);
 });
 
 test("competitor scheduler bounds three durable claims and preserves pending gateway work", async () => {

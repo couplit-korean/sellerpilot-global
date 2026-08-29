@@ -381,7 +381,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
   return (
     <div className="page-stack credential-page">
       {!embedded && <section className="credential-hero">
-        <div><span><ShieldCheck size={14} /> SECURE CONNECTION CONTROL</span><h2>API 키는 숨기고,<br /><em>수명과 교체 흐름은 선명하게.</em></h2><p>판매 채널 키 원문은 Supabase Vault에 암호화 저장됩니다. AI는 별도 API 키 없이 Mac의 ChatGPT CLI 인증으로 실행됩니다.</p></div>
+        <div><span><ShieldCheck size={14} /> SECURE CONNECTION CONTROL</span><h2>API 키는 숨기고,<br /><em>수명과 교체 흐름은 선명하게.</em></h2><p>판매 채널 키 원문은 Supabase Vault에 암호화 저장됩니다. AI는 Vercel OIDC 서버에서 실행하고 작업 상태는 Supabase 비공개 큐에 저장합니다.</p></div>
         <aside><LockKeyhole size={21} /><b>브라우저 원문 재조회 차단</b><small>관리자 로그인 · 새 키 일회성 입력 · 서버 검사 · 감사기록</small></aside>
       </section>}
 
