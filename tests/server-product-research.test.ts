@@ -15,6 +15,7 @@ import {
   classifyProductResearchGatewayFailure,
   collectProductResearchReferences,
   extractProductResearchReferenceUrls,
+  normalizeGeneratedProductResearchDraft,
   parseGeneratedProductResearchJson,
   runServerProductResearchCron,
   shouldTerminallyFailProductResearch,
@@ -164,6 +165,70 @@ test("server product research classifies invalid raw model text without leaking 
       && error.message === "gateway_result_invalid"
       && !error.message.includes("private"),
   );
+});
+
+test("server product research normalizes a valid JSON draft without inventing missing product facts", () => {
+  const normalized = normalizeGeneratedProductResearchDraft({
+    mode: "server-research",
+    summary: "짧음",
+    suggestedFields: {
+      productName: "  롯데 롯샌 파스퇴르 순우유맛  ",
+      brandName: "",
+      countryOfOrigin: " ",
+      gtin: "확인 불가",
+    },
+    searchQueries: [
+      { locale: "ko-KR", query: "롯데 롯샌 순우유맛" },
+      { locale: "ko-KR", query: "중복 검색어" },
+      { locale: "unknown", query: "invalid locale" },
+    ],
+    details: {
+      features: ["우유맛 샌드 과자", ""],
+      specifications: [{ label: "중량", value: "315g", evidence: "판매자 입력" }],
+      usage: null,
+      cautions: ["실물 라벨 확인 필요"],
+    },
+    warnings: ["모델 경고"],
+  }, "롯데 롯샌 파스퇴르 순우유맛 6봉입 315g 상품");
+
+  assert.equal(normalized.suggestedFields.productName, "롯데 롯샌 파스퇴르 순우유맛");
+  assert.equal(normalized.suggestedFields.brandName, null);
+  assert.equal(normalized.suggestedFields.manufacturer, null);
+  assert.equal(normalized.suggestedFields.countryOfOrigin, null);
+  assert.equal(normalized.suggestedFields.gtin, null);
+  assert.equal(normalized.searchQueries.length, 6);
+  assert.equal(new Set(normalized.searchQueries.map((query) => query.locale)).size, 6);
+  assert.equal(normalized.details.features[0], "우유맛 샌드 과자");
+  assert.deepEqual(normalized.details.specifications, [{
+    label: "중량",
+    value: "315g",
+    evidence: "판매자 입력",
+  }]);
+  assert.match(normalized.summary, /판매자가 입력한 상품 설명/);
+  assert.match(normalized.warnings[0], /새 상품 사실은 추가하지 않았습니다/);
+});
+
+test("server product research normalization rejects irrelevant objects and drops oversized claims", () => {
+  assert.throws(
+    () => normalizeGeneratedProductResearchDraft({}, "테스트 상품"),
+    /gateway_result_invalid/,
+  );
+  assert.throws(
+    () => normalizeGeneratedProductResearchDraft({ unknown: "value" }, "테스트 상품"),
+    /gateway_result_invalid/,
+  );
+  const normalized = normalizeGeneratedProductResearchDraft({
+    summary: "확인된 입력을 정리한 검토용 상품정보 초안으로 실제 라벨 확인이 필요합니다.",
+    suggestedFields: {
+      productName: "x".repeat(161),
+      description: `안전 문구 ${"x".repeat(4_001)}`,
+    },
+    searchQueries: [],
+    details: { features: [], specifications: [], usage: [], cautions: [] },
+  }, "판매자 입력 테스트 상품");
+  assert.equal(normalized.suggestedFields.productName, null);
+  assert.equal(normalized.suggestedFields.description, null);
+  assert.equal(normalized.searchQueries.length, 6);
 });
 
 test("gateway failures map only bounded metadata to DB-safe reasons", () => {

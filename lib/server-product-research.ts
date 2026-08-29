@@ -260,7 +260,7 @@ export function buildServerProductResearchPrompt(
     "mode는 반드시 server-research이고, suggestedFields의 키는 productName, categoryHint, brandName, manufacturer, countryOfOrigin, material, packageContents, description, gtin입니다.",
     "details의 키는 features, specifications, usage, cautions이며 specifications 항목의 키는 label, value, evidence입니다.",
     "suggestedFields의 모든 키를 포함하고 확인할 수 없는 값은 키를 빼지 말고 null로 두세요. searchQueries, details의 네 배열, sources, warnings도 비어 있더라도 배열을 포함하세요.",
-    "JSON 골격: {\"mode\":\"server-research\",\"summary\":\"...\",\"suggestedFields\":{\"productName\":null,\"categoryHint\":null,\"brandName\":null,\"manufacturer\":null,\"countryOfOrigin\":null,\"material\":null,\"packageContents\":null,\"description\":null,\"gtin\":null},\"searchQueries\":[],\"details\":{\"features\":[],\"specifications\":[],\"usage\":[],\"cautions\":[]},\"sources\":[],\"warnings\":[]}",
+    "JSON 골격: {\"mode\":\"server-research\",\"summary\":\"...\",\"suggestedFields\":{\"productName\":null,\"categoryHint\":null,\"brandName\":null,\"manufacturer\":null,\"countryOfOrigin\":null,\"material\":null,\"packageContents\":null,\"description\":null,\"gtin\":null},\"searchQueries\":[{\"locale\":\"ko-KR\",\"query\":\"...\"},{\"locale\":\"en-US\",\"query\":\"...\"},{\"locale\":\"ja-JP\",\"query\":\"...\"},{\"locale\":\"zh-TW\",\"query\":\"...\"},{\"locale\":\"ms-MY\",\"query\":\"...\"},{\"locale\":\"id-ID\",\"query\":\"...\"}],\"details\":{\"features\":[],\"specifications\":[],\"usage\":[],\"cautions\":[]},\"sources\":[],\"warnings\":[]}",
     "searchQueries에는 지원 locale인 한국어(ko-KR), 영어(en-US), 일본어(ja-JP), 번체중국어(zh-TW), 말레이어(ms-MY), 인도네시아어(id-ID), 베트남어(vi-VN), 태국어(th-TH), 브라질 포르투갈어(pt-BR), 멕시코 스페인어(es-MX) 중 서로 다른 최소 6개, 최대 12개의 동일 상품 가격 검색 문구를 작성하세요.",
     "검색어마다 확인된 브랜드, 정확한 모델 번호, GTIN, 용량·중량·수량, 1+1 또는 묶음 구성을 원문과 동일하게 유지하고 일반 상품 유형만 자연스럽게 번역하세요. 확인되지 않은 모델명·브랜드·규격·수량을 검색어에 만들지 마세요.",
     "details.specifications의 evidence에는 어떤 입력 문장이나 페이지 항목에서 확인했는지 짧게 적으세요.",
@@ -293,6 +293,150 @@ export function parseGeneratedProductResearchJson(value: string) {
   } catch {
     throw new ProductResearchExecutionError("gateway_result_invalid");
   }
+}
+
+const RESEARCH_SEARCH_LOCALES = [
+  "ko-KR", "en-US", "ja-JP", "zh-TW", "ms-MY",
+  "id-ID", "vi-VN", "th-TH", "pt-BR", "es-MX",
+] as const;
+type ResearchSearchLocale = typeof RESEARCH_SEARCH_LOCALES[number];
+const RESEARCH_SEARCH_SUFFIX: Record<ResearchSearchLocale, string> = {
+  "ko-KR": "동일 상품 가격",
+  "en-US": "same product price",
+  "ja-JP": "同一商品 価格",
+  "zh-TW": "同一商品 價格",
+  "ms-MY": "produk sama harga",
+  "id-ID": "produk yang sama harga",
+  "vi-VN": "cùng sản phẩm giá",
+  "th-TH": "สินค้าเดียวกัน ราคา",
+  "pt-BR": "mesmo produto preço",
+  "es-MX": "mismo producto precio",
+};
+
+function researchRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function boundedResearchText(value: unknown, maximum: number, minimum = 1) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (normalized.length > maximum) return null;
+  return normalized.length >= minimum ? normalized : null;
+}
+
+function boundedResearchList(value: unknown, maximumItems: number, maximumCharacters: number) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, maximumItems).flatMap((item) => {
+    const normalized = boundedResearchText(item, maximumCharacters);
+    return normalized ? [normalized] : [];
+  });
+}
+
+/**
+ * AI Gateway may return syntactically valid JSON whose nullable values or
+ * helper arrays miss the seller-facing draft contract. Keep the first stage
+ * usable by normalizing only bounded strings already present in the response
+ * and by deriving missing search helpers from the seller's own input. Unknown
+ * product facts remain null and every normalized draft is explicitly marked
+ * for human review.
+ */
+export function normalizeGeneratedProductResearchDraft(value: unknown, researchInput: string) {
+  const alreadyValid = serverProductResearchResultSchema.safeParse(value);
+  if (alreadyValid.success) return alreadyValid.data;
+
+  const root = researchRecord(value);
+  const suggested = researchRecord(root.suggestedFields);
+  const details = researchRecord(root.details);
+  const productName = boundedResearchText(suggested.productName, 160);
+  const hasRecognizedEnvelope = [
+    "mode", "summary", "suggestedFields", "searchQueries", "details", "sources", "warnings",
+  ].some((key) => Object.prototype.hasOwnProperty.call(root, key));
+  const hasSubstantiveDraft = [
+    boundedResearchText(root.summary, 2_000),
+    productName,
+    boundedResearchText(suggested.categoryHint, 120),
+    boundedResearchText(suggested.description, 4_000),
+    Array.isArray(root.searchQueries) && root.searchQueries.length > 0 ? "search" : null,
+    Array.isArray(details.features) && details.features.length > 0 ? "feature" : null,
+    Array.isArray(details.specifications) && details.specifications.length > 0 ? "specification" : null,
+  ].some(Boolean);
+  if (!hasRecognizedEnvelope || !hasSubstantiveDraft) {
+    throw new ProductResearchExecutionError("gateway_result_invalid");
+  }
+  const inputSearchText = researchInput
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const searchBase = (inputSearchText || "판매자 입력 상품").slice(0, 120).trim();
+  const searchQueries: Array<{ locale: ResearchSearchLocale; query: string }> = [];
+  const seenLocales = new Set<ResearchSearchLocale>();
+  if (Array.isArray(root.searchQueries)) {
+    for (const item of root.searchQueries.slice(0, 12)) {
+      const candidate = researchRecord(item);
+      const locale = RESEARCH_SEARCH_LOCALES.find((entry) => entry === candidate.locale);
+      const query = boundedResearchText(candidate.query, 160, 2);
+      if (!locale || !query || seenLocales.has(locale)) continue;
+      seenLocales.add(locale);
+      searchQueries.push({ locale, query });
+    }
+  }
+  for (const locale of RESEARCH_SEARCH_LOCALES) {
+    if (searchQueries.length >= 6) break;
+    if (seenLocales.has(locale)) continue;
+    seenLocales.add(locale);
+    searchQueries.push({
+      locale,
+      query: `${searchBase} ${RESEARCH_SEARCH_SUFFIX[locale]}`.slice(0, 160).trim(),
+    });
+  }
+
+  const specifications = Array.isArray(details.specifications)
+    ? details.specifications.slice(0, 30).flatMap((item) => {
+      const candidate = researchRecord(item);
+      const label = boundedResearchText(candidate.label, 100);
+      const specificationValue = boundedResearchText(candidate.value, 500);
+      const evidence = boundedResearchText(candidate.evidence, 500);
+      return label && specificationValue && evidence
+        ? [{ label, value: specificationValue, evidence }]
+        : [];
+    })
+    : [];
+  const modelWarnings = boundedResearchList(root.warnings, 9, 500);
+  const normalized = {
+    mode: "server-research" as const,
+    summary: boundedResearchText(root.summary, 2_000, 20)
+      ?? "판매자가 입력한 상품 설명을 기준으로 만든 검토용 1차 초안입니다. 사진과 라벨의 실제 표시사항을 확인해 주세요.",
+    suggestedFields: {
+      productName,
+      categoryHint: boundedResearchText(suggested.categoryHint, 120),
+      brandName: boundedResearchText(suggested.brandName, 120),
+      manufacturer: boundedResearchText(suggested.manufacturer, 160),
+      countryOfOrigin: boundedResearchText(suggested.countryOfOrigin, 80),
+      material: boundedResearchText(suggested.material, 500),
+      packageContents: boundedResearchText(suggested.packageContents, 500),
+      description: boundedResearchText(suggested.description, 4_000),
+      gtin: typeof suggested.gtin === "string" && /^\d{8,14}$/.test(suggested.gtin.trim())
+        ? suggested.gtin.trim()
+        : null,
+    },
+    searchQueries,
+    details: {
+      features: boundedResearchList(details.features, 12, 300),
+      specifications,
+      usage: boundedResearchList(details.usage, 10, 300),
+      cautions: boundedResearchList(details.cautions, 10, 400),
+    },
+    sources: [],
+    warnings: [...new Set([
+      "AI 응답 구조만 보완했으며 새 상품 사실은 추가하지 않았습니다.",
+      ...modelWarnings,
+    ])].slice(0, 10),
+  };
+  const parsed = serverProductResearchResultSchema.safeParse(normalized);
+  if (!parsed.success) throw new ProductResearchExecutionError("gateway_result_invalid");
+  return parsed.data;
 }
 
 async function defaultGenerateProductResearch(prompt: string, signal: AbortSignal) {
@@ -351,15 +495,14 @@ export async function analyzeServerProductResearch(
     throw new ProductResearchExecutionError("gateway_request_failed");
   }
   const generated = parseGeneratedProductResearchJson(generatedText);
-  const parsed = serverProductResearchResultSchema.safeParse(generated);
-  if (!parsed.success) throw new ProductResearchExecutionError("gateway_result_invalid");
+  const parsed = normalizeGeneratedProductResearchDraft(generated, normalizedInput);
 
   const warnings = [...new Set([
     ...references.flatMap((reference) => reference.warning ? [reference.warning] : []),
-    ...parsed.data.warnings,
+    ...parsed.warnings,
   ])].slice(0, 10);
   return serverProductResearchResultSchema.parse({
-    ...parsed.data,
+    ...parsed,
     // The server, not the model, is authoritative for which pages were read.
     sources: references.map(({ url, title, status }) => ({ url, title, status })),
     warnings,
