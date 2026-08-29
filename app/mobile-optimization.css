@@ -3470,17 +3470,17 @@
   }
 }
 
-/* An operations warning adds a fifth header control. Give the page title and
-   controls separate rows on phone widths instead of shrinking the title into
-   an unreadable strip. The header-height token also keeps fixed popovers below
-   the expanded sticky header. */
+/* Give every phone header separate title and control rows. Healthy operation
+   states still carry four actions, so keeping only warning states on two rows
+   truncated longer workspace titles. The height token also keeps fixed
+   popovers below the expanded sticky header. */
 @media (max-width: 412px) {
-  .app-header-stack:has(> .topbar > .topbar-actions.has-operations-attention) {
+  .app-header-stack {
     --mobile-topbar-height: 104px;
     --mobile-header-clearance: calc(var(--mobile-header-safe-top) + var(--mobile-service-rail-height) + var(--mobile-topbar-height));
   }
 
-  .topbar:has(> .topbar-actions.has-operations-attention) {
+  .topbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(44px, auto) minmax(44px, auto);
@@ -3490,17 +3490,17 @@
     padding-bottom: 6px;
   }
 
-  .topbar:has(> .topbar-actions.has-operations-attention) > .topbar-title {
+  .topbar > .topbar-title {
     width: 100%;
     min-width: 0;
   }
 
-  .topbar:has(> .topbar-actions.has-operations-attention) > .topbar-title h1 {
+  .topbar > .topbar-title h1 {
     width: auto;
     max-width: 100%;
   }
 
-  .topbar:has(> .topbar-actions.has-operations-attention) > .topbar-actions {
+  .topbar > .topbar-actions {
     width: 100%;
     min-width: 0;
     flex: none;

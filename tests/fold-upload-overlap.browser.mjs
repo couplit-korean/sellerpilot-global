@@ -845,3 +845,127 @@ test("Fold workspaces keep history, detail preview and product edit actions clea
     await browser.close();
   }
 });
+
+const fullReleaseViewports = [
+  { width: 280, height: 653 },
+  { width: 320, height: 844 },
+  { width: 344, height: 844 },
+  { width: 390, height: 844 },
+  { width: 412, height: 844 },
+  { width: 768, height: 844 },
+  { width: 1440, height: 844 },
+];
+
+function toastClearanceFixtureHtml(styles) {
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>${styles.replaceAll("</style", "<\\/style")}</style></head><body>
+    <section class="app-main"><main class="app-content"><div style="height:1000px" aria-hidden="true"></div><button type="button" data-last-release-action style="display:block;width:100%;min-height:48px">마지막 작업 계속</button></main></section>
+    <div class="toast notice-info"><span class="toast-icon">!</span><span class="toast-copy"><b>진행 알림</b><span>마지막 작업을 가리지 않아야 합니다.</span></span><button type="button" data-toast-dismiss aria-label="알림 닫기">×</button></div>
+    <nav class="mobile-bottom-nav"><button>대시보드</button><button>상품</button><button>등록</button><button>주문</button><button>CS</button></nav>
+  </body></html>`;
+}
+
+function responsiveControlsFixtureHtml(styles) {
+  const orderHeadings = ["선택", "주문번호", "채널", "구매자", "상품", "금액", "상태", "정산", "시간", "상세"];
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>${styles.replaceAll("</style", "<\\/style")}</style></head><body>
+    <section class="app-main"><div class="app-header-stack"><div class="commerce-service-rail"><strong>통합 판매관리</strong><span>판매 데이터</span><span>운영 키</span><span>동기화</span><span>자동화</span></div><header class="topbar"><div class="topbar-title"><button class="mobile-menu-button" data-touch-target aria-label="메뉴">≡</button><div><h1>등록 진행 · 히스토리</h1></div></div><div class="topbar-actions"><button type="button" class="demo-data-badge"><b>실데이터</b><small>연결됨</small></button><button type="button" class="global-search" data-touch-target aria-label="검색">⌕</button><div class="notification-wrap"><button type="button" class="top-icon-button" data-touch-target aria-label="알림">!</button><div class="notification-popover"><div><h4>실시간 알림</h4><button type="button" data-touch-target>모두 닫기</button></div><div class="notification-item"><button type="button" class="notification-item-open" data-touch-target><span>!</span><span>상품 등록 상태</span></button><button type="button" class="notification-item-dismiss" data-touch-target aria-label="알림 하나 닫기">×</button></div></div></div><button type="button" class="user-menu" data-touch-target aria-label="계정"><span class="user-avatar">관</span></button></div></header></div>
+      <section class="mobile-push-gate browser"><div class="mobile-push-gate-copy"><h2>주문 알림</h2></div><div class="mobile-push-gate-actions"><button type="button" data-touch-target>알림 허용</button></div></section><div class="mobile-push-chip"><span><b>주문 알림 사용 중</b></span><button type="button" data-touch-target>테스트</button><button type="button" class="mobile-push-chip-dismiss" data-touch-target aria-label="푸시 상태 닫기">×</button></div>
+      <main class="app-content"><section class="panel sales-calendar-panel"><div class="sales-range-control"><div class="segmented-control"><button type="button" data-touch-target>일</button><button type="button" data-touch-target>주</button><button type="button" data-touch-target>월</button><button type="button" data-touch-target>연</button><button type="button" data-touch-target>직접</button></div></div><div class="sales-calendar-pager"><button type="button" data-touch-target>‹</button><span><b>2026년</b></span><button type="button" data-touch-target>›</button></div></section>
+        <section class="panel upload-panel"><div class="option-slot-wrap"><div class="photo-source-actions compact"><label data-touch-target>촬영</label><label data-touch-target>앨범</label></div></div><div class="analysis-start-bar"><span>분석 준비</span><button type="button" data-touch-target>상품 분석 시작</button></div></section>
+        <article class="panel registration-card"><button type="button" class="registration-card-inspect"><span>등록 작업 상세</span></button><footer><button type="button" class="credential-secondary" data-touch-target>등록 재시도</button></footer></article>
+        <section class="product-detail-actions"><button type="button" class="credential-secondary" data-touch-target>목록</button><div><button type="button" class="primary-button" data-touch-target>전체 정보 수정</button></div></section>
+        <section class="product-edit-dialog"><header><div><h2>상품 전체 정보 수정</h2></div><button type="button" data-touch-target aria-label="수정 닫기">×</button></header><form class="product-edit-form"><label><span>상품명</span><input data-touch-target value="상품명"></label><section class="product-revision-images"><div class="product-revision-main"><div class="product-revision-source-actions"><label data-touch-target>촬영</label><button type="button" data-touch-target>앨범</button></div></div><div class="product-revision-role-grid"><div><label>정면</label><button type="button" data-touch-target aria-label="사진 삭제">×</button></div></div><div class="product-revision-extras"><label data-touch-target>추가 사진</label></div></section></form><div></div><footer><button type="button" class="credential-secondary" data-touch-target>취소</button><button type="button" class="publish-execute" data-touch-target>저장</button></footer></section>
+        <div class="table-wrap" data-order-table-wrap><table class="data-table order-table"><thead><tr>${orderHeadings.map((heading) => `<th>${heading}</th>`).join("")}</tr></thead><tbody><tr><td><input type="checkbox"></td><td><button type="button" class="order-detail-link">ORD-123456</button></td><td>11번가</td><td>고객</td><td><button type="button" class="order-product-button" data-touch-target>매우 긴 상품명</button></td><td>10,000원</td><td>결제완료</td><td>정산대기</td><td>오늘</td><td><button type="button" class="table-action">›</button></td></tr></tbody></table></div><div class="bulk-order-bar"><button type="button" data-touch-target>일괄 출고 처리</button></div>
+        <fieldset class="shipment-draft-list"><article><label><span>택배사</span><input data-touch-target value="carrier"></label><label><span>참조 종류</span><select data-touch-target><option>PackingNo</option></select></label></article></fieldset>
+        <section class="credential-modal"><header><div><h3>채널 연결</h3></div><button type="button" data-touch-target aria-label="연결 창 닫기">×</button></header><fieldset class="credential-form-grid"><label><span>API 키</span><span class="credential-input"><input data-touch-target value="masked"></span></label></fieldset><footer><button type="button" class="credential-secondary" data-touch-target>취소</button><button type="button" class="credential-primary" data-touch-target>저장</button></footer></section>
+      </main></section><nav class="mobile-bottom-nav"><button>대시보드</button><button>상품</button><button>등록</button><button>주문</button><button>CS</button></nav>
+  </body></html>`;
+}
+
+test("280 through 1440 release widths keep the last action above fixed toasts", { timeout: 90_000 }, async () => {
+  const executablePath = await firstExecutable([
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ]);
+  assert.ok(executablePath, "release geometry test requires Chrome");
+  const styles = (await Promise.all(cssUrls.map((url) => readFile(url, "utf8")))).join("\n");
+  const browser = await chromium.launch({ executablePath, headless: true, args: ["--disable-background-networking", "--disable-default-apps", "--no-first-run"] });
+  try {
+    for (const { width, height } of fullReleaseViewports) {
+      const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, hasTouch: true, isMobile: width <= 412 });
+      const page = await context.newPage();
+      await page.setContent(toastClearanceFixtureHtml(styles), { waitUntil: "load" });
+      await page.waitForTimeout(250);
+      await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" }));
+      const geometry = await page.evaluate(() => {
+        const action = document.querySelector("[data-last-release-action]");
+        const toast = document.querySelector(".toast");
+        const dismiss = document.querySelector("[data-toast-dismiss]");
+        if (!(action instanceof HTMLElement) || !(toast instanceof HTMLElement) || !(dismiss instanceof HTMLElement)) throw new Error("toast fixture is incomplete");
+        const actionBox = action.getBoundingClientRect();
+        const toastBox = toast.getBoundingClientRect();
+        const dismissBox = dismiss.getBoundingClientRect();
+        const pointX = Math.max(actionBox.left + 1, Math.min(actionBox.right - 1, toastBox.left + toastBox.width / 2));
+        const hit = document.elementFromPoint(pointX, actionBox.top + actionBox.height / 2);
+        return { documentWidth: document.documentElement.scrollWidth, actionBottom: actionBox.bottom, toastTop: toastBox.top, dismissWidth: dismissBox.width, dismissHeight: dismissBox.height, hit: hit instanceof Element && Boolean(hit.closest("[data-last-release-action]")) };
+      });
+      assert.ok(geometry.documentWidth <= width, `${width}px toast fixture must not widen the document`);
+      assert.ok(geometry.actionBottom <= geometry.toastTop + 0.5, `${width}px last action must settle above the fixed toast (${JSON.stringify(geometry)})`);
+      assert.equal(geometry.hit, true, `${width}px last action must remain topmost while the toast is visible`);
+      if (width <= 900) assert.ok(geometry.dismissWidth >= 43.5 && geometry.dismissHeight >= 43.5, `${width}px toast close must retain a 44px CSS target (${JSON.stringify(geometry)})`);
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("phone and tablet release widths preserve titles, order data and 44px controls", { timeout: 90_000 }, async () => {
+  const executablePath = await firstExecutable([
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ]);
+  assert.ok(executablePath, "release geometry test requires Chrome");
+  const styles = (await Promise.all(cssUrls.map((url) => readFile(url, "utf8")))).join("\n");
+  const browser = await chromium.launch({ executablePath, headless: true, args: ["--disable-background-networking", "--disable-default-apps", "--no-first-run"] });
+  try {
+    for (const { width, height } of fullReleaseViewports) {
+      const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, hasTouch: true, isMobile: width <= 412 });
+      const page = await context.newPage();
+      await page.setContent(responsiveControlsFixtureHtml(styles), { waitUntil: "load" });
+      const geometry = await page.evaluate(() => {
+        const title = document.querySelector(".topbar-title h1");
+        const wrap = document.querySelector("[data-order-table-wrap]");
+        if (!(title instanceof HTMLElement) || !(wrap instanceof HTMLElement)) throw new Error("release controls fixture is incomplete");
+        wrap.scrollLeft = 100;
+        const stickyWidths = [...document.querySelectorAll(".order-table tbody td")]
+          .filter((cell) => getComputedStyle(cell).position === "sticky")
+          .map((cell) => cell.getBoundingClientRect().width);
+        const targets = [...document.querySelectorAll("[data-touch-target]")].map((target) => {
+          const box = target.getBoundingClientRect();
+          return { tag: target.tagName, className: target.className, width: box.width, height: box.height };
+        });
+        return { documentWidth: document.documentElement.scrollWidth, titleClientWidth: title.clientWidth, titleScrollWidth: title.scrollWidth, tableClientWidth: wrap.clientWidth, tableScrollWidth: wrap.scrollWidth, tableScrollLeft: wrap.scrollLeft, stickyWidth: stickyWidths.reduce((sum, value) => sum + value, 0), targets };
+      });
+      assert.ok(geometry.documentWidth <= width, `${width}px controls fixture must not widen the document`);
+      if (width <= 412) assert.ok(geometry.titleClientWidth + 0.5 >= geometry.titleScrollWidth, `${width}px full workspace title must remain readable (${geometry.titleClientWidth}/${geometry.titleScrollWidth})`);
+      if (width <= 900) {
+        for (const target of geometry.targets) assert.ok(target.width >= 43.5 && target.height >= 43.5, `${width}px ${target.tag}.${target.className} must retain a 44px CSS target (${target.width}x${target.height})`);
+        assert.ok(geometry.tableScrollWidth > geometry.tableClientWidth && geometry.tableScrollLeft > 0, `${width}px order ledger must remain horizontally scrollable`);
+      }
+      if (width <= 412) assert.ok(geometry.tableClientWidth - geometry.stickyWidth >= 100, `${width}px sticky order edges must leave at least 100px for central data (${geometry.tableClientWidth - geometry.stickyWidth}px)`);
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});

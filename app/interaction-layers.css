@@ -122,6 +122,15 @@
 .toast.notice-error { border-color: #edc2bd #efdfdd #efdfdd #cb4338 !important; }
 .toast.notice-error > .toast-icon { color: #b9372f; background: #fff0ef; }
 
+/* Phone layouts already reserve the navigation and toast lanes below. Tablet
+   and desktop pages have no bottom navigation, but still need enough scroll
+   clearance for the last action to settle above the fixed two-second toast. */
+@media (min-width: 721px) {
+  body:has(.toast) .app-content {
+    padding-bottom: max(104px, env(safe-area-inset-bottom));
+  }
+}
+
 fieldset.product-edit-form,
 fieldset.shipment-draft-list,
 fieldset.operation-console-body,
@@ -771,6 +780,97 @@ body:has(.notification-popover) .mobile-push-chip {
   .sidebar {
     padding-top: env(safe-area-inset-top);
   }
+
+  /* The app switches to its touch-oriented drawer layout at 900px, not 720px.
+     Extend the 44px interaction contract through tablet widths and restore the
+     form controls that the final shared cascade previously reset to 42px. */
+  .mobile-menu-button,
+  .global-search,
+  .top-icon-button,
+  .user-menu,
+  .toast > button,
+  .notification-popover > div:first-child button,
+  .notification-popover .notification-item > .notification-item-open,
+  .notification-popover .notification-item > .notification-item-dismiss,
+  .mobile-push-gate-actions button,
+  .mobile-push-chip button,
+  .sales-range-control .segmented-control button,
+  .selected-date-range,
+  .custom-date-range,
+  .custom-date-range input,
+  .photo-source-actions.compact > label,
+  .analysis-start-bar > button,
+  .registration-activity-hero button,
+  .registration-card > footer > button,
+  .product-detail-actions button,
+  .product-detail-asset-grid figcaption button,
+  .product-edit-form input,
+  .product-edit-form select,
+  .product-edit-form textarea,
+  .product-revision-source-actions > label,
+  .product-revision-source-actions > button,
+  .product-revision-role-grid label.product-revision-source-choice,
+  .product-revision-extras > label,
+  .product-revision-status > button,
+  .product-edit-dialog > footer > button,
+  .order-product-button,
+  .bulk-order-bar > button:not(.table-action),
+  .shipment-draft-list input,
+  .shipment-draft-list select,
+  .credential-input input,
+  .credential-input select,
+  .rotation-settings input,
+  .rotation-settings select,
+  .credential-modal > footer button,
+  .credential-card > footer button {
+    min-height: 44px;
+  }
+
+  .mobile-menu-button,
+  .top-icon-button,
+  .toast > button,
+  .notification-popover .notification-item > .notification-item-dismiss,
+  .product-edit-dialog > header > button,
+  .product-revision-role-grid > div > button,
+  .product-revision-extras > div button,
+  .credential-modal > header > button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .global-search,
+  .user-menu,
+  .mobile-push-chip button,
+  .notification-popover > div:first-child button,
+  .sales-range-control .segmented-control button {
+    min-width: 44px;
+  }
+
+  .notification-popover .notification-item {
+    grid-template-columns: minmax(0, 1fr) 44px;
+  }
+
+  .sales-calendar-pager {
+    grid-template-columns: 44px minmax(130px, 1fr) 44px;
+  }
+
+  .sales-range-control .segmented-control {
+    grid-template-columns: repeat(5, minmax(44px, auto));
+  }
+
+  .sales-calendar-pager > button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .order-product-button {
+    display: inline-flex;
+    align-items: center;
+  }
 }
 
 @media (max-width: 344px) {
@@ -805,6 +905,23 @@ body:has(.notification-popover) .mobile-push-chip {
   .margin-table td:first-child,
   .margin-table th:last-child,
   .margin-table td:last-child {
+    position: static;
+    z-index: auto;
+    right: auto;
+    left: auto;
+    box-shadow: none;
+  }
+}
+
+/* At 390px and 412px the order ID and right action sticky columns consumed
+   279px in addition to the 48px selection edge, leaving only 43-65px for all
+   central order facts. Keep one stable selection identity edge and let the
+   remaining columns participate in the horizontal ledger. */
+@media (max-width: 480px) {
+  .order-table th:nth-child(2),
+  .order-table td:nth-child(2),
+  .order-table th:last-child,
+  .order-table td:last-child {
     position: static;
     z-index: auto;
     right: auto;
