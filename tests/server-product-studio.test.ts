@@ -356,7 +356,7 @@ async function firstDraftPreflightFixture(
 
 async function runReviewedTransientPipelineFixture(options: {
   requestMode?: "reviewed" | "marker-mismatch" | "legacy";
-  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "partial-image-transient";
+  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient";
   transientReason?: string;
   corruptPreflightAssetId?: (typeof coreFirstDraftAssetIds)[number];
   duplicatePreflightAsset?: boolean;
@@ -453,6 +453,8 @@ async function runReviewedTransientPipelineFixture(options: {
   const completionCalls: Record<string, unknown>[] = [];
   const logs: Array<{ stage: string; details: Record<string, string | number | boolean> }> = [];
   let structuredCalls = 0;
+  const structuredChunkCalls: string[] = [];
+  const localizedPrompts: string[] = [];
   let segmentationCalls = 0;
   let backgroundCalls = 0;
   let auditCalls = 0;
@@ -531,14 +533,38 @@ async function runReviewedTransientPipelineFixture(options: {
       }
       const chunkTag = input.tags.find((tag) => tag.startsWith("chunk:"));
       assert.ok(chunkTag);
-      if (providerScenario === "partial-localization-transient" && chunkTag === "chunk:2") {
+      structuredChunkCalls.push(chunkTag);
+      localizedPrompts.push(input.prompt);
+      const chunkNumber = Number(chunkTag.slice("chunk:".length));
+      if ((providerScenario === "partial-localization-transient" && chunkTag === "chunk:2")
+          || (providerScenario === "mixed-localization-transient" && chunkNumber >= 4)
+          || (providerScenario === "race-contract-and-transient" && chunkTag === "chunk:2")) {
         throw transientError();
       }
-      const targets = planStudioLocalizedChunks(4)[Number(chunkTag.slice("chunk:".length)) - 1];
+      const targets = planStudioLocalizedChunks(4)[chunkNumber - 1];
       assert.ok(targets);
+      const outputTargets = providerScenario === "reordered-localization"
+        ? [...targets].reverse()
+        : targets;
       return input.schema.parse({
-        localizedListings: targets.map((target) => {
-          const listing = localizedListing(target);
+        localizedListings: outputTargets.map((target, targetIndex) => {
+          const effectiveTarget = providerScenario === "race-contract-and-transient"
+              && chunkTag === "chunk:1" && targetIndex > 0
+            ? targets[0]
+            : target;
+          assert.ok(effectiveTarget);
+          const listing = localizedListing(effectiveTarget);
+          if (providerScenario === "classification-mismatch") return listing;
+          if (providerScenario === "classification-copy-contradiction") {
+            return {
+              ...listing,
+              classification: {
+                ...listing.classification,
+                verificationStatus: "needs-review" as const,
+                isHealthFunctionalFood: null,
+              },
+            };
+          }
           return {
             ...listing,
             classification: {
@@ -590,6 +616,8 @@ async function runReviewedTransientPipelineFixture(options: {
     completionCalls,
     logs,
     structuredCalls,
+    structuredChunkCalls,
+    localizedPrompts,
     segmentationCalls,
     backgroundCalls,
     auditCalls,
@@ -1021,15 +1049,26 @@ test("master success plus a transient segmentation outage keeps normal text and 
     warnings: string[];
     deterministic_fallback: Record<string, unknown>;
     asset_audit_modes: Record<string, string>;
+    localizedListings: Array<{
+      classification: { verificationStatus: string; isHealthFunctionalFood: boolean | null };
+    }>;
   };
   assert.equal(payload.deterministic_fallback.masterReason, null);
   assert.deepEqual(payload.deterministic_fallback.localizationReasons, []);
   assert.equal(payload.deterministic_fallback.imageReason, "gateway_rate_limited");
   assert.ok(payload.warnings.some((warning) => /gateway_rate_limited.*나머지 10장은 AI 생성 이미지가 아니라 원본 사진 기반/u.test(warning)));
+  assert.equal(run.localizedPrompts.length, 9);
+  run.localizedPrompts.forEach((prompt) => {
+    assert.match(prompt, /verificationStatus는 needs-review, isHealthFunctionalFood는 null/u);
+  });
+  payload.localizedListings.forEach((listing) => {
+    assert.equal(listing.classification.verificationStatus, "needs-review");
+    assert.equal(listing.classification.isHealthFunctionalFood, null);
+  });
   remainingFinalAssetIds.forEach((assetId) => assert.equal(payload.asset_audit_modes[assetId], "source-photo-catalog"));
 });
 
-test("one transient localization chunk is replaced from reviewed facts and exposes a user-visible warning", async () => {
+test("one transient localization chunk atomically replaces all countries from reviewed facts", async () => {
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "partial-localization-transient",
   });
@@ -1046,9 +1085,154 @@ test("one transient localization chunk is replaced from reviewed facts and expos
     deterministic_fallback: { localizationReasons: string[] };
   };
   assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["gateway_rate_limited"]);
-  assert.ok(payload.warnings.some((warning) => /일부 국가별 문안/u.test(warning)));
+  assert.ok(payload.warnings.some((warning) => /34개 채널·국가 문안 전체/u.test(warning)));
   assert.equal(payload.localizedListings.length, 34);
-  assert.ok(payload.localizedListings.some((listing) => /5000 KRW/u.test(listing.description)));
+  assert.ok(payload.localizedListings.every((listing) => /5000 KRW/u.test(listing.description)));
+  assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
+});
+
+test("a transient localization batch atomically replaces earlier AI chunks and stops later remote chunks", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "mixed-localization-transient",
+  });
+  assert.deepEqual(
+    await run.response.json(),
+    { ok: true, status: "succeeded", processed: 1 },
+    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
+  );
+  const completion = run.completionCalls.at(-1);
+  assert.equal(completion?.p_status, "succeeded");
+  const payload = completion?.p_result_payload as {
+    warnings: string[];
+    localizedListings: Array<{
+      channel: string;
+      market: string;
+      description: string;
+      classification: { verificationStatus: string; isHealthFunctionalFood: boolean | null };
+    }>;
+    asset_storage_paths: Record<string, string>;
+    deterministic_fallback: { localizationReasons: string[] };
+  };
+  const parsed = cliStudioResultSchema.safeParse(payload);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+  assert.equal(payload.localizedListings.length, 34);
+  assert.deepEqual(
+    new Set(payload.localizedListings.map((listing) => `${listing.channel}:${listing.market}`)),
+    new Set(Object.keys(requiredLocalizedMarkets)),
+  );
+  assert.equal(Object.keys(payload.asset_storage_paths).length, 16);
+  assert.equal(run.structuredCalls, 7, "one master plus the first two localization batches must run without retries");
+  assert.deepEqual(
+    [...run.structuredChunkCalls].sort(),
+    ["chunk:1", "chunk:2", "chunk:3", "chunk:4", "chunk:5", "chunk:6"],
+    "chunks after the first transient batch must not be remotely scheduled",
+  );
+  assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["gateway_rate_limited"]);
+  assert.ok(payload.warnings.some((warning) => /34개 채널·국가 문안 전체.*gateway_rate_limited/u.test(warning)));
+  payload.localizedListings.forEach((listing) => {
+    assert.match(listing.description, /5000 KRW/u, "every target must be rebuilt from the same reviewed facts");
+    assert.equal(listing.classification.verificationStatus, "needs-review");
+    assert.equal(listing.classification.isHealthFunctionalFood, null);
+  });
+});
+
+test("a classification contradiction discards AI copy instead of relabeling contradictory evidence", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "classification-mismatch",
+  });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  const completion = run.completionCalls.at(-1);
+  assert.equal(completion?.p_status, "succeeded");
+  const payload = completion?.p_result_payload as {
+    warnings: string[];
+    localizedListings: Array<{
+      description: string;
+      classification: { evidence: string; verificationStatus: string; isHealthFunctionalFood: boolean | null };
+    }>;
+    deterministic_fallback: { localizationReasons: string[] };
+  };
+  assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["studio_localization_contract_invalid"]);
+  assert.ok(payload.warnings.some((warning) => /34개 채널·국가 문안 전체.*studio_localization_contract_invalid/u.test(warning)));
+  assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
+  payload.localizedListings.forEach((listing) => {
+    assert.match(listing.description, /5000 KRW/u);
+    assert.doesNotMatch(listing.classification.evidence, /Verified product information/u);
+    assert.equal(listing.classification.verificationStatus, "needs-review");
+    assert.equal(listing.classification.isHealthFunctionalFood, null);
+  });
+});
+
+test("a transient sibling and a contract-invalid sibling never launch a provider repair attempt", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "race-contract-and-transient",
+  });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  const completion = run.completionCalls.at(-1);
+  assert.equal(completion?.p_status, "succeeded");
+  const payload = completion?.p_result_payload as {
+    localizedListings: Array<{ description: string }>;
+    deterministic_fallback: { localizationReasons: string[] };
+  };
+  assert.equal(payload.localizedListings.length, 34);
+  assert.ok(payload.localizedListings.every((listing) => /5000 KRW/u.test(listing.description)));
+  assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
+  assert.ok(run.structuredChunkCalls.every((tag) => run.structuredChunkCalls.indexOf(tag) === run.structuredChunkCalls.lastIndexOf(tag)));
+  assert.ok(payload.deterministic_fallback.localizationReasons.length >= 1);
+});
+
+test("reviewed classification copy is derived from trusted facts even when AI flags look valid", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "classification-copy-contradiction",
+  });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  const completion = run.completionCalls.at(-1);
+  assert.equal(completion?.p_status, "succeeded");
+  const payload = completion?.p_result_payload as {
+    localizedListings: Array<{
+      classification: {
+        displayName: string;
+        evidence: string;
+        verificationStatus: string;
+        isHealthFunctionalFood: boolean | null;
+      };
+    }>;
+    deterministic_fallback: { localizationReasons: string[] };
+  };
+  assert.equal(payload.localizedListings.length, 34);
+  assert.deepEqual(payload.deterministic_fallback.localizationReasons, []);
+  assert.equal(run.structuredChunkCalls.length, 9);
+  payload.localizedListings.forEach((listing) => {
+    assert.doesNotMatch(listing.classification.displayName, /Verified product information/u);
+    assert.doesNotMatch(listing.classification.evidence, /Verified product information/u);
+    assert.equal(listing.classification.verificationStatus, "needs-review");
+    assert.equal(listing.classification.isHealthFunctionalFood, null);
+  });
+});
+
+test("reviewed classification copy follows the exact channel market locale key after AI reorders a chunk", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "reordered-localization",
+  });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  const completion = run.completionCalls.at(-1);
+  assert.equal(completion?.p_status, "succeeded");
+  const payload = completion?.p_result_payload as {
+    localizedListings: Array<{
+      channel: string;
+      market: string;
+      locale: string;
+      classification: { evidence: string; verificationStatus: string; isHealthFunctionalFood: boolean | null };
+    }>;
+    deterministic_fallback: { localizationReasons: string[] };
+  };
+  assert.equal(payload.localizedListings.length, 34);
+  assert.deepEqual(payload.deterministic_fallback.localizationReasons, []);
+  assert.equal(run.structuredChunkCalls.length, 9);
+  payload.localizedListings.forEach((listing) => {
+    assert.equal(listing.classification.verificationStatus, "needs-review");
+    assert.equal(listing.classification.isHealthFunctionalFood, null);
+    assert.ok(listing.classification.evidence.length >= 10);
+  });
 });
 
 test("a transient image failure after remote candidates exist discards every partial final asset and rebuilds all ten deterministically", async () => {

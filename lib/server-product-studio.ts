@@ -1263,6 +1263,50 @@ function buildReviewedStudioLocalizedSegment(
   });
 }
 
+function studioLocalizedClassificationIssue(
+  master: z.infer<typeof studioMasterResultSchema>,
+  targets: readonly StudioLocalizedTarget[],
+  segment: unknown,
+) {
+  const parsed = studioLocalizedChunkResultSchema(targets.length).safeParse(segment);
+  if (!parsed.success) return "현지화 청크가 구조 계약을 충족하지 못했습니다.";
+  return parsed.data.localizedListings.some((listing) => (
+    listing.classification.verificationStatus !== master.product.classification.verificationStatus
+      || listing.classification.isHealthFunctionalFood !== master.product.classification.isHealthFunctionalFood
+  ))
+    ? "현지화 분류 상태가 마스터 분류 계약과 일치하지 않습니다."
+    : "";
+}
+
+function normalizeReviewedStudioLocalizedClassification(
+  master: z.infer<typeof studioMasterResultSchema>,
+  targets: readonly StudioLocalizedTarget[],
+  segment: unknown,
+  reviewedFields: ProductIntakeFields,
+) {
+  const parsed = studioLocalizedChunkResultSchema(targets.length).safeParse(segment);
+  if (!parsed.success) return segment;
+  const trusted = buildReviewedStudioLocalizedSegment(master, targets, reviewedFields);
+  const trustedByTarget = new Map(trusted.localizedListings.map((listing) => [
+    `${listing.channel}:${listing.market}:${listing.locale}`,
+    listing.classification,
+  ]));
+  return {
+    localizedListings: parsed.data.localizedListings.map((listing) => {
+      const classification = trustedByTarget.get(
+        `${listing.channel}:${listing.market}:${listing.locale}`,
+      );
+      if (!classification) {
+        throw new ServerProductStudioError("studio_localization_contract_invalid", true);
+      }
+      return {
+        ...listing,
+        classification,
+      };
+    }),
+  };
+}
+
 function withReviewedFallbackWarnings(
   result: z.infer<typeof cliStudioResultSchema>,
   input: {
@@ -1276,6 +1320,7 @@ function withReviewedFallbackWarnings(
     gateway_billing_required: "결제 필요(gateway_billing_required)",
     gateway_timeout: "응답 시간 초과(gateway_timeout)",
     gateway_customer_verification_required: "계정 확인 필요(gateway_customer_verification_required)",
+    studio_localization_contract_invalid: "국가별 문안 계약 불일치(studio_localization_contract_invalid)",
     master_transient_fallback: "마스터 문안 외부 제한",
   }[reason] ?? reason);
   const fallbackWarnings = [
@@ -1283,7 +1328,7 @@ function withReviewedFallbackWarnings(
       `외부 AI 문안 서비스의 ${reasonLabel(input.masterReason)}로 판매자가 검수한 입력만 사용해 16개 상세 섹션을 안전하게 구성했습니다. 게시 전 실물 표시사항을 다시 확인하세요.`,
     ] : []),
     ...(input.localizationReasons.length ? [
-      `일부 국가별 문안은 ${input.localizationReasons.map(reasonLabel).join(", ")} 때문에 판매자가 검수한 상품명·브랜드·판매 구성·규격·가격을 보존하는 안전 문안으로 대체했습니다.`,
+      `34개 채널·국가 문안 전체는 ${input.localizationReasons.map(reasonLabel).join(", ")} 때문에 판매자가 검수한 상품명·브랜드·판매 구성·규격·가격을 보존하는 안전 문안으로 대체했습니다.`,
     ] : []),
     ...(input.imageReason ? [
       `외부 AI 이미지 처리의 ${reasonLabel(input.imageReason)}로 사람이 승인한 1차 이미지 6장은 그대로 보존했습니다. 나머지 10장은 AI 생성 이미지가 아니라 원본 사진 기반 중립 카탈로그 이미지입니다.`,
@@ -1533,51 +1578,90 @@ async function generateStudioLocalizedResult(
   const segments: unknown[] = new Array(chunks.length);
   const fallbackReasons = new Set<string>();
   const fallbackDiagnostics: AiGatewayFailureDiagnostic[] = [];
+  if (forceReviewedFallback && reviewedFallbackFields) {
+    chunks.forEach((targets, index) => {
+      segments[index] = buildReviewedStudioLocalizedSegment(master, targets, reviewedFallbackFields);
+    });
+    fallbackReasons.add("master_transient_fallback");
+  }
   for (let offset = 0; offset < chunks.length; offset += SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE) {
+    if (forceReviewedFallback && reviewedFallbackFields) break;
+    const batchState: {
+      fallback: {
+        reason: string;
+        diagnostic: AiGatewayFailureDiagnostic | null;
+      } | null;
+    } = { fallback: null };
+    const batchController = new AbortController();
+    const batchSignal = AbortSignal.any([signal, batchController.signal]);
     const chunkSettlements = await Promise.allSettled(chunks.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE).map(async (targets, batchIndex) => {
       const index = offset + batchIndex;
-      if (forceReviewedFallback && reviewedFallbackFields) {
-        segments[index] = buildReviewedStudioLocalizedSegment(master, targets, reviewedFallbackFields);
-        fallbackReasons.add("master_transient_fallback");
-        return;
-      }
-      let coverageIssue = "";
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
-        let segment: unknown;
-        try {
-          segment = await generate({
-            schema: studioLocalizedChunkResultSchema(targets.length),
-            prompt: [
-              buildServerStudioLocalizedPrompt(master, targets),
-              ...(coverageIssue ? [`이전 결과의 하드 계약 오류를 수정하세요: ${coverageIssue}`] : []),
-            ].join("\n"),
-            images: [],
-            signal,
-            tags: ["feature:product-studio-localization", `chunk:${index + 1}`, `attempt:${attempt}`],
-          });
-        } catch (error) {
-          if (reviewedFallbackFields && !signal.aborted
-              && serverStudioAllowsReviewedTransientFallback(error)) {
-            segments[index] = buildReviewedStudioLocalizedSegment(master, targets, reviewedFallbackFields);
-            fallbackReasons.add((error as ServerProductStudioError).safeReason);
-            const diagnostic = (error as ServerProductStudioError).diagnostic;
-            if (diagnostic) fallbackDiagnostics.push(diagnostic);
-            return;
-          }
-          throw error;
-        }
-        coverageIssue = localizedSegmentCoverageIssue(segment, targets);
-        if (!coverageIssue) {
-          segments[index] = segment;
+      if (batchState.fallback) return;
+      let segment: unknown;
+      try {
+        segment = await generate({
+          schema: studioLocalizedChunkResultSchema(targets.length),
+          prompt: [
+            buildServerStudioLocalizedPrompt(master, targets),
+            `분류 상태 계약: 모든 localizedListings[].classification.verificationStatus는 ${master.product.classification.verificationStatus}, isHealthFunctionalFood는 ${JSON.stringify(master.product.classification.isHealthFunctionalFood)} 값을 마스터에서 그대로 보존하세요.`,
+          ].join("\n"),
+          images: [],
+          signal: batchSignal,
+          tags: ["feature:product-studio-localization", `chunk:${index + 1}`, "attempt:1"],
+        });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        if (batchState.fallback && batchController.signal.aborted) return;
+        if (reviewedFallbackFields && serverStudioAllowsReviewedTransientFallback(error)) {
+          batchState.fallback = {
+            reason: (error as ServerProductStudioError).safeReason,
+            diagnostic: (error as ServerProductStudioError).diagnostic ?? null,
+          };
+          batchController.abort();
           return;
         }
+        throw error;
       }
-      throw new ServerProductStudioError("studio_localization_contract_invalid", true);
+      if (batchState.fallback) return;
+      const contractIssue = localizedSegmentCoverageIssue(segment, targets)
+        || studioLocalizedClassificationIssue(master, targets, segment);
+      if (contractIssue) {
+        if (!reviewedFallbackFields) {
+          throw new ServerProductStudioError("studio_localization_contract_invalid", true);
+        }
+        batchState.fallback = {
+          reason: "studio_localization_contract_invalid",
+          diagnostic: null,
+        };
+        batchController.abort();
+        return;
+      }
+      segments[index] = reviewedFallbackFields
+        ? normalizeReviewedStudioLocalizedClassification(
+          master,
+          targets,
+          segment,
+          reviewedFallbackFields,
+        )
+        : segment;
     }));
     const rejected = chunkSettlements.find(
       (settlement): settlement is PromiseRejectedResult => settlement.status === "rejected",
     );
     if (rejected) throw rejected.reason;
+    const batchFallback = batchState.fallback;
+    if (batchFallback) {
+      signal.throwIfAborted();
+      if (!reviewedFallbackFields) {
+        throw new ServerProductStudioError("studio_localization_fallback_not_authorized", true);
+      }
+      chunks.forEach((targets, index) => {
+        segments[index] = buildReviewedStudioLocalizedSegment(master, targets, reviewedFallbackFields);
+      });
+      fallbackReasons.add(batchFallback.reason);
+      if (batchFallback.diagnostic) fallbackDiagnostics.push(batchFallback.diagnostic);
+      break;
+    }
   }
   const merged = mergeStudioSegmentOutputs(master, segments);
   const parsed = cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(merged));
