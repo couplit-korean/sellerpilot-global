@@ -57,6 +57,13 @@ import {
   readShopeeListingPublicationState,
   type ShopeePublicationReadbackVerification,
 } from "./provider-shopee-publication-readback";
+import {
+  lazadaListingArgumentsForPublicationIntent,
+  lazadaListingArgumentsForRemoteItem,
+  lazadaListingRemoteIdFromArguments,
+  readLazadaListingPublicationState,
+  type LazadaPublicationReadbackVerification,
+} from "./provider-lazada-publication-readback";
 
 export const channelOperationNames = [
   "categories.list",
@@ -1955,6 +1962,23 @@ function applyShopeePublicationVerification(
   return readbackStep;
 }
 
+function applyLazadaPublicationVerification(
+  readbackStep: ChannelOperationStep,
+  verification: LazadaPublicationReadbackVerification,
+) {
+  readbackStep.ok = readbackStep.ok && Boolean(verification.remoteState);
+  readbackStep.data = {
+    ...readbackStep.data,
+    sellerpilotPublicationVerification: verification.remoteState
+      ? "LAZADA_PUBLICATION_STATE_VERIFIED"
+      : "LAZADA_PUBLICATION_STATE_UNVERIFIED",
+    providerStatus: verification.providerStatus,
+    actualImageCount: verification.imageCount,
+    sellerpilotPublicationChecks: verification.checks,
+  };
+  return readbackStep;
+}
+
 function shopeeOrderPageWithCredentialIdentity(
   remote: RemoteResponse,
   payload: SecretPayload,
@@ -2439,6 +2463,8 @@ async function executeShopee(input: ExecuteInput) {
 
 async function executeLazada(input: ExecuteInput) {
   const query = stringMap(input.arguments, "queryParams");
+  const publicationIntent = listingPublicationIntentFromArguments(input.arguments);
+  const verifiedPublicationRequested = input.arguments.publicationStateContract === listingRemoteStateContractVersion;
   if (input.operation === "categories.suggest") {
     const params = { ...query, product_name: stringArgument(input.arguments, "query") };
     const treeParams: Record<string, string> = {};
@@ -2730,17 +2756,50 @@ async function executeLazada(input: ExecuteInput) {
   const path = pathMap[input.operation];
   if (!path) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
   const write = writeChannelOperations.has(input.operation);
-  const params = write ? { ...query, payload: lazadaPayload(input.arguments) } : query;
+  let effectiveArguments = input.arguments;
+  if (verifiedPublicationRequested && input.operation === "listing.create") {
+    if (!publicationIntent) throw new Error("LAZADA_PUBLICATION_INTENT_REQUIRED");
+    effectiveArguments = lazadaListingArgumentsForPublicationIntent(input.arguments, publicationIntent);
+  }
+  if (verifiedPublicationRequested && (input.operation === "listing.update" || input.operation === "listing.stop")) {
+    const requestedRemoteId = lazadaListingRemoteIdFromArguments(input.arguments);
+    effectiveArguments = lazadaListingArgumentsForRemoteItem(input.arguments, requestedRemoteId);
+  }
+  const params = write ? { ...query, payload: lazadaPayload(effectiveArguments) } : query;
   const remote = await lazadaRequest({ payload: input.payload, path, method: write ? "POST" : "GET", params });
   const dataValue = remote.data.data;
   const responseRemoteId = dataValue && typeof dataValue === "object" && !Array.isArray(dataValue) && "item_id" in dataValue
     ? String((dataValue as Record<string, unknown>).item_id)
     : undefined;
-  const requestedItemId = input.operation === "listing.update"
-    ? stringArgument(input.arguments, "itemId", false)
+  const requestedItemId = input.operation === "listing.update" || input.operation === "listing.stop"
+    ? lazadaListingRemoteIdFromArguments(effectiveArguments)
     : "";
   const remoteId = requestedItemId || responseRemoteId;
   const writeStep = step(path, remote);
+  if (verifiedPublicationRequested && requestedItemId && responseRemoteId && requestedItemId !== responseRemoteId) {
+    writeStep.ok = false;
+    writeStep.data = {
+      ...writeStep.data,
+      sellerpilotPublicationVerification: "LAZADA_MUTATION_ITEM_ID_MISMATCH",
+    };
+  }
+  if ((input.operation === "listing.create" || input.operation === "listing.update" || input.operation === "listing.stop")
+      && writeStep.ok
+      && remoteId
+      && verifiedPublicationRequested) {
+    const verification = await readLazadaListingPublicationState({
+      payload: input.payload,
+      operation: input.operation,
+      remoteId,
+      mutationArguments: effectiveArguments,
+      ...verifiedPublicationArguments(input),
+    });
+    const readbackStep = input.operation === "listing.update"
+      ? listingUpdateReadbackStep("listing-readback", verification.remote, input.channel, effectiveArguments)
+      : step("listing-readback", verification.remote);
+    applyLazadaPublicationVerification(readbackStep, verification);
+    return result(input, [writeStep, readbackStep], remoteId, undefined, verification.remoteState);
+  }
   if ((input.operation === "listing.create" || input.operation === "listing.update") && writeStep.ok && remoteId) {
     const readback = await lazadaRequest({
       payload: input.payload,
@@ -2748,7 +2807,7 @@ async function executeLazada(input: ExecuteInput) {
       params: { item_id: remoteId },
     });
     const readbackStep = input.operation === "listing.update"
-      ? listingUpdateReadbackStep("listing-readback", readback, input.channel, input.arguments)
+      ? listingUpdateReadbackStep("listing-readback", readback, input.channel, effectiveArguments)
       : step("listing-readback", readback);
     const readbackData = objectValue(readback.data, "data", false);
     const readbackItem = objectValue(readbackData, "item", false);
