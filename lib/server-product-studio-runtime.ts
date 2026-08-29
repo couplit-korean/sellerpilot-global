@@ -10,9 +10,11 @@ import {
 import { supabaseUrl } from "./supabase/config";
 import type { StudioWorkerReadiness, StudioWorkerReadinessReason } from "./studio-worker-readiness";
 import { createBoundedSupabaseFetch } from "./worker-rpc";
+import { deriveSupabaseInternalScheduleBearer } from "./internal-scheduler-auth";
 
 const WORKER_TOKEN_PATTERN = /^spw_[A-Za-z0-9_-]{43}$/;
 const MAX_STORAGE_OBJECT_BYTES = 24 * 1024 * 1024;
+const PRODUCT_RECOVERY_WAKE_URL = "https://sellerpilot-global.vercel.app/api/internal/product-studio-wake";
 
 function configuredToken() {
   const token = process.env.SELLERPILOT_AI_WORKER_TOKEN?.trim() ?? "";
@@ -48,6 +50,25 @@ function checkedStorageBytes(value: ArrayBuffer) {
     throw new Error("storage_object_size_invalid");
   }
   return new Uint8Array(value);
+}
+
+function configuredNextProductWake() {
+  const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
+  if (!cronSecret) return undefined;
+  const authorization = `Bearer ${deriveSupabaseInternalScheduleBearer(cronSecret)}`;
+  return async () => {
+    const response = await fetch(PRODUCT_RECOVERY_WAKE_URL, {
+      method: "POST",
+      headers: {
+        authorization,
+        "user-agent": "SellerPilot-Vercel-Studio-Drain/1",
+      },
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.status !== 202) throw new Error("server_studio_next_wake_rejected");
+  };
 }
 
 export function configuredServerProductStudioDependencies(): ServerProductStudioDependencies {
@@ -107,6 +128,7 @@ export function configuredServerProductStudioDependencies(): ServerProductStudio
         if (error) throw new Error("storage_remove_failed");
       }
       : undefined,
+    wakeNext: configuredNextProductWake(),
   };
 }
 

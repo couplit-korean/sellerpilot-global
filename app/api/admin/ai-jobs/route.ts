@@ -1,9 +1,11 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
 import { sellerSafeAiJobFailure } from "../../../../lib/ai-worker-error-safety";
+import { wakeServerProductStudioAfterResponse } from "../../../../lib/server-product-studio-runtime";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 const actionSchema = z.object({
   jobId: z.string().uuid(),
@@ -55,6 +57,14 @@ export async function POST(request: Request) {
         ? "실패·취소된 작업만 다시 실행할 수 있습니다."
         : "대기·실행 중인 작업만 취소할 수 있습니다.",
     }, { status: 409 });
+  }
+
+  if (parsed.data.action === "retry") {
+    // The retry RPC preserves the exact server-stored request and resets only
+    // its lease/receipt generation. The RPC is short, so this authenticated
+    // 300-second request can run the bounded claimant after the transaction
+    // has committed without spending another network handoff.
+    after(wakeServerProductStudioAfterResponse);
   }
 
   return NextResponse.json({

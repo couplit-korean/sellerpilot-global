@@ -135,6 +135,7 @@ export type ServerProductStudioDependencies = {
     auditMode: ServerStudioImageAuditMode;
     signal: AbortSignal;
   }) => Promise<unknown>;
+  wakeNext?: () => Promise<void>;
   logError?: (stage: string, details: Record<string, string | number | boolean>) => void;
 };
 
@@ -1440,6 +1441,24 @@ async function runRegenerationClaim(
   return jsonResponse({ ok: true, status: "succeeded", processed: 1 });
 }
 
+async function wakeNextStudioClaim(
+  dependencies: ServerProductStudioDependencies,
+  logError: (stage: string, details: Record<string, string | number | boolean>) => void,
+  kind: z.infer<typeof studioClaimSchema>["kind"],
+) {
+  try {
+    await dependencies.wakeNext?.();
+  } catch {
+    // The committed terminal result remains authoritative even if both the
+    // immediate handoff and its diagnostic logger fail unexpectedly.
+    try {
+      logError("next_wake", { status: 503, kind });
+    } catch {
+      // The Supabase-owned five-minute recovery schedule remains the fallback.
+    }
+  }
+}
+
 export async function runOneServerProductStudio(dependencies: ServerProductStudioDependencies) {
   const logError = dependencies.logError ?? ((stage: string, details: Record<string, string | number | boolean>) => {
     console.error("server product studio failed", { stage, ...details });
@@ -1466,9 +1485,11 @@ export async function runOneServerProductStudio(dependencies: ServerProductStudi
     : Math.max(1, Math.min(dependencies.runtimeTimeoutMs, SERVER_PRODUCT_STUDIO_MAX_RUNTIME_MS));
   const signal = AbortSignal.timeout(runtimeTimeoutMs);
   try {
-    return claim.data.kind === "product_asset_regeneration"
+    const response = claim.data.kind === "product_asset_regeneration"
       ? await runRegenerationClaim(claim.data, dependencies, signal)
       : await runFullStudioClaim(claim.data, dependencies, signal);
+    await wakeNextStudioClaim(dependencies, logError, claim.data.kind);
+    return response;
   } catch (error) {
     const reason = signal.aborted ? "server_studio_runtime_timeout" : safeReason(error);
     logError("execution", { reason, status: 500, kind: claim.data.kind });
@@ -1482,6 +1503,7 @@ export async function runOneServerProductStudio(dependencies: ServerProductStudi
     if (!completed) {
       return jsonResponse({ message: "서버 상품 제작 실패 상태를 안전하게 저장하지 못했습니다." }, 503);
     }
+    await wakeNextStudioClaim(dependencies, logError, claim.data.kind);
     return jsonResponse({ ok: false, status: "failed", processed: 1 });
   }
 }

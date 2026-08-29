@@ -468,6 +468,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260828200500_gate_serverless_static_egress.sql",
       "20260828201500_cleanup_static_egress_queued_reads.sql",
       "20260828210000_non_cs_release_integrity.sql",
+      "20260829031000_bound_server_product_studio_concurrency.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -3119,6 +3120,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [TOKEN_HASH, crossProductCurrentJobId, crossProductCurrentClaim],
       ),
       /invalid worker token/,
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set status='succeeded', completed_at=now(), lease_expires_at=null
+        where id=$1`,
+      [crossProductCurrentJobId],
     );
     await db.query(
       "update sellerpilot_private.ai_cli_worker_tokens set status = 'revoked', revoked_at = now() where token_hash = $1",
