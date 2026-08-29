@@ -274,3 +274,108 @@ export async function readCoupangListingPublicationState(input: {
     }),
   };
 }
+
+function htmlImageUrls(value: unknown) {
+  const html = typeof value === "string" ? value : "";
+  const urls: string[] = [];
+  for (const match of html.matchAll(/<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/giu)) {
+    const url = String(match[1] ?? match[2] ?? match[3] ?? "").trim();
+    if (url) urls.push(url);
+  }
+  return [...new Set(urls)];
+}
+
+export type SmartstoreListingPublicationReadback = {
+  state?: VerifiedListingRemoteState;
+  originProductReadback: RemoteResponse;
+  failureCode?: string;
+};
+
+/**
+ * Performs the official v2 origin-product GET and requires both the origin
+ * sale state and SmartStore channel display state before normalizing exposure.
+ */
+export async function readSmartstoreListingPublicationState(input: {
+  operation: ListingMutationOperation;
+  intent?: ListingPublicationIntent;
+  remoteId: string;
+  expected: ListingPublicationReadbackExpectation;
+  readOriginProduct: (originProductNo: string) => Promise<RemoteResponse>;
+  verifiedAt?: string;
+}): Promise<SmartstoreListingPublicationReadback> {
+  const originProductReadback = await input.readOriginProduct(input.remoteId);
+  const locale = listingExpectedPublicationLocale("smartstore", "KR");
+  const originProduct = record(originProductReadback.data.originProduct);
+  const channelProduct = record(originProductReadback.data.smartstoreChannelProduct);
+  const responseOriginProductNo = String(
+    originProductReadback.data.originProductNo
+      ?? originProduct.originProductNo
+      ?? "",
+  ).trim();
+  const responseChannelProductNo = String(
+    originProductReadback.data.smartstoreChannelProductNo
+      ?? channelProduct.channelProductNo
+      ?? "",
+  ).trim();
+  const originStatus = String(originProduct.statusType ?? "").trim().toUpperCase();
+  const channelStatus = String(channelProduct.channelProductDisplayStatusType ?? "").trim().toUpperCase();
+  const detailImageUrls = htmlImageUrls(originProduct.detailContent);
+  const identityVerified = remoteAccepted(originProductReadback)
+    && (!responseOriginProductNo || responseOriginProductNo === input.remoteId)
+    && Object.keys(originProduct).length > 0;
+  const localeVerified = locale === input.expected.locale;
+  const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expected.fingerprint);
+  const imageCountVerified = input.operation === "listing.stop"
+    ? input.expected.imageCount === 0
+    : detailImageUrls.length === input.expected.imageCount;
+
+  let visibility: VerifiedListingRemoteState["visibility"] | undefined;
+  if (originStatus === "SALE" && channelStatus === "ON") visibility = "live";
+  else if (originStatus === "SUSPENSION" || channelStatus === "SUSPENSION") {
+    visibility = input.operation === "listing.stop" ? "withdrawn" : "non_public";
+  } else if (originStatus === "WAIT" || channelStatus === "WAIT") visibility = "pending_review";
+  else if (["UNADMISSION", "REJECTION", "PROHIBITION"].includes(originStatus)) visibility = "rejected";
+  else if (["CLOSE", "DELETE"].includes(originStatus)) visibility = "withdrawn";
+
+  if (!visibility
+      || !identityVerified
+      || !locale
+      || !localeVerified
+      || !fingerprintVerified
+      || !imageCountVerified
+      || (input.operation === "listing.stop" && originStatus !== "SUSPENSION")) {
+    return {
+      originProductReadback,
+      failureCode: "SMARTSTORE_PUBLICATION_READBACK_UNVERIFIED",
+    };
+  }
+
+  const resources: Record<string, unknown> = { originProductNo: input.remoteId };
+  if (responseChannelProductNo) resources.smartstoreChannelProductNo = responseChannelProductNo;
+  return {
+    originProductReadback,
+    state: buildVerifiedState({
+      visibility,
+      providerStatus: `${originStatus}|${channelStatus || "UNKNOWN"}`,
+      verifiedAt: input.verifiedAt,
+      resources,
+      locale,
+      fingerprint: input.expected.fingerprint,
+      imageCount: input.operation === "listing.stop" ? 0 : detailImageUrls.length,
+      evidence: {
+        identitySource: responseOriginProductNo ? "origin_product_response" : "origin_product_path",
+        originProductStatus: originStatus,
+        channelProductDisplayStatus: channelStatus,
+        detailImageCount: detailImageUrls.length,
+        readbackDigest: sha256({
+          originProductNo: input.remoteId,
+          responseOriginProductNo,
+          responseChannelProductNo,
+          originStatus,
+          channelStatus,
+          detailImageUrls,
+        }),
+      },
+    }),
+  };
+}

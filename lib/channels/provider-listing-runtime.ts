@@ -474,16 +474,20 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
       afterServiceGuideContent: "상품 상세 설명과 스마트스토어 판매자 안내를 확인해 주세요.",
     },
   };
+  if (input.arguments.publicationIntent === "safe_test") originProduct.statusType = "SUSPENSION";
+  if (input.arguments.publicationIntent === "live") originProduct.statusType = "SALE";
   body.originProduct = originProduct;
   const smartstoreChannelProduct = recordValue(body.smartstoreChannelProduct) ?? {};
   body.smartstoreChannelProduct = {
     ...smartstoreChannelProduct,
     naverShoppingRegistration: smartstoreChannelProduct.naverShoppingRegistration === true,
-    channelProductDisplayStatusType: ["ON", "SUSPENSION"].includes(
-      String(smartstoreChannelProduct.channelProductDisplayStatusType),
-    )
-      ? smartstoreChannelProduct.channelProductDisplayStatusType
-      : "ON",
+    channelProductDisplayStatusType: input.arguments.publicationIntent === "safe_test"
+      ? "SUSPENSION"
+      : input.arguments.publicationIntent === "live"
+        ? "ON"
+        : ["ON", "SUSPENSION"].includes(String(smartstoreChannelProduct.channelProductDisplayStatusType))
+          ? smartstoreChannelProduct.channelProductDisplayStatusType
+          : "ON",
   };
   return { ...input.arguments, body };
 }
