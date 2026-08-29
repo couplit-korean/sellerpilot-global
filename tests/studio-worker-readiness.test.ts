@@ -295,7 +295,10 @@ test("product research identifies the Vercel OIDC server path without erasing le
       < route.indexOf("const { error } = await createProductResearchJobWithLegacyFallback"),
   );
   assert.match(route, /code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,180}workerAvailable: false/);
-  assert.match(runtime, /Output\.object\(\{ schema: serverProductResearchResultSchema \}\)/);
+  assert.match(runtime, /const \{ generateText \} = await import\("ai"\)/);
+  assert.match(runtime, /generatedText = result\.text/);
+  assert.match(runtime, /const generated = parseGeneratedProductResearchJson\(generatedText\)/);
+  assert.match(runtime, /serverProductResearchResultSchema\.safeParse\(generated\)/);
   assert.match(page, /if \(!isStudioExecutionReady\(studioWorkerReadiness\)\)[\s\S]{0,260}setProductResearchError\(message\)/);
   assert.match(page, /disabled=\{researchingProduct \? false : intake\.researchInput\.trim\(\)\.length < 2 \|\| !mainPhoto \|\| photoSelectionsProcessing \|\| running \|\| !studioWorkerAvailable\}/);
   assert.match(page, /Gateway 점검 필요/);
