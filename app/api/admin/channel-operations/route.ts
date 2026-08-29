@@ -38,6 +38,12 @@ import {
 } from "../../../../lib/channels/listing-publication-state";
 import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
 import { marketplaceChannelDetailImageCount } from "../../../../lib/channels/marketplace-image-contract";
+import type { ProductDetailImageManifest } from "../../../../lib/product-detail-image-manifest";
+import {
+  approvedProductDetailManifestFromPublishContext,
+  bindMarketplaceArgumentsToApprovedDetailManifest,
+  marketplaceArgumentsForApprovedDetailFingerprint,
+} from "../../../../lib/server-product-detail-manifest";
 import {
   configuredServerlessStaticEgressChannels,
   hasServerlessStaticEgressFor,
@@ -194,6 +200,8 @@ export async function POST(request: NextRequest) {
     || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets));
   let verifiedPublishContext: Record<string, unknown> | null = null;
   let verifiedProductContentMode: ProductContentMode | null = null;
+  let approvedDetailBinding: { version: number; manifest: ProductDetailImageManifest } | null = null;
+  let approvedDetailSignedUrls: string[] = [];
   if (contentBoundListingOperation) {
     const { data: publishContext, error: contextError } = await userClient.rpc(
       "sellerpilot_get_product_publish_context",
@@ -218,6 +226,41 @@ export async function POST(request: NextRequest) {
         mode: "product_content_mode_mismatch",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
+    const approvedDetail = approvedProductDetailManifestFromPublishContext(publishContext);
+    if (!approvedDetail.ok) {
+      return NextResponse.json({
+        message: "승인된 상세페이지 8장과 현재 운영 이미지 원장이 일치하지 않아 판매채널 전송을 시작하지 않았습니다.",
+        mode: "approved_detail_image_manifest_required",
+        manifestCode: approvedDetail.code,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const detailPaths = approvedDetail.value.manifest.images.map((image) => image.path);
+    const detailBucket = serviceClient.storage.from("sellerpilot-ai");
+    let resolvedSignedUrls: string[] | null = null;
+    try {
+      const [detailExistence, detailSigning] = await Promise.all([
+        Promise.all(detailPaths.map((path) => detailBucket.exists(path))),
+        detailBucket.createSignedUrls(detailPaths, 2 * 60 * 60),
+      ]);
+      const signedUrls = (detailSigning.data ?? []).map((item) => item.signedUrl ?? "");
+      if (!detailExistence.some((result) => result.error || result.data !== true)
+          && !detailSigning.error
+          && signedUrls.length === marketplaceChannelDetailImageCount
+          && signedUrls.every((url) => url.startsWith("https://"))
+          && new Set(signedUrls).size === marketplaceChannelDetailImageCount) {
+        resolvedSignedUrls = signedUrls;
+      }
+    } catch {
+      resolvedSignedUrls = null;
+    }
+    if (!resolvedSignedUrls) {
+      return NextResponse.json({
+        message: "승인된 상세 이미지 8장의 운영 저장 경로를 확인하지 못해 판매채널 전송을 시작하지 않았습니다.",
+        mode: "approved_detail_image_assets_unavailable",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    approvedDetailBinding = approvedDetail.value;
+    approvedDetailSignedUrls = resolvedSignedUrls;
     verifiedPublishContext = publishContext;
     verifiedProductContentMode = contentMode;
   }
@@ -477,6 +520,26 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
+  if (contentBoundListingOperation) {
+    if (!approvedDetailBinding) {
+      return NextResponse.json({
+        message: "승인된 상세페이지 이미지 결속을 확인하지 못해 판매채널 전송을 시작하지 않았습니다.",
+        mode: "approved_detail_image_manifest_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    try {
+      effectiveArguments = bindMarketplaceArgumentsToApprovedDetailManifest(
+        effectiveArguments,
+        approvedDetailBinding,
+        approvedDetailSignedUrls,
+      );
+    } catch {
+      return NextResponse.json({
+        message: "현지화 상세정보를 승인된 상세 이미지 8장과 안전하게 결속하지 못해 판매채널 전송을 시작하지 않았습니다.",
+        mode: "approved_detail_image_binding_invalid",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   const effectivePublicationIntent = operation === "listing.create"
     ? parsed.data.publicationIntent ?? "safe_test"
     : operation === "listing.update"
@@ -515,6 +578,9 @@ export async function POST(request: NextRequest) {
   }
   const effectiveCurrency = boundListingCurrency ?? parsed.data.currency;
   const effectivePrice = boundListingPrice ?? parsed.data.price;
+  const fingerprintArguments = approvedDetailBinding
+    ? marketplaceArgumentsForApprovedDetailFingerprint(effectiveArguments, approvedDetailBinding)
+    : effectiveArguments;
   const requestFingerprint = createHash("sha256")
     .update(canonicalJson({
       channel,
@@ -530,7 +596,7 @@ export async function POST(request: NextRequest) {
       price: effectivePrice ?? null,
       market: parsed.data.market,
       targetId: parsed.data.targetId,
-      arguments: effectiveArguments,
+      arguments: fingerprintArguments,
     }))
     .digest("hex");
   if (listingOperationRequiresVerifiedRemoteState(operation)) {

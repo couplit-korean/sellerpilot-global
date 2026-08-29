@@ -132,7 +132,8 @@ test("publish-context and the forward migration persist only validated manual GI
   assert.match(route, /validateDetailAnimatedGif\(props\.data\)\.canAnimate/);
   assert.match(route, /z\.enum\(\["light", "dark"\]\)/);
   const putRoute = route.slice(route.indexOf("export async function PUT"), route.indexOf("export async function PATCH"));
-  assert.doesNotMatch(putRoute, /image\/gif|FormData|storage\.from/);
+  assert.doesNotMatch(putRoute, /image\/gif|FormData|\.upload\(|createSignedUploadUrl/);
+  assert.match(putRoute, /detailBucket\.exists\(asset\.path\)/);
 
   assert.match(migration, /'AnimatedGifBlock'/);
   assert.match(migration, /sellerpilot_private\.detail_page_media_url_is_valid/);

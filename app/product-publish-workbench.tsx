@@ -10,6 +10,10 @@ import {
   marketplaceMinimumThumbnailCount,
 } from "../lib/channels/marketplace-image-contract";
 import {
+  parseProductDetailImageManifest,
+  productDetailImageCount,
+} from "../lib/product-detail-image-manifest";
+import {
   centralProductEditFieldSupport,
   channelProductEditFieldSupport,
   listingCoreContentForOperation,
@@ -147,6 +151,11 @@ type PublishContext = {
   sourceImages: Array<{ path: string; url: string | null }>;
   generatedImages: Array<{ id: string; path: string; url: string | null }>;
   localizedListings: LocalizedListing[];
+  detailPage?: {
+    version?: number;
+    approvedVersion?: number;
+    imageManifest?: unknown;
+  };
   contentMode?: "ai_generated" | "manual_mvp";
 };
 
@@ -685,15 +694,19 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const marketplaceThumbnailCount = context?.generatedImages.filter((item) => (item.id === "square" || item.id === "hero") && item.url).length ?? 0;
   const dedicatedDetailImageCount = context?.generatedImages.filter((item) => item.id.startsWith("detail-") && item.url).length ?? 0;
   const manualMvp = context?.contentMode === "manual_mvp";
-  const imagePackageReady = context
-    ? manualMvp
-      ? context.sourceImages.some((item) => Boolean(item.url))
-      : marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount
-        && dedicatedDetailImageCount >= marketplaceChannelDetailImageCount
-    : false;
+  const approvedDetailManifest = parseProductDetailImageManifest(context?.detailPage?.imageManifest);
+  const approvedDetailPageReady = Boolean(context
+    && approvedDetailManifest
+    && context.detailPage?.version === context.detailPage?.approvedVersion
+    && approvedDetailManifest.images.length === productDetailImageCount
+    && approvedDetailManifest.images.every((entry) => context.generatedImages.some((image) => image.id === entry.role && image.path === entry.path && Boolean(image.url))));
+  const imagePackageReady = Boolean(context
+    && !manualMvp
+    && marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount
+    && approvedDetailPageReady);
   const imagePackageBlockedMessage = manualMvp
-    ? "채널 업로드용 원본 대표사진이 없어 실제 전송을 시작하지 않았습니다."
-    : `채널 업로드 이미지가 미완료입니다. 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장, 상세 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장을 모두 준비한 뒤 실행해 주세요.`;
+    ? "승인된 상세페이지 이미지 8장이 없는 직접등록 상품은 판매채널 자동 전송을 시작하지 않습니다."
+    : `채널 업로드 이미지가 미완료입니다. 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장과 저장·승인된 상세페이지 8/8장을 모두 확인한 뒤 실행해 주세요.`;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1380,7 +1393,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       <button type="button" onClick={() => setDrafts(buildDraftMap(context, price, quantity, selectedTargets, packageFields, globalBaseUsdPrice))}><RefreshCw size={14} />공통값으로 초안 갱신</button>
     </div>
     <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>{manualMvp ? `원본 ${context.sourceImages.filter((item) => item.url).length}장 직접 사용` : `대표 ${marketplaceThumbnailCount}장 · 상세 전용 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장`}</span><span><Check size={15} /><b>등록 직전 보정</b>대표 1200×1200 JPEG · 상세 원본 비율 · 각 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
-    {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>{manualMvp ? "채널 업로드용 원본 대표사진이 없습니다." : `채널 업로드 이미지 미완료 · 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장 · 상세 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장`}</b><small>{manualMvp ? "판매자가 확인한 원본 대표사진이 준비될 때까지 단일·일괄 채널 전송을 모두 차단합니다." : `상세페이지 제작에서 대표·설정·근거를 분리한 ${marketplaceGeneratedAssetCount}종 이미지 세트가 모두 저장될 때까지 단일·일괄 채널 전송을 모두 차단합니다.`}</small></div></div>}
+    {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>{manualMvp ? "승인된 상세페이지 이미지 8장이 없습니다." : `채널 업로드 이미지 미완료 · 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장 · 승인 상세 ${approvedDetailManifest?.images.length ?? 0}/${marketplaceChannelDetailImageCount}장`}</b><small>{manualMvp ? "상세페이지 8장 운영 원장이 없는 직접등록 상품은 단일·일괄 채널 전송을 모두 차단합니다." : `마스터 ${marketplaceGeneratedAssetCount}종 이미지 원장은 보존하고, 상세페이지에 선택·저장된 서로 다른 8장만 게시 원장으로 승인해야 합니다.`}</small></div></div>}
     <div className="publish-channel-cards">{visibleChannels.map((channel) => {
       const definition = channelCatalog[channel];
       const credential = activeCredentials.get(channel);

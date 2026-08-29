@@ -2294,6 +2294,12 @@ button.demo-data-badge.attention {
 .product-detail-asset-grid figcaption button:disabled { cursor: not-allowed; opacity: .55; }
 .saved-product-detail-page .detail-preview-scroll { margin-top: 18px; border-top: 1px solid #e2e4e9; border-radius: 10px; }
 .saved-detail-meta { display: flex; align-items: center; gap: 6px; margin: 10px 2px 0; color: #7c8796; font-size: 9px; line-height: 1.5; }
+.saved-detail-image-readiness { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding: 10px 12px; border: 1px solid #d8dfdc; border-radius: 10px; background: #f7faf8; color: #496158; }
+.saved-detail-image-readiness > span { display: grid; gap: 2px; }
+.saved-detail-image-readiness b { font-size: 10px; }
+.saved-detail-image-readiness small { color: #6f7c77; font-size: 9px; line-height: 1.45; }
+.saved-detail-image-readiness.error { border-color: #efc8c8; background: #fff7f7; color: #a13d3d; }
+.saved-detail-image-readiness.ready { border-color: #b8d8c8; background: #f0fbf5; color: #26704a; }
 .puck-editor-body[aria-busy="true"] { pointer-events: none; opacity: .72; }
 
 .remediation-summary { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 18px 20px; border-color: #eedfbe; background: linear-gradient(105deg, #fffaf0, #fff); }

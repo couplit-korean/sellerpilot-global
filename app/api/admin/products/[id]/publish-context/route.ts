@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
 import { productEditSchema } from "../../../../../../lib/product-intake";
+import { inspectProductDetailImageDocument } from "../../../../../../lib/product-detail-image-manifest";
+import { resolveProductDetailDocumentAssetPaths } from "../../../../../../lib/server-product-detail-manifest";
 import {
   detailAnimatedGifMaximumAltLength,
   detailAnimatedGifMaximumCaptionLength,
@@ -60,6 +62,10 @@ function stringList(value: unknown) {
 function stringRecord(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Record<string, string>;
   return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -121,8 +127,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   delete payload.ownerId;
   delete payload.sourceImagePaths;
   delete payload.generatedImagePaths;
+  const studioResult = isRecord(payload.studioResult) && Array.isArray(payload.localizedListings)
+    ? { ...payload.studioResult, localizedListings: payload.localizedListings }
+    : payload.studioResult;
   return NextResponse.json({
     ...payload,
+    studioResult,
     commerceOperations: operationsError ? null : commerceOperations,
     sourceImages,
     generatedImages,
@@ -171,6 +181,40 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
         : "상품 ID 형식이 올바르지 않습니다.",
     }, { status: 400 });
   }
+  const detailImageInspection = inspectProductDetailImageDocument(body.data.data);
+  if (!detailImageInspection.ok) {
+    return NextResponse.json({
+      code: detailImageInspection.code,
+      message: detailImageInspection.message,
+    }, { status: 400 });
+  }
+  const { data: currentContext, error: currentContextError } = await admin.userClient.rpc(
+    "sellerpilot_get_product_publish_context",
+    { p_product_id: productId.data },
+  );
+  const contextRecord = isRecord(currentContext) ? currentContext : null;
+  const resolvedAssets = contextRecord
+    ? resolveProductDetailDocumentAssetPaths(body.data.data, contextRecord.generatedImagePaths)
+    : null;
+  if (currentContextError || !resolvedAssets?.ok) {
+    return NextResponse.json({
+      code: resolvedAssets && !resolvedAssets.ok ? resolvedAssets.code : "DETAIL_PAGE_ASSETS_UNRESOLVED",
+      message: "상세 이미지 8장의 현재 운영 저장 경로를 확인하지 못했습니다.",
+    }, { status: 409 });
+  }
+  const detailBucket = admin.serviceClient.storage.from("sellerpilot-ai");
+  const assetsResolvable = await Promise.all(
+    resolvedAssets.value.map((asset) => detailBucket.exists(asset.path)),
+  ).then(
+    (results) => results.every((result) => !result.error && result.data === true),
+    () => false,
+  );
+  if (!assetsResolvable) {
+    return NextResponse.json({
+      code: "DETAIL_PAGE_ASSETS_UNRESOLVED",
+      message: "상세 이미지 8장 중 운영 저장소에서 불러올 수 없는 파일이 있습니다.",
+    }, { status: 409 });
+  }
   const { data, error } = await admin.userClient.rpc("sellerpilot_save_product_detail_page", {
     p_product_id: productId.data,
     p_data: body.data.data,
@@ -179,12 +223,13 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
   if (error || !data || typeof data !== "object" || Array.isArray(data)) {
     const versionConflict = error?.message?.includes("DETAIL_PAGE_VERSION_CONFLICT");
     const rejectedPayload = error?.message?.includes("DETAIL_PAGE_INVALID");
+    const unresolvedAssets = error?.message?.includes("DETAIL_PAGE_ASSETS_UNRESOLVED");
     return NextResponse.json({
-      code: versionConflict ? "DETAIL_PAGE_VERSION_CONFLICT" : rejectedPayload ? "DETAIL_PAGE_INVALID" : "DETAIL_PAGE_SAVE_FAILED",
+      code: versionConflict ? "DETAIL_PAGE_VERSION_CONFLICT" : rejectedPayload ? "DETAIL_PAGE_INVALID" : unresolvedAssets ? "DETAIL_PAGE_ASSETS_UNRESOLVED" : "DETAIL_PAGE_SAVE_FAILED",
       message: versionConflict
         ? "다른 화면에서 상세페이지가 먼저 수정됐습니다. 최신 저장본을 다시 불러왔습니다."
-        : rejectedPayload ? "상세페이지 블록 구성이나 크기 제한을 확인해 주세요." : "상세페이지 편집 내용을 저장하지 못했습니다.",
-    }, { status: versionConflict ? 409 : rejectedPayload ? 400 : 500 });
+        : rejectedPayload ? "상세페이지 블록 구성이나 크기 제한을 확인해 주세요." : unresolvedAssets ? "상세 이미지 역할과 현재 운영 저장 경로가 일치하지 않습니다. 이미지를 다시 확인해 주세요." : "상세페이지 편집 내용을 저장하지 못했습니다.",
+    }, { status: versionConflict || unresolvedAssets ? 409 : rejectedPayload ? 400 : 500 });
   }
   return NextResponse.json({ detailPage: data }, {
     headers: { "cache-control": "no-store, max-age=0" },

@@ -20,7 +20,7 @@ import {
   type StudioSourceImageMediaType,
 } from "../lib/studio-source-photo-policy";
 import { CODEX_IMAGE_SOURCE } from "./product-studio-prompt";
-import { makeProductDetailPersistable, parsePersistedProductDetailPage } from "./_publishing/product-detail-persistence";
+import { makeValidatedProductDetailPersistable, parsePersistedProductDetailPage } from "./_publishing/product-detail-persistence";
 import type { ProductDetailData } from "./product-detail-puck";
 import type { ProductStudioResult } from "./product-studio-types";
 import { waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
@@ -1381,7 +1381,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
           method: "PUT",
           headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
           body: JSON.stringify({
-            data: makeProductDetailPersistable(next, studioAssetUrls),
+            data: makeValidatedProductDetailPersistable(next, studioAssetUrls),
             expectedVersion: detailPageVersion,
           }),
         },

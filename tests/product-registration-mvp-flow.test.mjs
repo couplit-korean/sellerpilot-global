@@ -76,10 +76,11 @@ test("editing a newly generated product closes its stale channel handoff without
 
 test("single and bulk channel writes fail closed until the complete image package exists", async () => {
   const workbench = await readFile(publishWorkbenchUrl, "utf8");
-  assert.match(workbench, /const imagePackageReady = context[\s\S]*?marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount[\s\S]*?dedicatedDetailImageCount >= marketplaceChannelDetailImageCount/);
+  assert.match(workbench, /const approvedDetailPageReady = Boolean\(context[\s\S]*?context\.detailPage\?\.version === context\.detailPage\?\.approvedVersion[\s\S]*?image\.id === entry\.role && image\.path === entry\.path/);
+  assert.match(workbench, /const imagePackageReady = Boolean\(context[\s\S]*?!manualMvp[\s\S]*?marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount[\s\S]*?approvedDetailPageReady/);
   assert.ok((workbench.match(/if \(!imagePackageReady\) \{\s*notify\(imagePackageBlockedMessage\);\s*return(?: false)?;/g) ?? []).length >= 2);
   assert.match(workbench, /className="publish-bulk-execute" disabled=\{bulkRunning \|\| bulkConfirming \|\| !imagePackageReady\}/);
   assert.match(workbench, /className=\{`publish-execute\$\{remoteUpdate \? " product-edit-remote-action" : ""\}`\}[\s\S]*?disabled=\{!imagePackageReady \|\| !credential/);
-  assert.match(workbench, /채널 업로드 이미지 미완료 · 대표 \$\{marketplaceThumbnailCount\}\/\$\{marketplaceMinimumThumbnailCount\}장 · 상세 \$\{dedicatedDetailImageCount\}\/\$\{marketplaceChannelDetailImageCount\}장/);
+  assert.match(workbench, /채널 업로드 이미지 미완료 · 대표 \$\{marketplaceThumbnailCount\}\/\$\{marketplaceMinimumThumbnailCount\}장 · 승인 상세 \$\{approvedDetailManifest\?\.images\.length \?\? 0\}\/\$\{marketplaceChannelDetailImageCount\}장/);
   assert.match(workbench, /단일·일괄 채널 전송을 모두 차단합니다/);
 });

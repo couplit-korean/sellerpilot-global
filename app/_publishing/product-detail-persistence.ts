@@ -1,4 +1,10 @@
-export const productDetailAssetReferencePrefix = "sellerpilot-asset://";
+import {
+  inspectProductDetailImageDocument,
+  productDetailAssetReferencePrefix,
+  productDetailRoleFromAssetReference,
+} from "../../lib/product-detail-image-manifest";
+
+export { productDetailAssetReferencePrefix };
 
 type PuckBlockLike = {
   type: string;
@@ -65,13 +71,43 @@ export function makeProductDetailPersistable<T extends PersistablePuckData>(
   });
 }
 
+export function makeValidatedProductDetailPersistable<T extends PersistablePuckData>(
+  data: T,
+  assetUrls: Record<string, string>,
+) {
+  const persistable = makeProductDetailPersistable(data, assetUrls);
+  const inspection = inspectProductDetailImageDocument(persistable);
+  if (!inspection.ok) throw new Error(inspection.message);
+  const resolvedUrls = inspection.images.map((image) => assetUrls[image.role]?.trim() ?? "");
+  if (resolvedUrls.some((url) => !url.startsWith("https://"))
+      || new Set(resolvedUrls).size !== inspection.images.length) {
+    throw new Error("상세 이미지 8장의 현재 운영 접근 경로를 모두 확인해 주세요.");
+  }
+  return persistable;
+}
+
 export function resolveProductDetailAssets<T extends PersistablePuckData>(
   data: T,
   assetUrls: Record<string, string>,
 ) {
-  return mapImageUrl(data, (imageUrl) => {
-    if (!imageUrl.startsWith(productDetailAssetReferencePrefix)) return imageUrl;
-    const assetId = imageUrl.slice(productDetailAssetReferencePrefix.length);
-    return assetUrls[assetId] ?? "";
-  });
+  return {
+    ...data,
+    root: { ...data.root },
+    content: data.content.map((block) => {
+      const imageUrl = block.props.imageUrl;
+      const assetId = typeof imageUrl === "string" && imageUrl.startsWith(productDetailAssetReferencePrefix)
+        ? imageUrl.slice(productDetailAssetReferencePrefix.length)
+        : "";
+      if (!assetId) return { ...block, props: { ...block.props } };
+      const role = productDetailRoleFromAssetReference(imageUrl);
+      return {
+        ...block,
+        props: {
+          ...block.props,
+          ...(role ? { imageRole: role } : {}),
+          imageUrl: assetUrls[assetId] ?? "",
+        },
+      };
+    }),
+  };
 }

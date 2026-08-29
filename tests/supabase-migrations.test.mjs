@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
@@ -239,7 +240,13 @@ create or replace function extensions.digest(value text, algorithm text)
 returns bytea
 language sql
 immutable
-as $$ select convert_to(md5(value || algorithm), 'UTF8') $$;
+as $$
+  select case
+    when lower(algorithm) = 'sha256'
+      then sha256(convert_to(value, 'UTF8'))
+    else convert_to(md5(value || algorithm), 'UTF8')
+  end
+$$;
 `;
 
 function withoutUnavailableExtensions(sql) {
@@ -514,6 +521,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830095000_close_listing_mutations_until_adapters_ready.sql",
       "20260830100000_verified_remote_publication_ledger.sql",
       "20260830110000_pending_publication_reverification.sql",
+      "20260830114500_approve_exact_detail_image_manifest.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -643,6 +651,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "utf8",
     );
     await db.exec(withoutUnavailableExtensions(detailPipelineLineageMigration));
+    const detailImageManifestMigration = await readFile(
+      new URL("20260830114500_approve_exact_detail_image_manifest.sql", migrationUrl),
+      "utf8",
+    );
+    await db.exec(withoutUnavailableExtensions(detailImageManifestMigration));
     assert.equal(
       await scalar(
         db,
@@ -5223,6 +5236,27 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [elevenstCompetitorJobId],
     );
     await setClaims(db);
+    const approvedDetailRoles = [
+      "detail-overview",
+      "detail-feature",
+      "detail-use",
+      "detail-package",
+      "detail-routine",
+      "detail-dimensions",
+      "detail-contents",
+      "detail-care",
+    ];
+    const approvedAssetStoragePaths = await scalar(
+      db,
+      "select result_payload->'asset_storage_paths' from sellerpilot_private.ai_cli_jobs where id = $1",
+      [JOB_ID],
+    );
+    await db.query(
+      `insert into storage.objects (bucket_id, name)
+       select 'sellerpilot-ai', asset.value
+         from jsonb_each_text($1::jsonb) asset`,
+      [JSON.stringify(approvedAssetStoragePaths)],
+    );
     const detailPageV1 = {
       root: { props: { title: "AI 생성 테스트 상품 상세" } },
       content: [
@@ -5243,6 +5277,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
             evidence: "판매자 제공 상품 라벨",
           },
         },
+        ...approvedDetailRoles.map((role, index) => ({
+          type: "ImageStoryBlock",
+          props: {
+            id: `image-${index + 1}`,
+            imageUrl: `sellerpilot-asset://${role}`,
+            imageRole: role,
+            imageAlt: `AI 생성 테스트 상품 상세 이미지 ${index + 1}`,
+          },
+        })),
         {
           type: "CtaBlock",
           props: { id: "cta-1", title: "지금 확인하세요" },
@@ -5255,6 +5298,16 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [aiProductId, JSON.stringify(detailPageV1)],
     );
     assert.equal(savedDetailV1.version, 1);
+    assert.equal(savedDetailV1.approvedVersion, 1);
+    assert.equal(savedDetailV1.imageManifest.contract, "sellerpilot_detail_image_manifest_v1");
+    assert.equal(savedDetailV1.imageManifest.algorithm, "sha256");
+    assert.deepEqual(savedDetailV1.imageManifest.images.map((image) => image.role), approvedDetailRoles);
+    assert.deepEqual(savedDetailV1.imageManifest.images.map((image) => image.path), approvedDetailRoles.map((role) => approvedAssetStoragePaths[role]));
+    const expectedDetailManifestDigest = createHash("sha256").update(
+      approvedDetailRoles.map((role) => `${role}\t${approvedAssetStoragePaths[role]}`).join("\n"),
+      "utf8",
+    ).digest("hex");
+    assert.equal(savedDetailV1.imageManifest.digest, expectedDetailManifestDigest);
     assert.deepEqual(savedDetailV1.data, detailPageV1);
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_get_product_detail_page($1)", [aiProductId]),
@@ -5281,6 +5334,128 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [aiProductId, JSON.stringify(detailPageV2)],
     );
     assert.equal(savedDetailV2.version, 2);
+    assert.equal(savedDetailV2.approvedVersion, 2);
+    assert.equal(savedDetailV2.imageManifest.digest, expectedDetailManifestDigest);
+    await db.exec("begin");
+    try {
+      await db.query(
+        "update sellerpilot_private.products set detail_page_data = jsonb_set(detail_page_data, '{root}', '{\"changed\":true}'::jsonb, true) where id = $1",
+        [aiProductId],
+      );
+      assert.deepEqual(
+        (await db.query(
+          "select detail_page_approved_version, detail_page_image_manifest from sellerpilot_private.products where id = $1",
+          [aiProductId],
+        )).rows[0],
+        { detail_page_approved_version: 0, detail_page_image_manifest: null },
+      );
+    } finally {
+      await db.exec("rollback");
+    }
+    assert.equal(
+      Object.keys(approvedAssetStoragePaths).filter((role) => role.startsWith("detail-")).length,
+      12,
+      "the full twelve-role Studio asset ledger remains intact while the page approves eight",
+    );
+    const detailImageBlocks = detailPageV2.content.filter((block) => block.type === "ImageStoryBlock");
+    const invalidExactEightDocuments = [
+      {
+        ...detailPageV2,
+        content: detailPageV2.content.filter((block) => block.props.id !== "image-8"),
+      },
+      {
+        ...detailPageV2,
+        content: [
+          ...detailPageV2.content,
+          {
+            type: "ImageStoryBlock",
+            props: {
+              id: "image-9",
+              imageUrl: "sellerpilot-asset://detail-scale",
+              imageRole: "detail-scale",
+              imageAlt: "허용되지만 아홉 번째인 상세 이미지",
+            },
+          },
+        ],
+      },
+      {
+        ...detailPageV2,
+        content: detailPageV2.content.map((block) => (
+          block.props.id === "image-2"
+            ? {
+                ...block,
+                props: {
+                  ...block.props,
+                  imageUrl: detailImageBlocks[0].props.imageUrl,
+                  imageRole: detailImageBlocks[0].props.imageRole,
+                },
+              }
+            : block
+        )),
+      },
+      {
+        ...detailPageV2,
+        content: detailPageV2.content.map((block) => (
+          block.props.id === "image-1"
+            ? { ...block, props: { ...block.props, imageUrl: "https://cdn.example.com/detail.png" } }
+            : block
+        )),
+      },
+      {
+        ...detailPageV2,
+        content: detailPageV2.content.map((block) => (
+          block.props.id === "image-1"
+            ? { ...block, props: { ...block.props, imageUrl: "sellerpilot-asset://hero", imageRole: "hero" } }
+            : block
+        )),
+      },
+      {
+        ...detailPageV2,
+        content: detailPageV2.content.map((block) => (
+          block.props.id === "image-1"
+            ? { ...block, props: { ...block.props, imageAlt: "   " } }
+            : block
+        )),
+      },
+      {
+        ...detailPageV2,
+        content: detailPageV2.content.map((block) => (
+          block.props.id === "image-1"
+            ? { ...block, props: { ...block.props, imageRole: "detail-feature" } }
+            : block
+        )),
+      },
+    ];
+    for (const invalidDocument of invalidExactEightDocuments) {
+      await db.exec("begin");
+      try {
+        await assert.rejects(
+          db.query(
+            "select public.sellerpilot_save_product_detail_page($1, $2::jsonb, 2)",
+            [aiProductId, JSON.stringify(invalidDocument)],
+          ),
+          /DETAIL_PAGE_INVALID/,
+        );
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+    await db.exec("begin");
+    try {
+      await db.query(
+        "delete from storage.objects where bucket_id = 'sellerpilot-ai' and name = $1",
+        [approvedAssetStoragePaths["detail-care"]],
+      );
+      await assert.rejects(
+        db.query(
+          "select public.sellerpilot_save_product_detail_page($1, $2::jsonb, 2)",
+          [aiProductId, JSON.stringify(detailPageV2)],
+        ),
+        /DETAIL_PAGE_ASSETS_UNRESOLVED/,
+      );
+    } finally {
+      await db.exec("rollback");
+    }
     const animatedGifBlock = {
       type: "AnimatedGifBlock",
       props: {
@@ -5395,20 +5570,24 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         [aiProductId],
       )
     ).rows[0].safe_detail;
-    assert.deepEqual(Object.keys(detailAudit).sort(), ["block_count", "document_bytes", "version"]);
+    assert.deepEqual(Object.keys(detailAudit).sort(), ["block_count", "document_bytes", "image_count", "manifest_digest", "version"]);
     assert.equal(detailAudit.version, 2);
+    assert.equal(detailAudit.image_count, 8);
+    assert.equal(detailAudit.manifest_digest, expectedDetailManifestDigest);
     assert.equal(JSON.stringify(detailAudit).includes("수정된 CTA"), false);
 
     await db.query(
       "update sellerpilot_private.ai_cli_jobs set created_by = $2 where id = $1",
       [JOB_ID, SECOND_ADMIN_ID],
     );
-    const mismatchedClassificationContext = await scalar(
-      db,
-      "select public.sellerpilot_get_product_publish_context($1)",
-      [aiProductId],
+    await assert.rejects(
+      scalar(
+        db,
+        "select public.sellerpilot_get_product_publish_context($1)",
+        [aiProductId],
+      ),
+      /PRODUCT_CONTENT_LINEAGE_UNVERIFIED/,
     );
-    assert.equal(mismatchedClassificationContext.classification, null);
     await db.query(
       "update sellerpilot_private.ai_cli_jobs set created_by = $2 where id = $1",
       [JOB_ID, ADMIN_ID],
@@ -5421,6 +5600,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(publishContext.assignments.some((assignment) => assignment.channel === "elevenst" && assignment.categoryId === "1341821"), true);
     assert.deepEqual(publishContext.detailPage.data, detailPageV2);
     assert.equal(publishContext.detailPage.version, 2);
+    assert.equal(publishContext.detailPage.approvedVersion, 2);
+    assert.equal(publishContext.detailPage.imageManifest.digest, expectedDetailManifestDigest);
     assert.deepEqual(publishContext.classification, resultPayload.product.classification);
     assert.deepEqual(Object.keys(publishContext.studioResult).sort(), ["design", "mode", "product", "thumbnail", "warnings"]);
     assert.equal(publishContext.studioResult.mode, "cli");
@@ -5712,7 +5893,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.deepEqual(
       (await db.query(
-        "select id, ai_job_id, name, on_hand, (product_facts->>'stock')::integer as facts_stock, detail_page_data, detail_page_version from sellerpilot_private.products where id = $1",
+        "select id, ai_job_id, name, on_hand, (product_facts->>'stock')::integer as facts_stock, detail_page_data, detail_page_version, detail_page_approved_version, detail_page_image_manifest from sellerpilot_private.products where id = $1",
         [aiProductId],
       )).rows[0],
       {
@@ -5723,6 +5904,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         facts_stock: 3,
         detail_page_data: null,
         detail_page_version: 0,
+        detail_page_approved_version: 0,
+        detail_page_image_manifest: null,
       },
     );
     assert.equal(
@@ -6689,26 +6872,33 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(db, "select public.sellerpilot_get_product_detail_page($1)", [SHARED_PRODUCT_ID]),
       null,
     );
-    const crossOwnerPublishContext = await scalar(
-      db,
-      "select public.sellerpilot_get_product_publish_context($1)",
-      [SHARED_PRODUCT_ID],
+    await assert.rejects(
+      scalar(
+        db,
+        "select public.sellerpilot_get_product_publish_context($1)",
+        [SHARED_PRODUCT_ID],
+      ),
+      /PRODUCT_CONTENT_LINEAGE_UNVERIFIED/,
     );
-    assert.equal(crossOwnerPublishContext.product.id, SHARED_PRODUCT_ID);
-    assert.deepEqual(crossOwnerPublishContext.detailPage, { data: null, version: 0, updatedAt: null });
-    assert.equal(crossOwnerPublishContext.studioResult, null);
     assert.equal(
       await scalar(
         db,
         "select public.sellerpilot_save_product_detail_page($1, $2::jsonb, null)",
-        [SHARED_PRODUCT_ID, JSON.stringify({ root: {}, content: [] })],
+        [SHARED_PRODUCT_ID, JSON.stringify(detailPageV2)],
       ),
       null,
     );
     await setClaims(db, "authenticated", SECOND_ADMIN_ID);
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_get_product_detail_page($1)", [SHARED_PRODUCT_ID]),
-      { productId: SHARED_PRODUCT_ID, data: null, version: 0, updatedAt: null },
+      {
+        productId: SHARED_PRODUCT_ID,
+        data: null,
+        version: 0,
+        approvedVersion: 0,
+        imageManifest: null,
+        updatedAt: null,
+      },
     );
     await db.query(
       "update sellerpilot_private.products set status = 'archived' where id = $1",
@@ -6718,18 +6908,19 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(db, "select public.sellerpilot_get_product_detail_page($1)", [SHARED_PRODUCT_ID]),
       null,
     );
-    const archivedPublishContext = await scalar(
-      db,
-      "select public.sellerpilot_get_product_publish_context($1)",
-      [SHARED_PRODUCT_ID],
+    await assert.rejects(
+      scalar(
+        db,
+        "select public.sellerpilot_get_product_publish_context($1)",
+        [SHARED_PRODUCT_ID],
+      ),
+      /PRODUCT_CONTENT_LINEAGE_UNVERIFIED/,
     );
-    assert.deepEqual(archivedPublishContext.detailPage, { data: null, version: 0, updatedAt: null });
-    assert.equal(archivedPublishContext.studioResult, null);
     assert.equal(
       await scalar(
         db,
         "select public.sellerpilot_save_product_detail_page($1, $2::jsonb, null)",
-        [SHARED_PRODUCT_ID, JSON.stringify({ root: {}, content: [] })],
+        [SHARED_PRODUCT_ID, JSON.stringify(detailPageV2)],
       ),
       null,
     );
@@ -6893,11 +7084,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     const listingNewerAiFacts = listingNewerReadiness.find((facts) => facts.productId === aiProductId);
     assert.equal(listingNewerAiFacts.latestError, "채널 카테고리·권한 확인이 필요합니다.");
     assert.equal(listingNewerAiFacts.latestErrorKind, "external_action");
-    const sharedPublishContext = await scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [SHARED_PRODUCT_ID]);
-    assert.equal(sharedPublishContext.product.id, SHARED_PRODUCT_ID);
-    assert.equal(sharedPublishContext.ownerId, SECOND_ADMIN_ID);
-    assert.deepEqual(sharedPublishContext.detailPage, { data: null, version: 0, updatedAt: null });
-    assert.equal(sharedPublishContext.studioResult, null);
+    await assert.rejects(
+      scalar(db, "select public.sellerpilot_get_product_publish_context($1)", [SHARED_PRODUCT_ID]),
+      /PRODUCT_CONTENT_LINEAGE_UNVERIFIED/,
+    );
 
     const sharedCategoryAssignmentId = await scalar(
       db,

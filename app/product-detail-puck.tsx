@@ -3,7 +3,11 @@
 
 import { Puck, Render, usePuck, type Config, type Data, type Viewports } from "@puckeditor/core";
 import { Save, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import {
+  localizedProductDetailImageRoles,
+  productDetailRoleFromAssetReference,
+} from "../lib/product-detail-image-manifest";
 import { validateDetailAnimatedGif } from "../lib/product-media-contract";
 import { resolveProductDetailAssets } from "./_publishing/product-detail-persistence";
 import mediaStyles from "./product-detail-media.module.css";
@@ -105,6 +109,7 @@ type DetailComponents = {
     body: string;
     points: string;
     imageUrl: string;
+    imageRole: string;
     imageAlt: string;
     imageFit: "cover" | "contain";
     reverse: boolean;
@@ -151,7 +156,15 @@ type DetailComponents = {
 };
 
 export type ProductDetailData = Data<DetailComponents>;
-export type ProductDetailSource = Pick<ProductStudioResult, "product" | "design">;
+export type ProductDetailSource = Pick<ProductStudioResult, "product" | "design">
+  & Partial<Pick<ProductStudioResult, "localizedListings">>;
+
+export type ProductDetailImageLoadState = "loaded" | "error";
+
+const noopProductDetailImageLoadReport = () => undefined;
+const ProductDetailImageLoadContext = createContext<{
+  report: (role: string, state: ProductDetailImageLoadState) => void;
+}>({ report: noopProductDetailImageLoadReport });
 
 const productDetailEditorViewports: Viewports = [
   { width: "100%", height: "auto", label: "현재 화면", icon: "Monitor" },
@@ -250,20 +263,15 @@ const detailConfig: Config<DetailComponents> = {
       fields: {
         sectionType: { type: "select", label: "정보 유형", options: detailSectionTypeOptions },
         eyebrow: { type: "text", label: "상단 문구" }, title: { type: "textarea", label: "제목" }, body: { type: "textarea", label: "설명" }, points: { type: "textarea", label: "확인 포인트 (줄바꿈)" },
-        imageUrl: { type: "text", label: "상세 이미지 URL" }, imageAlt: { type: "text", label: "이미지 설명" }, imageFit: { type: "radio", label: "이미지 표시", options: [{ label: "장면 채우기", value: "cover" }, { label: "근거 전체 보기", value: "contain" }] }, reverse: { type: "radio", label: "배치", options: [{ label: "이미지 왼쪽", value: false }, { label: "이미지 오른쪽", value: true }] },
+        imageUrl: { type: "text", label: "상세 이미지 URL" }, imageRole: { type: "text", label: "운영 이미지 역할 (자동)" }, imageAlt: { type: "text", label: "이미지 설명" }, imageFit: { type: "radio", label: "이미지 표시", options: [{ label: "장면 채우기", value: "cover" }, { label: "근거 전체 보기", value: "contain" }] }, reverse: { type: "radio", label: "배치", options: [{ label: "이미지 왼쪽", value: false }, { label: "이미지 오른쪽", value: true }] },
         primary: { type: "text", label: "주 색상" }, accent: { type: "text", label: "강조 색상" }, surface: { type: "text", label: "배경 색상" },
         layout: { type: "radio", label: "레이아웃", options: [{ label: "분할", value: "split" }, { label: "풀 블리드", value: "full-bleed" }, { label: "카드", value: "cards" }, { label: "단계", value: "steps" }, { label: "스펙", value: "spec-grid" }, { label: "에디토리얼", value: "editorial" }] },
         motion: { type: "radio", label: "미리보기 모션", options: [{ label: "없음", value: "none" }, { label: "등장", value: "reveal" }, { label: "순차", value: "stagger" }] },
         buyerQuestion: { type: "textarea", label: "구매 전 질문" }, evidence: { type: "textarea", label: "확인 근거" },
         verificationStatus: { type: "radio", label: "검증 상태", options: verificationStatusOptions },
       },
-      defaultProps: { sectionType: "proof", eyebrow: "VISIBLE EVIDENCE", title: "보이는 특징을 구체적으로", body: "구매 판단에 필요한 근거를 이미지와 함께 설명합니다.", points: "확인 포인트 1\n확인 포인트 2", imageUrl: "", imageAlt: "상품 특징 이미지", imageFit: "contain", reverse: false, primary: "#25352d", accent: "#d9eeae", surface: "#f4f1e9", layout: "split", motion: "reveal", buyerQuestion: "사진에서 실제로 확인할 수 있는 특징은 무엇인가요?", evidence: "업로드한 실물 사진과 상품 자료", verificationStatus: "verified" },
-      render: ({ sectionType, eyebrow, title, body, points, imageUrl, imageAlt, imageFit, reverse, primary, accent, surface, layout, motion, buyerQuestion, evidence, verificationStatus }) => (
-        <section className={`pdp-image-story ${layout} ${reverse ? "reverse" : ""}`} data-motion={motion} data-section-type={sectionType} style={{ "--pdp-primary": primary, "--pdp-accent": accent, "--pdp-surface": surface } as React.CSSProperties}>
-          <div className={`pdp-image-story-visual ${imageFit === "contain" ? "contain" : "cover"}`}>{imageUrl ? <img src={imageUrl} alt={imageAlt} loading="lazy" decoding="async" /> : <span>DETAIL IMAGE</span>}<i /></div>
-          <div className="pdp-image-story-copy"><SectionTypeBadge sectionType={sectionType} /><span>{eyebrow}</span><h2>{title}</h2><p>{body}</p><SectionEvidence buyerQuestion={buyerQuestion} evidence={evidence} verificationStatus={verificationStatus} /><ul>{points.split("\n").filter(Boolean).map((point, index) => <li key={`${point}-${index}`} style={{ "--pdp-sequence": index } as React.CSSProperties}><CheckMark />{point}</li>)}</ul></div>
-        </section>
-      ),
+      defaultProps: { sectionType: "proof", eyebrow: "VISIBLE EVIDENCE", title: "보이는 특징을 구체적으로", body: "구매 판단에 필요한 근거를 이미지와 함께 설명합니다.", points: "확인 포인트 1\n확인 포인트 2", imageUrl: "", imageRole: "", imageAlt: "상품 특징 이미지", imageFit: "contain", reverse: false, primary: "#25352d", accent: "#d9eeae", surface: "#f4f1e9", layout: "split", motion: "reveal", buyerQuestion: "사진에서 실제로 확인할 수 있는 특징은 무엇인가요?", evidence: "업로드한 실물 사진과 상품 자료", verificationStatus: "verified" },
+      render: (props) => <ImageStoryBlockRender {...props} />,
     },
     AnimatedGifBlock: {
       label: "상세페이지 GIF (채널 전송 제외)",
@@ -313,6 +321,17 @@ const detailConfig: Config<DetailComponents> = {
 
 function CheckMark() {
   return <span aria-hidden="true">✓</span>;
+}
+
+function ImageStoryBlockRender({ sectionType, eyebrow, title, body, points, imageUrl, imageRole, imageAlt, imageFit, reverse, primary, accent, surface, layout, motion, buyerQuestion, evidence, verificationStatus }: DetailComponents["ImageStoryBlock"]) {
+  const loadContext = useContext(ProductDetailImageLoadContext);
+  const role = imageRole || productDetailRoleFromAssetReference(imageUrl) || "";
+  return (
+    <section className={`pdp-image-story ${layout} ${reverse ? "reverse" : ""}`} data-motion={motion} data-section-type={sectionType} data-sellerpilot-detail-role={role || undefined} style={{ "--pdp-primary": primary, "--pdp-accent": accent, "--pdp-surface": surface } as React.CSSProperties}>
+      <div className={`pdp-image-story-visual ${imageFit === "contain" ? "contain" : "cover"}`}>{imageUrl ? <img src={imageUrl} alt={imageAlt} loading="eager" decoding="async" data-sellerpilot-detail-image-role={role || undefined} onLoad={() => loadContext.report(role, "loaded")} onError={() => loadContext.report(role, "error")} /> : <span>DETAIL IMAGE</span>}<i /></div>
+      <div className="pdp-image-story-copy"><SectionTypeBadge sectionType={sectionType} /><span>{eyebrow}</span><h2>{title}</h2><p>{body}</p><SectionEvidence buyerQuestion={buyerQuestion} evidence={evidence} verificationStatus={verificationStatus} /><ul>{points.split("\n").filter(Boolean).map((point, index) => <li key={`${point}-${index}`} style={{ "--pdp-sequence": index } as React.CSSProperties}><CheckMark />{point}</li>)}</ul></div>
+    </section>
+  );
 }
 
 function useAllowsDetailAnimation() {
@@ -404,7 +423,7 @@ function SectionEvidence({ buyerQuestion, evidence, verificationStatus }: { buye
   );
 }
 
-function createDetailData(result: ProductDetailSource, imageUrl: string, assetUrls: Record<string, string>): ProductDetailData {
+export function createDetailData(result: ProductDetailSource, imageUrl: string, assetUrls: Record<string, string>): ProductDetailData {
   const { product, design } = result;
   const classification = product.classification ?? {
     displayName: "상품 유형 확인 필요",
@@ -413,6 +432,7 @@ function createDetailData(result: ProductDetailSource, imageUrl: string, assetUr
     isHealthFunctionalFood: null,
   };
   const verificationStatus = classification.verificationStatus;
+  const selectedDetailRoles = new Set(localizedProductDetailImageRoles(result.localizedListings));
   const designArchetype = design.creativeStrategy?.designArchetype ?? "proof-led";
   const heroLayout = designArchetype === "gift-story"
     ? "centered"
@@ -428,12 +448,12 @@ function createDetailData(result: ProductDetailSource, imageUrl: string, assetUr
         const sectionLayout = section.layout ?? (index === 0 ? "cards" : index % 3 === 0 ? "editorial" : "split");
         const sectionMotion = section.motion ?? "none";
         const sectionAsset = section.imageAsset ?? detailImageAssets[index] ?? "none";
-        const sectionImage = sectionAsset === "none" ? "" : assetUrls[sectionAsset];
+        const sectionImage = sectionAsset === "none" || !selectedDetailRoles.has(sectionAsset) ? "" : assetUrls[sectionAsset];
         const sectionImageFit: "contain" | "cover" = evidenceDetailImageAssets.has(sectionAsset) ? "contain" : "cover";
         const sectionVerificationStatus: VerificationStatus = verificationStatus === "needs-review" || /(미확인|확인 필요|추가 확인|근거 없음|제공되지 않)/.test(section.evidence ?? "") ? "needs-review" : "verified";
         return sectionImage ? {
           type: "ImageStoryBlock" as const,
-          props: { id: `ai-image-section-${index}`, sectionType: section.type, eyebrow: section.eyebrow, title: section.title, body: section.body, points: section.points.join("\n"), imageUrl: sectionImage, imageAlt: `${product.name} ${section.title}`, imageFit: sectionImageFit, reverse: index % 2 === 1, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface, layout: sectionLayout, motion: sectionMotion, buyerQuestion: section.buyerQuestion, evidence: section.evidence, verificationStatus: sectionVerificationStatus },
+          props: { id: `ai-image-section-${index}`, sectionType: section.type, eyebrow: section.eyebrow, title: section.title, body: section.body, points: section.points.join("\n"), imageUrl: sectionImage, imageRole: sectionAsset, imageAlt: `${product.name} ${section.title}`, imageFit: sectionImageFit, reverse: index % 2 === 1, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface, layout: sectionLayout, motion: sectionMotion, buyerQuestion: section.buyerQuestion, evidence: section.evidence, verificationStatus: sectionVerificationStatus },
         } : sectionLayout === "cards" ? {
           type: "BenefitBlock" as const,
           props: { id: `ai-card-section-${index}`, sectionType: section.type, eyebrow: section.eyebrow, title: section.title, body: section.body, point1: section.points[0] ?? "", point2: section.points[1] ?? "", point3: section.points[2] ?? "", point4: section.points[3] ?? "", point5: section.points[4] ?? "", point6: section.points[5] ?? "", buyerQuestion: section.buyerQuestion, evidence: section.evidence, verificationStatus: sectionVerificationStatus, accent: design.palette.accent, motion: sectionMotion },
@@ -447,13 +467,17 @@ function createDetailData(result: ProductDetailSource, imageUrl: string, assetUr
   };
 }
 
-export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null }) {
+export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data, onDetailImageLoadState }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; onDetailImageLoadState?: (role: string, state: ProductDetailImageLoadState) => void }) {
   const renderData = useMemo(() => {
     if (data) return resolveProductDetailAssets(data, assetUrls);
     return result ? createDetailData(result, imageUrl, assetUrls) : null;
   }, [assetUrls, data, imageUrl, result]);
+  const imageLoadContext = useMemo(
+    () => ({ report: onDetailImageLoadState ?? noopProductDetailImageLoadReport }),
+    [onDetailImageLoadState],
+  );
   if (!renderData) return null;
-  return <Render config={detailConfig} data={renderData} />;
+  return <ProductDetailImageLoadContext.Provider value={imageLoadContext}><Render config={detailConfig} data={renderData} /></ProductDetailImageLoadContext.Provider>;
 }
 
 function ProductDetailPublishAction({ saving, onSave }: { saving: boolean; onSave: (next: ProductDetailData) => void | Promise<void> }) {
