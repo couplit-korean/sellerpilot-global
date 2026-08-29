@@ -592,6 +592,7 @@ async function defaultGenerateProductResearch(prompt: string, signal: AbortSigna
       timeout: AI_GATEWAY_TIMEOUT_MS,
       providerOptions: {
         gateway: {
+          only: ["openai"],
           user: "sellerpilot-server-product-research",
           tags: ["feature:product-research", "runtime:vercel-oidc", "data:product-input"],
         },
@@ -691,6 +692,7 @@ async function defaultSegmentPreflightSource(source: ServerStudioSource, signal:
       timeout: { totalMs: SEGMENTATION_CALL_TIMEOUT_MS },
       providerOptions: {
         gateway: {
+          only: ["openai"],
           user: "sellerpilot-server-product-research",
           tags: ["feature:product-preflight-segmentation", "runtime:vercel-oidc"],
         },
@@ -738,6 +740,7 @@ async function defaultGeneratePreflightBackground(input: {
       abortSignal: input.signal,
       providerOptions: {
         gateway: {
+          only: ["openai"],
           user: "sellerpilot-server-product-research",
           tags: ["feature:product-preflight-image", `asset:${input.asset.id}`, "runtime:vercel-oidc"],
         },

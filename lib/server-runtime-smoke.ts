@@ -385,6 +385,7 @@ async function defaultAiGatewayRequest(input: { model: string }): Promise<AiGate
     timeout: 25_000,
     providerOptions: {
       gateway: {
+        only: ["openai"],
         user: "sellerpilot-server-runtime-smoke",
         tags: ["feature:server-runtime-smoke", "data:synthetic"],
       },

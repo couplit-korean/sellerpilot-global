@@ -463,6 +463,7 @@ async function defaultGenerateStructured<T>(input: {
       timeout: { totalMs: TEXT_CALL_TIMEOUT_MS },
       providerOptions: {
         gateway: {
+          only: ["openai"],
           user: "sellerpilot-server-product-studio",
           tags: ["runtime:vercel-oidc", "data:product-input", ...input.tags],
         },
@@ -503,6 +504,7 @@ async function defaultGenerateBackground(input: {
       abortSignal: input.signal,
       providerOptions: {
         gateway: {
+          only: ["openai"],
           user: "sellerpilot-server-product-studio",
           tags: ["feature:product-studio-image", `asset:${input.asset.id}`, "runtime:vercel-oidc"],
         },

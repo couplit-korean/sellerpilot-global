@@ -12,6 +12,50 @@ const JOB_IDS = [
   "30000000-0000-4000-8000-000000000003",
 ];
 
+test("every active server AI SDK call hard-pins OpenAI without model fallback or SDK retry", async () => {
+  const sourceContracts = [
+    {
+      name: "product research",
+      source: await readFile(new URL("../lib/server-product-research.ts", import.meta.url), "utf8"),
+      expectedAiCalls: 3,
+      expectedModels: ["openai/gpt-5.5", "openai/gpt-image-2"],
+    },
+    {
+      name: "product Studio",
+      source: await readFile(new URL("../lib/server-product-studio.ts", import.meta.url), "utf8"),
+      expectedAiCalls: 2,
+      expectedModels: ["openai/gpt-5.5", "openai/gpt-image-2"],
+    },
+    {
+      name: "runtime smoke",
+      source: await readFile(new URL("../lib/server-runtime-smoke.ts", import.meta.url), "utf8"),
+      expectedAiCalls: 1,
+      expectedModels: ["openai/gpt-5.5"],
+    },
+  ];
+
+  for (const contract of sourceContracts) {
+    const aiCalls = contract.source.match(/\b(?:generateText|generateImage)\(\{/g) ?? [];
+    const openAiOnlyAllowlists = contract.source.match(/\bonly:\s*\["openai"\]/g) ?? [];
+    const disabledSdkRetries = contract.source.match(/\bmaxRetries:\s*0\b/g) ?? [];
+
+    assert.equal(aiCalls.length, contract.expectedAiCalls, `${contract.name} AI call inventory changed`);
+    assert.equal(
+      openAiOnlyAllowlists.length,
+      aiCalls.length,
+      `${contract.name} must hard-pin every AI call to the OpenAI provider`,
+    );
+    assert.equal(
+      disabledSdkRetries.length,
+      aiCalls.length,
+      `${contract.name} must not add opaque SDK retries`,
+    );
+    for (const model of contract.expectedModels) assert.match(contract.source, new RegExp(model.replaceAll(".", "\\.")));
+    assert.doesNotMatch(contract.source, /\b(?:models|order):\s*\[/);
+    assert.doesNotMatch(contract.source, /openai\/gpt-5\.4-mini/);
+  }
+});
+
 test("one final Studio job reuses the first six behind one shared three-call ceiling", () => {
   const plan = serverStudioRemoteWorkPlan();
   assert.deepEqual(plan.settingWaves, [2]);
