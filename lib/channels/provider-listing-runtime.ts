@@ -780,7 +780,7 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
       returnAddressDetail: String(returnAddress.returnAddressDetail ?? ""),
       returnCharge: returnFee,
       vendorUserId: requestedBy,
-      requested: true,
+      requested: input.arguments.publicationIntent === "safe_test" ? false : true,
       items,
     },
   };

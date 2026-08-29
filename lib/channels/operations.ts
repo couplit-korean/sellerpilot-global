@@ -64,6 +64,10 @@ import {
   readLazadaListingPublicationState,
   type LazadaPublicationReadbackVerification,
 } from "./provider-lazada-publication-readback";
+import {
+  listingPublicationReadbackExpectation,
+  readCoupangListingPublicationState,
+} from "./listing-publication-readback";
 
 export const channelOperationNames = [
   "categories.list",
@@ -2818,6 +2822,81 @@ async function executeLazada(input: ExecuteInput) {
   return result(input, [writeStep], remoteId);
 }
 
+function listingPublicationReadbackRequested(input: ExecuteInput) {
+  return listingOperationRequiresVerifiedRemoteState(input.operation)
+    && input.arguments.publicationStateContract === listingRemoteStateContractVersion;
+}
+
+function publicationStateVerificationStep(
+  channel: ActiveChannelKey,
+  state: VerifiedListingRemoteState | undefined,
+  failureCode: string | undefined,
+): ChannelOperationStep {
+  return {
+    name: "publication-state-verification",
+    ok: Boolean(state),
+    status: state ? 200 : 422,
+    data: state
+      ? {
+          sellerpilotVerification: "VERIFIED_REMOTE_PUBLICATION_STATE",
+          visibility: state.visibility,
+          providerStatus: state.providerStatus,
+          imageCount: state.imageCount,
+        }
+      : {
+          sellerpilotVerification: "REMOTE_PUBLICATION_STATE_UNVERIFIED",
+          code: failureCode ?? `${channel.toUpperCase()}_PUBLICATION_READBACK_UNVERIFIED`,
+        },
+  };
+}
+
+async function coupangListingResultWithPublicationReadback(
+  input: ExecuteInput,
+  steps: ChannelOperationStep[],
+  remoteId: string,
+) {
+  if (!listingPublicationReadbackRequested(input) || steps.some((item) => !item.ok)) {
+    return result(input, steps, remoteId);
+  }
+  const expected = listingPublicationReadbackExpectation(input.arguments);
+  if (!expected) {
+    return result(input, [
+      ...steps,
+      publicationStateVerificationStep(input.channel, undefined, "COUPANG_PUBLICATION_EXPECTATION_MISSING"),
+    ], remoteId);
+  }
+  const readback = await readCoupangListingPublicationState({
+    operation: input.operation as "listing.create" | "listing.update" | "listing.stop",
+    intent: listingPublicationIntentFromArguments(input.arguments),
+    remoteId,
+    expected,
+    readSellerProduct: (sellerProductId) => coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/${pathSegment(sellerProductId)}`,
+    }),
+    readVendorItem: (vendorItemId) => coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${pathSegment(vendorItemId)}/inventories`,
+    }),
+  });
+  const readbackSteps: ChannelOperationStep[] = [];
+  if (readback.sellerProductReadback) {
+    readbackSteps.push(step("seller-product-publication-readback", readback.sellerProductReadback));
+  }
+  readback.vendorItemReadbacks.forEach(({ vendorItemId, remote }, index) => {
+    const vendorStep = step(`vendor-item-publication-readback:${index + 1}`, remote);
+    vendorStep.data = {
+      ...vendorStep.data,
+      sellerpilotVendorItemId: vendorItemId,
+    };
+    readbackSteps.push(vendorStep);
+  });
+  readbackSteps.push(publicationStateVerificationStep(input.channel, readback.state, readback.failureCode));
+  return result(input, [...steps, ...readbackSteps], remoteId, undefined, readback.state);
+}
+
 async function executeCoupang(input: ExecuteInput) {
   const vendorId = textValue(input.payload, "vendor_id");
   if (!vendorId) throw new Error("COUPANG_CREDENTIALS_MISSING");
@@ -2884,6 +2963,9 @@ async function executeCoupang(input: ExecuteInput) {
     const mergedBody = mergeCoupangListingUpdateBody(currentBody, patchBody);
     mergedBody.vendorId = vendorId;
     mergedBody.sellerProductId = patchBody.sellerProductId;
+    if (listingPublicationReadbackRequested(input)) {
+      mergedBody.requested = listingPublicationIntentFromArguments(input.arguments) === "live";
+    }
     const writeRemote = await coupangRequest({
       payload: input.payload,
       method: "PUT",
@@ -2896,10 +2978,13 @@ async function executeCoupang(input: ExecuteInput) {
     const readbackStep = listingUpdateReadbackStep("listing-readback", readbackRemote, input.channel, input.arguments);
     const readbackBody = objectValue(readbackRemote.data, "data", false);
     readbackStep.ok = readbackStep.ok && String(readbackBody.sellerProductId ?? "") === remoteId;
-    return result(input, [preflightStep, writeStep, readbackStep], remoteId);
+    return coupangListingResultWithPublicationReadback(input, [preflightStep, writeStep, readbackStep], remoteId);
   }
   if (input.operation === "listing.create") {
     const body: Record<string, unknown> = { ...objectValue(input.arguments, "body"), vendorId };
+    if (listingPublicationReadbackRequested(input)) {
+      body.requested = listingPublicationIntentFromArguments(input.arguments) === "live";
+    }
     const resumeRemoteId = stringArgument(input.arguments, "resumeRemoteId", false);
     const writeRemote = resumeRemoteId ? null : await coupangRequest({
       payload: input.payload,
@@ -2956,7 +3041,7 @@ async function executeCoupang(input: ExecuteInput) {
     let initialReadback = verifyReadback("listing-readback");
     if (body.requested !== true || initialReadback.approvalObserved) {
       initialReadback.readbackStep.ok = initialReadback.providerAndIdentityOk;
-      return result(input, [writeStep, initialReadback.readbackStep], remoteId);
+      return coupangListingResultWithPublicationReadback(input, [writeStep, initialReadback.readbackStep], remoteId);
     }
 
     // Coupang can return ID_GEN for several seconds after a successful create.
@@ -2974,7 +3059,7 @@ async function executeCoupang(input: ExecuteInput) {
     }
     if (initialReadback.approvalObserved) {
       initialReadback.readbackStep.ok = initialReadback.providerAndIdentityOk;
-      return result(input, [writeStep, initialReadback.readbackStep], remoteId);
+      return coupangListingResultWithPublicationReadback(input, [writeStep, initialReadback.readbackStep], remoteId);
     }
     initialReadback.readbackStep.ok = initialReadback.providerAndIdentityOk && initialReadback.saved;
     if (!initialReadback.readbackStep.ok) {
@@ -3005,12 +3090,20 @@ async function executeCoupang(input: ExecuteInput) {
       initialReadback.readbackStep.ok = true;
       approvalStep.ok = true;
     }
-    return result(input, [writeStep, initialReadback.readbackStep, approvalStep, approvalReadback.readbackStep], remoteId);
+    return coupangListingResultWithPublicationReadback(
+      input,
+      [writeStep, initialReadback.readbackStep, approvalStep, approvalReadback.readbackStep],
+      remoteId,
+    );
   }
   if (input.operation === "listing.stop") {
     const vendorItemId = pathSegment(stringArgument(input.arguments, "vendorItemId"));
     const remote = await coupangRequest({ payload: input.payload, method: "PUT", path: `${sellerProductsPath.replace("seller-products", "vendor-items")}/${vendorItemId}/sales/stop` });
-    return result(input, [step("sales-stop", remote)], vendorItemId);
+    return coupangListingResultWithPublicationReadback(
+      input,
+      [step("sales-stop", remote)],
+      decodeURIComponent(vendorItemId),
+    );
   }
   if (input.operation === "price.update") {
     const vendorItemId = pathSegment(stringArgument(input.arguments, "vendorItemId"));
