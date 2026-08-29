@@ -217,6 +217,14 @@ test("server product research normalization rejects irrelevant objects and drops
     () => normalizeGeneratedProductResearchDraft({ unknown: "value" }, "테스트 상품"),
     /gateway_result_invalid/,
   );
+  assert.throws(
+    () => normalizeGeneratedProductResearchDraft({ searchQueries: [null] }, "테스트 상품"),
+    /gateway_result_invalid/,
+  );
+  assert.throws(
+    () => normalizeGeneratedProductResearchDraft({ details: { features: [null] } }, "테스트 상품"),
+    /gateway_result_invalid/,
+  );
   const normalized = normalizeGeneratedProductResearchDraft({
     summary: "확인된 입력을 정리한 검토용 상품정보 초안으로 실제 라벨 확인이 필요합니다.",
     suggestedFields: {
@@ -292,7 +300,7 @@ test("server product research makes fetched reference status authoritative", asy
       }),
       generate: async () => JSON.stringify({
         ...validResult(),
-        sources: [{ url: "https://hallucinated.example/", title: "Wrong", status: "read" }],
+        sources: ["https://hallucinated.example/"],
       }),
     },
   );

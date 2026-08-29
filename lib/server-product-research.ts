@@ -350,6 +350,21 @@ export function normalizeGeneratedProductResearchDraft(value: unknown, researchI
   const suggested = researchRecord(root.suggestedFields);
   const details = researchRecord(root.details);
   const productName = boundedResearchText(suggested.productName, 160);
+  const hasValidSearchQuery = Array.isArray(root.searchQueries)
+    && root.searchQueries.some((item) => {
+      const candidate = researchRecord(item);
+      return RESEARCH_SEARCH_LOCALES.includes(candidate.locale as ResearchSearchLocale)
+        && boundedResearchText(candidate.query, 160, 2) != null;
+    });
+  const hasValidFeature = Array.isArray(details.features)
+    && details.features.some((item) => boundedResearchText(item, 300) != null);
+  const hasValidSpecification = Array.isArray(details.specifications)
+    && details.specifications.some((item) => {
+      const candidate = researchRecord(item);
+      return boundedResearchText(candidate.label, 100) != null
+        && boundedResearchText(candidate.value, 500) != null
+        && boundedResearchText(candidate.evidence, 500) != null;
+    });
   const hasRecognizedEnvelope = [
     "mode", "summary", "suggestedFields", "searchQueries", "details", "sources", "warnings",
   ].some((key) => Object.prototype.hasOwnProperty.call(root, key));
@@ -358,9 +373,9 @@ export function normalizeGeneratedProductResearchDraft(value: unknown, researchI
     productName,
     boundedResearchText(suggested.categoryHint, 120),
     boundedResearchText(suggested.description, 4_000),
-    Array.isArray(root.searchQueries) && root.searchQueries.length > 0 ? "search" : null,
-    Array.isArray(details.features) && details.features.length > 0 ? "feature" : null,
-    Array.isArray(details.specifications) && details.specifications.length > 0 ? "specification" : null,
+    hasValidSearchQuery ? "search" : null,
+    hasValidFeature ? "feature" : null,
+    hasValidSpecification ? "specification" : null,
   ].some(Boolean);
   if (!hasRecognizedEnvelope || !hasSubstantiveDraft) {
     throw new ProductResearchExecutionError("gateway_result_invalid");
@@ -369,7 +384,7 @@ export function normalizeGeneratedProductResearchDraft(value: unknown, researchI
     .replace(/https?:\/\/\S+/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const searchBase = (inputSearchText || "판매자 입력 상품").slice(0, 120).trim();
+  const searchBase = (productName || inputSearchText || "판매자 입력 상품").slice(0, 120).trim();
   const searchQueries: Array<{ locale: ResearchSearchLocale; query: string }> = [];
   const seenLocales = new Set<ResearchSearchLocale>();
   if (Array.isArray(root.searchQueries)) {
