@@ -44,7 +44,7 @@ test("the UI names first-stage concurrency, human review, detail authoring, then
   assert.match(page, /상세페이지가 완료된 뒤에만 채널 업로드 단계가 열립니다/);
   assert.match(page, /동일상품 가격은 별도 확인 중/);
   assert.match(page, />상세페이지 제작 시작</);
-  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
+  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| recoveringProductResearch \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
 });
 
 test("first-stage upload sends only the current main photo and approval follows editable seller fields", async () => {

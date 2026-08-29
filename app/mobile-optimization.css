@@ -2435,6 +2435,7 @@
   .upload-panel > *,
   .product-research-panel,
   .product-research-input,
+  .product-research-recovery,
   .product-research-result,
   .product-research-detail-grid,
   .competitor-market-groups,
@@ -2468,6 +2469,17 @@
   .product-research-input button {
     width: 100%;
     max-width: 100%;
+  }
+
+  .product-research-recovery,
+  .product-research-recovery label {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-research-recovery input,
+  .product-research-recovery button {
+    width: 100%;
+    min-height: 44px;
   }
 
   .product-research-detail-grid dd,

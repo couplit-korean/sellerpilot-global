@@ -510,7 +510,13 @@ async function runReviewedTransientPipelineFixture(options: {
     }],
   };
 
-  const response = await runOneServerProductStudio({
+  // AbortSignal.timeout uses an unref'ed timer in Node. Keep this fixture's
+  // event loop alive long enough for timeout-only branches to settle instead
+  // of letting node:test cancel the pending promise when the file runs alone.
+  const timeoutBranchKeepAlive = setTimeout(() => undefined, 5_000);
+  let response: Awaited<ReturnType<typeof runOneServerProductStudio>>;
+  try {
+    response = await runOneServerProductStudio({
     tokenHash: "f".repeat(64),
     runtimeTimeoutMs: options.runtimeTimeoutMs ?? 120_000,
     rpc: async (name, arguments_ = {}) => {
@@ -665,6 +671,9 @@ async function runReviewedTransientPipelineFixture(options: {
     },
     logError: (stage, details) => logs.push({ stage, details }),
   });
+  } finally {
+    clearTimeout(timeoutBranchKeepAlive);
+  }
 
   return {
     response,
@@ -1165,9 +1174,12 @@ test("one transient localization chunk atomically replaces all countries from re
 
 test("one scoped localization deadline becomes gateway_timeout and rebuilds all reviewed countries", async (context) => {
   const originalTimeout = AbortSignal.timeout;
-  context.mock.method(AbortSignal, "timeout", (delay: number) => (
-    originalTimeout(delay === 45_000 ? 20 : delay)
-  ));
+  context.mock.method(AbortSignal, "timeout", (delay: number) => {
+    if (delay !== 45_000) return originalTimeout(delay);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException("Test operation timed out", "TimeoutError")), 20);
+    return controller.signal;
+  });
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "localization-scoped-timeout",
   });
@@ -1420,9 +1432,12 @@ test("the shared remote gate caps all lanes at three and one image 429 cancels q
 
 test("a queued image receives its full operation timeout only after the shared gate grants a permit", async (context) => {
   const originalTimeout = AbortSignal.timeout;
-  context.mock.method(AbortSignal, "timeout", (delay: number) => (
-    originalTimeout(delay === 40_000 ? 20 : delay)
-  ));
+  context.mock.method(AbortSignal, "timeout", (delay: number) => {
+    if (delay !== 40_000) return originalTimeout(delay);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException("Test operation timed out", "TimeoutError")), 20);
+    return controller.signal;
+  });
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "queued-image-timeout-budget",
   });

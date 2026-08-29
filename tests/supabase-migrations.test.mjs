@@ -473,6 +473,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260829080317_fail_closed_overseas_listing_create.sql",
       "20260829114703_accept_server_product_research_completion.sql",
       "20260829165803_enforce_category_publication_environment_and_market.sql",
+      "20260830090000_recover_product_research_context.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;

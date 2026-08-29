@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import sharp from "sharp";
 import {
   expandStudioCleanupStoragePaths,
   normalizedStudioImagePath,
@@ -11,6 +13,7 @@ import {
 import {
   maximumPreservedStudioImageInspectionConcurrency,
   sha256PreservedStudioOriginalImage,
+  verifyGeneratedStudioImages,
   verifyOriginalStudioImages,
   verifyPreservedStudioImages,
 } from "../lib/studio-image-validation";
@@ -91,6 +94,36 @@ test("the server hashes the bounded preserved main original instead of trusting 
     { originalBytes: first.size + 1, originalMediaType: "image/png", originalWidth: 600, originalHeight: 600 },
     async () => first,
   ), null);
+});
+
+test("recovered generated assets must match stored PNG geometry and raw SHA-256", async () => {
+  const bytes = await sharp({
+    create: { width: 64, height: 48, channels: 4, background: { r: 24, g: 80, b: 160, alpha: 1 } },
+  }).png().toBuffer();
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const entry = { id: "portrait", path: "results/job/portrait.png", digest, width: 64, height: 48 };
+  const download = async () => new Response(bytes, {
+    status: 200,
+    headers: { "content-type": "image/png", "content-length": String(bytes.byteLength) },
+  });
+
+  assert.equal(await verifyGeneratedStudioImages({ entries: [entry], download }), true);
+  assert.equal(await verifyGeneratedStudioImages({
+    entries: [{ ...entry, digest: "0".repeat(64) }],
+    download,
+  }), false);
+  assert.equal(await verifyGeneratedStudioImages({
+    entries: [{ ...entry, width: 65 }],
+    download,
+  }), false);
+  assert.equal(await verifyGeneratedStudioImages({
+    entries: [entry],
+    download: async () => new Blob([bytes], { type: "image/jpeg" }),
+  }), false);
+  assert.equal(await verifyGeneratedStudioImages({
+    entries: [entry, { ...entry }],
+    download,
+  }), false);
 });
 
 test("retention cleanup expands normalized inputs to originals without changing generated assets", () => {

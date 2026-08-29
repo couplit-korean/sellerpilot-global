@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import sharp from "sharp";
 
 import {
   maximumStudioSourceImageBytes,
@@ -9,6 +10,7 @@ import {
 } from "./studio-source-photo-policy";
 
 const maximumNormalizedStudioImageBytes = 3 * 1024 * 1024;
+const maximumGeneratedStudioImageBytes = 20 * 1024 * 1024;
 const studioImageInspectionConcurrency = 3;
 const studioSourceImageInspectionConcurrency = 3;
 
@@ -245,6 +247,60 @@ export async function verifyPreservedStudioImages({
     verifyOriginalStudioImages(originalPaths, specs, download),
   ]);
   return { normalized, originals };
+}
+
+export async function verifyGeneratedStudioImages({
+  entries,
+  download,
+}: {
+  entries: Array<{
+    id: string;
+    path: string;
+    digest: string;
+    width: number;
+    height: number;
+  }>;
+  download: (path: string) => Promise<Blob | Response | null>;
+}) {
+  if (entries.length < 1 || entries.length > 16
+      || new Set(entries.map((entry) => entry.id)).size !== entries.length
+      || new Set(entries.map((entry) => entry.path)).size !== entries.length
+      || new Set(entries.map((entry) => entry.digest)).size !== entries.length
+      || entries.some((entry) => !/^[a-f0-9]{64}$/.test(entry.digest)
+        || !Number.isSafeInteger(entry.width)
+        || !Number.isSafeInteger(entry.height)
+        || entry.width < 1
+        || entry.height < 1)) return false;
+  let nextIndex = 0;
+  let valid = true;
+  const inspect = async () => {
+    while (valid && nextIndex < entries.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const entry = entries[index];
+      const source = await download(entry.path);
+      if (!source) {
+        valid = false;
+        return;
+      }
+      const bytes = await boundedImageBytes(source, "image/png", maximumGeneratedStudioImageBytes);
+      if (!bytes || createHash("sha256").update(bytes).digest("hex") !== entry.digest) {
+        valid = false;
+        return;
+      }
+      const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: 16_000_000 })
+        .metadata()
+        .catch(() => null);
+      if (metadata?.format !== "png"
+          || metadata.width !== entry.width
+          || metadata.height !== entry.height) {
+        valid = false;
+        return;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(studioImageInspectionConcurrency, entries.length) }, () => inspect()));
+  return valid && nextIndex === entries.length;
 }
 
 export async function verifyOriginalStudioImages(

@@ -505,7 +505,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /const competitorResearchBlocksAnalysis = isCompetitorResearchBlockingAnalysis\([\s\S]{0,160}pendingCompetitorBypassConfirmed/);
   const finalAuthoring = page.slice(page.indexOf("const startAutomation = () =>"), page.indexOf("const totalPhotoCount ="));
   assert.doesNotMatch(finalAuthoring, /competitorResearchBlocksAnalysis|manualMvp|manual_mvp/);
-  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
+  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| recoveringProductResearch \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
   assert.match(page, /동일상품 가격은 별도 확인 중/);
   assert.match(page, /상세페이지 제작 시작/);
   assert.match(page, /가격 없이 계속/);

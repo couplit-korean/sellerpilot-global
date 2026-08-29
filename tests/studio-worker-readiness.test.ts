@@ -301,7 +301,7 @@ test("product research identifies the Vercel OIDC server path without erasing le
   assert.match(runtime, /const generated = parseGeneratedProductResearchJson\(generatedText\)/);
   assert.match(runtime, /normalizeGeneratedProductResearchDraft\(generated, normalizedInput\)/);
   assert.match(page, /if \(!isStudioExecutionReady\(studioWorkerReadiness\)\)[\s\S]{0,260}setProductResearchError\(message\)/);
-  assert.match(page, /disabled=\{researchingProduct \? false : intake\.researchInput\.trim\(\)\.length < 2 \|\| !mainPhoto \|\| photoSelectionsProcessing \|\| running \|\| !studioWorkerAvailable\}/);
+  assert.match(page, /disabled=\{researchingProduct \? false : recoveringProductResearch \|\| intake\.researchInput\.trim\(\)\.length < 2 \|\| !mainPhoto \|\| photoSelectionsProcessing \|\| running \|\| !studioWorkerAvailable\}/);
   assert.match(page, /Gateway 점검 필요/);
   assert.match(page, /researchResult\.mode === "server-research" \? "Vercel OIDC 서버 AI 상세정보 반영 완료" : "기존 AI 상세정보 반영 완료"/);
   assert.doesNotMatch(page, /이미지·CLI 조사·판매자 확인값/);

@@ -224,6 +224,24 @@ type ProductResearchUiResult = ProductResearchResult & {
   generatedImages?: Array<{ id: string; url: string | null }>;
 };
 
+type ProductResearchRecoveryPayload = {
+  jobId?: string;
+  researchInput?: string;
+  sourcePhotoSha256?: string;
+  lineageReceipt?: string;
+  sourcePhoto?: {
+    url?: string;
+    name?: string;
+    mediaType?: string;
+    bytes?: number;
+    width?: number;
+    height?: number;
+  };
+  result?: ProductResearchUiResult;
+  code?: string;
+  message?: string;
+};
+
 function exactFirstDraftImages(result: ProductResearchUiResult): FirstDraftGeneratedImage[] | null {
   const images = result.generatedImages ?? [];
   if (images.length !== coreFirstDraftAssetIds.length) return null;
@@ -2644,6 +2662,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
   const mainPhotoRef = useRef<UploadedPhoto | null>(null);
   const previousMainPhotoFileRef = useRef<File | null>(null);
+  const restoredMainPhotoFileRef = useRef<File | null>(null);
   const previousSupportingPhotoSelectionsRef = useRef<string[] | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
   const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
@@ -2662,6 +2681,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const competitorResearchControllerRef = useRef<AbortController | null>(null);
   const productResearchControllerRef = useRef<AbortController | null>(null);
   const productResearchGenerationRef = useRef(0);
+  const productResearchRecoveryControllerRef = useRef<AbortController | null>(null);
+  const productResearchRecoveryGenerationRef = useRef(0);
   const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
   const intakeRef = useRef(intake);
   const productResearchInputRef = useRef(intake.researchInput);
@@ -2670,6 +2691,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [uploadError, setUploadError] = useState("");
   const [productResearchError, setProductResearchError] = useState("");
   const [researchingProduct, setResearchingProduct] = useState(false);
+  const [recoveringProductResearch, setRecoveringProductResearch] = useState(false);
+  const [researchRecoveryJobId, setResearchRecoveryJobId] = useState("");
   const [researchResult, setResearchResult] = useState<ProductResearchUiResult | null>(null);
   const [firstDraftImages, setFirstDraftImages] = useState<FirstDraftGeneratedImage[]>([]);
   const [firstDraftReviewed, setFirstDraftReviewed] = useState(false);
@@ -2700,6 +2723,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   }, [initialProduct?.id, setAnalyzedProductId]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const candidate = new URLSearchParams(window.location.search).get("researchJobId")?.trim() ?? "";
+      if (isProductResearchJobId(candidate)) setResearchRecoveryJobId(candidate);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     intakeRef.current = intake;
   }, [intake]);
 
@@ -2709,6 +2740,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     mainPhotoRef.current = mainPhoto;
     if (previousFile === nextFile) return;
     previousMainPhotoFileRef.current = nextFile;
+    if (nextFile && restoredMainPhotoFileRef.current === nextFile) {
+      restoredMainPhotoFileRef.current = null;
+      return;
+    }
 
     const invalidatedExistingContext = window.sessionStorage.getItem(productResearchPendingStorageKey) !== null
       || Boolean(productResearchControllerRef.current)
@@ -2854,6 +2889,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       competitorResearchControllerRef.current?.abort();
       productResearchControllerRef.current?.abort();
       productResearchGenerationRef.current += 1;
+      productResearchRecoveryControllerRef.current?.abort();
+      productResearchRecoveryControllerRef.current = null;
+      productResearchRecoveryGenerationRef.current += 1;
       for (const controller of decodeControllers.values()) {
         controller.abort(new DOMException("상품 등록 사진 화면을 닫았습니다.", "AbortError"));
       }
@@ -3017,6 +3055,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const file = event.target.files?.[0];
     if (!file) return;
     event.target.value = "";
+    productResearchRecoveryControllerRef.current?.abort(new DOMException("새 대표사진을 선택했습니다.", "AbortError"));
+    productResearchRecoveryControllerRef.current = null;
+    productResearchRecoveryGenerationRef.current += 1;
+    setRecoveringProductResearch(false);
     try {
       assertStudioSourceFile(file);
     } catch (error) {
@@ -3076,9 +3118,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const waitForProductResearch = async (jobId: string, accessToken: string, signal: AbortSignal) => {
-    const deadline = Date.now() + 20 * 60_000;
+    const deadline = deadlineAfter(20 * 60_000);
     let consecutiveFailures = 0;
-    while (Date.now() < deadline) {
+    while (deadlineIsActive(deadline)) {
       if (signal.aborted) throw signal.reason ?? new DOMException("상품정보 확인이 취소되었습니다.", "AbortError");
       let response: Response;
       let payload: {
@@ -3163,6 +3205,269 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     });
   };
 
+  const applyCompletedProductResearch = ({
+    result,
+    jobId,
+    sourcePhotoSha256,
+    lineageReceipt,
+    researchInput,
+    recovery = false,
+  }: {
+    result: ProductResearchUiResult;
+    jobId: string;
+    sourcePhotoSha256: string;
+    lineageReceipt: string;
+    researchInput: string;
+    recovery?: boolean;
+  }) => {
+    const generatedFirstDraftImages = exactFirstDraftImages(result);
+    if (!generatedFirstDraftImages) throw new ProductResearchTerminalError("gateway_result_invalid");
+    const suggestion = result.suggestedFields;
+    const firstReadableSource = result.sources.find((source) => source.status === "read")?.url ?? "";
+    const currentIntake = recovery
+      ? clearUnchangedResearchAppliedValues(
+        intakeRef.current,
+        emptyProductIntake,
+        researchAppliedValuesRef.current,
+      )
+      : intakeRef.current;
+    if (recovery) researchAppliedValuesRef.current = {};
+    const nextIntake: ProductIntakeDraft = {
+      ...currentIntake,
+      researchInput,
+      productName: currentIntake.productName.trim() || suggestion.productName || "",
+      sellerSku: currentIntake.sellerSku.trim() || `AUTO-${jobId.replaceAll("-", "").slice(0, 20).toUpperCase()}`,
+      categoryHint: currentIntake.categoryHint.trim() || suggestion.categoryHint || "",
+      brandName: currentIntake.brandName.trim() || confirmedProductResearchValue(suggestion.brandName),
+      manufacturer: currentIntake.manufacturer.trim() || confirmedProductResearchValue(suggestion.manufacturer),
+      countryOfOrigin: currentIntake.countryOfOrigin.trim() || confirmedProductResearchValue(suggestion.countryOfOrigin),
+      material: currentIntake.material.trim() || confirmedProductResearchValue(suggestion.material),
+      packageContents: currentIntake.packageContents.trim() || normalizeProductSaleConfiguration(suggestion.packageContents),
+      description: currentIntake.description.trim() || confirmedProductResearchValue(suggestion.description),
+      productUrl: currentIntake.productUrl.trim() || firstReadableSource,
+      gtinStatus: currentIntake.gtin || !suggestion.gtin ? currentIntake.gtinStatus : "HAS_GTIN",
+      gtin: currentIntake.gtin || suggestion.gtin || "",
+    };
+    researchAppliedValuesRef.current = collectResearchAppliedValues(
+      currentIntake,
+      nextIntake,
+      ["productName", "sellerSku", "categoryHint", "brandName", "manufacturer", "countryOfOrigin", "material", "packageContents", "description", "productUrl", "gtinStatus", "gtin"],
+      researchAppliedValuesRef.current,
+    );
+    productResearchInputRef.current = researchInput;
+    intakeRef.current = nextIntake;
+    setIntake(nextIntake);
+    setResearchResult(result);
+    setFirstDraftImages(generatedFirstDraftImages);
+    setFirstDraftReviewed(false);
+    setUploadError("");
+    setProductResearchError("");
+    setResearchCompetitors([]);
+    setCompetitorProviders([]);
+    setPendingCompetitorBypassConfirmed(false);
+    setCompetitorResearchRetryAvailable(false);
+    const initialCompetitorResearchPath = buildCompetitorResearchRetryPath(
+      nextIntake,
+      result.searchQueries.map((searchQuery) => searchQuery.query),
+    );
+    if (initialCompetitorResearchPath) {
+      runCompetitorResearchPolling(initialCompetitorResearchPath, { items: [], providers: [] });
+    } else {
+      competitorResearchControllerRef.current?.abort();
+      competitorResearchControllerRef.current = null;
+      setCompetitorResearchRetryInput("");
+      setCompetitorResearchState("idle");
+    }
+    setSourceResearchJobId(jobId);
+    setSourceResearchPhotoSha256(sourcePhotoSha256);
+    setSourceResearchLineageReceipt(lineageReceipt);
+    setFirstDraftGenerated(true);
+    setManualErrors({});
+    if (recovery) closeGeneratedProductRegistration();
+    window.sessionStorage.removeItem(productResearchPendingStorageKey);
+    notify(recovery
+      ? "완료된 1차 작업의 원본사진·상품정보·이미지 6장을 복구했습니다. 사람이 사실정보와 이미지를 확인한 뒤 상세페이지 제작을 시작해 주세요."
+      : "1차 상품정보와 핵심 이미지 6장을 만들었습니다. 사람이 사실정보와 이미지를 확인한 뒤 상세페이지 제작을 시작해 주세요.");
+  };
+
+  const recoverCompletedProductResearch = async () => {
+    const jobId = researchRecoveryJobId.trim();
+    if (recoveringProductResearch || researchingProduct) return;
+    if (initialProduct?.id) {
+      const message = "기존 상품 재등록 화면에서는 다른 1차 작업을 연결할 수 없습니다. 새 상품 등록 화면에서 완료 작업을 불러와 주세요.";
+      setProductResearchError(message);
+      notify(message);
+      return;
+    }
+    if (running || queuedJobId) {
+      const message = queuedJobId
+        ? "이미 상세페이지 제작 큐에 접수된 상품이 있어 다른 1차 작업으로 바꿀 수 없습니다. 새 상품 등록을 시작해 주세요."
+        : "현재 상세페이지 제작이 끝난 뒤 완료된 1차 작업을 불러와 주세요.";
+      setProductResearchError(message);
+      notify(message);
+      return;
+    }
+    if (!isProductResearchJobId(jobId)) {
+      const message = "완료된 1차 작업 ID(UUID)를 확인해 주세요.";
+      setProductResearchError(message);
+      notify(message);
+      return;
+    }
+    productResearchRecoveryControllerRef.current?.abort();
+    const recoveryController = new AbortController();
+    const recoveryGeneration = productResearchRecoveryGenerationRef.current + 1;
+    productResearchRecoveryGenerationRef.current = recoveryGeneration;
+    productResearchRecoveryControllerRef.current = recoveryController;
+    const recoveryPhotoToken = photoSelectionFence.nextMain();
+    const scope = "main";
+    abortPhotoDecodeScope(scope, "완료된 작업의 원본사진 복구를 시작했습니다.");
+    setRecoveringProductResearch(true);
+    setUploadError("");
+    setProductResearchError("");
+    let budgetReservation: StudioPhotoBudgetReservation | null = null;
+    let decodeController: AbortController | null = null;
+    try {
+      const recoveryScope = createPageAbortScope([recoveryController.signal], 180_000, "완료된 1차 작업 복구 시간이 초과되었습니다.");
+      let response: Response;
+      let payload: ProductResearchRecoveryPayload;
+      try {
+        response = await authenticatedFetch("/api/ai/product-research/recover", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jobId }),
+          cache: "no-store",
+          signal: recoveryScope.signal,
+        });
+        payload = await waitForAbortablePromise(
+          response.json().catch(() => ({ message: "완료된 1차 작업 응답을 읽지 못했습니다." })),
+          recoveryScope.signal,
+        ) as ProductResearchRecoveryPayload;
+      } finally {
+        recoveryScope.dispose();
+      }
+      if (!response.ok) throw new Error(payload.message || "완료된 1차 작업을 복구하지 못했습니다.");
+      if (!publishingMountedRef.current
+          || recoveryController.signal.aborted
+          || productResearchRecoveryControllerRef.current !== recoveryController
+          || productResearchRecoveryGenerationRef.current !== recoveryGeneration) return;
+
+      const sourcePhoto = payload.sourcePhoto;
+      const result = payload.result;
+      if (payload.jobId !== jobId
+          || typeof payload.researchInput !== "string"
+          || payload.researchInput.trim().length < 2
+          || payload.researchInput.length > 12_000
+          || typeof payload.sourcePhotoSha256 !== "string"
+          || !productSourcePhotoSha256Pattern.test(payload.sourcePhotoSha256)
+          || typeof payload.lineageReceipt !== "string"
+          || payload.lineageReceipt.length < 32
+          || payload.lineageReceipt.length > 2_000
+          || !sourcePhoto
+          || typeof sourcePhoto.url !== "string"
+          || !sourcePhoto.url.startsWith("https://")
+          || typeof sourcePhoto.name !== "string"
+          || sourcePhoto.name.length === 0
+          || typeof sourcePhoto.mediaType !== "string"
+          || !["image/jpeg", "image/png", "image/webp"].includes(sourcePhoto.mediaType)
+          || !Number.isSafeInteger(sourcePhoto.bytes)
+          || (sourcePhoto.bytes ?? 0) <= 0
+          || !Number.isSafeInteger(sourcePhoto.width)
+          || (sourcePhoto.width ?? 0) <= 0
+          || !Number.isSafeInteger(sourcePhoto.height)
+          || (sourcePhoto.height ?? 0) <= 0
+          || !result
+          || (result.mode !== "server-research" && result.mode !== "cli-research")
+          || !exactFirstDraftImages(result)) {
+        throw new Error("완료된 1차 작업의 사진·결과 연결이 올바르지 않습니다.");
+      }
+
+      const sourceScope = createPageAbortScope([recoveryController.signal], 60_000, "완료된 원본사진을 다시 받는 시간이 초과되었습니다.");
+      let sourceResponse: Response;
+      let sourceBlob: Blob;
+      try {
+        sourceResponse = await fetch(sourcePhoto.url, { cache: "no-store", signal: sourceScope.signal });
+        if (!sourceResponse.ok) throw new Error("완료된 1차 작업의 원본사진을 다시 받지 못했습니다.");
+        sourceBlob = await waitForAbortablePromise(sourceResponse.blob(), sourceScope.signal);
+      } finally {
+        sourceScope.dispose();
+      }
+      if (sourceBlob.size !== sourcePhoto.bytes) {
+        throw new Error("복구한 원본사진의 크기가 저장된 작업과 일치하지 않습니다.");
+      }
+      const file = new File([sourceBlob], sourcePhoto.name, {
+        type: sourcePhoto.mediaType,
+        lastModified: 0,
+      });
+      assertStudioSourceFile(file);
+      const sourcePhotoSha256 = await productSourcePhotoSha256(file);
+      if (sourcePhotoSha256 !== payload.sourcePhotoSha256) {
+        throw new Error("복구한 원본사진의 확인값이 완료된 1차 작업과 일치하지 않습니다.");
+      }
+      if (!publishingMountedRef.current
+          || recoveryController.signal.aborted
+          || productResearchRecoveryControllerRef.current !== recoveryController
+          || productResearchRecoveryGenerationRef.current !== recoveryGeneration) return;
+
+      budgetReservation = photoSelectionBudget.reserve([{ key: "main", size: file.size }]);
+      decodeController = beginPhotoDecodeScope(scope);
+      beginPhotoSelectionProcessing();
+      const photo = await photoDecodeGate.run(
+        () => toPhoto(file, "main", decodeController!.signal),
+        decodeController.signal,
+      );
+      if (releaseStaleRevisionPhoto(
+        publishingMountedRef.current
+          && !recoveryController.signal.aborted
+          && productResearchRecoveryControllerRef.current === recoveryController
+          && productResearchRecoveryGenerationRef.current === recoveryGeneration
+          && photoSelectionFence.isCurrent(recoveryPhotoToken)
+          && photoSelectionBudget.isCurrent(budgetReservation),
+        photo.url,
+        releasePhotoUrl,
+      )) return;
+      if (photo.originalWidth !== sourcePhoto.width || photo.originalHeight !== sourcePhoto.height) {
+        releasePhotoUrl(photo.url);
+        throw new Error("복구한 원본사진의 해상도가 완료된 1차 작업과 일치하지 않습니다.");
+      }
+      if (!photoSelectionBudget.commit(budgetReservation, [{ key: "main", size: file.size }])) {
+        releasePhotoUrl(photo.url);
+        return;
+      }
+      restoredMainPhotoFileRef.current = file;
+      setMainPhoto((current) => {
+        if (current) releasePhotoUrl(current.url);
+        return photo;
+      });
+      applyCompletedProductResearch({
+        result,
+        jobId,
+        sourcePhotoSha256,
+        lineageReceipt: payload.lineageReceipt,
+        researchInput: payload.researchInput,
+        recovery: true,
+      });
+    } catch (error) {
+      if (recoveryController.signal.aborted
+          || productResearchRecoveryControllerRef.current !== recoveryController
+          || productResearchRecoveryGenerationRef.current !== recoveryGeneration
+          || !publishingMountedRef.current) return;
+      const message = error instanceof Error ? error.message : "완료된 1차 작업을 복구하지 못했습니다.";
+      setUploadError(message);
+      setProductResearchError(message);
+      notify(message);
+    } finally {
+      if (budgetReservation) photoSelectionBudget.cancel(budgetReservation);
+      if (decodeController) {
+        finishPhotoDecodeScope(scope, decodeController);
+        endPhotoSelectionProcessing();
+      }
+      if (productResearchRecoveryControllerRef.current === recoveryController) {
+        productResearchRecoveryControllerRef.current = null;
+        if (publishingMountedRef.current) setRecoveringProductResearch(false);
+      }
+    }
+  };
+
   const retryCompetitorResearch = () => {
     if (!competitorResearchRetryInput) return;
     notify("같은 검색 조건으로 동일 상품 가격을 다시 확인합니다.");
@@ -3190,8 +3495,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const researchProductInformation = async () => {
     const researchInput = intake.researchInput.trim();
-    if (researchingProduct || researchInput.length < 2) {
-      if (!researchingProduct) notify("상품 판매페이지 링크, 모델명 또는 설명을 입력해 주세요.");
+    if (researchingProduct || recoveringProductResearch || researchInput.length < 2) {
+      if (recoveringProductResearch) notify("완료된 1차 작업을 불러온 뒤 현재 입력으로 새 생성을 시작할 수 있습니다.");
+      else if (!researchingProduct) notify("상품 판매페이지 링크, 모델명 또는 설명을 입력해 주세요.");
       return;
     }
     const sourceMainPhoto = mainPhotoRef.current ?? mainPhoto;
@@ -3272,7 +3578,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           imageSpecs = uploaded.imageSpecs;
           cleanupPaths = uploaded.allUploadedPaths;
         }
-        const createdAt = pendingResearch?.createdAt ?? Date.now();
+        const createdAt = pendingResearch?.createdAt ?? deadlineAfter(0);
         window.sessionStorage.setItem(productResearchPendingStorageKey, JSON.stringify({
           version: 3,
           jobId,
@@ -3360,53 +3666,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           || productResearchInputRef.current.trim() !== researchInput
           || mainPhotoRef.current?.file !== sourceMainPhoto.file
           || productResearchGenerationRef.current !== productResearchGeneration) return;
-      const generatedFirstDraftImages = exactFirstDraftImages(result);
-      if (!generatedFirstDraftImages) {
-        throw new ProductResearchTerminalError("gateway_result_invalid");
-      }
-      const suggestion = result.suggestedFields;
-      const firstReadableSource = result.sources.find((source) => source.status === "read")?.url ?? "";
-      const currentIntake = intakeRef.current;
-      const nextIntake: ProductIntakeDraft = {
-        ...currentIntake,
-        productName: currentIntake.productName.trim() || suggestion.productName || "",
-        sellerSku: currentIntake.sellerSku.trim() || `AUTO-${new Date().toISOString().slice(2, 10).replaceAll("-", "")}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`,
-        categoryHint: currentIntake.categoryHint.trim() || suggestion.categoryHint || "",
-        brandName: currentIntake.brandName.trim() || confirmedProductResearchValue(suggestion.brandName),
-        manufacturer: currentIntake.manufacturer.trim() || confirmedProductResearchValue(suggestion.manufacturer),
-        countryOfOrigin: currentIntake.countryOfOrigin.trim() || confirmedProductResearchValue(suggestion.countryOfOrigin),
-        material: currentIntake.material.trim() || confirmedProductResearchValue(suggestion.material),
-        packageContents: currentIntake.packageContents.trim() || normalizeProductSaleConfiguration(suggestion.packageContents),
-        description: currentIntake.description.trim() || confirmedProductResearchValue(suggestion.description),
-        productUrl: currentIntake.productUrl.trim() || firstReadableSource,
-        gtinStatus: currentIntake.gtin || !suggestion.gtin ? currentIntake.gtinStatus : "HAS_GTIN",
-        gtin: currentIntake.gtin || suggestion.gtin || "",
-      };
-      researchAppliedValuesRef.current = collectResearchAppliedValues(
-        currentIntake,
-        nextIntake,
-        ["productName", "sellerSku", "categoryHint", "brandName", "manufacturer", "countryOfOrigin", "material", "packageContents", "description", "productUrl", "gtinStatus", "gtin"],
-        researchAppliedValuesRef.current,
-      );
-      intakeRef.current = nextIntake;
-      setIntake(nextIntake);
-      setResearchResult(result);
-      setFirstDraftImages(generatedFirstDraftImages);
-      setFirstDraftReviewed(false);
-      setProductResearchError("");
-      const initialCompetitorResearchPath = buildCompetitorResearchRetryPath(
-        nextIntake,
-        result.searchQueries.map((searchQuery) => searchQuery.query),
-      );
-      if (initialCompetitorResearchPath) {
-        runCompetitorResearchPolling(initialCompetitorResearchPath, { items: [], providers: [] });
-      }
-      setSourceResearchJobId(jobId);
-      setSourceResearchPhotoSha256(sourcePhotoSha256);
-      setSourceResearchLineageReceipt(lineageReceipt);
-      setFirstDraftGenerated(true);
-      setManualErrors({});
-      notify("1차 상품정보와 핵심 이미지 6장을 만들었습니다. 사람이 사실정보와 이미지를 확인한 뒤 상세페이지 제작을 시작해 주세요.");
+      applyCompletedProductResearch({
+        result,
+        jobId,
+        sourcePhotoSha256,
+        lineageReceipt,
+        researchInput,
+      });
     } catch (error) {
       if (shouldClearPendingProductResearch(error)) {
         window.sessionStorage.removeItem(productResearchPendingStorageKey);
@@ -3661,6 +3927,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify("1차 상품정보 확인을 마치거나 중단한 뒤 최종작성을 시작해 주세요.");
       return;
     }
+    if (recoveringProductResearch) {
+      notify("완료된 1차 작업의 원본사진과 결과 복구를 마친 뒤 상세페이지 제작을 시작해 주세요.");
+      return;
+    }
     if (!firstDraftGenerated
         || !isProductResearchJobId(sourceResearchJobId)
         || !productSourcePhotoSha256Pattern.test(sourceResearchPhotoSha256)
@@ -3818,8 +4088,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           <section className={`product-research-panel ${manualErrors.researchInput ? "field-error" : ""}`}>
             <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>1차 정보 · 이미지 6개</em></span><small>대표사진 1장과 판매페이지·모델명·카톡 설명으로 정보와 이미지 6개를 동시에 만듭니다. 역할별·추가 사진은 다음 상세페이지 제작에 사용합니다.</small></div>
-            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : intake.researchInput.trim().length < 2 || !mainPhoto || photoSelectionsProcessing || running || !studioWorkerAvailable} title={!researchingProduct && !mainPhoto ? "대표사진을 먼저 등록해 주세요." : !researchingProduct && !studioWorkerAvailable ? studioWorkerReadiness?.message : undefined}>{researchingProduct ? <X size={15} /> : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? <AlertCircle size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "생성 중단" : !mainPhoto ? "대표사진 필요" : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? "Gateway 점검 필요" : "1차 정보·6장 생성"}</button></div>
+            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" disabled={recoveringProductResearch} /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : recoveringProductResearch || intake.researchInput.trim().length < 2 || !mainPhoto || photoSelectionsProcessing || running || !studioWorkerAvailable} title={!researchingProduct && !mainPhoto ? "대표사진을 먼저 등록해 주세요." : !researchingProduct && !studioWorkerAvailable ? studioWorkerReadiness?.message : undefined}>{researchingProduct ? <X size={15} /> : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? <AlertCircle size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "생성 중단" : !mainPhoto ? "대표사진 필요" : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? "Gateway 점검 필요" : "1차 정보·6장 생성"}</button></div>
             <small className="product-research-help">공개 근거를 우선 사용하고, 동일 상품 가격은 채널별 최대 3개를 함께 조회해 판매가 검토에 사용합니다.</small>
+            {!initialProduct?.id && !researchResult && <div className="product-research-recovery">
+              <span><Clock3 size={15} /><span><b>완료된 1차 작업 이어서</b><small>다른 탭·기기에서 완료된 작업 ID로 원본사진과 이미지 6장을 안전하게 다시 불러옵니다.</small></span></span>
+              <label><input value={researchRecoveryJobId} onChange={(event) => setResearchRecoveryJobId(event.target.value)} maxLength={36} spellCheck={false} autoComplete="off" placeholder="완료된 작업 UUID" aria-label="완료된 1차 작업 ID" disabled={recoveringProductResearch} /><button type="button" onClick={() => void recoverCompletedProductResearch()} disabled={recoveringProductResearch || researchingProduct || running || photoSelectionsProcessing || !isProductResearchJobId(researchRecoveryJobId.trim())}>{recoveringProductResearch ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringProductResearch ? "복구 중" : "완료 작업 불러오기"}</button></label>
+            </div>}
             {productResearchError && <small className="product-research-error" role="alert"><AlertCircle size={14} />{productResearchError}</small>}
             {manualErrors.researchInput && <small className="product-research-error">{manualErrors.researchInput}</small>}
             {researchResult && <div className="product-research-result">
@@ -3877,7 +4151,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           {firstDraftGenerated && <div className="first-draft-review"><AlertTriangle size={15} /><span><b>수정한 1차 정보와 이미지 6개를 최종 확인하세요.</b><small>위 판매자 필수 입력값을 실물 기준으로 수정하고 이미지 6장을 확인한 뒤 상세페이지 제작을 승인하세요.</small><label htmlFor="first-draft-reviewed"><input id="first-draft-reviewed" aria-label="1차 상품정보와 이미지 6개 검토 확인" type="checkbox" checked={firstDraftReviewed} disabled={!firstDraftContentReady} onChange={(event) => setFirstDraftReviewed(event.target.checked)} /><span><b>수정한 1차 상품정보와 이미지 6개를 모두 확인했습니다.</b><small>이 확인 이후 입력이나 사진을 바꾸면 승인과 기존 채널 업로드 준비가 해제됩니다.</small></span></label></span></div>}
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && registrationExecutionAvailable && firstDraftReady && !researchingProduct && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>1차 입력 {mainPhoto ? 1 : 0}장</b> · 상세페이지용 포함 전체 {totalPhotoCount}장 보존 · 1차 정보·이미지 {firstDraftContentReady ? "6장 완료" : "미완료"} · 사람 검토 {firstDraftReviewed ? "완료" : "미완료"} · 필수정보 {intakeReady ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격은 별도 확인 중(상세페이지 제작 가능)" : ""}<br /><small role="status">{!firstDraftContentReady ? "먼저 사진과 설명으로 1차 정보와 이미지 6개를 생성해 주세요." : !firstDraftReviewed ? "1차 정보와 이미지 6개를 확인한 뒤 검토 확인란을 선택해 주세요." : studioWorkerReadiness?.message ?? "상세페이지 제작 서버 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!registrationExecutionAvailable || !firstDraftReady || running || researchingProduct || photoSelectionsProcessing || Boolean(queuedJobId)} title={!firstDraftContentReady ? "1차 정보와 이미지 6개 생성을 먼저 완료해 주세요." : !firstDraftReviewed ? "사람 검토 확인이 필요합니다." : !registrationExecutionAvailable ? studioWorkerReadiness?.message ?? "서버 등록 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />상세페이지 제작 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 정보·6장 생성 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />상세 제작 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 상태 확인 중</> : <><WandSparkles size={17} />상세페이지 제작 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && registrationExecutionAvailable && firstDraftReady && !researchingProduct && !recoveringProductResearch && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>1차 입력 {mainPhoto ? 1 : 0}장</b> · 상세페이지용 포함 전체 {totalPhotoCount}장 보존 · 1차 정보·이미지 {firstDraftContentReady ? "6장 완료" : "미완료"} · 사람 검토 {firstDraftReviewed ? "완료" : "미완료"} · 필수정보 {intakeReady ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격은 별도 확인 중(상세페이지 제작 가능)" : ""}<br /><small role="status">{recoveringProductResearch ? "완료된 1차 작업의 원본사진과 결과를 확인하고 있습니다." : !firstDraftContentReady ? "먼저 사진과 설명으로 1차 정보와 이미지 6개를 생성해 주세요." : !firstDraftReviewed ? "1차 정보와 이미지 6개를 확인한 뒤 검토 확인란을 선택해 주세요." : studioWorkerReadiness?.message ?? "상세페이지 제작 서버 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!registrationExecutionAvailable || !firstDraftReady || running || researchingProduct || recoveringProductResearch || photoSelectionsProcessing || Boolean(queuedJobId)} title={!firstDraftContentReady ? "1차 정보와 이미지 6개 생성을 먼저 완료해 주세요." : !firstDraftReviewed ? "사람 검토 확인이 필요합니다." : !registrationExecutionAvailable ? studioWorkerReadiness?.message ?? "서버 등록 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />상세페이지 제작 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 정보·6장 생성 중</> : recoveringProductResearch ? <><LoaderCircle className="spin" size={17} />완료 작업 복구 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />상세 제작 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 상태 확인 중</> : <><WandSparkles size={17} />상세페이지 제작 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
