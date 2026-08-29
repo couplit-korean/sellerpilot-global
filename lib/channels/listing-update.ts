@@ -443,6 +443,7 @@ export function prepareListingUpdateArguments(
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "imageUrls"),
       ...optionalArgument(createArguments, "shopId"),
+      ...optionalArgument(createArguments, "country"),
       localItemId: remoteId,
       body: { ...definedEntries(body, shopeeMutableFields), item_id: remoteNumberOrText(remoteId) },
     };

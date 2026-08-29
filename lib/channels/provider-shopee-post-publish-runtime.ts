@@ -1,5 +1,10 @@
 import type { ChannelOperationResult } from "./operations";
 import {
+  listingRemoteStateFulfillsOperation,
+  listingRemoteStateMatchesOperation,
+} from "./listing-publication-state";
+import { normalizeShopeeListingPublicationReadback } from "./provider-shopee-publication-readback";
+import {
   runWithChannelRequestSignal,
   shopeeMerchantRequest,
   shopeeRequest,
@@ -70,6 +75,16 @@ function globalAvailableStock(data: Record<string, unknown>) {
   }, 0);
 }
 
+function exactShopeeGlobalItemId(input: ShopeePostPublishInput) {
+  const supplied = String(input.arguments.globalItemId ?? "").trim();
+  const created = input.result.steps
+    .filter((item) => item.name === "global-item-create")
+    .map((item) => String(recordValue(item.data.response).global_item_id ?? "").trim())
+    .filter(Boolean);
+  const candidates = [...new Set([supplied, ...created].filter(Boolean))];
+  return candidates.length === 1 ? candidates[0] : "";
+}
+
 export async function verifyShopeeGlobalListingPostPublish(
   input: ShopeePostPublishInput,
   dependencies: ShopeePostPublishDependencies = defaultDependencies,
@@ -78,15 +93,17 @@ export async function verifyShopeeGlobalListingPostPublish(
     ...input.result,
     steps: [...input.result.steps],
   };
+  const providerStepsSucceeded = result.steps.length > 0 && result.steps.every((item) => item.ok);
   if (result.channel !== "shopee"
       || result.operation !== "listing.create"
       || input.arguments.globalProduct !== true
-      || !result.ok
+      || !providerStepsSucceeded
       || !result.remoteId) {
     return result;
   }
 
   return runWithChannelRequestSignal(input.signal, async () => {
+    const globalItemId = exactShopeeGlobalItemId(input);
     const readLocalItem = async () => {
       await input.hooks.assertLeaseHealthy();
       const remote = await dependencies.shopeeRequest({
@@ -139,7 +156,6 @@ export async function verifyShopeeGlobalListingPostPublish(
 
       const cbscGlobalStockOnly = stockRemote.data.error === "product.cnsc_shop_block";
       if (!stockOk && cbscGlobalStockOnly) {
-        const globalItemId = String(input.arguments.globalItemId ?? "").trim();
         if (globalItemId) {
           await input.hooks.assertLeaseHealthy();
           const globalStockRemote = await dependencies.shopeeMerchantRequest({
@@ -182,7 +198,60 @@ export async function verifyShopeeGlobalListingPostPublish(
       result.steps[result.steps.length - 1].ok = localOk;
     }
 
-    result.ok = result.ok && localOk;
+    if (result.publicationStateContract === "verified_remote_state_v1") {
+      const expectedLocale = String(input.arguments.publicationExpectedLocale ?? "").trim();
+      const expectedFingerprint = String(input.arguments.publicationExpectedFingerprint ?? "").trim();
+      const expectedImageCount = Number(input.arguments.publicationExpectedImageCount);
+      const publicationArguments = {
+        ...input.arguments,
+        ...(globalItemId ? { globalItemId } : {}),
+      };
+      const publicationVerification = normalizeShopeeListingPublicationReadback({
+        operation: "listing.create",
+        remoteId: result.remoteId ?? "",
+        remoteData: localReadback.data,
+        mutationArguments: publicationArguments,
+        credentialShopId: String(input.shopCredential.shop_id ?? ""),
+        expectedLocale,
+        expectedFingerprint,
+        expectedImageCount,
+      });
+      const publicationStepOk = localReadback.response.ok
+        && !localReadback.data.error
+        && Boolean(publicationVerification.remoteState);
+      result.steps.push({
+        name: "local-item-publication-readback",
+        ok: publicationStepOk,
+        status: localReadback.response.status,
+        data: {
+          ...localReadback.data,
+          sellerpilotPublicationVerification: publicationStepOk
+            ? "SHOPEE_PUBLICATION_STATE_VERIFIED"
+            : "SHOPEE_PUBLICATION_STATE_UNVERIFIED",
+          providerStatus: publicationVerification.providerStatus,
+          actualImageCount: publicationVerification.imageCount,
+          sellerpilotPublicationChecks: publicationVerification.checks,
+        },
+      });
+      if (publicationVerification.remoteState) {
+        result.remoteState = publicationVerification.remoteState;
+        result.publicationFulfilled = listingRemoteStateFulfillsOperation(
+          result.operation,
+          publicationVerification.remoteState,
+          result.publicationIntent,
+        );
+      }
+      result.ok = localOk
+        && publicationStepOk
+        && Boolean(publicationVerification.remoteState
+          && listingRemoteStateMatchesOperation(
+            result.operation,
+            publicationVerification.remoteState,
+            result.publicationIntent,
+          ));
+    } else {
+      result.ok = providerStepsSucceeded && localOk;
+    }
     result.safeMessage = result.ok
       ? "Shopee 글로벌 상품 생성·국가별 발행·로컬 상품·재고 읽기 검증을 완료했습니다."
       : "Shopee 글로벌 상품은 발행됐지만 로컬 상품·재고 재검증이 필요합니다.";

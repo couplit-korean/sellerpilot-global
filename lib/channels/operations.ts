@@ -53,6 +53,10 @@ import {
   type ListingPublicationIntent,
   type VerifiedListingRemoteState,
 } from "./listing-publication-state";
+import {
+  readShopeeListingPublicationState,
+  type ShopeePublicationReadbackVerification,
+} from "./provider-shopee-publication-readback";
 
 export const channelOperationNames = [
   "categories.list",
@@ -1926,6 +1930,31 @@ function shopeeResponseId(data: Record<string, unknown>, key: string) {
   return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
 }
 
+function verifiedPublicationArguments(input: ExecuteInput) {
+  return {
+    expectedLocale: stringArgument(input.arguments, "publicationExpectedLocale"),
+    expectedFingerprint: stringArgument(input.arguments, "publicationExpectedFingerprint"),
+    expectedImageCount: integerArgument(input.arguments, "publicationExpectedImageCount", { min: 0, max: 64 }),
+  };
+}
+
+function applyShopeePublicationVerification(
+  readbackStep: ChannelOperationStep,
+  verification: ShopeePublicationReadbackVerification,
+) {
+  readbackStep.ok = readbackStep.ok && Boolean(verification.remoteState);
+  readbackStep.data = {
+    ...readbackStep.data,
+    sellerpilotPublicationVerification: verification.remoteState
+      ? "SHOPEE_PUBLICATION_STATE_VERIFIED"
+      : "SHOPEE_PUBLICATION_STATE_UNVERIFIED",
+    providerStatus: verification.providerStatus,
+    actualImageCount: verification.imageCount,
+    sellerpilotPublicationChecks: verification.checks,
+  };
+  return readbackStep;
+}
+
 function shopeeOrderPageWithCredentialIdentity(
   remote: RemoteResponse,
   payload: SecretPayload,
@@ -1987,6 +2016,14 @@ function shopeeOrderPageWithCredentialIdentity(
 
 async function executeShopee(input: ExecuteInput) {
   const globalProduct = booleanArgument(input.arguments, "globalProduct");
+  const publicationIntent = listingPublicationIntentFromArguments(input.arguments);
+  const verifiedPublicationRequested = input.arguments.publicationStateContract === listingRemoteStateContractVersion;
+  if (verifiedPublicationRequested
+      && input.operation === "listing.create"
+      && publicationIntent === "safe_test"
+      && !globalProduct) {
+    throw new Error("SHOPEE_SAFE_TEST_REQUIRES_GLOBAL_PUBLISH");
+  }
   if (globalProduct && (input.operation === "categories.list" || input.operation === "categories.suggest")) {
     const remote = await shopeeMerchantRequest({
       payload: input.payload,
@@ -2014,6 +2051,19 @@ async function executeShopee(input: ExecuteInput) {
   if (globalProduct && input.operation === "listing.create") {
     let globalItemId = stringArgument(input.arguments, "globalItemId", false);
     const steps: ChannelOperationStep[] = [];
+    const suppliedPublish = objectValue(input.arguments, "publish", false);
+    if (verifiedPublicationRequested && (!publicationIntent || !Object.keys(suppliedPublish).length)) {
+      throw new Error("SHOPEE_VERIFIED_PUBLISH_ARGUMENTS_REQUIRED");
+    }
+    const publish = structuredClone(suppliedPublish);
+    const publishItem = objectValue(publish, "item", false);
+    if (publicationIntent && Object.keys(publish).length) {
+      publish.item = {
+        ...publishItem,
+        item_status: publicationIntent === "safe_test" ? "UNLIST" : "NORMAL",
+      };
+    }
+    const finalLocalReadback = (localItemId: string) => result(input, steps, localItemId);
     if (!globalItemId) {
       const createRemote = await shopeeMerchantRequest({
         payload: input.payload,
@@ -2036,7 +2086,6 @@ async function executeShopee(input: ExecuteInput) {
       query: new URLSearchParams({ global_item_id_list: globalItemId }),
     });
     steps.push(step("global-item-readback", readbackRemote));
-    const publish = objectValue(input.arguments, "publish", false);
     const publishedItem = async (maxAttempts = 1) => {
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 3_000));
@@ -2065,7 +2114,9 @@ async function executeShopee(input: ExecuteInput) {
     };
     if (booleanArgument(input.arguments, "recoverPublished")) {
       const published = await publishedItem();
-      return result(input, steps, published.itemId || globalItemId);
+      return published.itemId
+        ? finalLocalReadback(published.itemId)
+        : result(input, steps, globalItemId);
     }
     let publishTaskId = stringArgument(input.arguments, "publishTaskId", false);
     if (!publishTaskId) {
@@ -2118,7 +2169,9 @@ async function executeShopee(input: ExecuteInput) {
     if (published.ok && published.itemId) {
       for (const item of steps) if (item.name.startsWith("publish-task-result-")) item.ok = true;
     }
-    return result(input, steps, published.itemId || globalItemId);
+    return published.itemId
+      ? finalLocalReadback(published.itemId)
+      : result(input, steps, globalItemId);
   }
   if (input.operation === "categories.list" || input.operation === "categories.suggest") {
     const remote = await shopeeRequest({
@@ -2254,6 +2307,21 @@ async function executeShopee(input: ExecuteInput) {
     });
     const writeStep = step("listing.update", writeRemote);
     if (!writeStep.ok) return result(input, [preflightStep, writeStep], localItemId);
+    if (verifiedPublicationRequested) {
+      const verification = await readShopeeListingPublicationState({
+        payload: input.payload,
+        environment: input.environment,
+        operation: input.operation,
+        remoteId: localItemId,
+        mutationArguments: input.arguments,
+        ...verifiedPublicationArguments(input),
+      });
+      const readbackStep = applyShopeePublicationVerification(
+        listingUpdateReadbackStep("listing-readback", verification.remote, input.channel, input.arguments),
+        verification,
+      );
+      return result(input, [preflightStep, writeStep, readbackStep], localItemId, undefined, verification.remoteState);
+    }
     const readbackRemote = await readLocalItem();
     const readbackStep = listingUpdateReadbackStep("listing-readback", readbackRemote, input.channel, input.arguments);
     return result(input, [preflightStep, writeStep, readbackStep], localItemId);
@@ -2275,8 +2343,30 @@ async function executeShopee(input: ExecuteInput) {
       body: objectValue(input.arguments, "body"),
     });
     const responseRemoteId = shopeeResponseId(remote.data, input.operation === "listing.create" ? "item_id" : "request_id");
-    const remoteId = responseRemoteId;
+    const body = objectValue(input.arguments, "body");
+    const requestedItemId = input.operation === "listing.stop"
+      ? String(body.item_id ?? "").trim()
+      : "";
+    const remoteId = requestedItemId || responseRemoteId;
     const writeStep = step(input.operation, remote);
+    if ((input.operation === "listing.create" || input.operation === "listing.stop")
+        && writeStep.ok
+        && remoteId
+        && verifiedPublicationRequested) {
+      const verification = await readShopeeListingPublicationState({
+        payload: input.payload,
+        environment: input.environment,
+        operation: input.operation,
+        remoteId,
+        mutationArguments: input.arguments,
+        ...verifiedPublicationArguments(input),
+      });
+      const readbackStep = applyShopeePublicationVerification(
+        step("listing-readback", verification.remote),
+        verification,
+      );
+      return result(input, [writeStep, readbackStep], remoteId, undefined, verification.remoteState);
+    }
     if (input.operation === "listing.create" && writeStep.ok && remoteId) {
       const readback = await shopeeRequest({
         payload: input.payload,
