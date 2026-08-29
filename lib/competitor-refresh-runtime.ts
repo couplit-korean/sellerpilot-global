@@ -49,6 +49,41 @@ export type CompetitorProductRefreshOutcome = {
   failureStage: CompetitorRefreshFailureStage | null;
 };
 
+const MAX_COMPETITOR_PRODUCT_CONCURRENCY = 3;
+
+/**
+ * Keeps a claimed refresh batch concurrent without allowing a caller to turn
+ * one scheduler request into an unbounded marketplace fan-out. Results retain
+ * claim order so the route response stays deterministic for operators/tests.
+ */
+export async function runBoundedCompetitorRefreshBatch<T>(
+  products: readonly T[],
+  requestedConcurrency: number,
+  refresh: (product: T, index: number) => Promise<CompetitorProductRefreshOutcome>,
+) {
+  if (products.length === 0) return [];
+  const concurrency = Math.max(
+    1,
+    Math.min(
+      MAX_COMPETITOR_PRODUCT_CONCURRENCY,
+      products.length,
+      Number.isFinite(requestedConcurrency) ? Math.floor(requestedConcurrency) : 1,
+    ),
+  );
+  const outcomes = new Array<CompetitorProductRefreshOutcome>(products.length);
+  let nextIndex = 0;
+
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (nextIndex < products.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      outcomes[index] = await refresh(products[index], index);
+    }
+  }));
+
+  return outcomes;
+}
+
 function failedResult(
   product: ClaimedCompetitorProduct,
   providers: CompetitorProviderStatus[],

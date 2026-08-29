@@ -1,36 +1,83 @@
 "use client";
 
-import { AlertTriangle, Ban, CheckCircle2, Clock3, Copy, Cpu, DatabaseZap, History, KeyRound, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SquareTerminal } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertTriangle, Ban, CheckCircle2, Clock3, Cpu, DatabaseZap, History, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SquareTerminal } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../lib/supabase/client";
-import { useModalInteraction } from "./use-modal-interaction";
-
-type WorkerScope = "ai" | "gateway" | "scheduler";
 
 type WorkerSnapshot = {
   label: string;
-  fingerprint: string;
   expires_at: string;
   last_seen_at: string | null;
   last_version: string | null;
-  scope?: WorkerScope | "legacy_combined";
+  scope?: "ai" | "gateway" | "scheduler" | "legacy_combined";
 };
 
 type WorkerStatus = {
   worker: WorkerSnapshot | null;
-  workers?: Partial<Record<WorkerScope | "legacy_combined", WorkerSnapshot>>;
+  workers?: Partial<Record<"ai" | "gateway" | "scheduler" | "legacy_combined", WorkerSnapshot>>;
   queued: number;
   running: number;
   succeeded_today: number;
   failed_today: number;
 };
 
-type IssuedTokenSet = {
-  tokenSetId: string;
-  activationExpiresAt: string;
-  expiresAt: string;
-  tokens: Record<WorkerScope, { token: string; fingerprint: string }>;
+type ServerReadiness = {
+  available: boolean;
+  reason: string;
   message: string;
+  checkedAt: string;
+};
+
+type ServerAiRuntimeState =
+  | "checking"
+  | "ready"
+  | "token_mismatch"
+  | "token_missing_or_expired"
+  | "status_unavailable"
+  | "configuration_missing";
+
+const serverAiRuntimeGuidance: Record<ServerAiRuntimeState, {
+  statusLabel: string;
+  queueSummary: string;
+  recoveryTitle: string;
+  recoveryDetail: string;
+}> = {
+  checking: {
+    statusLabel: "확인 중",
+    queueSummary: "Vercel·Supabase 토큰 상태 확인 중",
+    recoveryTitle: "확인 결과 전에는 설정을 변경하지 마세요",
+    recoveryDetail: "상태 확인이 끝날 때까지 새 토큰을 만들거나 환경변수를 바꾸지 않습니다.",
+  },
+  ready: {
+    statusLabel: "서버 AI 연결",
+    queueSummary: "Vercel 서버 토큰과 활성 AI 토큰 일치",
+    recoveryTitle: "운영 비밀값은 서버에서만 관리",
+    recoveryDetail: "SELLERPILOT_AI_WORKER_TOKEN과 AI 공급자 인증은 Vercel sensitive environment에만 둡니다. 이 화면은 토큰을 발급·노출·복사하지 않으며 로컬 설치 명령도 제공하지 않습니다.",
+  },
+  token_mismatch: {
+    statusLabel: "서버 토큰 불일치",
+    queueSummary: "Vercel 서버 토큰과 Supabase 활성 AI 토큰이 다름",
+    recoveryTitle: "마지막 정상 배포를 복원하거나 서버 전용으로 교체하세요",
+    recoveryDetail: "새 상품 AI 요청은 차단됩니다. 방금 Vercel 환경변수나 배포가 바뀌었다면 원문을 꺼내지 말고 마지막 정상 배포를 복원하세요. 복원할 수 없으면 운영 배포·인증 체크리스트 §7의 서버 전용 교체 절차를 사용하며 이 화면에서 발급하거나 복사하지 않습니다.",
+  },
+  token_missing_or_expired: {
+    statusLabel: "활성 AI 토큰 없음·만료",
+    queueSummary: "Supabase에 만료되지 않은 활성 AI 토큰이 없음",
+    recoveryTitle: "실행 중 작업을 확인한 뒤 서버 전용으로 교체하세요",
+    recoveryDetail: "새 상품 AI 요청은 차단됩니다. 운영 배포·인증 체크리스트 §7에서 실행 중 lease를 먼저 확인한 뒤 승인된 운영 셸에서만 새 원문을 만들고, 원문은 Vercel sensitive environment에만 CLI 표준입력으로 전달하며 Supabase에는 해시와 지문만 등록합니다.",
+  },
+  status_unavailable: {
+    statusLabel: "토큰 상태 조회 실패",
+    queueSummary: "Supabase 토큰 상태를 확인하지 못함",
+    recoveryTitle: "조회 실패를 만료로 간주해 교체하지 마세요",
+    recoveryDetail: "Supabase 연결과 상태 RPC를 먼저 복구한 뒤 새로고침합니다. 실제 활성 토큰 상태가 확인되기 전에는 토큰 교체나 작업 재시도를 시작하지 않습니다.",
+  },
+  configuration_missing: {
+    statusLabel: "서버 구성 확인 필요",
+    queueSummary: "활성 AI 토큰 상태 확인 전 OIDC·Vercel 서버 구성이 준비되지 않음",
+    recoveryTitle: "토큰 교체 전에 서버 구성을 분리 확인하세요",
+    recoveryDetail: "Vercel 요청 범위의 OIDC, Supabase 서버 환경변수와 정확한 배포 프로젝트를 먼저 확인합니다. 이 상태만으로 활성 토큰의 존재 여부는 확인되지 않았으므로 원인을 분리하기 전 새 토큰을 발급하지 않습니다.",
+  },
 };
 
 type AiJob = {
@@ -64,77 +111,49 @@ const jobKindLabel: Record<string, string> = {
   support_reply: "고객 문의 답변 초안",
 };
 
-const workerScopeDefinitions: ReadonlyArray<{
-  scope: WorkerScope;
-  label: string;
-  shortLabel: string;
-  purpose: string;
-  tokenLabel: string;
-  keychainService: string;
-  rotateFlag: string;
-}> = [
-  {
-    scope: "ai",
-    label: "서버 AI 작업",
-    shortLabel: "AI",
-    purpose: "Vercel AI Gateway OIDC로 상품 분석·이미지 큐만 처리하며 Mac 작업자 상태에 의존하지 않습니다.",
-    tokenLabel: "Vercel · AI Studio Runner",
-    keychainService: "Vercel sensitive env · SELLERPILOT_AI_WORKER_TOKEN",
-    rotateFlag: "--rotate-ai-token",
-  },
-  {
-    scope: "gateway",
-    label: "판매채널 게이트웨이",
-    shortLabel: "게이트웨이",
-    purpose: "판매채널 쓰기 작업과 채널 자격증명 사용만 허용합니다.",
-    tokenLabel: "SellerPilot Mac · Gateway Worker",
-    keychainService: "SellerPilot Gateway Worker",
-    rotateFlag: "--rotate-gateway-token",
-  },
-  {
-    scope: "scheduler",
-    label: "스케줄러",
-    shortLabel: "스케줄러",
-    purpose: "운영 동기화·유지보수 예약 작업만 호출합니다.",
-    tokenLabel: "SellerPilot Mac · Scheduler Worker",
-    keychainService: "SellerPilot Scheduler Worker",
-    rotateFlag: "--rotate-scheduler-token",
-  },
-];
-
-function workerForScope(status: WorkerStatus | null, scope: WorkerScope) {
+function aiWorker(status: WorkerStatus | null) {
   if (!status) return null;
-  if (status.workers) {
-    return status.workers[scope]
-      ?? status.workers.legacy_combined
-      ?? (scope === "ai" ? status.worker : null);
-  }
-  return status.worker;
+  return status.workers?.ai
+    ?? (status.worker?.scope === "ai" || status.worker?.scope === undefined ? status.worker : null);
 }
 
-function formatDate(value: string | null) {
-  if (!value) return "아직 접속 없음";
-  return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+function formatDate(value: string | null | undefined) {
+  if (!value) return "확인 전";
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return "확인 전";
+  return new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
 }
 
-function isOnline(lastSeenAt: string | null) {
-  return Boolean(lastSeenAt && Date.now() - new Date(lastSeenAt).getTime() < 30_000);
+function validReadiness(value: unknown): value is ServerReadiness {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.available === "boolean"
+    && typeof candidate.reason === "string"
+    && typeof candidate.message === "string"
+    && typeof candidate.checkedAt === "string";
+}
+
+function resolveServerAiRuntimeState(
+  readiness: ServerReadiness | null,
+  serverWorker: WorkerSnapshot | null,
+): ServerAiRuntimeState {
+  if (!readiness) return "checking";
+  if (readiness.available) return "ready";
+  if (readiness.reason === "token_mismatch") return "token_mismatch";
+  if (readiness.reason === "token_missing_or_expired") return "token_missing_or_expired";
+  if (readiness.reason === "configuration_missing") return "configuration_missing";
+  if (readiness.reason === "worker_missing" && !serverWorker) return "token_missing_or_expired";
+  return "status_unavailable";
 }
 
 export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void }) {
   const [status, setStatus] = useState<WorkerStatus | null>(null);
-  const [issued, setIssued] = useState<IssuedTokenSet | null>(null);
-  const [selectedScope, setSelectedScope] = useState<WorkerScope>("ai");
-  const [expiresInDays, setExpiresInDays] = useState(90);
+  const [readiness, setReadiness] = useState<ServerReadiness | null>(null);
   const [loading, setLoading] = useState(true);
-  const [issuing, setIssuing] = useState(false);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [jobsError, setJobsError] = useState("");
   const [workingJobId, setWorkingJobId] = useState("");
-  const [tokenRotationConfirming, setTokenRotationConfirming] = useState(false);
-  const tokenRotationDialogRef = useRef<HTMLDialogElement | null>(null);
-  const tokenRotationConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data } = await createClient().auth.getSession();
@@ -150,14 +169,22 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [statusResponse, jobsResponse] = await Promise.all([
+      const [statusResponse, jobsResponse, readinessResponse] = await Promise.all([
         authenticatedFetch("/api/admin/ai-worker-token"),
         authenticatedFetch("/api/admin/ai-jobs?limit=12"),
+        authenticatedFetch("/api/ai/product-studio"),
       ]);
       const statusPayload = await statusResponse.json().catch(() => ({ message: "런타임 상태 응답을 읽지 못했습니다." })) as WorkerStatus & { message?: string };
       const jobsPayload = await jobsResponse.json().catch(() => ({ message: "작업 이력 응답을 읽지 못했습니다.", jobs: [] })) as { message?: string; jobs?: AiJob[] };
+      const readinessPayload = await readinessResponse.json().catch(() => null) as unknown;
       if (!statusResponse.ok) throw new Error(statusPayload.message ?? "런타임 상태를 불러오지 못했습니다.");
       setStatus(statusPayload);
+      setReadiness(validReadiness(readinessPayload) ? readinessPayload : {
+        available: false,
+        reason: readinessResponse.ok ? "invalid_response" : "status_unavailable",
+        message: "Vercel 서버 AI 연결 상태를 확인하지 못했습니다.",
+        checkedAt: new Date().toISOString(),
+      });
       setError("");
       if (jobsResponse.ok) {
         setJobs(jobsPayload.jobs ?? []);
@@ -166,6 +193,12 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         setJobsError(jobsPayload.message ?? "작업 이력을 불러오지 못했습니다.");
       }
     } catch (loadError) {
+      setReadiness({
+        available: false,
+        reason: "status_unavailable",
+        message: "Vercel 서버 AI 준비 상태를 확인할 수 없습니다.",
+        checkedAt: new Date().toISOString(),
+      });
       setError(loadError instanceof Error ? loadError.message : "런타임 상태를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
@@ -217,138 +250,34 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     return () => { window.clearTimeout(initialLoad); window.clearInterval(interval); };
   }, [load]);
 
-  const closeTokenRotationConfirmation = useCallback(() => {
-    const dialog = tokenRotationDialogRef.current;
-    if (dialog?.open) dialog.close();
-    setTokenRotationConfirming(false);
-  }, []);
-
-  useModalInteraction(tokenRotationConfirming, tokenRotationDialogRef, closeTokenRotationConfirmation, {
-    dismissible: !issuing,
-    initialFocusRef: tokenRotationConfirmButtonRef,
-  });
-
-  useEffect(() => {
-    const dialog = tokenRotationDialogRef.current;
-    if (!dialog || !tokenRotationConfirming) return;
-    if (!dialog.open) dialog.showModal();
-    const focusFrame = window.requestAnimationFrame(() => tokenRotationConfirmButtonRef.current?.focus());
-    return () => window.cancelAnimationFrame(focusFrame);
-  }, [tokenRotationConfirming]);
-
-  const selectedScopeDefinition = workerScopeDefinitions.find((definition) => definition.scope === selectedScope) ?? workerScopeDefinitions[0];
-  const selectedWorker = workerForScope(status, selectedScope);
-
-  const issueToken = async () => {
-    setIssuing(true);
-    setError("");
-    try {
-      const response = await authenticatedFetch("/api/admin/ai-worker-token", {
-        method: "POST",
-        body: JSON.stringify({ label: "SellerPilot Scoped Runtime", expiresInDays }),
-      });
-      const payload = await response.json().catch(() => ({ message: "토큰 발급 응답을 읽지 못했습니다." })) as Partial<IssuedTokenSet>;
-      const completeTokenSet = payload.tokens
-        && workerScopeDefinitions.every((definition) => payload.tokens?.[definition.scope]?.token.startsWith("spw_"));
-      if (!response.ok || !payload.tokenSetId || !completeTokenSet) {
-        throw new Error(payload.message ?? "운영 런타임 토큰 세트를 발급하지 못했습니다.");
-      }
-      setIssued({
-        tokenSetId: payload.tokenSetId,
-        activationExpiresAt: payload.activationExpiresAt ?? "",
-        expiresAt: payload.expiresAt ?? "",
-        message: payload.message ?? "새 운영 런타임 토큰 세트가 대기 상태로 발급됐습니다.",
-        tokens: payload.tokens as IssuedTokenSet["tokens"],
-      });
-      notify("세 범위 전용 토큰을 대기 상태로 발급했습니다. 설치 성공 전까지 기존 토큰은 유지됩니다.");
-      await load();
-    } catch (issueError) {
-      setError(issueError instanceof Error ? issueError.message : "운영 런타임 토큰을 발급하지 못했습니다.");
-    } finally {
-      setIssuing(false);
-    }
-  };
-
-  const requestTokenIssue = () => {
-    if (!status?.worker) {
-      void issueToken();
-      return;
-    }
-    setTokenRotationConfirming(true);
-  };
-
-  const confirmTokenRotation = () => {
-    const dialog = tokenRotationDialogRef.current;
-    if (dialog?.open) dialog.close();
-    setTokenRotationConfirming(false);
-    void issueToken();
-  };
-
-  const copy = async (value: string, message: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      notify(message);
-    } catch {
-      notify("클립보드 권한이 없어 복사하지 못했습니다. 값을 직접 선택해 주세요.");
-    }
-  };
-
-  const online = isOnline(selectedWorker?.last_seen_at ?? null);
-  const issuedInstallCommand = issued
-    ? `npm run ai:worker:install:ai-only -- --rotate-token --token-set ${issued.tokenSetId}`
-    : "";
+  const serverWorker = aiWorker(status);
+  const serverReady = readiness?.available === true;
+  const queueReady = serverReady && Boolean(serverWorker);
+  const runtimeState = resolveServerAiRuntimeState(readiness, serverWorker);
+  const runtimeGuidance = serverAiRuntimeGuidance[runtimeState];
 
   return <section className="cli-runtime-card">
     <header>
-      <div className="cli-runtime-title"><span><SquareTerminal size={18} /></span><div><small>VERCEL AI + SCOPED WORKERS</small><h3>서버 AI 스튜디오 런타임</h3><p>상품 스튜디오는 Vercel OIDC와 Supabase 비공개 큐에서 실행하며, 판매채널·스케줄러 권한은 별도 범위로 유지합니다.</p></div></div>
-      <span className={`cli-runtime-state ${online ? "online" : "offline"}`}><i />{online ? `${selectedScopeDefinition.shortLabel} 연결` : selectedWorker ? `${selectedScopeDefinition.shortLabel} 대기` : `${selectedScopeDefinition.shortLabel} 토큰 미발급`}</span>
+      <div className="cli-runtime-title"><span><SquareTerminal size={18} /></span><div><small>SERVER-ONLY VERCEL AI</small><h3>서버 AI 스튜디오 런타임</h3><p>상품 분석과 이미지 제작은 Vercel Node·AI Gateway OIDC·Supabase 비공개 큐에서 실행됩니다. 운영에 Mac 또는 로컬 상품 작업자는 필요하지 않습니다.</p></div></div>
+      <span className={`cli-runtime-state ${serverReady ? "online" : "offline"}`}><i />{runtimeGuidance.statusLabel}</span>
     </header>
 
-    <div className="cli-worker-scopes" role="group" aria-label="운영 런타임 권한 선택">
-      {workerScopeDefinitions.map((definition) => {
-        const scopeWorker = workerForScope(status, definition.scope);
-        const scopeOnline = isOnline(scopeWorker?.last_seen_at ?? null);
-        return <button
-          type="button"
-          key={definition.scope}
-          className={selectedScope === definition.scope ? "selected" : ""}
-          aria-pressed={selectedScope === definition.scope}
-          onClick={() => setSelectedScope(definition.scope)}
-        >
-          <span><i className={scopeOnline ? "online" : scopeWorker ? "ready" : "missing"} />{definition.label}</span>
-          <small>{scopeOnline ? "실시간 연결" : scopeWorker ? `대기 · ${scopeWorker.fingerprint}` : "전용 토큰 필요"}</small>
-        </button>;
-      })}
+    <div className="cli-server-runtime-flow" aria-label="서버 AI 실행 경로">
+      <article><span><i className={serverReady ? "online" : "missing"} />Vercel Node + OIDC</span><small>{serverReady ? "요청 범위에서 AI Gateway 인증 확인" : "OIDC·AI Gateway 연결 확인 필요"}</small></article>
+      <article><span><i className={queueReady ? "online" : "missing"} />Supabase 비공개 큐</span><small>{runtimeGuidance.queueSummary}{serverWorker ? ` · 만료 ${formatDate(serverWorker.expires_at)}` : ""}</small></article>
+      <article><span><i className={serverReady ? "ready" : "missing"} />운영 복구 게이트</span><small>{serverReady ? "5분 큐 복구 일정 · 운영 활성 여부는 배포 canary에서 확인" : "토큰 불일치·만료는 자동 복구하지 않음 · 운영 체크리스트 §7 확인"}</small></article>
     </div>
 
     <div className="cli-runtime-grid">
-      <article><Cpu size={16} /><span><small>{selectedScopeDefinition.label} 런타임</small><b>{selectedWorker?.label ?? "연결 필요"}</b><em>{selectedWorker?.last_version ?? (selectedScope === "ai" ? "Vercel 서버 실행 확인 대기" : "전용 토큰 저장 후 실행")}</em></span></article>
-      <article><Clock3 size={16} /><span><small>마지막 신호</small><b>{formatDate(selectedWorker?.last_seen_at ?? null)}</b><em>{selectedWorker ? `토큰 ${selectedWorker.fingerprint} · 만료 ${formatDate(selectedWorker.expires_at)}` : `${selectedScopeDefinition.label} 토큰을 먼저 발급하세요`}</em></span></article>
+      <article><Cpu size={16} /><span><small>상품 제작 실행 위치</small><b>Vercel Node · AI Gateway</b><em>로컬 프로세스 없이 서버에서 실행</em></span></article>
+      <article><Clock3 size={16} /><span><small>서버 연결 확인</small><b>{formatDate(readiness?.checkedAt)}</b><em>{readiness?.message ?? "서버 연결 상태 확인 중"}</em></span></article>
       <article><RefreshCw size={16} /><span><small>현재 작업</small><b>{Number(status?.running ?? 0)} 실행 · {Number(status?.queued ?? 0)} 대기</b><em>15초마다 자동 갱신</em></span></article>
       <article><CheckCircle2 size={16} /><span><small>오늘 처리</small><b>{Number(status?.succeeded_today ?? 0)} 성공 · {Number(status?.failed_today ?? 0)} 실패</b><em>16개 이미지 + 26개국 현지화 계약</em></span></article>
     </div>
 
-    <div className="cli-runtime-actions">
-      <div><label><span>토큰 유효기간</span><select value={expiresInDays} onChange={(event) => setExpiresInDays(Number(event.target.value))}><option value={30}>30일</option><option value={90}>90일</option><option value={180}>180일</option><option value={365}>365일</option></select></label><button type="button" className="credential-primary" onClick={requestTokenIssue} disabled={issuing || tokenRotationConfirming}>{issuing ? <LoaderCircle className="spin" size={14} /> : status?.worker ? <RotateCcw size={14} /> : <KeyRound size={14} />}{status?.worker ? "3개 토큰 안전 교체" : "3개 전용 토큰 발급"}</button></div>
-      <aside><ShieldCheck size={15} /><span><b>{selectedScopeDefinition.label} 전용 권한</b><small>{selectedScopeDefinition.purpose}</small></span></aside>
+    <div className="cli-runtime-actions cli-server-runtime-notice" role="status" aria-live="polite">
+      <aside>{serverReady ? <ShieldCheck size={15} /> : <AlertTriangle size={15} />}<span><b>{runtimeGuidance.recoveryTitle}</b><small>{runtimeGuidance.recoveryDetail}</small></span></aside>
     </div>
-
-    <dialog
-      ref={tokenRotationDialogRef}
-      className="cli-token-confirm-dialog"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="cli-token-confirm-title"
-      aria-describedby="cli-token-confirm-description"
-      onCancel={(event) => {
-        event.preventDefault();
-        closeTokenRotationConfirmation();
-      }}
-    >
-      <div className="cli-token-confirm-heading"><span><AlertTriangle size={18} /></span><div><small>WORKER TOKEN ROTATION</small><h4 id="cli-token-confirm-title">작업자 토큰 세트 교체 확인</h4></div></div>
-      <p id="cli-token-confirm-description">AI·게이트웨이·스케줄러 토큰 세트를 새로 발급할까요? 기존 작업자는 새 런타임 설치가 성공할 때까지 계속 동작합니다.</p>
-      <div className="cli-token-confirm-actions"><button type="button" className="credential-secondary" onClick={closeTokenRotationConfirmation}>취소</button><button ref={tokenRotationConfirmButtonRef} type="button" className="credential-primary" onClick={confirmTokenRotation}>확인 후 새로 발급</button></div>
-    </dialog>
 
     <div className="cli-job-history">
       <div className="cli-job-history-heading"><span><History size={15} /><b>최근 AI 작업</b></span><small>요청 이미지·시도 횟수·결과 상태를 운영 화면에서 관리합니다.</small></div>
@@ -368,15 +297,6 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       {jobsError && <p className="cli-runtime-error"><AlertTriangle size={14} />{jobsError}</p>}
     </div>
 
-    {issued && <div className="cli-token-reveal">
-      <div><AlertTriangle size={16} /><span><b>세 범위 일회성 토큰 — 설치 완료 전 창을 닫지 마세요.</b><small>서버에는 SHA-256 지문만 저장되며, 세 토큰이 모두 검증돼야 기존 토큰과 원자적으로 교체됩니다.</small></span></div>
-      {workerScopeDefinitions.map((definition) => <p key={definition.scope}>
-        <b>{definition.label}</b><code>{issued.tokens[definition.scope].token}</code>
-        <button type="button" onClick={() => void copy(issued.tokens[definition.scope].token, `${definition.label} 전용 토큰을 복사했습니다.`)}><Copy size={13} />토큰 복사</button>
-        <small>{definition.scope === "ai" ? "서버 저장 위치" : "Keychain"}: {definition.keychainService} · 지문 {issued.tokens[definition.scope].fingerprint}</small>
-      </p>)}
-      <p><b>안전 설치·교체</b><code>{issuedInstallCommand}</code><button type="button" onClick={() => void copy(issuedInstallCommand, "CLI 작업자 안전 교체 명령을 복사했습니다.")}><Copy size={13} />명령 복사</button><small>{formatDate(issued.activationExpiresAt)} 전까지 실행하세요. 설치 실패 시 대기 토큰만 폐기되고 기존 작업자는 유지됩니다.</small></p>
-    </div>}
     {error && <p className="cli-runtime-error"><AlertTriangle size={14} />{error}</p>}
     {loading && !status && <div className="cli-runtime-loading"><LoaderCircle className="spin" size={15} />운영 런타임 상태 확인 중</div>}
   </section>;

@@ -32,7 +32,7 @@ type ElevenstSearchCredentials = { apiKey: string; credentialId?: string };
 type EbayBrowseCredentials = { clientId: string; clientSecret: string; marketplaceId: string; environment: "production" | "sandbox" };
 type BraveMarketplaceWebCredentials = { apiKey: string };
 export type MarketplaceWebMarketplace = Extract<CompetitorMarketplace, "shopee" | "lazada" | "temu">;
-export type CompetitorRefreshContext = { productId: string; claimToken: string };
+export type CompetitorRefreshContext = { productId?: string; claimToken?: string; signal?: AbortSignal };
 type SearchProvider = {
   id: CompetitorSearchProvider;
   marketplaces: CompetitorMarketplace[];
@@ -54,6 +54,7 @@ export type CompetitorProviderRegistryOptions = {
     productId?: string;
     claimToken?: string;
     timeoutMs?: number;
+    signal?: AbortSignal;
   }) => Promise<CompetitorPriceCandidate[]>;
   elevenstTimeoutMs?: number;
   enableMarketplaceWeb?: boolean;
@@ -78,6 +79,80 @@ const BRAVE_WEB_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/searc
 const BRAVE_MARKETPLACE_QUERY_LIMIT = 4;
 const BRAVE_MARKETPLACE_RESULT_LIMIT = 20;
 const BRAVE_MARKETPLACE_TIMEOUT_MS = 7_000;
+// A scheduler request may process three products and each product searches
+// several providers/aliases. Share one FIFO budget across the whole module so
+// that nested Promise.allSettled calls cannot multiply outbound concurrency.
+const COMPETITOR_FETCH_CONCURRENCY = 3;
+type CompetitorFetchWaiter = {
+  resolve: () => void;
+  reject: (reason: Error) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+};
+const competitorFetchWaiters: CompetitorFetchWaiter[] = [];
+let competitorFetchesInFlight = 0;
+
+function competitorAbortReason(signal: AbortSignal, fallback = "COMPETITOR_PROVIDER_ABORTED") {
+  return signal.reason instanceof Error ? signal.reason : new Error(fallback);
+}
+
+function removeCompetitorFetchWaiter(waiter: CompetitorFetchWaiter) {
+  const index = competitorFetchWaiters.indexOf(waiter);
+  if (index >= 0) competitorFetchWaiters.splice(index, 1);
+}
+
+function dispatchCompetitorFetchWaiters() {
+  while (competitorFetchesInFlight < COMPETITOR_FETCH_CONCURRENCY && competitorFetchWaiters.length > 0) {
+    const waiter = competitorFetchWaiters.shift()!;
+    if (waiter.onAbort) waiter.signal?.removeEventListener("abort", waiter.onAbort);
+    if (waiter.signal?.aborted) {
+      waiter.reject(competitorAbortReason(waiter.signal));
+      continue;
+    }
+    competitorFetchesInFlight += 1;
+    waiter.resolve();
+  }
+}
+
+async function acquireCompetitorFetchSlot(signal?: AbortSignal) {
+  if (signal?.aborted) throw competitorAbortReason(signal);
+  if (competitorFetchesInFlight < COMPETITOR_FETCH_CONCURRENCY) {
+    competitorFetchesInFlight += 1;
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    const waiter: CompetitorFetchWaiter = {
+      resolve,
+      reject,
+      signal,
+    };
+    if (signal) {
+      waiter.onAbort = () => {
+        removeCompetitorFetchWaiter(waiter);
+        signal.removeEventListener("abort", waiter.onAbort!);
+        reject(competitorAbortReason(signal));
+      };
+      signal.addEventListener("abort", waiter.onAbort, { once: true });
+    }
+    competitorFetchWaiters.push(waiter);
+    if (signal?.aborted) waiter.onAbort?.();
+  });
+}
+
+function competitorRequestSignal(parentSignal: AbortSignal | undefined, networkTimeout: AbortSignal) {
+  return parentSignal ? AbortSignal.any([parentSignal, networkTimeout]) : networkTimeout;
+}
+
+async function withCompetitorFetchSlot<T>(request: () => Promise<T>, signal?: AbortSignal) {
+  await acquireCompetitorFetchSlot(signal);
+  try {
+    if (signal?.aborted) throw competitorAbortReason(signal);
+    return await request();
+  } finally {
+    competitorFetchesInFlight -= 1;
+    dispatchCompetitorFetchWaiters();
+  }
+}
 const marketplaceWebCurrencies = new Set([
   "AUD", "BRL", "CAD", "CLP", "COP", "EUR", "GBP", "IDR", "JPY", "KRW", "MXN", "MYR", "PHP", "SGD", "THB", "TWD", "USD", "VND",
 ]);
@@ -767,6 +842,147 @@ function identityAnchors(tokens: string[]) {
   return [...new Set([tokens[0], interior, tokens.at(-1)].filter((token): token is string => Boolean(token)))];
 }
 
+const hangulInitialRomanization = [
+  "g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj", "ch", "k", "t", "p", "h",
+] as const;
+const hangulMedialRomanization = [
+  "a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i",
+] as const;
+const hangulFinalRomanization = [
+  "", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lk", "lm", "lb", "ls", "lt", "lp", "lh", "m", "p", "ps", "t", "t", "ng", "t", "t", "k", "t", "p", "h",
+] as const;
+
+const kanaRomanization: Readonly<Record<string, string>> = {
+  ア: "a", イ: "i", ウ: "u", エ: "e", オ: "o",
+  カ: "ka", キ: "ki", ク: "ku", ケ: "ke", コ: "ko",
+  ガ: "ga", ギ: "gi", グ: "gu", ゲ: "ge", ゴ: "go",
+  サ: "sa", シ: "shi", ス: "su", セ: "se", ソ: "so",
+  ザ: "za", ジ: "ji", ズ: "zu", ゼ: "ze", ゾ: "zo",
+  タ: "ta", チ: "chi", ツ: "tsu", テ: "te", ト: "to",
+  ダ: "da", ヂ: "ji", ヅ: "zu", デ: "de", ド: "do",
+  ナ: "na", ニ: "ni", ヌ: "nu", ネ: "ne", ノ: "no",
+  ハ: "ha", ヒ: "hi", フ: "fu", ヘ: "he", ホ: "ho",
+  バ: "ba", ビ: "bi", ブ: "bu", ベ: "be", ボ: "bo",
+  パ: "pa", ピ: "pi", プ: "pu", ペ: "pe", ポ: "po",
+  マ: "ma", ミ: "mi", ム: "mu", メ: "me", モ: "mo",
+  ヤ: "ya", ユ: "yu", ヨ: "yo",
+  ラ: "ra", リ: "ri", ル: "ru", レ: "re", ロ: "ro",
+  ワ: "wa", ヰ: "i", ヱ: "e", ヲ: "o", ン: "n", ヴ: "vu",
+  ァ: "a", ィ: "i", ゥ: "u", ェ: "e", ォ: "o", ャ: "ya", ュ: "yu", ョ: "yo",
+} as const;
+
+const kanaDigraphRomanization: Readonly<Record<string, string>> = {
+  キャ: "kya", キュ: "kyu", キョ: "kyo", ギャ: "gya", ギュ: "gyu", ギョ: "gyo",
+  シャ: "sha", シュ: "shu", ショ: "sho", ジャ: "ja", ジュ: "ju", ジョ: "jo",
+  チャ: "cha", チュ: "chu", チョ: "cho", ニャ: "nya", ニュ: "nyu", ニョ: "nyo",
+  ヒャ: "hya", ヒュ: "hyu", ヒョ: "hyo", ビャ: "bya", ビュ: "byu", ビョ: "byo",
+  ピャ: "pya", ピュ: "pyu", ピョ: "pyo", ミャ: "mya", ミュ: "myu", ミョ: "myo",
+  リャ: "rya", リュ: "ryu", リョ: "ryo", ティ: "ti", ディ: "di", トゥ: "tu", ドゥ: "du",
+  ファ: "fa", フィ: "fi", フェ: "fe", フォ: "fo", ウィ: "wi", ウェ: "we", ウォ: "wo",
+  ヴァ: "va", ヴィ: "vi", ヴェ: "ve", ヴォ: "vo",
+} as const;
+
+const specialLatinRomanization: Readonly<Record<string, string>> = {
+  ß: "ss", æ: "ae", œ: "oe", ø: "o", ð: "d", þ: "th", ł: "l",
+} as const;
+
+function katakanaCharacter(value: string) {
+  const codePoint = value.codePointAt(0) ?? 0;
+  return codePoint >= 0x3041 && codePoint <= 0x3096
+    ? String.fromCodePoint(codePoint + 0x60)
+    : value;
+}
+
+function hangulSyllableRomanization(value: string) {
+  const codePoint = value.codePointAt(0) ?? 0;
+  if (codePoint < 0xac00 || codePoint > 0xd7a3) return "";
+  const syllable = codePoint - 0xac00;
+  const initial = Math.floor(syllable / 588);
+  const medial = Math.floor((syllable % 588) / 28);
+  const final = syllable % 28;
+  return `${hangulInitialRomanization[initial]}${hangulMedialRomanization[medial]}${hangulFinalRomanization[final]}`;
+}
+
+/**
+ * Conservative, deterministic brand-only fallback. It supports Latin
+ * diacritic folding plus Korean Hangul and Japanese Kana romanization. Any
+ * unsupported letter makes that span unusable instead of silently dropping
+ * identity evidence and weakening the matcher.
+ */
+function deterministicBrandTransliterationKey(value: string) {
+  const characters = [...value.normalize("NFKC").toLocaleLowerCase()];
+  let output = "";
+  let unsupportedLetter = false;
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index] ?? "";
+    const hangul = hangulSyllableRomanization(character);
+    if (hangul) {
+      output += hangul;
+      continue;
+    }
+    const katakana = katakanaCharacter(character);
+    if (katakana === "ッ") {
+      const next = katakanaCharacter(characters[index + 1] ?? "");
+      const afterNext = katakanaCharacter(characters[index + 2] ?? "");
+      const nextRomanization = kanaDigraphRomanization[`${next}${afterNext}`] ?? kanaRomanization[next] ?? "";
+      const consonant = nextRomanization.match(/^[bcdfghjklmnpqrstvwxyz]/u)?.[0] ?? "";
+      output += consonant;
+      continue;
+    }
+    const digraph = kanaDigraphRomanization[`${katakana}${katakanaCharacter(characters[index + 1] ?? "")}`];
+    if (digraph) {
+      output += digraph;
+      index += 1;
+      continue;
+    }
+    const kana = kanaRomanization[katakana];
+    if (kana) {
+      output += kana;
+      continue;
+    }
+    if (katakana === "ー") continue;
+    if (/^[a-z0-9]$/u.test(character)) {
+      output += character;
+      continue;
+    }
+    const specialLatin = specialLatinRomanization[character];
+    if (specialLatin) {
+      output += specialLatin;
+      continue;
+    }
+    const foldedLatin = character.normalize("NFKD").replace(/\p{M}/gu, "");
+    if (/^[a-z]+$/u.test(foldedLatin)) {
+      output += foldedLatin;
+      continue;
+    }
+    if (/^[\s\p{P}\p{S}]$/u.test(character)) {
+      output += " ";
+      continue;
+    }
+    if (/\p{L}/u.test(character)) unsupportedLetter = true;
+    else output += " ";
+  }
+  if (unsupportedLetter) return "";
+  const key = output.replace(/[^a-z0-9]+/gu, " ").replace(/\s+/gu, " ").trim();
+  const letters = key.replace(/[^a-z]/gu, "");
+  return letters.length >= 4 && new Set(letters).size >= 3 ? key : "";
+}
+
+function containsDeterministicBrandTransliteration(value: string, phrase: string) {
+  const phraseKey = deterministicBrandTransliterationKey(phrase);
+  if (!phraseKey) return false;
+  const phraseCompact = phraseKey.replaceAll(" ", "");
+  const candidateTokens = normalizedSearchText(value).split(" ").filter(Boolean);
+  const maximumSpan = Math.min(6, Math.max(3, phraseKey.split(" ").length + 2));
+  for (let start = 0; start < candidateTokens.length; start += 1) {
+    for (let length = 1; length <= maximumSpan && start + length <= candidateTokens.length; length += 1) {
+      const candidateKey = deterministicBrandTransliterationKey(candidateTokens.slice(start, start + length).join(" "));
+      if (candidateKey && candidateKey.replaceAll(" ", "") === phraseCompact) return true;
+    }
+  }
+  return false;
+}
+
 // Brand names are product identity, not optional relevance words. Product
 // research normally preserves them in every localized query, but the JSON
 // contract cannot prove that an AI-generated translation did so. Keep a small,
@@ -793,14 +1009,14 @@ function containsIdentityPhrase(value: string, phrase: string) {
   return compactSearchText(value).includes(compactSearchText(phrase));
 }
 
-function repeatedLeadingLatinIdentityPhrase(queries: string[]) {
+function repeatedLeadingIdentityPhrase(queries: string[], latinOnly: boolean) {
   if (queries.length <= 1) return "";
   const tokenProfiles = queries.map(meaningfulSearchTokens);
   const primaryTokens = tokenProfiles[0] ?? [];
   const common: string[] = [];
   for (let index = 0; index < Math.min(primaryTokens.length, 6); index += 1) {
     const token = primaryTokens[index] ?? "";
-    if (!/^[a-z][a-z0-9'._-]{1,31}$/iu.test(token)
+    if ((latinOnly && !/^[a-z][a-z0-9'._-]{1,31}$/iu.test(token))
         || !tokenProfiles.slice(1).every((tokens) => tokens[index] === token)) break;
     common.push(token);
   }
@@ -811,9 +1027,14 @@ function competitorBrandRequirements(queries: string[]) {
   const aliasGroups = safeCompetitorBrandAliasGroups.filter((aliases) => (
     queries.some((query) => aliases.some((alias) => containsIdentityPhrase(query, alias)))
   ));
+  const repeatedLatinPhrase = repeatedLeadingIdentityPhrase(queries, true);
+  const repeatedFallbackPhrase = !repeatedLatinPhrase && aliasGroups.length === 0
+    ? repeatedLeadingIdentityPhrase(queries, false)
+    : "";
   return {
     aliasGroups,
-    repeatedLatinPhrase: repeatedLeadingLatinIdentityPhrase(queries),
+    repeatedLatinPhrase,
+    repeatedFallbackPhrase: deterministicBrandTransliterationKey(repeatedFallbackPhrase) ? repeatedFallbackPhrase : "",
   };
 }
 
@@ -834,7 +1055,7 @@ function packNeutralSearchQuery(value: string) {
 }
 
 function elevenstRetrievalQueries(primary: string, aliases: string[]) {
-  const base = normalizedCompetitorQueries(primary, aliases, 8);
+  const base = competitorProviderRetrievalQueries(primary, aliases, 8);
   const neutral = base.map(packNeutralSearchQuery).filter(Boolean);
   return normalizedCompetitorQueries(base[0] ?? primary, [...base.slice(1), ...neutral], 12);
 }
@@ -852,9 +1073,18 @@ export function competitorCandidateRelevance(candidate: CompetitorPriceCandidate
     aliases.some((alias) => containsIdentityPhrase(candidate.title, alias))
   ));
   if (matchedBrandAliasGroups.length !== brandRequirements.aliasGroups.length) return 0;
+  const repeatedFallbackPhraseMatched = Boolean(
+    brandRequirements.repeatedFallbackPhrase
+    && (
+      containsIdentityPhrase(candidate.title, brandRequirements.repeatedFallbackPhrase)
+      || containsDeterministicBrandTransliteration(candidate.title, brandRequirements.repeatedFallbackPhrase)
+    ),
+  );
+  if (brandRequirements.repeatedFallbackPhrase && !repeatedFallbackPhraseMatched) return 0;
+  const repeatedFallbackTokens = new Set(meaningfulSearchTokens(brandRequirements.repeatedFallbackPhrase));
   const candidateMatchesBrandToken = (token: string) => matchedBrandAliasGroups.some((aliases) => (
     aliases.some((alias) => meaningfulSearchTokens(alias).includes(token))
-  ));
+  )) || (repeatedFallbackPhraseMatched && repeatedFallbackTokens.has(token));
   const repeatedPhraseSatisfiedBySafeAlias = matchedBrandAliasGroups.some((aliases) => (
     aliases.some((alias) => normalizedSearchText(alias) === brandRequirements.repeatedLatinPhrase)
   ));
@@ -1080,18 +1310,71 @@ export function normalizedCompetitorQueries(primary: string, aliases: string[] =
   return selected;
 }
 
-export async function searchNaverShopping(query: string, credentials: NaverSearchCredentials, display = 30): Promise<CompetitorPriceCandidate[]> {
+function leadingIdentityPattern(phrase: string) {
+  const tokens = normalizedSearchText(phrase).split(" ").filter(Boolean);
+  if (tokens.length === 0) return null;
+  const body = tokens
+    .map((token) => token.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+    .join("[\\s\\p{P}\\p{S}]+");
+  return new RegExp(`^\\s*${body}(?=$|[^\\p{L}\\p{N}])`, "iu");
+}
+
+/**
+ * Adds one high-confidence retrieval fallback without changing the strict
+ * relevance queries. Intake repeats the confirmed producer identity at the
+ * front of every localized alias; only that unanimous prefix may be
+ * romanized. Brand/model/GTIN/pack/size acceptance is still evaluated against
+ * the original queries after providers return candidates.
+ */
+function competitorProviderRetrievalQueries(primary: string, aliases: string[], maximum: number) {
+  const strictQueries = normalizedCompetitorQueries(primary, aliases, maximum);
+  const fallbackPhrase = competitorBrandRequirements(strictQueries).repeatedFallbackPhrase;
+  const fallbackKey = deterministicBrandTransliterationKey(fallbackPhrase);
+  const pattern = leadingIdentityPattern(fallbackPhrase);
+  if (!fallbackKey || !pattern) return strictQueries;
+
+  const fallback = strictQueries
+    .map((query, index) => {
+      const normalized = query.normalize("NFKC");
+      const replaced = normalized.replace(pattern, fallbackKey).replace(/\s+/gu, " ").trim().slice(0, 160);
+      const remainder = replaced.slice(fallbackKey.length);
+      return {
+        value: replaced,
+        index,
+        latinLetters: (remainder.match(/\p{Script=Latin}/gu) ?? []).length,
+      };
+    })
+    .filter(({ value }, index) => value.length >= 2 && compactSearchText(value) !== compactSearchText(strictQueries[index] ?? ""))
+    .sort((left, right) => right.latinLetters - left.latinLetters || left.index - right.index)[0]?.value ?? "";
+  if (!fallback) return strictQueries;
+  if (strictQueries.some((query) => compactSearchText(query) === compactSearchText(fallback))) return strictQueries;
+  // The fallback is an additional retrieval spelling, not a replacement for
+  // one of the locale-specific strict queries. Keep their relative order and
+  // allow this single bounded extra request; candidate acceptance still uses
+  // only the original strict query set.
+  return [strictQueries[0] ?? primary, fallback, ...strictQueries.slice(1)];
+}
+
+export async function searchNaverShopping(
+  query: string,
+  credentials: NaverSearchCredentials,
+  display = 30,
+  signal?: AbortSignal,
+): Promise<CompetitorPriceCandidate[]> {
   const url = new URL("https://openapi.naver.com/v1/search/shop.json");
   url.searchParams.set("query", query);
   url.searchParams.set("display", String(Math.max(1, Math.min(display, 100))));
   url.searchParams.set("sort", "sim");
-  const response = await fetch(url, {
-    headers: { "X-Naver-Client-Id": credentials.clientId, "X-Naver-Client-Secret": credentials.clientSecret },
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!response.ok) throw new Error("NAVER_SHOPPING_SEARCH_FAILED");
-  const payload = await response.json() as { items?: Array<Record<string, unknown>> };
+  const payload = await withCompetitorFetchSlot(async () => {
+    const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(10_000));
+    const response = await fetch(url, {
+      headers: { "X-Naver-Client-Id": credentials.clientId, "X-Naver-Client-Secret": credentials.clientSecret },
+      cache: "no-store",
+      signal: requestSignal,
+    });
+    if (!response.ok) throw new Error("NAVER_SHOPPING_SEARCH_FAILED");
+    return response.json() as Promise<{ items?: Array<Record<string, unknown>> }>;
+  }, signal);
   return (payload.items ?? []).slice(0, display).flatMap((item) => {
     const itemUrl = validHttpUrl(item.link);
     const imageUrl = validHttpUrl(item.image);
@@ -1108,8 +1391,10 @@ async function successfulVariantSearches(
   queries: string[],
   search: (query: string) => Promise<CompetitorPriceCandidate[]>,
   failureCode: string,
+  signal?: AbortSignal,
 ) {
   const settled = await Promise.allSettled(queries.map(search));
+  if (signal?.aborted) throw competitorAbortReason(signal);
   const fulfilled = settled.flatMap((result) => result.status === "fulfilled" ? result.value : []);
   if (!fulfilled.length && settled.length > 0 && settled.every((result) => result.status === "rejected")) throw new Error(failureCode);
   const unique = new Map<string, CompetitorPriceCandidate>();
@@ -1123,9 +1408,20 @@ async function successfulVariantSearches(
   return [...unique.values()];
 }
 
-export async function searchNaverShoppingVariants(primary: string, aliases: string[], credentials: NaverSearchCredentials, displayPerQuery = 30) {
-  const queries = normalizedCompetitorQueries(primary, aliases, 8);
-  return successfulVariantSearches(queries, (query) => searchNaverShopping(query, credentials, displayPerQuery), "NAVER_SHOPPING_SEARCH_FAILED");
+export async function searchNaverShoppingVariants(
+  primary: string,
+  aliases: string[],
+  credentials: NaverSearchCredentials,
+  displayPerQuery = 30,
+  signal?: AbortSignal,
+) {
+  const queries = competitorProviderRetrievalQueries(primary, aliases, 8);
+  return successfulVariantSearches(
+    queries,
+    (query) => searchNaverShopping(query, credentials, displayPerQuery, signal),
+    "NAVER_SHOPPING_SEARCH_FAILED",
+    signal,
+  );
 }
 
 function elevenstXmlNodes(xml: string, tag: string) {
@@ -1147,18 +1443,26 @@ async function elevenstResponseXml(response: Response) {
   }
 }
 
-export async function searchElevenstProducts(query: string, credentials: ElevenstSearchCredentials, display = 30): Promise<CompetitorPriceCandidate[]> {
+export async function searchElevenstProducts(
+  query: string,
+  credentials: ElevenstSearchCredentials,
+  display = 30,
+  signal?: AbortSignal,
+): Promise<CompetitorPriceCandidate[]> {
   const url = new URL("https://openapi.11st.co.kr/openapi/OpenApiService.tmall");
   url.search = new URLSearchParams({ key: credentials.apiKey, apiCode: "ProductSearch", keyword: query, pageNum: "1", pageSize: String(Math.max(1, Math.min(display, 200))), sortCd: "CP", targetSearchPrd: /[A-Za-z]/.test(query) && !/[가-힣]/.test(query) ? "ENG" : "KOR" }).toString();
-  const response = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-    headers: { accept: "application/xml,text/xml;q=0.9,*/*;q=0.8", "user-agent": "SellerPilot-11st-Competitor-Search/1.0" },
-  });
-  const xml = await elevenstResponseXml(response);
+  const { responseOk, xml } = await withCompetitorFetchSlot(async () => {
+    const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(15_000));
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: requestSignal,
+      headers: { accept: "application/xml,text/xml;q=0.9,*/*;q=0.8", "user-agent": "SellerPilot-11st-Competitor-Search/1.0" },
+    });
+    return { responseOk: response.ok, xml: await elevenstResponseXml(response) };
+  }, signal);
   const errorCode = elevenstXmlValue(xml, "ErrorCode") || elevenstXmlValue(xml, "ResultCode");
-  if (!response.ok || errorCode || /<Errors?(?:\s[^>]*)?>/i.test(xml)) throw new Error("ELEVENST_PRODUCT_SEARCH_FAILED");
+  if (!responseOk || errorCode || /<Errors?(?:\s[^>]*)?>/i.test(xml)) throw new Error("ELEVENST_PRODUCT_SEARCH_FAILED");
   return elevenstXmlNodes(xml, "Product").slice(0, display).flatMap((product) => {
     const externalId = elevenstXmlValue(product, "ProductCode").slice(0, 500);
     const title = elevenstXmlValue(product, "ProductName").slice(0, 1000);
@@ -1172,47 +1476,73 @@ export async function searchElevenstProducts(query: string, credentials: Elevens
   });
 }
 
-export async function searchElevenstProductVariants(primary: string, aliases: string[], credentials: ElevenstSearchCredentials, displayPerQuery = 30) {
+export async function searchElevenstProductVariants(
+  primary: string,
+  aliases: string[],
+  credentials: ElevenstSearchCredentials,
+  displayPerQuery = 30,
+  signal?: AbortSignal,
+) {
   const queries = elevenstRetrievalQueries(primary, aliases);
-  return successfulVariantSearches(queries, (query) => searchElevenstProducts(query, credentials, displayPerQuery), "ELEVENST_PRODUCT_SEARCH_FAILED");
+  return successfulVariantSearches(
+    queries,
+    (query) => searchElevenstProducts(query, credentials, displayPerQuery, signal),
+    "ELEVENST_PRODUCT_SEARCH_FAILED",
+    signal,
+  );
 }
 
 const ebayApplicationTokens = new Map<string, { accessToken: string; expiresAt: number }>();
 
-async function ebayApplicationAccessToken(credentials: EbayBrowseCredentials) {
+async function ebayApplicationAccessToken(credentials: EbayBrowseCredentials, signal?: AbortSignal) {
   const cacheKey = `${credentials.environment}:${createHash("sha256").update(credentials.clientId).digest("hex")}`;
   const cached = ebayApplicationTokens.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.accessToken;
   const apiHost = credentials.environment === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
   const scope = "https://api.ebay.com/oauth/api_scope";
-  const response = await fetch(`${apiHost}/identity/v1/oauth2/token`, {
-    method: "POST",
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-    headers: { authorization: `Basic ${Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64")}`, "content-type": "application/x-www-form-urlencoded", "user-agent": "SellerPilot-eBay-Browse-Connector/1.0" },
-    body: new URLSearchParams({ grant_type: "client_credentials", scope }),
-  });
-  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+  const { responseOk, payload } = await withCompetitorFetchSlot(async () => {
+    const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(15_000));
+    const response = await fetch(`${apiHost}/identity/v1/oauth2/token`, {
+      method: "POST",
+      cache: "no-store",
+      signal: requestSignal,
+      headers: { authorization: `Basic ${Buffer.from(`${credentials.clientId}:${credentials.clientSecret}`).toString("base64")}`, "content-type": "application/x-www-form-urlencoded", "user-agent": "SellerPilot-eBay-Browse-Connector/1.0" },
+      body: new URLSearchParams({ grant_type: "client_credentials", scope }),
+    });
+    return {
+      responseOk: response.ok,
+      payload: await response.json().catch(() => ({})) as Record<string, unknown>,
+    };
+  }, signal);
   const accessToken = typeof payload.access_token === "string" ? payload.access_token.trim() : "";
-  if (!response.ok || !accessToken) throw new Error("EBAY_APPLICATION_TOKEN_FAILED");
+  if (!responseOk || !accessToken) throw new Error("EBAY_APPLICATION_TOKEN_FAILED");
   const expiresIn = Number(payload.expires_in ?? 7_200);
   ebayApplicationTokens.set(cacheKey, { accessToken, expiresAt: Date.now() + Math.max(60, Number.isFinite(expiresIn) ? expiresIn : 7_200) * 1_000 });
   return accessToken;
 }
 
-export async function searchEbayBrowse(query: string, credentials: EbayBrowseCredentials, accessToken: string, display = 30): Promise<CompetitorPriceCandidate[]> {
+export async function searchEbayBrowse(
+  query: string,
+  credentials: EbayBrowseCredentials,
+  accessToken: string,
+  display = 30,
+  signal?: AbortSignal,
+): Promise<CompetitorPriceCandidate[]> {
   const apiHost = credentials.environment === "sandbox" ? "https://api.sandbox.ebay.com" : "https://api.ebay.com";
   const url = new URL(`${apiHost}/buy/browse/v1/item_summary/search`);
   url.searchParams.set("q", query);
   url.searchParams.set("limit", String(Math.max(1, Math.min(display, 200))));
-  const response = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-    headers: { authorization: `Bearer ${accessToken}`, "x-ebay-c-marketplace-id": credentials.marketplaceId, "user-agent": "SellerPilot-eBay-Browse-Connector/1.0" },
-  });
-  if (!response.ok) throw new Error("EBAY_BROWSE_SEARCH_FAILED");
-  const payload = await response.json() as { itemSummaries?: Array<Record<string, unknown>> };
+  const payload = await withCompetitorFetchSlot(async () => {
+    const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(15_000));
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: requestSignal,
+      headers: { authorization: `Bearer ${accessToken}`, "x-ebay-c-marketplace-id": credentials.marketplaceId, "user-agent": "SellerPilot-eBay-Browse-Connector/1.0" },
+    });
+    if (!response.ok) throw new Error("EBAY_BROWSE_SEARCH_FAILED");
+    return response.json() as Promise<{ itemSummaries?: Array<Record<string, unknown>> }>;
+  }, signal);
   return (payload.itemSummaries ?? []).slice(0, display).flatMap((item) => {
     const priceRecord = item.price && typeof item.price === "object" && !Array.isArray(item.price) ? item.price as Record<string, unknown> : {};
     const imageRecord = item.image && typeof item.image === "object" && !Array.isArray(item.image) ? item.image as Record<string, unknown> : {};
@@ -1227,10 +1557,21 @@ export async function searchEbayBrowse(query: string, credentials: EbayBrowseCre
   });
 }
 
-export async function searchEbayBrowseVariants(primary: string, aliases: string[], credentials: EbayBrowseCredentials, displayPerQuery = 30) {
-  const queries = normalizedCompetitorQueries(primary, aliases, 8);
-  const accessToken = await ebayApplicationAccessToken(credentials);
-  return successfulVariantSearches(queries, (query) => searchEbayBrowse(query, credentials, accessToken, displayPerQuery), "EBAY_BROWSE_SEARCH_FAILED");
+export async function searchEbayBrowseVariants(
+  primary: string,
+  aliases: string[],
+  credentials: EbayBrowseCredentials,
+  displayPerQuery = 30,
+  signal?: AbortSignal,
+) {
+  const queries = competitorProviderRetrievalQueries(primary, aliases, 8);
+  const accessToken = await ebayApplicationAccessToken(credentials, signal);
+  return successfulVariantSearches(
+    queries,
+    (query) => searchEbayBrowse(query, credentials, accessToken, displayPerQuery, signal),
+    "EBAY_BROWSE_SEARCH_FAILED",
+    signal,
+  );
 }
 
 export function braveMarketplaceSearchQuery(query: string, marketplace: MarketplaceWebMarketplace) {
@@ -1266,7 +1607,7 @@ function braveSearchLanguage(query: string) {
 }
 
 function diverseMarketplaceQueries(primary: string, aliases: string[], marketplace: MarketplaceWebMarketplace) {
-  const available = normalizedCompetitorQueries(primary, aliases, 12);
+  const available = competitorProviderRetrievalQueries(primary, aliases, 12);
   if (available.length <= BRAVE_MARKETPLACE_QUERY_LIMIT) return available;
   const primaryFamily = competitorQueryLanguageFamily(available[0]);
   // A Korean source title remains part of the relevance fence, but when the
@@ -1304,6 +1645,7 @@ export async function searchBraveMarketplaceWeb(
   marketplace: MarketplaceWebMarketplace,
   display = BRAVE_MARKETPLACE_RESULT_LIMIT,
   relevanceQueries: string[] = [query],
+  signal?: AbortSignal,
 ): Promise<CompetitorPriceCandidate[]> {
   const url = new URL(BRAVE_WEB_SEARCH_ENDPOINT);
   url.searchParams.set("q", braveMarketplaceSearchQuery(query, marketplace));
@@ -1315,18 +1657,21 @@ export async function searchBraveMarketplaceWeb(
   url.searchParams.set("text_decorations", "false");
   url.searchParams.set("result_filter", "web");
   url.searchParams.set("operators", "true");
-  const response = await fetch(url, {
-    method: "GET",
-    cache: "no-store",
-    signal: AbortSignal.timeout(BRAVE_MARKETPLACE_TIMEOUT_MS),
-    headers: {
-      accept: "application/json",
-      "x-subscription-token": credentials.apiKey,
-      "user-agent": "SellerPilot-Competitor-Web-Search/1.0",
-    },
-  });
-  if (!response.ok) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
-  const payload = await response.json() as Record<string, unknown>;
+  const payload = await withCompetitorFetchSlot(async () => {
+    const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(BRAVE_MARKETPLACE_TIMEOUT_MS));
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      signal: requestSignal,
+      headers: {
+        accept: "application/json",
+        "x-subscription-token": credentials.apiKey,
+        "user-agent": "SellerPilot-Competitor-Web-Search/1.0",
+      },
+    });
+    if (!response.ok) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
+    return response.json() as Promise<Record<string, unknown>>;
+  }, signal);
   const web = isRecord(payload.web) ? payload.web : {};
   const results = Array.isArray(web.results) ? web.results.slice(0, Math.min(display, BRAVE_MARKETPLACE_RESULT_LIMIT)) : [];
   return results.flatMap((rawResult) => {
@@ -1359,6 +1704,7 @@ export async function searchBraveMarketplaceWebVariants(
   aliases: string[],
   credentials: BraveMarketplaceWebCredentials,
   displayPerQuery = BRAVE_MARKETPLACE_RESULT_LIMIT,
+  signal?: AbortSignal,
 ) {
   const allQueries = normalizedCompetitorQueries(primary, aliases, 12);
   const settled = await Promise.allSettled((["shopee", "lazada", "temu"] as const).map(async (marketplace) => {
@@ -1367,7 +1713,7 @@ export async function searchBraveMarketplaceWebVariants(
     let successfulQueries = 0;
     for (const query of queries) {
       try {
-        candidates.push(...await searchBraveMarketplaceWeb(query, credentials, marketplace, displayPerQuery, allQueries));
+        candidates.push(...await searchBraveMarketplaceWeb(query, credentials, marketplace, displayPerQuery, allQueries, signal));
         successfulQueries += 1;
       } catch {
         continue;
@@ -1378,6 +1724,7 @@ export async function searchBraveMarketplaceWebVariants(
     if (successfulQueries === 0) throw new Error("BRAVE_MARKETPLACE_SEARCH_FAILED");
     return candidates;
   }));
+  if (signal?.aborted) throw competitorAbortReason(signal);
   // These are three independent channel searches represented by one durable
   // provider status. The current DB/UI contract cannot truthfully encode a
   // per-marketplace partial outage. Fail the provider closed when any channel
@@ -1415,7 +1762,11 @@ export async function competitorProviderRegistry(
   const marketplaceWeb = options.enableMarketplaceWeb ? braveMarketplaceWebCredentials() : null;
   const configured: SearchProvider[] = [];
   const unavailable: CompetitorProviderStatus[] = [];
-  if (naver) configured.push({ id: "naver_shopping", marketplaces: providerMarketplaces.naver_shopping, search: (primary, aliases, display) => searchNaverShoppingVariants(primary, aliases, naver, display) });
+  if (naver) configured.push({
+    id: "naver_shopping",
+    marketplaces: providerMarketplaces.naver_shopping,
+    search: (primary, aliases, display, context) => searchNaverShoppingVariants(primary, aliases, naver, display, context?.signal),
+  });
   else unavailable.push({ provider: "naver_shopping", status: naverResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.naver_shopping });
   if (elevenst) configured.push({
     id: "elevenst_product_search",
@@ -1430,17 +1781,22 @@ export async function competitorProviderRegistry(
           productId: context?.productId,
           claimToken: context?.claimToken,
           timeoutMs: options.elevenstTimeoutMs,
+          signal: context?.signal,
         })
-      : searchElevenstProductVariants(primary, aliases, elevenst, display),
+      : searchElevenstProductVariants(primary, aliases, elevenst, display, context?.signal),
   });
   else unavailable.push({ provider: "elevenst_product_search", status: elevenstResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.elevenst_product_search });
-  if (ebay) configured.push({ id: "ebay_browse", marketplaces: providerMarketplaces.ebay_browse, search: (primary, aliases, display) => searchEbayBrowseVariants(primary, aliases, ebay, display) });
+  if (ebay) configured.push({
+    id: "ebay_browse",
+    marketplaces: providerMarketplaces.ebay_browse,
+    search: (primary, aliases, display, context) => searchEbayBrowseVariants(primary, aliases, ebay, display, context?.signal),
+  });
   else unavailable.push({ provider: "ebay_browse", status: ebayResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.ebay_browse });
   if (options.enableMarketplaceWeb) {
     if (marketplaceWeb) configured.push({
       id: "brave_marketplace_web",
       marketplaces: providerMarketplaces.brave_marketplace_web,
-      search: (primary, aliases, display) => searchBraveMarketplaceWebVariants(primary, aliases, marketplaceWeb, display),
+      search: (primary, aliases, display, context) => searchBraveMarketplaceWebVariants(primary, aliases, marketplaceWeb, display, context?.signal),
     });
     else unavailable.push({ provider: "brave_marketplace_web", status: "unavailable", count: 0, marketplaces: providerMarketplaces.brave_marketplace_web });
   }
@@ -1485,18 +1841,33 @@ function marketplaceIdentity(item: CompetitorPriceCandidate) {
   }
 }
 
-async function withProviderTimeout<T>(promise: Promise<T>, timeoutMs: number) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+async function withProviderTimeout<T>(
+  operation: (signal?: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return operation();
+  const controller = new AbortController();
+  const timeoutError = new Error("COMPETITOR_PROVIDER_TIMEOUT");
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let rejectOnAbort: (() => void) | undefined;
   try {
-    return await Promise.race([
-      promise,
+    const operationPromise = operation(controller.signal);
+    const result = await Promise.race([
+      operationPromise,
       new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error("COMPETITOR_PROVIDER_TIMEOUT")), timeoutMs);
+        rejectOnAbort = () => reject(competitorAbortReason(controller.signal, timeoutError.message));
+        controller.signal.addEventListener("abort", rejectOnAbort, { once: true });
+        timeout = setTimeout(() => controller.abort(timeoutError), timeoutMs);
       }),
     ]);
+    if (controller.signal.aborted) throw timeoutError;
+    return result;
+  } catch (error) {
+    if (controller.signal.aborted && controller.signal.reason === timeoutError) throw timeoutError;
+    throw error;
   } finally {
     if (timeout) clearTimeout(timeout);
+    if (rejectOnAbort) controller.signal.removeEventListener("abort", rejectOnAbort);
   }
 }
 
@@ -1506,13 +1877,23 @@ export async function searchCompetitorProviders(
   aliases: string[],
   displayPerQuery = 30,
   providerTimeoutMs = 0,
-  context?: CompetitorRefreshContext,
+  refreshContext?: CompetitorRefreshContext,
 ) {
   const queries = normalizedCompetitorQueries(primary, aliases);
   const effectivePrimary = queries[0] ?? primary.replace(/\p{Cc}/gu, " ").trim().slice(0, 160);
   const effectiveAliases = queries.slice(1);
   const settled = await Promise.allSettled(registry.configured.map(async (provider) => {
-    const items = await withProviderTimeout(provider.search(effectivePrimary, effectiveAliases, displayPerQuery, context), providerTimeoutMs);
+    const items = await withProviderTimeout(
+      (signal) => {
+        const parentSignal = refreshContext?.signal;
+        const combinedSignal = signal && parentSignal
+          ? AbortSignal.any([parentSignal, signal])
+          : signal ?? parentSignal;
+        const context = combinedSignal ? { ...refreshContext, signal: combinedSignal } : refreshContext;
+        return provider.search(effectivePrimary, effectiveAliases, displayPerQuery, context);
+      },
+      providerTimeoutMs,
+    );
     const ranked = items
       .map((item) => ({ item, score: competitorCandidateRelevance(item, queries) }))
       // A zero/NaN price is not a usable market-price observation. Reject it
@@ -1523,6 +1904,7 @@ export async function searchCompetitorProviders(
       .map(({ item }) => item);
     return { provider, items: ranked };
   }));
+  if (refreshContext?.signal?.aborted) throw competitorAbortReason(refreshContext.signal);
   const providers: CompetitorProviderStatus[] = [...registry.unavailable];
   const candidates: CompetitorPriceCandidate[] = [];
   for (let index = 0; index < settled.length; index += 1) {

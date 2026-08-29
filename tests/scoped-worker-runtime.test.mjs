@@ -16,7 +16,7 @@ const scopes = [
   ["scheduler", "SellerPilot Scheduler Worker", "SellerPilot Scheduler Worker", "--rotate-scheduler-token"],
 ];
 
-test("runtime UI issues one pending three-scope worker token set", async () => {
+test("production runtime UI is read-only and reports the Vercel server AI path", async () => {
   const [runtimeCard, operationsCss, tokenRoute, maintenanceRoute] = await Promise.all([
     readFile(runtimeCardUrl, "utf8"),
     readFile(operationsCssUrl, "utf8"),
@@ -24,39 +24,40 @@ test("runtime UI issues one pending three-scope worker token set", async () => {
     readFile(maintenanceRouteUrl, "utf8"),
   ]);
 
-  assert.match(runtimeCard, /type WorkerScope = "ai" \| "gateway" \| "scheduler"/);
-  assert.match(runtimeCard, /status\.workers\[scope\]/);
-  assert.match(runtimeCard, /status\.workers\.legacy_combined/);
-  assert.match(runtimeCard, /scope === "ai" \? status\.worker : null/);
-  assert.match(runtimeCard, /JSON\.stringify\(\{ label: "SellerPilot Scoped Runtime", expiresInDays \}\)/);
-  assert.match(runtimeCard, /payload\.tokens\?\.\[definition\.scope\]\?\.token\.startsWith\("spw_"\)/);
-  assert.match(runtimeCard, /npm run ai:worker:install:ai-only -- --rotate-token --token-set \$\{issued\.tokenSetId\}/);
-  assert.match(runtimeCard, /issued\.tokens\[definition\.scope\]\.token/);
-  assert.match(runtimeCard, /aria-label="운영 런타임 권한 선택"/);
-  assert.match(runtimeCard, /aria-pressed=\{selectedScope === definition\.scope\}/);
+  assert.match(runtimeCard, /authenticatedFetch\("\/api\/ai\/product-studio"\)/);
+  assert.match(runtimeCard, /const serverReady = readiness\?\.available === true/);
+  assert.match(runtimeCard, /const queueReady = serverReady && Boolean\(serverWorker\)/);
+  assert.match(runtimeCard, /className=\{queueReady \? "online" : "missing"\}/);
+  assert.match(runtimeCard, /SERVER-ONLY VERCEL AI/);
+  assert.match(runtimeCard, /Vercel Node \+ OIDC/);
+  assert.match(runtimeCard, /Supabase 비공개 큐/);
+  assert.match(runtimeCard, /운영 복구 게이트/);
+  assert.match(runtimeCard, /운영에 Mac 또는 로컬 상품 작업자는 필요하지 않습니다/);
+  assert.match(runtimeCard, /이 화면은 토큰을 발급·노출·복사하지 않으며 로컬 설치 명령도 제공하지 않습니다/);
+  assert.match(runtimeCard, /aria-label="서버 AI 실행 경로"/);
+  assert.match(runtimeCard, /type ServerAiRuntimeState =.*"token_mismatch".*"token_missing_or_expired".*"status_unavailable".*"configuration_missing";/s);
+  assert.match(runtimeCard, /if \(readiness\.reason === "token_mismatch"\) return "token_mismatch"/);
+  assert.match(runtimeCard, /if \(readiness\.reason === "token_missing_or_expired"\) return "token_missing_or_expired"/);
+  assert.match(runtimeCard, /if \(readiness\.reason === "configuration_missing"\) return "configuration_missing"/);
+  assert.doesNotMatch(runtimeCard, /readiness\.message\.includes/);
+  assert.match(runtimeCard, /서버 토큰 불일치/);
+  assert.match(runtimeCard, /원문을 꺼내지 말고 마지막 정상 배포를 복원하세요/);
+  assert.match(runtimeCard, /활성 AI 토큰 없음·만료/);
+  assert.match(runtimeCard, /조회 실패를 만료로 간주해 교체하지 마세요/);
+  assert.match(runtimeCard, /CLI 표준입력/);
+  assert.match(runtimeCard, /Supabase에는 해시와 지문만 등록합니다/);
+  assert.match(runtimeCard, /토큰 불일치·만료는 자동 복구하지 않음/);
+  assert.match(runtimeCard, /role="status" aria-live="polite"/);
+  assert.match(operationsCss, /\.cli-server-runtime-flow \{[^}]*grid-template-columns: repeat\(3/);
+  assert.match(operationsCss, /\.cli-server-runtime-flow article small \{[^}]*overflow-wrap: anywhere/);
+  assert.doesNotMatch(runtimeCard, /npm run ai:worker:install/);
+  assert.doesNotMatch(runtimeCard, /IssuedTokenSet|issueToken|requestTokenIssue|confirmTokenRotation/);
+  assert.doesNotMatch(runtimeCard, /process\.env|\bspw_|navigator\.clipboard|useModalInteraction|tokenRotationDialog/);
+  assert.doesNotMatch(runtimeCard, /authenticatedFetch\("\/api\/admin\/ai-worker-token",\s*\{\s*method: "POST"/);
 
-  const issueTokenStart = runtimeCard.indexOf("const issueToken = async");
-  const issueTokenEnd = runtimeCard.indexOf("const requestTokenIssue", issueTokenStart);
-  assert.ok(issueTokenStart >= 0 && issueTokenEnd > issueTokenStart, "worker token issue function must be present");
-  assert.doesNotMatch(runtimeCard.slice(issueTokenStart, issueTokenEnd), /window\.confirm/);
-  assert.match(runtimeCard, /const requestTokenIssue = \(\) => \{[\s\S]*?if \(!status\?\.worker\) \{[\s\S]*?void issueToken\(\);[\s\S]*?return;[\s\S]*?setTokenRotationConfirming\(true\);/);
-  assert.match(runtimeCard, /const confirmTokenRotation = \(\) => \{[\s\S]*?setTokenRotationConfirming\(false\);[\s\S]*?void issueToken\(\);/);
-  assert.match(runtimeCard, /<dialog[\s\S]*?role="alertdialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-labelledby="cli-token-confirm-title"[\s\S]*?aria-describedby="cli-token-confirm-description"/);
-  assert.match(runtimeCard, /AI·게이트웨이·스케줄러 토큰 세트를 새로 발급할까요\? 기존 작업자는 새 런타임 설치가 성공할 때까지 계속 동작합니다\./);
-  assert.match(runtimeCard, /onClick=\{requestTokenIssue\}/);
-  assert.match(runtimeCard, /onClick=\{confirmTokenRotation\}>확인 후 새로 발급<\/button>/);
-  assert.match(runtimeCard, /dialog\.showModal\(\)/);
-  assert.match(runtimeCard, /tokenRotationConfirmButtonRef\.current\?\.focus\(\)/);
-  assert.match(runtimeCard, /onCancel=\{\(event\) => \{[\s\S]*?event\.preventDefault\(\);[\s\S]*?closeTokenRotationConfirmation\(\);/);
-  assert.match(operationsCss, /\.cli-token-confirm-dialog::backdrop/);
-  assert.match(operationsCss, /\.cli-token-confirm-actions button \{[^}]*min-height: 44px;/);
-
-  for (const [scope, runtimeService, , rotateFlag] of scopes) {
-    assert.match(runtimeCard, new RegExp(`scope: "${scope}"`));
-    assert.match(runtimeCard, new RegExp(`keychainService: "${runtimeService}"`));
-    assert.match(runtimeCard, new RegExp(`rotateFlag: "${rotateFlag}"`));
-  }
-
+  // The legacy token lifecycle remains isolated for development/compatibility;
+  // removing it is outside this production UI change and would require a
+  // separately reviewed credential migration.
   assert.match(tokenRoute, /sellerpilot_issue_pending_worker_token_set/);
   assert.match(tokenRoute, /p_token_metadata:/);
   assert.match(tokenRoute, /export async function PATCH/);

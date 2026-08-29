@@ -10,7 +10,7 @@
 
 비밀키 원문은 Git, 브라우저 저장소, 화면, 감사 로그에 남기지 않는다. Vercel에는 Supabase 서버 접근용 Secret Key와 범위가 `ai`인 Worker Token만 sensitive 서버 환경변수로 보관하고, 판매 채널 키는 웹 관리 화면에서 Vault로 저장한다. 상품 스튜디오는 OpenAI API Key나 Mac 로그인에 의존하지 않고 Vercel이 자동 제공하는 단기 OIDC로 AI Gateway를 호출한다.
 
-## 키 교체 표준 절차
+## 판매채널 키 교체 표준 절차
 
 1. `API 키 · 인증` 메뉴에서 채널을 선택한다.
 2. 새 키만 입력한다. 기존 키는 다시 표시하거나 자동 입력하지 않는다.
@@ -21,6 +21,8 @@
 7. 감사기록에서 버전, 지문, 작업시각, 검사 결과를 확인한다.
 
 키 지문은 비밀값의 SHA-256 앞 12자리만 표시한다. 원문을 복구하거나 화면에 노출하는 기능은 제공하지 않는다.
+
+서버 AI의 `SELLERPILOT_AI_WORKER_TOKEN`은 이 웹 입력 절차의 대상이 아니다. 웹의 서버 AI 런타임 카드는 상태·처리 건수·불일치 또는 만료 복구 안내만 제공하며 토큰 원문을 발급·표시·복사하거나 교체하지 않는다. 서버 AI 토큰 복구는 `운영_배포_인증_체크리스트.md` §7의 server-only 절차를 따른다.
 
 ## 채널별 필수 입력과 수명
 
@@ -52,7 +54,7 @@
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
    - `SUPABASE_SECRET_KEY`
-   - `SELLERPILOT_AI_WORKER_TOKEN` (AI scope, sensitive; 원문 조회·로그 금지)
+   - `SELLERPILOT_AI_WORKER_TOKEN` (AI scope, sensitive; 기존 활성 원문 복구 또는 server-only 교체 때만 CLI 표준입력으로 설정, 웹 조회·로그 금지)
    - `VERCEL_OIDC_TOKEN`은 Vercel이 함수에 자동 제공하므로 수동 값을 만들거나 Git에 저장하지 않는다.
 3. Production과 Preview에 저장하고 재배포한다.
 4. 로그인, 키 목록 조회, 연결 검사를 확인한다.
@@ -71,7 +73,7 @@ Secret Key는 절대 `NEXT_PUBLIC_` 접두사를 사용하지 않는다. 새 키
 - [x] 키 버전·만료·경고·유예·감사기록
 - [x] Qoo10/Shopee/Lazada 읽기 연결 검사 구현
 - [x] Shopee/Lazada OAuth state 검증·콜백 처리·만료 전 자동 갱신 구현
-- [x] 범위 분리 작업자 토큰 발급·교체·만료·상태·처리 건수 UI 구현
+- [x] 서버 AI 런타임의 읽기 전용 상태·처리 건수·토큰 불일치 또는 만료 복구 안내 UI 구현(웹 발급·교체·원문 표시 없음)
 - [x] Vercel OIDC 서버 상품 스튜디오 claim·heartbeat·멱등 완료와 16개 이미지·26개국 계약 구현
 - [x] 연결 검사 응답의 비밀·원문 로그 차단
 - [ ] Couplit Supabase 계정 전환 후 Security/Performance Advisor 재검증
@@ -84,4 +86,4 @@ Secret Key는 절대 `NEXT_PUBLIC_` 접두사를 사용하지 않는다. 새 키
 - [ ] JEONGHUN 프로필에서 Vercel Production의 AI scope sensitive token 배치와 OIDC 서버 실호출을 확인하고, 16개 asset·34개 시장 결과를 운영 원장에서 검수
 - [ ] 웹훅 서명·중복 방지·재전송 E2E 검수
 
-남은 항목은 외부 발급·고정 IP·유료 사용 한도가 확정된 뒤 실행한다. 키를 화면이나 문서로 전달하지 말고 반드시 운영 화면의 일회성 입력창을 사용한다.
+남은 항목은 외부 발급·고정 IP·유료 사용 한도가 확정된 뒤 실행한다. 판매채널 키는 문서로 전달하지 않고 승인된 운영 화면의 일회성 입력창을 사용한다. 서버 AI 토큰은 웹 입력창의 대상이 아니며 server-only 복구 절차만 사용한다.

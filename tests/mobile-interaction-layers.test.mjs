@@ -9,7 +9,6 @@ const modalHookUrl = new URL("../app/use-modal-interaction.ts", import.meta.url)
 const publishingUrl = new URL("../app/product-publish-workbench.tsx", import.meta.url);
 const credentialCenterUrl = new URL("../app/api-credential-center.tsx", import.meta.url);
 const puckEditorUrl = new URL("../app/product-detail-puck.tsx", import.meta.url);
-const runtimeCardUrl = new URL("../app/ai-cli-runtime-card.tsx", import.meta.url);
 const pushManagerUrl = new URL("../app/mobile-push-manager.tsx", import.meta.url);
 
 function layerValue(styles, name) {
@@ -108,7 +107,7 @@ test("mobile-only hidden labels and compact controls retain accessible 44px targ
   const styles = await readFile(layerStylesUrl, "utf8");
 
   assert.match(styles, /\.sr-only\s*\{[^}]*position:\s*absolute !important;[^}]*width:\s*1px !important;[^}]*clip-path:\s*inset\(50%\) !important;[^}]*margin:\s*-1px !important/);
-  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.sales-calendar-pager > button,[\s\S]*?\.command-input > button,[\s\S]*?\.credential-modal > header > button,[\s\S]*?\.cli-token-reveal button,[\s\S]*?\.bulk-order-bar > button:not\(\.table-action\),[\s\S]*?\.operation-console-meta a\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px/);
+  assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.sales-calendar-pager > button,[\s\S]*?\.command-input > button,[\s\S]*?\.credential-modal > header > button,[\s\S]*?\.cli-job-controls button,[\s\S]*?\.bulk-order-bar > button:not\(\.table-action\),[\s\S]*?\.operation-console-meta a\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px/);
   assert.match(styles, /\.command-dialog > button,[\s\S]*?\.command-result,[\s\S]*?\.account-security-submit,[\s\S]*?\.operation-console-meta a\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px/);
   assert.match(styles, /\.sidebar nav button,[\s\S]*?\.sidebar-foot button,[\s\S]*?\.briefing-settlement button,[\s\S]*?\.table-footer button,[\s\S]*?\.category-empty button,[\s\S]*?\.kakao-connect-button\s*\{[^}]*min-height:\s*44px/);
   assert.match(styles, /\.table-footer button\s*\{[^}]*min-width:\s*44px/);
@@ -134,13 +133,12 @@ test("the embedded detail editor fits a Fold and exposes a semantic save action"
 });
 
 test("true modals lock scroll, trap focus, close on Escape and restore the opener", async () => {
-  const [page, hook, publishing, credentialCenter, puckEditor, runtimeCard] = await Promise.all([
+  const [page, hook, publishing, credentialCenter, puckEditor] = await Promise.all([
     readFile(pageUrl, "utf8"),
     readFile(modalHookUrl, "utf8"),
     readFile(publishingUrl, "utf8"),
     readFile(credentialCenterUrl, "utf8"),
     readFile(puckEditorUrl, "utf8"),
-    readFile(runtimeCardUrl, "utf8"),
   ]);
 
   assert.match(hook, /acquireModalBodyScrollLock\(document\.body\)/);
@@ -170,15 +168,12 @@ test("true modals lock scroll, trap focus, close on Escape and restore the opene
   assert.match(credentialCenter, /<fieldset className="rotation-settings" disabled=\{saving\} aria-busy=\{saving\}>/);
   assert.match(puckEditor, /useModalInteraction\(Boolean\(initialData\), dialogRef, onClose, \{ dismissible: !saving, initialFocusRef: closeButtonRef \}\)/);
   assert.match(puckEditor, /className="puck-editor-body" aria-busy=\{saving\} aria-disabled=\{saving \|\| undefined\} inert=\{saving \|\| undefined\}/);
-  assert.match(runtimeCard, /useModalInteraction\(tokenRotationConfirming, tokenRotationDialogRef, closeTokenRotationConfirmation/);
-  assert.match(runtimeCard, /dialog\.showModal\(\)/);
   assert.match(publishing, /querySelector<HTMLButtonElement>\("\.credential-secondary"\)/);
 
   for (const [name, source] of [
     ["page", page],
     ["credential center", credentialCenter],
     ["Puck editor", puckEditor],
-    ["runtime card", runtimeCard],
   ]) {
     const modalCount = source.match(/aria-modal="true"/g)?.length ?? 0;
     const referencedModalCount = source.match(/<(?:div|section|form|dialog)\b[^>]*\bref=\{[^}]+\}[^>]*\baria-modal="true"/g)?.length ?? 0;

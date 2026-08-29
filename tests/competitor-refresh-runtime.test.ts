@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   type ClaimedCompetitorProduct,
+  runBoundedCompetitorRefreshBatch,
   runClaimedCompetitorProductRefresh,
 } from "../lib/competitor-refresh-runtime";
 import type { CompetitorPriceCandidate, CompetitorProviderStatus } from "../lib/competitor-prices";
@@ -31,6 +32,40 @@ const item: CompetitorPriceCandidate = {
   price: 14.99,
   currency: "USD",
 };
+
+test("competitor refresh batches preserve order and never run more than three products concurrently", async () => {
+  let active = 0;
+  let maximumActive = 0;
+  const completionOrder: number[] = [];
+  const outcomes = await runBoundedCompetitorRefreshBatch(
+    [0, 1, 2, 3, 4],
+    99,
+    async (value) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, value < 3 ? 8 - value : 1));
+      completionOrder.push(value);
+      active -= 1;
+      return {
+        result: {
+          productId: `product-${value}`,
+          ok: true,
+          pending: false,
+          count: value,
+          providers: [],
+        },
+        infrastructureFailure: false,
+        failureStage: null,
+      };
+    },
+  );
+
+  assert.equal(maximumActive, 3);
+  assert.notDeepEqual(completionOrder, [0, 1, 2, 3, 4]);
+  assert.deepEqual(outcomes.map((outcome) => outcome.result.productId), [
+    "product-0", "product-1", "product-2", "product-3", "product-4",
+  ]);
+});
 
 test("synthetic competitor refresh completes a fenced snapshot with the matcher version", async () => {
   let released = false;

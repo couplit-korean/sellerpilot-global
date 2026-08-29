@@ -191,7 +191,7 @@ import {
   type CsStatusFilter,
 } from "./cs-navigation";
 import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
-import { toastDurationMs, toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
+import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
   controllableRegistrationActivityJobId,
   isCancelledRegistrationActivity,
@@ -2733,7 +2733,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           || payload?.reason === "worker_missing"
           || payload?.reason === "heartbeat_missing"
           || payload?.reason === "heartbeat_stale"
-          || payload?.reason === "status_unavailable";
+          || payload?.reason === "status_unavailable"
+          || payload?.reason === "configuration_missing"
+          || payload?.reason === "token_missing_or_expired"
+          || payload?.reason === "token_mismatch";
         if (response.ok
             && typeof payload?.available === "boolean"
             && validReason
@@ -3461,6 +3464,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const totalPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length;
+  const extraPhotoInputDisabled = extraPhotosProcessing || totalPhotoCount >= 100;
+  const extraPhotoDisabledReason = extraPhotosProcessing ? "선택한 사진 확인 중" : totalPhotoCount >= 100 ? "최대 100장 등록됨" : "";
   const studioWorkerAvailable = studioWorkerReadiness?.available === true;
   const intakeReady = productIntakeSchema.safeParse(intake).success;
   const intakeCompletionItems = [
@@ -3524,18 +3529,30 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               {optionalPhotoSlots.map((slot) => {
                 const photo = slotPhotos[slot.id];
                 const slotDisabled = extraPhotosProcessing || (!photo && totalPhotoCount >= 100);
-                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} key={slot.id}><input id={`option-photo-${slot.id}-camera`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={slotDisabled} onClick={preservePublishingCaptureContext} onChange={(event) => void selectSlotPhoto(slot.id, event)} /><label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`} aria-disabled={slotDisabled}><input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={slotDisabled} onChange={(event) => void selectSlotPhoto(slot.id, event)} />{photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>{photo.originalWidth}×{photo.originalHeight} · 교체</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slot.guide}</small></>}</label><div className="photo-source-actions compact" aria-label={`${slot.label} 사진 입력 방식`}><label htmlFor={`option-photo-${slot.id}-camera`}><Camera size={14} /><span><b>촬영</b></span></label><label htmlFor={`option-photo-${slot.id}`}><ImagePlus size={14} /><span><b>앨범</b></span></label></div>{photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}</div>;
+                const slotDisabledReason = extraPhotosProcessing ? "선택한 사진 확인 중" : slotDisabled ? "최대 100장 등록됨" : "";
+                return <div className={`option-slot-wrap ${photo ? "has-photo" : ""}`} data-disabled={slotDisabled || undefined} key={slot.id}>
+                  <input id={`option-photo-${slot.id}-camera`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={slotDisabled} onClick={preservePublishingCaptureContext} onChange={(event) => void selectSlotPhoto(slot.id, event)} />
+                  <label className="option-photo-slot" htmlFor={`option-photo-${slot.id}`} aria-disabled={slotDisabled || undefined} title={slotDisabledReason || undefined}>
+                    <input id={`option-photo-${slot.id}`} className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={slotDisabled} onChange={(event) => void selectSlotPhoto(slot.id, event)} />
+                    {photo ? <><Image src={photo.url} alt={`${slot.label} 상품 사진`} fill sizes="180px" unoptimized /><span className="slot-photo-label"><b>{slot.label}</b><small>{slotDisabledReason || `${photo.originalWidth}×${photo.originalHeight} · 교체`}</small></span></> : <><span><ImagePlus size={18} /></span><b>{slot.label}</b><small>{slotDisabledReason || slot.guide}</small></>}
+                  </label>
+                  <div className="photo-source-actions compact" aria-label={`${slot.label} 사진 입력 방식`} aria-disabled={slotDisabled || undefined}>
+                    <label htmlFor={`option-photo-${slot.id}-camera`} aria-disabled={slotDisabled || undefined}><Camera size={14} /><span><b>촬영</b></span></label>
+                    <label htmlFor={`option-photo-${slot.id}`} aria-disabled={slotDisabled || undefined}><ImagePlus size={14} /><span><b>앨범</b></span></label>
+                  </div>
+                  {photo && <button type="button" className="remove-photo-button" aria-label={`${slot.label} 사진 삭제`} onClick={() => removeSlotPhoto(slot.id)}><Trash2 size={13} /></button>}
+                </div>;
               })}
             </div>
           </section>
 
           <section className="extra-photo-section">
             <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>상세컷, 구성품, 포장 상태 등 필요한 만큼 한 번에 선택할 수 있습니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
-            <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={extraPhotosProcessing || totalPhotoCount >= 100} onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
-            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotosProcessing || totalPhotoCount >= 100}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotosProcessing || totalPhotoCount >= 100} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotosProcessing ? "선택한 사진 확인 중" : totalPhotoCount >= 100 ? "최대 100장 등록됨" : "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : "분석용 최대 100장 · 채널 등록은 앞 8~9장 자동 선별"}</small></span></label>
-            <div className="photo-source-actions" aria-label="추가 사진 입력 방식">
-              <label htmlFor="extra-product-photo-camera"><Camera size={18} /><span><b>사진 촬영</b><small>한 장씩 바로 추가</small></span></label>
-              <label htmlFor="extra-product-photos"><ImagePlus size={18} /><span><b>앨범에서 선택</b><small>여러 장 한 번에 첨부</small></span></label>
+            <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={extraPhotoInputDisabled} onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
+            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined} title={extraPhotoDisabledReason || undefined}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotoInputDisabled} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotoDisabledReason || "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : totalPhotoCount >= 100 ? "사진을 삭제하면 다시 추가할 수 있습니다." : "분석용 최대 100장 · 채널 등록은 앞 8~9장 자동 선별"}</small></span></label>
+            <div className="photo-source-actions" aria-label="추가 사진 입력 방식" aria-disabled={extraPhotoInputDisabled || undefined}>
+              <label htmlFor="extra-product-photo-camera" aria-disabled={extraPhotoInputDisabled || undefined}><Camera size={18} /><span><b>사진 촬영</b><small>{extraPhotoInputDisabled ? "현재 선택 불가" : "한 장씩 바로 추가"}</small></span></label>
+              <label htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined}><ImagePlus size={18} /><span><b>앨범에서 선택</b><small>{extraPhotoInputDisabled ? "현재 선택 불가" : "여러 장 한 번에 첨부"}</small></span></label>
             </div>
             {extraPhotos.length > 0 && <div className="extra-photo-list">{extraPhotos.map((photo, index) => <div key={`${photo.name}-${index}`}><span><Image src={photo.url} alt={`추가 상품 사진 ${index + 1}`} fill sizes="100px" unoptimized /></span><small>{index + 1}</small><button type="button" aria-label={`추가 사진 ${index + 1} 삭제`} onClick={() => removeExtraPhoto(index)}><X size={12} /></button></div>)}</div>}
           </section>
@@ -4210,7 +4227,7 @@ function getServerSidebarDrawerSnapshot() {
   return false;
 }
 
-function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin }: { onLogout: () => Promise<void>; onIdleLogout: () => Promise<void>; userEmail: string; userId: string; freshLogin: boolean }) {
+function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin, oauthToastMessage, onOAuthToastQueued }: { onLogout: () => Promise<void>; onIdleLogout: () => Promise<void>; userEmail: string; userId: string; freshLogin: boolean; oauthToastMessage: string; onOAuthToastQueued: () => void }) {
   const [view, setView] = useState<View>("overview");
   const viewRef = useRef<View>("overview");
   const workspaceRestoreReadyRef = useRef(false);
@@ -4226,6 +4243,11 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
   const [newAdminPassword, setNewAdminPassword] = useState("");
   const { toast, notify, dismissToast } = useToastQueue();
   const toastTone = toastToneForMessage(toast);
+  useEffect(() => {
+    if (!oauthToastMessage) return;
+    notify(oauthToastMessage);
+    onOAuthToastQueued();
+  }, [notify, oauthToastMessage, onOAuthToastQueued]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [targetedSearch, setTargetedSearch] = useState<{ kind: "order" | "inquiry"; id: string; query: string } | null>(null);
@@ -5346,8 +5368,15 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
     : productReadinessState === "unavailable"
       ? productReadinessMessage ?? "상품 상태 확인 필요"
       : aiRecovery?.status === "failed"
-        ? aiRecovery.message
+        ? aiRecovery.message ?? "AI 복구 상태 확인 필요"
         : aiRecovery?.expiredCount ? `장기 AI 분석 ${aiRecovery.expiredCount}건 자동 종료` : "Supabase 운영 원장";
+  const operationsBadgeNeedsAttention = operations.state === "unavailable" || productReadinessState === "unavailable" || aiRecovery?.status === "failed";
+  const operationsBadgeTitle = [operations.message, productReadinessMessage, aiRecovery?.message].filter(Boolean).join(" · ") || operationsBadgeDetail;
+  const openOperationsAttention = () => {
+    if (productReadinessState === "unavailable") navigate("products");
+    else if (aiRecovery?.status === "failed") navigate("registration-activity", "failed");
+    else navigate("overview");
+  };
 
   return (
     <main className="app-shell">
@@ -5364,7 +5393,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
 
-      <section className="app-main">
+      <section className={`app-main ${view === "publishing" ? "publishing-active" : ""}`.trim()}>
         <div className="app-header-stack">
           <div className="commerce-service-rail" aria-label="채널 운영 상태">
             <strong>통합 판매관리</strong>
@@ -5377,7 +5406,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
           </div>
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" aria-controls="sellerpilot-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
-          <div className="topbar-actions"><span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} title={[operations.message, productReadinessMessage, aiRecovery?.message].filter(Boolean).join(" · ")}><Activity size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></span><button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button ref={notificationButtonRef} className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} aria-controls="sellerpilot-notifications" onClick={() => { if (notificationsOpen) closeNotifications(true); else setNotificationsOpen(true); }}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div id="sellerpilot-notifications" className="notification-popover" role="region" aria-label="실시간 알림"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => closeNotifications(true)}><X size={14} /></button></span></div>{notificationItems.map((item) => { const openItem = () => { if (item.view === "cs" && item.csStatus) openCs("all", item.csStatus); else navigate(item.view, item.registrationStatus); closeNotifications(false); }; return <div className="notification-item" key={item.key}><button type="button" className="notification-item-open" onClick={openItem}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span></button><button type="button" className="notification-item-dismiss" aria-label={`${item.title} 알림 닫기`} onClick={() => setDismissedNotifications((current) => new Set([...current, item.key]))}><X size={13} /></button></div>; })}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
+          <div className={`topbar-actions ${operationsBadgeNeedsAttention ? "has-operations-attention" : ""}`.trim()}>{operationsBadgeNeedsAttention ? <button type="button" className="demo-data-badge attention" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`} onClick={openOperationsAttention}><AlertTriangle size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></button> : <span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} role="status" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`}><Activity size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></span>}<button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button ref={notificationButtonRef} className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} aria-controls="sellerpilot-notifications" onClick={() => { if (notificationsOpen) closeNotifications(true); else setNotificationsOpen(true); }}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div id="sellerpilot-notifications" className="notification-popover" role="region" aria-label="실시간 알림"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => closeNotifications(true)}><X size={14} /></button></span></div>{notificationItems.map((item) => { const openItem = () => { if (item.view === "cs" && item.csStatus) openCs("all", item.csStatus); else navigate(item.view, item.registrationStatus); closeNotifications(false); }; return <div className="notification-item" key={item.key}><button type="button" className="notification-item-open" onClick={openItem}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span></button><button type="button" className="notification-item-dismiss" aria-label={`${item.title} 알림 닫기`} onClick={() => setDismissedNotifications((current) => new Set([...current, item.key]))}><X size={13} /></button></div>; })}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
           </header>
         </div>
         <MobilePushManager authenticatedFetch={operations.authenticatedFetch} />
@@ -5385,16 +5414,16 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin 
       </section>
 
       <nav className="mobile-bottom-nav" aria-label="모바일 주요 메뉴">
-        <button type="button" className={view === "overview" ? "active" : ""} onClick={() => navigate("overview")}><LayoutDashboard size={19} /><span>대시보드</span></button>
-        <button type="button" className={view === "products" || view === "product-detail" ? "active" : ""} onClick={() => navigate("products")}><Package size={19} /><span>상품</span></button>
-        <button type="button" className={view === "publishing" || view === "registration-activity" ? "active" : ""} onClick={() => navigate("publishing")}><CloudUpload size={19} /><span>등록</span></button>
-        <button type="button" className={view === "orders" ? "active" : ""} onClick={() => navigate("orders")}><ShoppingCart size={19} /><span>주문</span></button>
-        <button type="button" className={view === "cs" ? "active" : ""} onClick={() => openCs("all", "open")}><Headphones size={19} /><span>CS</span></button>
+        <button type="button" className={view === "overview" ? "active" : ""} aria-current={view === "overview" ? "page" : undefined} onClick={() => navigate("overview")}><LayoutDashboard size={19} /><span>대시보드</span></button>
+        <button type="button" className={view === "products" || view === "product-detail" ? "active" : ""} aria-current={view === "products" || view === "product-detail" ? "page" : undefined} onClick={() => navigate("products")}><Package size={19} /><span>상품</span></button>
+        <button type="button" className={view === "publishing" || view === "registration-activity" ? "active" : ""} aria-current={view === "publishing" || view === "registration-activity" ? "page" : undefined} onClick={() => navigate("publishing")}><CloudUpload size={19} /><span>등록</span></button>
+        <button type="button" className={view === "orders" ? "active" : ""} aria-current={view === "orders" ? "page" : undefined} onClick={() => navigate("orders")}><ShoppingCart size={19} /><span>주문</span></button>
+        <button type="button" className={view === "cs" ? "active" : ""} aria-current={view === "cs" ? "page" : undefined} onClick={() => openCs("all", "open")}><Headphones size={19} /><span>CS</span></button>
       </nav>
 
       {searchOpen && <div className="command-overlay"><div ref={searchDialogRef} tabIndex={-1} className="command-dialog" role="dialog" aria-modal="true" aria-label="통합 검색"><div className="command-input"><Search size={18} /><input ref={searchInputRef} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { setSearchOpen(false); return; } if (event.key !== "Enter") return; const first = unifiedSearchResults.products[0] ?? unifiedSearchResults.orders[0] ?? unifiedSearchResults.inquiries[0]; if (first) selectUnifiedSearchResult(first); }} placeholder="상품명, 주문번호, 고객명 또는 문의 내용 검색" aria-label="통합 검색어" /><button aria-label="검색창 닫기" onClick={() => setSearchOpen(false)}><X size={17} /></button></div>{searchQuery.trim() ? <div className="command-results" aria-live="polite">{unifiedSearchResultCount > 0 ? <>{([{ label: "상품", items: unifiedSearchResults.products, icon: Package }, { label: "주문", items: unifiedSearchResults.orders, icon: ShoppingCart }, { label: "문의", items: unifiedSearchResults.inquiries, icon: MessageCircleMore }] as const).map((group) => group.items.length > 0 && <section key={group.label}><span className="command-label">{group.label} <b>{group.items.length}</b></span>{group.items.map((result) => <button type="button" className="command-result" key={`${result.kind}-${result.id}`} onClick={() => selectUnifiedSearchResult(result)}><span className={`command-result-icon ${result.kind}`}><group.icon size={16} /></span><span><b>{result.title}</b><small>{result.subtitle}</small></span><em>{result.meta}</em><ArrowRight size={14} /></button>)}</section>)}</> : <div className="command-empty"><Search size={24} /><b>일치하는 상품·주문·문의가 없습니다.</b><small>상품명, SKU, 주문번호, 고객명 또는 문의 내용을 확인해 주세요.</small></div>}</div> : <><span className="command-label">빠른 이동</span>{navGroups[0].items.map((item) => { const Icon = "icon" in item ? item.icon : null; return Icon ? <button key={item.id} onClick={() => { navigate(item.id); setSearchOpen(false); }}><Icon size={17} /><span>{item.label}</span><ArrowRight size={14} /></button> : null; })}</>}</div></div>}
       {accountOpen && <div className="account-security-overlay"><section ref={accountDialogRef} tabIndex={-1} className="account-security-dialog" role="dialog" aria-modal="true" aria-labelledby="account-security-title"><div className="account-security-head"><span><ShieldCheck size={18} /></span><div><h2 id="account-security-title">관리자 로그인 정보 변경</h2><p>현재 계정의 로그인 아이디를 admin으로 변경합니다.</p></div><button aria-label="계정 설정 닫기" onClick={() => setAccountOpen(false)} disabled={credentialChanging}><X size={17} /></button></div><div className="account-security-values"><div><small>새 아이디</small><strong>admin</strong></div><label><small>새 비밀번호</small><input ref={accountPasswordRef} type="password" value={newAdminPassword} onChange={(event) => setNewAdminPassword(event.target.value)} autoComplete="new-password" placeholder="보안 정책에 맞게 입력" /></label></div><p className="account-security-warning"><AlertTriangle size={16} />Supabase 보안 정책상 10자 이상이며 영문 대·소문자, 숫자, 특수문자를 모두 포함해야 합니다. 변경이 완료되면 현재 세션에서 로그아웃됩니다.</p>{credentialMessage && <p className="account-security-message">{credentialMessage}</p>}<button className="account-security-submit" type="button" onClick={() => void changeAdminCredentials()} disabled={credentialChanging || !newAdminPassword}>{credentialChanging ? <><LoaderCircle className="spin" size={17} />변경 중</> : <><KeyRound size={17} />admin 계정으로 변경</>}</button></section></div>}
-      {toast && <div className={`toast notice-${toastTone}`} role="status" aria-live="polite"><span className="toast-icon">{toastTone === "error" ? <AlertCircle size={18} /> : toastTone === "warning" ? <AlertTriangle size={18} /> : toastTone === "info" ? <Activity size={18} /> : <CheckCircle2 size={18} />}</span><span className="toast-copy"><b>{toastTone === "error" ? "처리 오류" : toastTone === "warning" ? "확인 필요" : toastTone === "info" ? "진행 알림" : "처리 완료"}</b><span>{toast}</span></span><button type="button" aria-label="알림 닫기" onClick={dismissToast}><X size={14} /></button></div>}
+      {toast && <div className={`toast notice-${toastTone}`} role="status" aria-live="polite" aria-atomic="true"><span className="toast-icon">{toastTone === "error" ? <AlertCircle size={18} /> : toastTone === "warning" ? <AlertTriangle size={18} /> : toastTone === "info" ? <Activity size={18} /> : <CheckCircle2 size={18} />}</span><span className="toast-copy"><b>{toastTone === "error" ? "처리 오류" : toastTone === "warning" ? "확인 필요" : toastTone === "info" ? "진행 알림" : "처리 완료"}</b><span>{toast}</span></span><button type="button" aria-label="알림 닫기" onClick={dismissToast}><X size={14} /></button></div>}
     </main>
   );
 }
@@ -5409,15 +5438,10 @@ export default function Home() {
   const [accessRetryKey, setAccessRetryKey] = useState(0);
   const [accountSwitchCleanup, setAccountSwitchCleanup] = useState<AccountSwitchCleanupState>("idle");
   const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "shopee" | "lazada" | "ebay"; code: string; state: string; shopId?: string; mainAccountId?: string } | null>(null);
-  const [oauthNotice, setOauthNotice] = useState("");
+  const [oauthToastMessage, setOAuthToastMessage] = useState("");
   const oauthHandled = useRef(false);
   const accountSwitchingRef = useRef(false);
-
-  useEffect(() => {
-    if (!oauthNotice) return;
-    const timer = window.setTimeout(() => setOauthNotice(""), toastDurationMs);
-    return () => window.clearTimeout(timer);
-  }, [oauthNotice]);
+  const clearOAuthToastMessage = useCallback(() => setOAuthToastMessage(""), []);
 
   useEffect(() => {
     const captureCallback = window.setTimeout(() => {
@@ -5559,9 +5583,9 @@ export default function Home() {
         });
         const payload = await response.json().catch(() => ({ message: "채널 OAuth 응답을 읽지 못했습니다." })) as { message: string };
         if (!response.ok) throw new Error(payload.message);
-        setOauthNotice(payload.message);
+        setOAuthToastMessage(payload.message);
       } catch (oauthError) {
-        setOauthNotice(oauthError instanceof Error ? oauthError.message : "채널 OAuth 연결을 완료하지 못했습니다.");
+        setOAuthToastMessage(oauthError instanceof Error ? oauthError.message : "채널 OAuth 연결을 완료하지 못했습니다.");
       } finally {
         setPendingChannelOAuth(null);
       }
@@ -5650,6 +5674,6 @@ export default function Home() {
     return <main className="login-shell"><section className="login-form-panel"><div className="login-card"><AlertTriangle size={26} /><h2>관리자 권한이 필요합니다.</h2><p>{userEmail || "현재 계정"}은 SellerPilot 관리자 명단에 없습니다. Supabase의 <b>sellerpilot_private.admin_users</b> 승인 후 접근할 수 있습니다.</p><button type="button" className="login-submit" onClick={() => void logout()}><LogOut size={16} />다른 계정으로 로그인</button></div></section></main>;
   }
   return accessState === "admin"
-    ? <><DashboardShell onLogout={logout} onIdleLogout={idleLogout} userEmail={userEmail} userId={userId} freshLogin={Boolean(userId && freshLoginUserId === userId)} />{oauthNotice && <div className="toast"><KeyRound size={18} /><span>{oauthNotice}</span><button onClick={() => setOauthNotice("")}><X size={14} /></button></div>}</>
+    ? <DashboardShell onLogout={logout} onIdleLogout={idleLogout} userEmail={userEmail} userId={userId} freshLogin={Boolean(userId && freshLoginUserId === userId)} oauthToastMessage={oauthToastMessage} onOAuthToastQueued={clearOAuthToastMessage} />
     : <LoginScreen onLogin={login} onPasswordReset={resetPassword} notice={loginNotice} sessionCleanupState={accountSwitchCleanup} onRetrySessionCleanup={retryAccountSwitchCleanup} />;
 }

@@ -69,7 +69,7 @@ test("periodic channel sync preserves idempotent partial results and surfaces da
   assert.match(source, /status: databaseWideFailure[\s\S]{0,260}infrastructureFailures > 0[\s\S]{0,160}reconciliationRequired > 0[\s\S]{0,120}pushRequiresAttention[\s\S]{0,80}\? 207/);
 });
 
-test("competitor scheduler bounds one durable claim and preserves pending gateway work", async () => {
+test("competitor scheduler bounds three durable claims and preserves pending gateway work", async () => {
   const [source, refreshRuntime] = await Promise.all([
     readFile(routeUrls.competitorPrices, "utf8"),
     readFile(routeUrls.competitorRefreshRuntime, "utf8"),
@@ -77,13 +77,18 @@ test("competitor scheduler bounds one durable claim and preserves pending gatewa
   assertBoundedSupabaseAndSeparatedAuth(source);
 
   assert.match(source, /const COMPETITOR_RPC_TIMEOUT_MS = 5_000/);
-  assert.match(source, /const COMPETITOR_CLAIM_BATCH_SIZE = 1/);
+  assert.match(source, /const COMPETITOR_CLAIM_BATCH_SIZE = 3/);
+  assert.match(source, /const COMPETITOR_PRODUCT_CONCURRENCY = 3/);
   assert.match(source, /const COMPETITOR_PROVIDER_BUDGET_MS = 32_000/);
   assert.match(source, /enableMarketplaceWeb: true/);
   assert.match(source, /sellerpilot_service_claim_due_competitor_products/);
   assert.match(source, /p_limit: COMPETITOR_CLAIM_BATCH_SIZE/);
-  assert.doesNotMatch(source, /p_limit:\s*(?:[2-9]|[1-9][0-9]+)/);
+  assert.match(source, /runBoundedCompetitorRefreshBatch\(\s*due,\s*COMPETITOR_PRODUCT_CONCURRENCY/);
+  assert.match(source, /const seenProductIds = new Set<string>\(\)/);
+  assert.match(source, /const seenClaimTokens = new Set<string>\(\)/);
+  assert.match(source, /seenProductIds\.has\(item\.product_id\) \|\| seenClaimTokens\.has\(item\.claim_token\)/);
   assert.match(source, /sellerpilot_service_complete_competitor_price_refresh/);
+  assert.match(source, /p_claim_token: claimed\.claimToken/);
   assert.match(source, /p_providers: providers/);
   assert.match(source, /sellerpilot_service_release_competitor_price_refresh/);
   assert.doesNotMatch(source, /sellerpilot_service_due_competitor_products/);
@@ -92,6 +97,7 @@ test("competitor scheduler bounds one durable claim and preserves pending gatewa
   assert.match(source, /if \(!Array\.isArray\(dueData\)\)[\s\S]{0,260}status: 503/);
   assert.match(source, /if \(saveError\) throw saveError/);
   assert.match(refreshRuntime, /!Number\.isFinite\(savedCount\) \|\| savedCount < 0/);
+  assert.match(refreshRuntime, /MAX_COMPETITOR_PRODUCT_CONCURRENCY = 3/);
   assert.match(refreshRuntime, /if \(searched\.pending\)[\s\S]{0,260}pending: true/);
   assert.match(refreshRuntime, /Completion may have committed before a response was lost/);
   assert.match(source, /status: providerConfigurationMissing \|\| infrastructureFailures > 0 \? 503 : pending \? 202 : results\.some\(\(item\) => !item\.ok\) \? 207 : 200/);

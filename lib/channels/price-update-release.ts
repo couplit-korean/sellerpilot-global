@@ -28,10 +28,10 @@ export type PriceUpdateRelease = {
 const evidenceByChannel = {
   qoo10: {
     writeImplemented: true,
-    exactRemoteIdentity: false,
+    exactRemoteIdentity: true,
     sameProductPriceCurrencyReadback: false,
-    failClosedOnMismatch: false,
-    reason: "Qoo10 SetGoodsPriceQty 쓰기는 구현됐지만, ItemCode 필수 계보와 동일 ItemCode의 통화·가격 사후 조회 및 불일치 차단이 없습니다.",
+    failClosedOnMismatch: true,
+    reason: "Qoo10 게시 원장의 ItemCode 계보, SetGoodsPriceQty의 Price·Qty 매핑, 동일 ItemCode·요청가격 불일치 차단은 구현됐습니다. 하지만 현재 GetItemDetailInfo 계약에는 통화 필드가 없고 반영에 최대 10분이 걸릴 수 있어 동일 상품의 통화·가격 terminal readback을 증명할 수 없습니다.",
   },
   shopee: {
     writeImplemented: true,

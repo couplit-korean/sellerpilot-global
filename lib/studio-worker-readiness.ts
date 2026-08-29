@@ -10,7 +10,10 @@ export type StudioWorkerReadinessReason =
   | "worker_missing"
   | "heartbeat_missing"
   | "heartbeat_stale"
-  | "status_unavailable";
+  | "status_unavailable"
+  | "configuration_missing"
+  | "token_missing_or_expired"
+  | "token_mismatch";
 
 export type StudioWorkerReadiness = {
   available: boolean;

@@ -8,7 +8,7 @@ import {
   type ServerProductStudioDependencies,
 } from "./server-product-studio";
 import { supabaseUrl } from "./supabase/config";
-import type { StudioWorkerReadiness } from "./studio-worker-readiness";
+import type { StudioWorkerReadiness, StudioWorkerReadinessReason } from "./studio-worker-readiness";
 import { createBoundedSupabaseFetch } from "./worker-rpc";
 
 const WORKER_TOKEN_PATTERN = /^spw_[A-Za-z0-9_-]{43}$/;
@@ -121,7 +121,10 @@ export async function wakeServerProductStudioAfterResponse() {
   }
 }
 
-function unavailable(reason: "worker_missing" | "status_unavailable", message: string): StudioWorkerReadiness {
+function unavailable(
+  reason: Exclude<StudioWorkerReadinessReason, "ready">,
+  message: string,
+): StudioWorkerReadiness {
   return { available: false, reason, message, checkedAt: new Date().toISOString() };
 }
 
@@ -132,7 +135,7 @@ export async function readServerProductStudioReadiness(
   const gatewayAuthenticated = await aiGatewayAuthenticationAvailable();
   if (!configuration.configured || !gatewayAuthenticated) {
     return unavailable(
-      "worker_missing",
+      "configuration_missing",
       "서버 AI 제작 환경(OIDC·Supabase 큐·AI 작업자 토큰)이 아직 모두 연결되지 않았습니다.",
     );
   }
@@ -142,12 +145,12 @@ export async function readServerProductStudioReadiness(
   }
   const worker = (data as Record<string, unknown>).worker;
   if (!worker || typeof worker !== "object" || Array.isArray(worker)) {
-    return unavailable("worker_missing", "Supabase에 활성 AI 범위 작업자 토큰이 없습니다.");
+    return unavailable("token_missing_or_expired", "Supabase에 활성 AI 범위 작업자 토큰이 없습니다.");
   }
   const snapshot = worker as Record<string, unknown>;
   const expectedFingerprint = configuration.tokenHash.slice(0, 12).toUpperCase();
   if (snapshot.scope !== "ai" || snapshot.fingerprint !== expectedFingerprint) {
-    return unavailable("worker_missing", "Vercel 서버 토큰과 Supabase 활성 AI 토큰이 일치하지 않습니다.");
+    return unavailable("token_mismatch", "Vercel 서버 토큰과 Supabase 활성 AI 토큰이 일치하지 않습니다.");
   }
   return {
     available: true,

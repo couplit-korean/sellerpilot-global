@@ -562,7 +562,7 @@ body:has(.notification-popover) .mobile-push-chip {
   .puck-editor-top > button,
   .mobile-push-gate-actions button,
   .mobile-push-chip button,
-  .cli-token-reveal button,
+  .cli-job-controls button,
   .cli-job-controls button,
   .selection-toolbar button,
   .bulk-order-bar > button:not(.table-action),

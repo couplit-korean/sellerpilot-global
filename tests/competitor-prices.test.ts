@@ -15,6 +15,7 @@ import {
   searchEbayBrowseVariants,
   searchElevenstProductVariants,
   searchElevenstProducts,
+  searchNaverShopping,
   searchNaverShoppingVariants,
   structuredMarketplaceWebPrice,
   type CompetitorPriceCandidate,
@@ -73,6 +74,234 @@ test("competitor queries retain bounded channel-local language coverage after no
   for (const marker of ["ケロッグ", "家樂氏", "perisa", "Produk", "Ngũ", "ซีเรียล", "Produto", "Producto"]) {
     assert.equal(queries.some((query) => query.includes(marker)), true, marker);
   }
+});
+
+test("provider retrieval adds one deterministic arbitrary-brand transliteration while strict queries stay unchanged", async () => {
+  const originalFetch = globalThis.fetch;
+  const queries: string[] = [];
+  globalThis.fetch = async (input) => {
+    queries.push(new URL(String(input)).searchParams.get("query") ?? "");
+    return Response.json({ items: [] });
+  };
+  try {
+    const primary = "모코비 콜라겐 앰플 MK-7 50ml 2개";
+    const aliases = [
+      "모코비 collagen ampoule MK-7 50ml 2 pack",
+      "모코비 コラーゲンアンプル MK-7 50ml 2個",
+      "모코비 胶原蛋白安瓶 MK-7 50ml 2瓶",
+      "모코비 ampul kolagen MK-7 50ml pek 2",
+      "모코비 produk ampul kolagen MK-7 50ml isi 2",
+      "모코비 ống collagen MK-7 50ml 2 chai",
+      "모코비 แอมพูลคอลลาเจน MK-7 50ml 2 ชิ้น",
+    ];
+    const strictQueries = normalizedCompetitorQueries(primary, aliases, 8);
+    assert.equal(strictQueries.length, 8);
+    await searchNaverShoppingVariants(primary, aliases, {
+      clientId: "synthetic-client",
+      clientSecret: "synthetic-secret",
+    });
+
+    assert.equal(queries.length, strictQueries.length + 1);
+    for (const query of strictQueries) assert.equal(queries.includes(query), true, query);
+    const fallbackQueries = queries.filter((query) => !strictQueries.includes(query));
+    assert.equal(fallbackQueries.length, 1);
+    assert.match(fallbackQueries[0] ?? "", /^mokobi /iu);
+    assert.equal(new Set(queries).size, queries.length);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("three concurrent product searches never exceed three actual provider fetches", async () => {
+  const originalFetch = globalThis.fetch;
+  let activeFetches = 0;
+  let maximumActiveFetches = 0;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    activeFetches += 1;
+    fetchCount += 1;
+    maximumActiveFetches = Math.max(maximumActiveFetches, activeFetches);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      return Response.json({ items: [] });
+    } finally {
+      activeFetches -= 1;
+    }
+  };
+  try {
+    const aliases = [
+      "모코비 collagen ampoule MK-7 50ml 2 pack",
+      "모코비 コラーゲンアンプル MK-7 50ml 2個",
+      "모코비 胶原蛋白安瓶 MK-7 50ml 2瓶",
+      "모코비 ampul kolagen MK-7 50ml pek 2",
+      "모코비 produk ampul kolagen MK-7 50ml isi 2",
+      "모코비 ống collagen MK-7 50ml 2 chai",
+      "모코비 แอมพูลคอลลาเจน MK-7 50ml 2 ชิ้น",
+    ];
+    await Promise.all(Array.from({ length: 3 }, () => searchNaverShoppingVariants(
+      "모코비 콜라겐 앰플 MK-7 50ml 2개",
+      aliases,
+      { clientId: "synthetic-client", clientSecret: "synthetic-secret" },
+    )));
+
+    assert.equal(fetchCount, 27);
+    assert.equal(maximumActiveFetches, 3);
+    assert.equal(activeFetches, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("queued provider requests receive their network timeout only after the FIFO permit", async () => {
+  const originalFetch = globalThis.fetch;
+  const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
+  const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+  let activeFetches = 0;
+  let maximumActiveFetches = 0;
+  let startedFetches = 0;
+  Object.defineProperty(AbortSignal, "timeout", {
+    configurable: true,
+    writable: true,
+    value: () => nativeTimeout(40),
+  });
+  globalThis.fetch = async (_input, init) => {
+    startedFetches += 1;
+    activeFetches += 1;
+    maximumActiveFetches = Math.max(maximumActiveFetches, activeFetches);
+    const signal = init?.signal instanceof AbortSignal ? init.signal : null;
+    return await new Promise<Response>((resolve, reject) => {
+      const finish = () => {
+        signal?.removeEventListener("abort", abort);
+        activeFetches -= 1;
+        resolve(Response.json({ items: [] }));
+      };
+      const abort = () => {
+        clearTimeout(timer);
+        activeFetches -= 1;
+        reject(signal?.reason instanceof Error ? signal.reason : new Error("synthetic network abort"));
+      };
+      const timer = setTimeout(finish, 25);
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
+    });
+  };
+  try {
+    const results = await Promise.all(Array.from({ length: 6 }, (_, index) => searchNaverShopping(
+      `synthetic queued product ${index}`,
+      { clientId: "synthetic-client", clientSecret: "synthetic-secret" },
+    )));
+
+    assert.equal(results.length, 6);
+    assert.equal(startedFetches, 6);
+    assert.equal(maximumActiveFetches, 3);
+    assert.equal(activeFetches, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (timeoutDescriptor) Object.defineProperty(AbortSignal, "timeout", timeoutDescriptor);
+  }
+});
+
+test("provider deadline aborts active fetches, removes queued fetches, and leaves the FIFO reusable", async () => {
+  const originalFetch = globalThis.fetch;
+  let activeFetches = 0;
+  let startedBeforeDeadline = 0;
+  let abortedFetches = 0;
+  let followupFetches = 0;
+  globalThis.fetch = async (_input, init) => {
+    startedBeforeDeadline += 1;
+    activeFetches += 1;
+    const signal = init?.signal instanceof AbortSignal ? init.signal : null;
+    return await new Promise<Response>((_resolve, reject) => {
+      const abort = () => {
+        activeFetches -= 1;
+        abortedFetches += 1;
+        reject(signal?.reason instanceof Error ? signal.reason : new Error("synthetic deadline abort"));
+      };
+      if (signal?.aborted) abort();
+      else signal?.addEventListener("abort", abort, { once: true });
+    });
+  };
+  try {
+    const registry: CompetitorProviderRegistry = {
+      configured: [{
+        id: "naver_shopping",
+        marketplaces: ["smartstore"],
+        search: async (_primary, _aliases, _display, context) => (await Promise.all(
+          Array.from({ length: 6 }, (_, index) => searchNaverShopping(
+            `synthetic deadline product ${index}`,
+            { clientId: "synthetic-client", clientSecret: "synthetic-secret" },
+            30,
+            context?.signal,
+          )),
+        )).flat(),
+      }],
+      unavailable: [],
+    };
+
+    const result = await searchCompetitorProviders(registry, "synthetic deadline product", [], 30, 25);
+    assert.equal(result.pending, true);
+    assert.equal(result.providers[0]?.status, "pending");
+
+    for (let attempt = 0; attempt < 20 && activeFetches > 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(startedBeforeDeadline, 3, "queued requests must be removed before they start after the product deadline");
+    assert.equal(abortedFetches, 3);
+    assert.equal(activeFetches, 0);
+
+    globalThis.fetch = async () => {
+      followupFetches += 1;
+      return Response.json({ items: [] });
+    };
+    await searchNaverShopping("synthetic followup product", {
+      clientId: "synthetic-client",
+      clientSecret: "synthetic-secret",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(followupFetches, 1, "an aborted batch must not leave stale waiters or active permits");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a parent product deadline is composed with the provider budget and cancels immediately", async () => {
+  const controller = new AbortController();
+  let observedParentAbort = false;
+  const registry: CompetitorProviderRegistry = {
+    configured: [{
+      id: "naver_shopping",
+      marketplaces: ["smartstore"],
+      search: async (_primary, _aliases, _display, context) => await new Promise<CompetitorPriceCandidate[]>((resolve, reject) => {
+        const signal = context?.signal;
+        const timeout = setTimeout(() => {
+          signal?.removeEventListener("abort", abort);
+          resolve([]);
+        }, 200);
+        const abort = () => {
+          clearTimeout(timeout);
+          observedParentAbort = true;
+          reject(signal?.reason instanceof Error ? signal.reason : new Error("synthetic parent abort"));
+        };
+        if (signal?.aborted) abort();
+        else signal?.addEventListener("abort", abort, { once: true });
+      }),
+    }],
+    unavailable: [],
+  };
+  const startedAt = Date.now();
+  const search = searchCompetitorProviders(
+    registry,
+    "synthetic parent cancellation product",
+    [],
+    30,
+    1_000,
+    { signal: controller.signal },
+  );
+  setTimeout(() => controller.abort(new Error("SYNTHETIC_PRODUCT_DEADLINE")), 10);
+
+  await assert.rejects(search, /SYNTHETIC_PRODUCT_DEADLINE/);
+  assert.equal(observedParentAbort, true);
+  assert.ok(Date.now() - startedAt < 150, "parent cancellation must not wait for the provider timeout");
 });
 
 test("Brave marketplace queries stay within the documented limits and only name official marketplace domains", () => {
@@ -763,6 +992,33 @@ test("repeated multiword Latin brand identity requires the whole phrase", () => 
   assert.ok(competitorCandidateRelevance(candidate({ title: "Nature Made daily vitamin 30 tablets" }), queries) > 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Nature Bounty daily vitamin 30 tablets" }), queries), 0);
   assert.equal(competitorCandidateRelevance(candidate({ title: "Nature daily vitamin 30 tablets" }), queries), 0);
+});
+
+test("arbitrary repeated brands use deterministic script transliteration without weakening hard identity fences", () => {
+  const queries = [
+    "모코비 콜라겐 앰플 MK-7 50ml 2개 8801234567890",
+    "모코비 collagen ampoule MK-7 50ml 2 pack 8801234567890",
+    "모코비 コラーゲンアンプル MK-7 50ml 2個 8801234567890",
+  ];
+  const exact = "Mokobi collagen ampoule MK-7 50ml 2 pack 8801234567890";
+
+  assert.ok(competitorCandidateRelevance(candidate({ title: exact }), queries) > 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: exact.replace("Mokobi", "Mokoba") }), queries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: exact.replace("MK-7", "MK-8") }), queries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: exact.replace("8801234567890", "8801234567891") }), queries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: exact.replace("2 pack", "3 pack") }), queries), 0);
+  assert.equal(competitorCandidateRelevance(candidate({ title: exact.replace("50ml", "30ml") }), queries), 0);
+
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Mokobi collagen serum 50ml" }), [
+    "モコビ collagen serum 50ml",
+    "モコビ 콜라겐 세럼 50ml",
+    "モコビ sérum de colágeno 50ml",
+  ]) > 0);
+  assert.ok(competitorCandidateRelevance(candidate({ title: "Mokobi collagen serum 50ml" }), [
+    "Mökobi collagen serum 50ml",
+    "Mökobi 콜라겐 세럼 50ml",
+    "Mökobi sérum de colágeno 50ml",
+  ]) > 0);
 });
 
 test("single-query ACV normalization is symmetric without letting generic apple replace ACV identity", () => {

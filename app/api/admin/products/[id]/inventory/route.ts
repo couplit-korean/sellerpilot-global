@@ -242,12 +242,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     try {
       await processTask(task);
     } catch {
+      const safeMessage = "재고 요청 처리 중 예상하지 못한 응답이 발생했습니다. 외부 반영 여부를 확인하기 전에는 다시 적용하지 마세요.";
+      // The RPC fails closed when a gateway job already exists. That lets us
+      // close a genuinely pre-write exception without overwriting an external
+      // mutation whose outcome still has to be reconciled by the gateway.
+      const recorded = await recordPrewriteFailure(task, null, safeMessage);
       results.push({
         id: task.id,
         channel: task.channel,
         ok: false,
-        message: "재고 요청 처리 중 예상하지 못한 응답이 발생했습니다. 외부 반영 여부를 확인하기 전에는 다시 적용하지 마세요.",
-        reconciliationRequired: true,
+        message: recorded
+          ? "재고 요청을 외부 전송 전에 안전하게 종료했습니다. 원인을 확인한 뒤 다시 적용해 주세요."
+          : safeMessage,
+        ...(!recorded ? { reconciliationRequired: true } : {}),
       });
     }
   };

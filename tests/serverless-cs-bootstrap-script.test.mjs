@@ -1,6 +1,29 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+const bootstrapScript = fileURLToPath(
+  new URL("../scripts/bootstrap-serverless-cs-runtime.mjs", import.meta.url),
+);
+
+function runBootstrap(arguments_) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [bootstrapScript, ...arguments_], {
+      env: { PATH: process.env.PATH ?? "" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
 
 test("serverless CS bootstrap is project-bound, secret-safe, and canary-gated", async () => {
   const source = await readFile(
@@ -44,4 +67,23 @@ test("serverless CS bootstrap is project-bound, secret-safe, and canary-gated", 
   assert.doesNotMatch(source, /error\??\.message/);
   assert.doesNotMatch(source, /console\.log\([^)]*(?:cronSecret|wakeBearer|rawToken|serviceKey)/);
   assert.doesNotMatch(source, /writeFile|appendFile|["']\.env(?:\.local)?["']/);
+});
+
+test("status and deactivation do not require CRON_SECRET while secret-bearing modes stay fail-closed", async () => {
+  for (const arguments_ of [["--status"], ["--deactivate", "--status"]]) {
+    const result = await runBootstrap(arguments_);
+    assert.equal(result.code, 1);
+    assert.equal(result.signal, null);
+    assert.match(result.stderr, /exact SellerPilot Supabase project is not configured/);
+    assert.doesNotMatch(result.stderr, /server runtime secrets are not available/);
+    assert.equal(result.stdout, "");
+  }
+
+  for (const arguments_ of [["--candidate-canary"], ["--bootstrap"], ["--canary"]]) {
+    const result = await runBootstrap(arguments_);
+    assert.equal(result.code, 1);
+    assert.equal(result.signal, null);
+    assert.match(result.stderr, /server runtime secrets are not available/);
+    assert.equal(result.stdout, "");
+  }
 });

@@ -6,6 +6,7 @@ import { COMPETITOR_MATCHER_VERSION, competitorProviderRegistry, searchCompetito
 import {
   type ClaimedCompetitorProduct,
   type CompetitorRefreshResult,
+  runBoundedCompetitorRefreshBatch,
   runClaimedCompetitorProductRefresh,
 } from "../../../../lib/competitor-refresh-runtime";
 import { supabaseUrl } from "../../../../lib/supabase/config";
@@ -21,7 +22,8 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const COMPETITOR_RPC_TIMEOUT_MS = 5_000;
-const COMPETITOR_CLAIM_BATCH_SIZE = 1;
+const COMPETITOR_CLAIM_BATCH_SIZE = 3;
+const COMPETITOR_PRODUCT_CONCURRENCY = 3;
 const COMPETITOR_CLAIM_LEASE_SECONDS = 90;
 const COMPETITOR_ELEVENST_WAIT_MS = 18_000;
 const COMPETITOR_PROVIDER_BUDGET_MS = 32_000;
@@ -100,6 +102,8 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
     return NextResponse.json({ message: "경쟁가 조회 대상 상품을 확인하지 못했습니다." }, { status: 503 });
   }
   let invalidDueRows = 0;
+  const seenProductIds = new Set<string>();
+  const seenClaimTokens = new Set<string>();
   const due = dueData.flatMap((item) => {
     if (!item || typeof item !== "object"
         || typeof item.product_id !== "string"
@@ -110,51 +114,64 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
       invalidDueRows += 1;
       return [];
     }
+    // The database claim RPC already fences rows with SKIP LOCKED and a token.
+    // Treat a duplicate product or token in the returned batch as invalid
+    // infrastructure data instead of searching/completing the same claim twice.
+    if (seenProductIds.has(item.product_id) || seenClaimTokens.has(item.claim_token)) {
+      invalidDueRows += 1;
+      return [];
+    }
+    seenProductIds.add(item.product_id);
+    seenClaimTokens.add(item.claim_token);
     const aliases = Array.isArray(item.aliases) ? item.aliases.filter((alias: unknown): alias is string => typeof alias === "string") : [];
     return [{ product_id: item.product_id, query: item.query, aliases, claim_token: item.claim_token } satisfies DueProductRow];
   });
-  const results: CompetitorRefreshResult[] = [];
   let infrastructureFailures = invalidDueRows;
-  for (const dueProduct of due) {
-    const product: ClaimedCompetitorProduct = {
-      productId: dueProduct.product_id,
-      query: dueProduct.query,
-      aliases: dueProduct.aliases,
-      claimToken: dueProduct.claim_token,
-    };
-    const outcome = await runClaimedCompetitorProductRefresh({
-      product,
-      unavailableProviders: registry.unavailable,
-      matcherVersion: COMPETITOR_MATCHER_VERSION,
-      search: (claimed) => searchCompetitorProviders(
-        registry,
-        claimed.query,
-        claimed.aliases,
-        30,
-        COMPETITOR_PROVIDER_BUDGET_MS,
-        { productId: claimed.productId, claimToken: claimed.claimToken },
-      ),
-      release: (claimed) => releaseCompetitorClaim(serviceClient, claimed),
-      complete: async ({ product: claimed, items, providers }) => {
-        const { data: saved, error: saveError } = await serviceClient.rpc("sellerpilot_service_complete_competitor_price_refresh", {
-          p_product_id: claimed.productId,
-          p_claim_token: claimed.claimToken,
-          p_items: items,
-          p_providers: providers,
-        });
-        if (saveError) throw saveError;
-        return typeof saved === "number" || typeof saved === "string" ? Number(saved) : Number.NaN;
-      },
-    });
-    if (outcome.infrastructureFailure) infrastructureFailures += 1;
-    if (outcome.failureStage) {
-      logCompetitorRefreshFailure(outcome.failureStage, {
-        status: outcome.infrastructureFailure ? 503 : 207,
-        pending: outcome.result.pending,
+  const outcomes = await runBoundedCompetitorRefreshBatch(
+    due,
+    COMPETITOR_PRODUCT_CONCURRENCY,
+    async (dueProduct) => {
+      const product: ClaimedCompetitorProduct = {
+        productId: dueProduct.product_id,
+        query: dueProduct.query,
+        aliases: dueProduct.aliases,
+        claimToken: dueProduct.claim_token,
+      };
+      const outcome = await runClaimedCompetitorProductRefresh({
+        product,
+        unavailableProviders: registry.unavailable,
+        matcherVersion: COMPETITOR_MATCHER_VERSION,
+        search: (claimed) => searchCompetitorProviders(
+          registry,
+          claimed.query,
+          claimed.aliases,
+          30,
+          COMPETITOR_PROVIDER_BUDGET_MS,
+          { productId: claimed.productId, claimToken: claimed.claimToken },
+        ),
+        release: (claimed) => releaseCompetitorClaim(serviceClient, claimed),
+        complete: async ({ product: claimed, items, providers }) => {
+          const { data: saved, error: saveError } = await serviceClient.rpc("sellerpilot_service_complete_competitor_price_refresh", {
+            p_product_id: claimed.productId,
+            p_claim_token: claimed.claimToken,
+            p_items: items,
+            p_providers: providers,
+          });
+          if (saveError) throw saveError;
+          return typeof saved === "number" || typeof saved === "string" ? Number(saved) : Number.NaN;
+        },
       });
-    }
-    results.push(outcome.result);
-  }
+      if (outcome.failureStage) {
+        logCompetitorRefreshFailure(outcome.failureStage, {
+          status: outcome.infrastructureFailure ? 503 : 207,
+          pending: outcome.result.pending,
+        });
+      }
+      return outcome;
+    },
+  );
+  infrastructureFailures += outcomes.filter((outcome) => outcome.infrastructureFailure).length;
+  const results: CompetitorRefreshResult[] = outcomes.map((outcome) => outcome.result);
   if (infrastructureFailures > 0) {
     console.error("competitor price database operations failed", {
       failed: infrastructureFailures,

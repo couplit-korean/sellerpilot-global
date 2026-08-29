@@ -1223,6 +1223,155 @@ function qoo10InventoryQuantity(value: unknown, itemCode: string, depth = 0): un
   return undefined;
 }
 
+type Qoo10ItemPriceSnapshot = {
+  itemCode: string;
+  price: number | null;
+  quantity: number | null;
+  currency: string | null;
+};
+
+function qoo10Integer(value: unknown, minimum: number) {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const normalized = String(value).trim();
+  if (!/^\d+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed >= minimum ? parsed : null;
+}
+
+function qoo10RecordValue(recordValue: Record<string, unknown>, names: readonly string[]) {
+  const normalizedNames = new Set(names.map((name) => name.toLowerCase()));
+  return Object.entries(recordValue)
+    .find(([name]) => normalizedNames.has(name.toLowerCase()))?.[1];
+}
+
+function qoo10ItemPriceSnapshots(
+  value: unknown,
+  depth = 0,
+  snapshots: Qoo10ItemPriceSnapshot[] = [],
+) {
+  if (depth > 8 || value === null || value === undefined) return snapshots;
+  if (Array.isArray(value)) {
+    for (const item of value) qoo10ItemPriceSnapshots(item, depth + 1, snapshots);
+    return snapshots;
+  }
+  if (typeof value !== "object") return snapshots;
+  const recordValue = value as Record<string, unknown>;
+  const rawItemCode = qoo10RecordValue(recordValue, ["ItemCode"]);
+  if (typeof rawItemCode === "string" || typeof rawItemCode === "number") {
+    const itemCode = String(rawItemCode).trim();
+    if (itemCode) {
+      const rawCurrency = qoo10RecordValue(recordValue, ["Currency", "CurrencyCode", "CurrencyCd"]);
+      const currency = typeof rawCurrency === "string" && /^[A-Za-z]{3}$/.test(rawCurrency.trim())
+        ? rawCurrency.trim().toUpperCase()
+        : null;
+      snapshots.push({
+        itemCode,
+        price: qoo10Integer(qoo10RecordValue(recordValue, ["ItemPrice"]), 1),
+        quantity: qoo10Integer(qoo10RecordValue(recordValue, ["ItemQty"]), 0),
+        currency,
+      });
+    }
+  }
+  for (const nested of Object.values(recordValue)) {
+    qoo10ItemPriceSnapshots(nested, depth + 1, snapshots);
+  }
+  return snapshots;
+}
+
+function qoo10SingleItemPriceSnapshot(value: unknown) {
+  const snapshots = qoo10ItemPriceSnapshots(value);
+  return snapshots.length === 1 ? snapshots[0] : null;
+}
+
+function qoo10PricePrewriteStep(
+  remote: RemoteResponse,
+  expectedItemCode: string,
+  expectedCurrency: string,
+) {
+  const readbackStep = step("GetItemDetailInfo-before-price", remote);
+  const snapshot = qoo10SingleItemPriceSnapshot(remote.data.ResultObject);
+  const verified = readbackStep.ok
+    && snapshot?.itemCode === expectedItemCode
+    && snapshot.price !== null
+    && snapshot.quantity !== null
+    && snapshot.currency === expectedCurrency;
+  return {
+    snapshot,
+    step: {
+      ...readbackStep,
+      ok: verified,
+      data: {
+        ...readbackStep.data,
+        expectedItemCode,
+        actualItemCode: snapshot?.itemCode ?? null,
+        expectedCurrency,
+        actualCurrency: snapshot?.currency ?? null,
+        currentPrice: snapshot?.price ?? null,
+        preservedQuantity: snapshot?.quantity ?? null,
+        sellerpilotVerification: verified
+          ? "QOO10_PRICE_PREWRITE_SNAPSHOT_VERIFIED"
+          : "QOO10_PRICE_PREWRITE_SNAPSHOT_MISMATCH",
+      },
+    } satisfies ChannelOperationStep,
+  };
+}
+
+function qoo10PriceReadbackStep(
+  remote: RemoteResponse,
+  expected: { itemCode: string; price: number; currency: string },
+): ChannelOperationStep {
+  const readbackStep = step("GetItemDetailInfo-after-price", remote);
+  const snapshot = qoo10SingleItemPriceSnapshot(remote.data.ResultObject);
+  const mismatches = [
+    ...(snapshot?.itemCode === expected.itemCode ? [] : ["ItemCode"]),
+    ...(snapshot?.price === expected.price ? [] : ["ItemPrice"]),
+    ...(snapshot?.currency === expected.currency ? [] : ["Currency"]),
+  ];
+  const verified = readbackStep.ok && mismatches.length === 0;
+  return {
+    ...readbackStep,
+    ok: verified,
+    data: {
+      ...readbackStep.data,
+      expectedItemCode: expected.itemCode,
+      actualItemCode: snapshot?.itemCode ?? null,
+      expectedPrice: expected.price,
+      actualPrice: snapshot?.price ?? null,
+      expectedCurrency: expected.currency,
+      actualCurrency: snapshot?.currency ?? null,
+      sellerpilotMismatchFields: mismatches,
+      sellerpilotVerification: verified
+        ? "QOO10_PRICE_IDENTITY_CURRENCY_VALUE_VERIFIED"
+        : "QOO10_PRICE_IDENTITY_CURRENCY_VALUE_MISMATCH",
+      ...(!verified ? { sellerpilotReconciliationRequired: true } : {}),
+    },
+  };
+}
+
+function qoo10PriceUpdateRequest(
+  input: ExecuteInput,
+  suppliedParams: Record<string, string>,
+) {
+  const itemCode = suppliedParams.ItemCode || stringArgument(input.arguments, "remoteId", false);
+  if (!/^\d{9,10}$/.test(itemCode)) throw new Error("CHANNEL_ARGUMENT_INVALID:ItemCode");
+
+  const rawPrices = [suppliedParams.Price, suppliedParams.ItemPrice, stringArgument(input.arguments, "price", false)]
+    .filter((value) => value !== undefined && value !== "");
+  const prices = rawPrices.map((value) => qoo10Integer(value, 1));
+  if (!prices.length || prices.some((value) => value === null) || new Set(prices).size !== 1) {
+    throw new Error("CHANNEL_ARGUMENT_INVALID:Price");
+  }
+  const price = prices[0]!;
+
+  const currency = (
+    stringArgument(input.arguments, "currency", false)
+    || suppliedParams.Currency
+    || suppliedParams.CurrencyCode
+  ).trim().toUpperCase();
+  if (currency !== "JPY") throw new Error("CHANNEL_ARGUMENT_INVALID:currency");
+  return { itemCode, price, currency };
+}
+
 async function executeQoo10(input: ExecuteInput) {
   const suppliedParams = stringMap(input.arguments, "params");
   const inventoryQuantity = input.operation === "inventory.update"
@@ -1269,6 +1418,53 @@ async function executeQoo10(input: ExecuteInput) {
       params,
     });
     return result(input, [step("seller-check", remote)]);
+  }
+  if (input.operation === "price.update") {
+    const request = qoo10PriceUpdateRequest(input, suppliedParams);
+    const beforeRemote = await qoo10Request({
+      payload: input.payload,
+      service: "ItemsLookup",
+      method: "GetItemDetailInfo",
+      version: "1.2",
+      params: { ItemCode: request.itemCode, SellerCode: "" },
+    });
+    const before = qoo10PricePrewriteStep(beforeRemote, request.itemCode, request.currency);
+    if (!before.step.ok || before.snapshot?.quantity === null || before.snapshot?.quantity === undefined) {
+      return result(input, [before.step], request.itemCode);
+    }
+
+    // The current QAPI contract names these fields Price and Qty. Preserve the
+    // exact pre-write quantity so a price-only action cannot silently reset
+    // inventory through SetGoodsPriceQty's documented Qty default.
+    const updateRemote = await qoo10Request({
+      payload: input.payload,
+      service: "ItemsOrder",
+      method: "SetGoodsPriceQty",
+      params: {
+        ItemCode: request.itemCode,
+        Price: String(request.price),
+        Qty: String(before.snapshot.quantity),
+      },
+    });
+    const updateStep = step("SetGoodsPriceQty", updateRemote);
+    if (!updateStep.ok) return result(input, [before.step, updateStep], request.itemCode);
+
+    // QAPI warns that the public product page can take up to ten minutes to
+    // reflect a change. A single bounded serverless request cannot turn a
+    // missing immediate readback into success; the release gate remains closed
+    // until an explicit-currency terminal readback contract exists.
+    const afterRemote = await qoo10Request({
+      payload: input.payload,
+      service: "ItemsLookup",
+      method: "GetItemDetailInfo",
+      version: "1.2",
+      params: { ItemCode: request.itemCode, SellerCode: "" },
+    });
+    return result(input, [
+      before.step,
+      updateStep,
+      qoo10PriceReadbackStep(afterRemote, request),
+    ], request.itemCode);
   }
   const definition = map[input.operation];
   if (!definition) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);

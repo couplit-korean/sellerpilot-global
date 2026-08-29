@@ -65,6 +65,10 @@ test("product studio route and clients fail closed without turning explicit work
   assert.match(readinessServer, /x-vercel-oidc-token/);
   assert.match(readinessServer, /SELLERPILOT_AI_WORKER_TOKEN/);
   assert.match(readinessServer, /snapshot\.scope !== "ai"/);
+  assert.match(readinessServer, /"configuration_missing"/);
+  assert.match(readinessServer, /"token_missing_or_expired"/);
+  assert.match(readinessServer, /"token_mismatch"/);
+  assert.doesNotMatch(readinessServer, /message\.includes/);
   assert.match(regenerateRoute, /readServerProductStudioReadiness\(admin\)[\s\S]{0,260}code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,220}status: 503/);
   assert.ok(
     revisionRoute.indexOf("const readiness = await readServerProductStudioReadiness(admin)")

@@ -82,7 +82,7 @@
 2. 서버가 원문을 Vault에 옮기고 10분 유효 OAuth state를 HttpOnly·SameSite=Lax 쿠키에 저장한다.
 3. Lazada 승인 후 복귀하면 code를 URL에서 즉시 제거하고 timing-safe 방식으로 state를 검증한다.
 4. 서버가 code를 Access/Refresh Token으로 교환하고 새 Vault 버전을 생성한다.
-5. Vercel Cron이 매일 Access Token 만료를 확인해 72시간 이내일 때 Refresh Token으로 교체한다.
+5. Supabase `pg_cron` 일정이 Vercel의 보호된 내부 경로를 호출해 Access Token 만료를 확인하고, 72시간 이내일 때 Refresh Token으로 교체한다. Vercel Cron은 사용하지 않는다.
 
 ### 남은 외부 게이트
 

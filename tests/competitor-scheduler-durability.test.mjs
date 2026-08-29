@@ -46,6 +46,8 @@ test("competitor scheduler migration owns due products and deduplicates exact 11
   assert.match(gateway, /sellerpilot_enqueue_competitor_search_job/);
   assert.match(gateway, /p_product_id: input\.productId \?\? null/);
   assert.match(gateway, /p_claim_token: input\.claimToken \?\? null/);
+  assert.match(gateway, /signal\?: AbortSignal/);
+  assert.match(gateway, /input\.signal/);
   assert.doesNotMatch(
     gateway.slice(gateway.indexOf("export async function executeCompetitorSearchViaChannelGateway")),
     /p_operation: "competitor\.search"/,
@@ -66,5 +68,7 @@ test("competitor scheduler migration owns due products and deduplicates exact 11
   assert.doesNotMatch(missingProviderBranch, /return NextResponse/);
   assert.match(internalRoute, /status: providerConfigurationMissing \|\| infrastructureFailures > 0 \? 503/);
   assert.match(competitorLibrary, /provider\.search\(effectivePrimary, effectiveAliases, displayPerQuery, context\)/);
+  assert.match(competitorLibrary, /AbortSignal\.any\(\[parentSignal, signal\]\)/);
+  assert.match(competitorLibrary, /if \(refreshContext\?\.signal\?\.aborted\) throw competitorAbortReason/);
   assert.ok((competitorLibrary.match(/AbortSignal\.timeout\(15_000\)/g) ?? []).length >= 3);
 });

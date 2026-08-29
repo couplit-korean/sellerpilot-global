@@ -33,6 +33,8 @@ test("Galaxy Fold cover widths compact the header without removing controls", as
   assert.doesNotMatch(cover, /\.topbar-actions \.user-menu\s*\{[^}]*display:\s*none/);
   assert.match(narrowCover, /\.topbar-actions\s*\{[^}]*min-width:\s*136px;[^}]*flex:\s*0 0 136px/);
   assert.match(narrowCover, /\.topbar-actions \.demo-data-badge\s*\{[^}]*display:\s*none/);
+  assert.match(narrowCover, /\.topbar-actions\.has-operations-attention\s*\{[^}]*min-width:\s*182px;[^}]*flex-basis:\s*182px/);
+  assert.match(narrowCover, /\.topbar-actions \.demo-data-badge\.attention\s*\{[^}]*display:\s*grid/);
   assert.match(narrowCover, /\.topbar-title h1\s*\{[^}]*max-width:\s*none;[^}]*font-size:\s*12px/);
   assert.doesNotMatch(narrowCover, /\.topbar-actions \.user-menu\s*\{[^}]*display:\s*none/);
 });
@@ -60,13 +62,16 @@ test("cover-screen status, calendar and fixed actions stay reachable", async () 
   assert.match(cover, /\.sales-calendar-pager\s*\{[^}]*width:\s*100%;[^}]*grid-template-columns:\s*44px minmax\(0, 1fr\) 44px/);
   assert.match(cover, /\.mobile-bottom-nav button span\s*\{[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap/);
   assert.match(legacyCover, /\.mobile-push-gate\.browser\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(cover, /\.app-main\.publishing-active > \.mobile-push-gate\.browser\s*\{[^}]*grid-template-columns:\s*36px minmax\(0, 1fr\);[^}]*padding:\s*10px/);
+  assert.match(cover, /\.app-main\.publishing-active > \.mobile-push-gate\.browser \.mobile-push-gate-actions\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.doesNotMatch(cover, /\.app-main\.publishing-active > \.mobile-push-gate\.standalone/);
 });
 
-test("Fold overrides do not replace the established 390px two-column registration contract", async () => {
+test("Fold registration cards use one column through 344px and keep the 390px two-column contract", async () => {
   const styles = await readFile(stylesUrl, "utf8");
   const cover = mediaBody(styles, "(max-width: 344px)");
 
   assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.registration-card-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
-  assert.doesNotMatch(cover, /\.registration-card-grid\s*\{/);
+  assert.match(cover, /\.registration-card-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
   assert.ok(344 < 390);
 });

@@ -20,7 +20,7 @@ import {
   registrationChannelStatusLabel,
   type RegistrationActivity,
 } from "../app/_registration/registration-status";
-import { appendToast, toastDurationMs, toastToneForMessage } from "../app/_notifications/use-toast-queue";
+import { appendToast, shiftToastQueue, toastDurationMs, toastToneForMessage } from "../app/_notifications/use-toast-queue";
 import { operationEventNotifications, operationEventState, type OperationEventSnapshot } from "../app/_notifications/operation-event-notifications";
 import { resolveHydratedProductEditDraft } from "../app/product-edit-draft-fence";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
@@ -298,6 +298,8 @@ test("toast queue preserves separate events for two seconds instead of replacing
   const first = appendToast([], "첫 이벤트", 1);
   const second = appendToast(first, "둘째 이벤트", 2);
   assert.deepEqual(second, [{ id: 1, message: "첫 이벤트" }, { id: 2, message: "둘째 이벤트" }]);
+  assert.deepEqual(shiftToastQueue(second), [{ id: 2, message: "둘째 이벤트" }]);
+  assert.deepEqual(shiftToastQueue(shiftToastQueue(second)), []);
   assert.deepEqual(appendToast(second, "둘째 이벤트", 3), [
     { id: 1, message: "첫 이벤트" },
     { id: 2, message: "둘째 이벤트" },

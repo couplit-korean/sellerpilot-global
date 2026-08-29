@@ -20,6 +20,10 @@ export function appendToast(queue: ToastItem[], message: string, id: number) {
   return [...queue, { id, message: normalized }];
 }
 
+export function shiftToastQueue(queue: ToastItem[]) {
+  return queue.slice(1);
+}
+
 export function useToastQueue(durationMs = toastDurationMs) {
   const [queue, setQueue] = useState<ToastItem[]>([]);
   const nextToastIdRef = useRef(0);
@@ -33,7 +37,7 @@ export function useToastQueue(durationMs = toastDurationMs) {
   }, []);
 
   const dismissToast = useCallback(() => {
-    setQueue((current) => current.slice(1));
+    setQueue(shiftToastQueue);
   }, []);
 
   useEffect(() => {

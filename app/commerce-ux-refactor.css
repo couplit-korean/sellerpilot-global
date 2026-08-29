@@ -274,6 +274,15 @@ button {
   font-size: 9px;
 }
 
+button.demo-data-badge.attention {
+  border-color: #e8b978;
+  color: #a34f08;
+  background: #fff5e8;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
 .top-icon-button {
   width: 40px;
   height: 40px;
@@ -1195,6 +1204,20 @@ button {
 .photo-source-actions > label:hover {
   border-color: var(--primary);
   background: #fff8f1;
+}
+
+.option-photo-slot[aria-disabled="true"],
+.extra-photo-uploader[aria-disabled="true"],
+.photo-source-actions[aria-disabled="true"] > label {
+  cursor: not-allowed;
+  opacity: .56;
+  pointer-events: none;
+}
+
+.photo-source-actions[aria-disabled="true"] > label {
+  border-color: #dfe3e8;
+  color: #7a8491;
+  background: #f2f4f6;
 }
 
 .photo-source-actions > label > span {
@@ -2618,7 +2641,7 @@ button {
 .registration-filter-strip button { display: flex; min-height: 54px; align-items: center; justify-content: space-between; border: 1px solid #dfe5e3; border-radius: 11px; padding: 0 14px; color: #6c7774; background: #fff; font-size: 10px; font-weight: 800; }
 .registration-filter-strip button b { display: grid; min-width: 26px; height: 26px; place-items: center; border-radius: 8px; background: #f0f3f2; }
 .registration-filter-strip button.active { color: #0b6e60; border-color: #9fd2c7; background: #eef9f6; }
-.extra-photo-uploader.processing { pointer-events: none; opacity: .72; }
+.extra-photo-uploader.processing { pointer-events: none; opacity: .56; }
 .registration-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .registration-card { display: grid; align-content: start; gap: 12px; min-width: 0; padding: 15px; }
 .registration-card > header, .registration-card > footer, .registration-product, .registration-channel-summary { display: flex; align-items: center; justify-content: space-between; gap: 9px; }

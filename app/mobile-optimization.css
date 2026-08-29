@@ -1309,8 +1309,7 @@
   .credential-form-grid,
   .rotation-settings > div,
   .operation-console-controls,
-  .cli-runtime-grid,
-  .cli-token-reveal {
+  .cli-runtime-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1348,15 +1347,6 @@
 
   .cli-job-controls {
     justify-content: flex-end;
-  }
-
-  .cli-token-reveal > button,
-  .cli-token-reveal > p {
-    grid-column: auto;
-  }
-
-  .cli-token-reveal > p {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .readiness-channel-card {
@@ -3124,6 +3114,65 @@
     padding-left: max(var(--mobile-gutter), env(safe-area-inset-left));
   }
 
+  .registration-card-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-main.publishing-active > .mobile-push-gate.browser {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 8px;
+    padding: 10px;
+    border-radius: 12px;
+  }
+
+  .app-main.publishing-active > .mobile-push-gate.browser .mobile-push-gate-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+
+  .app-main.publishing-active > .mobile-push-gate.browser .mobile-push-gate-copy {
+    min-width: 0;
+    padding-right: 72px;
+  }
+
+  .app-main.publishing-active > .mobile-push-gate.browser .mobile-push-gate-copy > span,
+  .app-main.publishing-active > .mobile-push-gate.browser .mobile-push-gate-copy > small {
+    display: none;
+  }
+
+  .app-main.publishing-active > .mobile-push-gate.browser .mobile-push-gate-copy h2 {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .app-main.publishing-active > .mobile-push-gate.browser .mobile-push-gate-copy p {
+    display: -webkit-box;
+    overflow: hidden;
+    margin-top: 3px;
+    font-size: 9px;
+    line-height: 1.35;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .app-main.publishing-active > .mobile-push-gate.browser .mobile-push-gate-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .app-main.publishing-active > .mobile-push-gate.browser .mobile-push-gate-actions button {
+    min-height: 44px;
+    padding: 0 6px;
+    font-size: 9px;
+  }
+
+  .app-main.publishing-active > .mobile-push-gate.browser .mobile-push-gate-actions button:only-child {
+    grid-column: 1 / -1;
+  }
+
   .commerce-service-rail {
     gap: 4px;
     overflow-x: auto;
@@ -3379,6 +3428,15 @@
 
   .topbar-actions .demo-data-badge {
     display: none;
+  }
+
+  .topbar-actions.has-operations-attention {
+    min-width: 182px;
+    flex-basis: 182px;
+  }
+
+  .topbar-actions .demo-data-badge.attention {
+    display: grid;
   }
 
   .topbar-title h1 {

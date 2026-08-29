@@ -20,6 +20,10 @@ test("inventory writes use retry-stable keys and expire stale pending work", asy
   assert.match(route, /const inventoryTaskBatchSize = 6/);
   assert.match(route, /pendingTasks\.slice\(0, inventoryTaskBatchSize\)/);
   assert.match(route, /map\(processTaskSafely\)/);
+  assert.match(
+    route,
+    /const processTaskSafely[\s\S]*catch[\s\S]*recordPrewriteFailure\(task, null, safeMessage\)[\s\S]*!recorded \? \{ reconciliationRequired: true \}/,
+  );
   assert.match(route, /continuationRequired: remainingPendingCount > 0/);
   assert.match(route, /remainingPendingCount/);
   assert.match(page, /applyInventoryAcrossSafeBatches/);

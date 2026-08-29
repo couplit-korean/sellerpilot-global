@@ -130,6 +130,9 @@ if (!requested.size || [...requested].some((argument) => !allowed.has(argument))
 } else if (requested.has("--deactivate") && requested.has("--activate")) {
   fail("deactivation and activation must be separate release steps");
 } else {
+  const requiresCronSecret = candidateOnly
+    || requested.has("--bootstrap")
+    || requested.has("--canary");
   const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
   const origin = selectedRuntimeOrigin();
   const release = requested.has("--candidate-canary") || requested.has("--canary")
@@ -137,14 +140,16 @@ if (!requested.size || [...requested].some((argument) => !allowed.has(argument))
     : null;
   if (!origin) {
     fail("SellerPilot runtime origin must be the production host or an exact Vercel deployment host");
-  } else if (cronSecret.length < 16) {
+  } else if (requiresCronSecret && cronSecret.length < 16) {
     fail("SellerPilot server runtime secrets are not available");
   } else if ((requested.has("--candidate-canary") || requested.has("--canary")) && !release) {
     fail("SELLERPILOT_EXPECTED_RELEASE must be the exact 40-character Git commit SHA");
   } else if (requested.has("--canary") && origin !== PRODUCTION_ORIGIN) {
     fail("receipt-backed production canary must use the production origin");
   } else {
-    const wakeBearer = createHmac("sha256", cronSecret).update(WAKE_LABEL, "utf8").digest("base64url");
+    const wakeBearer = requiresCronSecret
+      ? createHmac("sha256", cronSecret).update(WAKE_LABEL, "utf8").digest("base64url")
+      : "";
     if (candidateOnly) {
       const candidateCanary = await runNoWorkCanaries({ origin, release, wakeBearer });
       process.stdout.write(`${JSON.stringify({ candidateCanary })}\n`);
@@ -166,8 +171,6 @@ if (!requested.size || [...requested].some((argument) => !allowed.has(argument))
           auth: { persistSession: false, autoRefreshToken: false },
           global: { fetch: (input, init = {}) => fetch(input, { ...init, signal: AbortSignal.timeout(15_000) }) },
         });
-        const gateway = tokenMetadata(derivedToken(cronSecret, GATEWAY_LABEL));
-        const scheduler = tokenMetadata(derivedToken(cronSecret, SCHEDULER_LABEL));
         const report = {};
         let canaryPassed = false;
         let canaryReceiptId = null;
@@ -191,6 +194,8 @@ if (!requested.size || [...requested].some((argument) => !allowed.has(argument))
         }
 
         if (requested.has("--bootstrap")) {
+          const gateway = tokenMetadata(derivedToken(cronSecret, GATEWAY_LABEL));
+          const scheduler = tokenMetadata(derivedToken(cronSecret, SCHEDULER_LABEL));
           const { data, error } = await supabase.rpc("sellerpilot_service_bootstrap_ebay_asq_serverless_runtime", {
             p_gateway_token_hash: gateway.tokenHash,
             p_gateway_fingerprint: gateway.fingerprint,

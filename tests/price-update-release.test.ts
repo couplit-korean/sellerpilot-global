@@ -29,6 +29,9 @@ test("현재 구현된 가격 쓰기와 미구현 채널을 구분하되 readbac
   for (const channel of ["elevenst", "temu"] as const) {
     assert.equal(channelPriceUpdateRelease(channel).evidence.writeImplemented, false, channel);
   }
+  assert.equal(channelPriceUpdateRelease("qoo10").evidence.exactRemoteIdentity, true);
+  assert.equal(channelPriceUpdateRelease("qoo10").evidence.failClosedOnMismatch, true);
+  assert.equal(channelPriceUpdateRelease("qoo10").evidence.sameProductPriceCurrencyReadback, false);
   assert.match(channelPriceUpdateRelease("qoo10").reason, /ItemCode.*통화·가격/);
   assert.match(channelPriceUpdateRelease("coupang").reason, /vendorItemId.*readback/);
   assert.match(channelPriceUpdateRelease("ebay").reason, /offer ID·SKU.*통화·가격/);
@@ -45,6 +48,22 @@ test("관리자 출시 판정과 serverless 실행 허용 목록은 동일한 �
       assert.equal(adminRelease.reason, evidenceRelease.reason, channel);
     }
   }
+});
+
+test("Qoo10 가격 대상은 게시 원장의 ItemCode와 검증된 판매자 계보에 먼저 결속된다", async () => {
+  const [adminRoute, writeResource, lineageVerification] = await Promise.all([
+    readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/write-resource.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/listing-lineage-verification.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(adminRoute, /listingBoundOperation = \["listing\.update", "listing\.stop", "price\.update", "inventory\.update"\]/);
+  assert.match(writeResource, /channel === "qoo10"\) return text\(params\.ItemCode, argumentsValue\.itemCode, argumentsValue\.remoteId\)/);
+  const exactListing = adminRoute.indexOf("const exactListing");
+  const lineageFence = adminRoute.indexOf("sellerpilot_service_validate_listing_write_lineage", exactListing);
+  const releaseFence = adminRoute.indexOf("const operationRelease", lineageFence);
+  assert.ok(exactListing >= 0 && lineageFence > exactListing && releaseFence > lineageFence);
+  assert.match(lineageVerification, /method: "GetItemDetailInfo"[\s\S]*identities\.size === 1[\s\S]*identities\.has\(argumentsValue\.expectedRemoteId\)/);
 });
 
 test("Vercel claim·serverless drain·로컬 gateway worker가 차단된 가격 작업을 공급자 호출 전에 종료한다", async () => {
