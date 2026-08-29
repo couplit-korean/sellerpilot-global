@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   maximumStudioSourceImageBytes,
   maximumStudioSourceImageDimension,
@@ -214,6 +216,18 @@ type OriginalStudioImageSpec = {
   originalWidth: number;
   originalHeight: number;
 };
+
+export async function sha256PreservedStudioOriginalImage(
+  path: string,
+  spec: OriginalStudioImageSpec,
+  download: (path: string) => Promise<Blob | Response | null>,
+) {
+  const source = await download(path);
+  if (!source) return null;
+  const bytes = await boundedImageBytes(source, spec.originalMediaType, maximumStudioSourceImageBytes);
+  if (!bytes || bytes.byteLength !== spec.originalBytes) return null;
+  return createHash("sha256").update(bytes).digest("hex");
+}
 
 export async function verifyPreservedStudioImages({
   normalizedPaths,

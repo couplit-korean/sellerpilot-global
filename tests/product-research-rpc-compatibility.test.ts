@@ -6,6 +6,7 @@ import {
 } from "../lib/product-research-rpc-compatibility";
 
 const jobId = "11111111-1111-4111-8111-111111111111";
+const sourcePhotoSha256 = "a".repeat(64);
 
 test("product research legacy fallback recognizes only the missing RPC contract", () => {
   assert.equal(isMissingProductResearchRpcContract({
@@ -44,6 +45,7 @@ test("product research uses product_studio compatibility only after an exact mis
   const result = await createProductResearchJobWithLegacyFallback({
     jobId,
     researchInput: "롯데샌드 파인애플",
+    sourcePhotoSha256,
     createJob: async (arguments_) => {
       calls.push(arguments_);
       return calls.length === 1
@@ -55,8 +57,10 @@ test("product research uses product_studio compatibility only after an exact mis
   assert.deepEqual(result, { error: null, usedLegacyFallback: true });
   assert.equal(calls.length, 2);
   assert.equal(calls[0].p_kind, "product_research");
+  assert.equal(calls[0].p_request_payload.source_photo_sha256, sourcePhotoSha256);
   assert.equal(calls[1].p_kind, "product_studio");
   assert.equal(calls[1].p_request_payload.research_only, true);
+  assert.equal(calls[1].p_request_payload.source_photo_sha256, sourcePhotoSha256);
 });
 
 test("product research preserves transient, authorization, and server errors without a fallback call", async () => {
@@ -70,6 +74,7 @@ test("product research preserves transient, authorization, and server errors wit
     const result = await createProductResearchJobWithLegacyFallback({
       jobId,
       researchInput: "애플 사이다 비니거 젤리",
+      sourcePhotoSha256,
       createJob: async () => {
         calls += 1;
         return { error };

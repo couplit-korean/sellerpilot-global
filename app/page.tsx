@@ -2383,6 +2383,12 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
 }
 
 type UploadedPhoto = { name: string; url: string; file: File; role: string; originalWidth: number; originalHeight: number };
+const productSourcePhotoSha256Pattern = /^[a-f0-9]{64}$/;
+
+async function productSourcePhotoSha256(file: File) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 const optionalPhotoSlots = [
   { id: "front", label: "정면", guide: "제품 전체 정면" },
@@ -2573,6 +2579,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [running, setRunning] = useState(false);
   const automationStartInFlightRef = useRef(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
+  const mainPhotoRef = useRef<UploadedPhoto | null>(null);
+  const previousMainPhotoFileRef = useRef<File | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
   const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
   const [extraPhotosProcessing, setExtraPhotosProcessing] = useState(false);
@@ -2611,6 +2619,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [competitorResearchRetryAvailable, setCompetitorResearchRetryAvailable] = useState(false);
   const [firstDraftGenerated, setFirstDraftGenerated] = useState(false);
   const [sourceResearchJobId, setSourceResearchJobId] = useState("");
+  const [sourceResearchPhotoSha256, setSourceResearchPhotoSha256] = useState("");
+  const [sourceResearchLineageReceipt, setSourceResearchLineageReceipt] = useState("");
   const [queuedJobId, setQueuedJobId] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
   const [studioSubmissionMode, setStudioSubmissionMode] = useState<StudioSubmissionMode>("ai");
@@ -2622,6 +2632,62 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   useEffect(() => {
     intakeRef.current = intake;
   }, [intake]);
+
+  useEffect(() => {
+    const previousFile = previousMainPhotoFileRef.current;
+    const nextFile = mainPhoto?.file ?? null;
+    mainPhotoRef.current = mainPhoto;
+    if (previousFile === nextFile) return;
+    previousMainPhotoFileRef.current = nextFile;
+
+    const invalidatedExistingContext = Boolean(productResearchControllerRef.current)
+      || researchResult !== null
+      || competitorResearchState !== "idle"
+      || researchCompetitors.length > 0
+      || firstDraftGenerated
+      || Boolean(sourceResearchJobId)
+      || Boolean(sourceResearchPhotoSha256)
+      || Boolean(sourceResearchLineageReceipt);
+    if (!invalidatedExistingContext) return;
+
+    const nextIntake = clearUnchangedResearchAppliedValues(
+      intakeRef.current,
+      emptyProductIntake,
+      researchAppliedValuesRef.current,
+    );
+    researchAppliedValuesRef.current = {};
+    intakeRef.current = nextIntake;
+    setIntake(nextIntake);
+    productResearchControllerRef.current?.abort(new DOMException("대표사진이 변경되었습니다.", "AbortError"));
+    productResearchControllerRef.current = null;
+    productResearchGenerationRef.current += 1;
+    setResearchingProduct(false);
+    window.sessionStorage.removeItem(productResearchPendingStorageKey);
+    competitorResearchControllerRef.current?.abort(new DOMException("대표사진이 변경되었습니다.", "AbortError"));
+    competitorResearchControllerRef.current = null;
+    setResearchResult(null);
+    setResearchCompetitors([]);
+    setCompetitorProviders([]);
+    setCompetitorResearchState("stale");
+    setPendingCompetitorBypassConfirmed(false);
+    setCompetitorResearchRetryAvailable(false);
+    setFirstDraftGenerated(false);
+    setSourceResearchJobId("");
+    setSourceResearchPhotoSha256("");
+    setSourceResearchLineageReceipt("");
+    setProductResearchError("대표사진이 변경되어 이전 1차 초안을 사용할 수 없습니다. 현재 사진으로 다시 생성해 주세요.");
+    notify("대표사진이 변경되어 이전 1차 초안과 최종작성 연결을 제거했습니다. 현재 사진으로 1차 자동생성을 다시 실행해 주세요.");
+  }, [
+    competitorResearchState,
+    firstDraftGenerated,
+    mainPhoto,
+    notify,
+    researchCompetitors.length,
+    researchResult,
+    sourceResearchJobId,
+    sourceResearchLineageReceipt,
+    sourceResearchPhotoSha256,
+  ]);
   const [categoryDraftRef] = useState(() => crypto.randomUUID());
   const [publishRefreshVersion, setPublishRefreshVersion] = useState(0);
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
@@ -2787,6 +2853,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (key === "researchInput") {
         setFirstDraftGenerated(false);
         setSourceResearchJobId("");
+        setSourceResearchPhotoSha256("");
+        setSourceResearchLineageReceipt("");
       }
       if (invalidatedExistingContext && competitorResearchState !== "stale") {
         notify(key === "researchInput"
@@ -3027,6 +3095,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (!researchingProduct) notify("상품 판매페이지 링크, 모델명 또는 설명을 입력해 주세요.");
       return;
     }
+    const sourceMainPhoto = mainPhotoRef.current ?? mainPhoto;
+    if (!sourceMainPhoto) {
+      const message = "대표사진을 먼저 등록한 뒤 사진과 상품 설명을 함께 1차 분석해 주세요.";
+      setProductResearchError(message);
+      notify(message);
+      return;
+    }
     if (!isStudioExecutionReady(studioWorkerReadiness)) {
       const message = studioWorkerReadiness?.message
         ?? "Vercel AI Gateway 실제 호출 점검을 통과한 뒤 1차 상품 분석을 시작해 주세요.";
@@ -3052,6 +3127,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setUploadError("");
     setProductResearchError("");
     try {
+      const sourcePhotoSha256 = await productSourcePhotoSha256(sourceMainPhoto.file);
+      if (!productSourcePhotoSha256Pattern.test(sourcePhotoSha256)) {
+        throw new Error("대표사진 원본 확인값을 만들지 못했습니다. 사진을 다시 선택해 주세요.");
+      }
+      if (productResearchController.signal.aborted) throw productResearchController.signal.reason;
+      if (mainPhotoRef.current?.file !== sourceMainPhoto.file) {
+        throw new Error("대표사진이 변경되었습니다. 현재 사진으로 1차 자동생성을 다시 실행해 주세요.");
+      }
       const sessionScope = createPageAbortScope([productResearchController.signal], 15_000, "관리자 로그인 확인 시간이 초과되었습니다.");
       const { data: sessionData } = await waitForAbortablePromise(createSupabaseClient().auth.getSession(), sessionScope.signal)
         .finally(() => sessionScope.dispose());
@@ -3062,18 +3145,25 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       let pendingResearch: PendingProductResearch | null = null;
       try {
         const stored = JSON.parse(window.sessionStorage.getItem(productResearchPendingStorageKey) ?? "null") as unknown;
-        pendingResearch = pendingProductResearchForOwner(stored, ownerId, researchInput);
+        pendingResearch = pendingProductResearchForOwner(stored, ownerId, researchInput, sourcePhotoSha256);
         if (stored !== null && !pendingResearch) window.sessionStorage.removeItem(productResearchPendingStorageKey);
       } catch {
         window.sessionStorage.removeItem(productResearchPendingStorageKey);
       }
       const jobId = pendingResearch?.jobId ?? crypto.randomUUID();
-      window.sessionStorage.setItem(productResearchPendingStorageKey, JSON.stringify({ jobId, researchInput, ownerId } satisfies PendingProductResearch));
+      let lineageReceipt = pendingResearch?.lineageReceipt ?? "";
+      window.sessionStorage.setItem(productResearchPendingStorageKey, JSON.stringify({
+        jobId,
+        researchInput,
+        ownerId,
+        sourcePhotoSha256,
+        lineageReceipt,
+      } satisfies PendingProductResearch));
       if (pendingResearch) {
         notify("이전에 접수한 상품정보 작업 상태를 다시 확인합니다.");
       } else {
         let response: Response | null = null;
-        let queued: { jobId?: string; message?: string } | null = null;
+        let queued: { jobId?: string; lineageReceipt?: string; message?: string } | null = null;
         const enqueueScope = createPageAbortScope([productResearchController.signal], 30_000, "상품정보 분석 접수 시간이 초과되었습니다.");
         try {
           response = await fetch("/api/ai/product-research", {
@@ -3081,30 +3171,46 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             cache: "no-store",
             signal: enqueueScope.signal,
             headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-            body: JSON.stringify({ jobId, researchInput }),
+            body: JSON.stringify({ jobId, researchInput, sourcePhotoFingerprint: sourcePhotoSha256 }),
           });
           queued = await waitForAbortablePromise(
             response.json().catch(() => ({ message: "AI 상품정보 요청 응답을 읽지 못했습니다." })),
             enqueueScope.signal,
-          ) as { jobId?: string; message?: string };
+          ) as { jobId?: string; lineageReceipt?: string; message?: string };
         } catch {
           if (productResearchController.signal.aborted) throw productResearchController.signal.reason;
         } finally {
           enqueueScope.dispose();
         }
         if (response && queued) {
-          if (response.status < 500 && (!response.ok || queued.jobId !== jobId)) {
+          if (response.status !== 202
+              || queued.jobId !== jobId
+              || typeof queued.lineageReceipt !== "string"
+              || queued.lineageReceipt.length < 32
+              || queued.lineageReceipt.length > 2_000) {
             window.sessionStorage.removeItem(productResearchPendingStorageKey);
             throw new Error(queued.message || "AI 상품정보 수집 작업을 등록하지 못했습니다.");
           }
+          lineageReceipt = queued.lineageReceipt;
+          window.sessionStorage.setItem(productResearchPendingStorageKey, JSON.stringify({
+            jobId,
+            researchInput,
+            ownerId,
+            sourcePhotoSha256,
+            lineageReceipt,
+          } satisfies PendingProductResearch));
         }
         notify("AI가 링크 본문과 입력 텍스트에서 상세 상품정보를 조사하고 있습니다.");
       }
       const result = await waitForProductResearch(jobId, accessToken, productResearchController.signal);
       window.sessionStorage.removeItem(productResearchPendingStorageKey);
+      if (!lineageReceipt) {
+        throw new Error("1차 분석 접수 응답이 유실되어 사진 연결 증명을 확인할 수 없습니다. 같은 사진과 설명으로 1차 자동생성을 다시 실행해 주세요.");
+      }
       if (!publishingMountedRef.current
           || productResearchController.signal.aborted
           || productResearchInputRef.current.trim() !== researchInput
+          || mainPhotoRef.current?.file !== sourceMainPhoto.file
           || productResearchGenerationRef.current !== productResearchGeneration) return;
       const suggestion = result.suggestedFields;
       const firstReadableSource = result.sources.find((source) => source.status === "read")?.url ?? "";
@@ -3142,6 +3248,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         runCompetitorResearchPolling(initialCompetitorResearchPath, { items: [], providers: [] });
       }
       setSourceResearchJobId(jobId);
+      setSourceResearchPhotoSha256(sourcePhotoSha256);
+      setSourceResearchLineageReceipt(lineageReceipt);
       setFirstDraftGenerated(true);
       setManualErrors({});
       notify("1차 자동생성 초안을 만들었습니다. 확인되지 않은 값은 공란으로 유지했습니다. 실물 기준 필수값을 입력해 주세요.");
@@ -3399,7 +3507,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify("1차 상품정보 확인을 마치거나 중단한 뒤 최종작성을 시작해 주세요.");
       return;
     }
-    if (!firstDraftGenerated || !isProductResearchJobId(sourceResearchJobId)) {
+    if (!firstDraftGenerated
+        || !isProductResearchJobId(sourceResearchJobId)
+        || !productSourcePhotoSha256Pattern.test(sourceResearchPhotoSha256)
+        || !sourceResearchLineageReceipt) {
       const message = "상품 링크 또는 설명으로 1차 자동생성을 완료한 뒤, 초안을 확인·수정하고 최종작성을 시작해 주세요.";
       setUploadError(message);
       notify(message);
@@ -3449,7 +3560,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const extraPhotoDisabledReason = extraPhotosProcessing ? "선택한 사진 확인 중" : totalPhotoCount >= 100 ? "최대 100장 등록됨" : "";
   const studioWorkerAvailable = isStudioExecutionReady(studioWorkerReadiness);
   const registrationExecutionAvailable = studioWorkerAvailable;
-  const firstDraftReady = firstDraftGenerated && isProductResearchJobId(sourceResearchJobId);
+  const firstDraftReady = firstDraftGenerated
+    && isProductResearchJobId(sourceResearchJobId)
+    && productSourcePhotoSha256Pattern.test(sourceResearchPhotoSha256)
+    && Boolean(sourceResearchLineageReceipt);
   const intakeReady = productIntakeSchema.safeParse(intake).success;
   const intakeCompletionItems = [
     intake.researchInput.trim().length >= 2,
@@ -3542,7 +3656,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           <section className={`product-research-panel ${manualErrors.researchInput ? "field-error" : ""}`}>
             <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>1차 자동생성</em></span><small>판매페이지·제조사 링크, 모델명, 바코드, 카톡으로 받은 상품 설명을 그대로 넣으세요.</small></div>
-            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : intake.researchInput.trim().length < 2 || running || !studioWorkerAvailable} title={!researchingProduct && !studioWorkerAvailable ? studioWorkerReadiness?.message : undefined}>{researchingProduct ? <X size={15} /> : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? <AlertCircle size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "확인 중단" : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? "Gateway 점검 필요" : "1차 자동생성"}</button></div>
+            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : intake.researchInput.trim().length < 2 || !mainPhoto || photoSelectionsProcessing || running || !studioWorkerAvailable} title={!researchingProduct && !mainPhoto ? "대표사진을 먼저 등록해 주세요." : !researchingProduct && !studioWorkerAvailable ? studioWorkerReadiness?.message : undefined}>{researchingProduct ? <X size={15} /> : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? <AlertCircle size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "확인 중단" : !mainPhoto ? "대표사진 필요" : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? "Gateway 점검 필요" : "1차 자동생성"}</button></div>
             <small className="product-research-help">공개 근거를 우선 사용하고, 동일 상품 가격은 채널별 최대 3개를 함께 조회해 판매가 검토에 사용합니다.</small>
             {productResearchError && <small className="product-research-error" role="alert"><AlertCircle size={14} />{productResearchError}</small>}
             {manualErrors.researchInput && <small className="product-research-error">{manualErrors.researchInput}</small>}
@@ -3613,6 +3727,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         manualFields={intake}
         competitorContext={studioCompetitorContext}
         sourceResearchJobId={sourceResearchJobId}
+        sourcePhotoFingerprint={sourceResearchPhotoSha256}
+        sourceResearchLineageReceipt={sourceResearchLineageReceipt}
         requestId={studioRequestId}
         submissionMode={studioSubmissionMode}
         workerReadiness={studioWorkerReadiness}

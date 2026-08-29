@@ -571,13 +571,15 @@ const detailPresets = aiGeneratedAssetSpecs
 
 const generatedPreviewPresets = [...thumbnailPresets, ...detailPresets];
 
-export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, sourceResearchJobId, submissionMode, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady, onManualResultReady }: {
+export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, sourceResearchJobId, sourcePhotoFingerprint, sourceResearchLineageReceipt, submissionMode, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady, onManualResultReady }: {
   mainPhoto: StudioPhoto | null;
   photos: StudioPhoto[];
   manualFields: ProductIntakeDraft;
   competitorContext: StudioCompetitorContext;
   requestId: number;
   sourceResearchJobId: string;
+  sourcePhotoFingerprint: string;
+  sourceResearchLineageReceipt: string;
   submissionMode: StudioSubmissionMode;
   workerReadiness: StudioWorkerReadiness | null;
   onRunningChange: (running: boolean) => void;
@@ -829,7 +831,11 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     }
     const manualMvp = submissionMode === "manual_mvp";
     const normalizedSourceResearchJobId = sourceResearchJobId?.trim() ?? "";
-    if (!manualMvp && !normalizedSourceResearchJobId) {
+    const normalizedSourcePhotoFingerprint = sourcePhotoFingerprint?.trim() ?? "";
+    const normalizedSourceResearchLineageReceipt = sourceResearchLineageReceipt?.trim() ?? "";
+    if (!manualMvp && (!normalizedSourceResearchJobId
+        || !/^[a-f0-9]{64}$/.test(normalizedSourcePhotoFingerprint)
+        || !normalizedSourceResearchLineageReceipt)) {
       const message = "먼저 1차 상품정보 초안을 생성하고 사람이 확인·수정한 뒤 최종 작성을 시작해 주세요.";
       setLastError(message);
       notify(message);
@@ -1025,7 +1031,16 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         ({ response, payload: queued } = await fetchJsonWithStudioJobTimeout("/api/ai/product-studio", {
           method: "POST",
           headers: { "Content-Type": "application/json", authorization: `Bearer ${accessToken}` },
-          body: JSON.stringify({ jobId, sourceResearchJobId: normalizedSourceResearchJobId, manualFields: validatedIntake.data, competitorContext, imagePaths, imageSpecs }),
+          body: JSON.stringify({
+            jobId,
+            sourceResearchJobId: normalizedSourceResearchJobId,
+            sourcePhotoFingerprint: normalizedSourcePhotoFingerprint,
+            sourceResearchLineageReceipt: normalizedSourceResearchLineageReceipt,
+            manualFields: validatedIntake.data,
+            competitorContext,
+            imagePaths,
+            imageSpecs,
+          }),
         }, lifecycleController.signal, 90_000, { message: "Supabase AI 작업 큐 접수 응답을 읽지 못했습니다." } as { jobId?: string; message?: string }));
       } catch (error) {
         if (isStudioJobAbort(error) || !studioMountedRef.current) throw error;
@@ -1036,12 +1051,19 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         return;
       }
       throwIfStudioJobAborted(lifecycleController.signal);
-      if (!response.ok && queued.code === "AI_WORKER_UNAVAILABLE") {
+      const deterministicPreEnqueueRejection = !response.ok && (
+        queued.code === "AI_WORKER_UNAVAILABLE"
+        || (response.status === 503 && queued.code === "SOURCE_RESEARCH_UNAVAILABLE")
+        || (response.status === 409 && queued.code === "SOURCE_RESEARCH_REQUIRED")
+        || (response.status === 503 && queued.code === "SOURCE_RESEARCH_REQUIRED")
+        || (response.status === 409 && queued.code === "SOURCE_PHOTO_MISMATCH")
+      );
+      if (deterministicPreEnqueueRejection) {
         terminallyRejected = true;
         clearActiveStudioJob(jobId);
         submittedIntakesByJobIdRef.current.delete(jobId);
         releaseOwnJob(jobId);
-        throw new StudioJobTerminalError(queued.message ?? "AI 제작 작업자가 연결되지 않아 상품 분석을 시작하지 않았습니다.");
+        throw new StudioJobTerminalError(queued.message ?? "최종 제작 작업을 시작하지 않았습니다. 안내 내용을 확인한 뒤 바로 다시 시도해 주세요.");
       }
       const ambiguousResponse = response.status === 408
         || response.status === 425
@@ -1088,7 +1110,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         onRunningChange(false);
       }
     }
-  }, [announceOwnJob, competitorContext, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onManualResultReady, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, sourceResearchJobId, studioSessionId, submissionMode, workerReadiness]);
+  }, [announceOwnJob, competitorContext, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onManualResultReady, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, sourcePhotoFingerprint, sourceResearchJobId, sourceResearchLineageReceipt, studioSessionId, submissionMode, workerReadiness]);
 
   const retryOwnJobStatus = useCallback(async () => {
     const jobId = queuedOwnJobIdRef.current;
@@ -1284,7 +1306,9 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   const creativeThumbnails = thumbnails.filter((thumbnail) => thumbnailPresets.some((preset) => preset.id === thumbnail.id));
   const detailThumbnails = thumbnails.filter((thumbnail) => detailPresets.some((preset) => preset.id === thumbnail.id));
   const studioExecutionReady = isStudioExecutionReady(workerReadiness);
-  const hasResearchDraft = Boolean(sourceResearchJobId?.trim());
+  const hasResearchDraft = Boolean(sourceResearchJobId?.trim())
+    && /^[a-f0-9]{64}$/.test(sourcePhotoFingerprint?.trim() ?? "")
+    && Boolean(sourceResearchLineageReceipt?.trim());
   const submissionAvailable = submissionMode === "manual_mvp" || (studioExecutionReady && hasResearchDraft);
   const submissionUnavailableMessage = submissionMode !== "manual_mvp" && !hasResearchDraft
     ? "먼저 1차 상품정보 초안을 생성하고 사람이 확인·수정해 주세요."

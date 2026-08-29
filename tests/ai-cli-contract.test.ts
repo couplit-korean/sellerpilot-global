@@ -28,6 +28,8 @@ import {
 } from "../lib/product-classification";
 
 const CLAIM_TOKEN = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const SOURCE_PHOTO_SHA256 = "a".repeat(64);
+const SOURCE_RESEARCH_RECEIPT = "v1.test-lineage-payload.test-lineage-signature";
 
 test("AI studio output schema keeps every object strict for structured output", () => {
   const schema = JSON.parse(readFileSync(new URL("../scripts/ai-studio-output.schema.json", import.meta.url), "utf8")) as unknown;
@@ -1757,6 +1759,7 @@ test("product research contract distinguishes Vercel server results from legacy 
   assert.equal(productResearchJobRequestSchema.safeParse({
     jobId: "22222222-2222-4222-8222-222222222222",
     researchInput: "Model ABC-100, stainless steel bottle, 500 ml",
+    sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
   }).success, true);
   assert.equal(productResearchResultSchema.safeParse(validResearchResult()).success, true);
   const serverResult = { ...validResearchResult(), mode: "server-research" as const };
@@ -1787,6 +1790,8 @@ test("AI studio request requires seller facts and normalized listing images", ()
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "11111111-1111-4111-8111-111111111111",
     sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
+    sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
+    sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1798,6 +1803,8 @@ test("AI studio request accepts only bounded verified same-product price evidenc
   const base = {
     jobId: "11111111-1111-4111-8111-111111111111",
     sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
+    sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
+    sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1842,6 +1849,8 @@ test("AI studio request canonicalizes HTTP 11st evidence before the second stage
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "22222222-2222-4222-8222-222222222222",
     sourceResearchJobId: "11111111-1111-4111-8111-111111111111",
+    sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
+    sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1916,6 +1925,8 @@ test("AI studio request accepts four providers and fences marketplace web eviden
   const base = {
     jobId: "77777777-7777-4777-8777-777777777777",
     sourceResearchJobId: "66666666-6666-4666-8666-666666666666",
+    sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
+    sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1961,6 +1972,8 @@ test("AI studio request accepts free-text research without a source URL", () => 
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "33333333-3333-4333-8333-333333333333",
     sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
+    sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
+    sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
     manualFields: {
       ...validRequiredIntake(),
       researchInput: "Model ABC-100 stainless steel bottle, 500 ml, one bottle included",
@@ -1977,6 +1990,8 @@ test("AI studio request rejects missing rights confirmation and non-square outpu
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "11111111-1111-4111-8111-111111111111",
     sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
+    sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
+    sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
     manualFields,
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1080, height: 1080, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],

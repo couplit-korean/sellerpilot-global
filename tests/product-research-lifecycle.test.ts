@@ -9,22 +9,35 @@ import {
 } from "../app/_publishing/product-research-lifecycle";
 
 const researchJobId = "46c1fb0c-59e3-4f07-a3b2-dc9ff05ea19a";
+const sourcePhotoSha256 = "a".repeat(64);
+const lineageReceipt = "v1.test-lineage-payload.test-lineage-signature";
 
 test("pending product research recovery is scoped to the signed-in owner", () => {
-  const stored = { jobId: researchJobId, researchInput: "롯데 샌드", ownerId: "owner-a" };
+  const stored = {
+    jobId: researchJobId,
+    researchInput: "롯데 샌드",
+    ownerId: "owner-a",
+    sourcePhotoSha256,
+    lineageReceipt,
+  };
 
   assert.deepEqual(
-    pendingProductResearchForOwner(stored, "owner-a", "롯데 샌드"),
+    pendingProductResearchForOwner(stored, "owner-a", "롯데 샌드", sourcePhotoSha256),
     stored,
   );
-  assert.equal(pendingProductResearchForOwner(stored, "owner-b", "롯데 샌드"), null);
-  assert.equal(pendingProductResearchForOwner(stored, "owner-a", "사조 참치"), null);
+  assert.equal(pendingProductResearchForOwner(stored, "owner-b", "롯데 샌드", sourcePhotoSha256), null);
+  assert.equal(pendingProductResearchForOwner(stored, "owner-a", "사조 참치", sourcePhotoSha256), null);
+  assert.equal(pendingProductResearchForOwner(stored, "owner-a", "롯데 샌드", "b".repeat(64)), null);
   assert.equal(
-    pendingProductResearchForOwner({ jobId: researchJobId, researchInput: "롯데 샌드" }, "owner-a", "롯데 샌드"),
+    pendingProductResearchForOwner({ jobId: researchJobId, researchInput: "롯데 샌드", ownerId: "owner-a" }, "owner-a", "롯데 샌드", sourcePhotoSha256),
     null,
   );
   assert.equal(
-    pendingProductResearchForOwner({ ...stored, jobId: "not-a-job-id" }, "owner-a", "롯데 샌드"),
+    pendingProductResearchForOwner({ ...stored, jobId: "not-a-job-id" }, "owner-a", "롯데 샌드", sourcePhotoSha256),
+    null,
+  );
+  assert.equal(
+    pendingProductResearchForOwner({ ...stored, lineageReceipt: "" }, "owner-a", "롯데 샌드", sourcePhotoSha256),
     null,
   );
 });

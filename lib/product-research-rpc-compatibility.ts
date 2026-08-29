@@ -37,12 +37,13 @@ export function isMissingProductResearchRpcContract(error: unknown) {
   return false;
 }
 
-function legacyResearchPayload(jobId: string, researchInput: string) {
+function legacyResearchPayload(jobId: string, researchInput: string, sourcePhotoSha256: string) {
   const firstUrl = researchInput.match(/https?:\/\/[^\s<>"']+/i)?.[0]?.replace(/[),.;!?\]}]+$/g, "")
     ?? "https://sellerpilot-global.vercel.app/";
   return {
     research_only: true,
     research_input: researchInput,
+    source_photo_sha256: sourcePhotoSha256,
     description: "상품 등록 전 CLI 상세정보 조사 전용 작업입니다.",
     product_url: firstUrl,
     image_paths: [`research-only/${jobId}.jpg`],
@@ -72,15 +73,20 @@ export async function createProductResearchJobWithLegacyFallback({
   createJob,
   jobId,
   researchInput,
+  sourcePhotoSha256,
 }: {
   createJob: CreateProductResearchJob;
   jobId: string;
   researchInput: string;
+  sourcePhotoSha256: string;
 }) {
   const primary = await createJob({
     p_id: jobId,
     p_kind: "product_research",
-    p_request_payload: { research_input: researchInput },
+    p_request_payload: {
+      research_input: researchInput,
+      source_photo_sha256: sourcePhotoSha256,
+    },
   });
   if (!primary.error || !isMissingProductResearchRpcContract(primary.error)) {
     return { error: primary.error, usedLegacyFallback: false };
@@ -89,7 +95,7 @@ export async function createProductResearchJobWithLegacyFallback({
   const compatibility = await createJob({
     p_id: jobId,
     p_kind: "product_studio",
-    p_request_payload: legacyResearchPayload(jobId, researchInput),
+    p_request_payload: legacyResearchPayload(jobId, researchInput, sourcePhotoSha256),
   });
   return { error: compatibility.error, usedLegacyFallback: true };
 }

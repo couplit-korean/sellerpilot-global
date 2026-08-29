@@ -6,12 +6,16 @@ const studio = await readFile(new URL("../app/ai-product-studio.tsx", import.met
 
 test("AI final authoring requires the exact first-draft research job before uploads", () => {
   assert.match(studio, /sourceResearchJobId: string;/);
+  assert.match(studio, /sourcePhotoFingerprint: string;/);
+  assert.match(studio, /sourceResearchLineageReceipt: string;/);
   assert.match(studio, /const normalizedSourceResearchJobId = sourceResearchJobId\?\.trim\(\) \?\? "";/);
   const generateStart = studio.indexOf("const generate = useCallback");
-  const lineageGuard = studio.indexOf("if (!manualMvp && !normalizedSourceResearchJobId)", generateStart);
+  const lineageGuard = studio.indexOf("if (!manualMvp && (!normalizedSourceResearchJobId", generateStart);
   const firstUpload = studio.indexOf("optimizeAndUploadStudioPhotos(", lineageGuard);
   assert.ok(lineageGuard >= 0 && lineageGuard < firstUpload, "lineage must fail closed before any photo upload");
-  assert.match(studio, /JSON\.stringify\(\{ jobId, sourceResearchJobId: normalizedSourceResearchJobId,/);
+  assert.match(studio, /sourceResearchJobId: normalizedSourceResearchJobId,/);
+  assert.match(studio, /sourcePhotoFingerprint: normalizedSourcePhotoFingerprint,/);
+  assert.match(studio, /sourceResearchLineageReceipt: normalizedSourceResearchLineageReceipt,/);
 });
 
 test("MVP copy distinguishes six setting shots, support assets, and internal draft from publication", () => {

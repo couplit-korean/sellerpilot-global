@@ -9,11 +9,15 @@ import { validateVisibleSucceededProductResearchJob } from "../lib/product-studi
 
 const studioJobId = "11111111-1111-4111-8111-111111111111";
 const researchJobId = "22222222-2222-4222-8222-222222222222";
+const sourcePhotoSha256 = "a".repeat(64);
+const lineageReceipt = "v1.test-lineage-payload.test-lineage-signature";
 
 function requestPayload() {
   return {
     jobId: studioJobId,
     sourceResearchJobId: researchJobId,
+    sourcePhotoFingerprint: sourcePhotoSha256,
+    sourceResearchLineageReceipt: lineageReceipt,
     manualFields: {
       researchInput: "판매자 확인 테스트 상품 1개",
       productName: "판매자 확인 테스트 상품",
@@ -68,6 +72,14 @@ test("studio request requires a distinct completed product-research job id", () 
     ...requestPayload(),
     sourceResearchJobId: studioJobId,
   }).success, false);
+  assert.equal(studioJobRequestSchema.safeParse({
+    ...requestPayload(),
+    sourcePhotoFingerprint: "b".repeat(63),
+  }).success, false);
+  assert.equal(studioJobRequestSchema.safeParse({
+    ...requestPayload(),
+    sourceResearchLineageReceipt: "",
+  }).success, false);
 });
 
 test("manual intake keeps the shared photo contract without requiring AI lineage", () => {
@@ -108,7 +120,12 @@ test("product studio route checks lineage before image verification and persists
   assert.ok(lineageRead > 0 && lineageRead < imageVerification);
   assert.ok(imageVerification < enqueue);
   assert.match(route, /validateVisibleSucceededProductResearchJob/);
+  assert.match(route, /verifyIssuedProductResearchLineageReceipt/);
+  assert.match(route, /sha256PreservedStudioOriginalImage/);
+  assert.match(route, /uploadedMainSourceSha256 !== parsed\.data\.sourcePhotoFingerprint/);
   assert.match(route, /source_research_job_id: parsed\.data\.sourceResearchJobId/);
+  assert.match(route, /source_photo_sha256: parsed\.data\.sourcePhotoFingerprint/);
   assert.match(route, /SOURCE_RESEARCH_REQUIRED/);
+  assert.match(route, /SOURCE_PHOTO_MISMATCH/);
   assert.match(route, /cleanupStudioUploadsOnlyWhenJobIsAbsent/);
 });

@@ -10,6 +10,7 @@ import {
 } from "../lib/studio-image-paths";
 import {
   maximumPreservedStudioImageInspectionConcurrency,
+  sha256PreservedStudioOriginalImage,
   verifyOriginalStudioImages,
   verifyPreservedStudioImages,
 } from "../lib/studio-image-validation";
@@ -67,6 +68,29 @@ test("source paths are deterministic, pair-validated, and legacy worker jobs sti
   assert.throws(() => sourceImagePathsForWorker(normalized, [specs[1], specs[0]]), /일치하지/);
   assert.equal(validatePreservedStudioUploadPaths(userId, jobId, normalized, [specs[1], specs[0]]), null);
   assert.equal(validatePreservedStudioUploadPaths(userId, jobId, [normalized[1], normalized[0]], specs), null);
+});
+
+test("the server hashes the bounded preserved main original instead of trusting a client digest", async () => {
+  const first = png(600, 600);
+  const different = new Blob([await first.arrayBuffer(), new Uint8Array([1])], { type: "image/png" });
+  const firstDigest = await sha256PreservedStudioOriginalImage(
+    "main.source",
+    { originalBytes: first.size, originalMediaType: "image/png", originalWidth: 600, originalHeight: 600 },
+    async () => first,
+  );
+  const differentDigest = await sha256PreservedStudioOriginalImage(
+    "main.source",
+    { originalBytes: different.size, originalMediaType: "image/png", originalWidth: 600, originalHeight: 600 },
+    async () => different,
+  );
+  assert.match(firstDigest ?? "", /^[a-f0-9]{64}$/);
+  assert.match(differentDigest ?? "", /^[a-f0-9]{64}$/);
+  assert.notEqual(firstDigest, differentDigest);
+  assert.equal(await sha256PreservedStudioOriginalImage(
+    "main.source",
+    { originalBytes: first.size + 1, originalMediaType: "image/png", originalWidth: 600, originalHeight: 600 },
+    async () => first,
+  ), null);
 });
 
 test("retention cleanup expands normalized inputs to originals without changing generated assets", () => {

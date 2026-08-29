@@ -273,11 +273,11 @@ test("product studio route and clients fail closed without turning explicit work
   assert.match(readinessHook, /return \(\) => poller\.dispose\(\)/);
   assert.match(page, /const studioWorkerAvailable = isStudioExecutionReady\(studioWorkerReadiness\)/);
   assert.match(page, /const registrationExecutionAvailable = studioWorkerAvailable/);
-  assert.match(page, /const firstDraftReady = firstDraftGenerated && isProductResearchJobId\(sourceResearchJobId\)/);
+  assert.match(page, /const firstDraftReady = firstDraftGenerated[\s\S]*?isProductResearchJobId\(sourceResearchJobId\)[\s\S]*?productSourcePhotoSha256Pattern\.test\(sourceResearchPhotoSha256\)[\s\S]*?Boolean\(sourceResearchLineageReceipt\)/);
   assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running/);
   assert.match(page, /최종작성 시작/);
   assert.match(studio, /const manualMvp = submissionMode === "manual_mvp"/);
-  assert.match(studio, /if \(!manualMvp && !normalizedSourceResearchJobId\)/);
+  assert.match(studio, /if \(!manualMvp && \(!normalizedSourceResearchJobId[\s\S]{0,240}normalizedSourceResearchLineageReceipt\)\)/);
   assert.match(studio, /if \(!manualMvp && !isStudioExecutionReady\(workerReadiness\)\)/);
   assert.match(studio, /AI Gateway 점검 필요/);
 });
@@ -297,7 +297,7 @@ test("product research identifies the Vercel OIDC server path without erasing le
   assert.match(route, /code: "AI_WORKER_UNAVAILABLE"[\s\S]{0,180}workerAvailable: false/);
   assert.match(runtime, /Output\.object\(\{ schema: serverProductResearchResultSchema \}\)/);
   assert.match(page, /if \(!isStudioExecutionReady\(studioWorkerReadiness\)\)[\s\S]{0,260}setProductResearchError\(message\)/);
-  assert.match(page, /disabled=\{researchingProduct \? false : intake\.researchInput\.trim\(\)\.length < 2 \|\| running \|\| !studioWorkerAvailable\}/);
+  assert.match(page, /disabled=\{researchingProduct \? false : intake\.researchInput\.trim\(\)\.length < 2 \|\| !mainPhoto \|\| photoSelectionsProcessing \|\| running \|\| !studioWorkerAvailable\}/);
   assert.match(page, /Gateway 점검 필요/);
   assert.match(page, /researchResult\.mode === "server-research" \? "Vercel OIDC 서버 AI 상세정보 반영 완료" : "기존 AI 상세정보 반영 완료"/);
   assert.doesNotMatch(page, /이미지·CLI 조사·판매자 확인값/);

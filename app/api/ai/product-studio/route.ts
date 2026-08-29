@@ -3,9 +3,10 @@ import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from 
 import { rejectedUploadPaths } from "../../../../lib/ai-upload-guard";
 import { studioJobRequestSchema } from "../../../../lib/ai-cli-contract";
 import { withPromiseTimeout } from "../../../../lib/promise-timeout";
+import { verifyIssuedProductResearchLineageReceipt } from "../../../../lib/product-research-lineage-receipt";
 import { validateVisibleSucceededProductResearchJob } from "../../../../lib/product-studio-lineage";
 import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } from "../../../../lib/studio-image-paths";
-import { createSignedStudioImageDownloader, verifyPreservedStudioImages } from "../../../../lib/studio-image-validation";
+import { createSignedStudioImageDownloader, sha256PreservedStudioOriginalImage, verifyPreservedStudioImages } from "../../../../lib/studio-image-validation";
 import { resolveStudioAdmission } from "../../../../lib/studio-job-admission";
 import { wakeServerProductStudioAfterResponse, readServerProductStudioReadiness } from "../../../../lib/server-product-studio-runtime";
 import type { StudioWorkerReadiness } from "../../../../lib/studio-worker-readiness";
@@ -112,6 +113,32 @@ export async function POST(request: Request) {
     });
   }
 
+  const lineageReceiptVerification = verifyIssuedProductResearchLineageReceipt(
+    parsed.data.sourceResearchLineageReceipt,
+    {
+      ownerId: admin.user.id,
+      researchJobId: parsed.data.sourceResearchJobId,
+      researchInput: parsed.data.manualFields.researchInput,
+      sourcePhotoSha256: parsed.data.sourcePhotoFingerprint,
+    },
+  );
+  if (!lineageReceiptVerification.valid) {
+    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
+      admin,
+      parsed.data.jobId,
+      allUploadedPaths,
+    );
+    return NextResponse.json({
+      code: "SOURCE_RESEARCH_REQUIRED",
+      jobId: parsed.data.jobId,
+      sourceResearchJobId: parsed.data.sourceResearchJobId,
+      cleanupPending: !cleaned,
+      message: lineageReceiptVerification.reason === "configuration_missing"
+        ? "1차 분석과 원본 사진을 확인할 서버 설정이 완료되지 않았습니다."
+        : "현재 설명·대표사진과 일치하는 1차 자동생성을 다시 완료해 주세요.",
+    }, { status: lineageReceiptVerification.reason === "configuration_missing" ? 503 : 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+
   const download = await studioValidationDownloader(allUploadedPaths, admin);
   const verified = download ? await verifyPreservedStudioImages({
     normalizedPaths: uploadedPaths,
@@ -127,9 +154,29 @@ export async function POST(request: Request) {
     await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, parsed.data.jobId, allUploadedPaths);
     return NextResponse.json({ message: "원본 이미지의 형식·크기·픽셀 정보가 업로드 요청과 일치하지 않습니다." }, { status: 400 });
   }
+  const uploadedMainSourceSha256 = download ? await sha256PreservedStudioOriginalImage(
+    preservedPaths.originalPaths[0],
+    parsed.data.imageSpecs[0],
+    download,
+  ) : null;
+  if (!uploadedMainSourceSha256 || uploadedMainSourceSha256 !== parsed.data.sourcePhotoFingerprint) {
+    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
+      admin,
+      parsed.data.jobId,
+      allUploadedPaths,
+    );
+    return NextResponse.json({
+      code: "SOURCE_PHOTO_MISMATCH",
+      jobId: parsed.data.jobId,
+      cleanupPending: !cleaned,
+      message: "1차 자동생성에 사용한 대표사진과 최종작성에 업로드된 원본이 다릅니다. 현재 사진으로 1차 자동생성을 다시 실행해 주세요.",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
 
   const requestPayload = {
     source_research_job_id: parsed.data.sourceResearchJobId,
+    source_research_input_sha256: lineageReceiptVerification.researchInputSha256,
+    source_photo_sha256: parsed.data.sourcePhotoFingerprint,
     description: parsed.data.manualFields.description.trim(),
     product_url: parsed.data.manualFields.productUrl.trim(),
     research_input: parsed.data.manualFields.researchInput.trim(),

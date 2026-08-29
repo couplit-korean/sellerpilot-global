@@ -112,6 +112,7 @@ export const productResearchResultSchema = z.discriminatedUnion("mode", [
 export const productResearchJobRequestSchema = z.object({
   jobId: z.string().uuid(),
   researchInput: z.string().trim().min(2).max(12_000),
+  sourcePhotoFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
 export const supportReplyLocaleSchema = z.enum([
@@ -1434,6 +1435,8 @@ export const manualProductIntakeJobRequestSchema = studioImageJobRequestBaseSche
 
 export const studioJobRequestSchema = studioImageJobRequestBaseSchema.extend({
   sourceResearchJobId: z.string().uuid(),
+  sourcePhotoFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  sourceResearchLineageReceipt: z.string().min(32).max(2_000),
 }).superRefine((value, context) => {
   if (value.sourceResearchJobId === value.jobId) {
     context.addIssue({

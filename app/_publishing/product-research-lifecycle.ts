@@ -1,11 +1,13 @@
 import { productResearchFailureMessage } from "../../lib/product-research-failure";
 
-export const productResearchPendingStorageKey = "sellerpilot:product-research-pending:v1";
+export const productResearchPendingStorageKey = "sellerpilot:product-research-pending:v2";
 
 export type PendingProductResearch = {
   jobId: string;
   researchInput: string;
   ownerId: string;
+  sourcePhotoSha256: string;
+  lineageReceipt: string;
 };
 
 const productResearchJobIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -18,13 +20,24 @@ export function pendingProductResearchForOwner(
   value: unknown,
   ownerId: string,
   researchInput: string,
+  sourcePhotoSha256: string,
 ): PendingProductResearch | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (record.ownerId !== ownerId
       || record.researchInput !== researchInput
+      || record.sourcePhotoSha256 !== sourcePhotoSha256
+      || typeof record.lineageReceipt !== "string"
+      || record.lineageReceipt.length < 32
+      || record.lineageReceipt.length > 2_000
       || !isProductResearchJobId(record.jobId)) return null;
-  return { jobId: record.jobId, researchInput, ownerId };
+  return {
+    jobId: record.jobId,
+    researchInput,
+    ownerId,
+    sourcePhotoSha256,
+    lineageReceipt: record.lineageReceipt,
+  };
 }
 
 export class ProductResearchNotFoundError extends Error {

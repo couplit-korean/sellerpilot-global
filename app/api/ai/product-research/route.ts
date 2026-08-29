@@ -1,6 +1,10 @@
 import { after, NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
 import { productResearchJobRequestSchema } from "../../../../lib/ai-cli-contract";
+import {
+  issueProductResearchLineageReceipt,
+  productResearchLineageReceiptConfigured,
+} from "../../../../lib/product-research-lineage-receipt";
 import { createProductResearchJobWithLegacyFallback } from "../../../../lib/product-research-rpc-compatibility";
 import { wakeServerProductResearchAfterResponse } from "../../../../lib/server-product-research-runtime";
 import { readServerProductStudioReadiness } from "../../../../lib/server-product-studio-runtime";
@@ -27,9 +31,18 @@ export async function POST(request: Request) {
     }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
+  if (!productResearchLineageReceiptConfigured()) {
+    return NextResponse.json({
+      code: "PRODUCT_RESEARCH_LINEAGE_UNAVAILABLE",
+      workerAvailable: false,
+      message: "1차 분석과 원본 사진을 안전하게 연결할 서버 설정이 완료되지 않았습니다.",
+    }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+
   const { error } = await createProductResearchJobWithLegacyFallback({
     jobId: parsed.data.jobId,
     researchInput: parsed.data.researchInput,
+    sourcePhotoSha256: parsed.data.sourcePhotoFingerprint,
     createJob: async (arguments_) => {
       const result = await admin.userClient.rpc("sellerpilot_create_ai_job", arguments_);
       return { error: result.error };
@@ -39,10 +52,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "AI 상품정보 수집 작업을 등록하지 못했습니다." }, { status: 500 });
   }
 
+  const lineageReceipt = issueProductResearchLineageReceipt({
+    ownerId: admin.user.id,
+    researchJobId: parsed.data.jobId,
+    researchInput: parsed.data.researchInput,
+    sourcePhotoSha256: parsed.data.sourcePhotoFingerprint,
+  });
+
   after(wakeServerProductResearchAfterResponse);
   return NextResponse.json({
     mode: "server-research",
     jobId: parsed.data.jobId,
+    lineageReceipt,
     status: "queued",
     message: "Vercel 서버 AI가 상품 링크와 설명을 조사하고 있습니다.",
   }, {

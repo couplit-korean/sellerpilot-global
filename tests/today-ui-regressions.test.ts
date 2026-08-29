@@ -488,8 +488,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /competitorResearchControllerRef\.current !== competitorController/);
   assert.match(page, /가격 다시 확인/);
   assert.match(page, /productResearchPendingStorageKey/);
-  assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput\)/);
-  assert.match(page, /JSON\.stringify\(\{ jobId, researchInput, ownerId \} satisfies PendingProductResearch\)/);
+  assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput, sourcePhotoSha256\)/);
+  assert.match(page, /JSON\.stringify\(\{[\s\S]{0,180}jobId,[\s\S]{0,100}researchInput,[\s\S]{0,100}ownerId,[\s\S]{0,100}sourcePhotoSha256,[\s\S]{0,100}lineageReceipt,[\s\S]{0,80}\} satisfies PendingProductResearch\)/);
   assert.match(page, /productResearchControllerRef\.current\?\.abort\(\)/);
   assert.match(page, /detailRegenerationControllerRef = useRef<AbortController \| null>\(null\)/);
   assert.match(page, /detailRegenerationControllerRef\.current\?\.abort\(new DOMException\("상품 상세 화면이 닫혔습니다\.", "AbortError"\)\)/);
