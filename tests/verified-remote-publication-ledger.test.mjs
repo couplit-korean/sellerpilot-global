@@ -653,6 +653,30 @@ test("legacy failed rows with remote evidence become manual readback fences", as
        null, null, '2026-08-29T12:00:00Z',
        'retryable', 'old retry', '2026-08-29T13:00:00Z');
   `);
+  await db.exec(extractFunction(
+    migration,
+    "create or replace function sellerpilot_private.legacy_remote_publication_downgrade_allowed",
+  ));
+  await db.exec(`
+    create function sellerpilot_private.test_legacy_downgrade_guard()
+    returns trigger
+    language plpgsql
+    set search_path = ''
+    as $$
+    begin
+      if not sellerpilot_private.legacy_remote_publication_downgrade_allowed(
+        to_jsonb(old),
+        to_jsonb(new)
+      ) then
+        raise exception 'invalid legacy remote publication downgrade';
+      end if;
+      return new;
+    end;
+    $$;
+    create trigger test_legacy_downgrade_guard
+      before update on sellerpilot_private.product_listings
+      for each row execute function sellerpilot_private.test_legacy_downgrade_guard();
+  `);
 
   const historical = migration.indexOf("-- Historical `published`");
   assert.ok(historical >= 0);

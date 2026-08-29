@@ -144,7 +144,7 @@ as $$
     end,
     'last_error', case
       when expected.has_legacy_publication_claim
-        then to_jsonb('기존 등록 성공 기록은 원격 공개 상태 증거가 없어 판매자센터 재조회가 필요합니다.'::text)
+        then to_jsonb('기존 원격 상품 기록은 검증된 공개 상태 증거가 없어 판매자센터 재조회가 필요합니다.'::text)
       else p_old->'last_error'
     end,
     'updated_at', to_jsonb(statement_timestamp())
