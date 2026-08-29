@@ -9,6 +9,7 @@ const maintenanceRouteUrl = new URL("../app/api/internal/maintenance/route.ts", 
 const installerUrl = new URL("../scripts/install-ai-worker-launch-agent.mjs", import.meta.url);
 const packageUrl = new URL("../package.json", import.meta.url);
 const channelGatewayDocUrl = new URL("../docs/channel-gateway-worker.md", import.meta.url);
+const deploymentChecklistUrl = new URL("../docs/운영_배포_인증_체크리스트.md", import.meta.url);
 
 const scopes = [
   ["ai", "Vercel sensitive env · SELLERPILOT_AI_WORKER_TOKEN", "SellerPilot AI Worker", "--rotate-ai-token"],
@@ -180,11 +181,18 @@ test("macOS installer atomically activates the pending set only after staged lau
 });
 
 test("production channel gateway documentation keeps the Vercel-only runtime boundary", async () => {
-  const documentation = await readFile(channelGatewayDocUrl, "utf8");
+  const [documentation, deploymentChecklist] = await Promise.all([
+    readFile(channelGatewayDocUrl, "utf8"),
+    readFile(deploymentChecklistUrl, "utf8"),
+  ]);
 
   assert.match(documentation, /운영 판매채널 작업은 로컬 Mac의 장기 실행 worker가 아니라 Vercel Function과/);
   assert.match(documentation, /POST \/api\/internal\/channel-gateway-drain/);
-  assert.match(documentation, /pnpm gateway:serverless:configure -- --canary --activate --status/);
+  assert.match(documentation, /pnpm gateway:serverless:configure --canary --activate --status/);
+  assert.match(deploymentChecklist, /pnpm gateway:serverless:configure --canary --activate --status/);
+  for (const operatorDocument of [documentation, deploymentChecklist]) {
+    assert.doesNotMatch(operatorDocument, /gateway:serverless:configure -- --/);
+  }
   assert.match(documentation, /`--ai-only` 모드/);
   assert.match(documentation, /production fallback이 아니다/);
   assert.match(documentation, /STATIC_EGRESS_REQUIRED/);

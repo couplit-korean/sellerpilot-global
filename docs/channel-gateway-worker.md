@@ -58,7 +58,7 @@ worker로 우회하지 않는다. 특히 Temu는 로컬 Mac 공인 IP 조회, AW
 ```sh
 SELLERPILOT_RUNTIME_ORIGIN=https://sellerpilot-global-<deployment>-project-e59d.vercel.app \
 SELLERPILOT_EXPECTED_RELEASE=<40자리-커밋-SHA> \
-pnpm gateway:serverless:configure -- --candidate-canary
+pnpm gateway:serverless:configure --candidate-canary
 ```
 
 4. **migration 전에** 현재 운영 gateway cron을 명시적으로 중지하고 status가
@@ -66,7 +66,7 @@ pnpm gateway:serverless:configure -- --candidate-canary
    기존 분 단위 cron이 외부 작업을 claim하는 창이 생기지 않는다.
 
 ```sh
-pnpm gateway:serverless:configure -- --deactivate --status
+pnpm gateway:serverless:configure --deactivate --status
 ```
 
 5. 검증한 동일 후보를 Production으로 승격하고, Vercel cron inventory가 0건인지
@@ -79,9 +79,9 @@ pnpm gateway:serverless:configure -- --deactivate --status
    scheduler를 활성화한다.
 
 ```sh
-pnpm gateway:serverless:configure -- --bootstrap
+pnpm gateway:serverless:configure --bootstrap
 SELLERPILOT_EXPECTED_RELEASE=<40자리-커밋-SHA> \
-pnpm gateway:serverless:configure -- --canary --activate --status
+pnpm gateway:serverless:configure --canary --activate --status
 ```
 
 bootstrap 스크립트는 운영 Supabase host가 예상값과 다르면 중단한다. gateway
