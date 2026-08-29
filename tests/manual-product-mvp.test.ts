@@ -232,6 +232,8 @@ test("manual intake route validates preserved photos and the client retries the 
   assert.match(studio, /if \(terminallyRejected\) \{[\s\S]{0,220}clearPendingManualProductRequest\(pending\)/);
   assert.match(page, /setStudioSubmissionMode\(manualMvp \? "manual_mvp" : "ai"\)/);
   assert.match(page, /onManualResultReady=\{\(productId, _jobId, submittedIntake\)/);
+  assert.match(page, /onManualResultReady=\{\(productId, _jobId, submittedIntake\)[\s\S]{0,360}onManualProductCreated\(\)/);
+  assert.match(page, /onManualProductCreated=\{\(\) => void operations\.reload\(\)\}/);
   assert.match(marketplaceImages, /uniqueStrings\(manualSourceMode \? gallery : \[\.\.\.gallery, \.\.\.details\]\)/);
   assert.match(marketplaceImages, /if \(!productPatch && index > 0\) product\[field\] = ""/);
   assert.doesNotMatch(route, /sellerpilot_create_ai_job/);
