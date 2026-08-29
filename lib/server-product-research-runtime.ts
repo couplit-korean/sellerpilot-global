@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import {
   analyzeServerProductResearch,
@@ -16,6 +17,15 @@ import {
 } from "./internal-scheduler-auth";
 import { runOneServerProductStudio } from "./server-product-studio";
 import { configuredServerProductStudioDependencies } from "./server-product-studio-runtime";
+
+const MAX_RESEARCH_STORAGE_OBJECT_BYTES = 24 * 1024 * 1024;
+
+function checkedResearchStorageBytes(value: ArrayBuffer) {
+  if (value.byteLength < 1 || value.byteLength > MAX_RESEARCH_STORAGE_OBJECT_BYTES) {
+    throw new Error("storage_object_size_invalid");
+  }
+  return new Uint8Array(value);
+}
 
 export function configuredServerProductResearchDependencies(): ServerProductResearchDependencies {
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
@@ -35,6 +45,45 @@ export function configuredServerProductResearchDependencies(): ServerProductRese
       ? async (name, arguments_ = {}) => {
         const { data, error } = await serviceClient.rpc(name, arguments_);
         return { data, error };
+      }
+      : undefined,
+    download: serviceClient
+      ? async (path, signal) => {
+        if (signal.aborted) throw signal.reason;
+        const { data, error } = await serviceClient.storage.from("sellerpilot-ai").download(path);
+        if (error || !data) throw new Error("storage_download_failed");
+        if (signal.aborted) throw signal.reason;
+        return checkedResearchStorageBytes(await data.arrayBuffer());
+      }
+      : undefined,
+    upload: serviceClient
+      ? async (path, bytes, signal) => {
+        if (signal.aborted) throw signal.reason;
+        const { error } = await serviceClient.storage.from("sellerpilot-ai").upload(path, bytes, {
+          contentType: "image/png",
+          cacheControl: "31536000",
+          upsert: false,
+        });
+        if (!error) return "uploaded" as const;
+
+        // The upload may have committed before the response was lost. Never
+        // overwrite a claim-scoped result; prove exact identity instead.
+        const { data: existing, error: readError } = await serviceClient.storage
+          .from("sellerpilot-ai")
+          .download(path);
+        if (readError || !existing) throw new Error("storage_upload_failed");
+        const existingBytes = checkedResearchStorageBytes(await existing.arrayBuffer());
+        const expectedDigest = createHash("sha256").update(bytes).digest("hex");
+        const existingDigest = createHash("sha256").update(existingBytes).digest("hex");
+        if (expectedDigest !== existingDigest) throw new Error("storage_upload_conflict");
+        return "identical" as const;
+      }
+      : undefined,
+    remove: serviceClient
+      ? async (paths) => {
+        if (!paths.length) return;
+        const { error } = await serviceClient.storage.from("sellerpilot-ai").remove(paths);
+        if (error) throw new Error("storage_remove_failed");
       }
       : undefined,
     analyze: analyzeServerProductResearch,

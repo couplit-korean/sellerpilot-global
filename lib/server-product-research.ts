@@ -1,4 +1,17 @@
-import { serverProductResearchResultSchema, type ServerProductResearchResult } from "./ai-cli-contract";
+import { createHash } from "node:crypto";
+import sharp from "sharp";
+import { z } from "zod";
+import {
+  productResearchPreflightLineageSchema,
+  productResearchPreflightStoragePathsSchema,
+  serverProductResearchResultSchema,
+  type ServerProductResearchResult,
+} from "./ai-cli-contract";
+import {
+  aiGeneratedAssetPath,
+  aiGeneratedAssetSpecs,
+  coreFirstDraftAssetIds,
+} from "./ai-generated-assets";
 import {
   classifyAiGatewayFailure,
   type AiGatewayFailureReason,
@@ -14,18 +27,32 @@ import {
   internalScheduleRequestMode,
   runtimeStatusMatchesCurrentRelease,
 } from "./internal-scheduler-auth";
+import { sourcePreservingProductImageSpecSchema } from "./product-intake";
+import {
+  buildPortableProductCutout,
+  ServerProductStudioError,
+  type PortableProductSegmentation,
+  type ServerStudioSource,
+} from "./server-product-studio";
+import { sourceImagePathsForWorker } from "./studio-image-paths";
+import { maximumStudioJobSourceBytes } from "./studio-source-photo-policy";
 
 // This is the same OIDC-authenticated model exercised by server-runtime-smoke.
 // Keep the runtime module independent so the product route does not bundle the
 // unrelated Vercel Sandbox synthetic-check implementation.
 export const SERVER_PRODUCT_RESEARCH_MODEL = "openai/gpt-5.4-mini";
-export const SERVER_PRODUCT_RESEARCH_VERSION = "sellerpilot-vercel-product-research/1.0";
+export const SERVER_PRODUCT_RESEARCH_IMAGE_MODEL = "openai/gpt-image-2";
+export const SERVER_PRODUCT_RESEARCH_VERSION = "sellerpilot-vercel-product-research/1.1";
 export const SERVER_PRODUCT_RESEARCH_WAKE_WIDTH = 3;
+export const SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY = 2;
 
 const MAX_REFERENCE_COUNT = 5;
 const MAX_REFERENCE_TEXT_CHARACTERS = 18_000;
 const MAX_REFERENCE_PROMPT_CHARACTERS = 60_000;
 const MAX_GENERATED_RESEARCH_CHARACTERS = 80_000;
+const MAX_SINGLE_SOURCE_BYTES = 20 * 1024 * 1024;
+const SEGMENTATION_CALL_TIMEOUT_MS = 40_000;
+const BACKGROUND_CALL_TIMEOUT_MS = 40_000;
 // Vercel Fluid Compute currently gives this route a 300 second hard ceiling.
 // Reserve enough time after analysis for claim-fenced release/completion RPCs
 // even after a cold start or a delayed enqueue response.
@@ -37,6 +64,53 @@ const NO_STORE_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+
+const portablePreflightSegmentationSchema = z.object({
+  containsSingleProduct: z.boolean(),
+  touchesFrame: z.boolean(),
+  foregroundConfidence: z.number().min(0).max(1),
+  edgeConfidence: z.number().min(0).max(1),
+  polygons: z.array(z.object({
+    points: z.array(z.object({
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+    }).strict()).min(12).max(160),
+  }).strict()).min(1).max(8),
+}).strict();
+
+const preflightResearchRequestSchema = z.object({
+  research_input: z.string().trim().min(2).max(12_000),
+  source_photo_sha256: z.string().regex(SHA256_PATTERN),
+  preflight_version: z.literal(1),
+  image_paths: z.array(z.string().min(1).max(400)).min(1).max(100),
+  image_specs: z.array(sourcePreservingProductImageSpecSchema).min(1).max(100),
+}).passthrough().superRefine((value, context) => {
+  if (value.image_paths.length !== value.image_specs.length) {
+    context.addIssue({ code: "custom", path: ["image_specs"], message: "source image contract mismatch" });
+  }
+  if (value.image_specs[0]?.role !== "main") {
+    context.addIssue({ code: "custom", path: ["image_specs", 0, "role"], message: "main source image required" });
+  }
+  if (value.image_specs.reduce((total, spec) => total + spec.originalBytes, 0) > maximumStudioJobSourceBytes) {
+    context.addIssue({ code: "custom", path: ["image_specs"], message: "source image bytes exceeded" });
+  }
+});
+
+type PreflightResearchRequest = z.infer<typeof preflightResearchRequestSchema>;
+type CoreFirstDraftAssetId = typeof coreFirstDraftAssetIds[number];
+type CoreFirstDraftAssetSpec = Extract<(typeof aiGeneratedAssetSpecs)[number], { id: CoreFirstDraftAssetId }>;
+type PreflightAuditMode = "segmented-source-composite" | "source-photo-catalog";
+
+type ProductResearchPreflightResult = {
+  asset_storage_paths: Record<CoreFirstDraftAssetId, string>;
+  preflightAssetLineage: Record<CoreFirstDraftAssetId, {
+    digest: string;
+    role: "creative" | "detail";
+    auditMode: PreflightAuditMode;
+    sourceRole: string;
+  }>;
+};
 
 export type ServerProductResearchReference = {
   url: string;
@@ -56,6 +130,25 @@ export type ServerProductResearchDependencies = {
   requireActiveRuntime?: boolean;
   rpc?: (name: string, arguments_?: Record<string, unknown>) => Promise<RpcResult>;
   analyze?: (researchInput: string, signal: AbortSignal) => Promise<ServerProductResearchResult>;
+  download?: (path: string, signal: AbortSignal) => Promise<Uint8Array>;
+  upload?: (path: string, bytes: Uint8Array, signal: AbortSignal) => Promise<"uploaded" | "identical">;
+  remove?: (paths: string[]) => Promise<void>;
+  segmentSource?: (source: ServerStudioSource, signal: AbortSignal) => Promise<{
+    segmentation: PortableProductSegmentation;
+    segmentationSource: Uint8Array;
+  }>;
+  generateBackground?: (input: {
+    asset: CoreFirstDraftAssetSpec;
+    prompt: string;
+    signal: AbortSignal;
+  }) => Promise<Uint8Array>;
+  generatePreflight?: (input: {
+    jobId: string;
+    claimToken: string;
+    request: PreflightResearchRequest;
+    signal: AbortSignal;
+    dependencies: ServerProductResearchDependencies;
+  }) => Promise<ProductResearchPreflightResult>;
   logError?: (stage: string, details: Record<string, string | number | boolean>) => void;
 };
 
@@ -76,6 +169,10 @@ const TERMINAL_PRODUCT_RESEARCH_FAILURE_REASONS = new Set([
   "gateway_forbidden",
   "gateway_model_not_found",
   "research_input_invalid",
+  "preflight_request_invalid",
+  "preflight_source_image_invalid",
+  "preflight_source_photo_mismatch",
+  "preflight_result_invalid",
 ]);
 
 export function shouldTerminallyFailProductResearch(safeReason: string) {
@@ -89,6 +186,23 @@ class ProductResearchExecutionError extends Error {
     super(safeReason);
     this.name = "ProductResearchExecutionError";
     this.safeReason = safeReason;
+  }
+}
+
+class ProductResearchPreflightError extends Error {
+  readonly safeReason: string;
+
+  constructor(safeReason: string) {
+    super(safeReason);
+    this.name = "ProductResearchPreflightError";
+    this.safeReason = safeReason;
+  }
+}
+
+class ProductResearchImageFallbackRequired extends Error {
+  constructor() {
+    super("source_photo_catalog_fallback_required");
+    this.name = "ProductResearchImageFallbackRequired";
   }
 }
 
@@ -525,6 +639,396 @@ export async function analyzeServerProductResearch(
   });
 }
 
+function coreFirstDraftAssetSpecs() {
+  return coreFirstDraftAssetIds.map((assetId) => {
+    const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    if (!asset || (asset.role !== "creative" && asset.role !== "detail")) {
+      throw new ProductResearchPreflightError("preflight_result_invalid");
+    }
+    return asset as CoreFirstDraftAssetSpec;
+  });
+}
+
+function perCallSignal(signal: AbortSignal, timeoutMs: number) {
+  return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+}
+
+async function defaultSegmentPreflightSource(source: ServerStudioSource, signal: AbortSignal) {
+  const segmentationSource = await sharp(source.bytes, { failOn: "warning", limitInputPixels: 16_000_000 })
+    .rotate()
+    .resize(1024, 1024, { fit: "contain", background: "#ffffff", withoutEnlargement: true })
+    .png()
+    .toBuffer();
+  const prompt = [
+    "Return a fail-closed polygon mask for the one saleable product or package in this image.",
+    "Coordinates are normalized 0..1 in the complete 1024x1024 image. Trace only the visible outer silhouette.",
+    "Do not include table, hand, shadow, shelf, background, adjacent objects or whitespace.",
+    "Use 12-160 ordered boundary points per polygon and multiple polygons only for disconnected product parts.",
+    "containsSingleProduct is false if identity is ambiguous or multiple saleable products are visible.",
+    "touchesFrame is true if any product boundary is clipped by the image edge.",
+    "Set foregroundConfidence below 0.97 or edgeConfidence below 0.94 on uncertainty, occlusion, clipping or an approximate rectangle.",
+  ].join("\n");
+  try {
+    const { generateText, Output } = await import("ai");
+    const generated = await generateText({
+      model: SERVER_PRODUCT_RESEARCH_MODEL,
+      output: Output.object({ schema: portablePreflightSegmentationSchema }),
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          { type: "image", image: new Uint8Array(segmentationSource), mediaType: "image/png" },
+        ],
+      }],
+      maxOutputTokens: 4_096,
+      maxRetries: 0,
+      abortSignal: signal,
+      timeout: { totalMs: SEGMENTATION_CALL_TIMEOUT_MS },
+      providerOptions: {
+        gateway: {
+          user: "sellerpilot-server-product-research",
+          tags: ["feature:product-preflight-segmentation", "runtime:vercel-oidc"],
+        },
+      },
+    });
+    return {
+      segmentation: portablePreflightSegmentationSchema.parse(generated.output),
+      segmentationSource: new Uint8Array(segmentationSource),
+    };
+  } catch (error) {
+    throw new ProductResearchPreflightError(classifyProductResearchGatewayFailure(error, signal.aborted));
+  }
+}
+
+function preflightImageModelSize(asset: CoreFirstDraftAssetSpec) {
+  if (asset.ratio === "16:9") return "1536x1024" as const;
+  if (asset.ratio === "4:5") return "1024x1536" as const;
+  return "1024x1024" as const;
+}
+
+function preflightBackgroundPrompt(asset: CoreFirstDraftAssetSpec) {
+  const placement = asset.identityPolicy.placement;
+  return [
+    "Generate only an empty photorealistic real-life background plate for a marketplace product image.",
+    "Do not draw a product, package, box, pouch, bottle, can, label, logo, text, barcode, hand or person.",
+    `Keep an unobstructed quiet rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height} for later source-pixel compositing.`,
+    `Image role=${asset.id}; scene=${asset.scene}; camera=${asset.camera}; composition=${asset.composition}.`,
+    "The empty plate must have real spatial depth, natural light and functional surfaces while the reserved rectangle remains completely empty.",
+  ].join("\n");
+}
+
+async function defaultGeneratePreflightBackground(input: {
+  asset: CoreFirstDraftAssetSpec;
+  prompt: string;
+  signal: AbortSignal;
+}) {
+  try {
+    const { generateImage } = await import("ai");
+    const generated = await generateImage({
+      model: SERVER_PRODUCT_RESEARCH_IMAGE_MODEL,
+      prompt: input.prompt,
+      n: 1,
+      size: preflightImageModelSize(input.asset),
+      maxRetries: 0,
+      abortSignal: input.signal,
+      providerOptions: {
+        gateway: {
+          user: "sellerpilot-server-product-research",
+          tags: ["feature:product-preflight-image", `asset:${input.asset.id}`, "runtime:vercel-oidc"],
+        },
+      },
+    });
+    const image = generated.images[0];
+    if (!image?.uint8Array?.byteLength) throw new Error("empty generated image");
+    return image.uint8Array;
+  } catch (error) {
+    throw new ProductResearchPreflightError(classifyProductResearchGatewayFailure(error, input.signal.aborted));
+  }
+}
+
+async function loadPreflightMainSource(
+  jobId: string,
+  request: PreflightResearchRequest,
+  dependencies: ServerProductResearchDependencies,
+  signal: AbortSignal,
+) {
+  if (!dependencies.download) throw new ProductResearchPreflightError("preflight_storage_configuration_missing");
+  let sourcePaths: string[];
+  try {
+    sourcePaths = sourceImagePathsForWorker(request.image_paths, request.image_specs);
+  } catch {
+    throw new ProductResearchPreflightError("preflight_request_invalid");
+  }
+  if (request.image_paths.some((path) => path.split("/")[1]?.toLowerCase() !== jobId.toLowerCase())) {
+    throw new ProductResearchPreflightError("preflight_request_invalid");
+  }
+  const sourcePath = sourcePaths[0];
+  const sourceSpec = request.image_specs[0];
+  if (!sourcePath || !sourceSpec || sourceSpec.role !== "main") {
+    throw new ProductResearchPreflightError("preflight_request_invalid");
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = await dependencies.download(sourcePath, signal);
+  } catch {
+    throw new ProductResearchPreflightError("preflight_source_download_failed");
+  }
+  if (!bytes.byteLength || bytes.byteLength > MAX_SINGLE_SOURCE_BYTES
+      || bytes.byteLength !== sourceSpec.originalBytes) {
+    throw new ProductResearchPreflightError("preflight_source_image_invalid");
+  }
+  const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: 16_000_000 })
+    .metadata()
+    .catch(() => {
+      throw new ProductResearchPreflightError("preflight_source_image_invalid");
+    });
+  if (!metadata.width || !metadata.height
+      || metadata.width !== sourceSpec.originalWidth
+      || metadata.height !== sourceSpec.originalHeight) {
+    throw new ProductResearchPreflightError("preflight_source_image_invalid");
+  }
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (digest !== request.source_photo_sha256) {
+    throw new ProductResearchPreflightError("preflight_source_photo_mismatch");
+  }
+  return {
+    path: sourcePath,
+    role: sourceSpec.role,
+    name: sourceSpec.originalName,
+    mediaType: sourceSpec.originalMediaType,
+    bytes,
+  } satisfies ServerStudioSource;
+}
+
+const catalogBackgrounds = ["#f7f3ed", "#eef3f6", "#f5f0e8", "#eef2ea", "#f1edf5", "#edf3f2"] as const;
+
+export async function buildServerProductResearchSourcePhotoCatalog(
+  asset: CoreFirstDraftAssetSpec,
+  source: ServerStudioSource,
+  variant: number,
+) {
+  const insetScale = 0.78 + ((variant % 3) * 0.045);
+  const maximumWidth = Math.max(1, Math.round(asset.width * insetScale));
+  const maximumHeight = Math.max(1, Math.round(asset.height * (0.76 + ((variant + 1) % 3) * 0.045)));
+  const sourceFrame = await sharp(source.bytes, { failOn: "warning", limitInputPixels: 16_000_000 })
+    .rotate()
+    .resize(maximumWidth, maximumHeight, { fit: "inside", withoutEnlargement: false })
+    .png()
+    .toBuffer({ resolveWithObject: true });
+  const leftBias = ((variant % 3) - 1) * 0.06;
+  const topBias = (((variant + 1) % 3) - 1) * 0.045;
+  const left = Math.max(0, Math.min(
+    asset.width - sourceFrame.info.width,
+    Math.round((asset.width - sourceFrame.info.width) * (0.5 + leftBias)),
+  ));
+  const top = Math.max(0, Math.min(
+    asset.height - sourceFrame.info.height,
+    Math.round((asset.height - sourceFrame.info.height) * (0.5 + topBias)),
+  ));
+  const background = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${asset.width}" height="${asset.height}">`
+      + `<rect width="100%" height="100%" fill="${catalogBackgrounds[variant % catalogBackgrounds.length]}"/>`
+      + `<rect x="${Math.max(0, left - 10)}" y="${Math.max(0, top - 10)}" width="${Math.min(asset.width, sourceFrame.info.width + 20)}" height="${Math.min(asset.height, sourceFrame.info.height + 20)}" rx="18" fill="#ffffff" opacity="0.72"/>`
+      + "</svg>",
+  );
+  return sharp(background)
+    .composite([{ input: sourceFrame.data, left, top }])
+    .png()
+    .toBuffer();
+}
+
+async function buildSegmentedPreflightComposite(
+  asset: CoreFirstDraftAssetSpec,
+  cutout: Uint8Array,
+  dependencies: ServerProductResearchDependencies,
+  signal: AbortSignal,
+) {
+  const generateBackground = dependencies.generateBackground ?? defaultGeneratePreflightBackground;
+  let background: Uint8Array;
+  try {
+    background = await generateBackground({
+      asset,
+      prompt: preflightBackgroundPrompt(asset),
+      signal: perCallSignal(signal, BACKGROUND_CALL_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (!imageModelFailureAllowsSourcePhotoFallback(error, signal)) throw error;
+    throw new ProductResearchImageFallbackRequired();
+  }
+  const normalizedBackground = await sharp(background, { failOn: "warning", limitInputPixels: 16_000_000 })
+    .rotate()
+    .resize(asset.width, asset.height, { fit: "cover" })
+    .png()
+    .toBuffer();
+  const placement = asset.identityPolicy.placement;
+  const width = Math.max(1, Math.round(asset.width * placement.width));
+  const height = Math.max(1, Math.round(asset.height * placement.height));
+  const product = await sharp(cutout, { failOn: "warning", limitInputPixels: 16_000_000 })
+    .resize(width, height, { fit: "contain" })
+    .png()
+    .toBuffer();
+  return sharp(normalizedBackground)
+    .composite([{
+      input: product,
+      left: Math.round(asset.width * placement.left),
+      top: Math.round(asset.height * placement.top),
+    }])
+    .png()
+    .toBuffer();
+}
+
+function segmentationAllowsSourcePhotoFallback(error: unknown) {
+  return error instanceof ServerProductStudioError
+    && new Set(["product_segmentation_low_confidence", "product_segmentation_area_invalid"]).has(error.safeReason);
+}
+
+const IMAGE_MODEL_FALLBACK_REASONS = new Set<AiGatewayFailureReason>([
+  "gateway_customer_verification_required",
+  "gateway_authentication_error",
+  "gateway_billing_required",
+  "gateway_forbidden",
+  "gateway_model_not_found",
+  "gateway_rate_limited",
+  "gateway_timeout",
+  "gateway_request_failed",
+  "gateway_result_invalid",
+  "runtime_timeout",
+]);
+
+function imageModelFailureAllowsSourcePhotoFallback(error: unknown, parentSignal: AbortSignal) {
+  if (parentSignal.aborted) return false;
+  if (error instanceof ProductResearchPreflightError) {
+    return IMAGE_MODEL_FALLBACK_REASONS.has(error.safeReason as AiGatewayFailureReason);
+  }
+  if (error instanceof ServerProductStudioError) {
+    return IMAGE_MODEL_FALLBACK_REASONS.has(error.safeReason as AiGatewayFailureReason);
+  }
+  // Dependency-injected model clients can throw provider-specific errors that
+  // are not ProductResearchPreflightError instances. They arise only inside
+  // the bounded segmentation/background call sites guarded by this function.
+  return true;
+}
+
+async function settlePreflightBatch<T>(tasks: Array<Promise<T>>) {
+  const outcomes = await Promise.allSettled(tasks);
+  const rejected = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+  if (rejected) throw rejected.reason;
+  return outcomes.map((outcome) => (outcome as PromiseFulfilledResult<T>).value);
+}
+
+export async function generateServerProductResearchPreflightAssets(input: {
+  jobId: string;
+  claimToken: string;
+  request: PreflightResearchRequest;
+  signal: AbortSignal;
+  dependencies: ServerProductResearchDependencies;
+}): Promise<ProductResearchPreflightResult> {
+  const specs = coreFirstDraftAssetSpecs();
+  const paths = Object.fromEntries(specs.map((asset) => [
+    asset.id,
+    aiGeneratedAssetPath(input.jobId, asset, input.claimToken),
+  ])) as Record<CoreFirstDraftAssetId, string>;
+  if (!input.dependencies.download || !input.dependencies.upload || !input.dependencies.remove) {
+    throw new ProductResearchPreflightError("preflight_storage_configuration_missing");
+  }
+  try {
+    const source = await loadPreflightMainSource(input.jobId, input.request, input.dependencies, input.signal);
+    let auditMode: PreflightAuditMode = "segmented-source-composite";
+    let cutout: Uint8Array | null = null;
+    let segmented: Awaited<ReturnType<NonNullable<ServerProductResearchDependencies["segmentSource"]>>> | null = null;
+    try {
+      segmented = await (input.dependencies.segmentSource ?? defaultSegmentPreflightSource)(
+        source,
+        perCallSignal(input.signal, SEGMENTATION_CALL_TIMEOUT_MS),
+      );
+    } catch (error) {
+      if (!imageModelFailureAllowsSourcePhotoFallback(error, input.signal)) throw error;
+      auditMode = "source-photo-catalog";
+    }
+    if (segmented) {
+      try {
+        cutout = new Uint8Array(await buildPortableProductCutout(segmented));
+      } catch (error) {
+        if (!segmentationAllowsSourcePhotoFallback(error)) throw error;
+        auditMode = "source-photo-catalog";
+      }
+    }
+
+    let generated = new Map<CoreFirstDraftAssetId, Uint8Array>();
+    const generateAll = async (mode: PreflightAuditMode) => {
+      const outputs = new Map<CoreFirstDraftAssetId, Uint8Array>();
+      for (let offset = 0; offset < specs.length; offset += SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY) {
+        const batch = specs.slice(offset, offset + SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY);
+        const bytes = await settlePreflightBatch(batch.map(async (asset, batchIndex) => {
+          const variant = offset + batchIndex;
+          const output = mode === "source-photo-catalog"
+            ? await buildServerProductResearchSourcePhotoCatalog(asset, source, variant)
+            : await buildSegmentedPreflightComposite(asset, cutout!, input.dependencies, input.signal);
+          const metadata = await sharp(output, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata();
+          if (metadata.width !== asset.width || metadata.height !== asset.height || metadata.format !== "png") {
+            throw new ProductResearchPreflightError("preflight_result_invalid");
+          }
+          return new Uint8Array(output);
+        }));
+        batch.forEach((asset, index) => outputs.set(asset.id, bytes[index]));
+      }
+      return outputs;
+    };
+    try {
+      generated = await generateAll(auditMode);
+    } catch (error) {
+      if (!(error instanceof ProductResearchImageFallbackRequired) || input.signal.aborted) throw error;
+      // Discard every partial segmented result and rebuild all canonical roles
+      // from the same authoritative source photo. Mixing modes would make the
+      // lineage ambiguous and could leave fewer than six assets after a
+      // mid-batch provider failure.
+      auditMode = "source-photo-catalog";
+      generated = await generateAll(auditMode);
+    }
+    if (generated.size !== coreFirstDraftAssetIds.length) {
+      throw new ProductResearchPreflightError("preflight_result_invalid");
+    }
+
+    const digests = new Set<string>();
+    const lineageEntries: Array<[CoreFirstDraftAssetId, ProductResearchPreflightResult["preflightAssetLineage"][CoreFirstDraftAssetId]]> = [];
+    for (const asset of specs) {
+      const bytes = generated.get(asset.id);
+      if (!bytes) throw new ProductResearchPreflightError("preflight_result_invalid");
+      const digest = createHash("sha256").update(bytes).digest("hex");
+      if (digests.has(digest)) throw new ProductResearchPreflightError("preflight_result_invalid");
+      digests.add(digest);
+      lineageEntries.push([asset.id, {
+        digest,
+        role: asset.role,
+        auditMode,
+        sourceRole: source.role,
+      }]);
+    }
+    const lineage = Object.fromEntries(lineageEntries) as ProductResearchPreflightResult["preflightAssetLineage"];
+
+    for (let offset = 0; offset < specs.length; offset += SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY) {
+      const batch = specs.slice(offset, offset + SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY);
+      await settlePreflightBatch(batch.map(async (asset) => {
+        const bytes = generated.get(asset.id);
+        if (!bytes) throw new ProductResearchPreflightError("preflight_result_invalid");
+        await input.dependencies.upload!(paths[asset.id], bytes, input.signal);
+      }));
+    }
+    return {
+      asset_storage_paths: productResearchPreflightStoragePathsSchema.parse(paths),
+      preflightAssetLineage: productResearchPreflightLineageSchema.parse(lineage),
+    };
+  } catch (error) {
+    await input.dependencies.remove(Object.values(paths)).catch(() => undefined);
+    if (error instanceof ProductResearchPreflightError) throw error;
+    if (error instanceof ServerProductStudioError) {
+      throw new ProductResearchPreflightError(error.safeReason);
+    }
+    if (input.signal.aborted) throw new ProductResearchPreflightError("runtime_timeout");
+    throw new ProductResearchPreflightError("preflight_generation_failed");
+  }
+}
+
 function claimIdentity(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
@@ -535,14 +1039,25 @@ function claimIdentity(value: unknown) {
     : null;
 }
 
-function claimedResearchInput(candidate: Record<string, unknown>) {
+function claimedResearchRequest(candidate: Record<string, unknown>) {
   if (candidate.kind !== "product_research"
       || candidate.claim_scope !== "server_product_research"
       || !candidate.request
       || typeof candidate.request !== "object"
       || Array.isArray(candidate.request)) return null;
-  const researchInput = (candidate.request as Record<string, unknown>).research_input;
-  return typeof researchInput === "string" ? researchInput.trim() : null;
+  const request = candidate.request as Record<string, unknown>;
+  const researchInput = typeof request.research_input === "string"
+    ? request.research_input.trim()
+    : "";
+  if (researchInput.length < 2 || researchInput.length > 12_000) return null;
+  const preflightKeys = ["preflight_version", "image_paths", "image_specs"] as const;
+  if (!preflightKeys.some((key) => Object.hasOwn(request, key))) {
+    return { researchInput, preflight: null };
+  }
+  const preflight = preflightResearchRequestSchema.safeParse(request);
+  return preflight.success
+    ? { researchInput, preflight: preflight.data }
+    : null;
 }
 
 async function callRpc(
@@ -615,13 +1130,21 @@ export async function runOneServerProductResearch(
     logError("claim_contract", { status: 503 });
     return jsonResponse({ message: "상품정보 분석 작업 계약을 확인하지 못했습니다." }, 503);
   }
-  const researchInput = claimedResearchInput(identity.candidate);
-  if (researchInput == null || researchInput.length < 2 || researchInput.length > 12_000) {
+  const request = claimedResearchRequest(identity.candidate);
+  if (!request) {
+    const rawRequest = identity.candidate.request && typeof identity.candidate.request === "object"
+      && !Array.isArray(identity.candidate.request)
+      ? identity.candidate.request as Record<string, unknown>
+      : null;
+    const invalidReason = rawRequest
+      && ["preflight_version", "image_paths", "image_specs"].some((key) => Object.hasOwn(rawRequest, key))
+      ? "preflight_request_invalid"
+      : "research_input_invalid";
     const released = await releaseClaim(
       dependencies,
       identity.id,
       identity.claimToken,
-      "research_input_invalid",
+      invalidReason,
       true,
     );
     if (!released) {
@@ -633,12 +1156,40 @@ export async function runOneServerProductResearch(
 
   const runtimeSignal = AbortSignal.timeout(MAX_RESEARCH_RUNTIME_MS);
   let result: ServerProductResearchResult;
-  try {
-    result = await (dependencies.analyze ?? analyzeServerProductResearch)(researchInput, runtimeSignal);
-  } catch (error) {
+  let preflightPaths: string[] = [];
+  const researchPromise = (dependencies.analyze ?? analyzeServerProductResearch)(
+    request.researchInput,
+    runtimeSignal,
+  );
+  const preflightPromise = request.preflight
+    ? (dependencies.generatePreflight ?? generateServerProductResearchPreflightAssets)({
+      jobId: identity.id,
+      claimToken: identity.claimToken,
+      request: request.preflight,
+      signal: runtimeSignal,
+      dependencies,
+    })
+    : Promise.resolve(null);
+  const [researchOutcome, preflightOutcome] = await Promise.allSettled([
+    researchPromise,
+    preflightPromise,
+  ] as const);
+  if (researchOutcome.status === "rejected" || preflightOutcome.status === "rejected") {
+    if (preflightOutcome.status === "fulfilled" && preflightOutcome.value) {
+      preflightPaths = Object.values(preflightOutcome.value.asset_storage_paths);
+      await dependencies.remove?.(preflightPaths).catch(() => undefined);
+    }
+    const error = researchOutcome.status === "rejected"
+      ? researchOutcome.reason
+      : (preflightOutcome as PromiseRejectedResult).reason;
     const safeReason = error instanceof ProductResearchExecutionError
+      || error instanceof ProductResearchPreflightError
       ? error.safeReason
-      : "gateway_request_failed";
+      : error instanceof ServerProductStudioError
+        ? error.safeReason
+        : runtimeSignal.aborted
+          ? "runtime_timeout"
+          : "gateway_request_failed";
     const terminal = shouldTerminallyFailProductResearch(safeReason);
     const released = await releaseClaim(
       dependencies,
@@ -653,6 +1204,39 @@ export async function runOneServerProductResearch(
     }
     return jsonResponse({ ok: false, status: released, processed: 1 });
   }
+  try {
+    const preflight = preflightOutcome.value;
+    if (request.preflight && !preflight) {
+      throw new ProductResearchPreflightError("preflight_result_invalid");
+    }
+    preflightPaths = preflight ? Object.values(preflight.asset_storage_paths) : [];
+    result = serverProductResearchResultSchema.parse({
+      ...researchOutcome.value,
+      ...(preflight ? {
+        preflightVersion: 1,
+        researchInputSha256: createHash("sha256").update(request.researchInput.trim(), "utf8").digest("hex"),
+        sourcePhotoSha256: request.preflight!.source_photo_sha256,
+        ...preflight,
+      } : {}),
+    });
+  } catch (error) {
+    await dependencies.remove?.(preflightPaths).catch(() => undefined);
+    const safeReason = error instanceof ProductResearchPreflightError
+      ? error.safeReason
+      : "preflight_result_invalid";
+    const released = await releaseClaim(
+      dependencies,
+      identity.id,
+      identity.claimToken,
+      safeReason,
+      true,
+    );
+    if (!released) {
+      logError("result_contract_release", { status: 503, reason: safeReason });
+      return jsonResponse({ message: "1차 상품 이미지 실패 상태를 안전하게 저장하지 못했습니다." }, 503);
+    }
+    return jsonResponse({ ok: false, status: released, processed: 1 });
+  }
 
   const touched = await callRpc(
     dependencies,
@@ -660,10 +1244,12 @@ export async function runOneServerProductResearch(
     { p_job_id: identity.id, p_claim_token: identity.claimToken },
   );
   if (touched.error) {
+    await dependencies.remove?.(preflightPaths).catch(() => undefined);
     logError("touch", { code: safeRpcCode(touched.error), status: 503 });
     return jsonResponse({ message: "상품정보 분석 작업 소유권을 확인하지 못했습니다." }, 503);
   }
   if (touched.data !== "running") {
+    await dependencies.remove?.(preflightPaths).catch(() => undefined);
     logError("touch", { status: 409 });
     return jsonResponse({ message: "상품정보 분석 작업 소유권이 변경되었습니다." }, 409);
   }
@@ -687,6 +1273,10 @@ export async function runOneServerProductResearch(
     return jsonResponse({ message: "상품정보 분석 완료 여부를 확인하지 못했습니다." }, 503);
   }
   if (completed.data !== true) {
+    // A definitive fence rejection means this claim cannot own a committed
+    // result. Its UUID-scoped paths are therefore safe to remove. This differs
+    // from an RPC error above, where the commit outcome is genuinely unknown.
+    await dependencies.remove?.(preflightPaths).catch(() => undefined);
     logError("complete", { status: 409 });
     return jsonResponse({ message: "상품정보 분석 작업 소유권이 변경되었습니다." }, 409);
   }

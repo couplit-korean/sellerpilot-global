@@ -571,7 +571,7 @@ const detailPresets = aiGeneratedAssetSpecs
 
 const generatedPreviewPresets = [...thumbnailPresets, ...detailPresets];
 
-export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, sourceResearchJobId, sourcePhotoFingerprint, sourceResearchLineageReceipt, submissionMode, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady, onManualResultReady }: {
+export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, sourceResearchJobId, sourcePhotoFingerprint, sourceResearchLineageReceipt, firstDraftReviewed, submissionMode, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady, onManualResultReady }: {
   mainPhoto: StudioPhoto | null;
   photos: StudioPhoto[];
   manualFields: ProductIntakeDraft;
@@ -580,6 +580,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   sourceResearchJobId: string;
   sourcePhotoFingerprint: string;
   sourceResearchLineageReceipt: string;
+  firstDraftReviewed: boolean;
   submissionMode: StudioSubmissionMode;
   workerReadiness: StudioWorkerReadiness | null;
   onRunningChange: (running: boolean) => void;
@@ -835,8 +836,9 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     const normalizedSourceResearchLineageReceipt = sourceResearchLineageReceipt?.trim() ?? "";
     if (!manualMvp && (!normalizedSourceResearchJobId
         || !/^[a-f0-9]{64}$/.test(normalizedSourcePhotoFingerprint)
-        || !normalizedSourceResearchLineageReceipt)) {
-      const message = "먼저 1차 상품정보 초안을 생성하고 사람이 확인·수정한 뒤 최종 작성을 시작해 주세요.";
+        || !normalizedSourceResearchLineageReceipt
+        || !firstDraftReviewed)) {
+      const message = "먼저 1차 상품정보와 이미지 6개를 생성하고 사람이 확인한 뒤 상세페이지 제작을 시작해 주세요.";
       setLastError(message);
       notify(message);
       onRunningChange(false);
@@ -1036,6 +1038,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
             sourceResearchJobId: normalizedSourceResearchJobId,
             sourcePhotoFingerprint: normalizedSourcePhotoFingerprint,
             sourceResearchLineageReceipt: normalizedSourceResearchLineageReceipt,
+            humanReviewConfirmed: true,
             manualFields: validatedIntake.data,
             competitorContext,
             imagePaths,
@@ -1110,7 +1113,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         onRunningChange(false);
       }
     }
-  }, [announceOwnJob, competitorContext, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onManualResultReady, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, sourcePhotoFingerprint, sourceResearchJobId, sourceResearchLineageReceipt, studioSessionId, submissionMode, workerReadiness]);
+  }, [announceOwnJob, competitorContext, firstDraftReviewed, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onManualResultReady, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, sourcePhotoFingerprint, sourceResearchJobId, sourceResearchLineageReceipt, studioSessionId, submissionMode, workerReadiness]);
 
   const retryOwnJobStatus = useCallback(async () => {
     const jobId = queuedOwnJobIdRef.current;
@@ -1308,10 +1311,11 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   const studioExecutionReady = isStudioExecutionReady(workerReadiness);
   const hasResearchDraft = Boolean(sourceResearchJobId?.trim())
     && /^[a-f0-9]{64}$/.test(sourcePhotoFingerprint?.trim() ?? "")
-    && Boolean(sourceResearchLineageReceipt?.trim());
+    && Boolean(sourceResearchLineageReceipt?.trim())
+    && firstDraftReviewed;
   const submissionAvailable = submissionMode === "manual_mvp" || (studioExecutionReady && hasResearchDraft);
   const submissionUnavailableMessage = submissionMode !== "manual_mvp" && !hasResearchDraft
-    ? "먼저 1차 상품정보 초안을 생성하고 사람이 확인·수정해 주세요."
+    ? "먼저 1차 상품정보와 이미지 6개를 생성하고 사람이 확인해 주세요."
     : workerReadiness?.message;
   const studioAssetUrls = useMemo(() => ({
     ...(currentImageUrl ? { hero: currentImageUrl } : {}),
@@ -1420,8 +1424,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   return (
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
-        <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 설정샷 AI 초안 제작</h3><p>1차 상품정보 초안을 사람이 확인한 뒤, 핵심 생활 설정샷 6개와 대표·근거 보조 자산 및 상세페이지 내부 draft를 서버에서 함께 준비합니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? submissionMode === "manual_mvp" ? "원본 사진 저장 중" : cliPhase === "running" ? "AI 초안 제작 중" : "Supabase 큐 대기 중" : result ? "AI 초안 준비됨" : submissionMode === "manual_mvp" ? "AI 없이 원본 등록" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "AI 초안 처리 중" : !hasResearchDraft ? "1차 초안 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "최종작성 가능"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || !submissionAvailable || generating || Boolean(queuedOwnJobId)} title={!submissionAvailable ? submissionUnavailableMessage : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{generating && submissionMode === "manual_mvp" ? "원본 저장 중" : submissionMode === "manual_mvp" ? "원본 사진 직접등록" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !hasResearchDraft ? "1차 초안 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : result ? "AI 초안 다시 만들기" : "최종작성 시작"}</button></div>
+        <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>검토 완료 정보로 상세페이지 제작</h3><p>1차에서 만든 핵심 이미지 6장을 그대로 재사용하고, 사람이 확인한 상품정보를 기준으로 후속 자산과 상세페이지 내부 draft를 서버에서 준비합니다.</p></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? submissionMode === "manual_mvp" ? "원본 사진 저장 중" : cliPhase === "running" ? "상세페이지 제작 중" : "Supabase 큐 대기 중" : result ? "상세페이지 준비됨" : submissionMode === "manual_mvp" ? "AI 없이 원본 등록" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "상세페이지 처리 중" : !hasResearchDraft ? "1차 정보·6장 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "상세페이지 제작 가능"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || !submissionAvailable || generating || Boolean(queuedOwnJobId)} title={!submissionAvailable ? submissionUnavailableMessage : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{generating && submissionMode === "manual_mvp" ? "원본 저장 중" : submissionMode === "manual_mvp" ? "원본 사진 직접등록" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !hasResearchDraft ? "1차 정보·6장 확인 필요" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : result ? "상세페이지 다시 만들기" : "상세페이지 제작 시작"}</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>

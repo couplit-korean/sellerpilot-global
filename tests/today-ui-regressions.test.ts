@@ -489,7 +489,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /가격 다시 확인/);
   assert.match(page, /productResearchPendingStorageKey/);
   assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput, sourcePhotoSha256\)/);
-  assert.match(page, /JSON\.stringify\(\{[\s\S]{0,180}jobId,[\s\S]{0,100}researchInput,[\s\S]{0,100}ownerId,[\s\S]{0,100}sourcePhotoSha256,[\s\S]{0,100}lineageReceipt,[\s\S]{0,80}\} satisfies PendingProductResearch\)/);
+  assert.match(page, /JSON\.stringify\(\{[\s\S]{0,220}version: 3,[\s\S]{0,120}jobId,[\s\S]{0,120}researchInput,[\s\S]{0,120}ownerId,[\s\S]{0,120}sourcePhotoSha256,[\s\S]{0,120}lineageReceipt,[\s\S]{0,220}imagePaths,[\s\S]{0,120}imageSpecs,[\s\S]{0,120}cleanupPaths/);
   assert.match(page, /productResearchControllerRef\.current\?\.abort\(\)/);
   assert.match(page, /detailRegenerationControllerRef = useRef<AbortController \| null>\(null\)/);
   assert.match(page, /detailRegenerationControllerRef\.current\?\.abort\(new DOMException\("상품 상세 화면이 닫혔습니다\.", "AbortError"\)\)/);
@@ -506,8 +506,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   const finalAuthoring = page.slice(page.indexOf("const startAutomation = () =>"), page.indexOf("const totalPhotoCount ="));
   assert.doesNotMatch(finalAuthoring, /competitorResearchBlocksAnalysis|manualMvp|manual_mvp/);
   assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
-  assert.match(page, /동일상품 가격은 별도 확인 중\(최종작성 가능\)/);
-  assert.match(page, /최종작성 시작/);
+  assert.match(page, /동일상품 가격은 별도 확인 중/);
+  assert.match(page, /상세페이지 제작 시작/);
   assert.match(page, /가격 없이 계속/);
   assert.match(page, /invalidatedExistingContext = interruptedResearch[\s\S]{0,180}competitorResearchState !== "idle"/);
   assert.match(page, /invalidatedExistingContext && competitorResearchState !== "stale"/);
@@ -554,7 +554,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
     /job\.kind === "product_research"[\s\S]{0,180}productResearchFailureMessage\(job\.error\)/,
   );
   assert.match(page, /shouldClearPendingProductResearch\(error\)/);
-  assert.match(page, /확인 중단/);
+  assert.match(page, /생성 중단/);
   assert.match(commerceStyles, /\.competitor-retry button \{[^}]*min-height: 44px/);
   assert.match(commerceStyles, /@media \(max-width: 560px\)[\s\S]*?\.competitor-retry button \{ width: 100%; \}/);
 });

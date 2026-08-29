@@ -1,5 +1,10 @@
 import { z, type RefinementCtx } from "zod";
-import { aiDetailAssetIds, aiGeneratedAssetIds } from "./ai-generated-assets";
+import {
+  aiDetailAssetIds,
+  aiGeneratedAssetIds,
+  aiGeneratedAssetSpecs,
+  coreFirstDraftAssetIds,
+} from "./ai-generated-assets";
 import { productEditSchema, productIntakeSchema, sourcePreservingProductImageSpecSchema } from "./product-intake";
 import {
   hasDirectIntakeEvidence,
@@ -56,6 +61,62 @@ export const localizedListingSchema = z.object({
 
 const nullableResearchText = (maximum: number) => z.string().trim().min(1).max(maximum).nullable();
 const researchSearchLocaleSchema = z.enum(["ko-KR", "en-US", "ja-JP", "zh-TW", "ms-MY", "id-ID", "vi-VN", "th-TH", "pt-BR", "es-MX"]);
+const coreFirstDraftAssetIdSchema = z.enum(coreFirstDraftAssetIds);
+const preflightSha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+const preflightClaimPathSchema = /^results\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/claims\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/([^/]+)$/i;
+
+function exactCoreFirstDraftRecord<Value extends z.ZodType>(value: Value) {
+  return z.record(coreFirstDraftAssetIdSchema, value).superRefine((record, context) => {
+    const keys = Object.keys(record);
+    if (keys.length !== coreFirstDraftAssetIds.length
+        || coreFirstDraftAssetIds.some((assetId) => !Object.hasOwn(record, assetId))) {
+      context.addIssue({
+        code: "custom",
+        message: "1차 이미지 결과는 지정된 핵심 이미지 6개를 정확히 포함해야 합니다.",
+      });
+    }
+  });
+}
+
+export const productResearchPreflightAssetLineageSchema = z.object({
+  digest: preflightSha256Schema,
+  role: z.enum(["creative", "detail"]),
+  auditMode: z.enum(["segmented-source-composite", "source-photo-catalog"]),
+  sourceRole: z.string().trim().min(1).max(40),
+}).strict();
+
+export const productResearchPreflightStoragePathsSchema = exactCoreFirstDraftRecord(
+  z.string().min(1).max(400),
+).superRefine((record, context) => {
+  let expectedJobId = "";
+  let expectedClaimToken = "";
+  for (const assetId of coreFirstDraftAssetIds) {
+    const path = record[assetId];
+    const match = preflightClaimPathSchema.exec(path);
+    const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    if (!match || !asset || match[3] !== asset.file) {
+      context.addIssue({
+        code: "custom",
+        path: [assetId],
+        message: "1차 이미지 저장 경로가 역할별 서버 경로와 일치하지 않습니다.",
+      });
+      continue;
+    }
+    expectedJobId ||= match[1].toLowerCase();
+    expectedClaimToken ||= match[2].toLowerCase();
+    if (match[1].toLowerCase() !== expectedJobId || match[2].toLowerCase() !== expectedClaimToken) {
+      context.addIssue({
+        code: "custom",
+        path: [assetId],
+        message: "1차 이미지 여섯 장은 같은 작업과 같은 claim 경로에 있어야 합니다.",
+      });
+    }
+  }
+});
+
+export const productResearchPreflightLineageSchema = exactCoreFirstDraftRecord(
+  productResearchPreflightAssetLineageSchema,
+);
 
 const productResearchResultBaseSchema = z.object({
   summary: z.string().trim().min(20).max(2_000),
@@ -102,6 +163,37 @@ export const cliProductResearchResultSchema = productResearchResultBaseSchema.ex
 
 export const serverProductResearchResultSchema = productResearchResultBaseSchema.extend({
   mode: z.literal("server-research"),
+  preflightVersion: z.literal(1).optional(),
+  researchInputSha256: preflightSha256Schema.optional(),
+  sourcePhotoSha256: preflightSha256Schema.optional(),
+  asset_storage_paths: productResearchPreflightStoragePathsSchema.optional(),
+  preflightAssetLineage: productResearchPreflightLineageSchema.optional(),
+}).superRefine((value, context) => {
+  const fields = [
+    value.preflightVersion,
+    value.researchInputSha256,
+    value.sourcePhotoSha256,
+    value.asset_storage_paths,
+    value.preflightAssetLineage,
+  ];
+  const present = fields.filter((field) => field !== undefined).length;
+  if (present !== 0 && present !== fields.length) {
+    context.addIssue({
+      code: "custom",
+      message: "1차 이미지 버전, 입력·원본 확인값, 저장 경로와 생성 계보는 함께 저장되어야 합니다.",
+    });
+  }
+  if (present !== fields.length || !value.preflightAssetLineage) return;
+  for (const assetId of coreFirstDraftAssetIds) {
+    const expectedRole = assetId === "portrait" || assetId === "wide" ? "creative" : "detail";
+    if (value.preflightAssetLineage[assetId].role !== expectedRole) {
+      context.addIssue({
+        code: "custom",
+        path: ["preflightAssetLineage", assetId, "role"],
+        message: "1차 이미지 역할 계보가 서버 자산 계약과 일치하지 않습니다.",
+      });
+    }
+  }
 });
 
 export const productResearchResultSchema = z.discriminatedUnion("mode", [
@@ -113,6 +205,18 @@ export const productResearchJobRequestSchema = z.object({
   jobId: z.string().uuid(),
   researchInput: z.string().trim().min(2).max(12_000),
   sourcePhotoFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  imagePaths: z.array(z.string().min(1).max(400)).min(1).max(100),
+  imageSpecs: z.array(sourcePreservingProductImageSpecSchema).min(1).max(100),
+}).strict().superRefine((value, context) => {
+  if (value.imagePaths.length !== value.imageSpecs.length) {
+    context.addIssue({ code: "custom", path: ["imageSpecs"], message: "이미지 경로와 규격 정보 수가 일치해야 합니다." });
+  }
+  if (value.imageSpecs[0]?.role !== "main") {
+    context.addIssue({ code: "custom", path: ["imageSpecs", 0, "role"], message: "첫 번째 이미지는 대표사진이어야 합니다." });
+  }
+  if (value.imageSpecs.reduce((total, spec) => total + spec.originalBytes, 0) > maximumStudioJobSourceBytes) {
+    context.addIssue({ code: "custom", path: ["imageSpecs"], message: "한 상품의 원본 사진 합계는 200MB 이하여야 합니다." });
+  }
 });
 
 export const supportReplyLocaleSchema = z.enum([
@@ -1437,6 +1541,7 @@ export const studioJobRequestSchema = studioImageJobRequestBaseSchema.extend({
   sourceResearchJobId: z.string().uuid(),
   sourcePhotoFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   sourceResearchLineageReceipt: z.string().min(32).max(2_000),
+  humanReviewConfirmed: z.literal(true),
 }).superRefine((value, context) => {
   if (value.sourceResearchJobId === value.jobId) {
     context.addIssue({

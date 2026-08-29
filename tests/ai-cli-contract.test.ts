@@ -11,6 +11,8 @@ import {
   normalizeStudioSectionCount,
   normalizeStudioWarningLimits,
   productResearchJobRequestSchema,
+  productResearchPreflightLineageSchema,
+  productResearchPreflightStoragePathsSchema,
   productResearchResultSchema,
   serverProductResearchResultSchema,
   studioJobRequestSchema,
@@ -19,7 +21,11 @@ import {
   supportReplyWorkerRequestSchema,
   workerCompletionSchema,
 } from "../lib/ai-cli-contract";
-import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import {
+  aiGeneratedAssetPath,
+  aiGeneratedAssetSpecs,
+  coreFirstDraftAssetIds,
+} from "../lib/ai-generated-assets";
 import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
 import {
   hasNegatedHealthFunctionalFoodSignal,
@@ -1760,12 +1766,87 @@ test("product research contract distinguishes Vercel server results from legacy 
     jobId: "22222222-2222-4222-8222-222222222222",
     researchInput: "Model ABC-100, stainless steel bottle, 500 ml",
     sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
+    imagePaths: ["11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/input/001.jpg"],
+    imageSpecs: [sourcePreservingImageSpec({ originalWidth: 1600, originalHeight: 900 })],
   }).success, true);
   assert.equal(productResearchResultSchema.safeParse(validResearchResult()).success, true);
   const serverResult = { ...validResearchResult(), mode: "server-research" as const };
   assert.equal(productResearchResultSchema.safeParse(serverResult).success, true);
   assert.equal(serverProductResearchResultSchema.safeParse(serverResult).success, true);
   assert.equal(serverProductResearchResultSchema.safeParse(validResearchResult()).success, false);
+});
+
+test("server product research preflight requires one complete six-asset lineage set", () => {
+  const jobId = "22222222-2222-4222-8222-222222222222";
+  const paths = Object.fromEntries(coreFirstDraftAssetIds.map((assetId) => {
+    const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    assert.ok(asset);
+    return [assetId, aiGeneratedAssetPath(jobId, asset, CLAIM_TOKEN)];
+  }));
+  const lineage = Object.fromEntries(coreFirstDraftAssetIds.map((assetId, index) => [assetId, {
+    digest: index.toString(16).padStart(64, "0"),
+    role: assetId === "portrait" || assetId === "wide" ? "creative" : "detail",
+    auditMode: index % 2 === 0 ? "segmented-source-composite" : "source-photo-catalog",
+    sourceRole: "main",
+  }]));
+  const preflightResult = {
+    ...validResearchResult(),
+    mode: "server-research" as const,
+    preflightVersion: 1 as const,
+    researchInputSha256: "b".repeat(64),
+    sourcePhotoSha256: SOURCE_PHOTO_SHA256,
+    asset_storage_paths: paths,
+    preflightAssetLineage: lineage,
+  };
+
+  assert.equal(productResearchPreflightStoragePathsSchema.safeParse(paths).success, true);
+  assert.equal(productResearchPreflightLineageSchema.safeParse(lineage).success, true);
+  assert.equal(serverProductResearchResultSchema.safeParse(preflightResult).success, true);
+
+  for (const field of ["preflightVersion", "researchInputSha256", "sourcePhotoSha256", "asset_storage_paths", "preflightAssetLineage"] as const) {
+    const partial = { ...preflightResult } as Record<string, unknown>;
+    delete partial[field];
+    assert.equal(serverProductResearchResultSchema.safeParse(partial).success, false, field);
+  }
+
+  const missingPaths = { ...paths };
+  delete missingPaths[coreFirstDraftAssetIds[0]];
+  assert.equal(productResearchPreflightStoragePathsSchema.safeParse(missingPaths).success, false);
+  assert.equal(productResearchPreflightStoragePathsSchema.safeParse({ ...paths, unexpected: "results/unexpected.png" }).success, false);
+  assert.equal(productResearchPreflightStoragePathsSchema.safeParse({
+    ...paths,
+    portrait: paths.portrait.replace(CLAIM_TOKEN, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+  }).success, false);
+  assert.equal(productResearchPreflightStoragePathsSchema.safeParse({
+    ...paths,
+    wide: paths.wide.replace(/[^/]+$/, "wrong-role.png"),
+  }).success, false);
+  assert.equal(serverProductResearchResultSchema.safeParse({
+    ...preflightResult,
+    asset_storage_paths: missingPaths,
+  }).success, false);
+  assert.equal(productResearchPreflightLineageSchema.safeParse({
+    ...lineage,
+    portrait: { ...lineage.portrait, unexpected: true },
+  }).success, false);
+  assert.equal(serverProductResearchResultSchema.safeParse({
+    ...preflightResult,
+    preflightAssetLineage: {
+      ...lineage,
+      portrait: { ...lineage.portrait, role: "detail" },
+    },
+  }).success, false);
+  assert.equal(serverProductResearchResultSchema.safeParse({
+    ...preflightResult,
+    preflightAssetLineage: {
+      ...lineage,
+      wide: { ...lineage.wide, digest: "not-a-digest" },
+    },
+  }).success, false);
+  assert.equal(serverProductResearchResultSchema.safeParse({
+    ...preflightResult,
+    sourcePhotoSha256: undefined,
+  }).success, false);
 });
 
 test("product research search locales stay aligned across Zod and worker JSON schema", () => {
@@ -1787,16 +1868,22 @@ test("product research search locales stay aligned across Zod and worker JSON sc
 });
 
 test("AI studio request requires seller facts and normalized listing images", () => {
-  const parsed = studioJobRequestSchema.safeParse({
+  const request = {
     jobId: "11111111-1111-4111-8111-111111111111",
     sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
     sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
     sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
+    humanReviewConfirmed: true as const,
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
-  });
+  };
+  const parsed = studioJobRequestSchema.safeParse(request);
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+  assert.equal(studioJobRequestSchema.safeParse({ ...request, humanReviewConfirmed: false }).success, false);
+  const missingConfirmation: Record<string, unknown> = { ...request };
+  Reflect.deleteProperty(missingConfirmation, "humanReviewConfirmed");
+  assert.equal(studioJobRequestSchema.safeParse(missingConfirmation).success, false);
 });
 
 test("AI studio request accepts only bounded verified same-product price evidence", () => {
@@ -1805,6 +1892,7 @@ test("AI studio request accepts only bounded verified same-product price evidenc
     sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
     sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
     sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
+    humanReviewConfirmed: true,
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1851,6 +1939,7 @@ test("AI studio request canonicalizes HTTP 11st evidence before the second stage
     sourceResearchJobId: "11111111-1111-4111-8111-111111111111",
     sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
     sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
+    humanReviewConfirmed: true,
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1927,6 +2016,7 @@ test("AI studio request accepts four providers and fences marketplace web eviden
     sourceResearchJobId: "66666666-6666-4666-8666-666666666666",
     sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
     sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
+    humanReviewConfirmed: true,
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1974,6 +2064,7 @@ test("AI studio request accepts free-text research without a source URL", () => 
     sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
     sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
     sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
+    humanReviewConfirmed: true,
     manualFields: {
       ...validRequiredIntake(),
       researchInput: "Model ABC-100 stainless steel bottle, 500 ml, one bottle included",
@@ -1992,6 +2083,7 @@ test("AI studio request rejects missing rights confirmation and non-square outpu
     sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
     sourcePhotoFingerprint: SOURCE_PHOTO_SHA256,
     sourceResearchLineageReceipt: SOURCE_RESEARCH_RECEIPT,
+    humanReviewConfirmed: true,
     manualFields,
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1080, height: 1080, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],

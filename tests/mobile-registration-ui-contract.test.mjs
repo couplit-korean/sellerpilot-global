@@ -66,7 +66,7 @@ test("the same narrow registration and preview contract covers both target phone
   assert.match(mobileStyles, /@media \(max-width: 720px\)[\s\S]*?\.registration-status\.long-analysis-connected,[\s\S]*?\.registration-status\.long-analysis-attention\s*\{[^}]*width:\s*100%;[^}]*white-space:\s*normal/);
 });
 
-test("mobile final authoring keeps competitor prices visible but optional and never deadlocks on them", async () => {
+test("mobile detail authoring keeps competitor prices visible but optional and never deadlocks on them", async () => {
   const page = await readFile(pageUrl, "utf8");
   const globalStyles = await readFile(globalStylesUrl, "utf8");
   const mobileStyles = await readFile(mobileStylesUrl, "utf8");
@@ -76,7 +76,7 @@ test("mobile final authoring keeps competitor prices visible but optional and ne
   const finalAuthoring = page.slice(page.indexOf("const startAutomation = () =>"), page.indexOf("const totalPhotoCount ="));
   assert.doesNotMatch(finalAuthoring, /competitorResearchBlocksAnalysis|manualMvp|manual_mvp/);
   assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
-  assert.match(page, /동일상품 가격은 별도 확인 중\(최종작성 가능\)/);
+  assert.match(page, /동일상품 가격은 별도 확인 중\(상세페이지 제작 가능\)/);
   assert.match(page, /가격 없이 계속/);
   assert.match(page, /setPendingCompetitorBypassConfirmed\(true\)/);
   assert.match(page, /setCompetitorResearchState\(invalidatedExistingContext \? "stale" : "idle"\)/);

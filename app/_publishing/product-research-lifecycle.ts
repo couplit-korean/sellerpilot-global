@@ -1,13 +1,22 @@
 import { productResearchFailureMessage } from "../../lib/product-research-failure";
+import {
+  sourcePreservingProductImageSpecSchema,
+  type SourcePreservingProductImageSpec,
+} from "../../lib/product-intake";
 
-export const productResearchPendingStorageKey = "sellerpilot:product-research-pending:v2";
+export const productResearchPendingStorageKey = "sellerpilot:product-research-pending:v3";
 
 export type PendingProductResearch = {
+  version: 3;
   jobId: string;
   researchInput: string;
   ownerId: string;
   sourcePhotoSha256: string;
   lineageReceipt: string;
+  imagePaths: string[];
+  imageSpecs: SourcePreservingProductImageSpec[];
+  cleanupPaths: string[];
+  createdAt: number;
 };
 
 const productResearchJobIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -24,19 +33,46 @@ export function pendingProductResearchForOwner(
 ): PendingProductResearch | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
-  if (record.ownerId !== ownerId
+  const rawImagePaths = Array.isArray(record.imagePaths) ? record.imagePaths : [];
+  const rawImageSpecs = Array.isArray(record.imageSpecs) ? record.imageSpecs : [];
+  const rawCleanupPaths = Array.isArray(record.cleanupPaths) ? record.cleanupPaths : [];
+  // Recovery data is security-sensitive lineage. Never silently filter or
+  // reindex malformed entries because that can pair a normalized image with a
+  // different original/specification on the next enqueue attempt.
+  const imagePaths = rawImagePaths.every(
+    (path): path is string => typeof path === "string" && path.length > 0 && path.length <= 400,
+  ) ? [...rawImagePaths] : [];
+  const parsedImageSpecs = rawImageSpecs.map((spec) => sourcePreservingProductImageSpecSchema.safeParse(spec));
+  const imageSpecs = parsedImageSpecs.every((parsed) => parsed.success)
+    ? parsedImageSpecs.map((parsed) => parsed.data)
+    : [];
+  const cleanupPaths = rawCleanupPaths.every(
+    (path): path is string => typeof path === "string" && path.length > 0 && path.length <= 400,
+  ) ? [...rawCleanupPaths] : [];
+  if (record.version !== 3
+      || record.ownerId !== ownerId
       || record.researchInput !== researchInput
       || record.sourcePhotoSha256 !== sourcePhotoSha256
       || typeof record.lineageReceipt !== "string"
-      || record.lineageReceipt.length < 32
-      || record.lineageReceipt.length > 2_000
+      || (record.lineageReceipt.length > 0 && (record.lineageReceipt.length < 32 || record.lineageReceipt.length > 2_000))
+      || !imagePaths.length
+      || imagePaths.length !== imageSpecs.length
+      || !cleanupPaths.length
+      || typeof record.createdAt !== "number"
+      || !Number.isFinite(record.createdAt)
+      || record.createdAt <= 0
       || !isProductResearchJobId(record.jobId)) return null;
   return {
+    version: 3,
     jobId: record.jobId,
     researchInput,
     ownerId,
     sourcePhotoSha256,
     lineageReceipt: record.lineageReceipt,
+    imagePaths,
+    imageSpecs,
+    cleanupPaths,
+    createdAt: record.createdAt,
   };
 }
 

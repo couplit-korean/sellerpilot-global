@@ -273,11 +273,12 @@ test("product studio route and clients fail closed without turning explicit work
   assert.match(readinessHook, /return \(\) => poller\.dispose\(\)/);
   assert.match(page, /const studioWorkerAvailable = isStudioExecutionReady\(studioWorkerReadiness\)/);
   assert.match(page, /const registrationExecutionAvailable = studioWorkerAvailable/);
-  assert.match(page, /const firstDraftReady = firstDraftGenerated[\s\S]*?isProductResearchJobId\(sourceResearchJobId\)[\s\S]*?productSourcePhotoSha256Pattern\.test\(sourceResearchPhotoSha256\)[\s\S]*?Boolean\(sourceResearchLineageReceipt\)/);
+  assert.match(page, /const firstDraftContentReady = firstDraftGenerated[\s\S]*?firstDraftImages\.length === coreFirstDraftAssetIds\.length/);
+  assert.match(page, /const firstDraftReady = firstDraftContentReady && firstDraftReviewed/);
   assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running/);
-  assert.match(page, /최종작성 시작/);
+  assert.match(page, /상세페이지 제작 시작/);
   assert.match(studio, /const manualMvp = submissionMode === "manual_mvp"/);
-  assert.match(studio, /if \(!manualMvp && \(!normalizedSourceResearchJobId[\s\S]{0,240}normalizedSourceResearchLineageReceipt\)\)/);
+  assert.match(studio, /if \(!manualMvp && \(!normalizedSourceResearchJobId[\s\S]{0,320}!firstDraftReviewed\)\)/);
   assert.match(studio, /if \(!manualMvp && !isStudioExecutionReady\(workerReadiness\)\)/);
   assert.match(studio, /AI Gateway 점검 필요/);
 });
@@ -289,7 +290,7 @@ test("product research identifies the Vercel OIDC server path without erasing le
     readFile(new URL("../lib/server-product-research.ts", import.meta.url), "utf8"),
   ]);
   assert.match(route, /mode: "server-research"/);
-  assert.match(route, /Vercel 서버 AI가 상품 링크와 설명을 조사/);
+  assert.match(route, /Vercel 서버 AI가 상품 링크·설명과 원본 사진을 함께 조사/);
   assert.ok(
     route.indexOf("readServerProductStudioReadiness(admin, request)")
       < route.indexOf("const { error } = await createProductResearchJobWithLegacyFallback"),

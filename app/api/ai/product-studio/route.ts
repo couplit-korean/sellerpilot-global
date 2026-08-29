@@ -4,7 +4,11 @@ import { rejectedUploadPaths } from "../../../../lib/ai-upload-guard";
 import { studioJobRequestSchema } from "../../../../lib/ai-cli-contract";
 import { withPromiseTimeout } from "../../../../lib/promise-timeout";
 import { verifyIssuedProductResearchLineageReceipt } from "../../../../lib/product-research-lineage-receipt";
-import { validateVisibleSucceededProductResearchJob } from "../../../../lib/product-studio-lineage";
+import { productResearchInputSha256 } from "../../../../lib/product-research-lineage-receipt-core";
+import {
+  validateSucceededProductResearchPreflight,
+  validateVisibleSucceededProductResearchJob,
+} from "../../../../lib/product-studio-lineage";
 import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } from "../../../../lib/studio-image-paths";
 import { createSignedStudioImageDownloader, sha256PreservedStudioOriginalImage, verifyPreservedStudioImages } from "../../../../lib/studio-image-validation";
 import { resolveStudioAdmission } from "../../../../lib/studio-job-admission";
@@ -59,6 +63,10 @@ export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
   const parsed = studioJobRequestSchema.safeParse(payload);
   if (!parsed.success) {
+    const humanReviewRequired = !payload
+      || typeof payload !== "object"
+      || Array.isArray(payload)
+      || (payload as Record<string, unknown>).humanReviewConfirmed !== true;
     const orphanedPaths = expandStudioCleanupStoragePaths(rejectedUploadPaths(payload, admin.user.id));
     const candidateJobId = payload && typeof payload === "object" && !Array.isArray(payload)
       && typeof (payload as Record<string, unknown>).jobId === "string"
@@ -67,7 +75,12 @@ export async function POST(request: Request) {
     if (orphanedPaths.length && candidateJobId) {
       await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, candidateJobId, orphanedPaths);
     }
-    return NextResponse.json({ message: "대표 이미지를 포함한 상품 분석 요청 형식을 확인해 주세요." }, { status: 400 });
+    return NextResponse.json({
+      ...(humanReviewRequired ? { code: "HUMAN_REVIEW_REQUIRED" } : {}),
+      message: humanReviewRequired
+        ? "사람이 1차 상품정보와 이미지 6장을 확인한 뒤 상세페이지 제작을 시작해 주세요."
+        : "대표 이미지를 포함한 상품 분석 요청 형식을 확인해 주세요.",
+    }, { status: humanReviewRequired ? 409 : 400 });
   }
 
   const preservedPaths = validatePreservedStudioUploadPaths(
@@ -111,6 +124,37 @@ export async function POST(request: Request) {
       status: sourceUnavailable ? 503 : 409,
       headers: { "cache-control": "no-store, max-age=0" },
     });
+  }
+
+  const sourcePreflight = validateSucceededProductResearchPreflight({
+    expectedJobId: parsed.data.sourceResearchJobId,
+    expectedResearchInputSha256: productResearchInputSha256(parsed.data.manualFields.researchInput),
+    expectedSourcePhotoSha256: parsed.data.sourcePhotoFingerprint,
+    data: sourceResearchReadback.data,
+  });
+  if (!sourcePreflight.valid) {
+    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
+      admin,
+      parsed.data.jobId,
+      allUploadedPaths,
+    );
+    return NextResponse.json({
+      code: sourcePreflight.reason === "source_photo_mismatch"
+        ? "SOURCE_PHOTO_MISMATCH"
+        : sourcePreflight.reason === "research_input_mismatch"
+          ? "SOURCE_RESEARCH_INPUT_MISMATCH"
+        : "SOURCE_RESEARCH_PREFLIGHT_REQUIRED",
+      jobId: parsed.data.jobId,
+      sourceResearchJobId: parsed.data.sourceResearchJobId,
+      cleanupPending: !cleaned,
+      message: sourcePreflight.reason === "preflight_missing"
+        ? "기존 텍스트 전용 1차 분석은 읽을 수 있지만 최종 제작에는 사진 기반 1차 자동생성을 다시 완료해야 합니다."
+        : sourcePreflight.reason === "source_photo_mismatch"
+          ? "1차 자동생성 자산의 대표사진과 현재 최종작성 대표사진이 다릅니다."
+          : sourcePreflight.reason === "research_input_mismatch"
+            ? "1차 자동생성에 사용한 상품 링크·설명과 현재 검수 내용이 다릅니다. 현재 내용으로 1차 자동생성을 다시 실행해 주세요."
+          : "1차 자동생성 이미지의 경로·해시·감사 이력을 확인하지 못해 최종 제작을 시작하지 않았습니다.",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
   const lineageReceiptVerification = verifyIssuedProductResearchLineageReceipt(
@@ -184,6 +228,15 @@ export async function POST(request: Request) {
     competitor_context: parsed.data.competitorContext,
     image_paths: uploadedPaths,
     image_specs: parsed.data.imageSpecs,
+    preflight_version: sourcePreflight.preflight.preflightVersion,
+    preflight_asset_storage_paths: sourcePreflight.preflight.assetStoragePaths,
+    preflight_asset_digests: sourcePreflight.preflight.assetDigests,
+    preflight_asset_audit_lineage: sourcePreflight.preflight.auditLineage,
+    human_review_confirmation: {
+      first_draft_reviewed: true,
+      source: "authenticated_admin_request",
+      source_research_job_id: parsed.data.sourceResearchJobId,
+    },
   };
   const enqueueGuard: { checked: boolean; readiness: StudioWorkerReadiness } = {
     checked: false,

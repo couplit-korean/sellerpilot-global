@@ -19,10 +19,13 @@ test("first-draft generation requires and hashes the exact current main photo", 
   assert.match(page, /!mainPhoto \|\| photoSelectionsProcessing/);
 });
 
-test("pending research v2 resumes only with the exact photo hash and signed receipt", () => {
-  assert.match(lifecycle, /product-research-pending:v2/);
+test("pending research v3 resumes only with the exact photo hash and preserved upload request", () => {
+  assert.match(lifecycle, /product-research-pending:v3/);
   assert.match(lifecycle, /record\.sourcePhotoSha256 !== sourcePhotoSha256/);
   assert.match(lifecycle, /typeof record\.lineageReceipt !== "string"/);
+  assert.match(lifecycle, /!imagePaths\.length/);
+  assert.match(lifecycle, /imagePaths\.length !== imageSpecs\.length/);
+  assert.match(page, /imagePaths,[\s\S]{0,120}imageSpecs/);
   assert.match(page, /setSourceResearchPhotoSha256\(sourcePhotoSha256\)/);
   assert.match(page, /setSourceResearchLineageReceipt\(lineageReceipt\)/);
   assert.match(page, /1차 분석 접수 응답이 유실되어 사진 연결 증명을 확인할 수 없습니다/);

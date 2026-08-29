@@ -11,14 +11,37 @@ import {
 const researchJobId = "46c1fb0c-59e3-4f07-a3b2-dc9ff05ea19a";
 const sourcePhotoSha256 = "a".repeat(64);
 const lineageReceipt = "v1.test-lineage-payload.test-lineage-signature";
+const sourceSpec = {
+  name: "front.jpg",
+  role: "main",
+  originalName: "front.png",
+  originalBytes: 2_000,
+  originalMediaType: "image/png",
+  originalWidth: 1_200,
+  originalHeight: 1_200,
+  originalPath: `inputs/owner-a/${researchJobId}/original/0-front.png`,
+  width: 1_200,
+  height: 1_200,
+  bytes: 1_000,
+  mediaType: "image/jpeg",
+  fit: "contain",
+} as const;
 
 test("pending product research recovery is scoped to the signed-in owner", () => {
   const stored = {
+    version: 3,
     jobId: researchJobId,
     researchInput: "롯데 샌드",
     ownerId: "owner-a",
     sourcePhotoSha256,
     lineageReceipt,
+    imagePaths: [`inputs/owner-a/${researchJobId}/0-front.jpg`],
+    imageSpecs: [sourceSpec],
+    cleanupPaths: [
+      `inputs/owner-a/${researchJobId}/0-front.jpg`,
+      sourceSpec.originalPath,
+    ],
+    createdAt: 1_778_000_000_000,
   };
 
   assert.deepEqual(
@@ -37,7 +60,26 @@ test("pending product research recovery is scoped to the signed-in owner", () =>
     null,
   );
   assert.equal(
-    pendingProductResearchForOwner({ ...stored, lineageReceipt: "" }, "owner-a", "롯데 샌드", sourcePhotoSha256),
+    pendingProductResearchForOwner({ ...stored, lineageReceipt: "" }, "owner-a", "롯데 샌드", sourcePhotoSha256)?.lineageReceipt,
+    "",
+  );
+  assert.equal(pendingProductResearchForOwner({ ...stored, imagePaths: [] }, "owner-a", "롯데 샌드", sourcePhotoSha256), null);
+  assert.equal(
+    pendingProductResearchForOwner(
+      { ...stored, imagePaths: [stored.imagePaths[0], 7], imageSpecs: [sourceSpec, sourceSpec] },
+      "owner-a",
+      "롯데 샌드",
+      sourcePhotoSha256,
+    ),
+    null,
+  );
+  assert.equal(
+    pendingProductResearchForOwner(
+      { ...stored, imagePaths: [stored.imagePaths[0], stored.imagePaths[0]], imageSpecs: [sourceSpec, { invalid: true }] },
+      "owner-a",
+      "롯데 샌드",
+      sourcePhotoSha256,
+    ),
     null,
   );
 });

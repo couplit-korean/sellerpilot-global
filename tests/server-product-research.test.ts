@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import sharp from "sharp";
 import type { ServerProductResearchResult } from "../lib/ai-cli-contract";
+import {
+  aiGeneratedAssetPath,
+  aiGeneratedAssetSpecs,
+  coreFirstDraftAssetIds,
+} from "../lib/ai-generated-assets";
 import {
   deriveSupabaseInternalScheduleBearer,
   INTERNAL_SCHEDULE_CANARY_HEADER,
@@ -15,17 +22,22 @@ import {
   classifyProductResearchGatewayFailure,
   collectProductResearchReferences,
   extractProductResearchReferenceUrls,
+  generateServerProductResearchPreflightAssets,
   normalizeGeneratedProductResearchDraft,
   parseGeneratedProductResearchJson,
+  runOneServerProductResearch,
   runServerProductResearchCron,
   runServerProductResearchWakeBurst,
+  SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY,
   SERVER_PRODUCT_RESEARCH_WAKE_WIDTH,
   shouldTerminallyFailProductResearch,
 } from "../lib/server-product-research";
 
 const JOB_ID = "10000000-0000-4000-8000-000000000001";
 const CLAIM_TOKEN = "20000000-0000-4000-8000-000000000001";
+const USER_ID = "30000000-0000-4000-8000-000000000001";
 const SECRET = "server-product-research-cron-secret";
+type CoreFirstDraftAssetId = typeof coreFirstDraftAssetIds[number];
 
 async function routeSources(directory: string): Promise<Array<{ path: string; source: string }>> {
   const sources: Array<{ path: string; source: string }> = [];
@@ -86,6 +98,63 @@ function claim(researchInput = "테스트 상품 설명") {
   };
 }
 
+function preflightClaim(sourcePhotoSha256 = "a".repeat(64), originalBytes = 1_024) {
+  return {
+    ...claim(),
+    request: {
+      research_input: "테스트 상품 설명",
+      source_photo_sha256: sourcePhotoSha256,
+      preflight_version: 1 as const,
+      image_paths: [`${USER_ID}/${JOB_ID}/input/001.jpg`],
+      image_specs: [{
+        name: "001.jpg",
+        role: "main" as const,
+        originalName: "source.png",
+        originalBytes,
+        originalMediaType: "image/png" as const,
+        originalPath: `${USER_ID}/${JOB_ID}/original/001.source`,
+        originalWidth: 600,
+        originalHeight: 600,
+        width: 1200 as const,
+        height: 1200 as const,
+        bytes: 100_000,
+        mediaType: "image/jpeg" as const,
+        fit: "contain" as const,
+      }],
+    },
+  };
+}
+
+function validPreflightResult() {
+  const asset_storage_paths = Object.fromEntries(coreFirstDraftAssetIds.map((assetId) => {
+    const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    assert.ok(asset);
+    return [assetId, aiGeneratedAssetPath(JOB_ID, asset, CLAIM_TOKEN)];
+  })) as Record<CoreFirstDraftAssetId, string>;
+  const preflightAssetLineage = Object.fromEntries(coreFirstDraftAssetIds.map((assetId, index) => [assetId, {
+    digest: index.toString(16).padStart(64, "0"),
+    role: assetId === "portrait" || assetId === "wide" ? "creative" as const : "detail" as const,
+    auditMode: "source-photo-catalog" as const,
+    sourceRole: "main",
+  }])) as Record<CoreFirstDraftAssetId, {
+    digest: string;
+    role: "creative" | "detail";
+    auditMode: "source-photo-catalog";
+    sourceRole: string;
+  }>;
+  return { asset_storage_paths, preflightAssetLineage };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 test("server product research extracts only five normalized public URL candidates", () => {
   assert.deepEqual(extractProductResearchReferenceUrls([
     "https://example.com/item#fragment",
@@ -130,7 +199,7 @@ test("server product research uses AI SDK auto-OIDC without manually handling cr
   assert.match(source, /maxOutputTokens: 8_192/);
   assert.match(source, /timeout: AI_GATEWAY_TIMEOUT_MS/);
   assert.match(source, /maxRetries: 0/);
-  assert.doesNotMatch(source, /Output\.object/);
+  assert.match(source, /output: Output\.object\(\{ schema: portablePreflightSegmentationSchema \}\)/);
   assert.doesNotMatch(source, /createGateway|getVercelOidcToken|@vercel\/oidc|ai-gateway-auth-method/);
   assert.doesNotMatch(source, /apiKey:\s*oidcToken/);
 });
@@ -286,6 +355,550 @@ test("permanent gateway failures stop instead of leaving mobile research polling
   ]) {
     assert.equal(shouldTerminallyFailProductResearch(reason), false, reason);
   }
+});
+
+test("one first-stage claim starts research and the six-image preflight together", async () => {
+  const researchGate = deferred<ServerProductResearchResult>();
+  const preflightGate = deferred<ReturnType<typeof validPreflightResult>>();
+  let researchStarted = false;
+  let preflightStarted = false;
+  let completedPayload: Record<string, unknown> | null = null;
+  const responsePromise = runOneServerProductResearch({
+    analyze: async () => {
+      researchStarted = true;
+      return researchGate.promise;
+    },
+    generatePreflight: async () => {
+      preflightStarted = true;
+      return preflightGate.promise;
+    },
+    rpc: async (name, arguments_ = {}) => {
+      if (name === "sellerpilot_service_claim_product_research_ai_job") {
+        return { data: preflightClaim(), error: null };
+      }
+      if (name === "sellerpilot_service_touch_product_research_ai_job") {
+        return { data: "running", error: null };
+      }
+      if (name === "sellerpilot_service_complete_product_research_ai_job") {
+        completedPayload = arguments_.p_result_payload as Record<string, unknown>;
+        return { data: true, error: null };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+  });
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(researchStarted, true);
+  assert.equal(preflightStarted, true);
+  researchGate.resolve(validResult());
+  preflightGate.resolve(validPreflightResult());
+
+  const response = await responsePromise;
+  assert.equal(response.status, 200);
+  assert.equal(completedPayload?.preflightVersion, 1);
+  assert.equal(
+    completedPayload?.researchInputSha256,
+    createHash("sha256").update("테스트 상품 설명", "utf8").digest("hex"),
+  );
+  assert.equal(completedPayload?.sourcePhotoSha256, "a".repeat(64));
+  assert.deepEqual(
+    Object.keys(completedPayload?.asset_storage_paths as Record<string, string>),
+    [...coreFirstDraftAssetIds],
+  );
+});
+
+test("a failed research half removes a completed preflight and never marks the claim succeeded", async () => {
+  const removed: string[][] = [];
+  const calls: string[] = [];
+  const response = await runOneServerProductResearch({
+    analyze: async () => {
+      throw new Error("private analysis failure");
+    },
+    generatePreflight: async () => validPreflightResult(),
+    remove: async (paths) => { removed.push(paths); },
+    rpc: async (name) => {
+      calls.push(name);
+      if (name === "sellerpilot_service_claim_product_research_ai_job") {
+        return { data: preflightClaim(), error: null };
+      }
+      if (name === "sellerpilot_service_release_product_research_ai_job") {
+        return { data: "queued", error: null };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: false, status: "queued", processed: 1 });
+  assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
+  assert.equal(calls.includes("sellerpilot_service_complete_product_research_ai_job"), false);
+});
+
+test("low-confidence segmentation keeps the complete source frame in six explicit catalog composites", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 205, g: 45, b: 65 } },
+  }).png().toBuffer();
+  const digest = createHash("sha256").update(source).digest("hex");
+  const uploads = new Map<string, Uint8Array>();
+  const removed: string[][] = [];
+  let backgroundCalls = 0;
+  const result = await generateServerProductResearchPreflightAssets({
+    jobId: JOB_ID,
+    claimToken: CLAIM_TOKEN,
+    request: preflightClaim(digest, source.byteLength).request,
+    signal: AbortSignal.timeout(30_000),
+    dependencies: {
+      download: async () => new Uint8Array(source),
+      upload: async (path, bytes) => {
+        uploads.set(path, bytes);
+        return "uploaded";
+      },
+      remove: async (paths) => { removed.push(paths); },
+      segmentSource: async () => ({
+        segmentation: {
+          containsSingleProduct: true,
+          touchesFrame: false,
+          foregroundConfidence: 0.96,
+          edgeConfidence: 1,
+          polygons: [{
+            points: Array.from({ length: 12 }, (_, index) => ({
+              x: 0.5 + Math.cos((index / 12) * Math.PI * 2) * 0.3,
+              y: 0.5 + Math.sin((index / 12) * Math.PI * 2) * 0.3,
+            })),
+          }],
+        },
+        segmentationSource: new Uint8Array(source),
+      }),
+      generateBackground: async () => {
+        backgroundCalls += 1;
+        return new Uint8Array(source);
+      },
+    },
+  });
+
+  assert.equal(backgroundCalls, 0, "fallback must not ask a model to redraw the product or background");
+  assert.equal(uploads.size, 6);
+  assert.deepEqual(Object.keys(result.asset_storage_paths), [...coreFirstDraftAssetIds]);
+  assert.equal(Object.values(result.preflightAssetLineage).every((item) => item.auditMode === "source-photo-catalog"), true);
+  assert.equal(new Set(Object.values(result.preflightAssetLineage).map((item) => item.digest)).size, 6);
+  assert.deepEqual(removed, []);
+});
+
+test("successful text research plus a segmentation failure still completes with exactly six source-photo assets", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 135, g: 75, b: 195 } },
+  }).png().toBuffer();
+  const digest = createHash("sha256").update(source).digest("hex");
+  const uploads = new Map<string, Uint8Array>();
+  let backgroundCalls = 0;
+  let completedPayload: Record<string, unknown> | null = null;
+  const response = await runOneServerProductResearch({
+    analyze: async () => validResult(),
+    download: async () => new Uint8Array(source),
+    upload: async (path, bytes) => {
+      uploads.set(path, bytes);
+      return "uploaded";
+    },
+    remove: async () => {},
+    segmentSource: async () => {
+      throw { statusCode: 402, name: "private model billing diagnostic" };
+    },
+    generateBackground: async () => {
+      backgroundCalls += 1;
+      throw new Error("background generation must not run after segmentation fallback");
+    },
+    rpc: async (name, arguments_ = {}) => {
+      if (name === "sellerpilot_service_claim_product_research_ai_job") {
+        return { data: preflightClaim(digest, source.byteLength), error: null };
+      }
+      if (name === "sellerpilot_service_touch_product_research_ai_job") {
+        return { data: "running", error: null };
+      }
+      if (name === "sellerpilot_service_complete_product_research_ai_job") {
+        completedPayload = arguments_.p_result_payload as Record<string, unknown>;
+        return { data: true, error: null };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.equal(backgroundCalls, 0);
+  assert.equal(uploads.size, coreFirstDraftAssetIds.length);
+  assert.deepEqual(
+    Object.keys(completedPayload?.asset_storage_paths as Record<string, string>),
+    [...coreFirstDraftAssetIds],
+  );
+  const completedLineage = completedPayload?.preflightAssetLineage as Record<CoreFirstDraftAssetId, {
+    auditMode: string;
+    digest: string;
+  }>;
+  assert.deepEqual(
+    Object.keys(completedLineage),
+    [...coreFirstDraftAssetIds],
+  );
+  assert.equal(
+    Object.values(completedLineage).every((item) => item.auditMode === "source-photo-catalog"),
+    true,
+  );
+  assert.equal(new Set(Object.values(completedLineage).map((item) => item.digest)).size, 6);
+});
+
+test("a mid-background model failure discards partial scenes and rebuilds all six from the source photo", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 35, g: 165, b: 105 } },
+  }).png().toBuffer();
+  const segmentationSource = await sharp(source).resize(1024, 1024).png().toBuffer();
+  const digest = createHash("sha256").update(source).digest("hex");
+  const uploads = new Map<string, Uint8Array>();
+  let backgroundCalls = 0;
+  const result = await generateServerProductResearchPreflightAssets({
+    jobId: JOB_ID,
+    claimToken: CLAIM_TOKEN,
+    request: preflightClaim(digest, source.byteLength).request,
+    signal: AbortSignal.timeout(30_000),
+    dependencies: {
+      download: async () => new Uint8Array(source),
+      upload: async (path, bytes) => {
+        uploads.set(path, bytes);
+        return "uploaded";
+      },
+      remove: async () => {},
+      segmentSource: async () => ({
+        segmentation: {
+          containsSingleProduct: true,
+          touchesFrame: false,
+          foregroundConfidence: 1,
+          edgeConfidence: 1,
+          polygons: [{
+            points: Array.from({ length: 12 }, (_, index) => ({
+              x: 0.5 + Math.cos((index / 12) * Math.PI * 2) * 0.3,
+              y: 0.5 + Math.sin((index / 12) * Math.PI * 2) * 0.3,
+            })),
+          }],
+        },
+        segmentationSource: new Uint8Array(segmentationSource),
+      }),
+      generateBackground: async ({ asset }) => {
+        backgroundCalls += 1;
+        if (backgroundCalls === 3) throw { statusCode: 503 };
+        return new Uint8Array(await sharp({
+          create: { width: asset.width, height: asset.height, channels: 3, background: "#e9ecef" },
+        }).png().toBuffer());
+      },
+    },
+  });
+
+  assert.equal(backgroundCalls, 4, "the failed second batch must stop further image-model batches");
+  assert.equal(uploads.size, coreFirstDraftAssetIds.length);
+  assert.deepEqual(Object.keys(result.asset_storage_paths), [...coreFirstDraftAssetIds]);
+  assert.equal(
+    Object.values(result.preflightAssetLineage).every((item) => item.auditMode === "source-photo-catalog"),
+    true,
+  );
+  assert.equal(new Set(Object.values(result.preflightAssetLineage).map((item) => item.digest)).size, 6);
+});
+
+test("source-photo digest drift fails before image generation and clears canonical paths", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 70, g: 90, b: 110 } },
+  }).png().toBuffer();
+  const removed: string[][] = [];
+  let segmented = false;
+  let uploaded = false;
+  await assert.rejects(
+    generateServerProductResearchPreflightAssets({
+      jobId: JOB_ID,
+      claimToken: CLAIM_TOKEN,
+      request: preflightClaim("f".repeat(64), source.byteLength).request,
+      signal: AbortSignal.timeout(30_000),
+      dependencies: {
+        download: async () => new Uint8Array(source),
+        upload: async () => {
+          uploaded = true;
+          return "uploaded";
+        },
+        remove: async (paths) => { removed.push(paths); },
+        segmentSource: async () => {
+          segmented = true;
+          throw new Error("must not be called");
+        },
+      },
+    }),
+    /preflight_source_photo_mismatch/,
+  );
+  assert.equal(segmented, false);
+  assert.equal(uploaded, false);
+  assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
+});
+
+test("a corrupt source photo remains a hard failure and never reaches image-model fallback", async () => {
+  const source = Buffer.from("not-a-decodable-product-image", "utf8");
+  const digest = createHash("sha256").update(source).digest("hex");
+  const removed: string[][] = [];
+  let segmented = false;
+  let uploaded = false;
+  await assert.rejects(
+    generateServerProductResearchPreflightAssets({
+      jobId: JOB_ID,
+      claimToken: CLAIM_TOKEN,
+      request: preflightClaim(digest, source.byteLength).request,
+      signal: AbortSignal.timeout(30_000),
+      dependencies: {
+        download: async () => new Uint8Array(source),
+        upload: async () => {
+          uploaded = true;
+          return "uploaded";
+        },
+        remove: async (paths) => { removed.push(paths); },
+        segmentSource: async () => {
+          segmented = true;
+          throw new Error("must not be called for invalid source bytes");
+        },
+      },
+    }),
+    /preflight_source_image_invalid/,
+  );
+  assert.equal(segmented, false);
+  assert.equal(uploaded, false);
+  assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
+});
+
+test("parent cancellation remains a hard runtime timeout instead of starting a catalog fallback", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 95, g: 125, b: 155 } },
+  }).png().toBuffer();
+  const digest = createHash("sha256").update(source).digest("hex");
+  const controller = new AbortController();
+  const removed: string[][] = [];
+  let uploaded = false;
+  let backgroundCalls = 0;
+  await assert.rejects(
+    generateServerProductResearchPreflightAssets({
+      jobId: JOB_ID,
+      claimToken: CLAIM_TOKEN,
+      request: preflightClaim(digest, source.byteLength).request,
+      signal: controller.signal,
+      dependencies: {
+        download: async () => new Uint8Array(source),
+        upload: async () => {
+          uploaded = true;
+          return "uploaded";
+        },
+        remove: async (paths) => { removed.push(paths); },
+        segmentSource: async () => {
+          controller.abort();
+          throw new Error("private cancellation diagnostic");
+        },
+        generateBackground: async () => {
+          backgroundCalls += 1;
+          throw new Error("must not be called after cancellation");
+        },
+      },
+    }),
+    /runtime_timeout/,
+  );
+  assert.equal(uploaded, false);
+  assert.equal(backgroundCalls, 0);
+  assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
+});
+
+test("a corrupt background result remains fail-closed instead of being relabeled as a model outage", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 75, g: 155, b: 215 } },
+  }).png().toBuffer();
+  const segmentationSource = await sharp(source).resize(1024, 1024).png().toBuffer();
+  const digest = createHash("sha256").update(source).digest("hex");
+  const removed: string[][] = [];
+  let uploaded = false;
+  await assert.rejects(
+    generateServerProductResearchPreflightAssets({
+      jobId: JOB_ID,
+      claimToken: CLAIM_TOKEN,
+      request: preflightClaim(digest, source.byteLength).request,
+      signal: AbortSignal.timeout(30_000),
+      dependencies: {
+        download: async () => new Uint8Array(source),
+        upload: async () => {
+          uploaded = true;
+          return "uploaded";
+        },
+        remove: async (paths) => { removed.push(paths); },
+        segmentSource: async () => ({
+          segmentation: {
+            containsSingleProduct: true,
+            touchesFrame: false,
+            foregroundConfidence: 1,
+            edgeConfidence: 1,
+            polygons: [{
+              points: Array.from({ length: 12 }, (_, index) => ({
+                x: 0.5 + Math.cos((index / 12) * Math.PI * 2) * 0.3,
+                y: 0.5 + Math.sin((index / 12) * Math.PI * 2) * 0.3,
+              })),
+            }],
+          },
+          segmentationSource: new Uint8Array(segmentationSource),
+        }),
+        generateBackground: async () => new Uint8Array([1, 2, 3, 4]),
+      },
+    }),
+    /preflight_generation_failed/,
+  );
+  assert.equal(uploaded, false);
+  assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
+});
+
+test("segmented preflight caps image-model work at two calls and records uploaded digests", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 25, g: 125, b: 215 } },
+  }).png().toBuffer();
+  const segmentationSource = await sharp(source).resize(1024, 1024).png().toBuffer();
+  const digest = createHash("sha256").update(source).digest("hex");
+  const uploaded = new Map<string, Uint8Array>();
+  let active = 0;
+  let peak = 0;
+  let backgroundCalls = 0;
+  const result = await generateServerProductResearchPreflightAssets({
+    jobId: JOB_ID,
+    claimToken: CLAIM_TOKEN,
+    request: preflightClaim(digest, source.byteLength).request,
+    signal: AbortSignal.timeout(30_000),
+    dependencies: {
+      download: async () => new Uint8Array(source),
+      upload: async (path, bytes) => {
+        uploaded.set(path, bytes);
+        return "uploaded";
+      },
+      remove: async () => {},
+      segmentSource: async () => ({
+        segmentation: {
+          containsSingleProduct: true,
+          touchesFrame: false,
+          foregroundConfidence: 1,
+          edgeConfidence: 1,
+          polygons: [{
+            points: Array.from({ length: 12 }, (_, index) => ({
+              x: 0.5 + Math.cos((index / 12) * Math.PI * 2) * 0.3,
+              y: 0.5 + Math.sin((index / 12) * Math.PI * 2) * 0.3,
+            })),
+          }],
+        },
+        segmentationSource: new Uint8Array(segmentationSource),
+      }),
+      generateBackground: async ({ asset }) => {
+        backgroundCalls += 1;
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return new Uint8Array(await sharp({
+          create: { width: asset.width, height: asset.height, channels: 3, background: "#f1f1f1" },
+        }).png().toBuffer());
+      },
+    },
+  });
+
+  assert.equal(SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY, 2);
+  assert.equal(backgroundCalls, 6);
+  assert.equal(peak, 2);
+  assert.equal(uploaded.size, 6);
+  for (const assetId of coreFirstDraftAssetIds) {
+    const path = result.asset_storage_paths[assetId];
+    const bytes = uploaded.get(path);
+    assert.ok(bytes);
+    assert.equal(result.preflightAssetLineage[assetId].auditMode, "segmented-source-composite");
+    assert.equal(result.preflightAssetLineage[assetId].digest, createHash("sha256").update(bytes).digest("hex"));
+  }
+});
+
+test("a hard preflight storage upload failure removes every canonical claim path without fallback", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 190, g: 140, b: 30 } },
+  }).png().toBuffer();
+  const digest = createHash("sha256").update(source).digest("hex");
+  const removed: string[][] = [];
+  let uploads = 0;
+  await assert.rejects(
+    generateServerProductResearchPreflightAssets({
+      jobId: JOB_ID,
+      claimToken: CLAIM_TOKEN,
+      request: preflightClaim(digest, source.byteLength).request,
+      signal: AbortSignal.timeout(30_000),
+      dependencies: {
+        download: async () => new Uint8Array(source),
+        upload: async () => {
+          uploads += 1;
+          if (uploads === 2) throw new Error("private upload diagnostic");
+          return "uploaded";
+        },
+        remove: async (paths) => { removed.push(paths); },
+        segmentSource: async () => ({
+          segmentation: {
+            containsSingleProduct: true,
+            touchesFrame: false,
+            foregroundConfidence: 0.5,
+            edgeConfidence: 0.5,
+            polygons: [{ points: Array.from({ length: 12 }, (_, index) => ({ x: 0.2 + index * 0.01, y: 0.2 + index * 0.01 })) }],
+          },
+          segmentationSource: new Uint8Array(source),
+        }),
+      },
+    }),
+    /preflight_generation_failed/,
+  );
+  assert.equal(uploads, 2);
+  assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
+});
+
+test("an uncertain completion response never deletes claim assets that may already be committed", async () => {
+  const removed: string[][] = [];
+  let completionCalls = 0;
+  const response = await runOneServerProductResearch({
+    analyze: async () => validResult(),
+    generatePreflight: async () => validPreflightResult(),
+    remove: async (paths) => { removed.push(paths); },
+    rpc: async (name) => {
+      if (name === "sellerpilot_service_claim_product_research_ai_job") {
+        return { data: preflightClaim(), error: null };
+      }
+      if (name === "sellerpilot_service_touch_product_research_ai_job") {
+        return { data: "running", error: null };
+      }
+      if (name === "sellerpilot_service_complete_product_research_ai_job") {
+        completionCalls += 1;
+        return { data: null, error: { code: "response_uncertain" } };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+  });
+  assert.equal(response.status, 503);
+  assert.equal(completionCalls, 2);
+  assert.deepEqual(removed, []);
+});
+
+test("a definitive completion fence rejection clears only the rejected claim paths", async () => {
+  const removed: string[][] = [];
+  const response = await runOneServerProductResearch({
+    analyze: async () => validResult(),
+    generatePreflight: async () => validPreflightResult(),
+    remove: async (paths) => { removed.push(paths); },
+    logError: () => {},
+    rpc: async (name) => {
+      if (name === "sellerpilot_service_claim_product_research_ai_job") {
+        return { data: preflightClaim(), error: null };
+      }
+      if (name === "sellerpilot_service_touch_product_research_ai_job") {
+        return { data: "running", error: null };
+      }
+      if (name === "sellerpilot_service_complete_product_research_ai_job") {
+        return { data: false, error: null };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+  });
+  assert.equal(response.status, 409);
+  assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
 });
 
 test("server product research makes fetched reference status authoritative", async () => {

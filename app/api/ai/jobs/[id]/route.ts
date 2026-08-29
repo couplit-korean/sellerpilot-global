@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
+import { serverProductResearchResultSchema } from "../../../../../lib/ai-cli-contract";
+import { coreFirstDraftAssetIds } from "../../../../../lib/ai-generated-assets";
 import { sellerSafeAiJobFailure } from "../../../../../lib/ai-worker-error-safety";
 import { productResearchFailureMessage } from "../../../../../lib/product-research-failure";
+import {
+  validateSucceededProductResearchPreflight,
+  validateVisibleSucceededProductResearchJob,
+} from "../../../../../lib/product-studio-lineage";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -18,10 +24,72 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   }
 
   const job = data as Record<string, unknown>;
-  const result = job.result && typeof job.result === "object" && !Array.isArray(job.result)
+  let result = job.result && typeof job.result === "object" && !Array.isArray(job.result)
     ? { ...(job.result as Record<string, unknown>) }
     : null;
-  if (result && result.asset_storage_paths && typeof result.asset_storage_paths === "object" && !Array.isArray(result.asset_storage_paths)) {
+
+  const hasProductResearchPreflight = job.kind === "product_research"
+    && result != null
+    && (result.preflightVersion !== undefined
+      || result.researchInputSha256 !== undefined
+      || result.sourcePhotoSha256 !== undefined
+      || result.asset_storage_paths !== undefined
+      || result.preflightAssetLineage !== undefined);
+
+  if (hasProductResearchPreflight) {
+    // Never sign arbitrary storage paths from a malformed worker result. The
+    // six first-draft paths, roles, hashes and shared claim scope are validated
+    // as one contract before any URL leaves the server.
+    const parsedResult = serverProductResearchResultSchema.safeParse(result);
+    const visible = validateVisibleSucceededProductResearchJob({
+      expectedJobId: id,
+      data: job,
+      error: null,
+    });
+    const preflight = parsedResult.success
+      && parsedResult.data.preflightVersion === 1
+      && parsedResult.data.researchInputSha256
+      && parsedResult.data.sourcePhotoSha256
+      ? validateSucceededProductResearchPreflight({
+        expectedJobId: id,
+        expectedResearchInputSha256: parsedResult.data.researchInputSha256,
+        expectedSourcePhotoSha256: parsedResult.data.sourcePhotoSha256,
+        data: job,
+      })
+      : { valid: false as const, reason: "preflight_invalid" as const };
+    if (!parsedResult.success || !visible.valid || !preflight.valid) {
+      return NextResponse.json({
+        ...job,
+        status: "failed",
+        result: null,
+        error: productResearchFailureMessage("gateway_result_invalid"),
+      }, { headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const entries = coreFirstDraftAssetIds.map((assetId) => [
+      assetId,
+      preflight.preflight.assetStoragePaths[assetId],
+    ] as const);
+    const { data: signed, error: signingError } = await admin.serviceClient.storage
+      .from("sellerpilot-ai")
+      .createSignedUrls(entries.map(([, path]) => path), 60 * 60);
+    if (signingError
+        || !signed
+        || signed.length !== entries.length
+        || signed.some((item) => typeof item.signedUrl !== "string" || item.signedUrl.length === 0)) {
+      return NextResponse.json({ message: "1차 생성 이미지 연결을 잠시 확인하지 못했습니다. 같은 작업을 다시 확인해 주세요." }, {
+        status: 503,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
+    }
+    result = {
+      ...parsedResult.data,
+      generatedImages: entries.map(([assetId], index) => ({
+        id: assetId,
+        url: signed[index]!.signedUrl,
+      })),
+    };
+    delete result.asset_storage_paths;
+  } else if (result && result.asset_storage_paths && typeof result.asset_storage_paths === "object" && !Array.isArray(result.asset_storage_paths)) {
     const entries = Object.entries(result.asset_storage_paths as Record<string, unknown>)
       .filter((entry): entry is [string, string] => typeof entry[1] === "string");
     const { data: signed } = await admin.serviceClient.storage

@@ -18,6 +18,7 @@ function requestPayload() {
     sourceResearchJobId: researchJobId,
     sourcePhotoFingerprint: sourcePhotoSha256,
     sourceResearchLineageReceipt: lineageReceipt,
+    humanReviewConfirmed: true,
     manualFields: {
       researchInput: "판매자 확인 테스트 상품 1개",
       productName: "판매자 확인 테스트 상품",
@@ -66,6 +67,13 @@ test("studio request requires a distinct completed product-research job id", () 
   assert.equal(studioJobRequestSchema.safeParse(requestPayload()).success, true);
   assert.equal(studioJobRequestSchema.safeParse({
     ...requestPayload(),
+    humanReviewConfirmed: false,
+  }).success, false);
+  const unreviewedPayload: Record<string, unknown> = { ...requestPayload() };
+  Reflect.deleteProperty(unreviewedPayload, "humanReviewConfirmed");
+  assert.equal(studioJobRequestSchema.safeParse(unreviewedPayload).success, false);
+  assert.equal(studioJobRequestSchema.safeParse({
+    ...requestPayload(),
     sourceResearchJobId: undefined,
   }).success, false);
   assert.equal(studioJobRequestSchema.safeParse({
@@ -85,6 +93,7 @@ test("studio request requires a distinct completed product-research job id", () 
 test("manual intake keeps the shared photo contract without requiring AI lineage", () => {
   const manualPayload: Record<string, unknown> = { ...requestPayload() };
   Reflect.deleteProperty(manualPayload, "sourceResearchJobId");
+  Reflect.deleteProperty(manualPayload, "humanReviewConfirmed");
   assert.equal(manualProductIntakeJobRequestSchema.safeParse(manualPayload).success, true);
   assert.equal(studioJobRequestSchema.safeParse(manualPayload).success, false);
 });
@@ -125,6 +134,8 @@ test("product studio route checks lineage before image verification and persists
   assert.match(route, /uploadedMainSourceSha256 !== parsed\.data\.sourcePhotoFingerprint/);
   assert.match(route, /source_research_job_id: parsed\.data\.sourceResearchJobId/);
   assert.match(route, /source_photo_sha256: parsed\.data\.sourcePhotoFingerprint/);
+  assert.match(route, /human_review_confirmation:\s*\{[\s\S]{0,220}first_draft_reviewed: true[\s\S]{0,220}source: "authenticated_admin_request"/);
+  assert.match(route, /HUMAN_REVIEW_REQUIRED/);
   assert.match(route, /SOURCE_RESEARCH_REQUIRED/);
   assert.match(route, /SOURCE_PHOTO_MISMATCH/);
   assert.match(route, /cleanupStudioUploadsOnlyWhenJobIsAbsent/);

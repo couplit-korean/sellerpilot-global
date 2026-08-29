@@ -15,6 +15,12 @@ type CreateProductResearchJob = (
   arguments_: ProductResearchRpcArguments,
 ) => PromiseLike<{ error: ProductResearchRpcError | null }>;
 
+type ProductResearchImagePreflight = {
+  preflightVersion: 1;
+  imagePaths: readonly string[];
+  imageSpecs: readonly unknown[];
+};
+
 function errorText(error: ProductResearchRpcError) {
   return [error.message, error.details, error.hint]
     .filter((value): value is string => typeof value === "string")
@@ -74,21 +80,52 @@ export async function createProductResearchJobWithLegacyFallback({
   jobId,
   researchInput,
   sourcePhotoSha256,
+  ...preflight
 }: {
   createJob: CreateProductResearchJob;
   jobId: string;
   researchInput: string;
   sourcePhotoSha256: string;
-}) {
+} & Partial<ProductResearchImagePreflight>) {
+  const preflightRequested = preflight.preflightVersion !== undefined
+    || preflight.imagePaths !== undefined
+    || preflight.imageSpecs !== undefined;
+  const validPreflight = preflight.preflightVersion === 1
+    && Array.isArray(preflight.imagePaths)
+    && preflight.imagePaths.length > 0
+    && Array.isArray(preflight.imageSpecs)
+    && preflight.imageSpecs.length === preflight.imagePaths.length;
+  if (preflightRequested && !validPreflight) {
+    return {
+      error: {
+        code: "PRODUCT_RESEARCH_PREFLIGHT_INVALID",
+        message: "product research image preflight contract is incomplete",
+      },
+      usedLegacyFallback: false,
+    };
+  }
+
   const primary = await createJob({
     p_id: jobId,
     p_kind: "product_research",
     p_request_payload: {
       research_input: researchInput,
       source_photo_sha256: sourcePhotoSha256,
+      ...(validPreflight ? {
+        image_paths: [...preflight.imagePaths!],
+        image_specs: [...preflight.imageSpecs!],
+        preflight_version: 1,
+      } : {}),
     },
   });
   if (!primary.error || !isMissingProductResearchRpcContract(primary.error)) {
+    return { error: primary.error, usedLegacyFallback: false };
+  }
+
+  // A preflight request owns real private uploads and promises six audited
+  // first-draft assets. A legacy product_studio compatibility row cannot
+  // satisfy that contract, so never silently downgrade the new request.
+  if (preflightRequested) {
     return { error: primary.error, usedLegacyFallback: false };
   }
 

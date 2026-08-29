@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import sharp from "sharp";
-import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import {
+  aiGeneratedAssetPath,
+  aiGeneratedAssetSpecs,
+  coreFirstDraftAssetIds,
+} from "../lib/ai-generated-assets";
 import { cliStudioResultSchema, requiredLocalizedMarkets } from "../lib/ai-cli-contract";
 import {
   assertPortableAudit,
@@ -15,6 +19,8 @@ import {
   resolveServerAssetSource,
   runOneServerProductStudio,
   ServerProductStudioError,
+  serverStudioRequestMode,
+  serverStudioSegmentationAllowsCatalogFallback,
   serverStudioRemoteWorkPlan,
   type ServerStudioSource,
 } from "../lib/server-product-studio";
@@ -259,13 +265,115 @@ async function patternedBackground(
   )).png().toBuffer();
 }
 
-test("server Studio plans 8 setting shots as 3+3+2 and caps three lanes at nine", () => {
+async function firstDraftPreflightFixture(
+  researchJobId: string,
+  claimToken: string,
+  sourcePhotoSha256: string,
+  overrides: Partial<Record<(typeof coreFirstDraftAssetIds)[number], Uint8Array>> = {},
+) {
+  const paths: Record<string, string> = {};
+  const digests: Record<string, string> = {};
+  const lineage: Record<string, {
+    digest: string;
+    role: "creative" | "detail";
+    auditMode: "segmented-source-composite" | "source-photo-catalog";
+    sourceRole: string;
+  }> = {};
+  const bytesByPath = new Map<string, Uint8Array>();
+  for (const [index, assetId] of coreFirstDraftAssetIds.entries()) {
+    const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+    assert.ok(asset);
+    const bytes = overrides[assetId] ?? await patternedBackground(
+      asset.width,
+      asset.height,
+      `preflight:${assetId}:${index}`,
+      ["#cf3328", "#19674f", "#273f79", "#7a3d92", "#a86418", "#176b83"][index],
+      true,
+    );
+    const path = aiGeneratedAssetPath(researchJobId, asset, claimToken);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    paths[assetId] = path;
+    digests[assetId] = digest;
+    lineage[assetId] = {
+      digest,
+      role: asset.role,
+      auditMode: "segmented-source-composite",
+      sourceRole: "main",
+    };
+    bytesByPath.set(path, new Uint8Array(bytes));
+  }
+  return {
+    request: {
+      source_research_job_id: researchJobId,
+      source_photo_sha256: sourcePhotoSha256,
+      preflight_version: 1,
+      preflight_asset_storage_paths: paths,
+      preflight_asset_digests: digests,
+      preflight_asset_audit_lineage: lineage,
+    },
+    bytesByPath,
+  };
+}
+
+test("final server Studio restores six assets and plans only the remaining 2+8 roles", () => {
   const plan = serverStudioRemoteWorkPlan();
-  assert.deepEqual(plan.settingWaves, [3, 3, 2]);
+  assert.deepEqual(plan.settingWaves, [2]);
   assert.deepEqual(plan.sourceAuditWaves, [3, 3, 2]);
   assert.deepEqual(plan.localizedWaves, [3, 3, 3]);
   assert.equal(plan.maximumRemoteConcurrency, 9);
   assert.ok(Math.max(...plan.settingWaves) + Math.max(...plan.sourceAuditWaves) + Math.max(...plan.localizedWaves) <= 9);
+});
+
+test("new registration requires the complete preflight while revisions and queued legacy jobs remain executable", async () => {
+  const jobId = "12121212-1212-4121-8121-121212121212";
+  const userId = "13131313-1313-4131-8131-131313131313";
+  const baseRequest = {
+    description: "Existing product revision remains compatible.",
+    product_url: "",
+    research_input: "existing product revision",
+    manual_fields: { categoryHint: "Office organization" },
+    image_paths: [`${userId}/${jobId}/input/001.jpg`],
+    image_specs: [{
+      name: "001.jpg",
+      role: "main",
+      originalName: "source.png",
+      originalBytes: 2_000,
+      originalMediaType: "image/png",
+      originalPath: `${userId}/${jobId}/original/001.source`,
+      originalWidth: 1_200,
+      originalHeight: 1_200,
+      width: 1_200,
+      height: 1_200,
+      bytes: 1_000,
+      mediaType: "image/jpeg",
+      fit: "contain",
+    }],
+  };
+  assert.equal(serverStudioRequestMode({
+    ...baseRequest,
+    revision_mode: "replace_product_assets",
+    revision_product_id: "14141414-1414-4141-8141-141414141414",
+  }), "legacy");
+  assert.equal(serverStudioRequestMode({
+    ...baseRequest,
+    source_research_job_id: "15151515-1515-4151-8151-151515151515",
+    source_photo_sha256: "a".repeat(64),
+  }), "legacy", "a job queued by the previous release must not become terminal after deployment");
+
+  const preflight = await firstDraftPreflightFixture(
+    "16161616-1616-4161-8161-161616161616",
+    "17171717-1717-4171-8171-171717171717",
+    "b".repeat(64),
+  );
+  assert.equal(serverStudioRequestMode({ ...baseRequest, ...preflight.request }), "preflight");
+  for (const marker of [
+    "preflight_version",
+    "preflight_asset_storage_paths",
+    "preflight_asset_digests",
+    "preflight_asset_audit_lineage",
+  ] as const) {
+    assert.equal(serverStudioRequestMode({ ...baseRequest, [marker]: preflight.request[marker] }), "invalid");
+  }
 });
 
 test("localization terminal contract covers 34 channel markets and exactly 26 countries", () => {
@@ -406,6 +514,34 @@ test("source catalog requires natural cutout edges without pretending it is an e
   );
 });
 
+test("source-photo catalog fallback is limited to deterministic segmentation quality failures", () => {
+  assert.equal(
+    serverStudioSegmentationAllowsCatalogFallback(
+      new ServerProductStudioError("product_segmentation_low_confidence", true),
+    ),
+    true,
+  );
+  assert.equal(
+    serverStudioSegmentationAllowsCatalogFallback(
+      new ServerProductStudioError("product_segmentation_area_invalid", true),
+    ),
+    true,
+  );
+  for (const reason of [
+    "gateway_authentication_error",
+    "gateway_result_invalid",
+    "server_studio_runtime_timeout",
+    "source_image_metadata_mismatch",
+  ]) {
+    assert.equal(
+      serverStudioSegmentationAllowsCatalogFallback(new ServerProductStudioError(reason, true)),
+      false,
+      `${reason} must remain fail-closed`,
+    );
+  }
+  assert.equal(serverStudioSegmentationAllowsCatalogFallback(new Error("network timeout")), false);
+});
+
 test("single-main intake keeps package and contents images honest instead of failing for an optional role", async () => {
   const sourceBytes = await sharp({
     create: { width: 1200, height: 1200, channels: 3, background: "#f5f1e8" },
@@ -489,6 +625,8 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
   const jobId = "44444444-4444-4444-8444-444444444444";
   const claimToken = "55555555-5555-4555-8555-555555555555";
   const userId = "66666666-6666-4666-8666-666666666666";
+  const researchJobId = "77777777-7777-4777-8777-777777777777";
+  const researchClaimToken = "88888888-8888-4888-8888-888888888888";
   const normalizedPath = `${userId}/${jobId}/input/001.jpg`;
   const originalPath = `${userId}/${jobId}/original/001.source`;
   const normalizedBackPath = `${userId}/${jobId}/input/002.jpg`;
@@ -499,6 +637,58 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
     input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200"><rect x="180" y="180" width="840" height="840" fill="#d63b30"/></svg>'),
   }]).png().toBuffer();
   const backBytes = await patternedBackground(1200, 1200, "dedicated-back-evidence");
+  const validSegmentation = {
+    containsSingleProduct: true,
+    touchesFrame: false,
+    foregroundConfidence: 0.99,
+    edgeConfidence: 0.99,
+    polygons: [{
+      points: [
+        { x: 0.25, y: 0.25 }, { x: 0.375, y: 0.25 }, { x: 0.5, y: 0.25 },
+        { x: 0.625, y: 0.25 }, { x: 0.75, y: 0.25 }, { x: 0.75, y: 0.5 },
+        { x: 0.75, y: 0.75 }, { x: 0.625, y: 0.75 }, { x: 0.5, y: 0.75 },
+        { x: 0.375, y: 0.75 }, { x: 0.25, y: 0.75 }, { x: 0.25, y: 0.5 },
+      ],
+    }],
+  };
+  const cutout = await buildPortableProductCutout({
+    segmentation: validSegmentation,
+    segmentationSource: sourceBytes,
+  });
+  const contextSpec = aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-context");
+  assert.ok(contextSpec);
+  const contextBackgroundInput = await patternedBackground(
+    contextSpec.width,
+    contextSpec.height,
+    "detail-context:1",
+    "#d63b30",
+    true,
+  );
+  const contextBackground = await sharp(contextBackgroundInput, { failOn: "warning", limitInputPixels: 16_000_000 })
+    .rotate()
+    .resize(contextSpec.width, contextSpec.height, { fit: "cover" })
+    .png()
+    .toBuffer();
+  const contextPlacement = contextSpec.identityPolicy.placement;
+  const contextProduct = await sharp(cutout)
+    .resize(
+      Math.max(1, Math.round(contextSpec.width * contextPlacement.width)),
+      Math.max(1, Math.round(contextSpec.height * contextPlacement.height)),
+      { fit: "contain" },
+    )
+    .png()
+    .toBuffer();
+  const duplicateContextBytes = await sharp(contextBackground).composite([{
+    input: contextProduct,
+    left: Math.round(contextSpec.width * contextPlacement.left),
+    top: Math.round(contextSpec.height * contextPlacement.top),
+  }]).png().toBuffer();
+  const preflight = await firstDraftPreflightFixture(
+    researchJobId,
+    researchClaimToken,
+    createHash("sha256").update(sourceBytes).digest("hex"),
+    { wide: duplicateContextBytes },
+  );
   const localizedChunks = planStudioLocalizedChunks(4);
   const terminalFixture = cliStudioResultSchema.safeParse({
     ...testMasterResult(),
@@ -511,7 +701,9 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
     referencePaths: string[];
   }> = [];
   const auditAttempts = new Map<string, number>();
+  const contextCandidateDigests: string[] = [];
   const uploadedPaths: string[] = [];
+  const uploadedDigests = new Map<string, string>();
   const completionCalls: Record<string, unknown>[] = [];
   let completionAttempt = 0;
   let masterAttempts = 0;
@@ -562,6 +754,7 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
                 mediaType: "image/jpeg",
                 fit: "contain",
               }],
+              ...preflight.request,
             },
           },
           error: null,
@@ -579,14 +772,16 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
       }
       return { data: true, error: null };
     },
-    download: async (path) => path === originalPath
-      ? sourceBytes
-      : path === originalBackPath
-        ? backBytes
-        : assert.fail(`unexpected source path: ${path}`),
+    download: async (path) => {
+      if (path === originalPath) return sourceBytes;
+      if (path === originalBackPath) return backBytes;
+      const bytes = preflight.bytesByPath.get(path);
+      return bytes ?? assert.fail(`unexpected source path: ${path}`);
+    },
     upload: async (path, bytes) => {
       assert.ok(bytes.byteLength > 0);
       uploadedPaths.push(path);
+      uploadedDigests.set(path, createHash("sha256").update(bytes).digest("hex"));
       return "uploaded";
     },
     generateStructured: async (input) => {
@@ -612,23 +807,7 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
       assert.ok(targets);
       return input.schema.parse({ localizedListings: targets.map(localizedListing) });
     },
-    segmentSource: async () => ({
-      segmentation: {
-        containsSingleProduct: true,
-        touchesFrame: false,
-        foregroundConfidence: 0.99,
-        edgeConfidence: 0.99,
-        polygons: [{
-          points: [
-            { x: 0.25, y: 0.25 }, { x: 0.375, y: 0.25 }, { x: 0.5, y: 0.25 },
-            { x: 0.625, y: 0.25 }, { x: 0.75, y: 0.25 }, { x: 0.75, y: 0.5 },
-            { x: 0.75, y: 0.75 }, { x: 0.625, y: 0.75 }, { x: 0.5, y: 0.75 },
-            { x: 0.375, y: 0.75 }, { x: 0.25, y: 0.75 }, { x: 0.25, y: 0.5 },
-          ],
-        }],
-      },
-      segmentationSource: sourceBytes,
-    }),
+    segmentSource: async () => ({ segmentation: validSegmentation, segmentationSource: sourceBytes }),
     generateBackground: async ({ asset, prompt, references }) => {
       const attemptMatch = /distinct retry=(\d+)/u.exec(prompt);
       const attempt = Number(attemptMatch?.[1] ?? 0);
@@ -638,20 +817,21 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
         prompt,
         referencePaths: references.map((reference) => reference.path),
       });
-      const sharedRejectedPlate = (asset.id === "portrait" && attempt <= 2)
-        || (asset.id === "detail-overview" && attempt === 1);
       return patternedBackground(
         asset.width,
         asset.height,
-        sharedRejectedPlate ? "shared-portrait-overview-plate" : `${asset.id}:${attempt}`,
+        `${asset.id}:${attempt}`,
         "#d63b30",
-        sharedRejectedPlate,
+        true,
       );
     },
-    auditImage: async ({ assetId }) => {
+    auditImage: async ({ assetId, candidate }) => {
       const attempt = (auditAttempts.get(assetId) ?? 0) + 1;
       auditAttempts.set(assetId, attempt);
-      if (assetId === "portrait" && attempt === 1) {
+      if (assetId === "detail-context") {
+        contextCandidateDigests.push(createHash("sha256").update(candidate).digest("hex"));
+      }
+      if (assetId === "detail-storage" && attempt === 1) {
         return {
           ...passingPortableAudit(),
           quantityUnitMatches: false,
@@ -685,29 +865,174 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
   const resultPayload = completionCalls[0].p_result_payload as { asset_storage_paths?: Record<string, string> };
   assert.equal(Object.keys(resultPayload.asset_storage_paths ?? {}).length, 16);
 
-  const portraitCalls = backgroundCalls.filter((call) => call.assetId === "portrait");
-  assert.equal(portraitCalls.length, 3, "portrait must retry once for OCR/semantic audit and once for duplicate topology");
-  assert.doesNotMatch(portraitCalls[0].prompt, /REJECTED CANDIDATE LINEAGE/u);
-  assert.match(portraitCalls[1].prompt, /REJECTED CANDIDATE LINEAGE/u);
-  assert.match(portraitCalls[1].prompt, /ocr:missing-token/u);
-  assert.match(portraitCalls[1].prompt, /ocr:quantity-unit/u);
-  assert.match(portraitCalls[1].prompt, /semantic:assigned-scene/u);
-  assert.match(portraitCalls[1].prompt, /500 g/u);
-  assert.match(portraitCalls[1].prompt, /400 g/u);
-  assert.match(portraitCalls[1].referencePaths[0] ?? "", /^rejected-background:portrait:1$/u);
-  assert.match(portraitCalls[2].prompt, /visual:duplicate/u);
-  assert.match(portraitCalls[2].prompt, /detail-overview/u);
-  assert.match(portraitCalls[2].prompt, /duplicateDistance/u);
+  for (const assetId of coreFirstDraftAssetIds) {
+    assert.equal(auditAttempts.has(assetId), false, `${assetId} must be restored instead of regenerated`);
+    const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+    assert.ok(spec);
+    const finalPath = aiGeneratedAssetPath(jobId, spec, claimToken);
+    assert.equal(uploadedDigests.get(finalPath), preflight.request.preflight_asset_digests[assetId]);
+  }
+  assert.equal(contextCandidateDigests[0], preflight.request.preflight_asset_digests.wide);
+  assert.equal(contextCandidateDigests.length, 2, "a final asset duplicating a restored first-draft asset must retry");
+  assert.notEqual(contextCandidateDigests[1], contextCandidateDigests[0]);
+
+  const finalSettingCalls = backgroundCalls.filter((call) => call.assetId === "detail-storage");
+  assert.equal(finalSettingCalls.length, 2, "the remaining setting asset must retry its rejected OCR audit");
+  assert.doesNotMatch(finalSettingCalls[0].prompt, /REJECTED CANDIDATE LINEAGE/u);
+  assert.match(finalSettingCalls[1].prompt, /REJECTED CANDIDATE LINEAGE/u);
+  assert.match(finalSettingCalls[1].prompt, /ocr:missing-token/u);
+  assert.match(finalSettingCalls[1].prompt, /ocr:quantity-unit/u);
+  assert.match(finalSettingCalls[1].prompt, /semantic:assigned-scene/u);
+  assert.match(finalSettingCalls[1].prompt, /500 g/u);
+  assert.match(finalSettingCalls[1].prompt, /400 g/u);
+  assert.match(finalSettingCalls[1].referencePaths[0] ?? "", /^rejected-background:detail-storage:1$/u);
   assert.deepEqual(
-    portraitCalls[2].referencePaths.slice(0, 2),
-    ["rejected-background:portrait:1", "rejected-background:portrait:2"],
+    [...new Set(backgroundCalls.map((call) => call.assetId))].sort(),
+    ["detail-context", "detail-storage"],
   );
+  assert.deepEqual(
+    Object.keys((completionCalls[0].p_result_payload as { asset_audit_modes: Record<string, string> }).asset_audit_modes).sort(),
+    aiGeneratedAssetSpecs.map((asset) => asset.id).sort(),
+  );
+});
+
+test("main then front segmentation quality failures preserve the full source frame for the final catalog roles", async () => {
+  const jobId = "91919191-9191-4191-8191-919191919191";
+  const claimToken = "92929292-9292-4292-8292-929292929292";
+  const userId = "93939393-9393-4393-8393-939393939393";
+  const mainOriginalPath = `${userId}/${jobId}/original/001.source`;
+  const frontOriginalPath = `${userId}/${jobId}/original/002.source`;
+  const mainBytes = await patternedBackground(1200, 1200, "fallback-main-source", "#c9392d", true);
+  const frontBytes = await patternedBackground(1200, 1200, "fallback-front-source", "#2d6ac9", true);
+  const preflight = await firstDraftPreflightFixture(
+    "94949494-9494-4494-8494-949494949494",
+    "95959595-9595-4595-8595-959595959595",
+    createHash("sha256").update(mainBytes).digest("hex"),
+  );
+  const localizedChunks = planStudioLocalizedChunks(4);
+  const attemptedRoles: string[] = [];
+  const auditModes = new Map<string, string>();
+  const uploadedPaths: string[] = [];
+  let resultPayload: Record<string, unknown> | null = null;
+
+  const response = await runOneServerProductStudio({
+    tokenHash: "d".repeat(64),
+    runtimeTimeoutMs: 120_000,
+    rpc: async (name, arguments_ = {}) => {
+      if (name === "sellerpilot_claim_product_ai_job") {
+        return {
+          data: {
+            id: jobId,
+            claim_token: claimToken,
+            kind: "product_studio",
+            claim_scope: "product",
+            request: {
+              description: "Fallback catalog integration fixture.",
+              product_url: "",
+              research_input: "fallback catalog product",
+              manual_fields: {},
+              image_paths: [
+                `${userId}/${jobId}/input/001.jpg`,
+                `${userId}/${jobId}/input/002.jpg`,
+              ],
+              image_specs: [{
+                name: "main.jpg",
+                role: "main",
+                originalName: "main.png",
+                originalBytes: mainBytes.byteLength,
+                originalMediaType: "image/png",
+                originalPath: mainOriginalPath,
+                originalWidth: 1200,
+                originalHeight: 1200,
+                width: 1200,
+                height: 1200,
+                bytes: mainBytes.byteLength,
+                mediaType: "image/jpeg",
+                fit: "contain",
+              }, {
+                name: "front.jpg",
+                role: "front",
+                originalName: "front.png",
+                originalBytes: frontBytes.byteLength,
+                originalMediaType: "image/png",
+                originalPath: frontOriginalPath,
+                originalWidth: 1200,
+                originalHeight: 1200,
+                width: 1200,
+                height: 1200,
+                bytes: frontBytes.byteLength,
+                mediaType: "image/jpeg",
+                fit: "contain",
+              }],
+              ...preflight.request,
+            },
+          },
+          error: null,
+        };
+      }
+      if (name === "sellerpilot_complete_ai_job_with_image_context") {
+        resultPayload = arguments_.p_result_payload as Record<string, unknown>;
+      }
+      if (name === "sellerpilot_touch_ai_job") return { data: "running", error: null };
+      return { data: true, error: null };
+    },
+    download: async (path) => {
+      if (path === mainOriginalPath) return mainBytes;
+      if (path === frontOriginalPath) return frontBytes;
+      return preflight.bytesByPath.get(path) ?? assert.fail(`unexpected source path: ${path}`);
+    },
+    upload: async (path, bytes) => {
+      assert.ok(bytes.byteLength > 0);
+      uploadedPaths.push(path);
+      return "uploaded";
+    },
+    generateStructured: async (input) => {
+      if (input.tags.includes("feature:product-studio-master")) {
+        return input.schema.parse(testMasterResult());
+      }
+      const chunkTag = input.tags.find((tag) => tag.startsWith("chunk:"));
+      assert.ok(chunkTag);
+      const targets = localizedChunks[Number(chunkTag.slice("chunk:".length)) - 1];
+      assert.ok(targets);
+      return input.schema.parse({ localizedListings: targets.map(localizedListing) });
+    },
+    segmentSource: async (source) => {
+      attemptedRoles.push(source.role);
+      if (source.role === "main") {
+        throw new ServerProductStudioError("product_segmentation_low_confidence", true);
+      }
+      throw new ServerProductStudioError("product_segmentation_area_invalid", true);
+    },
+    generateBackground: async () => assert.fail("catalog fallback must not invoke background generation"),
+    auditImage: async ({ assetId, auditMode }) => {
+      auditModes.set(assetId, auditMode);
+      return passingPortableAudit();
+    },
+    logError: (stage, details) => assert.fail(`unexpected ${stage}: ${JSON.stringify(details)}`),
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.deepEqual(attemptedRoles, ["main", "front"]);
+  assert.equal(uploadedPaths.length, 16);
+  assert.equal(auditModes.get("detail-storage"), "source-photo-catalog");
+  assert.equal(auditModes.get("detail-context"), "source-photo-catalog");
+  assert.ok(resultPayload);
+  assert.deepEqual(resultPayload.segmentation_attempted_roles, ["main", "front"]);
+  const recordedModes = resultPayload.asset_audit_modes as Record<string, string>;
+  assert.equal(recordedModes["detail-storage"], "source-photo-catalog");
+  assert.equal(recordedModes["detail-context"], "source-photo-catalog");
 });
 
 test("a 300-second-compatible runtime timeout completes the exact claim as failed and never releases it", async () => {
   const jobId = "11111111-1111-4111-8111-111111111111";
   const claimToken = "22222222-2222-4222-8222-222222222222";
   const userId = "33333333-3333-4333-8333-333333333333";
+  const preflight = await firstDraftPreflightFixture(
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "c".repeat(64),
+  );
   const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
   const response = await runOneServerProductStudio({
     tokenHash: "a".repeat(64),
@@ -742,6 +1067,7 @@ test("a 300-second-compatible runtime timeout completes the exact claim as faile
                 mediaType: "image/jpeg",
                 fit: "contain",
               }],
+              ...preflight.request,
             },
           },
           error: null,

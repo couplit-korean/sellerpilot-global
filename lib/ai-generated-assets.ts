@@ -405,6 +405,28 @@ export type AiDetailAssetId = Extract<(typeof aiGeneratedAssetSpecs)[number], { 
 
 export const aiGeneratedAssetIds = aiGeneratedAssetSpecs.map((asset) => asset.id) as [AiGeneratedAssetId, ...AiGeneratedAssetId[]];
 
+export const coreFirstDraftAssetIds = [
+  "portrait",
+  "wide",
+  "detail-overview",
+  "detail-use",
+  "detail-routine",
+  "detail-scale",
+] as const satisfies readonly AiGeneratedAssetId[];
+
+export const remainingFinalAssetIds = [
+  "hero",
+  "square",
+  "detail-feature",
+  "detail-package",
+  "detail-storage",
+  "detail-context",
+  "detail-material",
+  "detail-dimensions",
+  "detail-contents",
+  "detail-care",
+] as const satisfies readonly AiGeneratedAssetId[];
+
 export const aiDetailAssetIds = aiGeneratedAssetSpecs
   .filter((asset) => asset.role === "detail")
   .map((asset) => asset.id) as [AiDetailAssetId, ...AiDetailAssetId[]];

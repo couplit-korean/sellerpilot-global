@@ -8,6 +8,7 @@ test("AI final authoring requires the exact first-draft research job before uplo
   assert.match(studio, /sourceResearchJobId: string;/);
   assert.match(studio, /sourcePhotoFingerprint: string;/);
   assert.match(studio, /sourceResearchLineageReceipt: string;/);
+  assert.match(studio, /firstDraftReviewed: boolean;/);
   assert.match(studio, /const normalizedSourceResearchJobId = sourceResearchJobId\?\.trim\(\) \?\? "";/);
   const generateStart = studio.indexOf("const generate = useCallback");
   const lineageGuard = studio.indexOf("if (!manualMvp && (!normalizedSourceResearchJobId", generateStart);
@@ -16,6 +17,7 @@ test("AI final authoring requires the exact first-draft research job before uplo
   assert.match(studio, /sourceResearchJobId: normalizedSourceResearchJobId,/);
   assert.match(studio, /sourcePhotoFingerprint: normalizedSourcePhotoFingerprint,/);
   assert.match(studio, /sourceResearchLineageReceipt: normalizedSourceResearchLineageReceipt,/);
+  assert.match(studio, /humanReviewConfirmed: true,/);
 });
 
 test("MVP copy distinguishes six setting shots, support assets, and internal draft from publication", () => {

@@ -670,6 +670,18 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const mountedRef = useRef(true);
   const confirmationOpen = bulkConfirming || confirmingChannel !== null || qoo10StopConfirming !== null;
   const centralEditFieldSupport = useMemo(() => centralProductEditFieldSupport(), []);
+  const marketplaceThumbnailCount = context?.generatedImages.filter((item) => (item.id === "square" || item.id === "hero") && item.url).length ?? 0;
+  const dedicatedDetailImageCount = context?.generatedImages.filter((item) => item.id.startsWith("detail-") && item.url).length ?? 0;
+  const manualMvp = context?.contentMode === "manual_mvp";
+  const imagePackageReady = context
+    ? manualMvp
+      ? context.sourceImages.some((item) => Boolean(item.url))
+      : marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount
+        && dedicatedDetailImageCount >= marketplaceChannelDetailImageCount
+    : false;
+  const imagePackageBlockedMessage = manualMvp
+    ? "채널 업로드용 원본 대표사진이 없어 실제 전송을 시작하지 않았습니다."
+    : `채널 업로드 이미지가 미완료입니다. 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장, 상세 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장을 모두 준비한 뒤 실행해 주세요.`;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -912,6 +924,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       notify("선택한 상품의 등록 준비 정보를 다시 확인해 주세요.");
       return false;
     }
+    if (!imagePackageReady) {
+      notify(imagePackageBlockedMessage);
+      return false;
+    }
     const credential = activeCredentials.get(channel);
     const target = selectedTargets[channel];
     const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
@@ -1114,6 +1130,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       notify("선택한 상품의 등록 준비 정보를 다시 확인해 주세요.");
       return;
     }
+    if (!imagePackageReady) {
+      notify(imagePackageBlockedMessage);
+      return;
+    }
     const requestedProductId = productId;
     const readyChannels = visibleChannels.filter((channel) => {
       const credential = activeCredentials.get(channel);
@@ -1124,7 +1144,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const parsedDraft = parseDraft(drafts[channel]);
       const hasMissingRequired = !parsedDraft || blockingListingRequirements(channel, parsedDraft).length > 0 || missingNativeValues(channel, parsedDraft).length > 0;
       const remoteIdentityReady = operation === "listing.create" || Boolean(listing?.remoteId);
-      return Boolean(channelOperationAvailable(channel, operation)
+      return Boolean(imagePackageReady
+        && channelOperationAvailable(channel, operation)
         && credential
         && assignment
         && remoteIdentityReady
@@ -1275,13 +1296,6 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   if (loading && !context) return <section className="panel product-publish-workbench disabled"><LoaderCircle className="spin" size={26} /><b>상품·카테고리·이미지 원장 확인 중</b></section>;
   if (!context || !workbenchProductContextMatches(productId, context.product.id)) return <section className="panel product-publish-workbench disabled"><AlertTriangle size={26} /><b>상품 등록 준비 정보를 불러오지 못했습니다.</b><button type="button" onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></section>;
 
-  const marketplaceThumbnailCount = context.generatedImages.filter((item) => (item.id === "square" || item.id === "hero") && item.url).length;
-  const dedicatedDetailImageCount = context.generatedImages.filter((item) => item.id.startsWith("detail-") && item.url).length;
-  const manualMvp = context.contentMode === "manual_mvp";
-  const imagePackageReady = manualMvp
-    ? context.sourceImages.some((item) => Boolean(item.url))
-    : marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount
-      && dedicatedDetailImageCount >= marketplaceChannelDetailImageCount;
   const remoteUpdateChannelCount = visibleChannels.filter((channel) => {
     const target = selectedTargets[channel];
     const listing = context.listings.find((item) => item.channel === channel
@@ -1290,8 +1304,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   }).length;
 
   return <section className="panel product-publish-workbench">
-    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>신규 채널은 등록하고, 이미 게시된 채널은 검증된 원격 ID를 유지한 채 상품명·설명·구성·이미지만 수정합니다. 재고는 상품 상세의 통합 재고에서 별도로 동기화하며, 가격은 채널별 식별값 검증 전 자동으로 덮어쓰지 않습니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 처리 중" : bulkConfirming ? "최종 확인 열림" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
-    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·콘텐츠 수정을 동시에 실행합니다.</b><small>신규 등록의 가격·재고와 기존 상품의 원격 ID·콘텐츠 변경 필드를 채널별로 최종 확인하세요.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeReadyChannels(true)}>확인 후 동시 실행</button></div>}
+    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>신규 채널은 등록하고, 이미 게시된 채널은 검증된 원격 ID를 유지한 채 상품명·설명·구성·이미지만 수정합니다. 재고는 상품 상세의 통합 재고에서 별도로 동기화하며, 가격은 채널별 식별값 검증 전 자동으로 덮어쓰지 않습니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming || !imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 처리 중" : bulkConfirming ? "최종 확인 열림" : !imagePackageReady ? "이미지 세트 완료 후 채널 전송" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
+    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·콘텐츠 수정을 동시에 실행합니다.</b><small>신규 등록의 가격·재고와 기존 상품의 원격 ID·콘텐츠 변경 필드를 채널별로 최종 확인하세요.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels(true)}>확인 후 동시 실행</button></div>}
     {remoteUpdateChannelCount > 0 && <section className="product-edit-handoff" aria-label="중앙 저장과 채널별 원격 반영 순서">
       <header><span><ShieldCheck size={17} /><b>중앙 저장 후 채널별로 따로 반영합니다.</b></span><em>수정 대상 {remoteUpdateChannelCount}개 채널</em></header>
       <ol>
@@ -1319,7 +1333,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       <button type="button" onClick={() => setDrafts(buildDraftMap(context, price, quantity, selectedTargets, packageFields, globalBaseUsdPrice))}><RefreshCw size={14} />공통값으로 초안 갱신</button>
     </div>
     <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>{manualMvp ? `원본 ${context.sourceImages.filter((item) => item.url).length}장 직접 사용` : `대표 ${marketplaceThumbnailCount}장 · 상세 전용 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장`}</span><span><Check size={15} /><b>등록 직전 보정</b>대표 1200×1200 JPEG · 상세 원본 비율 · 각 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
-    {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>{manualMvp ? "원본 대표사진이 필요합니다." : `대표 썸네일과 채널용 상세 전용 이미지 ${marketplaceChannelDetailImageCount}장이 모두 필요합니다.`}</b><small>{manualMvp ? "AI 결과로 가장하지 않고 판매자가 확인한 원본 사진만 채널 규격으로 보정합니다." : `이전 8종 생성 상품은 실제 등록을 차단합니다. 상품 등록 화면에서 AI 상세·썸네일을 다시 생성하면 대표·설정·근거를 분리한 새 ${marketplaceGeneratedAssetCount}종 이미지 세트로 교체됩니다.`}</small></div></div>}
+    {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>{manualMvp ? "채널 업로드용 원본 대표사진이 없습니다." : `채널 업로드 이미지 미완료 · 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장 · 상세 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장`}</b><small>{manualMvp ? "판매자가 확인한 원본 대표사진이 준비될 때까지 단일·일괄 채널 전송을 모두 차단합니다." : `상세페이지 제작에서 대표·설정·근거를 분리한 ${marketplaceGeneratedAssetCount}종 이미지 세트가 모두 저장될 때까지 단일·일괄 채널 전송을 모두 차단합니다.`}</small></div></div>}
     <div className="publish-channel-cards">{visibleChannels.map((channel) => {
       const definition = channelCatalog[channel];
       const credential = activeCredentials.get(channel);
@@ -1393,10 +1407,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
-          {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{remoteUpdate ? `원격 ID ${listing?.remoteId ?? "확인 필요"} · 가격·재고·옵션·판매 구성은 변경하지 않음` : `가격 ${price.toLocaleString()} ${target?.currency || currency} · 재고 ${quantity}개`}</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
+          {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{remoteUpdate ? `원격 ID ${listing?.remoteId ?? "확인 필요"} · 가격·재고·옵션·판매 구성은 변경하지 않음` : `가격 ${price.toLocaleString()} ${target?.currency || currency} · 재고 ${quantity}개`}</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
           {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
           {remoteUpdate && <p className="product-edit-action-scope" id={`${channel}-remote-action-scope`}><ShieldCheck size={14} /><span><b>{definition.name} 상품 콘텐츠만 별도 원격 반영</b><small>{remotelyWritableListingFieldLabels.length > 0 ? `완전 지원: ${remoteListingSupportedFieldLabels.join(" · ") || "없음"} · 일부 지원: ${remoteListingPartialFieldLabels.join(" · ") || "없음"}` : "검증된 상품 콘텐츠 수정 항목 없음"}. 가격·재고·옵션·판매 구성은 이 버튼으로 변경하지 않습니다.</small></span></p>}
-          <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!credential || !assignment || invalidDraft || blockingCount > 0 || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
+          <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!imagePackageReady || !credential || !assignment || invalidDraft || blockingCount > 0 || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
           {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={["queued", "running", "blocked", "succeeded"].includes(result.phase) || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => openConfirmation({ kind: "qoo10-stop", listing })}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
         </>}
       </article>;

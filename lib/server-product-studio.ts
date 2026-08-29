@@ -12,6 +12,8 @@ import {
 import {
   aiGeneratedAssetPath,
   aiGeneratedAssetSpecs,
+  coreFirstDraftAssetIds,
+  remainingFinalAssetIds,
   type AiGeneratedAssetId,
 } from "./ai-generated-assets";
 import { resolveProductSettingShot } from "./ai-image-planning";
@@ -91,9 +93,16 @@ export type ServerStudioAsset = {
   bytes: Uint8Array;
   digest: string;
   fingerprint: ShotFingerprint;
+  auditMode?: ServerStudioRecordedAuditMode;
 };
 
-export type ServerStudioImageAuditMode = "scene-composite" | "source-evidence" | "source-catalog";
+export type ServerStudioImageAuditMode =
+  | "scene-composite"
+  | "source-evidence"
+  | "source-catalog"
+  | "source-photo-catalog";
+
+type ServerStudioRecordedAuditMode = ServerStudioImageAuditMode | "segmented-source-composite";
 
 type ServerStudioCandidateRejection = Readonly<{
   attempt: number;
@@ -168,7 +177,7 @@ const studioClaimSchema = z.object({
   request: z.record(z.string(), z.unknown()),
 }).passthrough();
 
-const studioRequestSchema = z.object({
+const studioSourceRequestSchema = z.object({
   description: z.string().max(4_000).default(""),
   product_url: z.string().max(2_000).default(""),
   research_input: z.string().max(12_000).default(""),
@@ -177,6 +186,83 @@ const studioRequestSchema = z.object({
   image_paths: z.array(z.string().min(1).max(400)).min(1).max(100),
   image_specs: z.array(sourcePreservingProductImageSpecSchema).min(1).max(100),
 }).passthrough();
+
+const coreFirstDraftAssetIdSchema = z.enum(coreFirstDraftAssetIds);
+const lowercaseSha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
+
+function exactCoreFirstDraftRecord<Value extends z.ZodType>(value: Value) {
+  return z.record(coreFirstDraftAssetIdSchema, value).superRefine((record, context) => {
+    const keys = Object.keys(record);
+    if (keys.length !== coreFirstDraftAssetIds.length
+        || coreFirstDraftAssetIds.some((assetId) => !Object.hasOwn(record, assetId))) {
+      context.addIssue({ code: "custom", message: "핵심 1차 이미지 역할 6개가 정확히 필요합니다." });
+    }
+  });
+}
+
+const preflightAssetAuditLineageSchema = exactCoreFirstDraftRecord(z.object({
+  digest: lowercaseSha256Schema,
+  role: z.enum(["creative", "detail"]),
+  auditMode: z.enum(["segmented-source-composite", "source-photo-catalog"]),
+  sourceRole: z.string().trim().min(1).max(40),
+}).strict());
+
+const studioRequestSchema = studioSourceRequestSchema.extend({
+  source_research_job_id: z.string().uuid(),
+  source_photo_sha256: lowercaseSha256Schema,
+  preflight_version: z.literal(1),
+  preflight_asset_storage_paths: exactCoreFirstDraftRecord(z.string().min(1).max(400)),
+  preflight_asset_digests: exactCoreFirstDraftRecord(lowercaseSha256Schema),
+  preflight_asset_audit_lineage: preflightAssetAuditLineageSchema,
+}).superRefine((request, context) => {
+  for (const assetId of coreFirstDraftAssetIds) {
+    const expectedRole = assetId === "portrait" || assetId === "wide" ? "creative" : "detail";
+    const lineage = request.preflight_asset_audit_lineage[assetId];
+    if (lineage.role !== expectedRole) {
+      context.addIssue({
+        code: "custom",
+        path: ["preflight_asset_audit_lineage", assetId, "role"],
+        message: "핵심 1차 이미지 역할이 원본 자산 계약과 일치하지 않습니다.",
+      });
+    }
+    if (lineage.digest !== request.preflight_asset_digests[assetId]) {
+      context.addIssue({
+        code: "custom",
+        path: ["preflight_asset_audit_lineage", assetId, "digest"],
+        message: "핵심 1차 이미지 해시 계보가 일치하지 않습니다.",
+      });
+    }
+  }
+});
+
+const studioPreflightMarkerKeys = [
+  "preflight_version",
+  "preflight_asset_storage_paths",
+  "preflight_asset_digests",
+  "preflight_asset_audit_lineage",
+] as const;
+
+function hasStudioPreflightMarker(request: Record<string, unknown>) {
+  return studioPreflightMarkerKeys.some((key) => Object.hasOwn(request, key));
+}
+
+type ParsedStudioRequest =
+  | { mode: "preflight"; data: z.infer<typeof studioRequestSchema> }
+  | { mode: "legacy"; data: z.infer<typeof studioSourceRequestSchema> };
+
+function parseStudioRequest(request: Record<string, unknown>): ParsedStudioRequest | null {
+  const sourceRequest = studioSourceRequestSchema.safeParse(request);
+  const preflightRequest = studioRequestSchema.safeParse(request);
+  if (!sourceRequest.success || (hasStudioPreflightMarker(request) && !preflightRequest.success)) return null;
+  return preflightRequest.success
+    ? { mode: "preflight", data: preflightRequest.data }
+    : { mode: "legacy", data: sourceRequest.data };
+}
+
+export function serverStudioRequestMode(request: unknown) {
+  if (!request || typeof request !== "object" || Array.isArray(request)) return "invalid" as const;
+  return parseStudioRequest(request as Record<string, unknown>)?.mode ?? "invalid" as const;
+}
 
 const regenerationRequestSchema = z.object({
   source_job_id: z.string().uuid(),
@@ -231,8 +317,11 @@ export function serverStudioRemoteWorkPlan() {
       count - (index * SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE),
     ),
   );
-  const settingCount = aiGeneratedAssetSpecs.filter((asset) => asset.identityPolicy.mode === "source-composite").length;
-  const sourceCount = aiGeneratedAssetSpecs.length - settingCount;
+  const finalSpecs = remainingFinalAssetIds.map((assetId) => (
+    aiGeneratedAssetSpecs.find((asset) => asset.id === assetId)!
+  ));
+  const settingCount = finalSpecs.filter((asset) => asset.identityPolicy.mode === "source-composite").length;
+  const sourceCount = finalSpecs.length - settingCount;
   const localeCount = planStudioLocalizedChunks(4).length;
   return Object.freeze({
     settingWaves: Object.freeze(waveSizes(settingCount)),
@@ -370,7 +459,9 @@ async function defaultAuditImage(input: {
     "You are a fail-closed product identity and package-label auditor.",
     input.auditMode === "source-evidence"
       ? "Image 1 is the exact authoritative role-specific crop used as the candidate's evidence panel. Audit every readable identity token in this crop, but do not require source pixels that were intentionally outside this crop. Image 2 is the decorated candidate."
-      : "Image 1 is the authoritative seller source. Image 2 is the candidate.",
+      : input.auditMode === "source-photo-catalog"
+        ? "Image 1 is the entire authoritative seller source photo. Image 2 is an explicit catalog fallback that must preserve that complete source frame inside a neutral layout without cropping, redrawing or claiming a lifestyle scene."
+        : "Image 1 is the authoritative seller source. Image 2 is the candidate.",
     "Transcribe visible brand, model, count, capacity, weight and unit tokens exactly and preserve English letter case.",
     "requiredTokens must contain every readable identity-critical token from the source; do not normalize spelling or case.",
     "candidateTokens must contain only tokens actually readable in the candidate.",
@@ -382,7 +473,9 @@ async function defaultAuditImage(input: {
       ? "productEdgesNatural is false for a rectangular photo patch, clipped product, halo, missing edge or low-confidence composite; evidencePanelIntact may be true."
       : input.auditMode === "source-evidence"
         ? "This is an explicit source-evidence role. A deliberate neutral evidence panel is allowed; evidencePanelIntact is true only if the complete role-specific crop is unaltered and not presented as a lifestyle composite. productEdgesNatural may be false for this permitted evidence panel."
-        : "This is a source-catalog role made from a source-derived isolated cutout on a neutral background. productEdgesNatural is false for a rectangular photo patch, clipped product, halo or missing edge. evidencePanelIntact is not required.",
+        : input.auditMode === "source-photo-catalog"
+          ? "This is an explicit full-frame source-photo catalog fallback. A rectangular source frame is intentional; evidencePanelIntact is true only when the complete source frame is visible and unaltered. productEdgesNatural is not required."
+          : "This is a source-catalog role made from a source-derived isolated cutout on a neutral background. productEdgesNatural is false for a rectangular photo patch, clipped product, halo or missing edge. evidencePanelIntact is not required.",
     input.auditMode === "scene-composite"
       ? "assignedSceneVisible is true only if a real spatial lifestyle environment with surface, depth and light is visible around the unchanged source product."
       : "assignedSceneVisible is not required for this factual evidence or catalog role.",
@@ -425,7 +518,7 @@ async function defaultSegmentSource(source: ServerStudioSource, signal: AbortSig
   return { segmentation: result, segmentationSource: new Uint8Array(segmentationSource) };
 }
 
-export function buildServerStudioMasterPrompt(request: z.infer<typeof studioRequestSchema>) {
+export function buildServerStudioMasterPrompt(request: z.infer<typeof studioSourceRequestSchema>) {
   const manual = request.manual_fields;
   const category = typeof manual.categoryHint === "string" ? manual.categoryHint : "일반 상품";
   const missingDedicatedEvidence = missingDedicatedEvidenceAssetIds(
@@ -597,7 +690,7 @@ async function touchClaim(
 }
 
 async function loadStudioSources(
-  request: z.infer<typeof studioRequestSchema>,
+  request: z.infer<typeof studioSourceRequestSchema>,
   download: NonNullable<ServerProductStudioDependencies["download"]>,
   signal: AbortSignal,
 ) {
@@ -648,8 +741,84 @@ async function loadStudioSources(
   return sources;
 }
 
-async function generateStudioMaster(
+const claimScopedUuidPart = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+
+function preflightClaimTokenFromPath(
+  sourceResearchJobId: string,
+  asset: (typeof aiGeneratedAssetSpecs)[number],
+  path: string,
+) {
+  const match = new RegExp(
+    `^results/(${claimScopedUuidPart})/claims/(${claimScopedUuidPart})/([^/]+)$`,
+    "i",
+  ).exec(path);
+  if (!match
+      || match[1].toLowerCase() !== sourceResearchJobId.toLowerCase()
+      || match[3] !== asset.file) return null;
+  return match[2].toLowerCase();
+}
+
+async function restoreFirstDraftAssets(
   request: z.infer<typeof studioRequestSchema>,
+  download: NonNullable<ServerProductStudioDependencies["download"]>,
+  signal: AbortSignal,
+) {
+  const restored = new Map<AiGeneratedAssetId, ServerStudioAsset>();
+  let sharedClaimToken = "";
+  for (let offset = 0; offset < coreFirstDraftAssetIds.length; offset += SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE) {
+    const assetIds = coreFirstDraftAssetIds.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE);
+    const batch = await Promise.all(assetIds.map(async (assetId) => {
+      const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+      const path = request.preflight_asset_storage_paths[assetId];
+      const lineage = request.preflight_asset_audit_lineage[assetId];
+      if (!asset) throw new ServerProductStudioError("preflight_asset_id_invalid", true);
+      const claimToken = preflightClaimTokenFromPath(request.source_research_job_id, asset, path);
+      if (!claimToken) throw new ServerProductStudioError("preflight_asset_path_invalid", true);
+      const bytes = await download(path, signal);
+      if (!bytes.byteLength || bytes.byteLength > MAX_SINGLE_SOURCE_BYTES) {
+        throw new ServerProductStudioError("preflight_asset_size_invalid", true);
+      }
+      const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata();
+      if (metadata.width !== asset.width || metadata.height !== asset.height || metadata.format !== "png") {
+        throw new ServerProductStudioError("preflight_asset_geometry_invalid", true);
+      }
+      const fingerprint = await fingerprintAsset(assetId, bytes);
+      if (fingerprint.digest !== request.preflight_asset_digests[assetId]
+          || fingerprint.digest !== lineage.digest) {
+        throw new ServerProductStudioError("preflight_asset_digest_mismatch", true);
+      }
+      return {
+        claimToken,
+        asset: {
+          id: assetId,
+          path,
+          bytes: new Uint8Array(bytes),
+          digest: fingerprint.digest,
+          fingerprint,
+          auditMode: lineage.auditMode,
+        } satisfies ServerStudioAsset,
+      };
+    }));
+    for (const candidate of batch) {
+      if (sharedClaimToken && candidate.claimToken !== sharedClaimToken) {
+        throw new ServerProductStudioError("preflight_asset_claim_mismatch", true);
+      }
+      // These six assets were already shown to and explicitly approved by the
+      // seller in stage one. Restore them byte-for-byte even when conservative
+      // catalog fallback layouts are visually close; every newly generated
+      // final-stage asset is still checked against all six restored fingerprints.
+      sharedClaimToken ||= candidate.claimToken;
+      restored.set(candidate.asset.id, candidate.asset);
+    }
+  }
+  if (restored.size !== coreFirstDraftAssetIds.length) {
+    throw new ServerProductStudioError("preflight_asset_set_incomplete", true);
+  }
+  return restored;
+}
+
+async function generateStudioMaster(
+  request: z.infer<typeof studioSourceRequestSchema>,
   sources: readonly ServerStudioSource[],
   dependencies: ServerProductStudioDependencies,
   signal: AbortSignal,
@@ -786,6 +955,49 @@ export async function buildPortableProductCutout(input: {
     .toBuffer();
 }
 
+export function serverStudioSegmentationAllowsCatalogFallback(error: unknown) {
+  return error instanceof ServerProductStudioError
+    && new Set([
+      "product_segmentation_low_confidence",
+      "product_segmentation_area_invalid",
+    ]).has(error.safeReason);
+}
+
+async function resolveStudioCutout(
+  sources: readonly ServerStudioSource[],
+  dependencies: ServerProductStudioDependencies,
+  signal: AbortSignal,
+) {
+  const main = sources.find((source) => source.role.trim().toLocaleLowerCase() === "main") ?? sources[0];
+  if (!main) throw new ServerProductStudioError("source_image_missing", true);
+  const front = sources.find((source) => (
+    source.path !== main.path && source.role.trim().toLocaleLowerCase() === "front"
+  ));
+  const candidates = front ? [main, front] : [main];
+  for (const source of candidates) {
+    try {
+      const segmented = await (dependencies.segmentSource ?? defaultSegmentSource)(
+        source,
+        perCallSignal(signal, TEXT_CALL_TIMEOUT_MS),
+      );
+      return {
+        cutout: new Uint8Array(await buildPortableProductCutout(segmented)),
+        catalogFallbackSource: null,
+        attemptedRoles: candidates.slice(0, candidates.indexOf(source) + 1).map((candidate) => candidate.role),
+      };
+    } catch (error) {
+      // Only deterministic mask quality failures may fall back. Gateway auth,
+      // schema, storage and timeout errors must remain terminal/fail-closed.
+      if (!serverStudioSegmentationAllowsCatalogFallback(error)) throw error;
+    }
+  }
+  return {
+    cutout: new Uint8Array(main.bytes),
+    catalogFallbackSource: main,
+    attemptedRoles: candidates.map((candidate) => candidate.role),
+  };
+}
+
 const genericSourceRoles = new Set(["main", "front", "extra"]);
 
 function requiresDedicatedEvidence(
@@ -911,7 +1123,7 @@ export async function buildServerSourceDerivedAsset(
   source: ServerStudioSource,
   cutout: Uint8Array,
   variant: number,
-  renderMode: "source-evidence" | "source-catalog" = asset.identityPolicy.mode === "source-evidence"
+  renderMode: "source-evidence" | "source-catalog" | "source-photo-catalog" = asset.identityPolicy.mode === "source-evidence"
     ? "source-evidence"
     : "source-catalog",
 ) {
@@ -1090,6 +1302,7 @@ function evaluatePortableAudit(input: unknown, auditMode: ServerStudioImageAudit
     ...(auditMode === "scene-composite" && !audit.productEdgesNatural ? ["geometry:product-edges"] : []),
     ...(auditMode === "scene-composite" && !audit.assignedSceneVisible ? ["semantic:assigned-scene"] : []),
     ...(auditMode === "source-evidence" && !audit.evidencePanelIntact ? ["geometry:evidence-panel"] : []),
+    ...(auditMode === "source-photo-catalog" && !audit.evidencePanelIntact ? ["geometry:source-photo-frame"] : []),
     ...(auditMode === "source-catalog" && !audit.productEdgesNatural ? ["geometry:product-edges"] : []),
   ];
   return { audit, label, failureDimensions: [...new Set(failureDimensions)] };
@@ -1137,10 +1350,18 @@ async function generateCandidate(input: {
   cutout: Uint8Array;
   attempt: number;
   retryLineage: readonly ServerStudioCandidateRejection[];
+  catalogFallbackSource?: ServerStudioSource | null;
   dependencies: ServerProductStudioDependencies;
   signal: AbortSignal;
 }): Promise<ServerStudioCandidateOutcome> {
-  const sourceResolution = resolveServerAssetSource(input.asset, input.sources);
+  const sourceResolution = input.catalogFallbackSource
+    && input.asset.identityPolicy.mode === "source-composite"
+    ? {
+      source: input.catalogFallbackSource,
+      auditMode: "source-photo-catalog" as const,
+      dedicatedEvidence: false,
+    }
+    : resolveServerAssetSource(input.asset, input.sources);
   const source = sourceResolution.source;
   const auditMode = sourceResolution.auditMode;
   const sceneRequired = auditMode === "scene-composite";
@@ -1151,9 +1372,9 @@ async function generateCandidate(input: {
       bytes: await buildServerSourceDerivedAsset(
         input.asset,
         source,
-        input.cutout,
+        auditMode === "source-photo-catalog" ? source.bytes : input.cutout,
         input.attempt,
-        auditMode,
+        auditMode === "source-photo-catalog" ? "source-photo-catalog" : auditMode,
       ),
       rejectedBackground: null,
     };
@@ -1195,6 +1416,7 @@ async function generateCandidate(input: {
         bytes: new Uint8Array(bytes),
         digest: fingerprint.digest,
         fingerprint,
+        auditMode,
       },
       rejectedBackground: generated.rejectedBackground,
     },
@@ -1206,6 +1428,7 @@ async function generateAssetWave(input: {
   specs: readonly (typeof aiGeneratedAssetSpecs)[number][];
   sources: readonly ServerStudioSource[];
   cutout: Uint8Array;
+  catalogFallbackSource?: ServerStudioSource | null;
   restored: Map<AiGeneratedAssetId, ServerStudioAsset>;
   jobId: string;
   claimToken: string;
@@ -1224,6 +1447,7 @@ async function generateAssetWave(input: {
         cutout: input.cutout,
         attempt,
         retryLineage: retryLineage.get(asset.id) ?? [],
+        catalogFallbackSource: input.catalogFallbackSource,
         dependencies: input.dependencies,
         signal: input.signal,
       }),
@@ -1276,6 +1500,7 @@ async function generateAssetSet(input: {
   specs: readonly (typeof aiGeneratedAssetSpecs)[number][];
   sources: readonly ServerStudioSource[];
   cutout: Uint8Array;
+  catalogFallbackSource?: ServerStudioSource | null;
   restored: Map<AiGeneratedAssetId, ServerStudioAsset>;
   jobId: string;
   claimToken: string;
@@ -1374,32 +1599,47 @@ async function runFullStudioClaim(
   dependencies: ServerProductStudioDependencies,
   signal: AbortSignal,
 ) {
-  const request = studioRequestSchema.safeParse(claim.request);
-  if (!request.success || !dependencies.download) {
+  const parsedRequest = parseStudioRequest(claim.request);
+  // New two-stage registration requests fail closed if even one preflight
+  // field is absent or malformed. Existing queued Studio jobs and product
+  // revisions predate that contract and intentionally continue through the
+  // source-only path, where all sixteen assets are generated as before.
+  if (!parsedRequest || !dependencies.download) {
     throw new ServerProductStudioError("studio_request_invalid", true);
   }
+  const request = parsedRequest.data;
   await stageResultPaths(dependencies, claim.id, claim.claim_token, aiGeneratedAssetSpecs);
-  const sources = await loadStudioSources(request.data, dependencies.download, signal);
+  const sources = await loadStudioSources(request, dependencies.download, signal);
   const mainSource = sources.find((source) => source.role.toLocaleLowerCase() === "main") ?? sources[0];
   if (!mainSource) throw new ServerProductStudioError("source_image_missing", true);
+  if (parsedRequest.mode === "preflight"
+      && createHash("sha256").update(mainSource.bytes).digest("hex") !== parsedRequest.data.source_photo_sha256) {
+    throw new ServerProductStudioError("source_photo_sha256_mismatch", true);
+  }
 
   await touchClaim(dependencies, claim.id, claim.claim_token);
-  const [master, segmentation] = await Promise.all([
-    generateStudioMaster(request.data, sources, dependencies, signal),
-    (dependencies.segmentSource ?? defaultSegmentSource)(
-      mainSource,
-      perCallSignal(signal, TEXT_CALL_TIMEOUT_MS),
-    ),
+  const [master, cutoutResolution, generated] = await Promise.all([
+    generateStudioMaster(request, sources, dependencies, signal),
+    resolveStudioCutout(sources, dependencies, signal),
+    parsedRequest.mode === "preflight"
+      ? restoreFirstDraftAssets(parsedRequest.data, dependencies.download, signal)
+      : Promise.resolve(new Map<AiGeneratedAssetId, ServerStudioAsset>()),
   ]);
-  const cutout = await buildPortableProductCutout(segmentation);
-  const generated = new Map<AiGeneratedAssetId, ServerStudioAsset>();
-  const settingSpecs = aiGeneratedAssetSpecs.filter((asset) => asset.identityPolicy.mode === "source-composite");
-  const sourceSpecs = aiGeneratedAssetSpecs.filter((asset) => asset.identityPolicy.mode !== "source-composite");
+  const finalSpecs = parsedRequest.mode === "preflight"
+    ? remainingFinalAssetIds.map((assetId) => {
+      const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+      if (!asset) throw new ServerProductStudioError("remaining_asset_contract_invalid", true);
+      return asset;
+    })
+    : [...aiGeneratedAssetSpecs];
+  const settingSpecs = finalSpecs.filter((asset) => asset.identityPolicy.mode === "source-composite");
+  const sourceSpecs = finalSpecs.filter((asset) => asset.identityPolicy.mode !== "source-composite");
   const touch = () => touchClaim(dependencies, claim.id, claim.claim_token);
 
-  // Three independent lanes are bounded together: generated settings use
-  // 3+3+2 waves, source-derived evidence uses 3-wide vision waves, and locale
-  // chunks use three concurrent structured calls. Peak remote concurrency is 9.
+  // New registration restores the first six before these lanes start and only
+  // generates the remaining ten. Legacy/revision work starts with an empty map
+  // and preserves the prior all-sixteen generation behavior. Both paths keep
+  // every remote lane below the same nine-call ceiling.
   if (SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE * 3 > SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY) {
     throw new ServerProductStudioError("server_studio_concurrency_contract_invalid", true);
   }
@@ -1409,7 +1649,8 @@ async function runFullStudioClaim(
       result: master,
       specs: settingSpecs,
       sources,
-      cutout,
+      cutout: cutoutResolution.cutout,
+      catalogFallbackSource: cutoutResolution.catalogFallbackSource,
       restored: generated,
       jobId: claim.id,
       claimToken: claim.claim_token,
@@ -1421,7 +1662,8 @@ async function runFullStudioClaim(
       result: master,
       specs: sourceSpecs,
       sources,
-      cutout,
+      cutout: cutoutResolution.cutout,
+      catalogFallbackSource: cutoutResolution.catalogFallbackSource,
       restored: generated,
       jobId: claim.id,
       claimToken: claim.claim_token,
@@ -1444,7 +1686,15 @@ async function runFullStudioClaim(
     jobId: claim.id,
     claimToken: claim.claim_token,
     status: "succeeded",
-    resultPayload: { ...result, asset_storage_paths: storagePaths },
+    resultPayload: {
+      ...result,
+      asset_storage_paths: storagePaths,
+      asset_audit_modes: Object.fromEntries(aiGeneratedAssetSpecs.map((asset) => [
+        asset.id,
+        generated.get(asset.id)?.auditMode ?? "unrecorded",
+      ])),
+      segmentation_attempted_roles: cutoutResolution.attemptedRoles,
+    },
     errorMessage: null,
   });
   if (!completed) throw new ServerProductStudioError("studio_completion_uncertain", true);
@@ -1498,7 +1748,7 @@ async function runRegenerationClaim(
     throw new ServerProductStudioError("asset_regeneration_source_invalid", true);
   }
   await stageResultPaths(dependencies, claim.id, claim.claim_token, [asset]);
-  const sourceRequest = studioRequestSchema.parse({
+  const sourceRequest = studioSourceRequestSchema.parse({
     description: "",
     product_url: "",
     research_input: "",
