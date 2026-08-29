@@ -18,6 +18,8 @@ import {
   normalizeGeneratedProductResearchDraft,
   parseGeneratedProductResearchJson,
   runServerProductResearchCron,
+  runServerProductResearchWakeBurst,
+  SERVER_PRODUCT_RESEARCH_WAKE_WIDTH,
   shouldTerminallyFailProductResearch,
 } from "../lib/server-product-research";
 
@@ -548,6 +550,43 @@ test("completion is retried exactly once after an uncertain RPC response", async
   });
   assert.equal(response.status, 200);
   assert.equal(completionCalls, 2);
+});
+
+test("an enqueue wake claims a bounded three-job burst so an older job cannot strand the current draft", async () => {
+  let claimCalls = 0;
+  let completionCalls = 0;
+  const outcomes = await runServerProductResearchWakeBurst({
+    analyze: async () => validResult(),
+    rpc: async (name) => {
+      if (name === "sellerpilot_service_claim_product_research_ai_job") {
+        claimCalls += 1;
+        return claimCalls <= 2
+          ? {
+            data: {
+              ...claim(),
+              id: `10000000-0000-4000-8000-00000000000${claimCalls}`,
+              claim_token: `20000000-0000-4000-8000-00000000000${claimCalls}`,
+            },
+            error: null,
+          }
+          : { data: null, error: null };
+      }
+      if (name === "sellerpilot_service_touch_product_research_ai_job") {
+        return { data: "running", error: null };
+      }
+      if (name === "sellerpilot_service_complete_product_research_ai_job") {
+        completionCalls += 1;
+        return { data: true, error: null };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+  });
+
+  assert.equal(SERVER_PRODUCT_RESEARCH_WAKE_WIDTH, 3);
+  assert.equal(outcomes.length, 3);
+  assert.equal(claimCalls, 3);
+  assert.equal(completionCalls, 2);
+  assert.ok(outcomes.every((outcome) => outcome.status === "fulfilled"));
 });
 
 test("Hobby deployment moves product-research scheduling out of Vercel cron", async () => {

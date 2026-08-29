@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   analyzeServerProductResearch,
   runOneServerProductResearch,
+  runServerProductResearchWakeBurst,
   type ServerProductResearchDependencies,
 } from "./server-product-research";
 import { supabaseUrl } from "./supabase/config";
@@ -41,17 +42,17 @@ export function configuredServerProductResearchDependencies(): ServerProductRese
 }
 
 export async function wakeServerProductResearchAfterResponse() {
-  try {
-    const response = await runOneServerProductResearch(
-      configuredServerProductResearchDependencies(),
-    );
-    if (response.status >= 500) {
+  const outcomes = await runServerProductResearchWakeBurst(
+    configuredServerProductResearchDependencies(),
+  );
+  for (const outcome of outcomes) {
+    if (outcome.status === "rejected") {
+      console.error("server product research after wakeup threw", { status: 503 });
+    } else if (outcome.value.status >= 500) {
       console.error("server product research after wakeup failed", {
-        status: response.status,
+        status: outcome.value.status,
       });
     }
-  } catch {
-    console.error("server product research after wakeup threw", { status: 503 });
   }
 }
 

@@ -20,6 +20,7 @@ import {
 // unrelated Vercel Sandbox synthetic-check implementation.
 export const SERVER_PRODUCT_RESEARCH_MODEL = "openai/gpt-5.4-mini";
 export const SERVER_PRODUCT_RESEARCH_VERSION = "sellerpilot-vercel-product-research/1.0";
+export const SERVER_PRODUCT_RESEARCH_WAKE_WIDTH = 3;
 
 const MAX_REFERENCE_COUNT = 5;
 const MAX_REFERENCE_TEXT_CHARACTERS = 18_000;
@@ -690,6 +691,17 @@ export async function runOneServerProductResearch(
     return jsonResponse({ message: "상품정보 분석 작업 소유권이 변경되었습니다." }, 409);
   }
   return jsonResponse({ ok: true, status: "succeeded", processed: 1 });
+}
+
+export function runServerProductResearchWakeBurst(
+  dependencies: ServerProductResearchDependencies,
+) {
+  return Promise.allSettled(
+    Array.from(
+      { length: SERVER_PRODUCT_RESEARCH_WAKE_WIDTH },
+      () => runOneServerProductResearch(dependencies),
+    ),
+  );
 }
 
 export async function runServerProductResearchCron(
