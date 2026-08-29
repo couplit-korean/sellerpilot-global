@@ -38,6 +38,11 @@
 .mobile-push-gate,
 .mobile-push-chip { z-index: var(--layer-push-prompt); }
 
+/* Browser push status is part of the page flow and must scroll beneath the
+   sticky header. The standalone gate keeps the prompt layer above. */
+.app-main > .mobile-push-gate.browser,
+.app-main > .mobile-push-chip { z-index: auto; }
+
 /* Only the toast rules needed by the rendered notice structure live here.
    The broader customer-experience stylesheet is intentionally not imported. */
 .toast {

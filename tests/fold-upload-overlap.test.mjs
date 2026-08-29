@@ -60,3 +60,18 @@ test("mobile registration, a long toast, push status and navigation do not share
   assert.match(interactionStyles, /\.toast > \.toast-copy > span\s*\{[^}]*overflow-wrap:\s*anywhere/);
   assert.match(interactionStyles, /\.mobile-push-gate\.browser\s*\{[^}]*max-height:\s*calc\(100dvh - var\(--mobile-nav-clearance, 78px\) - var\(--mobile-toast-lane-height, 0px\) - 16px\);[^}]*overflow-y:\s*auto/);
 });
+
+test("flow push status scrolls below the sticky header while the standalone gate keeps its prompt layer", async () => {
+  const [styles, interactionStyles] = await Promise.all([
+    readFile(mobileStylesUrl, "utf8"),
+    readFile(interactionStylesUrl, "utf8"),
+  ]);
+  const { contract } = foldSafeContract(styles);
+  const promptLayer = interactionStyles.search(/\.mobile-push-gate,\s*\.mobile-push-chip\s*\{[^}]*z-index:\s*var\(--layer-push-prompt\)/);
+  const flowLayer = interactionStyles.search(/\.app-main > \.mobile-push-gate\.browser,\s*\.app-main > \.mobile-push-chip\s*\{[^}]*z-index:\s*auto/);
+
+  assert.ok(promptLayer >= 0, "missing the shared push prompt layer");
+  assert.ok(flowLayer > promptLayer, "the page-flow override must follow the shared prompt layer");
+  assert.match(contract, /\.app-main > \.mobile-push-gate\.browser,\s*\.app-main > \.mobile-push-chip\s*\{[^}]*position:\s*relative/);
+  assert.match(styles, /\.mobile-push-gate\.standalone\s*\{[^}]*z-index:\s*130/);
+});
