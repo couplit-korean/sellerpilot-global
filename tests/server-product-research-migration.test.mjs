@@ -11,6 +11,10 @@ const secretGuardFixMigrationUrl = new URL(
   "../supabase/migrations/20260828135100_fix_server_product_research_secret_guard.sql",
   import.meta.url,
 );
+const serverCompletionMigrationUrl = new URL(
+  "../supabase/migrations/20260829114703_accept_server_product_research_completion.sql",
+  import.meta.url,
+);
 const RESEARCH_JOB_ID = "10000000-0000-4000-8000-000000000001";
 const EXPIRED_DESKTOP_JOB_ID = "10000000-0000-4000-8000-000000000002";
 const STUDIO_JOB_ID = "10000000-0000-4000-8000-000000000003";
@@ -70,6 +74,7 @@ async function fixture() {
   `);
   await db.exec(await readFile(migrationUrl, "utf8"));
   await db.exec(await readFile(secretGuardFixMigrationUrl, "utf8"));
+  await db.exec(await readFile(serverCompletionMigrationUrl, "utf8"));
   return db;
 }
 
@@ -78,9 +83,10 @@ async function assumeServiceRole(db) {
 }
 
 test("server research migration is service-only and structurally isolated", async () => {
-  const [migration, secretGuardFixMigration] = await Promise.all([
+  const [migration, secretGuardFixMigration, serverCompletionMigration] = await Promise.all([
     readFile(migrationUrl, "utf8"),
     readFile(secretGuardFixMigrationUrl, "utf8"),
+    readFile(serverCompletionMigrationUrl, "utf8"),
   ]);
   assert.match(migration, /job\.kind = 'product_research'/);
   assert.doesNotMatch(migration, /job\.kind\s+in\s*\([^)]*product_studio/i);
@@ -101,6 +107,10 @@ test("server research migration is service-only and structurally isolated", asyn
   }
   assert.match(secretGuardFixMigration, /v_rewritten := replace\(v_definition, v_guard, ''\)/);
   assert.match(secretGuardFixMigration, /grant execute on function public\.sellerpilot_service_claim_product_research_ai_job\(text\)[\s\S]*to service_role/);
+  assert.match(serverCompletionMigration, /p_result_payload->>'mode' not in \('cli-research', 'server-research'\)/);
+  assert.match(serverCompletionMigration, /security definer[\s\S]*set search_path = ''/);
+  assert.match(serverCompletionMigration, /revoke all on function public\.sellerpilot_service_complete_product_research_ai_job\(uuid, uuid, jsonb\)[\s\S]*from public, anon, authenticated, service_role/);
+  assert.match(serverCompletionMigration, /grant execute on function public\.sellerpilot_service_complete_product_research_ai_job\(uuid, uuid, jsonb\)[\s\S]*to service_role/);
 });
 
 test("server claimant claims research only and never takes a studio job", async () => {
@@ -194,7 +204,7 @@ test("server completion is claim-fenced and exactly idempotent", async () => {
       ),
       "running",
     );
-    const result = JSON.stringify({ mode: "cli-research", summary: "first" });
+    const result = JSON.stringify({ mode: "server-research", summary: "first" });
     assert.equal(
       await scalar(
         db,
@@ -215,7 +225,7 @@ test("server completion is claim-fenced and exactly idempotent", async () => {
       await scalar(
         db,
         "select public.sellerpilot_service_complete_product_research_ai_job($1,$2,$3::jsonb)",
-        [RESEARCH_JOB_ID, claimed.claim_token, JSON.stringify({ mode: "cli-research", summary: "changed" })],
+        [RESEARCH_JOB_ID, claimed.claim_token, JSON.stringify({ mode: "server-research", summary: "changed" })],
       ),
       false,
     );
@@ -241,12 +251,61 @@ test("server completion is claim-fenced and exactly idempotent", async () => {
       await scalar(
         db,
         "select public.sellerpilot_service_complete_product_research_ai_job($1,$2,$3::jsonb)",
-        [RESEARCH_JOB_ID, retried.claim_token, JSON.stringify({ mode: "cli-research", summary: "retry" })],
+        [RESEARCH_JOB_ID, retried.claim_token, JSON.stringify({ mode: "server-research", summary: "retry" })],
       ),
       true,
     );
   } finally {
     await db.close();
+  }
+});
+
+test("server completion keeps cutover compatibility and rejects unknown result modes", async () => {
+  const db = await fixture();
+  try {
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs(id,kind,request_payload)
+       values ($1,'product_research','{"research_input":"research me"}')`,
+      [RESEARCH_JOB_ID],
+    );
+    await assumeServiceRole(db);
+    const claimed = await scalar(
+      db,
+      "select public.sellerpilot_service_claim_product_research_ai_job('test/1.0')",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_product_research_ai_job($1,$2,$3::jsonb)",
+        [RESEARCH_JOB_ID, claimed.claim_token, JSON.stringify({ mode: "cli-research" })],
+      ),
+      true,
+    );
+  } finally {
+    await db.close();
+  }
+
+  const unknownModeDb = await fixture();
+  try {
+    await unknownModeDb.query(
+      `insert into sellerpilot_private.ai_cli_jobs(id,kind,request_payload)
+       values ($1,'product_research','{"research_input":"research me"}')`,
+      [RESEARCH_JOB_ID],
+    );
+    await assumeServiceRole(unknownModeDb);
+    const claimed = await scalar(
+      unknownModeDb,
+      "select public.sellerpilot_service_claim_product_research_ai_job('test/1.0')",
+    );
+    await assert.rejects(
+      unknownModeDb.query(
+        "select public.sellerpilot_service_complete_product_research_ai_job($1,$2,$3::jsonb)",
+        [RESEARCH_JOB_ID, claimed.claim_token, JSON.stringify({ mode: "unknown-research" })],
+      ),
+      /invalid product research result/,
+    );
+  } finally {
+    await unknownModeDb.close();
   }
 });
 
@@ -343,7 +402,7 @@ test("a stale server completion cannot overwrite a later claim", async () => {
       await scalar(
         db,
         "select public.sellerpilot_service_complete_product_research_ai_job($1,$2,$3::jsonb)",
-        [RESEARCH_JOB_ID, first.claim_token, JSON.stringify({ mode: "cli-research" })],
+        [RESEARCH_JOB_ID, first.claim_token, JSON.stringify({ mode: "server-research" })],
       ),
       false,
     );

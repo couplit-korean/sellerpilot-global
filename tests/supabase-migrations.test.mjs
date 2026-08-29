@@ -471,6 +471,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260829031000_bound_server_product_studio_concurrency.sql",
       "20260829080000_create_manual_mvp_products.sql",
       "20260829080317_fail_closed_overseas_listing_create.sql",
+      "20260829114703_accept_server_product_research_completion.sql",
       "20260829165803_enforce_category_publication_environment_and_market.sql",
     ]);
     for (const name of migrationNames) {
