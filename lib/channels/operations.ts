@@ -24,6 +24,7 @@ import {
   type ChannelCapabilityKey,
 } from "./catalog";
 import { qoo10ProductionPlace, qoo10ResultMessage } from "./qoo10";
+import { qoo10VerifiedListingRemoteState } from "./qoo10-listing-publication";
 import {
   ebayAsqMarketplaceId,
   ebayAsqMarketplaceIdFromSiteCode,
@@ -1267,6 +1268,45 @@ function qoo10VerificationStep(ok: boolean, status: number, imageCount: number):
   };
 }
 
+function qoo10PublicationExpectation(input: ExecuteInput) {
+  if (input.arguments.publicationStateContract !== listingRemoteStateContractVersion) return null;
+  const expectedLocale = typeof input.arguments.publicationExpectedLocale === "string"
+    ? input.arguments.publicationExpectedLocale
+    : "";
+  const expectedFingerprint = typeof input.arguments.publicationExpectedFingerprint === "string"
+    ? input.arguments.publicationExpectedFingerprint
+    : "";
+  const expectedImageCount = typeof input.arguments.publicationExpectedImageCount === "number"
+    ? input.arguments.publicationExpectedImageCount
+    : Number.NaN;
+  return { expectedLocale, expectedFingerprint, expectedImageCount };
+}
+
+function qoo10PublicationReadbackStep(
+  remote: RemoteResponse,
+  remoteState: VerifiedListingRemoteState | null,
+): ChannelOperationStep {
+  const readbackStep = step("GetItemDetailInfo-publication-readback", remote);
+  const verified = readbackStep.ok && Boolean(remoteState);
+  return {
+    ...readbackStep,
+    ok: verified,
+    data: {
+      ...readbackStep.data,
+      sellerpilotVerification: verified
+        ? "QOO10_PUBLICATION_STATE_VERIFIED"
+        : "QOO10_PUBLICATION_STATE_UNVERIFIED",
+      ...(remoteState
+        ? {
+            sellerpilotRemoteVisibility: remoteState.visibility,
+            sellerpilotProviderStatus: remoteState.providerStatus,
+            sellerpilotDetailImageCount: remoteState.imageCount,
+          }
+        : { sellerpilotReconciliationRequired: true }),
+    },
+  };
+}
+
 function operationDelay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1447,6 +1487,31 @@ function qoo10PriceUpdateRequest(
 
 async function executeQoo10(input: ExecuteInput) {
   const suppliedParams = stringMap(input.arguments, "params");
+  if (input.operation === "listing.create"
+      && listingPublicationIntentFromArguments(input.arguments) === "safe_test") {
+    return result(input, [{
+      name: "safe-test-prewrite-fence",
+      ok: false,
+      status: 422,
+      data: {
+        ResultCode: -9999,
+        ResultMsg: "QOO10_SAFE_TEST_CREATE_UNSUPPORTED",
+        sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+      },
+    }]);
+  }
+  if (input.operation === "listing.stop" && suppliedParams.Status !== "1") {
+    return result(input, [{
+      name: "stop-status-prewrite-fence",
+      ok: false,
+      status: 422,
+      data: {
+        ResultCode: -9002,
+        ResultMsg: "QOO10_STOP_REQUIRES_ON_QUEUE_STATUS_1",
+        sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+      },
+    }], suppliedParams.ItemCode);
+  }
   const inventoryQuantity = input.operation === "inventory.update"
     ? integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 })
     : null;
@@ -1553,7 +1618,7 @@ async function executeQoo10(input: ExecuteInput) {
         ?.toString()
       : undefined;
   const remoteId = responseRemoteId
-    ?? (input.operation === "listing.update" ? params.ItemCode : undefined);
+    ?? (input.operation === "listing.update" || input.operation === "listing.stop" ? params.ItemCode : undefined);
   if (input.operation === "inventory.update") {
     const itemCode = params.ItemCode;
     if (!createStep.ok) return result(input, [createStep], itemCode || remoteId);
@@ -1576,6 +1641,42 @@ async function executeQoo10(input: ExecuteInput) {
       if (lastVerification.ok) return result(input, [createStep, lastVerification], itemCode || remoteId);
     }
     return result(input, [createStep, lastVerification!], itemCode || remoteId);
+  }
+  if (input.operation === "listing.stop") {
+    if (!createStep.ok || !remoteId) return result(input, [createStep], remoteId);
+    const expectation = qoo10PublicationExpectation(input);
+    if (!expectation) return result(input, [createStep], remoteId);
+    let lastReadbackStep: ChannelOperationStep | null = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt > 0) await operationDelay(750 * attempt);
+      let readback: RemoteResponse;
+      try {
+        readback = await qoo10Request({
+          payload: input.payload,
+          service: "ItemsLookup",
+          method: "GetItemDetailInfo",
+          version: "1.2",
+          params: { ItemCode: remoteId, SellerCode: params.SellerCode ?? "" },
+        });
+      } catch {
+        readback = {
+          response: new Response(null, { status: 503 }),
+          text: "",
+          data: { ResultCode: -9999, ResultMsg: "QOO10_PUBLICATION_READBACK_UNAVAILABLE" },
+        };
+      }
+      const remoteState = qoo10VerifiedListingRemoteState({
+        operation: input.operation,
+        remoteId,
+        resultObject: readback.data.ResultObject,
+        ...expectation,
+      });
+      lastReadbackStep = qoo10PublicationReadbackStep(readback, remoteState);
+      if (lastReadbackStep.ok) {
+        return result(input, [createStep, lastReadbackStep], remoteId, undefined, remoteState ?? undefined);
+      }
+    }
+    return result(input, [createStep, lastReadbackStep!], remoteId);
   }
   if ((input.operation !== "listing.create" && input.operation !== "listing.update") || !createStep.ok || !remoteId) {
     return result(input, [createStep], remoteId);
@@ -1600,6 +1701,7 @@ async function executeQoo10(input: ExecuteInput) {
   let readbackStatus = 422;
   let readbackImageCount = 0;
   let updateReadbackStep: ChannelOperationStep | null = null;
+  const publicationExpectation = qoo10PublicationExpectation(input);
   for (let attempt = 0; detailUpdateStep.ok && attempt < 4; attempt += 1) {
     if (attempt > 0) await operationDelay(750 * attempt);
     const readback = await qoo10Request({
@@ -1612,20 +1714,51 @@ async function executeQoo10(input: ExecuteInput) {
     const readbackStep = step("GetItemDetailInfo", readback);
     readbackStatus = readbackStep.status;
     readbackImageCount = qoo10ImageCount(qoo10DetailHtml(readback.data.ResultObject));
+    const remoteState = publicationExpectation
+      ? qoo10VerifiedListingRemoteState({
+          operation: input.operation,
+          remoteId,
+          resultObject: readback.data.ResultObject,
+          expectedSellerCode: params.SellerCode || undefined,
+          ...publicationExpectation,
+        })
+      : null;
+    const publicationReadbackStep = publicationExpectation
+      ? qoo10PublicationReadbackStep(readback, remoteState)
+      : null;
     if (
       readbackStep.ok
       && expectedDetailImages >= minimumExpectedDetailImages
       && readbackImageCount >= expectedDetailImages
+      && (!publicationReadbackStep || publicationReadbackStep.ok)
     ) {
       if (input.operation === "listing.update") {
         updateReadbackStep = listingUpdateReadbackStep("detail-image-readback", readback, input.channel, input.arguments);
         updateReadbackStep.ok = updateReadbackStep.ok && readbackImageCount >= expectedDetailImages;
         updateReadbackStep.data = { ...updateReadbackStep.data, detailImageCount: readbackImageCount };
         if (!updateReadbackStep.ok) continue;
-        return result(input, [createStep, detailUpdateStep, updateReadbackStep], remoteId);
+        return result(
+          input,
+          [createStep, detailUpdateStep, updateReadbackStep, ...(publicationReadbackStep ? [publicationReadbackStep] : [])],
+          remoteId,
+          undefined,
+          remoteState ?? undefined,
+        );
       }
-      return result(input, [createStep, detailUpdateStep, qoo10VerificationStep(true, readbackStatus, readbackImageCount)], remoteId);
+      return result(
+        input,
+        [
+          createStep,
+          detailUpdateStep,
+          qoo10VerificationStep(true, readbackStatus, readbackImageCount),
+          ...(publicationReadbackStep ? [publicationReadbackStep] : []),
+        ],
+        remoteId,
+        undefined,
+        remoteState ?? undefined,
+      );
     }
+    if (publicationReadbackStep && !publicationReadbackStep.ok) updateReadbackStep = publicationReadbackStep;
   }
 
   if (input.operation === "listing.update") {
