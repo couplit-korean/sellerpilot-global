@@ -1728,7 +1728,7 @@ export async function elevenstSellerXmlRequest(input: {
     || elevenstNamespacedXmlValue(xml, "prdNo");
   const productNode = elevenstXmlNodes(xml, "Product")[0] ?? "";
   const productScalarFields = [
-    "prdNo", "sellerPrdCd", "prdNm", "brand", "orgnNmVal", "prdStatCd",
+    "prdNo", "sellerPrdCd", "prdNm", "brand", "orgnNmVal", "prdStatCd", "selStatCd", "selStatNm",
     "prdImage01", "prdImage02", "prdImage03", "prdImage04", "htmlDetail",
     "asDetail", "rtngExchDetail",
   ] as const;

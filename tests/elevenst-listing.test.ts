@@ -263,8 +263,8 @@ test("11st verification listing creates, reads back, and stops the exact remote 
     if (call.url.endsWith("/rest/prodservices/product")) {
       return new Response("<ClientMessage><message>created</message><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
     }
-    if (call.url.endsWith("/rest/prodmarketservice/prodmarket")) {
-      return new Response("<ns2:products><ns2:product><prdNo>123456789</prdNo><sellerPrdCd>QA-001</sellerPrdCd><selStatCd>103</selStatCd></ns2:product></ns2:products>", { status: 200 });
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/123456789")) {
+      return new Response(exactProductXml("123456789", completeProduct({ sellerPrdCd: "QA-001" })), { status: 200 });
     }
     return new Response("<ClientMessage><message>stopped</message><resultCode>200</resultCode></ClientMessage>", { status: 200 });
   };
@@ -286,14 +286,14 @@ test("11st verification listing creates, reads back, and stops the exact remote 
     assert.equal(result.remoteId, "123456789");
     assert.equal(result.publicUrl, "https://www.11st.co.kr/products/123456789");
     assert.deepEqual(result.steps.map((step) => step.name), ["product-create", "product-readback", "verification-stop-display"]);
-    assert.deepEqual(calls.map((call) => call.method), ["GET", "POST", "POST", "PUT"]);
+    assert.deepEqual(calls.map((call) => call.method), ["GET", "POST", "GET", "PUT"]);
     assert.match(calls[0].url, /sellerprodcode\/QA-001$/);
     assert.match(calls[1].body, /SellerPilot &lt;QA&gt;/);
     assert.match(calls[1].body, /<aplBgnDy>2026\/08\/24<\/aplBgnDy>/);
     assert.match(calls[1].body, /<aplEndDy>2029\/08\/23<\/aplEndDy>/);
     assert.match(calls[1].body, /<ProductCertGroup><crtfGrpTypCd>01<\/crtfGrpTypCd><crtfGrpObjClfCd>03<\/crtfGrpObjClfCd><\/ProductCertGroup>/);
     assert.doesNotMatch(calls[1].body, /<certTypeCd>|<certKey>/);
-    assert.match(calls[2].body, /<prdNo>123456789<\/prdNo>/);
+    assert.match(calls[2].url, /prodmarket\/123456789$/);
     assert.match(calls[3].url, /stopdisplay\/123456789$/);
   } finally {
     globalThis.fetch = originalFetch;
@@ -316,8 +316,8 @@ test("11st listing reconciles a timed-out create by seller product code without 
       return new Response("<Product><prdNo>987654321</prdNo><sellerPrdCd>QA-TIMEOUT-001</sellerPrdCd></Product>", { status: 200 });
     }
     if (call.url.endsWith("/rest/prodservices/product")) throw new DOMException("timed out", "TimeoutError");
-    if (call.url.endsWith("/rest/prodmarketservice/prodmarket")) {
-      return new Response("<ns2:products><ns2:product><prdNo>987654321</prdNo><sellerPrdCd>QA-TIMEOUT-001</sellerPrdCd><selStatCd>103</selStatCd></ns2:product></ns2:products>", { status: 200 });
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/987654321")) {
+      return new Response("<Product><prdNo>987654321</prdNo><sellerPrdCd>QA-TIMEOUT-001</sellerPrdCd></Product>", { status: 200 });
     }
     return new Response("<ClientMessage><message>stopped</message><resultCode>200</resultCode></ClientMessage>", { status: 200 });
   };
@@ -510,7 +510,7 @@ test("11st reconciles an accepted create response without productNo and never re
     if (call.url.endsWith("/rest/prodservices/product")) {
       return new Response("<ClientMessage><message>created</message><resultCode>200</resultCode></ClientMessage>", { status: 200 });
     }
-    return new Response("<ns2:products><ns2:product><prdNo>777888999</prdNo><sellerPrdCd>QA-NO-ID-001</sellerPrdCd></ns2:product></ns2:products>", { status: 200 });
+    return new Response("<Product><prdNo>777888999</prdNo><sellerPrdCd>QA-NO-ID-001</sellerPrdCd></Product>", { status: 200 });
   };
   try {
     const result = await executeChannelOperation({
