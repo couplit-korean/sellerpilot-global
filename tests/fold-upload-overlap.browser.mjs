@@ -17,6 +17,7 @@ const viewports = [
   { width: 280, height: 653 },
   { width: 320, height: 844 },
   { width: 344, height: 844 },
+  { width: 360, height: 844 },
   { width: 390, height: 844 },
   { width: 412, height: 844 },
 ];
@@ -650,7 +651,7 @@ test("Fold cover dashboard gives marketplace status cards readable rows without 
         assert.ok(card.left >= -0.5 && card.right <= width + 0.5, `${width}px CS card ${index + 1} must stay inside the viewport`);
       }
 
-      assert.equal(geometry.channelColumns, width <= 344 ? 1 : 2, `${width}px dashboard channel grid uses the wrong responsive column count`);
+      assert.equal(geometry.channelColumns, width <= 360 ? 1 : 2, `${width}px dashboard channel grid uses the wrong responsive column count`);
       assert.equal(geometry.channelCards.length, 2, `${width}px dashboard fixture must render two channel cards`);
       for (const [index, card] of geometry.channelCards.entries()) {
         assert.ok(card.width > 0 && card.height >= 44, `${width}px channel card ${index + 1} must remain touchable`);
@@ -659,7 +660,7 @@ test("Fold cover dashboard gives marketplace status cards readable rows without 
         assert.ok(card.textLines <= 2, `${width}px channel card ${index + 1} name became a vertical label (${card.textLines} lines)`);
       }
 
-      if (width <= 344) {
+      if (width <= 360) {
         assert.ok(geometry.channelCards[1].top >= geometry.channelCards[0].bottom - 0.5, `${width}px channel cards must occupy separate rows`);
       } else {
         assert.ok(Math.abs(geometry.channelCards[1].top - geometry.channelCards[0].top) <= 0.5, `${width}px wider phones should retain the two-column channel row`);

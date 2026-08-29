@@ -114,7 +114,8 @@ import { createRevisionPhotoSelectionFence, releaseStaleRevisionPhoto } from "..
 import { settleWithConcurrency } from "../lib/promise-pool";
 import { assertStudioPhotoBatch } from "../lib/studio-photo-upload";
 import { withPromiseTimeout } from "../lib/promise-timeout";
-import { isStudioExecutionReady, type StudioWorkerReadiness } from "../lib/studio-worker-readiness";
+import { isStudioExecutionReady } from "../lib/studio-worker-readiness";
+import { useStudioWorkerReadiness } from "./use-studio-worker-readiness";
 import { fetchJsonWithDeadline } from "../lib/bounded-json-request";
 import { classifyExactJobAdmission } from "../lib/exact-job-admission";
 import { assertStudioSourceDimensions, assertStudioSourceFile } from "../lib/studio-source-photo-policy";
@@ -2447,7 +2448,7 @@ function longRunningAnalysisState(
   return isFresh(activityUpdatedAt) && isFresh(workerLastSeenAt) ? "connected" : "attention";
 }
 
-function RegistrationActivityPage({ activities, activityState, aiRuntime, snapshotGeneratedAt, displayProducts, loading, filter, onFilterChange, onRefresh, onOpenProduct, onRetryProduct, onRecoverAnalysis, onStopActivity, onNewProduct, onExternalActions }: {
+function RegistrationActivityPage({ activities, activityState, aiRuntime, snapshotGeneratedAt, displayProducts, loading, filter, onFilterChange, onRefresh, onOpenProduct, onRetryProduct, onRecoverAnalysis, onStopActivity, onNewProduct, onExternalActions, authenticatedFetch }: {
   activities: OperationsSnapshot["registrationActivities"];
   activityState: NonNullable<OperationsSnapshot["registrationActivityState"]>;
   aiRuntime: OperationsSnapshot["aiRuntime"];
@@ -2463,11 +2464,22 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
   onStopActivity: (activity: RegistrationActivity) => Promise<void>;
   onNewProduct: () => void;
   onExternalActions: () => void;
+  authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>;
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [recoveringActivityId, setRecoveringActivityId] = useState("");
   const [stoppingActivityId, setStoppingActivityId] = useState("");
   const [expandedActivityId, setExpandedActivityId] = useState("");
+  const studioWorkerReadiness = useStudioWorkerReadiness(authenticatedFetch);
+  const studioExecutionReady = isStudioExecutionReady(studioWorkerReadiness);
+  const recoveryUnavailableLabel = !studioWorkerReadiness
+    ? "서버 AI 확인 중"
+    : studioWorkerReadiness.reason === "gateway_unverified"
+      || studioWorkerReadiness.reason === "gateway_verification_failed"
+      ? "Gateway 점검 필요"
+      : !studioExecutionReady
+        ? "서버 AI 연결 필요"
+        : "";
   const productMap = useMemo(() => new Map(displayProducts.map((product) => [product.sourceId, product])), [displayProducts]);
   const filtered = activities.filter((activity) => registrationActivityMatchesFilter(activity, filter));
   const counts = {
@@ -2551,7 +2563,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} ${isActive ? "실시간 작업 상태" : "작업 상세"}`}><header><span><Activity size={14} /><b>{isActive ? "현재 작업 상태" : "작업 상세"}</b></span><em>{isActive ? "10초마다 운영 원장 갱신" : "종료 상태 · 채널 응답"}</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl><p>{activity.message || statusDetail} {progress.label}</p>{activity.channels.length > 0 && <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div>}</section>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId)}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "서버 저장 입력으로 AI 분석 재시도"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
+          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId) || !studioExecutionReady} title={!studioExecutionReady ? studioWorkerReadiness?.message : undefined}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : !studioExecutionReady ? <AlertCircle size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : !studioExecutionReady ? recoveryUnavailableLabel : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "서버 저장 입력으로 AI 분석 재시도"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;
@@ -2600,7 +2612,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [firstDraftGenerated, setFirstDraftGenerated] = useState(false);
   const [queuedJobId, setQueuedJobId] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
-  const [studioWorkerReadiness, setStudioWorkerReadiness] = useState<StudioWorkerReadiness | null>(null);
+  const studioWorkerReadiness = useStudioWorkerReadiness(authenticatedFetch);
   const [analyzedProductName, setAnalyzedProductName] = useState(initialProduct?.name ?? "");
   const [analyzedProductId, setAnalyzedProductId] = useState<string | null>(initialProduct?.id ?? null);
   const resolvedProductId = analyzedProductId ?? initialProduct?.id ?? null;
@@ -2715,57 +2727,6 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       const payload = await response.json() as { templates?: CommerceTemplate[] };
       setCommerceTemplates(Array.isArray(payload.templates) ? payload.templates : []);
     }).catch(() => null);
-  }, [authenticatedFetch]);
-
-  useEffect(() => {
-    let disposed = false;
-    const loadStudioWorkerReadiness = async () => {
-      try {
-        const response = await authenticatedFetch("/api/ai/product-studio", { cache: "no-store" });
-        const payload = await response.json().catch(() => null) as Partial<StudioWorkerReadiness> | null;
-        if (disposed) return;
-        const validReason = payload?.reason === "ready"
-          || payload?.reason === "worker_missing"
-          || payload?.reason === "heartbeat_missing"
-          || payload?.reason === "heartbeat_stale"
-          || payload?.reason === "status_unavailable"
-          || payload?.reason === "configuration_missing"
-          || payload?.reason === "token_missing_or_expired"
-          || payload?.reason === "token_mismatch"
-          || payload?.reason === "gateway_unverified"
-          || payload?.reason === "gateway_verification_failed";
-        if (response.ok
-            && typeof payload?.available === "boolean"
-            && validReason
-            && typeof payload.message === "string"
-            && typeof payload.checkedAt === "string") {
-          setStudioWorkerReadiness(payload as StudioWorkerReadiness);
-          return;
-        }
-        setStudioWorkerReadiness({
-          available: false,
-          reason: "status_unavailable",
-          message: typeof payload?.message === "string"
-            ? payload.message
-            : "AI 제작 작업자 연결 상태를 확인할 수 없어 상품 분석을 시작할 수 없습니다.",
-          checkedAt: new Date().toISOString(),
-        });
-      } catch {
-        if (disposed) return;
-        setStudioWorkerReadiness({
-          available: false,
-          reason: "status_unavailable",
-          message: "AI 제작 작업자 연결 상태를 확인할 수 없어 상품 분석을 시작할 수 없습니다.",
-          checkedAt: new Date().toISOString(),
-        });
-      }
-    };
-    void loadStudioWorkerReadiness();
-    const interval = window.setInterval(() => void loadStudioWorkerReadiness(), 15_000);
-    return () => {
-      disposed = true;
-      window.clearInterval(interval);
-    };
   }, [authenticatedFetch]);
 
   const applyCommerceTemplate = (template: CommerceTemplate) => {
@@ -5314,7 +5275,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   const content = (() => {
     if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenCs={(status) => openCs("all", status)} onOpenProduct={openProductDetails} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
-    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={resumeFailedAiActivity} onStopActivity={stopRegistrationActivity} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} />;
+    if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={resumeFailedAiActivity} onStopActivity={stopRegistrationActivity} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} authenticatedFetch={operations.authenticatedFetch} />;
     if (view === "product-detail") return activeSelectedProduct
       ? <ProductDetailPage key={`${activeSelectedProduct.sourceId}:${activeSelectedProduct.updatedAt}`} product={activeSelectedProduct} marginScenarios={operations.data?.marginScenarios ?? []} onBack={() => window.history.back()} onEditChannels={() => retryProductPublishing(activeSelectedProduct)} onOpenActivity={() => navigate("registration-activity")} authenticatedFetch={operations.authenticatedFetch} notify={notify} onChanged={operations.refresh} />
       : <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>{operations.state === "loading" ? "상품 상세정보를 불러오는 중입니다." : "상품을 찾지 못했습니다."}</b><small>{operations.state === "loading" ? "운영 상품 원장을 확인하고 있습니다." : "상품 목록에서 다시 선택해 주세요."}</small>{operations.state !== "loading" ? <button type="button" className="ghost-button" onClick={() => navigate("products")}>상품 목록으로</button> : null}</div>;

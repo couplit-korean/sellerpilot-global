@@ -1644,6 +1644,7 @@
 
 @media (max-width: 360px) {
   .dashboard-cs-pair, .channel-list { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .channel-performance > .channel-list { grid-template-columns: minmax(0, 1fr) !important; }
   .dashboard-cs-pair > button { padding: 9px; }
   .dashboard-cs-pair .metric-icon { width: 30px; height: 30px; }
 }

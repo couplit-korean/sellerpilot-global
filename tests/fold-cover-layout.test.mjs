@@ -73,5 +73,6 @@ test("Fold registration cards use one column through 344px and keep the 390px tw
 
   assert.match(styles, /@media \(max-width: 720px\)[\s\S]*?\.registration-card-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(cover, /\.registration-card-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(styles, /@media \(max-width: 360px\)[\s\S]*?\.channel-performance > \.channel-list\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)\s*!important/);
   assert.ok(344 < 390);
 });

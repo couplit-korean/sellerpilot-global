@@ -38,6 +38,11 @@ type GatewaySmokeState = {
   checkedAt: string | null;
 };
 
+type RuntimeReleaseState = {
+  status: "idle" | "checking" | "passed" | "failed";
+  message: string;
+};
+
 type ServerAiRuntimeState =
   | "checking"
   | "ready"
@@ -197,6 +202,10 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     message: "실제 AI Gateway 호출은 아직 확인하지 않았습니다.",
     checkedAt: null,
   });
+  const [runtimeRelease, setRuntimeRelease] = useState<RuntimeReleaseState>({
+    status: "idle",
+    message: "배포 후 무작업 점검 6개와 Supabase 일정 상태를 함께 확인합니다.",
+  });
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data } = await createClient().auth.getSession();
@@ -308,6 +317,27 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     }
   };
 
+  const activateRuntimeRelease = async () => {
+    if (!window.confirm("현재 운영 배포를 무작업 점검하고 Supabase 운영 일정 6개를 재시작할까요?")) return;
+    setRuntimeRelease({ status: "checking", message: "현재 운영 배포를 무작업 점검한 뒤 Supabase 일정을 재시작하고 있습니다." });
+    try {
+      const response = await authenticatedFetch("/api/admin/serverless-runtime-release", {
+        method: "POST",
+        body: JSON.stringify({ action: "canary_activate" }),
+      });
+      const payload = await response.json().catch(() => ({})) as { message?: string };
+      const message = payload.message ?? (response.ok
+        ? "운영 일정 재검증과 재시작을 완료했습니다."
+        : "운영 일정 재검증을 완료하지 못했습니다.");
+      setRuntimeRelease({ status: response.ok ? "passed" : "failed", message });
+      notify(message);
+    } catch {
+      const message = "운영 일정 재검증 요청을 완료하지 못했습니다. 일정 상태를 다시 확인해 주세요.";
+      setRuntimeRelease({ status: "failed", message });
+      notify(message);
+    }
+  };
+
   const recoverProduct = async (job: AiJob) => {
     setWorkingJobId(job.id);
     setJobsError("");
@@ -367,6 +397,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     <div className="cli-runtime-actions cli-server-runtime-notice" role="status" aria-live="polite">
       <aside>{gatewayVerified ? <ShieldCheck size={15} /> : <AlertTriangle size={15} />}<span><b>{gatewaySmoke.status === "idle" ? runtimeGuidance.recoveryTitle : gatewaySmoke.message}</b><small>{gatewaySmoke.checkedAt ? `실제 호출 점검 ${formatDate(gatewaySmoke.checkedAt)}` : runtimeGuidance.recoveryDetail}</small></span></aside>
       <button type="button" className="credential-secondary cli-gateway-smoke-button" onClick={() => void verifyGateway()} disabled={!serverConfigured || gatewaySmoke.status === "checking"}>{gatewaySmoke.status === "checking" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{gatewaySmoke.status === "checking" ? "실제 호출 확인 중" : "AI Gateway 실제 호출 점검"}</button>
+      <button type="button" className="credential-secondary cli-gateway-smoke-button" onClick={() => void activateRuntimeRelease()} disabled={runtimeRelease.status === "checking"} title={runtimeRelease.message}>{runtimeRelease.status === "checking" ? <LoaderCircle className="spin" size={13} /> : runtimeRelease.status === "passed" ? <CheckCircle2 size={13} /> : <RefreshCw size={13} />}{runtimeRelease.status === "checking" ? "운영 일정 재검증 중" : "운영 일정 재검증·재시작"}</button>
     </div>
 
     <div className="cli-job-history">

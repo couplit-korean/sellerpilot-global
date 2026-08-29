@@ -48,7 +48,7 @@ test("operations checklist treats Vercel as the only production product worker",
   assert.match(checklist, /## 7\. Vercel 서버 AI 스튜디오/);
   assert.match(checklist, /Production 상품 분석·이미지 제작은 Vercel Node 런타임만 사용한다/);
   assert.match(checklist, /Mac LaunchAgent[\s\S]*운영 선행조건이나 장애 시 자동 대체 경로가 아니다/);
-  assert.match(checklist, /마지막 Mac heartbeat를 운영 준비 판정에 사용하지 않는다/);
+  assert.match(checklist, /마지막 Mac heartbeat나 구성 감지만 운영 준비 판정에 사용하지 않는다/);
   assert.match(checklist, /5분 일정은 응답 직후 `after\(\)` 실행이 끊긴 경우 상품 스튜디오 큐를 먼저 복구/);
   assert.match(checklist, /### 서버 AI 토큰 불일치·만료 복구/);
   assert.match(checklist, /토큰 상태 조회 실패[^\n]*만료의 증거가 아니므로 토큰부터 교체하지 않는다/);

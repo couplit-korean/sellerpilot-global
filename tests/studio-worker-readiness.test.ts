@@ -43,7 +43,7 @@ test("studio admission accepts only a fresh exact AI-scope heartbeat and returns
 });
 
 test("product studio route and clients fail closed without turning explicit worker absence into reconciliation polling", async () => {
-  const [route, regenerateRoute, revisionRoute, retryRoute, readinessServer, verificationServer, smokeRoute, studio, page] = await Promise.all([
+  const [route, regenerateRoute, revisionRoute, retryRoute, readinessServer, verificationServer, smokeRoute, studio, page, readinessHook] = await Promise.all([
     readFile(new URL("../app/api/ai/product-studio/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/product-studio/regenerate/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/products/[id]/revision/route.ts", import.meta.url), "utf8"),
@@ -53,6 +53,7 @@ test("product studio route and clients fail closed without turning explicit work
     readFile(new URL("../app/api/admin/server-runtime-smoke/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/use-studio-worker-readiness.ts", import.meta.url), "utf8"),
   ]);
 
   const readinessCheck = route.indexOf("enqueueGuard.readiness = await readServerProductStudioReadiness(admin, request)");
@@ -103,7 +104,9 @@ test("product studio route and clients fail closed without turning explicit work
   assert.ok(terminalWorkerRejection > 0 && terminalWorkerRejection < ambiguousAdmission);
   assert.match(studio, /!isStudioExecutionReady\(workerReadiness\)/);
   assert.match(studio, /workerReadiness\?\.available !== false[\s\S]{0,140}submissionPhase !== "monitoring"[\s\S]{0,180}jobMonitors\.abortAll/);
-  assert.match(page, /authenticatedFetch\("\/api\/ai\/product-studio"/);
+  assert.match(page, /useStudioWorkerReadiness\(authenticatedFetch\)/);
+  assert.match(readinessHook, /authenticatedFetch\("\/api\/ai\/product-studio"/);
+  assert.match(readinessHook, /window\.setInterval\(\(\) => void loadReadiness\(\), pollIntervalMs\)/);
   assert.match(page, /const studioWorkerAvailable = isStudioExecutionReady\(studioWorkerReadiness\)/);
   assert.match(page, /disabled=\{!studioWorkerAvailable \|\| running/);
   assert.match(page, /AI Gateway 점검 필요/);

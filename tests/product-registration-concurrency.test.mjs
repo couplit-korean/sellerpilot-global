@@ -58,8 +58,12 @@ test("failed AI cards retry only their existing server-stored input without open
   const start = page.indexOf("const resumeFailedAiActivity");
   const end = page.indexOf("const editExternalActionProduct", start);
   const recovery = page.slice(start, end);
+  const activityStart = page.indexOf("function RegistrationActivityPage");
+  const activityEnd = page.indexOf("function PublishingPage", activityStart);
+  const activityPage = page.slice(activityStart, activityEnd);
 
   assert.ok(start >= 0 && end > start);
+  assert.ok(activityStart >= 0 && activityEnd > activityStart);
   assert.match(recovery, /authenticatedOperationsFetch\("\/api\/admin\/ai-jobs"/);
   assert.match(recovery, /JSON\.stringify\(\{ jobId, action: "retry" \}\)/);
   assert.match(recovery, /activity\.id\.startsWith\("revision:"\)/);
@@ -68,6 +72,9 @@ test("failed AI cards retry only their existing server-stored input without open
   assert.match(recovery, /서버에 저장된 입력으로/);
   assert.doesNotMatch(recovery, /sessionStorage|activeStudioJobStorageKey|studioJobRecoveryStorageValue/);
   assert.doesNotMatch(recovery, /navigate\("publishing"\)/);
-  assert.match(page, /서버 저장 입력으로 AI 분석 재시도/);
+  assert.match(activityPage, /서버 저장 입력으로 AI 분석 재시도/);
+  assert.match(activityPage, /const studioWorkerReadiness = useStudioWorkerReadiness\(authenticatedFetch\)/);
+  assert.match(activityPage, /disabled=\{Boolean\(recoveringActivityId\) \|\| !studioExecutionReady\}/);
+  assert.match(activityPage, /!studioExecutionReady \? recoveryUnavailableLabel/);
   assert.doesNotMatch(recovery, /channel-operations|listing\.create|listing\.update/);
 });

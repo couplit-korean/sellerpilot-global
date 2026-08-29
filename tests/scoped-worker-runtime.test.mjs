@@ -28,6 +28,8 @@ test("production runtime UI is read-only and reports the Vercel server AI path",
   assert.match(runtimeCard, /authenticatedFetch\("\/api\/ai\/product-studio"\)/);
   assert.match(runtimeCard, /authenticatedFetch\("\/api\/admin\/server-runtime-smoke"/);
   assert.match(runtimeCard, /AI Gateway 실제 호출 점검/);
+  assert.match(runtimeCard, /운영 일정 재검증·재시작/);
+  assert.match(runtimeCard, /\/api\/admin\/serverless-runtime-release/);
   assert.match(runtimeCard, /customer_verification_required/);
   assert.match(runtimeCard, /구성 감지와 실제 AI 호출 성공은 별도로 판정/);
   assert.match(runtimeCard, /구성 감지만으로 성공 처리하지 않음/);
