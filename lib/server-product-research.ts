@@ -1,5 +1,9 @@
 import { serverProductResearchResultSchema, type ServerProductResearchResult } from "./ai-cli-contract";
 import {
+  classifyAiGatewayFailure,
+  type AiGatewayFailureReason,
+} from "./ai-gateway-failure";
+import {
   fetchPublicReferenceDocument,
   PublicReferenceFetchError,
   type PublicReferenceDocument,
@@ -61,18 +65,10 @@ export type ProductResearchGenerationDependencies = {
   generate?: (prompt: string, signal: AbortSignal) => Promise<unknown>;
 };
 
-export type ProductResearchGatewayFailureReason =
-  | "gateway_authentication_error"
-  | "gateway_billing_required"
-  | "gateway_forbidden"
-  | "gateway_model_not_found"
-  | "gateway_rate_limited"
-  | "gateway_timeout"
-  | "gateway_request_failed"
-  | "gateway_result_invalid"
-  | "runtime_timeout";
+export type ProductResearchGatewayFailureReason = AiGatewayFailureReason;
 
 const TERMINAL_PRODUCT_RESEARCH_FAILURE_REASONS = new Set([
+  "gateway_customer_verification_required",
   "gateway_authentication_error",
   "gateway_billing_required",
   "gateway_forbidden",
@@ -269,62 +265,11 @@ export function buildServerProductResearchPrompt(
   ].join("\n");
 }
 
-function errorRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
-}
-
 export function classifyProductResearchGatewayFailure(
   error: unknown,
   signalAborted = false,
 ): ProductResearchGatewayFailureReason {
-  if (signalAborted) return "runtime_timeout";
-
-  const queue: unknown[] = [error];
-  const seen = new Set<unknown>();
-  let inspected = 0;
-  while (queue.length > 0 && inspected < 12) {
-    const candidate = queue.shift();
-    if (candidate == null || seen.has(candidate)) continue;
-    seen.add(candidate);
-    inspected += 1;
-    const record = errorRecord(candidate);
-    if (!record) continue;
-
-    switch (record.name) {
-      case "GatewayAuthenticationError": return "gateway_authentication_error";
-      // ai@6 deliberately redacts GatewayAuthenticationError to this generic
-      // name in production; it is produced only by its auth wrapper.
-      case "GatewayError": return "gateway_authentication_error";
-      case "GatewayForbiddenError": return "gateway_forbidden";
-      case "GatewayModelNotFoundError": return "gateway_model_not_found";
-      case "GatewayRateLimitError": return "gateway_rate_limited";
-      case "GatewayTimeoutError": return "gateway_timeout";
-      case "AI_NoObjectGeneratedError":
-      case "NoObjectGeneratedError": return "gateway_result_invalid";
-    }
-
-    const statusCode = typeof record.statusCode === "number" && Number.isInteger(record.statusCode)
-      ? record.statusCode
-      : null;
-    switch (statusCode) {
-      case 401: return "gateway_authentication_error";
-      case 402: return "gateway_billing_required";
-      case 403: return "gateway_forbidden";
-      case 404: return "gateway_model_not_found";
-      case 408:
-      case 504: return "gateway_timeout";
-      case 429: return "gateway_rate_limited";
-    }
-
-    // AI SDK retry failures retain their last provider error. Traverse only
-    // known error linkage fields and never inspect messages or response bodies.
-    if (record.lastError != null) queue.push(record.lastError);
-    if (Array.isArray(record.errors)) queue.push(...record.errors.slice(-3).reverse());
-    if (record.cause != null) queue.push(record.cause);
-  }
-  return "gateway_request_failed";
+  return classifyAiGatewayFailure(error, { signalAborted });
 }
 
 async function defaultGenerateProductResearch(prompt: string, signal: AbortSignal) {

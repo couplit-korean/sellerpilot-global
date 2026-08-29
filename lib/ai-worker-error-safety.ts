@@ -1,3 +1,5 @@
+import { AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE } from "./ai-gateway-failure";
+
 const GENERIC_AI_JOB_FAILURE = "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.";
 const AI_TOOL_CONNECTION_FAILURE = "AI 생성 도구 연결이 중단되었습니다. 작업자를 다시 시작한 뒤 다시 실행해 주세요.";
 const AI_IMAGE_RESPONSE_FAILURE = "AI 이미지 생성 도구가 올바른 결과를 반환하지 못했습니다. 작업자를 다시 시작한 뒤 다시 실행해 주세요.";
@@ -6,6 +8,7 @@ const CONNECTION_FAILURE_PATTERN = /(?:authrequired|www_authenticate|bearer\s+re
 const PROMPT_LEAK_PATTERN = /(?:```|sketch-to-render|primary\s+request:|style\/medium:|subject:|features\s+enabled:|under-development\s+features)/i;
 const PRIVATE_RUNTIME_PATTERN = /(?:\/Users\/|\/private\/|\/var\/folders\/|file:\/\/|node_modules|[A-Za-z]:\\|\bat\s+\S+\s*\()/i;
 const SECRET_MATERIAL_PATTERN = /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|authorization|password|secret)\b/i;
+const CUSTOMER_VERIFICATION_REASON_PATTERN = /^(?:server product (?:research|studio) failed:\s*)?gateway_customer_verification_required$/i;
 
 const STUDIO_SEGMENT_FAILURES = {
   "budget-exhausted": "AI 마스터 기획 보정 시간이 모두 사용되었습니다. 입력 사진과 설명을 확인한 뒤 다시 실행해 주세요. [studio-budget-exhausted]",
@@ -18,6 +21,14 @@ const STUDIO_SEGMENT_FAILURES = {
   "duplicate-target": "AI 현지화 대상이 중복되어 완료하지 못했습니다. 다시 실행해 주세요. [studio-duplicate-target]",
   "missing-target": "AI 현지화 대상 일부가 누락되어 완료하지 못했습니다. 다시 실행해 주세요. [studio-missing-target]",
 } as const;
+
+const SAFE_SELLER_FACING_MESSAGES = new Set<string>([
+  GENERIC_AI_JOB_FAILURE,
+  AI_TOOL_CONNECTION_FAILURE,
+  AI_IMAGE_RESPONSE_FAILURE,
+  AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE,
+  ...Object.values(STUDIO_SEGMENT_FAILURES),
+]);
 
 function studioSegmentFailure(error: unknown) {
   if (!error || typeof error !== "object") return null;
@@ -38,11 +49,16 @@ export function sellerSafeAiJobFailure(error: unknown) {
       : "";
   const compact = raw.replace(/\p{Cc}+/gu, " ").replace(/\s+/g, " ").trim();
   if (!compact) return GENERIC_AI_JOB_FAILURE;
+  if (SAFE_SELLER_FACING_MESSAGES.has(compact)) return compact;
+  if (CUSTOMER_VERIFICATION_REASON_PATTERN.test(compact)) {
+    return AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE;
+  }
   if (CONNECTION_FAILURE_PATTERN.test(compact)) return AI_TOOL_CONNECTION_FAILURE;
   if (PROMPT_LEAK_PATTERN.test(compact)) return AI_IMAGE_RESPONSE_FAILURE;
   if (PRIVATE_RUNTIME_PATTERN.test(compact) || SECRET_MATERIAL_PATTERN.test(compact)) {
     return GENERIC_AI_JOB_FAILURE;
   }
-  if (!/[가-힣]/.test(compact)) return GENERIC_AI_JOB_FAILURE;
-  return compact.slice(0, 300);
+  // Upstream text is untrusted even when it contains Korean. Only the exact
+  // fixed messages and structured reason codes above may reach seller UI.
+  return GENERIC_AI_JOB_FAILURE;
 }

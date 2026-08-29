@@ -1742,7 +1742,8 @@ a:focus-visible,
 .cli-runtime-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 16px; background: #f7faf9; }
 .cli-runtime-actions > div { display: flex; align-items: flex-end; gap: 8px; }.cli-runtime-actions label > span { display: block; margin-bottom: 5px; color: #65756f; font-size: 8px; font-weight: 750; }.cli-runtime-actions select { width: 108px; height: 38px; padding: 0 9px; border: 1px solid #aeb9b6; color: #233a34; background: #fff; font-size: 9px; }
 .cli-runtime-actions aside { display: flex; align-items: center; gap: 8px; color: #315c51; }.cli-runtime-actions aside svg { flex: 0 0 auto; }.cli-runtime-actions aside b, .cli-runtime-actions aside small { display: block; }.cli-runtime-actions aside b { font-size: 8px; }.cli-runtime-actions aside small { margin-top: 3px; color: #7a8985; font-size: 7px; }
-.cli-server-runtime-notice { justify-content: flex-start; }.cli-server-runtime-notice aside { align-items: flex-start; }.cli-server-runtime-notice code { color: #315c51; font: inherit; font-weight: 800; overflow-wrap: anywhere; }
+.cli-server-runtime-notice { justify-content: space-between; }.cli-server-runtime-notice aside { min-width: 0; align-items: flex-start; }.cli-server-runtime-notice code { color: #315c51; font: inherit; font-weight: 800; overflow-wrap: anywhere; }
+.cli-gateway-smoke-button { display: inline-flex; min-height: 38px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; }
 .cli-runtime-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 10px 16px; border-top: 1px solid #efcfca; color: #913f39; background: #fff3f2; font-size: 8px; }
 .cli-runtime-loading { display: flex; min-height: 52px; align-items: center; justify-content: center; gap: 7px; color: #73817d; font-size: 8px; }
 
@@ -2016,6 +2017,7 @@ a:focus-visible,
   .cli-server-runtime-flow article { border-right: 0; border-bottom: 1px solid #d8e2de; }
   .cli-server-runtime-flow article:last-child { border-bottom: 0; }
   .cli-runtime-actions > div { width: 100%; }.cli-runtime-actions .credential-primary { flex: 1; }
+  .cli-gateway-smoke-button { width: 100%; }
 }
 
 @media (max-width: 480px) {

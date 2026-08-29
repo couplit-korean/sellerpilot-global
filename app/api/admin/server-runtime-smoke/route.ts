@@ -1,4 +1,5 @@
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
+import { createServerAiGatewayVerificationCookie } from "../../../../lib/server-ai-gateway-verification";
 import { handleServerRuntimeSmoke } from "../../../../lib/server-runtime-smoke";
 
 export const runtime = "nodejs";
@@ -22,7 +23,20 @@ export async function POST(request: Request) {
     },
     body: JSON.stringify({ action: "ai_gateway_smoke" }),
   });
-  return handleServerRuntimeSmoke(syntheticRequest, {
+  const response = await handleServerRuntimeSmoke(syntheticRequest, {
     runtimeSmokeSecret: ADMIN_SMOKE_BRIDGE,
   });
+  const payload = await response.clone().json().catch(() => null) as unknown;
+  const record = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {};
+  const diagnostic = record.diagnostic && typeof record.diagnostic === "object" && !Array.isArray(record.diagnostic)
+    ? record.diagnostic as Record<string, unknown>
+    : {};
+  const cookie = createServerAiGatewayVerificationCookie({
+    ok: response.ok && record.ok === true,
+    code: diagnostic.code,
+  }, admin.user.id);
+  if (cookie) response.headers.append("set-cookie", cookie);
+  return response;
 }

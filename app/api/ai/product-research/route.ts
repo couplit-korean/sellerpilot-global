@@ -3,6 +3,7 @@ import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin
 import { productResearchJobRequestSchema } from "../../../../lib/ai-cli-contract";
 import { createProductResearchJobWithLegacyFallback } from "../../../../lib/product-research-rpc-compatibility";
 import { wakeServerProductResearchAfterResponse } from "../../../../lib/server-product-research-runtime";
+import { readServerProductStudioReadiness } from "../../../../lib/server-product-studio-runtime";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -15,6 +16,15 @@ export async function POST(request: Request) {
   const parsed = productResearchJobRequestSchema.safeParse(payload);
   if (!parsed.success) {
     return NextResponse.json({ message: "상품 링크나 설명을 2자 이상 입력해 주세요." }, { status: 400 });
+  }
+
+  const readiness = await readServerProductStudioReadiness(admin, request);
+  if (!readiness.available) {
+    return NextResponse.json({
+      code: "AI_WORKER_UNAVAILABLE",
+      workerAvailable: false,
+      message: readiness.message,
+    }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
   const { error } = await createProductResearchJobWithLegacyFallback({

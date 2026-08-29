@@ -115,8 +115,9 @@ test("product list, detail, and calculator label only ledger-backed values", asy
   assert.match(mobileStyles, /@media \(max-width: 390px\)[\s\S]*?\.product-table[\s\S]*?min-width: 760px/);
   assert.match(mobileStyles, /\.product-table \.product-list-error[\s\S]*?color: #b42318/);
   assert.match(page, /activity\.elapsedSeconds < LONG_ANALYSIS_SECONDS/);
-  assert.match(page, /장기 분석 진행 중 · 서버 AI 연결됨/);
-  assert.match(page, /장기 대기 · 서버 AI 확인 필요/);
+  assert.match(page, /장기 분석 진행 중 · 서버 작업 신호 확인/);
+  assert.doesNotMatch(page, /장기 분석 진행 중 · 서버 AI 연결됨/);
+  assert.match(page, /장기 대기 · 서버 작업 신호 확인 필요/);
   assert.match(page, /실제 lease를 읽을 수 없어 완료 여부는 추정하지 않습니다/);
   assert.match(mobileStyles, /@media \(max-width: 390px\)[\s\S]*?\.registration-status\.long-analysis-connected,[\s\S]*?min-height: 44px/);
   assert.match(mobileStyles, /@media \(max-width: 720px\)[\s\S]*?\.product-detail-ledger dd[\s\S]*?overflow-wrap: anywhere[\s\S]*?white-space: normal/);

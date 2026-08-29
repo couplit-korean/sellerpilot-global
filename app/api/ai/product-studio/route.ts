@@ -15,7 +15,7 @@ export const maxDuration = 300;
 export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
   if (isAdminApiError(admin)) return admin;
-  const readiness = await readServerProductStudioReadiness(admin);
+  const readiness = await readServerProductStudioReadiness(admin, request);
   return NextResponse.json(readiness, {
     status: readiness.reason === "status_unavailable" ? 503 : 200,
     headers: { "cache-control": "no-store, max-age=0" },
@@ -117,7 +117,7 @@ export async function POST(request: Request) {
   const admission = await resolveStudioAdmission({
     jobId: parsed.data.jobId,
     createJob: async () => {
-      enqueueGuard.readiness = await readServerProductStudioReadiness(admin);
+      enqueueGuard.readiness = await readServerProductStudioReadiness(admin, request);
       enqueueGuard.checked = true;
       if (!enqueueGuard.readiness.available) {
         return { data: null, error: { code: "AI_WORKER_UNAVAILABLE" } };

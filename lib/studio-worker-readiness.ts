@@ -1,3 +1,5 @@
+import type { AiGatewayRuntimeVerification } from "./ai-gateway-runtime-verification";
+
 // An idle worker can legitimately wait for about 31 seconds (30-second
 // exponential backoff plus jitter) before the next claim updates last_seen_at.
 // Keep enough room for one bounded 30-second claim request as well, otherwise a
@@ -13,14 +15,30 @@ export type StudioWorkerReadinessReason =
   | "status_unavailable"
   | "configuration_missing"
   | "token_missing_or_expired"
-  | "token_mismatch";
+  | "token_mismatch"
+  | "gateway_unverified"
+  | "gateway_verification_failed";
 
 export type StudioWorkerReadiness = {
   available: boolean;
   reason: StudioWorkerReadinessReason;
   message: string;
   checkedAt: string;
+  configurationReady?: boolean;
+  gatewayVerification?: AiGatewayRuntimeVerification;
 };
+
+export function isStudioExecutionReady(
+  readiness: StudioWorkerReadiness | null | undefined,
+  nowMs = Date.now(),
+) {
+  if (readiness?.available !== true
+      || readiness.reason !== "ready"
+      || readiness.configurationReady !== true
+      || readiness.gatewayVerification?.status !== "verified") return false;
+  const expiresAt = Date.parse(readiness.gatewayVerification.expiresAt ?? "");
+  return Number.isFinite(expiresAt) && expiresAt > nowMs;
+}
 
 type StudioWorkerReadinessOptions = {
   nowMs?: number;

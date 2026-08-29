@@ -3,6 +3,7 @@
 import { AlertTriangle, Ban, CheckCircle2, Clock3, Cpu, DatabaseZap, History, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "../lib/supabase/client";
+import { isStudioExecutionReady, type StudioWorkerReadiness } from "../lib/studio-worker-readiness";
 
 type WorkerSnapshot = {
   label: string;
@@ -21,11 +22,20 @@ type WorkerStatus = {
   failed_today: number;
 };
 
-type ServerReadiness = {
-  available: boolean;
-  reason: string;
+type ServerReadiness = StudioWorkerReadiness;
+
+type GatewaySmokePayload = {
+  ok?: boolean;
+  diagnostic?: {
+    code?: string;
+    status?: number;
+  };
+};
+
+type GatewaySmokeState = {
+  status: "idle" | "checking" | "passed" | "failed";
   message: string;
-  checkedAt: string;
+  checkedAt: string | null;
 };
 
 type ServerAiRuntimeState =
@@ -49,10 +59,10 @@ const serverAiRuntimeGuidance: Record<ServerAiRuntimeState, {
     recoveryDetail: "상태 확인이 끝날 때까지 새 토큰을 만들거나 환경변수를 바꾸지 않습니다.",
   },
   ready: {
-    statusLabel: "서버 AI 연결",
-    queueSummary: "Vercel 서버 토큰과 활성 AI 토큰 일치",
-    recoveryTitle: "운영 비밀값은 서버에서만 관리",
-    recoveryDetail: "SELLERPILOT_AI_WORKER_TOKEN과 AI 공급자 인증은 Vercel sensitive environment에만 둡니다. 이 화면은 토큰을 발급·노출·복사하지 않으며 로컬 설치 명령도 제공하지 않습니다.",
+    statusLabel: "서버 구성 감지",
+    queueSummary: "Vercel 서버 토큰과 활성 AI 토큰 일치 · 실제 Gateway 호출은 별도 점검",
+    recoveryTitle: "구성 감지와 실제 AI 호출 성공은 별도로 판정",
+    recoveryDetail: "OIDC와 Supabase 큐가 보인다는 이유만으로 생성 가능 상태라고 표시하지 않습니다. 실제 호출 점검을 통과해야 AI Gateway 운영 연결을 확인한 것으로 판정합니다. 이 화면은 토큰을 발급·노출·복사하지 않으며 로컬 설치 명령도 제공하지 않습니다.",
   },
   token_mismatch: {
     statusLabel: "서버 토큰 불일치",
@@ -111,6 +121,8 @@ const jobKindLabel: Record<string, string> = {
   support_reply: "고객 문의 답변 초안",
 };
 
+const productAiJobKinds = new Set(["product_studio", "product_research", "product_asset_regeneration"]);
+
 function aiWorker(status: WorkerStatus | null) {
   if (!status) return null;
   return status.workers?.ai
@@ -127,10 +139,36 @@ function formatDate(value: string | null | undefined) {
 function validReadiness(value: unknown): value is ServerReadiness {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
-  return typeof candidate.available === "boolean"
+  const coreValid = typeof candidate.available === "boolean"
     && typeof candidate.reason === "string"
     && typeof candidate.message === "string"
     && typeof candidate.checkedAt === "string";
+  return coreValid && (candidate.available !== true || isStudioExecutionReady(candidate as ServerReadiness));
+}
+
+function gatewaySmokeStateFromReadiness(readiness: ServerReadiness): GatewaySmokeState {
+  if (isStudioExecutionReady(readiness)) {
+    return {
+      status: "passed",
+      message: "Vercel AI Gateway 실제 생성 호출이 확인된 실행 가능 상태입니다.",
+      checkedAt: readiness.gatewayVerification?.checkedAt ?? readiness.checkedAt,
+    };
+  }
+  if (readiness.reason === "gateway_verification_failed"
+      && readiness.gatewayVerification?.status === "failed") {
+    return {
+      status: "failed",
+      message: readiness.message,
+      checkedAt: readiness.gatewayVerification.checkedAt,
+    };
+  }
+  return {
+    status: "idle",
+    message: readiness.reason === "gateway_unverified"
+      ? readiness.message
+      : "실제 AI Gateway 호출은 아직 확인하지 않았습니다.",
+    checkedAt: null,
+  };
 }
 
 function resolveServerAiRuntimeState(
@@ -138,7 +176,7 @@ function resolveServerAiRuntimeState(
   serverWorker: WorkerSnapshot | null,
 ): ServerAiRuntimeState {
   if (!readiness) return "checking";
-  if (readiness.available) return "ready";
+  if (readiness.configurationReady === true || readiness.available) return "ready";
   if (readiness.reason === "token_mismatch") return "token_mismatch";
   if (readiness.reason === "token_missing_or_expired") return "token_missing_or_expired";
   if (readiness.reason === "configuration_missing") return "configuration_missing";
@@ -154,6 +192,11 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [jobsError, setJobsError] = useState("");
   const [workingJobId, setWorkingJobId] = useState("");
+  const [gatewaySmoke, setGatewaySmoke] = useState<GatewaySmokeState>({
+    status: "idle",
+    message: "실제 AI Gateway 호출은 아직 확인하지 않았습니다.",
+    checkedAt: null,
+  });
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data } = await createClient().auth.getSession();
@@ -166,7 +209,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     });
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (preserveGatewaySmoke = false) => {
     setLoading(true);
     try {
       const [statusResponse, jobsResponse, readinessResponse] = await Promise.all([
@@ -179,12 +222,14 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       const readinessPayload = await readinessResponse.json().catch(() => null) as unknown;
       if (!statusResponse.ok) throw new Error(statusPayload.message ?? "런타임 상태를 불러오지 못했습니다.");
       setStatus(statusPayload);
-      setReadiness(validReadiness(readinessPayload) ? readinessPayload : {
+      const nextReadiness: ServerReadiness = validReadiness(readinessPayload) ? readinessPayload : {
         available: false,
-        reason: readinessResponse.ok ? "invalid_response" : "status_unavailable",
+        reason: "status_unavailable",
         message: "Vercel 서버 AI 연결 상태를 확인하지 못했습니다.",
         checkedAt: new Date().toISOString(),
-      });
+      };
+      setReadiness(nextReadiness);
+      if (!preserveGatewaySmoke) setGatewaySmoke(gatewaySmokeStateFromReadiness(nextReadiness));
       setError("");
       if (jobsResponse.ok) {
         setJobs(jobsPayload.jobs ?? []);
@@ -207,6 +252,10 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
 
   const controlJob = async (job: AiJob, action: "retry" | "cancel") => {
     const actionLabel = action === "retry" ? "다시 실행" : "취소";
+    if (action === "retry" && productAiJobKinds.has(job.kind) && !isStudioExecutionReady(readiness)) {
+      notify(readiness?.message ?? "AI Gateway 실제 호출 점검을 통과한 뒤 상품 AI 작업을 다시 실행해 주세요.");
+      return;
+    }
     if (!window.confirm(`이 AI 작업을 ${actionLabel}할까요?`)) return;
     setWorkingJobId(job.id);
     setJobsError("");
@@ -223,6 +272,39 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       setJobsError(controlError instanceof Error ? controlError.message : `AI 작업을 ${actionLabel}하지 못했습니다.`);
     } finally {
       setWorkingJobId("");
+    }
+  };
+
+  const verifyGateway = async () => {
+    setGatewaySmoke({ status: "checking", message: "Vercel AI Gateway 실제 호출을 확인하고 있습니다.", checkedAt: null });
+    try {
+      const response = await authenticatedFetch("/api/admin/server-runtime-smoke", {
+        method: "POST",
+        body: JSON.stringify({ action: "ai_gateway_smoke" }),
+      });
+      const payload = await response.json().catch(() => ({})) as GatewaySmokePayload;
+      const checkedAt = new Date().toISOString();
+      if (response.ok && payload.ok === true) {
+        const message = "Vercel OIDC 기반 AI Gateway 실제 생성 호출을 확인했습니다.";
+        setGatewaySmoke({ status: "passed", message, checkedAt });
+        await load(true);
+        notify(message);
+        return;
+      }
+      const message = payload.diagnostic?.code === "customer_verification_required"
+        ? "Vercel AI Gateway 계정 확인이 필요합니다. Vercel 결제수단·고객 확인을 마친 뒤 다시 점검해 주세요."
+        : payload.diagnostic?.code === "billing_required"
+          ? "Vercel AI Gateway 사용 한도 또는 결제 상태 확인이 필요합니다."
+          : payload.diagnostic?.code === "authentication_error"
+            ? "Vercel OIDC 인증 연결을 확인하지 못했습니다. 배포 프로젝트의 OIDC 설정을 확인해 주세요."
+            : "Vercel AI Gateway 실제 생성 호출에 실패했습니다. 운영 로그와 Gateway 상태를 확인해 주세요.";
+      setGatewaySmoke({ status: "failed", message, checkedAt });
+      await load(true);
+      notify(message);
+    } catch {
+      const message = "Vercel AI Gateway 실제 호출 점검 요청을 완료하지 못했습니다.";
+      setGatewaySmoke({ status: "failed", message, checkedAt: new Date().toISOString() });
+      notify(message);
     }
   };
 
@@ -251,21 +333,28 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
   }, [load]);
 
   const serverWorker = aiWorker(status);
-  const serverReady = readiness?.available === true;
-  const queueReady = serverReady && Boolean(serverWorker);
+  const serverConfigured = readiness?.configurationReady === true;
+  const serverReady = isStudioExecutionReady(readiness);
+  const gatewayVerified = serverReady;
+  const queueReady = serverConfigured && Boolean(serverWorker);
   const runtimeState = resolveServerAiRuntimeState(readiness, serverWorker);
   const runtimeGuidance = serverAiRuntimeGuidance[runtimeState];
+  const runtimeStatusLabel = gatewayVerified
+    ? "AI Gateway 실호출 확인"
+    : gatewaySmoke.status === "failed"
+      ? "AI Gateway 확인 필요"
+      : runtimeGuidance.statusLabel;
 
   return <section className="cli-runtime-card">
     <header>
       <div className="cli-runtime-title"><span><SquareTerminal size={18} /></span><div><small>SERVER-ONLY VERCEL AI</small><h3>서버 AI 스튜디오 런타임</h3><p>상품 분석과 이미지 제작은 Vercel Node·AI Gateway OIDC·Supabase 비공개 큐에서 실행됩니다. 운영에 Mac 또는 로컬 상품 작업자는 필요하지 않습니다.</p></div></div>
-      <span className={`cli-runtime-state ${serverReady ? "online" : "offline"}`}><i />{runtimeGuidance.statusLabel}</span>
+      <span className={`cli-runtime-state ${serverReady && gatewayVerified ? "online" : "offline"}`}><i />{runtimeStatusLabel}</span>
     </header>
 
     <div className="cli-server-runtime-flow" aria-label="서버 AI 실행 경로">
-      <article><span><i className={serverReady ? "online" : "missing"} />Vercel Node + OIDC</span><small>{serverReady ? "요청 범위에서 AI Gateway 인증 확인" : "OIDC·AI Gateway 연결 확인 필요"}</small></article>
+      <article><span><i className={gatewayVerified ? "online" : "missing"} />Vercel Node + OIDC</span><small>{gatewayVerified ? "실제 AI Gateway 생성 호출 확인" : serverConfigured ? "OIDC 인증 수단 감지 · 실제 호출은 아래에서 점검" : "OIDC·AI Gateway 구성 확인 필요"}</small></article>
       <article><span><i className={queueReady ? "online" : "missing"} />Supabase 비공개 큐</span><small>{runtimeGuidance.queueSummary}{serverWorker ? ` · 만료 ${formatDate(serverWorker.expires_at)}` : ""}</small></article>
-      <article><span><i className={serverReady ? "ready" : "missing"} />운영 복구 게이트</span><small>{serverReady ? "5분 큐 복구 일정 · 운영 활성 여부는 배포 canary에서 확인" : "토큰 불일치·만료는 자동 복구하지 않음 · 운영 체크리스트 §7 확인"}</small></article>
+      <article><span><i className={gatewayVerified ? "ready" : "missing"} />운영 복구 게이트</span><small>{gatewayVerified ? "실제 Gateway 호출 통과 · 큐 복구 상태는 운영 원장에서 확인" : "구성 감지만으로 성공 처리하지 않음 · 실제 호출 점검 필요 · 토큰 불일치·만료는 자동 복구하지 않음"}</small></article>
     </div>
 
     <div className="cli-runtime-grid">
@@ -276,7 +365,8 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     </div>
 
     <div className="cli-runtime-actions cli-server-runtime-notice" role="status" aria-live="polite">
-      <aside>{serverReady ? <ShieldCheck size={15} /> : <AlertTriangle size={15} />}<span><b>{runtimeGuidance.recoveryTitle}</b><small>{runtimeGuidance.recoveryDetail}</small></span></aside>
+      <aside>{gatewayVerified ? <ShieldCheck size={15} /> : <AlertTriangle size={15} />}<span><b>{gatewaySmoke.status === "idle" ? runtimeGuidance.recoveryTitle : gatewaySmoke.message}</b><small>{gatewaySmoke.checkedAt ? `실제 호출 점검 ${formatDate(gatewaySmoke.checkedAt)}` : runtimeGuidance.recoveryDetail}</small></span></aside>
+      <button type="button" className="credential-secondary cli-gateway-smoke-button" onClick={() => void verifyGateway()} disabled={!serverConfigured || gatewaySmoke.status === "checking"}>{gatewaySmoke.status === "checking" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{gatewaySmoke.status === "checking" ? "실제 호출 확인 중" : "AI Gateway 실제 호출 점검"}</button>
     </div>
 
     <div className="cli-job-history">
@@ -289,7 +379,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
           </div>
           <div className="cli-job-controls">
             {job.status === "succeeded" && <><span className="cli-job-output">{job.has_hero ? "대표 이미지 포함" : job.kind === "support_reply" ? "답변 초안 완료" : job.has_result ? "분석 완료" : "완료"}</span>{job.kind === "product_studio" && <button type="button" onClick={() => void recoverProduct(job)} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <DatabaseZap size={13} />}상품 원장 연결</button>}</>}
-            {(job.status === "failed" || job.status === "cancelled") && <button type="button" onClick={() => void controlJob(job, "retry")} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}다시 실행</button>}
+            {(job.status === "failed" || job.status === "cancelled") && <button type="button" onClick={() => void controlJob(job, "retry")} disabled={workingJobId === job.id || productAiJobKinds.has(job.kind) && !gatewayVerified} title={productAiJobKinds.has(job.kind) && !gatewayVerified ? readiness?.message : undefined}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <RotateCcw size={13} />}{productAiJobKinds.has(job.kind) && !gatewayVerified ? "Gateway 점검 필요" : "다시 실행"}</button>}
             {(job.status === "queued" || job.status === "running") && <button type="button" className="danger" onClick={() => void controlJob(job, "cancel")} disabled={workingJobId === job.id}>{workingJobId === job.id ? <LoaderCircle className="spin" size={13} /> : <Ban size={13} />}취소</button>}
           </div>
         </article>)}

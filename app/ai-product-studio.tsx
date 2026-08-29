@@ -11,7 +11,7 @@ import { createClient } from "../lib/supabase/client";
 import { productIntakeSchema, type ProductIntakeDraft, type SourcePreservingProductImageSpec } from "../lib/product-intake";
 import { uploadStudioStorageObject } from "../lib/studio-direct-upload";
 import { assertStudioPhotoBatch, uploadStudioPhotoPairs } from "../lib/studio-photo-upload";
-import type { StudioWorkerReadiness } from "../lib/studio-worker-readiness";
+import { isStudioExecutionReady, type StudioWorkerReadiness } from "../lib/studio-worker-readiness";
 import {
   assertStudioSourceDimensions,
   assertStudioSourceFile,
@@ -710,7 +710,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       onRunningChange(false);
       return;
     }
-    if (workerReadiness?.available !== true) {
+    if (!isStudioExecutionReady(workerReadiness)) {
       const message = workerReadiness?.message
         ?? "AI 제작 작업자 연결 상태를 확인하고 있습니다. 확인이 끝난 뒤 다시 시도해 주세요.";
       setLastError(message);
@@ -1049,6 +1049,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
 
   const creativeThumbnails = thumbnails.filter((thumbnail) => thumbnailPresets.some((preset) => preset.id === thumbnail.id));
   const detailThumbnails = thumbnails.filter((thumbnail) => detailPresets.some((preset) => preset.id === thumbnail.id));
+  const studioExecutionReady = isStudioExecutionReady(workerReadiness);
   const studioAssetUrls = useMemo(() => ({
     ...(currentImageUrl ? { hero: currentImageUrl } : {}),
     ...Object.fromEntries(thumbnails.map((thumbnail) => [thumbnail.id, thumbnail.dataUrl])),
@@ -1157,7 +1158,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
         <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>Vercel OIDC 서버 AI가 사진과 설명을 분석하고, Supabase 비공개 작업 큐와 codex-image·Puck 편집 흐름으로 결과를 만듭니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "서버 AI 제작 중" : "Supabase 큐 대기 중" : result ? "서버 AI 실데이터" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "서버 처리 중" : !workerReadiness ? "서버 AI 확인 중" : !workerReadiness.available ? "서버 AI 연결 필요" : "실행 대기"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || workerReadiness?.available !== true || generating || Boolean(queuedOwnJobId)} title={workerReadiness?.available === false ? workerReadiness.message : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !workerReadiness ? "서버 AI 확인 중" : !workerReadiness.available ? "서버 AI 연결 필요" : "다시 생성"}</button></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "서버 AI 제작 중" : "Supabase 큐 대기 중" : result ? "서버 AI 실데이터" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "서버 처리 중" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "실행 가능"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || !studioExecutionReady || generating || Boolean(queuedOwnJobId)} title={!studioExecutionReady ? workerReadiness?.message : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "다시 생성"}</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>

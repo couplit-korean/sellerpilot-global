@@ -113,6 +113,7 @@ type SmokeDiagnostic = {
   code:
     | "authentication_error"
     | "billing_required"
+    | "customer_verification_required"
     | "failed_dependency"
     | "forbidden"
     | "internal_server_error"
@@ -166,6 +167,7 @@ const gatewayDiagnosticNames = new Set<SmokeDiagnostic["name"]>([
 ]);
 const gatewayDiagnosticCodes = new Set<SmokeDiagnostic["code"]>([
   "authentication_error",
+  "customer_verification_required",
   "failed_dependency",
   "forbidden",
   "internal_server_error",
@@ -208,6 +210,17 @@ function safeStatus(value: unknown): SmokeDiagnostic["status"] | undefined {
 
 function gatewayDiagnostic(error: unknown): SmokeDiagnostic {
   const chain = errorChain(error);
+  const customerVerificationRequired = chain.some((record) => {
+    const data = record.data && typeof record.data === "object" && !Array.isArray(record.data)
+      ? record.data as Record<string, unknown>
+      : null;
+    const providerError = data?.error && typeof data.error === "object" && !Array.isArray(data.error)
+      ? data.error as Record<string, unknown>
+      : null;
+    return record.type === "customer_verification_required"
+      || data?.type === "customer_verification_required"
+      || providerError?.type === "customer_verification_required";
+  });
   const gatewayRecord = chain.find((record) => (
     typeof record.type === "string" && gatewayDiagnosticCodes.has(record.type as SmokeDiagnostic["code"])
   ) || (
@@ -225,23 +238,25 @@ function gatewayDiagnostic(error: unknown): SmokeDiagnostic {
   const explicitCode = typeof record.type === "string" && gatewayDiagnosticCodes.has(record.type as SmokeDiagnostic["code"])
     ? record.type as SmokeDiagnostic["code"]
     : undefined;
-  const code = status === 402
-    ? "billing_required"
-    : explicitCode
-      ?? (name === "GatewayAuthenticationError" || name === "GatewayError" ? "authentication_error"
-      : name === "GatewayFailedDependencyError" ? "failed_dependency"
-        : name === "GatewayForbiddenError" ? "forbidden"
-          : name === "GatewayInternalServerError" ? "internal_server_error"
-            : name === "GatewayInvalidRequestError" ? "invalid_request_error"
-              : name === "GatewayModelNotFoundError" ? "model_not_found"
-                : name === "GatewayRateLimitError" ? "rate_limit_exceeded"
-                  : name === "GatewayResponseError" ? "response_error"
-                    : name === "GatewayTimeoutError" || name === "AbortError" || name === "TimeoutError"
-                      ? "timeout_error"
-                      : name === "AI_NoObjectGeneratedError"
+  const code = customerVerificationRequired
+    ? "customer_verification_required"
+    : status === 402
+      ? "billing_required"
+      : explicitCode
+        ?? (name === "GatewayAuthenticationError" || name === "GatewayError" ? "authentication_error"
+          : name === "GatewayFailedDependencyError" ? "failed_dependency"
+            : name === "GatewayForbiddenError" ? "forbidden"
+              : name === "GatewayInternalServerError" ? "internal_server_error"
+                : name === "GatewayInvalidRequestError" ? "invalid_request_error"
+                  : name === "GatewayModelNotFoundError" ? "model_not_found"
+                    : name === "GatewayRateLimitError" ? "rate_limit_exceeded"
+                      : name === "GatewayResponseError" ? "response_error"
+                        : name === "GatewayTimeoutError" || name === "AbortError" || name === "TimeoutError"
+                          ? "timeout_error"
+                          : name === "AI_NoObjectGeneratedError"
                           || name === "NoObjectGeneratedError"
                           || name === "AI_NoOutputGeneratedError" ? "no_output"
-                        : "unknown");
+                            : "unknown");
   return { name, code, ...(status ? { status } : {}) };
 }
 
@@ -564,7 +579,9 @@ function executionFailure(action: Exclude<RuntimeSmokeAction, "readiness">, erro
       ? "gateway_request_failed"
       : "sandbox_command_failed";
   const diagnostic = error instanceof SmokeExecutionError ? error.diagnostic : undefined;
-  const status = code === "sandbox_unavailable" || diagnostic?.code === "authentication_error"
+  const status = code === "sandbox_unavailable"
+    || diagnostic?.code === "authentication_error"
+    || diagnostic?.code === "customer_verification_required"
     ? 503
     : 502;
   const message = action === "ai_gateway_smoke"

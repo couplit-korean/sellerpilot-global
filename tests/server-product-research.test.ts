@@ -129,6 +129,10 @@ test("server product research uses AI SDK auto-OIDC without manually handling cr
 
 test("gateway failures map only bounded metadata to DB-safe reasons", () => {
   const cases: Array<[unknown, string]> = [
+    [{
+      statusCode: 403,
+      data: { error: { type: "customer_verification_required", message: "private verification detail" } },
+    }, "gateway_customer_verification_required"],
     [{ statusCode: 401, message: "private token diagnostic" }, "gateway_authentication_error"],
     [{ name: "GatewayError", message: "private production auth diagnostic" }, "gateway_authentication_error"],
     [{ statusCode: 402, responseBody: "private billing body" }, "gateway_billing_required"],
@@ -150,6 +154,7 @@ test("gateway failures map only bounded metadata to DB-safe reasons", () => {
 
 test("permanent gateway failures stop instead of leaving mobile research polling indefinitely", () => {
   for (const reason of [
+    "gateway_customer_verification_required",
     "gateway_authentication_error",
     "gateway_billing_required",
     "gateway_forbidden",

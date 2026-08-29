@@ -26,8 +26,15 @@ test("production runtime UI is read-only and reports the Vercel server AI path",
   ]);
 
   assert.match(runtimeCard, /authenticatedFetch\("\/api\/ai\/product-studio"\)/);
-  assert.match(runtimeCard, /const serverReady = readiness\?\.available === true/);
-  assert.match(runtimeCard, /const queueReady = serverReady && Boolean\(serverWorker\)/);
+  assert.match(runtimeCard, /authenticatedFetch\("\/api\/admin\/server-runtime-smoke"/);
+  assert.match(runtimeCard, /AI Gateway 실제 호출 점검/);
+  assert.match(runtimeCard, /customer_verification_required/);
+  assert.match(runtimeCard, /구성 감지와 실제 AI 호출 성공은 별도로 판정/);
+  assert.match(runtimeCard, /구성 감지만으로 성공 처리하지 않음/);
+  assert.match(runtimeCard, /const serverConfigured = readiness\?\.configurationReady === true/);
+  assert.match(runtimeCard, /const serverReady = isStudioExecutionReady\(readiness\)/);
+  assert.match(runtimeCard, /const gatewayVerified = serverReady/);
+  assert.match(runtimeCard, /const queueReady = serverConfigured && Boolean\(serverWorker\)/);
   assert.match(runtimeCard, /className=\{queueReady \? "online" : "missing"\}/);
   assert.match(runtimeCard, /SERVER-ONLY VERCEL AI/);
   assert.match(runtimeCard, /Vercel Node \+ OIDC/);
@@ -49,8 +56,12 @@ test("production runtime UI is read-only and reports the Vercel server AI path",
   assert.match(runtimeCard, /Supabase에는 해시와 지문만 등록합니다/);
   assert.match(runtimeCard, /토큰 불일치·만료는 자동 복구하지 않음/);
   assert.match(runtimeCard, /role="status" aria-live="polite"/);
+  assert.match(runtimeCard, /disabled=\{!serverConfigured \|\| gatewaySmoke\.status === "checking"\}/);
+  assert.match(runtimeCard, /productAiJobKinds\.has\(job\.kind\) && !gatewayVerified/);
+  assert.match(runtimeCard, /Gateway 점검 필요/);
   assert.match(operationsCss, /\.cli-server-runtime-flow \{[^}]*grid-template-columns: repeat\(3/);
   assert.match(operationsCss, /\.cli-server-runtime-flow article small \{[^}]*overflow-wrap: anywhere/);
+  assert.match(operationsCss, /\.cli-gateway-smoke-button \{[^}]*min-height: 38px/);
   assert.doesNotMatch(runtimeCard, /npm run ai:worker:install/);
   assert.doesNotMatch(runtimeCard, /IssuedTokenSet|issueToken|requestTokenIssue|confirmTokenRotation/);
   assert.doesNotMatch(runtimeCard, /process\.env|\bspw_|navigator\.clipboard|useModalInteraction|tokenRotationDialog/);

@@ -49,6 +49,7 @@ test("terminal worker failures always release the pending product research job",
 
 test("terminal gateway reasons become actionable Korean messages without technical leakage", () => {
   const cases = [
+    ["gateway_customer_verification_required", "Vercel AI Gateway 계정 확인·결제수단 확인 필요"],
     ["Server product research failed: gateway_authentication_error", "운영 연결"],
     ["Server product research failed: gateway_billing_required", "결제·사용량"],
     ["gateway_forbidden", "권한 설정"],
@@ -70,6 +71,7 @@ test("terminal gateway reasons become actionable Korean messages without technic
 
 test("API-redacted product research failures keep their exact meaning in the browser", () => {
   for (const reason of [
+    "gateway_customer_verification_required",
     "gateway_authentication_error",
     "gateway_billing_required",
     "gateway_forbidden",

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { z } from "zod";
+import { classifyAiGatewayFailure } from "./ai-gateway-failure";
 import {
   cliStudioResultSchema,
   normalizeStudioResultForTerminalValidation,
@@ -251,23 +252,6 @@ function safeReason(error: unknown) {
     : "server_studio_execution_failed";
 }
 
-function modelFailureReason(error: unknown) {
-  if (error && typeof error === "object") {
-    const value = error as Record<string, unknown>;
-    const status = typeof value.statusCode === "number" ? value.statusCode : null;
-    if (status === 401) return "gateway_authentication_error";
-    if (status === 402) return "gateway_billing_required";
-    if (status === 403) return "gateway_forbidden";
-    if (status === 404) return "gateway_model_not_found";
-    if (status === 429) return "gateway_rate_limited";
-    if (status === 408 || status === 504) return "gateway_timeout";
-    if (value.name === "AI_NoObjectGeneratedError" || value.name === "NoObjectGeneratedError") {
-      return "gateway_result_invalid";
-    }
-  }
-  return "gateway_request_failed";
-}
-
 async function defaultGenerateStructured<T>(input: {
   schema: z.ZodType<T>;
   prompt: string;
@@ -302,7 +286,9 @@ async function defaultGenerateStructured<T>(input: {
     });
     return input.schema.parse(generated.output);
   } catch (error) {
-    throw new ServerProductStudioError(modelFailureReason(error));
+    throw new ServerProductStudioError(classifyAiGatewayFailure(error, {
+      signalAborted: input.signal.aborted,
+    }));
   }
 }
 
@@ -341,7 +327,9 @@ async function defaultGenerateBackground(input: {
     if (!file?.uint8Array?.byteLength) throw new Error("empty generated image");
     return file.uint8Array;
   } catch (error) {
-    throw new ServerProductStudioError(modelFailureReason(error));
+    throw new ServerProductStudioError(classifyAiGatewayFailure(error, {
+      signalAborted: input.signal.aborted,
+    }));
   }
 }
 

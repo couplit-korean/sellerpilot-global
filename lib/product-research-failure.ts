@@ -1,7 +1,10 @@
+import { AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE } from "./ai-gateway-failure";
+
 const DEFAULT_PRODUCT_RESEARCH_FAILURE_MESSAGE =
   "AI 상품정보 분석 서버에 일시적으로 연결하지 못했습니다. 잠시 후 같은 입력으로 다시 시도해 주세요.";
 
 const PRODUCT_RESEARCH_FAILURE_MESSAGES = {
+  gateway_customer_verification_required: AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE,
   gateway_authentication_error:
     "AI 상품정보 분석 인증을 확인하지 못했습니다. 운영 연결을 점검한 뒤 다시 시도해 주세요.",
   gateway_billing_required:

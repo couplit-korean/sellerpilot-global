@@ -6,16 +6,18 @@ const workerUrl = new URL("../scripts/ai-cli-worker.mjs", import.meta.url);
 const claimRouteUrl = new URL("../app/api/ai/worker/claim/route.ts", import.meta.url);
 const completionRouteUrl = new URL("../app/api/ai/worker/complete/route.ts", import.meta.url);
 const jobsRouteUrl = new URL("../app/api/admin/ai-jobs/route.ts", import.meta.url);
+const jobStatusRouteUrl = new URL("../app/api/ai/jobs/[id]/route.ts", import.meta.url);
 const operationsSnapshotRouteUrl = new URL("../app/api/operations/snapshot/route.ts", import.meta.url);
 const marketplaceImagesUrl = new URL("../lib/channels/marketplace-images.ts", import.meta.url);
 const maintenanceRouteUrl = new URL("../app/api/internal/maintenance/route.ts", import.meta.url);
 
 test("AI worker dispatches support replies, sanitizes failures, and preserves uploaded assets across ambiguous completion", async () => {
-  const [source, claimRoute, completionRoute, jobsRoute, operationsSnapshotRoute] = await Promise.all([
+  const [source, claimRoute, completionRoute, jobsRoute, jobStatusRoute, operationsSnapshotRoute] = await Promise.all([
     readFile(workerUrl, "utf8"),
     readFile(claimRouteUrl, "utf8"),
     readFile(completionRouteUrl, "utf8"),
     readFile(jobsRouteUrl, "utf8"),
+    readFile(jobStatusRouteUrl, "utf8"),
     readFile(operationsSnapshotRouteUrl, "utf8"),
   ]);
   assert.match(source, /job\.kind === "support_reply"[\s\S]{0,900}draftSupportReply/);
@@ -24,7 +26,11 @@ test("AI worker dispatches support replies, sanitizes failures, and preserves up
   assert.match(source, /const preserveRemoteState = completionPersistenceStarted/);
   assert.match(source, /const message = sellerSafeAiJobFailure\(effectiveError\)/);
   assert.match(completionRoute, /p_error_message: completion\.status === "failed" \? sellerSafeAiJobFailure\(completion\.error\) : null/);
-  assert.match(jobsRoute, /error_message: row\.error_message \? sellerSafeAiJobFailure\(row\.error_message\) : null/);
+  assert.match(
+    jobsRoute,
+    /row\.kind === "product_research"[\s\S]{0,120}productResearchFailureMessage\(row\.error_message\)[\s\S]{0,120}sellerSafeAiJobFailure\(row\.error_message\)/,
+  );
+  assert.match(jobStatusRoute, /else if \(typeof job\.error === "string"\)[\s\S]{0,120}sellerSafeAiJobFailure\(job\.error\)/);
   assert.match(operationsSnapshotRoute, /message: isAiActivity && row\.message \? sellerSafeAiJobFailure\(row\.message\) : row\.message/);
   assert.match(claimRoute, /sellerpilot_service_stage_ai_result_uploads/);
   assert.match(claimRoute, /p_job_id: jobId/);

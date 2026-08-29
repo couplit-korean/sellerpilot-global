@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE } from "../lib/ai-gateway-failure";
 import { sellerSafeAiJobFailure } from "../lib/ai-worker-error-safety";
 import { StudioSegmentContractError } from "../lib/studio-segment-generation";
 
@@ -25,14 +26,52 @@ test("AI worker failure messages never expose prompts, credentials, or local run
   );
 });
 
-test("AI worker failure messages preserve concise actionable Korean validation errors", () => {
+test("AI worker failure messages fail closed for arbitrary upstream Korean text", () => {
   assert.equal(
     sellerSafeAiJobFailure(new Error("원본 상품 기획 검증 실패 · 구성 수량 근거를 확인해 주세요.")),
-    "원본 상품 기획 검증 실패 · 구성 수량 근거를 확인해 주세요.",
+    "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.",
   );
   assert.equal(
     sellerSafeAiJobFailure(new Error("hero 이미지 업로드 실패: 일시적인 저장소 응답입니다.")),
-    "hero 이미지 업로드 실패: 일시적인 저장소 응답입니다.",
+    "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.",
+  );
+  assert.equal(
+    sellerSafeAiJobFailure("공급자 내부 진단: 요청 원문과 고객 데이터가 포함될 수 있습니다."),
+    "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.",
+  );
+});
+
+test("AI worker preserves only its exact allowlisted seller-facing messages", () => {
+  for (const upstream of [
+    new Error("rmcp::transport::worker AuthRequired"),
+    new Error("Primary request: sketch-to-render ```"),
+  ]) {
+    const safe = sellerSafeAiJobFailure(upstream);
+    assert.equal(sellerSafeAiJobFailure(safe), safe);
+  }
+  assert.equal(
+    sellerSafeAiJobFailure("AI 생성 도구 연결이 중단되었습니다. 작업자를 다시 시작한 뒤 다시 실행해 주세요. private"),
+    "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.",
+  );
+});
+
+test("AI worker exposes only the allowlisted Vercel customer verification guidance", () => {
+  assert.equal(
+    sellerSafeAiJobFailure("gateway_customer_verification_required"),
+    AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE,
+  );
+  assert.equal(
+    sellerSafeAiJobFailure("Server product studio failed: gateway_customer_verification_required"),
+    AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE,
+  );
+  assert.equal(
+    sellerSafeAiJobFailure(AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE),
+    AI_GATEWAY_CUSTOMER_VERIFICATION_MESSAGE,
+    "a second API sanitization pass must preserve the approved Korean message",
+  );
+  assert.equal(
+    sellerSafeAiJobFailure("gateway_customer_verification_required private provider body"),
+    "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.",
   );
 });
 

@@ -90,7 +90,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return true;
   };
 
-  const readiness = await readServerProductStudioReadiness(admin);
+  const readiness = await readServerProductStudioReadiness(admin, request);
   if (!readiness.available) {
     const cleaned = await abandonAndCleanupIfUncreated();
     return NextResponse.json({

@@ -217,6 +217,45 @@ test("AI Gateway failures expose only allowlisted status, name, and code diagnos
     status: 401,
   });
 
+  const verificationSecret = "private-vercel-account-detail";
+  const verificationResponse = await handleServerRuntimeSmoke(
+    request("POST", { action: "ai_gateway_smoke" }),
+    {
+      runtimeSmokeSecret: "test-runtime-smoke-secret",
+      runners: {
+        aiGateway: () => runSyntheticAiGatewaySmoke({
+          request: async () => {
+            throw Object.assign(new Error(verificationSecret), {
+              name: "GatewayInternalServerError",
+              type: "internal_server_error",
+              statusCode: 403,
+              cause: Object.assign(new Error(verificationSecret), {
+                name: "AI_APICallError",
+                statusCode: 403,
+                data: {
+                  error: {
+                    type: "customer_verification_required",
+                    message: verificationSecret,
+                  },
+                },
+                responseBody: verificationSecret,
+              }),
+            });
+          },
+        }),
+        sandbox: async () => ({}),
+      },
+    },
+  );
+  const verificationText = await verificationResponse.text();
+  assert.equal(verificationResponse.status, 503);
+  assert.equal(verificationText.includes(verificationSecret), false);
+  assert.deepEqual(JSON.parse(verificationText).diagnostic, {
+    name: "GatewayInternalServerError",
+    code: "customer_verification_required",
+    status: 403,
+  });
+
   await assert.rejects(
     runSyntheticAiGatewaySmoke({
       request: async () => {

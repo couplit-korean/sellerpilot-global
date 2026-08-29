@@ -13,6 +13,8 @@ test("the admin runtime smoke can execute only the synthetic AI Gateway probe", 
   assert.ok(authenticate > 0 && execute > authenticate);
   assert.match(route, /export const maxDuration = 60/);
   assert.match(route, /JSON\.stringify\(\{ action: "ai_gateway_smoke" \}\)/);
+  assert.match(route, /response\.headers\.append\("set-cookie", cookie\)/);
+  assert.doesNotMatch(route, /response\.headers\.set\("set-cookie"/);
   assert.doesNotMatch(route, /sandbox_smoke|product_studio|product_research/);
   assert.doesNotMatch(route, /channel|listing|publish|customer/i);
   assert.doesNotMatch(route, /process\.env|SERVER_RUNTIME_SMOKE_SECRET/);

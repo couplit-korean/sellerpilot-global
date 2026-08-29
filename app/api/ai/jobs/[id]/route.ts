@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
+import { sellerSafeAiJobFailure } from "../../../../../lib/ai-worker-error-safety";
 import { productResearchFailureMessage } from "../../../../../lib/product-research-failure";
 
 export const runtime = "nodejs";
@@ -39,6 +40,8 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 
   if (job.kind === "product_research" && typeof job.error === "string") {
     job.error = productResearchFailureMessage(job.error);
+  } else if (typeof job.error === "string") {
+    job.error = sellerSafeAiJobFailure(job.error);
   }
 
   return NextResponse.json({ ...job, result }, {

@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "재제작할 이미지 정보를 확인해 주세요." }, { status: 400 });
   }
 
-  const readiness = await readServerProductStudioReadiness(admin);
+  const readiness = await readServerProductStudioReadiness(admin, request);
   if (!readiness.available) {
     return NextResponse.json({
       code: "AI_WORKER_UNAVAILABLE",

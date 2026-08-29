@@ -114,7 +114,7 @@ import { createRevisionPhotoSelectionFence, releaseStaleRevisionPhoto } from "..
 import { settleWithConcurrency } from "../lib/promise-pool";
 import { assertStudioPhotoBatch } from "../lib/studio-photo-upload";
 import { withPromiseTimeout } from "../lib/promise-timeout";
-import type { StudioWorkerReadiness } from "../lib/studio-worker-readiness";
+import { isStudioExecutionReady, type StudioWorkerReadiness } from "../lib/studio-worker-readiness";
 import { fetchJsonWithDeadline } from "../lib/bounded-json-request";
 import { classifyExactJobAdmission } from "../lib/exact-job-admission";
 import { assertStudioSourceDimensions, assertStudioSourceFile } from "../lib/studio-source-photo-policy";
@@ -2532,9 +2532,9 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
         const elapsedLabel = isActive ? "현재 경과시간" : isImageOperation ? "총 처리시간" : activity.status === "ready" ? "총 분석시간" : "총 등록시간";
         const progress = registrationActivityProgress(activity);
         const statusDetail = longAnalysis === "connected"
-          ? "30분 넘게 분석 중이며 최근 작업 신호와 서버 AI 연결이 확인됩니다. 완료 시점은 추정하지 않습니다."
+          ? "30분 넘게 분석 중이며 최근 서버 작업 신호가 확인됩니다. 실제 AI Gateway 성공과 완료 시점은 별도로 확인하며 추정하지 않습니다."
           : longAnalysis === "attention"
-            ? "30분 넘게 새 작업 신호 또는 서버 AI 연결이 확인되지 않습니다. 새로고침 후 운영 연결 상태를 점검해 주세요."
+            ? "30분 넘게 새 서버 작업 신호가 확인되지 않습니다. 새로고침 후 큐와 실제 AI Gateway 상태를 각각 점검해 주세요."
           : isCancelled
           ? "관리자가 중지한 AI 작업입니다. 외부 채널 전송은 시작하지 않았고 기존 입력으로 다시 실행할 수 있습니다."
           : isImageOperation
@@ -2543,7 +2543,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
               : "AI 이미지 작업을 처리 중입니다."
           : status.detail;
         return <article className={`panel registration-card ${activity.status}${isCancelled ? " cancelled" : ""}`} key={activity.id}>
-          <header><span className={`registration-status ${activity.status}${isCancelled ? " cancelled" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}>{longAnalysis === "attention" ? <AlertTriangle size={14} /> : longAnalysis === "connected" ? <Activity size={14} /> : isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : isCancelled ? <Square size={14} /> : <AlertCircle size={14} />}{longAnalysis === "connected" ? "장기 분석 진행 중 · 서버 AI 연결됨" : longAnalysis === "attention" ? "장기 대기 · 서버 AI 확인 필요" : displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
+          <header><span className={`registration-status ${activity.status}${isCancelled ? " cancelled" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}>{longAnalysis === "attention" ? <AlertTriangle size={14} /> : longAnalysis === "connected" ? <Activity size={14} /> : isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : isCancelled ? <Square size={14} /> : <AlertCircle size={14} />}{longAnalysis === "connected" ? "장기 분석 진행 중 · 서버 작업 신호 확인" : longAnalysis === "attention" ? "장기 대기 · 서버 작업 신호 확인 필요" : displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
           <button type="button" className="registration-card-inspect" aria-expanded={expanded} aria-controls={`registration-live-${activity.id}`} onClick={() => setExpandedActivityId((current) => current === activity.id ? "" : activity.id)}><span className="registration-product"><span>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</span><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></span><span className="registration-inspect-label">{expanded ? (isActive ? "상태 접기" : "상세 접기") : (isActive ? "실시간 상태 보기" : "작업 상세 보기")}<ChevronDown size={14} /></span></button>
           <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{retryableJobId ? activity.id.startsWith("revision:") ? "같은 상품 수정 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : activity.id.startsWith("asset:") ? "같은 이미지 재제작 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {longAnalysis ? "실제 lease를 읽을 수 없어 완료 여부는 추정하지 않습니다." : progress.label}</small></div>
           <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
@@ -2731,7 +2731,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           || payload?.reason === "status_unavailable"
           || payload?.reason === "configuration_missing"
           || payload?.reason === "token_missing_or_expired"
-          || payload?.reason === "token_mismatch";
+          || payload?.reason === "token_mismatch"
+          || payload?.reason === "gateway_unverified"
+          || payload?.reason === "gateway_verification_failed";
         if (response.ok
             && typeof payload?.available === "boolean"
             && validReason
@@ -3051,6 +3053,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const researchInput = intake.researchInput.trim();
     if (researchingProduct || researchInput.length < 2) {
       if (!researchingProduct) notify("상품 판매페이지 링크, 모델명 또는 설명을 입력해 주세요.");
+      return;
+    }
+    if (!isStudioExecutionReady(studioWorkerReadiness)) {
+      const message = studioWorkerReadiness?.message
+        ?? "Vercel AI Gateway 실제 호출 점검을 통과한 뒤 1차 상품 분석을 시작해 주세요.";
+      setProductResearchError(message);
+      notify(message);
       return;
     }
     productResearchControllerRef.current?.abort();
@@ -3399,7 +3408,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const startAutomation = () => {
     if (running || automationStartInFlightRef.current) return;
-    if (studioWorkerReadiness?.available !== true) {
+    if (!isStudioExecutionReady(studioWorkerReadiness)) {
       const message = studioWorkerReadiness?.message
         ?? "AI 제작 작업자 연결 상태를 확인하고 있습니다. 확인이 끝난 뒤 다시 시도해 주세요.";
       setUploadError(message);
@@ -3461,7 +3470,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const totalPhotoCount = (mainPhoto ? 1 : 0) + Object.keys(slotPhotos).length + extraPhotos.length;
   const extraPhotoInputDisabled = extraPhotosProcessing || totalPhotoCount >= 100;
   const extraPhotoDisabledReason = extraPhotosProcessing ? "선택한 사진 확인 중" : totalPhotoCount >= 100 ? "최대 100장 등록됨" : "";
-  const studioWorkerAvailable = studioWorkerReadiness?.available === true;
+  const studioWorkerAvailable = isStudioExecutionReady(studioWorkerReadiness);
   const intakeReady = productIntakeSchema.safeParse(intake).success;
   const intakeCompletionItems = [
     intake.researchInput.trim().length >= 2,
@@ -3554,7 +3563,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           <section className={`product-research-panel ${manualErrors.researchInput ? "field-error" : ""}`}>
             <div className="product-research-heading"><span><Bot size={17} /><b>상품 링크 또는 설명</b><em>1차 자동생성</em></span><small>판매페이지·제조사 링크, 모델명, 바코드, 카톡으로 받은 상품 설명을 그대로 넣으세요.</small></div>
-            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : intake.researchInput.trim().length < 2 || running}>{researchingProduct ? <X size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "확인 중단" : "1차 자동생성"}</button></div>
+            <div className="product-research-input"><Link2 size={17} /><textarea value={intake.researchInput} onChange={(event) => setIntakeField("researchInput", event.target.value)} maxLength={12_000} placeholder={"예: https://공급사.example/product/123\n또는 상품명, 모델명, 재질·구성 등 알고 있는 내용을 붙여넣으세요."} aria-label="상품 링크 또는 설명" /><button type="button" onClick={() => researchingProduct ? cancelProductResearch() : void researchProductInformation()} disabled={researchingProduct ? false : intake.researchInput.trim().length < 2 || running || !studioWorkerAvailable} title={!researchingProduct && !studioWorkerAvailable ? studioWorkerReadiness?.message : undefined}>{researchingProduct ? <X size={15} /> : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? <AlertCircle size={15} /> : <WandSparkles size={15} />}{researchingProduct ? "확인 중단" : studioWorkerReadiness?.reason === "gateway_unverified" || studioWorkerReadiness?.reason === "gateway_verification_failed" ? "Gateway 점검 필요" : "1차 자동생성"}</button></div>
             <small className="product-research-help">공개 근거를 우선 사용하고, 동일 상품 가격은 채널별 최대 3개를 함께 조회해 판매가 검토에 사용합니다.</small>
             {productResearchError && <small className="product-research-error" role="alert"><AlertCircle size={14} />{productResearchError}</small>}
             {manualErrors.researchInput && <small className="product-research-error">{manualErrors.researchInput}</small>}
@@ -3609,7 +3618,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·AI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
           </section>
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && studioWorkerAvailable && !researchingProduct && !competitorResearchBlocksAnalysis && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격 확인 대기" : ""}<br /><small role="status">{studioWorkerReadiness?.message ?? "Vercel OIDC 서버 AI 연결 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!studioWorkerAvailable || running || researchingProduct || photoSelectionsProcessing || competitorResearchBlocksAnalysis || Boolean(queuedJobId)} title={!studioWorkerAvailable ? studioWorkerReadiness?.message ?? "Vercel OIDC 서버 AI 연결 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 AI 확인 중</> : !studioWorkerAvailable ? <><AlertCircle size={17} />서버 AI 연결 필요</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && studioWorkerAvailable && !researchingProduct && !competitorResearchBlocksAnalysis && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격 확인 대기" : ""}<br /><small role="status">{studioWorkerReadiness?.message ?? "Vercel 서버 AI 구성과 실제 Gateway 호출 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!studioWorkerAvailable || running || researchingProduct || photoSelectionsProcessing || competitorResearchBlocksAnalysis || Boolean(queuedJobId)} title={!studioWorkerAvailable ? studioWorkerReadiness?.message ?? "Vercel 서버 AI 실행 가능 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 AI 확인 중</> : studioWorkerReadiness.reason === "gateway_unverified" || studioWorkerReadiness.reason === "gateway_verification_failed" ? <><AlertCircle size={17} />AI Gateway 점검 필요</> : !studioWorkerAvailable ? <><AlertCircle size={17} />서버 AI 연결 필요</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
@@ -4433,7 +4442,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       ? {
           key: `ai-recovery:expired:${aiRecovery.checkedAt}:${aiRecovery.expiredCount}`,
           title: `장기 AI 분석 ${aiRecovery.expiredCount}건 자동 종료`,
-          detail: "서버 AI 연결 없이 멈춘 작업입니다. 등록 진행에서 서버 저장 입력으로 재시도해 주세요.",
+          detail: "서버 작업 신호 없이 멈춘 작업입니다. 등록 진행에서 큐와 실제 AI Gateway 상태를 확인한 뒤 서버 저장 입력으로 재시도해 주세요.",
           kind: "expired" as const,
         }
       : aiRecovery.status === "failed"
