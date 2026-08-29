@@ -474,6 +474,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260829114703_accept_server_product_research_completion.sql",
       "20260829165803_enforce_category_publication_environment_and_market.sql",
       "20260830090000_recover_product_research_context.sql",
+      "20260830095000_close_listing_mutations_until_adapters_ready.sql",
+      "20260830100000_verified_remote_publication_ledger.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -491,6 +493,34 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         throw error;
       }
     }
+    const listingReleaseGate = await scalar(
+      db,
+      "select public.sellerpilot_service_listing_mutation_release_gate_status()",
+    );
+    assert.equal(listingReleaseGate.contract, "verified_publication_release_gate_v1");
+    assert.equal(listingReleaseGate.open, false);
+    assert.equal(listingReleaseGate.state, "closed");
+    assert.equal(listingReleaseGate.queuedOrRunning, 0);
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_service_set_listing_mutation_release_gate(boolean)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_service_set_listing_mutation_release_gate(boolean)', 'EXECUTE')",
+      ),
+      true,
+    );
+    const openedListingReleaseGate = await scalar(
+      db,
+      "select public.sellerpilot_service_set_listing_mutation_release_gate(true)",
+    );
+    assert.equal(openedListingReleaseGate.open, true);
+    assert.equal(openedListingReleaseGate.queuedOrRunning, 0);
     const detailPipelineLineageMigration = await readFile(
       new URL("20260826212116_harden_detail_pipeline_lineage.sql", migrationUrl),
       "utf8",
@@ -615,9 +645,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       true,
     );
-    const boundedRegistrationActivityDefinition = await scalar(
+    const registrationActivityDefinition = await scalar(
       db,
       "select pg_get_functiondef('public.sellerpilot_list_registration_activity(integer)'::regprocedure)",
+    );
+    const boundedRegistrationActivityDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_list_registration_activity_pre_remote_state(integer)'::regprocedure)",
     );
     assert.match(boundedRegistrationActivityDefinition, /recent_listing_probe[\s\S]*limit v_listing_probe_limit/i);
     assert.match(boundedRegistrationActivityDefinition, /recent_studio_job_probe[\s\S]*limit v_job_probe_limit/i);
@@ -626,6 +660,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       boundedRegistrationActivityDefinition,
       /sellerpilot_list_registration_activity_pre_image_activity/i,
     );
+    assert.match(registrationActivityDefinition, /sellerpilot_list_registration_activity_pre_remote_state/i);
+    assert.match(registrationActivityDefinition, /requestedPublicationIntent/);
+    assert.match(registrationActivityDefinition, /remoteVisibility/);
+    assert.match(registrationActivityDefinition, /providerStatus/);
     const temuFulfillmentMigration = await readFile(
       new URL("20260822050435_temu_orders_shipping_aftersales.sql", migrationUrl),
       "utf8",
@@ -2611,13 +2649,25 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
         $1, $2, $3, 'shopee', 'KR', 'test-shop-uncertain', 'KRW', 1000, $4,
-        '{"arguments":{"shopId":"test-shop-uncertain","merchantSku":"UNCERTAIN-1","stock":4}}'::jsonb
+        $5::jsonb
       )`,
       [
         uncertainWriteProductId,
         progressivePreparation.credential_id,
         uncertainWriteAttempt.attempt_id,
         "7".repeat(64),
+        JSON.stringify({
+          arguments: {
+            shopId: "test-shop-uncertain",
+            merchantSku: "UNCERTAIN-1",
+            stock: 4,
+            publicationIntent: "safe_test",
+            publicationStateContract: "verified_remote_state_v1",
+            publicationExpectedLocale: "ko-KR",
+            publicationExpectedFingerprint: "7".repeat(64),
+            publicationExpectedImageCount: 8,
+          },
+        }),
       ],
     );
     const uncertainWriteJobId = uncertainWriteEnqueue.job_id;
@@ -4960,9 +5010,24 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
         $1, $2, $3, 'elevenst', '', '', 'KRW', 5000, $4,
-        '{"arguments":{"verificationOnly":true}}'::jsonb
+        $5::jsonb
       )`,
-      [aiProductId, elevenstCredentialId, elevenstAttempt.attempt_id, "e".repeat(64)],
+      [
+        aiProductId,
+        elevenstCredentialId,
+        elevenstAttempt.attempt_id,
+        "e".repeat(64),
+        JSON.stringify({
+          arguments: {
+            verificationOnly: true,
+            publicationIntent: "safe_test",
+            publicationStateContract: "verified_remote_state_v1",
+            publicationExpectedLocale: "ko-KR",
+            publicationExpectedFingerprint: "e".repeat(64),
+            publicationExpectedImageCount: 8,
+          },
+        }),
+      ],
     );
     const elevenstPreparedListingId = elevenstGatewayEnqueue.listing_id;
     assert.match(elevenstPreparedListingId, /^[0-9a-f-]{36}$/i);
@@ -5304,9 +5369,23 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     const listingGatewayEnqueue = await scalar(
       db,
       `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
-        $1, $2, $3, 'coupang', '', '', 'KRW', 25000, $4, '{}'::jsonb
+        $1, $2, $3, 'coupang', '', '', 'KRW', 25000, $4, $5::jsonb
       )`,
-      [aiProductId, coupangCredentialId, listingAttempt.attempt_id, "c".repeat(64)],
+      [
+        aiProductId,
+        coupangCredentialId,
+        listingAttempt.attempt_id,
+        "c".repeat(64),
+        JSON.stringify({
+          arguments: {
+            publicationIntent: "safe_test",
+            publicationStateContract: "verified_remote_state_v1",
+            publicationExpectedLocale: "ko-KR",
+            publicationExpectedFingerprint: "c".repeat(64),
+            publicationExpectedImageCount: 8,
+          },
+        }),
+      ],
     );
     const preparedListingId = listingGatewayEnqueue.listing_id;
     assert.match(preparedListingId, /^[0-9a-f-]{36}$/i);
@@ -5719,8 +5798,16 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await setClaims(db, "service_role");
     await assert.rejects(
       db.query(
-        "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.update', '{}'::jsonb)",
-        [preparedListingId, otherCoupangCredentialId, crossAccountAttempt.attempt_id],
+        "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.update', $4::jsonb)",
+        [preparedListingId, otherCoupangCredentialId, crossAccountAttempt.attempt_id, JSON.stringify({
+          arguments: {
+            publicationIntent: "safe_test",
+            publicationStateContract: "verified_remote_state_v1",
+            publicationExpectedLocale: "ko-KR",
+            publicationExpectedFingerprint: "7".repeat(64),
+            publicationExpectedImageCount: 8,
+          },
+        })],
       ),
       /product listing seller account mismatch|gateway listing seller account mismatch/,
     );
@@ -5734,8 +5821,16 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await setClaims(db, "service_role");
     const failedUpdateGatewayEnqueue = await scalar(
       db,
-      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.update', '{}'::jsonb)",
-      [updatePreparedListingId, coupangCredentialId, failedUpdateAttempt.attempt_id],
+      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.update', $4::jsonb)",
+      [updatePreparedListingId, coupangCredentialId, failedUpdateAttempt.attempt_id, JSON.stringify({
+        arguments: {
+          publicationIntent: "safe_test",
+          publicationStateContract: "verified_remote_state_v1",
+          publicationExpectedLocale: "ko-KR",
+          publicationExpectedFingerprint: "f".repeat(64),
+          publicationExpectedImageCount: 8,
+        },
+      })],
     );
     await db.query(
       "update sellerpilot_private.channel_gateway_jobs set status='failed', error_message='one channel failed', completed_at=now() where id=$1",
@@ -5758,7 +5853,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     const failedPublishedListing = failedUpdateContext.listings.find((listing) => listing.id === preparedListingId);
     assert.equal(failedPublishedListing.status, "failed");
     assert.equal(failedPublishedListing.remoteId, "remote-product-1");
-    assert.match(failedPublishedListing.publishedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.equal(failedPublishedListing.publishedAt, null);
     const mixedRegistrationActivity = await scalar(db, "select public.sellerpilot_list_registration_activity(20)");
     const mixedRegistrationCard = mixedRegistrationActivity.find((activity) => activity.productId === aiProductId);
     assert.equal(mixedRegistrationCard.status, "blocked");
@@ -5780,8 +5875,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await setClaims(db, "service_role");
     const stopListingGatewayEnqueue = await scalar(
       db,
-      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.stop', '{}'::jsonb)",
-      [preparedListingId, coupangCredentialId, stopListingAttempt.attempt_id],
+      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.stop', $4::jsonb)",
+      [preparedListingId, coupangCredentialId, stopListingAttempt.attempt_id, JSON.stringify({
+        arguments: {
+          publicationStateContract: "verified_remote_state_v1",
+          publicationExpectedLocale: "ko-KR",
+          publicationExpectedFingerprint: "9".repeat(64),
+          publicationExpectedImageCount: 0,
+        },
+      })],
     );
     await db.query(
       `update sellerpilot_private.channel_gateway_jobs
@@ -5828,8 +5930,16 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await setClaims(db, "service_role");
     const resumeListingGatewayEnqueue = await scalar(
       db,
-      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.update', '{}'::jsonb)",
-      [preparedListingId, coupangCredentialId, resumeListingAttempt.attempt_id],
+      "select public.sellerpilot_service_enqueue_listing_gateway_job($1, $2, $3, 'coupang', 'listing.update', $4::jsonb)",
+      [preparedListingId, coupangCredentialId, resumeListingAttempt.attempt_id, JSON.stringify({
+        arguments: {
+          publicationIntent: "safe_test",
+          publicationStateContract: "verified_remote_state_v1",
+          publicationExpectedLocale: "ko-KR",
+          publicationExpectedFingerprint: "8".repeat(64),
+          publicationExpectedImageCount: 8,
+        },
+      })],
     );
     await db.query(
       `update sellerpilot_private.channel_gateway_jobs
@@ -6696,9 +6806,24 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
         $1, $2, $3, 'qoo10', '', '', 'JPY', 1800, $4,
-        '{"arguments":{"verificationOnly":true}}'::jsonb
+        $5::jsonb
       )`,
-      [SHARED_PRODUCT_ID, credentialId, sharedListingAttempt.attempt_id, "b".repeat(64)],
+      [
+        SHARED_PRODUCT_ID,
+        credentialId,
+        sharedListingAttempt.attempt_id,
+        "b".repeat(64),
+        JSON.stringify({
+          arguments: {
+            verificationOnly: true,
+            publicationIntent: "safe_test",
+            publicationStateContract: "verified_remote_state_v1",
+            publicationExpectedLocale: "ja-JP",
+            publicationExpectedFingerprint: "b".repeat(64),
+            publicationExpectedImageCount: 8,
+          },
+        }),
+      ],
     );
     const sharedListingId = sharedListingEnqueue.listing_id;
     assert.match(sharedListingId, /^[0-9a-f-]{36}$/i);
@@ -9833,6 +9958,14 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         await readFile(new URL(name, migrationUrl), "utf8"),
       ));
     }
+    assert.equal(
+      (await scalar(
+        db,
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true)",
+      )).open,
+      true,
+      "this provider-mutation fixture must explicitly open the release gate",
+    );
 
     await db.query(
       "insert into auth.users (id, email) values ($1, 'serverless-gateway@example.test')",
@@ -10554,6 +10687,14 @@ test("Coupang bounded reads drain nine jobs per window and opportunistic reaping
         await readFile(new URL(name, migrationUrl), "utf8"),
       ));
     }
+    assert.equal(
+      (await scalar(
+        db,
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true)",
+      )).open,
+      true,
+      "this mutation-reaping fixture must explicitly open the release gate",
+    );
 
     await db.query(
       "insert into auth.users (id, email) values ($1, 'coupang-read-capacity@example.test')",

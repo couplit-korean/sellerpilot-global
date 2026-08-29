@@ -60,6 +60,12 @@ function listingReference(listing: ListingRecord) {
     status: typeof listing.status === "string" ? listing.status : "",
     remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
     publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+    requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+      ? listing.requestedPublicationIntent
+      : null,
+    remoteVisibility: typeof listing.remoteVisibility === "string"
+      ? listing.remoteVisibility
+      : null,
   };
 }
 
@@ -80,18 +86,18 @@ function listingExecutionBlock(listing: ListingRecord) {
       message: "이전 원격 작업 결과를 판매자센터에서 확인하기 전에는 새 상품 수정을 실행할 수 없습니다.",
     };
   }
-  if (status !== "published" && status !== "failed") {
+  if (!["published", "paused", "failed"].includes(status)) {
     return {
       status: 409,
       mode: "published_listing_required",
-      message: "현재 게시 중이거나 게시 후 재시도 가능한 상품만 원격 수정할 수 있습니다.",
+      message: "검증된 공개 상품 또는 안전한 비공개 상품만 원격 수정할 수 있습니다.",
     };
   }
   if (listingWriteOperation(listingReference(listing)) !== "listing.update") {
     return {
       status: 409,
       mode: "published_remote_identity_required",
-      message: "게시 원장의 원격 상품 ID와 최초 게시 시각이 확인되지 않아 수정을 차단했습니다.",
+      message: "게시 원장의 원격 상품 ID와 검증된 공개 상태를 확인하지 못해 수정을 차단했습니다.",
     };
   }
   return null;

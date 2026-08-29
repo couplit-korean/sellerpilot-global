@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { gatewayWorkerCompletionSchema } from "../../../../../lib/channels/gateway-contract";
+import {
+  gatewayJobCompletionStatusAtJobBoundary,
+  gatewayWorkerCompletionSchema,
+} from "../../../../../lib/channels/gateway-contract";
 import { normalizeChannelInquiries } from "../../../../../lib/channels/inquiry-sync";
 import { normalizeChannelOrders } from "../../../../../lib/channels/order-sync";
 import type { ActiveChannelKey } from "../../../../../lib/channels/catalog";
@@ -133,6 +136,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "실행 중인 채널 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
   }
   const normalizationTimestamp = completionNormalizationTimestamp(job.normalization_timestamp);
+  const publicationVerificationBoundary = completionNormalizationTimestamp(
+    job.publication_verification_boundary,
+  );
+  const succeededResult = parsed.data.status === "succeeded" ? parsed.data.result : null;
+  const succeededResultRecord = succeededResult as unknown as Record<string, unknown> | null;
+  const effectiveCompletionStatus = gatewayJobCompletionStatusAtJobBoundary(
+    parsed.data.status,
+    succeededResultRecord,
+    publicationVerificationBoundary,
+  );
+  const effectiveCompletionError = effectiveCompletionStatus === "reconciliation_required"
+      && parsed.data.status === "succeeded"
+    ? "LISTING_REMOTE_STATE_PROVIDER_MUTATION_BOUNDARY_MISMATCH"
+    : parsed.data.status === "succeeded"
+      ? null
+      : parsed.data.error;
 
   let storedResponse: Record<string, unknown> | null = null;
   let normalizedOrders: ReturnType<typeof normalizeChannelOrders> | null = null;
@@ -270,9 +289,9 @@ export async function POST(request: Request) {
     p_token_hash: tokenHash,
     p_job_id: parsed.data.jobId,
     p_claim_token: parsed.data.claimToken,
-    p_status: parsed.data.status,
+    p_status: effectiveCompletionStatus,
     p_response_payload: storedResponse,
-    p_error_message: parsed.data.status === "succeeded" ? null : parsed.data.error,
+    p_error_message: effectiveCompletionError,
     p_credential_refresh: credentialRefresh ?? null,
     p_normalized_orders: normalizedOrders,
     p_normalized_inquiries: normalizedInquiries,
@@ -293,7 +312,7 @@ export async function POST(request: Request) {
     await dispatchPendingPushNotifications(serviceClient).catch(() => null);
   }
   return NextResponse.json({
-    message: parsed.data.status === "reconciliation_required"
+    message: effectiveCompletionStatus === "reconciliation_required"
       ? "채널 작업을 수동 확인 필요 상태로 안전하게 보존했습니다."
       : "채널 작업 결과가 안전하게 저장됐습니다.",
   });

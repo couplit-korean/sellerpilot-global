@@ -9,18 +9,80 @@ import {
   verifyListingUpdateReadback,
 } from "../lib/channels/listing-update";
 
-const listing = { status: "published", remoteId: "123456789" };
+const listing = {
+  status: "published",
+  remoteId: "123456789",
+  publishedAt: "2026-08-24T10:00:00.000Z",
+  requestedPublicationIntent: "live",
+  remoteVisibility: "live",
+};
 
-test("a failed update keeps using update when an earlier publication is proven", () => {
-  const failedUpdate = { status: "failed", remoteId: "123456789", publishedAt: "2026-08-24T10:00:00.000Z" };
+test("verified safe drafts and live listings keep using their exact remote identity", () => {
+  const failedUpdate = {
+    status: "failed",
+    remoteId: "123456789",
+    publishedAt: "2026-08-24T10:00:00.000Z",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+  };
   assert.equal(listingWriteOperation(failedUpdate), "listing.update");
   assert.equal(listingWriteOperation({
     status: "failed",
     remoteId: "unverified-remote-create-123",
     publishedAt: "2026-08-25T10:00:00.000Z",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
   }), "listing.update");
-  assert.equal(listingWriteOperation({ status: "failed", remoteId: "123456789", publishedAt: null }), "listing.create");
+  assert.equal(listingWriteOperation({
+    status: "paused",
+    remoteId: "safe-draft-123",
+    publishedAt: null,
+    requestedPublicationIntent: "safe_test",
+    remoteVisibility: "non_public",
+  }), "listing.update");
+  assert.equal(listingWriteOperation({
+    status: "paused",
+    remoteId: "safe-withdrawn-123",
+    publishedAt: null,
+    requestedPublicationIntent: "safe_test",
+    remoteVisibility: "withdrawn",
+  }), "listing.update");
+});
+
+test("every existing remote identity stays update-only while blocked states are handled by the workbench", () => {
+  assert.equal(listingWriteOperation({ status: "failed", remoteId: "123456789", publishedAt: null }), "listing.update");
   assert.equal(listingWriteOperation({ status: "published", remoteId: "123456789", publishedAt: null }), "listing.update");
+  for (const remoteVisibility of ["unknown", "pending_review", "rejected"] as const) {
+    assert.equal(listingWriteOperation({
+      status: remoteVisibility === "rejected" ? "failed" : "paused",
+      remoteId: `remote-${remoteVisibility}`,
+      publishedAt: null,
+      requestedPublicationIntent: remoteVisibility === "pending_review" ? "live" : "safe_test",
+      remoteVisibility,
+    }), "listing.update", remoteVisibility);
+  }
+  assert.equal(listingWriteOperation({
+    status: "paused",
+    remoteId: "unsafe-live-123",
+    publishedAt: null,
+    requestedPublicationIntent: "safe_test",
+    remoteVisibility: "live",
+  }), "listing.update");
+  assert.equal(listingWriteOperation({
+    status: "failed",
+    remoteId: null,
+    publishedAt: "2026-08-24T10:00:00.000Z",
+  }), "listing.create");
+});
+
+test("failed verified updates preserve the immutable remote product identity", () => {
+  const failedUpdate = {
+    status: "failed",
+    remoteId: "123456789",
+    publishedAt: "2026-08-24T10:00:00.000Z",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+  };
   assert.deepEqual(
     prepareListingUpdateArguments("qoo10", { params: { ItemTitle: "재시도" } }, failedUpdate),
     { params: { ItemTitle: "재시도", ItemCode: "123456789" } },

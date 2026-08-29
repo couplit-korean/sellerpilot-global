@@ -23,6 +23,36 @@ test("inline channel write confirmations move focus without claiming modal isola
   assert.equal((source.match(/className="publish-write-confirmation(?: channel)?"[^>]*aria-modal="true"/g) ?? []).length, 0);
 });
 
+test("FINAL registration binds live intent and serializes provider writes", async () => {
+  const source = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const publicationIntent = operation === "listing\.create"[\s\S]*?"live" as const/);
+  assert.match(source, /const mutationContract = \{[\s\S]*?publicationIntent,/);
+  assert.match(source, /operation,[\s\S]*?publicationIntent: "live",[\s\S]*?idempotencyKey:/);
+  assert.match(source, /executeChannelWritesSequentially\([\s\S]*?readyChannels,[\s\S]*?executeChannel\(channel/);
+  assert.doesNotMatch(source, /Promise\.all\(readyChannels\.map\([\s\S]*?executeChannel/);
+  assert.match(source, /확인 후 순차 실행/);
+  assert.match(source, /심사 대기는 공개 게시 성공으로 집계하지 않습니다/);
+});
+
+test("HTTP 202 publication review is visible and cannot fall through as success", async () => {
+  const source = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /isPublicationPendingReviewResponse\(response\.status, payload\)[\s\S]*?phase: "pending_review"/);
+  assert.match(source, /심사 대기 · 공개 게시 성공 0건/);
+  assert.match(source, /return false;[\s\S]*?response\.status === 202 && payload\.inProgress === true/);
+  assert.match(source, /result\.phase === "pending_review"/);
+});
+
+test("create and content update both require all eight localized detail images", async () => {
+  const source = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
+
+  assert.match(
+    source,
+    /expectedPublicationImageCount = operation === "listing\.create" \|\| operation === "listing\.update"[\s\S]*?marketplaceChannelDetailImageCount/,
+  );
+});
+
 test("Coupang listing preflight never creates an unconfirmed shipping place", async () => {
   const [worker, listingRuntime] = await Promise.all([
     readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),

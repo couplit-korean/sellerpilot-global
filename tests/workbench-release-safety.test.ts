@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   channelTargetOptionValue,
+  executeChannelWritesSequentially,
+  isPublicationPendingReviewResponse,
   listingMutationGeneration,
   productEditSupportLabel,
   reconcileQueuedChannelResults,
@@ -55,6 +57,54 @@ test("workbench state belongs only to the exact selected product", () => {
   assert.equal(workbenchProductContextMatches("product-a", "product-b"), false);
   assert.equal(workbenchProductContextMatches(null, "product-a"), false);
   assert.equal(workbenchProductContextMatches("product-a", null), false);
+});
+
+test("only a successful HTTP 202 publication decision becomes pending review", () => {
+  assert.equal(isPublicationPendingReviewResponse(202, {
+    ok: true,
+    publicationPending: true,
+    publicationFulfilled: false,
+  }), true);
+  assert.equal(isPublicationPendingReviewResponse(202, {
+    ok: true,
+    publicationFulfilled: false,
+  }), true);
+  assert.equal(isPublicationPendingReviewResponse(200, {
+    ok: true,
+    publicationPending: true,
+    publicationFulfilled: false,
+  }), false);
+  assert.equal(isPublicationPendingReviewResponse(202, {
+    ok: false,
+    publicationPending: true,
+    publicationFulfilled: false,
+  }), false);
+});
+
+test("provider writes run one at a time in visible channel order", async () => {
+  const events: string[] = [];
+  let running = 0;
+  let maximumRunning = 0;
+  const result = await executeChannelWritesSequentially(
+    ["qoo10", "shopee", "lazada"],
+    async (channel) => {
+      running += 1;
+      maximumRunning = Math.max(maximumRunning, running);
+      events.push(`start:${channel}`);
+      await Promise.resolve();
+      events.push(`end:${channel}`);
+      running -= 1;
+      return channel;
+    },
+  );
+
+  assert.equal(maximumRunning, 1);
+  assert.deepEqual(result, ["qoo10", "shopee", "lazada"]);
+  assert.deepEqual(events, [
+    "start:qoo10", "end:qoo10",
+    "start:shopee", "end:shopee",
+    "start:lazada", "end:lazada",
+  ]);
 });
 
 test("queued reconciliation requires the exact listing and attempt", () => {
@@ -132,4 +182,26 @@ test("listing stop stays queued while published and completes only when paused",
     listing({ status: "failed", failureClass: "external_action", lastError: "manual review" }),
   ]);
   assert.equal(blocked.qoo10?.phase, "blocked");
+});
+
+test("live publication review remains pending and never reconciles as succeeded", () => {
+  const queued: Partial<Record<"qoo10", WorkbenchChannelResult>> = {
+    qoo10: {
+      phase: "queued",
+      operation: "listing.create",
+      attemptId: "40000000-0000-4000-8000-000000000001",
+      listingId: "30000000-0000-4000-8000-000000000001",
+      market: "JP",
+      targetId: "",
+    },
+  };
+
+  const pending = reconcileQueuedChannelResults(queued, [listing({
+    status: "paused",
+    failureClass: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "pending_review",
+  })]);
+  assert.equal(pending.qoo10?.phase, "pending_review");
+  assert.match(pending.qoo10?.message ?? "", /공개 게시 성공에는 포함되지 않습니다/);
 });

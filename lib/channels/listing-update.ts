@@ -8,6 +8,8 @@ export type ListingUpdateReference = {
   remoteId: string | null;
   status: string;
   publishedAt?: string | null;
+  requestedPublicationIntent?: string | null;
+  remoteVisibility?: string | null;
 };
 
 export const productEditFieldKeys = [
@@ -210,9 +212,26 @@ export function remoteProductEditIdempotencyKey(input: {
 }
 
 export function listingWriteOperation(listing: ListingUpdateReference | null | undefined): "listing.create" | "listing.update" {
-  const hasPublishedIdentity = Boolean(listing?.remoteId?.trim())
-    && (listing?.status === "published" || Boolean(listing?.publishedAt));
-  return hasPublishedIdentity ? "listing.update" : "listing.create";
+  const hasRemoteIdentity = Boolean(listing?.remoteId?.trim());
+  // A remote identifier is an immutable identity fence even when its latest
+  // visibility readback is stale, pending, rejected, or otherwise blocked.
+  // The workbench decides whether the row may be acted on; this selector must
+  // never turn an existing remote product into a second create attempt.
+  return hasRemoteIdentity ? "listing.update" : "listing.create";
+}
+
+function listingHasVerifiedUpdateIdentity(listing: ListingUpdateReference) {
+  const hasRemoteIdentity = Boolean(listing.remoteId?.trim());
+  const hasPublishedAt = Boolean(listing.publishedAt?.trim());
+  const hasVerifiedSafeIdentity = listing.requestedPublicationIntent === "safe_test"
+    && (listing.remoteVisibility === "non_public" || listing.remoteVisibility === "withdrawn")
+    && (listing.status === "paused" || listing.status === "failed")
+    && !hasPublishedAt;
+  const hasVerifiedLiveIdentity = listing.requestedPublicationIntent === "live"
+    && listing.remoteVisibility === "live"
+    && (listing.status === "published" || listing.status === "failed")
+    && hasPublishedAt;
+  return hasRemoteIdentity && (hasVerifiedSafeIdentity || hasVerifiedLiveIdentity);
 }
 
 export type ListingCoreContent = {
@@ -399,7 +418,12 @@ export function prepareListingUpdateArguments(
   listing: ListingUpdateReference,
 ) {
   const remoteId = listing.remoteId?.trim() ?? "";
-  if (listingWriteOperation(listing) !== "listing.update" || !remoteId) {
+  // Public callers must pass the verified ledger classifier above. The
+  // provider executor also re-normalizes an already authorized update using
+  // a minimal published reference, so keep that internal compatibility path
+  // identity-only and never use it to select the write operation.
+  const authorizedProviderReference = listing.status === "published" && Boolean(remoteId);
+  if ((!listingHasVerifiedUpdateIdentity(listing) && !authorizedProviderReference) || !remoteId) {
     throw new Error("PUBLISHED_REMOTE_LISTING_REQUIRED");
   }
 

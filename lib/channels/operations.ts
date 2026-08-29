@@ -40,6 +40,17 @@ import {
   prepareListingUpdateArguments,
   verifyListingUpdateReadback,
 } from "./listing-update";
+import {
+  listingOperationRequiresVerifiedRemoteState,
+  listingOperationUsesPublicationIntent,
+  listingPublicationIntentFromArguments,
+  listingRemoteStateContractVersion,
+  listingRemoteStateFulfillsOperation,
+  listingRemoteStateMatchesOperation,
+  verifiedListingRemoteStateSchema,
+  type ListingPublicationIntent,
+  type VerifiedListingRemoteState,
+} from "./listing-publication-state";
 
 export const channelOperationNames = [
   "categories.list",
@@ -105,6 +116,10 @@ export type ChannelOperationResult = {
   steps: ChannelOperationStep[];
   remoteId?: string;
   publicUrl?: string;
+  publicationIntent?: ListingPublicationIntent;
+  publicationStateContract?: typeof listingRemoteStateContractVersion;
+  remoteState?: VerifiedListingRemoteState;
+  publicationFulfilled?: boolean;
   continuation?: {
     reason: "page_cap_reached";
     arguments: Record<string, unknown>;
@@ -553,6 +568,7 @@ function result(
   steps: ChannelOperationStep[],
   remoteId?: string,
   continuation?: ChannelOperationResult["continuation"],
+  verifiedRemoteState?: VerifiedListingRemoteState,
 ): ChannelOperationResult {
   const providerStepsSucceeded = steps.length > 0 && steps.every((item) => item.ok);
   // A create response is not a durable success until the provider identity is
@@ -562,7 +578,49 @@ function result(
   // retry, can create a duplicate remote product.
   const createIdentityMissing = input.operation === "listing.create"
     && !remoteId?.trim();
-  const ok = providerStepsSucceeded && !createIdentityMissing;
+  // Direct provider protocol callers that predate the remote-state contract
+  // remain parseable for fixture and recovery compatibility. Every new admin
+  // listing write injects the contract before enqueueing, so the strict fence
+  // is activated whenever the marker is present (including an invalid marker).
+  // Gateway completion still rejects a legacy `ok` result without the marker.
+  const publicationVerificationRequested = listingOperationRequiresVerifiedRemoteState(input.operation)
+    && Object.hasOwn(input.arguments, "publicationStateContract");
+  const publicationStateContract = publicationVerificationRequested
+      && input.arguments.publicationStateContract === listingRemoteStateContractVersion
+    ? listingRemoteStateContractVersion
+    : undefined;
+  const publicationIntent = listingOperationUsesPublicationIntent(input.operation)
+    ? listingPublicationIntentFromArguments(input.arguments)
+    : undefined;
+  const parsedRemoteState = verifiedListingRemoteStateSchema.safeParse(verifiedRemoteState);
+  const remoteState = parsedRemoteState.success ? parsedRemoteState.data : undefined;
+  const publicationContractMissing = providerStepsSucceeded
+    && !createIdentityMissing
+    && publicationVerificationRequested
+    && !publicationStateContract;
+  const publicationIntentMissing = providerStepsSucceeded
+    && !createIdentityMissing
+    && publicationVerificationRequested
+    && listingOperationUsesPublicationIntent(input.operation)
+    && !publicationIntent;
+  const publicationStateMissing = providerStepsSucceeded
+    && !createIdentityMissing
+    && publicationVerificationRequested
+    && !remoteState;
+  const publicationStateMismatch = Boolean(
+    publicationStateContract
+    && remoteState
+    && !listingRemoteStateMatchesOperation(input.operation, remoteState, publicationIntent),
+  );
+  const publicationFulfilled = publicationStateContract && remoteState
+    ? listingRemoteStateFulfillsOperation(input.operation, remoteState, publicationIntent)
+    : undefined;
+  const ok = providerStepsSucceeded
+    && !createIdentityMissing
+    && !publicationContractMissing
+    && !publicationIntentMissing
+    && !publicationStateMissing
+    && !publicationStateMismatch;
   const providerMessage = steps
     .filter((item) => !item.ok)
     .map((item) => {
@@ -576,6 +634,10 @@ function result(
     operation: input.operation,
     steps,
     remoteId,
+    ...(publicationIntent ? { publicationIntent } : {}),
+    ...(publicationStateContract ? { publicationStateContract } : {}),
+    ...(remoteState ? { remoteState } : {}),
+    ...(publicationFulfilled === undefined ? {} : { publicationFulfilled }),
     ...(ok && continuation ? { continuation } : {}),
     safeMessage: ok
       ? continuation
@@ -583,6 +645,14 @@ function result(
         : `${channelCatalog[input.channel].name} ${input.operation} 작업이 정상 응답했습니다.`
       : createIdentityMissing && providerStepsSucceeded
         ? `${channelCatalog[input.channel].name} 상품 생성 응답은 수신했지만 원격 상품 식별값을 확인할 수 없습니다. 판매자센터 수동 확인이 필요합니다.`
+        : publicationContractMissing
+          ? `${channelCatalog[input.channel].name} 상품 작업에 검증된 원격 상태 계약이 없어 성공으로 처리하지 않았습니다.`
+          : publicationIntentMissing
+            ? `${channelCatalog[input.channel].name} 상품 작업의 원장 게시 의도를 확인할 수 없어 성공으로 처리하지 않았습니다.`
+        : publicationStateMissing
+            ? `${channelCatalog[input.channel].name} 원격 상품 응답은 수신했지만 게시 상태 검증값을 확인할 수 없습니다. 판매자센터 수동 확인이 필요합니다.`
+            : publicationStateMismatch
+              ? `${channelCatalog[input.channel].name} 원격 상품 가시성이 요청한 작업과 일치하지 않습니다. 판매자센터 수동 확인이 필요합니다.`
         : `${channelCatalog[input.channel].name} ${input.operation} 작업이 원격 오류로 종료됐습니다.${providerMessage ? ` · ${providerMessage}` : ""}`,
   };
 }
@@ -3741,13 +3811,41 @@ async function executeEbay(input: ExecuteInput) {
 
 export async function executeChannelOperation(input: ExecuteInput): Promise<ChannelOperationResult> {
   ensureProviderSupport(input.channel, input.operation);
+  const requestedPublicationIntent = listingPublicationIntentFromArguments(input.arguments);
+  const requestedPublicationStateContract = input.arguments.publicationStateContract === listingRemoteStateContractVersion
+    ? listingRemoteStateContractVersion
+    : undefined;
+  const requestedPublicationExpectedFingerprint = typeof input.arguments.publicationExpectedFingerprint === "string"
+      && /^[a-f0-9]{64}$/u.test(input.arguments.publicationExpectedFingerprint)
+    ? input.arguments.publicationExpectedFingerprint
+    : undefined;
+  const requestedPublicationExpectedLocale = typeof input.arguments.publicationExpectedLocale === "string"
+    ? input.arguments.publicationExpectedLocale
+    : undefined;
+  const requestedPublicationExpectedImageCount = typeof input.arguments.publicationExpectedImageCount === "number"
+      && Number.isInteger(input.arguments.publicationExpectedImageCount)
+    ? input.arguments.publicationExpectedImageCount
+    : undefined;
   const safeInput = input.operation === "listing.update"
     ? {
       ...input,
-      arguments: prepareListingUpdateArguments(input.channel, input.arguments, {
-        status: "published",
-        remoteId: listingUpdateRemoteIdentity(input.channel, input.arguments),
-      }),
+      arguments: {
+        ...prepareListingUpdateArguments(input.channel, input.arguments, {
+          status: "published",
+          remoteId: listingUpdateRemoteIdentity(input.channel, input.arguments),
+        }),
+        ...(requestedPublicationIntent ? { publicationIntent: requestedPublicationIntent } : {}),
+        ...(requestedPublicationStateContract ? { publicationStateContract: requestedPublicationStateContract } : {}),
+        ...(requestedPublicationExpectedFingerprint
+          ? { publicationExpectedFingerprint: requestedPublicationExpectedFingerprint }
+          : {}),
+        ...(requestedPublicationExpectedLocale
+          ? { publicationExpectedLocale: requestedPublicationExpectedLocale }
+          : {}),
+        ...(requestedPublicationExpectedImageCount === undefined
+          ? {}
+          : { publicationExpectedImageCount: requestedPublicationExpectedImageCount }),
+      },
     }
     : input;
   const safeArguments: Record<string, unknown> = safeInput.arguments;

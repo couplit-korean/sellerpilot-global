@@ -14,7 +14,13 @@ import {
 } from "../lib/channels/listing-update";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
 
-const publishedListing = { status: "published", remoteId: "987654321", publishedAt: "2026-08-25T00:00:00Z" };
+const publishedListing = {
+  status: "published",
+  remoteId: "987654321",
+  publishedAt: "2026-08-25T00:00:00Z",
+  requestedPublicationIntent: "live",
+  remoteVisibility: "live",
+};
 
 test("중앙 편집과 원격 편집의 실제 지원 필드를 분리한다", () => {
   const central = centralProductEditFieldSupport();
@@ -226,6 +232,8 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.doesNotMatch(source, /randomUUID/);
   assert.doesNotMatch(source, /operation:\s*"price\.update" as const/);
   assert.match(source, /productEditRemotePlan/);
+  assert.match(source, /requestedPublicationIntent:[\s\S]*remoteVisibility:/);
+  assert.match(source, /\["published", "paused", "failed"\]\.includes\(status\)/);
   assert.match(source, /centralWritePerformed:\s*false/);
   assert.match(source, /remoteWritePerformed:\s*false/);
   assert.match(source, /manualRequired:\s*true/);

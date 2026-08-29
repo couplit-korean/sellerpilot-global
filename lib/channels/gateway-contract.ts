@@ -1,5 +1,16 @@
 import { z } from "zod";
 import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operations";
+import {
+  listingOperationRequiresVerifiedRemoteState,
+  listingOperationUsesPublicationIntent,
+  listingPublicationLocaleSchema,
+  listingPublicationIntentSchema,
+  listingRemoteStateContractSchema,
+  listingRemoteStateFulfillsOperation,
+  listingRemoteStateMatchesOperation,
+  listingRemoteStateVerifiedAtOrAfterJobBoundary,
+  verifiedListingRemoteStateSchema,
+} from "./listing-publication-state";
 
 const gatewayChannelSchema = z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]);
 
@@ -30,6 +41,61 @@ export const gatewayClaimSchema = z.object({
   request: z.record(z.string(), z.unknown()),
   credential: credentialPayloadSchema,
   attempt_count: z.number().int().min(1).max(6),
+}).superRefine((value, context) => {
+  if (!listingOperationRequiresVerifiedRemoteState(value.operation)) return;
+  const argumentsValue = value.request.arguments;
+  if (!argumentsValue || typeof argumentsValue !== "object" || Array.isArray(argumentsValue)) return;
+  const listingArguments = argumentsValue as Record<string, unknown>;
+  const remoteStateContract = listingArguments.publicationStateContract;
+  if (remoteStateContract !== undefined && !listingRemoteStateContractSchema.safeParse(remoteStateContract).success) {
+    context.addIssue({
+      code: "custom",
+      path: ["request", "arguments", "publicationStateContract"],
+      message: "invalid listing remote-state contract",
+    });
+  }
+  const publicationIntent = listingArguments.publicationIntent;
+  // Existing queued jobs predate publication intent. They remain readable and
+  // executable as legacy jobs, while every new admin request injects the
+  // normalized default before it is enqueued.
+  if (listingOperationUsesPublicationIntent(value.operation)
+      && publicationIntent !== undefined
+      && !listingPublicationIntentSchema.safeParse(publicationIntent).success) {
+    context.addIssue({
+      code: "custom",
+      path: ["request", "arguments", "publicationIntent"],
+      message: "invalid listing publication intent",
+    });
+  } else if (!listingOperationUsesPublicationIntent(value.operation) && publicationIntent !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["request", "arguments", "publicationIntent"],
+      message: "listing operation does not use publication intent",
+    });
+  }
+  if (remoteStateContract === "verified_remote_state_v1") {
+    if (!listingPublicationLocaleSchema.safeParse(listingArguments.publicationExpectedLocale).success) {
+      context.addIssue({
+        code: "custom",
+        path: ["request", "arguments", "publicationExpectedLocale"],
+        message: "verified listing request requires its server-owned locale",
+      });
+    }
+    if (!z.string().regex(/^[a-f0-9]{64}$/u).safeParse(listingArguments.publicationExpectedFingerprint).success) {
+      context.addIssue({
+        code: "custom",
+        path: ["request", "arguments", "publicationExpectedFingerprint"],
+        message: "verified listing request requires its request fingerprint",
+      });
+    }
+    if (!z.number().int().min(0).max(64).safeParse(listingArguments.publicationExpectedImageCount).success) {
+      context.addIssue({
+        code: "custom",
+        path: ["request", "arguments", "publicationExpectedImageCount"],
+        message: "verified listing request requires its image-count floor",
+      });
+    }
+  }
 });
 
 const paginationContinuationSchema = z.object({
@@ -58,46 +124,122 @@ const operationResultSchema = z.object({
   })).min(1).max(128),
   remoteId: z.string().max(240).optional(),
   publicUrl: z.string().url().max(1_000).optional(),
+  publicationIntent: listingPublicationIntentSchema.optional(),
+  publicationStateContract: listingRemoteStateContractSchema.optional(),
+  remoteState: verifiedListingRemoteStateSchema.optional(),
+  publicationFulfilled: z.boolean().optional(),
   continuation: paginationContinuationSchema.optional(),
   safeMessage: z.string().min(1).max(1_000),
 }).superRefine((value, context) => {
-  if (!value.continuation) return;
-  if (value.ok !== true || (value.operation !== "orders.list" && value.operation !== "inquiries.list")) {
-    context.addIssue({ code: "custom", message: "pagination continuation requires a successful sync page" });
-    return;
+  if (listingOperationRequiresVerifiedRemoteState(value.operation)
+      && !value.publicationStateContract
+      && (value.publicationIntent !== undefined
+        || value.remoteState !== undefined
+        || value.publicationFulfilled !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      path: ["publicationStateContract"],
+      message: "listing publication fields require the verified remote-state contract",
+    });
   }
-  const next = value.continuation.arguments;
-  const query = next.query && typeof next.query === "object" && !Array.isArray(next.query)
-    ? next.query as Record<string, unknown>
-    : {};
-  const queryParams = next.queryParams && typeof next.queryParams === "object" && !Array.isArray(next.queryParams)
-    ? next.queryParams as Record<string, unknown>
-    : {};
-  const positiveInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 1;
-  const nonNegativeInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 0;
-  const nonEmpty = (item: unknown) => typeof item === "string" && item.trim().length > 0;
-  const valid = value.channel === "shopee" && value.operation === "orders.list"
-    ? nonEmpty(query.cursor)
-    : value.channel === "lazada" && value.operation === "orders.list"
-      ? nonNegativeInteger(queryParams.offset)
-      : value.channel === "coupang" && value.operation === "orders.list"
-        ? nonEmpty(query.nextToken)
-        : value.channel === "coupang" && value.operation === "inquiries.list"
-          ? positiveInteger(query.pageNum)
-          : value.channel === "smartstore" && value.operation === "orders.list"
-            ? nonEmpty(query.lastChangedFrom) && nonEmpty(query.moreSequence)
-            : value.channel === "smartstore" && value.operation === "inquiries.list"
-              ? positiveInteger(query.page)
-              : value.channel === "ebay" && value.operation === "orders.list"
-                ? nonNegativeInteger(query.offset)
-                : value.channel === "ebay" && value.operation === "inquiries.list"
-                  ? positiveInteger(next.pageNumber)
-                  : value.channel === "temu" && value.operation === "orders.list"
+  if (value.publicationStateContract && !listingOperationRequiresVerifiedRemoteState(value.operation)) {
+    context.addIssue({
+      code: "custom",
+      path: ["publicationStateContract"],
+      message: "remote-state contract is only valid for listing mutations",
+    });
+  }
+  if (value.ok && listingOperationRequiresVerifiedRemoteState(value.operation)) {
+    if (!value.publicationStateContract) {
+      context.addIssue({
+        code: "custom",
+        path: ["publicationStateContract"],
+        message: "successful listing mutation requires the verified remote-state contract",
+      });
+    } else if (!value.remoteState) {
+      context.addIssue({
+        code: "custom",
+        path: ["remoteState"],
+        message: "successful listing mutation requires verified remote state",
+      });
+    } else if (listingOperationUsesPublicationIntent(value.operation) && !value.publicationIntent) {
+      context.addIssue({
+        code: "custom",
+        path: ["publicationIntent"],
+        message: "listing mutation requires its bound publication intent",
+      });
+    } else if (!listingOperationUsesPublicationIntent(value.operation) && value.publicationIntent) {
+      context.addIssue({
+        code: "custom",
+        path: ["publicationIntent"],
+        message: "listing stop cannot change publication intent",
+      });
+    } else if (!listingRemoteStateMatchesOperation(value.operation, value.remoteState, value.publicationIntent)) {
+      context.addIssue({
+        code: "custom",
+        path: ["remoteState", "visibility"],
+        message: "verified remote visibility does not match publication intent",
+      });
+    } else if (value.publicationFulfilled === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["publicationFulfilled"],
+        message: "successful listing mutation requires a publication fulfillment decision",
+      });
+    } else if (value.publicationFulfilled !== listingRemoteStateFulfillsOperation(value.operation, value.remoteState, value.publicationIntent)) {
+      context.addIssue({
+        code: "custom",
+        path: ["publicationFulfilled"],
+        message: "publication fulfillment does not match verified remote visibility",
+      });
+    }
+  }
+  if (value.remoteState && value.remoteState.visibility !== "live" && value.publicUrl) {
+    context.addIssue({
+      code: "custom",
+      path: ["publicUrl"],
+      message: "non-public listing state cannot expose a public URL",
+    });
+  }
+
+  if (value.continuation) {
+    if (value.ok !== true || (value.operation !== "orders.list" && value.operation !== "inquiries.list")) {
+      context.addIssue({ code: "custom", message: "pagination continuation requires a successful sync page" });
+      return;
+    }
+    const next = value.continuation.arguments;
+    const query = next.query && typeof next.query === "object" && !Array.isArray(next.query)
+      ? next.query as Record<string, unknown>
+      : {};
+    const queryParams = next.queryParams && typeof next.queryParams === "object" && !Array.isArray(next.queryParams)
+      ? next.queryParams as Record<string, unknown>
+      : {};
+    const positiveInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 1;
+    const nonNegativeInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 0;
+    const nonEmpty = (item: unknown) => typeof item === "string" && item.trim().length > 0;
+    const valid = value.channel === "shopee" && value.operation === "orders.list"
+      ? nonEmpty(query.cursor)
+      : value.channel === "lazada" && value.operation === "orders.list"
+        ? nonNegativeInteger(queryParams.offset)
+        : value.channel === "coupang" && value.operation === "orders.list"
+          ? nonEmpty(query.nextToken)
+          : value.channel === "coupang" && value.operation === "inquiries.list"
+            ? positiveInteger(query.pageNum)
+            : value.channel === "smartstore" && value.operation === "orders.list"
+              ? nonEmpty(query.lastChangedFrom) && nonEmpty(query.moreSequence)
+              : value.channel === "smartstore" && value.operation === "inquiries.list"
+                ? positiveInteger(query.page)
+                : value.channel === "ebay" && value.operation === "orders.list"
+                  ? nonNegativeInteger(query.offset)
+                  : value.channel === "ebay" && value.operation === "inquiries.list"
                     ? positiveInteger(next.pageNumber)
-                    : value.channel === "temu" && value.operation === "inquiries.list"
-                      ? positiveInteger(next.pageNo)
-                      : false;
-  if (!valid) context.addIssue({ code: "custom", message: "invalid provider pagination continuation" });
+                    : value.channel === "temu" && value.operation === "orders.list"
+                      ? positiveInteger(next.pageNumber)
+                      : value.channel === "temu" && value.operation === "inquiries.list"
+                        ? positiveInteger(next.pageNo)
+                        : false;
+    if (!valid) context.addIssue({ code: "custom", message: "invalid provider pagination continuation" });
+  }
 });
 
 const credentialRefreshSchema = z.object({
@@ -363,4 +505,24 @@ export function gatewayJobCompletionStatus(
   if (gatewayResultHasObservedMutation(operation, ok, steps)) return "reconciliation_required";
   if (!ok && (operation === "orders.list" || operation === "inquiries.list")) return "failed";
   return "succeeded";
+}
+
+export function gatewayJobCompletionStatusAtJobBoundary(
+  status: "succeeded" | "failed" | "reconciliation_required",
+  result: {
+    ok?: unknown;
+    operation?: unknown;
+    remoteState?: unknown;
+  } | null | undefined,
+  jobBoundary: unknown,
+): "succeeded" | "failed" | "reconciliation_required" {
+  if (status !== "succeeded"
+      || result?.ok !== true
+      || typeof result.operation !== "string"
+      || !listingOperationRequiresVerifiedRemoteState(result.operation)) {
+    return status;
+  }
+  return listingRemoteStateVerifiedAtOrAfterJobBoundary(result.remoteState, jobBoundary)
+    ? status
+    : "reconciliation_required";
 }

@@ -10,11 +10,13 @@ export type WorkbenchListingSnapshot = {
   status: string;
   lastError: string | null;
   failureClass?: "retryable" | "external_action" | null;
+  requestedPublicationIntent?: "safe_test" | "live" | null;
+  remoteVisibility?: "unknown" | "non_public" | "pending_review" | "live" | "withdrawn" | "rejected" | null;
   operationAttemptId?: string | null;
 };
 
 export type WorkbenchChannelResult = {
-  phase: "idle" | "queued" | "running" | "succeeded" | "failed" | "blocked";
+  phase: "idle" | "queued" | "running" | "pending_review" | "succeeded" | "failed" | "blocked";
   operation?: "listing.create" | "listing.update" | "listing.stop";
   message?: string;
   remoteId?: string;
@@ -24,6 +26,32 @@ export type WorkbenchChannelResult = {
   targetId?: string;
   mutationGeneration?: string;
 };
+
+export type WorkbenchPublicationResponse = {
+  ok?: boolean;
+  publicationPending?: boolean;
+  publicationFulfilled?: boolean;
+};
+
+export function isPublicationPendingReviewResponse(
+  status: number,
+  payload: WorkbenchPublicationResponse,
+) {
+  return status === 202
+    && payload.ok === true
+    && (payload.publicationPending === true || payload.publicationFulfilled === false);
+}
+
+export async function executeChannelWritesSequentially<T>(
+  channels: readonly ActiveChannelKey[],
+  execute: (channel: ActiveChannelKey) => Promise<T>,
+) {
+  const results: T[] = [];
+  for (const channel of channels) {
+    results.push(await execute(channel));
+  }
+  return results;
+}
 
 export function workbenchProductContextMatches(
   productId: string | null,
@@ -105,6 +133,18 @@ export function reconcileQueuedChannelResults(
     }
 
     changed = true;
+    if (operation !== "listing.stop"
+        && listing.requestedPublicationIntent === "live"
+        && listing.remoteVisibility === "pending_review") {
+      next[channel] = {
+        ...boundResult,
+        phase: "pending_review",
+        message: "판매채널 접수는 완료됐지만 아직 심사 중이며 공개 게시 성공에는 포함되지 않습니다.",
+        remoteId: listing.remoteId ?? result.remoteId,
+      };
+      continue;
+    }
+
     const succeeded = operation === "listing.stop"
       ? listing.status === "paused"
       : listing.status === "published";

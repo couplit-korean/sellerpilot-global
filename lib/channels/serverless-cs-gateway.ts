@@ -2,6 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
   gatewayClaimSchema,
   gatewayJobCompletionStatus,
+  gatewayJobCompletionStatusAtJobBoundary,
   gatewayWorkerCompletionSchema,
   type GatewayClaim,
   type GatewayWorkerCompletion,
@@ -473,7 +474,7 @@ export async function executeServerlessCsProviderJob(
   return executeServerlessGatewayProviderJob(input, operationExecutor);
 }
 
-type CompletionResult = "completed" | "ownership_lost" | "unavailable";
+type CompletionResult = "completed" | "completed_reconciliation" | "ownership_lost" | "unavailable";
 
 type SuccessfulGatewayResult = Extract<GatewayWorkerCompletion, { status: "succeeded" }>["result"];
 type ListingLineageResult = Extract<SuccessfulGatewayResult, { operation: "listing.lineage.verify" }>;
@@ -679,6 +680,17 @@ async function completeClaim(
         || completionProviderResult.operation !== job.operation)) {
     return "ownership_lost";
   }
+  const effectiveCompletionStatus = gatewayJobCompletionStatusAtJobBoundary(
+    parsed.data.status,
+    completionProviderResult as unknown as Record<string, unknown> | undefined,
+    context.publication_verification_boundary,
+  );
+  const effectiveCompletionError = effectiveCompletionStatus === "reconciliation_required"
+      && parsed.data.status === "succeeded"
+    ? "LISTING_REMOTE_STATE_PROVIDER_MUTATION_BOUNDARY_MISMATCH"
+    : parsed.data.status === "succeeded"
+      ? null
+      : parsed.data.error;
   if (job.operation === "listing.lineage.verify") {
     return completeListingLineageClaim(
       dependencies,
@@ -735,9 +747,9 @@ async function completeClaim(
     p_token_hash: gatewayTokenHash,
     p_job_id: job.id,
     p_claim_token: job.claim_token,
-    p_status: parsed.data.status,
+    p_status: effectiveCompletionStatus,
     p_response_payload: storedResponse,
-    p_error_message: parsed.data.status === "succeeded" ? null : parsed.data.error,
+    p_error_message: effectiveCompletionError,
     p_credential_refresh: parsed.data.credentialRefresh ?? null,
     p_normalized_orders: normalizedOrders,
     p_normalized_inquiries: normalizedInquiries,
@@ -759,9 +771,10 @@ async function completeClaim(
     );
   }
   if (completed.error) return "unavailable";
-  return recordValue(completed.data)?.status === "completed"
-    ? "completed"
-    : "ownership_lost";
+  if (recordValue(completed.data)?.status !== "completed") return "ownership_lost";
+  return effectiveCompletionStatus === "reconciliation_required"
+    ? "completed_reconciliation"
+    : "completed";
 }
 
 function terminalResponse(
@@ -787,7 +800,12 @@ async function finishClaim(
   logError: (stage: string, details: Record<string, string | number | boolean>) => void,
 ) {
   const completed = await completeClaim(dependencies, gatewayTokenHash, job, completion);
-  if (completed === "completed") return terminalResponse(completion.status, job);
+  if (completed === "completed" || completed === "completed_reconciliation") {
+    return terminalResponse(
+      completed === "completed_reconciliation" ? "reconciliation_required" : completion.status,
+      job,
+    );
+  }
   if (completed === "ownership_lost") {
     logError("complete_ownership", { status: 409, channel: job.channel, operation: job.operation });
     return jsonResponse({ message: "채널 작업 소유권이 변경되었습니다." }, 409);

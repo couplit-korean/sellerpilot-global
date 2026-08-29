@@ -99,7 +99,11 @@ test("gateway completion accepts a terminal reconciliation state without disguis
   assert.match(contractSource, /result: operationResultSchema\.optional\(\)/);
   assert.match(contractSource, /claim_token: z\.string\(\)\.uuid\(\)/);
   assert.ok((contractSource.match(/claimToken: z\.string\(\)\.uuid\(\)/g) ?? []).length >= 3);
-  assert.match(routeSource, /p_error_message: parsed\.data\.status === "succeeded" \? null : parsed\.data\.error/);
+  assert.match(routeSource, /publicationVerificationBoundary[\s\S]*job\.publication_verification_boundary/);
+  assert.match(routeSource, /gatewayJobCompletionStatusAtJobBoundary\([\s\S]*publicationVerificationBoundary/);
+  assert.match(routeSource, /effectiveCompletionStatus === "reconciliation_required"[\s\S]*LISTING_REMOTE_STATE_PROVIDER_MUTATION_BOUNDARY_MISMATCH/);
+  assert.match(routeSource, /p_status: effectiveCompletionStatus/);
+  assert.match(routeSource, /p_error_message: effectiveCompletionError/);
   assert.match(routeSource, /parsed\.data\.status === "reconciliation_required"/);
   assert.match(migrationSource, /status in \('queued', 'running', 'succeeded', 'failed', 'cancelled', 'reconciliation_required'\)/);
   assert.match(migrationSource, /p_status not in \('succeeded', 'failed', 'reconciliation_required'\)/);

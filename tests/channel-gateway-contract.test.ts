@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  gatewayClaimSchema,
   gatewayCredentialRefreshLifecycleSchema,
   gatewayJobCompletionStatus,
+  gatewayJobCompletionStatusAtJobBoundary,
   gatewayResultHasObservedMutation,
   gatewayWorkerCompletionSchema,
 } from "../lib/channels/gateway-contract";
+import {
+  listingRemoteStateFulfillsIntent,
+  persistedListingPublicationReplay,
+  verifiedListingPublicationResult,
+} from "../lib/channels/listing-publication-state";
 
 test("gateway canonicalizes PostgreSQL timezone offsets before credential staging", () => {
   const parsed = gatewayCredentialRefreshLifecycleSchema.safeParse({
@@ -92,6 +99,51 @@ test("channel gateway reconciliation can preserve a structured partial-write res
     },
   });
   assert.equal(parsed.success, true);
+});
+
+test("verified listing exposure remains attached to the reconciliation completion", () => {
+  const result = {
+    ok: false,
+    channel: "smartstore" as const,
+    operation: "listing.create" as const,
+    remoteId: "origin-product-123",
+    publicationIntent: "safe_test" as const,
+    publicationStateContract: "verified_remote_state_v1" as const,
+    publicationFulfilled: false,
+    remoteState: {
+      verified: true as const,
+      visibility: "live" as const,
+      providerStatus: "SALE",
+      verifiedAt: "2020-08-30T10:01:00.000Z",
+      evidence: {
+        identityVerified: true,
+        statusVerified: true,
+        localeVerified: true,
+        fingerprintVerified: true,
+        imageCountVerified: true,
+      },
+      resources: { originProductNo: "origin-product-123" },
+      locale: "ko-KR",
+      fingerprint: "a".repeat(64),
+      imageCount: 8,
+    },
+    steps: [
+      { name: "listing.create", ok: true, status: 200, data: {} },
+      { name: "listing-readback", ok: true, status: 200, data: {} },
+    ],
+    safeMessage: "안전 등록 상품이 원격에서 공개 상태로 확인됐습니다.",
+  };
+  assert.equal(
+    gatewayJobCompletionStatus(result.operation, result.ok, result.steps),
+    "reconciliation_required",
+  );
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    jobId: "4c547930-1f56-46ea-b65d-a628fb440e9b",
+    claimToken: "cb3b9b9b-9830-4997-8bd8-af1e6657e2f3",
+    status: "reconciliation_required",
+    error: result.safeMessage,
+    result,
+  }).success, true);
 });
 
 test("channel gateway accepts sanitized 11st competitor search candidates", () => {
@@ -206,4 +258,408 @@ test("inquiry reply provider uncertainty is never classified as safely retryable
   assert.equal(gatewayJobCompletionStatus("inquiries.reply", false, [
     { name: "inquiry-preflight", ok: false, status: 422 },
   ]), "succeeded");
+});
+
+const listingCompletionBase = {
+  jobId: "16bc7199-5adf-479d-a8a4-1e56d3516d78",
+  claimToken: "ca3a8043-4565-4543-a467-65e4bf445523",
+  status: "succeeded" as const,
+  result: {
+    ok: true,
+    channel: "smartstore" as const,
+    operation: "listing.create" as const,
+    remoteId: "origin-product-123",
+    publicationIntent: "safe_test" as const,
+    publicationStateContract: "verified_remote_state_v1" as const,
+    steps: [{
+      name: "listing-readback",
+      ok: true,
+      status: 200,
+      data: { sellerpilotVerification: "REMOTE_LISTING_STATE_VERIFIED" },
+    }],
+    safeMessage: "스마트스토어 비공개 검증 상품을 확인했습니다.",
+  },
+};
+
+test("new successful listing writes require a verified remote state", () => {
+  assert.equal(gatewayWorkerCompletionSchema.safeParse(listingCompletionBase).success, false);
+
+  const parsed = gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: {
+      ...listingCompletionBase.result,
+      remoteState: {
+        verified: true,
+        visibility: "non_public",
+        providerStatus: "SUSPENSION",
+        verifiedAt: "2020-08-30T18:00:00+09:00",
+        evidence: {
+          version: "provider_listing_state_v1",
+          readbackStep: "listing-readback",
+          identityVerified: true,
+          statusVerified: true,
+          localeVerified: true,
+          fingerprintVerified: true,
+          imageCountVerified: true,
+        },
+        resources: { originProductNo: "origin-product-123" },
+        locale: "ko-KR",
+        fingerprint: "a".repeat(64),
+        imageCount: 8,
+      },
+      publicationFulfilled: true,
+    },
+  });
+
+  assert.equal(parsed.success, true);
+  if (parsed.success && parsed.data.status === "succeeded" && "remoteState" in parsed.data.result) {
+    assert.equal(parsed.data.result.remoteState?.verifiedAt, "2020-08-30T09:00:00.000Z");
+    assert.equal(parsed.data.result.remoteState?.visibility, "non_public");
+  }
+});
+
+test("publication intent cannot be satisfied by an unsafe or unknown visibility", () => {
+  const remoteState = {
+    verified: true,
+    visibility: "live",
+    providerStatus: "SALE",
+    verifiedAt: "2020-08-30T09:00:00.000Z",
+    evidence: { version: "provider_listing_state_v1", identityVerified: true, statusVerified: true, localeVerified: true, fingerprintVerified: true, imageCountVerified: true },
+    resources: { originProductNo: "origin-product-123" },
+    locale: "ko-KR",
+    fingerprint: "b".repeat(64),
+    imageCount: 8,
+  };
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: { ...listingCompletionBase.result, remoteState },
+  }).success, false);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: {
+      ...listingCompletionBase.result,
+      remoteState: { ...remoteState, visibility: "unknown" },
+    },
+  }).success, false);
+});
+
+test("legacy listing successes fail closed while non-listing results remain compatible", () => {
+  const { publicationIntent: _intent, publicationStateContract: _contract, ...legacyResult } = listingCompletionBase.result;
+  void _intent;
+  void _contract;
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: legacyResult,
+  }).success, false);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: {
+      ok: true,
+      channel: "smartstore",
+      operation: "orders.get",
+      steps: [{ name: "order", ok: true, status: 200, data: {} }],
+      safeMessage: "주문을 확인했습니다.",
+    },
+  }).success, true);
+});
+
+test("gateway claims reject malformed publication intent but preserve legacy queued writes", () => {
+  const claim = {
+    id: "e8a576dd-bc83-4620-8652-f469fc4aa78e",
+    claim_token: "451da96f-c8eb-42c9-8630-260f9ab36750",
+    credential_id: "e26b3dbf-b950-430b-a35a-6a280780ce03",
+    channel: "smartstore",
+    operation: "listing.create",
+    environment: "production",
+    request: { arguments: {} },
+    credential: { access_token: "secret" },
+    attempt_count: 1,
+  };
+  assert.equal(gatewayClaimSchema.safeParse(claim).success, true);
+  assert.equal(gatewayClaimSchema.safeParse({
+    ...claim,
+    request: { arguments: { publicationIntent: "publish_now" } },
+  }).success, false);
+  assert.equal(gatewayClaimSchema.safeParse({
+    ...claim,
+    request: {
+      arguments: {
+        publicationIntent: "safe_test",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "ko-KR",
+        publicationExpectedFingerprint: "a".repeat(64),
+        publicationExpectedImageCount: 8,
+      },
+    },
+  }).success, true);
+  assert.equal(gatewayClaimSchema.safeParse({
+    ...claim,
+    request: { arguments: { publicationIntent: "safe_test", publicationStateContract: "v0" } },
+  }).success, false);
+  assert.equal(gatewayClaimSchema.safeParse({
+    ...claim,
+    operation: "listing.stop",
+    request: { arguments: { publicationIntent: "safe_test", publicationStateContract: "verified_remote_state_v1" } },
+  }).success, false);
+});
+
+test("pending provider review is known but does not fulfill either publication intent", () => {
+  const state = {
+    verified: true as const,
+    visibility: "pending_review" as const,
+    providerStatus: "PENDING_REVIEW",
+    verifiedAt: "2020-08-30T09:00:00.000Z",
+    evidence: { version: "provider_listing_state_v1", identityVerified: true, statusVerified: true, localeVerified: true, fingerprintVerified: true, imageCountVerified: true },
+    resources: { listingId: "listing-123" },
+    locale: "en-US",
+    fingerprint: "c".repeat(64),
+    imageCount: 8,
+  };
+  assert.equal(listingRemoteStateFulfillsIntent("safe_test", state), false);
+  assert.equal(listingRemoteStateFulfillsIntent("live", state), false);
+
+  const parsed = gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: {
+      ...listingCompletionBase.result,
+      publicationIntent: "live",
+      remoteState: state,
+      publicationFulfilled: false,
+    },
+  });
+  assert.equal(parsed.success, true, "a verified pending state remains a known provider-operation result");
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: {
+      ...listingCompletionBase.result,
+      remoteState: state,
+      publicationFulfilled: false,
+    },
+  }).success, false, "safe-test pending review can auto-go-live and is not an acceptable safe state");
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: {
+      ...listingCompletionBase.result,
+      publicationIntent: "live",
+      remoteState: state,
+      publicationFulfilled: true,
+    },
+  }).success, false, "pending review cannot be presented as completed live publication");
+});
+
+test("listing stop requires verified non-public readback without a publication intent", () => {
+  const result = {
+    ok: true,
+    channel: "smartstore",
+    operation: "listing.stop",
+    remoteId: "origin-product-123",
+    publicationStateContract: "verified_remote_state_v1",
+    remoteState: {
+      verified: true,
+      visibility: "withdrawn",
+      providerStatus: "STOPPED",
+      verifiedAt: "2020-08-30T09:00:00.000Z",
+      evidence: { version: "provider_listing_state_v1", identityVerified: true, statusVerified: true, localeVerified: true, fingerprintVerified: true, imageCountVerified: true },
+      resources: { originProductNo: "origin-product-123" },
+      locale: "ko-KR",
+      fingerprint: "f".repeat(64),
+      imageCount: 8,
+    },
+    publicationFulfilled: true,
+    steps: [{ name: "listing-stop-readback", ok: true, status: 200, data: {} }],
+    safeMessage: "판매 중지 상태를 확인했습니다.",
+  };
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result,
+  }).success, true);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: { ...result, publicationIntent: "safe_test" },
+  }).success, false);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    ...listingCompletionBase,
+    result: {
+      ...result,
+      remoteState: { ...result.remoteState, visibility: "pending_review" },
+      publicationFulfilled: false,
+    },
+  }).success, false);
+});
+
+test("persisted duplicate listing results require exact verified state", () => {
+  const state = {
+    verified: true as const,
+    visibility: "non_public" as const,
+    providerStatus: "SUSPENSION",
+    verifiedAt: "2020-08-30T09:00:00.000Z",
+    evidence: { version: "provider_listing_state_v1", identityVerified: true, statusVerified: true, localeVerified: true, fingerprintVerified: true, imageCountVerified: true },
+    resources: { originProductNo: "origin-product-123" },
+    locale: "ko-KR",
+    fingerprint: "d".repeat(64),
+    imageCount: 8,
+  };
+  assert.deepEqual(persistedListingPublicationReplay("listing.create", null, null, "safe_test"), { status: "invalid" });
+  assert.deepEqual(persistedListingPublicationReplay("listing.create", undefined, undefined, "safe_test"), { status: "invalid" });
+  assert.deepEqual(persistedListingPublicationReplay("listing.update", "safe_test", state, "live"), { status: "invalid" });
+  const verified = persistedListingPublicationReplay("listing.create", "safe_test", state, "safe_test");
+  assert.equal(verified.status, "verified");
+  if (verified.status === "verified") {
+    assert.equal(verified.publicationFulfilled, true);
+    assert.equal(verified.remoteState.providerStatus, "SUSPENSION");
+  }
+
+  const stoppedState = { ...state, visibility: "withdrawn" as const, providerStatus: "STOPPED" };
+  const stopped = persistedListingPublicationReplay("listing.stop", "live", stoppedState);
+  assert.equal(stopped.status, "verified");
+  if (stopped.status === "verified") {
+    assert.equal(stopped.publicationIntent, undefined);
+    assert.equal(stopped.publicationFulfilled, true);
+  }
+  assert.deepEqual(persistedListingPublicationReplay("listing.stop", "live", {
+    ...state,
+    visibility: "pending_review",
+  }), { status: "invalid" });
+});
+
+test("remote publication schema stays byte-compatible with the DB bounds", () => {
+  const baseState = {
+    verified: true,
+    visibility: "non_public",
+    providerStatus: "S".repeat(160),
+    verifiedAt: "2020-08-30T09:00:00.000Z",
+    evidence: { version: "provider_listing_state_v1", identityVerified: true, statusVerified: true, localeVerified: true, fingerprintVerified: true, imageCountVerified: true },
+    resources: { listingId: "listing-123" },
+    locale: "zh-Hant-TW",
+    fingerprint: "e".repeat(64),
+    imageCount: 64,
+  };
+  const completion = (remoteState: Record<string, unknown>) => ({
+    ...listingCompletionBase,
+    result: {
+      ...listingCompletionBase.result,
+      remoteState,
+      publicationFulfilled: true,
+    },
+  });
+  assert.equal(gatewayWorkerCompletionSchema.safeParse(completion(baseState)).success, true);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse(completion({
+    ...baseState,
+    providerStatus: "S".repeat(161),
+  })).success, false);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse(completion({
+    ...baseState,
+    providerStatus: "SALE\nLIVE",
+  })).success, false);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse(completion({
+    ...baseState,
+    evidence: { ...baseState.evidence, note: "가".repeat(12_000) },
+  })).success, false, "UTF-8 byte size, not JavaScript character count, controls the evidence bound");
+  assert.equal(gatewayWorkerCompletionSchema.safeParse(completion({
+    ...baseState,
+    locale: "zh_Hant_TW",
+  })).success, false);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse(completion({
+    ...baseState,
+    imageCount: 65,
+  })).success, false);
+});
+
+test("route-facing publication verification binds intent, remote ID, and create image evidence", () => {
+  const result = {
+    ...listingCompletionBase.result,
+    remoteState: {
+      verified: true,
+      visibility: "non_public",
+      providerStatus: "SUSPENSION",
+      verifiedAt: "2020-08-30T09:00:00.000Z",
+      evidence: { version: "provider_listing_state_v1", identityVerified: true, statusVerified: true, localeVerified: true, fingerprintVerified: true, imageCountVerified: true },
+      resources: { originProductNo: "origin-product-123" },
+      locale: "ko-KR",
+      fingerprint: "1".repeat(64),
+      imageCount: 8,
+    },
+    publicationFulfilled: true,
+  };
+  assert.equal(verifiedListingPublicationResult(
+    "listing.create",
+    result,
+    "safe_test",
+    {
+      locale: "ko-KR",
+      fingerprint: "1".repeat(64),
+      minimumImageCount: 8,
+      jobBoundary: "2020-08-30T09:00:00.000Z",
+    },
+  ).status, "verified");
+  assert.equal(verifiedListingPublicationResult(
+    "listing.create",
+    result,
+    "safe_test",
+    { jobBoundary: "2020-08-30T09:00:00.001Z" },
+  ).status, "invalid");
+  assert.equal(verifiedListingPublicationResult("listing.create", result, "live").status, "invalid");
+  assert.equal(verifiedListingPublicationResult("listing.create", {
+    ...result,
+    remoteState: { ...result.remoteState, resources: { originProductNo: "different" } },
+  }, "safe_test").status, "invalid");
+  assert.equal(verifiedListingPublicationResult("listing.create", {
+    ...result,
+    remoteState: { ...result.remoteState, imageCount: 7 },
+  }, "safe_test", { minimumImageCount: 8 }).status, "invalid");
+});
+
+test("successful listing completion is reconciled unless readback is at the provider-mutation boundary or later", () => {
+  const result = {
+    ok: true,
+    operation: "listing.create",
+    remoteState: {
+      verified: true,
+      visibility: "non_public",
+      providerStatus: "SUSPENSION",
+      verifiedAt: "2026-08-29T20:00:00.000Z",
+      evidence: {
+        identityVerified: true,
+        statusVerified: true,
+        localeVerified: true,
+        fingerprintVerified: true,
+        imageCountVerified: true,
+      },
+      resources: { originProductNo: "origin-product-123" },
+      locale: "ko-KR",
+      fingerprint: "2".repeat(64),
+      imageCount: 8,
+    },
+  };
+
+  assert.equal(gatewayJobCompletionStatusAtJobBoundary(
+    "succeeded",
+    result,
+    "2026-08-29T20:00:00.000Z",
+  ), "succeeded");
+  assert.equal(gatewayJobCompletionStatusAtJobBoundary(
+    "succeeded",
+    result,
+    "2026-08-29T20:00:00.001Z",
+  ), "reconciliation_required");
+  assert.equal(gatewayJobCompletionStatusAtJobBoundary(
+    "succeeded",
+    result,
+    null,
+  ), "reconciliation_required");
+  assert.equal(gatewayJobCompletionStatusAtJobBoundary(
+    "succeeded",
+    { ok: false, operation: "listing.create" },
+    "2026-08-29T20:00:00.001Z",
+  ), "succeeded", "definite provider rejection keeps the existing retry path");
+  assert.equal(gatewayJobCompletionStatusAtJobBoundary(
+    "succeeded",
+    { ok: true, operation: "orders.list" },
+    null,
+  ), "succeeded", "non-listing completion remains backward compatible");
+  assert.equal(gatewayJobCompletionStatusAtJobBoundary(
+    "failed",
+    result,
+    "2026-08-29T20:00:00.001Z",
+  ), "failed");
 });

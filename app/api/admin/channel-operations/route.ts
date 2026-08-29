@@ -27,6 +27,15 @@ import {
   listingWriteOperation,
 } from "../../../../lib/channels/listing-update";
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
+import {
+  listingOperationRequiresVerifiedRemoteState,
+  listingOperationUsesPublicationIntent,
+  listingExpectedPublicationLocale,
+  listingPublicationIntentSchema,
+  listingRemoteStateContractVersion,
+  persistedListingPublicationReplay,
+  verifiedListingPublicationResult,
+} from "../../../../lib/channels/listing-publication-state";
 import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
 import { marketplaceChannelDetailImageCount } from "../../../../lib/channels/marketplace-image-contract";
 import {
@@ -44,6 +53,7 @@ const requestSchema = z.object({
   credentialId: z.string().uuid(),
   channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
   operation: z.enum(channelOperationNames),
+  publicationIntent: listingPublicationIntentSchema.optional(),
   idempotencyKey: z.string().trim().min(16).max(160),
   confirmWrite: z.boolean().default(false),
   productId: z.string().uuid().optional(),
@@ -233,6 +243,7 @@ export async function POST(request: NextRequest) {
   };
   let boundListingCurrency: string | undefined;
   let boundListingPrice: number | undefined;
+  let boundListingPublicationIntent: "safe_test" | "live" | undefined;
   if (listingBoundOperation) {
     const productId = parsed.data.productId!;
     const resourceListingId = parsed.data.resourceListingId!;
@@ -262,9 +273,15 @@ export async function POST(request: NextRequest) {
         && listing.channel === channel
         && (operation === "listing.update"
           ? listingWriteOperation({
-              status: String(listing.status ?? ""),
               remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+              status: String(listing.status ?? ""),
               publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+              requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+                ? listing.requestedPublicationIntent
+                : null,
+              remoteVisibility: typeof listing.remoteVisibility === "string"
+                ? listing.remoteVisibility
+                : null,
             }) === "listing.update"
           : ["published", "paused"].includes(String(listing.status ?? "")))
         && ledgerRemoteIdentity === requestedRemoteId
@@ -275,6 +292,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         message: "요청한 원격 상품 ID가 이 상품의 게시 원장과 일치하지 않아 수정을 차단했습니다.",
         mode: "listing_identity_mismatch",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (operation === "listing.update") {
+      const ledgerIntent = listingPublicationIntentSchema.safeParse(exactListing.requestedPublicationIntent);
+      if (!ledgerIntent.success) {
+        return NextResponse.json({
+          message: "게시 원장의 게시 의도를 확인하지 못해 상품 수정을 차단했습니다.",
+          mode: "listing_publication_intent_unverified",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      const nestedIntent = parsed.data.arguments.publicationIntent;
+      const suppliedIntent = parsed.data.publicationIntent ?? nestedIntent;
+      const parsedSuppliedIntent = suppliedIntent === undefined
+        ? null
+        : listingPublicationIntentSchema.safeParse(suppliedIntent);
+      if ((parsed.data.publicationIntent !== undefined
+          && nestedIntent !== undefined
+          && parsed.data.publicationIntent !== nestedIntent)
+          || (parsedSuppliedIntent && (!parsedSuppliedIntent.success || parsedSuppliedIntent.data !== ledgerIntent.data))) {
+        return NextResponse.json({
+          message: "상품 수정은 게시 원장의 기존 게시 의도를 변경할 수 없습니다.",
+          mode: "listing_publication_intent_mismatch",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundListingPublicationIntent = ledgerIntent.data;
+    } else if (operation === "listing.stop"
+        && (parsed.data.publicationIntent !== undefined || parsed.data.arguments.publicationIntent !== undefined)) {
+      return NextResponse.json({
+        message: "판매 중지 작업은 safe/live 게시 의도를 변경하지 않습니다.",
+        mode: "listing_stop_publication_intent_forbidden",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     if (operation === "listing.update" || operation === "listing.stop") {
@@ -429,6 +476,42 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
+  const effectivePublicationIntent = operation === "listing.create"
+    ? parsed.data.publicationIntent ?? "safe_test"
+    : operation === "listing.update"
+      ? boundListingPublicationIntent
+      : undefined;
+  const expectedPublicationLocale = listingOperationRequiresVerifiedRemoteState(operation)
+    ? listingExpectedPublicationLocale(channel, parsed.data.market)
+    : undefined;
+  if (listingOperationRequiresVerifiedRemoteState(operation) && !expectedPublicationLocale) {
+    return NextResponse.json({
+      message: "판매채널 대상 국가의 게시 언어를 서버에서 확정하지 못해 상품 작업을 차단했습니다.",
+      mode: "listing_publication_locale_unverified",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  const expectedPublicationImageCount = operation === "listing.create" || operation === "listing.update"
+    ? marketplaceChannelDetailImageCount
+    : 0;
+  if (listingOperationRequiresVerifiedRemoteState(operation)) {
+    effectiveArguments = {
+      ...effectiveArguments,
+      publicationStateContract: listingRemoteStateContractVersion,
+      ...(listingOperationUsesPublicationIntent(operation)
+        ? { publicationIntent: effectivePublicationIntent }
+        : {}),
+      publicationExpectedLocale: expectedPublicationLocale,
+      publicationExpectedImageCount: expectedPublicationImageCount,
+    };
+    if (!listingOperationUsesPublicationIntent(operation)) {
+      delete effectiveArguments.publicationIntent;
+    }
+  } else if (Object.hasOwn(effectiveArguments, "publicationIntent")
+      || Object.hasOwn(effectiveArguments, "publicationStateContract")) {
+    effectiveArguments = { ...effectiveArguments };
+    delete effectiveArguments.publicationIntent;
+    delete effectiveArguments.publicationStateContract;
+  }
   const effectiveCurrency = boundListingCurrency ?? parsed.data.currency;
   const effectivePrice = boundListingPrice ?? parsed.data.price;
   const requestFingerprint = createHash("sha256")
@@ -449,6 +532,39 @@ export async function POST(request: NextRequest) {
       arguments: effectiveArguments,
     }))
     .digest("hex");
+  if (listingOperationRequiresVerifiedRemoteState(operation)) {
+    // Bind the provider readback to the exact normalized request without
+    // creating a circular hash input (the digest itself is appended after the
+    // canonical request fingerprint has been computed).
+    effectiveArguments = {
+      ...effectiveArguments,
+      publicationExpectedFingerprint: requestFingerprint,
+    };
+  }
+  if (listingOperationRequiresVerifiedRemoteState(operation)) {
+    const { data: releaseGateStatus, error: releaseGateError } = await serviceClient.rpc(
+      "sellerpilot_service_listing_mutation_release_gate_status",
+    );
+    const releaseGateStateIsExact = !releaseGateError
+      && isRecord(releaseGateStatus)
+      && releaseGateStatus.contract === "verified_publication_release_gate_v1"
+      && (
+        (releaseGateStatus.open === true && releaseGateStatus.state === "open")
+        || (releaseGateStatus.open === false && releaseGateStatus.state === "closed")
+      );
+    if (!releaseGateStateIsExact) {
+      return NextResponse.json({
+        message: "상품 게시 릴리스 게이트 상태를 확인하지 못해 판매채널 작업을 차단했습니다.",
+        mode: "listing_mutation_release_gate_unavailable",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (releaseGateStatus.open !== true) {
+      return NextResponse.json({
+        message: "판매채널 상품 작업은 채널별 원격 검증이 완료될 때까지 일시 중지되어 있습니다.",
+        mode: "listing_mutation_release_gate_closed",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   const { data: claimData, error: claimError } = await userClient.rpc("sellerpilot_claim_channel_operation", {
     p_credential_id: parsed.data.credentialId,
     p_channel: channel,
@@ -466,20 +582,77 @@ export async function POST(request: NextRequest) {
     const duplicateRemoteId = typeof claim.remote_id === "string" ? claim.remote_id : undefined;
     const duplicateMessage = typeof claim.safe_message === "string" ? claim.safe_message : "같은 작업이 이미 완료됐습니다.";
     if (claim.status === "succeeded") {
+      const duplicateListingId = parsed.data.resourceListingId
+        ?? await findProductListingId(duplicateRemoteId);
+      const persistedPublicationReplay = listingOperationRequiresVerifiedRemoteState(operation)
+        ? persistedListingPublicationReplay(
+            operation,
+            claim.publication_intent,
+            claim.remote_state,
+            effectivePublicationIntent,
+          )
+        : null;
+      const publicationReplay = persistedPublicationReplay?.status === "verified"
+        ? verifiedListingPublicationResult(
+            operation,
+            {
+              publicationStateContract: listingRemoteStateContractVersion,
+              ...(persistedPublicationReplay.publicationIntent
+                ? { publicationIntent: persistedPublicationReplay.publicationIntent }
+                : {}),
+              remoteState: persistedPublicationReplay.remoteState,
+              publicationFulfilled: persistedPublicationReplay.publicationFulfilled,
+              remoteId: duplicateRemoteId,
+            },
+            effectivePublicationIntent,
+            {
+              locale: expectedPublicationLocale,
+              fingerprint: requestFingerprint,
+              minimumImageCount: expectedPublicationImageCount,
+            },
+          )
+        : persistedPublicationReplay;
+      if (publicationReplay?.status === "invalid") {
+        return NextResponse.json({
+          ok: false,
+          duplicate: true,
+          manualRequired: true,
+          reconciliationRequired: true,
+          attemptId,
+          remoteId: duplicateRemoteId,
+          listingId: duplicateListingId || undefined,
+          legacyPublicationResult: claim.legacy_publication_result === true,
+          message: "이미 처리된 상품 작업의 원격 게시 상태를 검증할 수 없습니다. 판매자센터에서 상태를 확인하기 전에는 성공으로 처리하지 않습니다.",
+          mode: "listing_remote_state_unverified",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
       // Gateway completion already owns the attempt + listing transaction.
       // Replaying a legacy listing completion here could overwrite a newer
       // active attempt (for example, an update replay while stop is running).
-      const duplicateListingId = parsed.data.resourceListingId
-        ?? await findProductListingId(duplicateRemoteId);
+      const publicationPending = publicationReplay?.status === "verified"
+        && publicationReplay.publicationFulfilled === false;
       return NextResponse.json({
         ok: true,
         duplicate: true,
+        ...(publicationPending ? { publicationPending: true } : {}),
         message: "이미 성공한 동일 작업을 다시 호출하지 않고 기존 결과를 반환했습니다.",
         safeMessage: duplicateMessage,
         remoteId: duplicateRemoteId,
         attemptId,
         listingId: duplicateListingId || undefined,
-      }, { headers: { "cache-control": "no-store, max-age=0" } });
+        ...(publicationReplay?.status === "verified"
+          ? {
+              ...(publicationReplay.publicationIntent
+                ? { publicationIntent: publicationReplay.publicationIntent }
+                : {}),
+              remoteState: publicationReplay.remoteState,
+              publicationFulfilled: publicationReplay.publicationFulfilled,
+            }
+          : {}),
+      }, {
+        status: publicationPending ? 202 : 200,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
     }
     if (claim.status === "running") {
       const activeListingId = parsed.data.resourceListingId ?? await findProductListingId();
@@ -619,19 +792,48 @@ export async function POST(request: NextRequest) {
       });
       const rawResult = gatewayExecution.result;
       if (gatewayExecution.listingId) listingId = gatewayExecution.listingId;
+      if (rawResult.ok && listingOperationRequiresVerifiedRemoteState(operation)) {
+        const verifiedPublication = verifiedListingPublicationResult(
+          operation,
+          rawResult as unknown as Record<string, unknown>,
+          effectivePublicationIntent,
+          {
+            locale: expectedPublicationLocale,
+            fingerprint: requestFingerprint,
+            minimumImageCount: expectedPublicationImageCount,
+          },
+        );
+        if (verifiedPublication.status !== "verified") {
+          return NextResponse.json({
+            ok: false,
+            manualRequired: true,
+            reconciliationRequired: true,
+            attemptId,
+            listingId: (gatewayExecution.listingId ?? listingId) || undefined,
+            remoteId: rawResult.remoteId,
+            message: "원격 상품 작업 결과가 요청한 게시 의도·식별자·검증 증거와 일치하지 않아 성공으로 반환하지 않습니다.",
+            mode: "listing_remote_state_context_mismatch",
+          }, {
+            status: 409,
+            headers: { "cache-control": "no-store, max-age=0" },
+          });
+        }
+      }
       const { result, remediation } = applyListingRemediation(rawResult);
       if (remediation?.rejectCategory) await rejectBlockedCategory(remediation.code);
       // Listing gateway completion is the single transaction that owns both
       // the attempt and listing ledgers. Replaying the legacy completion RPCs
       // here can overwrite a worker-recorded external_action/manual_required
       // outcome after a remote create whose readback could not be verified.
+      const publicationPending = result.ok && result.publicationFulfilled === false;
       return NextResponse.json({
         ...result,
+        ...(publicationPending ? { publicationPending: true } : {}),
         attemptId,
         listingId: listingId || parsed.data.resourceListingId || undefined,
         gateway: "vercel-serverless-channel-gateway",
       }, {
-        status: result.ok ? 200 : 422,
+        status: publicationPending ? 202 : result.ok ? 200 : 422,
         headers: { "cache-control": "no-store, max-age=0" },
       });
     } catch (error) {
@@ -788,12 +990,14 @@ export async function POST(request: NextRequest) {
         reconciliationRequired: true,
       }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
     }
+    const publicationPending = result.ok && result.publicationFulfilled === false;
     return NextResponse.json({
       ...result,
+      ...(publicationPending ? { publicationPending: true } : {}),
       attemptId,
       listingId: listingId || parsed.data.resourceListingId || undefined,
     }, {
-      status: result.ok ? 200 : 422,
+      status: publicationPending ? 202 : result.ok ? 200 : 422,
       headers: { "cache-control": "no-store, max-age=0" },
     });
   } catch (error) {
