@@ -77,7 +77,7 @@ test("a failed smoke persists only an allowlisted safe code for two minutes", ()
   assert.doesNotMatch(unknown.value, /raw-provider-secret/);
 });
 
-test("Studio execution requires a currently valid verified smoke, not configuration detection", () => {
+test("Studio execution requires valid server configuration and blocks only an explicit Gateway failure", () => {
   const expiresAt = new Date(nowMs + 60_000).toISOString();
   const ready: StudioWorkerReadiness = {
     available: true,
@@ -95,6 +95,17 @@ test("Studio execution requires a currently valid verified smoke, not configurat
   assert.equal(isStudioExecutionReady(ready, nowMs), true);
   assert.equal(isStudioExecutionReady({ ...ready, configurationReady: false }, nowMs), false);
   assert.equal(isStudioExecutionReady({ ...ready, gatewayVerification: undefined }, nowMs), false);
-  assert.equal(isStudioExecutionReady({ ...ready, available: false, reason: "gateway_unverified" }, nowMs), false);
-  assert.equal(isStudioExecutionReady(ready, Date.parse(expiresAt)), false);
+  assert.equal(isStudioExecutionReady({
+    ...ready,
+    gatewayVerification: { status: "unverified", code: null, checkedAt: null, expiresAt: null },
+  }, Date.parse(expiresAt)), true);
+  assert.equal(isStudioExecutionReady({
+    ...ready,
+    gatewayVerification: {
+      status: "failed",
+      code: "authentication_error",
+      checkedAt: new Date(nowMs).toISOString(),
+      expiresAt,
+    },
+  }, nowMs), false);
 });

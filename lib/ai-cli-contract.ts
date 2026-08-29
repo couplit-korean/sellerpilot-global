@@ -1406,13 +1406,18 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
   });
 });
 
-export const studioJobRequestSchema = z.object({
+const studioImageJobRequestBaseSchema = z.object({
   jobId: z.string().uuid(),
   manualFields: productIntakeSchema,
   imagePaths: z.array(z.string().min(1).max(400)).min(1).max(100),
   imageSpecs: z.array(sourcePreservingProductImageSpecSchema).min(1).max(100),
   competitorContext: studioCompetitorContextSchema.optional(),
-}).superRefine((value, context) => {
+});
+
+function validateStudioImageJobRequest(
+  value: z.infer<typeof studioImageJobRequestBaseSchema>,
+  context: RefinementCtx,
+) {
   if (value.imagePaths.length !== value.imageSpecs.length) {
     context.addIssue({ code: "custom", path: ["imageSpecs"], message: "이미지 경로와 규격 정보 수가 일치해야 합니다." });
   }
@@ -1422,6 +1427,22 @@ export const studioJobRequestSchema = z.object({
   if (value.imageSpecs.reduce((total, spec) => total + spec.originalBytes, 0) > maximumStudioJobSourceBytes) {
     context.addIssue({ code: "custom", path: ["imageSpecs"], message: "한 상품의 원본 사진 합계는 200MB 이하여야 합니다." });
   }
+}
+
+export const manualProductIntakeJobRequestSchema = studioImageJobRequestBaseSchema
+  .superRefine(validateStudioImageJobRequest);
+
+export const studioJobRequestSchema = studioImageJobRequestBaseSchema.extend({
+  sourceResearchJobId: z.string().uuid(),
+}).superRefine((value, context) => {
+  if (value.sourceResearchJobId === value.jobId) {
+    context.addIssue({
+      code: "custom",
+      path: ["sourceResearchJobId"],
+      message: "1차 상품정보 분석 작업과 최종 제작 작업은 서로 다른 작업 ID를 사용해야 합니다.",
+    });
+  }
+  validateStudioImageJobRequest(value, context);
 });
 
 export const productRevisionJobRequestSchema = z.object({

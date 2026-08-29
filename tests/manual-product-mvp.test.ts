@@ -220,7 +220,7 @@ test("manual intake route validates preserved photos and the client retries the 
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/marketplace-images.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(route, /studioJobRequestSchema\.safeParse/);
+  assert.match(route, /manualProductIntakeJobRequestSchema\.safeParse/);
   assert.match(route, /validatePreservedStudioUploadPaths/);
   assert.match(route, /verifyPreservedStudioImages/);
   assert.match(route, /sellerpilot_create_manual_product_v1/);
@@ -230,7 +230,8 @@ test("manual intake route validates preserved photos and the client retries the 
   assert.match(studio, /const requestBody = pending\.requestBody/);
   assert.match(studio, /onManualResultReady\?\.\(payload\.productId, jobId, submittedManualFields\)/);
   assert.match(studio, /if \(terminallyRejected\) \{[\s\S]{0,220}clearPendingManualProductRequest\(pending\)/);
-  assert.match(page, /setStudioSubmissionMode\(manualMvp \? "manual_mvp" : "ai"\)/);
+  assert.match(page, /setStudioSubmissionMode\("ai"\)/);
+  assert.match(page, /sourceResearchJobId=\{sourceResearchJobId\}/);
   assert.match(page, /onManualResultReady=\{\(productId, _jobId, submittedIntake\)/);
   assert.match(page, /onManualResultReady=\{\(productId, _jobId, submittedIntake\)[\s\S]{0,360}onManualProductCreated\(\)/);
   assert.match(page, /onManualProductCreated=\{\(\) => void operations\.reloadAfterMutation\(\)\}/);

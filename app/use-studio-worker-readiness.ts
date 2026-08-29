@@ -101,7 +101,8 @@ function isStudioWorkerReadinessPayload(value: unknown): value is StudioWorkerRe
   if (!payload.available) return payload.reason !== "ready";
   return payload.reason === "ready"
     && payload.configurationReady === true
-    && payload.gatewayVerification?.status === "verified";
+    && payload.gatewayVerification !== undefined
+    && payload.gatewayVerification.status !== "failed";
 }
 
 function abortReason(signal: AbortSignal) {

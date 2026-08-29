@@ -3,6 +3,7 @@ import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from 
 import { rejectedUploadPaths } from "../../../../lib/ai-upload-guard";
 import { studioJobRequestSchema } from "../../../../lib/ai-cli-contract";
 import { withPromiseTimeout } from "../../../../lib/promise-timeout";
+import { validateVisibleSucceededProductResearchJob } from "../../../../lib/product-studio-lineage";
 import { expandStudioCleanupStoragePaths, validatePreservedStudioUploadPaths } from "../../../../lib/studio-image-paths";
 import { createSignedStudioImageDownloader, verifyPreservedStudioImages } from "../../../../lib/studio-image-validation";
 import { resolveStudioAdmission } from "../../../../lib/studio-job-admission";
@@ -80,6 +81,37 @@ export async function POST(request: Request) {
   const uploadedPaths = preservedPaths.imagePaths;
   const allUploadedPaths = preservedPaths.allPaths;
 
+  const sourceResearchReadback = await withPromiseTimeout(
+    admin.userClient.rpc("sellerpilot_get_ai_job", { p_id: parsed.data.sourceResearchJobId }),
+    15_000,
+    "1차 상품정보 분석 작업 확인 제한시간을 초과했습니다.",
+  ).catch(() => ({ data: null, error: { code: "SOURCE_RESEARCH_READ_FAILED" } }));
+  const sourceResearch = validateVisibleSucceededProductResearchJob({
+    expectedJobId: parsed.data.sourceResearchJobId,
+    data: sourceResearchReadback.data,
+    error: sourceResearchReadback.error,
+  });
+  if (!sourceResearch.valid) {
+    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
+      admin,
+      parsed.data.jobId,
+      allUploadedPaths,
+    );
+    const sourceUnavailable = sourceResearch.reason === "read_failed";
+    return NextResponse.json({
+      code: sourceUnavailable ? "SOURCE_RESEARCH_UNAVAILABLE" : "SOURCE_RESEARCH_REQUIRED",
+      jobId: parsed.data.jobId,
+      sourceResearchJobId: parsed.data.sourceResearchJobId,
+      cleanupPending: !cleaned,
+      message: sourceUnavailable
+        ? "1차 상품정보 분석 결과를 확인하지 못했습니다. 잠시 후 같은 상품으로 다시 시도해 주세요."
+        : "같은 사용자가 완료한 1차 상품정보 분석 결과가 있어야 최종 제작을 시작할 수 있습니다.",
+    }, {
+      status: sourceUnavailable ? 503 : 409,
+      headers: { "cache-control": "no-store, max-age=0" },
+    });
+  }
+
   const download = await studioValidationDownloader(allUploadedPaths, admin);
   const verified = download ? await verifyPreservedStudioImages({
     normalizedPaths: uploadedPaths,
@@ -97,6 +129,7 @@ export async function POST(request: Request) {
   }
 
   const requestPayload = {
+    source_research_job_id: parsed.data.sourceResearchJobId,
     description: parsed.data.manualFields.description.trim(),
     product_url: parsed.data.manualFields.productUrl.trim(),
     research_input: parsed.data.manualFields.researchInput.trim(),

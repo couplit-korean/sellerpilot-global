@@ -190,7 +190,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /앨범에서 선택/);
   assert.match(page, /상품 사실 설명/);
   assert.doesNotMatch(page, /자료 출처·상품 링크/);
-  assert.match(page, /상품 분석 시작/);
+  assert.match(page, /최종작성 시작/);
   assert.doesNotMatch(page, /대기열에 담기/);
   assert.doesNotMatch(page, /상품 동시 처리/);
   assert.doesNotMatch(page, /DEMO_DATA_META|createDemoStudioResult|seed_demo/);

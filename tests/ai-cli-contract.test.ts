@@ -1786,6 +1786,7 @@ test("product research search locales stay aligned across Zod and worker JSON sc
 test("AI studio request requires seller facts and normalized listing images", () => {
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "11111111-1111-4111-8111-111111111111",
+    sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1796,6 +1797,7 @@ test("AI studio request requires seller facts and normalized listing images", ()
 test("AI studio request accepts only bounded verified same-product price evidence", () => {
   const base = {
     jobId: "11111111-1111-4111-8111-111111111111",
+    sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1839,6 +1841,7 @@ test("AI studio request canonicalizes HTTP 11st evidence before the second stage
 
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "22222222-2222-4222-8222-222222222222",
+    sourceResearchJobId: "11111111-1111-4111-8111-111111111111",
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1912,6 +1915,7 @@ test("AI studio request accepts four providers and fences marketplace web eviden
 
   const base = {
     jobId: "77777777-7777-4777-8777-777777777777",
+    sourceResearchJobId: "66666666-6666-4666-8666-666666666666",
     manualFields: validRequiredIntake(),
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [sourcePreservingImageSpec()],
@@ -1956,6 +1960,7 @@ test("AI studio request accepts four providers and fences marketplace web eviden
 test("AI studio request accepts free-text research without a source URL", () => {
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "33333333-3333-4333-8333-333333333333",
+    sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
     manualFields: {
       ...validRequiredIntake(),
       researchInput: "Model ABC-100 stainless steel bottle, 500 ml, one bottle included",
@@ -1971,6 +1976,7 @@ test("AI studio request rejects missing rights confirmation and non-square outpu
   const manualFields = { ...validRequiredIntake(), imageRightsConfirmed: false };
   const parsed = studioJobRequestSchema.safeParse({
     jobId: "11111111-1111-4111-8111-111111111111",
+    sourceResearchJobId: "22222222-2222-4222-8222-222222222222",
     manualFields,
     imagePaths: ["user/job/input/001.jpg"],
     imageSpecs: [{ name: "001.jpg", role: "main", originalWidth: 1600, originalHeight: 900, width: 1080, height: 1080, bytes: 450_000, mediaType: "image/jpeg", fit: "contain" }],

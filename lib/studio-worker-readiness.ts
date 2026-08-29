@@ -30,14 +30,17 @@ export type StudioWorkerReadiness = {
 
 export function isStudioExecutionReady(
   readiness: StudioWorkerReadiness | null | undefined,
-  nowMs = Date.now(),
+  _nowMs = Date.now(),
 ) {
+  // Kept for callers that pass a clock during readiness tests. Browser-bound
+  // smoke expiry no longer gates configured server execution.
+  void _nowMs;
   if (readiness?.available !== true
       || readiness.reason !== "ready"
       || readiness.configurationReady !== true
-      || readiness.gatewayVerification?.status !== "verified") return false;
-  const expiresAt = Date.parse(readiness.gatewayVerification.expiresAt ?? "");
-  return Number.isFinite(expiresAt) && expiresAt > nowMs;
+      || !readiness.gatewayVerification
+      || readiness.gatewayVerification.status === "failed") return false;
+  return true;
 }
 
 type StudioWorkerReadinessOptions = {

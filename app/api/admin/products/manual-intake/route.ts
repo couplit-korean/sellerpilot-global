@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from "../../../../../lib/admin-api";
 import { rejectedUploadPaths } from "../../../../../lib/ai-upload-guard";
-import { studioJobRequestSchema } from "../../../../../lib/ai-cli-contract";
+import { manualProductIntakeJobRequestSchema } from "../../../../../lib/ai-cli-contract";
 import { withPromiseTimeout } from "../../../../../lib/promise-timeout";
 import {
   expandStudioCleanupStoragePaths,
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
   if (isAdminApiError(admin)) return admin;
 
   const payload = await request.json().catch(() => null);
-  const parsed = studioJobRequestSchema.safeParse(payload);
+  const parsed = manualProductIntakeJobRequestSchema.safeParse(payload);
   if (!parsed.success) {
     const candidateJobId = payload && typeof payload === "object" && !Array.isArray(payload)
       && typeof (payload as Record<string, unknown>).jobId === "string"

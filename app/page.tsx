@@ -2610,6 +2610,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [competitorResearchRetryInput, setCompetitorResearchRetryInput] = useState("");
   const [competitorResearchRetryAvailable, setCompetitorResearchRetryAvailable] = useState(false);
   const [firstDraftGenerated, setFirstDraftGenerated] = useState(false);
+  const [sourceResearchJobId, setSourceResearchJobId] = useState("");
   const [queuedJobId, setQueuedJobId] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
   const [studioSubmissionMode, setStudioSubmissionMode] = useState<StudioSubmissionMode>("ai");
@@ -2760,12 +2761,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         || competitorResearchState !== "idle"
         || researchCompetitors.length > 0
         || firstDraftGenerated;
-      nextIntake = clearUnchangedResearchAppliedValues(
-        nextIntake,
-        emptyProductIntake,
-        researchAppliedValuesRef.current,
-      );
-      researchAppliedValuesRef.current = {};
+      if (key === "researchInput") {
+        nextIntake = clearUnchangedResearchAppliedValues(
+          nextIntake,
+          emptyProductIntake,
+          researchAppliedValuesRef.current,
+        );
+        researchAppliedValuesRef.current = {};
+      }
       const nextCompetitorRetryPath = buildCompetitorResearchRetryPath(nextIntake);
       productResearchControllerRef.current?.abort(new DOMException("상품 식별 입력이 변경되었습니다.", "AbortError"));
       productResearchControllerRef.current = null;
@@ -2774,15 +2777,22 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       window.sessionStorage.removeItem(productResearchPendingStorageKey);
       competitorResearchControllerRef.current?.abort(new DOMException("상품 식별 입력이 변경되었습니다.", "AbortError"));
       competitorResearchControllerRef.current = null;
-      setResearchResult(null);
+      if (key === "researchInput") setResearchResult(null);
       setResearchCompetitors([]);
       setCompetitorProviders([]);
       setCompetitorResearchState(invalidatedExistingContext ? "stale" : "idle");
       setPendingCompetitorBypassConfirmed(false);
       setCompetitorResearchRetryInput(invalidatedExistingContext ? nextCompetitorRetryPath : "");
       setCompetitorResearchRetryAvailable(invalidatedExistingContext && Boolean(nextCompetitorRetryPath));
-      setFirstDraftGenerated(false);
-      if (invalidatedExistingContext && competitorResearchState !== "stale") notify("상품 식별정보가 변경되어 이전 상품의 가격·1차 확인 근거를 제거했습니다. 변경한 정보로 가격을 다시 확인해 주세요.");
+      if (key === "researchInput") {
+        setFirstDraftGenerated(false);
+        setSourceResearchJobId("");
+      }
+      if (invalidatedExistingContext && competitorResearchState !== "stale") {
+        notify(key === "researchInput"
+          ? "상품 링크 또는 설명이 변경되어 이전 1차 초안 근거를 제거했습니다. 변경한 입력으로 1차 자동생성을 다시 실행해 주세요."
+          : "상품 식별정보가 수정되어 동일상품 가격만 재확인이 필요합니다. 수정한 1차 초안으로 최종작성은 계속할 수 있습니다.");
+      }
     }
     intakeRef.current = nextIntake;
     setIntake(nextIntake);
@@ -3131,6 +3141,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (initialCompetitorResearchPath) {
         runCompetitorResearchPolling(initialCompetitorResearchPath, { items: [], providers: [] });
       }
+      setSourceResearchJobId(jobId);
       setFirstDraftGenerated(true);
       setManualErrors({});
       notify("1차 자동생성 초안을 만들었습니다. 확인되지 않은 값은 공란으로 유지했습니다. 실물 기준 필수값을 입력해 주세요.");
@@ -3371,10 +3382,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const startAutomation = () => {
     if (running || automationStartInFlightRef.current) return;
     const aiReady = isStudioExecutionReady(studioWorkerReadiness);
-    const manualMvp = studioWorkerReadiness?.available === false;
-    if (!aiReady && !manualMvp) {
+    if (!aiReady) {
       const message = studioWorkerReadiness?.message
-        ?? "서버 등록 상태를 확인하고 있습니다. 확인이 끝난 뒤 다시 시도해 주세요.";
+        ?? "Vercel 서버 AI 상태를 확인하고 있습니다. 점검이 끝난 뒤 다시 시도해 주세요.";
       setUploadError(message);
       notify(message);
       return;
@@ -3386,15 +3396,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       return;
     }
     if (researchingProduct) {
-      notify("1차 상품정보 확인을 마치거나 중단한 뒤 최종 상품 분석을 시작해 주세요.");
+      notify("1차 상품정보 확인을 마치거나 중단한 뒤 최종작성을 시작해 주세요.");
+      return;
+    }
+    if (!firstDraftGenerated || !isProductResearchJobId(sourceResearchJobId)) {
+      const message = "상품 링크 또는 설명으로 1차 자동생성을 완료한 뒤, 초안을 확인·수정하고 최종작성을 시작해 주세요.";
+      setUploadError(message);
+      notify(message);
       return;
     }
     if (queuedJobId) {
       notify("이 상품은 이미 등록 큐에 있습니다. 진행상황을 확인하거나 ‘다른 상품 등록’을 눌러 새 작업을 시작해 주세요.");
-      return;
-    }
-    if (competitorResearchBlocksAnalysis && !manualMvp) {
-      notify("동일 상품 가격 확인이 끝난 뒤 상품 분석을 시작해 주세요. 조회 실패 시에는 공란 상태로 계속 진행할 수 있습니다.");
       return;
     }
     const parsed = productIntakeSchema.safeParse(intakeRef.current);
@@ -3427,10 +3439,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     automationStartInFlightRef.current = true;
     setRunning(true);
     setUploadError("");
-    setStudioSubmissionMode(manualMvp ? "manual_mvp" : "ai");
-    notify(manualMvp
-      ? `${photoCount}장을 1200×1200 공통 규격으로 보정해 원본 사진과 판매자 확인 정보로 상품 원장을 직접 저장합니다.`
-      : `${photoCount}장을 1200×1200 공통 규격으로 보정하고 필수 상품 정보와 함께 AI 분석에 반영합니다.`);
+    setStudioSubmissionMode("ai");
+    notify(`${photoCount}장을 공통 규격으로 보정한 뒤 핵심 생활 설정샷 6개와 상세페이지 초안을 동시에 제작합니다.`);
     setStudioRequestId((current) => current + 1);
   };
 
@@ -3438,8 +3448,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const extraPhotoInputDisabled = extraPhotosProcessing || totalPhotoCount >= 100;
   const extraPhotoDisabledReason = extraPhotosProcessing ? "선택한 사진 확인 중" : totalPhotoCount >= 100 ? "최대 100장 등록됨" : "";
   const studioWorkerAvailable = isStudioExecutionReady(studioWorkerReadiness);
-  const manualMvpAvailable = studioWorkerReadiness?.available === false;
-  const registrationExecutionAvailable = studioWorkerAvailable || manualMvpAvailable;
+  const registrationExecutionAvailable = studioWorkerAvailable;
+  const firstDraftReady = firstDraftGenerated && isProductResearchJobId(sourceResearchJobId);
   const intakeReady = productIntakeSchema.safeParse(intake).success;
   const intakeCompletionItems = [
     intake.researchInput.trim().length >= 2,
@@ -3469,10 +3479,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   return (
     <div className="page-stack publishing-page">
       <section className="publishing-workflow-header">
-        <div className="publishing-workflow-copy"><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>링크나 설명으로 1차 초안을 자동생성하세요.</h2><p>AI 초안을 사람이 사실 기준으로 확인·수정한 뒤 ‘상품 분석 시작’을 누르면 이미지 제작, 번역, 카테고리 검증과 업로드 준비가 이어집니다.</p></div>
+        <div className="publishing-workflow-copy"><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>링크나 설명으로 1차 초안을 자동생성하세요.</h2><p>AI 초안을 사람이 사실 기준으로 확인·수정한 뒤 ‘최종작성 시작’을 누르면 핵심 생활 설정샷 6개와 상세페이지 초안을 동시에 제작합니다. 동일상품 가격은 선택 참고 정보이며 제작을 막지 않습니다.</p></div>
         <ol className="publishing-steps" aria-label="상품 등록 단계">
           <li className="active"><span>1</span><b>1차 자동생성</b><small>{intakeProgress}% 완료</small></li>
-          <li><span>2</span><b>사람 확인 · 최종 분석</b><small>이미지·사실 검증</small></li>
+          <li><span>2</span><b>사람 확인 · 최종작성</b><small>설정샷 6개·상세페이지 동시 제작</small></li>
           <li><span>3</span><b>번역 · 채널 업로드</b><small>{selectedChannels.length}개 채널 선택</small></li>
         </ol>
       </section>
@@ -3547,7 +3557,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             </div>}
             {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} onProceedWithoutPrices={proceedWithoutCompetitorPrices} compact />}
           </section>
-          {firstDraftGenerated && <div className="first-draft-review"><AlertTriangle size={15} /><span><b>1차 자동생성은 검토용 초안입니다.</b><small>확인되지 않은 항목은 공란으로 남습니다. 가격·재고와 포장 규격을 실물·공급처 자료 및 위 비교 가격에 맞게 입력한 뒤 사실 확인을 체크하세요.</small></span></div>}
+          {firstDraftGenerated && <div className="first-draft-review"><AlertTriangle size={15} /><span><b>1차 자동생성은 사람이 확인·수정하는 초안입니다.</b><small>확인되지 않은 항목은 공란으로 남습니다. 실물과 공급처 자료에 맞게 필수값을 수정하고 사실 확인을 체크한 뒤 ‘최종작성 시작’을 누르세요. 동일상품 가격 조회가 늦어져도 최종작성은 진행할 수 있습니다.</small></span></div>}
 
           <section className="product-context-section required-product-intake">
             <div className="upload-section-heading"><div><b>판매자 필수 입력</b><span className="required-chip">전부 필수</span><small>AI가 추측하면 안 되는 실물·포장·책임 정보입니다. 사진과 함께 입력해야 다음 단계로 갈 수 있습니다.</small></div><em>{intakeReady ? "입력 완료" : "확인 필요"}</em></div>
@@ -3587,7 +3597,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·AI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
           </section>
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && registrationExecutionAvailable && !researchingProduct && (!competitorResearchBlocksAnalysis || manualMvpAvailable) && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis && !manualMvpAvailable ? " · 동일상품 가격 확인 대기" : ""}<br /><small role="status">{manualMvpAvailable ? `${studioWorkerReadiness?.message ?? "서버 AI를 사용할 수 없습니다."} 원본 사진 직접등록은 사용할 수 있습니다.` : studioWorkerReadiness?.message ?? "Vercel 서버 AI 구성과 실제 Gateway 호출 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!registrationExecutionAvailable || running || researchingProduct || photoSelectionsProcessing || (competitorResearchBlocksAnalysis && !manualMvpAvailable) || Boolean(queuedJobId)} title={!registrationExecutionAvailable ? studioWorkerReadiness?.message ?? "서버 등록 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />{studioSubmissionMode === "manual_mvp" ? "원본 저장 중" : "분석 중"}</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis && !manualMvpAvailable ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 상태 확인 중</> : manualMvpAvailable ? <><Upload size={17} />원본 사진 직접등록</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && registrationExecutionAvailable && firstDraftReady && !researchingProduct && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 1차 초안 {firstDraftReady ? "검토 가능" : "미완료"} · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격은 별도 확인 중(최종작성 가능)" : ""}<br /><small role="status">{!firstDraftReady ? "먼저 상품 링크 또는 설명으로 1차 자동생성을 완료하고 초안을 검토해 주세요." : studioWorkerReadiness?.message ?? "Vercel 서버 AI 구성과 실제 Gateway 호출 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!registrationExecutionAvailable || !firstDraftReady || running || researchingProduct || photoSelectionsProcessing || Boolean(queuedJobId)} title={!firstDraftReady ? "1차 자동생성과 사람 검토를 먼저 완료해 주세요." : !registrationExecutionAvailable ? studioWorkerReadiness?.message ?? "서버 등록 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />설정샷·상세 제작 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 상태 확인 중</> : <><WandSparkles size={17} />최종작성 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
@@ -3602,6 +3612,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         photos={mainPhoto ? [mainPhoto, ...Object.values(slotPhotos), ...extraPhotos] : []}
         manualFields={intake}
         competitorContext={studioCompetitorContext}
+        sourceResearchJobId={sourceResearchJobId}
         requestId={studioRequestId}
         submissionMode={studioSubmissionMode}
         workerReadiness={studioWorkerReadiness}

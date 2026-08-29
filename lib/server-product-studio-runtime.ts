@@ -207,11 +207,14 @@ export async function readServerProductStudioReadiness(
     );
   }
   if (gatewayVerification.status !== "verified") {
-    return unavailable(
-      "gateway_unverified",
-      "서버 AI 구성은 감지했지만 AI Gateway 실제 생성 호출은 아직 확인되지 않았습니다. 운영 설정에서 실제 호출 점검을 통과해야 새 상품 분석을 시작할 수 있습니다.",
-      { configurationReady: true, gatewayVerification },
-    );
+    return {
+      available: true,
+      reason: "ready",
+      message: "Vercel AI Gateway와 Supabase 상품 제작 큐 구성이 확인됐습니다. 실제 생성 오류는 해당 상품 작업에서 즉시 표시됩니다.",
+      checkedAt: new Date().toISOString(),
+      configurationReady: true,
+      gatewayVerification,
+    };
   }
   return {
     available: true,

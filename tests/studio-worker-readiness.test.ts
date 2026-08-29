@@ -233,7 +233,8 @@ test("product studio route and clients fail closed without turning explicit work
   assert.match(readinessServer, /"token_missing_or_expired"/);
   assert.match(readinessServer, /"token_mismatch"/);
   assert.match(readinessServer, /readServerAiGatewayVerification\(request, admin\.user\.id\)/);
-  assert.match(readinessServer, /"gateway_unverified"/);
+  assert.match(readinessServer, /gatewayVerification\.status !== "verified"/);
+  assert.match(readinessServer, /available: true,[\s\S]{0,100}reason: "ready"[\s\S]{0,220}실제 생성 오류는 해당 상품 작업에서 즉시 표시/);
   assert.match(readinessServer, /"gateway_verification_failed"/);
   assert.match(readinessServer, /실제 생성 호출과 Supabase 상품 제작 큐 인증을 확인/);
   assert.doesNotMatch(readinessServer, /AI Gateway[^\n]*연결되었습니다/);
@@ -271,12 +272,13 @@ test("product studio route and clients fail closed without turning explicit work
   assert.match(readinessHook, /generation === request\.generation/);
   assert.match(readinessHook, /return \(\) => poller\.dispose\(\)/);
   assert.match(page, /const studioWorkerAvailable = isStudioExecutionReady\(studioWorkerReadiness\)/);
-  assert.match(page, /const manualMvpAvailable = studioWorkerReadiness\?\.available === false/);
-  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| running/);
-  assert.match(page, /원본 사진 직접등록/);
+  assert.match(page, /const registrationExecutionAvailable = studioWorkerAvailable/);
+  assert.match(page, /const firstDraftReady = firstDraftGenerated && isProductResearchJobId\(sourceResearchJobId\)/);
+  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running/);
+  assert.match(page, /최종작성 시작/);
   assert.match(studio, /const manualMvp = submissionMode === "manual_mvp"/);
+  assert.match(studio, /if \(!manualMvp && !normalizedSourceResearchJobId\)/);
   assert.match(studio, /if \(!manualMvp && !isStudioExecutionReady\(workerReadiness\)\)/);
-  assert.match(page, /Gateway 점검 필요/);
   assert.match(studio, /AI Gateway 점검 필요/);
 });
 
