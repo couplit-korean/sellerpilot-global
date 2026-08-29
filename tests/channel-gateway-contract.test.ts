@@ -607,6 +607,54 @@ test("route-facing publication verification binds intent, remote ID, and create 
     ...result,
     remoteState: { ...result.remoteState, imageCount: 7 },
   }, "safe_test", { minimumImageCount: 8 }).status, "invalid");
+  assert.equal(verifiedListingPublicationResult("listing.create", {
+    ...result,
+    remoteState: { ...result.remoteState, imageCount: 9 },
+  }, "safe_test", { minimumImageCount: 8 }).status, "invalid");
+});
+
+test("publication reverification accepts exact terminal states but fulfills only a live readback", () => {
+  const makeResult = (visibility: "pending_review" | "live" | "rejected" | "withdrawn" | "non_public") => ({
+    ...listingCompletionBase.result,
+    operation: "listing.publication.verify" as const,
+    publicationIntent: "live" as const,
+    remoteState: {
+      verified: true as const,
+      visibility,
+      providerStatus: visibility.toUpperCase(),
+      verifiedAt: "2020-08-30T09:00:00.000Z",
+      evidence: {
+        identityVerified: true,
+        statusVerified: true,
+        localeVerified: true,
+        fingerprintVerified: true,
+        imageCountVerified: true,
+      },
+      resources: { originProductNo: "origin-product-123" },
+      locale: "ko-KR",
+      fingerprint: "3".repeat(64),
+      imageCount: 8,
+    },
+    publicationFulfilled: visibility === "live",
+  });
+  for (const visibility of ["pending_review", "live", "rejected", "withdrawn", "non_public"] as const) {
+    const result = makeResult(visibility);
+    assert.equal(gatewayWorkerCompletionSchema.safeParse({
+      ...listingCompletionBase,
+      result,
+    }).success, true, visibility);
+    assert.equal(verifiedListingPublicationResult(
+      "listing.publication.verify",
+      result,
+      "live",
+      {
+        locale: "ko-KR",
+        fingerprint: "3".repeat(64),
+        minimumImageCount: 8,
+        jobBoundary: "2020-08-30T09:00:00.000Z",
+      },
+    ).status, "verified", visibility);
+  }
 });
 
 test("successful listing completion is reconciled unless readback is at the provider-mutation boundary or later", () => {

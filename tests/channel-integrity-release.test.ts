@@ -39,6 +39,22 @@ test("상품 전체 수정은 원격 식별값과 readback 경로가 검증된 �
   assert.equal(channelOperationAvailable("ebay", "listing.update"), false);
 });
 
+test("게시 상태 재검증은 출시 대상 7개 채널에만 연다", () => {
+  for (const channel of [
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+  ] as const) {
+    assert.equal(
+      channelOperationAvailable(channel, "listing.publication.verify"),
+      true,
+      channel,
+    );
+  }
+  assert.equal(
+    channelOperationAvailable("temu", "listing.publication.verify"),
+    false,
+  );
+});
+
 test("실발송 후보가 0건이면 검증 완료가 아니라 대상 부재로 표시한다", () => {
   assert.deepEqual(shipmentVerificationSummary(0), {
     title: "실발송 검증 대상 0건",

@@ -96,6 +96,7 @@ const SERVERLESS_GATEWAY_RETRY_SAFE_READ_OPERATIONS = new Set<GatewayClaim["oper
   "diagnostic.test",
   "shops.get",
   "competitor.search",
+  "listing.publication.verify",
 ]);
 
 type RpcError = { code?: string | null } | null;
@@ -337,6 +338,21 @@ async function enqueueCurrentInquirySyncs(
     fixedEgressRequired: statuses.filter((status) => status === "fixed_egress_required").length,
     failed: statuses.filter((status) => status === "failed").length,
   };
+}
+
+async function enqueueDuePublicationReviews(
+  dependencies: ServerlessCsGatewayDependencies,
+) {
+  const result = await callRpc(
+    dependencies,
+    "sellerpilot_service_enqueue_due_listing_publication_verifications",
+    { p_limit: 14 },
+  );
+  // Code-first and database-first rolling deployments can briefly lack the
+  // counterpart RPC. The next minute wake retries after both halves converge.
+  return result.error && !isMissingRpc(result.error)
+    ? { ok: false as const, code: safeRpcCode(result.error) }
+    : { ok: true as const };
 }
 
 async function claimOneJob(
@@ -1148,6 +1164,13 @@ export async function runServerlessCsGatewayDrain(
     }
   }
   const logError = dependencies.logError ?? defaultLogError;
+  const publicationReviews = await enqueueDuePublicationReviews(dependencies);
+  if (!publicationReviews.ok) {
+    logError("publication_review_enqueue", {
+      status: 503,
+      code: publicationReviews.code,
+    });
+  }
   const enqueue = await enqueueCurrentInquirySyncs(dependencies);
   if (enqueue.failed > 0) {
     logError("enqueue", {

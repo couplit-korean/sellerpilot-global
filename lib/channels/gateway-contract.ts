@@ -146,7 +146,7 @@ const operationResultSchema = z.object({
     context.addIssue({
       code: "custom",
       path: ["publicationStateContract"],
-      message: "remote-state contract is only valid for listing mutations",
+      message: "remote-state contract is only valid for verified listing operations",
     });
   }
   if (value.ok && listingOperationRequiresVerifiedRemoteState(value.operation)) {
@@ -154,19 +154,19 @@ const operationResultSchema = z.object({
       context.addIssue({
         code: "custom",
         path: ["publicationStateContract"],
-        message: "successful listing mutation requires the verified remote-state contract",
+        message: "successful listing operation requires the verified remote-state contract",
       });
     } else if (!value.remoteState) {
       context.addIssue({
         code: "custom",
         path: ["remoteState"],
-        message: "successful listing mutation requires verified remote state",
+        message: "successful listing operation requires verified remote state",
       });
     } else if (listingOperationUsesPublicationIntent(value.operation) && !value.publicationIntent) {
       context.addIssue({
         code: "custom",
         path: ["publicationIntent"],
-        message: "listing mutation requires its bound publication intent",
+        message: "listing operation requires its bound publication intent",
       });
     } else if (!listingOperationUsesPublicationIntent(value.operation) && value.publicationIntent) {
       context.addIssue({

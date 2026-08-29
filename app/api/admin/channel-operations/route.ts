@@ -44,6 +44,7 @@ import {
   SERVERLESS_STATIC_EGRESS_REQUIRED,
 } from "../../../../lib/channels/serverless-static-egress";
 import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
+import { resolveRuntimeReleaseIdentity } from "../../../../lib/internal-scheduler-auth";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -545,11 +546,20 @@ export async function POST(request: NextRequest) {
     const { data: releaseGateStatus, error: releaseGateError } = await serviceClient.rpc(
       "sellerpilot_service_listing_mutation_release_gate_status",
     );
+    const runtimeRelease = resolveRuntimeReleaseIdentity();
     const releaseGateStateIsExact = !releaseGateError
       && isRecord(releaseGateStatus)
       && releaseGateStatus.contract === "verified_publication_release_gate_v1"
+      && typeof releaseGateStatus.effectiveOpen === "boolean"
       && (
-        (releaseGateStatus.open === true && releaseGateStatus.state === "open")
+        (
+          releaseGateStatus.open === true
+          && releaseGateStatus.state === "open"
+          && runtimeRelease.status === "valid"
+          && releaseGateStatus.openedRelease === runtimeRelease.release
+          && releaseGateStatus.attestedRelease === runtimeRelease.release
+          && releaseGateStatus.activeRuntimeRelease === runtimeRelease.release
+        )
         || (releaseGateStatus.open === false && releaseGateStatus.state === "closed")
       );
     if (!releaseGateStateIsExact) {
@@ -558,7 +568,7 @@ export async function POST(request: NextRequest) {
         mode: "listing_mutation_release_gate_unavailable",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    if (releaseGateStatus.open !== true) {
+    if (releaseGateStatus.open !== true || releaseGateStatus.effectiveOpen !== true) {
       return NextResponse.json({
         message: "판매채널 상품 작업은 채널별 원격 검증이 완료될 때까지 일시 중지되어 있습니다.",
         mode: "listing_mutation_release_gate_closed",

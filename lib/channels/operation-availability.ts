@@ -16,6 +16,7 @@ const operationCapabilities: Record<ChannelOperationName, ChannelCapabilityKey> 
   "listing.create": "listingCreate",
   "listing.update": "listingUpdate",
   "listing.stop": "listingStop",
+  "listing.publication.verify": "listingCreate",
   "price.update": "price",
   "inventory.update": "inventory",
   "orders.list": "orders",
@@ -34,7 +35,18 @@ const elevenstImplementedOperations = new Set<ChannelOperationName>([
   "listing.create",
   "listing.update",
   "listing.stop",
+  "listing.publication.verify",
   "orders.list",
+]);
+
+const publicationVerificationChannels = new Set<ActiveChannelKey>([
+  "qoo10",
+  "shopee",
+  "lazada",
+  "coupang",
+  "elevenst",
+  "smartstore",
+  "ebay",
 ]);
 
 // Product updates are released only when this codebase has both a complete
@@ -79,6 +91,13 @@ export function channelOperationRelease(
   operation: ChannelOperationName,
   environment: ChannelEnvironment = "production",
 ): ChannelOperationRelease {
+  if (operation === "listing.publication.verify" && !publicationVerificationChannels.has(channel)) {
+    return {
+      available: false,
+      mode: "release_verification_required",
+      reason: "이 채널은 정확한 원격 게시 상태 재조회 어댑터가 출시되지 않아 차단했습니다.",
+    };
+  }
   const capability = channelCatalog[channel].capabilities[operationCapabilities[operation]];
   if (channel === "ebay" && operation === "inquiries.reply") {
     return {

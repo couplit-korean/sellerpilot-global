@@ -720,7 +720,10 @@ test("one enqueue failure is safely aggregated and does not block an existing qu
     failed: 1,
   });
   assert.equal(providerCalls, 1);
-  assert.deepEqual(logged, [["enqueue", { status: 503, failed: 1, total: 2 }]]);
+  assert.deepEqual(logged, [
+    ["publication_review_enqueue", { status: 503, code: "unexpected_rpc" }],
+    ["enqueue", { status: 503, failed: 1, total: 2 }],
+  ]);
   assert.doesNotMatch(responseText, /Qoo10 민감 구매자|배송 상태를 알려 주세요|private_provider_body/);
   assert.doesNotMatch(JSON.stringify(logged), /private_provider_body/);
 });
@@ -764,7 +767,10 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
     jobs: [],
   });
   assert.equal(claimCalls, SERVERLESS_CS_DRAIN_CONCURRENCY);
-  assert.deepEqual(logged, [["enqueue", { status: 503, failed: 2, total: 2 }]]);
+  assert.deepEqual(logged, [
+    ["publication_review_enqueue", { status: 503, code: "unexpected_rpc" }],
+    ["enqueue", { status: 503, failed: 2, total: 2 }],
+  ]);
 });
 
 test("two fenced jobs run concurrently within eight-worker drain capacity", async () => {

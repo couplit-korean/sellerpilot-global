@@ -34,7 +34,21 @@ test("admin listing mutations require an exact open release gate before idempote
   );
   assert.match(
     route,
-    /releaseGateStatus\.open === true && releaseGateStatus\.state === "open"/,
+    /releaseGateStatus\.open === true[\s\S]{0,180}releaseGateStatus\.state === "open"/,
+  );
+  assert.match(route, /typeof releaseGateStatus\.effectiveOpen === "boolean"/);
+  assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
+  assert.match(
+    route,
+    /releaseGateStatus\.openedRelease === runtimeRelease\.release[\s\S]{0,160}releaseGateStatus\.attestedRelease === runtimeRelease\.release/,
+  );
+  assert.match(
+    route,
+    /releaseGateStatus\.activeRuntimeRelease === runtimeRelease\.release/,
+  );
+  assert.match(
+    route,
+    /releaseGateStatus\.open !== true \|\| releaseGateStatus\.effectiveOpen !== true/,
   );
   assert.match(route, /mode: "listing_mutation_release_gate_unavailable"/);
   assert.match(route, /mode: "listing_mutation_release_gate_closed"/);

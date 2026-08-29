@@ -145,12 +145,14 @@ export function listingOperationRequiresVerifiedRemoteState(operation: string) {
   return operation === "listing.create"
     || operation === "listing.update"
     || operation === "listing.stop"
+    || operation === "listing.publication.verify"
     || operation === "listing.activate";
 }
 
 export function listingOperationUsesPublicationIntent(operation: string) {
   return operation === "listing.create"
     || operation === "listing.update"
+    || operation === "listing.publication.verify"
     || operation === "listing.activate";
 }
 
@@ -184,6 +186,9 @@ export function listingRemoteStateMatchesOperation(
     return state.visibility === "non_public"
       || state.visibility === "withdrawn";
   }
+  if (operation === "listing.publication.verify") {
+    return intent === "live" && state.visibility !== "unknown";
+  }
   return Boolean(intent && listingRemoteStateMatchesIntent(intent, state));
 }
 
@@ -194,6 +199,9 @@ export function listingRemoteStateFulfillsOperation(
 ) {
   if (operation === "listing.stop") {
     return state.visibility === "non_public" || state.visibility === "withdrawn";
+  }
+  if (operation === "listing.publication.verify") {
+    return intent === "live" && state.visibility === "live";
   }
   return Boolean(intent && listingRemoteStateFulfillsIntent(intent, state));
 }
@@ -281,7 +289,12 @@ export function verifiedListingPublicationResult(
   }
   if (expected?.locale && replay.remoteState.locale !== expected.locale) return { status: "invalid" };
   if (expected?.fingerprint && replay.remoteState.fingerprint !== expected.fingerprint) return { status: "invalid" };
-  if (replay.remoteState.imageCount < (expected?.minimumImageCount ?? 0)) return { status: "invalid" };
+  // The marketplace publication contract is an exact manifest, not a floor:
+  // an extra image is source drift just as surely as a missing image.
+  if (expected?.minimumImageCount !== undefined
+      && replay.remoteState.imageCount !== expected.minimumImageCount) {
+    return { status: "invalid" };
+  }
   if (expected?.jobBoundary
       && !listingRemoteStateVerifiedAtOrAfterJobBoundary(replay.remoteState, expected.jobBoundary)) {
     return { status: "invalid" };

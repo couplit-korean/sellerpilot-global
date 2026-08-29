@@ -87,6 +87,7 @@ test("generic serverless operation matrix is exact and price updates stay closed
     "categories.attributes": allChannels,
     "categories.validate": allChannels,
     "orders.get": ["qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay"],
+    "listing.publication.verify": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"],
   };
   for (const [operation, allowed] of Object.entries(expectedReads)) {
     for (const channel of channels) {
@@ -154,6 +155,65 @@ test("a bounded provider write crosses the mutation fence and rechecks its lease
   });
   assert.equal(result.ok, true);
   assert.deepEqual(events, ["lease", "mutation-fence", "lease", "provider"]);
+});
+
+test("publication reverification is allowlisted for the seven release channels and never opens the provider mutation fence", async () => {
+  const events: string[] = [];
+  const job = {
+    ...genericClaim("qoo10", "listing.publication.verify"),
+    request: {
+      arguments: {
+        remoteId: "remote-item-1",
+        publicationIntent: "live",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "ja-JP",
+        publicationExpectedFingerprint: "a".repeat(64),
+        publicationExpectedImageCount: 8,
+      },
+    },
+  } satisfies GatewayClaim;
+  const result = await executeServerlessGatewayProviderJob({
+    job,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => { events.push("lease"); },
+      beginProviderMutation: async () => { events.push("mutation-fence"); },
+      beginCredentialMutation: async () => { throw new Error("unexpected credential mutation"); },
+      stageCredentialRefresh: async () => { throw new Error("unexpected credential stage"); },
+    },
+  }, async (input) => {
+    events.push("provider-readback");
+    return {
+      ok: true,
+      channel: input.channel,
+      operation: input.operation,
+      steps: [{ name: "publication-readback", ok: true, status: 200, data: { exact: true } }],
+      remoteId: "remote-item-1",
+      publicationIntent: "live",
+      publicationStateContract: "verified_remote_state_v1",
+      remoteState: {
+        verified: true,
+        visibility: "pending_review",
+        providerStatus: "WAITING",
+        verifiedAt: new Date().toISOString(),
+        evidence: {
+          identityVerified: true,
+          statusVerified: true,
+          localeVerified: true,
+          fingerprintVerified: true,
+          imageCountVerified: true,
+        },
+        resources: { remoteId: "remote-item-1" },
+        locale: "ja-JP",
+        fingerprint: "a".repeat(64),
+        imageCount: 8,
+      },
+      publicationFulfilled: false,
+      safeMessage: "readback complete",
+    };
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(events, ["lease", "provider-readback"]);
 });
 
 for (const channel of ["coupang", "smartstore", "elevenst", "temu"] as const) {

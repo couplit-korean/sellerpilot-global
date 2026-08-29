@@ -77,6 +77,9 @@ const serverlessReadMatrix = {
   "categories.attributes": allServerlessChannels,
   "categories.validate": allServerlessChannels,
   "orders.get": new Set(["qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay"]),
+  "listing.publication.verify": new Set([
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+  ]),
 } as const satisfies Record<string, ReadonlySet<GatewayClaim["channel"]>>;
 
 const serverlessOAuthChannels = new Set<GatewayClaim["channel"]>(["shopee", "lazada", "ebay"]);

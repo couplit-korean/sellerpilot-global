@@ -39,6 +39,7 @@ const PENDING_AI_TOKEN_HASH = "1".repeat(64);
 const PENDING_GATEWAY_TOKEN_HASH = "2".repeat(64);
 const PENDING_SCHEDULER_TOKEN_HASH = "3".repeat(64);
 const LEGACY_SCOPE_RETIREMENT_MIGRATION = "20260828150000_remove_legacy_combined_worker_scope.sql";
+const PUBLICATION_RELEASE_SHA = "a".repeat(40);
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -283,6 +284,42 @@ async function scalar(db, sql, params = []) {
   return Object.values(result.rows[0] ?? {})[0];
 }
 
+async function attestPublicationRelease(db, releaseSha = PUBLICATION_RELEASE_SHA) {
+  for (const channel of [
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+  ]) {
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_adapter_ready($1,true,$2)",
+      [channel, releaseSha],
+    );
+  }
+  await db.query(
+    "select public.sellerpilot_service_set_listing_publication_rechecker_ready(true,$1)",
+    [releaseSha],
+  );
+}
+
+async function activatePublicationRuntimeRelease(db, releaseSha = PUBLICATION_RELEASE_SHA) {
+  await db.query(
+    `insert into sellerpilot_private.serverless_runtime_canary_receipts (
+       release_id, passed_at, consumed_at
+     ) values ($1, clock_timestamp(), clock_timestamp())`,
+    [releaseSha],
+  );
+  await db.query(
+    `update cron.job
+        set active = true
+      where jobname in (
+        'sellerpilot-serverless-cs-wake-v1',
+        'sellerpilot-product-research-v1',
+        'sellerpilot-channel-sync-v1',
+        'sellerpilot-competitor-prices-v1',
+        'sellerpilot-kakao-notifications-v1',
+        'sellerpilot-maintenance-v1'
+      )`,
+  );
+}
+
 function aiClaimAssetPaths(jobId, claimToken) {
   const prefix = `results/${jobId}/claims/${claimToken}`;
   return {
@@ -476,6 +513,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830090000_recover_product_research_context.sql",
       "20260830095000_close_listing_mutations_until_adapters_ready.sql",
       "20260830100000_verified_remote_publication_ledger.sql",
+      "20260830110000_pending_publication_reverification.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -515,12 +553,91 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       true,
     );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_service_set_listing_mutation_release_gate(boolean,text)', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_service_set_listing_mutation_release_gate(boolean,text)', 'EXECUTE')",
+      ),
+      true,
+    );
+    await attestPublicationRelease(db);
+    await activatePublicationRuntimeRelease(db);
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_adapter_ready('qoo10',true,$1)",
+      ["b".repeat(40)],
+    );
+    await assert.rejects(
+      () => scalar(
+        db,
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
+      ),
+      /exact release/,
+    );
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_adapter_ready('qoo10',true,$1)",
+      [PUBLICATION_RELEASE_SHA],
+    );
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_rechecker_ready(true,$1)",
+      ["b".repeat(40)],
+    );
+    await assert.rejects(
+      () => scalar(
+        db,
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
+      ),
+      /exact release/,
+    );
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_rechecker_ready(true,$1)",
+      [PUBLICATION_RELEASE_SHA],
+    );
+    await assert.rejects(
+      () => scalar(
+        db,
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true)",
+      ),
+      /exact listing publication release required/,
+    );
     const openedListingReleaseGate = await scalar(
       db,
-      "select public.sellerpilot_service_set_listing_mutation_release_gate(true)",
+      "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+      [PUBLICATION_RELEASE_SHA],
     );
     assert.equal(openedListingReleaseGate.open, true);
+    assert.equal(openedListingReleaseGate.effectiveOpen, true);
+    assert.equal(openedListingReleaseGate.openedRelease, PUBLICATION_RELEASE_SHA);
     assert.equal(openedListingReleaseGate.queuedOrRunning, 0);
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_adapter_ready('qoo10',false,null)",
+    );
+    const invalidatedListingReleaseGate = await scalar(
+      db,
+      "select public.sellerpilot_service_listing_mutation_release_gate_status()",
+    );
+    assert.equal(invalidatedListingReleaseGate.open, false);
+    assert.equal(invalidatedListingReleaseGate.effectiveOpen, false);
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_adapter_ready('qoo10',true,$1)",
+      [PUBLICATION_RELEASE_SHA],
+    );
+    assert.equal(
+      (await scalar(
+        db,
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
+      )).effectiveOpen,
+      true,
+    );
     const detailPipelineLineageMigration = await readFile(
       new URL("20260826212116_harden_detail_pipeline_lineage.sql", migrationUrl),
       "utf8",
@@ -8298,6 +8415,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
   const migrationName = "20260828200500_gate_serverless_static_egress.sql";
   const cleanupMigrationName = "20260828201500_cleanup_static_egress_queued_reads.sql";
   const finalMigrationName = "20260828210000_non_cs_release_integrity.sql";
+  const publicationReviewMigrationName = "20260830110000_pending_publication_reverification.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
@@ -8306,7 +8424,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
       .filter((name) => name.endsWith(".sql")
         && name !== migrationName
         && name !== cleanupMigrationName
-        && name !== finalMigrationName)
+        && name !== finalMigrationName
+        && name !== publicationReviewMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -9958,10 +10077,13 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         await readFile(new URL(name, migrationUrl), "utf8"),
       ));
     }
+    await attestPublicationRelease(db);
+    await activatePublicationRuntimeRelease(db);
     assert.equal(
       (await scalar(
         db,
-        "select public.sellerpilot_service_set_listing_mutation_release_gate(true)",
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
       )).open,
       true,
       "this provider-mutation fixture must explicitly open the release gate",
@@ -10687,10 +10809,13 @@ test("Coupang bounded reads drain nine jobs per window and opportunistic reaping
         await readFile(new URL(name, migrationUrl), "utf8"),
       ));
     }
+    await attestPublicationRelease(db);
+    await activatePublicationRuntimeRelease(db);
     assert.equal(
       (await scalar(
         db,
-        "select public.sellerpilot_service_set_listing_mutation_release_gate(true)",
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
       )).open,
       true,
       "this mutation-reaping fixture must explicitly open the release gate",
