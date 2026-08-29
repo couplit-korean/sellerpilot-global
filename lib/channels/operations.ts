@@ -67,6 +67,7 @@ import {
 import {
   listingPublicationReadbackExpectation,
   readCoupangListingPublicationState,
+  readEbayListingPublicationState,
   readSmartstoreListingPublicationState,
 } from "./listing-publication-readback";
 
@@ -4049,6 +4050,55 @@ async function executeTemu(input: ExecuteInput) {
   throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
 }
 
+async function ebayListingResultWithPublicationReadback(
+  input: ExecuteInput,
+  steps: ChannelOperationStep[],
+  remoteId: string,
+  offerId: string,
+) {
+  if (!listingPublicationReadbackRequested(input) || steps.some((item) => !item.ok)) {
+    return result(input, steps, remoteId);
+  }
+  const expected = listingPublicationReadbackExpectation(input.arguments);
+  if (!expected) {
+    return result(input, [
+      ...steps,
+      publicationStateVerificationStep(input.channel, undefined, "EBAY_PUBLICATION_EXPECTATION_MISSING"),
+    ], remoteId);
+  }
+  const readback = await readEbayListingPublicationState({
+    operation: input.operation as "listing.create" | "listing.update" | "listing.stop",
+    intent: listingPublicationIntentFromArguments(input.arguments),
+    remoteId,
+    offerId,
+    expected,
+    readOffer: (readbackOfferId) => ebayRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: `/sell/inventory/v1/offer/${pathSegment(readbackOfferId)}`,
+    }),
+    readInventoryItem: (sku) => ebayRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: `/sell/inventory/v1/inventory_item/${pathSegment(sku)}`,
+    }),
+  });
+  const readbackSteps: ChannelOperationStep[] = [step("offer-publication-readback", readback.offerReadback)];
+  if (readback.inventoryItemReadback) {
+    readbackSteps.push(step("inventory-item-publication-readback", readback.inventoryItemReadback));
+  }
+  readbackSteps.push(publicationStateVerificationStep(input.channel, readback.state, readback.failureCode));
+  return result(
+    input,
+    [...steps, ...readbackSteps],
+    readback.resolvedRemoteId,
+    undefined,
+    readback.state,
+  );
+}
+
 async function executeEbay(input: ExecuteInput) {
   if (input.operation === "categories.list") {
     const categoryTreeId = pathSegment(stringArgument(input.arguments, "categoryTreeId"));
@@ -4083,6 +4133,9 @@ async function executeEbay(input: ExecuteInput) {
     const offer = structuredClone(objectValue(input.arguments, "offer"));
     const marketplaceId = String(offer.marketplaceId ?? "").trim();
     if (!marketplaceId) throw new Error("CHANNEL_ARGUMENT_REQUIRED:offer.marketplaceId");
+    const shouldPublish = listingPublicationReadbackRequested(input)
+      ? listingPublicationIntentFromArguments(input.arguments) === "live"
+      : booleanArgument(input.arguments, "publish");
     // eBay rejects an offer when its SKU differs from the Inventory Item URL
     // even if both values are otherwise valid. Enforce this invariant at the
     // channel boundary as a final guard for manually edited or legacy drafts.
@@ -4196,23 +4249,41 @@ async function executeEbay(input: ExecuteInput) {
         publishedListingId = String(listing.listingId ?? "").trim();
       }
     }
-    if (offerId && booleanArgument(input.arguments, "publish") && !publishedListingId) {
+    if (offerId && shouldPublish && !publishedListingId) {
       const publishRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "POST", path: `/sell/inventory/v1/offer/${pathSegment(offerId)}/publish` });
-      steps.push(step("publish", publishRemote));
+      const publishStep = step("publish", publishRemote);
+      steps.push(publishStep);
       const listingId = publishRemote.data.listingId === undefined ? undefined : String(publishRemote.data.listingId);
-      return result(input, steps, listingId ?? offerId);
+      if (!publishStep.ok) return result(input, steps, listingId ?? offerId);
+      return ebayListingResultWithPublicationReadback(input, steps, listingId ?? offerId, offerId);
     }
-    return result(input, steps, publishedListingId || offerId || sku);
+    const finalRemoteId = publishedListingId || offerId || sku;
+    return offerId
+      ? ebayListingResultWithPublicationReadback(input, steps, finalRemoteId, offerId)
+      : result(input, steps, finalRemoteId);
   }
   if (input.operation === "listing.update") {
     const offerId = pathSegment(stringArgument(input.arguments, "offerId"));
-    const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "PUT", path: `/sell/inventory/v1/offer/${offerId}`, body: objectValue(input.arguments, "body") });
-    return result(input, [step("offer-update", remote)], offerId);
+    const body = objectValue(input.arguments, "body");
+    assertEbayListingCreateConfiguration({ offer: body });
+    if (!stringArgument(body, "sku", false)) throw new Error("EBAY_OFFER_UPDATE_SKU_REQUIRED");
+    const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "PUT", path: `/sell/inventory/v1/offer/${offerId}`, body });
+    return ebayListingResultWithPublicationReadback(
+      input,
+      [step("offer-update", remote)],
+      decodeURIComponent(offerId),
+      decodeURIComponent(offerId),
+    );
   }
   if (input.operation === "listing.stop") {
     const offerId = pathSegment(stringArgument(input.arguments, "offerId"));
     const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "POST", path: `/sell/inventory/v1/offer/${offerId}/withdraw` });
-    return result(input, [step("offer-withdraw", remote)], offerId);
+    return ebayListingResultWithPublicationReadback(
+      input,
+      [step("offer-withdraw", remote)],
+      decodeURIComponent(offerId),
+      decodeURIComponent(offerId),
+    );
   }
   if (input.operation === "price.update") {
     const offerId = pathSegment(stringArgument(input.arguments, "offerId"));

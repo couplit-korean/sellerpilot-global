@@ -98,7 +98,7 @@ test("중앙 저장과 원격 전체 수정의 수동 반영 필드를 구조적
   assert.deepEqual(productEditRemotePlan("ebay", false).remotelyWritableFields, []);
 });
 
-test("11번가는 전체 원본 병합용 내용 patch만 만들고 Temu·eBay 미검증 수정은 차단한다", () => {
+test("11번가는 전체 원본 patch를 만들고 eBay는 offer ID와 전체 offer 본문을 함께 고정한다", () => {
   assert.deepEqual(
     prepareListingUpdateArguments("elevenst", {
       product: { prdNm: "수정 상품", htmlDetail: "<p>수정 설명</p>", selPrc: "999999", prdSelQty: "999" },
@@ -108,13 +108,41 @@ test("11번가는 전체 원본 병합용 내용 patch만 만들고 Temu·eBay �
       productPatch: { prdNm: "수정 상품", htmlDetail: "<p>수정 설명</p>" },
     },
   );
-  for (const channel of ["temu", "ebay"] as const) {
-    assert.throws(
-      () => prepareListingUpdateArguments(channel, { body: { title: "수정 상품" } }, publishedListing),
-      new RegExp(`LISTING_UPDATE_NOT_RELEASED:${channel}`),
-      channel,
-    );
-  }
+  assert.throws(
+    () => prepareListingUpdateArguments("temu", { body: { title: "수정 상품" } }, publishedListing),
+    /LISTING_UPDATE_NOT_RELEASED:temu/,
+  );
+  assert.deepEqual(
+    prepareListingUpdateArguments("ebay", {
+      sku: "SELLERPILOT-001",
+      offer: {
+        sku: "SELLERPILOT-001",
+        marketplaceId: "EBAY_US",
+        listingDescription: "<p>수정 설명</p>",
+        listingPolicies: {
+          fulfillmentPolicyId: "fulfillment-1",
+          paymentPolicyId: "payment-1",
+          returnPolicyId: "return-1",
+        },
+        merchantLocationKey: "seoul-warehouse",
+      },
+    }, publishedListing),
+    {
+      sku: "SELLERPILOT-001",
+      offerId: publishedListing.remoteId,
+      body: {
+        sku: "SELLERPILOT-001",
+        marketplaceId: "EBAY_US",
+        listingDescription: "<p>수정 설명</p>",
+        listingPolicies: {
+          fulfillmentPolicyId: "fulfillment-1",
+          paymentPolicyId: "payment-1",
+          returnPolicyId: "return-1",
+        },
+        merchantLocationKey: "seoul-warehouse",
+      },
+    },
+  );
 });
 
 test("상품 수정 payload는 원격 identity를 원장에서 고정하고 가격·재고·옵션을 제거한다", () => {

@@ -379,3 +379,136 @@ export async function readSmartstoreListingPublicationState(input: {
     }),
   };
 }
+
+export type EbayListingPublicationReadback = {
+  state?: VerifiedListingRemoteState;
+  offerReadback: RemoteResponse;
+  inventoryItemReadback?: RemoteResponse;
+  resolvedRemoteId: string;
+  failureCode?: string;
+};
+
+/**
+ * Performs only eBay Inventory API GETs. getOffer is authoritative for the
+ * offer/listing exposure and getInventoryItem binds the offer to its SKU and
+ * persisted product images.
+ */
+export async function readEbayListingPublicationState(input: {
+  operation: ListingMutationOperation;
+  intent?: ListingPublicationIntent;
+  remoteId: string;
+  offerId: string;
+  expected: ListingPublicationReadbackExpectation;
+  readOffer: (offerId: string) => Promise<RemoteResponse>;
+  readInventoryItem: (sku: string) => Promise<RemoteResponse>;
+  verifiedAt?: string;
+}): Promise<EbayListingPublicationReadback> {
+  const offerReadback = await input.readOffer(input.offerId);
+  const offer = offerReadback.data;
+  const responseOfferId = String(offer.offerId ?? "").trim();
+  const sku = String(offer.sku ?? "").trim();
+  const marketplaceId = String(offer.marketplaceId ?? "").trim().toUpperCase();
+  const market = marketplaceId.startsWith("EBAY_") ? marketplaceId.slice(5) : "";
+  const locale = market ? listingExpectedPublicationLocale("ebay", market) : undefined;
+  const inventoryItemReadback = sku ? await input.readInventoryItem(sku) : undefined;
+  const inventoryItem = inventoryItemReadback?.data ?? {};
+  const inventoryProduct = record(inventoryItem.product);
+  const inventoryImageUrls = Array.isArray(inventoryProduct.imageUrls)
+    ? [...new Set(inventoryProduct.imageUrls.map(String).map((value) => value.trim()).filter(Boolean))]
+    : [];
+  const detailImageUrls = htmlImageUrls(offer.listingDescription);
+  const listing = record(offer.listing);
+  const listingId = String(listing.listingId ?? "").trim();
+  const offerStatus = String(offer.status ?? "").trim().toUpperCase();
+  const listingStatus = String(listing.listingStatus ?? "").trim().toUpperCase();
+  const expectedRemoteIds = new Set([input.offerId, listingId].filter(Boolean));
+  const identityVerified = remoteAccepted(offerReadback)
+    && responseOfferId === input.offerId
+    && Boolean(sku)
+    && Boolean(marketplaceId)
+    && expectedRemoteIds.has(input.remoteId)
+    && Boolean(inventoryItemReadback && remoteAccepted(inventoryItemReadback));
+  const localeVerified = Boolean(locale && locale === input.expected.locale);
+  const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expected.fingerprint);
+  const imageCountVerified = input.operation === "listing.stop"
+    ? input.expected.imageCount === 0
+    : detailImageUrls.length === input.expected.imageCount && inventoryImageUrls.length > 0;
+
+  let visibility: VerifiedListingRemoteState["visibility"] | undefined;
+  if (offerStatus === "PUBLISHED" && listingId && listingStatus === "ACTIVE") visibility = "live";
+  else if (offerStatus === "PUBLISHED" && listingId) visibility = "pending_review";
+  else if (offerStatus === "UNPUBLISHED") {
+    visibility = input.operation === "listing.stop" ? "withdrawn" : "non_public";
+  }
+  const resolvedRemoteId = input.operation === "listing.create" && visibility === "live"
+    ? listingId
+    : input.offerId;
+
+  const failureCode = !visibility
+    ? "EBAY_PUBLICATION_STATUS_UNVERIFIED"
+    : !identityVerified
+      ? "EBAY_PUBLICATION_IDENTITY_UNVERIFIED"
+      : !locale || !localeVerified
+        ? "EBAY_PUBLICATION_LOCALE_UNVERIFIED"
+        : !fingerprintVerified
+          ? "EBAY_PUBLICATION_FINGERPRINT_UNVERIFIED"
+          : !imageCountVerified
+            ? "EBAY_PUBLICATION_IMAGE_COUNT_UNVERIFIED"
+            : input.operation === "listing.stop" && offerStatus !== "UNPUBLISHED"
+              ? "EBAY_PUBLICATION_WITHDRAWAL_UNVERIFIED"
+              : undefined;
+  if (failureCode) {
+    return {
+      offerReadback,
+      ...(inventoryItemReadback ? { inventoryItemReadback } : {}),
+      resolvedRemoteId: input.remoteId,
+      failureCode,
+    };
+  }
+  if (!visibility || !locale) {
+    return {
+      offerReadback,
+      ...(inventoryItemReadback ? { inventoryItemReadback } : {}),
+      resolvedRemoteId: input.remoteId,
+      failureCode: "EBAY_PUBLICATION_READBACK_UNVERIFIED",
+    };
+  }
+
+  const state = buildVerifiedState({
+    visibility,
+    providerStatus: `${offerStatus}|${listingStatus || "NONE"}`,
+    verifiedAt: input.verifiedAt,
+    resources: {
+      offerId: input.offerId,
+      sku,
+      marketplaceId,
+      ...(listingId ? { listingId } : {}),
+    },
+    locale,
+    fingerprint: input.expected.fingerprint,
+    imageCount: input.operation === "listing.stop" ? 0 : detailImageUrls.length,
+    evidence: {
+      offerStatus,
+      listingStatus: listingStatus || "NONE",
+      detailImageCount: detailImageUrls.length,
+      inventoryImageCount: inventoryImageUrls.length,
+      readbackDigest: sha256({
+        offerId: responseOfferId,
+        sku,
+        marketplaceId,
+        offerStatus,
+        listingId,
+        listingStatus,
+        detailImageUrls,
+        inventoryImageUrls,
+      }),
+    },
+  });
+  return {
+    offerReadback,
+    inventoryItemReadback,
+    resolvedRemoteId,
+    state,
+    ...(state ? {} : { failureCode: "EBAY_PUBLICATION_STATE_SCHEMA_INVALID" }),
+  };
+}

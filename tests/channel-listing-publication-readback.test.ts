@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   listingPublicationReadbackExpectation,
   readCoupangListingPublicationState,
+  readEbayListingPublicationState,
   readSmartstoreListingPublicationState,
 } from "../lib/channels/listing-publication-readback";
 import { executeChannelOperation } from "../lib/channels/operations";
@@ -76,6 +77,53 @@ function smartstoreOriginProduct(input: {
     smartstoreChannelProduct: {
       channelProductNo: 20000001,
       channelProductDisplayStatusType: input.channelStatus,
+    },
+  };
+}
+
+function ebayOffer(input: {
+  status: "PUBLISHED" | "UNPUBLISHED";
+  listingStatus?: string;
+  marketplaceId?: string;
+  imageCount?: number;
+}) {
+  return {
+    offerId: "offer-123",
+    sku: "SELLERPILOT-001",
+    marketplaceId: input.marketplaceId ?? "EBAY_US",
+    status: input.status,
+    listingDescription: detailHtml(input.imageCount ?? 8),
+    ...(input.status === "PUBLISHED"
+      ? { listing: { listingId: "110000000001", listingStatus: input.listingStatus } }
+      : {}),
+  };
+}
+
+function ebayInventoryImages(count = 9) {
+  return Array.from({ length: count }, (_, index) => `https://cdn.example.com/inventory-${index + 1}.jpg`);
+}
+
+function ebayCreateArguments(intent: "safe_test" | "live") {
+  return {
+    ...publicationArguments(intent),
+    publicationExpectedLocale: "en-US",
+    sku: "SELLERPILOT-001",
+    inventoryItem: {
+      availability: { shipToLocationAvailability: { quantity: 1 } },
+      condition: "NEW",
+      product: { title: "Verified item", imageUrls: ebayInventoryImages() },
+    },
+    offer: {
+      sku: "SELLERPILOT-001",
+      marketplaceId: "EBAY_US",
+      format: "FIXED_PRICE",
+      listingDescription: detailHtml(),
+      listingPolicies: {
+        fulfillmentPolicyId: "fulfillment-1",
+        paymentPolicyId: "payment-1",
+        returnPolicyId: "return-1",
+      },
+      merchantLocationKey: "seoul-warehouse",
     },
   };
 }
@@ -421,4 +469,232 @@ test("SmartStore does not issue verified state when final detail HTML has seven 
   });
   assert.equal(readback.state, undefined);
   assert.equal(readback.failureCode, "SMARTSTORE_PUBLICATION_READBACK_UNVERIFIED");
+});
+
+test("eBay read-only publication boundary binds getOffer to getInventoryItem", async () => {
+  const expected = {
+    locale: "de-DE",
+    fingerprint,
+    imageCount: 8,
+  };
+  const calls: string[] = [];
+  const readback = await readEbayListingPublicationState({
+    operation: "listing.create",
+    intent: "live",
+    remoteId: "110000000001",
+    offerId: "offer-123",
+    expected,
+    verifiedAt: "2026-08-29T22:00:00.000Z",
+    readOffer: async (offerId) => {
+      calls.push(`offer:${offerId}`);
+      return remote(ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", marketplaceId: "EBAY_DE" }));
+    },
+    readInventoryItem: async (sku) => {
+      calls.push(`inventory:${sku}`);
+      return remote({ product: { imageUrls: ebayInventoryImages() } });
+    },
+  });
+  assert.deepEqual(calls, ["offer:offer-123", "inventory:SELLERPILOT-001"]);
+  assert.equal(readback.failureCode, undefined);
+  assert.equal(readback.resolvedRemoteId, "110000000001");
+  assert.equal(readback.state?.visibility, "live");
+  assert.equal(readback.state?.providerStatus, "PUBLISHED|ACTIVE");
+  assert.equal(readback.state?.locale, "de-DE");
+  assert.deepEqual(readback.state?.resources, {
+    offerId: "offer-123",
+    sku: "SELLERPILOT-001",
+    marketplaceId: "EBAY_DE",
+    listingId: "110000000001",
+  });
+});
+
+test("eBay safe-test create keeps an unpublished offer even when legacy publish=true is supplied", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push({ url, method });
+    if (url.includes("/inventory_item/") && method === "GET") {
+      return Response.json({ product: { imageUrls: ebayInventoryImages() } });
+    }
+    if (url.endsWith("/offer") && method === "POST") return Response.json({ offerId: "offer-123" }, { status: 201 });
+    if (url.endsWith("/offer/offer-123") && method === "GET") {
+      return Response.json(ebayOffer({ status: "UNPUBLISHED" }));
+    }
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.create",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: { ...ebayCreateArguments("safe_test"), publish: true },
+      environment: "production",
+    });
+    assert.equal(calls.some((call) => call.url.endsWith("/publish")), false);
+    assert.deepEqual(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`), [
+      "PUT /sell/inventory/v1/inventory_item/SELLERPILOT-001",
+      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
+      "POST /sell/inventory/v1/offer",
+      "GET /sell/inventory/v1/offer/offer-123",
+      "GET /sell/inventory/v1/offer/offer-123",
+      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
+    ]);
+    assert.equal(operation.ok, true);
+    assert.equal(operation.publicationFulfilled, true);
+    assert.equal(operation.remoteId, "offer-123");
+    assert.equal(operation.remoteState?.visibility, "non_public");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay live create requires final PUBLISHED ACTIVE readback after publishOffer", async () => {
+  const originalFetch = globalThis.fetch;
+  let published = false;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/inventory_item/") && method === "GET") {
+      return Response.json({ product: { imageUrls: ebayInventoryImages() } });
+    }
+    if (url.endsWith("/offer") && method === "POST") return Response.json({ offerId: "offer-123" }, { status: 201 });
+    if (url.endsWith("/offer/offer-123") && method === "GET") {
+      return Response.json(published
+        ? ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE" })
+        : ebayOffer({ status: "UNPUBLISHED" }));
+    }
+    if (url.endsWith("/offer/offer-123/publish") && method === "POST") {
+      published = true;
+      return Response.json({ listingId: "110000000001" });
+    }
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.create",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: { ...ebayCreateArguments("live"), publish: false },
+      environment: "production",
+    });
+    assert.equal(published, true);
+    assert.equal(operation.ok, true);
+    assert.equal(operation.publicationFulfilled, true);
+    assert.equal(operation.remoteId, "110000000001");
+    assert.equal(operation.remoteState?.visibility, "live");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay published acceptance without ACTIVE listing readback remains pending review", async () => {
+  const readback = await readEbayListingPublicationState({
+    operation: "listing.create",
+    intent: "live",
+    remoteId: "110000000001",
+    offerId: "offer-123",
+    expected: { locale: "en-US", fingerprint, imageCount: 8 },
+    readOffer: async () => remote(ebayOffer({ status: "PUBLISHED" })),
+    readInventoryItem: async () => remote({ product: { imageUrls: ebayInventoryImages() } }),
+  });
+  assert.equal(readback.state?.visibility, "pending_review");
+  assert.equal(readback.state?.providerStatus, "PUBLISHED|NONE");
+});
+
+test("eBay listing update verifies the exact offer, SKU, locale, and live status", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/inventory_item/") && method === "GET") {
+      return Response.json({ product: { imageUrls: ebayInventoryImages() } });
+    }
+    if (url.endsWith("/offer/offer-123") && method === "GET") {
+      return Response.json(ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE" }));
+    }
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.update",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: {
+        ...publicationArguments("live"),
+        publicationExpectedLocale: "en-US",
+        offerId: "offer-123",
+        body: {
+          sku: "SELLERPILOT-001",
+          marketplaceId: "EBAY_US",
+          format: "FIXED_PRICE",
+          listingDescription: detailHtml(),
+          listingPolicies: {
+            fulfillmentPolicyId: "fulfillment-1",
+            paymentPolicyId: "payment-1",
+            returnPolicyId: "return-1",
+          },
+          merchantLocationKey: "seoul-warehouse",
+        },
+      },
+      environment: "production",
+    });
+    assert.equal(operation.ok, true);
+    assert.equal(operation.publicationFulfilled, true);
+    assert.equal(operation.remoteId, "offer-123");
+    assert.equal(operation.remoteState?.visibility, "live");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay withdraw is complete only after getOffer is UNPUBLISHED", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    if (url.includes("/inventory_item/") && method === "GET") {
+      return Response.json({ product: { imageUrls: ebayInventoryImages() } });
+    }
+    if (url.endsWith("/offer/offer-123") && method === "GET") {
+      return Response.json(ebayOffer({ status: "UNPUBLISHED" }));
+    }
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.stop",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: {
+        offerId: "offer-123",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "en-US",
+        publicationExpectedFingerprint: fingerprint,
+        publicationExpectedImageCount: 0,
+      },
+      environment: "production",
+    });
+    assert.equal(operation.ok, true);
+    assert.equal(operation.publicationFulfilled, true);
+    assert.equal(operation.remoteState?.visibility, "withdrawn");
+    assert.equal(operation.remoteState?.imageCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay refuses verified success when getOffer returns only seven detail images", async () => {
+  const readback = await readEbayListingPublicationState({
+    operation: "listing.update",
+    intent: "live",
+    remoteId: "offer-123",
+    offerId: "offer-123",
+    expected: { locale: "en-US", fingerprint, imageCount: 8 },
+    readOffer: async () => remote(ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", imageCount: 7 })),
+    readInventoryItem: async () => remote({ product: { imageUrls: ebayInventoryImages() } }),
+  });
+  assert.equal(readback.state, undefined);
+  assert.equal(readback.failureCode, "EBAY_PUBLICATION_IMAGE_COUNT_UNVERIFIED");
 });

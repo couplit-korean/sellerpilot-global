@@ -307,7 +307,9 @@ export function listingUpdateRemoteIdentity(channel: ActiveChannelKey, arguments
             ? [argumentsValue.originProductNo]
             : channel === "elevenst"
               ? [argumentsValue.productNo]
-              : [];
+              : channel === "ebay"
+                ? [argumentsValue.offerId]
+                : [];
   const identities = [...new Set(candidates.map(identityValue).filter(Boolean))];
   if (identities.length !== 1) {
     throw new Error(identities.length ? "LISTING_UPDATE_IDENTITY_MISMATCH" : "LISTING_UPDATE_IDENTITY_REQUIRED");
@@ -481,6 +483,20 @@ export function prepareListingUpdateArguments(
       ...optionalArgument(createArguments, "imageUrls"),
       originProductNo: remoteId,
       body: safeSmartstoreBody(createArguments.body),
+    };
+  }
+
+  if (channel === "ebay") {
+    const suppliedBody = recordValue(createArguments.body);
+    const sourceOffer = Object.keys(suppliedBody).length
+      ? suppliedBody
+      : recordValue(createArguments.offer);
+    if (!Object.keys(sourceOffer).length) throw new Error("EBAY_OFFER_UPDATE_BODY_REQUIRED");
+    return {
+      ...optionalArgument(createArguments, "sellerpilotAssets"),
+      ...optionalArgument(createArguments, "sku"),
+      offerId: remoteId,
+      body: structuredClone(sourceOffer),
     };
   }
 
