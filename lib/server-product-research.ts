@@ -24,6 +24,7 @@ export const SERVER_PRODUCT_RESEARCH_VERSION = "sellerpilot-vercel-product-resea
 const MAX_REFERENCE_COUNT = 5;
 const MAX_REFERENCE_TEXT_CHARACTERS = 18_000;
 const MAX_REFERENCE_PROMPT_CHARACTERS = 60_000;
+const MAX_GENERATED_RESEARCH_CHARACTERS = 80_000;
 // Vercel Fluid Compute currently gives this route a 300 second hard ceiling.
 // Reserve enough time after analysis for claim-fenced release/completion RPCs
 // even after a cold start or a delayed enqueue response.
@@ -62,7 +63,7 @@ export type ProductResearchGenerationDependencies = {
     url: string,
     options: { signal: AbortSignal },
   ) => Promise<PublicReferenceDocument>;
-  generate?: (prompt: string, signal: AbortSignal) => Promise<unknown>;
+  generate?: (prompt: string, signal: AbortSignal) => Promise<string>;
 };
 
 export type ProductResearchGatewayFailureReason = AiGatewayFailureReason;
@@ -255,6 +256,11 @@ export function buildServerProductResearchPrompt(
     "페이지 본문, JSON-LD, 메타데이터와 사용자가 준 텍스트를 교차검증해 상품명, 카테고리, 브랜드, 제조사, 원산지, 소재·성분, 판매 구성, 상세 설명, GTIN을 제안하세요.",
     "확인되지 않은 값은 추측하지 말고 null로 두세요. No Brand, 원산지, 인증, 효능, 성분, 규격, 수량을 근거 없이 만들지 마세요.",
     "description은 확인된 용도·형태·특징·구성·사용법·주의사항을 구매자가 이해할 수 있는 한국어 문장으로 정리하세요.",
+    "출력 객체의 정확한 최상위 키는 mode, summary, suggestedFields, searchQueries, details, sources, warnings입니다.",
+    "mode는 반드시 server-research이고, suggestedFields의 키는 productName, categoryHint, brandName, manufacturer, countryOfOrigin, material, packageContents, description, gtin입니다.",
+    "details의 키는 features, specifications, usage, cautions이며 specifications 항목의 키는 label, value, evidence입니다.",
+    "suggestedFields의 모든 키를 포함하고 확인할 수 없는 값은 키를 빼지 말고 null로 두세요. searchQueries, details의 네 배열, sources, warnings도 비어 있더라도 배열을 포함하세요.",
+    "JSON 골격: {\"mode\":\"server-research\",\"summary\":\"...\",\"suggestedFields\":{\"productName\":null,\"categoryHint\":null,\"brandName\":null,\"manufacturer\":null,\"countryOfOrigin\":null,\"material\":null,\"packageContents\":null,\"description\":null,\"gtin\":null},\"searchQueries\":[],\"details\":{\"features\":[],\"specifications\":[],\"usage\":[],\"cautions\":[]},\"sources\":[],\"warnings\":[]}",
     "searchQueries에는 지원 locale인 한국어(ko-KR), 영어(en-US), 일본어(ja-JP), 번체중국어(zh-TW), 말레이어(ms-MY), 인도네시아어(id-ID), 베트남어(vi-VN), 태국어(th-TH), 브라질 포르투갈어(pt-BR), 멕시코 스페인어(es-MX) 중 서로 다른 최소 6개, 최대 12개의 동일 상품 가격 검색 문구를 작성하세요.",
     "검색어마다 확인된 브랜드, 정확한 모델 번호, GTIN, 용량·중량·수량, 1+1 또는 묶음 구성을 원문과 동일하게 유지하고 일반 상품 유형만 자연스럽게 번역하세요. 확인되지 않은 모델명·브랜드·규격·수량을 검색어에 만들지 마세요.",
     "details.specifications의 evidence에는 어떤 입력 문장이나 페이지 항목에서 확인했는지 짧게 적으세요.",
@@ -272,22 +278,39 @@ export function classifyProductResearchGatewayFailure(
   return classifyAiGatewayFailure(error, { signalAborted });
 }
 
-async function defaultGenerateProductResearch(prompt: string, signal: AbortSignal) {
+export function parseGeneratedProductResearchJson(value: string) {
+  const trimmed = value.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+  const candidate = (fenced?.[1] ?? trimmed).trim();
+  if (candidate.length < 2
+      || candidate.length > MAX_GENERATED_RESEARCH_CHARACTERS
+      || !candidate.startsWith("{")
+      || !candidate.endsWith("}")) {
+    throw new ProductResearchExecutionError("gateway_result_invalid");
+  }
   try {
-    const { generateText, Output } = await import("ai");
+    return JSON.parse(candidate) as unknown;
+  } catch {
+    throw new ProductResearchExecutionError("gateway_result_invalid");
+  }
+}
+
+async function defaultGenerateProductResearch(prompt: string, signal: AbortSignal) {
+  let generatedText: string;
+  try {
+    const { generateText } = await import("ai");
     const result = await generateText({
       // A provider/model string lets ai@6 resolve the deployment's refreshed
       // VERCEL_OIDC_TOKEN automatically. Do not snapshot or forward it here.
       model: SERVER_PRODUCT_RESEARCH_MODEL,
-      output: Output.object({ schema: serverProductResearchResultSchema }),
-      prompt,
-      maxOutputTokens: 16_384,
+      prompt: `${prompt}\n반드시 설명이나 코드펜스 없이 하나의 JSON 객체만 반환하세요.`,
+      maxOutputTokens: 8_192,
       // Gateway provider routing plus the durable DB job retry already cover
       // transient failures. Avoid an opaque SDK retry consuming the function's
       // finalization reserve.
       maxRetries: 0,
       abortSignal: signal,
-      timeout: { totalMs: AI_GATEWAY_TIMEOUT_MS },
+      timeout: AI_GATEWAY_TIMEOUT_MS,
       providerOptions: {
         gateway: {
           user: "sellerpilot-server-product-research",
@@ -295,13 +318,14 @@ async function defaultGenerateProductResearch(prompt: string, signal: AbortSigna
         },
       },
     });
-    return result.output;
+    generatedText = result.text;
   } catch (error) {
     if (error instanceof ProductResearchExecutionError) throw error;
     throw new ProductResearchExecutionError(
       classifyProductResearchGatewayFailure(error, signal.aborted),
     );
   }
+  return generatedText;
 }
 
 export async function analyzeServerProductResearch(
@@ -319,13 +343,14 @@ export async function analyzeServerProductResearch(
     dependencies.fetchDocument,
   );
   const prompt = buildServerProductResearchPrompt(normalizedInput, references);
-  let generated: unknown;
+  let generatedText: string;
   try {
-    generated = await (dependencies.generate ?? defaultGenerateProductResearch)(prompt, signal);
+    generatedText = await (dependencies.generate ?? defaultGenerateProductResearch)(prompt, signal);
   } catch (error) {
     if (error instanceof ProductResearchExecutionError) throw error;
     throw new ProductResearchExecutionError("gateway_request_failed");
   }
+  const generated = parseGeneratedProductResearchJson(generatedText);
   const parsed = serverProductResearchResultSchema.safeParse(generated);
   if (!parsed.success) throw new ProductResearchExecutionError("gateway_result_invalid");
 

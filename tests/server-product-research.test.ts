@@ -15,6 +15,7 @@ import {
   classifyProductResearchGatewayFailure,
   collectProductResearchReferences,
   extractProductResearchReferenceUrls,
+  parseGeneratedProductResearchJson,
   runServerProductResearchCron,
   shouldTerminallyFailProductResearch,
 } from "../lib/server-product-research";
@@ -122,9 +123,47 @@ test("server product research uses AI SDK auto-OIDC without manually handling cr
   assert.match(source, /providerOptions:\s*\{[\s\S]*?gateway:\s*\{[\s\S]*?user:/);
   assert.match(source, /MAX_RESEARCH_RUNTIME_MS = 210_000/);
   assert.match(source, /AI_GATEWAY_TIMEOUT_MS = 175_000/);
+  assert.match(source, /generatedText = result\.text/);
+  assert.match(source, /maxOutputTokens: 8_192/);
+  assert.match(source, /timeout: AI_GATEWAY_TIMEOUT_MS/);
   assert.match(source, /maxRetries: 0/);
+  assert.doesNotMatch(source, /Output\.object/);
   assert.doesNotMatch(source, /createGateway|getVercelOidcToken|@vercel\/oidc|ai-gateway-auth-method/);
   assert.doesNotMatch(source, /apiKey:\s*oidcToken/);
+});
+
+test("server product research parses only one bounded JSON object", () => {
+  assert.deepEqual(
+    parseGeneratedProductResearchJson(JSON.stringify(validResult())),
+    validResult(),
+  );
+  assert.deepEqual(
+    parseGeneratedProductResearchJson(`\`\`\`json\n${JSON.stringify(validResult())}\n\`\`\``),
+    validResult(),
+  );
+  assert.throws(
+    () => parseGeneratedProductResearchJson(`설명\n${JSON.stringify(validResult())}`),
+    /gateway_result_invalid/,
+  );
+  assert.throws(
+    () => parseGeneratedProductResearchJson("{not-json}"),
+    /gateway_result_invalid/,
+  );
+  assert.throws(
+    () => parseGeneratedProductResearchJson(`{"value":"${"x".repeat(80_001)}"}`),
+    /gateway_result_invalid/,
+  );
+});
+
+test("server product research classifies invalid raw model text without leaking it", async () => {
+  await assert.rejects(
+    analyzeServerProductResearch("테스트 상품", AbortSignal.timeout(5_000), {
+      generate: async () => "private non-json model response",
+    }),
+    (error: unknown) => error instanceof Error
+      && error.message === "gateway_result_invalid"
+      && !error.message.includes("private"),
+  );
 });
 
 test("gateway failures map only bounded metadata to DB-safe reasons", () => {
@@ -186,7 +225,7 @@ test("server product research makes fetched reference status authoritative", asy
         redirects: [],
         status: 200,
       }),
-      generate: async () => ({
+      generate: async () => JSON.stringify({
         ...validResult(),
         sources: [{ url: "https://hallucinated.example/", title: "Wrong", status: "read" }],
       }),
