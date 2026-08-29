@@ -11,6 +11,7 @@ import {
   buildServerSourceDerivedAsset,
   buildServerSourceEvidencePanel,
   buildServerStudioMasterPrompt,
+  normalizeServerStudioMasterContract,
   resolveServerAssetSource,
   runOneServerProductStudio,
   serverStudioRemoteWorkPlan,
@@ -21,7 +22,11 @@ import {
   MINIMUM_SHOT_HASH_DISTANCE,
   visualHashDistance,
 } from "../lib/image-shot-uniqueness";
-import { planStudioLocalizedChunks, type StudioLocalizedTarget } from "../lib/studio-segment-generation";
+import {
+  planStudioLocalizedChunks,
+  studioMasterDetailImageRoleIssue,
+  type StudioLocalizedTarget,
+} from "../lib/studio-segment-generation";
 
 const MASTER_SECTION_TYPES = [
   "benefit", "story", "howto", "proof", "spec", "caution", "comparison", "faq", "notice",
@@ -159,6 +164,69 @@ function passingPortableAudit() {
     missingTokens: [],
   };
 }
+
+test("server master normalization repairs presentation metadata without changing seller-backed copy", () => {
+  const alreadyValid = testMasterResult();
+  assert.equal(normalizeServerStudioMasterContract(alreadyValid), alreadyValid);
+
+  const master = testMasterResult();
+  master.design.creativeStrategy.targetSectionCount = 20;
+  master.design.sections = master.design.sections.map((section, index) => ({
+    ...section,
+    type: "benefit" as const,
+    layout: "split" as const,
+    imageAsset: index < 12 ? "detail-overview" as const : "none" as const,
+  }));
+  const sellerBackedCopy = master.design.sections.map((section) => ({
+    buyerQuestion: section.buyerQuestion,
+    evidence: section.evidence,
+    eyebrow: section.eyebrow,
+    title: section.title,
+    body: section.body,
+    points: section.points,
+    visualDirection: section.visualDirection,
+  }));
+
+  const normalized = normalizeServerStudioMasterContract(master);
+
+  assert.deepEqual(
+    normalized.design.sections.map((section) => ({
+      buyerQuestion: section.buyerQuestion,
+      evidence: section.evidence,
+      eyebrow: section.eyebrow,
+      title: section.title,
+      body: section.body,
+      points: section.points,
+      visualDirection: section.visualDirection,
+    })),
+    sellerBackedCopy,
+  );
+  assert.equal(normalized.design.creativeStrategy.targetSectionCount, normalized.design.sections.length);
+  assert.deepEqual(
+    [...new Set(normalized.design.sections.map((section) => section.type))].sort(),
+    [...MASTER_SECTION_TYPES.slice(0, 9)].sort(),
+  );
+  assert.equal(studioMasterDetailImageRoleIssue(normalized), "");
+  assert.ok(new Set(normalized.design.sections.map((section) => section.layout)).size >= 5);
+  normalized.design.sections.forEach((section, index, sections) => {
+    if (index > 0) assert.notEqual(section.layout, sections[index - 1]?.layout);
+  });
+  assert.deepEqual(normalizeServerStudioMasterContract(normalized), normalized);
+
+  const noneBeforeDuplicate = testMasterResult();
+  noneBeforeDuplicate.design.sections = noneBeforeDuplicate.design.sections.map((section, index) => ({
+    ...section,
+    imageAsset: index === 11
+      ? "none" as const
+      : index === 12
+        ? "detail-overview" as const
+        : section.imageAsset,
+  }));
+  assert.equal(
+    studioMasterDetailImageRoleIssue(normalizeServerStudioMasterContract(noneBeforeDuplicate)),
+    "",
+  );
+});
 
 async function patternedBackground(
   width: number,
@@ -521,7 +589,15 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
     },
     generateStructured: async (input) => {
       if (input.tags.includes("feature:product-studio-master")) {
-        return input.schema.parse(testMasterResult());
+        const repeatedMetadata = testMasterResult();
+        repeatedMetadata.design.creativeStrategy.targetSectionCount = 20;
+        repeatedMetadata.design.sections = repeatedMetadata.design.sections.map((section, index) => ({
+          ...section,
+          type: "benefit" as const,
+          layout: "split" as const,
+          imageAsset: index < 12 ? "detail-overview" as const : "none" as const,
+        }));
+        return input.schema.parse(repeatedMetadata);
       }
       const chunkTag = input.tags.find((tag) => tag.startsWith("chunk:"));
       assert.ok(chunkTag);

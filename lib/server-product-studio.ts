@@ -49,6 +49,25 @@ const MAX_SINGLE_SOURCE_BYTES = 20 * 1024 * 1024;
 const TEXT_CALL_TIMEOUT_MS = 45_000;
 const BACKGROUND_CALL_TIMEOUT_MS = 40_000;
 const VISION_CALL_TIMEOUT_MS = 20_000;
+const MASTER_SECTION_TYPES = [
+  "benefit",
+  "story",
+  "howto",
+  "proof",
+  "spec",
+  "caution",
+  "comparison",
+  "faq",
+  "notice",
+] as const;
+const MASTER_SECTION_LAYOUTS = [
+  "split",
+  "full-bleed",
+  "cards",
+  "steps",
+  "spec-grid",
+  "editorial",
+] as const;
 const NO_STORE_HEADERS = {
   "cache-control": "no-store, max-age=0",
   "content-type": "application/json; charset=utf-8",
@@ -456,6 +475,91 @@ function masterSemanticIssue(master: z.infer<typeof studioMasterResultSchema>) {
   return "";
 }
 
+/**
+ * Structured generation already guarantees that every section and product
+ * field is schema-valid.  The model can still repeat presentation metadata
+ * (a section type, image slot, or layout), which used to discard the complete
+ * draft after two attempts.  Repair only that metadata here: seller facts,
+ * evidence, copy, ordering, and the 16-to-20 section count stay untouched.
+ */
+export function normalizeServerStudioMasterContract(
+  master: z.infer<typeof studioMasterResultSchema>,
+): z.infer<typeof studioMasterResultSchema> {
+  if (!masterSemanticIssue(master)
+      && master.design.creativeStrategy.targetSectionCount === master.design.sections.length) {
+    return master;
+  }
+  const sections = master.design.sections.map((section) => ({ ...section }));
+
+  const typeCounts = new Map<(typeof MASTER_SECTION_TYPES)[number], number>(
+    MASTER_SECTION_TYPES.map((type) => [type, 0]),
+  );
+  sections.forEach((section) => {
+    typeCounts.set(section.type, (typeCounts.get(section.type) ?? 0) + 1);
+  });
+  const missingTypes = MASTER_SECTION_TYPES.filter((type) => (typeCounts.get(type) ?? 0) === 0);
+  for (const missingType of missingTypes) {
+    const replacementIndex = sections.findIndex(
+      (section) => (typeCounts.get(section.type) ?? 0) > 1,
+    );
+    if (replacementIndex < 0) break;
+    const previousType = sections[replacementIndex].type;
+    sections[replacementIndex] = { ...sections[replacementIndex], type: missingType };
+    typeCounts.set(previousType, (typeCounts.get(previousType) ?? 0) - 1);
+    typeCounts.set(missingType, 1);
+  }
+
+  const requiredAssets = [...aiGeneratedAssetSpecs]
+    .filter((asset) => asset.role === "detail")
+    .map((asset) => asset.id);
+  const seenAssets = new Set<AiGeneratedAssetId>();
+  const replaceableIndexes: number[] = [];
+  sections.forEach((section, index) => {
+    if (section.imageAsset === "none") {
+      replaceableIndexes.push(index);
+      return;
+    }
+    if (seenAssets.has(section.imageAsset)) {
+      sections[index] = { ...section, imageAsset: "none" };
+      replaceableIndexes.push(index);
+      return;
+    }
+    seenAssets.add(section.imageAsset);
+  });
+  const missingAssets = requiredAssets.filter((asset) => !seenAssets.has(asset));
+  missingAssets.forEach((asset, index) => {
+    const sectionIndex = replaceableIndexes[index];
+    if (sectionIndex === undefined) return;
+    sections[sectionIndex] = { ...sections[sectionIndex], imageAsset: asset };
+  });
+
+  const usedLayouts = new Set<(typeof MASTER_SECTION_LAYOUTS)[number]>();
+  let previousLayout: (typeof MASTER_SECTION_LAYOUTS)[number] | null = null;
+  const normalizedSections = sections.map((section) => {
+    const candidates = [section.layout, ...MASTER_SECTION_LAYOUTS];
+    const layout = candidates.find((candidate) => (
+      candidate !== previousLayout
+      && (usedLayouts.size >= 5 || !usedLayouts.has(candidate))
+    )) ?? MASTER_SECTION_LAYOUTS.find((candidate) => candidate !== previousLayout)
+      ?? MASTER_SECTION_LAYOUTS[0];
+    usedLayouts.add(layout);
+    previousLayout = layout;
+    return { ...section, layout };
+  });
+
+  return {
+    ...master,
+    design: {
+      ...master.design,
+      creativeStrategy: {
+        ...master.design.creativeStrategy,
+        targetSectionCount: normalizedSections.length,
+      },
+      sections: normalizedSections,
+    },
+  };
+}
+
 async function callRpc(
   dependencies: ServerProductStudioDependencies,
   name: string,
@@ -551,13 +655,13 @@ async function generateStudioMaster(
       buildServerStudioMasterPrompt(request),
       ...(issue ? [`이전 결과의 하드 계약 오류를 수정하세요: ${issue}`] : []),
     ].join("\n");
-    master = await generate({
+    master = normalizeServerStudioMasterContract(await generate({
       schema: studioMasterResultSchema,
       prompt,
       images: sources,
       signal,
       tags: ["feature:product-studio-master", `attempt:${attempt}`],
-    });
+    }));
     issue = masterSemanticIssue(master);
     if (!issue) break;
   }
