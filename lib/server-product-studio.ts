@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { z } from "zod";
-import { classifyAiGatewayFailure } from "./ai-gateway-failure";
+import {
+  inspectAiGatewayFailure,
+  type AiGatewayFailureDiagnostic,
+} from "./ai-gateway-failure";
 import {
   cliStudioResultSchema,
   normalizeStudioResultForTerminalValidation,
@@ -14,6 +17,7 @@ import {
   aiGeneratedAssetSpecs,
   coreFirstDraftAssetIds,
   remainingFinalAssetIds,
+  type AiDetailAssetId,
   type AiGeneratedAssetId,
 } from "./ai-generated-assets";
 import { resolveProductSettingShot } from "./ai-image-planning";
@@ -25,7 +29,16 @@ import {
   type ShotFingerprint,
 } from "./image-shot-uniqueness";
 import { buildMarketplaceMasterStyleBrief } from "./marketplace-style-learning";
-import { sourcePreservingProductImageSpecSchema } from "./product-intake";
+import {
+  productIntakeSchema,
+  sourcePreservingProductImageSpecSchema,
+  type ProductIntakeFields,
+} from "./product-intake";
+import {
+  hasPrescriptiveIntakeInstruction,
+  hasUnsupportedGeneralFoodEfficacyClaim,
+  isGeneralFoodClassification,
+} from "./product-classification";
 import { sourceImagePathsForWorker } from "./studio-image-paths";
 import {
   localizedSegmentCoverageIssue,
@@ -250,6 +263,41 @@ type ParsedStudioRequest =
   | { mode: "preflight"; data: z.infer<typeof studioRequestSchema> }
   | { mode: "legacy"; data: z.infer<typeof studioSourceRequestSchema> };
 
+const reviewedStudioFallbackMarkerSchema = z.object({
+  first_draft_reviewed: z.literal(true),
+  source: z.literal("authenticated_admin_request"),
+  source_research_job_id: z.string().uuid(),
+}).strict();
+
+const reviewedStudioTransientFallbackReasons = new Set([
+  "gateway_rate_limited",
+  "gateway_billing_required",
+  "gateway_timeout",
+  "gateway_customer_verification_required",
+]);
+
+export function serverStudioAllowsReviewedTransientFallback(error: unknown) {
+  return error instanceof ServerProductStudioError
+    && !error.terminal
+    && reviewedStudioTransientFallbackReasons.has(error.safeReason);
+}
+
+function reviewedStudioFallbackFields(parsedRequest: ParsedStudioRequest) {
+  if (parsedRequest.mode !== "preflight") return null;
+  const marker = reviewedStudioFallbackMarkerSchema.safeParse(
+    parsedRequest.data.human_review_confirmation,
+  );
+  const manual = productIntakeSchema.safeParse(parsedRequest.data.manual_fields);
+  if (!marker.success || !manual.success
+      || marker.data.source_research_job_id !== parsedRequest.data.source_research_job_id
+      || manual.data.researchInput.trim() !== parsedRequest.data.research_input.trim()
+      || manual.data.description.trim() !== parsedRequest.data.description.trim()
+      || manual.data.productUrl.trim() !== parsedRequest.data.product_url.trim()) {
+    return null;
+  }
+  return manual.data;
+}
+
 function parseStudioRequest(request: Record<string, unknown>): ParsedStudioRequest | null {
   const sourceRequest = studioSourceRequestSchema.safeParse(request);
   const preflightRequest = studioRequestSchema.safeParse(request);
@@ -334,12 +382,18 @@ export function serverStudioRemoteWorkPlan() {
 export class ServerProductStudioError extends Error {
   readonly safeReason: string;
   readonly terminal: boolean;
+  readonly diagnostic?: AiGatewayFailureDiagnostic;
 
-  constructor(safeReason: string, terminal = false) {
+  constructor(
+    safeReason: string,
+    terminal = false,
+    diagnostic?: AiGatewayFailureDiagnostic,
+  ) {
     super(safeReason);
     this.name = "ServerProductStudioError";
     this.safeReason = safeReason;
     this.terminal = terminal;
+    this.diagnostic = diagnostic;
   }
 }
 
@@ -358,6 +412,20 @@ function safeReason(error: unknown) {
   return error instanceof ServerProductStudioError
     ? error.safeReason
     : "server_studio_execution_failed";
+}
+
+function gatewayDiagnosticLogDetails(diagnostic: AiGatewayFailureDiagnostic) {
+  return {
+    reason: diagnostic.reason,
+    status: diagnostic.httpStatus ?? 500,
+    ...(diagnostic.limitKind == null ? {} : { limitKind: diagnostic.limitKind }),
+    ...(diagnostic.retryAfterMs == null ? {} : { retryAfterMs: diagnostic.retryAfterMs }),
+    ...(diagnostic.generationId == null ? {} : { generationId: diagnostic.generationId }),
+    ...(diagnostic.requestId == null ? {} : { requestId: diagnostic.requestId }),
+    ...(diagnostic.upstreamProviderAttempted == null
+      ? {}
+      : { upstreamProviderAttempted: diagnostic.upstreamProviderAttempted }),
+  } satisfies Record<string, string | number | boolean>;
 }
 
 async function defaultGenerateStructured<T>(input: {
@@ -401,9 +469,10 @@ async function defaultGenerateStructured<T>(input: {
     });
     return input.schema.parse(generated.output);
   } catch (error) {
-    throw new ServerProductStudioError(classifyAiGatewayFailure(error, {
+    const diagnostic = inspectAiGatewayFailure(error, {
       signalAborted: input.signal.aborted,
-    }));
+    });
+    throw new ServerProductStudioError(diagnostic.reason, false, diagnostic);
   }
 }
 
@@ -442,9 +511,10 @@ async function defaultGenerateBackground(input: {
     if (!file?.uint8Array?.byteLength) throw new Error("empty generated image");
     return file.uint8Array;
   } catch (error) {
-    throw new ServerProductStudioError(classifyAiGatewayFailure(error, {
+    const diagnostic = inspectAiGatewayFailure(error, {
       signalAborted: input.signal.aborted,
-    }));
+    });
+    throw new ServerProductStudioError(diagnostic.reason, false, diagnostic);
   }
 }
 
@@ -660,6 +730,571 @@ export function normalizeServerStudioMasterContract(
   };
 }
 
+function boundedReviewedText(value: unknown, fallback: string, maximum: number) {
+  const safeCharacters = [...(typeof value === "string" ? value : fallback).normalize("NFC")]
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint < 32 || codePoint === 127 || character === "<" || character === ">"
+        ? " "
+        : character;
+    })
+    .join("");
+  const normalized = safeCharacters
+    .replace(/\s+/gu, " ")
+    .trim() || fallback;
+  let bounded = normalized.slice(0, maximum);
+  if (/[\uD800-\uDBFF]$/u.test(bounded)) bounded = bounded.slice(0, -1);
+  return bounded.trim() || fallback;
+}
+
+function reviewedEvidence(label: string, value: unknown) {
+  const safeValue = boundedReviewedText(value, "판매자 확인값 없음", 330);
+  return boundedReviewedText(
+    `${label} 항목에 판매자가 검수해 저장한 값은 “${safeValue}”입니다. 이 기록 외의 사실은 근거로 추가하지 않았습니다.`,
+    `${label} 항목은 판매자 검수 기록만 근거로 사용했습니다.`,
+    500,
+  );
+}
+
+function reviewedSectionBody(body: string, topic: string, index: number) {
+  const suffix = ` ${topic} 항목 ${index + 1}은 판매자가 직접 확인한 입력 범위만 보여 주며, 실물 포장이나 공식 공급처 자료에서 다시 확인되지 않은 표현은 게시 전에 보완해야 합니다.`;
+  let output = body;
+  while (output.length < 160) output += suffix;
+  return boundedReviewedText(output, suffix.trim(), 1_100);
+}
+
+/**
+ * Emergency Studio text fallback for an already authenticated, explicitly
+ * human-reviewed stage-one request. It deliberately produces conservative
+ * purchase-check copy instead of trying to infer unseen labels, efficacy,
+ * certifications, ingredients or package contents from the source photo.
+ */
+export function buildReviewedServerStudioFallbackMaster(
+  fields: ProductIntakeFields,
+): z.infer<typeof studioMasterResultSchema> {
+  const reviewedPublicInput = [
+    fields.productName,
+    fields.categoryHint,
+    fields.brandName,
+    fields.manufacturer,
+    fields.material,
+    fields.packageContents,
+    fields.description,
+    fields.shippingRule,
+    fields.packagingRule,
+    fields.researchInput,
+  ].join("\n");
+  if (isGeneralFoodClassification(`${fields.categoryHint}\n${fields.researchInput}`)
+      && (hasUnsupportedGeneralFoodEfficacyClaim(reviewedPublicInput)
+        || hasPrescriptiveIntakeInstruction(reviewedPublicInput))) {
+    throw new ServerProductStudioError("reviewed_general_food_claim_requires_manual_correction", true);
+  }
+  const name = boundedReviewedText(fields.productName, "판매자 검수 상품", 160);
+  const category = boundedReviewedText(fields.categoryHint, "판매자 확인 카테고리", 120);
+  const facts = {
+    identity: name,
+    brand: boundedReviewedText(fields.brandName, "판매자 확인 브랜드", 120),
+    manufacturer: boundedReviewedText(fields.manufacturer, "판매자 확인 제조사", 160),
+    category,
+    contents: boundedReviewedText(fields.packageContents, "판매자 확인 판매 구성", 330),
+    condition: fields.condition === "NEW" ? "새 상품" : fields.condition === "USED" ? "중고 상품" : "리퍼비시 상품",
+    material: boundedReviewedText(fields.material, "판매자 확인 소재·성분", 330),
+    origin: boundedReviewedText(fields.countryOfOrigin, "판매자 확인 원산지", 80),
+    dimensions: `${fields.packageLengthCm} × ${fields.packageWidthCm} × ${fields.packageHeightCm} cm / ${fields.weightKg} kg`,
+    price: `${fields.sellingPrice} ${fields.currency}`,
+    stock: `${fields.stock}개`,
+    shipping: `배송비 ${fields.shippingFeeKrw} KRW${fields.shippingRule ? ` / ${boundedReviewedText(fields.shippingRule, "", 260)}` : ""}`,
+    packaging: boundedReviewedText(fields.packagingRule, "별도 포장 규칙 입력 없음", 330),
+    gtin: fields.gtinStatus === "HAS_GTIN" ? fields.gtin : "GTIN 없음으로 확인",
+    description: boundedReviewedText(fields.description, "판매자 검수 설명", 330),
+    research: boundedReviewedText(fields.researchInput, "판매자 검수 상품 자료", 330),
+  };
+  const detailAssetByTopic: Record<string, AiDetailAssetId | "none"> = {
+    "상품 식별": "detail-overview",
+    "브랜드 제조": "detail-feature",
+    "카테고리 분류": "detail-context",
+    "판매 구성": "detail-contents",
+    "상품 상태": "none",
+    "소재 성분": "detail-material",
+    "원산지 공급": "detail-package",
+    "포장 규격": "detail-dimensions",
+    "가격 통화": "none",
+    "재고 수량": "detail-storage",
+    "배송 조건": "detail-scale",
+    "포장 방식": "detail-care",
+    "상품 코드": "none",
+    "판매자 설명": "detail-use",
+    "구매 점검": "detail-routine",
+    "근거 한계": "none",
+  };
+  const blueprints = [
+    {
+      type: "benefit", topic: "상품 식별", question: "주문하려는 상품이 맞는지 무엇으로 구분하나요?",
+      evidence: reviewedEvidence("상품명", facts.identity), title: "검수된 상품명부터 대조",
+      body: `이 페이지의 식별 기준은 판매자가 확인한 상품명 ${facts.identity}입니다. 대표사진과 주문 화면의 명칭을 먼저 맞춰 보고, 비슷한 포장이나 유사 모델을 같은 상품으로 단정하지 않습니다. 상품명에 없는 용량, 맛, 색상, 세대 또는 옵션은 별도 선택값이 확인되기 전까지 추가하지 않습니다.`,
+      points: ["주문명과 대표사진의 일치 여부 확인", "유사 포장·유사 모델과 혼동 방지", "미확인 옵션명 자동 추가 금지"],
+    },
+    {
+      type: "story", topic: "브랜드 제조", question: "브랜드와 제조 관련 표기는 어디까지 확인됐나요?",
+      evidence: reviewedEvidence("브랜드·제조사", `${facts.brand} / ${facts.manufacturer}`), title: "브랜드와 제조 기록 분리",
+      body: `브랜드와 제조사는 서로 다른 판매자 입력란에서 가져왔습니다. 브랜드는 ${facts.brand}, 제조사·공급처는 ${facts.manufacturer}로 기록되어 있으며 두 값을 임의로 합치거나 계열사 관계를 추정하지 않습니다. 로고 대소문자, 법인명, 수입원처럼 실물에서 추가로 보이는 표기는 공식 표시사항 확인 뒤 수정해야 합니다.`,
+      points: ["브랜드 입력값 독립 보존", "제조사·공급처 기록 별도 표시", "계열사·수입원 관계 추정 금지"],
+    },
+    {
+      type: "proof", topic: "카테고리 분류", question: "현재 카테고리는 어떤 확인 상태로 표시되나요?",
+      evidence: reviewedEvidence("카테고리", facts.category), title: "카테고리는 검토 필요 상태",
+      body: `판매자가 선택한 카테고리는 ${facts.category}입니다. 이 폴백은 사진만 보고 인증 분류, 의약적 용도, 건강기능식품 여부 또는 규제 대상을 확정하지 않습니다. 채널별 최종 카테고리와 필수 고시는 실제 포장, 공급처 서류, 판매 국가의 등록 화면을 대조한 뒤 게시 직전에 선택해야 합니다.`,
+      points: ["판매자 입력 카테고리 보존", "규제·인증 분류 자동 확정 금지", "채널별 필수 고시 게시 전 대조"],
+    },
+    {
+      type: "spec", topic: "판매 구성", question: "한 주문에 포함되는 판매 구성은 무엇인가요?",
+      evidence: reviewedEvidence("판매 구성품", facts.contents), title: "판매 구성과 촬영 소품 구별",
+      body: `판매 구성은 판매자가 검수한 구성 입력을 기준으로만 안내합니다. 이미지 배경에 보이는 그릇, 가구, 도구, 장식물 또는 연출 소품은 구성품으로 포함하지 않습니다. 세트 수량, 증정품, 리필, 번들 여부가 입력에 명시되지 않았다면 화면 문구나 상세 이미지에서 새 구성으로 만들어 내지 않습니다.`,
+      points: ["검수된 판매 구성만 포함", "배경 연출 소품은 구성에서 제외", "증정·번들·리필 수량 추정 금지"],
+    },
+    {
+      type: "notice", topic: "상품 상태", question: "상품 상태와 개봉 여부는 어떻게 확인하나요?",
+      evidence: reviewedEvidence("상품 상태", facts.condition), title: "상태값과 실물 컨디션 구분",
+      body: `등록 상태값은 ${facts.condition}으로 검수되었습니다. 이 값은 개별 재고의 외관, 봉인, 유통기한, 흠집 또는 구성 누락까지 자동으로 보증하지 않습니다. 출고 전 검품 기준과 반품 조건은 판매자의 실제 운영 정책을 따르며, 상태를 과장하는 최상급 표현이나 보증 문구는 추가하지 않습니다.`,
+      points: ["등록 상태값 명시", "개별 재고 컨디션 자동 보증 금지", "출고 검품·반품 정책 별도 확인"],
+    },
+    {
+      type: "caution", topic: "소재 성분", question: "소재나 성분 정보는 어디에서 다시 확인해야 하나요?",
+      evidence: reviewedEvidence("소재·성분", facts.material), title: "소재·성분은 실물 표시 우선",
+      body: `소재·성분 입력은 판매자가 확인한 기록을 근거란에 보존하지만, 보이지 않는 원료 비율이나 알레르기 유발 성분을 사진에서 추정하지 않습니다. 식품, 화장품, 생활화학제품처럼 표시 의무가 있는 상품은 수령한 실물 라벨과 공식 공급처 문서를 우선하며, 효능·섭취량·사용량을 임의로 제안하지 않습니다.`,
+      points: ["원료 비율·숨은 성분 추정 금지", "실물 라벨과 공식 자료 우선", "효능·섭취량·사용량 임의 생성 금지"],
+    },
+    {
+      type: "proof", topic: "원산지 공급", question: "원산지와 공급 주체는 어떤 기록을 따르나요?",
+      evidence: reviewedEvidence("원산지·제조사", `${facts.origin} / ${facts.manufacturer}`), title: "원산지와 공급 주체 대조",
+      body: `원산지는 ${facts.origin}로, 제조사·공급처는 ${facts.manufacturer}로 판매자가 각각 검수했습니다. 제조국, 원료 원산지, 포장 국가, 수입자 주소는 서로 다른 개념이므로 한 값을 다른 항목으로 바꾸어 쓰지 않습니다. 국가별 원산지 표시 문구는 통관 서류와 실물 표시사항을 확인한 뒤 확정해야 합니다.`,
+      points: ["원산지와 제조 주체 분리", "원료·포장·수입자 국가 혼용 금지", "통관·표시 자료 최종 대조"],
+    },
+    {
+      type: "comparison", topic: "포장 규격", question: "배송용 크기와 중량은 어떤 수치인가요?",
+      evidence: reviewedEvidence("포장 규격·중량", facts.dimensions), title: "포장 단위 수치 한눈에 확인",
+      body: `판매자가 입력한 배송용 규격과 중량은 ${facts.dimensions}입니다. 이 수치는 내용물 자체 크기나 순중량으로 바꾸어 표시하지 않으며, 측정 방향도 가로·세로·높이 순서를 유지합니다. 채널의 부피무게 계산이나 배송비 구간이 달라질 수 있으므로 실제 포장 완료 후 다시 측정해 손실 가능성을 점검해야 합니다.`,
+      points: ["포장 가로·세로·높이 순서 유지", "배송 중량과 내용물 순중량 구분", "실포장 후 부피무게 재확인"],
+    },
+    {
+      type: "comparison", topic: "가격 통화", question: "표시 가격과 통화는 어떤 기준인가요?",
+      evidence: reviewedEvidence("판매가·통화", facts.price), title: "가격과 통화를 함께 검토",
+      body: `현재 기준 판매가는 ${facts.price}로 입력되었습니다. 이 상세 문안은 할인율, 정상가, 경쟁사 가격, 환율 이익 또는 최종 마진을 새로 계산해 주장하지 않습니다. 채널 수수료, 환전 비용, 세금과 배송비가 반영되면 손익이 달라질 수 있으므로 실제 업로드 직전에 채널별 계산 결과를 별도로 확인해야 합니다.`,
+      points: ["판매가와 통화 코드 동시 확인", "할인율·경쟁가 자동 주장 금지", "수수료·세금·환전 비용 별도 계산"],
+    },
+    {
+      type: "faq", topic: "재고 수량", question: "업로드 전에 재고 수량을 어떻게 점검하나요?",
+      evidence: reviewedEvidence("재고", facts.stock), title: "등록 재고와 실재고 대조",
+      body: `등록 요청의 재고는 ${facts.stock}입니다. 이 값은 다른 판매 채널의 동시 주문, 입고 예정 수량, 반품 대기 또는 불량 격리 수량을 자동 반영하지 않습니다. 중복 판매를 막기 위해 채널 전송 직전에 실제 가용 재고를 다시 확인하고, 확인할 수 없는 예약·미래 재고를 즉시 판매 가능한 수량으로 포함하지 않습니다.`,
+      points: ["현재 등록 재고값 확인", "동시 주문·반품 대기분 별도 관리", "미래 입고를 가용 재고로 추정 금지"],
+    },
+    {
+      type: "howto", topic: "배송 조건", question: "구매 전에 어떤 배송 조건을 확인해야 하나요?",
+      evidence: reviewedEvidence("배송비·배송 규칙", facts.shipping), title: "배송비와 적용 규칙 함께 보기",
+      body: `배송 입력 기록은 ${facts.shipping}입니다. 도서산간 추가비, 무료배송 임계값, 묶음 배송, 국가별 관부가세와 예상 도착일은 확인된 정책이 없으면 새로 만들지 않습니다. 주문 지역과 채널 정책에 따라 결제 단계의 금액이 달라질 수 있으므로 구매자는 최종 결제 화면을, 판매자는 전송 전 배송 템플릿을 대조해야 합니다.`,
+      points: ["기본 배송비 입력값 확인", "추가 지역비·관부가세 추정 금지", "채널 배송 템플릿 최종 대조"],
+    },
+    {
+      type: "howto", topic: "포장 방식", question: "출고 포장은 어떤 기준으로 준비하나요?",
+      evidence: reviewedEvidence("포장 규칙", facts.packaging), title: "포장 규칙을 출고 흐름에 연결",
+      body: `포장 규칙은 판매자가 입력한 운영 기록을 따릅니다. 완충재 종류, 냉장·냉동 조건, 파손주의 라벨, 선물 포장 또는 합배송 금지 여부가 기록에 없다면 자동으로 약속하지 않습니다. 실제 상품의 재질과 운송 환경을 확인한 뒤 작업자가 포장 방식을 확정하고, 채널 상세 문구와 창고 지시가 서로 다른지 점검해야 합니다.`,
+      points: ["판매자 포장 규칙 우선", "미확인 특수 포장 자동 약속 금지", "상세 문구와 창고 지시 일치 확인"],
+    },
+    {
+      type: "spec", topic: "상품 코드", question: "GTIN 또는 바코드는 어떻게 표시되나요?",
+      evidence: reviewedEvidence("GTIN 상태", facts.gtin), title: "상품 코드 상태 명확히 구분",
+      body: `상품 코드 기록은 ${facts.gtin}입니다. 코드가 없다고 확인된 경우 임의 번호를 만들지 않으며, 번호가 있는 경우에도 사진 OCR만으로 다른 숫자로 교체하지 않습니다. 채널이 면제 사유나 별도 상품 식별자를 요구하면 실물 바코드, 공급처 문서와 판매자 계정의 승인 상태를 대조한 뒤 해당 입력란을 완성해야 합니다.`,
+      points: ["GTIN 유무 상태 그대로 유지", "임의 식별번호 생성 금지", "면제·대체 코드 요구사항 별도 확인"],
+    },
+    {
+      type: "story", topic: "판매자 설명", question: "판매자가 작성한 설명은 상세 문안에 어떻게 반영되나요?",
+      evidence: reviewedEvidence("상품 설명", facts.description), title: "검수 원문을 과장 없이 재구성",
+      body: `판매자가 검수한 설명 원문은 근거란에 보존하고, 상세페이지 본문은 확인 항목을 찾기 쉬운 순서로만 재구성합니다. 원문에 없는 성능 비교, 치료·예방 효과, 인증, 수상 이력, 사용 결과 또는 고객 후기를 덧붙이지 않습니다. 모호한 표현은 단정문으로 바꾸지 않고 게시 전에 공급처 자료로 보완합니다.`,
+      points: ["판매자 검수 설명을 근거로 보존", "효능·인증·후기 임의 추가 금지", "모호한 문구는 게시 전 자료 보완"],
+    },
+    {
+      type: "benefit", topic: "구매 점검", question: "최종 주문 전에 어떤 항목을 한 번 더 보나요?",
+      evidence: reviewedEvidence("상품 링크 또는 설명", facts.research), title: "구매 결정 체크리스트",
+      body: `구매 전에는 상품명, 옵션, 판매 구성, 상태, 포장 규격, 가격, 통화, 재고와 배송 조건을 순서대로 대조합니다. 상세 이미지가 선명해 보여도 보이지 않는 라벨이나 구성품을 대신 증명하지는 않습니다. 서로 다른 입력이 발견되면 판매자 확인을 받은 뒤 수정하고, 불일치가 남아 있는 상태에서는 외부 채널 게시를 진행하지 않습니다.`,
+      points: ["식별·옵션·구성 순차 대조", "가격·통화·재고·배송 재확인", "불일치 해소 전 외부 게시 보류"],
+    },
+    {
+      type: "notice", topic: "근거 한계", question: "사진이나 입력에서 확인되지 않은 내용은 어떻게 처리하나요?",
+      evidence: "판매자 검수 입력과 업로드 원본 사진만 사용했으며, 외부 AI 제한 중 보이지 않는 라벨 정보는 생성하지 않았습니다.", title: "확인되지 않은 사실은 비워 두기",
+      body: `이 폴백 상세페이지는 판매자가 검수한 입력과 보존된 원본 사진의 범위만 사용합니다. 사진에 보이지 않는 후면 표시, 바코드, 인증 마크, 유통기한, 정확한 색상명, 내부 구조와 구성 수량은 추정하지 않습니다. 필요한 근거가 부족하면 빈칸 또는 확인 필요 상태로 남기고, 실물 촬영이나 공식 문서가 추가된 뒤 다시 검수합니다.`,
+      points: ["보이지 않는 라벨·바코드 추정 금지", "근거 부족 항목은 확인 필요 유지", "추가 실물 촬영·공식 문서 후 재검수"],
+    },
+  ] as const;
+
+  const master = {
+    mode: "cli" as const,
+    product: {
+      name,
+      category,
+      classification: {
+        displayName: "판매자 확인 분류",
+        verificationStatus: "needs-review" as const,
+        evidence: "판매자가 검수한 카테고리 입력을 보존했으며 외부 인증·규제 분류는 게시 전에 별도 확인해야 합니다.",
+        isHealthFunctionalFood: null,
+      },
+      oneLine: "판매자가 검수한 입력 범위만 사용해 구매 전 확인 항목을 정리한 상품 정보입니다.",
+      targetCustomer: "상품명, 판매 구성, 가격과 배송 조건을 직접 대조한 뒤 구매하려는 고객",
+      features: [
+        "판매자 검수 완료 상품 식별 정보",
+        "판매 구성과 포장 조건의 분리 확인",
+        "가격·재고·배송 조건의 구매 전 점검",
+        "확인되지 않은 표시사항을 확정하지 않는 작성 기준",
+      ],
+      cautions: [
+        "구매 전 실제 상품명과 판매 구성을 다시 확인하세요.",
+        "표시사항과 사용 관련 정보는 수령한 실물 포장과 공식 안내를 우선 확인하세요.",
+      ],
+    },
+    design: {
+      themeName: "판매자 검수 근거 중심 상세",
+      creativeStrategy: {
+        designArchetype: "proof-led" as const,
+        purchaseDecision: "판매자가 확인한 식별·구성·가격·배송 입력이 구매하려는 상품과 일치하는지 점검합니다.",
+        contentDensity: "long" as const,
+        targetSectionCount: blueprints.length,
+        lengthRationale: "열여섯 개의 서로 다른 구매 질문으로 식별, 구성, 규격, 가격, 재고, 배송과 근거 한계를 분리했습니다.",
+        differentiationKey: "추정 문구 대신 판매자 검수 필드와 확인 필요 경계를 각 섹션에 명시합니다.",
+        artDirection: "보존된 원본 상품 프레임과 중립 카탈로그 배치를 사용하고 보이지 않는 라벨, 효능, 인증 또는 구성품을 시각적으로 만들지 않습니다.",
+        motionPolicy: "static-first" as const,
+      },
+      palette: { primary: "#243047", accent: "#D86419", surface: "#F7F5F1", text: "#172033" },
+      heroCopy: "확인된 정보만, 구매 전에 한 번 더",
+      heroSubcopy: "판매자가 검수한 입력을 기준으로 구성하고 보이지 않는 사실은 추정하지 않았습니다.",
+      cta: "검수 정보 확인하기",
+      sections: blueprints.map((section, index) => ({
+        type: section.type,
+        buyerQuestion: section.question,
+        evidence: section.evidence,
+        eyebrow: `검수 항목 ${String(index + 1).padStart(2, "0")}`,
+        title: section.title,
+        body: reviewedSectionBody(section.body, section.topic, index),
+        points: [...section.points],
+        layout: MASTER_SECTION_LAYOUTS[index % MASTER_SECTION_LAYOUTS.length],
+        imageAsset: detailAssetByTopic[section.topic] ?? "none",
+        visualDirection: `${section.topic} 구매 질문을 중립적인 정보 계층으로 보여 주며 원본에 없는 문자나 상품 요소를 추가하지 않습니다.`,
+        motion: index % 3 === 0 ? "none" as const : index % 3 === 1 ? "reveal" as const : "stagger" as const,
+      })),
+    },
+    thumbnail: {
+      headline: boundedReviewedText(name, "판매자 검수 상품", 120),
+      subline: "판매자 확인 정보 기반",
+      badge: "게시 전 최종 확인",
+    },
+    warnings: [
+      "외부 AI 게이트웨이 제한으로 판매자가 검수한 입력만 사용해 결정론적으로 구성했습니다. 게시 전 실물 표시사항과 문구를 다시 확인하세요.",
+    ],
+  };
+  return studioMasterResultSchema.parse(master);
+}
+
+type ReviewedLocaleCopy = Readonly<{
+  identity: string;
+  short: string;
+  description: string;
+  review: string;
+  classification: string;
+  classificationEvidence: string;
+  question: (topic: string) => string;
+  evidence: (topic: string) => string;
+  body: (topic: string) => string;
+  topics: readonly [string, string, string, string, string, string, string, string];
+}>;
+
+const reviewedLocaleCopies: Readonly<Record<string, ReviewedLocaleCopy>> = {
+  ko: {
+    identity: "판매자 검수 상품 정보", short: "판매자가 확인한 입력만 사용한 상품 안내입니다.",
+    description: "상품명, 구성, 규격, 가격과 배송 조건을 주문 전에 실물 포장 및 판매자 안내와 다시 대조하세요. 확인되지 않은 효능, 인증, 라벨 또는 구성품은 이 문안에서 추정하지 않았습니다.",
+    review: "구매 전 확인", classification: "판매자 확인 분류",
+    classificationEvidence: "판매자가 검수한 카테고리 기록을 사용했으며 규제·인증 분류는 게시 전에 별도 확인해야 합니다.",
+    question: (topic) => `${topic}은 구매 전에 어떻게 확인하나요?`,
+    evidence: (topic) => `${topic}에 해당하는 판매자 검수 입력 기록만 근거로 사용했습니다.`,
+    body: (topic) => `${topic} 항목은 판매자가 확인한 입력 범위만 정리합니다. 실제 상품명, 판매 구성, 포장 표시와 주문 조건을 구매 전에 다시 대조하세요. 보이지 않는 라벨, 인증, 효능 또는 구성품은 추정하지 않습니다.`,
+    topics: ["상품 식별", "브랜드 정보", "판매 구성", "포장 규격", "가격과 재고", "배송 조건", "사용 전 확인", "근거 한계"],
+  },
+  en: {
+    identity: "Seller-reviewed product information", short: "Product guidance based only on seller-reviewed input.",
+    description: "Before ordering, compare the product name, package contents, dimensions, price and shipping terms with the actual package and seller guidance. No unseen label, certification, benefit or included item has been inferred.",
+    review: "Pre-purchase review", classification: "Seller-reviewed classification",
+    classificationEvidence: "The seller-reviewed category record is retained, while regulatory and certification status still requires a separate check before publication.",
+    question: (topic) => `How should ${topic} be checked before purchase?`,
+    evidence: (topic) => `Only the seller-reviewed input record for ${topic} is used as evidence.`,
+    body: (topic) => `${topic} is presented only within the seller-confirmed input boundary. Compare the actual product name, package contents, package wording and order terms before purchase. Unseen labels, certifications, benefits and included items are not inferred.`,
+    topics: ["product identity", "brand record", "sale contents", "package dimensions", "price and stock", "shipping terms", "pre-use checks", "evidence limits"],
+  },
+  ja: {
+    identity: "販売者確認済み商品情報", short: "販売者が確認した入力だけに基づく商品案内です。",
+    description: "注文前に商品名、販売構成、梱包寸法、価格、配送条件を実物パッケージと販売者案内で再確認してください。見えない表示、認証、効能、構成品は推測していません。",
+    review: "購入前確認", classification: "販売者確認分類",
+    classificationEvidence: "販売者が確認したカテゴリ記録を保持し、規制や認証の分類は公開前に別途確認します。",
+    question: (topic) => `${topic}は購入前にどのように確認しますか？`,
+    evidence: (topic) => `${topic}に対応する販売者確認済み入力記録だけを根拠にしています。`,
+    body: (topic) => `${topic}は販売者が確認した入力範囲だけを整理しています。購入前に実際の商品名、販売構成、包装表示、注文条件を再確認してください。見えないラベル、認証、効能、構成品は推測しません。`,
+    topics: ["商品識別", "ブランド記録", "販売構成", "梱包寸法", "価格と在庫", "配送条件", "使用前確認", "根拠の限界"],
+  },
+  zh: {
+    identity: "賣家已審核商品資訊", short: "僅依據賣家已確認輸入內容整理的商品說明。",
+    description: "下單前請將商品名稱、銷售內容、包裝尺寸、價格與配送條件和實際包裝及賣家說明再次核對。本說明不推測未顯示的標示、認證、功效或內容物。",
+    review: "購買前確認", classification: "賣家確認分類",
+    classificationEvidence: "保留賣家已審核的分類記錄，法規與認證分類仍須在發佈前另行確認。",
+    question: (topic) => `購買前應如何核對${topic}？`,
+    evidence: (topic) => `僅使用與${topic}對應的賣家已審核輸入記錄作為依據。`,
+    body: (topic) => `${topic}只整理賣家已確認的輸入範圍。購買前請再次核對實際商品名稱、銷售內容、包裝標示與訂單條件。本頁不推測看不見的標籤、認證、功效或內容物。`,
+    topics: ["商品識別", "品牌記錄", "銷售內容", "包裝尺寸", "價格與庫存", "配送條件", "使用前確認", "證據限制"],
+  },
+  th: {
+    identity: "ข้อมูลสินค้าที่ผู้ขายตรวจสอบแล้ว", short: "คำแนะนำสินค้าที่ใช้เฉพาะข้อมูลซึ่งผู้ขายตรวจสอบแล้ว",
+    description: "ก่อนสั่งซื้อ โปรดเทียบชื่อสินค้า รายการที่ขาย ขนาดบรรจุ ราคา และเงื่อนไขการจัดส่งกับบรรจุภัณฑ์จริงและคำแนะนำของผู้ขาย โดยไม่คาดเดาฉลาก การรับรอง คุณประโยชน์ หรือสิ่งของที่มองไม่เห็น",
+    review: "ตรวจสอบก่อนซื้อ", classification: "หมวดหมู่ที่ผู้ขายตรวจสอบ",
+    classificationEvidence: "เก็บบันทึกหมวดหมู่ที่ผู้ขายตรวจสอบไว้ ส่วนข้อกำกับและการรับรองต้องตรวจอีกครั้งก่อนเผยแพร่",
+    question: (topic) => `ควรตรวจสอบ${topic}อย่างไรก่อนซื้อ?`,
+    evidence: (topic) => `ใช้เฉพาะบันทึกข้อมูลที่ผู้ขายตรวจสอบสำหรับ${topic}เป็นหลักฐาน`,
+    body: (topic) => `${topic}แสดงเฉพาะขอบเขตข้อมูลที่ผู้ขายยืนยัน โปรดเทียบชื่อสินค้าจริง รายการที่ขาย ข้อความบนบรรจุภัณฑ์ และเงื่อนไขคำสั่งซื้อก่อนซื้อ โดยไม่คาดเดาฉลาก การรับรอง คุณประโยชน์ หรือสิ่งของที่มองไม่เห็น`,
+    topics: ["การระบุสินค้า", "ข้อมูลแบรนด์", "รายการที่ขาย", "ขนาดบรรจุ", "ราคาและสต็อก", "เงื่อนไขจัดส่ง", "การตรวจก่อนใช้", "ข้อจำกัดหลักฐาน"],
+  },
+  vi: {
+    identity: "Thông tin sản phẩm do người bán xác nhận", short: "Hướng dẫn chỉ dựa trên dữ liệu đã được người bán xác nhận.",
+    description: "Trước khi đặt hàng, hãy đối chiếu tên sản phẩm, thành phần gói bán, kích thước đóng gói, giá và điều kiện giao hàng với bao bì thực tế cùng hướng dẫn của người bán. Không suy đoán nhãn, chứng nhận, công dụng hoặc vật phẩm không nhìn thấy.",
+    review: "Kiểm tra trước khi mua", classification: "Phân loại do người bán xác nhận",
+    classificationEvidence: "Bản ghi danh mục đã được người bán xác nhận được giữ nguyên; tình trạng pháp lý và chứng nhận cần được kiểm tra riêng trước khi đăng.",
+    question: (topic) => `Cần kiểm tra ${topic} như thế nào trước khi mua?`,
+    evidence: (topic) => `Chỉ dùng bản ghi đầu vào đã được người bán xác nhận cho ${topic} làm bằng chứng.`,
+    body: (topic) => `${topic} chỉ được trình bày trong phạm vi dữ liệu người bán đã xác nhận. Trước khi mua, hãy đối chiếu tên thật, thành phần gói bán, chữ trên bao bì và điều kiện đặt hàng. Không suy đoán nhãn, chứng nhận, công dụng hoặc vật phẩm không nhìn thấy.`,
+    topics: ["nhận diện sản phẩm", "thông tin thương hiệu", "thành phần gói bán", "kích thước đóng gói", "giá và tồn kho", "điều kiện giao hàng", "kiểm tra trước khi dùng", "giới hạn bằng chứng"],
+  },
+  ms: {
+    identity: "Maklumat produk disemak penjual", short: "Panduan produk berdasarkan input yang telah disemak oleh penjual sahaja.",
+    description: "Sebelum membuat pesanan, padankan nama produk, kandungan jualan, ukuran bungkusan, harga dan syarat penghantaran dengan bungkusan sebenar serta panduan penjual. Label, pensijilan, manfaat atau item yang tidak kelihatan tidak diandaikan.",
+    review: "Semakan sebelum membeli", classification: "Klasifikasi disemak penjual",
+    classificationEvidence: "Rekod kategori yang disemak penjual dikekalkan, manakala status kawal selia dan pensijilan perlu disemak berasingan sebelum diterbitkan.",
+    question: (topic) => `Bagaimanakah ${topic} perlu disemak sebelum membeli?`,
+    evidence: (topic) => `Hanya rekod input yang disemak penjual untuk ${topic} digunakan sebagai bukti.`,
+    body: (topic) => `${topic} dipaparkan hanya dalam had input yang disahkan penjual. Padankan nama sebenar, kandungan jualan, tulisan bungkusan dan syarat pesanan sebelum membeli. Label, pensijilan, manfaat atau item yang tidak kelihatan tidak diandaikan.`,
+    topics: ["identiti produk", "rekod jenama", "kandungan jualan", "ukuran bungkusan", "harga dan stok", "syarat penghantaran", "semakan sebelum guna", "had bukti"],
+  },
+  id: {
+    identity: "Informasi produk ditinjau penjual", short: "Panduan produk yang hanya memakai masukan yang telah ditinjau penjual.",
+    description: "Sebelum memesan, cocokkan nama produk, isi penjualan, ukuran kemasan, harga, dan ketentuan pengiriman dengan kemasan asli serta panduan penjual. Label, sertifikasi, manfaat, atau barang yang tidak terlihat tidak diperkirakan.",
+    review: "Pemeriksaan sebelum membeli", classification: "Klasifikasi ditinjau penjual",
+    classificationEvidence: "Catatan kategori yang ditinjau penjual dipertahankan, sedangkan status regulasi dan sertifikasi harus diperiksa terpisah sebelum publikasi.",
+    question: (topic) => `Bagaimana ${topic} diperiksa sebelum membeli?`,
+    evidence: (topic) => `Hanya catatan masukan penjual untuk ${topic} yang digunakan sebagai bukti.`,
+    body: (topic) => `${topic} ditampilkan hanya dalam batas masukan yang telah dikonfirmasi penjual. Sebelum membeli, cocokkan nama asli, isi penjualan, tulisan kemasan, dan ketentuan pesanan. Label, sertifikasi, manfaat, atau barang yang tidak terlihat tidak diperkirakan.`,
+    topics: ["identitas produk", "catatan merek", "isi penjualan", "ukuran kemasan", "harga dan stok", "ketentuan pengiriman", "pemeriksaan sebelum pakai", "batas bukti"],
+  },
+  pt: {
+    identity: "Informação do produto revisada pelo vendedor", short: "Orientação baseada apenas nos dados revisados pelo vendedor.",
+    description: "Antes do pedido, compare o nome do produto, o conteúdo da venda, as dimensões da embalagem, o preço e as condições de envio com a embalagem real e a orientação do vendedor. Nenhum rótulo, certificação, benefício ou item invisível foi presumido.",
+    review: "Revisão antes da compra", classification: "Classificação revisada pelo vendedor",
+    classificationEvidence: "O registro de categoria revisado pelo vendedor foi mantido; a situação regulatória e de certificação ainda exige verificação separada antes da publicação.",
+    question: (topic) => `Como verificar ${topic} antes da compra?`,
+    evidence: (topic) => `Somente o registro revisado pelo vendedor para ${topic} é usado como evidência.`,
+    body: (topic) => `${topic} é apresentado somente dentro dos dados confirmados pelo vendedor. Antes da compra, compare o nome real, o conteúdo da venda, o texto da embalagem e as condições do pedido. Rótulos, certificações, benefícios e itens invisíveis não são presumidos.`,
+    topics: ["identidade do produto", "registro da marca", "conteúdo da venda", "dimensões da embalagem", "preço e estoque", "condições de envio", "verificação antes do uso", "limites da evidência"],
+  },
+  es: {
+    identity: "Información del producto revisada por el vendedor", short: "Guía basada únicamente en datos revisados por el vendedor.",
+    description: "Antes de comprar, compare el nombre del producto, el contenido de venta, las dimensiones del paquete, el precio y las condiciones de envío con el envase real y la guía del vendedor. No se infieren etiquetas, certificaciones, beneficios ni artículos no visibles.",
+    review: "Revisión antes de comprar", classification: "Clasificación revisada por el vendedor",
+    classificationEvidence: "Se conserva el registro de categoría revisado por el vendedor; el estado regulatorio y de certificación requiere una revisión separada antes de publicar.",
+    question: (topic) => `¿Cómo comprobar ${topic} antes de comprar?`,
+    evidence: (topic) => `Solo se usa como evidencia el registro revisado por el vendedor para ${topic}.`,
+    body: (topic) => `${topic} se presenta únicamente dentro de los datos confirmados por el vendedor. Antes de comprar, compare el nombre real, el contenido de venta, el texto del envase y las condiciones del pedido. No se infieren etiquetas, certificaciones, beneficios ni artículos no visibles.`,
+    topics: ["identidad del producto", "registro de marca", "contenido de venta", "dimensiones del paquete", "precio y existencias", "condiciones de envío", "revisión antes del uso", "límites de evidencia"],
+  },
+  de: {
+    identity: "Vom Verkäufer geprüfte Produktinformation", short: "Produktinformation nur auf Basis der vom Verkäufer geprüften Eingaben.",
+    description: "Vergleichen Sie vor der Bestellung Produktname, Lieferumfang, Verpackungsmaße, Preis und Versandbedingungen mit der tatsächlichen Verpackung und den Verkäuferangaben. Nicht sichtbare Etiketten, Zertifizierungen, Vorteile oder Bestandteile werden nicht abgeleitet.",
+    review: "Prüfung vor dem Kauf", classification: "Vom Verkäufer geprüfte Kategorie",
+    classificationEvidence: "Der geprüfte Kategoriedatensatz bleibt erhalten; Regulierung und Zertifizierung müssen vor der Veröffentlichung separat geprüft werden.",
+    question: (topic) => `Wie ist ${topic} vor dem Kauf zu prüfen?`,
+    evidence: (topic) => `Nur der vom Verkäufer geprüfte Eingabedatensatz zu ${topic} dient als Nachweis.`,
+    body: (topic) => `${topic} wird nur im Rahmen der bestätigten Verkäuferangaben dargestellt. Vergleichen Sie vor dem Kauf den tatsächlichen Namen, Lieferumfang, Verpackungstext und Bestellbedingungen. Nicht sichtbare Etiketten, Zertifizierungen, Vorteile oder Bestandteile werden nicht abgeleitet.`,
+    topics: ["Produktidentität", "Markenangabe", "Lieferumfang", "Verpackungsmaße", "Preis und Bestand", "Versandbedingungen", "Prüfung vor Nutzung", "Nachweisgrenzen"],
+  },
+  fr: {
+    identity: "Informations produit vérifiées par le vendeur", short: "Présentation fondée uniquement sur les données vérifiées par le vendeur.",
+    description: "Avant la commande, comparez le nom, le contenu vendu, les dimensions du colis, le prix et les conditions de livraison avec l’emballage réel et les indications du vendeur. Aucun étiquetage, certificat, bénéfice ou élément invisible n’est supposé.",
+    review: "Vérification avant achat", classification: "Classement vérifié par le vendeur",
+    classificationEvidence: "Le classement vérifié par le vendeur est conservé; le statut réglementaire et les certifications doivent être contrôlés séparément avant publication.",
+    question: (topic) => `Comment vérifier ${topic} avant l’achat ?`,
+    evidence: (topic) => `Seul l’enregistrement vérifié par le vendeur pour ${topic} sert de preuve.`,
+    body: (topic) => `${topic} est présenté uniquement dans la limite des données confirmées par le vendeur. Avant l’achat, comparez le nom réel, le contenu vendu, le texte de l’emballage et les conditions de commande. Les étiquettes, certifications, bénéfices et éléments invisibles ne sont pas supposés.`,
+    topics: ["identité du produit", "indication de marque", "contenu vendu", "dimensions du colis", "prix et stock", "conditions de livraison", "contrôle avant usage", "limites des preuves"],
+  },
+  it: {
+    identity: "Informazioni prodotto verificate dal venditore", short: "Guida basata solo sui dati verificati dal venditore.",
+    description: "Prima dell’ordine, confrontare nome del prodotto, contenuto della vendita, dimensioni dell’imballo, prezzo e condizioni di spedizione con la confezione reale e le indicazioni del venditore. Non vengono dedotti etichette, certificazioni, benefici o elementi non visibili.",
+    review: "Verifica prima dell’acquisto", classification: "Classificazione verificata dal venditore",
+    classificationEvidence: "La categoria verificata dal venditore viene conservata; lo stato normativo e le certificazioni richiedono un controllo separato prima della pubblicazione.",
+    question: (topic) => `Come verificare ${topic} prima dell’acquisto?`,
+    evidence: (topic) => `Solo il dato verificato dal venditore per ${topic} viene usato come prova.`,
+    body: (topic) => `${topic} è presentato solo entro i dati confermati dal venditore. Prima dell’acquisto, confrontare nome reale, contenuto della vendita, testo della confezione e condizioni dell’ordine. Etichette, certificazioni, benefici o elementi non visibili non vengono dedotti.`,
+    topics: ["identità del prodotto", "dato del marchio", "contenuto della vendita", "dimensioni dell’imballo", "prezzo e scorte", "condizioni di spedizione", "controllo prima dell’uso", "limiti delle prove"],
+  },
+  nl: {
+    identity: "Door verkoper gecontroleerde productinformatie", short: "Productinformatie uitsluitend op basis van gecontroleerde invoer.",
+    description: "Vergelijk vóór de bestelling de productnaam, verkoopinhoud, verpakkingsmaten, prijs en verzendvoorwaarden met de werkelijke verpakking en informatie van de verkoper. Onzichtbare etiketten, certificeringen, voordelen of onderdelen worden niet afgeleid.",
+    review: "Controle vóór aankoop", classification: "Door verkoper gecontroleerde categorie",
+    classificationEvidence: "De gecontroleerde categorie blijft behouden; regelgeving en certificering moeten vóór publicatie afzonderlijk worden gecontroleerd.",
+    question: (topic) => `Hoe moet ${topic} vóór aankoop worden gecontroleerd?`,
+    evidence: (topic) => `Alleen de gecontroleerde invoer van de verkoper voor ${topic} wordt als bewijs gebruikt.`,
+    body: (topic) => `${topic} wordt alleen binnen de bevestigde invoer van de verkoper getoond. Vergelijk vóór aankoop de werkelijke naam, verkoopinhoud, verpakkingstekst en bestelvoorwaarden. Onzichtbare etiketten, certificeringen, voordelen of onderdelen worden niet afgeleid.`,
+    topics: ["productidentiteit", "merkregistratie", "verkoopinhoud", "verpakkingsmaten", "prijs en voorraad", "verzendvoorwaarden", "controle vóór gebruik", "bewijsgrenzen"],
+  },
+  pl: {
+    identity: "Informacje o produkcie sprawdzone przez sprzedawcę", short: "Opis oparty wyłącznie na danych sprawdzonych przez sprzedawcę.",
+    description: "Przed zamówieniem porównaj nazwę produktu, zawartość sprzedaży, wymiary opakowania, cenę i warunki wysyłki z rzeczywistym opakowaniem oraz informacją sprzedawcy. Niewidoczne etykiety, certyfikaty, korzyści i elementy nie są zakładane.",
+    review: "Kontrola przed zakupem", classification: "Kategoria sprawdzona przez sprzedawcę",
+    classificationEvidence: "Zapis kategorii sprawdzony przez sprzedawcę pozostaje bez zmian; przepisy i certyfikaty wymagają osobnej kontroli przed publikacją.",
+    question: (topic) => `Jak sprawdzić ${topic} przed zakupem?`,
+    evidence: (topic) => `Jako dowód służy wyłącznie zapis sprzedawcy dotyczący ${topic}.`,
+    body: (topic) => `${topic} jest przedstawione wyłącznie w granicach danych potwierdzonych przez sprzedawcę. Przed zakupem porównaj rzeczywistą nazwę, zawartość sprzedaży, tekst opakowania i warunki zamówienia. Niewidoczne etykiety, certyfikaty, korzyści i elementy nie są zakładane.`,
+    topics: ["tożsamość produktu", "zapis marki", "zawartość sprzedaży", "wymiary opakowania", "cena i stan", "warunki wysyłki", "kontrola przed użyciem", "granice dowodów"],
+  },
+};
+
+function reviewedLocaleCopy(locale: string) {
+  return reviewedLocaleCopies[locale.split("-")[0]?.toLocaleLowerCase() ?? ""]
+    ?? reviewedLocaleCopies.en;
+}
+
+function romanizeHangul(value: string) {
+  const initials = ["g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj", "ch", "k", "t", "p", "h"];
+  const vowels = ["a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"];
+  const finals = ["", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lk", "lm", "lb", "ls", "lt", "lp", "lh", "m", "p", "ps", "t", "t", "ng", "t", "t", "k", "t", "p", "t", "h"];
+  return [...value.normalize("NFC")].map((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0xac00 || code > 0xd7a3) return character;
+    const offset = code - 0xac00;
+    const initial = Math.floor(offset / 588);
+    const vowel = Math.floor((offset % 588) / 28);
+    const final = offset % 28;
+    return `${initials[initial]}${vowels[vowel]}${finals[final]}`;
+  }).join("");
+}
+
+function reviewedLocalizedFact(value: unknown, locale: string, maximum: number) {
+  const bounded = boundedReviewedText(value, "seller-reviewed value", maximum);
+  return locale === "ko-KR"
+    ? bounded
+    : boundedReviewedText(romanizeHangul(bounded), "seller-reviewed value", maximum);
+}
+
+function buildReviewedStudioLocalizedSegment(
+  master: z.infer<typeof studioMasterResultSchema>,
+  targets: readonly StudioLocalizedTarget[],
+  fields: ProductIntakeFields,
+) {
+  const sectionTypes = ["overview", "feature", "howto", "spec", "routine", "contents", "care", "proof"] as const;
+  const sectionAssets = [
+    "detail-overview", "detail-feature", "detail-use", "detail-dimensions",
+    "detail-routine", "detail-contents", "detail-care", "detail-package",
+  ] as const;
+  return studioLocalizedChunkResultSchema(targets.length).parse({
+    localizedListings: targets.map((target) => {
+      const copy = reviewedLocaleCopy(target.locale);
+      const name = reviewedLocalizedFact(fields.productName, target.locale, 160);
+      const brand = reviewedLocalizedFact(fields.brandName, target.locale, 120);
+      const manufacturer = reviewedLocalizedFact(fields.manufacturer, target.locale, 160);
+      const category = reviewedLocalizedFact(fields.categoryHint, target.locale, 120);
+      const configuration = reviewedLocalizedFact(fields.packageContents, target.locale, 500);
+      const condition = fields.condition;
+      const dimensions = `${fields.packageLengthCm} x ${fields.packageWidthCm} x ${fields.packageHeightCm} cm / ${fields.weightKg} kg`;
+      const price = `${fields.sellingPrice} ${fields.currency}`;
+      const stock = `${fields.stock}`;
+      const shipping = `${fields.shippingFeeKrw} KRW`;
+      const sku = reviewedLocalizedFact(fields.sellerSku, target.locale, 100);
+      const factSummary = `${name}; ${brand}; ${configuration}; ${dimensions}; ${price}`;
+      const sectionFacts = [
+        `${name}; ${category}`,
+        `${brand}; ${manufacturer}`,
+        `${name}; ${condition}`,
+        dimensions,
+        `${price}; ${stock}`,
+        `${configuration}; ${shipping}`,
+        configuration,
+        `${sku}; ${name}`,
+      ];
+      return {
+        ...target,
+        title: boundedReviewedText(`${name} - ${copy.review}`, copy.identity, 120),
+        shortDescription: boundedReviewedText(`${copy.short} ${name}; ${brand}.`, copy.short, 500),
+        description: boundedReviewedText(`${copy.description} ${copy.review}: ${factSummary}.`, copy.description, 2_000),
+        keywords: [
+          boundedReviewedText(name, copy.identity, 80),
+          boundedReviewedText(brand, copy.review, 80),
+          boundedReviewedText(copy.review, copy.identity, 80),
+        ],
+        thumbnailAltText: boundedReviewedText(`${name}: ${copy.identity} ${target.market}`, copy.identity, 180),
+        classification: {
+          displayName: boundedReviewedText(`${copy.classification}: ${category}`, copy.classification, 120),
+          verificationStatus: master.product.classification.verificationStatus,
+          evidence: boundedReviewedText(`${copy.classificationEvidence} ${category}.`, copy.classificationEvidence, 500),
+          isHealthFunctionalFood: master.product.classification.isHealthFunctionalFood,
+        },
+        detailSections: sectionTypes.map((type, index) => ({
+          type,
+          buyerQuestion: copy.question(copy.topics[index]),
+          evidence: boundedReviewedText(
+            `${copy.evidence(copy.topics[index])} ${sectionFacts[index]}.`,
+            copy.evidence(copy.topics[index]),
+            500,
+          ),
+          heading: copy.topics[index],
+          body: boundedReviewedText(
+            `${copy.body(copy.topics[index])} ${copy.review}: ${sectionFacts[index]}.`,
+            copy.body(copy.topics[index]),
+            700,
+          ),
+          imageAsset: sectionAssets[index],
+          imageAltText: boundedReviewedText(
+            `${name}: ${copy.identity}: ${copy.topics[index]}`,
+            `${copy.identity}: ${copy.topics[index]}`,
+            180,
+          ),
+        })),
+      };
+    }),
+  });
+}
+
+function withReviewedFallbackWarnings(
+  result: z.infer<typeof cliStudioResultSchema>,
+  input: {
+    masterReason: string | null;
+    localizationReasons: readonly string[];
+    imageReason: string | null;
+  },
+) {
+  const reasonLabel = (reason: string) => ({
+    gateway_rate_limited: "요청 한도(gateway_rate_limited)",
+    gateway_billing_required: "결제 필요(gateway_billing_required)",
+    gateway_timeout: "응답 시간 초과(gateway_timeout)",
+    gateway_customer_verification_required: "계정 확인 필요(gateway_customer_verification_required)",
+    master_transient_fallback: "마스터 문안 외부 제한",
+  }[reason] ?? reason);
+  const fallbackWarnings = [
+    ...(input.masterReason ? [
+      `외부 AI 문안 서비스의 ${reasonLabel(input.masterReason)}로 판매자가 검수한 입력만 사용해 16개 상세 섹션을 안전하게 구성했습니다. 게시 전 실물 표시사항을 다시 확인하세요.`,
+    ] : []),
+    ...(input.localizationReasons.length ? [
+      `일부 국가별 문안은 ${input.localizationReasons.map(reasonLabel).join(", ")} 때문에 판매자가 검수한 상품명·브랜드·판매 구성·규격·가격을 보존하는 안전 문안으로 대체했습니다.`,
+    ] : []),
+    ...(input.imageReason ? [
+      `외부 AI 이미지 처리의 ${reasonLabel(input.imageReason)}로 사람이 승인한 1차 이미지 6장은 그대로 보존했습니다. 나머지 10장은 AI 생성 이미지가 아니라 원본 사진 기반 중립 카탈로그 이미지입니다.`,
+    ] : []),
+  ];
+  return cliStudioResultSchema.parse({
+    ...result,
+    warnings: [...new Set([...fallbackWarnings, ...result.warnings])].slice(0, 5),
+  });
+}
+
 async function callRpc(
   dependencies: ServerProductStudioDependencies,
   name: string,
@@ -764,6 +1399,7 @@ async function restoreFirstDraftAssets(
   signal: AbortSignal,
 ) {
   const restored = new Map<AiGeneratedAssetId, ServerStudioAsset>();
+  const restoredDigests = new Set<string>();
   let sharedClaimToken = "";
   for (let offset = 0; offset < coreFirstDraftAssetIds.length; offset += SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE) {
     const assetIds = coreFirstDraftAssetIds.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE);
@@ -807,6 +1443,10 @@ async function restoreFirstDraftAssets(
       // seller in stage one. Restore them byte-for-byte even when conservative
       // catalog fallback layouts are visually close; every newly generated
       // final-stage asset is still checked against all six restored fingerprints.
+      if (restoredDigests.has(candidate.asset.digest)) {
+        throw new ServerProductStudioError("preflight_asset_exact_duplicate", true);
+      }
+      restoredDigests.add(candidate.asset.digest);
       sharedClaimToken ||= candidate.claimToken;
       restored.set(candidate.asset.id, candidate.asset);
     }
@@ -822,9 +1462,12 @@ async function generateStudioMaster(
   sources: readonly ServerStudioSource[],
   dependencies: ServerProductStudioDependencies,
   signal: AbortSignal,
+  reviewedFallbackFields: ProductIntakeFields | null,
 ) {
   const generate = dependencies.generateStructured ?? defaultGenerateStructured;
   let master: z.infer<typeof studioMasterResultSchema> | null = null;
+  let fallbackReason: string | null = null;
+  let fallbackDiagnostic: AiGatewayFailureDiagnostic | null = null;
   let issue = "";
   let structuralFailure: ServerProductStudioError | null = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -847,6 +1490,15 @@ async function generateStudioMaster(
         issue = "이전 응답이 JSON 스키마를 충족하지 못했습니다. 16개 섹션과 모든 필수 필드를 완전하게 반환하세요.";
         continue;
       }
+      if (reviewedFallbackFields && !signal.aborted
+          && serverStudioAllowsReviewedTransientFallback(error)) {
+        master = buildReviewedServerStudioFallbackMaster(reviewedFallbackFields);
+        fallbackReason = (error as ServerProductStudioError).safeReason;
+        fallbackDiagnostic = (error as ServerProductStudioError).diagnostic ?? null;
+        structuralFailure = null;
+        issue = "";
+        break;
+      }
       throw error;
     }
     issue = masterSemanticIssue(master);
@@ -857,37 +1509,63 @@ async function generateStudioMaster(
   const missingDedicatedEvidence = missingDedicatedEvidenceAssetIds(
     request.image_specs.map((spec) => spec.role),
   );
-  if (!missingDedicatedEvidence.length) return master;
+  if (!missingDedicatedEvidence.length) return { master, fallbackReason, fallbackDiagnostic } as const;
   const warning = `별도 후면·라벨·바코드·상하·측면 사진이 없어 ${missingDedicatedEvidence.join(", ")} 이미지는 대표사진 기반 중립 카탈로그 보기로 제한했습니다. 보이지 않는 포장 정보는 이미지 근거로 확인하지 않았습니다.`;
   return {
-    ...master,
-    warnings: [warning, ...master.warnings.filter((item) => item !== warning)].slice(0, 5),
-  };
+    master: {
+      ...master,
+      warnings: [warning, ...master.warnings.filter((item) => item !== warning)].slice(0, 5),
+    },
+    fallbackReason,
+    fallbackDiagnostic,
+  } as const;
 }
 
 async function generateStudioLocalizedResult(
   master: z.infer<typeof studioMasterResultSchema>,
   dependencies: ServerProductStudioDependencies,
   signal: AbortSignal,
+  reviewedFallbackFields: ProductIntakeFields | null,
+  forceReviewedFallback: boolean,
 ) {
   const generate = dependencies.generateStructured ?? defaultGenerateStructured;
   const chunks = planStudioLocalizedChunks(4);
   const segments: unknown[] = new Array(chunks.length);
+  const fallbackReasons = new Set<string>();
+  const fallbackDiagnostics: AiGatewayFailureDiagnostic[] = [];
   for (let offset = 0; offset < chunks.length; offset += SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE) {
-    await Promise.all(chunks.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE).map(async (targets, batchIndex) => {
+    const chunkSettlements = await Promise.allSettled(chunks.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE).map(async (targets, batchIndex) => {
       const index = offset + batchIndex;
+      if (forceReviewedFallback && reviewedFallbackFields) {
+        segments[index] = buildReviewedStudioLocalizedSegment(master, targets, reviewedFallbackFields);
+        fallbackReasons.add("master_transient_fallback");
+        return;
+      }
       let coverageIssue = "";
       for (let attempt = 1; attempt <= 2; attempt += 1) {
-        const segment = await generate({
-          schema: studioLocalizedChunkResultSchema(targets.length),
-          prompt: [
-            buildServerStudioLocalizedPrompt(master, targets),
-            ...(coverageIssue ? [`이전 결과의 하드 계약 오류를 수정하세요: ${coverageIssue}`] : []),
-          ].join("\n"),
-          images: [],
-          signal,
-          tags: ["feature:product-studio-localization", `chunk:${index + 1}`, `attempt:${attempt}`],
-        });
+        let segment: unknown;
+        try {
+          segment = await generate({
+            schema: studioLocalizedChunkResultSchema(targets.length),
+            prompt: [
+              buildServerStudioLocalizedPrompt(master, targets),
+              ...(coverageIssue ? [`이전 결과의 하드 계약 오류를 수정하세요: ${coverageIssue}`] : []),
+            ].join("\n"),
+            images: [],
+            signal,
+            tags: ["feature:product-studio-localization", `chunk:${index + 1}`, `attempt:${attempt}`],
+          });
+        } catch (error) {
+          if (reviewedFallbackFields && !signal.aborted
+              && serverStudioAllowsReviewedTransientFallback(error)) {
+            segments[index] = buildReviewedStudioLocalizedSegment(master, targets, reviewedFallbackFields);
+            fallbackReasons.add((error as ServerProductStudioError).safeReason);
+            const diagnostic = (error as ServerProductStudioError).diagnostic;
+            if (diagnostic) fallbackDiagnostics.push(diagnostic);
+            return;
+          }
+          throw error;
+        }
         coverageIssue = localizedSegmentCoverageIssue(segment, targets);
         if (!coverageIssue) {
           segments[index] = segment;
@@ -896,11 +1574,19 @@ async function generateStudioLocalizedResult(
       }
       throw new ServerProductStudioError("studio_localization_contract_invalid", true);
     }));
+    const rejected = chunkSettlements.find(
+      (settlement): settlement is PromiseRejectedResult => settlement.status === "rejected",
+    );
+    if (rejected) throw rejected.reason;
   }
   const merged = mergeStudioSegmentOutputs(master, segments);
   const parsed = cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(merged));
   if (!parsed.success) throw new ServerProductStudioError("studio_terminal_contract_invalid", true);
-  return parsed.data;
+  return {
+    result: parsed.data,
+    fallbackReasons: [...fallbackReasons].sort(),
+    fallbackDiagnostics,
+  } as const;
 }
 
 function segmentationMaskSvg(segmentation: PortableProductSegmentation, size = 1024) {
@@ -967,6 +1653,7 @@ async function resolveStudioCutout(
   sources: readonly ServerStudioSource[],
   dependencies: ServerProductStudioDependencies,
   signal: AbortSignal,
+  allowReviewedTransientFallback: boolean,
 ) {
   const main = sources.find((source) => source.role.trim().toLocaleLowerCase() === "main") ?? sources[0];
   if (!main) throw new ServerProductStudioError("source_image_missing", true);
@@ -984,10 +1671,23 @@ async function resolveStudioCutout(
         cutout: new Uint8Array(await buildPortableProductCutout(segmented)),
         catalogFallbackSource: null,
         attemptedRoles: candidates.slice(0, candidates.indexOf(source) + 1).map((candidate) => candidate.role),
+        transientFallbackReason: null,
+        transientFallbackDiagnostic: null,
       };
     } catch (error) {
-      // Only deterministic mask quality failures may fall back. Gateway auth,
-      // schema, storage and timeout errors must remain terminal/fail-closed.
+      if (allowReviewedTransientFallback && !signal.aborted
+          && serverStudioAllowsReviewedTransientFallback(error)) {
+        return {
+          cutout: new Uint8Array(main.bytes),
+          catalogFallbackSource: main,
+          attemptedRoles: candidates.slice(0, candidates.indexOf(source) + 1).map((candidate) => candidate.role),
+          transientFallbackReason: (error as ServerProductStudioError).safeReason,
+          transientFallbackDiagnostic: (error as ServerProductStudioError).diagnostic ?? null,
+        };
+      }
+      // Deterministic mask quality failures may fall back for every valid
+      // Studio request. Other gateway, schema and storage failures remain
+      // fail-closed unless this exact request passed the human-review fence.
       if (!serverStudioSegmentationAllowsCatalogFallback(error)) throw error;
     }
   }
@@ -995,6 +1695,8 @@ async function resolveStudioCutout(
     cutout: new Uint8Array(main.bytes),
     catalogFallbackSource: main,
     attemptedRoles: candidates.map((candidate) => candidate.role),
+    transientFallbackReason: null,
+    transientFallbackDiagnostic: null,
   };
 }
 
@@ -1072,6 +1774,50 @@ function sourceCatalogPlacement(asset: (typeof aiGeneratedAssetSpecs)[number]) {
   return asset.identityPolicy.placement;
 }
 
+function sourcePhotoCatalogPlacement(
+  asset: (typeof aiGeneratedAssetSpecs)[number],
+  variant: number,
+) {
+  const digest = createHash("sha256").update(`source-photo:${asset.id}:${variant}`).digest();
+  const width = 0.44 + ((digest[0] % 4) * 0.055);
+  const height = Math.min(0.72, width + 0.08 + ((digest[1] % 3) * 0.035));
+  const availableLeft = 0.94 - width;
+  const availableTop = 0.94 - height;
+  const horizontalLane = digest[2] % 3;
+  const verticalLane = digest[3] % 3;
+  return {
+    left: Number((0.03 + (availableLeft * horizontalLane / 2)).toFixed(4)),
+    top: Number((0.03 + (availableTop * verticalLane / 2)).toFixed(4)),
+    width: Number(width.toFixed(4)),
+    height: Number(height.toFixed(4)),
+  };
+}
+
+function sourcePhotoCatalogBackground(
+  asset: (typeof aiGeneratedAssetSpecs)[number],
+  variant: number,
+) {
+  const columns = 8;
+  const rows = 8;
+  const cells = Array.from({ length: columns * rows }, (_, index) => {
+    const digest = createHash("sha256")
+      .update(`source-photo-background:${asset.id}:${variant}:${index}`)
+      .digest();
+    const value = 222 + (digest[0] % 28);
+    const x = Math.floor((index % columns) * asset.width / columns);
+    const y = Math.floor(Math.floor(index / columns) * asset.height / rows);
+    const width = Math.ceil(asset.width / columns) + 1;
+    const height = Math.ceil(asset.height / rows) + 1;
+    return `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="rgb(${value},${value},${value})"/>`;
+  }).join("");
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${asset.width}" height="${asset.height}">`
+      + `<rect width="100%" height="100%" fill="${asset.identityPolicy.background}"/>`
+      + cells
+      + "</svg>",
+  );
+}
+
 export async function buildServerSourceEvidencePanel(
   asset: (typeof aiGeneratedAssetSpecs)[number],
   source: ServerStudioSource,
@@ -1128,13 +1874,15 @@ export async function buildServerSourceDerivedAsset(
     : "source-catalog",
 ) {
   const palette = paletteFor(asset.id, variant);
-  const background = Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${asset.width}" height="${asset.height}">`
-      + `<rect width="100%" height="100%" fill="${asset.identityPolicy.background}"/>`
-      + `<circle cx="${15 + (variant * 17) % 70}%" cy="${18 + (variant * 23) % 64}%" r="${12 + variant * 2}%" fill="${palette.base}"/>`
-      + `<path d="M0 ${asset.height * (0.72 - variant * 0.03)} L${asset.width} ${asset.height * (0.48 + variant * 0.03)} L${asset.width} ${asset.height} L0 ${asset.height}Z" fill="${palette.accent}" opacity="0.16"/>`
-      + "</svg>",
-  );
+  const background = renderMode === "source-photo-catalog"
+    ? sourcePhotoCatalogBackground(asset, variant)
+    : Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${asset.width}" height="${asset.height}">`
+        + `<rect width="100%" height="100%" fill="${asset.identityPolicy.background}"/>`
+        + `<circle cx="${15 + (variant * 17) % 70}%" cy="${18 + (variant * 23) % 64}%" r="${12 + variant * 2}%" fill="${palette.base}"/>`
+        + `<path d="M0 ${asset.height * (0.72 - variant * 0.03)} L${asset.width} ${asset.height * (0.48 + variant * 0.03)} L${asset.width} ${asset.height} L0 ${asset.height}Z" fill="${palette.accent}" opacity="0.16"/>`
+        + "</svg>",
+    );
   if (renderMode === "source-evidence") {
     const panel = await buildServerSourceEvidencePanel(asset, source, variant);
     return sharp(background)
@@ -1142,7 +1890,9 @@ export async function buildServerSourceDerivedAsset(
       .png()
       .toBuffer();
   }
-  const placement = sourceCatalogPlacement(asset);
+  const placement = renderMode === "source-photo-catalog"
+    ? sourcePhotoCatalogPlacement(asset, variant)
+    : sourceCatalogPlacement(asset);
   const width = Math.max(1, Math.round(asset.width * placement.width));
   const height = Math.max(1, Math.round(asset.height * placement.height));
   const product = await sharp(cutout).resize(width, height, { fit: "contain" }).png().toBuffer();
@@ -1438,7 +2188,7 @@ async function generateAssetWave(input: {
   let pending = input.specs.filter((asset) => !input.restored.has(asset.id));
   const retryLineage = new Map<AiGeneratedAssetId, ServerStudioCandidateRejection[]>();
   for (let attempt = 1; attempt <= 4 && pending.length; attempt += 1) {
-    const outcomes = await Promise.all(pending.map(async (asset) => ({
+    const settlements = await Promise.allSettled(pending.map(async (asset) => ({
       asset,
       outcome: await generateCandidate({
         result: input.result,
@@ -1452,6 +2202,16 @@ async function generateAssetWave(input: {
         signal: input.signal,
       }),
     })));
+    const rejected = settlements.find(
+      (settlement): settlement is PromiseRejectedResult => settlement.status === "rejected",
+    );
+    if (rejected) throw rejected.reason;
+    const outcomes = settlements.map((settlement) => (
+      settlement as PromiseFulfilledResult<{
+        asset: (typeof aiGeneratedAssetSpecs)[number];
+        outcome: ServerStudioCandidateOutcome;
+      }>
+    ).value);
     const retry: typeof pending = [];
     for (const { asset, outcome } of outcomes) {
       if (outcome.status === "rejected") {
@@ -1517,6 +2277,114 @@ async function generateAssetSet(input: {
   }
 }
 
+async function buildReviewedSourcePhotoCatalogSet(input: {
+  specs: readonly (typeof aiGeneratedAssetSpecs)[number][];
+  sources: readonly ServerStudioSource[];
+  restored: Map<AiGeneratedAssetId, ServerStudioAsset>;
+  jobId: string;
+  claimToken: string;
+  signal: AbortSignal;
+  touch: () => Promise<void>;
+}) {
+  // A partially completed remote lane is never mixed with this emergency
+  // catalog set. The six reviewed first-stage assets are outside `specs` and
+  // remain byte-for-byte intact; every remaining final role is rebuilt from a
+  // complete seller source frame without another provider call.
+  input.specs.forEach((asset) => input.restored.delete(asset.id));
+  for (let offset = 0; offset < input.specs.length; offset += SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE) {
+    input.signal.throwIfAborted();
+    await input.touch();
+    const batch = input.specs.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE);
+    const generated = await Promise.all(batch.map(async (asset) => {
+      const source = resolveServerAssetSource(asset, input.sources).source;
+      const assetIndex = aiGeneratedAssetSpecs.findIndex((candidate) => candidate.id === asset.id);
+      for (let attempt = 1; attempt <= 8; attempt += 1) {
+        input.signal.throwIfAborted();
+        const variant = Math.max(1, assetIndex + attempt);
+        const bytes = new Uint8Array(await buildServerSourceDerivedAsset(
+          asset,
+          source,
+          source.bytes,
+          variant,
+          "source-photo-catalog",
+        ));
+        input.signal.throwIfAborted();
+        const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata();
+        if (metadata.width !== asset.width || metadata.height !== asset.height || metadata.format !== "png") {
+          throw new ServerProductStudioError("generated_asset_geometry_invalid", true);
+        }
+        const fingerprint = await fingerprintAsset(asset.id, bytes);
+        const conflict = findDuplicateShot(
+          fingerprint,
+          [...input.restored.values()].map((candidate) => candidate.fingerprint),
+        );
+        if (conflict) continue;
+        return {
+          id: asset.id,
+          path: aiGeneratedAssetPath(input.jobId, asset, input.claimToken),
+          bytes,
+          digest: fingerprint.digest,
+          fingerprint,
+          auditMode: "source-photo-catalog" as const,
+        } satisfies ServerStudioAsset;
+      }
+      throw new ServerProductStudioError("deterministic_catalog_duplicate_exhausted", true);
+    }));
+    // Resolve conflicts inside the same batch deterministically. In the rare
+    // event two entries collide, rebuild the later entry in a subsequent
+    // single-item pass rather than accepting a near duplicate.
+    for (const asset of generated) {
+      const conflict = findDuplicateShot(
+        asset.fingerprint,
+        [...input.restored.values()].map((candidate) => candidate.fingerprint),
+      );
+      if (conflict) {
+        const spec = input.specs.find((candidate) => candidate.id === asset.id);
+        if (!spec) throw new ServerProductStudioError("remaining_asset_contract_invalid", true);
+        let replacement: ServerStudioAsset | null = null;
+        const source = resolveServerAssetSource(spec, input.sources).source;
+        const assetIndex = aiGeneratedAssetSpecs.findIndex((candidate) => candidate.id === spec.id);
+        for (let attempt = 9; attempt <= 16; attempt += 1) {
+          input.signal.throwIfAborted();
+          const bytes: Uint8Array = new Uint8Array(await buildServerSourceDerivedAsset(
+            spec,
+            source,
+            source.bytes,
+            assetIndex + attempt,
+            "source-photo-catalog",
+          ));
+          input.signal.throwIfAborted();
+          const metadata: { width?: number; height?: number; format?: string } = await sharp(
+            bytes,
+            { failOn: "warning", limitInputPixels: 16_000_000 },
+          ).metadata();
+          if (metadata.width !== spec.width || metadata.height !== spec.height || metadata.format !== "png") {
+            throw new ServerProductStudioError("generated_asset_geometry_invalid", true);
+          }
+          const fingerprint = await fingerprintAsset(spec.id, bytes);
+          if (findDuplicateShot(
+            fingerprint,
+            [...input.restored.values()].map((candidate) => candidate.fingerprint),
+          )) continue;
+          replacement = {
+            id: spec.id,
+            path: aiGeneratedAssetPath(input.jobId, spec, input.claimToken),
+            bytes,
+            digest: fingerprint.digest,
+            fingerprint,
+            auditMode: "source-photo-catalog",
+          };
+          break;
+        }
+        if (!replacement) throw new ServerProductStudioError("deterministic_catalog_duplicate_exhausted", true);
+        input.restored.set(replacement.id, replacement);
+      } else {
+        input.restored.set(asset.id, asset);
+      }
+    }
+  }
+}
+
 async function stageResultPaths(
   dependencies: ServerProductStudioDependencies,
   jobId: string,
@@ -1577,10 +2445,12 @@ async function uploadAssets(
   if (!dependencies.upload) throw new ServerProductStudioError("result_storage_missing", true);
   const storagePaths = {} as Record<AiGeneratedAssetId, string>;
   for (let offset = 0; offset < aiGeneratedAssetSpecs.length; offset += SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE) {
+    signal.throwIfAborted();
     await touchClaim(dependencies, jobId, claimToken);
     await Promise.all(aiGeneratedAssetSpecs
       .slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE)
       .map(async (spec) => {
+        signal.throwIfAborted();
         const asset = assets.get(spec.id);
         if (!asset) throw new ServerProductStudioError("generated_asset_set_incomplete", true);
         const path = aiGeneratedAssetPath(jobId, spec, claimToken);
@@ -1598,6 +2468,7 @@ async function runFullStudioClaim(
   claim: z.infer<typeof studioClaimSchema>,
   dependencies: ServerProductStudioDependencies,
   signal: AbortSignal,
+  logError: (stage: string, details: Record<string, string | number | boolean>) => void,
 ) {
   const parsedRequest = parseStudioRequest(claim.request);
   // New two-stage registration requests fail closed if even one preflight
@@ -1608,6 +2479,7 @@ async function runFullStudioClaim(
     throw new ServerProductStudioError("studio_request_invalid", true);
   }
   const request = parsedRequest.data;
+  const reviewedFallbackFields = reviewedStudioFallbackFields(parsedRequest);
   await stageResultPaths(dependencies, claim.id, claim.claim_token, aiGeneratedAssetSpecs);
   const sources = await loadStudioSources(request, dependencies.download, signal);
   const mainSource = sources.find((source) => source.role.toLocaleLowerCase() === "main") ?? sources[0];
@@ -1618,13 +2490,30 @@ async function runFullStudioClaim(
   }
 
   await touchClaim(dependencies, claim.id, claim.claim_token);
-  const [master, cutoutResolution, generated] = await Promise.all([
-    generateStudioMaster(request, sources, dependencies, signal),
-    resolveStudioCutout(sources, dependencies, signal),
+  const [masterGeneration, cutoutResolution, generated] = await Promise.all([
+    generateStudioMaster(request, sources, dependencies, signal, reviewedFallbackFields),
+    resolveStudioCutout(sources, dependencies, signal, Boolean(reviewedFallbackFields)),
     parsedRequest.mode === "preflight"
       ? restoreFirstDraftAssets(parsedRequest.data, dependencies.download, signal)
       : Promise.resolve(new Map<AiGeneratedAssetId, ServerStudioAsset>()),
   ]);
+  const gatewayFallbackDiagnostics: Array<{
+    path: "master" | "localization" | "image";
+    diagnostic: AiGatewayFailureDiagnostic;
+  }> = [];
+  if (masterGeneration.fallbackDiagnostic) {
+    gatewayFallbackDiagnostics.push({
+      path: "master",
+      diagnostic: masterGeneration.fallbackDiagnostic,
+    });
+  }
+  if (cutoutResolution.transientFallbackDiagnostic) {
+    gatewayFallbackDiagnostics.push({
+      path: "image",
+      diagnostic: cutoutResolution.transientFallbackDiagnostic,
+    });
+  }
+  const master = masterGeneration.master;
   const finalSpecs = parsedRequest.mode === "preflight"
     ? remainingFinalAssetIds.map((assetId) => {
       const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
@@ -1643,35 +2532,106 @@ async function runFullStudioClaim(
   if (SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE * 3 > SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY) {
     throw new ServerProductStudioError("server_studio_concurrency_contract_invalid", true);
   }
-  const [result] = await Promise.all([
-    generateStudioLocalizedResult(master, dependencies, signal),
-    generateAssetSet({
-      result: master,
-      specs: settingSpecs,
+  const localizationPromise = generateStudioLocalizedResult(
+    master,
+    dependencies,
+    signal,
+    reviewedFallbackFields,
+    Boolean(masterGeneration.fallbackReason),
+  );
+  let localization: Awaited<ReturnType<typeof generateStudioLocalizedResult>>;
+  let imageFallbackReason = cutoutResolution.transientFallbackReason;
+  if (imageFallbackReason) {
+    localization = await localizationPromise;
+    await buildReviewedSourcePhotoCatalogSet({
+      specs: finalSpecs,
       sources,
-      cutout: cutoutResolution.cutout,
-      catalogFallbackSource: cutoutResolution.catalogFallbackSource,
       restored: generated,
       jobId: claim.id,
       claimToken: claim.claim_token,
-      dependencies,
       signal,
       touch,
-    }),
-    generateAssetSet({
-      result: master,
-      specs: sourceSpecs,
-      sources,
-      cutout: cutoutResolution.cutout,
-      catalogFallbackSource: cutoutResolution.catalogFallbackSource,
-      restored: generated,
-      jobId: claim.id,
-      claimToken: claim.claim_token,
-      dependencies,
-      signal,
-      touch,
-    }),
-  ]);
+    });
+  } else {
+    const settlements = await Promise.allSettled([
+      localizationPromise,
+      generateAssetSet({
+        result: master,
+        specs: settingSpecs,
+        sources,
+        cutout: cutoutResolution.cutout,
+        catalogFallbackSource: cutoutResolution.catalogFallbackSource,
+        restored: generated,
+        jobId: claim.id,
+        claimToken: claim.claim_token,
+        dependencies,
+        signal,
+        touch,
+      }),
+      generateAssetSet({
+        result: master,
+        specs: sourceSpecs,
+        sources,
+        cutout: cutoutResolution.cutout,
+        catalogFallbackSource: cutoutResolution.catalogFallbackSource,
+        restored: generated,
+        jobId: claim.id,
+        claimToken: claim.claim_token,
+        dependencies,
+        signal,
+        touch,
+      }),
+    ] as const);
+    if (settlements[0].status === "rejected") throw settlements[0].reason;
+    localization = settlements[0].value;
+    const imageFailures = settlements.slice(1).filter(
+      (settlement): settlement is PromiseRejectedResult => settlement.status === "rejected",
+    );
+    const disallowedFailure = imageFailures.find((failure) => (
+      !reviewedFallbackFields || signal.aborted
+      || !serverStudioAllowsReviewedTransientFallback(failure.reason)
+    ));
+    if (disallowedFailure) throw disallowedFailure.reason;
+    if (imageFailures.length) {
+      imageFallbackReason = (imageFailures[0].reason as ServerProductStudioError).safeReason;
+      for (const failure of imageFailures) {
+        const diagnostic = (failure.reason as ServerProductStudioError).diagnostic;
+        if (diagnostic) gatewayFallbackDiagnostics.push({ path: "image", diagnostic });
+      }
+      await buildReviewedSourcePhotoCatalogSet({
+        specs: finalSpecs,
+        sources,
+        restored: generated,
+        jobId: claim.id,
+        claimToken: claim.claim_token,
+        signal,
+        touch,
+      });
+    }
+  }
+  gatewayFallbackDiagnostics.push(...localization.fallbackDiagnostics.map((diagnostic) => ({
+    path: "localization" as const,
+    diagnostic,
+  })));
+  const result = withReviewedFallbackWarnings(localization.result, {
+    masterReason: masterGeneration.fallbackReason,
+    localizationReasons: localization.fallbackReasons,
+    imageReason: imageFallbackReason,
+  });
+  const primaryFallbackDiagnostic = gatewayFallbackDiagnostics[0];
+  if (primaryFallbackDiagnostic) {
+    try {
+      logError("gateway_fallback", {
+        ...gatewayDiagnosticLogDetails(primaryFallbackDiagnostic.diagnostic),
+        kind: claim.kind,
+        fallbackPath: primaryFallbackDiagnostic.path,
+        fallbackCount: gatewayFallbackDiagnostics.length,
+      });
+    } catch {
+      // Observability must never turn a safely reconstructed, reviewed result
+      // back into a failed job.
+    }
+  }
   if (generated.size !== aiGeneratedAssetSpecs.length) {
     throw new ServerProductStudioError("generated_asset_set_incomplete", true);
   }
@@ -1682,6 +2642,7 @@ async function runFullStudioClaim(
     generated,
     signal,
   );
+  signal.throwIfAborted();
   const completed = await completeExact(dependencies, {
     jobId: claim.id,
     claimToken: claim.claim_token,
@@ -1694,6 +2655,16 @@ async function runFullStudioClaim(
         generated.get(asset.id)?.auditMode ?? "unrecorded",
       ])),
       segmentation_attempted_roles: cutoutResolution.attemptedRoles,
+      ...((masterGeneration.fallbackReason
+          || localization.fallbackReasons.length
+          || imageFallbackReason) ? {
+          deterministic_fallback: {
+            reviewedInputOnly: true,
+            masterReason: masterGeneration.fallbackReason,
+            localizationReasons: localization.fallbackReasons,
+            imageReason: imageFallbackReason,
+          },
+        } : {}),
     },
     errorMessage: null,
   });
@@ -1848,12 +2819,26 @@ export async function runOneServerProductStudio(dependencies: ServerProductStudi
   try {
     const response = claim.data.kind === "product_asset_regeneration"
       ? await runRegenerationClaim(claim.data, dependencies, signal)
-      : await runFullStudioClaim(claim.data, dependencies, signal);
+      : await runFullStudioClaim(claim.data, dependencies, signal, logError);
     await wakeNextStudioClaim(dependencies, logError, claim.data.kind);
     return response;
   } catch (error) {
     const reason = signal.aborted ? "server_studio_runtime_timeout" : safeReason(error);
-    logError("execution", { reason, status: 500, kind: claim.data.kind });
+    const diagnostic = error instanceof ServerProductStudioError
+      ? error.diagnostic
+      : undefined;
+    logError("execution", {
+      reason,
+      status: diagnostic?.httpStatus ?? 500,
+      kind: claim.data.kind,
+      ...(diagnostic?.limitKind == null ? {} : { limitKind: diagnostic.limitKind }),
+      ...(diagnostic?.retryAfterMs == null ? {} : { retryAfterMs: diagnostic.retryAfterMs }),
+      ...(diagnostic?.generationId == null ? {} : { generationId: diagnostic.generationId }),
+      ...(diagnostic?.requestId == null ? {} : { requestId: diagnostic.requestId }),
+      ...(diagnostic?.upstreamProviderAttempted == null
+        ? {}
+        : { upstreamProviderAttempted: diagnostic.upstreamProviderAttempted }),
+    });
     const completed = await completeExact(dependencies, {
       jobId: claim.data.id,
       claimToken: claim.data.claim_token,

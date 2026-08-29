@@ -6,10 +6,13 @@ import {
   aiGeneratedAssetPath,
   aiGeneratedAssetSpecs,
   coreFirstDraftAssetIds,
+  remainingFinalAssetIds,
 } from "../lib/ai-generated-assets";
 import { cliStudioResultSchema, requiredLocalizedMarkets } from "../lib/ai-cli-contract";
+import type { AiGatewayFailureDiagnostic } from "../lib/ai-gateway-failure";
 import {
   assertPortableAudit,
+  buildReviewedServerStudioFallbackMaster,
   buildPortableProductCutout,
   buildServerImageAuditReference,
   buildServerSourceDerivedAsset,
@@ -19,11 +22,16 @@ import {
   resolveServerAssetSource,
   runOneServerProductStudio,
   ServerProductStudioError,
+  serverStudioAllowsReviewedTransientFallback,
   serverStudioRequestMode,
   serverStudioSegmentationAllowsCatalogFallback,
   serverStudioRemoteWorkPlan,
   type ServerStudioSource,
 } from "../lib/server-product-studio";
+import {
+  hasPrescriptiveIntakeInstruction,
+  hasUnsupportedGeneralFoodEfficacyClaim,
+} from "../lib/product-classification";
 import {
   buildDifferenceHash,
   MINIMUM_SHOT_HASH_DISTANCE,
@@ -172,6 +180,37 @@ function passingPortableAudit() {
   };
 }
 
+function reviewedFallbackManualFields() {
+  return {
+    researchInput: "롯데샌드 파인애플 맛 과자",
+    productName: "롯데샌드 파인애플",
+    sellerSku: "QA-LOTTE-SAND",
+    categoryHint: "일반식품 과자",
+    brandName: "롯데",
+    manufacturer: "롯데웰푸드",
+    countryOfOrigin: "대한민국",
+    material: "판매자가 실물에서 확인한 과자 원재료 표시",
+    packageContents: "낱개 포장 1개",
+    condition: "NEW" as const,
+    gtinStatus: "NO_GTIN" as const,
+    gtin: "",
+    sellingPrice: 5_000,
+    currency: "KRW" as const,
+    stock: 1,
+    weightKg: 0.1,
+    packageLengthCm: 20,
+    packageWidthCm: 15,
+    packageHeightCm: 5,
+    shippingFeeKrw: 3_000,
+    shippingRule: "판매자 확인 기본 배송",
+    packagingRule: "판매자 확인 완충 포장",
+    description: "판매자가 실물과 대조해 확인한 롯데샌드 파인애플 맛 과자 상품 설명입니다.",
+    productUrl: "",
+    imageRightsConfirmed: true as const,
+    productFactsConfirmed: true as const,
+  };
+}
+
 test("server master normalization repairs presentation metadata without changing seller-backed copy", () => {
   const alreadyValid = testMasterResult();
   assert.equal(normalizeServerStudioMasterContract(alreadyValid), alreadyValid);
@@ -312,6 +351,249 @@ async function firstDraftPreflightFixture(
       preflight_asset_audit_lineage: lineage,
     },
     bytesByPath,
+  };
+}
+
+async function runReviewedTransientPipelineFixture(options: {
+  requestMode?: "reviewed" | "marker-mismatch" | "legacy";
+  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "partial-image-transient";
+  transientReason?: string;
+  corruptPreflightAssetId?: (typeof coreFirstDraftAssetIds)[number];
+  duplicatePreflightAsset?: boolean;
+  sourcePhotoHashMismatch?: boolean;
+  uploadFailureReason?: string;
+  runtimeTimeoutMs?: number;
+  transientDiagnostic?: AiGatewayFailureDiagnostic;
+} = {}) {
+  const jobId = "41414141-4141-4141-8141-414141414141";
+  const claimToken = "42424242-4242-4242-8242-424242424242";
+  const userId = "43434343-4343-4343-8343-434343434343";
+  const researchJobId = "44414141-4141-4141-8141-414141414141";
+  const researchClaimToken = "45454545-4545-4545-8545-454545454545";
+  const normalizedPath = `${userId}/${jobId}/input/001.jpg`;
+  const originalPath = `${userId}/${jobId}/original/001.source`;
+  const manual = reviewedFallbackManualFields();
+  const sourceBytes = await patternedBackground(
+    1200,
+    1200,
+    "reviewed-transient-source",
+    "#d7462f",
+    true,
+  );
+  const sourceDigest = createHash("sha256").update(sourceBytes).digest("hex");
+  const preflight = await firstDraftPreflightFixture(
+    researchJobId,
+    researchClaimToken,
+    sourceDigest,
+  );
+  if (options.duplicatePreflightAsset) {
+    const sourceAssetId = "detail-overview" as const;
+    const duplicateAssetId = "detail-use" as const;
+    const sourcePath = preflight.request.preflight_asset_storage_paths[sourceAssetId];
+    const duplicatePath = preflight.request.preflight_asset_storage_paths[duplicateAssetId];
+    const duplicateBytes = preflight.bytesByPath.get(sourcePath);
+    assert.ok(duplicateBytes);
+    const digest = preflight.request.preflight_asset_digests[sourceAssetId];
+    preflight.bytesByPath.set(duplicatePath, duplicateBytes);
+    preflight.request.preflight_asset_digests[duplicateAssetId] = digest;
+    preflight.request.preflight_asset_audit_lineage[duplicateAssetId].digest = digest;
+  }
+  if (options.sourcePhotoHashMismatch) {
+    preflight.request.source_photo_sha256 = "0".repeat(64);
+  }
+  const corruptAsset = options.corruptPreflightAssetId
+    ? aiGeneratedAssetSpecs.find((asset) => asset.id === options.corruptPreflightAssetId)
+    : null;
+  const corruptedPreflightBytes = corruptAsset
+    ? await patternedBackground(
+      corruptAsset.width,
+      corruptAsset.height,
+      `reviewed-corrupt:${corruptAsset.id}`,
+      "#2b69c7",
+      true,
+    )
+    : null;
+  const baseRequest = {
+    description: manual.description,
+    product_url: manual.productUrl,
+    research_input: manual.researchInput,
+    manual_fields: manual,
+    image_paths: [normalizedPath],
+    image_specs: [{
+      name: "001.jpg",
+      role: "main",
+      originalName: "source.png",
+      originalBytes: sourceBytes.byteLength,
+      originalMediaType: "image/png",
+      originalPath,
+      originalWidth: 1200,
+      originalHeight: 1200,
+      width: 1200,
+      height: 1200,
+      bytes: Math.min(sourceBytes.byteLength, 3 * 1024 * 1024),
+      mediaType: "image/jpeg",
+      fit: "contain",
+    }],
+  };
+  const requestMode = options.requestMode ?? "reviewed";
+  const request = requestMode === "legacy"
+    ? baseRequest
+    : {
+      ...baseRequest,
+      ...preflight.request,
+      human_review_confirmation: {
+        first_draft_reviewed: true,
+        source: "authenticated_admin_request",
+        source_research_job_id: requestMode === "reviewed"
+          ? researchJobId
+          : "46464646-4646-4646-8646-464646464646",
+      },
+    };
+  const uploaded = new Map<string, Uint8Array>();
+  const completionCalls: Record<string, unknown>[] = [];
+  const logs: Array<{ stage: string; details: Record<string, string | number | boolean> }> = [];
+  let structuredCalls = 0;
+  let segmentationCalls = 0;
+  let backgroundCalls = 0;
+  let auditCalls = 0;
+  const auditedCandidateDigests = new Map<string, string[]>();
+  const transientReason = options.transientReason ?? "gateway_rate_limited";
+  const transientError = () => new ServerProductStudioError(
+    transientReason,
+    false,
+    options.transientDiagnostic,
+  );
+  const providerScenario = options.providerScenario ?? "all-transient";
+  const validSegmentation = {
+    containsSingleProduct: true,
+    touchesFrame: false,
+    foregroundConfidence: 0.99,
+    edgeConfidence: 0.99,
+    polygons: [{
+      points: [
+        { x: 0.24, y: 0.24 }, { x: 0.37, y: 0.24 }, { x: 0.50, y: 0.24 },
+        { x: 0.63, y: 0.24 }, { x: 0.76, y: 0.24 }, { x: 0.76, y: 0.50 },
+        { x: 0.76, y: 0.76 }, { x: 0.63, y: 0.76 }, { x: 0.50, y: 0.76 },
+        { x: 0.37, y: 0.76 }, { x: 0.24, y: 0.76 }, { x: 0.24, y: 0.50 },
+      ],
+    }],
+  };
+
+  const response = await runOneServerProductStudio({
+    tokenHash: "f".repeat(64),
+    runtimeTimeoutMs: options.runtimeTimeoutMs ?? 120_000,
+    rpc: async (name, arguments_ = {}) => {
+      if (name === "sellerpilot_claim_product_ai_job") {
+        return {
+          data: {
+            id: jobId,
+            claim_token: claimToken,
+            kind: "product_studio",
+            claim_scope: "product",
+            request,
+          },
+          error: null,
+        };
+      }
+      if (name === "sellerpilot_touch_ai_job") return { data: "running", error: null };
+      if (name === "sellerpilot_complete_ai_job_with_image_context") {
+        completionCalls.push(structuredClone(arguments_));
+      }
+      return { data: true, error: null };
+    },
+    download: async (path) => {
+      if (path === originalPath) return sourceBytes;
+      const bytes = preflight.bytesByPath.get(path);
+      if (!bytes) return assert.fail(`unexpected source path: ${path}`);
+      if (options.corruptPreflightAssetId
+          && path === preflight.request.preflight_asset_storage_paths[options.corruptPreflightAssetId]) {
+        return corruptedPreflightBytes ?? assert.fail("missing corrupted preflight fixture");
+      }
+      return bytes;
+    },
+    upload: async (path, bytes) => {
+      if (options.uploadFailureReason) {
+        throw new ServerProductStudioError(options.uploadFailureReason, true);
+      }
+      uploaded.set(path, new Uint8Array(bytes));
+      return "uploaded";
+    },
+    generateStructured: async (input) => {
+      structuredCalls += 1;
+      if (providerScenario === "all-transient") {
+        throw transientError();
+      }
+      if (input.tags.includes("feature:product-studio-master")) {
+        return input.schema.parse({
+          ...buildReviewedServerStudioFallbackMaster(manual),
+          warnings: [],
+        });
+      }
+      const chunkTag = input.tags.find((tag) => tag.startsWith("chunk:"));
+      assert.ok(chunkTag);
+      if (providerScenario === "partial-localization-transient" && chunkTag === "chunk:2") {
+        throw transientError();
+      }
+      const targets = planStudioLocalizedChunks(4)[Number(chunkTag.slice("chunk:".length)) - 1];
+      assert.ok(targets);
+      return input.schema.parse({
+        localizedListings: targets.map((target) => {
+          const listing = localizedListing(target);
+          return {
+            ...listing,
+            classification: {
+              ...listing.classification,
+              verificationStatus: "needs-review" as const,
+              isHealthFunctionalFood: null,
+            },
+          };
+        }),
+      });
+    },
+    segmentSource: async () => {
+      segmentationCalls += 1;
+      if (providerScenario !== "partial-image-transient") {
+        throw transientError();
+      }
+      return { segmentation: validSegmentation, segmentationSource: sourceBytes };
+    },
+    generateBackground: async ({ asset }) => {
+      backgroundCalls += 1;
+      if (providerScenario !== "partial-image-transient") {
+        return assert.fail("reviewed segmentation fallback must not invoke image generation");
+      }
+      return patternedBackground(asset.width, asset.height, `partial:${asset.id}`, "#d7462f", true);
+    },
+    auditImage: async ({ assetId, candidate }) => {
+      auditCalls += 1;
+      if (providerScenario !== "partial-image-transient") {
+        return assert.fail("deterministic source-photo assets must not invoke remote vision audit");
+      }
+      auditedCandidateDigests.set(assetId, [
+        ...(auditedCandidateDigests.get(assetId) ?? []),
+        createHash("sha256").update(candidate).digest("hex"),
+      ]);
+      if (assetId === "detail-material") throw transientError();
+      return passingPortableAudit();
+    },
+    logError: (stage, details) => logs.push({ stage, details }),
+  });
+
+  return {
+    response,
+    jobId,
+    claimToken,
+    manual,
+    sourceBytes,
+    preflight,
+    uploaded,
+    completionCalls,
+    logs,
+    structuredCalls,
+    segmentationCalls,
+    backgroundCalls,
+    auditCalls,
+    auditedCandidateDigests,
   };
 }
 
@@ -540,6 +822,337 @@ test("source-photo catalog fallback is limited to deterministic segmentation qua
     );
   }
   assert.equal(serverStudioSegmentationAllowsCatalogFallback(new Error("network timeout")), false);
+  for (const reason of [
+    "gateway_rate_limited",
+    "gateway_billing_required",
+    "gateway_timeout",
+    "gateway_customer_verification_required",
+  ]) {
+    assert.equal(
+      serverStudioAllowsReviewedTransientFallback(new ServerProductStudioError(reason)),
+      true,
+      `${reason} is the exact reviewed-input emergency allowlist`,
+    );
+    assert.equal(
+      serverStudioAllowsReviewedTransientFallback(new ServerProductStudioError(reason, true)),
+      false,
+      `${reason} marked terminal must remain fail-closed`,
+    );
+  }
+  for (const reason of [
+    "gateway_authentication_error",
+    "gateway_forbidden",
+    "gateway_model_not_found",
+    "gateway_request_failed",
+    "gateway_result_invalid",
+    "runtime_timeout",
+    "source_image_metadata_mismatch",
+  ]) {
+    assert.equal(
+      serverStudioAllowsReviewedTransientFallback(new ServerProductStudioError(reason)),
+      false,
+      `${reason} must never enter the reviewed-input fallback`,
+    );
+  }
+});
+
+test("reviewed transient gateway failure completes an exact 16-asset deterministic Studio result and preserves the approved first six bytes", async () => {
+  const run = await runReviewedTransientPipelineFixture();
+  assert.equal(run.response.status, 200);
+  assert.deepEqual(
+    await run.response.json(),
+    { ok: true, status: "succeeded", processed: 1 },
+    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
+  );
+  assert.equal(run.logs.length, 0);
+  assert.equal(run.structuredCalls, 1, "only the master provider call should be attempted before deterministic localization");
+  assert.equal(run.segmentationCalls, 1);
+  assert.equal(run.backgroundCalls, 0);
+  assert.equal(run.auditCalls, 0);
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "succeeded");
+  const resultPayload = run.completionCalls[0].p_result_payload as Record<string, unknown>;
+  const parsed = cliStudioResultSchema.safeParse(resultPayload);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
+  assert.ok(parsed.data.design.sections.length >= 16 && parsed.data.design.sections.length <= 20);
+  assert.equal(parsed.data.localizedListings.length, 34);
+  assert.equal(parsed.data.product.name, run.manual.productName);
+  const koreanListing = parsed.data.localizedListings.find((listing) => listing.locale === "ko-KR");
+  assert.ok(koreanListing);
+  const koreanCopy = JSON.stringify(koreanListing);
+  assert.match(koreanCopy, new RegExp(run.manual.productName, "u"));
+  assert.match(koreanCopy, new RegExp(run.manual.brandName, "u"));
+  assert.match(koreanCopy, new RegExp(run.manual.packageContents, "u"));
+  parsed.data.localizedListings.forEach((listing) => {
+    const copy = JSON.stringify(listing);
+    assert.match(copy, /5000 KRW/u, `${listing.channel}:${listing.market} must preserve the reviewed price`);
+    assert.match(copy, /20 x 15 x 5 cm \/ 0\.1 kg/u, `${listing.channel}:${listing.market} must preserve reviewed dimensions`);
+    assert.match(copy, /QA-LOTTE-SAND/u, `${listing.channel}:${listing.market} must preserve the reviewed product identity`);
+  });
+  assert.ok(parsed.data.warnings.some((warning) => /gateway_rate_limited.*검수한 입력만 사용해 16개 상세 섹션/u.test(warning)));
+  assert.ok(parsed.data.warnings.some((warning) => /사람이 승인한 1차 이미지 6장은 그대로 보존/u.test(warning)));
+  assert.equal(hasUnsupportedGeneralFoodEfficacyClaim(JSON.stringify(parsed.data)), false);
+  assert.equal(hasPrescriptiveIntakeInstruction(JSON.stringify(parsed.data)), false);
+  const sectionAssetsByTitle = Object.fromEntries(parsed.data.design.sections.map((section) => [
+    section.title,
+    section.imageAsset,
+  ]));
+  assert.deepEqual({
+    "검수된 상품명부터 대조": sectionAssetsByTitle["검수된 상품명부터 대조"],
+    "판매 구성과 촬영 소품 구별": sectionAssetsByTitle["판매 구성과 촬영 소품 구별"],
+    "소재·성분은 실물 표시 우선": sectionAssetsByTitle["소재·성분은 실물 표시 우선"],
+    "포장 단위 수치 한눈에 확인": sectionAssetsByTitle["포장 단위 수치 한눈에 확인"],
+  }, {
+    "검수된 상품명부터 대조": "detail-overview",
+    "판매 구성과 촬영 소품 구별": "detail-contents",
+    "소재·성분은 실물 표시 우선": "detail-material",
+    "포장 단위 수치 한눈에 확인": "detail-dimensions",
+  });
+  assert.equal(run.uploaded.size, aiGeneratedAssetSpecs.length);
+  assert.equal(Object.keys(resultPayload.asset_storage_paths as Record<string, string>).length, 16);
+
+  const auditModes = resultPayload.asset_audit_modes as Record<string, string>;
+  for (const assetId of coreFirstDraftAssetIds) {
+    const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+    assert.ok(spec);
+    const sourcePath = run.preflight.request.preflight_asset_storage_paths[assetId];
+    const finalPath = aiGeneratedAssetPath(run.jobId, spec, run.claimToken);
+    const sourceBytes = run.preflight.bytesByPath.get(sourcePath);
+    const finalBytes = run.uploaded.get(finalPath);
+    assert.ok(sourceBytes && finalBytes);
+    assert.deepEqual(finalBytes, sourceBytes, `${assetId} must remain byte-identical after final upload`);
+    assert.equal(
+      createHash("sha256").update(finalBytes).digest("hex"),
+      run.preflight.request.preflight_asset_digests[assetId],
+    );
+    assert.equal(auditModes[assetId], "segmented-source-composite");
+  }
+  for (const assetId of remainingFinalAssetIds) {
+    const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+    assert.ok(spec);
+    const finalBytes = run.uploaded.get(aiGeneratedAssetPath(run.jobId, spec, run.claimToken));
+    assert.ok(finalBytes);
+    const metadata = await sharp(finalBytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata();
+    assert.deepEqual(
+      { width: metadata.width, height: metadata.height, format: metadata.format },
+      { width: spec.width, height: spec.height, format: "png" },
+    );
+    assert.equal(auditModes[assetId], "source-photo-catalog");
+  }
+  const uploadedDigests = [...run.uploaded.values()].map((bytes) => (
+    createHash("sha256").update(bytes).digest("hex")
+  ));
+  assert.equal(new Set(uploadedDigests).size, 16, "fallback must not accept exact duplicate output assets");
+  const uploadedHashes = new Map(await Promise.all(aiGeneratedAssetSpecs.map(async (spec) => {
+    const bytes = run.uploaded.get(aiGeneratedAssetPath(run.jobId, spec, run.claimToken));
+    assert.ok(bytes);
+    return [spec.id, buildDifferenceHash(
+      await sharp(bytes).resize(17, 16, { fit: "fill" }).grayscale().raw().toBuffer(),
+      17,
+      16,
+    )] as const;
+  })));
+  for (const finalAssetId of remainingFinalAssetIds) {
+    const finalHash = uploadedHashes.get(finalAssetId);
+    assert.ok(finalHash);
+    for (const [otherAssetId, otherHash] of uploadedHashes) {
+      if (otherAssetId === finalAssetId) continue;
+      assert.ok(
+        visualHashDistance(finalHash, otherHash) >= MINIMUM_SHOT_HASH_DISTANCE,
+        `${finalAssetId} must remain visually distinct from ${otherAssetId}`,
+      );
+    }
+  }
+  assert.deepEqual(resultPayload.deterministic_fallback, {
+    reviewedInputOnly: true,
+    masterReason: "gateway_rate_limited",
+    localizationReasons: ["master_transient_fallback"],
+    imageReason: "gateway_rate_limited",
+  });
+});
+
+test("successful reviewed fallback logs one bounded Gateway diagnostic without another provider attempt", async () => {
+  const diagnostic: AiGatewayFailureDiagnostic = {
+    reason: "gateway_rate_limited",
+    httpStatus: 429,
+    limitKind: "provider_image_rate_limit",
+    retryAfterMs: 12_000,
+    generationId: "gen_01SAFEFALLBACK",
+    requestId: "req_safe_fallback",
+    upstreamProviderAttempted: true,
+  };
+  const run = await runReviewedTransientPipelineFixture({ transientDiagnostic: diagnostic });
+  assert.equal(run.response.status, 200);
+  assert.equal(run.structuredCalls, 1, "the diagnostic path must not add a provider retry");
+  assert.equal(run.segmentationCalls, 1, "the existing parallel segmentation attempt remains the only other provider call");
+  assert.deepEqual(run.logs, [{
+    stage: "gateway_fallback",
+    details: {
+      reason: "gateway_rate_limited",
+      status: 429,
+      limitKind: "provider_image_rate_limit",
+      retryAfterMs: 12_000,
+      generationId: "gen_01SAFEFALLBACK",
+      requestId: "req_safe_fallback",
+      upstreamProviderAttempted: true,
+      kind: "product_studio",
+      fallbackPath: "master",
+      fallbackCount: 2,
+    },
+  }]);
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "succeeded");
+});
+
+test("master success plus a transient segmentation outage keeps normal text and exposes the deterministic ten-image warning", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "segmentation-transient",
+  });
+  assert.deepEqual(
+    await run.response.json(),
+    { ok: true, status: "succeeded", processed: 1 },
+    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
+  );
+  assert.equal(run.backgroundCalls, 0);
+  assert.equal(run.auditCalls, 0);
+  const completion = run.completionCalls.at(-1);
+  assert.equal(completion?.p_status, "succeeded");
+  const payload = completion?.p_result_payload as {
+    warnings: string[];
+    deterministic_fallback: Record<string, unknown>;
+    asset_audit_modes: Record<string, string>;
+  };
+  assert.equal(payload.deterministic_fallback.masterReason, null);
+  assert.deepEqual(payload.deterministic_fallback.localizationReasons, []);
+  assert.equal(payload.deterministic_fallback.imageReason, "gateway_rate_limited");
+  assert.ok(payload.warnings.some((warning) => /gateway_rate_limited.*나머지 10장은 AI 생성 이미지가 아니라 원본 사진 기반/u.test(warning)));
+  remainingFinalAssetIds.forEach((assetId) => assert.equal(payload.asset_audit_modes[assetId], "source-photo-catalog"));
+});
+
+test("one transient localization chunk is replaced from reviewed facts and exposes a user-visible warning", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "partial-localization-transient",
+  });
+  assert.deepEqual(
+    await run.response.json(),
+    { ok: true, status: "succeeded", processed: 1 },
+    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
+  );
+  const completion = run.completionCalls.at(-1);
+  assert.equal(completion?.p_status, "succeeded");
+  const payload = completion?.p_result_payload as {
+    warnings: string[];
+    localizedListings: Array<{ channel: string; market: string; description: string }>;
+    deterministic_fallback: { localizationReasons: string[] };
+  };
+  assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["gateway_rate_limited"]);
+  assert.ok(payload.warnings.some((warning) => /일부 국가별 문안/u.test(warning)));
+  assert.equal(payload.localizedListings.length, 34);
+  assert.ok(payload.localizedListings.some((listing) => /5000 KRW/u.test(listing.description)));
+});
+
+test("a transient image failure after remote candidates exist discards every partial final asset and rebuilds all ten deterministically", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "partial-image-transient",
+  });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.ok(run.backgroundCalls >= 2);
+  assert.ok(run.auditCalls >= 4);
+  assert.ok(run.auditedCandidateDigests.size >= 4);
+  const completion = run.completionCalls.at(-1);
+  assert.equal(completion?.p_status, "succeeded");
+  const payload = completion?.p_result_payload as {
+    warnings: string[];
+    deterministic_fallback: Record<string, unknown>;
+    asset_audit_modes: Record<string, string>;
+  };
+  assert.equal(payload.deterministic_fallback.imageReason, "gateway_rate_limited");
+  assert.ok(payload.warnings.some((warning) => /사람이 승인한 1차 이미지 6장은 그대로 보존/u.test(warning)));
+  for (const assetId of remainingFinalAssetIds) {
+    const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+    assert.ok(spec);
+    const uploadedBytes = run.uploaded.get(aiGeneratedAssetPath(run.jobId, spec, run.claimToken));
+    assert.ok(uploadedBytes);
+    const uploadedDigest = createHash("sha256").update(uploadedBytes).digest("hex");
+    assert.equal(payload.asset_audit_modes[assetId], "source-photo-catalog");
+    assert.equal(
+      run.auditedCandidateDigests.get(assetId)?.includes(uploadedDigest) ?? false,
+      false,
+      `${assetId} must not retain a partial remote candidate after another lane fails`,
+    );
+  }
+});
+
+test("reviewed general-food efficacy or intake claims remain fail-closed instead of entering the emergency fallback", () => {
+  assert.throws(
+    () => buildReviewedServerStudioFallbackMaster({
+      ...reviewedFallbackManualFields(),
+      description: "판매자가 입력한 일반 과자이며 면역력 개선에 도움을 주고 하루 2개 섭취하도록 안내합니다.",
+    }),
+    /reviewed_general_food_claim_requires_manual_correction/u,
+  );
+});
+
+test("transient gateway failures remain terminal for marker-mismatched and legacy jobs", async () => {
+  for (const requestMode of ["marker-mismatch", "legacy"] as const) {
+    const run = await runReviewedTransientPipelineFixture({ requestMode });
+    assert.equal(run.response.status, 200);
+    assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+    assert.equal(run.uploaded.size, 0);
+    assert.equal(run.completionCalls.length, 1);
+    assert.equal(run.completionCalls[0].p_status, "failed");
+    assert.equal(run.completionCalls[0].p_error_message, "gateway_rate_limited");
+    assert.equal(run.logs.at(-1)?.details.reason, "gateway_rate_limited");
+  }
+});
+
+test("reviewed transient fallback fails closed when one approved first-draft asset no longer matches its digest", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    corruptPreflightAssetId: "portrait",
+  });
+  assert.equal(run.response.status, 200);
+  assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.equal(run.completionCalls[0].p_error_message, "preflight_asset_digest_mismatch");
+});
+
+test("reviewed transient fallback rejects exact duplicates inside the approved first six", async () => {
+  const run = await runReviewedTransientPipelineFixture({ duplicatePreflightAsset: true });
+  assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.equal(run.completionCalls[0].p_error_message, "preflight_asset_exact_duplicate");
+});
+
+test("reviewed transient fallback rejects a main source whose sha no longer matches the reviewed first stage", async () => {
+  const run = await runReviewedTransientPipelineFixture({ sourcePhotoHashMismatch: true });
+  assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.equal(run.completionCalls[0].p_error_message, "source_photo_sha256_mismatch");
+});
+
+test("reviewed transient fallback never reports success after a result storage upload failure", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    uploadFailureReason: "result_storage_upload_failed",
+  });
+  assert.equal(run.response.status, 200);
+  assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.equal(run.completionCalls[0].p_error_message, "result_storage_upload_failed");
+});
+
+test("reviewed deterministic image fallback observes the runtime abort fence before upload or success completion", async () => {
+  const run = await runReviewedTransientPipelineFixture({ runtimeTimeoutMs: 100 });
+  assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.equal(run.completionCalls[0].p_error_message, "server_studio_runtime_timeout");
+  assert.equal(run.uploaded.size, 0);
 });
 
 test("single-main intake keeps package and contents images honest instead of failing for an optional role", async () => {
