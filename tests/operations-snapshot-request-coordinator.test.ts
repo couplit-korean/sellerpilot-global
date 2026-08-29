@@ -76,6 +76,31 @@ test("concurrent refreshes for the same range share one request", async () => {
   await first;
 });
 
+test("aborting an in-flight snapshot before a post-mutation reload guarantees a fresh same-range request", async () => {
+  const coordinator = new OperationsSnapshotRequestCoordinator();
+  const firstResponse = deferred();
+  const calls: string[] = [];
+  let firstRequest: OperationsSnapshotRequest | null = null;
+
+  const first = coordinator.run("same", async (request) => {
+    firstRequest = request;
+    calls.push("before-mutation");
+    await firstResponse.promise;
+  });
+  await Promise.resolve();
+
+  coordinator.abortCurrent();
+  const fresh = coordinator.run("same", async () => {
+    calls.push("after-mutation");
+  });
+
+  assert.equal(firstRequest?.signal.aborted, true);
+  assert.notStrictEqual(fresh, first);
+  firstResponse.resolve();
+  await Promise.allSettled([first, fresh]);
+  assert.deepEqual(calls, ["before-mutation", "after-mutation"]);
+});
+
 test("sales range keys depend on dates rather than the preset label", () => {
   assert.equal(
     operationsSnapshotRangeKey({ from: "2026-08-01", to: "2026-08-25" }),

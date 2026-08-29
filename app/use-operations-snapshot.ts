@@ -644,6 +644,10 @@ export function useOperationsSnapshot() {
 
   const reload = useCallback(() => load({ force: true, refreshProductImages: true }), [load]);
   const refresh = useCallback(() => load({ force: true }), [load]);
+  const reloadAfterMutation = useCallback(() => {
+    requestCoordinatorRef.current.abortCurrent();
+    return load({ force: true, refreshProductImages: true });
+  }, [load]);
 
   useEffect(() => {
     const requestCoordinator = requestCoordinatorRef.current;
@@ -663,5 +667,5 @@ export function useOperationsSnapshot() {
     };
   }, [load]);
 
-  return { data, state, message, range, setRange, reload, refresh, authenticatedFetch };
+  return { data, state, message, range, setRange, reload, refresh, reloadAfterMutation, authenticatedFetch };
 }
