@@ -14,6 +14,7 @@ import {
   normalizeServerStudioMasterContract,
   resolveServerAssetSource,
   runOneServerProductStudio,
+  ServerProductStudioError,
   serverStudioRemoteWorkPlan,
   type ServerStudioSource,
 } from "../lib/server-product-studio";
@@ -513,6 +514,7 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
   const uploadedPaths: string[] = [];
   const completionCalls: Record<string, unknown>[] = [];
   let completionAttempt = 0;
+  let masterAttempts = 0;
 
   const response = await runOneServerProductStudio({
     tokenHash: "b".repeat(64),
@@ -589,6 +591,10 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
     },
     generateStructured: async (input) => {
       if (input.tags.includes("feature:product-studio-master")) {
+        masterAttempts += 1;
+        if (masterAttempts === 1) {
+          throw new ServerProductStudioError("gateway_result_invalid");
+        }
         const repeatedMetadata = testMasterResult();
         repeatedMetadata.design.creativeStrategy.targetSectionCount = 20;
         repeatedMetadata.design.sections = repeatedMetadata.design.sections.map((section, index) => ({
@@ -666,6 +672,7 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.equal(masterAttempts, 2, "an invalid structured master must receive one bounded retry");
   assert.equal(new Set(uploadedPaths).size, 16);
   assert.equal(uploadedPaths.length, 16);
   assert.deepEqual(

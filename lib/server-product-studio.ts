@@ -33,8 +33,8 @@ import {
   type StudioLocalizedTarget,
 } from "./studio-segment-generation";
 
-export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.0";
-export const SERVER_PRODUCT_STUDIO_TEXT_MODEL = "openai/gpt-5.4-mini";
+export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.1";
+export const SERVER_PRODUCT_STUDIO_TEXT_MODEL = "openai/gpt-5.6-luna";
 export const SERVER_PRODUCT_STUDIO_IMAGE_MODEL = "openai/gpt-image-2";
 export const SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE = 3;
 export const SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY = 9;
@@ -288,9 +288,16 @@ async function defaultGenerateStructured<T>(input: {
         mediaType: image.mediaType,
       })),
     ];
+    const masterOutput = input.tags.includes("feature:product-studio-master");
     const generated = await generateText({
       model: SERVER_PRODUCT_STUDIO_TEXT_MODEL,
-      output: Output.object({ schema: input.schema }),
+      output: Output.object({
+        schema: input.schema,
+        ...(masterOutput ? {
+          name: "sellerpilot_product_studio_master",
+          description: "A complete SellerPilot product-detail master with every required field and exactly 16 to 20 sections.",
+        } : {}),
+      }),
       messages: [{ role: "user", content }],
       maxOutputTokens: 32_768,
       maxRetries: 0,
@@ -650,21 +657,33 @@ async function generateStudioMaster(
   const generate = dependencies.generateStructured ?? defaultGenerateStructured;
   let master: z.infer<typeof studioMasterResultSchema> | null = null;
   let issue = "";
+  let structuralFailure: ServerProductStudioError | null = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const prompt = [
       buildServerStudioMasterPrompt(request),
       ...(issue ? [`이전 결과의 하드 계약 오류를 수정하세요: ${issue}`] : []),
     ].join("\n");
-    master = normalizeServerStudioMasterContract(await generate({
-      schema: studioMasterResultSchema,
-      prompt,
-      images: sources,
-      signal,
-      tags: ["feature:product-studio-master", `attempt:${attempt}`],
-    }));
+    try {
+      master = normalizeServerStudioMasterContract(await generate({
+        schema: studioMasterResultSchema,
+        prompt,
+        images: sources,
+        signal,
+        tags: ["feature:product-studio-master", `attempt:${attempt}`],
+      }));
+      structuralFailure = null;
+    } catch (error) {
+      if (error instanceof ServerProductStudioError && error.safeReason === "gateway_result_invalid") {
+        structuralFailure = error;
+        issue = "이전 응답이 JSON 스키마를 충족하지 못했습니다. 16개 섹션과 모든 필수 필드를 완전하게 반환하세요.";
+        continue;
+      }
+      throw error;
+    }
     issue = masterSemanticIssue(master);
     if (!issue) break;
   }
+  if (!master && structuralFailure) throw structuralFailure;
   if (!master || issue) throw new ServerProductStudioError("studio_master_contract_invalid", true);
   const missingDedicatedEvidence = missingDedicatedEvidenceAssetIds(
     request.image_specs.map((spec) => spec.role),
