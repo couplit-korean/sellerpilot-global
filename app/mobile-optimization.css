@@ -3114,6 +3114,12 @@
     padding-left: max(var(--mobile-gutter), env(safe-area-inset-left));
   }
 
+  /* Keep the separate CS pair at two columns, but give each marketplace
+     status card enough width for its channel name and connection state. */
+  .channel-performance > .channel-list {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
   .registration-card-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3461,6 +3467,44 @@
   .mobile-push-gate-actions button:only-child {
     width: 100%;
     grid-column: auto;
+  }
+}
+
+/* An operations warning adds a fifth header control. Give the page title and
+   controls separate rows on phone widths instead of shrinking the title into
+   an unreadable strip. The header-height token also keeps fixed popovers below
+   the expanded sticky header. */
+@media (max-width: 412px) {
+  .app-header-stack:has(> .topbar > .topbar-actions.has-operations-attention) {
+    --mobile-topbar-height: 104px;
+    --mobile-header-clearance: calc(var(--mobile-header-safe-top) + var(--mobile-service-rail-height) + var(--mobile-topbar-height));
+  }
+
+  .topbar:has(> .topbar-actions.has-operations-attention) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(44px, auto) minmax(44px, auto);
+    align-items: center;
+    gap: 4px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .topbar:has(> .topbar-actions.has-operations-attention) > .topbar-title {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .topbar:has(> .topbar-actions.has-operations-attention) > .topbar-title h1 {
+    width: auto;
+    max-width: 100%;
+  }
+
+  .topbar:has(> .topbar-actions.has-operations-attention) > .topbar-actions {
+    width: 100%;
+    min-width: 0;
+    flex: none;
+    justify-content: flex-end;
   }
 }
 
