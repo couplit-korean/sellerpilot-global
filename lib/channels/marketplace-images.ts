@@ -94,7 +94,36 @@ export function isPrivateMarketplaceAddress(address: string) {
     || parts[0] >= 224;
 }
 
-async function assertPublicImageUrl(sourceUrl: string) {
+type MarketplaceDnsResolver = (
+  hostname: string,
+  options: { all: true },
+) => Promise<Array<{ address: string; family: number }>>;
+
+export async function resolveMarketplaceImageAddresses(
+  hostname: string,
+  ownerSignal?: AbortSignal,
+  resolver: MarketplaceDnsResolver = lookup,
+) {
+  if (isIP(hostname)) return [{ address: hostname, family: isIP(hostname) }];
+  ownerSignal?.throwIfAborted();
+  const resolution = resolver(hostname, { all: true });
+  if (!ownerSignal) return resolution;
+  return new Promise<Array<{ address: string; family: number }>>((resolve, reject) => {
+    let settled = false;
+    const finish = (error: unknown, records?: Array<{ address: string; family: number }>) => {
+      if (settled) return;
+      settled = true;
+      ownerSignal.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve(records ?? []);
+    };
+    const onAbort = () => finish(ownerSignal.reason ?? new Error("MARKETPLACE_IMAGE_DOWNLOAD_ABORTED"));
+    ownerSignal.addEventListener("abort", onAbort, { once: true });
+    resolution.then((records) => finish(null, records), (error) => finish(error));
+  });
+}
+
+async function assertPublicImageUrl(sourceUrl: string, ownerSignal?: AbortSignal) {
   let url: URL;
   try {
     url = new URL(sourceUrl);
@@ -105,9 +134,7 @@ async function assertPublicImageUrl(sourceUrl: string) {
     throw new Error("MARKETPLACE_IMAGE_URL_INVALID");
   }
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
-  const records = isIP(hostname)
-    ? [{ address: hostname, family: isIP(hostname) }]
-    : await lookup(hostname, { all: true });
+  const records = await resolveMarketplaceImageAddresses(hostname, ownerSignal);
   if (!records.length || records.some((record) => isPrivateMarketplaceAddress(record.address))) {
     throw new Error("MARKETPLACE_IMAGE_URL_PRIVATE");
   }
@@ -151,7 +178,7 @@ export async function collectBoundedMarketplaceImage(
 
 export async function downloadMarketplaceImage(sourceUrl: string, ownerSignal?: AbortSignal) {
   ownerSignal?.throwIfAborted();
-  const target = await assertPublicImageUrl(sourceUrl);
+  const target = await assertPublicImageUrl(sourceUrl, ownerSignal);
   ownerSignal?.throwIfAborted();
   const timeoutSignal = AbortSignal.timeout(20_000);
   const requestSignal = ownerSignal
@@ -528,6 +555,9 @@ export async function prepareMarketplaceImages(
 
   const assets = record(next.sellerpilotAssets);
   delete next.sellerpilotAssets;
+  const manualSourceMode = assets?.contentMode === "manual_mvp"
+    && assets.detailAssetMode === "manual_source";
+  if (manualSourceMode) next.sellerpilotContentMode = "manual_mvp";
   const elevenstProductPatch = channel === "elevenst" ? record(next.productPatch) : null;
   const elevenstMediaFields = ["prdImage01", "prdImage02", "prdImage03", "prdImage04", "htmlDetail"] as const;
   if (channel === "elevenst"
@@ -538,16 +568,21 @@ export async function prepareMarketplaceImages(
     // panels that were not part of the requested mutable projection.
     return next;
   }
-  if (!assets || (
-    assets.detailAssetMode !== "dedicated"
-    || new Set(strings(assets.detailImageUrls)).size < marketplaceChannelDetailImageCount
-    || !hasCompleteLocalizedDetailSections(assets)
-  )) {
+  if (!assets || (manualSourceMode
+    ? new Set(strings(assets.galleryImageUrls)).size < 1
+      || new Set(strings(assets.detailImageUrls)).size < 1
+    : assets.detailAssetMode !== "dedicated"
+      || new Set(strings(assets.detailImageUrls)).size < marketplaceChannelDetailImageCount
+      || !hasCompleteLocalizedDetailSections(assets))) {
     throw new Error("MARKETPLACE_DETAIL_IMAGE_REQUIRED");
   }
   const gallery = assets ? await normalizeList(assets.galleryImageUrls, 12, "gallery-square") : [];
   const details = assets
-    ? await normalizeList(assets.detailImageUrls, marketplaceChannelDetailImageCount, "detail-ratio")
+    ? await normalizeList(
+        assets.detailImageUrls,
+        manualSourceMode ? 10 : marketplaceChannelDetailImageCount,
+        "detail-ratio",
+      )
     : [];
   const detailImageAltTexts = strings(assets?.detailImageAltTexts).slice(0, details.length);
   const detailImageRoles = strings(assets?.detailImageRoles).slice(0, details.length);
@@ -647,7 +682,7 @@ export async function prepareMarketplaceImages(
       : imageFields;
     let normalized: string[] = [];
     if (requestedImageFields.some((field) => productPatch?.[field] !== "" && productPatch?.[field] !== null)) {
-      normalized = gallery.length ? uniqueStrings([...gallery, ...details]).slice(0, 4) : await normalizeList([
+      normalized = gallery.length ? uniqueStrings(manualSourceMode ? gallery : [...gallery, ...details]).slice(0, 4) : await normalizeList([
         product.prdImage01,
         product.prdImage02,
         product.prdImage03,
@@ -662,8 +697,16 @@ export async function prepareMarketplaceImages(
         product[field] = requestedValue;
       } else {
         const url = normalized[index];
-        if (!url) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-        product[field] = url;
+        if (!url) {
+          // 11st only requires the representative image on create. Manual-MVP
+          // products may intentionally have a single verified source photo;
+          // keep optional image slots empty instead of turning that valid
+          // create into a false MARKETPLACE_IMAGE_REQUIRED failure.
+          if (!productPatch && index > 0) product[field] = "";
+          else throw new Error("MARKETPLACE_IMAGE_REQUIRED");
+        } else {
+          product[field] = url;
+        }
       }
       if (productPatch) productPatch[field] = product[field];
     }

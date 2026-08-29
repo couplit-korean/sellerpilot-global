@@ -143,6 +143,7 @@ type PublishContext = {
   sourceImages: Array<{ path: string; url: string | null }>;
   generatedImages: Array<{ id: string; path: string; url: string | null }>;
   localizedListings: LocalizedListing[];
+  contentMode?: "ai_generated" | "manual_mvp";
 };
 
 type ChannelResult = WorkbenchChannelResult;
@@ -241,6 +242,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     : localized;
   const classification = writeListing?.classification ?? context.classification ?? product.classification;
   const localizedDetailSections = normalizedLocalizedDetailSections(writeListing);
+  const manualMvp = context.contentMode === "manual_mvp";
   const generatedImage = (id: string) => context.generatedImages.find((item) => item.id === id)?.url;
   const galleryAssetIds = galleryAssetOrderForChannel(channel);
   const galleryImageUrls = uniqueUrls([
@@ -258,11 +260,14 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     && localizedDetailSections.length === marketplaceChannelDetailImageCount
     && dedicatedDetailImageRoles.length === marketplaceChannelDetailImageCount
     && uniqueUrls(dedicatedDetailImageUrls).length === dedicatedDetailImageRoles.length;
-  const detailImageUrls = uniqueUrls(dedicatedDetailReady
-    ? dedicatedDetailImageUrls
-    : [generatedImage("portrait"), generatedImage("wide"), generatedImage("hero")]);
+  const detailImageUrls = uniqueUrls(manualMvp
+    ? galleryImageUrls
+    : dedicatedDetailReady
+      ? dedicatedDetailImageUrls
+      : [generatedImage("portrait"), generatedImage("wide"), generatedImage("hero")]);
   const sourceImage = galleryImageUrls[0] ?? "";
   const sellerpilotAssets = {
+    contentMode: manualMvp ? "manual_mvp" : "ai_generated",
     galleryImageUrls,
     detailImageUrls,
     detailImageRoles: dedicatedDetailReady ? imageSeo.detailImageRoles : [],
@@ -270,7 +275,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     thumbnailAltText: imageSeo.thumbnailAltText,
     localizedDetailSections,
     classification,
-    detailAssetMode: dedicatedDetailReady ? "dedicated" : "legacy_fallback",
+    detailAssetMode: manualMvp ? "manual_source" : dedicatedDetailReady ? "dedicated" : "legacy_fallback",
     integrationRevision: "marketplace-write-v4-evidence-detail",
   };
   const manual = context.manualFields;
@@ -554,18 +559,21 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   };
 }
 
-function missingNativeValues(channel: ActiveChannelKey, value: Record<string, unknown>) {
+export function missingNativeValues(channel: ActiveChannelKey, value: Record<string, unknown>) {
   const json = JSON.stringify(value);
   const assets = value.sellerpilotAssets && typeof value.sellerpilotAssets === "object" && !Array.isArray(value.sellerpilotAssets)
     ? value.sellerpilotAssets as Record<string, unknown>
     : {};
   const galleryImages = Array.isArray(assets.galleryImageUrls) ? assets.galleryImageUrls.filter(Boolean) : [];
   const detailImages = Array.isArray(assets.detailImageUrls) ? assets.detailImageUrls.filter(Boolean) : [];
+  const manualMvp = assets.contentMode === "manual_mvp" && assets.detailAssetMode === "manual_source";
   const assetRequirements = [
     galleryImages.length === 0 ? "marketplace thumbnail image" : "",
-    assets.detailAssetMode !== "dedicated" || detailImages.length < marketplaceChannelDetailImageCount
-      ? `dedicated marketplace detail images (${marketplaceChannelDetailImageCount})`
-      : "",
+    manualMvp
+      ? detailImages.length === 0 ? "manual source detail image" : ""
+      : assets.detailAssetMode !== "dedicated" || detailImages.length < marketplaceChannelDetailImageCount
+        ? `dedicated marketplace detail images (${marketplaceChannelDetailImageCount})`
+        : "",
   ].filter(Boolean);
   if (channel === "qoo10") {
     const params = value.params as Record<string, unknown> | undefined;
@@ -1269,8 +1277,11 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
 
   const marketplaceThumbnailCount = context.generatedImages.filter((item) => (item.id === "square" || item.id === "hero") && item.url).length;
   const dedicatedDetailImageCount = context.generatedImages.filter((item) => item.id.startsWith("detail-") && item.url).length;
-  const imagePackageReady = marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount
-    && dedicatedDetailImageCount >= marketplaceChannelDetailImageCount;
+  const manualMvp = context.contentMode === "manual_mvp";
+  const imagePackageReady = manualMvp
+    ? context.sourceImages.some((item) => Boolean(item.url))
+    : marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount
+      && dedicatedDetailImageCount >= marketplaceChannelDetailImageCount;
   const remoteUpdateChannelCount = visibleChannels.filter((channel) => {
     const target = selectedTargets[channel];
     const listing = context.listings.find((item) => item.channel === channel
@@ -1307,8 +1318,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       <label><span>판매 구성 <i>필수</i></span><select required value={context.manualFields.packageContents} onChange={(event) => updateProductFact("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select></label>
       <button type="button" onClick={() => setDrafts(buildDraftMap(context, price, quantity, selectedTargets, packageFields, globalBaseUsdPrice))}><RefreshCw size={14} />공통값으로 초안 갱신</button>
     </div>
-    <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>대표 {marketplaceThumbnailCount}장 · 상세 전용 {dedicatedDetailImageCount}/{marketplaceChannelDetailImageCount}장</span><span><Check size={15} /><b>등록 직전 보정</b>대표 1200×1200 JPEG · 상세 원본 비율 · 각 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
-    {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>대표 썸네일과 채널용 상세 전용 이미지 {marketplaceChannelDetailImageCount}장이 모두 필요합니다.</b><small>이전 8종 생성 상품은 실제 등록을 차단합니다. 상품 등록 화면에서 AI 상세·썸네일을 다시 생성하면 대표·설정·근거를 분리한 새 {marketplaceGeneratedAssetCount}종 이미지 세트로 교체됩니다.</small></div></div>}
+    <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>{manualMvp ? `원본 ${context.sourceImages.filter((item) => item.url).length}장 직접 사용` : `대표 ${marketplaceThumbnailCount}장 · 상세 전용 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장`}</span><span><Check size={15} /><b>등록 직전 보정</b>대표 1200×1200 JPEG · 상세 원본 비율 · 각 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
+    {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>{manualMvp ? "원본 대표사진이 필요합니다." : `대표 썸네일과 채널용 상세 전용 이미지 ${marketplaceChannelDetailImageCount}장이 모두 필요합니다.`}</b><small>{manualMvp ? "AI 결과로 가장하지 않고 판매자가 확인한 원본 사진만 채널 규격으로 보정합니다." : `이전 8종 생성 상품은 실제 등록을 차단합니다. 상품 등록 화면에서 AI 상세·썸네일을 다시 생성하면 대표·설정·근거를 분리한 새 ${marketplaceGeneratedAssetCount}종 이미지 세트로 교체됩니다.`}</small></div></div>}
     <div className="publish-channel-cards">{visibleChannels.map((channel) => {
       const definition = channelCatalog[channel];
       const credential = activeCredentials.get(channel);
@@ -1362,7 +1373,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         </section>}
         {remoteUpdate && !operationAvailable && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />원격 반영 차단 · 판매자센터 수동 수정</button>}
         {operationAvailable && <>
-          <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}대표+상세 {marketplaceChannelDetailImageCount}장</span></div>
+          <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? "원본 사진 등록" : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
           {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
           {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>채널 JSON 형식 확인 필요</b><small>아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다.</small></div> : <div className="publish-required-fields">

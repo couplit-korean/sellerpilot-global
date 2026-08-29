@@ -1665,95 +1665,69 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
   }
 });
 
-test("eBay listing auto-selects non-vehicle policies and an enabled inventory location", async () => {
+test("eBay listing rejects server-managed policies before any provider request", async () => {
   const originalFetch = globalThis.fetch;
-  const calls: Array<{ url: string; body?: Record<string, unknown> }> = [];
-  globalThis.fetch = async (input, init) => {
-    const url = String(input);
-    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
-    calls.push({ url, body });
-    if (url.includes("/fulfillment_policy")) return Response.json({ fulfillmentPolicies: [{ fulfillmentPolicyId: "fulfillment-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
-    if (url.includes("/payment_policy")) return Response.json({ paymentPolicies: [{ paymentPolicyId: "payment-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
-    if (url.includes("/return_policy")) return Response.json({ returnPolicies: [{ returnPolicyId: "return-auto", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
-    if (url.includes("/location?")) return Response.json({ locations: [{ merchantLocationKey: "warehouse-auto", location: { merchantLocationStatus: "ENABLED" } }] });
-    if (url.includes("/inventory_item/") && init?.method === "GET") return Response.json({ product: { imageUrls: ["https://cdn.example.com/item.jpg"] } });
-    if (url.endsWith("/offer") && init?.method === "POST") return Response.json({ offerId: "offer-auto" }, { status: 201 });
-    if (url.endsWith("/offer/offer-auto") && init?.method === "GET") return Response.json({ offerId: "offer-auto" });
-    return new Response(null, { status: 204 });
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    throw new Error("provider request must not run");
   };
   try {
-    const result = await executeChannelOperation({
-      channel: "ebay",
-      operation: "listing.create",
-      payload: { access_token: "token", marketplace_id: "EBAY_US" },
-      arguments: {
-        sku: "SELLERPILOT-AUTO",
-        inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
-        offer: {
+    await assert.rejects(
+      executeChannelOperation({
+        channel: "ebay",
+        operation: "listing.create",
+        payload: { access_token: "token", marketplace_id: "EBAY_US" },
+        arguments: {
           sku: "SELLERPILOT-AUTO",
-          marketplaceId: "EBAY_US",
-          listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
-          merchantLocationKey: "SERVER_MANAGED",
+          inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
+          offer: {
+            sku: "SELLERPILOT-AUTO",
+            marketplaceId: "EBAY_US",
+            listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
+            merchantLocationKey: "warehouse-operator",
+          },
+          publish: false,
         },
-        publish: false,
-      },
-      environment: "production",
-    });
-    assert.equal(result.ok, true);
-    const offerCall = calls.find((call) => call.url.endsWith("/offer"));
-    assert.deepEqual(offerCall?.body?.listingPolicies, {
-      fulfillmentPolicyId: "fulfillment-auto",
-      paymentPolicyId: "payment-auto",
-      returnPolicyId: "return-auto",
-    });
-    assert.equal(offerCall?.body?.merchantLocationKey, "warehouse-auto");
-    assert.deepEqual(result.steps.map((item) => item.name), ["fulfillment-policies", "payment-policies", "return-policies", "inventory-locations", "inventory-item", "inventory-image-readback", "offer", "offer-readback"]);
+        environment: "production",
+      }),
+      /EBAY_LISTING_CONFIGURATION_REQUIRED/,
+    );
+    assert.equal(providerCalls, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("eBay listing provisions and verifies a reusable inventory location when the account has none", async () => {
+test("eBay listing rejects a server-managed inventory location instead of creating one", async () => {
   const originalFetch = globalThis.fetch;
-  const calls: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
-  globalThis.fetch = async (input, init) => {
-    const url = String(input);
-    const method = init?.method ?? "GET";
-    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : undefined;
-    calls.push({ url, method, body });
-    if (url.includes("/fulfillment_policy")) return Response.json({ fulfillmentPolicies: [{ fulfillmentPolicyId: "f-1", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
-    if (url.includes("/payment_policy")) return Response.json({ paymentPolicies: [{ paymentPolicyId: "p-1", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
-    if (url.includes("/return_policy")) return Response.json({ returnPolicies: [{ returnPolicyId: "r-1", categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }] }] });
-    if (url.includes("/location?") && method === "GET") return Response.json({ locations: [] });
-    if (url.endsWith("/location/sellerpilot-seoul") && method === "POST") return new Response(null, { status: 204 });
-    if (url.endsWith("/location/sellerpilot-seoul") && method === "GET") return Response.json({ merchantLocationKey: "sellerpilot-seoul", merchantLocationStatus: "ENABLED" });
-    if (url.includes("/inventory_item/") && method === "GET") return Response.json({ product: { imageUrls: ["https://cdn.example.com/item.jpg"] } });
-    if (url.endsWith("/offer") && method === "POST") return Response.json({ offerId: "offer-new-location" }, { status: 201 });
-    if (url.endsWith("/offer/offer-new-location") && method === "GET") return Response.json({ offerId: "offer-new-location" });
-    return new Response(null, { status: 204 });
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    throw new Error("provider request must not run");
   };
   try {
-    const result = await executeChannelOperation({
-      channel: "ebay",
-      operation: "listing.create",
-      payload: { access_token: "token", marketplace_id: "EBAY_US" },
-      arguments: {
-        sku: "SELLERPILOT-LOCATION",
-        inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
-        offer: {
+    await assert.rejects(
+      executeChannelOperation({
+        channel: "ebay",
+        operation: "listing.create",
+        payload: { access_token: "token", marketplace_id: "EBAY_US" },
+        arguments: {
           sku: "SELLERPILOT-LOCATION",
-          marketplaceId: "EBAY_US",
-          listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
-          merchantLocationKey: "SERVER_MANAGED",
+          inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
+          offer: {
+            sku: "SELLERPILOT-LOCATION",
+            marketplaceId: "EBAY_US",
+            listingPolicies: { fulfillmentPolicyId: "f-1", paymentPolicyId: "p-1", returnPolicyId: "r-1" },
+            merchantLocationKey: "SERVER_MANAGED",
+          },
+          publish: false,
         },
-        publish: false,
-      },
-      environment: "production",
-    });
-    assert.equal(result.ok, true);
-    assert.equal(calls.find((call) => call.url.endsWith("/location/sellerpilot-seoul") && call.method === "POST")?.body?.merchantLocationStatus, "ENABLED");
-    assert.equal(calls.find((call) => call.url.endsWith("/offer"))?.body?.merchantLocationKey, "sellerpilot-seoul");
-    assert.equal(result.steps.some((item) => item.name === "inventory-location-readback" && item.ok), true);
+        environment: "production",
+      }),
+      /EBAY_LISTING_CONFIGURATION_REQUIRED/,
+    );
+    assert.equal(providerCalls, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -1,6 +1,7 @@
 import { runChannelDiagnostic, type ChannelDiagnostic } from "../channel-diagnostics";
 import { searchElevenstProductVariants, type CompetitorPriceCandidate } from "../competitor-prices";
 import { ebayAsqOperationMarketplaceId } from "./ebay-asq";
+import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
 import type { GatewayClaim } from "./gateway-contract";
 import {
   executeProviderListingLineageVerification,
@@ -460,7 +461,15 @@ export async function executeServerlessGatewayProviderJob(
       throw new Error("SERVERLESS_GATEWAY_OPERATION_NOT_ALLOWED");
     }
 
-    const preparedCredential = await prepareCredential(input, requestArguments(input.job));
+    const rawArguments = requestArguments(input.job);
+    if (input.job.channel === "ebay" && input.job.operation === "listing.create") {
+      // Reject legacy/directly queued drafts before OAuth refresh, media writes,
+      // or the provider-mutation fence. Policy/location selection is an
+      // operator decision and cannot be inferred safely by the worker.
+      assertEbayListingCreateConfiguration(rawArguments);
+    }
+
+    const preparedCredential = await prepareCredential(input, rawArguments);
     let operationArguments = preparedCredential.arguments_;
     let mediaMutationObserved = false;
     if (input.job.operation === "listing.create" || input.job.operation === "listing.update") {

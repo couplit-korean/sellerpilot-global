@@ -29,6 +29,7 @@ import {
   ebayAsqMarketplaceIdFromSiteCode,
   type EbayAsqMarketplaceId,
 } from "./ebay-asq";
+import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
 import { validateElevenstListingProduct } from "./elevenst-listing";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import {
@@ -1513,6 +1514,9 @@ async function executeQoo10(input: ExecuteInput) {
   // same verified HTML through that method before treating the create as done.
   const detailHtml = params.ItemDescription ?? "";
   const expectedDetailImages = qoo10ImageCount(detailHtml);
+  const minimumExpectedDetailImages = input.arguments.sellerpilotContentMode === "manual_mvp"
+    ? 1
+    : marketplaceChannelDetailImageCount;
   const detailUpdate = await qoo10Request({
     payload: input.payload,
     service: "ItemsContents",
@@ -1538,7 +1542,7 @@ async function executeQoo10(input: ExecuteInput) {
     readbackImageCount = qoo10ImageCount(qoo10DetailHtml(readback.data.ResultObject));
     if (
       readbackStep.ok
-      && expectedDetailImages >= marketplaceChannelDetailImageCount
+      && expectedDetailImages >= minimumExpectedDetailImages
       && readbackImageCount >= expectedDetailImages
     ) {
       if (input.operation === "listing.update") {
@@ -3429,9 +3433,12 @@ async function executeEbay(input: ExecuteInput) {
     return result(input, [step("category-aspects", remote)], categoryId);
   }
   if (input.operation === "listing.create") {
+    assertEbayListingCreateConfiguration(input.arguments);
     const sku = pathSegment(stringArgument(input.arguments, "sku"));
     const inventoryItem = objectValue(input.arguments, "inventoryItem");
     const offer = structuredClone(objectValue(input.arguments, "offer"));
+    const marketplaceId = String(offer.marketplaceId ?? "").trim();
+    if (!marketplaceId) throw new Error("CHANNEL_ARGUMENT_REQUIRED:offer.marketplaceId");
     // eBay rejects an offer when its SKU differs from the Inventory Item URL
     // even if both values are otherwise valid. Enforce this invariant at the
     // channel boundary as a final guard for manually edited or legacy drafts.
@@ -3464,84 +3471,6 @@ async function executeEbay(input: ExecuteInput) {
         },
       };
     };
-    const listingPolicies = offer.listingPolicies && typeof offer.listingPolicies === "object" && !Array.isArray(offer.listingPolicies)
-      ? offer.listingPolicies as Record<string, unknown>
-      : {};
-    const serverManaged = (value: unknown) => !String(value ?? "").trim() || value === "SERVER_MANAGED";
-    const marketplaceId = String(offer.marketplaceId ?? textValue(input.payload, "marketplace_id") ?? "EBAY_US");
-    if (["fulfillmentPolicyId", "paymentPolicyId", "returnPolicyId"].some((key) => serverManaged(listingPolicies[key]))) {
-      const query = new URLSearchParams({ marketplace_id: marketplaceId });
-      const [fulfillmentRemote, paymentRemote, returnRemote] = await Promise.all([
-        ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: "/sell/account/v1/fulfillment_policy", query }),
-        ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: "/sell/account/v1/payment_policy", query }),
-        ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: "/sell/account/v1/return_policy", query }),
-      ]);
-      steps.push(step("fulfillment-policies", fulfillmentRemote), step("payment-policies", paymentRemote), step("return-policies", returnRemote));
-      if (steps.some((item) => !item.ok)) return result(input, steps, sku);
-      const defaultPolicy = (value: unknown, listKey: string, idKey: string) => {
-        const policies = value && typeof value === "object" && Array.isArray((value as Record<string, unknown>)[listKey])
-          ? (value as Record<string, unknown>)[listKey] as Array<Record<string, unknown>>
-          : [];
-        const nonVehicle = policies.find((policy) => Array.isArray(policy.categoryTypes) && policy.categoryTypes.some((category) => category && typeof category === "object" && (category as Record<string, unknown>).name === "ALL_EXCLUDING_MOTORS_VEHICLES"));
-        return String((nonVehicle ?? policies[0])?.[idKey] ?? "").trim();
-      };
-      if (serverManaged(listingPolicies.fulfillmentPolicyId)) listingPolicies.fulfillmentPolicyId = defaultPolicy(fulfillmentRemote.data, "fulfillmentPolicies", "fulfillmentPolicyId");
-      if (serverManaged(listingPolicies.paymentPolicyId)) listingPolicies.paymentPolicyId = defaultPolicy(paymentRemote.data, "paymentPolicies", "paymentPolicyId");
-      if (serverManaged(listingPolicies.returnPolicyId)) listingPolicies.returnPolicyId = defaultPolicy(returnRemote.data, "returnPolicies", "returnPolicyId");
-      if (["fulfillmentPolicyId", "paymentPolicyId", "returnPolicyId"].some((key) => !String(listingPolicies[key] ?? "").trim())) {
-        throw new Error("EBAY_BUSINESS_POLICIES_MISSING");
-      }
-      offer.listingPolicies = listingPolicies;
-    }
-    if (serverManaged(offer.merchantLocationKey)) {
-      const locationRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "GET", path: "/sell/inventory/v1/location", query: new URLSearchParams({ limit: "100" }) });
-      steps.push(step("inventory-locations", locationRemote));
-      if (!locationRemote.response.ok) return result(input, steps, sku);
-      const locations = Array.isArray(locationRemote.data.locations) ? locationRemote.data.locations as Array<Record<string, unknown>> : [];
-      const enabled = locations.find((location) => {
-        const inner = location.location && typeof location.location === "object" ? location.location as Record<string, unknown> : {};
-        return String(inner.merchantLocationStatus ?? location.merchantLocationStatus ?? "").toUpperCase() === "ENABLED";
-      }) ?? locations[0];
-      offer.merchantLocationKey = String(enabled?.merchantLocationKey ?? "").trim();
-      if (!offer.merchantLocationKey) {
-        const locationKey = "sellerpilot-seoul";
-        const createLocationRemote = await ebayRequest({
-          payload: input.payload,
-          environment: input.environment,
-          method: "POST",
-          path: `/sell/inventory/v1/location/${locationKey}`,
-          body: {
-            location: {
-              address: {
-                addressLine1: "Teheran-ro",
-                city: "Seoul",
-                stateOrProvince: "Seoul",
-                postalCode: "06236",
-                country: "KR",
-              },
-            },
-            locationTypes: ["WAREHOUSE"],
-            merchantLocationStatus: "ENABLED",
-            name: "SellerPilot Seoul Warehouse",
-          },
-        });
-        const createLocationStep = step("inventory-location-create", createLocationRemote);
-        steps.push(createLocationStep);
-        if (!createLocationStep.ok) return result(input, steps, sku);
-        const locationReadbackRemote = await ebayRequest({
-          payload: input.payload,
-          environment: input.environment,
-          method: "GET",
-          path: `/sell/inventory/v1/location/${locationKey}`,
-        });
-        const locationReadbackStep = step("inventory-location-readback", locationReadbackRemote);
-        const readbackStatus = String(locationReadbackRemote.data.merchantLocationStatus ?? "").toUpperCase();
-        locationReadbackStep.ok = locationReadbackStep.ok && readbackStatus === "ENABLED";
-        steps.push(locationReadbackStep);
-        if (!locationReadbackStep.ok) return result(input, steps, sku);
-        offer.merchantLocationKey = locationKey;
-      }
-    }
     const itemRemote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "PUT", path: `/sell/inventory/v1/inventory_item/${sku}`, body: inventoryItem });
     steps.push(step("inventory-item", itemRemote));
     if (!itemRemote.response.ok) return result(input, steps, sku);

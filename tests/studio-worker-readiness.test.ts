@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  createStudioWorkerReadinessPoller,
+  studioWorkerReadinessRequestTimeoutMs,
+} from "../app/use-studio-worker-readiness";
+import {
   resolveStudioWorkerReadiness,
   studioWorkerHeartbeatFreshnessMs,
 } from "../lib/studio-worker-readiness";
@@ -19,6 +23,27 @@ function status(lastSeenAt: string | null, scope: "ai" | "legacy_combined" = "ai
     },
   };
 }
+
+function readinessResponse(payload: unknown, statusCode = 200) {
+  return new Response(JSON.stringify(payload), {
+    status: statusCode,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+const readyPayload = {
+  available: true,
+  reason: "ready" as const,
+  message: "Vercel 서버 AI 실행 경로를 확인했습니다.",
+  checkedAt: "2026-08-29T05:00:00.000Z",
+  configurationReady: true,
+  gatewayVerification: {
+    status: "verified" as const,
+    code: null,
+    checkedAt: "2026-08-29T04:59:00.000Z",
+    expiresAt: "2026-08-29T05:09:00.000Z",
+  },
+};
 
 test("studio admission accepts only a fresh exact AI-scope heartbeat and returns no worker metadata", () => {
   // The worker's normal idle poll can reach 30 seconds plus jitter and a claim
@@ -40,6 +65,141 @@ test("studio admission accepts only a fresh exact AI-scope heartbeat and returns
     { nowMs },
   ).reason, "worker_missing");
   assert.equal(resolveStudioWorkerReadiness(null, { nowMs, statusAvailable: false }).reason, "status_unavailable");
+});
+
+test("readiness polling bounds a hung mobile request and coalesces overlapping polls", async () => {
+  const updates: Array<{ available: boolean; reason: string; message: string }> = [];
+  const signals: AbortSignal[] = [];
+  let calls = 0;
+  const poller = createStudioWorkerReadinessPoller({
+    authenticatedFetch: (_input, init) => {
+      calls += 1;
+      assert.ok(init?.signal);
+      signals.push(init.signal);
+      return new Promise<Response>(() => undefined);
+    },
+    onReadiness: (readiness) => updates.push(readiness),
+    requestTimeoutMs: 25,
+    autoStart: false,
+  });
+
+  const first = poller.pollNow();
+  const duplicate = poller.pollNow();
+  assert.equal(first, duplicate, "an active readiness request must be shared instead of duplicated");
+  assert.equal(poller.requestActive, true);
+
+  const result = await first;
+  assert.equal(calls, 1);
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0]?.aborted, true);
+  assert.equal(signals[0]?.reason instanceof DOMException ? signals[0].reason.name : "", "TimeoutError");
+  assert.equal(result?.available, false);
+  assert.equal(result?.reason, "status_unavailable");
+  assert.match(result?.message ?? "", /지연/);
+  assert.equal(updates.length, 1);
+  assert.equal(poller.requestActive, false);
+  poller.dispose();
+});
+
+test("readiness polling cleanup aborts work and fences a late stale response", async () => {
+  const updates: unknown[] = [];
+  let calls = 0;
+  let requestSignal: AbortSignal | undefined;
+  let resolveFetch: ((response: Response) => void) | undefined;
+  const poller = createStudioWorkerReadinessPoller({
+    authenticatedFetch: (_input, init) => {
+      calls += 1;
+      requestSignal = init?.signal;
+      return new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    },
+    onReadiness: (readiness) => updates.push(readiness),
+    requestTimeoutMs: 1_000,
+    autoStart: false,
+  });
+
+  const pending = poller.pollNow();
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  assert.equal(poller.requestActive, true);
+  poller.dispose();
+  assert.equal(requestSignal?.aborted, true);
+  assert.equal(requestSignal?.reason instanceof DOMException ? requestSignal.reason.name : "", "AbortError");
+  resolveFetch?.(readinessResponse(readyPayload));
+
+  assert.equal(await pending, null);
+  assert.equal(await poller.pollNow(), null);
+  assert.deepEqual(updates, [], "an unmounted hook must ignore a late successful payload");
+  assert.equal(calls, 1, "disposed polling must never start another request");
+});
+
+test("readiness polling rejects an invalid success payload instead of enabling AI", async () => {
+  const updates: Array<{ available: boolean; reason: string; message: string }> = [];
+  const poller = createStudioWorkerReadinessPoller({
+    authenticatedFetch: async () => readinessResponse({
+      available: true,
+      reason: "unknown-ready-state",
+      message: "must not enable AI",
+      checkedAt: readyPayload.checkedAt,
+    }),
+    onReadiness: (readiness) => updates.push(readiness),
+    autoStart: false,
+  });
+
+  const result = await poller.pollNow();
+  assert.equal(result?.available, false);
+  assert.equal(result?.reason, "status_unavailable");
+  assert.match(result?.message ?? "", /응답이 올바르지 않아/);
+  assert.doesNotMatch(result?.message ?? "", /must not enable AI/);
+  assert.deepEqual(updates, [result]);
+  poller.dispose();
+  assert.equal(studioWorkerReadinessRequestTimeoutMs, 10_000);
+});
+
+test("readiness polling rejects a forged ready payload with invalid nested gateway proof", async () => {
+  const updates: Array<{ available: boolean; reason: string; message: string }> = [];
+  const poller = createStudioWorkerReadinessPoller({
+    authenticatedFetch: async () => readinessResponse({
+      ...readyPayload,
+      gatewayVerification: {
+        status: "verified",
+        code: "must-not-be-accepted",
+        checkedAt: readyPayload.gatewayVerification.checkedAt,
+        expiresAt: readyPayload.gatewayVerification.expiresAt,
+      },
+    }),
+    onReadiness: (readiness) => updates.push(readiness),
+    autoStart: false,
+  });
+
+  const result = await poller.pollNow();
+  assert.equal(result?.available, false);
+  assert.equal(result?.reason, "status_unavailable");
+  assert.match(result?.message ?? "", /응답이 올바르지 않아/);
+  assert.deepEqual(updates, [result]);
+  poller.dispose();
+});
+
+test("readiness polling publishes the real in-flight promise before an authenticated fetch can re-enter", async () => {
+  let reentered: Promise<unknown> | undefined;
+  let calls = 0;
+  const poller = createStudioWorkerReadinessPoller({
+    authenticatedFetch: async () => {
+      calls += 1;
+      reentered = poller.pollNow();
+      return readinessResponse(readyPayload);
+    },
+    onReadiness: () => undefined,
+    autoStart: false,
+  });
+
+  const first = poller.pollNow();
+  const result = await first;
+  assert.equal(reentered, first);
+  assert.equal(calls, 1);
+  assert.deepEqual(result, readyPayload);
+  poller.dispose();
 });
 
 test("product studio route and clients fail closed without turning explicit worker absence into reconciliation polling", async () => {
@@ -106,10 +266,18 @@ test("product studio route and clients fail closed without turning explicit work
   assert.match(studio, /workerReadiness\?\.available !== false[\s\S]{0,140}submissionPhase !== "monitoring"[\s\S]{0,180}jobMonitors\.abortAll/);
   assert.match(page, /useStudioWorkerReadiness\(authenticatedFetch\)/);
   assert.match(readinessHook, /authenticatedFetch\("\/api\/ai\/product-studio"/);
-  assert.match(readinessHook, /window\.setInterval\(\(\) => void loadReadiness\(\), pollIntervalMs\)/);
+  assert.match(readinessHook, /signal: controller\.signal/);
+  assert.match(readinessHook, /if \(activeRequest\) return activeRequest\.promise/);
+  assert.match(readinessHook, /generation === request\.generation/);
+  assert.match(readinessHook, /return \(\) => poller\.dispose\(\)/);
   assert.match(page, /const studioWorkerAvailable = isStudioExecutionReady\(studioWorkerReadiness\)/);
-  assert.match(page, /disabled=\{!studioWorkerAvailable \|\| running/);
-  assert.match(page, /AI Gateway 점검 필요/);
+  assert.match(page, /const manualMvpAvailable = studioWorkerReadiness\?\.available === false/);
+  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| running/);
+  assert.match(page, /원본 사진 직접등록/);
+  assert.match(studio, /const manualMvp = submissionMode === "manual_mvp"/);
+  assert.match(studio, /if \(!manualMvp && !isStudioExecutionReady\(workerReadiness\)\)/);
+  assert.match(page, /Gateway 점검 필요/);
+  assert.match(studio, /AI Gateway 점검 필요/);
 });
 
 test("product research identifies the Vercel OIDC server path without erasing legacy CLI compatibility", async () => {

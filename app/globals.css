@@ -1493,3 +1493,177 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
   .showcase-detail-footer { width: calc(100% - 28px); align-items: stretch; flex-direction: column; }
   .showcase-detail-footer > a { justify-content: center; }
 }
+
+/* Fold cover interaction invariants. Critical geometry uses important because
+   global CSS chunk ordering may differ between development and production. */
+@media (max-width: 720px) {
+  :root {
+    --fold-nav-clearance: calc(78px + env(safe-area-inset-bottom));
+    --fold-toast-max-height: clamp(84px, 24svh, 132px);
+    --fold-toast-lane-height: 0px;
+  }
+  html:has(body .toast) { --fold-toast-lane-height: calc(var(--fold-toast-max-height) + 8px); }
+  html { scroll-padding-bottom: calc(104px + var(--fold-toast-lane-height, 0px) + env(safe-area-inset-bottom)) !important; }
+  .app-content {
+    min-width: 0;
+    max-width: 100%;
+    padding-bottom: calc(104px + var(--fold-toast-lane-height, 0px) + env(safe-area-inset-bottom)) !important;
+  }
+  .upload-panel .option-slot-wrap {
+    position: relative !important;
+    inset: auto !important;
+    display: grid !important;
+    height: auto !important;
+    grid-template-rows: minmax(124px, auto) auto !important;
+    overflow: visible !important;
+    aspect-ratio: auto !important;
+  }
+  .upload-panel .option-slot-wrap > .photo-source-actions.compact {
+    position: relative !important;
+    z-index: auto !important;
+    inset: auto !important;
+    width: 100% !important;
+    margin: 0 !important;
+    transform: none !important;
+  }
+  .upload-panel > .analysis-start-bar,
+  .upload-panel .analysis-start-bar {
+    position: static !important;
+    z-index: auto !important;
+    inset: auto !important;
+    transform: none !important;
+  }
+  .app-main > .mobile-push-gate.browser,
+  .app-main > .mobile-push-chip {
+    position: relative !important;
+    z-index: auto !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 8px max(var(--mobile-gutter, 8px), env(safe-area-inset-right)) 0 max(var(--mobile-gutter, 8px), env(safe-area-inset-left)) !important;
+    overflow: visible !important;
+  }
+  .toast {
+    right: max(12px, env(safe-area-inset-right)) !important;
+    bottom: var(--fold-nav-clearance, calc(78px + env(safe-area-inset-bottom))) !important;
+    left: max(12px, env(safe-area-inset-left)) !important;
+    max-height: var(--fold-toast-max-height, 132px) !important;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 344px) { body { min-width: 0 !important; } }
+
+/* 200% zoom reduces the Fold cover to 140-195 layout pixels. */
+@media (max-width: 240px) {
+  html:has(body .toast) { --fold-toast-lane-height: 0px; }
+  .option-photo-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .photo-source-actions:not(.compact) {
+    grid-template-columns: minmax(44px, 1fr) !important;
+  }
+  .topbar > .topbar-actions {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100%;
+    flex: 0 1 auto !important;
+    justify-content: flex-start !important;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    touch-action: pan-x;
+  }
+  .topbar > .topbar-actions > *,
+  .topbar > .topbar-actions > .notification-wrap,
+  .topbar > .topbar-actions .global-search,
+  .topbar > .topbar-actions .top-icon-button,
+  .topbar > .topbar-actions .user-menu {
+    width: 44px !important;
+    min-width: 44px !important;
+    flex: 0 0 44px !important;
+  }
+  .mobile-bottom-nav {
+    grid-template-columns: none !important;
+    grid-auto-flow: column;
+    grid-auto-columns: 44px;
+    justify-content: start;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    touch-action: pan-x;
+  }
+  .mobile-bottom-nav > button { width: 44px !important; min-width: 44px !important; }
+  .toast {
+    position: relative !important;
+    z-index: auto !important;
+    inset: auto !important;
+    width: auto !important;
+    max-height: none !important;
+    margin: 8px 12px calc(78px + env(safe-area-inset-bottom));
+  }
+}
+
+/* A landscape phone may be wider than the usual 720px mobile breakpoint. */
+@media (orientation: landscape) and (max-height: 390px) and (pointer: coarse) {
+  :root {
+    --fold-nav-clearance: calc(78px + env(safe-area-inset-bottom));
+    --fold-toast-max-height: clamp(52px, 24svh, 92px);
+    --fold-toast-lane-height: 0px;
+  }
+  html:has(body .toast) { --fold-toast-lane-height: calc(var(--fold-toast-max-height) + 8px); }
+  html { scroll-padding-bottom: calc(96px + var(--fold-toast-lane-height, 0px) + env(safe-area-inset-bottom)) !important; }
+  .app-content { padding-bottom: calc(96px + var(--fold-toast-lane-height, 0px) + env(safe-area-inset-bottom)) !important; }
+  .mobile-bottom-nav {
+    position: fixed !important;
+    z-index: 110;
+    inset: auto 0 0 !important;
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(44px, 1fr));
+    min-height: calc(64px + env(safe-area-inset-bottom));
+    padding: 6px max(4px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+  }
+  .mobile-bottom-nav > button {
+    display: flex;
+    min-width: 44px;
+    min-height: 52px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+  }
+  .toast {
+    right: max(12px, env(safe-area-inset-right)) !important;
+    bottom: var(--fold-nav-clearance) !important;
+    left: max(12px, env(safe-area-inset-left)) !important;
+    max-height: min(var(--fold-toast-max-height), calc(100dvh - var(--fold-nav-clearance) - 8px)) !important;
+    overflow-y: auto;
+  }
+  .app-main > .mobile-push-gate.browser,
+  .app-main > .mobile-push-chip { position: relative !important; z-index: auto !important; inset: auto !important; }
+  .upload-panel > .analysis-start-bar,
+  .upload-panel .analysis-start-bar { position: static !important; z-index: auto !important; inset: auto !important; }
+  .detail-preview-scroll,
+  .detail-preview-canvas,
+  .detail-preview-canvas img { touch-action: pan-y !important; }
+  .detail-preview-canvas img { pointer-events: none !important; user-select: none; }
+  .saved-product-detail-page > [data-workspace-action] { min-height: 44px; }
+  .product-edit-overlay { align-items: stretch; padding: max(4px, env(safe-area-inset-top)) max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left)); }
+  .product-edit-dialog { width: 100%; max-height: calc(100dvh - 16px); min-height: 0; margin: auto; }
+  .product-edit-dialog > header > button { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+  .product-edit-dialog > footer > button { min-width: 44px; min-height: 44px; }
+}
+
+/* On short landscape screens, a sticky header, fixed toast and navigation
+   leave less than one 44px target lane. Reflow the notice and edit dialog. */
+@media (orientation: landscape) and (max-height: 320px) and (pointer: coarse) {
+  html:has(body .toast) { --fold-toast-lane-height: 0px; }
+  .app-header-stack { position: relative !important; top: auto !important; }
+  .toast {
+    position: relative !important;
+    z-index: auto !important;
+    inset: auto !important;
+    width: auto !important;
+    max-height: none !important;
+    margin: 8px max(12px, env(safe-area-inset-right)) calc(78px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+  .product-edit-overlay { align-items: flex-start !important; overflow-y: auto !important; }
+  .product-edit-dialog { max-height: none !important; grid-template-rows: auto auto auto auto !important; overflow: visible !important; margin: 0 auto !important; }
+  .product-edit-form { max-height: none; overflow: visible !important; }
+}

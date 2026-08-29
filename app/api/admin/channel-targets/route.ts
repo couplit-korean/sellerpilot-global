@@ -2,8 +2,19 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { executeChannelTargetDiscovery } from "../../../../lib/channels/gateway";
-import { channelMarket, lazadaMarkets, shopeeMarkets } from "../../../../lib/channels/markets";
-import { isCompleteChannelTarget, shopeeShopTargetIds, supportedShopeeTargets, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
+import {
+  activeLazadaSellerIdForMarket,
+  activeProductionLazadaCredentialEnvelope,
+  activeProductionLazadaCredentialId,
+  lineageBoundLazadaTargets,
+} from "../../../../lib/channels/lazada-target-lineage";
+import { channelMarket, shopeeMarkets } from "../../../../lib/channels/markets";
+import {
+  activeProductionShopeeCredentialEnvelope,
+  activeProductionShopeeCredentialId,
+  lineageBoundShopeeTargets,
+} from "../../../../lib/channels/shopee-target-lineage";
+import { isCompleteChannelTarget, shopeeShopTargetIds, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -40,10 +51,16 @@ export async function GET(request: Request) {
     userClient.rpc("sellerpilot_list_channel_market_targets", { p_channel: channel.data }),
   ]);
   if (userError || !userData.user || adminError || credentialError || targetError || isAdmin !== true) return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
+  const productionCredentialId = channel.data === "shopee"
+    ? activeProductionShopeeCredentialId(credentials)
+    : activeProductionLazadaCredentialId(credentials);
   const credential = Array.isArray(credentials)
-    ? credentials.find((row) => row && typeof row === "object" && "channel" in row && row.channel === channel.data && "status" in row && row.status === "active")
+    ? credentials.find((row) => row && typeof row === "object"
+      && "channel" in row && row.channel === channel.data
+      && "status" in row && row.status === "active"
+      && "id" in row && row.id === productionCredentialId)
     : null;
-  if (!credential || !("id" in credential) || typeof credential.id !== "string") return NextResponse.json({ message: "활성 채널 키가 없습니다." }, { status: 404 });
+  if (!credential || !("id" in credential) || typeof credential.id !== "string") return NextResponse.json({ message: "활성 운영 채널 키가 없습니다." }, { status: 404 });
 
   const normalizedCachedTargets: ChannelTargetRecord[] = Array.isArray(cachedTargets)
     ? cachedTargets.map((target) => ({
@@ -57,28 +74,79 @@ export async function GET(request: Request) {
       verifiedAt: textValue(target.verified_at),
     }))
     : [];
-  const cachedTargetsComplete = normalizedCachedTargets.length > 0
-    && normalizedCachedTargets.every((target) => isCompleteChannelTarget(channel.data, target));
-  if (channel.data === "lazada" && cachedTargetsComplete) {
-    return NextResponse.json({
-      channel: channel.data,
-      credentialId: credential.id,
-      targets: normalizedCachedTargets,
-    }, { headers: { "cache-control": "no-store, max-age=0" } });
-  }
-  const normalizedSupportedShopeeTargets = channel.data === "shopee" ? supportedShopeeTargets(normalizedCachedTargets) : [];
-  if (channel.data === "shopee" && normalizedSupportedShopeeTargets.length === shopeeMarkets.length) {
-    return NextResponse.json({
-      channel: channel.data,
-      credentialId: credential.id,
-      targets: normalizedSupportedShopeeTargets,
-    }, { headers: { "cache-control": "no-store, max-age=0" } });
+  const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  let activeShopeeSecret: Record<string, unknown> | null = null;
+  let activeLazadaSecret: Record<string, unknown> | null = null;
+  if (channel.data === "shopee") {
+    const { data: activeCredential, error: activeCredentialError } = await serviceClient.rpc(
+      "sellerpilot_get_active_credential_secret",
+      { p_channel: "shopee", p_environment: "production" },
+    );
+    const envelope = activeProductionShopeeCredentialEnvelope(activeCredential);
+    if (activeCredentialError) {
+      return NextResponse.json({
+        message: "현재 운영 Shopee 키의 계보를 확인하지 못했습니다.",
+        channel: "shopee",
+        credentialId: credential.id,
+        targets: [],
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (!envelope || envelope.credentialId !== credential.id) {
+      return NextResponse.json({
+        message: "선택된 운영 Shopee 키와 서버의 현재 활성 계보가 일치하지 않습니다. OAuth 재승인 후 숍을 다시 동기화해 주세요.",
+        channel: "shopee",
+        credentialId: credential.id,
+        targets: [],
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    activeShopeeSecret = envelope.secretPayload;
+    const lineageBoundTargets = lineageBoundShopeeTargets(normalizedCachedTargets, activeShopeeSecret);
+    if (lineageBoundTargets.length === shopeeMarkets.length) {
+      return NextResponse.json({
+        channel: channel.data,
+        credentialId: envelope.credentialId,
+        targets: lineageBoundTargets,
+      }, { headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  } else {
+    const { data: activeCredential, error: activeCredentialError } = await serviceClient.rpc(
+      "sellerpilot_get_active_credential_secret",
+      { p_channel: "lazada", p_environment: "production" },
+    );
+    const lazadaEnvelope = activeProductionLazadaCredentialEnvelope(activeCredential);
+    if (activeCredentialError) {
+      return NextResponse.json({
+        message: "현재 운영 Lazada 키의 계보를 확인하지 못했습니다.",
+        channel: "lazada",
+        credentialId: credential.id,
+        targets: [],
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (!lazadaEnvelope || lazadaEnvelope.credentialId !== credential.id) {
+      return NextResponse.json({
+        message: "선택된 운영 Lazada 키와 서버의 현재 활성 계보가 일치하지 않습니다. OAuth 재승인 후 셀러를 다시 동기화해 주세요.",
+        channel: "lazada",
+        credentialId: credential.id,
+        targets: [],
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    activeLazadaSecret = lazadaEnvelope.secretPayload;
+    const lineageBoundTargets = lineageBoundLazadaTargets(normalizedCachedTargets, activeLazadaSecret);
+    if (lineageBoundTargets.length) {
+      return NextResponse.json({
+        channel: channel.data,
+        credentialId: lazadaEnvelope.credentialId,
+        targets: lineageBoundTargets,
+      }, { headers: { "cache-control": "no-store, max-age=0" } });
+    }
   }
 
-  const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data, error } = await serviceClient.rpc("sellerpilot_decrypt_credential", { p_credential_id: credential.id });
-  if (error || !data || typeof data !== "object" || Array.isArray(data)) return NextResponse.json({ message: "채널 대상을 안전하게 불러오지 못했습니다." }, { status: 500 });
-  const secret = data as Record<string, unknown>;
+  let secret = activeShopeeSecret ?? activeLazadaSecret;
+  if (!secret) {
+    const { data, error } = await serviceClient.rpc("sellerpilot_decrypt_credential", { p_credential_id: credential.id });
+    if (error || !data || typeof data !== "object" || Array.isArray(data)) return NextResponse.json({ message: "채널 대상을 안전하게 불러오지 못했습니다." }, { status: 500 });
+    secret = data as Record<string, unknown>;
+  }
   const targets = channel.data === "shopee"
     ? objectRows(secret.shopee_targets).filter((target) => target.type === "shop").map((target) => {
       const marketCode = textValue(target.region || target.market).toUpperCase();
@@ -106,9 +174,7 @@ export async function GET(request: Request) {
           currency: market?.currency ?? "",
         };
       });
-      const marketCode = textValue(secret.country || "MY").toUpperCase();
-      const market = channelMarket("lazada", marketCode);
-      return [{ targetId: "", displayName: "", marketCode, locale: market?.locale ?? "", language: market?.language ?? "", currency: market?.currency ?? "" }];
+      return [];
     })();
 
   if (!targets.length || targets.some((target) => !isCompleteChannelTarget(channel.data, target))) {
@@ -158,10 +224,16 @@ export async function POST(request: Request) {
     userClient.rpc("sellerpilot_list_credentials"),
   ]);
   if (userError || !userData.user || adminError || credentialError || isAdmin !== true) return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
+  const productionCredentialId = parsed.data.channel === "shopee"
+    ? activeProductionShopeeCredentialId(credentials)
+    : activeProductionLazadaCredentialId(credentials);
   const credential = Array.isArray(credentials)
-    ? credentials.find((row) => row && typeof row === "object" && "channel" in row && row.channel === parsed.data.channel && "status" in row && row.status === "active")
+    ? credentials.find((row) => row && typeof row === "object"
+      && "channel" in row && row.channel === parsed.data.channel
+      && "status" in row && row.status === "active"
+      && "id" in row && row.id === productionCredentialId)
     : null;
-  if (!credential || !("id" in credential) || typeof credential.id !== "string") return NextResponse.json({ message: "활성 채널 키가 없습니다." }, { status: 404 });
+  if (!credential || !("id" in credential) || typeof credential.id !== "string") return NextResponse.json({ message: "활성 운영 채널 키가 없습니다." }, { status: 404 });
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const activeCredentialId = async () => {
@@ -174,9 +246,38 @@ export async function POST(request: Request) {
     if (error || !id) throw new Error("ACTIVE_CHANNEL_CREDENTIAL_MISSING");
     return id;
   };
-  const { data: secretData, error: secretError } = await serviceClient.rpc("sellerpilot_decrypt_credential", { p_credential_id: credential.id });
-  if (secretError || !secretData || typeof secretData !== "object" || Array.isArray(secretData)) return NextResponse.json({ message: "채널 대상을 안전하게 불러오지 못했습니다." }, { status: 500 });
-  const secret = secretData as Record<string, unknown>;
+  let secret: Record<string, unknown>;
+  if (parsed.data.channel === "shopee") {
+    const { data: activeCredential, error: activeCredentialError } = await serviceClient.rpc(
+      "sellerpilot_get_active_credential_secret",
+      { p_channel: "shopee", p_environment: "production" },
+    );
+    const envelope = activeProductionShopeeCredentialEnvelope(activeCredential);
+    if (activeCredentialError || !envelope || envelope.credentialId !== credential.id) {
+      return NextResponse.json({
+        message: "선택된 운영 Shopee 키와 서버의 현재 활성 계보가 일치하지 않습니다. OAuth 재승인 후 숍을 다시 동기화해 주세요.",
+        channel: "shopee",
+        credentialId: credential.id,
+        targets: [],
+      }, { status: activeCredentialError ? 503 : 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    secret = envelope.secretPayload;
+  } else {
+    const { data: activeCredential, error: activeCredentialError } = await serviceClient.rpc(
+      "sellerpilot_get_active_credential_secret",
+      { p_channel: "lazada", p_environment: "production" },
+    );
+    const lazadaEnvelope = activeProductionLazadaCredentialEnvelope(activeCredential);
+    if (activeCredentialError || !lazadaEnvelope || lazadaEnvelope.credentialId !== credential.id) {
+      return NextResponse.json({
+        message: "선택된 운영 Lazada 키와 서버의 현재 활성 계보가 일치하지 않습니다. OAuth 재승인 후 셀러를 다시 동기화해 주세요.",
+        channel: "lazada",
+        credentialId: credential.id,
+        targets: [],
+      }, { status: activeCredentialError ? 503 : 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    secret = lazadaEnvelope.secretPayload;
+  }
 
   try {
     if (parsed.data.channel === "shopee") {
@@ -217,14 +318,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ channel: "shopee", credentialId: credential.id, targets: profiles }, { headers: { "cache-control": "no-store, max-age=0" } });
     }
 
+    const activeLazadaCredentialId = credential.id;
     const profiles = [];
-    const configuredMarket = channelMarket("lazada", textValue(secret.country || "MY").toUpperCase()) ?? lazadaMarkets[0];
+    const configuredMarket = channelMarket("lazada", textValue(secret.country).toUpperCase());
+    if (!configuredMarket) throw new Error("ACTIVE_LAZADA_MARKET_MISSING");
     for (const market of [configuredMarket]) {
+      const expectedSellerId = activeLazadaSellerIdForMarket(secret, market.code);
+      if (!expectedSellerId) throw new Error("ACTIVE_LAZADA_SELLER_MISSING");
       const currentCredentialId = await activeCredentialId();
-      const result = await executeChannelTargetDiscovery({ serviceClient, credentialId: currentCredentialId, channel: "lazada", request: { country: market.code.toLowerCase() } });
+      if (currentCredentialId !== activeLazadaCredentialId) throw new Error("ACTIVE_CHANNEL_CREDENTIAL_CHANGED");
+      const result = await executeChannelTargetDiscovery({ serviceClient, credentialId: activeLazadaCredentialId, channel: "lazada", request: { country: market.code.toLowerCase() } });
       const profile = remoteProfile(result);
+      const remoteTargetId = textValue(profile.seller_id || profile.sellerId);
+      if (remoteTargetId !== expectedSellerId) throw new Error("LAZADA_SELLER_LINEAGE_MISMATCH");
       profiles.push({
-        targetId: textValue(profile.seller_id || profile.sellerId || profile.user_id),
+        targetId: remoteTargetId,
         displayName: textValue(profile.name || profile.seller_name || profile.short_code),
         marketCode: market.code,
         locale: market.locale,
@@ -233,11 +341,12 @@ export async function POST(request: Request) {
         status: textValue(profile.status),
       });
       const latestCredentialId = await activeCredentialId();
+      if (latestCredentialId !== activeLazadaCredentialId) throw new Error("ACTIVE_CHANNEL_CREDENTIAL_CHANGED");
       const { data: storedTargetId, error: storeTargetError } = await serviceClient.rpc("sellerpilot_service_upsert_channel_market_target", {
         p_owner_id: userData.user.id,
-        p_credential_id: latestCredentialId,
+        p_credential_id: activeLazadaCredentialId,
         p_channel: "lazada",
-        p_target_id: textValue(profile.seller_id || profile.sellerId || profile.user_id),
+        p_target_id: remoteTargetId,
         p_display_name: textValue(profile.name || profile.seller_name || profile.short_code),
         p_market_code: market.code,
         p_locale: market.locale,

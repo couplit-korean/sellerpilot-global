@@ -87,6 +87,7 @@ type CliJobPayload = {
   error?: string | null;
 };
 type StudioSubmissionPhase = "idle" | "submitting" | "reconciling" | "monitoring" | "uncertain";
+export type StudioSubmissionMode = "ai" | "manual_mvp";
 type StudioJobWaitOptions = {
   notFoundGraceMs?: number;
   maximumAgeMs?: number;
@@ -104,6 +105,114 @@ const studioUploadTimeoutMs = 45_000;
 const studioJobAdmissionGraceMs = 30_000;
 const studioPreUploadOptimizationLimit = 9;
 const maximumSubmittedIntakeSnapshots = 9;
+const pendingManualProductRequestStoragePrefix = "sellerpilot.pending-manual-product.v1";
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export type PendingManualProductRequest = {
+  version: 1;
+  ownerId: string;
+  jobId: string;
+  requestFingerprint: string;
+  requestBody: string;
+  createdAt: number;
+};
+
+type ParsedManualProductRequestBody = {
+  jobId: string;
+  manualFields: ProductIntakeDraft;
+  imagePaths: string[];
+  imageSpecs: SourcePreservingProductImageSpec[];
+};
+
+export async function manualProductRequestFingerprint(sellerSku: string) {
+  const normalizedSku = sellerSku.trim().toUpperCase();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalizedSku));
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export function pendingManualProductRequestStorageKey(ownerId: string, requestFingerprint: string) {
+  return `${pendingManualProductRequestStoragePrefix}:${ownerId}:${requestFingerprint}`;
+}
+
+function parseManualProductRequestBody(value: string): ParsedManualProductRequestBody | null {
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    const manualFields = productIntakeSchema.safeParse(parsed.manualFields);
+    const imagePaths = Array.isArray(parsed.imagePaths)
+      ? parsed.imagePaths.filter((item): item is string => typeof item === "string" && item.length > 0)
+      : [];
+    const imageSpecs = Array.isArray(parsed.imageSpecs)
+      ? parsed.imageSpecs as SourcePreservingProductImageSpec[]
+      : [];
+    if (!uuidPattern.test(String(parsed.jobId ?? ""))
+      || !manualFields.success
+      || !imagePaths.length
+      || imagePaths.length !== imageSpecs.length) return null;
+    return {
+      jobId: String(parsed.jobId),
+      manualFields: manualFields.data,
+      imagePaths,
+      imageSpecs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function normalizePendingManualProductRequest(
+  value: unknown,
+  ownerId: string,
+  requestFingerprint: string,
+): PendingManualProductRequest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.version !== 1
+    || candidate.ownerId !== ownerId
+    || candidate.requestFingerprint !== requestFingerprint
+    || !uuidPattern.test(String(candidate.jobId ?? ""))
+    || typeof candidate.requestBody !== "string"
+    || typeof candidate.createdAt !== "number"
+    || !Number.isFinite(candidate.createdAt)
+    || candidate.createdAt <= 0) return null;
+  const request = parseManualProductRequestBody(candidate.requestBody);
+  if (!request || request.jobId !== candidate.jobId) return null;
+  return candidate as PendingManualProductRequest;
+}
+
+function readPendingManualProductRequest(ownerId: string, requestFingerprint: string) {
+  const storageKey = pendingManualProductRequestStorageKey(ownerId, requestFingerprint);
+  try {
+    const raw = window.sessionStorage.getItem(storageKey);
+    if (!raw) return null;
+    const pending = normalizePendingManualProductRequest(JSON.parse(raw), ownerId, requestFingerprint);
+    if (pending) return pending;
+    window.sessionStorage.removeItem(storageKey);
+  } catch {
+    // Invalid or unavailable browser storage cannot identify an accepted
+    // remote request. A failed write is handled before the POST begins.
+  }
+  return null;
+}
+
+function persistPendingManualProductRequest(pending: PendingManualProductRequest) {
+  window.sessionStorage.setItem(
+    pendingManualProductRequestStorageKey(pending.ownerId, pending.requestFingerprint),
+    JSON.stringify(pending),
+  );
+}
+
+function clearPendingManualProductRequest(pending: PendingManualProductRequest) {
+  try {
+    const storageKey = pendingManualProductRequestStorageKey(pending.ownerId, pending.requestFingerprint);
+    const current = readPendingManualProductRequest(pending.ownerId, pending.requestFingerprint);
+    if (current?.jobId === pending.jobId && current.requestBody === pending.requestBody) {
+      window.sessionStorage.removeItem(storageKey);
+    }
+  } catch {
+    // A committed server result must remain successful even if Safari or an
+    // embedded browser refuses the best-effort local cleanup.
+  }
+}
 
 class StudioJobTerminalError extends Error {}
 
@@ -462,12 +571,13 @@ const detailPresets = aiGeneratedAssetSpecs
 
 const generatedPreviewPresets = [...thumbnailPresets, ...detailPresets];
 
-export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady }: {
+export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, submissionMode, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady, onManualResultReady }: {
   mainPhoto: StudioPhoto | null;
   photos: StudioPhoto[];
   manualFields: ProductIntakeDraft;
   competitorContext: StudioCompetitorContext;
   requestId: number;
+  submissionMode: StudioSubmissionMode;
   workerReadiness: StudioWorkerReadiness | null;
   onRunningChange: (running: boolean) => void;
   notify: (message: string) => void;
@@ -477,6 +587,11 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     productId: string | null,
     jobId: string,
     submittedIntake: ProductIntakeDraft | null,
+  ) => void;
+  onManualResultReady?: (
+    productId: string,
+    jobId: string,
+    submittedIntake: ProductIntakeDraft,
   ) => void;
 }) {
   const [result, setResult] = useState<ProductStudioResult | null>(null);
@@ -506,6 +621,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   const uncertainRegenerationJobIdRef = useRef("");
   const announcedJobIdsRef = useRef(new Set<string>());
   const submittedIntakesByJobIdRef = useRef(new Map<string, ProductIntakeDraft>());
+  const pendingManualRequestRef = useRef<PendingManualProductRequest | null>(null);
   const studioMountedRef = useRef(true);
   const lifecycleControllerRef = useRef<AbortController | null>(null);
   const currentImageUrl = aiHero || mainPhoto?.url || "";
@@ -710,7 +826,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       onRunningChange(false);
       return;
     }
-    if (!isStudioExecutionReady(workerReadiness)) {
+    const manualMvp = submissionMode === "manual_mvp";
+    if (!manualMvp && !isStudioExecutionReady(workerReadiness)) {
       const message = workerReadiness?.message
         ?? "AI 제작 작업자 연결 상태를 확인하고 있습니다. 확인이 끝난 뒤 다시 시도해 주세요.";
       setLastError(message);
@@ -761,6 +878,114 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       const userId = sessionData.session?.user.id;
       if (!accessToken || !userId) throw new Error("AI 제작을 실행하려면 관리자 로그인이 필요합니다.");
       if (photos.length > 100) throw new Error("한 작업에는 대표사진을 포함해 최대 100장까지 분석할 수 있습니다.");
+      if (manualMvp) {
+        const requestFingerprint = await manualProductRequestFingerprint(validatedIntake.data.sellerSku);
+        let pending = pendingManualRequestRef.current;
+        if (pending?.ownerId !== userId || pending.requestFingerprint !== requestFingerprint) {
+          pending = readPendingManualProductRequest(userId, requestFingerprint);
+        }
+        let preservedRequest = pending ? parseManualProductRequestBody(pending.requestBody) : null;
+        if (pending && !preservedRequest) {
+          pendingManualRequestRef.current = null;
+          pending = null;
+        }
+        if (!pending || !preservedRequest) {
+          const jobId = crypto.randomUUID();
+          preparedJobId = jobId;
+          const uploaded = await optimizeAndUploadStudioPhotos(
+            photos,
+            userId,
+            jobId,
+            accessToken,
+            lifecycleController.signal,
+          );
+          uploadedCleanupPaths = uploaded.allUploadedPaths;
+          throwIfStudioJobAborted(lifecycleController.signal);
+          const requestBody = JSON.stringify({
+            jobId,
+            manualFields: validatedIntake.data,
+            competitorContext,
+            imagePaths: uploaded.uploadedPaths,
+            imageSpecs: uploaded.imageSpecs,
+          });
+          pending = {
+            version: 1,
+            ownerId: userId,
+            jobId,
+            requestFingerprint,
+            requestBody,
+            createdAt: Date.now(),
+          };
+          persistPendingManualProductRequest(pending);
+          pendingManualRequestRef.current = pending;
+          preservedRequest = {
+            jobId,
+            manualFields: validatedIntake.data,
+            imagePaths: uploaded.uploadedPaths,
+            imageSpecs: uploaded.imageSpecs,
+          };
+        } else {
+          preparedJobId = pending.jobId;
+          pendingManualRequestRef.current = pending;
+          notify("응답이 불명확했던 원본 상품을 새로 만들지 않고 기존 요청 ID와 동일한 내용으로 다시 확인합니다.");
+        }
+
+        const { jobId, manualFields: submittedManualFields, imagePaths } = preservedRequest;
+        const requestBody = pending.requestBody;
+        let response: Response | null = null;
+        let payload: { productId?: string; jobId?: string; code?: string; message?: string } = {};
+        enqueueStarted = true;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            ({ response, payload } = await fetchJsonWithStudioJobTimeout(
+              "/api/admin/products/manual-intake",
+              {
+                method: "POST",
+                headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+                body: requestBody,
+              },
+              lifecycleController.signal,
+              90_000,
+              { message: "원본 사진 상품 저장 응답을 읽지 못했습니다." },
+            ));
+          } catch (error) {
+            if (isStudioJobAbort(error) || !studioMountedRef.current) throw error;
+            if (attempt === 0) continue;
+            throw new Error("원본 사진 상품 저장 응답을 두 번 확인하지 못했습니다. 같은 요청 ID의 파일은 보존했으며 다시 시도하면 중복 없이 확인합니다.");
+          }
+          const ambiguous = response.status === 408
+            || response.status === 425
+            || response.status === 429
+            || response.status >= 500;
+          if (ambiguous && attempt === 0) continue;
+          break;
+        }
+        throwIfStudioJobAborted(lifecycleController.signal);
+        if (!response?.ok || typeof payload.productId !== "string" || payload.jobId !== jobId) {
+          const ambiguous = !response
+            || response.status === 408
+            || response.status === 425
+            || response.status === 429
+            || response.status >= 500
+            || (response.ok && (typeof payload.productId !== "string" || payload.jobId !== jobId));
+          terminallyRejected = !ambiguous;
+          if (terminallyRejected) {
+            clearPendingManualProductRequest(pending);
+            if (pendingManualRequestRef.current?.jobId === pending.jobId) pendingManualRequestRef.current = null;
+          }
+          throw new StudioJobTerminalError(payload.message ?? (ambiguous
+            ? "원본 사진 상품 저장 상태를 확정하지 못했습니다. 업로드 파일은 보존했습니다."
+            : "원본 사진 상품 원장을 저장하지 못했습니다."));
+        }
+        clearPendingManualProductRequest(pending);
+        if (pendingManualRequestRef.current?.jobId === pending.jobId) pendingManualRequestRef.current = null;
+        uploadedCleanupPaths = [];
+        setSourceJobId(jobId);
+        setSourceProductId(payload.productId);
+        onManualResultReady?.(payload.productId, jobId, submittedManualFields);
+        notify(`원본 사진 ${imagePaths.length}장과 판매자 확인 정보를 상품 원장에 저장했습니다. AI 생성 없이 공식 카테고리 확인과 채널 등록을 계속할 수 있습니다.`);
+        return;
+      }
       const jobId = crypto.randomUUID();
       preparedJobId = jobId;
       const { uploadedPaths: imagePaths, imageSpecs, allUploadedPaths } = await optimizeAndUploadStudioPhotos(
@@ -854,7 +1079,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         onRunningChange(false);
       }
     }
-  }, [announceOwnJob, competitorContext, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, studioSessionId, workerReadiness]);
+  }, [announceOwnJob, competitorContext, generating, mainPhoto, manualFields, monitorOwnStudioJob, notify, onManualResultReady, onRunningChange, photos, queuedOwnJobId, releaseOwnJob, studioSessionId, submissionMode, workerReadiness]);
 
   const retryOwnJobStatus = useCallback(async () => {
     const jobId = queuedOwnJobIdRef.current;
@@ -1050,6 +1275,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   const creativeThumbnails = thumbnails.filter((thumbnail) => thumbnailPresets.some((preset) => preset.id === thumbnail.id));
   const detailThumbnails = thumbnails.filter((thumbnail) => detailPresets.some((preset) => preset.id === thumbnail.id));
   const studioExecutionReady = isStudioExecutionReady(workerReadiness);
+  const submissionAvailable = submissionMode === "manual_mvp" || studioExecutionReady;
   const studioAssetUrls = useMemo(() => ({
     ...(currentImageUrl ? { hero: currentImageUrl } : {}),
     ...Object.fromEntries(thumbnails.map((thumbnail) => [thumbnail.id, thumbnail.dataUrl])),
@@ -1158,7 +1384,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     <section className="panel ai-product-studio" id="ai-product-studio">
       <div className="studio-heading">
         <div><span className="panel-kicker">AI DETAIL & CREATIVE STUDIO</span><h3>상세페이지 · 썸네일 자동 제작</h3><p>Vercel OIDC 서버 AI가 사진과 설명을 분석하고, Supabase 비공개 작업 큐와 codex-image·Puck 편집 흐름으로 결과를 만듭니다.</p></div>
-        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? cliPhase === "running" ? "서버 AI 제작 중" : "Supabase 큐 대기 중" : result ? "서버 AI 실데이터" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "서버 처리 중" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "실행 가능"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || !studioExecutionReady || generating || Boolean(queuedOwnJobId)} title={!studioExecutionReady ? workerReadiness?.message : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "다시 생성"}</button></div>
+        <div><span className={`studio-mode ${generating ? cliPhase : result?.mode ?? "idle"}`}><i />{generating ? submissionMode === "manual_mvp" ? "원본 사진 저장 중" : cliPhase === "running" ? "서버 AI 제작 중" : "Supabase 큐 대기 중" : result ? "서버 AI 실데이터" : submissionMode === "manual_mvp" ? "AI 없이 원본 등록" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "서버 처리 중" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "실행 가능"}</span><button type="button" onClick={() => void generate()} disabled={!mainPhoto || !submissionAvailable || generating || Boolean(queuedOwnJobId)} title={!submissionAvailable ? workerReadiness?.message : undefined}>{generating || (queuedOwnJobId && submissionPhase !== "uncertain") ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{generating && submissionMode === "manual_mvp" ? "원본 저장 중" : submissionMode === "manual_mvp" ? "원본 사진 직접등록" : submissionPhase === "reconciling" || submissionPhase === "submitting" ? "접수 확인 중" : submissionPhase === "uncertain" ? "접수 확인 필요" : queuedOwnJobId ? "이 상품 처리 중" : !workerReadiness ? "서버 AI 확인 중" : workerReadiness.reason === "gateway_unverified" || workerReadiness.reason === "gateway_verification_failed" ? "AI Gateway 점검 필요" : !studioExecutionReady ? "서버 AI 연결 필요" : "다시 생성"}</button></div>
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>

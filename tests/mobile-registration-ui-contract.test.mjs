@@ -73,8 +73,8 @@ test("mobile product analysis visibly waits for an in-flight competitor lookup w
   const commerceStyles = await readFile(commerceStylesUrl, "utf8");
 
   assert.match(page, /const competitorResearchBlocksAnalysis = isCompetitorResearchBlockingAnalysis\([\s\S]{0,160}pendingCompetitorBypassConfirmed/);
-  assert.match(page, /if \(competitorResearchBlocksAnalysis\) \{[\s\S]{0,260}동일 상품 가격 확인이 끝난 뒤 상품 분석을 시작/);
-  assert.match(page, /disabled=\{!studioWorkerAvailable \|\| running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| competitorResearchBlocksAnalysis \|\| Boolean\(queuedJobId\)\}/);
+  assert.match(page, /if \(competitorResearchBlocksAnalysis && !manualMvp\) \{[\s\S]{0,260}동일 상품 가격 확인이 끝난 뒤 상품 분석을 시작/);
+  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| running \|\| researchingProduct \|\| photoSelectionsProcessing \|\| \(competitorResearchBlocksAnalysis && !manualMvpAvailable\) \|\| Boolean\(queuedJobId\)\}/);
   assert.match(page, /동일상품 가격 확인 대기/);
   assert.match(page, /가격 확인 중/);
   assert.match(page, /가격 없이 계속/);

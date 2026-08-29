@@ -8,7 +8,7 @@ import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 
-type CredentialRow = {
+export type CredentialRow = {
   id: string;
   channel: ActiveChannelKey;
   environment: "sandbox" | "production";
@@ -16,10 +16,11 @@ type CredentialRow = {
 };
 
 type OperationStep = { name: string; ok: boolean; status: number; data: Record<string, unknown> };
-type OperationPayload = { ok?: boolean; steps?: OperationStep[]; message?: string };
+export type OperationPayload = { ok?: boolean; steps?: OperationStep[]; remoteId?: string; message?: string };
 type CategorySuggestion = { id: string; name: string; path: string[]; confidence: number; leaf: boolean };
 type CategoryAttribute = { id: string; name: string; required: boolean; values: Array<{ id: string; name: string }> };
 type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
+export type EbayCategoryTreeBinding = { marketplaceId: string; categoryTreeId: string };
 const ebayMarketplaceTargets: ChannelTarget[] = [
   { targetId: "EBAY_US", displayName: "United States", marketCode: "US", locale: "en-US", language: "English", currency: "USD" },
   { targetId: "EBAY_GB", displayName: "United Kingdom", marketCode: "GB", locale: "en-GB", language: "English", currency: "GBP" },
@@ -49,6 +50,7 @@ type ChannelState = {
   manualCategoryId: string;
   manualCategoryName: string;
   manualCategoryPath: string;
+  ebayCategoryTreeBinding?: EbayCategoryTreeBinding;
   error?: string;
 };
 
@@ -64,6 +66,54 @@ const initialState = (): ChannelState => ({
 });
 
 const categoryStateStorageKey = (productId: string) => `sellerpilot:category-workbench:${productId}:v1`;
+
+function isCredentialRow(value: unknown): value is CredentialRow {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.id === "string"
+    && typeof row.channel === "string"
+    && activeChannelKeys.includes(row.channel as ActiveChannelKey)
+    && (row.environment === "production" || row.environment === "sandbox")
+    && typeof row.status === "string";
+}
+
+export function selectActiveProductionCredential(rows: unknown, channel: ActiveChannelKey) {
+  if (!Array.isArray(rows)) return undefined;
+  return rows.find((row): row is CredentialRow => isCredentialRow(row)
+    && row.channel === channel
+    && row.environment === "production"
+    && row.status === "active");
+}
+
+export function activeProductionCredentialMap(rows: readonly CredentialRow[]) {
+  const credentials = new Map<ActiveChannelKey, CredentialRow>();
+  for (const row of rows) {
+    if (row.environment !== "production" || row.status !== "active" || credentials.has(row.channel)) continue;
+    credentials.set(row.channel, row);
+  }
+  return credentials;
+}
+
+export function bindEbayCategoryTree(payload: OperationPayload, marketplaceId: string): EbayCategoryTreeBinding | null {
+  const normalizedMarketplaceId = marketplaceId.trim().toUpperCase();
+  const categoryTreeId = payload.remoteId?.trim() ?? "";
+  if (!/^EBAY_[A-Z]{2}$/.test(normalizedMarketplaceId) || !/^\d{1,20}$/.test(categoryTreeId)) return null;
+  return { marketplaceId: normalizedMarketplaceId, categoryTreeId };
+}
+
+export function ebayCategoryInspectionArguments(
+  categoryId: string,
+  binding: EbayCategoryTreeBinding | undefined,
+  marketplaceId: string,
+) {
+  const normalizedCategoryId = categoryId.trim();
+  const normalizedMarketplaceId = marketplaceId.trim().toUpperCase();
+  if (!normalizedCategoryId
+      || !binding
+      || binding.marketplaceId !== normalizedMarketplaceId
+      || !/^\d{1,20}$/.test(binding.categoryTreeId)) return null;
+  return { categoryId: normalizedCategoryId, categoryTreeId: binding.categoryTreeId };
+}
 
 function restoreCategoryStates(productId: string | null): Record<string, ChannelState> {
   if (!productId || typeof window === "undefined") return {};
@@ -82,6 +132,9 @@ function restoreCategoryStates(productId: string | null): Record<string, Channel
         suggestions: Array.isArray(state.suggestions) ? state.suggestions : [],
         attributes: Array.isArray(state.attributes) ? state.attributes : [],
         values: state.values && typeof state.values === "object" && !Array.isArray(state.values) ? state.values : {},
+        // Taxonomy tree IDs are provider-issued market bindings. Never trust a
+        // sessionStorage copy for a later official category validation call.
+        ebayCategoryTreeBinding: undefined,
         error: state.phase === "suggesting" || state.phase === "inspecting"
           ? "페이지 전환 중 중단된 조회입니다. 현재 검색어로 다시 조회해 주세요."
           : state.error,
@@ -760,7 +813,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         ]);
         if (!isLatestRequest()) return;
         if (bounded.signal.aborted) throw bounded.signal.reason ?? new DOMException("채널 등록 준비 조회가 중단되었습니다.", "AbortError");
-        setCredentials(error || !Array.isArray(data) ? [] : data.filter((row): row is CredentialRow => Boolean(row && typeof row === "object" && "id" in row && "channel" in row && "environment" in row && "status" in row)));
+        setCredentials(error || !Array.isArray(data) ? [] : data.filter(isCredentialRow));
         const accessToken = sessionData.session?.access_token;
         if (!accessToken) {
           const message = "채널 등록 대상을 보려면 다시 로그인해 주세요.";
@@ -841,7 +894,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     };
   }, [bootstrapVersion, productId]);
 
-  const activeCredential = useMemo(() => new Map(credentials.filter((row) => row.status === "active").map((row) => [row.channel, row])), [credentials]);
+  const activeCredential = useMemo(() => activeProductionCredentialMap(credentials), [credentials]);
   const visibleChannels = useMemo(() => {
     if (!enabledChannels?.length) return activeChannelKeys;
     const enabled = new Set(enabledChannels);
@@ -888,10 +941,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       supabase.auth.getSession(),
       supabase.rpc("sellerpilot_list_credentials"),
     ]);
-    const credential = (Array.isArray(latestCredentialRows) ? latestCredentialRows : []).find((row): row is CredentialRow => Boolean(
-      row && typeof row === "object" && "id" in row && "channel" in row && "status" in row
-      && row.channel === channel && row.status === "active",
-    )) ?? activeCredential.get(channel);
+    const credential = selectActiveProductionCredential(latestCredentialRows, channel)
+      ?? activeCredential.get(channel);
     if (!credential) throw new Error("실제 API 키 연결이 필요합니다.");
     const response = await fetch("/api/admin/channel-operations", {
       method: "POST",
@@ -907,6 +958,8 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const textQuery = localizedQuery(channel);
     if (textQuery.length < 2) return notify("카테고리 검색에 사용할 상품명을 2자 이상 입력해 주세요.");
     const key = stateKey(channel);
+    const target = selectedTarget(channel);
+    let ebayTreeBinding: EbayCategoryTreeBinding | undefined;
     setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "suggesting", error: undefined } }));
     try {
       if (channel === "lazada" && !sourceImageUrl) throw new Error("Lazada 공식 카테고리 추천에 사용할 대표이미지를 불러오지 못했습니다.");
@@ -914,7 +967,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       const args: Record<string, unknown> = channel === "coupang"
         ? { query: textQuery, body: { productDescription: description.slice(0, 3000), attributes: {} } }
         : channel === "ebay"
-          ? { query: textQuery, marketplaceId: selectedTarget(channel)?.targetId ?? "EBAY_US", categoryTreeId: "" }
+          ? { query: textQuery, marketplaceId: target?.targetId ?? "EBAY_US", categoryTreeId: "" }
           : channel === "shopee"
             ? { queryText: textQuery, ...marketArguments(channel) }
             : channel === "lazada"
@@ -930,20 +983,38 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
                 ? { query: textQuery, params: {} }
                 : { query: textQuery };
       const payload = await operation(channel, "categories.suggest", args);
+      if (channel === "ebay") {
+        const binding = bindEbayCategoryTree(payload, target?.targetId ?? "");
+        if (!binding) throw new Error("선택한 eBay 마켓의 공식 카테고리 트리를 확인하지 못했습니다.");
+        ebayTreeBinding = binding;
+      }
       const suggestions = normalizeSuggestions(channel, payload, textQuery);
       if (!suggestions.length) throw new Error("공식 카테고리 응답에서 일치하는 말단 카테고리를 찾지 못했습니다.");
-      setStates((current) => ({ ...current, [key]: { ...initialState(), phase: "idle", suggestions } }));
+      setStates((current) => ({ ...current, [key]: { ...initialState(), phase: "idle", suggestions, ebayCategoryTreeBinding: ebayTreeBinding } }));
     } catch (error) {
-      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), phase: "error", error: error instanceof Error ? error.message : "카테고리 추천 실패" } }));
+      setStates((current) => ({ ...current, [key]: {
+        ...(current[key] ?? initialState()),
+        ...(ebayTreeBinding ? { ebayCategoryTreeBinding: ebayTreeBinding } : {}),
+        phase: "error",
+        error: error instanceof Error ? error.message : "카테고리 추천 실패",
+      } }));
     }
   };
 
   const inspect = async (channel: ActiveChannelKey, selected: CategorySuggestion) => {
     const key = stateKey(channel);
+    const target = selectedTarget(channel);
+    const currentState = states[key] ?? initialState();
     setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "inspecting", error: undefined } }));
     try {
+      const ebayArguments = channel === "ebay"
+        ? ebayCategoryInspectionArguments(selected.id, currentState.ebayCategoryTreeBinding, target?.targetId ?? "")
+        : null;
+      if (channel === "ebay" && !ebayArguments) {
+        throw new Error("선택한 eBay 마켓에서 카테고리를 다시 검색한 뒤 공식 속성을 확인해 주세요.");
+      }
       const common = channel === "ebay"
-        ? { categoryId: selected.id, categoryTreeId: "0" }
+        ? ebayArguments!
         : channel === "temu"
           ? { categoryId: selected.id, goodsName: localizedQuery(channel), description: description.slice(0, 3000) }
           : { categoryId: selected.id, ...marketArguments(channel) };
@@ -1020,7 +1091,14 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       p_classification_source: channel === "coupang" || channel === "lazada" || channel === "ebay" ? "channel_recommendation" : "official_tree_search",
       p_required_attributes: requiredAttributes,
       p_provided_attributes: providedAttributes,
-      p_official_metadata: { verifiedBy: "channel_api", verifiedAt: new Date().toISOString(), targetId: assignmentTarget?.targetId ?? null, locale: assignmentTarget?.locale ?? null, globalProduct: channel === "shopee" },
+      p_official_metadata: {
+        verifiedBy: "channel_api",
+        verifiedAt: new Date().toISOString(),
+        targetId: assignmentTarget?.targetId ?? null,
+        locale: assignmentTarget?.locale ?? null,
+        globalProduct: channel === "shopee",
+        categoryTreeId: channel === "ebay" ? state.ebayCategoryTreeBinding?.categoryTreeId ?? null : null,
+      },
       p_confirm: true,
     })));
     if (results.some((result) => result.error)) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");

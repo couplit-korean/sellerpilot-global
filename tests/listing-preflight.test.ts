@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { blockingListingRequirements, inspectListingDraft, setListingDraftValue } from "../lib/channels/listing-preflight";
 
-test("eBay preflight exposes account auto-lookup fields with manual override paths", () => {
+test("eBay preflight blocks server-managed policy and location placeholders", () => {
   const draft = {
     inventoryItem: { product: { title: "Test item", description: "A real test item", imageUrls: ["https://example.com/item.jpg"] } },
     offer: {
@@ -14,10 +14,14 @@ test("eBay preflight exposes account auto-lookup fields with manual override pat
     },
   };
 
-  assert.deepEqual(blockingListingRequirements("ebay", draft), []);
+  assert.deepEqual(
+    blockingListingRequirements("ebay", draft).map((item) => item.key),
+    ["fulfillment-policy", "payment-policy", "return-policy", "location"],
+  );
   const accountFields = inspectListingDraft("ebay", draft).filter((item) => item.manualPath);
   assert.equal(accountFields.length, 4);
-  assert.equal(accountFields.every((item) => item.status === "runtime"), true);
+  assert.equal(accountFields.every((item) => item.status === "manual"), true);
+  assert.equal(accountFields.every((item) => item.placeholder?.startsWith("Seller Hub")), true);
 });
 
 test("manual policy input updates only the requested channel payload path", () => {

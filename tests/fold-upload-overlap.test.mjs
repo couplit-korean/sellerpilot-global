@@ -75,3 +75,19 @@ test("flow push status scrolls below the sticky header while the standalone gate
   assert.match(contract, /\.app-main > \.mobile-push-gate\.browser,\s*\.app-main > \.mobile-push-chip\s*\{[^}]*position:\s*relative/);
   assert.match(styles, /\.mobile-push-gate\.standalone\s*\{[^}]*z-index:\s*130/);
 });
+
+test("global Fold invariants survive production CSS chunk ordering and 200% reflow", async () => {
+  const styles = await readFile(globalStylesUrl, "utf8");
+  const marker = "/* Fold cover interaction invariants.";
+  const start = styles.indexOf(marker);
+  assert.notEqual(start, -1, "missing the global Fold interaction invariant");
+  const contract = styles.slice(start);
+
+  assert.match(contract, /:root\s*\{[^}]*--fold-nav-clearance:[^}]*--fold-toast-lane-height:\s*0px/);
+  assert.match(contract, /html:has\(body \.toast\)\s*\{\s*--fold-toast-lane-height:/);
+  assert.match(contract, /html\s*\{\s*scroll-padding-bottom:[^;]*var\(--fold-toast-lane-height, 0px\)[^;]*!important/);
+  assert.match(contract, /\.upload-panel \.option-slot-wrap\s*\{[^}]*height:\s*auto !important;[^}]*grid-template-rows:\s*minmax\(124px, auto\) auto !important;[^}]*aspect-ratio:\s*auto !important/);
+  assert.match(contract, /@media \(max-width: 240px\)[\s\S]*?\.option-photo-grid\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\) !important/);
+  assert.match(contract, /@media \(orientation: landscape\) and \(max-height: 390px\) and \(pointer: coarse\)[\s\S]*?\.detail-preview-canvas img\s*\{\s*pointer-events:\s*none !important/);
+  assert.match(contract, /@media \(orientation: landscape\) and \(max-height: 320px\) and \(pointer: coarse\)[\s\S]*?\.app-header-stack\s*\{\s*position:\s*relative !important/);
+});

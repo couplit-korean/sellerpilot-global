@@ -73,7 +73,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { AiProductStudio, cleanupUnenqueuedStudioPhotos, optimizeAndUploadStudioPhotos, type StudioCompetitorContext, type StudioPhoto } from "./ai-product-studio";
+import { AiProductStudio, cleanupUnenqueuedStudioPhotos, optimizeAndUploadStudioPhotos, type StudioCompetitorContext, type StudioPhoto, type StudioSubmissionMode } from "./ai-product-studio";
 import { AcceptanceChecklistPage } from "./acceptance-checklist";
 import { ChannelConnectionsPage } from "./channel-connections";
 import { CategoryClassificationWorkbench } from "./category-classification-workbench";
@@ -2612,6 +2612,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [firstDraftGenerated, setFirstDraftGenerated] = useState(false);
   const [queuedJobId, setQueuedJobId] = useState("");
   const [studioRequestId, setStudioRequestId] = useState(0);
+  const [studioSubmissionMode, setStudioSubmissionMode] = useState<StudioSubmissionMode>("ai");
   const studioWorkerReadiness = useStudioWorkerReadiness(authenticatedFetch);
   const [analyzedProductName, setAnalyzedProductName] = useState(initialProduct?.name ?? "");
   const [analyzedProductId, setAnalyzedProductId] = useState<string | null>(initialProduct?.id ?? null);
@@ -3369,9 +3370,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const startAutomation = () => {
     if (running || automationStartInFlightRef.current) return;
-    if (!isStudioExecutionReady(studioWorkerReadiness)) {
+    const aiReady = isStudioExecutionReady(studioWorkerReadiness);
+    const manualMvp = studioWorkerReadiness?.available === false;
+    if (!aiReady && !manualMvp) {
       const message = studioWorkerReadiness?.message
-        ?? "AI 제작 작업자 연결 상태를 확인하고 있습니다. 확인이 끝난 뒤 다시 시도해 주세요.";
+        ?? "서버 등록 상태를 확인하고 있습니다. 확인이 끝난 뒤 다시 시도해 주세요.";
       setUploadError(message);
       notify(message);
       return;
@@ -3390,7 +3393,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify("이 상품은 이미 등록 큐에 있습니다. 진행상황을 확인하거나 ‘다른 상품 등록’을 눌러 새 작업을 시작해 주세요.");
       return;
     }
-    if (competitorResearchBlocksAnalysis) {
+    if (competitorResearchBlocksAnalysis && !manualMvp) {
       notify("동일 상품 가격 확인이 끝난 뒤 상품 분석을 시작해 주세요. 조회 실패 시에는 공란 상태로 계속 진행할 수 있습니다.");
       return;
     }
@@ -3408,7 +3411,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       return;
     }
     if (!mainPhoto) {
-      setUploadError("AI 상품 분석을 시작하려면 대표사진 1장이 반드시 필요합니다.");
+      setUploadError("상품 등록을 시작하려면 대표사진 1장이 반드시 필요합니다.");
       notify("대표사진 1장을 먼저 등록해 주세요.");
       return;
     }
@@ -3424,7 +3427,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     automationStartInFlightRef.current = true;
     setRunning(true);
     setUploadError("");
-    notify(`${photoCount}장을 1200×1200 공통 규격으로 보정하고 필수 상품 정보와 함께 AI 분석에 반영합니다.`);
+    setStudioSubmissionMode(manualMvp ? "manual_mvp" : "ai");
+    notify(manualMvp
+      ? `${photoCount}장을 1200×1200 공통 규격으로 보정해 원본 사진과 판매자 확인 정보로 상품 원장을 직접 저장합니다.`
+      : `${photoCount}장을 1200×1200 공통 규격으로 보정하고 필수 상품 정보와 함께 AI 분석에 반영합니다.`);
     setStudioRequestId((current) => current + 1);
   };
 
@@ -3432,6 +3438,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const extraPhotoInputDisabled = extraPhotosProcessing || totalPhotoCount >= 100;
   const extraPhotoDisabledReason = extraPhotosProcessing ? "선택한 사진 확인 중" : totalPhotoCount >= 100 ? "최대 100장 등록됨" : "";
   const studioWorkerAvailable = isStudioExecutionReady(studioWorkerReadiness);
+  const manualMvpAvailable = studioWorkerReadiness?.available === false;
+  const registrationExecutionAvailable = studioWorkerAvailable || manualMvpAvailable;
   const intakeReady = productIntakeSchema.safeParse(intake).success;
   const intakeCompletionItems = [
     intake.researchInput.trim().length >= 2,
@@ -3579,14 +3587,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             <div className="analysis-context-note"><ShieldCheck size={16} /><span><b>이미지·AI 조사·판매자 확인값 교차검증</b><small>대표사진, 라벨 OCR, 링크 본문과 입력 텍스트를 비교하고 충돌하거나 확인되지 않은 정보는 자동 확정하지 않습니다.</small></span></div>
           </section>
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && studioWorkerAvailable && !researchingProduct && !competitorResearchBlocksAnalysis && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격 확인 대기" : ""}<br /><small role="status">{studioWorkerReadiness?.message ?? "Vercel 서버 AI 구성과 실제 Gateway 호출 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!studioWorkerAvailable || running || researchingProduct || photoSelectionsProcessing || competitorResearchBlocksAnalysis || Boolean(queuedJobId)} title={!studioWorkerAvailable ? studioWorkerReadiness?.message ?? "Vercel 서버 AI 실행 가능 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />분석 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 AI 확인 중</> : studioWorkerReadiness.reason === "gateway_unverified" || studioWorkerReadiness.reason === "gateway_verification_failed" ? <><AlertCircle size={17} />AI Gateway 점검 필요</> : !studioWorkerAvailable ? <><AlertCircle size={17} />서버 AI 연결 필요</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && registrationExecutionAvailable && !researchingProduct && (!competitorResearchBlocksAnalysis || manualMvpAvailable) && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>{totalPhotoCount}장</b> · 원본 별도 보존 · 분석용 1200×1200 JPG · 필수정보 {intakeReady ? "완료" : "미완료"} · 대표사진 {mainPhoto ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis && !manualMvpAvailable ? " · 동일상품 가격 확인 대기" : ""}<br /><small role="status">{manualMvpAvailable ? `${studioWorkerReadiness?.message ?? "서버 AI를 사용할 수 없습니다."} 원본 사진 직접등록은 사용할 수 있습니다.` : studioWorkerReadiness?.message ?? "Vercel 서버 AI 구성과 실제 Gateway 호출 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!registrationExecutionAvailable || running || researchingProduct || photoSelectionsProcessing || (competitorResearchBlocksAnalysis && !manualMvpAvailable) || Boolean(queuedJobId)} title={!registrationExecutionAvailable ? studioWorkerReadiness?.message ?? "서버 등록 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />{studioSubmissionMode === "manual_mvp" ? "원본 저장 중" : "분석 중"}</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 확인 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : competitorResearchBlocksAnalysis && !manualMvpAvailable ? <><LoaderCircle className="spin" size={17} />가격 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />등록 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 상태 확인 중</> : manualMvpAvailable ? <><Upload size={17} />원본 사진 직접등록</> : <><WandSparkles size={17} />상품 분석 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
           <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 키가 연결된 채널만 선택할 수 있습니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
           <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 공식 API 등록 가능</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
           <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : connected ? "연결됨" : "키 필요"}</em></span>; })}</div></details>
-          <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>서버 AI 분석 완료</b><small>실제 작업 결과가 저장된 상품만 진행</small></span><em>필수</em></div><div className="automation-requirement"><span><b>상품별 병렬 처리</b><small>이전 상품 처리 중에도 다음 상품을 큐에 추가</small></span><em>동시</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
+          <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>상품 원장 저장</b><small>서버 AI 분석 또는 판매자 확인 원본으로 저장</small></span><em>필수</em></div><div className="automation-requirement"><span><b>상품별 병렬 처리</b><small>이전 상품 처리 중에도 다음 상품을 큐에 추가</small></span><em>동시</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
         </aside>
       </section>
       <AiProductStudio
@@ -3595,6 +3603,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         manualFields={intake}
         competitorContext={studioCompetitorContext}
         requestId={studioRequestId}
+        submissionMode={studioSubmissionMode}
         workerReadiness={studioWorkerReadiness}
         onRunningChange={(nextRunning) => {
           automationStartInFlightRef.current = nextRunning;
@@ -3628,6 +3637,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           );
           intakeRef.current = nextIntake;
           setIntake(nextIntake);
+          setPublishRefreshVersion((current) => current + 1);
+        }}
+        onManualResultReady={(productId, _jobId, submittedIntake) => {
+          setAnalyzedProductName(submittedIntake.productName);
+          setAnalyzedProductId(productId);
           setPublishRefreshVersion((current) => current + 1);
         }}
       />

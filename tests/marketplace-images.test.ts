@@ -10,10 +10,22 @@ import {
   normalizeMarketplaceImageBytes,
   persistMarketplaceNormalizedAssets,
   prepareMarketplaceImages,
+  resolveMarketplaceImageAddresses,
   renderMarketplaceDetailImages,
   renderQoo10DetailDescription,
   upsertMarketplaceDetailImages,
 } from "../lib/channels/marketplace-images";
+
+test("marketplace DNS resolution stops at the caller deadline", async () => {
+  const controller = new AbortController();
+  const pending = resolveMarketplaceImageAddresses(
+    "images.example.com",
+    controller.signal,
+    () => new Promise(() => undefined),
+  );
+  controller.abort(new Error("deadline"));
+  await assert.rejects(pending, /deadline/);
+});
 
 test("normalized marketplace assets are reserved before upload and marked only after readback", async () => {
   const events: string[] = [];

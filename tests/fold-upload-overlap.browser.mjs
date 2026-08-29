@@ -970,3 +970,278 @@ test("phone and tablet release widths preserve titles, order data and 44px contr
     await browser.close();
   }
 });
+
+const foldReflowProfiles = [
+  { name: "Fold cover 280 portrait", width: 280, height: 653, zoom: 1 },
+  { name: "Fold cover 320 portrait", width: 320, height: 844, zoom: 1 },
+  { name: "Fold cover 344 portrait", width: 344, height: 844, zoom: 1 },
+  { name: "phone 390 portrait", width: 390, height: 844, zoom: 1 },
+  { name: "Fold cover 280 landscape", width: 653, height: 280, zoom: 1 },
+  { name: "Fold cover 320 landscape", width: 844, height: 320, zoom: 1 },
+  { name: "Fold cover 344 landscape", width: 844, height: 344, zoom: 1 },
+  { name: "phone 390 landscape", width: 844, height: 390, zoom: 1 },
+  { name: "Fold cover 280 portrait at 200%", width: 140, height: 327, zoom: 2 },
+  { name: "Fold cover 320 portrait at 200%", width: 160, height: 422, zoom: 2 },
+  { name: "Fold cover 344 portrait at 200%", width: 172, height: 422, zoom: 2 },
+  { name: "phone 390 portrait at 200%", width: 195, height: 422, zoom: 2 },
+  { name: "Fold cover 280 landscape at 200%", width: 327, height: 140, zoom: 2 },
+  { name: "Fold cover 320 landscape at 200%", width: 422, height: 160, zoom: 2 },
+  { name: "Fold cover 344 landscape at 200%", width: 422, height: 172, zoom: 2 },
+  { name: "phone 390 landscape at 200%", width: 422, height: 195, zoom: 2 },
+];
+
+async function centerTargetAboveFixedLayers(page, selector) {
+  const target = page.locator(selector);
+  await target.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const fixedTops = [".toast", ".mobile-bottom-nav"]
+      .map((selector) => document.querySelector(selector))
+      .filter((layer) => layer instanceof HTMLElement && getComputedStyle(layer).position === "fixed")
+      .map((layer) => layer.getBoundingClientRect().top);
+    const fixedBottoms = [".app-header-stack"]
+      .map((selector) => document.querySelector(selector))
+      .filter((layer) => layer instanceof HTMLElement && ["fixed", "sticky"].includes(getComputedStyle(layer).position))
+      .map((layer) => layer.getBoundingClientRect().bottom);
+    const availableTop = Math.max(0, ...fixedBottoms);
+    const availableBottom = Math.min(window.innerHeight, ...fixedTops);
+    const desiredTop = availableTop + Math.max(0, (availableBottom - availableTop - box.height) / 2);
+    window.scrollTo({
+      top: window.scrollY + box.top - desiredTop,
+      behavior: "instant",
+    });
+  });
+  await page.waitForTimeout(10);
+  return target.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const fixedTops = [".toast", ".mobile-bottom-nav"]
+      .map((selector) => document.querySelector(selector))
+      .filter((layer) => layer instanceof HTMLElement && getComputedStyle(layer).position === "fixed")
+      .map((layer) => layer.getBoundingClientRect().top);
+    const fixedBottoms = [".app-header-stack"]
+      .map((selector) => document.querySelector(selector))
+      .filter((layer) => layer instanceof HTMLElement && ["fixed", "sticky"].includes(getComputedStyle(layer).position))
+      .map((layer) => layer.getBoundingClientRect().bottom);
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return {
+      width: box.width,
+      height: box.height,
+      top: box.top,
+      bottom: box.bottom,
+      occlusionBottom: Math.max(0, ...fixedBottoms),
+      occlusionTop: Math.min(window.innerHeight, ...fixedTops),
+      hit: hit instanceof Element && (hit === element || element.contains(hit)),
+    };
+  });
+}
+
+test("Fold portrait, landscape and 200% reflow keep registration, history, detail and edit actions reachable", { timeout: 180_000 }, async () => {
+  const executablePath = await firstExecutable([
+    process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ]);
+  assert.ok(executablePath, "Fold reflow geometry test requires Chrome");
+
+  const styles = (await Promise.all(cssUrls.map((url) => readFile(url, "utf8")))).join("\n");
+  const browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ["--disable-background-networking", "--disable-default-apps", "--no-first-run"],
+  });
+
+  try {
+    for (const profile of foldReflowProfiles) {
+      const { name, width, height, zoom } = profile;
+      const context = await browser.newContext({
+        viewport: { width, height },
+        deviceScaleFactor: zoom,
+        hasTouch: true,
+        isMobile: true,
+      });
+      const page = await context.newPage();
+
+      await page.setContent(fixtureHtml(styles), { waitUntil: "load" });
+      await page.waitForTimeout(80);
+      const registration = await page.evaluate(() => {
+        const push = document.querySelector(".app-main > .mobile-push-chip");
+        const cards = [...document.querySelectorAll(".option-slot-wrap")];
+        const analysis = document.querySelector("[data-generation-status]");
+        const toast = document.querySelector(".toast");
+        const nav = document.querySelector(".mobile-bottom-nav");
+        if (!(push instanceof HTMLElement) || cards.length === 0 || !(analysis instanceof HTMLElement) || !(toast instanceof HTMLElement) || !(nav instanceof HTMLElement)) throw new Error("registration reflow fixture is incomplete");
+        const cardGeometry = cards.map((card) => {
+          const photo = card.querySelector(".option-photo-slot");
+          const actions = card.querySelector(".photo-source-actions.compact");
+          if (!(photo instanceof HTMLElement) || !(actions instanceof HTMLElement)) throw new Error("photo card is incomplete");
+          const cardBox = card.getBoundingClientRect();
+          const photoBox = photo.getBoundingClientRect();
+          const actionsBox = actions.getBoundingClientRect();
+          return {
+            top: cardBox.top,
+            bottom: cardBox.bottom,
+            photoBottom: photoBox.bottom,
+            actionsTop: actionsBox.top,
+            actionsBottom: actionsBox.bottom,
+            targets: [...actions.querySelectorAll("label")].map((label) => {
+              const box = label.getBoundingClientRect();
+              return { width: box.width, height: box.height };
+            }),
+          };
+        });
+        const pushBox = push.getBoundingClientRect();
+        const firstCardBox = cards[0].getBoundingClientRect();
+        const lastCardBox = cards.at(-1).getBoundingClientRect();
+        const analysisBox = analysis.getBoundingClientRect();
+        const navBox = nav.getBoundingClientRect();
+        const appContent = document.querySelector(".app-content");
+        if (!(appContent instanceof HTMLElement)) throw new Error("registration content is missing");
+        return {
+          innerWidth: window.innerWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          scrollPaddingBottom: Number.parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom),
+          contentPaddingBottom: Number.parseFloat(getComputedStyle(appContent).paddingBottom),
+          pushPosition: getComputedStyle(push).position,
+          pushBottom: pushBox.bottom,
+          firstCardTop: firstCardBox.top,
+          lastCardBottom: lastCardBox.bottom,
+          analysisTop: analysisBox.top,
+          analysisPosition: getComputedStyle(analysis).position,
+          analysisZIndex: getComputedStyle(analysis).zIndex,
+          toastPosition: getComputedStyle(toast).position,
+          navPosition: getComputedStyle(nav).position,
+          navTop: navBox.top,
+          navBottom: navBox.bottom,
+          navClientWidth: nav.clientWidth,
+          navScrollWidth: nav.scrollWidth,
+          optionColumns: getComputedStyle(document.querySelector(".option-photo-grid")).gridTemplateColumns.split(" ").filter(Boolean).length,
+          cards: cardGeometry,
+        };
+      });
+
+      assert.equal(registration.innerWidth, width, `${name}: fixture must use the requested CSS viewport`);
+      assert.ok(registration.documentWidth <= width, `${name}: registration must not widen the document (${registration.documentWidth}/${width})`);
+      assert.ok(Number.isFinite(registration.scrollPaddingBottom) && registration.scrollPaddingBottom >= 96, `${name}: html must compute a valid fixed-layer scroll clearance (${registration.scrollPaddingBottom})`);
+      assert.ok(Number.isFinite(registration.contentPaddingBottom) && registration.contentPaddingBottom >= 96, `${name}: content must reserve the fixed navigation lane (${registration.contentPaddingBottom})`);
+      assert.equal(registration.pushPosition, "relative", `${name}: push status must stay in page flow`);
+      assert.ok(registration.pushBottom <= registration.firstCardTop + 0.5, `${name}: push status covers the first photo card`);
+      assert.equal(registration.analysisPosition, "static", `${name}: analysis status must stay in page flow`);
+      assert.equal(registration.analysisZIndex, "auto", `${name}: analysis status must not create an overlay`);
+      assert.ok(registration.lastCardBottom <= registration.analysisTop + 0.5, `${name}: analysis status covers the last photo card`);
+      assert.equal(registration.navPosition, "fixed", `${name}: bottom navigation must remain available in both orientations`);
+      assert.ok(registration.navBottom <= height + 0.5, `${name}: navigation must honor the viewport bottom`);
+      assert.equal(registration.toastPosition, height <= 320 || width <= 240 ? "relative" : "fixed", `${name}: toast must use the correct reflow lane`);
+      if (width <= 240) assert.equal(registration.optionColumns, 1, `${name}: 200% cover reflow needs one photo-card column`);
+      if (width <= 240) assert.ok(registration.navScrollWidth > registration.navClientWidth, `${name}: five 44px navigation targets must scroll internally`);
+      for (const [index, card] of registration.cards.entries()) {
+        assert.ok(card.actionsTop >= card.photoBottom - 0.5, `${name}: photo card ${index + 1} action row covers the photo`);
+        assert.ok(card.bottom >= card.actionsBottom - 0.5, `${name}: photo card ${index + 1} does not contain its actions`);
+        for (const target of card.targets) assert.ok(target.width >= 43.5 && target.height >= 43.5, `${name}: photo action is below 44px (${target.width}x${target.height})`);
+      }
+
+      for (const actionId of [
+        "main-camera",
+        "main-album",
+        "0-camera",
+        "0-album",
+        "7-camera",
+        "7-album",
+        "extra-camera",
+        "extra-album",
+      ]) {
+        const probe = await centerTargetAboveFixedLayers(page, `[data-action="${actionId}"]`);
+        assert.ok(probe.top >= probe.occlusionBottom - 0.5 && probe.bottom <= probe.occlusionTop + 0.5, `${name}: ${actionId} cannot scroll clear of fixed layers (${JSON.stringify(probe)})`);
+        assert.ok(probe.width >= 43.5 && probe.height >= 43.5, `${name}: ${actionId} must retain a 44px target`);
+        assert.equal(probe.hit, true, `${name}: ${actionId} center touch is intercepted`);
+      }
+
+      const navigationTargets = await page.locator(".mobile-bottom-nav > button").evaluateAll((buttons) => buttons.map((button) => {
+        button.scrollIntoView({ block: "nearest", inline: "center" });
+        const box = button.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        return { width: box.width, height: box.height, hit: hit instanceof Element && (hit === button || button.contains(hit)) };
+      }));
+      for (const target of navigationTargets) {
+        assert.ok(target.width >= 43.5 && target.height >= 43.5, `${name}: navigation target must retain 44px (${target.width}x${target.height})`);
+        assert.equal(target.hit, true, `${name}: navigation target center must remain touchable`);
+      }
+
+      await page.setContent(workspaceFixtureHtml(styles, "activity"), { waitUntil: "load" });
+      const historyGeometry = await page.evaluate(() => ({
+        documentWidth: document.documentElement.scrollWidth,
+        targets: [...document.querySelectorAll(".registration-card button")].map((button) => {
+          const box = button.getBoundingClientRect();
+          return { width: box.width, height: box.height };
+        }),
+      }));
+      assert.ok(historyGeometry.documentWidth <= width, `${name}: registration history must not widen the document`);
+      for (const target of historyGeometry.targets) assert.ok(target.width >= 43.5 && target.height >= 43.5, `${name}: registration history target must retain 44px (${target.width}x${target.height})`);
+      const historyAction = await centerTargetAboveFixedLayers(page, ".registration-stop-button");
+      assert.ok(historyAction.bottom <= historyAction.occlusionTop + 0.5 && historyAction.hit, `${name}: registration stop action is covered`);
+
+      await page.setContent(workspaceFixtureHtml(styles, "detail"), { waitUntil: "load" });
+      const detailGeometry = await page.locator("[data-preview-image]").evaluate((image) => {
+        const scroll = document.querySelector(".detail-preview-scroll");
+        if (!(scroll instanceof HTMLElement) || !(image instanceof HTMLElement)) throw new Error("detail preview fixture is incomplete");
+        window.scrollTo({ top: 0, behavior: "instant" });
+        const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+        window.scrollTo({ top: Math.min(240, maxScroll), behavior: "instant" });
+        return {
+          documentWidth: document.documentElement.scrollWidth,
+          touchAction: getComputedStyle(scroll).touchAction,
+          imagePointerEvents: getComputedStyle(image).pointerEvents,
+          didScroll: window.scrollY > 0,
+        };
+      });
+      assert.ok(detailGeometry.documentWidth <= width, `${name}: product detail must not widen the document`);
+      assert.ok(detailGeometry.touchAction.includes("pan-y"), `${name}: detail preview must allow vertical touch scrolling`);
+      assert.equal(detailGeometry.imagePointerEvents, "none", `${name}: preview image must not steal the scroll gesture`);
+      assert.equal(detailGeometry.didScroll, true, `${name}: detail page must remain vertically scrollable`);
+      const detailAction = await centerTargetAboveFixedLayers(page, "[data-workspace-action]");
+      assert.ok(detailAction.width >= 43.5 && detailAction.height >= 43.5 && detailAction.hit, `${name}: detail edit action must remain touchable (${JSON.stringify(detailAction)})`);
+      assert.ok(detailAction.bottom <= detailAction.occlusionTop + 0.5, `${name}: detail edit action is covered by a transient layer`);
+
+      await page.setContent(productEditFixtureHtml(styles), { waitUntil: "load" });
+      const editGeometry = await page.evaluate(() => {
+        const overlay = document.querySelector(".product-edit-overlay");
+        const dialog = document.querySelector(".product-edit-dialog");
+        const form = document.querySelector(".product-edit-form");
+        const footer = dialog?.querySelector(":scope > footer");
+        if (!(overlay instanceof HTMLElement) || !(dialog instanceof HTMLElement) || !(form instanceof HTMLElement) || !(footer instanceof HTMLElement)) throw new Error("product edit reflow fixture is incomplete");
+        if (window.innerHeight <= 320) overlay.scrollTop = overlay.scrollHeight;
+        else form.scrollTop = form.scrollHeight;
+        const formBox = form.getBoundingClientRect();
+        const footerBox = footer.getBoundingClientRect();
+        const targets = [...dialog.querySelectorAll("[data-edit-close], [data-edit-action]")].map((button) => {
+          button.scrollIntoView({ block: "nearest", inline: "nearest" });
+          const box = button.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return { width: box.width, height: box.height, hit: hit instanceof Element && (hit === button || button.contains(hit)) };
+        });
+        return {
+          documentWidth: document.documentElement.scrollWidth,
+          dialogMaxHeight: getComputedStyle(dialog).maxHeight,
+          formOverflow: getComputedStyle(form).overflowY,
+          formBottom: formBox.bottom,
+          footerTop: footerBox.top,
+          targets,
+        };
+      });
+      assert.ok(editGeometry.documentWidth <= width, `${name}: product edit must not widen the document`);
+      assert.ok(editGeometry.formBottom <= editGeometry.footerTop + 4, `${name}: product edit footer covers the form beyond its shared border (${JSON.stringify(editGeometry)})`);
+      if (height <= 320) assert.equal(editGeometry.dialogMaxHeight, "none", `${name}: short-landscape reflow must let the overlay scroll the complete edit dialog`);
+      else assert.equal(editGeometry.formOverflow, "auto", `${name}: product edit fields must scroll inside the dialog`);
+      for (const target of editGeometry.targets) {
+        assert.ok(target.width >= 43.5 && target.height >= 43.5, `${name}: product edit target must retain 44px (${target.width}x${target.height})`);
+        assert.equal(target.hit, true, `${name}: product edit target center must remain touchable`);
+      }
+
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+});

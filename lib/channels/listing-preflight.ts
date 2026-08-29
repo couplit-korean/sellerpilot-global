@@ -18,7 +18,7 @@ type RequirementSpec = Omit<ListingRequirement, "status"> & {
   runtime?: boolean;
 };
 
-const unknownValue = /^(?:seller confirmation required|unknown|not provided|n\/a|미기재|미확인|확인 필요|판매자 확인 필요)$/i;
+const unknownValue = /^(?:server_managed|seller confirmation required|unknown|not provided|n\/a|미기재|미확인|확인 필요|판매자 확인 필요)$/i;
 
 function valueAt(value: unknown, path: Array<string | number>) {
   return path.reduce<unknown>((current, part) => {
@@ -155,10 +155,10 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     sharedImage(["inventoryItem", "product", "imageUrls"]),
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["offer", "pricingSummary", "price", "value"]) },
     { key: "stock", label: "재고", source: "상품 정보", test: positive(["offer", "availableQuantity"]) },
-    { key: "fulfillment-policy", label: "배송 정책 ID", source: "판매자 계정", runtime: true, path: ["offer", "listingPolicies", "fulfillmentPolicyId"], manualPath: ["offer", "listingPolicies", "fulfillmentPolicyId"], placeholder: "자동조회 실패 시 fulfillmentPolicyId", help: "eBay Account API에서 자동 조회하며 필요하면 Seller Hub 값을 직접 입력할 수 있습니다." },
-    { key: "payment-policy", label: "결제 정책 ID", source: "판매자 계정", runtime: true, path: ["offer", "listingPolicies", "paymentPolicyId"], manualPath: ["offer", "listingPolicies", "paymentPolicyId"], placeholder: "자동조회 실패 시 paymentPolicyId" },
-    { key: "return-policy", label: "반품 정책 ID", source: "판매자 계정", runtime: true, path: ["offer", "listingPolicies", "returnPolicyId"], manualPath: ["offer", "listingPolicies", "returnPolicyId"], placeholder: "자동조회 실패 시 returnPolicyId" },
-    { key: "location", label: "재고 위치 키", source: "판매자 계정", runtime: true, path: ["offer", "merchantLocationKey"], manualPath: ["offer", "merchantLocationKey"], placeholder: "자동조회 실패 시 merchantLocationKey", help: "eBay Inventory API에서 자동 조회하며 필요하면 등록된 위치 키를 직접 입력할 수 있습니다." },
+    { key: "fulfillment-policy", label: "배송 정책 ID", source: "판매자 계정", path: ["offer", "listingPolicies", "fulfillmentPolicyId"], manualPath: ["offer", "listingPolicies", "fulfillmentPolicyId"], placeholder: "Seller Hub fulfillmentPolicyId", help: "Seller Hub에서 이 상품에 적용할 배송 정책을 확인해 직접 입력해 주세요." },
+    { key: "payment-policy", label: "결제 정책 ID", source: "판매자 계정", path: ["offer", "listingPolicies", "paymentPolicyId"], manualPath: ["offer", "listingPolicies", "paymentPolicyId"], placeholder: "Seller Hub paymentPolicyId", help: "Seller Hub에서 이 상품에 적용할 결제 정책을 확인해 직접 입력해 주세요." },
+    { key: "return-policy", label: "반품 정책 ID", source: "판매자 계정", path: ["offer", "listingPolicies", "returnPolicyId"], manualPath: ["offer", "listingPolicies", "returnPolicyId"], placeholder: "Seller Hub returnPolicyId", help: "Seller Hub에서 이 상품에 적용할 반품 정책을 확인해 직접 입력해 주세요." },
+    { key: "location", label: "재고 위치 키", source: "판매자 계정", path: ["offer", "merchantLocationKey"], manualPath: ["offer", "merchantLocationKey"], placeholder: "Seller Hub merchantLocationKey", help: "Seller Hub에 미리 등록한 실제 Inventory Location 키를 직접 입력해 주세요." },
   ],
 };
 

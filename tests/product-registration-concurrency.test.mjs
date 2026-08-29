@@ -25,8 +25,9 @@ test("the same product form cannot enqueue a duplicate while its own job is acti
   assert.match(studio, /if \(queuedOwnJobId \|\| queuedOwnJobIdRef\.current\)[\s\S]{0,300}onRunningChange\(false\)/);
   assert.match(studio, /setQueuedOwnJobId\(queued\.jobId\)/);
   assert.match(studio, /const studioExecutionReady = isStudioExecutionReady\(workerReadiness\)/);
-  assert.match(studio, /disabled=\{!mainPhoto \|\| !studioExecutionReady \|\| generating \|\| Boolean\(queuedOwnJobId\)\}/);
-  assert.match(page, /automationStartInFlightRef\.current = true[\s\S]{0,220}setStudioRequestId/);
+  assert.match(studio, /const submissionAvailable = submissionMode === "manual_mvp" \|\| studioExecutionReady/);
+  assert.match(studio, /disabled=\{!mainPhoto \|\| !submissionAvailable \|\| generating \|\| Boolean\(queuedOwnJobId\)\}/);
+  assert.match(page, /automationStartInFlightRef\.current = true[\s\S]{0,420}setStudioRequestId/);
   assert.match(page, /onRunningChange=\{\(nextRunning\) => \{[\s\S]{0,180}automationStartInFlightRef\.current = nextRunning/);
 });
 

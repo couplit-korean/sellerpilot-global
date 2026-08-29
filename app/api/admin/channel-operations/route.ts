@@ -19,6 +19,7 @@ import {
   executeViaChannelGateway,
 } from "../../../../lib/channels/gateway";
 import { channelOperationRelease } from "../../../../lib/channels/operation-availability";
+import { missingEbayListingCreateConfiguration } from "../../../../lib/channels/ebay-listing-configuration";
 import { mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elevenst-listing";
 import {
   elevenstListingUpdateProjectionDigestInput,
@@ -28,6 +29,11 @@ import {
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
 import { marketplaceChannelDetailImageCount } from "../../../../lib/channels/marketplace-image-contract";
+import {
+  configuredServerlessStaticEgressChannels,
+  hasServerlessStaticEgressFor,
+  SERVERLESS_STATIC_EGRESS_REQUIRED,
+} from "../../../../lib/channels/serverless-static-egress";
 import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
@@ -64,6 +70,30 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+type ProductContentMode = "ai_generated" | "manual_mvp";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function marketplaceContentModeMatchesProduct(
+  argumentsValue: Record<string, unknown>,
+  productContentMode: ProductContentMode,
+) {
+  const assets = isRecord(argumentsValue.sellerpilotAssets)
+    ? argumentsValue.sellerpilotAssets
+    : null;
+  if (!assets || assets.contentMode !== productContentMode) return false;
+
+  const preparedMarker = argumentsValue.sellerpilotContentMode;
+  if (productContentMode === "manual_mvp") {
+    return assets.detailAssetMode === "manual_source"
+      && (preparedMarker === undefined || preparedMarker === "manual_mvp");
+  }
+  return assets.detailAssetMode !== "manual_source"
+    && preparedMarker === undefined;
+}
+
 function errorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   if (message.startsWith("CHANNEL_ARGUMENT_REQUIRED:")) return `필수 작업값이 누락됐습니다 · ${message.split(":")[1]}`;
@@ -78,8 +108,7 @@ function errorMessage(error: unknown) {
   if (message.includes("MARKETPLACE_DETAIL_IMAGE_REQUIRED")) return `채널용 상세페이지 전용 이미지 ${marketplaceChannelDetailImageCount}장이 모두 생성·검증되지 않아 실제 채널 등록을 차단했습니다. AI 상세 제작을 다시 실행해 주세요.`;
   if (message.includes("MARKETPLACE_IMAGE_")) return "대표 이미지를 1200×1200 JPEG·3MB 이하 영구 공개 경로로 자동 보정하지 못했습니다.";
   if (message.includes("NAVER_AFTER_SERVICE_PHONE_MISSING")) return "네이버 판매자 주소록에서 A/S 연락처를 찾지 못했습니다. API 키의 A/S 전화번호 필드에 실제 연락처를 입력해 주세요.";
-  if (message.includes("EBAY_BUSINESS_POLICIES_MISSING")) return "eBay 계정에 해당 마켓의 배송·결제·반품 Business Policy가 없습니다. Seller Hub에서 정책을 만들거나 필수 입력란에 실제 정책 ID를 입력해 주세요.";
-  if (message.includes("EBAY_INVENTORY_LOCATION_MISSING")) return "eBay 계정에 사용할 Inventory Location이 없습니다. Seller Hub에서 재고 위치를 만들거나 필수 입력란에 실제 위치 키를 입력해 주세요.";
+  if (message.includes("EBAY_LISTING_CONFIGURATION_REQUIRED")) return "eBay 마켓과 Seller Hub에서 확인한 배송·결제·반품 정책 ID, 재고 위치 키를 명시적으로 입력해 주세요.";
   if (message.startsWith("CHANNEL_GATEWAY_TIMEOUT")) return "Vercel 서버리스 채널 게이트웨이의 응답 제한시간을 초과했습니다. 운영 상태를 확인해 주세요.";
   if (message.startsWith("CHANNEL_WRITE_RESOURCE_")) return "가격·재고·발송 작업의 원격 대상 식별값을 확인하지 못해 실행을 차단했습니다.";
   if (message.startsWith("CHANNEL_GATEWAY_")) return "Vercel 서버리스 채널 게이트웨이에서 안전하게 처리된 오류가 발생했습니다.";
@@ -150,6 +179,37 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const contentBoundListingOperation = operation === "listing.create"
+    || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets));
+  let verifiedPublishContext: Record<string, unknown> | null = null;
+  let verifiedProductContentMode: ProductContentMode | null = null;
+  if (contentBoundListingOperation) {
+    const { data: publishContext, error: contextError } = await userClient.rpc(
+      "sellerpilot_get_product_publish_context",
+      { p_product_id: parsed.data.productId! },
+    );
+    if (contextError || !isRecord(publishContext)) {
+      return NextResponse.json({
+        message: "상품 원장의 제작 계보를 확인하지 못해 판매채널 전송을 차단했습니다.",
+        mode: "product_content_lineage_unverified",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const contentMode = publishContext.contentMode;
+    if (contentMode !== "manual_mvp" && contentMode !== "ai_generated") {
+      return NextResponse.json({
+        message: "상품 원장의 제작 방식을 확인하지 못해 판매채널 전송을 차단했습니다.",
+        mode: "product_content_lineage_unverified",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (!marketplaceContentModeMatchesProduct(parsed.data.arguments, contentMode)) {
+      return NextResponse.json({
+        message: "요청한 이미지 제작 방식이 상품 원장의 제작 계보와 일치하지 않습니다.",
+        mode: "product_content_mode_mismatch",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    verifiedPublishContext = publishContext;
+    verifiedProductContentMode = contentMode;
+  }
   const findProductListingId = async (remoteId?: string) => {
     if (!parsed.data.productId) return "";
     const { data, error } = await userClient.rpc("sellerpilot_get_product_publish_context", {
@@ -184,9 +244,12 @@ export async function POST(request: NextRequest) {
     } catch {
       return NextResponse.json({ message: "원격 상품 식별값이 누락됐거나 서로 일치하지 않습니다." }, { status: 409 });
     }
-    const { data: publishContext, error: contextError } = await userClient.rpc("sellerpilot_get_product_publish_context", {
-      p_product_id: productId,
-    });
+    const publishContextResult = verifiedPublishContext
+      ? { data: verifiedPublishContext, error: null }
+      : await userClient.rpc("sellerpilot_get_product_publish_context", {
+          p_product_id: productId,
+        });
+    const { data: publishContext, error: contextError } = publishContextResult;
     const contextRecord = publishContext && typeof publishContext === "object" && !Array.isArray(publishContext)
       ? publishContext as Record<string, unknown>
       : {};
@@ -268,6 +331,63 @@ export async function POST(request: NextRequest) {
       mode: operationRelease.mode,
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
+
+  if (channel === "ebay" && operation === "listing.create") {
+    const missingConfiguration = missingEbayListingCreateConfiguration(parsed.data.arguments);
+    if (missingConfiguration.length) {
+      return NextResponse.json({
+        ok: false,
+        manualRequired: true,
+        externalActionRequired: true,
+        mode: "ebay_listing_configuration_required",
+        missingConfiguration,
+        message: "eBay 마켓과 Seller Hub에서 확인한 배송·결제·반품 정책 ID, 재고 위치 키를 명시적으로 입력한 뒤 다시 시도해 주세요.",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+
+  if (channel === "temu" && operation === "listing.create") {
+    const [staticEgressStatus, runtimeStatus] = await Promise.all([
+      serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
+      serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
+    ]);
+    const databasePolicy = staticEgressStatus.data
+      && typeof staticEgressStatus.data === "object"
+      && !Array.isArray(staticEgressStatus.data)
+      ? staticEgressStatus.data as Record<string, unknown>
+      : {};
+    const runtimeState = runtimeStatus.data
+      && typeof runtimeStatus.data === "object"
+      && !Array.isArray(runtimeStatus.data)
+      ? runtimeStatus.data as Record<string, unknown>
+      : {};
+    const environmentReady = hasServerlessStaticEgressFor(
+      configuredServerlessStaticEgressChannels(),
+      ["temu"],
+    );
+    if (!environmentReady || staticEgressStatus.error || databasePolicy.temu !== true) {
+      return NextResponse.json({
+        ok: false,
+        manualRequired: true,
+        externalActionRequired: true,
+        staticEgressReady: false,
+        blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+        mode: "static_egress_required",
+        message: "Temu에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 상품 등록을 다시 시도해 주세요.",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (runtimeStatus.error || runtimeState.configured !== true || runtimeState.active !== true) {
+      return NextResponse.json({
+        ok: false,
+        operatorActionRequired: true,
+        workerReady: false,
+        blockedReason: "SERVERLESS_WORKER_REQUIRED",
+        mode: "serverless_worker_required",
+        message: "Temu 상품 등록 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+
   let effectiveArguments = parsed.data.arguments;
   if (channel === "elevenst" && operation === "listing.update") {
     const productNo = listingUpdateRemoteIdentity(channel, parsed.data.arguments);
@@ -446,6 +566,17 @@ export async function POST(request: NextRequest) {
             productId: parsed.data.productId!,
             market: parsed.data.market,
             targetId: parsed.data.targetId,
+          }).then((prepared) => {
+            // The transport marker is server-owned. The request-side assets
+            // were already exact-bound to the product lineage before the
+            // idempotency attempt was claimed, so a client cannot relabel an
+            // AI product as manual to relax the strict image evidence fence.
+            if (verifiedProductContentMode === "manual_mvp") {
+              prepared.sellerpilotContentMode = "manual_mvp";
+            } else {
+              delete prepared.sellerpilotContentMode;
+            }
+            return prepared;
           })
         : effectiveArguments;
       const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
