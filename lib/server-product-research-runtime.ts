@@ -41,6 +41,9 @@ export function configuredServerProductResearchDependencies(): ServerProductRese
     releaseId: process.env.SELLERPILOT_RELEASE_SHA,
     vercelGitCommitSha: process.env.VERCEL_GIT_COMMIT_SHA,
     requireActiveRuntime: true,
+    preflightImageMode: process.env.SELLERPILOT_PRODUCT_RESEARCH_IMAGE_MODE === "gateway-composite"
+      ? "gateway-composite"
+      : "source-photo-catalog",
     rpc: serviceClient
       ? async (name, arguments_ = {}) => {
         const { data, error } = await serviceClient.rpc(name, arguments_);

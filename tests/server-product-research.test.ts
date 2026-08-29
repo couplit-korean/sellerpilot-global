@@ -31,6 +31,7 @@ import {
   SERVER_PRODUCT_RESEARCH_IMAGE_MODEL,
   SERVER_PRODUCT_RESEARCH_MODEL,
   SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY,
+  SERVER_PRODUCT_RESEARCH_REMOTE_CONCURRENCY,
   SERVER_PRODUCT_RESEARCH_WAKE_WIDTH,
   shouldTerminallyFailProductResearch,
 } from "../lib/server-product-research";
@@ -439,13 +440,14 @@ test("a failed research half removes a completed preflight and never marks the c
   assert.equal(calls.includes("sellerpilot_service_complete_product_research_ai_job"), false);
 });
 
-test("low-confidence segmentation keeps the complete source frame in six explicit catalog composites", async () => {
+test("default safe preflight skips every image provider and builds six distinct source-photo composites", async () => {
   const source = await sharp({
     create: { width: 600, height: 600, channels: 3, background: { r: 205, g: 45, b: 65 } },
   }).png().toBuffer();
   const digest = createHash("sha256").update(source).digest("hex");
   const uploads = new Map<string, Uint8Array>();
   const removed: string[][] = [];
+  let segmentationCalls = 0;
   let backgroundCalls = 0;
   const result = await generateServerProductResearchPreflightAssets({
     jobId: JOB_ID,
@@ -459,21 +461,24 @@ test("low-confidence segmentation keeps the complete source frame in six explici
         return "uploaded";
       },
       remove: async (paths) => { removed.push(paths); },
-      segmentSource: async () => ({
-        segmentation: {
-          containsSingleProduct: true,
-          touchesFrame: false,
-          foregroundConfidence: 0.96,
-          edgeConfidence: 1,
-          polygons: [{
-            points: Array.from({ length: 12 }, (_, index) => ({
-              x: 0.5 + Math.cos((index / 12) * Math.PI * 2) * 0.3,
-              y: 0.5 + Math.sin((index / 12) * Math.PI * 2) * 0.3,
-            })),
-          }],
-        },
-        segmentationSource: new Uint8Array(source),
-      }),
+      segmentSource: async () => {
+        segmentationCalls += 1;
+        return {
+          segmentation: {
+            containsSingleProduct: true,
+            touchesFrame: false,
+            foregroundConfidence: 0.96,
+            edgeConfidence: 1,
+            polygons: [{
+              points: Array.from({ length: 12 }, (_, index) => ({
+                x: 0.5 + Math.cos((index / 12) * Math.PI * 2) * 0.3,
+                y: 0.5 + Math.sin((index / 12) * Math.PI * 2) * 0.3,
+              })),
+            }],
+          },
+          segmentationSource: new Uint8Array(source),
+        };
+      },
       generateBackground: async () => {
         backgroundCalls += 1;
         return new Uint8Array(source);
@@ -481,6 +486,7 @@ test("low-confidence segmentation keeps the complete source frame in six explici
     },
   });
 
+  assert.equal(segmentationCalls, 0, "safe mode must not spend a segmentation request");
   assert.equal(backgroundCalls, 0, "fallback must not ask a model to redraw the product or background");
   assert.equal(uploads.size, 6);
   assert.deepEqual(Object.keys(result.asset_storage_paths), [...coreFirstDraftAssetIds]);
@@ -499,6 +505,7 @@ test("successful text research plus a segmentation failure still completes with 
   let completedPayload: Record<string, unknown> | null = null;
   const response = await runOneServerProductResearch({
     analyze: async () => validResult(),
+    preflightImageMode: "gateway-composite",
     download: async () => new Uint8Array(source),
     upload: async (path, bytes) => {
       uploads.set(path, bytes);
@@ -564,6 +571,7 @@ test("one image 429 stops later model calls and rebuilds all six from the source
     request: preflightClaim(digest, source.byteLength).request,
     signal: AbortSignal.timeout(30_000),
     dependencies: {
+      preflightImageMode: "gateway-composite",
       download: async () => new Uint8Array(source),
       upload: async (path, bytes) => {
         uploads.set(path, bytes);
@@ -619,6 +627,7 @@ test("source-photo digest drift fails before image generation and clears canonic
       request: preflightClaim("f".repeat(64), source.byteLength).request,
       signal: AbortSignal.timeout(30_000),
       dependencies: {
+        preflightImageMode: "gateway-composite",
         download: async () => new Uint8Array(source),
         upload: async () => {
           uploaded = true;
@@ -651,6 +660,7 @@ test("a corrupt source photo remains a hard failure and never reaches image-mode
       request: preflightClaim(digest, source.byteLength).request,
       signal: AbortSignal.timeout(30_000),
       dependencies: {
+        preflightImageMode: "gateway-composite",
         download: async () => new Uint8Array(source),
         upload: async () => {
           uploaded = true;
@@ -670,6 +680,37 @@ test("a corrupt source photo remains a hard failure and never reaches image-mode
   assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
 });
 
+test("an already-aborted safe preflight fails before download or upload", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let downloadCalls = 0;
+  let uploadCalls = 0;
+  const removed: string[][] = [];
+  await assert.rejects(
+    generateServerProductResearchPreflightAssets({
+      jobId: JOB_ID,
+      claimToken: CLAIM_TOKEN,
+      request: preflightClaim().request,
+      signal: controller.signal,
+      dependencies: {
+        download: async () => {
+          downloadCalls += 1;
+          return new Uint8Array();
+        },
+        upload: async () => {
+          uploadCalls += 1;
+          return "uploaded";
+        },
+        remove: async (paths) => { removed.push(paths); },
+      },
+    }),
+    /runtime_timeout/,
+  );
+  assert.equal(downloadCalls, 0);
+  assert.equal(uploadCalls, 0);
+  assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
+});
+
 test("parent cancellation remains a hard runtime timeout instead of starting a catalog fallback", async () => {
   const source = await sharp({
     create: { width: 600, height: 600, channels: 3, background: { r: 95, g: 125, b: 155 } },
@@ -686,6 +727,7 @@ test("parent cancellation remains a hard runtime timeout instead of starting a c
       request: preflightClaim(digest, source.byteLength).request,
       signal: controller.signal,
       dependencies: {
+        preflightImageMode: "gateway-composite",
         download: async () => new Uint8Array(source),
         upload: async () => {
           uploaded = true;
@@ -724,6 +766,7 @@ test("a corrupt background result remains fail-closed instead of being relabeled
       request: preflightClaim(digest, source.byteLength).request,
       signal: AbortSignal.timeout(30_000),
       dependencies: {
+        preflightImageMode: "gateway-composite",
         download: async () => new Uint8Array(source),
         upload: async () => {
           uploaded = true;
@@ -770,6 +813,7 @@ test("segmented preflight caps each claim at one image call and records uploaded
     request: preflightClaim(digest, source.byteLength).request,
     signal: AbortSignal.timeout(30_000),
     dependencies: {
+      preflightImageMode: "gateway-composite",
       download: async () => new Uint8Array(source),
       upload: async (path, bytes) => {
         uploaded.set(path, bytes);
@@ -853,6 +897,7 @@ test("three first-stage claims keep image generation concurrent without exceedin
       request,
       signal: AbortSignal.timeout(30_000),
       dependencies: {
+        preflightImageMode: "gateway-composite",
         download: async () => new Uint8Array(source),
         upload: async () => "uploaded",
         remove: async () => {},
@@ -1285,6 +1330,108 @@ test("an enqueue wake claims a bounded three-job burst so an older job cannot st
   assert.equal(claimCalls, 3);
   assert.equal(completionCalls, 2);
   assert.ok(outcomes.every((outcome) => outcome.status === "fulfilled"));
+});
+
+test("three safe-mode claims share one analyze permit and each complete six catalog assets without image-provider calls", async () => {
+  const source = await sharp({
+    create: { width: 600, height: 600, channels: 3, background: { r: 65, g: 135, b: 205 } },
+  }).png().toBuffer();
+  const digest = createHash("sha256").update(source).digest("hex");
+  const jobs = Array.from({ length: 3 }, (_, index) => {
+    const id = `10000000-0000-4000-8000-00000000000${index + 1}`;
+    const claimToken = `20000000-0000-4000-8000-00000000000${index + 1}`;
+    const base = preflightClaim(digest, source.byteLength);
+    return {
+      ...base,
+      id,
+      claim_token: claimToken,
+      request: {
+        ...base.request,
+        research_input: `동시 상품 ${index + 1}`,
+        image_paths: base.request.image_paths.map((path) => path.replace(JOB_ID, id)),
+        image_specs: base.request.image_specs.map((spec) => ({
+          ...spec,
+          originalPath: spec.originalPath.replace(JOB_ID, id),
+        })),
+      },
+    };
+  });
+  const uploads = new Map<string, string>();
+  const completedPayloads: Array<Record<string, unknown>> = [];
+  let claimCalls = 0;
+  let activeAnalyze = 0;
+  let peakAnalyze = 0;
+  let analyzeCalls = 0;
+  let segmentationCalls = 0;
+  let backgroundCalls = 0;
+
+  const outcomes = await runServerProductResearchWakeBurst({
+    analyze: async () => {
+      assert.equal(claimCalls, 3, "all three claims must start before the shared analyze queue drains");
+      analyzeCalls += 1;
+      activeAnalyze += 1;
+      peakAnalyze = Math.max(peakAnalyze, activeAnalyze);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return validResult();
+      } finally {
+        activeAnalyze -= 1;
+      }
+    },
+    download: async () => new Uint8Array(source),
+    upload: async (path, bytes) => {
+      uploads.set(path, createHash("sha256").update(bytes).digest("hex"));
+      return "uploaded";
+    },
+    remove: async () => {},
+    segmentSource: async () => {
+      segmentationCalls += 1;
+      throw new Error("safe mode must not call segmentation");
+    },
+    generateBackground: async () => {
+      backgroundCalls += 1;
+      throw new Error("safe mode must not call image generation");
+    },
+    rpc: async (name, arguments_ = {}) => {
+      if (name === "sellerpilot_service_claim_product_research_ai_job") {
+        claimCalls += 1;
+        return { data: jobs.shift() ?? null, error: null };
+      }
+      if (name === "sellerpilot_service_touch_product_research_ai_job") {
+        return { data: "running", error: null };
+      }
+      if (name === "sellerpilot_service_complete_product_research_ai_job") {
+        completedPayloads.push(arguments_.p_result_payload as Record<string, unknown>);
+        return { data: true, error: null };
+      }
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+  });
+
+  const bodies = await Promise.all(outcomes.map(async (outcome) => {
+    if (outcome.status === "rejected") throw outcome.reason;
+    return outcome.value.json();
+  }));
+  assert.equal(SERVER_PRODUCT_RESEARCH_WAKE_WIDTH, 3);
+  assert.equal(SERVER_PRODUCT_RESEARCH_REMOTE_CONCURRENCY, 1);
+  assert.equal(analyzeCalls, 3);
+  assert.equal(peakAnalyze, 1);
+  assert.equal(segmentationCalls, 0);
+  assert.equal(backgroundCalls, 0);
+  assert.equal(uploads.size, 18);
+  assert.equal(completedPayloads.length, 3);
+  assert.deepEqual(bodies, Array.from({ length: 3 }, () => ({ ok: true, status: "succeeded", processed: 1 })));
+  for (const payload of completedPayloads) {
+    const paths = payload.asset_storage_paths as Record<CoreFirstDraftAssetId, string>;
+    const lineage = payload.preflightAssetLineage as Record<CoreFirstDraftAssetId, {
+      auditMode: string;
+      digest: string;
+    }>;
+    assert.equal(Object.keys(paths).length, 6);
+    assert.equal(Object.values(paths).every((path) => uploads.has(path)), true);
+    assert.equal(Object.values(lineage).every((item) => item.auditMode === "source-photo-catalog"), true);
+    assert.equal(new Set(Object.values(lineage).map((item) => item.digest)).size, 6);
+  }
 });
 
 test("Hobby deployment moves product-research scheduling out of Vercel cron", async () => {

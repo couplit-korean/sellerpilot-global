@@ -363,7 +363,7 @@ async function firstDraftPreflightFixture(
 
 async function runReviewedTransientPipelineFixture(options: {
   requestMode?: "reviewed" | "marker-mismatch" | "legacy";
-  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient" | "image-rate-limit-circuit" | "queued-image-timeout-budget";
+  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "localization-scoped-timeout" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient" | "image-rate-limit-circuit" | "queued-image-timeout-budget";
   transientReason?: string;
   corruptPreflightAssetId?: (typeof coreFirstDraftAssetIds)[number];
   duplicatePreflightAsset?: boolean;
@@ -570,6 +570,13 @@ async function runReviewedTransientPipelineFixture(options: {
         await new Promise((resolve) => setTimeout(resolve, 60));
       } else if (providerScenario === "image-rate-limit-circuit" && chunkNumber <= 3) {
         await new Promise((resolve) => setTimeout(resolve, chunkNumber === 1 ? 5 : 40));
+      }
+      if (providerScenario === "localization-scoped-timeout" && chunkTag === "chunk:2") {
+        await new Promise<void>((_resolve, reject) => {
+          const rejectForAbort = () => reject(input.signal.reason);
+          if (input.signal.aborted) rejectForAbort();
+          else input.signal.addEventListener("abort", rejectForAbort, { once: true });
+        });
       }
       if ((providerScenario === "partial-localization-transient" && chunkTag === "chunk:2")
           || (providerScenario === "mixed-localization-transient" && chunkNumber >= 4)
@@ -1154,6 +1161,46 @@ test("one transient localization chunk atomically replaces all countries from re
   assert.equal(payload.localizedListings.length, 34);
   assert.ok(payload.localizedListings.every((listing) => /5000 KRW/u.test(listing.description)));
   assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
+});
+
+test("one scoped localization deadline becomes gateway_timeout and rebuilds all reviewed countries", async (context) => {
+  const originalTimeout = AbortSignal.timeout;
+  context.mock.method(AbortSignal, "timeout", (delay: number) => (
+    originalTimeout(delay === 45_000 ? 20 : delay)
+  ));
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "localization-scoped-timeout",
+  });
+  assert.deepEqual(
+    await run.response.json(),
+    { ok: true, status: "succeeded", processed: 1 },
+    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
+  );
+  assert.equal(run.completionCalls.at(-1)?.p_status, "succeeded");
+  const payload = run.completionCalls.at(-1)?.p_result_payload as {
+    localizedListings: Array<{ description: string }>;
+    deterministic_fallback: { localizationReasons: string[] };
+  };
+  assert.equal(payload.localizedListings.length, 34);
+  assert.ok(payload.localizedListings.every((listing) => /5000 KRW/u.test(listing.description)));
+  assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["gateway_timeout"]);
+  assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
+});
+
+test("a parent runtime abort during localization remains a hard failure", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "localization-scoped-timeout",
+    runtimeTimeoutMs: 1_000,
+  });
+  assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.equal(run.completionCalls[0].p_error_message, "server_studio_runtime_timeout");
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(
+    (run.completionCalls[0].p_result_payload as Record<string, unknown> | null),
+    null,
+  );
 });
 
 test("a transient localization batch atomically replaces earlier AI chunks and stops later remote chunks", async () => {

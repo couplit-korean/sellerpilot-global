@@ -36,7 +36,7 @@ Vercel은 비공개 Supabase 작업 큐, 지원되는 상품 등록·수정·중
 
 Temu는 모바일·웹 클라이언트나 로컬 AI 작업자가 직접 호출하지 않습니다. 모든 요청은 SellerPilot API와 Supabase 원장을 거치며, Vercel Static IP가 Temu 개발자센터에 등록되고 데이터베이스 정책과 요청별 egress attestation까지 일치할 때만 서버가 실행합니다. 설정이 없거나 IP를 검증하지 못하면 Temu 작업은 외부 호출 전에 `STATIC_EGRESS_REQUIRED`로 차단되고 다른 작업자로 자동 우회하지 않습니다. 같은 이중 차단은 쿠팡·스마트스토어·11번가에도 적용합니다.
 
-서버 상품 스튜디오·상품조사·합성 런타임 점검은 텍스트 생성에 Vercel AI Gateway의 단일 모델 `openai/gpt-5.4-mini`를 사용합니다. 모든 호출은 OpenAI provider만 허용하고 SDK 재시도와 모델 폴백을 사용하지 않습니다. 빈 설정 배경은 기존 `openai/gpt-image-2`를 그대로 사용합니다. 운영 성공은 모델 응답이 아니라 저장된 16개 asset과 완전한 현지화 결과의 terminal contract 검증으로 판정합니다.
+서버 상품 스튜디오·상품조사·합성 런타임 점검은 텍스트 생성에 Vercel AI Gateway의 단일 모델 `openai/gpt-5.4-mini`를 사용합니다. 모든 호출은 OpenAI provider만 허용하고 SDK 재시도와 모델 폴백을 사용하지 않습니다. 1차 등록의 6개 이미지는 운영 기본값에서 검수된 원본 사진으로 서버가 직접 구성하므로 원격 이미지 공급자의 429·권한 제한을 기다리지 않습니다. 기존 `openai/gpt-image-2` 합성 경로는 `SELLERPILOT_PRODUCT_RESEARCH_IMAGE_MODE=gateway-composite`를 명시한 배포에서만 사용합니다. 운영 성공은 모델 응답이 아니라 저장된 16개 asset과 완전한 현지화 결과의 terminal contract 검증으로 판정합니다.
 - 서비스 전체 흐름을 설명하는 화면형 스토리보드
 - PPT 31장 기반 175개 항목의 개발 상태와 실계정 검수 상태를 분리한 인수 대시보드
 - Coinbase Data API의 현재 시장 참고 환율을 서버에서 60초 단위로 조회하고, 장애 시 Frankfurter v2 중앙은행·기관 일일 기준값으로 명시적으로 대체하는 환율 위젯

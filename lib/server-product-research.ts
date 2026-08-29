@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { z } from "zod";
+import { createAbortableConcurrencyGate } from "./abortable-concurrency-gate";
 import {
   productResearchPreflightLineageSchema,
   productResearchPreflightStoragePathsSchema,
@@ -44,11 +45,9 @@ export const SERVER_PRODUCT_RESEARCH_MODEL = "openai/gpt-5.4-mini";
 export const SERVER_PRODUCT_RESEARCH_IMAGE_MODEL = "openai/gpt-image-2";
 export const SERVER_PRODUCT_RESEARCH_VERSION = "sellerpilot-vercel-product-research/1.1";
 export const SERVER_PRODUCT_RESEARCH_WAKE_WIDTH = 3;
-// Three first-stage claims may run together. Keep each claim to one image
-// request at a time so the intended aggregate image-model burst stays at
-// three instead of six. A transient provider failure immediately switches the
-// whole six-image cohort to the source-photo catalog path below; it is never
-// retried against AI Gateway.
+export const SERVER_PRODUCT_RESEARCH_REMOTE_CONCURRENCY = 1;
+// This applies only when the future Gateway composite mode is explicitly
+// enabled. Production's safe default performs no image-model calls.
 export const SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY = 1;
 
 const MAX_REFERENCE_COUNT = 5;
@@ -106,6 +105,7 @@ type PreflightResearchRequest = z.infer<typeof preflightResearchRequestSchema>;
 type CoreFirstDraftAssetId = typeof coreFirstDraftAssetIds[number];
 type CoreFirstDraftAssetSpec = Extract<(typeof aiGeneratedAssetSpecs)[number], { id: CoreFirstDraftAssetId }>;
 type PreflightAuditMode = "segmented-source-composite" | "source-photo-catalog";
+export type ProductResearchPreflightImageMode = "source-photo-catalog" | "gateway-composite";
 
 type ProductResearchPreflightResult = {
   asset_storage_paths: Record<CoreFirstDraftAssetId, string>;
@@ -135,6 +135,7 @@ export type ServerProductResearchDependencies = {
   requireActiveRuntime?: boolean;
   rpc?: (name: string, arguments_?: Record<string, unknown>) => Promise<RpcResult>;
   analyze?: (researchInput: string, signal: AbortSignal) => Promise<ServerProductResearchResult>;
+  preflightImageMode?: ProductResearchPreflightImageMode;
   download?: (path: string, signal: AbortSignal) => Promise<Uint8Array>;
   upload?: (path: string, bytes: Uint8Array, signal: AbortSignal) => Promise<"uploaded" | "identical">;
   remove?: (paths: string[]) => Promise<void>;
@@ -779,6 +780,7 @@ async function loadPreflightMainSource(
   try {
     bytes = await dependencies.download(sourcePath, signal);
   } catch {
+    if (signal.aborted) throw new ProductResearchPreflightError("runtime_timeout");
     throw new ProductResearchPreflightError("preflight_source_download_failed");
   }
   if (!bytes.byteLength || bytes.byteLength > MAX_SINGLE_SOURCE_BYTES
@@ -940,25 +942,36 @@ export async function generateServerProductResearchPreflightAssets(input: {
     throw new ProductResearchPreflightError("preflight_storage_configuration_missing");
   }
   try {
+    input.signal.throwIfAborted();
     const source = await loadPreflightMainSource(input.jobId, input.request, input.dependencies, input.signal);
-    let auditMode: PreflightAuditMode = "segmented-source-composite";
+    input.signal.throwIfAborted();
+    // Production defaults to the deterministic source-photo catalog. This
+    // path validates the original bytes and creates every first-stage role
+    // without spending an AI Gateway request. The more expensive segmentation
+    // and GPT Image 2 path remains available only through an explicit runtime
+    // or dependency opt-in.
+    let auditMode: PreflightAuditMode = input.dependencies.preflightImageMode === "gateway-composite"
+      ? "segmented-source-composite"
+      : "source-photo-catalog";
     let cutout: Uint8Array | null = null;
     let segmented: Awaited<ReturnType<NonNullable<ServerProductResearchDependencies["segmentSource"]>>> | null = null;
-    try {
-      segmented = await (input.dependencies.segmentSource ?? defaultSegmentPreflightSource)(
-        source,
-        perCallSignal(input.signal, SEGMENTATION_CALL_TIMEOUT_MS),
-      );
-    } catch (error) {
-      if (!imageModelFailureAllowsSourcePhotoFallback(error, input.signal)) throw error;
-      auditMode = "source-photo-catalog";
-    }
-    if (segmented) {
+    if (auditMode === "segmented-source-composite") {
       try {
-        cutout = new Uint8Array(await buildPortableProductCutout(segmented));
+        segmented = await (input.dependencies.segmentSource ?? defaultSegmentPreflightSource)(
+          source,
+          perCallSignal(input.signal, SEGMENTATION_CALL_TIMEOUT_MS),
+        );
       } catch (error) {
-        if (!segmentationAllowsSourcePhotoFallback(error)) throw error;
+        if (!imageModelFailureAllowsSourcePhotoFallback(error, input.signal)) throw error;
         auditMode = "source-photo-catalog";
+      }
+      if (segmented) {
+        try {
+          cutout = new Uint8Array(await buildPortableProductCutout(segmented));
+        } catch (error) {
+          if (!segmentationAllowsSourcePhotoFallback(error)) throw error;
+          auditMode = "source-photo-catalog";
+        }
       }
     }
 
@@ -966,8 +979,10 @@ export async function generateServerProductResearchPreflightAssets(input: {
     const generateAll = async (mode: PreflightAuditMode) => {
       const outputs = new Map<CoreFirstDraftAssetId, Uint8Array>();
       for (let offset = 0; offset < specs.length; offset += SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY) {
+        input.signal.throwIfAborted();
         const batch = specs.slice(offset, offset + SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY);
         const bytes = await settlePreflightBatch(batch.map(async (asset, batchIndex) => {
+          input.signal.throwIfAborted();
           const variant = offset + batchIndex;
           const output = mode === "source-photo-catalog"
             ? await buildServerProductResearchSourcePhotoCatalog(asset, source, variant)
@@ -976,6 +991,7 @@ export async function generateServerProductResearchPreflightAssets(input: {
           if (metadata.width !== asset.width || metadata.height !== asset.height || metadata.format !== "png") {
             throw new ProductResearchPreflightError("preflight_result_invalid");
           }
+          input.signal.throwIfAborted();
           return new Uint8Array(output);
         }));
         batch.forEach((asset, index) => outputs.set(asset.id, bytes[index]));
@@ -1015,13 +1031,17 @@ export async function generateServerProductResearchPreflightAssets(input: {
     const lineage = Object.fromEntries(lineageEntries) as ProductResearchPreflightResult["preflightAssetLineage"];
 
     for (let offset = 0; offset < specs.length; offset += SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY) {
+      input.signal.throwIfAborted();
       const batch = specs.slice(offset, offset + SERVER_PRODUCT_RESEARCH_IMAGE_CONCURRENCY);
       await settlePreflightBatch(batch.map(async (asset) => {
+        input.signal.throwIfAborted();
         const bytes = generated.get(asset.id);
         if (!bytes) throw new ProductResearchPreflightError("preflight_result_invalid");
         await input.dependencies.upload!(paths[asset.id], bytes, input.signal);
+        input.signal.throwIfAborted();
       }));
     }
+    input.signal.throwIfAborted();
     return {
       asset_storage_paths: productResearchPreflightStoragePathsSchema.parse(paths),
       preflightAssetLineage: productResearchPreflightLineageSchema.parse(lineage),
@@ -1294,10 +1314,22 @@ export async function runOneServerProductResearch(
 export function runServerProductResearchWakeBurst(
   dependencies: ServerProductResearchDependencies,
 ) {
+  const gate = createAbortableConcurrencyGate(SERVER_PRODUCT_RESEARCH_REMOTE_CONCURRENCY);
+  const analyze = dependencies.analyze ?? analyzeServerProductResearch;
+  const burstDependencies: ServerProductResearchDependencies = {
+    ...dependencies,
+    // Claims and their local preflight/storage work still start together. Only
+    // the Gateway-backed text analysis is serialized across this wake burst,
+    // so three products cannot multiply into three simultaneous model calls.
+    analyze: (researchInput, signal) => gate.run(
+      () => analyze(researchInput, signal),
+      signal,
+    ),
+  };
   return Promise.allSettled(
     Array.from(
       { length: SERVER_PRODUCT_RESEARCH_WAKE_WIDTH },
-      () => runOneServerProductResearch(dependencies),
+      () => runOneServerProductResearch(burstDependencies),
     ),
   );
 }

@@ -606,6 +606,14 @@ function isImageCircuitAbort(
     || (error instanceof ServerProductStudioError && error.safeReason === "runtime_timeout");
 }
 
+function scopedGatewayTimeoutError(error: unknown) {
+  const diagnostic: AiGatewayFailureDiagnostic = {
+    ...(error instanceof ServerProductStudioError ? error.diagnostic : undefined),
+    reason: "gateway_timeout",
+  };
+  return new ServerProductStudioError("gateway_timeout", false, diagnostic);
+}
+
 /**
  * Every provider call for one claimed Studio job passes through this one gate.
  * Logical localization and asset waves remain unchanged, but nested lanes can
@@ -638,9 +646,10 @@ function withServerStudioRemoteCallScope(
     try {
       return await gate.run(async () => {
         if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
+        const operationTimeoutSignal = AbortSignal.timeout(input.timeoutMs);
         const operationSignal = AbortSignal.any([
           queueSignal,
-          AbortSignal.timeout(input.timeoutMs),
+          operationTimeoutSignal,
         ]);
         try {
           const result = await input.call(operationSignal);
@@ -648,15 +657,21 @@ function withServerStudioRemoteCallScope(
           if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
           return result;
         } catch (error) {
-          if (input.path === "image" && !imageRateLimitFailure && isReviewedImageRateLimit(error)) {
-            imageRateLimitFailure = error;
-            imageController.abort(error);
+          const normalizedError = operationTimeoutSignal.aborted
+              && !claimSignal.aborted
+              && !input.signal.aborted
+              && (input.path !== "image" || !imageController.signal.aborted)
+            ? scopedGatewayTimeoutError(error)
+            : error;
+          if (input.path === "image" && !imageRateLimitFailure && isReviewedImageRateLimit(normalizedError)) {
+            imageRateLimitFailure = normalizedError;
+            imageController.abort(normalizedError);
           }
           if (input.path === "image" && imageRateLimitFailure
-              && isImageCircuitAbort(error, imageRateLimitFailure)) {
+              && isImageCircuitAbort(normalizedError, imageRateLimitFailure)) {
             throw imageRateLimitFailure;
           }
-          throw error;
+          throw normalizedError;
         }
       }, queueSignal);
     } catch (error) {
