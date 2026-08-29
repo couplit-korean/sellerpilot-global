@@ -104,7 +104,7 @@ test("each explicit action invokes only its exact synthetic runner", async () =>
 });
 
 test("OIDC smoke delegates token resolution to AI SDK and never accepts or returns credentials", async () => {
-  assert.equal(AI_GATEWAY_SMOKE_MODEL, "openai/gpt-5.5");
+  assert.equal(AI_GATEWAY_SMOKE_MODEL, "openai/gpt-5.4-mini");
   let requestInput: Record<string, unknown> = {};
   const successful = await runSyntheticAiGatewaySmoke({
     request: async (input) => {

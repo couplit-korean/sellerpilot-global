@@ -50,7 +50,7 @@ import {
 } from "./studio-segment-generation";
 
 export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.2";
-export const SERVER_PRODUCT_STUDIO_TEXT_MODEL = "openai/gpt-5.5";
+export const SERVER_PRODUCT_STUDIO_TEXT_MODEL = "openai/gpt-5.4-mini";
 export const SERVER_PRODUCT_STUDIO_IMAGE_MODEL = "openai/gpt-image-2";
 export const SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE = 3;
 export const SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY = 3;

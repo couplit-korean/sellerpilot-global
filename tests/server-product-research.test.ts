@@ -193,7 +193,7 @@ test("server product research treats seller and page text as escaped data", () =
 
 test("server product research uses AI SDK auto-OIDC without manually handling credentials", async () => {
   const source = await readFile(new URL("../lib/server-product-research.ts", import.meta.url), "utf8");
-  assert.equal(SERVER_PRODUCT_RESEARCH_MODEL, "openai/gpt-5.5");
+  assert.equal(SERVER_PRODUCT_RESEARCH_MODEL, "openai/gpt-5.4-mini");
   assert.equal(SERVER_PRODUCT_RESEARCH_IMAGE_MODEL, "openai/gpt-image-2");
   assert.match(source, /model: SERVER_PRODUCT_RESEARCH_MODEL/);
   assert.match(source, /providerOptions:\s*\{[\s\S]*?gateway:\s*\{[\s\S]*?user:/);
@@ -206,7 +206,7 @@ test("server product research uses AI SDK auto-OIDC without manually handling cr
   assert.match(source, /output: Output\.object\(\{ schema: portablePreflightSegmentationSchema \}\)/);
   assert.doesNotMatch(source, /createGateway|getVercelOidcToken|@vercel\/oidc|ai-gateway-auth-method/);
   assert.doesNotMatch(source, /apiKey:\s*oidcToken/);
-  assert.doesNotMatch(source, /openai\/gpt-5\.4-mini/);
+  assert.doesNotMatch(source, /openai\/gpt-5\.5/);
 });
 
 test("server product research parses only one bounded JSON object", () => {

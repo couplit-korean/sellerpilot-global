@@ -40,7 +40,7 @@ import { maximumStudioJobSourceBytes } from "./studio-source-photo-policy";
 // This is the same OIDC-authenticated model exercised by server-runtime-smoke.
 // Keep the runtime module independent so the product route does not bundle the
 // unrelated Vercel Sandbox synthetic-check implementation.
-export const SERVER_PRODUCT_RESEARCH_MODEL = "openai/gpt-5.5";
+export const SERVER_PRODUCT_RESEARCH_MODEL = "openai/gpt-5.4-mini";
 export const SERVER_PRODUCT_RESEARCH_IMAGE_MODEL = "openai/gpt-image-2";
 export const SERVER_PRODUCT_RESEARCH_VERSION = "sellerpilot-vercel-product-research/1.1";
 export const SERVER_PRODUCT_RESEARCH_WAKE_WIDTH = 3;

@@ -18,19 +18,19 @@ test("every active server AI SDK call hard-pins OpenAI without model fallback or
       name: "product research",
       source: await readFile(new URL("../lib/server-product-research.ts", import.meta.url), "utf8"),
       expectedAiCalls: 3,
-      expectedModels: ["openai/gpt-5.5", "openai/gpt-image-2"],
+      expectedModels: ["openai/gpt-5.4-mini", "openai/gpt-image-2"],
     },
     {
       name: "product Studio",
       source: await readFile(new URL("../lib/server-product-studio.ts", import.meta.url), "utf8"),
       expectedAiCalls: 2,
-      expectedModels: ["openai/gpt-5.5", "openai/gpt-image-2"],
+      expectedModels: ["openai/gpt-5.4-mini", "openai/gpt-image-2"],
     },
     {
       name: "runtime smoke",
       source: await readFile(new URL("../lib/server-runtime-smoke.ts", import.meta.url), "utf8"),
       expectedAiCalls: 1,
-      expectedModels: ["openai/gpt-5.5"],
+      expectedModels: ["openai/gpt-5.4-mini"],
     },
   ];
 
@@ -52,7 +52,7 @@ test("every active server AI SDK call hard-pins OpenAI without model fallback or
     );
     for (const model of contract.expectedModels) assert.match(contract.source, new RegExp(model.replaceAll(".", "\\.")));
     assert.doesNotMatch(contract.source, /\b(?:models|order):\s*\[/);
-    assert.doesNotMatch(contract.source, /openai\/gpt-5\.4-mini/);
+    assert.doesNotMatch(contract.source, /openai\/gpt-5\.5/);
   }
 });
 

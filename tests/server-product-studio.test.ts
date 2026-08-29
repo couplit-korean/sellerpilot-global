@@ -56,8 +56,8 @@ const LOCALIZED_SECTION_ASSETS = [
   "detail-routine", "detail-contents", "detail-care", "detail-material",
 ] as const;
 
-test("server Studio uses GPT-5.5 for text and preserves GPT Image 2", () => {
-  assert.equal(SERVER_PRODUCT_STUDIO_TEXT_MODEL, "openai/gpt-5.5");
+test("server Studio uses GPT-5.4 mini for text and preserves GPT Image 2", () => {
+  assert.equal(SERVER_PRODUCT_STUDIO_TEXT_MODEL, "openai/gpt-5.4-mini");
   assert.equal(SERVER_PRODUCT_STUDIO_IMAGE_MODEL, "openai/gpt-image-2");
 });
 

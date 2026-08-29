@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
-export const AI_GATEWAY_SMOKE_MODEL = "openai/gpt-5.5";
+export const AI_GATEWAY_SMOKE_MODEL = "openai/gpt-5.4-mini";
 
 const NO_STORE_HEADERS = {
   "cache-control": "no-store, max-age=0",
