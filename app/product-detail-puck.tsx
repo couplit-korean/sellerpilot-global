@@ -8,6 +8,7 @@ import {
   localizedProductDetailImageRoles,
   productDetailRoleFromAssetReference,
 } from "../lib/product-detail-image-manifest";
+import { productDetailHealthFunctionalStatus } from "../lib/product-detail-classification";
 import { validateDetailAnimatedGif } from "../lib/product-media-contract";
 import { resolveProductDetailAssets } from "./_publishing/product-detail-persistence";
 import mediaStyles from "./product-detail-media.module.css";
@@ -233,7 +234,7 @@ const detailConfig: Config<DetailComponents> = {
           }}
         >
           <VerificationCell label="상품 분류" value={classification} surface={surface} />
-          <VerificationCell label="건강기능식품 표시" value={healthFunctionalStatus} surface={surface} />
+          {healthFunctionalStatus.trim() ? <VerificationCell label="건강기능식품 표시" value={healthFunctionalStatus} surface={surface} /> : null}
           <VerificationCell label="추천 대상" value={targetCustomer} surface={surface} />
           <VerificationCell
             label={verificationStatus === "verified" ? "자료 확인 완료" : "구매 전 추가 확인"}
@@ -443,7 +444,7 @@ export function createDetailData(result: ProductDetailSource, imageUrl: string, 
     root: {},
     content: [
       { type: "HeroBlock", props: { id: "ai-hero", eyebrow: product.category.toUpperCase(), title: design.heroCopy, description: design.heroSubcopy, cta: design.cta, imageUrl, imageAlt: `${product.name} 대표 이미지`, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface, layout: heroLayout } },
-      { type: "VerificationRibbonBlock", props: { id: "ai-verification", classification: classification.displayName, verificationStatus, evidence: classification.evidence, healthFunctionalStatus: classification.isHealthFunctionalFood === true ? "건강기능식품 표시 확인" : classification.isHealthFunctionalFood === false ? "건강기능식품 아님" : "표시 여부 확인 필요", targetCustomer: product.targetCustomer, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface } },
+      { type: "VerificationRibbonBlock", props: { id: "ai-verification", classification: classification.displayName, verificationStatus, evidence: classification.evidence, healthFunctionalStatus: productDetailHealthFunctionalStatus({ name: product.name, category: product.category, classification }), targetCustomer: product.targetCustomer, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface } },
       ...design.sections.map((section, index) => {
         const sectionLayout = section.layout ?? (index === 0 ? "cards" : index % 3 === 0 ? "editorial" : "split");
         const sectionMotion = section.motion ?? "none";
