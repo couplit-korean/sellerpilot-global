@@ -549,6 +549,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830222257_confirm_qoo10_listing_create_rollback.sql",
       "20260831010000_resolve_exact_qoo10_origin_type_rejection.sql",
       "20260831033000_add_cs_message_delivery_ledger.sql",
+      "20260831040000_rebind_ebay_periodic_inquiry_reads.sql",
     ]);
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -1790,6 +1791,143 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.notEqual(refreshedEbayId, ebayActive.credential_id);
     const refreshedEbay = await scalar(db, "select public.sellerpilot_get_active_credential_secret('ebay', 'production')");
     assert.equal(refreshedEbay.secret_payload.access_token, "new-ebay-access-token");
+
+    const legacyEbayInquiry = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'ebay', 'inquiries.list',
+        '{"periodicKey":"inquiries:lineage-rebind-test","arguments":{"pageNumber":1,"entriesPerPage":25}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(legacyEbayInquiry.status, "queued");
+    assert.equal(
+      await scalar(
+        db,
+        "select seller_account_key is null from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [legacyEbayInquiry.jobId],
+      ),
+      true,
+    );
+    await db.query(
+      `update vault.secrets secret
+          set secret = (
+            secret.secret::jsonb ||
+            '{"provider_account_identity_version":"v1","provider_account_subject":"ebay:eias:test-seller"}'::jsonb
+          )::text
+         from sellerpilot_private.channel_credentials credential
+        where credential.id = $1
+          and secret.id = credential.vault_secret_id`,
+      [refreshedEbayId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key = repeat('0', 64),
+              seller_account_key_source = 'provider_certified_v1',
+              seller_account_verified_at = clock_timestamp()
+        where id = $1`,
+      [refreshedEbayId],
+    );
+    const certifiedEbaySellerKey = await scalar(
+      db,
+      "select seller_account_key from sellerpilot_private.channel_credentials where id = $1",
+      [refreshedEbayId],
+    );
+    assert.match(certifiedEbaySellerKey, /^[a-f0-9]{64}$/);
+    const reboundEbayInquiry = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'ebay', 'inquiries.list',
+        '{"periodicKey":"inquiries:lineage-rebind-test","arguments":{"pageNumber":1,"entriesPerPage":25}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(reboundEbayInquiry.status, "queued");
+    assert.notEqual(reboundEbayInquiry.jobId, legacyEbayInquiry.jobId);
+    assert.deepEqual(
+      (await db.query(
+        `select id::text, status, error_message,
+                coalesce(seller_account_key = $2, false) as rebound
+           from sellerpilot_private.channel_gateway_jobs
+          where id = any($1::uuid[])
+          order by (id = $3::uuid) desc, id`,
+        [
+          [legacyEbayInquiry.jobId, reboundEbayInquiry.jobId],
+          certifiedEbaySellerKey,
+          legacyEbayInquiry.jobId,
+        ],
+      )).rows,
+      [
+        {
+          id: legacyEbayInquiry.jobId,
+          status: "cancelled",
+          error_message: "EBAY_PERIODIC_INQUIRY_LINEAGE_REBIND_REQUIRED",
+          rebound: false,
+        },
+        {
+          id: reboundEbayInquiry.jobId,
+          status: "queued",
+          error_message: null,
+          rebound: true,
+        },
+      ],
+    );
+    const reboundPeriodicKey = await scalar(
+      db,
+      `select request_payload->>'periodicKey'
+         from sellerpilot_private.channel_gateway_jobs where id = $1`,
+      [reboundEbayInquiry.jobId],
+    );
+    assert.match(reboundPeriodicKey, /^ebay-inquiries:v1:[a-f0-9]{32}$/);
+    assert.notEqual(reboundPeriodicKey, "inquiries:lineage-rebind-test");
+    assert.deepEqual(
+      await scalar(
+        db,
+        `select request_payload->'arguments'
+           from sellerpilot_private.channel_gateway_jobs where id = $1`,
+        [reboundEbayInquiry.jobId],
+      ),
+      { pageNumber: 1, entriesPerPage: 25 },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select has_function_privilege(
+          'service_role',
+          'public.sellerpilot_310400_enqueue_periodic_sync_unsafe(text,text,jsonb,integer)',
+          'EXECUTE'
+        )`,
+      ),
+      false,
+    );
+    const deduplicatedReboundEbayInquiry = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'ebay', 'inquiries.list',
+        '{"periodicKey":"inquiries:lineage-rebind-test","arguments":{"pageNumber":1,"entriesPerPage":25}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(deduplicatedReboundEbayInquiry.status, "already_pending");
+    assert.equal(deduplicatedReboundEbayInquiry.jobId, reboundEbayInquiry.jobId);
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.operation_audit
+          where action = 'ebay_periodic_inquiry_lineage_rebind'
+            and entity_id = $1`,
+        [legacyEbayInquiry.jobId],
+      ),
+      1,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'cancelled', completed_at = clock_timestamp(),
+              updated_at = clock_timestamp()
+        where id = $1`,
+      [reboundEbayInquiry.jobId],
+    );
 
     await setClaims(db);
     const operationFingerprint = "b".repeat(64);
