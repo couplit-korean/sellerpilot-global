@@ -62,6 +62,16 @@ function detailHtml(count = 8) {
   )).join("");
 }
 
+function smartstoreImageUrl(index: number) {
+  return `https://shop-phinf.pstatic.net/20260830_sellerpilot/image-${index}.jpg`;
+}
+
+function smartstoreDetailHtml(count = 8) {
+  return Array.from({ length: count }, (_, index) => (
+    `<img src="${smartstoreImageUrl(index + 1)}" alt="detail ${index + 1}" />`
+  )).join("");
+}
+
 function smartstoreOriginProduct(input: {
   originStatus: string;
   channelStatus: string;
@@ -72,7 +82,13 @@ function smartstoreOriginProduct(input: {
     smartstoreChannelProductNo: 20000001,
     originProduct: {
       statusType: input.originStatus,
-      detailContent: detailHtml(input.imageCount ?? 8),
+      detailContent: smartstoreDetailHtml(input.imageCount ?? 8),
+      images: {
+        representativeImage: { url: smartstoreImageUrl(0) },
+        optionalImages: Array.from({ length: input.imageCount ?? 8 }, (_, index) => ({
+          url: smartstoreImageUrl(index + 1),
+        })),
+      },
     },
     smartstoreChannelProduct: {
       channelProductNo: 20000001,

@@ -6,6 +6,7 @@ import {
   type VerifiedListingRemoteState,
 } from "./listing-publication-state";
 import type { RemoteResponse } from "./protocols";
+import { smartstoreReadbackImageProjection } from "./smartstore-image-contract";
 
 type ListingMutationOperation = "listing.create" | "listing.update" | "listing.stop";
 
@@ -385,7 +386,8 @@ export async function readSmartstoreListingPublicationState(input: {
   const authoritativeChannelTitle = String(
     authoritativeChannelProduct.channelProductName ?? "",
   ).trim();
-  const detailImageUrls = htmlImageUrls(originProduct.detailContent);
+  const imageProjection = smartstoreReadbackImageProjection(originProduct);
+  const detailImageUrls = imageProjection.detailImageUrls;
   const identityVerified = remoteAccepted(originProductReadback)
     && (!responseOriginProductNo || responseOriginProductNo === input.remoteId)
     && Object.keys(originProduct).length > 0
@@ -401,7 +403,8 @@ export async function readSmartstoreListingPublicationState(input: {
   const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expected.fingerprint);
   const imageCountVerified = input.operation === "listing.stop"
     ? input.expected.imageCount === 0
-    : detailImageUrls.length === input.expected.imageCount;
+    : detailImageUrls.length === input.expected.imageCount
+      && imageProjection.verified;
 
   let visibility: VerifiedListingRemoteState["visibility"] | undefined;
   if (originStatus === "SALE" && channelStatus === "ON") visibility = "live";
@@ -443,6 +446,13 @@ export async function readSmartstoreListingPublicationState(input: {
         identitySource: responseOriginProductNo ? "origin_product_response" : "origin_product_path",
         originProductStatus: originStatus,
         channelProductDisplayStatus: channelStatus,
+        ...(input.operation === "listing.stop"
+          ? {}
+          : {
+            representativeImageVerified: Boolean(imageProjection.representativeImageUrl),
+            optionalImageCount: imageProjection.optionalImageUrls.length,
+            providerImagesVerified: imageProjection.verified,
+          }),
         detailImageCount: detailImageUrls.length,
         readbackDigest: sha256({
           originProductNo: input.remoteId,
@@ -452,6 +462,8 @@ export async function readSmartstoreListingPublicationState(input: {
           authoritativeOriginProductNo,
           originStatus,
           channelStatus,
+          representativeImageUrl: imageProjection.representativeImageUrl,
+          optionalImageUrls: imageProjection.optionalImageUrls,
           detailImageUrls,
         }),
       },

@@ -98,16 +98,47 @@ test("Lazada listing update verifies the requested item identity after the XML w
   }
 });
 
-test("Smartstore listing update merges content into the remote product without replacing sale or display policy", async () => {
+test("Smartstore listing 13671684696 update preserves category 50001578 and remote sale/display policy", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, init });
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
+    if (url.includes("/v2/products/channel-products/")) return Response.json({
+      originProductNo: 13671684696,
+      smartstoreChannelProductNo: 20000001,
+      smartstoreChannelProduct: {
+        channelProductNo: 20000001,
+        originProductNo: 13671684696,
+        channelProductName: "수정 상품",
+        channelProductDisplayStatusType: "SUSPENSION",
+        naverShoppingRegistration: true,
+      },
+    });
     if (init?.method === "GET") return Response.json({
-      originProduct: { name: "수정 상품", salePrice: 77_770, stockQuantity: 9, deliveryInfo: { deliveryType: "DELIVERY" } },
-      smartstoreChannelProduct: { channelProductName: "수정 상품", channelProductDisplayStatusType: "SUSPENSION" },
+      originProductNo: 13671684696,
+      smartstoreChannelProductNo: 20000001,
+      originProduct: {
+        leafCategoryId: "50001578",
+        name: "수정 상품",
+        salePrice: 77_770,
+        stockQuantity: 9,
+        deliveryInfo: { deliveryType: "DELIVERY" },
+        detailAttribute: {
+          productInfoProvidedNotice: {
+            productInfoProvidedNoticeType: "ETC",
+            etc: { manufacturer: "기존 제조사", customerServicePhoneNumber: "010-0000-0000" },
+          },
+        },
+      },
+      smartstoreChannelProduct: {
+        channelProductNo: 20000001,
+        originProductNo: 13671684696,
+        channelProductName: "수정 상품",
+        channelProductDisplayStatusType: "SUSPENSION",
+        naverShoppingRegistration: true,
+      },
     });
     return Response.json({});
   };
@@ -117,7 +148,7 @@ test("Smartstore listing update merges content into the remote product without r
       operation: "listing.update",
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
       arguments: {
-        originProductNo: "1234567890",
+        originProductNo: "13671684696",
         body: {
           originProduct: { name: "수정 상품", salePrice: 1000, stockQuantity: 999 },
           smartstoreChannelProduct: { channelProductName: "수정 상품", channelProductDisplayStatusType: "ON" },
@@ -126,13 +157,36 @@ test("Smartstore listing update merges content into the remote product without r
       environment: "production",
     });
     assert.equal(result.ok, true);
-    assert.equal(result.remoteId, "1234567890");
-    assert.deepEqual(result.steps.map((step) => step.name), ["product-update-preflight", "product-update", "product-readback"]);
-    const productCalls = calls.filter((call) => call.url.includes("/v2/products/origin-products/1234567890"));
+    assert.equal(result.remoteId, "13671684696");
+    assert.deepEqual(result.steps.map((step) => step.name), [
+      "product-update-preflight",
+      "channel-product-update-preflight",
+      "product-update",
+      "product-readback",
+    ]);
+    const productCalls = calls.filter((call) => call.url.includes("/v2/products/origin-products/13671684696"));
     assert.deepEqual(productCalls.map((call) => call.init?.method), ["GET", "PUT", "GET"]);
     assert.deepEqual(JSON.parse(String(productCalls[1].init?.body)), {
-      originProduct: { name: "수정 상품", salePrice: 77_770, stockQuantity: 9, deliveryInfo: { deliveryType: "DELIVERY" } },
-      smartstoreChannelProduct: { channelProductName: "수정 상품", channelProductDisplayStatusType: "SUSPENSION" },
+      originProduct: {
+        leafCategoryId: "50001578",
+        name: "수정 상품",
+        salePrice: 77_770,
+        stockQuantity: 9,
+        deliveryInfo: { deliveryType: "DELIVERY" },
+        detailAttribute: {
+          productInfoProvidedNotice: {
+            productInfoProvidedNoticeType: "ETC",
+            etc: { manufacturer: "기존 제조사", customerServicePhoneNumber: "010-0000-0000" },
+          },
+        },
+      },
+      smartstoreChannelProduct: {
+        channelProductNo: 20000001,
+        originProductNo: 13671684696,
+        channelProductName: "수정 상품",
+        channelProductDisplayStatusType: "SUSPENSION",
+        naverShoppingRegistration: true,
+      },
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -168,7 +222,27 @@ test("listing update fails when the provider accepts the write but readback keep
   globalThis.fetch = async (input) => {
     const url = String(input);
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
-    if (url.includes("/origin-products/")) return Response.json({ originProduct: { name: "기존 상품", salePrice: 77_770 } });
+    if (url.includes("/channel-products/")) return Response.json({
+      originProductNo: 1234567890,
+      smartstoreChannelProductNo: 20000001,
+      smartstoreChannelProduct: {
+        channelProductNo: 20000001,
+        originProductNo: 1234567890,
+        channelProductName: "기존 상품",
+        channelProductDisplayStatusType: "ON",
+      },
+    });
+    if (url.includes("/origin-products/")) return Response.json({
+      originProductNo: 1234567890,
+      smartstoreChannelProductNo: 20000001,
+      originProduct: { name: "기존 상품", salePrice: 77_770 },
+      smartstoreChannelProduct: {
+        channelProductNo: 20000001,
+        originProductNo: 1234567890,
+        channelProductName: "기존 상품",
+        channelProductDisplayStatusType: "ON",
+      },
+    });
     return Response.json({});
   };
   try {

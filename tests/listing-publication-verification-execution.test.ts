@@ -219,13 +219,26 @@ const coupangData = {
     items: [{ vendorItemId: 4444, itemName: "한국어로 확인된 고품질 판매 상품", contents: coupangContents }],
   },
 };
+const smartstoreProviderRepresentative =
+  "https://shop-phinf.pstatic.net/20260830_sellerpilot/representative.jpg";
+const smartstoreProviderImages = detailUrls.map((_, index) =>
+  `https://shop-phinf.pstatic.net/20260830_sellerpilot/detail-${index + 1}.jpg`);
+const smartstoreDescriptionText = "한국어 상품 상세 정보입니다.";
+const smartstoreProviderDescription = detailHtml(
+  smartstoreDescriptionText,
+  smartstoreProviderImages,
+);
 const smartstoreData = {
   originProductNo: 10000001,
   smartstoreChannelProductNo: 20000001,
   originProduct: {
     name: "한국어로 확인된 스마트스토어 판매 상품",
     statusType: "SALE",
-    detailContent: detailHtml("한국어 상품 상세 정보입니다."),
+    detailContent: smartstoreProviderDescription,
+    images: {
+      representativeImage: { url: smartstoreProviderRepresentative },
+      optionalImages: smartstoreProviderImages.map((url) => ({ url })),
+    },
   },
   smartstoreChannelProduct: {
     channelProductNo: 20000001,
@@ -472,7 +485,24 @@ const fixtures: Fixture[] = [
       body: {
         originProduct: {
           name: smartstoreData.originProduct.name,
-          detailContent: smartstoreData.originProduct.detailContent,
+          detailContent: detailHtml(smartstoreDescriptionText),
+        },
+        smartstoreChannelProduct: {
+          channelProductName: smartstoreData.smartstoreChannelProduct.channelProductName,
+        },
+      },
+    }),
+    providerArguments: publicationArguments({
+      publicationIntent: "live",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationExpectedLocale: "ko-KR",
+      publicationExpectedFingerprint: FINGERPRINT,
+      publicationExpectedImageCount: 8,
+      body: {
+        originProduct: {
+          name: smartstoreData.originProduct.name,
+          detailContent: smartstoreProviderDescription,
+          images: smartstoreData.originProduct.images,
         },
         smartstoreChannelProduct: {
           channelProductName: smartstoreData.smartstoreChannelProduct.channelProductName,
@@ -838,7 +868,7 @@ test("SmartStore source publication stages its client-credentials token before l
         beginCredentialMutation: async () => { credentialMutationHooks += 1; },
         stageCredentialRefresh: async (refresh) => { staged.push(refresh.payload); },
       },
-    }), /NAVER_LISTING_IMAGES_MISSING/);
+    }), /NAVER_REPRESENTATIVE_IMAGE_MISSING/);
     assert.deepEqual(fetchCalls, ["https://api.commerce.naver.com/external/v1/oauth2/token"]);
     assert.equal(credentialMutationHooks, 1);
     assert.equal(providerMutationHooks, 0);

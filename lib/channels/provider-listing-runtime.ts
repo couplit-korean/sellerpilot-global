@@ -20,6 +20,11 @@ import {
   textValue,
   type SecretPayload,
 } from "./protocols";
+import {
+  bindSmartstoreUploadedProductImages,
+  finalizeSmartstoreListingBody,
+  smartstoreImageUploadPlan,
+} from "./smartstore-image-contract";
 
 type UnknownRecord = Record<string, unknown>;
 type ListingOperation = "listing.create" | "listing.update";
@@ -653,15 +658,21 @@ async function prepareLazadaListing(input: PrepareProviderListingInput): Promise
 }
 
 async function prepareSmartstoreListing(input: PrepareProviderListingInput): Promise<UnknownRecord> {
-  const imageUrls = uniqueImageUrls(input.arguments.imageUrls, 10);
-  if (!imageUrls.length) throw new Error("NAVER_LISTING_IMAGES_MISSING");
+  const sourceBody = structuredClone(recordValue(input.arguments.body) ?? {});
+  const imagePlan = smartstoreImageUploadPlan({
+    imageUrls: input.arguments.imageUrls,
+    body: sourceBody,
+  });
+  const imageUrls = imagePlan.sourceUrls;
   await input.hooks.assertLeaseHealthy();
   const storedAccessToken = readStoredNaverAccessToken(input.credential);
   const token = storedAccessToken
     ? { accessToken: storedAccessToken }
     : await fetchNaverAccessToken(input.credential);
-  let phone = textValue(input.credential, "after_service_phone");
-  if (!phone) {
+  let phone = input.operation === "listing.create"
+    ? textValue(input.credential, "after_service_phone")
+    : "";
+  if (input.operation === "listing.create" && !phone) {
     await input.hooks.assertLeaseHealthy();
     const addressRemote = await naverRequest({
       accessToken: token.accessToken,
@@ -720,72 +731,18 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
     throw new Error("NAVER_IMAGE_UPLOAD_FAILED");
   }
 
-  const body = structuredClone(recordValue(input.arguments.body) ?? {});
-  const originProduct = recordValue(body.originProduct) ?? {};
-  originProduct.salePrice = normalizeTenWonAmount(originProduct.salePrice);
-  const detailAttribute = recordValue(originProduct.detailAttribute) ?? {};
-  const existingProvidedNotice = recordValue(detailAttribute.productInfoProvidedNotice) ?? {};
-  const existingEtcNotice = recordValue(existingProvidedNotice.etc) ?? {};
-  const productName = String(originProduct.name ?? "상품상세 참조").trim() || "상품상세 참조";
-  const sellerCodeInfo = recordValue(detailAttribute.sellerCodeInfo);
-  const sellerCode = String(sellerCodeInfo?.sellerManagementCode ?? productName).trim() || productName;
-  const providedNotice = String(existingProvidedNotice.productInfoProvidedNoticeType ?? "").trim()
-    ? structuredClone(existingProvidedNotice)
-    : {
-      productInfoProvidedNoticeType: "ETC",
-      etc: {
-        returnCostReason: "상품상세 참조",
-        noRefundReason: "상품상세 참조",
-        qualityAssuranceStandard: "상품상세 참조",
-        compensationProcedure: "상품상세 참조",
-        troubleShootingContents: "상품상세 참조",
-        itemName: productName.slice(0, 50),
-        modelName: sellerCode.slice(0, 50),
-        certificateDetails: "해당사항 없음",
-        manufacturer: "상품상세 참조",
-        customerServicePhoneNumber: phone,
-      },
-    };
-  if (providedNotice.productInfoProvidedNoticeType === "ETC") {
-    const etc: UnknownRecord = {
-      ...existingEtcNotice,
-      ...(recordValue(providedNotice.etc) ?? {}),
-      customerServicePhoneNumber: phone,
-    };
-    delete etc.afterServiceDirector;
-    providedNotice.etc = etc;
-  }
-  originProduct.images = {
-    representativeImage: { url: uploadedUrls[0] },
-    optionalImages: uploadedUrls.slice(1).map((url) => ({ url })),
-  };
-  originProduct.detailAttribute = {
-    ...detailAttribute,
-    minorPurchasable: typeof detailAttribute.minorPurchasable === "boolean"
-      ? detailAttribute.minorPurchasable
-      : true,
-    productInfoProvidedNotice: providedNotice,
-    afterServiceInfo: {
-      afterServiceTelephoneNumber: phone,
-      afterServiceGuideContent: "상품 상세 설명과 스마트스토어 판매자 안내를 확인해 주세요.",
-    },
-  };
-  if (input.arguments.publicationIntent === "safe_test") originProduct.statusType = "SUSPENSION";
-  if (input.arguments.publicationIntent === "live") originProduct.statusType = "SALE";
-  body.originProduct = originProduct;
-  const smartstoreChannelProduct = recordValue(body.smartstoreChannelProduct) ?? {};
-  body.smartstoreChannelProduct = {
-    ...smartstoreChannelProduct,
-    naverShoppingRegistration: smartstoreChannelProduct.naverShoppingRegistration === true,
-    channelProductDisplayStatusType: input.arguments.publicationIntent === "safe_test"
-      ? "SUSPENSION"
-      : input.arguments.publicationIntent === "live"
-        ? "ON"
-        : ["ON", "SUSPENSION"].includes(String(smartstoreChannelProduct.channelProductDisplayStatusType))
-          ? smartstoreChannelProduct.channelProductDisplayStatusType
-          : "ON",
-  };
-  return { ...input.arguments, body };
+  const providerImageBody = bindSmartstoreUploadedProductImages({
+    body: sourceBody,
+    sourceUrls: imageUrls,
+    uploadedUrls,
+  });
+  const body = finalizeSmartstoreListingBody({
+    body: providerImageBody,
+    operation: input.operation,
+    publicationIntent: input.arguments.publicationIntent,
+    afterServicePhone: phone,
+  });
+  return { ...input.arguments, imageUrls: uploadedUrls, body };
 }
 
 function nestedContent(data: UnknownRecord) {
