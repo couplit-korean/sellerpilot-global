@@ -27,6 +27,8 @@ import {
   listingUpdateRemoteIdentity,
   listingWriteOperation,
 } from "../../../../lib/channels/listing-update";
+import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/lazada-price-policy";
+import { lazadaRequestedUpdateQuantity } from "../../../../lib/channels/lazada-listing-update";
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import {
   listingOperationRequiresVerifiedRemoteState,
@@ -381,6 +383,31 @@ export async function POST(request: NextRequest) {
       }
       boundListingCurrency = ledgerCurrency;
       boundListingPrice = ledgerPrice;
+      if (channel === "lazada" && operation === "listing.update") {
+        const policy = lazadaKrwMyrPricePolicyFromArguments(parsed.data.arguments);
+        const manualFields = isRecord(contextRecord.manualFields)
+          ? contextRecord.manualFields
+          : {};
+        const centralCurrency = String(manualFields.currency ?? "").trim().toUpperCase();
+        const centralPrice = Number(manualFields.sellingPrice);
+        const centralStock = Number(manualFields.stock);
+        const requestedStock = lazadaRequestedUpdateQuantity(parsed.data.arguments);
+        if (!policy
+            || centralCurrency !== policy.sourceCurrency
+            || !Number.isFinite(centralPrice)
+            || Math.abs(centralPrice - policy.sourcePriceKrw) > 0.000_001
+            || !Number.isSafeInteger(centralStock)
+            || centralStock < 0
+            || requestedStock === null
+            || requestedStock !== centralStock) {
+          return NextResponse.json({
+            message: "중앙 KRW 판매가·재고와 고정된 MYR 최종 금액의 근거가 일치하지 않아 Lazada 상품 수정을 차단했습니다.",
+            mode: "lazada_krw_myr_price_policy_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        boundListingCurrency = policy.targetCurrency;
+        boundListingPrice = policy.targetPriceMyr;
+      }
     }
 
     const { data: lineageStatus, error: lineageError } = await serviceClient.rpc(

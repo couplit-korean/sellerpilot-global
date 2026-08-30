@@ -184,18 +184,28 @@ const lazadaDescriptionText = "Penerangan produk yang disahkan untuk maklumat te
 const lazadaDescription = detailHtml(lazadaDescriptionText);
 const lazadaProviderImages = detailUrls.map((_, index) =>
   `https://my-live.slatic.net/p/provider-image-${index + 1}.jpg`);
+const lazadaProviderRepresentative = "https://my-live.slatic.net/p/provider-representative.jpg";
 const lazadaProviderDescription = detailHtml(lazadaDescriptionText, lazadaProviderImages);
 const lazadaData = {
   code: "0",
   data: {
     item_id: 987654321,
+    primary_category: 10100205,
     status: "active",
-    images: lazadaProviderImages,
+    images: [lazadaProviderRepresentative, ...lazadaProviderImages.slice(0, 7)],
     attributes: {
       name: "Cawan produk yang disahkan",
       description: lazadaProviderDescription,
     },
-    skus: [{ SkuId: 555001, SellerSku: "CAWAN-MY-1", Status: "active" }],
+    skus: [{
+      SkuId: 555001,
+      SellerSku: "CAWAN-MY-1",
+      price: 14.29,
+      quantity: 1,
+      special_price: 0,
+      Status: "active",
+      Images: [lazadaProviderRepresentative, ...lazadaProviderImages.slice(0, 7)],
+    }],
   },
 };
 const coupangContents = [
@@ -393,12 +403,13 @@ const fixtures: Fixture[] = [
       request: {
         Request: {
           Product: {
-            Images: { Image: detailUrls },
+            PrimaryCategory: "10100205",
+            Images: { Image: [galleryUrl, ...detailUrls.slice(0, 7)] },
             Attributes: {
               name: lazadaData.data.attributes.name,
               description: lazadaDescription,
             },
-            Skus: { Sku: [{ SellerSku: "CAWAN-MY-1", Status: "active" }] },
+            Skus: { Sku: [{ SellerSku: "CAWAN-MY-1", price: "14.29", quantity: "1", Status: "active" }] },
           },
         },
       },
@@ -413,12 +424,13 @@ const fixtures: Fixture[] = [
       request: {
         Request: {
           Product: {
-            Images: { Image: lazadaProviderImages },
+            PrimaryCategory: "10100205",
+            Images: { Image: [lazadaProviderRepresentative, ...lazadaProviderImages.slice(0, 7)] },
             Attributes: {
               name: lazadaData.data.attributes.name,
               description: lazadaProviderDescription,
             },
-            Skus: { Sku: [{ SellerSku: "CAWAN-MY-1", Status: "active" }] },
+            Skus: { Sku: [{ SkuId: "555001", SellerSku: "CAWAN-MY-1", price: "14.29", quantity: "1", Status: "active" }] },
           },
         },
       },
@@ -438,6 +450,7 @@ const fixtures: Fixture[] = [
     resources: {
       itemId: "987654321",
       country: "my",
+      categoryId: "10100205",
       skuIds: ["555001"],
       sellerSkus: ["CAWAN-MY-1"],
     },
@@ -1116,6 +1129,11 @@ test("Lazada accepts provider-migrated image URLs only through immutable first-r
   });
   assert.equal(accepted.verified, true);
   assert.equal(accepted.detailImageCountVerified, true);
+  assert.equal(accepted.representativeImageVerified, true);
+  assert.equal(
+    accepted.providerImageContract,
+    "representative_plus_approved_detail_8_exact_detail_content",
+  );
 
   const drifted = structuredClone(fixture.remoteData);
   const driftedData = drifted.data as Record<string, unknown>;

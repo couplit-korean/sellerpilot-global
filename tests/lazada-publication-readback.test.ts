@@ -49,6 +49,7 @@ function readback(status: string, qcStatus?: string) {
     request_id: "readback-request",
     data: {
       item_id: 987654321,
+      primary_category: 12345,
       status,
       ...(qcStatus ? { qc_status: qcStatus } : {}),
       images: IMAGES,
@@ -60,6 +61,9 @@ function readback(status: string, qcStatus?: string) {
       skus: [{
         SkuId: 555001,
         SellerSku: "CAWAN-MY-1",
+        price: 39.90,
+        quantity: 1,
+        special_price: 0,
         Status: status,
         Url: "https://www.lazada.com.my/products/i987654321.html",
         Images: IMAGES,
@@ -110,6 +114,7 @@ test("Lazada GetProductItem normalization binds country, localized content, iden
   assert.deepEqual(normalized.remoteState?.resources, {
     itemId: "987654321",
     country: "my",
+    categoryId: "12345",
     skuIds: ["555001"],
     sellerSkus: ["CAWAN-MY-1"],
     urls: ["https://www.lazada.com.my/products/i987654321.html"],
@@ -121,6 +126,8 @@ test("Lazada GetProductItem normalization binds country, localized content, iden
       "localeVerified",
       "fingerprintVerified",
       "imageCountVerified",
+      "categoryVerified",
+      "commerceVerified",
     ].map((key) => [key, normalized.remoteState?.evidence[key]])),
     {
       identityVerified: true,
@@ -128,6 +135,8 @@ test("Lazada GetProductItem normalization binds country, localized content, iden
       localeVerified: true,
       fingerprintVerified: true,
       imageCountVerified: true,
+      categoryVerified: true,
+      commerceVerified: true,
     },
   );
   assert.equal(normalized.checks.fingerprintVerified, true);
@@ -166,6 +175,9 @@ test("Lazada live readback requires the exact requested SKU set and every SKU ac
   remote.data.skus.push({
     SkuId: 555002,
     SellerSku: "CAWAN-MY-2",
+    price: 49.90,
+    quantity: 1,
+    special_price: 0,
     Status: "inactive",
     Url: "https://www.lazada.com.my/products/i987654321.html",
     Images: IMAGES,
@@ -229,6 +241,44 @@ test("Lazada publication evidence fails shut on wrong country, content or image 
     ...base,
     market: "my",
     remoteData: { ...readback("active"), data: { ...readback("active").data, images: IMAGES.slice(0, 7) } },
+  }).remoteState, undefined);
+  assert.equal(normalizeLazadaListingPublicationReadback({
+    ...base,
+    market: "my",
+    remoteData: { ...readback("active"), data: { ...readback("active").data, primary_category: 99999 } },
+  }).remoteState, undefined);
+  assert.equal(normalizeLazadaListingPublicationReadback({
+    ...base,
+    market: "my",
+    remoteData: {
+      ...readback("active"),
+      data: {
+        ...readback("active").data,
+        skus: [{ ...readback("active").data.skus[0], price: 99.99 }],
+      },
+    },
+  }).remoteState, undefined);
+  assert.equal(normalizeLazadaListingPublicationReadback({
+    ...base,
+    market: "my",
+    remoteData: {
+      ...readback("active"),
+      data: {
+        ...readback("active").data,
+        skus: [{ ...readback("active").data.skus[0], quantity: 2 }],
+      },
+    },
+  }).remoteState, undefined);
+  assert.equal(normalizeLazadaListingPublicationReadback({
+    ...base,
+    market: "my",
+    remoteData: {
+      ...readback("active"),
+      data: {
+        ...readback("active").data,
+        skus: [{ ...readback("active").data.skus[0], special_price: 1 }],
+      },
+    },
   }).remoteState, undefined);
   assert.equal(normalizeLazadaListingPublicationReadback({
     ...base,

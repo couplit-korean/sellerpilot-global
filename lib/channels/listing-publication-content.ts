@@ -47,6 +47,7 @@ export type ListingPublicationContentVerification = {
   providerImageSurface: "detail_content" | "gallery" | "unknown";
   providerImageContract:
     | "approved_detail_content_exact_8"
+    | "representative_plus_approved_detail_8_exact_detail_content"
     | "representative_plus_approved_detail_8_exact_gallery_9"
     | "representative_plus_approved_detail_7_exact_gallery_8"
     | "unknown";
@@ -477,7 +478,15 @@ export function listingPublicationContentProjection(
     const description = firstText(attributes, ["description", "short_description"]);
     const title = normalizedListingPublicationText(firstText(attributes, ["name"]));
     const detailImageIdentities = htmlImageUrls(description);
-    return { title, titleParts: title ? [title] : [], description: normalizedListingPublicationText(description), detailImageCount: detailImageIdentities.length, detailImageIdentities };
+    const gallery = exactImageIdentities(item.Images ?? item.images);
+    return {
+      title,
+      titleParts: title ? [title] : [],
+      description: normalizedListingPublicationText(description),
+      detailImageCount: detailImageIdentities.length,
+      detailImageIdentities,
+      representativeImageIdentity: gallery[0] ?? "",
+    };
   }
   if (channel === "coupang") return coupangContentProjection(side === "source" ? recordValue(value.body) : value);
   if (channel === "smartstore") {
@@ -656,9 +665,10 @@ export function listingPublicationProviderAssetEvidence(input: {
     : binding.providerImageSurface;
   if (providerImageSurface !== "gallery" && providerImageSurface !== "detail_content") return null;
   const buyerVisibleShopee = input.channel === "shopee" && binding.providerImageSurface === "buyer_visible";
+  const representativeBound = buyerVisibleShopee || input.channel === "lazada";
   const sourceRepresentativeImage = sourceProjection.representativeImageIdentity ?? "";
   const providerRepresentativeImage = projection.representativeImageIdentity ?? "";
-  if (buyerVisibleShopee && (!sourceRepresentativeImage || !providerRepresentativeImage)) return null;
+  if (representativeBound && (!sourceRepresentativeImage || !providerRepresentativeImage)) return null;
   return {
     contract: "sellerpilot_provider_asset_binding_v1",
     sourceAssetBindingDigest: digest(binding),
@@ -669,7 +679,7 @@ export function listingPublicationProviderAssetEvidence(input: {
     providerTransportRoles: binding.providerTransportImages.map((item) => item.role),
     providerDetailImageIdentities: identities,
     providerImageDigest: digest(identities),
-    ...(buyerVisibleShopee ? {
+    ...(representativeBound ? {
       sourceRepresentativeImageDigest: digest(sourceRepresentativeImage),
       providerRepresentativeImageIdentity: providerRepresentativeImage,
       providerRepresentativeImageDigest: digest(providerRepresentativeImage),
@@ -683,7 +693,7 @@ function canonicalRemoteResources(channel: PublicationChannel, value: unknown) {
     qoo10: ["itemCode", "sellerCode"],
     elevenst: ["productNo", "sellerProductCode"],
     shopee: ["localItemId", "shopId", "globalItemId"],
-    lazada: ["itemId", "country", "skuIds", "sellerSkus"],
+    lazada: ["itemId", "country", "categoryId", "skuIds", "sellerSkus"],
     coupang: ["sellerProductId", "vendorItemIds"],
     smartstore: ["originProductNo", "smartstoreChannelProductNo"],
     ebay: ["offerId", "listingId", "sku", "marketplaceId"],
@@ -728,6 +738,9 @@ function sourceDeclaredRemoteResources(
   if (channel === "lazada") return {
     itemId: remoteId,
     ...(firstText(sourceArguments, ["country"]) ? { country: firstText(sourceArguments, ["country"]).toLowerCase() } : {}),
+    ...(firstText(requestProduct, ["PrimaryCategory", "primary_category"])
+      ? { categoryId: firstText(requestProduct, ["PrimaryCategory", "primary_category"]) }
+      : {}),
     ...(sourceSkus.length ? { sellerSkus: sourceSkus } : {}),
   };
   if (channel === "coupang") return {
@@ -834,13 +847,17 @@ export function verifyListingPublicationContent(input: {
     ?? (binding?.providerImageSurface === "buyer_visible" ? "unknown" : binding?.providerImageSurface)
     ?? "unknown";
   const providerImageContract = verifiedProviderImageSurface === "detail_content"
-    ? "approved_detail_content_exact_8"
+    ? input.channel === "lazada"
+      ? "representative_plus_approved_detail_8_exact_detail_content"
+      : "approved_detail_content_exact_8"
     : verifiedProviderImageSurface === "gallery"
       ? binding?.providerImageSurface === "buyer_visible"
         ? "representative_plus_approved_detail_8_exact_gallery_9"
         : "representative_plus_approved_detail_7_exact_gallery_8"
       : "unknown";
-  const representativeImageVerified = binding?.providerImageSurface !== "buyer_visible"
+  const representativeRequired = binding?.providerImageSurface === "buyer_visible"
+    || input.channel === "lazada";
+  const representativeImageVerified = !representativeRequired
     || Boolean(providerEvidence
       && source.representativeImageIdentity
       && providerEvidence.sourceRepresentativeImageDigest === digest(source.representativeImageIdentity)
@@ -869,7 +886,7 @@ export function verifyListingPublicationContent(input: {
     resources: sourceResources,
     approvedManifestDigest: binding?.approvedManifestDigest ?? "",
     providerImageSurface: verifiedProviderImageSurface,
-    ...(binding?.providerImageSurface === "buyer_visible"
+    ...(representativeRequired
       ? { representativeImage: providerEvidence?.providerRepresentativeImageIdentity ?? "" }
       : {}),
     detailImages: providerIdentities,
@@ -880,7 +897,7 @@ export function verifyListingPublicationContent(input: {
     resources: remoteResources,
     approvedManifestDigest: binding?.approvedManifestDigest ?? "",
     providerImageSurface: verifiedProviderImageSurface,
-    ...(binding?.providerImageSurface === "buyer_visible"
+    ...(representativeRequired
       ? { representativeImage: remote.representativeImageIdentity ?? "" }
       : {}),
     detailImages: remote.detailImageIdentities,

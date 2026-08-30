@@ -122,7 +122,7 @@ test("listing media mutations are fenced before upload and preserved in structur
   const shopeeFetch = listingRuntimeSource.indexOf("const response = await fetch", shopeeFence);
   const lazadaPrepare = listingRuntimeSource.indexOf("async function prepareLazadaListing");
   const lazadaFence = listingRuntimeSource.indexOf("await input.hooks.beginProviderMutation()", lazadaPrepare);
-  const lazadaRequest = listingRuntimeSource.indexOf("const remote = await lazadaRequest", lazadaFence);
+  const lazadaRequest = listingRuntimeSource.indexOf("const remote = await dependencies.lazadaRequest", lazadaFence);
   const smartstorePrepare = listingRuntimeSource.indexOf("async function prepareSmartstoreListing");
   const smartstoreFence = listingRuntimeSource.indexOf("await input.hooks.beginProviderMutation()", smartstorePrepare);
   const smartstoreUpload = listingRuntimeSource.indexOf("const uploadResponse = await fetch", smartstoreFence);

@@ -12,6 +12,7 @@ import {
   productEditRemotePlan,
   remoteProductEditIdempotencyKey,
 } from "../lib/channels/listing-update";
+import { lazadaRequestedUpdateQuantity } from "../lib/channels/lazada-listing-update";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
 
 const publishedListing = {
@@ -46,7 +47,7 @@ test("중앙 편집과 원격 편집의 실제 지원 필드를 분리한다", (
     assert.equal(remote.requiredInformation.state, "partial", channel);
     assert.equal(remote.options.state, "blocked", channel);
     assert.equal(remote.saleConfiguration.state, "blocked", channel);
-    assert.equal(remote.price.state, "blocked", channel);
+    assert.equal(remote.price.state, channel === "lazada" ? "supported" : "blocked", channel);
     assert.equal(remote.inventory.state, "supported", channel);
   }
 
@@ -139,7 +140,7 @@ test("11번가는 전체 원본 patch를 만들고 eBay는 listing ID와 안전�
   );
 });
 
-test("상품 수정 payload는 원격 identity를 원장에서 고정하고 가격·재고·옵션을 제거한다", () => {
+test("상품 수정 payload는 원격 identity를 고정하고 Lazada 단일 SKU 외 가격·재고·옵션을 제거한다", () => {
   const qoo10 = prepareListingUpdateArguments("qoo10", {
     params: {
       ItemTitle: "수정 상품",
@@ -173,15 +174,41 @@ test("상품 수정 payload는 원격 identity를 원장에서 고정하고 가�
   assert.equal(Object.hasOwn(shopeeBody, "model"), false);
 
   const lazada = prepareListingUpdateArguments("lazada", {
+    sellerpilotLazadaPricePolicy: {
+      contract: "lazada_krw_myr_reference_price_v1",
+      sourceCurrency: "KRW",
+      sourcePriceKrw: 5_000,
+      targetCurrency: "MYR",
+      targetPriceMyr: 14.29,
+      rate: {
+        krwPerMyr: 350,
+        fetchedAt: "2026-08-30T00:00:00.000Z",
+        asOf: "2026-08-30T00:00:00.000Z",
+        source: "Coinbase Data API",
+        sourceUrl: "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates",
+        frequency: "minute-market",
+      },
+    },
     request: { Request: { Product: {
+      PrimaryCategory: "10100205",
       Attributes: { name: "수정 상품" },
       Images: { Image: ["https://images.example.test/1.jpg"] },
-      Skus: { Sku: [{ SellerSku: "unsafe", price: "1", quantity: "999" }] },
+      Skus: { Sku: [{ SellerSku: "QA-20260823-CC-001-MY", price: "14.29", quantity: "1" }] },
     } } },
   }, publishedListing);
   const lazadaProduct = (((lazada.request as Record<string, unknown>).Request as Record<string, unknown>).Product as Record<string, unknown>);
-  assert.equal(Object.hasOwn(lazadaProduct, "Skus"), false);
-  assert.deepEqual(listingUpdateMutablePaths("lazada", lazada), ["Attributes.name", "Images.Image[0]"]);
+  assert.deepEqual(lazadaProduct.Skus, {
+    Sku: [{ SellerSku: "QA-20260823-CC-001-MY", price: "14.29", quantity: "1" }],
+  });
+  assert.equal(lazadaRequestedUpdateQuantity(lazada), 1);
+  assert.deepEqual(listingUpdateMutablePaths("lazada", lazada), [
+    "PrimaryCategory",
+    "Attributes.name",
+    "Images.Image[0]",
+    "Skus.Sku[0].SellerSku",
+    "Skus.Sku[0].price",
+    "Skus.Sku[0].quantity",
+  ]);
 
   const coupang = prepareListingUpdateArguments("coupang", {
     body: {
@@ -254,6 +281,10 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.doesNotMatch(source, /randomUUID/);
   assert.doesNotMatch(source, /operation:\s*"price\.update" as const/);
   assert.match(source, /productEditRemotePlan/);
+  assert.match(source, /lazadaKrwMyrPricePolicyFromArguments/);
+  assert.match(source, /sourceCurrency !== lazadaPricePolicy\.sourceCurrency/);
+  assert.match(source, /requestedStock !== sourceStock/);
+  assert.match(source, /const price = lazadaPricePolicy\?\.targetPriceMyr \?\? listingPrice/);
   assert.match(source, /requestedPublicationIntent:[\s\S]*remoteVisibility:/);
   assert.match(source, /\["published", "paused", "failed"\]\.includes\(status\)/);
   assert.match(source, /centralWritePerformed:\s*false/);
@@ -274,4 +305,8 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(workbench, /operationRelease\.reason/);
   assert.match(workbench, /productEditRemotePlan\(channel, operationAvailable\)/);
   assert.match(workbench, /channelTargetOptionValue\(item\)/);
+  const channelOperations = readFileSync(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
+  assert.match(channelOperations, /boundListingCurrency = policy\.targetCurrency/);
+  assert.match(channelOperations, /boundListingPrice = policy\.targetPriceMyr/);
+  assert.match(channelOperations, /requestedStock !== centralStock/);
 });

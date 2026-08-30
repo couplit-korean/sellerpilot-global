@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  channelProductEditFieldSupport,
   listingCoreContentForOperation,
   listingUpdateRemoteIdentity,
   listingWriteOperation,
@@ -203,7 +204,7 @@ test("Shopee update uses the published local item body instead of the global cre
   });
 });
 
-test("update preparation is idempotent and strips create-only sale, stock, shipping, and policy defaults", () => {
+test("update preparation is idempotent and only retains channel fields with verified update contracts", () => {
   const createDraft = {
     sellerpilotAssets: { galleryImageUrls: ["https://cdn.example.com/hero.jpg"] },
     body: {
@@ -269,8 +270,10 @@ test("update preparation is idempotent and strips create-only sale, stock, shipp
     request: {
       Request: {
         Product: {
+          PrimaryCategory: "1001",
           Attributes: { name: "수정 상품", description: "수정 설명" },
           Images: { Image: ["https://cdn.example.com/hero.jpg"] },
+          Skus: { Sku: [{ SellerSku: "SKU-1", price: "1.00", quantity: "999" }] },
         },
       },
     },
@@ -336,6 +339,84 @@ test("Lazada update keeps the verified XML request and adds a readback identity"
     prepareListingUpdateArguments("lazada", { request, country: "my" }, listing),
     { request, country: "my", itemId: "123456789" },
   );
+});
+
+test("Lazada MY QA update retains the exact category and requested single-SKU price and stock contract", () => {
+  const prepared = prepareListingUpdateArguments("lazada", {
+    country: "my",
+    sellerpilotLazadaPricePolicy: {
+      contract: "lazada_krw_myr_reference_price_v1",
+      sourceCurrency: "KRW",
+      sourcePriceKrw: 5_000,
+      targetCurrency: "MYR",
+      targetPriceMyr: 14.29,
+      rate: {
+        krwPerMyr: 350,
+        fetchedAt: "2026-08-30T00:00:00.000Z",
+        asOf: "2026-08-30T00:00:00.000Z",
+        source: "Coinbase Data API",
+        sourceUrl: "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates",
+        frequency: "minute-market",
+      },
+    },
+    request: {
+      Request: {
+        Product: {
+          PrimaryCategory: "10100205",
+          Attributes: {
+            name: "Klip pengurusan kabel pelekat, set 6 unit",
+            description: "Penerangan produk dalam Bahasa Melayu.",
+          },
+          Images: { Image: ["https://cdn.example.com/representative.jpg"] },
+          Skus: { Sku: [{
+            SellerSku: "QA-20260823-CC-001-MY",
+            price: "14.29",
+            quantity: "1",
+            package_weight: "0.1",
+            Status: "active",
+          }] },
+        },
+      },
+    },
+  }, { ...listing, remoteId: "14976038919" });
+  assert.equal(prepared.itemId, "14976038919");
+  assert.deepEqual(prepared.sellerpilotLazadaPricePolicy, {
+    contract: "lazada_krw_myr_reference_price_v1",
+    sourceCurrency: "KRW",
+    sourcePriceKrw: 5_000,
+    targetCurrency: "MYR",
+    targetPriceMyr: 14.29,
+    rate: {
+      krwPerMyr: 350,
+      fetchedAt: "2026-08-30T00:00:00.000Z",
+      asOf: "2026-08-30T00:00:00.000Z",
+      source: "Coinbase Data API",
+      sourceUrl: "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates",
+      frequency: "minute-market",
+    },
+  });
+  assert.deepEqual(prepared.request, {
+    Request: {
+      Product: {
+        PrimaryCategory: "10100205",
+        Attributes: {
+          name: "Klip pengurusan kabel pelekat, set 6 unit",
+          description: "Penerangan produk dalam Bahasa Melayu.",
+        },
+        Images: { Image: ["https://cdn.example.com/representative.jpg"] },
+        Skus: { Sku: [{
+          SellerSku: "QA-20260823-CC-001-MY",
+          price: "14.29",
+          quantity: "1",
+        }] },
+      },
+    },
+  });
+  const support = channelProductEditFieldSupport("lazada");
+  assert.equal(support.price.state, "supported");
+  assert.equal(support.price.operation, "listing.update");
+  assert.equal(support.inventory.state, "supported");
+  assert.equal(support.inventory.operation, "listing.update");
 });
 
 test("unpublished, identity-less, and unreleased update targets are blocked", () => {

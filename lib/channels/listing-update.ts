@@ -115,8 +115,10 @@ const releasedListingContent: Partial<Record<ActiveChannelKey, Partial<Record<Pr
   lazada: {
     productName: fieldSupport("supported", "listing.update", ["request.Request.Product.Attributes.name"], "Lazada item_id의 name 속성을 수정하고 같은 item_id를 readback합니다."),
     description: fieldSupport("supported", "listing.update", ["request.Request.Product.Attributes.description", "request.Request.Product.Attributes.short_description"], "상세·요약 설명을 수정하고 상품 속성을 다시 확인합니다."),
-    requiredInformation: fieldSupport("partial", "listing.update", ["request.Request.Product.Attributes"], "확정된 상품 속성은 수정하지만 SellerSku·SKU 옵션·포장값은 기존 원격 구조를 보존합니다."),
+    requiredInformation: fieldSupport("partial", "listing.update", ["request.Request.Product.PrimaryCategory", "request.Request.Product.Attributes"], "현재 원격 말단 카테고리를 먼저 확인하고 확정된 상품 속성만 수정하며 SellerSku·옵션·포장값은 보존합니다."),
     images: fieldSupport("supported", "listing.update", ["request.Request.Product.Images"], "상품 이미지를 수정하고 같은 item_id의 Images를 다시 확인합니다."),
+    price: fieldSupport("supported", "listing.update", ["request.Request.Product.Skus.Sku[].price"], "GetProductItem에서 단일 기존 SkuId와 할인 미적용 상태를 확인한 뒤 MYR 가격을 수정하고 다시 조회합니다."),
+    inventory: fieldSupport("supported", "listing.update", ["request.Request.Product.Skus.Sku[].quantity"], "단일 창고·단일 기존 SkuId를 확인한 뒤 수량을 수정하고 같은 SKU에서 다시 조회합니다."),
   },
   coupang: {
     productName: fieldSupport("supported", "listing.update", ["body.sellerProductName", "body.displayProductName", "body.items[].itemName"], "sellerProductId를 사전 조회한 뒤 상품명 필드를 병합하고 readback합니다."),
@@ -176,8 +178,8 @@ export function channelProductEditFieldSupport(channel: ActiveChannelKey) {
     saleConfiguration: blockedRemoteSaleConfiguration(),
     requiredInformation: released.requiredInformation ?? blockedRemoteContent(listingReason),
     images: released.images ?? blockedRemoteContent(listingReason),
-    price: blockedRemotePrice(),
-    inventory,
+    price: released.price ?? blockedRemotePrice(),
+    inventory: released.inventory ?? inventory,
   };
   return cloneFieldMap(result);
 }
@@ -366,9 +368,20 @@ const coupangMutableItemFields = [
 
 function safeLazadaProduct(value: unknown) {
   const product = recordValue(value);
+  const skusRoot = recordValue(product.Skus);
+  const rawSkus = Array.isArray(skusRoot.Sku)
+    ? skusRoot.Sku
+    : Object.keys(recordValue(skusRoot.Sku)).length
+      ? [skusRoot.Sku]
+      : [];
+  const skus = rawSkus.map((value) => nonEmptyEntries(recordValue(value), [
+    "SellerSku", "seller_sku", "price", "Price", "quantity", "Quantity",
+  ])).filter((value) => Object.keys(value).length > 0);
   return {
+    ...optionalArgument(product, "PrimaryCategory"),
     ...optionalArgument(product, "Attributes"),
     ...optionalArgument(product, "Images"),
+    ...(skus.length ? { Skus: { Sku: skus } } : {}),
   };
 }
 
@@ -473,6 +486,7 @@ export function prepareListingUpdateArguments(
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "imageUrls"),
       ...optionalArgument(createArguments, "country"),
+      ...optionalArgument(createArguments, "sellerpilotLazadaPricePolicy"),
       ...(sellerpilotExpectedSellerSkus.length ? { sellerpilotExpectedSellerSkus } : {}),
       itemId: remoteId,
       request: { Request: { Product: product } },
@@ -664,6 +678,38 @@ function lazadaComparableImages(value: unknown) {
   return record.Image ?? record.image ?? value;
 }
 
+function lazadaComparableSkuRows(value: unknown) {
+  const root = recordValue(value);
+  const raw = root.Sku ?? root.sku ?? value;
+  const rows = Array.isArray(raw)
+    ? raw
+    : Object.keys(recordValue(raw)).length
+      ? [raw]
+      : [];
+  return rows.map((value) => {
+    const sku = recordValue(value);
+    const skuId = sku.SkuId ?? sku.SkuID ?? sku.sku_id ?? sku.skuId;
+    const sellerSku = sku.SellerSku ?? sku.seller_sku;
+    const price = sku.price ?? sku.Price;
+    const quantity = sku.quantity ?? sku.Quantity;
+    const comparablePrice = Number(price);
+    const comparableQuantity = Number(quantity);
+    return {
+      ...(skuId === undefined ? {} : { SkuId: identityValue(skuId) }),
+      ...(sellerSku === undefined ? {} : { SellerSku: identityValue(sellerSku) }),
+      ...(price === undefined ? {} : {
+        price: Number.isFinite(comparablePrice) ? comparablePrice : String(price),
+      }),
+      ...(quantity === undefined ? {} : {
+        quantity: Number.isFinite(comparableQuantity) ? comparableQuantity : String(quantity),
+      }),
+      ...(sku.Images === undefined && sku.images === undefined
+        ? {}
+        : { Images: { Image: lazadaComparableImages(sku.Images ?? sku.images) } }),
+    };
+  });
+}
+
 function lazadaReadbackProjection(remoteData: Record<string, unknown>) {
   const data = recordValue(remoteData.data);
   const item = Object.keys(recordValue(data.item)).length ? recordValue(data.item) : data;
@@ -673,9 +719,13 @@ function lazadaReadbackProjection(remoteData: Record<string, unknown>) {
       ? recordValue(item.attributes)
       : item;
   const images = item.Images ?? item.images ?? data.Images ?? data.images;
+  const category = item.PrimaryCategory ?? item.primary_category ?? item.primaryCategory ?? data.primary_category;
+  const skus = item.Skus ?? item.skus ?? data.Skus ?? data.skus;
   return {
+    ...(category === undefined ? {} : { PrimaryCategory: identityValue(category) }),
     Attributes: attributes,
     ...(images !== undefined ? { Images: { Image: lazadaComparableImages(images) } } : {}),
+    ...(skus === undefined ? {} : { Skus: { Sku: lazadaComparableSkuRows(skus) } }),
   };
 }
 
@@ -685,8 +735,10 @@ function expectedListingUpdateProjection(channel: ActiveChannelKey, argumentsVal
   if (channel === "lazada") {
     const product = recordValue(recordValue(recordValue(argumentsValue.request).Request).Product);
     return {
+      ...optionalArgument(product, "PrimaryCategory"),
       ...optionalArgument(product, "Attributes"),
       ...(product.Images === undefined ? {} : { Images: { Image: lazadaComparableImages(product.Images) } }),
+      ...(product.Skus === undefined ? {} : { Skus: { Sku: lazadaComparableSkuRows(product.Skus) } }),
     };
   }
   if (channel === "coupang") {

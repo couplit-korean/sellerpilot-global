@@ -5,6 +5,10 @@ import {
 } from "./listing-publication-state";
 import { verifyListingUpdateReadback } from "./listing-update";
 import {
+  lazadaPrimaryCategory,
+  lazadaUpdateCommerceReadbackVerified,
+} from "./lazada-listing-update";
+import {
   lazadaRequest,
   textValue,
   type RemoteResponse,
@@ -24,6 +28,8 @@ export type LazadaPublicationReadbackVerification = {
     localeVerified: boolean;
     fingerprintVerified: boolean;
     imageCountVerified: boolean;
+    categoryVerified: boolean;
+    commerceVerified: boolean;
     contentVerified: boolean;
   };
 };
@@ -281,6 +287,14 @@ export function normalizeLazadaListingPublicationReadback(input: {
   const providerStatus = [...statuses, ...qcStatuses.map((status) => `QC:${status}`)].join("|").slice(0, 160);
   const images = lazadaImages(product);
   const imageCount = images.length;
+  const expectedCategory = lazadaPrimaryCategory(requestProduct);
+  const remoteCategory = lazadaPrimaryCategory(product);
+  const categoryVerified = input.operation === "listing.stop"
+    ? true
+    : Boolean(expectedCategory && expectedCategory === remoteCategory);
+  const commerceVerified = input.operation === "listing.stop"
+    ? true
+    : lazadaUpdateCommerceReadbackVerified(input.mutationArguments, input.remoteData);
   const identityVerified = Boolean(remoteId && productId === remoteId && exactSkuIdentity);
   const statusVerified = Boolean(visibility && providerStatus);
   const market = input.market.trim().toUpperCase();
@@ -307,6 +321,8 @@ export function normalizeLazadaListingPublicationReadback(input: {
     && statusVerified
     && localeVerified
     && imageCountVerified
+    && categoryVerified
+    && commerceVerified
     && contentVerified;
   const checks = {
     identityVerified,
@@ -314,6 +330,8 @@ export function normalizeLazadaListingPublicationReadback(input: {
     localeVerified,
     fingerprintVerified,
     imageCountVerified,
+    categoryVerified,
+    commerceVerified,
     contentVerified,
   };
   if (!visibility || !Object.values(checks).every(Boolean)) {
@@ -339,6 +357,7 @@ export function normalizeLazadaListingPublicationReadback(input: {
       resources: {
         itemId: remoteId,
         country: market.toLowerCase(),
+        ...(remoteCategory ? { categoryId: remoteCategory } : {}),
         ...(remoteSkuIds.length ? { skuIds: remoteSkuIds } : {}),
         ...(remoteSellerSkus.length ? { sellerSkus: remoteSellerSkus } : {}),
         ...(urls.length ? { urls } : {}),

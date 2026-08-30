@@ -13,6 +13,8 @@ import {
   remoteProductEditIdempotencyKey,
 } from "../../../../../../lib/channels/listing-update";
 import { channelOperationRelease } from "../../../../../../lib/channels/operation-availability";
+import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
+import { lazadaRequestedUpdateQuantity } from "../../../../../../lib/channels/lazada-listing-update";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -22,9 +24,9 @@ const remoteEditSchema = z.object({
   credentialId: z.string().uuid(),
   listingId: z.string().uuid(),
   mutationId: z.string().uuid(),
-  // This endpoint is deliberately limited to the content mapper below.
-  // Price, option, and sale-configuration writes require separate provider
-  // identities and readback contracts and must not fall through as content.
+  // This endpoint is deliberately limited to the released field mapper below.
+  // Lazada MY may include one preflight-bound SKU price and quantity; every
+  // other price, option, and sale-configuration write remains separate.
   operation: z.literal("listing.update"),
   confirmWrite: z.literal(true),
   arguments: z.record(z.string(), z.unknown())
@@ -225,14 +227,44 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       remoteWritePerformed: false,
       manualRequired: true,
       remotePlan,
-      message: "이 채널에서 자동 수정 가능한 상품명·설명·필수정보·이미지 값이 요청에 없습니다. 중앙 원장 저장값은 유지되며 판매구성·가격·옵션 등은 외부 채널 수동 반영이 필요합니다.",
+      message: "이 채널에서 자동 수정 가능한 상품명·설명·필수정보·이미지·검증된 가격·재고 값이 요청에 없습니다. 중앙 원장 저장값은 유지되며 미지원 판매구성·가격·옵션 등은 외부 채널 수동 반영이 필요합니다.",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
-  const currency = typeof listing.currency === "string" ? listing.currency.trim().toUpperCase() : "";
-  const price = typeof listing.price === "number" || typeof listing.price === "string"
+  const lazadaPricePolicy = listing.channel === "lazada"
+    ? lazadaKrwMyrPricePolicyFromArguments(argumentsValue)
+    : null;
+  if (listing.channel === "lazada") {
+    const manualFields = recordValue(loaded.context.manualFields);
+    const sourceCurrency = typeof manualFields.currency === "string"
+      ? manualFields.currency.trim().toUpperCase()
+      : "";
+    const sourcePrice = Number(manualFields.sellingPrice);
+    const sourceStock = Number(manualFields.stock);
+    const requestedStock = lazadaRequestedUpdateQuantity(argumentsValue);
+    if (!lazadaPricePolicy
+        || sourceCurrency !== lazadaPricePolicy.sourceCurrency
+        || !Number.isFinite(sourcePrice)
+        || Math.abs(sourcePrice - lazadaPricePolicy.sourcePriceKrw) > 0.000_001
+        || !Number.isSafeInteger(sourceStock)
+        || sourceStock < 0
+        || requestedStock === null
+        || requestedStock !== sourceStock) {
+      return NextResponse.json({
+        ok: false,
+        status: "blocked",
+        mode: "lazada_krw_myr_price_policy_required",
+        message: "중앙 상품 원장의 KRW 판매가·재고와 최신 MYR 환율로 고정한 최종 금액이 일치하지 않아 Lazada 수정을 차단했습니다.",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+
+  const listingCurrency = typeof listing.currency === "string" ? listing.currency.trim().toUpperCase() : "";
+  const listingPrice = typeof listing.price === "number" || typeof listing.price === "string"
     ? Number(listing.price)
     : Number.NaN;
+  const currency = lazadaPricePolicy?.targetCurrency ?? listingCurrency;
+  const price = lazadaPricePolicy?.targetPriceMyr ?? listingPrice;
   if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(price) || price < 0) {
     return NextResponse.json({
       ok: false,

@@ -6,6 +6,18 @@ import {
   normalizeTenWonAmount,
   replaceMarketplaceImageUrls,
 } from "./listing-normalization";
+import {
+  assertLazadaExistingListingUpdatePreflight,
+  bindLazadaExistingSkuToUpdateRequest,
+  lazadaCategoryAttributeCount,
+  lazadaCategoryTreeLeaf,
+  lazadaPrimaryCategory,
+} from "./lazada-listing-update";
+import {
+  assertLazadaKrwMyrPricePolicy,
+  loadAuthoritativeKrwPerMyr,
+  type LazadaKrwMyrRateEvidence,
+} from "./lazada-price-policy";
 import { downloadMarketplaceImage } from "./marketplace-images";
 import {
   buildShopeeSignature,
@@ -614,16 +626,138 @@ function xmlEscape(value: string) {
   })[character] ?? character);
 }
 
-async function prepareLazadaListing(input: PrepareProviderListingInput): Promise<UnknownRecord> {
-  const imageUrls = uniqueImageUrls(input.arguments.imageUrls, 20);
-  if (!imageUrls.length) throw new Error("LAZADA_LISTING_IMAGES_MISSING");
-  const migrated: string[] = [];
-  for (const imageUrl of imageUrls) {
+function lazadaAccepted(remote: Awaited<ReturnType<typeof lazadaRequest>>) {
+  return remote.response.ok && String(remote.data.code ?? "").trim() === "0";
+}
+
+function lazadaLanguageCode(country: string) {
+  const values: Record<string, string> = {
+    id: "id_ID",
+    my: "ms_MY",
+    ph: "en_PH",
+    sg: "en_SG",
+    th: "th_TH",
+    vn: "vi_VN",
+  };
+  return values[country];
+}
+
+function lazadaBoundPublicationImageSources(argumentsValue: UnknownRecord) {
+  const allSources = uniqueImageUrls(argumentsValue.imageUrls, 32);
+  const binding = recordValue(argumentsValue.sellerpilotPublicationAssetBinding);
+  const strict = argumentsValue.publicationStateContract === "verified_remote_state_v1";
+  if (!strict) return {
+    representative: allSources[0] ?? "",
+    details: allSources.slice(1, 9),
+    migrationSources: allSources,
+  };
+  const transportRows = Array.isArray(binding?.providerTransportImages)
+    ? binding.providerTransportImages.map(recordValue).filter((row): row is UnknownRecord => Boolean(row))
+    : [];
+  const details = transportRows.map((row) => String(row.publicUrl ?? "").trim()).filter(Boolean);
+  const assets = recordValue(argumentsValue.sellerpilotAssets);
+  const gallery = uniqueImageUrls(assets?.galleryImageUrls, 20);
+  const representative = gallery[0] ?? allSources.find((url) => !details.includes(url)) ?? "";
+  if (binding?.contract !== "sellerpilot_publication_asset_binding_v1"
+      || binding.providerImageSurface !== "detail_content"
+      || details.length !== 8
+      || new Set(details).size !== 8
+      || !representative
+      || details.includes(representative)
+      || !allSources.includes(representative)
+      || details.some((url) => !allSources.includes(url))) {
+    throw new Error("LAZADA_PUBLICATION_IMAGE_BINDING_INVALID");
+  }
+  return {
+    representative,
+    details,
+    migrationSources: [representative, ...details],
+  };
+}
+
+export type LazadaListingRuntimeDependencies = {
+  assertPublicReferenceUrl: typeof assertPublicReferenceUrl;
+  lazadaRequest: typeof lazadaRequest;
+  loadKrwPerMyr: (signal: AbortSignal) => Promise<LazadaKrwMyrRateEvidence>;
+};
+
+const lazadaListingRuntimeDependencies: LazadaListingRuntimeDependencies = {
+  assertPublicReferenceUrl,
+  lazadaRequest,
+  loadKrwPerMyr: (signal) => loadAuthoritativeKrwPerMyr({ signal }),
+};
+
+export async function prepareLazadaListing(
+  input: PrepareProviderListingInput,
+  dependencies: LazadaListingRuntimeDependencies = lazadaListingRuntimeDependencies,
+): Promise<UnknownRecord> {
+  const sources = lazadaBoundPublicationImageSources(input.arguments);
+  if (!sources.migrationSources.length || !sources.representative) {
+    throw new Error("LAZADA_LISTING_IMAGES_MISSING");
+  }
+  let preparedArguments = input.arguments;
+  if (input.operation === "listing.update") {
+    const request = recordValue(recordValue(recordValue(input.arguments.request)?.Request)?.Product);
+    const primaryCategory = lazadaPrimaryCategory(request ?? {});
+    const itemId = String(input.arguments.itemId ?? "").trim();
+    const country = String(input.arguments.country ?? textValue(input.credential, "country") ?? "")
+      .trim()
+      .toLowerCase();
+    const languageCode = lazadaLanguageCode(country);
+    if (!/^\d+$/u.test(itemId) || !/^\d+$/u.test(primaryCategory) || !languageCode) {
+      throw new Error("LAZADA_UPDATE_PREFLIGHT_ARGUMENTS_INVALID");
+    }
     await input.hooks.assertLeaseHealthy();
-    await assertPublicReferenceUrl(imageUrl, { signal: input.signal });
+    const [itemRemote, treeRemote, attributesRemote, authoritativeRate] = await Promise.all([
+      dependencies.lazadaRequest({
+        payload: input.credential,
+        path: "/product/item/get",
+        params: { item_id: itemId },
+      }),
+      dependencies.lazadaRequest({
+        payload: input.credential,
+        path: "/category/tree/get",
+        params: { language_code: languageCode },
+      }),
+      dependencies.lazadaRequest({
+        payload: input.credential,
+        path: "/category/attributes/get",
+        params: { primary_category_id: primaryCategory, language_code: languageCode },
+      }),
+      dependencies.loadKrwPerMyr(input.signal),
+    ]);
+    if (!lazadaAccepted(itemRemote)) throw new Error("LAZADA_UPDATE_ITEM_PREFLIGHT_FAILED");
+    if (!lazadaAccepted(treeRemote)
+        || !lazadaCategoryTreeLeaf(treeRemote.data, primaryCategory)) {
+      throw new Error("LAZADA_UPDATE_LEAF_CATEGORY_PREFLIGHT_FAILED");
+    }
+    if (!lazadaAccepted(attributesRemote)
+        || lazadaCategoryAttributeCount(attributesRemote.data) < 1) {
+      throw new Error("LAZADA_UPDATE_CATEGORY_ATTRIBUTES_PREFLIGHT_FAILED");
+    }
+    assertLazadaKrwMyrPricePolicy({
+      argumentsValue: input.arguments,
+      authoritativeRate,
+    });
+    const preflight = assertLazadaExistingListingUpdatePreflight({
+      argumentsValue: input.arguments,
+      remoteData: itemRemote.data,
+      country,
+    });
+    preparedArguments = bindLazadaExistingSkuToUpdateRequest(input.arguments, preflight);
+  }
+
+  await input.hooks.assertLeaseHealthy();
+  await Promise.all(sources.migrationSources.map((imageUrl) => (
+    dependencies.assertPublicReferenceUrl(imageUrl, { signal: input.signal })
+  )));
+
+  const migrated: string[] = [];
+  for (const imageUrl of sources.migrationSources) {
+    await input.hooks.assertLeaseHealthy();
     const xml = `<?xml version="1.0" encoding="UTF-8"?><Request><Image><Url>${xmlEscape(imageUrl)}</Url></Image></Request>`;
     await input.hooks.beginProviderMutation();
-    const remote = await lazadaRequest({
+    const remote = await dependencies.lazadaRequest({
       payload: input.credential,
       path: "/image/migrate",
       method: "POST",
@@ -638,15 +772,26 @@ async function prepareLazadaListing(input: PrepareProviderListingInput): Promise
     migrated.push(url);
   }
 
-  const request = structuredClone(recordValue(input.arguments.request) ?? {});
+  const request = structuredClone(recordValue(preparedArguments.request) ?? {});
   const requestRoot = recordValue(request.Request);
   const product = recordValue(requestRoot?.Product);
   if (!requestRoot || !product) throw new Error("CHANNEL_ARGUMENT_REQUIRED:request.Request.Product");
-  const replacements = new Map(imageUrls.map((source, index) => [source, migrated[index]]));
+  const replacements = new Map(sources.migrationSources.map((source, index) => [source, migrated[index]]));
   const migratedProduct = recordValue(replaceMarketplaceImageUrls(product, replacements));
   if (!migratedProduct) throw new Error("LAZADA_PRODUCT_IMAGE_REWRITE_FAILED");
   requestRoot.Product = migratedProduct;
-  const listingImages = migrated.slice(0, 8);
+  const providerRepresentative = replacements.get(sources.representative) ?? "";
+  const providerDetails = sources.details.map((url) => replacements.get(url) ?? "");
+  if (!providerRepresentative
+      || (preparedArguments.publicationStateContract === "verified_remote_state_v1"
+        && (providerDetails.length !== 8
+          || providerDetails.some((url) => !url)
+          || new Set([providerRepresentative, ...providerDetails]).size !== 9))) {
+    throw new Error("LAZADA_PROVIDER_IMAGE_BINDING_FAILED");
+  }
+  const listingImages = preparedArguments.publicationStateContract === "verified_remote_state_v1"
+    ? [providerRepresentative, ...providerDetails.slice(0, 7)]
+    : migrated.slice(0, 8);
   migratedProduct.Images = { Image: listingImages };
   const skusRoot = recordValue(migratedProduct.Skus);
   const skus = Array.isArray(skusRoot?.Sku) ? skusRoot.Sku : [];
@@ -654,7 +799,18 @@ async function prepareLazadaListing(input: PrepareProviderListingInput): Promise
     const row = recordValue(sku);
     if (row) row.Images = { Image: listingImages };
   }
-  return { ...input.arguments, request };
+  return {
+    ...preparedArguments,
+    ...(preparedArguments.publicationStateContract === "verified_remote_state_v1"
+      ? {
+          sellerpilotProviderImageSurface: "detail_content",
+          sellerpilotProviderImageContract: "representative_plus_approved_detail_8_exact_detail_content",
+          sellerpilotProviderRepresentativeImageUrl: providerRepresentative,
+          sellerpilotProviderDetailImageUrls: providerDetails,
+        }
+      : {}),
+    request,
+  };
 }
 
 async function prepareSmartstoreListing(input: PrepareProviderListingInput): Promise<UnknownRecord> {

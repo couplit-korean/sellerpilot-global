@@ -151,6 +151,72 @@ test("every marketplace draft preserves the explicit manual source-image contrac
   }
 });
 
+test("Lazada MY existing-product draft replaces the global USD default with the verified 5,000 KRW equivalent", () => {
+  const context = manualContext();
+  context.manualFields.sellingPrice = 5_000;
+  context.manualFields.stock = 1;
+  context.manualFields.sellerSku = "QA-20260823-CC-001";
+  context.assignments = [{
+    ...context.assignments[0],
+    channel: "lazada",
+    market: "MY",
+    categoryId: "10100205",
+  }];
+  context.listings = [{
+    id: "22222222-2222-4222-8222-222222222222",
+    channel: "lazada",
+    market: "MY",
+    targetId: "MY",
+    remoteId: "14976038919",
+    status: "published",
+    lastError: null,
+    publishedAt: "2026-08-30T00:00:00.000Z",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+  }];
+  const target = { targetId: "MY", marketCode: "MY", locale: "ms-MY", currency: "MYR", label: "Malaysia" };
+  const rate = {
+    krwPerMyr: 350,
+    fetchedAt: "2026-08-30T05:58:00.000Z",
+    asOf: "2026-08-30T05:58:00.000Z",
+    source: "Coinbase Data API",
+    sourceUrl: "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates",
+    frequency: "minute-market" as const,
+  };
+  const draft = buildChannelArguments(
+    "lazada",
+    context,
+    5_000,
+    1,
+    target,
+    { weight: 0.2, length: 10, width: 8, height: 4 },
+    12.9,
+    rate,
+  ) as Record<string, unknown>;
+  const request = draft.request as { Request: { Product: { Skus: { Sku: Array<Record<string, unknown>> } } } };
+  assert.equal(request.Request.Product.Skus.Sku[0].price, "14.29");
+  assert.deepEqual(draft.sellerpilotLazadaPricePolicy, {
+    contract: "lazada_krw_myr_reference_price_v1",
+    sourceCurrency: "KRW",
+    sourcePriceKrw: 5_000,
+    targetCurrency: "MYR",
+    targetPriceMyr: 14.29,
+    rate,
+  });
+  assert.equal(missingNativeValues("lazada", draft).includes("verified KRW to MYR price policy"), false);
+
+  const missingRate = buildChannelArguments(
+    "lazada",
+    context,
+    5_000,
+    1,
+    target,
+    { weight: 0.2, length: 10, width: 8, height: 4 },
+    12.9,
+  ) as Record<string, unknown>;
+  assert.equal(missingNativeValues("lazada", missingRate).includes("verified KRW to MYR price policy"), true);
+});
+
 test("manual MVP image contract reaches URL validation instead of the AI detail fence", async () => {
   await assert.rejects(
     prepareMarketplaceImages({} as SupabaseClient, "qoo10", {

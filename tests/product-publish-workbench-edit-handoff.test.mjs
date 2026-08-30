@@ -26,7 +26,7 @@ test("지원되지 않은 가격 옵션 판매 구성은 원격 성공처럼 표
   assert.match(source, /remoteManualFieldLabels[\s\S]*?state === "blocked"/);
   assert.match(source, /재고는 이 버튼과 별도:[\s\S]*?재고 동기화 지원/);
   assert.match(source, /아래 상품 콘텐츠 반영 버튼은 재고를 변경하지 않습니다/);
-  assert.match(source, /상품 콘텐츠만 별도 원격 반영/);
+  assert.match(source, /remoteCommerceUpdate \? "상품·단일 SKU 지원 항목" : "상품 콘텐츠만"/);
   assert.match(source, /가격·재고·옵션·판매 구성은 이 버튼으로 변경하지 않습니다/);
   assert.match(source, /일부 지원 필드도 채널 정책 보존 범위를 확인해야 합니다/);
   assert.match(source, /완전 반영 성공으로 표시하지 않습니다/);
@@ -34,6 +34,17 @@ test("지원되지 않은 가격 옵션 판매 구성은 원격 성공처럼 표
   assert.match(source, /disabled aria-describedby=\{`\$\{channel\}-remote-blocked-reason`\}/);
   assert.match(source, /가격·재고·옵션·판매 구성은 변경하지 않음/);
   assert.doesNotMatch(source, /가격·옵션·판매 구성 원격 (?:반영|수정) (?:완료|성공)/);
+});
+
+test("Lazada MY 기존 단일 SKU는 5,000 KRW 환율 금액을 명시하고 나머지 채널과 분리한다", async () => {
+  const source = await readFile(workbenchUrl, "utf8");
+
+  assert.match(source, /fetch\("\/api\/exchange-rates"/);
+  assert.match(source, /sellerpilotLazadaPricePolicyRequired: true/);
+  assert.match(source, /verified KRW to MYR price policy/);
+  assert.match(source, /sourcePriceKrw\.toLocaleString\(\)\} KRW 상당 \$\{lazadaFinalPricePolicy\.targetPriceMyr\.toFixed\(2\)\} MYR/);
+  assert.match(source, /검증된 단일 SKU의 가격·재고를 포함하고 옵션·판매 구성은 변경하지 않습니다/);
+  assert.match(source, /현재 환율을 확인하지 못하면 쓰기 전에 차단합니다/);
 });
 
 test("모바일 전용 스타일은 설명 전문과 44px 원격 액션을 보존한다", async () => {
