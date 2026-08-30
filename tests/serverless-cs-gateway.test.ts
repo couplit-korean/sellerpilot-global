@@ -595,6 +595,21 @@ test("explicit static egress enables Coupang and Smartstore current reads", () =
   );
 });
 
+test("explicit Temu static egress enables its current inquiry read", () => {
+  const enqueues = serverlessCsCurrentInquiryEnqueues(
+    new Date("2026-08-28T07:00:00.000Z"),
+    ["temu"],
+  );
+  assert.equal(enqueues.length, 3);
+  assert.deepEqual(
+    enqueues.map(({ channel }) => channel).sort(),
+    ["ebay", "qoo10", "temu"],
+  );
+  const temu = enqueues.find(({ channel }) => channel === "temu");
+  assert.equal(temu?.operation, "inquiries.list");
+  assert.equal(temu?.payload.periodicKey, "inquiries:0");
+});
+
 test("fixed-egress claims fail closed before provider execution without runtime attestation", async () => {
   let providerCalls = 0;
   const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
@@ -603,6 +618,20 @@ test("fixed-egress claims fail closed before provider execution without runtime 
     executeProvider: async () => {
       providerCalls += 1;
       return inquiryListResult("coupang");
+    },
+  });
+  assert.equal(response.status, 503);
+  assert.equal(providerCalls, 0);
+});
+
+test("Temu claims also fail closed before provider execution without runtime attestation", async () => {
+  let providerCalls = 0;
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(claim("temu", "inquiries.list"), []),
+    executeProvider: async () => {
+      providerCalls += 1;
+      return inquiryListResult("temu");
     },
   });
   assert.equal(response.status, 503);

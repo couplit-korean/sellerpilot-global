@@ -83,12 +83,13 @@ function periodicEnqueueSummary(values: unknown[]) {
   if (statuses.some((status) => !["queued", "already_pending", "not_connected", "reconnect_required", "reconciliation_required", "fixed_egress_required"].includes(status))) {
     throw new Error("periodic_sync_enqueue_invalid");
   }
+  const fixedEgressRequired = statuses.includes("fixed_egress_required");
   return {
     status: statuses.includes("reconnect_required")
       ? "reconnect_required" as const
       : statuses.includes("reconciliation_required")
         ? "reconciliation_required" as const
-        : statuses.includes("fixed_egress_required")
+        : fixedEgressRequired
           ? "fixed_egress_required" as const
         : statuses.includes("not_connected")
           ? "not_connected" as const
@@ -97,6 +98,7 @@ function periodicEnqueueSummary(values: unknown[]) {
             : "already_pending" as const,
     queuedJobs: statuses.filter((status) => status === "queued").length,
     pendingJobs: statuses.filter((status) => status === "already_pending").length,
+    ...(fixedEgressRequired ? { blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED } : {}),
   };
 }
 
@@ -175,8 +177,8 @@ export async function POST(request: Request) {
       message: "과거 문의 다시 불러오기는 쿠팡과 네이버 스마트스토어만 함께 선택할 수 있습니다.",
     }, { status: 400 });
   }
+  const staticEgressChannels = configuredServerlessStaticEgressChannels();
   if (parsed.data.historyDays !== undefined) {
-    const staticEgressChannels = configuredServerlessStaticEgressChannels();
     const envReady = hasServerlessStaticEgressFor(staticEgressChannels, ["coupang", "smartstore"]);
     const { data: databasePolicy, error: databasePolicyError } = envReady
       ? await admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status")
@@ -376,6 +378,15 @@ export async function POST(request: Request) {
       });
       return { channel, status: "unsupported" as const };
     }
+    if (channel === "temu" && !hasServerlessStaticEgressFor(staticEgressChannels, ["temu"])) {
+      return {
+        channel,
+        status: "fixed_egress_required" as const,
+        queuedJobs: 0,
+        pendingJobs: 0,
+        blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+      };
+    }
 
     try {
       if (gatewayChannels.has(channel)) {
@@ -440,7 +451,7 @@ export async function POST(request: Request) {
     inquiryResults,
     push: { configured: push.configured, sent: push.sent, failed: push.failed },
     message: [...results, ...inquiryResults].some((result) => result.status === "fixed_egress_required")
-      ? "쿠팡·스마트스토어 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 해당 조회를 자동 재시도하지 않습니다."
+      ? "Temu·쿠팡·스마트스토어 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 해당 조회를 접수하거나 자동 재시도하지 않습니다."
       : needsAttention
       ? "동기화를 요청했지만 일부 채널은 연결·재연동 또는 외부 처리 결과의 수동 확인이 필요합니다. 채널별 상태를 확인해 주세요."
       : "연결된 판매채널의 주문·고객 문의 동기화를 요청했습니다.",

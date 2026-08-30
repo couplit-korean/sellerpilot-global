@@ -550,6 +550,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260831010000_resolve_exact_qoo10_origin_type_rejection.sql",
       "20260831033000_add_cs_message_delivery_ledger.sql",
       "20260831040000_rebind_ebay_periodic_inquiry_reads.sql",
+      "20260831045000_gate_temu_periodic_inquiry_static_egress.sql",
     ]);
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -1778,6 +1779,108 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       assert.match(id, /^[0-9a-f-]{36}$/i);
     }
     await setClaims(db, "service_role");
+    const periodicJobCountBeforeStaticEgressChecks = await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs",
+    );
+    for (const channel of ["coupang", "smartstore", "temu"]) {
+      const blockedInquiry = await scalar(
+        db,
+        `select public.sellerpilot_service_enqueue_periodic_sync(
+          $1, 'inquiries.list',
+          jsonb_build_object(
+            'periodicKey', 'inquiries:final-static-egress-' || $1,
+            'arguments', '{}'::jsonb
+          ),
+          5
+        )`,
+        [channel],
+      );
+      assert.equal(blockedInquiry.status, "fixed_egress_required");
+      assert.equal(blockedInquiry.blockedReason, "STATIC_EGRESS_REQUIRED");
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.channel_gateway_jobs",
+      ),
+      periodicJobCountBeforeStaticEgressChecks,
+    );
+    assert.match(
+      await scalar(
+        db,
+        "select pg_get_functiondef('public.sellerpilot_service_enqueue_periodic_sync(text,text,jsonb,integer)'::regprocedure)",
+      ),
+      /sellerpilot_310450_enqueue_periodic_sync_unsafe/,
+    );
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal(
+        await scalar(
+          db,
+          `select has_function_privilege(
+            $1,
+            'public.sellerpilot_310450_enqueue_periodic_sync_unsafe(text,text,jsonb,integer)',
+            'EXECUTE'
+          )`,
+          [role],
+        ),
+        false,
+      );
+    }
+    for (const [role, expected] of [
+      ["anon", false],
+      ["authenticated", false],
+      ["service_role", true],
+    ]) {
+      assert.equal(
+        await scalar(
+          db,
+          `select has_function_privilege(
+            $1,
+            'public.sellerpilot_service_enqueue_periodic_sync(text,text,jsonb,integer)',
+            'EXECUTE'
+          )`,
+          [role],
+        ),
+        expected,
+      );
+    }
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled = true, updated_at = clock_timestamp()
+        where channel = 'temu'`,
+    );
+    const queuedTemuInquiry = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'temu', 'inquiries.list',
+        '{"periodicKey":"inquiries:temu-static-egress-enabled","arguments":{"pageNumber":1}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(queuedTemuInquiry.status, "queued");
+    const deduplicatedTemuInquiry = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_periodic_sync(
+        'temu', 'inquiries.list',
+        '{"periodicKey":"inquiries:temu-static-egress-enabled","arguments":{"pageNumber":1}}'::jsonb,
+        5
+      )`,
+    );
+    assert.equal(deduplicatedTemuInquiry.status, "already_pending");
+    assert.equal(deduplicatedTemuInquiry.jobId, queuedTemuInquiry.jobId);
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'cancelled', completed_at = clock_timestamp(),
+              updated_at = clock_timestamp()
+        where id = $1 and status = 'queued'`,
+      [queuedTemuInquiry.jobId],
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled = false, updated_at = clock_timestamp()
+        where channel = 'temu'`,
+    );
     const ebayActive = await scalar(db, "select public.sellerpilot_get_active_credential_secret('ebay', 'production')");
     const refreshedEbayId = await scalar(
       db,
@@ -9259,6 +9362,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
     "20260830203000_record_lazada_oauth_provider_call_boundary.sql";
   const lazadaOauthReauthorizationMigrationName =
     "20260830204000_allow_fresh_lazada_oauth_past_oauth_reconciliation.sql";
+  const temuStaticEgressMigrationName =
+    "20260831045000_gate_temu_periodic_inquiry_static_egress.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
@@ -9273,7 +9378,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== lazadaSafeOauthMigrationName
         && name !== shopeeStaticEgressMigrationName
         && name !== lazadaProviderMarkerMigrationName
-        && name !== lazadaOauthReauthorizationMigrationName)
+        && name !== lazadaOauthReauthorizationMigrationName
+        && name !== temuStaticEgressMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -9548,6 +9654,9 @@ test("static egress gate closes history and pre-gate reads without touching repl
 
     await db.exec(withoutUnavailableExtensions(
       await readFile(new URL(finalMigrationName, migrationUrl), "utf8"),
+    ));
+    await db.exec(withoutUnavailableExtensions(
+      await readFile(new URL(temuStaticEgressMigrationName, migrationUrl), "utf8"),
     ));
 
     await setClaims(db, "service_role");
