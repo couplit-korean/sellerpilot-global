@@ -31,7 +31,12 @@ import { mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elev
 import {
   elevenstListingUpdateProjectionDigestInput,
   listingUpdateRemoteIdentity,
-  listingWriteOperation,
+  listingUpdateServerCandidate,
+  qoo10RollbackListingUpdateCandidate,
+  qoo10RollbackUpdateRecoveryArgument,
+  qoo10RollbackUpdateRecoveryContract,
+  type ListingUpdateReference,
+  type Qoo10RollbackUpdateRecoveryBinding,
 } from "../../../../lib/channels/listing-update";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../lib/channels/lazada-listing-update";
@@ -85,6 +90,26 @@ const requestSchema = z.object({
   arguments: z.record(z.string(), z.unknown()).refine((value) => JSON.stringify(value).length <= 128_000, "payload too large"),
 });
 
+const qoo10RollbackIdentitySchema = z.object({
+  status: z.literal("allowed"),
+  contract: z.literal("qoo10_create_rollback_confirmation_v1"),
+  listingId: z.string().uuid(),
+  remoteId: z.string().regex(/^\d{9,10}$/u),
+  providerStatus: z.literal("S1"),
+  sourceJobId: z.string().uuid(),
+  expectedState: z.object({
+    categoryCode: z.string().regex(/^\d{9}$/u),
+    retailPriceJpy: z.number().int().min(1).max(999_999_999),
+    sellPriceJpy: z.number().int().min(1).max(999_999_999),
+    quantity: z.number().int().min(1).max(99_999_999),
+    shippingNo: z.string().regex(/^\d{1,20}$/u),
+    biContentsNo: z.number().int().min(100_000).max(Number.MAX_SAFE_INTEGER),
+  }).strict().refine(
+    (value) => value.retailPriceJpy >= value.sellPriceJpy,
+    "Qoo10 retail price must not be below its sell price",
+  ),
+}).strict();
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -100,6 +125,23 @@ type ProductContentMode = "ai_generated" | "manual_mvp";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function listingUpdateReferenceFromLedger(listing: Record<string, unknown>): ListingUpdateReference {
+  return {
+    remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+    status: typeof listing.status === "string" ? listing.status : "",
+    marketplaceSku: typeof listing.marketplaceSku === "string" ? listing.marketplaceSku : null,
+    providerStatus: typeof listing.providerStatus === "string" ? listing.providerStatus : null,
+    failureClass: listing.failureClass === "retryable" || listing.failureClass === "external_action"
+      ? listing.failureClass
+      : null,
+    publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+    requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+      ? listing.requestedPublicationIntent
+      : null,
+    remoteVisibility: typeof listing.remoteVisibility === "string" ? listing.remoteVisibility : null,
+  };
 }
 
 function marketplaceContentModeMatchesProduct(
@@ -298,6 +340,7 @@ export async function POST(request: NextRequest) {
   let boundListingPrice: number | undefined;
   let boundListingPublicationIntent: "safe_test" | "live" | undefined;
   let boundEbayListingIdentity: Record<string, string> | null = null;
+  let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   if (listingBoundOperation) {
     const productId = parsed.data.productId!;
     const resourceListingId = parsed.data.resourceListingId!;
@@ -326,17 +369,7 @@ export async function POST(request: NextRequest) {
       return String(listing.id ?? "") === resourceListingId
         && listing.channel === channel
         && (operation === "listing.update"
-          ? listingWriteOperation({
-              remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
-              status: String(listing.status ?? ""),
-              publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
-              requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
-                ? listing.requestedPublicationIntent
-                : null,
-              remoteVisibility: typeof listing.remoteVisibility === "string"
-                ? listing.remoteVisibility
-                : null,
-            }) === "listing.update"
+          ? listingUpdateServerCandidate(channel, listingUpdateReferenceFromLedger(listing))
           : ["published", "paused"].includes(String(listing.status ?? "")))
         && ledgerRemoteIdentity === requestedRemoteId
         && String(listing.market ?? "") === parsed.data.market
@@ -447,6 +480,30 @@ export async function POST(request: NextRequest) {
         headers: { "cache-control": "no-store, max-age=0" },
       });
     }
+    if (operation === "listing.update"
+        && qoo10RollbackListingUpdateCandidate(channel, listingUpdateReferenceFromLedger(exactListing))) {
+      const { data: identityData, error: identityError } = await serviceClient.rpc(
+        "sellerpilot_service_get_qoo10_rollback_update_identity",
+        {
+          p_listing_id: resourceListingId,
+          p_credential_id: parsed.data.credentialId,
+          p_product_id: productId,
+          p_market: parsed.data.market,
+          p_target_id: parsed.data.targetId,
+        },
+      );
+      const identity = qoo10RollbackIdentitySchema.safeParse(identityData);
+      if (identityError
+          || !identity.success
+          || identity.data.listingId !== resourceListingId
+          || identity.data.remoteId !== requestedRemoteId) {
+        return NextResponse.json({
+          message: "Qoo10 판매중지 롤백과 원격 상품 결속을 독립 조회로 확정하기 전에는 기존 상품을 수정할 수 없습니다.",
+          mode: "qoo10_rollback_identity_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundQoo10RollbackUpdateRecovery = identity.data;
+    }
     if (channel === "ebay" && operation === "listing.update") {
       const { data: identityData, error: identityError } = await serviceClient.rpc(
         "sellerpilot_service_get_ebay_listing_update_identity",
@@ -546,7 +603,16 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  let effectiveArguments = parsed.data.arguments;
+  // This marker is a server-owned capability. Always remove the browser value
+  // and recreate it only from the exact rollback identity RPC above.
+  let effectiveArguments = structuredClone(parsed.data.arguments);
+  delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
+  if (boundQoo10RollbackUpdateRecovery) {
+    effectiveArguments[qoo10RollbackUpdateRecoveryArgument] = {
+      ...boundQoo10RollbackUpdateRecovery,
+      contract: qoo10RollbackUpdateRecoveryContract,
+    };
+  }
   if (channel === "ebay" && operation === "listing.update") {
     if (!boundEbayListingIdentity) {
       return NextResponse.json({
@@ -555,7 +621,7 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     effectiveArguments = {
-      ...structuredClone(parsed.data.arguments),
+      ...effectiveArguments,
       ...boundEbayListingIdentity,
     };
   }
@@ -1155,7 +1221,13 @@ export async function POST(request: NextRequest) {
           p_safe_message: message,
         });
       }
-      await completeListing({ success: false, safeMessage: message });
+      // A failure before the gateway made any provider request is safe to
+      // retry. Preserve the exact paused/S1 rollback-confirmed listing row so
+      // the next attempt can pass the same read-only identity RPC instead of
+      // destroying its only recovery classification.
+      if (!(boundQoo10RollbackUpdateRecovery && preGatewayRetryable)) {
+        await completeListing({ success: false, safeMessage: message });
+      }
       return NextResponse.json({ message, attemptId, preGatewayRetryable }, { status: 422 });
     }
   }

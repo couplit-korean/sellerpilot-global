@@ -3,10 +3,13 @@ import test from "node:test";
 import {
   channelProductEditFieldSupport,
   listingCoreContentForOperation,
+  listingUpdateMutablePaths,
+  listingUpdateServerCandidate,
   listingUpdateRemoteIdentity,
   listingWriteOperation,
   mergeCoupangListingUpdateBody,
   prepareListingUpdateArguments,
+  qoo10RollbackListingUpdateCandidate,
   verifyListingUpdateReadback,
 } from "../lib/channels/listing-update";
 import { assertListingPublicationSourceLocalized } from "../lib/channels/listing-publication-content";
@@ -89,6 +92,76 @@ test("failed verified updates preserve the immutable remote product identity", (
     prepareListingUpdateArguments("qoo10", { params: { ItemTitle: "재시도" } }, failedUpdate),
     { params: { ItemTitle: "재시도", ItemCode: "123456789" } },
   );
+});
+
+test("only the exact rollback-confirmed Qoo10 S1 row becomes an update candidate", () => {
+  const rollback = {
+    status: "paused",
+    remoteId: "1217336970",
+    providerStatus: "S1",
+    failureClass: "retryable" as const,
+    publishedAt: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "non_public",
+  };
+  assert.equal(qoo10RollbackListingUpdateCandidate("qoo10", rollback), true);
+  assert.equal(listingUpdateServerCandidate("qoo10", rollback), true);
+  assert.equal(qoo10RollbackListingUpdateCandidate("ebay", rollback), false);
+  assert.equal(qoo10RollbackListingUpdateCandidate("qoo10", { ...rollback, providerStatus: "S2" }), false);
+  assert.equal(qoo10RollbackListingUpdateCandidate("qoo10", { ...rollback, failureClass: "external_action" }), false);
+  assert.equal(qoo10RollbackListingUpdateCandidate("qoo10", { ...rollback, publishedAt: "2026-08-30T00:00:00Z" }), false);
+  assert.equal(qoo10RollbackListingUpdateCandidate("qoo10", { ...rollback, remoteVisibility: "unknown" }), false);
+  assert.equal(listingUpdateServerCandidate("qoo10", {
+    ...rollback,
+    failureClass: "external_action",
+    providerStatus: null,
+    remoteVisibility: "unknown",
+  }), false, "an uncertain external_action row is not a generic update candidate");
+});
+
+test("Qoo10 rollback updates preserve required carrier fields but keep the existing remote CDN image", () => {
+  const params = {
+    SecondSubCat: "320002604",
+    ItemTitle: "ロールバック確認済み商品",
+    RetailPrice: "1871",
+    ShippingNo: "0",
+    AvailableDateType: "0",
+    AvailableDateValue: "3",
+    StandardImage: "https://source.example.test/representative.jpg",
+    ItemDescription: "<p>更新済みの商品説明</p>",
+  };
+  const rollback = {
+    status: "paused",
+    remoteId: "1217336970",
+    providerStatus: "S1",
+    failureClass: "retryable" as const,
+    publishedAt: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "non_public",
+  };
+  const rollbackArguments = prepareListingUpdateArguments("qoo10", { params }, rollback);
+  assert.deepEqual(rollbackArguments, {
+    params: {
+      SecondSubCat: "320002604",
+      ItemTitle: "ロールバック確認済み商品",
+      RetailPrice: "1871",
+      ShippingNo: "0",
+      AvailableDateType: "0",
+      AvailableDateValue: "3",
+      ItemDescription: "<p>更新済みの商品説明</p>",
+      ItemCode: "1217336970",
+    },
+  });
+  assert.equal(Object.hasOwn(rollbackArguments.params, "StandardImage"), false);
+  assert.deepEqual(listingUpdateMutablePaths("qoo10", rollbackArguments), ["ItemTitle", "ItemDescription"]);
+
+  const publishedArguments = prepareListingUpdateArguments("qoo10", { params }, listing);
+  assert.equal((publishedArguments.params as Record<string, unknown>).StandardImage, params.StandardImage);
+  assert.equal((publishedArguments.params as Record<string, unknown>).SecondSubCat, params.SecondSubCat);
+  assert.equal((publishedArguments.params as Record<string, unknown>).RetailPrice, params.RetailPrice);
+  assert.equal((publishedArguments.params as Record<string, unknown>).ShippingNo, params.ShippingNo);
+  assert.equal((publishedArguments.params as Record<string, unknown>).AvailableDateType, params.AvailableDateType);
+  assert.equal((publishedArguments.params as Record<string, unknown>).AvailableDateValue, params.AvailableDateValue);
 });
 
 test("published updates preserve the reviewed channel-language title and description", () => {
@@ -250,7 +323,7 @@ test("update preparation is idempotent and only retains channel fields with veri
       ExpireDate: "20991231",
     },
   }, listing), {
-    params: { ItemTitle: "수정 상품", ItemDescription: "<p>수정 설명</p>", ItemCode: "123456789" },
+    params: { ItemTitle: "수정 상품", ItemDescription: "<p>수정 설명</p>", ShippingNo: "0", ItemCode: "123456789" },
   });
 
   assert.deepEqual(prepareListingUpdateArguments("lazada", {

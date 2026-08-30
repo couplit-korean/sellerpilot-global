@@ -18,6 +18,7 @@ const CLAIM_ID = "30000000-0000-4000-8000-000000000001";
 const SKU = "QA-20260823-CC-001";
 const ITEM_CODE = "1234567890";
 const TEST_ITEM_CODE = "1098765432";
+const BI_CONTENTS_NO = "8461402963";
 const FINGERPRINT = "a".repeat(64);
 const SOURCE_PRICE_KRW = 5_000;
 const QAPI_PRICE_JPY = 1_871;
@@ -44,6 +45,10 @@ function normalizedImage(index: number) {
     objectPath,
     contentSha256,
   };
+}
+
+function qoo10MainImage(contentId: string, lastShard = contentId.slice(-3), precedingShard = contentId.slice(-6, -3)) {
+  return `https://gd.image-qoo10.jp/li/${lastShard}/${precedingShard}/${contentId}.g_400-w-st_g.jpg`;
 }
 
 function publicationBinding() {
@@ -197,6 +202,72 @@ test("Qoo10 strict live readback independently rejects category, shipping, price
   }
 });
 
+test("Qoo10 strict create binds a provider-rehosted representative image to SetNewGoods BIContentsNo and exact CDN shards", () => {
+  const parsed = qoo10ListingCreateExpectation({ arguments: strictArguments(), payload });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  const base = {
+    operation: "listing.create" as const,
+    remoteId: ITEM_CODE,
+    resultObject: { ...providerReadback(), ImageUrl: qoo10MainImage(BI_CONTENTS_NO) },
+    expectedSellerCode: SKU,
+    expectedLocale: "ja-JP",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+    expectedCreate: parsed.expectation,
+    expectedSellerAccountIdentityDigest: "c".repeat(64),
+    expectedRepresentativeImageContentId: BI_CONTENTS_NO,
+  };
+  const accepted = qoo10VerifiedListingRemoteState(base);
+  assert.equal(accepted?.evidence.version, "qoo10_get_item_detail_create_v3");
+  assert.equal(accepted?.evidence.representativeImageBinding, "set_new_goods_bi_contents_no");
+  assert.equal(accepted?.evidence.representativeImageBindingVerified, true);
+  assert.equal(accepted?.evidence.representativeImageContentIdVerified, true);
+  assert.equal(accepted?.resources.representativeImageBinding, "set_new_goods_bi_contents_no");
+  assert.equal(accepted?.resources.qoo10MainImageContentId, BI_CONTENTS_NO);
+
+  const acceptedOriginalSize = qoo10VerifiedListingRemoteState({
+    ...base,
+    resultObject: {
+      ...providerReadback(),
+      ImageUrl: `https://gd.image-qoo10.jp/li/963/402/${BI_CONTENTS_NO}.jpg`,
+    },
+  });
+  assert.equal(
+    acceptedOriginalSize?.evidence.representativeImageBinding,
+    "set_new_goods_bi_contents_no",
+  );
+
+  const wrongContentId = "8461402964";
+  for (const [name, imageUrl] of [
+    ["host", `https://gd.image-qoo10.jp.evil.example/li/963/402/${BI_CONTENTS_NO}.g_400-w-st_g.jpg`],
+    ["content-id", qoo10MainImage(wrongContentId)],
+    ["last-shard", qoo10MainImage(BI_CONTENTS_NO, "964", "402")],
+    ["preceding-shard", qoo10MainImage(BI_CONTENTS_NO, "963", "403")],
+    ["file-pattern", `https://gd.image-qoo10.jp/li/963/402/${BI_CONTENTS_NO}.png`],
+    ["query", `${qoo10MainImage(BI_CONTENTS_NO)}?source=untrusted`],
+  ] as const) {
+    assert.equal(qoo10VerifiedListingRemoteState({
+      ...base,
+      resultObject: { ...providerReadback(), ImageUrl: imageUrl },
+    }), null, name);
+  }
+
+  assert.equal(qoo10VerifiedListingRemoteState({
+    ...base,
+    operation: "listing.update",
+  }), null, "BIContentsNo binding is create-only");
+  const literal = qoo10VerifiedListingRemoteState({
+    ...base,
+    resultObject: providerReadback(),
+    expectedRepresentativeImageContentId: undefined,
+  });
+  assert.ok(literal, "the canonical source URL remains an accepted exact literal readback");
+  assert.equal(literal?.evidence.representativeImageBinding, "source_url_literal");
+  assert.equal(literal?.evidence.representativeImageSourceUrlLiteralVerified, true);
+  assert.equal(literal?.evidence.representativeImageContentIdVerified, undefined);
+});
+
 test("Qoo10 strict create rejects commerce, current field-name, active HTML, and asset-binding mismatches before provider access", async () => {
   for (const [name, argumentsValue] of [
     ["currency", strictArguments({ sellerpilotQoo10CreateContext: { ...(strictArguments().sellerpilotQoo10CreateContext as object), currency: "KRW" } })],
@@ -261,13 +332,19 @@ test("Qoo10 verifies account-bound seller item, exact leaf category, and shippin
       return Response.json({ ResultCode: 0, ResultObject: [] });
     }
     if (method === "ItemsBasic.SetNewGoods") {
-      return Response.json({ ResultCode: 0, ResultObject: { GdNo: ITEM_CODE } });
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: { GdNo: ITEM_CODE, BIContentsNo: Number(BI_CONTENTS_NO) },
+      });
     }
     if (method === "ItemsContents.EditGoodsContents") {
       return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
     }
     if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === ITEM_CODE) {
-      return Response.json({ ResultCode: 0, ResultObject: providerReadback() });
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: { ...providerReadback(), ImageUrl: qoo10MainImage(BI_CONTENTS_NO) },
+      });
     }
     return Response.json({ ResultCode: -9999, ResultMsg: "UNEXPECTED_TEST_CALL" });
   };
@@ -291,9 +368,181 @@ test("Qoo10 verifies account-bound seller item, exact leaf category, and shippin
     assert.equal(result.remoteState?.evidence.shippingVerified, true);
     assert.equal(result.remoteState?.evidence.priceQuantityVerified, true);
     assert.equal(result.remoteState?.evidence.representativeImageVerified, true);
+    assert.equal(result.remoteState?.evidence.representativeImageBinding, "set_new_goods_bi_contents_no");
+    assert.equal(result.remoteState?.evidence.representativeImageContentIdVerified, true);
+    assert.equal(result.remoteState?.resources.qoo10MainImageContentId, BI_CONTENTS_NO);
     assert.equal(result.remoteState?.evidence.detailImageDigestVerified, true);
     assert.equal(result.remoteState?.evidence.publicationAssetDigestVerified, true);
     assert.match(String(result.remoteState?.evidence.sellerAccountIdentityDigest), /^[a-f0-9]{64}$/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Qoo10 create preserves eight verified detail images and rolls back a mismatched CDN representative-image binding", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ method: string; status?: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
+    calls.push({ method, ...(body.Status ? { status: body.Status } : {}) });
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === TEST_ITEM_CODE) {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: { ItemNo: TEST_ITEM_CODE, SellerCode: "ACCOUNT-BOUND-TEST-ITEM" },
+      });
+    }
+    if (method === "CommonInfoLookup.GetCatagoryListAll") {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: [{
+          CATE_L_CD: "100000019",
+          CATE_L_NM: "文具",
+          CATE_M_CD: "200000146",
+          CATE_M_NM: "文房具",
+          CATE_S_CD: "320000542",
+          CATE_S_NM: "クリップ・結束用品",
+        }],
+      });
+    }
+    if (method === "ItemsLookup.GetSellerDeliveryGroupInfo") {
+      return Response.json({ ResultCode: 0, ResultObject: [] });
+    }
+    if (method === "ItemsBasic.SetNewGoods") {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: { GdNo: ITEM_CODE, BIContentsNo: BI_CONTENTS_NO },
+      });
+    }
+    if (method === "ItemsContents.EditGoodsContents") {
+      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    }
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === ITEM_CODE) {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: { ...providerReadback(), ImageUrl: qoo10MainImage("8461402964") },
+      });
+    }
+    if (method === "ItemsBasic.EditGoodsStatus") {
+      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    }
+    return Response.json({ ResultCode: -9999, ResultMsg: "UNEXPECTED_TEST_CALL" });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.create",
+      payload,
+      arguments: strictArguments(),
+      environment: "production",
+    });
+    const detailStep = operation.steps.find((item) => item.name === "detail-image-readback");
+    const publicationStep = operation.steps.find(
+      (item) => item.name === "GetItemDetailInfo-publication-readback",
+    );
+    const publicationChecks = publicationStep?.data.sellerpilotPublicationChecks as
+      | Record<string, boolean>
+      | undefined;
+
+    assert.equal(operation.ok, false);
+    assert.equal(operation.remoteId, ITEM_CODE);
+    assert.equal(detailStep?.ok, true);
+    assert.equal(detailStep?.data.ResultMsg, "DETAIL_IMAGES_VERIFIED");
+    assert.equal(detailStep?.data.detailImageCount, 8);
+    assert.equal(publicationStep?.ok, false);
+    assert.equal(publicationStep?.data.ResultMsg, "QOO10_PUBLICATION_STATE_UNVERIFIED");
+    assert.equal(publicationStep?.data.actualImageCount, 8);
+    assert.equal(publicationStep?.data.providerStatus, "S2");
+    assert.equal(publicationChecks?.imageCountVerified, true);
+    assert.equal(publicationChecks?.categoryVerified, true);
+    assert.equal(publicationChecks?.representativeImageVerified, false);
+    assert.equal(operation.steps.some(
+      (item) => item.data.ResultMsg === "QOO10_DETAIL_IMAGE_READBACK_MISSING",
+    ), false);
+    assert.match(operation.safeMessage, /GetItemDetailInfo-publication-readback: QOO10_PUBLICATION_STATE_UNVERIFIED/u);
+    assert.equal(operation.steps.at(-1)?.name, "rollback-missing-detail");
+    assert.equal(operation.steps.at(-1)?.ok, true);
+    assert.deepEqual(calls.at(-1), { method: "ItemsBasic.EditGoodsStatus", status: "1" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Qoo10 create never treats eight images from a failed readback plus rollback as publication success", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ method: string; status?: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
+    calls.push({ method, ...(body.Status ? { status: body.Status } : {}) });
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === TEST_ITEM_CODE) {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: { ItemNo: TEST_ITEM_CODE, SellerCode: "ACCOUNT-BOUND-TEST-ITEM" },
+      });
+    }
+    if (method === "CommonInfoLookup.GetCatagoryListAll") {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: [{
+          CATE_L_CD: "100000019",
+          CATE_L_NM: "文具",
+          CATE_M_CD: "200000146",
+          CATE_M_NM: "文房具",
+          CATE_S_CD: "320000542",
+          CATE_S_NM: "クリップ・結束用品",
+        }],
+      });
+    }
+    if (method === "ItemsLookup.GetSellerDeliveryGroupInfo") {
+      return Response.json({ ResultCode: 0, ResultObject: [] });
+    }
+    if (method === "ItemsBasic.SetNewGoods") {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: { GdNo: ITEM_CODE, BIContentsNo: BI_CONTENTS_NO },
+      });
+    }
+    if (method === "ItemsContents.EditGoodsContents") {
+      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    }
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === ITEM_CODE) {
+      return Response.json({
+        ResultCode: -9999,
+        ResultMsg: "READBACK_FAILED",
+        // A malformed provider error must not become success merely because a
+        // stale payload still contains the expected eight image elements.
+        ResultObject: { ...providerReadback(), ImageUrl: qoo10MainImage(BI_CONTENTS_NO) },
+      });
+    }
+    if (method === "ItemsBasic.EditGoodsStatus") {
+      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    }
+    return Response.json({ ResultCode: -9999, ResultMsg: "UNEXPECTED_TEST_CALL" });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.create",
+      payload,
+      arguments: strictArguments(),
+      environment: "production",
+    });
+    const detailStep = operation.steps.find((item) => item.name === "detail-image-readback");
+    const publicationStep = operation.steps.find(
+      (item) => item.name === "GetItemDetailInfo-publication-readback",
+    );
+
+    assert.equal(operation.ok, false);
+    assert.notEqual(operation.publicationFulfilled, true);
+    assert.equal(detailStep?.ok, false);
+    assert.equal(detailStep?.data.ResultMsg, "QOO10_DETAIL_IMAGE_READBACK_MISSING");
+    assert.equal(detailStep?.data.detailImageCount, 8);
+    assert.equal(publicationStep?.ok, false);
+    assert.equal(publicationStep?.data.sellerpilotProviderResultMessage, "READBACK_FAILED");
+    assert.equal(operation.steps.at(-1)?.name, "rollback-missing-detail");
+    assert.equal(operation.steps.at(-1)?.ok, true);
+    assert.deepEqual(calls.at(-1), { method: "ItemsBasic.EditGoodsStatus", status: "1" });
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -376,12 +625,26 @@ test("independent Qoo10 publication reverification re-attests the seller account
     sourceOperation: "listing.create",
     sourceArguments: argumentsValue,
     sourceResponsePayload: {
-      steps: [{
-        name: "GetItemDetailInfo-publication-readback",
-        ok: true,
-        status: 200,
-        data: { ResultCode: 0, ResultObject: providerReadback() },
-      }],
+      steps: [
+        {
+          name: "SetNewGoods",
+          ok: true,
+          status: 200,
+          data: {
+            ResultCode: 0,
+            ResultObject: { GdNo: ITEM_CODE, BIContentsNo: Number(BI_CONTENTS_NO) },
+          },
+        },
+        {
+          name: "GetItemDetailInfo-publication-readback",
+          ok: true,
+          status: 200,
+          data: {
+            ResultCode: 0,
+            ResultObject: { ...providerReadback(), ImageUrl: qoo10MainImage(BI_CONTENTS_NO) },
+          },
+        },
+      ],
       remoteState: {
         evidence: {
           publicationAssetBinding,
@@ -404,7 +667,10 @@ test("independent Qoo10 publication reverification re-attests the seller account
     readItems.push(body.ItemCode);
     return body.ItemCode === TEST_ITEM_CODE
       ? Response.json(sellerIdentityRemote.data)
-      : Response.json({ ResultCode: 0, ResultObject: providerReadback() });
+      : Response.json({
+          ResultCode: 0,
+          ResultObject: { ...providerReadback(), ImageUrl: qoo10MainImage(BI_CONTENTS_NO) },
+        });
   };
   try {
     const execution = await executeListingPublicationVerification({
@@ -429,6 +695,8 @@ test("independent Qoo10 publication reverification re-attests the seller account
     assert.deepEqual(readItems.sort(), [ITEM_CODE, TEST_ITEM_CODE].sort());
     assert.equal(execution.steps.every((step) => step.ok), true);
     assert.equal(execution.remoteState?.evidence.representativeImageVerified, true);
+    assert.equal(execution.remoteState?.evidence.representativeImageBinding, "set_new_goods_bi_contents_no");
+    assert.equal(execution.remoteState?.resources.qoo10MainImageContentId, BI_CONTENTS_NO);
     assert.equal(execution.remoteState?.evidence.detailImageDigestVerified, true);
     assert.equal(execution.remoteState?.evidence.sourceContentVerified, true);
   } finally {

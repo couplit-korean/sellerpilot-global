@@ -23,6 +23,7 @@ import {
   prepareListingUpdateArguments,
   productEditFieldKeys,
   productEditRemotePlan,
+  qoo10RollbackListingUpdateCandidate,
 } from "../lib/channels/listing-update";
 import { marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
 import {
@@ -93,6 +94,7 @@ type Listing = {
   publishedAt?: string | null;
   requestedPublicationIntent?: "safe_test" | "live" | null;
   remoteVisibility?: "unknown" | "non_public" | "pending_review" | "live" | "withdrawn" | "rejected" | null;
+  providerStatus?: string | null;
   operationAttemptId?: string | null;
 };
 
@@ -1048,6 +1050,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       return false;
     }
     const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+    const recoverableQoo10RollbackUpdate = qoo10RollbackListingUpdateCandidate(channel, listing);
     if (listing?.failureClass === "external_action" && !recoverableEbayUpdate) {
       notify(`${channelCatalog[channel].name} 원격 상태를 수동 확인하기 전에는 새 상품 작업을 실행할 수 없습니다.`);
       return false;
@@ -1084,7 +1087,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       try {
         channelArguments = prepareListingUpdateArguments(channel, channelArguments, listing);
       } catch {
-        notify(`${channelCatalog[channel].name} 게시 상품의 원격 ID를 확인하지 못해 수정을 차단했습니다.`);
+        notify(recoverableQoo10RollbackUpdate
+          ? "Qoo10 롤백 원격 ID와 판매중지 상태를 확인하지 못해 복구 수정을 차단했습니다."
+          : `${channelCatalog[channel].name} 게시 상품의 원격 ID를 확인하지 못해 수정을 차단했습니다.`);
         return false;
       }
     }

@@ -234,6 +234,27 @@ function responseSteps(responsePayload: UnknownRecord) {
     : [];
 }
 
+function qoo10SourceMainImageContentId(
+  source: ListingPublicationVerificationSource,
+  remoteId: string,
+) {
+  const matches = responseSteps(source.sourceResponsePayload).filter((item) =>
+    exactText(item.name) === "SetNewGoods"
+    && item.ok === true
+    && Number(item.status) >= 200
+    && Number(item.status) < 300);
+  if (matches.length !== 1) return "";
+  const data = recordValue(matches[0]?.data);
+  const resultObject = recordValue(data.ResultObject);
+  const resultRemoteId = exactText(resultObject.GdNo);
+  const contentId = exactText(resultObject.BIContentsNo);
+  return exactText(data.ResultCode) === "0"
+    && resultRemoteId === remoteId
+    && /^[1-9]\d{5,19}$/u.test(contentId)
+    ? contentId
+    : "";
+}
+
 function sourceRemotePayload(
   channel: PublicationChannel,
   source: ListingPublicationVerificationSource,
@@ -434,6 +455,9 @@ export async function executeListingPublicationVerification(
     }
     const strictIdentityVerified = !strictCreateSource
       || Boolean(strictExpectation?.ok && sellerIdentityStep?.ok);
+    const expectedRepresentativeImageContentId = strictCreateSource
+      ? qoo10SourceMainImageContentId(source, remoteId)
+      : "";
     const verifiedReadbackState = qoo10VerifiedListingRemoteState({
       operation: sourceOperation,
       remoteId,
@@ -450,6 +474,9 @@ export async function executeListingPublicationVerification(
             expectedSellerAccountIdentityDigest: strictIdentityVerified
               ? currentSellerAccountIdentityDigest
               : "",
+            ...(expectedRepresentativeImageContentId
+              ? { expectedRepresentativeImageContentId }
+              : {}),
           }
         : {}),
     });

@@ -66,15 +66,45 @@ test("zero price and stock are rejected before a write", () => {
       ItemTitle: "Test",
       ProductionPlace: "대한민국",
       StandardImage: "https://example.com/item.jpg",
+      RetailPrice: "0",
       ItemPrice: "0",
       ItemQty: "0",
       ShippingNo: "0",
+      AvailableDateType: "0",
+      AvailableDateValue: "3",
     },
   };
 
   assert.deepEqual(
     blockingListingRequirements("qoo10", draft).map((item) => item.key),
     ["price", "stock"],
+  );
+});
+
+test("Qoo10 UpdateGoods carrier fields are required before create or update preparation", () => {
+  const params = {
+    SecondSubCat: "320002604",
+    ItemTitle: "Test",
+    ProductionPlace: "Japan",
+    StandardImage: "https://example.com/item.jpg",
+    ItemPrice: "1871",
+    ItemQty: "1",
+    ShippingNo: "0",
+  };
+  assert.deepEqual(
+    blockingListingRequirements("qoo10", { params }, "listing.update").map((item) => item.key),
+    ["retail-price", "available-date-type", "available-date-value"],
+  );
+  assert.deepEqual(
+    blockingListingRequirements("qoo10", {
+      params: {
+        ...params,
+        RetailPrice: "0",
+        AvailableDateType: "0",
+        AvailableDateValue: "3",
+      },
+    }, "listing.update"),
+    [],
   );
 });
 

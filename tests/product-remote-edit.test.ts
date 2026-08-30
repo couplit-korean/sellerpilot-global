@@ -11,6 +11,7 @@ import {
   legacyEbayListingUpdateCandidate,
   prepareListingUpdateArguments,
   productEditRemotePlan,
+  qoo10RollbackListingUpdateCandidate,
   remoteProductEditIdempotencyKey,
 } from "../lib/channels/listing-update";
 import { lazadaRequestedUpdateQuantity } from "../lib/channels/lazada-listing-update";
@@ -166,6 +167,41 @@ test("읽기 전용 불변 결속을 마친 legacy eBay 행만 서버 재검증 
   );
 });
 
+test("Qoo10 rollback-confirmed 후보는 이미지 재업로드 없이 UpdateGoods 필수값을 보존한다", () => {
+  const rollback = {
+    status: "paused",
+    remoteId: "1217336970",
+    providerStatus: "S1",
+    failureClass: "retryable" as const,
+    publishedAt: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "non_public",
+  };
+  assert.equal(qoo10RollbackListingUpdateCandidate("qoo10", rollback), true);
+  const prepared = prepareListingUpdateArguments("qoo10", {
+    params: {
+      SecondSubCat: "320002604",
+      ItemTitle: "更新商品",
+      RetailPrice: "1871",
+      ShippingNo: "0",
+      AvailableDateType: "0",
+      AvailableDateValue: "3",
+      StandardImage: "https://source.example.test/item.jpg",
+      ItemDescription: "<p>更新説明</p>",
+    },
+  }, rollback);
+  assert.deepEqual(prepared.params, {
+    SecondSubCat: "320002604",
+    ItemTitle: "更新商品",
+    RetailPrice: "1871",
+    ShippingNo: "0",
+    AvailableDateType: "0",
+    AvailableDateValue: "3",
+    ItemDescription: "<p>更新説明</p>",
+    ItemCode: "1217336970",
+  });
+});
+
 test("상품 수정 payload는 원격 identity를 고정하고 Lazada 단일 SKU 외 가격·재고·옵션을 제거한다", () => {
   const qoo10 = prepareListingUpdateArguments("qoo10", {
     params: {
@@ -312,6 +348,17 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(source, /requestedStock !== sourceStock/);
   assert.match(source, /const price = lazadaPricePolicy\?\.targetPriceMyr \?\? listingPrice/);
   assert.match(source, /requestedPublicationIntent:[\s\S]*remoteVisibility:/);
+  assert.match(source, /providerStatus: typeof listing\.providerStatus === "string"/);
+  const qooCandidateCheck = source.indexOf("qoo10RollbackListingUpdateCandidate(listing.channel, reference)");
+  const qooIdentityRpc = source.indexOf('"sellerpilot_service_get_qoo10_rollback_update_identity"');
+  const prepareUpdate = source.indexOf("prepareListingUpdateArguments(listing.channel");
+  assert.ok(qooCandidateCheck >= 0);
+  assert.ok(qooIdentityRpc > qooCandidateCheck);
+  assert.ok(prepareUpdate > qooIdentityRpc, "Qoo10 rollback identity must be confirmed before update preparation");
+  assert.match(source, /qoo10_create_rollback_confirmation_v1/);
+  assert.match(source, /identity\.data\.listingId !== listing\.id/);
+  assert.match(source, /identity\.data\.remoteId !== reference\.remoteId/);
+  assert.match(source, /mode: "qoo10_rollback_identity_required"/);
   const legacyCandidateCheck = source.indexOf("legacyEbayListingUpdateCandidate(listing.channel, reference)");
   const immutableIdentityRpc = source.indexOf('"sellerpilot_service_get_ebay_listing_update_identity"');
   const executionBlock = source.indexOf("listingExecutionBlock(listing, verifiedLegacyEbayUpdate)");
@@ -340,6 +387,10 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(workbench, /operationRelease\.reason/);
   assert.match(workbench, /productEditRemotePlan\(channel, operationAvailable\)/);
   assert.match(workbench, /channelTargetOptionValue\(item\)/);
+  assert.match(workbench, /providerStatus\?: string \| null/);
+  assert.match(workbench, /qoo10RollbackListingUpdateCandidate\(channel, listing\)/);
+  assert.match(workbench, /failureClass === "external_action" && !recoverableEbayUpdate/);
+  assert.doesNotMatch(workbench, /failureClass === "external_action" && !recoverableEbayUpdate && !recoverableQoo10RollbackUpdate/);
   const channelOperations = readFileSync(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   assert.match(channelOperations, /boundListingCurrency = policy\.targetCurrency/);
   assert.match(channelOperations, /boundListingPrice = policy\.targetPriceMyr/);

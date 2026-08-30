@@ -34,6 +34,11 @@ function meaningful(value: unknown) {
   return value !== null && value !== undefined;
 }
 
+function meaningfulIncludingZero(value: unknown) {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0;
+  return meaningful(value);
+}
+
 function positive(path: Array<string | number>) {
   return (draft: Record<string, unknown>) => Number(valueAt(draft, path)) > 0;
 }
@@ -62,11 +67,14 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   qoo10: [
     { key: "category", label: "Qoo10 말단 카테고리", source: "카테고리", path: ["params", "SecondSubCat"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["params", "ItemTitle"] },
+    { key: "retail-price", label: "Qoo10 정가", source: "상품 정보", test: (draft) => meaningfulIncludingZero(valueAt(draft, ["params", "RetailPrice"])) },
     { key: "origin", label: "원산지", source: "상품 정보", path: ["params", "ProductionPlace"] },
     sharedImage(["params", "StandardImage"]),
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["params", "ItemPrice"]) },
     { key: "stock", label: "재고", source: "상품 정보", test: positive(["params", "ItemQty"]) },
     { key: "shipping", label: "배송비 코드", source: "판매자 계정", test: (draft) => valueAt(draft, ["params", "ShippingNo"]) !== undefined, help: "0은 Qoo10 무료배송 코드로 유효합니다." },
+    { key: "available-date-type", label: "출고 가능일 유형", source: "판매자 계정", test: (draft) => meaningfulIncludingZero(valueAt(draft, ["params", "AvailableDateType"])) },
+    { key: "available-date-value", label: "출고 가능일", source: "판매자 계정", test: (draft) => meaningfulIncludingZero(valueAt(draft, ["params", "AvailableDateValue"])) },
   ],
   shopee: [
     { key: "shop", label: "승인 Shop ID", source: "판매자 계정", path: ["shopId"] },

@@ -86,3 +86,47 @@ test("eBay UPDATE resolves the immutable provider tuple before fingerprinting or
   assert.match(route, /marketplaceId !== parsed\.data\.targetId\.toUpperCase\(\)/);
   assert.match(route, /mode: "ebay_immutable_identity_required"/);
 });
+
+test("Qoo10 rollback UPDATE independently confirms the S1 create rollback before fingerprinting or claiming", async () => {
+  const route = await readFile(routeUrl, "utf8");
+  const lineageIndex = route.indexOf('"sellerpilot_service_validate_listing_write_lineage"');
+  const rollbackCandidateIndex = route.indexOf(
+    "qoo10RollbackListingUpdateCandidate(channel, listingUpdateReferenceFromLedger(exactListing))",
+  );
+  const rollbackIdentityIndex = route.indexOf(
+    '"sellerpilot_service_get_qoo10_rollback_update_identity"',
+  );
+  const fingerprintIndex = route.indexOf('createHash("sha256")');
+  const claimIndex = route.indexOf('"sellerpilot_claim_channel_operation"');
+
+  assert.match(route, /listingUpdateServerCandidate\(channel, listingUpdateReferenceFromLedger\(listing\)\)/);
+  assert.ok(rollbackCandidateIndex > lineageIndex, "the existing seller lineage check must remain first");
+  assert.ok(rollbackIdentityIndex > rollbackCandidateIndex, "only the exact rollback candidate may invoke the identity RPC");
+  assert.ok(fingerprintIndex > rollbackIdentityIndex, "rollback identity must be confirmed before fingerprinting");
+  assert.ok(claimIndex > fingerprintIndex, "a failed rollback identity check must not create an attempt");
+  assert.match(route, /contract: z\.literal\("qoo10_create_rollback_confirmation_v1"\)/);
+  assert.match(route, /providerStatus: z\.literal\("S1"\)/);
+  assert.match(route, /sourceJobId: z\.string\(\)\.uuid\(\)/);
+  assert.match(route, /identity\.data\.listingId !== resourceListingId/);
+  assert.match(route, /identity\.data\.remoteId !== requestedRemoteId/);
+  assert.match(route, /mode: "qoo10_rollback_identity_required"/);
+});
+
+test("Qoo10 recovery capability is server-bound, survives normalization, and preserves the S1 ledger on pre-gateway retry", async () => {
+  const route = await readFile(routeUrl, "utf8");
+  const clientMarkerDelete = route.indexOf("delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument]");
+  const boundMarkerInsert = route.indexOf(
+    "effectiveArguments[qoo10RollbackUpdateRecoveryArgument] = {",
+  );
+  const fingerprintIndex = route.indexOf('const requestFingerprint = createHash("sha256")');
+  const imagePreparationIndex = route.indexOf("await prepareMarketplaceImages(serviceClient, channel, effectiveArguments");
+
+  assert.ok(clientMarkerDelete >= 0, "the route must strip every browser-supplied recovery marker");
+  assert.ok(boundMarkerInsert > clientMarkerDelete, "only the independently bound RPC result may recreate the marker");
+  assert.ok(fingerprintIndex > boundMarkerInsert, "the server capability must be included in the claimed request fingerprint");
+  assert.ok(imagePreparationIndex > fingerprintIndex, "the exact server capability must reach image preparation and gateway enqueue");
+  assert.match(route, /if \(boundQoo10RollbackUpdateRecovery\) \{[\s\S]*contract: qoo10RollbackUpdateRecoveryContract/);
+  assert.match(route, /effectiveArguments = \{[\s\S]*\.\.\.effectiveArguments,[\s\S]*\.\.\.boundEbayListingIdentity/);
+  assert.doesNotMatch(route, /\.\.\.structuredClone\(parsed\.data\.arguments\),[\s\S]{0,120}\.\.\.boundEbayListingIdentity/);
+  assert.match(route, /if \(!\(boundQoo10RollbackUpdateRecovery && preGatewayRetryable\)\) \{[\s\S]*await completeListing\(\{ success: false/);
+});

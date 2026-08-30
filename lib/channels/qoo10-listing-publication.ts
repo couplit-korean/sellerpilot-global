@@ -19,7 +19,54 @@ type Qoo10ListingReadbackInput = {
   expectedSellerCode?: string;
   expectedCreate?: Qoo10ListingCreateExpectation;
   expectedSellerAccountIdentityDigest?: string;
+  expectedRepresentativeImageContentId?: string;
+  expectedRecovery?: Qoo10RollbackRecoveryReadbackExpectation;
   verifiedAt?: Date;
+};
+
+/**
+ * Server-owned expectation for the one bounded Qoo10 S1 rollback recovery.
+ * Unlike the ordinary update projection, this contract also binds immutable
+ * commerce fields and the provider-hosted representative image before S2 may
+ * be requested.
+ */
+export type Qoo10RollbackRecoveryReadbackExpectation = {
+  categoryCode: string;
+  retailPriceJpy: number;
+  sellPriceJpy: number;
+  quantity: number;
+  shippingNo: string;
+  biContentsNo: number;
+  detailImageUrls: readonly string[];
+};
+
+export type Qoo10PublicationReadbackChecks = {
+  identityVerified: boolean;
+  statusVerified: boolean;
+  sellerCodeVerified: boolean;
+  localeVerified: boolean;
+  fingerprintVerified: boolean;
+  imageCountVerified: boolean;
+  sellerAccountIdentityVerified: boolean;
+  categoryVerified: boolean;
+  titleVerified: boolean;
+  shippingVerified: boolean;
+  priceQuantityVerified: boolean;
+  representativeImageVerified: boolean;
+  detailImageDigestVerified: boolean;
+  recoveryExpectationVerified?: boolean;
+  retailPriceVerified?: boolean;
+  sellPriceVerified?: boolean;
+  quantityVerified?: boolean;
+  confirmedBiCdnImageVerified?: boolean;
+  detailImageUrlsVerified?: boolean;
+};
+
+export type Qoo10PublicationReadbackVerification = {
+  remoteState?: VerifiedListingRemoteState;
+  providerStatus: string;
+  imageCount: number;
+  checks: Qoo10PublicationReadbackChecks;
 };
 
 function recordValue(value: unknown) {
@@ -83,57 +130,196 @@ function sameOrderedValues(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-/**
- * Converts one authoritative ItemsLookup.GetItemDetailInfo response into the
- * publication ledger contract. The helper performs no provider mutation, so a
- * later read-only reconciliation operation can reuse the same boundary.
- */
-export function qoo10VerifiedListingRemoteState(
-  input: Qoo10ListingReadbackInput,
-): VerifiedListingRemoteState | null {
-  if (!/^\d{9,10}$/u.test(input.remoteId)
-      || input.expectedLocale !== "ja-JP"
-      || !/^[a-f0-9]{64}$/u.test(input.expectedFingerprint)
-      || !Number.isInteger(input.expectedImageCount)
-      || input.expectedImageCount < 0
-      || input.expectedImageCount > 64
-      || (input.expectedCreate && !/^[a-f0-9]{64}$/u.test(input.expectedSellerAccountIdentityDigest ?? ""))) {
+function validRecoveryDetailImageUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      && !url.username
+      && !url.password
+      && (!url.port || url.port === "443")
+      && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function validRollbackRecoveryExpectation(
+  value: Qoo10RollbackRecoveryReadbackExpectation,
+  expectedImageCount: number,
+) {
+  return /^\d{9}$/u.test(value.categoryCode)
+    && Number.isSafeInteger(value.retailPriceJpy)
+    && value.retailPriceJpy >= 1
+    && value.retailPriceJpy <= 999_999_999
+    && Number.isSafeInteger(value.sellPriceJpy)
+    && value.sellPriceJpy >= 1
+    && value.sellPriceJpy <= value.retailPriceJpy
+    && Number.isSafeInteger(value.quantity)
+    && value.quantity >= 1
+    && value.quantity <= 99_999_999
+    && /^\d{1,20}$/u.test(value.shippingNo)
+    && Number.isSafeInteger(value.biContentsNo)
+    && value.biContentsNo >= 100_000
+    && value.detailImageUrls.length === expectedImageCount
+    && value.detailImageUrls.length > 0
+    && value.detailImageUrls.length <= 64
+    && new Set(value.detailImageUrls).size === value.detailImageUrls.length
+    && value.detailImageUrls.every(validRecoveryDetailImageUrl);
+}
+
+type Qoo10RepresentativeImageBinding =
+  | "source_url_literal"
+  | "set_new_goods_bi_contents_no";
+
+function qoo10RepresentativeImageBinding(input: {
+  remoteImageUrl: string;
+  sourceImageUrl: string;
+  expectedContentId?: string;
+}): Qoo10RepresentativeImageBinding | null {
+  if (input.remoteImageUrl === input.sourceImageUrl) return "source_url_literal";
+
+  const contentId = input.expectedContentId?.trim() ?? "";
+  if (!/^[1-9]\d{5,19}$/u.test(contentId)) return null;
+
+  try {
+    const url = new URL(input.remoteImageUrl);
+    if (url.protocol !== "https:"
+        || url.hostname !== "gd.image-qoo10.jp"
+        || url.port
+        || url.username
+        || url.password
+        || url.search
+        || url.hash) return null;
+
+    const match = url.pathname.match(
+      /^\/li\/(\d{3})\/(\d{3})\/([1-9]\d{5,19})(?:\.g(?:_[a-z0-9-]+)*)?\.jpg$/u,
+    );
+    if (!match || match[3] !== contentId) return null;
+    if (match[1] !== contentId.slice(-3) || match[2] !== contentId.slice(-6, -3)) return null;
+    return "set_new_goods_bi_contents_no";
+  } catch {
     return null;
   }
-  const matches = matchingItems(input.resultObject, input.remoteId);
-  if (matches.length !== 1) return null;
-  const item = matches[0];
+}
+
+/**
+ * Converts one authoritative ItemsLookup.GetItemDetailInfo response into both
+ * field-level diagnostics and the publication ledger contract. The helper
+ * performs no provider mutation, so create failure handling and a later
+ * read-only reconciliation operation can persist the same exact evidence.
+ */
+export function normalizeQoo10ListingPublicationReadback(
+  input: Qoo10ListingReadbackInput,
+): Qoo10PublicationReadbackVerification {
+  const remoteIdFormatVerified = /^\d{9,10}$/u.test(input.remoteId);
+  const expectedLocaleVerified = input.expectedLocale === "ja-JP";
+  const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expectedFingerprint);
+  const expectedImageCountVerified = Number.isInteger(input.expectedImageCount)
+    && input.expectedImageCount >= 0
+    && input.expectedImageCount <= 64;
+  const strict = input.expectedCreate;
+  const recovery = input.expectedRecovery;
+  const recoveryExpectationVerified = !recovery
+    || (input.operation === "listing.update"
+      && expectedImageCountVerified
+      && validRollbackRecoveryExpectation(recovery, input.expectedImageCount));
+  const sellerAccountIdentityVerified = !strict
+    || /^[a-f0-9]{64}$/u.test(input.expectedSellerAccountIdentityDigest ?? "");
+  const matches = remoteIdFormatVerified
+    ? matchingItems(input.resultObject, input.remoteId)
+    : [];
+  const identityVerified = remoteIdFormatVerified && matches.length === 1;
+  const item = identityVerified ? matches[0] : {};
   const itemStatus = exactText(item, ["ItemStatus", "Status"]);
   const visibility = visibilityForStatus(itemStatus);
   const sellerCode = exactText(item, ["SellerCode"]);
-  if (!visibility || (input.expectedSellerCode && sellerCode !== input.expectedSellerCode)) return null;
-
   const detailHtml = exactText(item, ["ItemDetail", "ItemDescription", "Description"]);
   const itemTitle = exactText(item, ["ItemTitle"]);
   const imageCount = detailImageCount(detailHtml);
-  const localeVerified = japaneseLocaleVerified(`${itemTitle}\n${detailHtml}`);
-  const imageCountVerified = input.expectedImageCount === 0 || imageCount === input.expectedImageCount;
-  const strict = input.expectedCreate;
-  const categoryVerified = !strict
-    || exactText(item, ["SecondSubCat", "SecondSubCatCd", "CategoryCode", "CateSCode"]) === strict.categoryCode;
+  const statusVerified = Boolean(visibility);
+  const sellerCodeVerified = !input.expectedSellerCode || sellerCode === input.expectedSellerCode;
+  const localeVerified = expectedLocaleVerified
+    && japaneseLocaleVerified(`${itemTitle}\n${detailHtml}`);
+  const imageCountVerified = expectedImageCountVerified
+    && (input.expectedImageCount === 0 || imageCount === input.expectedImageCount);
+  const categoryCode = exactText(item, ["SecondSubCat", "SecondSubCatCd", "CategoryCode", "CateSCode"]);
+  const categoryVerified = (!strict || categoryCode === strict.categoryCode)
+    && (!recovery || (recoveryExpectationVerified && categoryCode === recovery.categoryCode));
   const titleVerified = !strict || itemTitle === strict.itemTitle;
-  const shippingVerified = !strict
-    || exactText(item, ["ShippingNo", "DeliveryGroupNo"]) === strict.shippingNo;
-  const priceQuantityVerified = !strict
-    || (exactInteger(item, ["ItemPrice", "SellPrice"]) === strict.price
-      && exactInteger(item, ["ItemQty", "Qty", "StockQty"]) === strict.quantity);
+  const shippingNo = exactText(item, ["ShippingNo", "ShippingNO", "DeliveryGroupNo"]);
+  const shippingVerified = (!strict || shippingNo === strict.shippingNo)
+    && (!recovery || (recoveryExpectationVerified && shippingNo === recovery.shippingNo));
+  const sellPrice = exactInteger(item, ["SellPrice", "ItemPrice"]);
+  const retailPrice = exactInteger(item, ["RetailPrice"]);
+  const quantity = exactInteger(item, ["ItemQty", "Qty", "StockQty"]);
+  const retailPriceVerified = !recovery
+    || (recoveryExpectationVerified && retailPrice === recovery.retailPriceJpy);
+  const sellPriceVerified = !recovery
+    || (recoveryExpectationVerified && sellPrice === recovery.sellPriceJpy);
+  const quantityVerified = !recovery
+    || (recoveryExpectationVerified && quantity === recovery.quantity);
+  const priceQuantityVerified = (!strict || (sellPrice === strict.price && quantity === strict.quantity))
+    && retailPriceVerified
+    && sellPriceVerified
+    && quantityVerified;
   const standardImageUrl = exactText(item, ["ImageUrl", "StandardImage", "MainImageUrl"]);
-  const representativeImageVerified = !strict || standardImageUrl === strict.standardImageUrl;
+  const representativeImageBinding = strict
+    ? qoo10RepresentativeImageBinding({
+        remoteImageUrl: standardImageUrl,
+        sourceImageUrl: strict.standardImageUrl,
+        ...(input.operation === "listing.create" && input.expectedRepresentativeImageContentId
+          ? { expectedContentId: input.expectedRepresentativeImageContentId }
+          : {}),
+      })
+    : null;
+  const confirmedBiCdnImageVerified = !recovery
+    || (recoveryExpectationVerified
+      && qoo10RepresentativeImageBinding({
+        remoteImageUrl: standardImageUrl,
+        sourceImageUrl: "",
+        expectedContentId: String(recovery.biContentsNo),
+      }) === "set_new_goods_bi_contents_no");
+  const representativeImageVerified = (!strict || Boolean(representativeImageBinding))
+    && confirmedBiCdnImageVerified;
   const detailImageUrls = qoo10DetailImageUrls(detailHtml);
-  const detailImageDigestVerified = !strict
-    || sameOrderedValues(detailImageUrls, strict.detailImageUrls);
+  const detailImageUrlsVerified = !recovery
+    || (recoveryExpectationVerified && sameOrderedValues(detailImageUrls, recovery.detailImageUrls));
+  const detailImageDigestVerified = (!strict || sameOrderedValues(detailImageUrls, strict.detailImageUrls))
+    && detailImageUrlsVerified;
   const strictProjectionVerified = categoryVerified
     && titleVerified
     && shippingVerified
     && priceQuantityVerified
     && representativeImageVerified
     && detailImageDigestVerified;
-  if (!localeVerified || !imageCountVerified || !strictProjectionVerified) return null;
+  const checks = {
+    identityVerified,
+    statusVerified,
+    sellerCodeVerified,
+    localeVerified,
+    fingerprintVerified,
+    imageCountVerified,
+    sellerAccountIdentityVerified,
+    categoryVerified,
+    titleVerified,
+    shippingVerified,
+    priceQuantityVerified,
+    representativeImageVerified,
+    detailImageDigestVerified,
+    ...(recovery
+      ? {
+          recoveryExpectationVerified,
+          retailPriceVerified,
+          sellPriceVerified,
+          quantityVerified,
+          confirmedBiCdnImageVerified,
+          detailImageUrlsVerified,
+        }
+      : {}),
+  } satisfies Qoo10PublicationReadbackChecks;
+  if (!Object.values(checks).every(Boolean) || !strictProjectionVerified || !visibility) {
+    return { providerStatus: itemStatus, imageCount, checks };
+  }
 
   const candidate = {
     verified: true,
@@ -141,7 +327,11 @@ export function qoo10VerifiedListingRemoteState(
     providerStatus: itemStatus,
     verifiedAt: (input.verifiedAt ?? new Date()).toISOString(),
     evidence: {
-      version: strict ? "qoo10_get_item_detail_create_v2" : "qoo10_get_item_detail_v1",
+      version: strict
+        ? "qoo10_get_item_detail_create_v3"
+        : recovery
+          ? "qoo10_get_item_detail_rollback_recovery_v1"
+          : "qoo10_get_item_detail_v1",
       readbackMethod: "ItemsLookup.GetItemDetailInfo",
       identityVerified: true,
       statusVerified: true,
@@ -166,6 +356,11 @@ export function qoo10VerifiedListingRemoteState(
             qapiPriceJpy: strict.price,
             representativeImageVerified: true,
             representativeImageDigest: strict.standardImageDigest,
+            representativeImageBinding,
+            representativeImageBindingVerified: true,
+            ...(representativeImageBinding === "source_url_literal"
+              ? { representativeImageSourceUrlLiteralVerified: true }
+              : { representativeImageContentIdVerified: true }),
             detailImageDigestVerified: true,
             detailImageDigest: strict.detailImageDigest,
             publicationAssetDigestVerified: true,
@@ -173,6 +368,25 @@ export function qoo10VerifiedListingRemoteState(
             detailImageUrlsVerified: true,
             officialMarket: "JP",
             officialCurrencySemantics: "JPY",
+          }
+        : {}),
+      ...(recovery
+        ? {
+            recoveryExpectationVerified: true,
+            categoryVerified: true,
+            retailPriceVerified: true,
+            sellPriceVerified: true,
+            quantityVerified: true,
+            shippingVerified: true,
+            representativeImageVerified: true,
+            representativeImageBinding: "set_new_goods_bi_contents_no",
+            representativeImageBindingVerified: true,
+            representativeImageContentIdVerified: true,
+            detailImageDigestVerified: true,
+            detailImageUrlsVerified: true,
+            qapiRetailPriceJpy: recovery.retailPriceJpy,
+            qapiSellPriceJpy: recovery.sellPriceJpy,
+            qapiQuantity: recovery.quantity,
           }
         : {}),
     },
@@ -185,6 +399,18 @@ export function qoo10VerifiedListingRemoteState(
             categoryCode: strict.categoryCode,
             shippingNo: strict.shippingNo,
             standardImageDigest: strict.standardImageDigest,
+            representativeImageBinding,
+            ...(representativeImageBinding === "set_new_goods_bi_contents_no"
+              ? { qoo10MainImageContentId: input.expectedRepresentativeImageContentId }
+              : {}),
+          }
+        : {}),
+      ...(recovery
+        ? {
+            categoryCode: recovery.categoryCode,
+            shippingNo: recovery.shippingNo,
+            qoo10MainImageContentId: String(recovery.biContentsNo),
+            representativeImageBinding: "set_new_goods_bi_contents_no",
           }
         : {}),
     },
@@ -193,5 +419,17 @@ export function qoo10VerifiedListingRemoteState(
     imageCount,
   } satisfies VerifiedListingRemoteState;
   const parsed = verifiedListingRemoteStateSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : null;
+  return {
+    providerStatus: itemStatus,
+    imageCount,
+    checks,
+    ...(parsed.success ? { remoteState: parsed.data } : {}),
+  };
+}
+
+/** Backwards-compatible verified-state projection for existing callers. */
+export function qoo10VerifiedListingRemoteState(
+  input: Qoo10ListingReadbackInput,
+): VerifiedListingRemoteState | null {
+  return normalizeQoo10ListingPublicationReadback(input).remoteState ?? null;
 }

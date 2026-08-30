@@ -10,6 +10,7 @@ import {
   marketplaceChannelDetailImageCount,
   marketplaceLocalizedDetailSectionTypes,
 } from "./marketplace-image-contract";
+import { qoo10RollbackUpdateRecoveryBinding } from "./listing-update";
 
 const marketplaceImageBucket = "sellerpilot-marketplace";
 const inputMimeTypes = ["image/jpeg", "image/png", "image/webp"];
@@ -635,6 +636,40 @@ export function renderQoo10DetailDescription(value: unknown, urls: string[], alt
   return injectMarketplaceDetailImages(source, urls, altTexts, roles, true);
 }
 
+export function qoo10RollbackRecoveryPreservesRepresentativeImage(
+  channel: ActiveChannelKey,
+  argumentsValue: Record<string, unknown>,
+) {
+  return channel === "qoo10" && Boolean(qoo10RollbackUpdateRecoveryBinding(argumentsValue));
+}
+
+/** Applies already-normalized Qoo10 images without authorizing the recovery. */
+export function applyPreparedQoo10Images(
+  argumentsValue: Record<string, unknown>,
+  gallery: string[],
+  details: string[],
+  detailImageAltTexts: string[] = [],
+  detailImageRoles: string[] = [],
+) {
+  const params = record(argumentsValue.params);
+  if (!params) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
+  if (qoo10RollbackRecoveryPreservesRepresentativeImage("qoo10", argumentsValue)) {
+    delete params.StandardImage;
+  } else {
+    const sourceUrl = gallery[0]
+      ?? (typeof params.StandardImage === "string" ? params.StandardImage.trim() : "");
+    if (!sourceUrl) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
+    params.StandardImage = sourceUrl;
+  }
+  params.ItemDescription = renderQoo10DetailDescription(
+    params.ItemDescription,
+    details,
+    detailImageAltTexts,
+    detailImageRoles,
+  );
+  return argumentsValue;
+}
+
 export function upsertMarketplaceDetailImages(value: unknown, urls: string[], altTexts: string[], roles: string[]) {
   const source = (typeof value === "string" ? value : "")
     .replace(/<section\b[^>]*\bdata-sellerpilot-detail-images=(?:"true"|'true')[^>]*>[\s\S]*?<\/section>/gi, "")
@@ -799,8 +834,11 @@ export async function prepareMarketplaceImages(
   }
   const approvedDetailImagePaths = strings(assets?.approvedDetailImagePaths);
   const approvedDetailImageSha256s = strings(assets?.approvedDetailImageSha256s);
+  const preserveQoo10RepresentativeImage = qoo10RollbackRecoveryPreservesRepresentativeImage(channel, next);
   const gallery = assets
-    ? await normalizeList(assets.galleryImageUrls, channel === "qoo10" ? 1 : 12, "gallery-square")
+    ? preserveQoo10RepresentativeImage
+      ? []
+      : await normalizeList(assets.galleryImageUrls, channel === "qoo10" ? 1 : 12, "gallery-square")
     : [];
   const details = assets
     ? await normalizeList(
@@ -843,11 +881,7 @@ export async function prepareMarketplaceImages(
   bindPublicationAssets("detail_content", details, detailImageRoles);
 
   if (channel === "qoo10") {
-    const params = record(next.params);
-    const sourceUrl = gallery[0] ?? (typeof params?.StandardImage === "string" ? params.StandardImage.trim() : "");
-    if (!params || !sourceUrl) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    params.StandardImage = gallery[0] ?? await normalize(sourceUrl, "gallery-square");
-    params.ItemDescription = renderQoo10DetailDescription(params.ItemDescription, details, detailImageAltTexts, detailImageRoles);
+    applyPreparedQoo10Images(next, gallery, details, detailImageAltTexts, detailImageRoles);
     return finish();
   }
 

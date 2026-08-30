@@ -10,8 +10,8 @@ test("publish context exposes preserved publication evidence for failed update r
   ]);
   assert.match(migration, /jsonb_build_object\('publishedAt', listing\.published_at\)/);
   assert.match(workbench, /listingWriteOperation\(listing\)/);
-  assert.match(route, /listingWriteOperation\(\{[\s\S]*publishedAt:/);
-  assert.match(route, /requestedPublicationIntent:[\s\S]*remoteVisibility:/);
+  assert.match(route, /listingUpdateServerCandidate\(channel, listingUpdateReferenceFromLedger\(listing\)\)/);
+  assert.match(route, /function listingUpdateReferenceFromLedger[\s\S]*publishedAt:[\s\S]*requestedPublicationIntent:[\s\S]*remoteVisibility:/);
   assert.match(route, /listingLedgerRemoteIdentity\(channel, operation, listing\)/);
   assert.match(route, /ledgerRemoteIdentity === requestedRemoteId/);
 });

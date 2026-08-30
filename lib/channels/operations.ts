@@ -25,8 +25,13 @@ import {
   type ChannelCapabilityKey,
 } from "./catalog";
 import { qoo10ProductionPlace, qoo10ResultMessage } from "./qoo10";
-import { qoo10VerifiedListingRemoteState } from "./qoo10-listing-publication";
 import {
+  normalizeQoo10ListingPublicationReadback,
+  type Qoo10PublicationReadbackVerification,
+  type Qoo10RollbackRecoveryReadbackExpectation,
+} from "./qoo10-listing-publication";
+import {
+  qoo10DetailImageUrls,
   qoo10ListingCreateExpectation,
   runQoo10ListingCreateProviderPreflight,
   type Qoo10ListingCreateExpectation,
@@ -46,6 +51,8 @@ import {
   listingUpdateRemoteIdentity,
   mergeListingUpdatePatch,
   prepareListingUpdateArguments,
+  qoo10RollbackUpdateRecoveryArgument,
+  qoo10RollbackUpdateRecoveryBinding,
   verifyListingUpdateReadback,
 } from "./listing-update";
 import {
@@ -1407,6 +1414,52 @@ function qoo10ImageCount(html: string) {
   return (html.match(/(?:<|&lt;)img\b/gi) ?? []).length;
 }
 
+function qoo10SetNewGoodsMainImageContentId(resultObject: unknown, remoteId: string) {
+  if (!resultObject || typeof resultObject !== "object" || Array.isArray(resultObject)) return undefined;
+  const record = resultObject as Record<string, unknown>;
+  const resultRemoteId = typeof record.GdNo === "string" || typeof record.GdNo === "number"
+    ? String(record.GdNo).trim()
+    : "";
+  const rawContentId = record.BIContentsNo;
+  const contentId = typeof rawContentId === "string" || typeof rawContentId === "number"
+    ? String(rawContentId).trim()
+    : "";
+  return resultRemoteId === remoteId && /^[1-9]\d{5,19}$/u.test(contentId)
+    ? contentId
+    : undefined;
+}
+
+function qoo10UpdateResponseIdentities(resultObject: unknown) {
+  if (!resultObject || typeof resultObject !== "object" || Array.isArray(resultObject)) return [];
+  const record = resultObject as Record<string, unknown>;
+  return ["GdNo", "ItemCode", "itemCode"].flatMap((alias) => {
+    if (!Object.hasOwn(record, alias)) return [];
+    const value = record[alias];
+    const normalized = typeof value === "string" || typeof value === "number"
+      ? String(value).trim()
+      : "";
+    return [{ alias, value: normalized }];
+  });
+}
+
+function qoo10ExplicitProviderRejection(remote: RemoteResponse) {
+  if (!remote.response.ok || !Object.hasOwn(remote.data, "ResultCode")) return false;
+  const resultCode = remote.data.ResultCode;
+  if (resultCode === undefined || resultCode === null) return false;
+  const normalized = String(resultCode).trim();
+  return Boolean(normalized) && normalized !== "0";
+}
+
+function qoo10RollbackRecoveryExpectation(
+  expectedState: Omit<Qoo10RollbackRecoveryReadbackExpectation, "detailImageUrls">,
+  detailHtml: string,
+): Qoo10RollbackRecoveryReadbackExpectation {
+  return {
+    ...expectedState,
+    detailImageUrls: qoo10DetailImageUrls(detailHtml),
+  };
+}
+
 function qoo10VerificationStep(ok: boolean, status: number, imageCount: number): ChannelOperationStep {
   return {
     name: "detail-image-readback",
@@ -1436,18 +1489,31 @@ function qoo10PublicationExpectation(input: ExecuteInput) {
 
 function qoo10PublicationReadbackStep(
   remote: RemoteResponse,
-  remoteState: VerifiedListingRemoteState | null,
+  verification: Qoo10PublicationReadbackVerification,
 ): ChannelOperationStep {
   const readbackStep = step("GetItemDetailInfo-publication-readback", remote);
+  const remoteState = verification.remoteState;
   const verified = readbackStep.ok && Boolean(remoteState);
+  const providerResultMessage = qoo10ResultMessage(readbackStep.data);
   return {
     ...readbackStep,
     ok: verified,
     data: {
       ...readbackStep.data,
+      ...(!verified
+        ? {
+            ResultMsg: "QOO10_PUBLICATION_STATE_UNVERIFIED",
+            ...(providerResultMessage
+              ? { sellerpilotProviderResultMessage: providerResultMessage }
+              : {}),
+          }
+        : {}),
       sellerpilotVerification: verified
         ? "QOO10_PUBLICATION_STATE_VERIFIED"
         : "QOO10_PUBLICATION_STATE_UNVERIFIED",
+      providerStatus: verification.providerStatus || null,
+      actualImageCount: verification.imageCount,
+      sellerpilotPublicationChecks: verification.checks,
       ...(remoteState
         ? {
             sellerpilotRemoteVisibility: remoteState.visibility,
@@ -1457,6 +1523,51 @@ function qoo10PublicationReadbackStep(
         : { sellerpilotReconciliationRequired: true }),
     },
   };
+}
+
+function qoo10RollbackRecoveryReadbackStep(input: {
+  phase: "pre_activation" | "post_activation" | "update_rejection_s1";
+  remote: RemoteResponse;
+  publication: Qoo10PublicationReadbackVerification;
+  mutable: ChannelOperationStep;
+  expectedDetailImages: number;
+}) {
+  const publicationStep = qoo10PublicationReadbackStep(input.remote, input.publication);
+  const expectedStatus = input.phase === "post_activation" ? "S2" : "S1";
+  const expectedVisibility = input.phase === "post_activation" ? "live" : "non_public";
+  const statusVerified = input.publication.providerStatus.trim().toUpperCase() === expectedStatus
+    && input.publication.remoteState?.visibility === expectedVisibility;
+  const exactImagesVerified = input.expectedDetailImages === marketplaceChannelDetailImageCount
+    && input.publication.imageCount === marketplaceChannelDetailImageCount;
+  const ok = publicationStep.ok && input.mutable.ok && statusVerified && exactImagesVerified;
+  return {
+    ...publicationStep,
+    name: input.phase === "pre_activation"
+      ? "qoo10-rollback-pre-activation-readback"
+      : input.phase === "post_activation"
+        ? "qoo10-rollback-post-activation-readback"
+        : "qoo10-rollback-update-rejection-s1-readback",
+    ok,
+    data: {
+      ...publicationStep.data,
+      sellerpilotMutableVerification: input.mutable.data.sellerpilotVerification,
+      sellerpilotMismatchPaths: input.mutable.data.sellerpilotMismatchPaths,
+      sellerpilotExpectedProviderStatus: expectedStatus,
+      sellerpilotExactDetailImageCount: marketplaceChannelDetailImageCount,
+      sellerpilotVerification: ok
+        ? input.phase === "pre_activation"
+          ? "QOO10_ROLLBACK_S1_CONTENT_VERIFIED"
+          : input.phase === "post_activation"
+            ? "QOO10_ROLLBACK_S2_PUBLICATION_VERIFIED"
+            : "QOO10_ROLLBACK_UPDATE_REJECTION_S1_VERIFIED"
+        : input.phase === "pre_activation"
+          ? "QOO10_ROLLBACK_S1_CONTENT_UNVERIFIED"
+          : input.phase === "post_activation"
+            ? "QOO10_ROLLBACK_S2_PUBLICATION_UNVERIFIED"
+            : "QOO10_ROLLBACK_UPDATE_REJECTION_S1_UNVERIFIED",
+      ...(!ok ? { sellerpilotReconciliationRequired: true } : {}),
+    },
+  } satisfies ChannelOperationStep;
 }
 
 function operationDelay(ms: number) {
@@ -1701,6 +1812,42 @@ async function executeQoo10(input: ExecuteInput) {
       },
     }], suppliedParams.ItemCode);
   }
+  const rollbackRecoveryMarkerSupplied = Object.hasOwn(
+    input.arguments,
+    qoo10RollbackUpdateRecoveryArgument,
+  );
+  const rollbackRecovery = qoo10RollbackUpdateRecoveryBinding(input.arguments);
+  const rollbackRecoveryReadbackExpectation = rollbackRecovery
+    ? qoo10RollbackRecoveryExpectation(
+        rollbackRecovery.expectedState,
+        suppliedParams.ItemDescription ?? "",
+      )
+    : null;
+  if (rollbackRecoveryMarkerSupplied && (
+    input.operation !== "listing.update"
+    || !rollbackRecovery
+    || rollbackRecovery.remoteId !== suppliedParams.ItemCode
+    || Object.hasOwn(suppliedParams, "StandardImage")
+    || qoo10ImageCount(suppliedParams.ItemDescription ?? "") !== marketplaceChannelDetailImageCount
+    || rollbackRecoveryReadbackExpectation?.detailImageUrls.length !== marketplaceChannelDetailImageCount
+    || input.arguments.publicationStateContract !== listingRemoteStateContractVersion
+    || listingPublicationIntentFromArguments(input.arguments) !== "live"
+    || input.arguments.publicationExpectedLocale !== "ja-JP"
+    || typeof input.arguments.publicationExpectedFingerprint !== "string"
+    || !/^[a-f0-9]{64}$/u.test(input.arguments.publicationExpectedFingerprint)
+    || input.arguments.publicationExpectedImageCount !== marketplaceChannelDetailImageCount
+  )) {
+    return result(input, [{
+      name: "qoo10-rollback-recovery-prewrite-fence",
+      ok: false,
+      status: 422,
+      data: {
+        ResultCode: -9999,
+        ResultMsg: "QOO10_ROLLBACK_RECOVERY_CONTEXT_INVALID",
+        sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+      },
+    }], suppliedParams.ItemCode);
+  }
   let strictCreateExpectation: Qoo10ListingCreateExpectation | null = null;
   let sellerAccountIdentityDigest = "";
   let createPreflightSteps: ChannelOperationStep[] = [];
@@ -1852,6 +1999,7 @@ async function executeQoo10(input: ExecuteInput) {
   const remote = await qoo10Request({ payload: input.payload, ...definition, params });
   const createStep = step(definition.method, remote);
   const resultObject = remote.data.ResultObject;
+  const responseIdentities = qoo10UpdateResponseIdentities(resultObject);
   const responseRemoteId = typeof resultObject === "string" || typeof resultObject === "number"
     ? String(resultObject)
     : resultObject && typeof resultObject === "object" && !Array.isArray(resultObject)
@@ -1860,8 +2008,41 @@ async function executeQoo10(input: ExecuteInput) {
         .find((value): value is string | number => typeof value === "string" || typeof value === "number")
         ?.toString()
       : undefined;
-  const remoteId = responseRemoteId
+  const responseIdentityMismatch = Boolean(rollbackRecovery
+    && responseIdentities.length > 0
+    && (new Set(responseIdentities.map((identity) => identity.value)).size !== 1
+      || responseIdentities.some((identity) => !identity.value
+        || identity.value !== rollbackRecovery.remoteId
+        || identity.value !== params.ItemCode)));
+  if (rollbackRecovery && responseIdentityMismatch) {
+    return result(input, [
+      ...createPreflightSteps,
+      createStep,
+      {
+        name: "qoo10-rollback-update-response-identity-mismatch",
+        ok: false,
+        status: remote.response.status,
+        requestId: createStep.requestId,
+        data: {
+          ...remote.data,
+          ResultMsg: "QOO10_ROLLBACK_UPDATE_RESPONSE_IDENTITY_MISMATCH",
+          sellerpilotProviderResultMessage: qoo10ResultMessage(remote.data) || null,
+          sellerpilotVerification: "QOO10_ROLLBACK_UPDATE_RESPONSE_IDENTITY_MISMATCH",
+          sellerpilotExpectedRemoteId: rollbackRecovery.remoteId,
+          sellerpilotExpectedItemCode: params.ItemCode,
+          sellerpilotResponseIdentities: Object.fromEntries(
+            responseIdentities.map((identity) => [identity.alias, identity.value || null]),
+          ),
+          sellerpilotReconciliationRequired: true,
+        },
+      },
+    ], rollbackRecovery.remoteId);
+  }
+  const remoteId = rollbackRecovery?.remoteId ?? responseRemoteId
     ?? (input.operation === "listing.update" || input.operation === "listing.stop" ? params.ItemCode : undefined);
+  const expectedRepresentativeImageContentId = input.operation === "listing.create" && remoteId
+    ? qoo10SetNewGoodsMainImageContentId(resultObject, remoteId)
+    : undefined;
   if (input.operation === "inventory.update") {
     const itemCode = params.ItemCode;
     if (!createStep.ok) return result(input, [createStep], itemCode || remoteId);
@@ -1908,18 +2089,67 @@ async function executeQoo10(input: ExecuteInput) {
           data: { ResultCode: -9999, ResultMsg: "QOO10_PUBLICATION_READBACK_UNAVAILABLE" },
         };
       }
-      const remoteState = qoo10VerifiedListingRemoteState({
+      const verification = normalizeQoo10ListingPublicationReadback({
         operation: input.operation,
         remoteId,
         resultObject: readback.data.ResultObject,
         ...expectation,
       });
-      lastReadbackStep = qoo10PublicationReadbackStep(readback, remoteState);
+      const remoteState = verification.remoteState;
+      lastReadbackStep = qoo10PublicationReadbackStep(readback, verification);
       if (lastReadbackStep.ok) {
-        return result(input, [createStep, lastReadbackStep], remoteId, undefined, remoteState ?? undefined);
+        return result(input, [createStep, lastReadbackStep], remoteId, undefined, remoteState);
       }
     }
     return result(input, [createStep, lastReadbackStep!], remoteId);
+  }
+  const publicationExpectation = qoo10PublicationExpectation(input);
+  if (rollbackRecovery
+      && rollbackRecoveryReadbackExpectation
+      && publicationExpectation
+      && qoo10ExplicitProviderRejection(remote)) {
+    let rejectionReadbackStep: ChannelOperationStep | null = null;
+    let rejectionRemoteState: VerifiedListingRemoteState | undefined;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt > 0) await operationDelay(750 * attempt);
+      const readback = await qoo10Request({
+        payload: input.payload,
+        service: "ItemsLookup",
+        method: "GetItemDetailInfo",
+        version: "1.2",
+        params: { ItemCode: rollbackRecovery.remoteId, SellerCode: params.SellerCode ?? "" },
+      });
+      const publication = normalizeQoo10ListingPublicationReadback({
+        operation: "listing.update",
+        remoteId: rollbackRecovery.remoteId,
+        resultObject: readback.data.ResultObject,
+        expectedSellerCode: params.SellerCode || undefined,
+        expectedRecovery: rollbackRecoveryReadbackExpectation,
+        ...publicationExpectation,
+      });
+      const mutable = listingUpdateReadbackStep(
+        "qoo10-rollback-update-rejection-mutable-readback",
+        readback,
+        input.channel,
+        input.arguments,
+      );
+      rejectionReadbackStep = qoo10RollbackRecoveryReadbackStep({
+        phase: "update_rejection_s1",
+        remote: readback,
+        publication,
+        mutable,
+        expectedDetailImages: rollbackRecoveryReadbackExpectation.detailImageUrls.length,
+      });
+      if (rejectionReadbackStep.ok && publication.remoteState) {
+        rejectionRemoteState = publication.remoteState;
+        break;
+      }
+    }
+    return result(input, [
+      ...createPreflightSteps,
+      createStep,
+      rejectionReadbackStep!,
+    ], rollbackRecovery.remoteId, undefined, rejectionRemoteState);
   }
   if ((input.operation !== "listing.create" && input.operation !== "listing.update") || !createStep.ok || !remoteId) {
     return result(input, [...createPreflightSteps, createStep], remoteId);
@@ -1943,8 +2173,124 @@ async function executeQoo10(input: ExecuteInput) {
   const detailUpdateStep = step("EditGoodsContents", detailUpdate);
   let readbackStatus = 422;
   let readbackImageCount = 0;
+  let readbackAccepted = false;
   let updateReadbackStep: ChannelOperationStep | null = null;
-  const publicationExpectation = qoo10PublicationExpectation(input);
+  if (rollbackRecovery) {
+    if (!detailUpdateStep.ok || !publicationExpectation) {
+      return result(input, [
+        ...createPreflightSteps,
+        createStep,
+        detailUpdateStep,
+      ], remoteId);
+    }
+    // Keep the confirmed S1 item non-public while validating the just-written
+    // content. Only an exact mutable-field and eight-image S1 readback may
+    // cross the separate activation mutation.
+    let preActivationStep: ChannelOperationStep | null = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt > 0) await operationDelay(750 * attempt);
+      const readback = await qoo10Request({
+        payload: input.payload,
+        service: "ItemsLookup",
+        method: "GetItemDetailInfo",
+        version: "1.2",
+        params: { ItemCode: remoteId, SellerCode: params.SellerCode ?? "" },
+      });
+      const publication = normalizeQoo10ListingPublicationReadback({
+        operation: input.operation,
+        remoteId,
+        resultObject: readback.data.ResultObject,
+        expectedSellerCode: params.SellerCode || undefined,
+        expectedRecovery: rollbackRecoveryReadbackExpectation!,
+        ...publicationExpectation!,
+      });
+      const mutable = listingUpdateReadbackStep(
+        "qoo10-rollback-pre-activation-mutable-readback",
+        readback,
+        input.channel,
+        input.arguments,
+      );
+      preActivationStep = qoo10RollbackRecoveryReadbackStep({
+        phase: "pre_activation",
+        remote: readback,
+        publication,
+        mutable,
+        expectedDetailImages,
+      });
+      if (preActivationStep.ok) break;
+    }
+    if (!preActivationStep?.ok) {
+      return result(input, [
+        ...createPreflightSteps,
+        createStep,
+        detailUpdateStep,
+        preActivationStep!,
+      ], remoteId);
+    }
+
+    const activation = await qoo10Request({
+      payload: input.payload,
+      service: "ItemsBasic",
+      method: "EditGoodsStatus",
+      params: { ItemCode: remoteId, Status: "2" },
+    });
+    const activationStep = step("qoo10-rollback-recovery-activate", activation);
+    if (!activationStep.ok) {
+      return result(input, [
+        ...createPreflightSteps,
+        createStep,
+        detailUpdateStep,
+        preActivationStep,
+        activationStep,
+      ], remoteId);
+    }
+
+    let postActivationStep: ChannelOperationStep | null = null;
+    let activatedRemoteState: VerifiedListingRemoteState | undefined;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt > 0) await operationDelay(750 * attempt);
+      const readback = await qoo10Request({
+        payload: input.payload,
+        service: "ItemsLookup",
+        method: "GetItemDetailInfo",
+        version: "1.2",
+        params: { ItemCode: remoteId, SellerCode: params.SellerCode ?? "" },
+      });
+      const publication = normalizeQoo10ListingPublicationReadback({
+        operation: input.operation,
+        remoteId,
+        resultObject: readback.data.ResultObject,
+        expectedSellerCode: params.SellerCode || undefined,
+        expectedRecovery: rollbackRecoveryReadbackExpectation!,
+        ...publicationExpectation!,
+      });
+      const mutable = listingUpdateReadbackStep(
+        "qoo10-rollback-post-activation-mutable-readback",
+        readback,
+        input.channel,
+        input.arguments,
+      );
+      postActivationStep = qoo10RollbackRecoveryReadbackStep({
+        phase: "post_activation",
+        remote: readback,
+        publication,
+        mutable,
+        expectedDetailImages,
+      });
+      if (postActivationStep.ok && publication.remoteState) {
+        activatedRemoteState = publication.remoteState;
+        break;
+      }
+    }
+    return result(input, [
+      ...createPreflightSteps,
+      createStep,
+      detailUpdateStep,
+      preActivationStep,
+      activationStep,
+      postActivationStep!,
+    ], remoteId, undefined, activatedRemoteState);
+  }
   for (let attempt = 0; detailUpdateStep.ok && attempt < 4; attempt += 1) {
     if (attempt > 0) await operationDelay(750 * attempt);
     const readback = await qoo10Request({
@@ -1956,9 +2302,10 @@ async function executeQoo10(input: ExecuteInput) {
     });
     const readbackStep = step("GetItemDetailInfo", readback);
     readbackStatus = readbackStep.status;
+    readbackAccepted = readbackStep.ok;
     readbackImageCount = qoo10ImageCount(qoo10DetailHtml(readback.data.ResultObject));
-    const remoteState = publicationExpectation
-      ? qoo10VerifiedListingRemoteState({
+    const publicationVerification = publicationExpectation
+      ? normalizeQoo10ListingPublicationReadback({
           operation: input.operation,
           remoteId,
           resultObject: readback.data.ResultObject,
@@ -1967,13 +2314,17 @@ async function executeQoo10(input: ExecuteInput) {
             ? {
                 expectedCreate: strictCreateExpectation,
                 expectedSellerAccountIdentityDigest: sellerAccountIdentityDigest,
+                ...(expectedRepresentativeImageContentId
+                  ? { expectedRepresentativeImageContentId }
+                  : {}),
               }
             : {}),
           ...publicationExpectation,
         })
       : null;
-    const publicationReadbackStep = publicationExpectation
-      ? qoo10PublicationReadbackStep(readback, remoteState)
+    const remoteState = publicationVerification?.remoteState;
+    const publicationReadbackStep = publicationVerification
+      ? qoo10PublicationReadbackStep(readback, publicationVerification)
       : null;
     if (
       readbackStep.ok
@@ -1991,7 +2342,7 @@ async function executeQoo10(input: ExecuteInput) {
           [...createPreflightSteps, createStep, detailUpdateStep, updateReadbackStep, ...(publicationReadbackStep ? [publicationReadbackStep] : [])],
           remoteId,
           undefined,
-          remoteState ?? undefined,
+          remoteState,
         );
       }
       return result(
@@ -2005,7 +2356,7 @@ async function executeQoo10(input: ExecuteInput) {
         ],
         remoteId,
         undefined,
-        remoteState ?? undefined,
+        remoteState,
       );
     }
     if (publicationReadbackStep && !publicationReadbackStep.ok) updateReadbackStep = publicationReadbackStep;
@@ -2036,11 +2387,15 @@ async function executeQoo10(input: ExecuteInput) {
     method: "EditGoodsStatus",
     params: { ItemCode: remoteId, Status: "1" },
   });
+  const detailImagesVerified = readbackAccepted
+    && expectedDetailImages >= minimumExpectedDetailImages
+    && readbackImageCount >= expectedDetailImages;
   return result(input, [
     ...createPreflightSteps,
     createStep,
     detailUpdateStep,
-    qoo10VerificationStep(false, readbackStatus, readbackImageCount),
+    qoo10VerificationStep(detailImagesVerified, readbackStatus, readbackImageCount),
+    ...(updateReadbackStep ? [updateReadbackStep] : []),
     step("rollback-missing-detail", rollback),
   ], remoteId);
 }

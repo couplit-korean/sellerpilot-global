@@ -5,12 +5,13 @@ import { activeChannelKeys, type ActiveChannelKey } from "../../../../../../lib/
 import {
   centralProductEditFieldSupport,
   channelProductEditFieldSupport,
+  listingUpdateServerCandidate,
   listingUpdateMutablePaths,
   listingUpdateRemoteIdentity,
-  listingWriteOperation,
   legacyEbayListingUpdateCandidate,
   prepareListingUpdateArguments,
   productEditRemotePlan,
+  qoo10RollbackListingUpdateCandidate,
   remoteProductEditIdempotencyKey,
   type ListingUpdateReference,
 } from "../../../../../../lib/channels/listing-update";
@@ -34,6 +35,26 @@ const remoteEditSchema = z.object({
   arguments: z.record(z.string(), z.unknown())
     .refine((value) => JSON.stringify(value).length <= 128_000, "payload too large"),
 });
+
+const qoo10RollbackIdentitySchema = z.object({
+  status: z.literal("allowed"),
+  contract: z.literal("qoo10_create_rollback_confirmation_v1"),
+  listingId: z.string().uuid(),
+  remoteId: z.string().regex(/^\d{9,10}$/u),
+  providerStatus: z.literal("S1"),
+  sourceJobId: z.string().uuid(),
+  expectedState: z.object({
+    categoryCode: z.string().regex(/^\d{9}$/u),
+    retailPriceJpy: z.number().int().min(1).max(999_999_999),
+    sellPriceJpy: z.number().int().min(1).max(999_999_999),
+    quantity: z.number().int().min(1).max(99_999_999),
+    shippingNo: z.string().regex(/^\d{1,20}$/u),
+    biContentsNo: z.number().int().min(100_000).max(Number.MAX_SAFE_INTEGER),
+  }).strict().refine(
+    (value) => value.retailPriceJpy >= value.sellPriceJpy,
+    "Qoo10 retail price must not be below its sell price",
+  ),
+}).strict();
 
 type ListingRecord = Record<string, unknown> & {
   id: string;
@@ -76,6 +97,9 @@ function listingReference(listing: ListingRecord): ListingUpdateReference {
     remoteVisibility: typeof listing.remoteVisibility === "string"
       ? listing.remoteVisibility
       : null,
+    providerStatus: typeof listing.providerStatus === "string"
+      ? listing.providerStatus
+      : null,
   };
 }
 
@@ -103,7 +127,7 @@ function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUp
       message: "검증된 공개 상품 또는 안전한 비공개 상품만 원격 수정할 수 있습니다.",
     };
   }
-  if (listingWriteOperation(listingReference(listing)) !== "listing.update") {
+  if (!listingUpdateServerCandidate(listing.channel, listingReference(listing))) {
     return {
       status: 409,
       mode: "published_remote_identity_required",
@@ -200,6 +224,30 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const reference = listingReference(listing);
+  if (qoo10RollbackListingUpdateCandidate(listing.channel, reference)) {
+    const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
+      "sellerpilot_service_get_qoo10_rollback_update_identity",
+      {
+        p_listing_id: listing.id,
+        p_credential_id: body.data.credentialId,
+        p_product_id: productId.data,
+        p_market: typeof listing.market === "string" ? listing.market : "",
+        p_target_id: typeof listing.targetId === "string" ? listing.targetId : "",
+      },
+    );
+    const identity = qoo10RollbackIdentitySchema.safeParse(identityData);
+    if (identityError
+        || !identity.success
+        || identity.data.listingId !== listing.id
+        || identity.data.remoteId !== reference.remoteId) {
+      return NextResponse.json({
+        ok: false,
+        status: "blocked",
+        mode: "qoo10_rollback_identity_required",
+        message: "Qoo10 판매중지 롤백과 원격 상품 결속을 독립 조회로 확정하기 전에는 기존 상품을 수정할 수 없습니다.",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   let verifiedLegacyEbayUpdate = false;
   if (legacyEbayListingUpdateCandidate(listing.channel, reference)) {
     const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(

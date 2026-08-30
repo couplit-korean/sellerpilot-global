@@ -397,7 +397,7 @@ async function enqueue(db, listing) {
 async function claim(db) {
   return scalar(
     db,
-    "select public.sellerpilot_claim_channel_gateway_job($1, 'lineage-test/1.0')",
+    "select public.sellerpilot_claim_serverless_gateway_job($1, 'lineage-test/1.0')",
     [TOKEN_HASH],
   );
 }
@@ -462,7 +462,7 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
     await db.query(
       `insert into sellerpilot_private.ai_cli_worker_tokens(
          id,label,token_hash,fingerprint,scope,status,expires_at,created_by
-       ) values($1,'Lineage worker',$2,'ABCDEF000001','gateway','active',now() + interval '1 day',$3)`,
+       ) values($1,'Lineage worker',$2,'ABCDEF000001','serverless_cs','active',now() + interval '1 day',$3)`,
       [TOKEN_ID, TOKEN_HASH, ADMIN_ID],
     );
 
@@ -976,6 +976,18 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
     await db.query(
       "update sellerpilot_private.channel_credentials set status='grace' where id=$1",
       [shopeeMissingTarget.currentCredentialId],
+    );
+
+    // Shopee provider reads are deliberately handed off to the attested
+    // serverless fixed-egress claimant. Model that released runtime contract
+    // here instead of letting this legacy fixture bypass the handoff through
+    // the generic gateway claimant.
+    await db.query(
+      "update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='shopee'",
+    );
+    await db.query(
+      "select set_config('request.headers', $1, false)",
+      [JSON.stringify({ "x-sellerpilot-static-egress-channels": "shopee" })],
     );
 
     const shopeeRetry = await seedListing(db, {

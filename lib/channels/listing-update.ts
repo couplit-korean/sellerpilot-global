@@ -8,10 +8,33 @@ export type ListingUpdateReference = {
   remoteId: string | null;
   status: string;
   marketplaceSku?: string | null;
+  providerStatus?: string | null;
   failureClass?: "retryable" | "external_action" | null;
   publishedAt?: string | null;
   requestedPublicationIntent?: string | null;
   remoteVisibility?: string | null;
+};
+
+export const qoo10RollbackUpdateRecoveryContract =
+  "qoo10_create_rollback_confirmation_v1" as const;
+export const qoo10RollbackUpdateRecoveryArgument =
+  "sellerpilotQoo10RollbackUpdateRecovery" as const;
+
+export type Qoo10RollbackUpdateRecoveryBinding = {
+  status: "allowed";
+  contract: typeof qoo10RollbackUpdateRecoveryContract;
+  listingId: string;
+  remoteId: string;
+  providerStatus: "S1";
+  sourceJobId: string;
+  expectedState: {
+    categoryCode: string;
+    retailPriceJpy: number;
+    sellPriceJpy: number;
+    quantity: number;
+    shippingNo: string;
+    biContentsNo: number;
+  };
 };
 
 export const productEditFieldKeys = [
@@ -250,6 +273,27 @@ export function legacyEbayListingUpdateCandidate(
     && Boolean(listing.marketplaceSku?.trim());
 }
 
+/**
+ * A Qoo10 create that was confirmed as seller-paused (S1) after rollback may
+ * be retried only as a client-side UPDATE candidate. This predicate never
+ * authorizes a provider write: every server entry point must still validate
+ * sellerpilot_service_get_qoo10_rollback_update_identity for the active
+ * credential before it may enqueue the mutation.
+ */
+export function qoo10RollbackListingUpdateCandidate(
+  channel: ActiveChannelKey,
+  listing: ListingUpdateReference | null | undefined,
+) {
+  return channel === "qoo10"
+    && listing?.status === "paused"
+    && listing.failureClass === "retryable"
+    && listing.requestedPublicationIntent === "live"
+    && listing.remoteVisibility === "non_public"
+    && listing.providerStatus === "S1"
+    && Boolean(listing.remoteId?.trim())
+    && !listing.publishedAt?.trim();
+}
+
 function listingHasVerifiedUpdateIdentity(listing: ListingUpdateReference) {
   const hasRemoteIdentity = Boolean(listing.remoteId?.trim());
   const hasPublishedAt = Boolean(listing.publishedAt?.trim());
@@ -262,6 +306,23 @@ function listingHasVerifiedUpdateIdentity(listing: ListingUpdateReference) {
     && (listing.status === "published" || listing.status === "failed")
     && hasPublishedAt;
   return hasRemoteIdentity && (hasVerifiedSafeIdentity || hasVerifiedLiveIdentity);
+}
+
+/**
+ * Server-side candidate fence for an existing listing mutation. Legacy eBay
+ * and rollback-confirmed Qoo10 rows still require their channel-specific
+ * service RPC checks after this structural predicate succeeds.
+ */
+export function listingUpdateServerCandidate(
+  channel: ActiveChannelKey,
+  listing: ListingUpdateReference | null | undefined,
+) {
+  if (!listing) return false;
+  return (
+    (listing.failureClass !== "external_action" && listingHasVerifiedUpdateIdentity(listing))
+    || legacyEbayListingUpdateCandidate(channel, listing)
+    || qoo10RollbackListingUpdateCandidate(channel, listing)
+  );
 }
 
 export type ListingCoreContent = {
@@ -289,6 +350,70 @@ function recordValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const qoo10RollbackUpdateRecoveryKeys = [
+  "status",
+  "contract",
+  "listingId",
+  "remoteId",
+  "providerStatus",
+  "sourceJobId",
+  "expectedState",
+] as const;
+
+const qoo10RollbackExpectedStateKeys = [
+  "categoryCode",
+  "retailPriceJpy",
+  "sellPriceJpy",
+  "quantity",
+  "shippingNo",
+  "biContentsNo",
+] as const;
+
+/**
+ * Parses the bounded server-owned recovery marker carried through the gateway.
+ * The shape is not authorization: the admin route must delete any client
+ * value and recreate it only after the exact service RPC returns allowed.
+ */
+export function qoo10RollbackUpdateRecoveryBinding(
+  argumentsValue: Record<string, unknown>,
+): Qoo10RollbackUpdateRecoveryBinding | null {
+  const value = recordValue(argumentsValue[qoo10RollbackUpdateRecoveryArgument]);
+  const expectedState = recordValue(value.expectedState);
+  if (Object.keys(value).length !== qoo10RollbackUpdateRecoveryKeys.length
+      || !qoo10RollbackUpdateRecoveryKeys.every((key) => Object.hasOwn(value, key))
+      || Object.keys(expectedState).length !== qoo10RollbackExpectedStateKeys.length
+      || !qoo10RollbackExpectedStateKeys.every((key) => Object.hasOwn(expectedState, key))
+      || value.status !== "allowed"
+      || value.contract !== qoo10RollbackUpdateRecoveryContract
+      || value.providerStatus !== "S1"
+      || typeof value.listingId !== "string"
+      || !uuidPattern.test(value.listingId)
+      || typeof value.sourceJobId !== "string"
+      || !uuidPattern.test(value.sourceJobId)
+      || typeof value.remoteId !== "string"
+      || !/^\d{9,10}$/u.test(value.remoteId)
+      || typeof expectedState.categoryCode !== "string"
+      || !/^\d{9}$/u.test(expectedState.categoryCode)
+      || !Number.isSafeInteger(expectedState.retailPriceJpy)
+      || Number(expectedState.retailPriceJpy) < 1
+      || Number(expectedState.retailPriceJpy) > 999_999_999
+      || !Number.isSafeInteger(expectedState.sellPriceJpy)
+      || Number(expectedState.sellPriceJpy) < 1
+      || Number(expectedState.sellPriceJpy) > Number(expectedState.retailPriceJpy)
+      || !Number.isSafeInteger(expectedState.quantity)
+      || Number(expectedState.quantity) < 1
+      || Number(expectedState.quantity) > 99_999_999
+      || typeof expectedState.shippingNo !== "string"
+      || !/^\d{1,20}$/u.test(expectedState.shippingNo)
+      || !Number.isSafeInteger(expectedState.biContentsNo)
+      || Number(expectedState.biContentsNo) < 100_000
+      || Number(expectedState.biContentsNo) > Number.MAX_SAFE_INTEGER) {
+    return null;
+  }
+  return value as Qoo10RollbackUpdateRecoveryBinding;
 }
 
 function definedEntries(source: Record<string, unknown>, keys: readonly string[]) {
@@ -352,6 +477,16 @@ const qoo10MutableFields = [
   "StandardImage",
   "ItemDescription",
   "Keyword",
+] as const;
+
+// UpdateGoods requires these create-derived carrier fields even though they
+// are not mutable/readback-projected SellerPilot content fields.
+const qoo10UpdateRequiredCarrierFields = [
+  "SecondSubCat",
+  "RetailPrice",
+  "ShippingNo",
+  "AvailableDateType",
+  "AvailableDateValue",
 ] as const;
 
 const shopeeMutableFields = [
@@ -472,18 +607,30 @@ export function prepareListingUpdateArguments(
   // a minimal published reference, so keep that internal compatibility path
   // identity-only and never use it to select the write operation.
   const authorizedProviderReference = listing.status === "published" && Boolean(remoteId);
-  const legacyEbayRecoveryCandidate = legacyEbayListingUpdateCandidate(channel, listing);
-  if ((!listingHasVerifiedUpdateIdentity(listing)
-      && !authorizedProviderReference
-      && !legacyEbayRecoveryCandidate)
+  const verifiedServerCandidate = listingUpdateServerCandidate(channel, listing);
+  const qoo10RollbackCandidate = qoo10RollbackListingUpdateCandidate(channel, listing);
+  if ((!verifiedServerCandidate
+      && !authorizedProviderReference)
       || !remoteId) {
     throw new Error("PUBLISHED_REMOTE_LISTING_REQUIRED");
   }
 
   if (channel === "qoo10") {
+    const params: Record<string, unknown> = {
+      ...nonEmptyEntries(recordValue(createArguments.params), [
+        ...qoo10MutableFields,
+        ...qoo10UpdateRequiredCarrierFields,
+      ]),
+      ItemCode: remoteId,
+    };
+    // Qoo10 rehosts representative images. A rollback recovery must preserve
+    // the already confirmed remote CDN image instead of triggering another
+    // upload/content-id and a false literal-URL readback mismatch.
+    if (qoo10RollbackCandidate) delete params.StandardImage;
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
-      params: { ...nonEmptyEntries(recordValue(createArguments.params), qoo10MutableFields), ItemCode: remoteId },
+      ...optionalArgument(createArguments, qoo10RollbackUpdateRecoveryArgument),
+      params,
     };
   }
 
@@ -682,6 +829,40 @@ function firstRecursiveValue(value: unknown, aliases: readonly string[], depth =
   return undefined;
 }
 
+function directAliasValue(record: Record<string, unknown>, aliases: readonly string[]) {
+  const normalizedAliases = new Set(
+    aliases.map((item) => item.toLocaleLowerCase().replace(/[^a-z0-9]/g, "")),
+  );
+  return Object.entries(record).find(([key]) =>
+    normalizedAliases.has(key.toLocaleLowerCase().replace(/[^a-z0-9]/g, "")))?.[1];
+}
+
+function qoo10ExactReadbackRecords(
+  value: unknown,
+  expectedRemoteId: string,
+  depth = 0,
+  found: Record<string, unknown>[] = [],
+) {
+  if (depth > 7 || value === null || value === undefined) return found;
+  if (Array.isArray(value)) {
+    for (const item of value) qoo10ExactReadbackRecords(item, expectedRemoteId, depth + 1, found);
+    return found;
+  }
+  if (typeof value !== "object") return found;
+  const record = value as Record<string, unknown>;
+  const identities = ["ItemNo", "ItemCode", "GdNo"]
+    .filter((alias) => Object.hasOwn(record, alias))
+    .map((alias) => identityValue(record[alias]));
+  if (identities.length > 0
+      && identities.every((identity) => identity === expectedRemoteId)) {
+    found.push(record);
+  }
+  for (const nested of Object.values(record)) {
+    qoo10ExactReadbackRecords(nested, expectedRemoteId, depth + 1, found);
+  }
+  return found;
+}
+
 function qoo10ReadbackProjection(argumentsValue: Record<string, unknown>, remoteData: Record<string, unknown>) {
   const params = recordValue(argumentsValue.params);
   const aliases: Record<string, string[]> = {
@@ -693,9 +874,21 @@ function qoo10ReadbackProjection(argumentsValue: Record<string, unknown>, remote
     ItemDescription: ["ItemDetail", "ItemDescription", "description"],
     Keyword: ["Keyword", "keywords"],
   };
-  return Object.fromEntries(Object.keys(definedEntries(params, qoo10MutableFields)).map((key) => [
+  const expectedFields = Object.keys(definedEntries(params, qoo10MutableFields));
+  if (!qoo10RollbackUpdateRecoveryBinding(argumentsValue)) {
+    return Object.fromEntries(expectedFields.map((key) => [
+      key,
+      firstRecursiveValue(remoteData.ResultObject ?? remoteData, aliases[key] ?? [key]),
+    ]));
+  }
+  const expectedRemoteId = identityValue(params.ItemCode);
+  const matches = expectedRemoteId
+    ? qoo10ExactReadbackRecords(remoteData.ResultObject ?? remoteData, expectedRemoteId)
+    : [];
+  const exactItem = matches.length === 1 ? matches[0] : undefined;
+  return Object.fromEntries(expectedFields.map((key) => [
     key,
-    firstRecursiveValue(remoteData.ResultObject ?? remoteData, aliases[key] ?? [key]),
+    exactItem ? directAliasValue(exactItem, aliases[key] ?? [key]) : undefined,
   ]));
 }
 

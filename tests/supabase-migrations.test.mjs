@@ -546,6 +546,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830204000_allow_fresh_lazada_oauth_past_oauth_reconciliation.sql",
       "20260830205000_restore_verified_listing_intent_after_effective_gate.sql",
       "20260830212500_retry_failed_pre_gateway_listing_attempts.sql",
+      "20260830222257_confirm_qoo10_listing_create_rollback.sql",
     ]);
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -14610,6 +14611,1355 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
       ),
       0,
       "successful replacement must leave no older queued OAuth Vault request",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("Qoo10 create rollback confirmation is exact, atomic, idempotent, and releases only listing.update", async () => {
+  const db = new PGlite();
+  const migrationName =
+    "20260830222257_confirm_qoo10_listing_create_rollback.sql";
+  const productId = "10000000-0000-4000-8000-000000000301";
+  const listingId = "10000000-0000-4000-8000-000000000302";
+  const attemptId = "10000000-0000-4000-8000-000000000303";
+  const sourceJobId = "10000000-0000-4000-8000-000000000304";
+  const unknownJobId = "10000000-0000-4000-8000-000000000305";
+  const sharedJobCreatorId = "10000000-0000-4000-8000-000000000306";
+  const remoteId = "1217336970";
+  const biContentsNo = 8461402963;
+  const requestFingerprint = "8".repeat(64);
+  const differentFingerprint = "9".repeat(64);
+  const staleFingerprint = "6".repeat(64);
+  const stopFingerprint = "5".repeat(64);
+  const mismatchedAccountKey = "7".repeat(64);
+  const functionSignature =
+    "sellerpilot_private.confirm_qoo10_listing_create_rollback(uuid,text,bigint,text)";
+  const identityFunctionSignature =
+    "public.sellerpilot_service_get_qoo10_rollback_update_identity(uuid,uuid,uuid,text,text)";
+  const requestPayload = {
+    arguments: {
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "live",
+      publicationExpectedLocale: "ja-JP",
+      publicationExpectedFingerprint: requestFingerprint,
+      publicationExpectedImageCount: 8,
+      sellerpilotQoo10CreateContext: {
+        contract: "sellerpilot_qoo10_listing_create_context_v1",
+        productId,
+        sku: "QOO10-ROLLBACK-SKU",
+        sourceCurrency: "KRW",
+        sourcePrice: 17000,
+        market: "JP",
+        locale: "ja-JP",
+        currency: "JPY",
+        price: 1871,
+        quantity: 1,
+      },
+      params: {
+        SecondSubCat: "320002604",
+        RetailPrice: "1871",
+        ItemPrice: "1871",
+        ItemQty: "1",
+        ShippingNo: "0",
+      },
+    },
+  };
+  const responsePayload = {
+    ok: false,
+    channel: "qoo10",
+    operation: "listing.create",
+    remoteId,
+    safeMessage: "Qoo10 publication readback failed after a verified rollback.",
+    steps: [
+      {
+        name: "qoo10-create-contract-preflight",
+        ok: true,
+        status: 200,
+        data: {
+          categoryCode: "320002604",
+          price: 1871,
+          quantity: 1,
+          shippingNo: "0",
+        },
+      },
+      { name: "seller-account-readback", ok: true, status: 200, data: {} },
+      { name: "category-readback", ok: true, status: 200, data: {} },
+      { name: "shipping-readback", ok: true, status: 200, data: {} },
+      { name: "representative-image-upload", ok: true, status: 200, data: {} },
+      {
+        name: "SetNewGoods",
+        ok: true,
+        status: 200,
+        data: {
+          ResultCode: 0,
+          ResultObject: { GdNo: remoteId, BIContentsNo: biContentsNo },
+        },
+      },
+      {
+        name: "EditGoodsContents",
+        ok: true,
+        status: 200,
+        data: { ResultCode: 0, ResultMsg: "SUCCESS" },
+      },
+      {
+        name: "detail-image-readback",
+        ok: false,
+        status: 200,
+        data: {
+          ResultCode: 0,
+          ResultMsg: "QOO10_DETAIL_IMAGE_READBACK_MISSING",
+          detailImageCount: 8,
+        },
+      },
+      {
+        name: "rollback-missing-detail",
+        ok: true,
+        status: 200,
+        data: { ResultCode: 0, ResultMsg: "SUCCESS" },
+      },
+    ],
+  };
+  const confirm = (jobId, expectedRemoteId, expectedBiContentsNo, status) =>
+    scalar(
+      db,
+      `select sellerpilot_private.confirm_qoo10_listing_create_rollback(
+        $1, $2, $3::bigint, $4
+      )`,
+      [jobId, expectedRemoteId, expectedBiContentsNo, status],
+    );
+  try {
+    await db.exec(supabaseCompatibilityLayer);
+    const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
+    const migrationNames = (await readdir(migrationUrl))
+      .filter((name) => name.endsWith(".sql"))
+      .sort();
+    assert.equal(migrationNames.includes(migrationName), true);
+    for (const name of migrationNames) {
+      await db.exec(withoutUnavailableExtensions(
+        await readFile(new URL(name, migrationUrl), "utf8"),
+      ));
+    }
+
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select has_function_privilege($1, $2, 'EXECUTE')",
+          [role, functionSignature],
+        ),
+        false,
+        `${role} must not execute the SQL-editor-only recovery function`,
+      );
+      assert.equal(
+        await scalar(
+          db,
+          `select has_function_privilege(
+            $1,
+            'sellerpilot_private.qoo10_rollback_confirmation_invoker_allowed(text,text,text,boolean)',
+            'EXECUTE'
+          )`,
+          [role],
+        ),
+        false,
+      );
+      assert.equal(
+        await scalar(
+          db,
+          `select has_table_privilege(
+            $1,
+            'sellerpilot_private.qoo10_listing_create_rollback_confirmations',
+            'SELECT,INSERT,UPDATE,DELETE'
+          )`,
+          [role],
+        ),
+        false,
+        `${role} must not access the private rollback audit`,
+      );
+    }
+    for (const role of ["anon", "authenticated"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select has_function_privilege($1, $2, 'EXECUTE')",
+          [role, identityFunctionSignature],
+        ),
+        false,
+      );
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', $1, 'EXECUTE')",
+        [identityFunctionSignature],
+      ),
+      true,
+      "only service_role may read the bounded application update identity",
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select security_definer, search_path_locked, private_schema
+           from (
+             select procedure.prosecdef as security_definer,
+                    cardinality(procedure.proconfig) = 1
+                      and procedure.proconfig[1] in (
+                        'search_path=', 'search_path=""'
+                      ) as search_path_locked,
+                    namespace.nspname = 'sellerpilot_private' as private_schema
+               from pg_catalog.pg_proc procedure
+               join pg_catalog.pg_namespace namespace
+                 on namespace.oid = procedure.pronamespace
+              where procedure.oid = $1::regprocedure
+           ) definition`,
+        [functionSignature],
+      )).rows,
+      [{ security_definer: true, search_path_locked: true, private_schema: true }],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select security_definer, search_path_locked, public_schema
+           from (
+             select procedure.prosecdef as security_definer,
+                    cardinality(procedure.proconfig) = 1
+                      and procedure.proconfig[1] in (
+                        'search_path=', 'search_path=""'
+                      ) as search_path_locked,
+                    namespace.nspname = 'public' as public_schema
+               from pg_catalog.pg_proc procedure
+               join pg_catalog.pg_namespace namespace
+                 on namespace.oid = procedure.pronamespace
+              where procedure.oid = $1::regprocedure
+           ) definition`,
+        [identityFunctionSignature],
+      )).rows,
+      [{ security_definer: true, search_path_locked: true, public_schema: true }],
+      "the service identity RPC must lock its definer search path",
+    );
+    const recoveryDefinition = await scalar(
+      db,
+      "select pg_get_functiondef($1::regprocedure)",
+      [functionSignature],
+    );
+    assert.match(recoveryDefinition, /rolsuper[\s\S]*pg_roles[\s\S]*session_user/i);
+    const invokerDefinition = await scalar(
+      db,
+      `select pg_get_functiondef(
+        'sellerpilot_private.qoo10_rollback_confirmation_invoker_allowed(text,text,text,boolean)'::regprocedure
+      )`,
+    );
+    assert.match(
+      invokerDefinition,
+      /p_session_user\s+is not distinct from\s+p_current_user[\s\S]*p_current_user\s+is not distinct from\s+p_function_owner/i,
+      "hosted Supabase SQL Editor uses a direct postgres owner session even when postgres is not rolsuper",
+    );
+    assert.match(
+      await scalar(
+        db,
+        "select pg_get_functiondef('sellerpilot_private.guard_product_listing_seller_lineage()'::regprocedure)",
+      ),
+      /sellerpilot\.qoo10_create_rollback_source_job[\s\S]*qoo10_listing_create_rollback_update_allowed/i,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select column_name
+           from information_schema.columns
+          where table_schema = 'sellerpilot_private'
+            and table_name = 'qoo10_listing_create_rollback_confirmations'
+            and column_name ~ '(^|_)(payload|response|secret|token)($|_)'
+          order by column_name`,
+      )).rows,
+      [],
+      "the audit may store only the bounded request digest, never raw payloads or secrets",
+    );
+
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'qoo10-rollback@example.test')",
+      [ADMIN_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.admin_users (user_id, display_name)
+       values ($1, 'Qoo10 Rollback Admin')`,
+      [ADMIN_ID],
+    );
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'qoo10-shared-job-creator@example.test')",
+      [sharedJobCreatorId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.admin_users (user_id, display_name)
+       values ($1, 'Qoo10 Shared Job Creator')`,
+      [sharedJobCreatorId],
+    );
+    await setClaims(db);
+    const credentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'qoo10', 'production',
+        '{"api_key":"qoo10-rollback-key","seller_id":"qoo10-rollback-seller"}'::jsonb,
+        now() + interval '365 days', 180, 30, 0
+      )`,
+    );
+    const credentialIdentity = (await db.query(
+      `select seller_account_key, seller_account_key_source
+         from sellerpilot_private.channel_credentials
+        where id = $1`,
+      [credentialId],
+    )).rows[0];
+    assert.match(credentialIdentity.seller_account_key, /^[a-f0-9]{64}$/);
+    assert.equal(
+      credentialIdentity.seller_account_key_source,
+      "credential_incarnation_v1",
+    );
+
+    await setClaims(db, "service_role");
+    await db.query(
+      `insert into sellerpilot_private.products (
+         id, owner_id, external_code, sku, name, status, demo
+       ) values (
+         $1, $2, 'QOO10-ROLLBACK-PRODUCT', 'QOO10-ROLLBACK-SKU',
+         'Qoo10 rollback recovery fixture', 'draft', false
+       )`,
+      [productId, ADMIN_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.channel_operation_attempts (
+         id, owner_id, credential_id, channel, operation,
+         idempotency_key, request_fingerprint, status, http_status,
+         remote_id, safe_message, gateway_write_required,
+         pre_gateway_retryable, completed_at
+       ) values (
+         $1, $2, $3, 'qoo10', 'listing.create',
+         'qoo10-rollback-source-attempt-0001', $4, 'manual_required', 409,
+         $5, 'Provider outcome requires reconciliation.', true,
+         false, clock_timestamp()
+       )`,
+      [attemptId, ADMIN_ID, credentialId, requestFingerprint, remoteId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.product_listings (
+         id, owner_id, product_id, channel_key, market, target_id,
+         remote_id, status, currency, price, operation_attempt_id,
+         seller_account_key, failure_class, requested_publication_intent,
+         remote_visibility, provider_status, last_error, published_at
+       ) values (
+         $1, $2, $3, 'qoo10', 'JP', '',
+         $4, 'failed', 'JPY', 500, $5,
+         null, 'external_action', 'live',
+         'unknown', 'S2', 'Provider outcome requires reconciliation.', null
+       )`,
+      [listingId, ADMIN_ID, productId, remoteId, attemptId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id, credential_id, attempt_id, listing_id, channel, operation,
+         environment, request_payload, response_payload, status,
+         error_message, request_fingerprint, created_by, attempt_count,
+         provider_mutation_started_at, started_at, completed_at, updated_at
+       ) values (
+         $1, $2, $3, $4, 'qoo10', 'listing.create',
+         'production', $5::jsonb, $6::jsonb, 'reconciliation_required',
+         'Provider outcome requires reconciliation.', $7, $8, 1,
+         clock_timestamp() - interval '2 minutes',
+         clock_timestamp() - interval '3 minutes',
+         clock_timestamp() - interval '1 minute', clock_timestamp()
+       )`,
+      [
+        sourceJobId,
+        credentialId,
+        attemptId,
+        listingId,
+        JSON.stringify(requestPayload),
+        JSON.stringify(responsePayload),
+        requestFingerprint,
+        sharedJobCreatorId,
+      ],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select seller_account_key from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [sourceJobId],
+      ),
+      credentialIdentity.seller_account_key,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select job.created_by::text as job_creator,
+                attempt.owner_id::text as attempt_owner,
+                listing.owner_id::text as listing_owner
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.channel_operation_attempts attempt
+             on attempt.id = job.attempt_id
+           join sellerpilot_private.product_listings listing
+             on listing.id = job.listing_id
+          where job.id = $1`,
+        [sourceJobId],
+      )).rows,
+      [{
+        job_creator: sharedJobCreatorId,
+        attempt_owner: ADMIN_ID,
+        listing_owner: ADMIN_ID,
+      }],
+      "a shared admin may create the job, while attempt ownership remains the listing authority",
+    );
+
+    await assert.rejects(
+      confirm(unknownJobId, remoteId, biContentsNo, "S1"),
+      /source Qoo10 create job evidence mismatch/,
+      "a different source job must fail closed",
+    );
+    await assert.rejects(
+      confirm(sourceJobId, "1217336971", biContentsNo, "S1"),
+      /source Qoo10 create job evidence mismatch/,
+      "the remote id must match the response and all ledgers",
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo + 1, "S1"),
+      /steps evidence mismatch/,
+      "BIContentsNo must match the SetNewGoods evidence",
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo, "S2"),
+      /invalid Qoo10 rollback confirmation evidence/,
+      "only an independently observed S1 or 1 rollback status is accepted",
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set response_payload = jsonb_set(
+            response_payload, '{steps,7,data,detailImageCount}', '7'::jsonb
+          )
+        where id = $1`,
+      [sourceJobId],
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo, "S1"),
+      /steps evidence mismatch/,
+      "an inexact eight-image readback must reject recovery",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set response_payload = $2::jsonb
+        where id = $1`,
+      [sourceJobId, JSON.stringify(responsePayload)],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set response_payload = jsonb_set(
+            response_payload, '{steps,7,ok}', 'true'::jsonb
+          )
+        where id = $1`,
+      [sourceJobId],
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo, "S1"),
+      /steps evidence mismatch/,
+      "a successful detail readback followed by rollback is contradictory and must reject recovery",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set response_payload = $2::jsonb
+        where id = $1`,
+      [sourceJobId, JSON.stringify(responsePayload)],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_operation_attempts
+          set status = 'failed'
+        where id = $1`,
+      [attemptId],
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo, "S1"),
+      /attempt evidence mismatch/,
+      "the source attempt must still be manual_required",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_operation_attempts
+          set status = 'manual_required'
+        where id = $1`,
+      [attemptId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_operation_attempts
+          set request_fingerprint = $2
+        where id = $1`,
+      [attemptId, differentFingerprint],
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo, "S1"),
+      /attempt evidence mismatch/,
+      "the source job and attempt fingerprints must be identical",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_operation_attempts
+          set request_fingerprint = $2
+        where id = $1`,
+      [attemptId, requestFingerprint],
+    );
+
+    await db.exec(
+      `alter table sellerpilot_private.channel_operation_attempts
+         disable trigger guard_attempt_seller_lineage`,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_operation_attempts
+          set seller_account_key = $2
+        where id = $1`,
+      [attemptId, mismatchedAccountKey],
+    );
+    await db.exec(
+      `alter table sellerpilot_private.channel_operation_attempts
+         enable trigger guard_attempt_seller_lineage`,
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo, "S1"),
+      /attempt evidence mismatch/,
+      "a different seller account lineage must reject recovery",
+    );
+    await db.exec(
+      `alter table sellerpilot_private.channel_operation_attempts
+         disable trigger guard_attempt_seller_lineage`,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_operation_attempts
+          set seller_account_key = $2
+        where id = $1`,
+      [attemptId, credentialIdentity.seller_account_key],
+    );
+    await db.exec(
+      `alter table sellerpilot_private.channel_operation_attempts
+         enable trigger guard_attempt_seller_lineage`,
+    );
+
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         disable trigger guard_product_listing_seller_lineage`,
+    );
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set remote_id = '1217336971'
+        where id = $1`,
+      [listingId],
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         enable trigger guard_product_listing_seller_lineage`,
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo, "S1"),
+      /listing evidence mismatch/,
+      "a different listing identity must reject recovery",
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         disable trigger guard_product_listing_seller_lineage`,
+    );
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set remote_id = $2
+        where id = $1`,
+      [listingId, remoteId],
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         enable trigger guard_product_listing_seller_lineage`,
+    );
+
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.qoo10_listing_create_rollback_confirmations",
+      ),
+      0,
+      "every rejected probe must roll back without creating audit evidence",
+    );
+
+    // Hosted Supabase reports session_user=current_user='postgres' in SQL
+    // Editor while pg_roles.rolsuper is false. Exercise that identity contract
+    // independently from PGlite's non-demotable bootstrap superuser.
+    assert.equal(
+      await scalar(
+        db,
+        `select sellerpilot_private.qoo10_rollback_confirmation_invoker_allowed(
+          'postgres', 'postgres', 'postgres', false
+        )`,
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select sellerpilot_private.qoo10_rollback_confirmation_invoker_allowed(
+          'authenticator', 'postgres', 'postgres', false
+        )`,
+      ),
+      false,
+      "PostgREST must not inherit the direct SQL Editor maintenance path",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select sellerpilot_private.qoo10_rollback_confirmation_invoker_allowed(
+          'maintenance_super', 'postgres', 'postgres', true
+        )`,
+      ),
+      true,
+    );
+
+    const confirmed = await confirm(
+      sourceJobId,
+      remoteId,
+      biContentsNo,
+      "S1",
+    );
+    assert.equal(confirmed.status, "confirmed");
+    assert.equal(confirmed.replayed, false);
+    assert.equal(confirmed.sourceJobId, sourceJobId);
+    assert.equal(confirmed.attemptId, attemptId);
+    assert.equal(confirmed.listingId, listingId);
+    assert.equal(confirmed.remoteId, remoteId);
+    assert.equal(confirmed.biContentsNo, biContentsNo);
+    assert.equal(confirmed.providerStatus, "S1");
+
+    const recovered = (await db.query(
+      `select job.status as job_status,
+              job.error_message as job_error,
+              job.response_payload,
+              attempt.status as attempt_status,
+              attempt.http_status,
+              attempt.remote_id as attempt_remote_id,
+              attempt.safe_message,
+              listing.status as listing_status,
+              listing.remote_id as listing_remote_id,
+              listing.seller_account_key,
+              listing.requested_publication_intent,
+              listing.remote_visibility,
+              listing.provider_status,
+              listing.published_at,
+              listing.last_verified_at is not null as listing_verified,
+              listing.failure_class,
+              listing.last_error,
+              product.status as product_status
+         from sellerpilot_private.channel_gateway_jobs job
+         join sellerpilot_private.channel_operation_attempts attempt
+           on attempt.id = job.attempt_id
+         join sellerpilot_private.product_listings listing
+           on listing.id = job.listing_id
+         join sellerpilot_private.products product
+           on product.id = listing.product_id
+        where job.id = $1`,
+      [sourceJobId],
+    )).rows[0];
+    assert.deepEqual(recovered, {
+      job_status: "failed",
+      job_error:
+        "QOO10_LISTING_CREATE_ROLLBACK_CONFIRMED: provider status S1; continue only with listing.update.",
+      response_payload: responsePayload,
+      attempt_status: "failed",
+      http_status: 409,
+      attempt_remote_id: remoteId,
+      safe_message:
+        "Qoo10 신규 등록 롤백(S1)이 확인되어 기존 원격 상품으로 수정 재시도가 가능합니다.",
+      listing_status: "paused",
+      listing_remote_id: remoteId,
+      seller_account_key: credentialIdentity.seller_account_key,
+      requested_publication_intent: "live",
+      remote_visibility: "non_public",
+      provider_status: "S1",
+      published_at: null,
+      listing_verified: true,
+      failure_class: "retryable",
+      last_error:
+        "Qoo10 원격 상품 비공개(S1) 롤백 확인 완료 · listing.update 재시도 필요",
+      product_status: "draft",
+    });
+    assert.deepEqual(
+      (await db.query(
+        `select source_job_id::text, source_attempt_id::text,
+                listing_id::text, credential_id::text,
+                request_fingerprint, seller_account_key, remote_id,
+                bi_contents_no, category_code, retail_price_jpy,
+                sell_price_jpy, quantity, shipping_no,
+                observed_provider_status,
+                previous_job_status, new_job_status,
+                previous_attempt_status, new_attempt_status,
+                previous_listing_status, new_listing_status,
+                previous_failure_class, new_failure_class,
+                previous_remote_visibility, new_remote_visibility,
+                previous_provider_status, new_provider_status,
+                requested_publication_intent,
+                confirmed_at is not null as confirmed
+           from sellerpilot_private.qoo10_listing_create_rollback_confirmations
+          where source_job_id = $1`,
+        [sourceJobId],
+      )).rows,
+      [{
+        source_job_id: sourceJobId,
+        source_attempt_id: attemptId,
+        listing_id: listingId,
+        credential_id: credentialId,
+        request_fingerprint: requestFingerprint,
+        seller_account_key: credentialIdentity.seller_account_key,
+        remote_id: remoteId,
+        bi_contents_no: biContentsNo,
+        category_code: "320002604",
+        retail_price_jpy: 1871,
+        sell_price_jpy: 1871,
+        quantity: 1,
+        shipping_no: "0",
+        observed_provider_status: "S1",
+        previous_job_status: "reconciliation_required",
+        new_job_status: "failed",
+        previous_attempt_status: "manual_required",
+        new_attempt_status: "failed",
+        previous_listing_status: "failed",
+        new_listing_status: "paused",
+        previous_failure_class: "external_action",
+        new_failure_class: "retryable",
+        previous_remote_visibility: "unknown",
+        new_remote_visibility: "non_public",
+        previous_provider_status: "S2",
+        new_provider_status: "S1",
+        requested_publication_intent: "live",
+        confirmed: true,
+      }],
+    );
+
+    const replay = await confirm(sourceJobId, remoteId, biContentsNo, "S1");
+    assert.equal(replay.status, "confirmed");
+    assert.equal(replay.replayed, true);
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.qoo10_listing_create_rollback_confirmations where source_job_id = $1",
+        [sourceJobId],
+      ),
+      1,
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo + 1, "S1"),
+      /confirmation evidence mismatch/,
+      "an idempotent replay must reject changed BI evidence",
+    );
+    await assert.rejects(
+      confirm(sourceJobId, remoteId, biContentsNo, "1"),
+      /confirmation evidence mismatch/,
+      "an idempotent replay preserves the exact observed status representation",
+    );
+
+    const lookupIdentity = (input = {}) => scalar(
+      db,
+      `select public.sellerpilot_service_get_qoo10_rollback_update_identity(
+        $1, $2, $3, $4, $5
+      )`,
+      [
+        input.listingId ?? listingId,
+        input.credentialId ?? credentialId,
+        input.productId ?? productId,
+        input.market ?? "JP",
+        input.targetId ?? "",
+      ],
+    );
+    assert.deepEqual(
+      await lookupIdentity(),
+      {
+        status: "allowed",
+        contract: "qoo10_create_rollback_confirmation_v1",
+        listingId,
+        remoteId,
+        providerStatus: "S1",
+        sourceJobId,
+        expectedState: {
+          categoryCode: "320002604",
+          retailPriceJpy: 1871,
+          sellPriceJpy: 1871,
+          quantity: 1,
+          shippingNo: "0",
+          biContentsNo,
+        },
+      },
+    );
+    await db.exec(
+      "alter table sellerpilot_private.channel_gateway_jobs disable trigger user",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set response_payload = jsonb_set(
+            response_payload, '{steps,7,ok}', 'true'::jsonb
+          )
+        where id = $1`,
+      [sourceJobId],
+    );
+    await db.exec(
+      "alter table sellerpilot_private.channel_gateway_jobs enable trigger user",
+    );
+    assert.deepEqual(
+      await lookupIdentity(),
+      {
+        status: "blocked",
+        contract: "qoo10_create_rollback_confirmation_v1",
+      },
+      "the application identity must fail closed if source detail evidence drifts to a contradictory success",
+    );
+    await db.exec(
+      "alter table sellerpilot_private.channel_gateway_jobs disable trigger user",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set response_payload = $2::jsonb
+        where id = $1`,
+      [sourceJobId, JSON.stringify(responsePayload)],
+    );
+    await db.exec(
+      "alter table sellerpilot_private.channel_gateway_jobs enable trigger user",
+    );
+    assert.equal((await lookupIdentity()).status, "allowed");
+    const blockedIdentity = {
+      status: "blocked",
+      contract: "qoo10_create_rollback_confirmation_v1",
+    };
+    assert.deepEqual(
+      await lookupIdentity({ credentialId: unknownJobId }),
+      blockedIdentity,
+      "a different credential must return an identifier-free block",
+    );
+    assert.deepEqual(
+      await lookupIdentity({ productId: unknownJobId }),
+      blockedIdentity,
+      "a different product must return an identifier-free block",
+    );
+    assert.deepEqual(
+      await lookupIdentity({ market: "KR" }),
+      blockedIdentity,
+      "a different market must return an identifier-free block",
+    );
+    assert.deepEqual(
+      await lookupIdentity({ targetId: "different-target" }),
+      blockedIdentity,
+      "a different target must return an identifier-free block",
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         disable trigger guard_product_listing_seller_lineage`,
+    );
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set provider_status = 'S2'
+        where id = $1`,
+      [listingId],
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         enable trigger guard_product_listing_seller_lineage`,
+    );
+    assert.deepEqual(
+      await lookupIdentity(),
+      blockedIdentity,
+      "any current listing-state drift must return an identifier-free block",
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         disable trigger guard_product_listing_seller_lineage`,
+    );
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set provider_status = 'S1'
+        where id = $1`,
+      [listingId],
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         enable trigger guard_product_listing_seller_lineage`,
+    );
+    assert.equal((await lookupIdentity()).status, "allowed");
+
+    await attestPublicationRelease(db);
+    await activatePublicationRuntimeRelease(db);
+    assert.equal(
+      (await scalar(
+        db,
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
+      )).open,
+      true,
+    );
+    const recoveryBinding = {
+      status: "allowed",
+      contract: "qoo10_create_rollback_confirmation_v1",
+      listingId,
+      remoteId,
+      providerStatus: "S1",
+      sourceJobId,
+      expectedState: {
+        categoryCode: "320002604",
+        retailPriceJpy: 1871,
+        sellPriceJpy: 1871,
+        quantity: 1,
+        shippingNo: "0",
+        biContentsNo,
+      },
+    };
+    const recoveryPayload = (fingerprint) => ({
+      arguments: {
+        ...requestPayload.arguments,
+        params: {
+          ...requestPayload.arguments.params,
+          ItemCode: remoteId,
+        },
+        publicationExpectedFingerprint: fingerprint,
+        sellerpilotQoo10RollbackUpdateRecovery: recoveryBinding,
+      },
+    });
+
+    // The route preflight may succeed and then lose a race to a stop/update
+    // before enqueue. The DB transaction must recheck the source-attempt
+    // binding under row lock and create no stale activation job.
+    await setClaims(db);
+    const staleUpdateAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+        $1, 'qoo10', 'listing.update',
+        'qoo10-rollback-stale-update-0001', $2
+      )`,
+      [credentialId, staleFingerprint],
+    );
+    const laterStopAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+        $1, 'qoo10', 'listing.stop',
+        'qoo10-rollback-later-stop-0001', $2
+      )`,
+      [credentialId, stopFingerprint],
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         disable trigger guard_product_listing_seller_lineage`,
+    );
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set operation_attempt_id = $2,
+              updated_at = clock_timestamp()
+        where id = $1`,
+      [listingId, laterStopAttempt.attempt_id],
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         enable trigger guard_product_listing_seller_lineage`,
+    );
+    await setClaims(db, "service_role");
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+          $1, $2, $3, 'qoo10', 'listing.update', $4::jsonb
+        )`,
+        [
+          listingId,
+          credentialId,
+          staleUpdateAttempt.attempt_id,
+          JSON.stringify(recoveryPayload(staleFingerprint)),
+        ],
+      ),
+      /QOO10_ROLLBACK_UPDATE_ENQUEUE_FENCE_MISMATCH/,
+      "a stale route authorization must not survive a newer listing operation",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.channel_gateway_jobs
+          where attempt_id = $1`,
+        [staleUpdateAttempt.attempt_id],
+      ),
+      0,
+      "TOCTOU rejection must leave no gateway job",
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         disable trigger guard_product_listing_seller_lineage`,
+    );
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set operation_attempt_id = $2,
+              updated_at = clock_timestamp()
+        where id = $1`,
+      [listingId, attemptId],
+    );
+    await db.exec(
+      `alter table sellerpilot_private.product_listings
+         enable trigger guard_product_listing_seller_lineage`,
+    );
+
+    await setClaims(db);
+    const updateAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+        $1, 'qoo10', 'listing.update',
+        'qoo10-rollback-followup-update-0001', $2
+      )`,
+      [credentialId, differentFingerprint],
+    );
+    assert.equal(updateAttempt.status, "running");
+    assert.equal(updateAttempt.duplicate, false);
+    const tamperedRecoveryPayloads = [
+      ["remote item", (payload) => {
+        payload.arguments.params.ItemCode = "9999999999";
+      }],
+      ["category", (payload) => {
+        payload.arguments.sellerpilotQoo10RollbackUpdateRecovery.expectedState.categoryCode = "320002605";
+      }],
+      ["retail price", (payload) => {
+        payload.arguments.sellerpilotQoo10RollbackUpdateRecovery.expectedState.retailPriceJpy = 1872;
+      }],
+      ["sell price", (payload) => {
+        payload.arguments.sellerpilotQoo10RollbackUpdateRecovery.expectedState.sellPriceJpy = 1870;
+      }],
+      ["quantity", (payload) => {
+        payload.arguments.sellerpilotQoo10RollbackUpdateRecovery.expectedState.quantity = 2;
+      }],
+      ["shipping", (payload) => {
+        payload.arguments.sellerpilotQoo10RollbackUpdateRecovery.expectedState.shippingNo = "1";
+      }],
+      ["BI content", (payload) => {
+        payload.arguments.sellerpilotQoo10RollbackUpdateRecovery.expectedState.biContentsNo += 1;
+      }],
+    ];
+    for (const [label, mutate] of tamperedRecoveryPayloads) {
+      const payload = structuredClone(recoveryPayload(differentFingerprint));
+      mutate(payload);
+      await setClaims(db, "service_role");
+      await assert.rejects(
+        scalar(
+          db,
+          `select public.sellerpilot_service_enqueue_listing_gateway_job(
+            $1, $2, $3, 'qoo10', 'listing.update', $4::jsonb
+          )`,
+          [
+            listingId,
+            credentialId,
+            updateAttempt.attempt_id,
+            JSON.stringify(payload),
+          ],
+        ),
+        /QOO10_ROLLBACK_UPDATE_ENQUEUE_FENCE_MISMATCH/,
+        `${label} drift must fail closed before gateway enqueue`,
+      );
+    }
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.channel_gateway_jobs
+          where attempt_id = $1`,
+        [updateAttempt.attempt_id],
+      ),
+      0,
+      "all tampered recovery bindings must leave no gateway job",
+    );
+    await setClaims(db, "service_role");
+    const updateEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_listing_gateway_job(
+        $1, $2, $3, 'qoo10', 'listing.update', $4::jsonb
+      )`,
+      [
+        listingId,
+        credentialId,
+        updateAttempt.attempt_id,
+        JSON.stringify(recoveryPayload(differentFingerprint)),
+      ],
+    );
+    assert.equal(updateEnqueue.status, "queued");
+    assert.equal(updateEnqueue.reused, false);
+    assert.deepEqual(
+      (await db.query(
+        `select operation, count(*)::integer as count
+           from sellerpilot_private.channel_gateway_jobs
+          where listing_id = $1
+          group by operation
+          order by operation`,
+        [listingId],
+      )).rows,
+      [
+        { operation: "listing.create", count: 1 },
+        { operation: "listing.update", count: 1 },
+      ],
+      "recovery must release one update without issuing a duplicate create",
+    );
+
+    const retryWorkerTokenHash = "4".repeat(64);
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+         label, token_hash, fingerprint, status, scope, expires_at, created_by
+       ) values (
+         'Qoo10 rollback retry proof', $1, '444444444444', 'active',
+         'gateway', clock_timestamp() + interval '1 day', $2
+       )`,
+      [retryWorkerTokenHash, ADMIN_ID],
+    );
+    const updateClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_gateway_job($1, 'test/qoo10-retry-proof')",
+      [retryWorkerTokenHash],
+    );
+    assert.equal(updateClaim.id, updateEnqueue.job_id);
+    assert.equal(updateClaim.operation, "listing.update");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+        [retryWorkerTokenHash, updateClaim.id, updateClaim.claim_token],
+      ),
+      true,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, failure_class, remote_visibility, provider_status,
+                operation_attempt_id::text, published_at,
+                last_verified_at is not null as verified
+           from sellerpilot_private.product_listings where id = $1`,
+        [listingId],
+      )).rows,
+      [{
+        status: "queued",
+        failure_class: null,
+        remote_visibility: "non_public",
+        provider_status: "S1",
+        operation_attempt_id: updateAttempt.attempt_id,
+        published_at: null,
+        verified: true,
+      }],
+    );
+    const explicitRejectionResponse = {
+      ok: false,
+      channel: "qoo10",
+      operation: "listing.update",
+      remoteId,
+      publicationIntent: "live",
+      publicationStateContract: "verified_remote_state_v1",
+      safeMessage: "Qoo10 UpdateGoods explicitly rejected the request; S1 remained exact.",
+      steps: [
+        {
+          name: "UpdateGoods",
+          ok: false,
+          status: 200,
+          data: { ResultCode: -99, ResultMsg: "EXPLICIT_REJECTION" },
+        },
+        {
+          name: "qoo10-rollback-update-rejection-s1-readback",
+          ok: true,
+          status: 200,
+          data: {
+            providerStatus: "S1",
+            sellerpilotExpectedProviderStatus: "S1",
+            sellerpilotExactDetailImageCount: 8,
+            sellerpilotVerification: "QOO10_ROLLBACK_UPDATE_REJECTION_S1_VERIFIED",
+            sellerpilotMutableVerification: "LISTING_MUTABLE_FIELDS_VERIFIED",
+            sellerpilotPublicationChecks: {
+              identityVerified: true,
+              statusVerified: true,
+              sellerCodeVerified: true,
+              localeVerified: true,
+              fingerprintVerified: true,
+              imageCountVerified: true,
+              sellerAccountIdentityVerified: true,
+              categoryVerified: true,
+              titleVerified: true,
+              shippingVerified: true,
+              retailPriceVerified: true,
+              priceQuantityVerified: true,
+              representativeImageVerified: true,
+              detailImageDigestVerified: true,
+              recoveryExpectationVerified: true,
+              sellPriceVerified: true,
+              quantityVerified: true,
+              confirmedBiCdnImageVerified: true,
+              detailImageUrlsVerified: true,
+            },
+          },
+        },
+      ],
+    };
+    const rejectedRetryProofMutations = [
+      ["sellerCodeVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.sellerCodeVerified = false;
+      }],
+      ["localeVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.localeVerified = false;
+      }],
+      ["fingerprintVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.fingerprintVerified = false;
+      }],
+      ["imageCountVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.imageCountVerified = false;
+      }],
+      ["sellerAccountIdentityVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.sellerAccountIdentityVerified = false;
+      }],
+      ["recoveryExpectationVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.recoveryExpectationVerified = false;
+      }],
+      ["sellPriceVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.sellPriceVerified = false;
+      }],
+      ["quantityVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.quantityVerified = false;
+      }],
+      ["confirmedBiCdnImageVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.confirmedBiCdnImageVerified = false;
+      }],
+      ["detailImageUrlsVerified", (response) => {
+        response.steps[1].data.sellerpilotPublicationChecks.detailImageUrlsVerified = false;
+      }],
+      ["mutable verification", (response) => {
+        response.steps[1].data.sellerpilotMutableVerification = "MISMATCH";
+      }],
+    ];
+    for (const [label, mutate] of rejectedRetryProofMutations) {
+      await db.exec("begin");
+      try {
+        const response = structuredClone(explicitRejectionResponse);
+        mutate(response);
+        assert.equal(
+          await scalar(
+            db,
+            `select public.sellerpilot_complete_channel_gateway_job(
+              $1,$2,$3,'succeeded',$4::jsonb,null
+            )`,
+            [
+              retryWorkerTokenHash,
+              updateClaim.id,
+              updateClaim.claim_token,
+              JSON.stringify(response),
+            ],
+          ),
+          true,
+        );
+        assert.deepEqual(
+          (await db.query(
+            `select status, operation_attempt_id::text
+               from sellerpilot_private.product_listings
+              where id = $1`,
+            [listingId],
+          )).rows,
+          [{ status: "failed", operation_attempt_id: updateAttempt.attempt_id }],
+          `${label} must not restore the confirmed source retry pointer`,
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*)::integer
+               from sellerpilot_private.operation_audit
+              where action = 'qoo10_rollback_update_rejected_retry_preserved'
+                and entity_id = $1`,
+            [listingId],
+          ),
+          0,
+          `${label} must leave no retry-preserved audit`,
+        );
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_complete_channel_gateway_job(
+          $1,$2,$3,'succeeded',$4::jsonb,null
+        )`,
+        [
+          retryWorkerTokenHash,
+          updateClaim.id,
+          updateClaim.claim_token,
+          JSON.stringify(explicitRejectionResponse),
+        ],
+      ),
+      true,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select listing.status, listing.failure_class,
+                listing.remote_visibility, listing.provider_status,
+                listing.operation_attempt_id::text,
+                listing.published_at, listing.last_error,
+                update_attempt.status as update_attempt_status,
+                update_job.status as update_job_status
+           from sellerpilot_private.product_listings listing
+           join sellerpilot_private.channel_operation_attempts update_attempt
+             on update_attempt.id = $2
+           join sellerpilot_private.channel_gateway_jobs update_job
+             on update_job.id = $3
+          where listing.id = $1`,
+        [listingId, updateAttempt.attempt_id, updateClaim.id],
+      )).rows,
+      [{
+        status: "paused",
+        failure_class: "retryable",
+        remote_visibility: "non_public",
+        provider_status: "S1",
+        operation_attempt_id: attemptId,
+        published_at: null,
+        last_error:
+          "Qoo10 원격 상품 비공개(S1) 롤백 확인 완료 · listing.update 재시도 필요",
+        update_attempt_status: "failed",
+        update_job_status: "succeeded",
+      }],
+      "an explicit rejection plus exact S1 readback must preserve the confirmed retry pointer without erasing failed audit rows",
+    );
+    assert.equal((await lookupIdentity()).status, "allowed");
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.operation_audit
+          where action = 'qoo10_rollback_update_rejected_retry_preserved'
+            and entity_id = $1`,
+        [listingId],
+      ),
+      1,
+    );
+
+    await setClaims(db);
+    const retryAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+        $1, 'qoo10', 'listing.update',
+        'qoo10-rollback-followup-update-0002', $2
+      )`,
+      [credentialId, "3".repeat(64)],
+    );
+    await setClaims(db, "service_role");
+    const retryEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_listing_gateway_job(
+        $1, $2, $3, 'qoo10', 'listing.update', $4::jsonb
+      )`,
+      [
+        listingId,
+        credentialId,
+        retryAttempt.attempt_id,
+        JSON.stringify(recoveryPayload("3".repeat(64))),
+      ],
+    );
+    assert.equal(retryEnqueue.status, "queued");
+    assert.deepEqual(
+      (await db.query(
+        `select operation, count(*)::integer as count
+           from sellerpilot_private.channel_gateway_jobs
+          where listing_id = $1
+          group by operation
+          order by operation`,
+        [listingId],
+      )).rows,
+      [
+        { operation: "listing.create", count: 1 },
+        { operation: "listing.update", count: 2 },
+      ],
+      "a proven explicit rejection may enqueue another update but never a second create",
     );
   } finally {
     await db.close();

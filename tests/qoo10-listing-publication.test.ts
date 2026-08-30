@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { executeChannelOperation } from "../lib/channels/operations";
-import { qoo10VerifiedListingRemoteState } from "../lib/channels/qoo10-listing-publication";
+import {
+  normalizeQoo10ListingPublicationReadback,
+  qoo10VerifiedListingRemoteState,
+} from "../lib/channels/qoo10-listing-publication";
 
 const FINGERPRINT = "a".repeat(64);
 const detailHtml = `<section lang="ja-JP"><p>日本語の商品詳細です。</p>${Array.from(
@@ -67,6 +70,37 @@ test("Qoo10 read-only publication helper fails shut on identity, locale, image-c
   }), null);
   assert.equal(qoo10VerifiedListingRemoteState({ ...base, expectedImageCount: 7 }), null);
   assert.equal(qoo10VerifiedListingRemoteState({ ...base, resultObject: readback("S9") }), null);
+});
+
+test("Qoo10 publication diagnostics preserve each passing field when one readback field mismatches", () => {
+  const verification = normalizeQoo10ListingPublicationReadback({
+    operation: "listing.create",
+    remoteId: "1234567890",
+    resultObject: readback(),
+    expectedSellerCode: "DIFFERENT-SELLER-CODE",
+    expectedLocale: "ja-JP",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  });
+
+  assert.equal(verification.remoteState, undefined);
+  assert.equal(verification.providerStatus, "S2");
+  assert.equal(verification.imageCount, 8);
+  assert.deepEqual(verification.checks, {
+    identityVerified: true,
+    statusVerified: true,
+    sellerCodeVerified: false,
+    localeVerified: true,
+    fingerprintVerified: true,
+    imageCountVerified: true,
+    sellerAccountIdentityVerified: true,
+    categoryVerified: true,
+    titleVerified: true,
+    shippingVerified: true,
+    priceQuantityVerified: true,
+    representativeImageVerified: true,
+    detailImageDigestVerified: true,
+  });
 });
 
 test("Qoo10 safe_test create is rejected before any provider request", async () => {
