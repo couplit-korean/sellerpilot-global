@@ -538,6 +538,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830123000_bind_immutable_ebay_offer_identity.sql",
       "20260830132944_allow_failed_ebay_lineage_discovery.sql",
       "20260830141500_unblock_shopee_identity_reauthorization.sql",
+      "20260830171000_discard_rejected_lazada_recovery_for_oauth.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -12180,6 +12181,8 @@ test("exact Lazada recovery certifies only its fingerprinted Vault snapshot and 
   const productionStaleRequestSha256 = "a8d59a7fdd78fa570a68150e3ea3dfba4c3d5ba8e24d9458a818e15db38400c9";
   const exactStaleCreatedAt = "2026-08-25T12:55:20.426414Z";
   const exactRecoveryMigrationName = "20260830062415_recover_exact_lazada_credential_snapshot.sql";
+  const rejectedRecoveryCleanupMigrationName =
+    "20260830171000_discard_rejected_lazada_recovery_for_oauth.sql";
   const recoveryTokenHash = "6".repeat(64);
   const recoveryPayload = {
     app_key: "lazada-recovery-app",
@@ -12360,6 +12363,7 @@ test("exact Lazada recovery certifies only its fingerprinted Vault snapshot and 
       .replaceAll(productionStaleRequestSha256, fixtureStaleRequestSha256);
     await db.exec(withoutUnavailableExtensions(exactRecoverySql));
     for (const name of migrationNames.slice(exactRecoveryMigrationIndex + 1)) {
+      if (name === rejectedRecoveryCleanupMigrationName) continue;
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(source));
     }
@@ -13026,6 +13030,607 @@ test("exact Lazada recovery certifies only its fingerprinted Vault snapshot and 
     assert.equal(replacementClaim.id, finished.replacementJobId);
     assert.equal(replacementClaim.operation, "orders.list");
     assert.equal(replacementClaim.credential_id, versionSixCredentialId);
+  } finally {
+    await db.close();
+  }
+});
+
+test("rejected Lazada recovery cleanup is bound to one unclaimed OAuth discard", async () => {
+  const migration = await readFile(new URL(
+    "../supabase/migrations/20260830171000_discard_rejected_lazada_recovery_for_oauth.sql",
+    import.meta.url,
+  ), "utf8");
+
+  assert.match(
+    migration,
+    /5ac7a12f-94d5-451f-bd47-3b07d86c21b8[\s\S]*705b572c-1e08-4f56-a74a-bc1fb53175ae/,
+  );
+  assert.match(
+    migration,
+    /LAZADA_RECOVERY_SNAPSHOT_REJECTED[\s\S]*provider_mutation_started_at is null/,
+  );
+  assert.match(
+    migration,
+    /observed Lazada OAuth exchange no longer matches exact unclaimed evidence/,
+  );
+  assert.match(
+    migration,
+    /clock_timestamp\(\) < v_oauth_created_at \+ interval '25 minutes'/,
+  );
+  assert.match(
+    migration,
+    /'payload', v_recovery_secret[\s\S]*'recovery_only', true[\s\S]*v_recovery_snapshot_sha256 is distinct from[\s\S]*credential_refresh_recovery_fingerprint/,
+  );
+  assert.match(
+    migration,
+    /'channel', 'lazada'[\s\S]*'code', trim\(v_oauth_secret->>'code'\)[\s\S]*v_oauth_fingerprint is distinct from[\s\S]*oauth_request_fingerprint/,
+  );
+  assert.match(
+    migration,
+    /delete from vault\.secrets secret[\s\S]*secret\.id = v_recovery_vault_id[\s\S]*delete from vault\.secrets secret[\s\S]*secret\.id = v_oauth_vault_id/,
+  );
+  assert.match(
+    migration,
+    /lazada_rejected_recovery_discarded_for_reauthorization[\s\S]*recovery_snapshot_discarded', true[\s\S]*oauth_code_discarded', true/,
+  );
+  assert.match(
+    migration,
+    /lazada_oauth_discarded_outside_safe_window[\s\S]*oauth_code_sent_to_provider', false/,
+  );
+  assert.match(
+    migration,
+    /provider_mutation_started', false[\s\S]*credential_rotated_during_cleanup', false/,
+  );
+  assert.match(
+    migration,
+    /v_recovery_job\.created_by is distinct from v_oauth_job\.created_by[\s\S]*v_source_credential\.created_by/,
+  );
+  assert.match(
+    migration,
+    /jsonb_object_keys\(audit\.safe_detail\)[\s\S]*\) = 17[\s\S]*jsonb_object_keys\(audit\.safe_detail\)[\s\S]*\) = 11/,
+  );
+  assert.match(
+    migration,
+    /runtime_first_seller_reauthorization[\s\S]*runtime_inactive_outside_safe_window/,
+  );
+  assert.doesNotMatch(
+    migration,
+    /update sellerpilot_private\.channel_credentials[\s\S]*set status/,
+  );
+});
+
+test("rejected Lazada recovery cleanup discards both exact unusable snapshots", async () => {
+  const db = new PGlite();
+  const migrationName =
+    "20260830171000_discard_rejected_lazada_recovery_for_oauth.sql";
+  const recoveryJobId = "5ac7a12f-94d5-451f-bd47-3b07d86c21b8";
+  const freshOauthJobId = "705b572c-1e08-4f56-a74a-bc1fb53175ae";
+  const recoveryVaultId = "312705aa-9a16-4c2e-bc3a-32e743ec41e6";
+  const productionOauthVaultId = "d5462aa4-bc3d-4258-8f6a-e0b19d6cef79";
+  const productionCredentialId = "e54fa95d-ddfd-414f-82e9-636a0d9ab07c";
+  const productionRecoverySha =
+    "ba9a002eeee680dc5224aff75a3797f2c0e643b21f8433768c7684db11adf8c5";
+  const productionOauthSha =
+    "80195afdac6cc858bc28a90503910ef16f1ae1cfd80e906a3206e8d5192b475d";
+  const productionOauthCreatedAt = "2026-08-30T07:49:58.027035Z";
+  const recoveryRequest = { arguments: {} };
+  const oauthRequest = { vaultBacked: true };
+  const recoveryExpiresAt = "2099-01-01T00:00:00.000Z";
+  const recoveryPayload = {
+    access_token: "rejected-access-token-fixture",
+    refresh_token: "rejected-refresh-token-fixture",
+    refresh_token_expires_at: recoveryExpiresAt,
+  };
+  const oauthCode = "fresh-lazada-authorization-code";
+  const oauthCreatedAt = new Date(Date.now() - 26 * 60_000).toISOString();
+  const serverlessTokenHash = "9".repeat(64);
+
+  try {
+    await db.exec(supabaseCompatibilityLayer);
+    const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
+    const migrationNames = (await readdir(migrationUrl))
+      .filter((name) => name.endsWith(".sql"))
+      .sort();
+    for (const name of migrationNames) {
+      if (name === migrationName) continue;
+      const source = await readFile(new URL(name, migrationUrl), "utf8");
+      await db.exec(withoutUnavailableExtensions(source));
+    }
+
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'lazada-cleanup@example.test')",
+      [ADMIN_ID],
+    );
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'lazada-cleanup-other@example.test')",
+      [SECOND_ADMIN_ID],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Lazada Cleanup Admin')",
+      [ADMIN_ID],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Other Cleanup Admin')",
+      [SECOND_ADMIN_ID],
+    );
+    await setClaims(db);
+
+    let versionFiveCredentialId;
+    for (let version = 1; version <= 5; version += 1) {
+      versionFiveCredentialId = await scalar(
+        db,
+        `select public.sellerpilot_rotate_credential(
+          'lazada', 'production', $1::jsonb,
+          '2099-01-01T00:00:00.000Z'::timestamptz,
+          90, 30, 0
+        )`,
+        [JSON.stringify({
+          app_key: "cleanup-app",
+          app_secret: "cleanup-secret",
+          country: "my",
+          access_token: `cleanup-access-v${version}`,
+          refresh_token: `cleanup-refresh-v${version}`,
+        })],
+      );
+    }
+
+    await setClaims(db, "service_role");
+    await db.query(
+      `insert into vault.secrets (id, secret, name, description)
+       values ($1, $2, $3, 'Exact rejected recovery fixture.')`,
+      [
+        recoveryVaultId,
+        JSON.stringify(recoveryPayload),
+        `sellerpilot_gateway_recovery_lazada_${recoveryJobId}_fixture`,
+      ],
+    );
+    const freshOauthVaultId = await scalar(
+      db,
+      `select vault.create_secret($1, $2, 'Fresh OAuth fixture.')`,
+      [
+        JSON.stringify({ code: oauthCode }),
+        `sellerpilot_gateway_oauth_${freshOauthJobId}_fixture`,
+      ],
+    );
+    const recoveryRequestSha = await scalar(
+      db,
+      "select encode(extensions.digest($1::jsonb::text, 'sha256'), 'hex')",
+      [JSON.stringify(recoveryRequest)],
+    );
+    const oauthRequestSha = await scalar(
+      db,
+      "select encode(extensions.digest($1::jsonb::text, 'sha256'), 'hex')",
+      [JSON.stringify(oauthRequest)],
+    );
+    const recoveryFingerprint = await scalar(
+      db,
+      `select encode(extensions.digest(
+        jsonb_build_object(
+          'payload', $1::jsonb,
+          'expires_at', $2::timestamptz,
+          'recovery_only', true
+        )::text,
+        'sha256'
+      ), 'hex')`,
+      [JSON.stringify(recoveryPayload), recoveryExpiresAt],
+    );
+    const oauthFingerprint = await scalar(
+      db,
+      `select encode(extensions.digest(
+        jsonb_build_object(
+          'channel', 'lazada',
+          'code', trim($1)
+        )::text,
+        'sha256'
+      ), 'hex')`,
+      [oauthCode],
+    );
+
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id, credential_id, channel, operation, environment, request_payload,
+         status, error_message, created_by, attempt_count, created_at,
+         started_at, completed_at, updated_at,
+         credential_refresh_recovery_vault_id,
+         credential_refresh_recovery_fingerprint,
+         credential_refresh_recovery_staged_at
+       ) values (
+         $1, $2, 'lazada', 'orders.list', 'production', $3::jsonb,
+         'reconciliation_required', 'LAZADA_RECOVERY_SNAPSHOT_REJECTED',
+         $4, 1, '2026-08-25T12:54:05.823863Z'::timestamptz,
+         '2026-08-25T12:54:41.356793Z'::timestamptz,
+         '2026-08-30T07:42:13.312764Z'::timestamptz,
+         '2026-08-30T07:42:13.312764Z'::timestamptz,
+         $5, $6,
+         '2026-08-25T12:54:43.000000Z'::timestamptz
+       )`,
+      [
+        recoveryJobId,
+        versionFiveCredentialId,
+        JSON.stringify(recoveryRequest),
+        ADMIN_ID,
+        recoveryVaultId,
+        recoveryFingerprint,
+      ],
+    );
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id, credential_id, channel, operation, environment, request_payload,
+         status, created_by, attempt_count, created_at, updated_at,
+         oauth_request_vault_id, oauth_request_fingerprint,
+         oauth_source_credential_id
+       ) values (
+         $1, $2, 'lazada', 'oauth.exchange', 'production', $3::jsonb,
+         'queued', $4, 0,
+         $6::timestamptz,
+         $6::timestamptz,
+         $5, $7, $2
+       )`,
+      [
+        freshOauthJobId,
+        versionFiveCredentialId,
+        JSON.stringify(oauthRequest),
+        ADMIN_ID,
+        freshOauthVaultId,
+        oauthCreatedAt,
+        oauthFingerprint,
+      ],
+    );
+    await db.query(
+      `insert into sellerpilot_private.operation_audit (
+         owner_id, action, entity_type, entity_id, safe_detail, occurred_at
+       ) values
+       ($1, 'lazada_credential_recovery_claimed', 'channel_gateway_job', $2,
+        jsonb_build_object(
+          'recovery_snapshot_sha256', $3::text,
+          'provider_mutation_started', false
+        ),
+        '2026-08-30T07:42:09Z'::timestamptz),
+       ($1, 'lazada_credential_recovery_preserved', 'channel_gateway_job', $2,
+        '{"reason":"snapshot_rejected","recovery_snapshot_preserved":true,"provider_mutation_started":false}'::jsonb,
+        '2026-08-30T07:42:13Z'::timestamptz)`,
+      [ADMIN_ID, recoveryJobId, recoveryFingerprint],
+    );
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+         label, token_hash, fingerprint, status, scope, expires_at, created_by
+       ) values (
+         'exact OAuth unblock probe', $1, '999999999999', 'active',
+         'serverless_cs', clock_timestamp() + interval '1 day', $2
+       )`,
+      [serverlessTokenHash, ADMIN_ID],
+    );
+
+    const migrationSource = await readFile(new URL(migrationName, migrationUrl), "utf8");
+    const renderMigration = (createdAt) => migrationSource
+      .replaceAll(productionCredentialId, versionFiveCredentialId)
+      .replaceAll(productionRecoverySha, recoveryRequestSha)
+      .replaceAll(productionOauthSha, oauthRequestSha)
+      .replaceAll(productionOauthVaultId, freshOauthVaultId)
+      .replaceAll(productionOauthCreatedAt, createdAt);
+    const migration = renderMigration(oauthCreatedAt);
+
+    const safeWindowCreatedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set created_at = $2::timestamptz,
+              updated_at = $2::timestamptz
+        where id = $1`,
+      [freshOauthJobId, safeWindowCreatedAt],
+    );
+    await assert.rejects(
+      db.exec(withoutUnavailableExtensions(renderMigration(safeWindowCreatedAt))),
+      /observed Lazada OAuth exchange no longer matches exact unclaimed evidence/,
+      "a still-fresh authorization code must not be discarded",
+    );
+    await db.exec("rollback");
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id in ($1, $2)", [
+        recoveryVaultId,
+        freshOauthVaultId,
+      ]),
+      2,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set created_at = $2::timestamptz,
+              updated_at = $2::timestamptz
+        where id = $1`,
+      [freshOauthJobId, oauthCreatedAt],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set created_by = $2
+        where id = $1`,
+      [freshOauthJobId, SECOND_ADMIN_ID],
+    );
+    await assert.rejects(
+      db.exec(withoutUnavailableExtensions(migration)),
+      /Lazada rejected recovery cleanup evidence is incomplete/,
+      "cross-owner OAuth evidence must not be discarded",
+    );
+    await db.exec("rollback");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set created_by = $2
+        where id = $1`,
+      [freshOauthJobId, ADMIN_ID],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set oauth_request_fingerprint = repeat('c', 64)
+        where id = $1`,
+      [freshOauthJobId],
+    );
+    await assert.rejects(
+      db.exec(withoutUnavailableExtensions(migration)),
+      /observed Lazada OAuth exchange no longer matches exact unclaimed evidence/,
+    );
+    await db.exec("rollback");
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [recoveryJobId],
+      ),
+      "reconciliation_required",
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [recoveryVaultId]),
+      1,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set oauth_request_fingerprint = $2
+        where id = $1`,
+      [freshOauthJobId, oauthFingerprint],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set credential_refresh_recovery_fingerprint = repeat('d', 64)
+        where id = $1`,
+      [recoveryJobId],
+    );
+    await assert.rejects(
+      db.exec(withoutUnavailableExtensions(migration)),
+      /observed Lazada recovery no longer matches exact rejected evidence/,
+    );
+    await db.exec("rollback");
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_rejected_recovery_discarded_for_reauthorization'
+            and entity_id = $1`,
+        [recoveryJobId],
+      ),
+      0,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set credential_refresh_recovery_fingerprint = $2
+        where id = $1`,
+      [recoveryJobId, recoveryFingerprint],
+    );
+
+    await db.exec(withoutUnavailableExtensions(migration));
+
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message,
+                credential_refresh_recovery_vault_id,
+                credential_refresh_recovery_fingerprint,
+                credential_refresh_recovery_staged_at,
+                provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [recoveryJobId],
+      )).rows,
+      [{
+        status: "cancelled",
+        error_message: "LAZADA_REJECTED_RECOVERY_DISCARDED_FOR_REAUTHORIZATION",
+        credential_refresh_recovery_vault_id: null,
+        credential_refresh_recovery_fingerprint: null,
+        credential_refresh_recovery_staged_at: null,
+        provider_mutation_started_at: null,
+      }],
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [recoveryVaultId]),
+      0,
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [freshOauthVaultId]),
+      0,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message, attempt_count, oauth_request_vault_id::text,
+                oauth_exchange_completed, provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [freshOauthJobId],
+      )).rows,
+      [{
+        status: "cancelled",
+        error_message: "LAZADA_OAUTH_CODE_DISCARDED_OUTSIDE_SAFE_WINDOW",
+        attempt_count: 0,
+        oauth_request_vault_id: null,
+        oauth_exchange_completed: false,
+        provider_mutation_started_at: null,
+      }],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select version, status, seller_account_key_source,
+                seller_account_verified_at
+           from sellerpilot_private.channel_credentials
+          where id = $1`,
+        [versionFiveCredentialId],
+      )).rows,
+      [{
+        version: 5,
+        status: "active",
+        seller_account_key_source: "legacy_unattested",
+        seller_account_verified_at: null,
+      }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_rejected_recovery_discarded_for_reauthorization'
+            and entity_id = $1
+            and safe_detail->>'fresh_oauth_job_id' = $2
+            and safe_detail->>'provider_mutation_started' = 'false'
+            and safe_detail->>'recovery_snapshot_discarded' = 'true'`,
+        [recoveryJobId, freshOauthJobId],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_oauth_discarded_outside_safe_window'
+            and entity_id = $1
+            and safe_detail->>'oauth_code_sent_to_provider' = 'false'
+            and safe_detail->>'provider_mutation_started' = 'false'`,
+        [freshOauthJobId],
+      ),
+      1,
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set error_message = 'TAMPERED_TERMINAL_EVIDENCE'
+        where id = $1`,
+      [recoveryJobId],
+    );
+    await assert.rejects(
+      db.exec(withoutUnavailableExtensions(migration)),
+      /exact Lazada cleanup no longer matches terminal evidence/,
+    );
+    await db.exec("rollback");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set error_message = 'LAZADA_REJECTED_RECOVERY_DISCARDED_FOR_REAUTHORIZATION'
+        where id = $1`,
+      [recoveryJobId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.operation_audit
+          set safe_detail = safe_detail || '{"unexpected":true}'::jsonb
+        where action = 'lazada_rejected_recovery_discarded_for_reauthorization'
+          and entity_id = $1`,
+      [recoveryJobId],
+    );
+    await assert.rejects(
+      db.exec(withoutUnavailableExtensions(migration)),
+      /exact Lazada cleanup no longer matches terminal evidence/,
+      "terminal audit key sets must remain exact",
+    );
+    await db.exec("rollback");
+    await db.query(
+      `update sellerpilot_private.operation_audit
+          set safe_detail = safe_detail - 'unexpected'
+        where action = 'lazada_rejected_recovery_discarded_for_reauthorization'
+          and entity_id = $1`,
+      [recoveryJobId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.operation_audit
+          set safe_detail = jsonb_set(
+            safe_detail,
+            '{reason}',
+            '"tampered-replay-reason"'::jsonb
+          )
+        where action = 'lazada_rejected_recovery_discarded_for_reauthorization'
+          and entity_id = $1`,
+      [recoveryJobId],
+    );
+    await assert.rejects(
+      db.exec(withoutUnavailableExtensions(migration)),
+      /exact Lazada cleanup no longer matches terminal evidence/,
+      "terminal audit values must remain exact when the key count is unchanged",
+    );
+    await db.exec("rollback");
+    await db.query(
+      `update sellerpilot_private.operation_audit
+          set safe_detail = jsonb_set(
+            safe_detail,
+            '{reason}',
+            '"runtime_first_seller_reauthorization"'::jsonb
+          )
+        where action = 'lazada_rejected_recovery_discarded_for_reauthorization'
+          and entity_id = $1`,
+      [recoveryJobId],
+    );
+
+    await db.query(
+      `insert into sellerpilot_private.operation_audit (
+         owner_id, action, entity_type, entity_id, safe_detail, occurred_at
+       ) values (
+         $1, 'lazada_rejected_recovery_discarded_for_reauthorization',
+         'channel_gateway_job', $2, '{}'::jsonb, clock_timestamp()
+       )`,
+      [ADMIN_ID, recoveryJobId],
+    );
+    await assert.rejects(
+      db.exec(withoutUnavailableExtensions(migration)),
+      /exact Lazada cleanup no longer matches terminal evidence/,
+      "a contradictory duplicate terminal audit must fail replay",
+    );
+    await db.exec("rollback");
+    await db.query(
+      `delete from sellerpilot_private.operation_audit
+        where owner_id = $1
+          and action = 'lazada_rejected_recovery_discarded_for_reauthorization'
+          and entity_id = $2
+          and safe_detail = '{}'::jsonb`,
+      [ADMIN_ID, recoveryJobId],
+    );
+
+    await db.exec(withoutUnavailableExtensions(migration));
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_rejected_recovery_discarded_for_reauthorization'
+            and entity_id = $1`,
+        [recoveryJobId],
+      ),
+      1,
+      "replaying the migration must accept only its exact terminal evidence",
+    );
+
+    const terminalEvidence = JSON.stringify((await db.query(
+      `select job.error_message, audit.safe_detail
+         from sellerpilot_private.channel_gateway_jobs job
+         join sellerpilot_private.operation_audit audit
+           on audit.entity_id = job.id::text
+          and audit.action in (
+            'lazada_rejected_recovery_discarded_for_reauthorization',
+            'lazada_oauth_discarded_outside_safe_window'
+          )
+        where job.id in ($1, $2)`,
+      [recoveryJobId, freshOauthJobId],
+    )).rows);
+    assert.doesNotMatch(terminalEvidence, /rejected-access-token-fixture/);
+    assert.doesNotMatch(terminalEvidence, /rejected-refresh-token-fixture/);
+    assert.doesNotMatch(terminalEvidence, /fresh-lazada-authorization-code/);
+
+    const oauthClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/no-expired-oauth-claim')",
+      [serverlessTokenHash],
+    );
+    assert.equal(oauthClaim, null);
   } finally {
     await db.close();
   }
