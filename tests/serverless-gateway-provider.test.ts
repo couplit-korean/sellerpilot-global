@@ -157,6 +157,73 @@ test("a bounded provider write crosses the mutation fence and rechecks its lease
   assert.deepEqual(events, ["lease", "mutation-fence", "lease", "provider"]);
 });
 
+test("legacy eBay diagnostic stages immutable GetUser identity before privilege read", async () => {
+  const originalFetch = globalThis.fetch;
+  const events: string[] = [];
+  const staged: Array<Record<string, unknown>> = [];
+  const calls: string[] = [];
+  const eiasToken = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=";
+  const job = genericClaim("ebay", "diagnostic.test");
+  job.credential = {
+    client_id: "sandbox-client",
+    client_secret: "sandbox-secret",
+    ru_name: "sandbox-runame",
+    access_token: "expired-access-token",
+    access_token_expires_at: "2000-01-01T00:00:00.000Z",
+    refresh_token: "sandbox-refresh-token",
+    refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
+  };
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const callName = new Headers(init?.headers).get("x-ebay-api-call-name") ?? "";
+    calls.push(callName || new URL(url).pathname);
+    if (url.endsWith("/identity/v1/oauth2/token")) {
+      return Response.json({ access_token: "fresh-access-token", expires_in: 7200 });
+    }
+    if (callName === "GetUser") {
+      return new Response(
+        `<?xml version="1.0" encoding="UTF-8"?><GetUserResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><User><UserID>mutable-display-name</UserID><EIASToken>${eiasToken}</EIASToken></User></GetUserResponse>`,
+        { status: 200, headers: { "content-type": "text/xml" } },
+      );
+    }
+    if (new URL(url).pathname === "/sell/account/v1/privilege/") {
+      return Response.json({
+        sellerRegistrationCompleted: true,
+        sellingLimit: { amount: { value: "1000", currency: "USD" } },
+      });
+    }
+    throw new Error(`unexpected eBay diagnostic request: ${url}`);
+  };
+  try {
+    const result = await executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { throw new Error("unexpected provider mutation"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async (refresh) => {
+          events.push("credential-stage");
+          staged.push(refresh.payload);
+        },
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.operation, "diagnostic.test");
+    assert.equal(staged.length, 1);
+    assert.equal(staged[0].provider_account_identity_version, "v1");
+    assert.equal(staged[0].provider_account_subject, `ebay:eias:${eiasToken}`);
+    assert.deepEqual(calls, [
+      "/identity/v1/oauth2/token",
+      "GetUser",
+      "/sell/account/v1/privilege/",
+    ]);
+    assert.ok(events.indexOf("credential-fence") < events.indexOf("credential-stage"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("publication reverification is allowlisted for the seven release channels and never opens the provider mutation fence", async () => {
   const events: string[] = [];
   const job = {

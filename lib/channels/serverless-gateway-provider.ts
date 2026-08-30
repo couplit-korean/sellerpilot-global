@@ -368,6 +368,10 @@ async function prepareCredential(
 
 async function executeDiagnostic(input: ServerlessGatewayProviderExecutionInput) {
   const prepared = await prepareCredential(input, requestArguments(input.job));
+  if (input.job.channel === "ebay"
+      && !readProviderAccountIdentity(prepared.credential, "ebay")) {
+    throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISSING");
+  }
   await input.hooks.assertLeaseHealthy();
   const diagnostic = await runChannelDiagnostic(
     input.job.channel,

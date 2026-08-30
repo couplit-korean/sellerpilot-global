@@ -526,6 +526,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260829114703_accept_server_product_research_completion.sql",
       "20260829165803_enforce_category_publication_environment_and_market.sql",
       "20260830052516_allow_legacy_ebay_diagnostic_attestation.sql",
+      "20260830054851_certify_provider_identity_on_service_refresh.sql",
       "20260830090000_recover_product_research_context.sql",
       "20260830095000_close_listing_mutations_until_adapters_ready.sql",
       "20260830100000_verified_remote_publication_ledger.sql",
@@ -10408,6 +10409,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
   const authorizationCode = "serverless-oauth-code-never-stored-in-job-json";
   const legacyEbayDiagnosticMigrationName =
     "20260830052516_allow_legacy_ebay_diagnostic_attestation.sql";
+  const providerIdentityCertificationMigrationName =
+    "20260830054851_certify_provider_identity_on_service_refresh.sql";
   try {
     await db.exec(supabaseCompatibilityLayer);
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
@@ -10415,15 +10418,19 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       .filter((name) => name.endsWith(".sql"))
       .sort();
     let legacyEbayDiagnosticMigration;
+    let providerIdentityCertificationMigration;
     for (const name of migrationNames) {
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       if (name === legacyEbayDiagnosticMigrationName) {
         legacyEbayDiagnosticMigration = source;
+      } else if (name === providerIdentityCertificationMigrationName) {
+        providerIdentityCertificationMigration = source;
       } else {
         await db.exec(withoutUnavailableExtensions(source));
       }
     }
     assert.equal(typeof legacyEbayDiagnosticMigration, "string");
+    assert.equal(typeof providerIdentityCertificationMigration, "string");
     await attestPublicationRelease(db);
     await activatePublicationRuntimeRelease(db);
     assert.equal(
@@ -10584,6 +10591,10 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       provider_account_subject: stableEbayProviderSubject,
     };
     const diagnosticExpiresAt = "2099-01-01T00:00:00.000Z";
+    // Opaque sb_secret_* requests run as the service_role database role but
+    // do not populate this legacy JWT GUC. Keep this exact production shape
+    // so provider identity certification cannot regress to legacy_unattested.
+    await db.query("select set_config('request.jwt.claim.role', '', false)");
     const diagnosticCompletion = await scalar(
       db,
       `select public.sellerpilot_service_complete_serverless_cs_transaction(
@@ -10615,6 +10626,28 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     );
     assert.equal(diagnosticCompletion.status, "completed");
     assert.notEqual(diagnosticCompletion.credentialId, ebayCredentialId);
+    assert.deepEqual(
+      (await db.query(
+        `select credential.seller_account_key,
+                credential.seller_account_key_source,
+                credential.seller_account_verified_at,
+                secret.decrypted_secret::jsonb->>'provider_account_identity_version' as identity_version,
+                length(secret.decrypted_secret::jsonb->>'provider_account_subject') > 10 as has_provider_subject
+           from sellerpilot_private.channel_credentials credential
+           join vault.decrypted_secrets secret on secret.id = credential.vault_secret_id
+          where credential.id = $1`,
+        [diagnosticCompletion.credentialId],
+      )).rows,
+      [{
+        seller_account_key: null,
+        seller_account_key_source: "legacy_unattested",
+        seller_account_verified_at: null,
+        identity_version: "v1",
+        has_provider_subject: true,
+      }],
+      "the pre-fix production shape must be reproduced before exact repair",
+    );
+    await db.exec(withoutUnavailableExtensions(providerIdentityCertificationMigration));
     const diagnosticCredential = (await db.query(
       `select id::text, status, seller_account_key,
               seller_account_key_source,
@@ -10632,6 +10665,17 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     );
     assert.equal(diagnosticCredential.seller_account_verified, true);
     assert.equal(diagnosticCredential.last_check_status, "passed");
+    assert.deepEqual(
+      (await db.query(
+        `select secret.decrypted_secret::jsonb->>'provider_account_identity_version' as identity_version,
+                length(secret.decrypted_secret::jsonb->>'provider_account_subject') > 10 as has_provider_subject
+           from sellerpilot_private.channel_credentials credential
+           join vault.decrypted_secrets secret on secret.id = credential.vault_secret_id
+          where credential.id = $1`,
+        [diagnosticCompletion.credentialId],
+      )).rows,
+      [{ identity_version: "v1", has_provider_subject: true }],
+    );
     assert.deepEqual(
       (await db.query(
         `select status, credential_id::text
