@@ -89,15 +89,15 @@ test("failed verified updates preserve the immutable remote product identity", (
   );
 });
 
-test("published updates use the central edited title and description without discarding localized assets", () => {
+test("published updates preserve the reviewed channel-language title and description", () => {
   assert.deepEqual(listingCoreContentForOperation({
     operation: "listing.update",
     central: { title: "중앙 수정 상품명", description: "중앙에서 사용자가 직접 수정한 상품 설명" },
-    localized: { title: "Old localized title", shortDescription: "Old summary", description: "Old description" },
+    localized: { title: "Reviewed localized title", shortDescription: "Reviewed summary", description: "Reviewed description" },
   }), {
-    title: "중앙 수정 상품명",
-    shortDescription: "중앙에서 사용자가 직접 수정한 상품 설명",
-    description: "중앙에서 사용자가 직접 수정한 상품 설명",
+    title: "Reviewed localized title",
+    shortDescription: "Reviewed summary",
+    description: "Reviewed description",
   });
   assert.deepEqual(listingCoreContentForOperation({
     operation: "listing.create",
@@ -107,6 +107,14 @@ test("published updates use the central edited title and description without dis
     title: "Localized title",
     shortDescription: "Localized summary",
     description: "Localized description",
+  });
+  assert.deepEqual(listingCoreContentForOperation({
+    operation: "listing.update",
+    central: { title: "한국 채널 제목", description: "한국 채널 설명" },
+  }), {
+    title: "한국 채널 제목",
+    shortDescription: "한국 채널 설명",
+    description: "한국 채널 설명",
   });
 });
 

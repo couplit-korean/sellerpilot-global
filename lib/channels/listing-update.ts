@@ -247,13 +247,6 @@ export function listingCoreContentForOperation(input: {
 }): ListingCoreContent {
   const centralTitle = input.central.title.trim();
   const centralDescription = input.central.description.trim();
-  if (input.operation === "listing.update") {
-    return {
-      title: centralTitle,
-      shortDescription: centralDescription.slice(0, 500),
-      description: centralDescription,
-    };
-  }
   const description = input.localized?.description?.trim() || centralDescription;
   return {
     title: input.localized?.title?.trim() || centralTitle,
