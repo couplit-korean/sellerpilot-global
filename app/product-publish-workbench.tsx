@@ -4,6 +4,7 @@ import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, Pa
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
+import { repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
 import {
   marketplaceChannelDetailImageCount,
   marketplaceGeneratedAssetCount,
@@ -335,7 +336,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         Drugtype: "",
         ManufactureNo: qoo10CatalogCode(assignment?.providedAttributes.ManufactureNo),
         BrandNo: qoo10CatalogCode(assignment?.providedAttributes.BrandNo),
-        ItemTitle: title.slice(0, 100),
+        ItemTitle: repairLegacyQoo10JapaneseFallbackTitle(title, manual.productName).slice(0, 100),
         PromotionName: shortDescription.slice(0, 20),
         SellerCode: qoo10SellerCode(product.sku, existingListing?.status !== "published" ? existingListing?.remoteId ?? undefined : undefined),
         IndustrialCode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "",

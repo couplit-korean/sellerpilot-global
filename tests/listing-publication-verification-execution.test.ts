@@ -9,6 +9,7 @@ import {
   parseListingPublicationAssetBinding,
   verifyListingPublicationContent,
 } from "../lib/channels/listing-publication-content";
+import { repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
 import {
   ebayProviderAccountIdentity,
   shopeeProviderAccountIdentity,
@@ -1589,6 +1590,37 @@ test("normal concise English and Malay commerce copy passes without weakening is
     "Barang Deskripsi Informasi Kualitas",
     "title",
   ), false);
+});
+
+test("Qoo10 legacy Japanese fallback repair is strict, reviewed, and seller-title safe", () => {
+  const legacyFallback = "buchakhyeong keibeul jeongri keulrip 6gae seteu - 購入前確認";
+  assert.equal(listingPublicationLanguageVerified("ja-JP", legacyFallback, "title"), false);
+
+  const reviewedTitle = repairLegacyQoo10JapaneseFallbackTitle(
+    legacyFallback,
+    "부착형 케이블 정리 클립 6개 세트",
+  );
+  assert.equal(reviewedTitle, "貼り付け式ケーブル整理クリップ6個セット");
+  assert.equal(listingPublicationLanguageVerified("ja-JP", reviewedTitle, "title"), true);
+
+  const alreadyValid = "ケーブル整理クリップ 6個セット";
+  assert.equal(repairLegacyQoo10JapaneseFallbackTitle(alreadyValid), alreadyValid);
+
+  const sellerFormatting = "  ＡＢＣ　ケーブルクリップ  ";
+  assert.equal(repairLegacyQoo10JapaneseFallbackTitle(sellerFormatting), sellerFormatting);
+
+  const sellerAuthoredHangul = "부착형 케이블 클립 - 購入前確認";
+  assert.equal(
+    repairLegacyQoo10JapaneseFallbackTitle(sellerAuthoredHangul, "부착형 케이블 정리 클립 6개 세트"),
+    sellerAuthoredHangul,
+  );
+
+  const unknownProductFallback = repairLegacyQoo10JapaneseFallbackTitle(
+    legacyFallback,
+    "부착형 케이블 미등록품목 6개 세트",
+  );
+  assert.match(unknownProductFallback, /^販売者確認済み商品情報・購入前のご案内 - /u);
+  assert.equal(listingPublicationLanguageVerified("ja-JP", unknownProductFallback, "title"), true);
 });
 
 test("read-only transport blocks mutation methods even on legitimate provider resource paths", async () => {

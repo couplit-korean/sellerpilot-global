@@ -13,6 +13,7 @@ import {
 } from "../app/ai-product-studio";
 import { prepareMarketplaceImages } from "../lib/channels/marketplace-images";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { listingPublicationLanguageVerified } from "../lib/channels/listing-publication-content";
 
 type PublishContext = Parameters<typeof buildChannelArguments>[1];
 
@@ -91,6 +92,35 @@ test("manual MVP draft keeps source photos explicit without inventing AI assets"
   assert.equal(JSON.stringify(draft).includes("detail-overview"), false);
   assert.equal(missingNativeValues("qoo10", draft).some((item) => item.includes("dedicated marketplace")), false);
   assert.equal(missingNativeValues("qoo10", draft).includes("manual source detail image"), false);
+});
+
+test("Qoo10 repairs only the exact legacy reviewed Japanese fallback title", () => {
+  const context = manualContext();
+  context.manualFields.productName = "부착형 케이블 정리 클립 6개 세트";
+  context.localizedListings = [{
+    channel: "qoo10",
+    market: "JP",
+    locale: "ja-JP",
+    title: "buchakhyeong keibeul jeongri keulrip 6gae seteu - 購入前確認",
+    shortDescription: "販売者が確認した商品案内です。",
+    description: "日本のお客様向けに、販売者が確認した商品名、販売構成、価格、在庫、配送条件をご案内します。購入前に実物の商品と包装表示を再確認してください。",
+    keywords: ["ケーブル", "整理", "クリップ"],
+  }];
+  const draft = buildChannelArguments(
+    "qoo10",
+    context,
+    10_000,
+    3,
+    undefined,
+    { weight: 0.2, length: 10, width: 8, height: 4 },
+    10,
+  ) as { params: { ItemTitle: string } };
+
+  assert.equal(
+    draft.params.ItemTitle,
+    "貼り付け式ケーブル整理クリップ6個セット",
+  );
+  assert.equal(listingPublicationLanguageVerified("ja-JP", draft.params.ItemTitle, "title"), true);
 });
 
 test("every marketplace draft preserves the explicit manual source-image contract", () => {

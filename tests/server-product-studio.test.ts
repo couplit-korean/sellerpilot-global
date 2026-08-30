@@ -44,6 +44,7 @@ import {
   studioMasterDetailImageRoleIssue,
   type StudioLocalizedTarget,
 } from "../lib/studio-segment-generation";
+import { listingPublicationLanguageVerified } from "../lib/channels/listing-publication-content";
 
 const MASTER_SECTION_TYPES = [
   "benefit", "story", "howto", "proof", "spec", "caution", "comparison", "faq", "notice",
@@ -1390,13 +1391,17 @@ test("one transient localization chunk atomically replaces all countries from re
   assert.equal(completion?.p_status, "succeeded");
   const payload = completion?.p_result_payload as {
     warnings: string[];
-    localizedListings: Array<{ channel: string; market: string; description: string }>;
+    localizedListings: Array<{ channel: string; market: string; locale: string; title: string; description: string }>;
     deterministic_fallback: { localizationReasons: string[] };
   };
   assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["gateway_rate_limited"]);
   assert.ok(payload.warnings.some((warning) => /34개 채널·국가 문안 전체/u.test(warning)));
   assert.equal(payload.localizedListings.length, 34);
   assert.ok(payload.localizedListings.every((listing) => /5000 KRW/u.test(listing.description)));
+  const qoo10Japan = payload.localizedListings.find((listing) => listing.channel === "qoo10" && listing.market === "JP");
+  assert.ok(qoo10Japan);
+  assert.equal(qoo10Japan.locale, "ja-JP");
+  assert.equal(listingPublicationLanguageVerified("ja-JP", qoo10Japan.title, "title"), true);
   assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
 });
 

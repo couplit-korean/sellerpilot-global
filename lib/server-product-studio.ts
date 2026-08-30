@@ -22,6 +22,10 @@ import {
   type AiGeneratedAssetId,
 } from "./ai-generated-assets";
 import { resolveProductSettingShot } from "./ai-image-planning";
+import {
+  buildReviewedJapaneseFallbackTitle,
+  reviewedJapaneseCommerceProductName,
+} from "./channels/qoo10-japanese-title";
 import { evaluateImageLabelFidelityReport } from "./image-label-fidelity";
 import {
   buildDuplicateRetryGuidance,
@@ -1416,7 +1420,10 @@ function buildReviewedStudioLocalizedSegment(
       ];
       return {
         ...target,
-        title: boundedReviewedText(`${name} - ${copy.review}`, copy.identity, 120),
+        title: target.locale === "ja-JP"
+          ? reviewedJapaneseCommerceProductName(fields.productName)
+            ?? buildReviewedJapaneseFallbackTitle(name)
+          : boundedReviewedText(`${name} - ${copy.review}`, copy.identity, 120),
         shortDescription: boundedReviewedText(`${copy.short} ${name}; ${brand}.`, copy.short, 500),
         description: boundedReviewedText(`${copy.description} ${copy.review}: ${factSummary}.`, copy.description, 2_000),
         keywords: [

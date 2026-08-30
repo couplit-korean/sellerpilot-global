@@ -544,6 +544,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830200000_require_static_egress_for_shopee.sql",
       "20260830203000_record_lazada_oauth_provider_call_boundary.sql",
       "20260830204000_allow_fresh_lazada_oauth_past_oauth_reconciliation.sql",
+      "20260830205000_restore_verified_listing_intent_after_effective_gate.sql",
     ]);
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {

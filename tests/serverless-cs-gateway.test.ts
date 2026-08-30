@@ -1165,6 +1165,25 @@ test("an error after the reply fence completes as reconciliation without leaking
   assert.equal(complete?.arguments_.p_error_message, "serverless_cs_execution_failed");
 });
 
+test("a pre-provider localized listing failure keeps its exact safe remediation code", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(claim("qoo10", "inquiries.list"), calls),
+    executeProvider: async () => {
+      throw new Error("LISTING_PUBLICATION_LOCALIZED_CONTENT_REQUIRED");
+    },
+  });
+
+  assert.equal(response.status, 200);
+  const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  assert.equal(complete?.arguments_.p_status, "failed");
+  assert.equal(
+    complete?.arguments_.p_error_message,
+    "LISTING_PUBLICATION_LOCALIZED_CONTENT_REQUIRED",
+  );
+});
+
 for (const safeReason of [
   "NAVER_IP_NOT_ALLOWED",
   "NAVER_AUTH_FAILED",

@@ -217,6 +217,9 @@ function safeExecutionError(error: unknown, signal: AbortSignal) {
     }
   }
   if (error instanceof Error) {
+    if (error.message === "LISTING_PUBLICATION_LOCALIZED_CONTENT_REQUIRED") {
+      return error.message;
+    }
     if (error.message === "NAVER_CREDENTIALS_MISSING") return "NAVER_AUTH_FAILED";
     if (SAFE_NAVER_EXECUTION_ERRORS.has(error.message)) {
       return error.message;
