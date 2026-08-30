@@ -31,6 +31,7 @@ import {
 } from "./image-shot-uniqueness";
 import { buildMarketplaceMasterStyleBrief } from "./marketplace-style-learning";
 import {
+  productEditSchema,
   productIntakeSchema,
   sourcePreservingProductImageSpecSchema,
   type ProductIntakeFields,
@@ -270,6 +271,12 @@ const reviewedStudioFallbackMarkerSchema = z.object({
   source_research_job_id: z.string().uuid(),
 }).strict();
 
+const reviewedProductRevisionFallbackMarkerSchema = z.object({
+  revision_mode: z.literal("replace_product_assets"),
+  revision_product_id: z.string().uuid(),
+  auto_publish: z.literal(false),
+}).passthrough();
+
 const reviewedStudioTransientFallbackReasons = new Set([
   "gateway_rate_limited",
   "gateway_billing_required",
@@ -284,7 +291,20 @@ export function serverStudioAllowsReviewedTransientFallback(error: unknown) {
 }
 
 function reviewedStudioFallbackFields(parsedRequest: ParsedStudioRequest) {
-  if (parsedRequest.mode !== "preflight") return null;
+  if (parsedRequest.mode === "legacy") {
+    // These markers are appended by the authenticated product-revision RPC,
+    // after the route validates the preserved source pair and seller facts.
+    // Ordinary legacy jobs do not receive the deterministic Gateway fallback.
+    const marker = reviewedProductRevisionFallbackMarkerSchema.safeParse(parsedRequest.data);
+    const manual = productEditSchema.safeParse(parsedRequest.data.manual_fields);
+    if (!marker.success || !manual.success
+        || manual.data.researchInput.trim() !== parsedRequest.data.research_input.trim()
+        || manual.data.description.trim() !== parsedRequest.data.description.trim()
+        || manual.data.productUrl.trim() !== parsedRequest.data.product_url.trim()) {
+      return null;
+    }
+    return manual.data;
+  }
   const marker = reviewedStudioFallbackMarkerSchema.safeParse(
     parsedRequest.data.human_review_confirmation,
   );

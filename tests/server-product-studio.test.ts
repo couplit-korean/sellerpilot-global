@@ -362,7 +362,7 @@ async function firstDraftPreflightFixture(
 }
 
 async function runReviewedTransientPipelineFixture(options: {
-  requestMode?: "reviewed" | "marker-mismatch" | "legacy";
+  requestMode?: "reviewed" | "marker-mismatch" | "revision-reviewed" | "revision-marker-mismatch" | "legacy";
   providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "localization-scoped-timeout" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient" | "image-rate-limit-circuit" | "queued-image-timeout-budget";
   transientReason?: string;
   corruptPreflightAssetId?: (typeof coreFirstDraftAssetIds)[number];
@@ -446,6 +446,13 @@ async function runReviewedTransientPipelineFixture(options: {
   const requestMode = options.requestMode ?? "reviewed";
   const request = requestMode === "legacy"
     ? baseRequest
+    : requestMode === "revision-reviewed" || requestMode === "revision-marker-mismatch"
+      ? {
+        ...baseRequest,
+        revision_mode: "replace_product_assets",
+        revision_product_id: "47474747-4747-4747-8747-474747474747",
+        auto_publish: requestMode === "revision-reviewed" ? false : true,
+      }
     : {
       ...baseRequest,
       ...preflight.request,
@@ -1080,6 +1087,34 @@ test("reviewed transient gateway failure completes an exact 16-asset determinist
   });
 });
 
+test("authenticated product revision uses the exact 16-asset deterministic fallback without publishing", async () => {
+  const run = await runReviewedTransientPipelineFixture({ requestMode: "revision-reviewed" });
+  assert.equal(run.response.status, 200);
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "succeeded");
+  const payload = run.completionCalls[0].p_result_payload as {
+    asset_storage_paths: Record<string, string>;
+    asset_storage_sha256s: Record<string, string>;
+    deterministic_fallback: {
+      reviewedInputOnly: boolean;
+      masterReason: string | null;
+      localizationReasons: string[];
+      imageReason: string | null;
+    };
+  };
+  assert.equal(Object.keys(payload.asset_storage_paths).length, 16);
+  assert.equal(Object.keys(payload.asset_storage_sha256s).length, 16);
+  assert.deepEqual(payload.deterministic_fallback, {
+    reviewedInputOnly: true,
+    masterReason: "gateway_rate_limited",
+    localizationReasons: ["master_transient_fallback"],
+    imageReason: "gateway_rate_limited",
+  });
+  assert.equal(run.backgroundCalls, 0);
+  assert.equal(run.auditCalls, 0);
+});
+
 test("successful reviewed fallback logs one bounded Gateway diagnostic without another provider attempt", async () => {
   const diagnostic: AiGatewayFailureDiagnostic = {
     reason: "gateway_rate_limited",
@@ -1471,8 +1506,8 @@ test("reviewed general-food efficacy or intake claims remain fail-closed instead
   );
 });
 
-test("transient gateway failures remain terminal for marker-mismatched and legacy jobs", async () => {
-  for (const requestMode of ["marker-mismatch", "legacy"] as const) {
+test("transient gateway failures remain terminal for marker-mismatched and ordinary legacy jobs", async () => {
+  for (const requestMode of ["marker-mismatch", "revision-marker-mismatch", "legacy"] as const) {
     const run = await runReviewedTransientPipelineFixture({ requestMode });
     assert.equal(run.response.status, 200);
     assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
