@@ -115,6 +115,8 @@ test("marketplace image fetch pins DNS and streams through a byte cap", async ()
   assert.match(source, /collectBoundedMarketplaceImage\(response\)/);
   const downloadBody = source.match(/export async function downloadMarketplaceImage[\s\S]*?\n}\n\nasync function downloadImage/)?.[0] ?? "";
   assert.doesNotMatch(downloadBody, /arrayBuffer\(/);
+  assert.match(source, /channel === "qoo10" \? 1 : 12/);
+  assert.match(source, /runWithConcurrency\([\s\S]*marketplaceUploadConcurrency/);
 });
 
 test("maintenance uses a durable storage cleanup claim before reporting success", async () => {

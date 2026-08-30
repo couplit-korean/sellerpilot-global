@@ -168,6 +168,49 @@ test("marketplace DNS resolution stops at the caller deadline", async () => {
   await assert.rejects(pending, /deadline/);
 });
 
+test("marketplace image download retries the next vetted public address after a transport timeout", async () => {
+  const requestedAddresses: string[] = [];
+  const result = await downloadMarketplaceImage(
+    "https://images.example.com/product.png",
+    undefined,
+    async () => [
+      { address: "203.0.113.10", family: 4 },
+      { address: "198.51.100.20", family: 4 },
+    ],
+    async (target, _signal, timeoutMs) => {
+      requestedAddresses.push(target.address);
+      assert.equal(timeoutMs, 10_000);
+      if (target.address === "203.0.113.10") {
+        throw new DOMException("edge timed out", "TimeoutError");
+      }
+      return { bytes: Buffer.from("verified-image"), contentType: "image/png" };
+    },
+  );
+  assert.deepEqual(requestedAddresses, ["203.0.113.10", "198.51.100.20"]);
+  assert.equal(result.bytes.toString("utf8"), "verified-image");
+  assert.equal(result.contentType, "image/png");
+});
+
+test("marketplace image download does not retry an oversized response on another address", async () => {
+  const requestedAddresses: string[] = [];
+  await assert.rejects(
+    downloadMarketplaceImage(
+      "https://images.example.com/product.png",
+      undefined,
+      async () => [
+        { address: "203.0.113.10", family: 4 },
+        { address: "198.51.100.20", family: 4 },
+      ],
+      async (target) => {
+        requestedAddresses.push(target.address);
+        throw new Error("MARKETPLACE_IMAGE_SIZE_INVALID");
+      },
+    ),
+    /MARKETPLACE_IMAGE_SIZE_INVALID/,
+  );
+  assert.deepEqual(requestedAddresses, ["203.0.113.10"]);
+});
+
 test("normalized marketplace assets are reserved before upload and marked only after readback", async () => {
   const events: string[] = [];
   const bytes = [Buffer.from("image-0"), Buffer.from("image-1")];

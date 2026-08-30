@@ -7,7 +7,12 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260825104800_expose_listing_attempt_generation.sql",
   import.meta.url,
 );
+const preGatewayRetryMigrationUrl = new URL(
+  "../supabase/migrations/20260830212500_retry_failed_pre_gateway_listing_attempts.sql",
+  import.meta.url,
+);
 const workbenchUrl = new URL("../app/product-publish-workbench.tsx", import.meta.url);
+const channelOperationsRouteUrl = new URL("../app/api/admin/channel-operations/route.ts", import.meta.url);
 
 const USER_ID = "10000000-0000-4000-8000-000000000001";
 const PRODUCT_ID = "20000000-0000-4000-8000-000000000001";
@@ -17,6 +22,8 @@ const PREWRITE_ATTEMPT_ID = "40000000-0000-4000-8000-000000000002";
 const PROVIDER_ATTEMPT_ID = "40000000-0000-4000-8000-000000000003";
 const JOB_BACKED_ATTEMPT_ID = "40000000-0000-4000-8000-000000000004";
 const LEGACY_RUNNING_ATTEMPT_ID = "40000000-0000-4000-8000-000000000005";
+const IMAGE_TIMEOUT_ATTEMPT_ID = "40000000-0000-4000-8000-000000000006";
+const REMOTE_ID_ATTEMPT_ID = "40000000-0000-4000-8000-000000000007";
 const CREDENTIAL_ID = "50000000-0000-4000-8000-000000000001";
 const REQUEST_FINGERPRINT = "a".repeat(64);
 
@@ -31,6 +38,7 @@ test("publish context exposes the exact listing attempt used as retry generation
     await db.exec(`
       create role anon noinherit;
       create role authenticated noinherit;
+      create role service_role noinherit;
       create schema auth;
       create schema sellerpilot_private;
 
@@ -95,6 +103,24 @@ test("publish context exposes the exact listing attempt used as retry generation
       values ('${CREDENTIAL_ID}', 'shopee', 'active');
     `);
     await db.exec(await readFile(migrationUrl, "utf8"));
+    await db.exec(`
+      alter function public.sellerpilot_claim_channel_operation(
+        uuid, text, text, text, text
+      ) rename to sellerpilot_301000_claim_channel_operation_pre_remote_state;
+      create function public.sellerpilot_claim_channel_operation(
+        p_credential_id uuid,
+        p_channel text,
+        p_operation text,
+        p_idempotency_key text,
+        p_request_fingerprint text
+      ) returns jsonb language sql security definer set search_path = '' as $fn$
+        select public.sellerpilot_301000_claim_channel_operation_pre_remote_state(
+          p_credential_id, p_channel, p_operation, p_idempotency_key,
+          p_request_fingerprint
+        ) || jsonb_build_object('publication_wrapper_preserved', true)
+      $fn$;
+    `);
+    await db.exec(await readFile(preGatewayRetryMigrationUrl, "utf8"));
     const context = await scalar(
       db,
       "select public.sellerpilot_get_product_publish_context($1)",
@@ -110,6 +136,7 @@ test("publish context exposes the exact listing attempt used as retry generation
     )`, [CREDENTIAL_ID, lostResponseKey, REQUEST_FINGERPRINT]);
     assert.equal(firstClaim.status, "running");
     assert.equal(firstClaim.duplicate, false);
+    assert.equal(firstClaim.publication_wrapper_preserved, true);
     assert.equal(await scalar(
       db,
       "select gateway_write_required from sellerpilot_private.channel_operation_attempts where id=$1",
@@ -192,12 +219,70 @@ test("publish context exposes the exact listing attempt used as retry generation
     assert.equal(providerFailure.status, "failed");
     assert.equal(providerFailure.duplicate, true);
 
+    const imageTimeoutKey = "listing-current-image-timeout";
+    await db.query(`insert into sellerpilot_private.channel_operation_attempts (
+      id, owner_id, credential_id, channel, operation, idempotency_key,
+      request_fingerprint, status, gateway_write_required
+    ) values ($1,$2,$3,'shopee','listing.create',$4,$5,'running',true)`, [
+      IMAGE_TIMEOUT_ATTEMPT_ID,
+      USER_ID,
+      CREDENTIAL_ID,
+      imageTimeoutKey,
+      REQUEST_FINGERPRINT,
+    ]);
+    assert.equal(await scalar(db, `select public.sellerpilot_service_fail_pre_gateway_channel_operation(
+      $1,422,'판매채널 응답 제한시간(15초)을 초과했습니다.'
+    )`, [IMAGE_TIMEOUT_ATTEMPT_ID]), true);
+    const imageTimeoutRetry = await scalar(db, `select public.sellerpilot_claim_channel_operation(
+      $1,'shopee','listing.create',$2,$3
+    )`, [CREDENTIAL_ID, imageTimeoutKey, REQUEST_FINGERPRINT]);
+    assert.equal(imageTimeoutRetry.attempt_id, IMAGE_TIMEOUT_ATTEMPT_ID);
+    assert.equal(imageTimeoutRetry.status, "running");
+    assert.equal(imageTimeoutRetry.duplicate, false);
+    assert.deepEqual(
+      (await db.query("select status,http_status,safe_message,completed_at,gateway_write_required,pre_gateway_retryable from sellerpilot_private.channel_operation_attempts where id=$1", [IMAGE_TIMEOUT_ATTEMPT_ID])).rows[0],
+      {
+        status: "running",
+        http_status: null,
+        safe_message: null,
+        completed_at: null,
+        gateway_write_required: true,
+        pre_gateway_retryable: false,
+      },
+    );
+    await assert.rejects(
+      () => scalar(db, `select public.sellerpilot_claim_channel_operation(
+        $1,'shopee','listing.create',$2,$3
+      )`, [CREDENTIAL_ID, imageTimeoutKey, "b".repeat(64)]),
+      /idempotency key payload mismatch/,
+    );
+
+    const remoteIdKey = "listing-current-remote-id-failure";
+    await db.query(`insert into sellerpilot_private.channel_operation_attempts (
+      id, owner_id, credential_id, channel, operation, idempotency_key,
+      request_fingerprint, status, http_status, remote_id, safe_message,
+      completed_at, gateway_write_required
+    ) values ($1,$2,$3,'shopee','listing.create',$4,$5,'failed',422,
+      'provider-remote-id','provider outcome failed',now(),true)`, [
+      REMOTE_ID_ATTEMPT_ID,
+      USER_ID,
+      CREDENTIAL_ID,
+      remoteIdKey,
+      REQUEST_FINGERPRINT,
+    ]);
+    const remoteIdFailure = await scalar(db, `select public.sellerpilot_claim_channel_operation(
+      $1,'shopee','listing.create',$2,$3
+    )`, [CREDENTIAL_ID, remoteIdKey, REQUEST_FINGERPRINT]);
+    assert.equal(remoteIdFailure.status, "failed");
+    assert.equal(remoteIdFailure.duplicate, true);
+
     const jobBackedKey = "listing-job-backed-failure";
     await db.query(`insert into sellerpilot_private.channel_operation_attempts (
       id, owner_id, credential_id, channel, operation, idempotency_key,
-      request_fingerprint, status, http_status, safe_message, completed_at
+      request_fingerprint, status, http_status, safe_message, completed_at,
+      gateway_write_required
     ) values ($1,$2,$3,'shopee','listing.create',$4,$5,'failed',409,
-      '상품·카테고리·채널 연결 사전조건을 충족하지 못했습니다.',now())`, [
+      '판매채널 응답 제한시간(15초)을 초과했습니다.',now(),true)`, [
       JOB_BACKED_ATTEMPT_ID,
       USER_ID,
       CREDENTIAL_ID,
@@ -210,6 +295,12 @@ test("publish context exposes the exact listing attempt used as retry generation
     )`, [CREDENTIAL_ID, jobBackedKey, REQUEST_FINGERPRINT]);
     assert.equal(jobBacked.status, "failed");
     assert.equal(jobBacked.duplicate, true);
+    await db.query("delete from sellerpilot_private.channel_gateway_jobs where attempt_id=$1", [JOB_BACKED_ATTEMPT_ID]);
+    const prunedJobBacked = await scalar(db, `select public.sellerpilot_claim_channel_operation(
+      $1,'shopee','listing.create',$2,$3
+    )`, [CREDENTIAL_ID, jobBackedKey, REQUEST_FINGERPRINT]);
+    assert.equal(prunedJobBacked.status, "failed");
+    assert.equal(prunedJobBacked.duplicate, true);
   } finally {
     await db.close();
   }
@@ -217,6 +308,8 @@ test("publish context exposes the exact listing attempt used as retry generation
 
 test("workbench advances retry generations but keeps queued and external-action listings fenced", async () => {
   const workbench = await readFile(workbenchUrl, "utf8");
+  const channelOperationsRoute = await readFile(channelOperationsRouteUrl, "utf8");
+  const preGatewayRetryMigration = await readFile(preGatewayRetryMigrationUrl, "utf8");
 
   assert.match(workbench, /\["queued", "publishing"\]\.includes\(listing\.status\)/);
   assert.match(workbench, /listing\?\.failureClass === "external_action"/);
@@ -226,4 +319,8 @@ test("workbench advances retry generations but keeps queued and external-action 
   assert.match(workbench, /mutationId: await remoteEditMutationId\(mutationContract\)/);
   assert.match(workbench, /if \(!options\.deferRefresh && isCurrentProduct\(\)\) \{[\s\S]*await load\(\);[\s\S]*onChanged\?\.\(\);/);
   assert.match(workbench, /createBoundedRequestSignal\([\s\S]*writeController\.signal[\s\S]*65_000/);
+  assert.match(channelOperationsRoute, /sellerpilot_service_fail_pre_gateway_channel_operation/);
+  assert.match(channelOperationsRoute, /if \(!preGatewayRetryable\) \{[\s\S]*sellerpilot_service_complete_channel_operation/);
+  assert.match(preGatewayRetryMigration, /create or replace function public\.sellerpilot_301000_claim_channel_operation_pre_remote_state/);
+  assert.doesNotMatch(preGatewayRetryMigration, /create or replace function public\.sellerpilot_claim_channel_operation\(/);
 });

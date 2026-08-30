@@ -18,6 +18,8 @@ const maxOutputBytes = 3 * 1024 * 1024;
 const outputSize = 1200;
 const detailMaxDimension = 1600;
 const marketplaceUploadConcurrency = 4;
+const marketplaceImageDownloadTimeoutMs = 20_000;
+const marketplaceImageMaximumAddresses = 4;
 
 export type MarketplaceImageNormalizationMode = "gallery-square" | "detail-ratio";
 
@@ -196,7 +198,11 @@ export async function resolveMarketplaceImageAddresses(
   });
 }
 
-async function assertPublicImageUrl(sourceUrl: string, ownerSignal?: AbortSignal) {
+async function assertPublicImageUrl(
+  sourceUrl: string,
+  ownerSignal?: AbortSignal,
+  resolver: MarketplaceDnsResolver = lookup,
+) {
   let url: URL;
   try {
     url = new URL(sourceUrl);
@@ -207,11 +213,14 @@ async function assertPublicImageUrl(sourceUrl: string, ownerSignal?: AbortSignal
     throw new Error("MARKETPLACE_IMAGE_URL_INVALID");
   }
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
-  const records = await resolveMarketplaceImageAddresses(hostname, ownerSignal);
+  const records = await resolveMarketplaceImageAddresses(hostname, ownerSignal, resolver);
   if (!records.length || records.some((record) => isPrivateMarketplaceAddress(record.address))) {
     throw new Error("MARKETPLACE_IMAGE_URL_PRIVATE");
   }
-  return { url, hostname, address: records[0].address, family: records[0].family };
+  const addresses = [...new Map(
+    records.map((record) => [`${record.family}:${record.address}`, record]),
+  ).values()].slice(0, marketplaceImageMaximumAddresses);
+  return { url, hostname, addresses };
 }
 
 async function ensureMarketplaceImageBucket(serviceClient: SupabaseClient) {
@@ -249,11 +258,26 @@ export async function collectBoundedMarketplaceImage(
   return Buffer.concat(chunks, total);
 }
 
-export async function downloadMarketplaceImage(sourceUrl: string, ownerSignal?: AbortSignal) {
+type MarketplaceImageDownloadTarget = {
+  url: URL;
+  hostname: string;
+  address: string;
+  family: number;
+};
+
+type MarketplaceImageAddressRequester = (
+  target: MarketplaceImageDownloadTarget,
+  ownerSignal: AbortSignal | undefined,
+  timeoutMs: number,
+) => Promise<{ bytes: Buffer; contentType: string }>;
+
+async function downloadMarketplaceImageFromAddress(
+  target: MarketplaceImageDownloadTarget,
+  ownerSignal: AbortSignal | undefined,
+  timeoutMs: number,
+) {
   ownerSignal?.throwIfAborted();
-  const target = await assertPublicImageUrl(sourceUrl, ownerSignal);
-  ownerSignal?.throwIfAborted();
-  const timeoutSignal = AbortSignal.timeout(20_000);
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const requestSignal = ownerSignal
     ? AbortSignal.any([ownerSignal, timeoutSignal])
     : timeoutSignal;
@@ -305,6 +329,40 @@ export async function downloadMarketplaceImage(sourceUrl: string, ownerSignal?: 
     request.once("error", (error) => finish(error instanceof Error ? error : new Error("MARKETPLACE_IMAGE_DOWNLOAD_FAILED")));
     request.end();
   });
+}
+
+export async function downloadMarketplaceImage(
+  sourceUrl: string,
+  ownerSignal?: AbortSignal,
+  resolver: MarketplaceDnsResolver = lookup,
+  requester: MarketplaceImageAddressRequester = downloadMarketplaceImageFromAddress,
+) {
+  ownerSignal?.throwIfAborted();
+  const target = await assertPublicImageUrl(sourceUrl, ownerSignal, resolver);
+  ownerSignal?.throwIfAborted();
+  const timeoutPerAddress = Math.max(
+    5_000,
+    Math.floor(marketplaceImageDownloadTimeoutMs / target.addresses.length),
+  );
+  let lastError: Error | null = null;
+  for (const record of target.addresses) {
+    try {
+      return await requester({
+        url: target.url,
+        hostname: target.hostname,
+        address: record.address,
+        family: record.family,
+      }, ownerSignal, timeoutPerAddress);
+    } catch (error) {
+      ownerSignal?.throwIfAborted();
+      const normalized = error instanceof Error
+        ? error
+        : new Error("MARKETPLACE_IMAGE_DOWNLOAD_FAILED");
+      if (normalized.message === "MARKETPLACE_IMAGE_SIZE_INVALID") throw normalized;
+      lastError = normalized;
+    }
+  }
+  throw lastError ?? new Error("MARKETPLACE_IMAGE_DOWNLOAD_FAILED");
 }
 
 async function downloadImage(sourceUrl: string) {
@@ -693,12 +751,20 @@ export async function prepareMarketplaceImages(
     )) {
       throw new Error("MARKETPLACE_APPROVED_SOURCE_LINEAGE_INVALID");
     }
-    return Promise.all(unique.map((sourceUrl, index) => normalize(
-      sourceUrl,
-      mode,
-      lineageRequired ? sourceObjectPaths[index] : undefined,
-      lineageRequired ? expectedSourceSha256s[index] : undefined,
-    )));
+    const normalized = new Array<string>(unique.length);
+    await runWithConcurrency(
+      unique.map((sourceUrl, index) => ({ sourceUrl, index })),
+      marketplaceUploadConcurrency,
+      async ({ sourceUrl, index }) => {
+        normalized[index] = await normalize(
+          sourceUrl,
+          mode,
+          lineageRequired ? sourceObjectPaths[index] : undefined,
+          lineageRequired ? expectedSourceSha256s[index] : undefined,
+        );
+      },
+    );
+    return normalized;
   };
   const finish = async () => {
     if (preparedAssets.length) {
@@ -733,7 +799,9 @@ export async function prepareMarketplaceImages(
   }
   const approvedDetailImagePaths = strings(assets?.approvedDetailImagePaths);
   const approvedDetailImageSha256s = strings(assets?.approvedDetailImageSha256s);
-  const gallery = assets ? await normalizeList(assets.galleryImageUrls, 12, "gallery-square") : [];
+  const gallery = assets
+    ? await normalizeList(assets.galleryImageUrls, channel === "qoo10" ? 1 : 12, "gallery-square")
+    : [];
   const details = assets
     ? await normalizeList(
         assets.detailImageUrls,

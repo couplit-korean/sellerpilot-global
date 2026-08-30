@@ -1137,15 +1137,26 @@ export async function POST(request: NextRequest) {
         });
       }
       const message = errorMessage(error);
-      await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
-        p_attempt_id: attemptId,
-        p_status: "failed",
-        p_http_status: 422,
-        p_remote_id: null,
-        p_safe_message: message,
-      });
+      const { data: preGatewayFailed, error: preGatewayFailureError } = await serviceClient.rpc(
+        "sellerpilot_service_fail_pre_gateway_channel_operation",
+        {
+          p_attempt_id: attemptId,
+          p_http_status: 422,
+          p_safe_message: message,
+        },
+      );
+      const preGatewayRetryable = !preGatewayFailureError && preGatewayFailed === true;
+      if (!preGatewayRetryable) {
+        await serviceClient.rpc("sellerpilot_service_complete_channel_operation", {
+          p_attempt_id: attemptId,
+          p_status: "failed",
+          p_http_status: 422,
+          p_remote_id: null,
+          p_safe_message: message,
+        });
+      }
       await completeListing({ success: false, safeMessage: message });
-      return NextResponse.json({ message, attemptId }, { status: 422 });
+      return NextResponse.json({ message, attemptId, preGatewayRetryable }, { status: 422 });
     }
   }
 
