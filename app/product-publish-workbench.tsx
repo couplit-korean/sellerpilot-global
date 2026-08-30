@@ -119,6 +119,7 @@ const ebayMarketplaceTargets: ChannelTarget[] = [
 type LocalizedListing = LocalizedCreativeListing & { channel: ActiveChannelKey; market: string; locale: string; detailSections?: LocalizedDetailSection[] };
 type PackageFields = { weight: number; length: number; width: number; height: number };
 const publishContextRequestTimeoutMs = 30_000;
+const publicationSelectableChannelKeys = activeChannelKeys.filter((channel) => channel !== "temu");
 type ManualFields = {
   productName: string;
   description: string;
@@ -1013,7 +1014,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       .filter((item) => item.status === "active" && item.environment === "production")
       .map((item) => [item.channel, item]),
   ), [credentials]);
-  const visibleChannels = useMemo(() => activeChannelKeys.filter((channel) => selectedChannels.includes(channel)), [selectedChannels]);
+  const visibleChannels = useMemo(
+    () => publicationSelectableChannelKeys.filter((channel) => selectedChannels.includes(channel)),
+    [selectedChannels],
+  );
 
   const updateProductFact = (key: "brandName" | "manufacturer" | "countryOfOrigin" | "material" | "packageContents", value: string) => {
     if (!context) return;
@@ -1032,6 +1036,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   };
 
   const executeChannel = async (channel: ActiveChannelKey, options: { skipConfirm?: boolean; accessToken?: string; deferRefresh?: boolean } = {}) => {
+    if (channel === "temu") {
+      notify("Temu 상품 게시 상태를 독립적으로 재조회할 수 있을 때까지 자동 등록을 차단합니다.");
+      return false;
+    }
     if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) {
       notify("선택한 상품의 등록 준비 정보를 다시 확인해 주세요.");
       return false;
@@ -1303,7 +1311,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         && !(listing?.requestedPublicationIntent === "live" && listing.remoteVisibility === "pending_review")
         && !["queued", "running", "pending_review", "blocked"].includes(results[channel]?.phase ?? "idle")
         && (listing?.failureClass !== "external_action" || recoverableEbayUpdate));
-    }).slice(0, 8);
+    }).slice(0, publicationSelectableChannelKeys.length);
     if (!readyChannels.length) return notify("활성 키·확정 카테고리·검증된 원격 ID가 모두 준비된 등록·수정 대상 채널이 없습니다.");
     if (!confirmed) {
       openConfirmation({ kind: "bulk" });
