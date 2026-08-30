@@ -118,6 +118,80 @@ const ebayMarketplaceTargets: ChannelTarget[] = [
 ];
 type LocalizedListing = LocalizedCreativeListing & { channel: ActiveChannelKey; market: string; locale: string; detailSections?: LocalizedDetailSection[] };
 type PackageFields = { weight: number; length: number; width: number; height: number };
+type LegacyQoo10TitleReferenceRepair = {
+  legacyName: string;
+  legacyTitle: string;
+  marketplaceTitle: string;
+};
+const legacyQoo10JapaneseFallbackSuffix = " - 購入前確認";
+
+function legacyQoo10TitleReferenceRepair(
+  channel: ActiveChannelKey,
+  legacyTitle: string,
+  repairedTitle: string,
+  marketplaceTitle: string,
+): LegacyQoo10TitleReferenceRepair | null {
+  if (channel !== "qoo10"
+      || repairedTitle === legacyTitle
+      || !legacyTitle.endsWith(legacyQoo10JapaneseFallbackSuffix)) {
+    return null;
+  }
+  const legacyName = legacyTitle.slice(0, -legacyQoo10JapaneseFallbackSuffix.length).trim();
+  return legacyName ? { legacyName, legacyTitle, marketplaceTitle } : null;
+}
+
+function replaceLegacyQoo10TitleReferences(
+  value: string,
+  repair: LegacyQoo10TitleReferenceRepair | null,
+) {
+  if (!repair || !value) return value;
+  return value
+    .split(repair.legacyTitle).join(repair.marketplaceTitle)
+    .split(repair.legacyName).join(repair.marketplaceTitle);
+}
+
+function replaceLegacyQoo10ClassificationReferences(
+  classification: LocalizedProductClassification | undefined,
+  repair: LegacyQoo10TitleReferenceRepair | null,
+) {
+  return classification && repair
+    ? {
+        ...classification,
+        displayName: replaceLegacyQoo10TitleReferences(classification.displayName, repair),
+        evidence: replaceLegacyQoo10TitleReferences(classification.evidence, repair),
+      }
+    : classification;
+}
+
+function replaceLegacyQoo10ListingReferences(
+  listing: LocalizedListing | undefined,
+  repair: LegacyQoo10TitleReferenceRepair | null,
+) {
+  if (!listing || !repair) return listing;
+  return {
+    ...listing,
+    title: replaceLegacyQoo10TitleReferences(listing.title, repair),
+    shortDescription: replaceLegacyQoo10TitleReferences(listing.shortDescription, repair),
+    description: replaceLegacyQoo10TitleReferences(listing.description, repair),
+    keywords: listing.keywords.map((keyword) => replaceLegacyQoo10TitleReferences(keyword, repair)),
+    ...(listing.thumbnailAltText
+      ? { thumbnailAltText: replaceLegacyQoo10TitleReferences(listing.thumbnailAltText, repair) }
+      : {}),
+    classification: replaceLegacyQoo10ClassificationReferences(listing.classification, repair),
+    detailSections: listing.detailSections?.map((section) => ({
+      ...section,
+      ...(section.buyerQuestion
+        ? { buyerQuestion: replaceLegacyQoo10TitleReferences(section.buyerQuestion, repair) }
+        : {}),
+      ...(section.evidence
+        ? { evidence: replaceLegacyQoo10TitleReferences(section.evidence, repair) }
+        : {}),
+      heading: replaceLegacyQoo10TitleReferences(section.heading, repair),
+      body: replaceLegacyQoo10TitleReferences(section.body, repair),
+      imageAltText: replaceLegacyQoo10TitleReferences(section.imageAltText, repair),
+    })),
+  };
+}
 const publishContextRequestTimeoutMs = 30_000;
 const publicationSelectableChannelKeys = activeChannelKeys.filter((channel) => channel !== "temu");
 type ManualFields = {
@@ -279,10 +353,30 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
     localized,
   });
-  const writeListing: LocalizedListing | undefined = operation === "listing.update"
-    ? { ...(localized ?? { channel, market: listingMarket, locale: target?.locale ?? "", keywords: [], title: "", shortDescription: "", description: "" }), ...coreContent }
-    : localized;
-  const classification = writeListing?.classification ?? context.classification ?? product.classification;
+  const manual = context.manualFields;
+  const { title, description, shortDescription } = coreContent;
+  const repairedQoo10Title = channel === "qoo10"
+    ? repairLegacyQoo10JapaneseFallbackTitle(title, manual.productName)
+    : title;
+  const marketplaceTitle = channel === "qoo10" ? repairedQoo10Title.slice(0, 100) : title;
+  const legacyQoo10Repair = legacyQoo10TitleReferenceRepair(
+    channel,
+    title,
+    repairedQoo10Title,
+    marketplaceTitle,
+  );
+  const baseWriteListing: LocalizedListing | undefined = operation === "listing.update"
+    ? { ...(localized ?? { channel, market: listingMarket, locale: target?.locale ?? "", keywords: [], title: "", shortDescription: "", description: "" }), ...coreContent, title: marketplaceTitle }
+    : localized && marketplaceTitle !== localized.title
+      ? { ...localized, title: marketplaceTitle }
+      : localized;
+  const writeListing = replaceLegacyQoo10ListingReferences(baseWriteListing, legacyQoo10Repair);
+  const marketplaceDescription = replaceLegacyQoo10TitleReferences(description, legacyQoo10Repair);
+  const marketplaceShortDescription = replaceLegacyQoo10TitleReferences(shortDescription, legacyQoo10Repair);
+  const classification = replaceLegacyQoo10ClassificationReferences(
+    writeListing?.classification ?? context.classification ?? product.classification,
+    legacyQoo10Repair,
+  );
   const localizedDetailSections = normalizedLocalizedDetailSections(writeListing);
   const manualMvp = context.contentMode === "manual_mvp";
   const generatedImage = (id: string) => context.generatedImages.find((item) => item.id === id)?.url;
@@ -292,7 +386,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     ...context.sourceImages.map((item) => item.url),
     ...galleryAssetIds.slice(1).map(generatedImage),
   ]);
-  const imageSeo = localizedImageSeo(writeListing, channel, coreContent.title);
+  const imageSeo = localizedImageSeo(writeListing, channel, marketplaceTitle);
   const dedicatedDetailImageRoles = detailAssetOrderForChannel(channel, writeListing);
   const dedicatedDetailImageUrls = dedicatedDetailImageRoles.map(generatedImage);
   const classificationReady = Boolean(classification?.displayName?.trim()
@@ -320,12 +414,22 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     detailAssetMode: manualMvp ? "manual_source" : dedicatedDetailReady ? "dedicated" : "legacy_fallback",
     integrationRevision: "marketplace-write-v4-evidence-detail",
   };
-  const manual = context.manualFields;
-  const { title, description, shortDescription } = coreContent;
-  const richDescription = buildLocalizedRichDetail(writeListing, title, description, { classification });
-  const plainDescription = buildLocalizedPlainDetail(writeListing, title, description, { classification });
-  const shopeePlainDescription = buildLocalizedBudgetedPlainDetail(writeListing, title, description, 3_000, { classification });
-  const temuPlainDescription = buildLocalizedBudgetedPlainDetail(writeListing, title, description, 10_000, { classification });
+  const richDescription = replaceLegacyQoo10TitleReferences(
+    buildLocalizedRichDetail(writeListing, marketplaceTitle, marketplaceDescription, { classification }),
+    legacyQoo10Repair,
+  );
+  const plainDescription = replaceLegacyQoo10TitleReferences(
+    buildLocalizedPlainDetail(writeListing, marketplaceTitle, marketplaceDescription, { classification }),
+    legacyQoo10Repair,
+  );
+  const shopeePlainDescription = replaceLegacyQoo10TitleReferences(
+    buildLocalizedBudgetedPlainDetail(writeListing, marketplaceTitle, marketplaceDescription, 3_000, { classification }),
+    legacyQoo10Repair,
+  );
+  const temuPlainDescription = replaceLegacyQoo10TitleReferences(
+    buildLocalizedBudgetedPlainDetail(writeListing, marketplaceTitle, marketplaceDescription, 10_000, { classification }),
+    legacyQoo10Repair,
+  );
   const temuBulletPoints = buildLocalizedSectionBulletPoints(writeListing, 700);
   const seoKeywords = localizedSeoKeywords(writeListing);
   const marketSku = target ? `${manual.sellerSku || product.sku}-${target.marketCode}`.slice(0, 100) : manual.sellerSku || product.sku;
@@ -339,8 +443,8 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         Drugtype: "",
         ManufactureNo: qoo10CatalogCode(assignment?.providedAttributes.ManufactureNo),
         BrandNo: qoo10CatalogCode(assignment?.providedAttributes.BrandNo),
-        ItemTitle: repairLegacyQoo10JapaneseFallbackTitle(title, manual.productName).slice(0, 100),
-        PromotionName: shortDescription.slice(0, 20),
+        ItemTitle: marketplaceTitle,
+        PromotionName: marketplaceShortDescription.slice(0, 20),
         SellerCode: qoo10SellerCode(product.sku, existingListing?.status !== "published" ? existingListing?.remoteId ?? undefined : undefined),
         IndustrialCode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "",
         IndustrialCodeType: manual.gtinStatus === "HAS_GTIN" ? "J" : "",

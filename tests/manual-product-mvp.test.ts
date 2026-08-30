@@ -94,33 +94,211 @@ test("manual MVP draft keeps source photos explicit without inventing AI assets"
   assert.equal(missingNativeValues("qoo10", draft).includes("manual source detail image"), false);
 });
 
-test("Qoo10 repairs only the exact legacy reviewed Japanese fallback title", () => {
+const legacyQoo10RomanizedName = "buchakhyeong keibeul jeongri keulrip 6gae seteu";
+const legacyQoo10ReviewedTitle = `${legacyQoo10RomanizedName} - 購入前確認`;
+const repairedQoo10MarketplaceTitle = "貼り付け式ケーブル整理クリップ6個セット";
+type ProductionDetailSection = NonNullable<PublishContext["localizedListings"][number]["detailSections"]>[number];
+const productionDetailSectionPairs: Array<readonly [ProductionDetailSection["type"], ProductionDetailSection["imageAsset"]]> = [
+  ["overview", "detail-overview"],
+  ["feature", "detail-feature"],
+  ["howto", "detail-use"],
+  ["spec", "detail-dimensions"],
+  ["routine", "detail-routine"],
+  ["contents", "detail-contents"],
+  ["care", "detail-care"],
+  ["proof", "detail-package"],
+];
+
+function productionLikeQoo10LegacyContext(operation: "create" | "update") {
   const context = manualContext();
+  context.contentMode = "ai_generated";
   context.manualFields.productName = "부착형 케이블 정리 클립 6개 세트";
+  context.manualFields.description = `판매자가 확인한 ${legacyQoo10RomanizedName} 상품 설명입니다.`;
+  const classification = {
+    displayName: `${legacyQoo10RomanizedName} ケーブル整理用品`,
+    verificationStatus: "verified" as const,
+    evidence: `販売者が確認した ${legacyQoo10RomanizedName} 包装表示です。`,
+    isHealthFunctionalFood: false,
+  };
+  context.classification = classification;
+  context.product.classification = classification;
   context.localizedListings = [{
     channel: "qoo10",
     market: "JP",
     locale: "ja-JP",
-    title: "buchakhyeong keibeul jeongri keulrip 6gae seteu - 購入前確認",
-    shortDescription: "販売者が確認した商品案内です。",
-    description: "日本のお客様向けに、販売者が確認した商品名、販売構成、価格、在庫、配送条件をご案内します。購入前に実物の商品と包装表示を再確認してください。",
-    keywords: ["ケーブル", "整理", "クリップ"],
+    title: legacyQoo10ReviewedTitle,
+    shortDescription: `販売者が確認した ${legacyQoo10RomanizedName} の案内です。판매자 원문 보존.`,
+    description: `日本のお客様向けに ${legacyQoo10RomanizedName} の仕様をご案内します。販売者が確認した仕様です。판매자 원문 보존.`,
+    keywords: [legacyQoo10RomanizedName, "ケーブル", "整理", "クリップ"],
+    thumbnailAltText: `${legacyQoo10RomanizedName} 正面画像`,
+    classification,
+    detailSections: productionDetailSectionPairs.map(([type, imageAsset], index) => ({
+      type,
+      buyerQuestion: `${legacyQoo10RomanizedName} の購入前確認 ${index + 1}`,
+      evidence: `販売者確認資料 ${legacyQoo10RomanizedName} ${index + 1}`,
+      heading: `${legacyQoo10RomanizedName} ${type}`,
+      body: `日本語の説明 ${index + 1}。${legacyQoo10RomanizedName} の実物仕様です。판매자 원문 보존.`,
+      imageAsset,
+      imageAltText: `${legacyQoo10RomanizedName} ${type} 詳細画像`,
+    })),
   }];
-  const draft = buildChannelArguments(
-    "qoo10",
-    context,
-    10_000,
-    3,
-    undefined,
-    { weight: 0.2, length: 10, width: 8, height: 4 },
-    10,
-  ) as { params: { ItemTitle: string } };
+  context.generatedImages = [
+    "square",
+    "hero",
+    "portrait",
+    "wide",
+    ...productionDetailSectionPairs.map(([, imageAsset]) => imageAsset),
+  ].map((id, index) => ({
+    id,
+    path: `owner/job/generated/${id}.jpg`,
+    url: `https://cdn.example.com/generated-${index}-${id}.jpg`,
+  }));
+  if (operation === "update") {
+    context.listings = [{
+      id: "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc",
+      channel: "qoo10",
+      market: "JP",
+      targetId: "",
+      remoteId: "1217336970",
+      status: "paused",
+      lastError: null,
+      failureClass: "retryable",
+      publishedAt: null,
+      requestedPublicationIntent: "live",
+      remoteVisibility: "non_public",
+      providerStatus: "S1",
+    }];
+  }
+  return context;
+}
 
-  assert.equal(
-    draft.params.ItemTitle,
-    "貼り付け式ケーブル整理クリップ6個セット",
-  );
-  assert.equal(listingPublicationLanguageVerified("ja-JP", draft.params.ItemTitle, "title"), true);
+type Qoo10LegacyRepairDraft = {
+  sellerpilotAssets: {
+    detailImageAltTexts: string[];
+    localizedDetailSections: ProductionDetailSection[];
+    thumbnailAltText: string;
+  };
+  params: {
+    ItemDescription: string;
+    ItemTitle: string;
+  };
+};
+
+test("Qoo10 create and exact existing-product update replace legacy romanized references across the reviewed 8-image payload", () => {
+  for (const operation of ["create", "update"] as const) {
+    const draft = buildChannelArguments(
+      "qoo10",
+      productionLikeQoo10LegacyContext(operation),
+      10_000,
+      3,
+      undefined,
+      { weight: 0.2, length: 10, width: 8, height: 4 },
+      10,
+    ) as Qoo10LegacyRepairDraft;
+
+    assert.equal(draft.params.ItemTitle, repairedQoo10MarketplaceTitle, `${operation} ItemTitle`);
+    assert.match(
+      draft.params.ItemDescription,
+      /<h1[^>]*>貼り付け式ケーブル整理クリップ6個セット<\/h1>/,
+      `${operation} H1`,
+    );
+    assert.doesNotMatch(draft.params.ItemDescription, new RegExp(legacyQoo10RomanizedName), `${operation} ItemDescription`);
+    assert.match(draft.params.ItemDescription, /販売者が確認した仕様です/, `${operation} Japanese seller text`);
+    assert.match(draft.params.ItemDescription, /판매자 원문 보존/, `${operation} Korean seller text`);
+    assert.equal(draft.sellerpilotAssets.thumbnailAltText.includes(repairedQoo10MarketplaceTitle), true, `${operation} thumbnail alt`);
+    assert.equal(draft.sellerpilotAssets.thumbnailAltText.includes(legacyQoo10RomanizedName), false, `${operation} thumbnail legacy`);
+    assert.equal(draft.sellerpilotAssets.detailImageAltTexts.length, 8, `${operation} detail alt count`);
+    assert.equal(draft.sellerpilotAssets.localizedDetailSections.length, 8, `${operation} detail section count`);
+    for (const altText of draft.sellerpilotAssets.detailImageAltTexts) {
+      assert.equal(altText.includes(repairedQoo10MarketplaceTitle), true, `${operation} detail alt title`);
+      assert.equal(altText.includes(legacyQoo10RomanizedName), false, `${operation} detail alt legacy`);
+    }
+    assert.equal(JSON.stringify(draft).includes(legacyQoo10RomanizedName), false, `${operation} full provider payload`);
+    assert.equal(JSON.stringify(draft).includes(legacyQoo10ReviewedTitle), false, `${operation} full legacy title`);
+    assert.equal(listingPublicationLanguageVerified("ja-JP", draft.params.ItemTitle, "title"), true);
+  }
+});
+
+test("Qoo10 preserves seller-authored Japanese and Hangul titles and description text", () => {
+  for (const sellerTitle of ["販売者作成のケーブル整理クリップ", "부착형 케이블 클립 - 購入前確認"]) {
+    const context = manualContext();
+    context.localizedListings = [{
+      channel: "qoo10",
+      market: "JP",
+      locale: "ja-JP",
+      title: sellerTitle,
+      shortDescription: "販売者が書いた案内です。판매자 작성 문구입니다.",
+      description: "販売者が書いた詳細です。판매자 작성 상세입니다.",
+      keywords: ["販売者", "판매자"],
+      thumbnailAltText: `${sellerTitle} 販売者画像`,
+    }];
+    const draft = buildChannelArguments(
+      "qoo10",
+      context,
+      10_000,
+      3,
+      undefined,
+      { weight: 0.2, length: 10, width: 8, height: 4 },
+      10,
+    ) as Qoo10LegacyRepairDraft;
+
+    assert.equal(draft.params.ItemTitle, sellerTitle);
+    assert.equal(draft.sellerpilotAssets.thumbnailAltText, `${sellerTitle} 販売者画像`);
+    assert.equal(draft.params.ItemDescription.includes("販売者が書いた詳細です"), true);
+    assert.equal(draft.params.ItemDescription.includes("판매자 작성 상세입니다"), true);
+  }
+});
+
+test("legacy Qoo10 repair leaves non-Qoo create and update payloads unchanged", () => {
+  for (const operation of ["create", "update"] as const) {
+    const context = manualContext();
+    context.assignments = [{
+      ...context.assignments[0],
+      channel: "elevenst",
+      market: "KR",
+      categoryId: "1341821",
+    }];
+    context.localizedListings = [{
+      channel: "elevenst",
+      market: "KR",
+      locale: "ko-KR",
+      title: legacyQoo10ReviewedTitle,
+      shortDescription: `${legacyQoo10RomanizedName} 판매자 작성 요약`,
+      description: `${legacyQoo10RomanizedName} 판매자 작성 상세`,
+      keywords: [legacyQoo10RomanizedName],
+      thumbnailAltText: `${legacyQoo10RomanizedName} 판매자 이미지`,
+    }];
+    if (operation === "update") {
+      context.listings = [{
+        id: "33333333-3333-4333-8333-333333333333",
+        channel: "elevenst",
+        market: "KR",
+        targetId: "",
+        remoteId: "77889900",
+        status: "published",
+        lastError: null,
+        publishedAt: "2026-08-30T00:00:00.000Z",
+        requestedPublicationIntent: "live",
+        remoteVisibility: "live",
+      }];
+    }
+    const draft = buildChannelArguments(
+      "elevenst",
+      context,
+      10_000,
+      3,
+      undefined,
+      { weight: 0.2, length: 10, width: 8, height: 4 },
+      10,
+    ) as {
+      product: { htmlDetail: string; prdNm: string };
+      sellerpilotAssets: { thumbnailAltText: string };
+    };
+
+    assert.equal(draft.product.prdNm, legacyQoo10ReviewedTitle, `${operation} product title`);
+    assert.equal(draft.product.htmlDetail.includes(legacyQoo10RomanizedName), true, `${operation} detail text`);
+    assert.equal(draft.sellerpilotAssets.thumbnailAltText, `${legacyQoo10RomanizedName} 판매자 이미지`);
+  }
 });
 
 test("every marketplace draft preserves the explicit manual source-image contract", () => {
