@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import sharp from "sharp";
 import {
   buildCoupangMarketplaceContents,
+  buildListingPublicationAssetBinding,
   collectBoundedMarketplaceImage,
   downloadMarketplaceImage,
   isPrivateMarketplaceAddress,
@@ -15,6 +17,54 @@ import {
   renderQoo10DetailDescription,
   upsertMarketplaceDetailImages,
 } from "../lib/channels/marketplace-images";
+
+test("server-derived publication binding preserves approved detail lineage and Shopee's exact gallery surface", () => {
+  const roles = [
+    "detail-overview", "detail-context", "detail-package", "detail-feature",
+    "detail-contents", "detail-use", "detail-care", "detail-routine",
+  ];
+  const detailUrls = roles.map((_, index) => {
+    const digest = String(index + 1).padStart(64, "0");
+    return `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`;
+  });
+  const galleryDigest = "f".repeat(64);
+  const galleryUrl = `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/ff/${galleryDigest}.jpg`;
+  const approvedPaths = roles.map((role) =>
+    `results/11111111-1111-4111-8111-111111111111/claims/22222222-2222-4222-8222-222222222222/${role}.png`);
+  const approvedSourceSha256s = roles.map((_, index) => (index + 17).toString(16).padStart(64, "0"));
+  const detailBinding = buildListingPublicationAssetBinding({
+    approvedDetailPageVersion: 3,
+    approvedManifestDigest: "a".repeat(64),
+    approvedDetailRoles: roles,
+    approvedDetailImagePaths: approvedPaths,
+    approvedDetailImageSha256s: approvedSourceSha256s,
+    approvedDetailImageUrls: detailUrls,
+    providerImageSurface: "detail_content",
+    providerTransportRoles: roles,
+    providerTransportUrls: detailUrls,
+  });
+  assert.equal(detailBinding?.approvedDetailImages.length, 8);
+  assert.deepEqual(detailBinding?.approvedDetailImages.map((image) => image.approvedObjectPath), approvedPaths);
+  assert.deepEqual(detailBinding?.providerTransportImages.map((image) => image.publicUrl), detailUrls);
+
+  const shopeeBinding = buildListingPublicationAssetBinding({
+    approvedDetailPageVersion: 3,
+    approvedManifestDigest: "a".repeat(64),
+    approvedDetailRoles: roles,
+    approvedDetailImagePaths: approvedPaths,
+    approvedDetailImageSha256s: approvedSourceSha256s,
+    approvedDetailImageUrls: detailUrls,
+    providerImageSurface: "gallery",
+    providerTransportRoles: ["gallery-representative", ...roles.slice(0, 7)],
+    providerTransportUrls: [galleryUrl, ...detailUrls.slice(0, 7)],
+  });
+  assert.equal(shopeeBinding?.providerImageSurface, "gallery");
+  assert.deepEqual(shopeeBinding?.providerTransportImages.map((image) => image.role), [
+    "gallery-representative", ...roles.slice(0, 7),
+  ]);
+  assert.equal(shopeeBinding?.approvedDetailImages.length, 8);
+  assert.equal(shopeeBinding?.providerTransportImages.length, 8);
+});
 
 test("marketplace DNS resolution stops at the caller deadline", async () => {
   const controller = new AbortController();
@@ -29,15 +79,21 @@ test("marketplace DNS resolution stops at the caller deadline", async () => {
 
 test("normalized marketplace assets are reserved before upload and marked only after readback", async () => {
   const events: string[] = [];
-  const paths = [
-    `normalized/aa/${"a".repeat(64)}.jpg`,
-    `normalized/bb/${"b".repeat(64)}.jpg`,
-  ];
+  const bytes = [Buffer.from("image-0"), Buffer.from("image-1")];
+  const digests = bytes.map((value) => createHash("sha256").update(value).digest("hex"));
+  const paths = digests.map((digest) => `normalized/${digest.slice(0, 2)}/${digest}.jpg`);
   const serviceClient = {
     rpc: async (name: string, argumentsValue: Record<string, unknown>) => {
       events.push(`rpc:${name}`);
       if (name === "sellerpilot_service_register_marketplace_normalized_asset_refs") {
         assert.deepEqual(argumentsValue.p_paths, paths);
+      }
+      if (name === "sellerpilot_service_bind_marketplace_normalized_asset_urls") {
+        assert.deepEqual(argumentsValue.p_assets, paths.map((objectPath) => ({
+          objectPath,
+          contentSha256: objectPath.match(/([0-9a-f]{64})\.jpg$/u)?.[1],
+          publicUrl: `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${objectPath}`,
+        })));
       }
       return { data: true, error: null };
     },
@@ -47,7 +103,8 @@ test("normalized marketplace assets are reserved before upload and marked only a
         error: null,
       }),
       from: () => ({
-        upload: async (path: string) => {
+        upload: async (path: string, _bytes: unknown, options: { upsert?: boolean }) => {
+          assert.equal(options.upsert, false);
           events.push(`upload:${path}`);
           return { data: { path }, error: null };
         },
@@ -57,7 +114,9 @@ test("normalized marketplace assets are reserved before upload and marked only a
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     events.push(`readback:${String(input)}`);
-    return new Response(Buffer.from("image"), {
+    const digest = String(input).match(/([0-9a-f]{64})\.jpg$/u)?.[1];
+    const index = digests.indexOf(digest ?? "");
+    return new Response(bytes[index] ?? Buffer.from("wrong"), {
       status: 200,
       headers: { "content-type": "image/jpeg" },
     });
@@ -70,8 +129,8 @@ test("normalized marketplace assets are reserved before upload and marked only a
       targetId: "shop-1",
     }, paths.map((objectPath, index) => ({
       objectPath,
-      bytes: Buffer.from(`image-${index}`),
-      publicUrl: `https://cdn.example.com/${index}.jpg`,
+      bytes: bytes[index],
+      publicUrl: `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${objectPath}`,
     })));
   } finally {
     globalThis.fetch = originalFetch;
@@ -80,9 +139,58 @@ test("normalized marketplace assets are reserved before upload and marked only a
   const registerIndex = events.indexOf("rpc:sellerpilot_service_register_marketplace_normalized_asset_refs");
   const firstUploadIndex = events.findIndex((event) => event.startsWith("upload:"));
   const markIndex = events.indexOf("rpc:sellerpilot_service_mark_marketplace_normalized_assets_uploaded");
+  const bindIndex = events.indexOf("rpc:sellerpilot_service_bind_marketplace_normalized_asset_urls");
   const lastReadbackIndex = events.reduce((latest, event, index) => event.startsWith("readback:") ? index : latest, -1);
   assert.ok(registerIndex >= 0 && registerIndex < firstUploadIndex);
   assert.ok(lastReadbackIndex >= firstUploadIndex && lastReadbackIndex < markIndex);
+  assert.ok(markIndex >= 0 && markIndex < bindIndex);
+});
+
+test("normalized Storage readback must hash to the content-addressed object path", async () => {
+  const bytes = Buffer.from("expected-normalized-jpeg");
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const objectPath = `normalized/${digest.slice(0, 2)}/${digest}.jpg`;
+  const rpcCalls: string[] = [];
+  const serviceClient = {
+    rpc: async (name: string) => {
+      rpcCalls.push(name);
+      return { data: true, error: null };
+    },
+    storage: {
+      getBucket: async () => ({
+        data: { public: true, file_size_limit: 3 * 1024 * 1024 },
+        error: null,
+      }),
+      from: () => ({
+        upload: async () => ({ data: { path: objectPath }, error: null }),
+      }),
+    },
+  } as unknown as SupabaseClient;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(Buffer.from("wrong-storage-bytes"), {
+    status: 200,
+    headers: { "content-type": "image/jpeg" },
+  });
+  try {
+    await assert.rejects(
+      persistMarketplaceNormalizedAssets(serviceClient, "qoo10", {
+        attemptId: "11111111-1111-4111-8111-111111111111",
+        productId: "22222222-2222-4222-8222-222222222222",
+        market: "JP",
+        targetId: "shop-1",
+      }, [{
+        objectPath,
+        bytes,
+        publicUrl: `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${objectPath}`,
+      }]),
+      /MARKETPLACE_IMAGE_READBACK_DIGEST_MISMATCH/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.deepEqual(rpcCalls, [
+    "sellerpilot_service_register_marketplace_normalized_asset_refs",
+  ]);
 });
 
 test("marketplace image guard rejects private targets and stops oversized streams", async () => {

@@ -32,9 +32,27 @@ export type RemoteResponse = {
 };
 
 const channelRequestSignalStorage = new AsyncLocalStorage<AbortSignal>();
+const providerReadOnlyTransportStorage = new AsyncLocalStorage<true>();
 
 export function runWithChannelRequestSignal<T>(signal: AbortSignal, execute: () => Promise<T>) {
   return channelRequestSignalStorage.run(signal, execute);
+}
+
+export function runWithProviderReadOnlyTransport<T>(execute: () => Promise<T>) {
+  return providerReadOnlyTransportStorage.run(true, execute);
+}
+
+function assertProviderReadOnlyTransport(
+  method: string,
+  exception?: "qoo10_read_rpc" | "ebay_trading_read",
+) {
+  if (!providerReadOnlyTransportStorage.getStore()) return;
+  const normalized = method.trim().toUpperCase();
+  if (normalized === "GET") return;
+  if (normalized === "POST"
+      && (exception === "qoo10_read_rpc"
+        || exception === "ebay_trading_read")) return;
+  throw new Error("LISTING_PUBLICATION_VERIFY_NON_READ_TRANSPORT_BLOCKED");
 }
 
 function boundedChannelRequestSignal(timeoutMs: number) {
@@ -104,6 +122,7 @@ export async function coupangRequest(input: {
   query?: URLSearchParams;
   body?: unknown;
 }) {
+  assertProviderReadOnlyTransport(input.method);
   const accessKey = textValue(input.payload, "access_key");
   const secretKey = textValue(input.payload, "secret_key");
   const vendorId = textValue(input.payload, "vendor_id");
@@ -156,6 +175,10 @@ function naverTokenExchangeFailure(response: Response, remote: RemoteResponse) {
 }
 
 export async function fetchNaverAccessToken(payload: SecretPayload) {
+  // Client-credentials exchange is a credential mutation even though the
+  // Commerce API documents it as an OAuth POST. Strict publication
+  // re-verification must consume a previously staged token instead.
+  assertProviderReadOnlyTransport("POST");
   const clientId = textValue(payload, "client_id");
   const clientSecret = textValue(payload, "client_secret");
   const type = (textValue(payload, "token_type") || "SELF").toUpperCase();
@@ -194,11 +217,27 @@ export async function fetchNaverAccessToken(payload: SecretPayload) {
   if (!response.ok || !accessToken) {
     throw new Error(naverTokenExchangeFailure(response, remote));
   }
+  const expiresIn = Number(remote.data.expires_in ?? 10_800);
   return {
     accessToken,
-    expiresIn: Number(remote.data.expires_in ?? 10_800),
+    expiresIn,
+    expiresAt: safeFutureIso(expiresIn, 10_800),
     remote,
   };
+}
+
+/** Returns only a previously staged Naver token with enough readback lifetime. */
+export function readStoredNaverAccessToken(
+  payload: SecretPayload,
+  bufferMs = 5 * 60 * 1_000,
+) {
+  const accessToken = textValue(payload, "access_token");
+  const expiresAt = Date.parse(textValue(payload, "access_token_expires_at"));
+  return accessToken
+    && Number.isFinite(expiresAt)
+    && expiresAt > Date.now() + bufferMs
+    ? accessToken
+    : "";
 }
 
 export async function naverRequest(input: {
@@ -208,6 +247,7 @@ export async function naverRequest(input: {
   query?: URLSearchParams;
   body?: unknown;
 }) {
+  assertProviderReadOnlyTransport(input.method);
   const query = input.query?.toString() ?? "";
   const response = await fetch(`https://api.commerce.naver.com/external${input.path}${query ? `?${query}` : ""}`, {
     method: input.method,
@@ -581,6 +621,7 @@ export async function shopeeRequest(input: {
   query?: URLSearchParams;
   body?: unknown;
 }) {
+  assertProviderReadOnlyTransport(input.method);
   const partnerId = textValue(input.payload, "partner_id");
   const partnerKey = textValue(input.payload, "partner_key");
   const shopId = textValue(input.payload, "shop_id");
@@ -615,6 +656,7 @@ export async function shopeePartnerRequest(input: {
   path: string;
   query?: URLSearchParams;
 }) {
+  assertProviderReadOnlyTransport("GET");
   const partnerId = textValue(input.payload, "partner_id");
   const partnerKey = textValue(input.payload, "partner_key");
   if (!partnerId || !partnerKey) throw new Error("SHOPEE_CREDENTIALS_MISSING");
@@ -641,6 +683,7 @@ export async function shopeeMerchantRequest(input: {
   query?: URLSearchParams;
   body?: unknown;
 }) {
+  assertProviderReadOnlyTransport(input.method);
   const partnerId = textValue(input.payload, "partner_id");
   const partnerKey = textValue(input.payload, "partner_key");
   const merchantId = textValue(input.payload, "merchant_id");
@@ -687,6 +730,7 @@ export async function lazadaRequest(input: {
   const endpoint = lazadaApiEndpoints[country];
   if (!appKey || !appSecret || !accessToken || !endpoint) throw new Error("LAZADA_CREDENTIALS_MISSING");
   const method = input.method ?? "GET";
+  assertProviderReadOnlyTransport(method);
   const send = async () => {
     const params: Record<string, string> = {
       access_token: accessToken,
@@ -846,6 +890,12 @@ export async function qoo10Request(input: {
 }) {
   const apiKey = textValue(input.payload, "api_key");
   if (!apiKey) throw new Error("QOO10_CREDENTIALS_MISSING");
+  assertProviderReadOnlyTransport(
+    "POST",
+    input.service === "ItemsLookup" && input.method === "GetItemDetailInfo"
+      ? "qoo10_read_rpc"
+      : undefined,
+  );
   // The current QAPI developer console sends every method to the qualified
   // method path and authenticates with headers. Query-string authentication is
   // the retired OpenApiService shape and returns -90001 for current QAPI
@@ -1403,10 +1453,12 @@ export function parseEbayTradingResponse(callName: "GetMemberMessages" | "GetIte
 
   if (callName === "GetItem") {
     const item = ebayXmlChild(root, "Item");
+    const sku = item ? ebayXmlText(item, "SKU").slice(0, 50) : "";
     return {
       ...base,
       item: {
         itemId: item ? ebayXmlText(item, "ItemID").slice(0, 19) : "",
+        ...(sku ? { sku } : {}),
         site: item ? ebayXmlText(item, "Site").slice(0, 80) : "",
       },
     };
@@ -1475,6 +1527,10 @@ export async function ebayTradingRequest(input: {
   marketplaceId: string;
   body: string;
 }) {
+  assertProviderReadOnlyTransport(
+    "POST",
+    input.callName === "GetItem" ? "ebay_trading_read" : undefined,
+  );
   const accessToken = textValue(input.payload, "access_token");
   if (!accessToken) throw new Error("EBAY_ACCESS_TOKEN_MISSING");
   if (!ebayTradingCalls.has(input.callName)
@@ -1582,6 +1638,7 @@ export async function fetchEbayTradingUserIdentity(input: {
   environment: "sandbox" | "production";
   accessToken: string;
 }) {
+  assertProviderReadOnlyTransport("POST", "ebay_trading_read");
   if (!input.accessToken.trim()) throw new Error("EBAY_ACCOUNT_IDENTITY_VERIFICATION_FAILED");
   const response = await fetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
     method: "POST",
@@ -1693,6 +1750,7 @@ export async function elevenstSellerXmlRequest(input: {
   path: string;
   body?: string;
 }) {
+  assertProviderReadOnlyTransport(input.method);
   const apiKey = textValue(input.payload, "api_key");
   if (!apiKey) throw new Error("ELEVENST_CREDENTIALS_MISSING");
   if (!input.path.startsWith("/rest/")) throw new Error("ELEVENST_PATH_INVALID");
@@ -1774,6 +1832,7 @@ export async function ebayRequest(input: {
   query?: URLSearchParams;
   body?: unknown;
 }) {
+  assertProviderReadOnlyTransport(input.method);
   const accessToken = textValue(input.payload, "access_token");
   if (!accessToken) throw new Error("EBAY_ACCESS_TOKEN_MISSING");
   const query = input.query?.toString() ?? "";

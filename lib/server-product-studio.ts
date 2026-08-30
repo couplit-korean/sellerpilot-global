@@ -2860,6 +2860,10 @@ async function runFullStudioClaim(
     resultPayload: {
       ...result,
       asset_storage_paths: storagePaths,
+      asset_storage_sha256s: Object.fromEntries(aiGeneratedAssetSpecs.map((asset) => [
+        asset.id,
+        generated.get(asset.id)?.digest,
+      ])),
       asset_audit_modes: Object.fromEntries(aiGeneratedAssetSpecs.map((asset) => [
         asset.id,
         generated.get(asset.id)?.auditMode ?? "unrecorded",
@@ -2976,6 +2980,7 @@ async function runRegenerationClaim(
       sourceJobId: request.data.source_job_id,
       sourceProductId: request.data.source_product_id,
       asset_storage_paths: { [asset.id]: path },
+      asset_storage_sha256s: { [asset.id]: regenerated.digest },
     },
     errorMessage: null,
   });

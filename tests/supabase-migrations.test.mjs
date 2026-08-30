@@ -349,6 +349,13 @@ function aiClaimAssetPaths(jobId, claimToken) {
   };
 }
 
+function aiClaimAssetDigests(paths) {
+  return Object.fromEntries(Object.entries(paths).map(([role, path]) => [
+    role,
+    createHash("sha256").update(path, "utf8").digest("hex"),
+  ]));
+}
+
 test("Supabase migrations apply in order and core RPC flows persist safely", async () => {
   const db = new PGlite();
   try {
@@ -522,6 +529,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830100000_verified_remote_publication_ledger.sql",
       "20260830110000_pending_publication_reverification.sql",
       "20260830114500_approve_exact_detail_image_manifest.sql",
+      "20260830121000_listing_publication_verification_source.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -3170,10 +3178,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     for (let index = 0; index < crossProductSourceJobIds.length; index += 1) {
       const sourceJobId = crossProductSourceJobIds[index];
       const productId = crossProductProductIds[index];
+      const sourcePaths = aiClaimAssetPaths(sourceJobId, crossProductClaims[index]);
       const result = {
         mode: "cli",
         product: { category: "일반식품", name: `교차 비교 상품 ${index}` },
-        asset_storage_paths: aiClaimAssetPaths(sourceJobId, crossProductClaims[index]),
+        asset_storage_paths: sourcePaths,
+        asset_storage_sha256s: aiClaimAssetDigests(sourcePaths),
       };
       await db.query(
         `insert into sellerpilot_private.ai_cli_jobs (
@@ -3224,6 +3234,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         JSON.stringify({
           mode: "asset-regeneration",
           asset_storage_paths: { portrait: regeneratedPortraitPath },
+          asset_storage_sha256s: {
+            portrait: createHash("sha256")
+              .update(regeneratedPortraitPath, "utf8")
+              .digest("hex"),
+          },
         }),
         ADMIN_ID,
       ],
@@ -3237,6 +3252,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
 
     const crossOwnerSourceJobId = "75000000-0000-4000-8000-000000000001";
     const crossOwnerProductId = "75000000-0000-4000-8000-000000000002";
+    const crossOwnerPaths = aiClaimAssetPaths(
+      crossOwnerSourceJobId,
+      "75000000-0000-4000-8000-000000000003",
+    );
     await db.query(
       `insert into sellerpilot_private.ai_cli_jobs (
          id, kind, status, request_payload, result_payload, created_by, completed_at
@@ -3244,7 +3263,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [crossOwnerSourceJobId, JSON.stringify({
         mode: "cli",
         product: { category: "일반식품", name: "다른 소유자 상품" },
-        asset_storage_paths: aiClaimAssetPaths(crossOwnerSourceJobId, "75000000-0000-4000-8000-000000000003"),
+        asset_storage_paths: crossOwnerPaths,
+        asset_storage_sha256s: aiClaimAssetDigests(crossOwnerPaths),
       }), SECOND_ADMIN_ID],
     );
     await db.query(
@@ -3306,11 +3326,21 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       /invalid worker token/,
     );
+    const crossProductCurrentPaths = aiClaimAssetPaths(
+      crossProductCurrentJobId,
+      crossProductCurrentClaim,
+    );
     await db.query(
       `update sellerpilot_private.ai_cli_jobs
-          set status='succeeded', completed_at=now(), lease_expires_at=null
+          set status='succeeded',
+              result_payload=$2::jsonb,
+              completed_at=now(),
+              lease_expires_at=null
         where id=$1`,
-      [crossProductCurrentJobId],
+      [crossProductCurrentJobId, JSON.stringify({
+        asset_storage_paths: crossProductCurrentPaths,
+        asset_storage_sha256s: aiClaimAssetDigests(crossProductCurrentPaths),
+      })],
     );
     await db.query(
       "update sellerpilot_private.ai_cli_worker_tokens set status = 'revoked', revoked_at = now() where token_hash = $1",
@@ -3987,6 +4017,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(db, "select public.sellerpilot_touch_ai_job($1, $2, $3, 'migration-test/1.0')", [TOKEN_HASH, JOB_ID, claimed.claim_token]),
       "running",
     );
+    const completedAssetPaths = aiClaimAssetPaths(JOB_ID, claimed.claim_token);
     const resultPayload = {
       mode: "cli",
       title: "AI 생성 테스트 상품",
@@ -4005,7 +4036,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       thumbnail: { title: "AI 생성 테스트 상품" },
       warnings: ["migration-test-warning"],
       localizedListings: [{ title: "publish-context에서 제외될 현지화 데이터" }],
-      asset_storage_paths: aiClaimAssetPaths(JOB_ID, claimed.claim_token),
+      asset_storage_paths: completedAssetPaths,
+      asset_storage_sha256s: aiClaimAssetDigests(completedAssetPaths),
     };
     await assert.rejects(
       db.query(
@@ -4170,9 +4202,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       [TOKEN_HASH],
     );
     assert.equal(duplicateSkuClaim.id, DUPLICATE_SKU_JOB_ID);
+    const duplicateSkuPaths = aiClaimAssetPaths(
+      DUPLICATE_SKU_JOB_ID,
+      duplicateSkuClaim.claim_token,
+    );
     const duplicateSkuResult = {
       ...resultPayload,
-      asset_storage_paths: aiClaimAssetPaths(DUPLICATE_SKU_JOB_ID, duplicateSkuClaim.claim_token),
+      asset_storage_paths: duplicateSkuPaths,
+      asset_storage_sha256s: aiClaimAssetDigests(duplicateSkuPaths),
     };
     assert.equal(
       await scalar(
@@ -4276,6 +4313,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       assetId: "detail-care",
       sourceJobId: JOB_ID,
       asset_storage_paths: { "detail-care": expandedRegenerationPath },
+      asset_storage_sha256s: {
+        "detail-care": createHash("sha256")
+          .update(expandedRegenerationPath, "utf8")
+          .digest("hex"),
+      },
     };
     await db.query(
       "update sellerpilot_private.ai_cli_jobs set created_by = $2 where id = $1",
@@ -5796,10 +5838,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       /PRODUCT_REVISION_ALREADY_PENDING/,
     );
 
+    const revisionAssetPaths = aiClaimAssetPaths(
+      PRODUCT_REVISION_JOB_ID,
+      "784346eb-2788-4783-97da-451344fed051",
+    );
     const revisionResult = {
       ...resultPayload,
       product: { ...resultPayload.product, name: revisionManualFields.productName },
-      asset_storage_paths: aiClaimAssetPaths(PRODUCT_REVISION_JOB_ID, "784346eb-2788-4783-97da-451344fed051"),
+      asset_storage_paths: revisionAssetPaths,
+      asset_storage_sha256s: aiClaimAssetDigests(revisionAssetPaths),
     };
     // An accepted inventory write changes on_hand, product_facts.stock and
     // updated_at after the photo revision is queued. It must not look like a
@@ -6020,11 +6067,16 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       true,
     );
+    const staleRevisionAssetPaths = aiClaimAssetPaths(
+      STALE_PRODUCT_REVISION_JOB_ID,
+      "a19ae9d1-a544-4a12-96fd-b89501a03f89",
+    );
     await db.query(
       "update sellerpilot_private.ai_cli_jobs set status = 'succeeded', result_payload = $2::jsonb, completed_at = now() where id = $1",
       [STALE_PRODUCT_REVISION_JOB_ID, JSON.stringify({
         ...revisionResult,
-        asset_storage_paths: aiClaimAssetPaths(STALE_PRODUCT_REVISION_JOB_ID, "a19ae9d1-a544-4a12-96fd-b89501a03f89"),
+        asset_storage_paths: staleRevisionAssetPaths,
+        asset_storage_sha256s: aiClaimAssetDigests(staleRevisionAssetPaths),
       })],
     );
     assert.deepEqual(
@@ -7518,30 +7570,27 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     const protectedRegeneratedPath = `results/${REGEN_JOB_ID}/claims/9bb52c9a-9bfd-4517-b6ac-06f8a5ea443c/detail-use.png`;
     await db.query(
       `update sellerpilot_private.ai_cli_jobs
-          set result_payload = jsonb_set(
-                result_payload,
-                '{asset_storage_paths,detail-use}',
-                to_jsonb($2::text),
-                true
-              ),
-              completed_at = now() - interval '31 days',
-              updated_at = now() - interval '31 days'
-        where id = $1`,
-      [JOB_ID, protectedRegeneratedPath],
-    );
-    await db.query(
-      `update sellerpilot_private.ai_cli_jobs
           set status = 'succeeded',
               result_payload = jsonb_build_object(
                 'mode', 'asset-regeneration',
                 'assetId', 'detail-use',
                 'sourceJobId', $2::text,
-                'asset_storage_paths', jsonb_build_object('detail-use', $3::text)
+                'asset_storage_paths', jsonb_build_object('detail-use', $3::text),
+                'asset_storage_sha256s', jsonb_build_object(
+                  'detail-use', encode(extensions.digest($3::text, 'sha256'), 'hex')
+                )
               ),
               completed_at = now() - interval '31 days',
               updated_at = now() - interval '31 days'
         where id = $1`,
       [REGEN_JOB_ID, JOB_ID, protectedRegeneratedPath],
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set completed_at = now() - interval '31 days',
+              updated_at = now() - interval '31 days'
+        where id = $1`,
+      [JOB_ID],
     );
     await db.query(
       "select public.sellerpilot_create_ai_job($1, 'product_studio', $2::jsonb)",
@@ -8606,6 +8655,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
   const cleanupMigrationName = "20260828201500_cleanup_static_egress_queued_reads.sql";
   const finalMigrationName = "20260828210000_non_cs_release_integrity.sql";
   const publicationReviewMigrationName = "20260830110000_pending_publication_reverification.sql";
+  const publicationSourceMigrationName = "20260830121000_listing_publication_verification_source.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
@@ -8615,7 +8665,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== migrationName
         && name !== cleanupMigrationName
         && name !== finalMigrationName
-        && name !== publicationReviewMigrationName)
+        && name !== publicationReviewMigrationName
+        && name !== publicationSourceMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;

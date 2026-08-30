@@ -50,12 +50,14 @@ function localItemData(status = "UNLIST") {
 }
 
 function remote(data: Record<string, unknown>): RemoteResponse {
+  const text = JSON.stringify(data);
   return {
-    response: new Response(JSON.stringify(data), {
+    response: new Response(text, {
       status: 200,
       headers: { "content-type": "application/json" },
     }),
     data,
+    text,
   };
 }
 
@@ -142,6 +144,35 @@ test("Shopee publication evidence fails shut on wrong shop, market, mutable cont
       response: { item_list: [{ ...localItemData().response.item_list[0], image: { image_id_list: IMAGE_IDS.slice(0, 7) } }] },
     },
   }).remoteState, undefined);
+});
+
+test("Shopee publication evidence fails shut when base-info returns duplicate immutable item ids", () => {
+  const correctItem = localItemData("NORMAL").response.item_list[0];
+  const attacked = normalizeShopeeListingPublicationReadback({
+    operation: "listing.create",
+    remoteId: "9001",
+    remoteData: {
+      error: "",
+      response: {
+        item_list: [
+          correctItem,
+          {
+            ...correctItem,
+            item_name: "Attacker controlled product",
+            description: "Attacker controlled description",
+          },
+        ],
+      },
+    },
+    mutationArguments: { ...mutationArguments("NORMAL"), globalItemId: "7001" },
+    credentialShopId: "1001",
+    expectedLocale: "en-SG",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  });
+
+  assert.equal(attacked.remoteState, undefined);
+  assert.equal(attacked.checks.identityVerified, false);
 });
 
 test("Shopee verified global safe publication forces UNLIST and is finalized only by local base-info readback", async () => {

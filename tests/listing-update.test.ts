@@ -8,6 +8,7 @@ import {
   prepareListingUpdateArguments,
   verifyListingUpdateReadback,
 } from "../lib/channels/listing-update";
+import { assertListingPublicationSourceLocalized } from "../lib/channels/listing-publication-content";
 
 const listing = {
   status: "published",
@@ -118,6 +119,44 @@ test("published updates preserve the reviewed channel-language title and descrip
   });
 });
 
+test("Shopee SG and Lazada MY update payloads keep their channel-localized copy", () => {
+  const shopee = listingCoreContentForOperation({
+    operation: "listing.update",
+    central: { title: "중앙 상품명", description: "중앙 한국어 설명" },
+    localized: {
+      title: "Durable cable organizer clips",
+      shortDescription: "Easy adhesive cable care",
+      description: "Durable cable organizer clips keep charging cables tidy with an easy adhesive design.",
+    },
+  });
+  const shopeePayload = {
+    publish: { item: { item_name: shopee.title, description: shopee.description } },
+  };
+  assert.equal(assertListingPublicationSourceLocalized({
+    channel: "shopee",
+    expectedLocale: "en-SG",
+    sourceArguments: shopeePayload,
+  }).title, "Durable cable organizer clips");
+
+  const lazada = listingCoreContentForOperation({
+    operation: "listing.update",
+    central: { title: "중앙 상품명", description: "중앙 한국어 설명" },
+    localized: {
+      title: "Klip kabel tahan lama",
+      shortDescription: "Kabel kekal kemas",
+      description: "Klip kabel yang tahan lama memastikan kabel kekal kemas dengan reka bentuk pelekat yang mudah digunakan.",
+    },
+  });
+  const lazadaPayload = {
+    request: { Request: { Product: { Attributes: { name: lazada.title, description: lazada.description } } } },
+  };
+  assert.equal(assertListingPublicationSourceLocalized({
+    channel: "lazada",
+    expectedLocale: "ms-MY",
+    sourceArguments: lazadaPayload,
+  }).title, "Klip kabel tahan lama");
+});
+
 test("published listing update drafts bind the immutable remote product identity", () => {
   assert.deepEqual(
     prepareListingUpdateArguments("qoo10", { params: { ItemTitle: "수정 상품" } }, listing),
@@ -226,6 +265,7 @@ test("update preparation is idempotent and strips create-only sale, stock, shipp
     },
   }, listing), {
     itemId: "123456789",
+    sellerpilotExpectedSellerSkus: ["SKU-1"],
     request: {
       Request: {
         Product: {

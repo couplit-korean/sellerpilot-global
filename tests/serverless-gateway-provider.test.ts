@@ -164,11 +164,26 @@ test("publication reverification is allowlisted for the seven release channels a
     request: {
       arguments: {
         remoteId: "remote-item-1",
+        sellerpilotReadOnly: true,
         publicationIntent: "live",
         publicationStateContract: "verified_remote_state_v1",
         publicationExpectedLocale: "ja-JP",
         publicationExpectedFingerprint: "a".repeat(64),
         publicationExpectedImageCount: 8,
+        sellerpilotPublicationSource: {
+          contract: "listing_publication_verification_source_v1",
+          verificationJobId: JOB_ID,
+          sourceJobId: "54000000-0000-4000-8000-000000000001",
+          sourceOperation: "listing.create",
+          sourceArguments: {},
+          sourceResponsePayload: {},
+          sourceFingerprint: "a".repeat(64),
+          expectedRemoteId: "remote-item-1",
+          expectedLocale: "ja-JP",
+          expectedImageCount: 8,
+          market: "JP",
+          targetId: "JP",
+        },
       },
     },
   } satisfies GatewayClaim;

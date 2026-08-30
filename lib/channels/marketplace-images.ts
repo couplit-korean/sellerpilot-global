@@ -32,7 +32,80 @@ export type PreparedMarketplaceNormalizedAsset = {
   objectPath: string;
   bytes: Buffer;
   publicUrl: string;
+  sourceObjectPath?: string;
+  sourceSha256?: string;
 };
+
+export const listingPublicationAssetBindingContract =
+  "sellerpilot_publication_asset_binding_v1" as const;
+
+function normalizedMarketplaceAssetIdentity(url: string) {
+  let pathname = "";
+  try {
+    pathname = decodeURIComponent(new URL(url).pathname);
+  } catch {
+    return null;
+  }
+  const match = pathname.match(/(?:^|\/)(normalized\/([0-9a-f]{2})\/([0-9a-f]{64})\.jpg)$/u);
+  if (!match || match[2] !== match[3].slice(0, 2)) return null;
+  return { publicUrl: url, objectPath: match[1], contentSha256: match[3] };
+}
+
+export function buildListingPublicationAssetBinding(input: {
+  approvedDetailPageVersion: number;
+  approvedManifestDigest: string;
+  approvedDetailRoles: string[];
+  approvedDetailImagePaths: string[];
+  approvedDetailImageSha256s: string[];
+  approvedDetailImageUrls: string[];
+  providerImageSurface: "detail_content" | "gallery";
+  providerTransportRoles: string[];
+  providerTransportUrls: string[];
+}) {
+  const detailIdentities = input.approvedDetailImageUrls.map(normalizedMarketplaceAssetIdentity);
+  const transportIdentities = input.providerTransportUrls.map(normalizedMarketplaceAssetIdentity);
+  const valid = /^[a-f0-9]{64}$/u.test(input.approvedManifestDigest)
+    && Number.isSafeInteger(input.approvedDetailPageVersion)
+    && input.approvedDetailPageVersion > 0
+    && input.approvedDetailRoles.length === marketplaceChannelDetailImageCount
+    && new Set(input.approvedDetailRoles).size === marketplaceChannelDetailImageCount
+    && input.approvedDetailImagePaths.length === marketplaceChannelDetailImageCount
+    && new Set(input.approvedDetailImagePaths).size === marketplaceChannelDetailImageCount
+    && input.approvedDetailImageSha256s.length === marketplaceChannelDetailImageCount
+    && input.approvedDetailImageSha256s.every((digest) => /^[a-f0-9]{64}$/u.test(digest))
+    && new Set(input.approvedDetailImageSha256s).size === marketplaceChannelDetailImageCount
+    && detailIdentities.length === marketplaceChannelDetailImageCount
+    && detailIdentities.every(Boolean)
+    && new Set(detailIdentities.map((identity) => identity?.objectPath)).size === marketplaceChannelDetailImageCount
+    && input.providerTransportRoles.length === marketplaceChannelDetailImageCount
+    && new Set(input.providerTransportRoles).size === marketplaceChannelDetailImageCount
+    && transportIdentities.length === marketplaceChannelDetailImageCount
+    && transportIdentities.every(Boolean)
+    && new Set(transportIdentities.map((identity) => identity?.objectPath)).size === marketplaceChannelDetailImageCount
+    && (input.providerImageSurface === "detail_content"
+      ? input.providerTransportRoles.every((role, index) => role === input.approvedDetailRoles[index])
+        && input.providerTransportUrls.every((url, index) => url === input.approvedDetailImageUrls[index])
+      : input.providerTransportRoles[0] === "gallery-representative"
+        && input.providerTransportRoles.slice(1).every((role, index) => role === input.approvedDetailRoles[index])
+        && input.providerTransportUrls.slice(1).every((url, index) => url === input.approvedDetailImageUrls[index]));
+  if (!valid) return null;
+  return {
+    contract: listingPublicationAssetBindingContract,
+    approvedDetailPageVersion: input.approvedDetailPageVersion,
+    approvedManifestDigest: input.approvedManifestDigest,
+    approvedDetailImages: input.approvedDetailRoles.map((role, index) => ({
+      role,
+      approvedObjectPath: input.approvedDetailImagePaths[index],
+      approvedSourceSha256: input.approvedDetailImageSha256s[index],
+      ...detailIdentities[index]!,
+    })),
+    providerImageSurface: input.providerImageSurface,
+    providerTransportImages: input.providerTransportRoles.map((role, index) => ({
+      role,
+      ...transportIdentities[index]!,
+    })),
+  };
+}
 
 function embeddedIpv4Address(address: string) {
   let normalized = address.toLowerCase().split("%", 1)[0];
@@ -267,13 +340,30 @@ export async function normalizeMarketplaceImageBytes(source: Buffer, mode: Marke
   return Buffer.from(output);
 }
 
-async function prepareNormalizedImage(serviceClient: SupabaseClient, sourceUrl: string, mode: MarketplaceImageNormalizationMode) {
-  const normalized = await normalizeMarketplaceImageBytes(await downloadImage(sourceUrl), mode);
+async function prepareNormalizedImage(
+  serviceClient: SupabaseClient,
+  sourceUrl: string,
+  mode: MarketplaceImageNormalizationMode,
+  sourceObjectPath?: string,
+  expectedSourceSha256?: string,
+) {
+  const source = await downloadImage(sourceUrl);
+  const sourceSha256 = createHash("sha256").update(source).digest("hex");
+  if (expectedSourceSha256 && sourceSha256 !== expectedSourceSha256) {
+    throw new Error("MARKETPLACE_APPROVED_SOURCE_DIGEST_MISMATCH");
+  }
+  const normalized = await normalizeMarketplaceImageBytes(source, mode);
   const digest = createHash("sha256").update(normalized).digest("hex");
   const objectPath = `normalized/${digest.slice(0, 2)}/${digest}.jpg`;
   const { data } = serviceClient.storage.from(marketplaceImageBucket).getPublicUrl(objectPath);
   if (!data.publicUrl || data.publicUrl.length > 500) throw new Error("MARKETPLACE_IMAGE_PUBLIC_URL_INVALID");
-  return { objectPath, bytes: normalized, publicUrl: data.publicUrl } satisfies PreparedMarketplaceNormalizedAsset;
+  return {
+    objectPath,
+    bytes: normalized,
+    publicUrl: data.publicUrl,
+    ...(sourceObjectPath ? { sourceObjectPath } : {}),
+    ...(expectedSourceSha256 ? { sourceSha256 } : {}),
+  } satisfies PreparedMarketplaceNormalizedAsset;
 }
 
 async function runWithConcurrency<T>(
@@ -328,13 +418,28 @@ export async function persistMarketplaceNormalizedAssets(
       .upload(asset.objectPath, asset.bytes, {
         cacheControl: "31536000",
         contentType: "image/jpeg",
-        upsert: true,
+        upsert: false,
       });
-    if (uploadError) throw new Error("MARKETPLACE_IMAGE_UPLOAD_FAILED");
+    // A content-addressed object may already exist from an earlier attempt.
+    // Whether this upload succeeded or raced, only exact remote bytes can
+    // authorize the durable reference below.
+    void uploadError;
     const verify = await fetch(asset.publicUrl, { redirect: "error", signal: AbortSignal.timeout(15_000) });
-    await verify.body?.cancel();
-    if (!verify.ok || !(verify.headers.get("content-type") ?? "").toLowerCase().startsWith("image/jpeg")) {
+    const declaredLength = Number(verify.headers.get("content-length") ?? 0);
+    if (!verify.ok
+        || !(verify.headers.get("content-type") ?? "").toLowerCase().startsWith("image/jpeg")
+        || (Number.isFinite(declaredLength) && declaredLength > maxOutputBytes)
+        || !verify.body) {
+      await verify.body?.cancel();
       throw new Error("MARKETPLACE_IMAGE_READBACK_FAILED");
+    }
+    const remoteBytes = await collectBoundedMarketplaceImage(
+      verify.body as unknown as AsyncIterable<Uint8Array>,
+      maxOutputBytes,
+    );
+    const expectedDigest = asset.objectPath.match(/([0-9a-f]{64})\.jpg$/u)?.[1] ?? "";
+    if (createHash("sha256").update(remoteBytes).digest("hex") !== expectedDigest) {
+      throw new Error("MARKETPLACE_IMAGE_READBACK_DIGEST_MISMATCH");
     }
   });
 
@@ -343,6 +448,21 @@ export async function persistMarketplaceNormalizedAssets(
     { p_attempt_id: lifecycle.attemptId, p_paths: paths },
   );
   if (markError || marked !== true) throw new Error("MARKETPLACE_IMAGE_UPLOAD_MARK_FAILED");
+
+  const { data: urlsBound, error: urlBindingError } = await serviceClient.rpc(
+    "sellerpilot_service_bind_marketplace_normalized_asset_urls",
+    {
+      p_attempt_id: lifecycle.attemptId,
+      p_assets: uniqueAssets.map((asset) => ({
+        objectPath: asset.objectPath,
+        contentSha256: asset.objectPath.match(/([0-9a-f]{64})\.jpg$/u)?.[1] ?? "",
+        publicUrl: asset.publicUrl,
+        ...(asset.sourceObjectPath ? { sourceObjectPath: asset.sourceObjectPath } : {}),
+        ...(asset.sourceSha256 ? { sourceSha256: asset.sourceSha256 } : {}),
+      })),
+    },
+  );
+  if (urlBindingError || urlsBound !== true) throw new Error("MARKETPLACE_IMAGE_URL_BINDING_FAILED");
 }
 
 function record(value: unknown) {
@@ -528,22 +648,57 @@ export async function prepareMarketplaceImages(
   lifecycle?: MarketplaceImageLifecycleReference,
 ) {
   const next = structuredClone(argumentsValue);
+  delete next.sellerpilotPublicationAssetBinding;
   const normalizedBySource = new Map<string, Promise<PreparedMarketplaceNormalizedAsset>>();
   const preparedAssets: PreparedMarketplaceNormalizedAsset[] = [];
-  const normalize = async (sourceUrl: string, mode: MarketplaceImageNormalizationMode) => {
-    const cacheKey = `${mode}:${sourceUrl}`;
+  const normalize = async (
+    sourceUrl: string,
+    mode: MarketplaceImageNormalizationMode,
+    sourceObjectPath?: string,
+    expectedSourceSha256?: string,
+  ) => {
+    const cacheKey = `${mode}:${sourceUrl}:${sourceObjectPath ?? ""}:${expectedSourceSha256 ?? ""}`;
     const cached = normalizedBySource.get(cacheKey);
     if (cached) return (await cached).publicUrl;
-    const pending = prepareNormalizedImage(serviceClient, sourceUrl, mode);
+    const pending = prepareNormalizedImage(
+      serviceClient,
+      sourceUrl,
+      mode,
+      sourceObjectPath,
+      expectedSourceSha256,
+    );
     normalizedBySource.set(cacheKey, pending);
     const prepared = await pending;
     preparedAssets.push(prepared);
     return prepared.publicUrl;
   };
-  const normalizeList = async (value: unknown, limit: number, mode: MarketplaceImageNormalizationMode) => {
-    const unique = [...new Set(strings(value))].slice(0, limit);
+  const normalizeList = async (
+    value: unknown,
+    limit: number,
+    mode: MarketplaceImageNormalizationMode,
+    sourceObjectPaths: string[] = [],
+    expectedSourceSha256s: string[] = [],
+  ) => {
+    const sourceUrls = strings(value);
+    const unique = [...new Set(sourceUrls)].slice(0, limit);
     if (!unique.length) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-    return Promise.all(unique.map((sourceUrl) => normalize(sourceUrl, mode)));
+    const lineageRequired = sourceObjectPaths.length > 0 || expectedSourceSha256s.length > 0;
+    if (lineageRequired && (
+      sourceUrls.length !== unique.length
+      || sourceObjectPaths.length !== unique.length
+      || expectedSourceSha256s.length !== unique.length
+      || new Set(sourceObjectPaths).size !== unique.length
+      || new Set(expectedSourceSha256s).size !== unique.length
+      || expectedSourceSha256s.some((digest) => !/^[a-f0-9]{64}$/u.test(digest))
+    )) {
+      throw new Error("MARKETPLACE_APPROVED_SOURCE_LINEAGE_INVALID");
+    }
+    return Promise.all(unique.map((sourceUrl, index) => normalize(
+      sourceUrl,
+      mode,
+      lineageRequired ? sourceObjectPaths[index] : undefined,
+      lineageRequired ? expectedSourceSha256s[index] : undefined,
+    )));
   };
   const finish = async () => {
     if (preparedAssets.length) {
@@ -576,16 +731,48 @@ export async function prepareMarketplaceImages(
       || !hasCompleteLocalizedDetailSections(assets))) {
     throw new Error("MARKETPLACE_DETAIL_IMAGE_REQUIRED");
   }
+  const approvedDetailImagePaths = strings(assets?.approvedDetailImagePaths);
+  const approvedDetailImageSha256s = strings(assets?.approvedDetailImageSha256s);
   const gallery = assets ? await normalizeList(assets.galleryImageUrls, 12, "gallery-square") : [];
   const details = assets
     ? await normalizeList(
         assets.detailImageUrls,
         manualSourceMode ? 10 : marketplaceChannelDetailImageCount,
         "detail-ratio",
+        manualSourceMode ? [] : approvedDetailImagePaths,
+        manualSourceMode ? [] : approvedDetailImageSha256s,
       )
     : [];
   const detailImageAltTexts = strings(assets?.detailImageAltTexts).slice(0, details.length);
   const detailImageRoles = strings(assets?.detailImageRoles).slice(0, details.length);
+  const bindPublicationAssets = (
+    surface: "detail_content" | "gallery",
+    transportUrls: string[],
+    transportRoles: string[],
+  ) => {
+    if (manualSourceMode) return;
+    const manifestDigest = String(assets?.detailImageManifestDigest ?? "").trim();
+    const approvedVersion = Number(assets?.approvedDetailPageVersion);
+    const binding = buildListingPublicationAssetBinding({
+      approvedDetailPageVersion: approvedVersion,
+      approvedManifestDigest: manifestDigest,
+      approvedDetailRoles: detailImageRoles,
+      approvedDetailImagePaths,
+      approvedDetailImageSha256s,
+      approvedDetailImageUrls: details,
+      providerImageSurface: surface,
+      providerTransportRoles: transportRoles,
+      providerTransportUrls: transportUrls,
+    });
+    if (!binding) {
+      if (next.publicationStateContract === "verified_remote_state_v1") {
+        throw new Error("MARKETPLACE_PUBLICATION_ASSET_BINDING_INVALID");
+      }
+      return;
+    }
+    next.sellerpilotPublicationAssetBinding = binding;
+  };
+  bindPublicationAssets("detail_content", details, detailImageRoles);
 
   if (channel === "qoo10") {
     const params = record(next.params);
@@ -597,12 +784,21 @@ export async function prepareMarketplaceImages(
   }
 
   if (channel === "shopee" || channel === "lazada" || channel === "smartstore") {
-    const limit = channel === "smartstore" ? 10 : channel === "shopee" ? 9 : 8;
+    const limit = channel === "smartstore" ? 10 : 8;
     const sourceGallery = gallery.length ? gallery : await normalizeList(next.imageUrls, limit, "gallery-square");
     const normalizedAssets = uniqueStrings([...sourceGallery, ...details]);
     const listingImages = channel === "shopee"
-      ? uniqueStrings([sourceGallery[0] ?? "", ...details]).slice(0, limit)
+      ? (manualSourceMode
+          ? uniqueStrings([sourceGallery[0] ?? "", ...details]).slice(0, limit)
+          : uniqueStrings([sourceGallery[0] ?? "", ...details]).slice(0, limit))
       : normalizedAssets.slice(0, limit);
+    if (channel === "shopee" && !manualSourceMode) {
+      bindPublicationAssets(
+        "gallery",
+        listingImages,
+        ["gallery-representative", ...detailImageRoles.slice(0, 7)],
+      );
+    }
     // Lazada rejects any external URL left in description HTML. Keep every
     // normalized detail asset in imageUrls so the local worker migrates all of
     // them into Lazada media space, while the product gallery stays at 8.

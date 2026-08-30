@@ -45,7 +45,11 @@ export function channelListingRemoteIdentity(channel: ActiveChannelKey, operatio
   if (channel === "qoo10") return text(params.ItemCode, argumentsValue.itemCode, argumentsValue.remoteId);
   if (channel === "shopee") return text(body.item_id, bodyModel.model_id, argumentsValue.itemId, argumentsValue.item_id);
   if (channel === "lazada") return text(argumentsValue.itemId, requestSku.ItemId, requestSku.SellerSku, requestProduct.ItemId);
-  if (channel === "coupang") return text(argumentsValue.vendorItemId, argumentsValue.sellerProductId);
+  if (channel === "coupang") {
+    return operation === "listing.stop"
+      ? text(argumentsValue.sellerProductId)
+      : text(argumentsValue.vendorItemId, argumentsValue.sellerProductId);
+  }
   if (channel === "smartstore") return text(argumentsValue.originProductNo, body.originProductNo);
   if (channel === "ebay") {
     return operation === "price.update"

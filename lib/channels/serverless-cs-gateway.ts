@@ -16,6 +16,9 @@ import {
   type ChannelOperationResult,
 } from "./operations";
 import {
+  listingPublicationVerificationSourceSchema,
+} from "./listing-publication-verification";
+import {
   type CredentialRefreshSnapshot,
 } from "./protocols";
 import {
@@ -68,6 +71,8 @@ const LEGACY_BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless
 const COMPLETION_CONTEXT_RPC = "sellerpilot_service_serverless_cs_completion_context";
 const COMPLETE_TRANSACTION_RPC = "sellerpilot_service_complete_serverless_cs_transaction";
 const COMPLETE_LISTING_LINEAGE_RPC = "sellerpilot_complete_listing_lineage_verification";
+const PUBLICATION_VERIFICATION_SOURCE_RPC =
+  "sellerpilot_service_listing_publication_verification_source";
 const SANITIZED_ORDER_LIST_MARKER = "normalized_orders_v1";
 const SANITIZED_INQUIRY_LIST_MARKER = "normalized_inquiries_v1";
 const NO_STORE_HEADERS = {
@@ -481,6 +486,39 @@ async function beginProviderMutation(
   }
   if (begun.error) throw new Error("gateway_provider_fence_unavailable");
   if (begun.data !== true) throw new GatewayOwnershipLostError();
+}
+
+async function hydrateListingPublicationVerificationJob(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+) {
+  if (job.operation !== "listing.publication.verify") return job;
+  const sourceResult = await callRpc(dependencies, PUBLICATION_VERIFICATION_SOURCE_RPC, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+  });
+  const source = listingPublicationVerificationSourceSchema.safeParse(sourceResult.data);
+  if (sourceResult.error
+      || !source.success
+      || source.data.verificationJobId !== job.id) {
+    throw new Error("LISTING_PUBLICATION_VERIFY_SOURCE_CONTEXT_UNAVAILABLE");
+  }
+  const argumentsValue = recordValue(job.request.arguments);
+  if (!argumentsValue) {
+    throw new Error("LISTING_PUBLICATION_VERIFY_SOURCE_CONTEXT_UNAVAILABLE");
+  }
+  return {
+    ...job,
+    request: {
+      ...job.request,
+      arguments: {
+        ...argumentsValue,
+        sellerpilotPublicationSource: source.data,
+      },
+    },
+  } satisfies ServerlessGatewayClaim;
 }
 
 export async function executeServerlessCsProviderJob(
@@ -921,8 +959,14 @@ export async function runOneServerlessCsGatewayJob(
   try {
     await heartbeat.start();
     await assertLeaseHealthy();
-    const result = await (dependencies.executeProvider ?? executeServerlessCsProviderJob)({
+    const executionJob = await hydrateListingPublicationVerificationJob(
+      dependencies,
+      gatewayTokenHash,
       job,
+    );
+    await assertLeaseHealthy();
+    const result = await (dependencies.executeProvider ?? executeServerlessCsProviderJob)({
+      job: executionJob,
       signal: runtimeSignal,
       hooks,
     });

@@ -28,6 +28,8 @@ export type LazadaPublicationReadbackVerification = {
   };
 };
 
+type LazadaContentVerificationMode = "mutation_arguments" | "immutable_source_readback";
+
 function recordValue(value: unknown): UnknownRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as UnknownRecord
@@ -67,6 +69,39 @@ function lazadaImages(product: UnknownRecord) {
   return uniqueTexts(root.Image ?? root.image);
 }
 
+function sameOrderedTexts(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function lazadaImmutableRemoteAssetsVerified(
+  sourceRemoteData: UnknownRecord,
+  currentRemoteData: UnknownRecord,
+) {
+  const sourceProduct = lazadaProduct(sourceRemoteData);
+  const currentProduct = lazadaProduct(currentRemoteData);
+  const sourceGallery = lazadaImages(sourceProduct);
+  const currentGallery = lazadaImages(currentProduct);
+  if (sourceGallery.length !== 8 || !sameOrderedTexts(sourceGallery, currentGallery)) return false;
+
+  const sourceSkus = lazadaSkus(sourceProduct);
+  const currentSkus = lazadaSkus(currentProduct);
+  if (!sourceSkus.length || sourceSkus.length !== currentSkus.length) return false;
+  const sourceSellerSkus = sourceSkus.map((sku) => exactText(sku.SellerSku ?? sku.seller_sku));
+  if (sourceSellerSkus.some((sellerSku) => !sellerSku)
+    || new Set(sourceSellerSkus).size !== sourceSkus.length) return false;
+  const currentBySellerSku = new Map(currentSkus.map((sku) => [
+    exactText(sku.SellerSku ?? sku.seller_sku),
+    sku,
+  ]));
+  if (currentBySellerSku.size !== currentSkus.length || currentBySellerSku.has("")) return false;
+  return sourceSkus.every((sourceSku) => {
+    const sellerSku = exactText(sourceSku.SellerSku ?? sourceSku.seller_sku);
+    const currentSku = currentBySellerSku.get(sellerSku);
+    return Boolean(sellerSku && currentSku
+      && sameOrderedTexts(lazadaImages(sourceSku), lazadaImages(currentSku)));
+  });
+}
+
 function normalizedLazadaStatus(value: unknown) {
   return exactText(value)
     .trim()
@@ -91,6 +126,10 @@ function lazadaProviderStatuses(product: UnknownRecord, skus: UnknownRecord[]) {
   };
 }
 
+function lazadaExplicitSkuStatuses(skus: UnknownRecord[]) {
+  return skus.map((sku) => normalizedLazadaStatus(sku.Status ?? sku.status));
+}
+
 function lazadaVisibility(
   statuses: string[],
   qcStatuses: string[],
@@ -100,11 +139,11 @@ function lazadaVisibility(
   const rejected = new Set(["REJECTED", "QC_REJECTED", "FAILED", "FAILED_REVIEW"]);
   const inactive = new Set(["INACTIVE", "OFFLINE", "DEACTIVATED"]);
   const deleted = new Set(["DELETED", "REMOVED"]);
-  // Preserve exposure truth first: one active SKU makes the product buyable
-  // even if another SKU is inactive or under review.
-  if (statuses.some((status) => active.has(status))) return "live";
+  // QC is the authoritative publication gate. An active SKU cannot be
+  // attested as live while the provider still reports review or rejection.
   if (qcStatuses.some((status) => rejected.has(status)) || statuses.some((status) => rejected.has(status))) return "rejected";
   if (qcStatuses.some((status) => pending.has(status)) || statuses.some((status) => pending.has(status))) return "pending_review";
+  if (statuses.length > 0 && statuses.every((status) => active.has(status))) return "live";
   if (statuses.length > 0 && statuses.every((status) => deleted.has(status))) return "withdrawn";
   if (statuses.length > 0 && statuses.every((status) => inactive.has(status) || deleted.has(status))) return "non_public";
   return undefined;
@@ -195,18 +234,54 @@ export function normalizeLazadaListingPublicationReadback(input: {
   expectedLocale: string;
   expectedFingerprint: string;
   expectedImageCount: number;
+  contentVerificationMode?: LazadaContentVerificationMode;
+  immutableSourceRemoteData?: UnknownRecord;
   verifiedAt?: string;
 }): LazadaPublicationReadbackVerification {
   const remoteId = input.remoteId.trim();
   const product = lazadaProduct(input.remoteData);
   const productId = exactText(product.item_id || product.ItemId || product.itemId);
   const skus = lazadaSkus(product);
+  const request = recordValue(input.mutationArguments.request);
+  const requestRoot = recordValue(request.Request);
+  const requestProduct = recordValue(requestRoot.Product);
+  const expectedSellerSkus = uniqueTexts([
+    ...lazadaSkuRows(requestProduct).map((sku) => sku.SellerSku ?? sku.seller_sku),
+    ...(Array.isArray(input.mutationArguments.sellerpilotExpectedSellerSkus)
+      ? input.mutationArguments.sellerpilotExpectedSellerSkus
+      : []),
+  ]);
+  const remoteSellerSkus = uniqueTexts(skus.map((sku) => sku.SellerSku ?? sku.seller_sku));
+  const remoteSkuIds = uniqueTexts(skus.map((sku) => sku.SkuId ?? sku.SkuID ?? sku.sku_id));
+  const exactSkuIdentity = input.operation === "listing.stop"
+    ? true
+    : expectedSellerSkus.length > 0
+      && expectedSellerSkus.length === remoteSellerSkus.length
+      && expectedSellerSkus.every((sellerSku) => remoteSellerSkus.includes(sellerSku))
+      && remoteSkuIds.length === skus.length;
   const { statuses, qcStatuses } = lazadaProviderStatuses(product, skus);
-  const visibility = lazadaVisibility(statuses, qcStatuses);
+  const skuStatuses = lazadaExplicitSkuStatuses(skus);
+  const provisionalVisibility = lazadaVisibility(statuses, qcStatuses);
+  const completeSkuStatuses = skus.length > 0
+    && skuStatuses.length === skus.length
+    && skuStatuses.every(Boolean);
+  const visibility = provisionalVisibility === "live"
+    ? completeSkuStatuses && skuStatuses.every((status) => ["ACTIVE", "LIVE", "ONLINE"].includes(status))
+      ? "live"
+      : undefined
+    : provisionalVisibility === "non_public"
+      ? completeSkuStatuses && skuStatuses.every((status) => ["INACTIVE", "OFFLINE", "DEACTIVATED", "DELETED", "REMOVED"].includes(status))
+        ? "non_public"
+        : undefined
+      : provisionalVisibility === "withdrawn"
+        ? completeSkuStatuses && skuStatuses.every((status) => ["DELETED", "REMOVED"].includes(status))
+          ? "withdrawn"
+          : undefined
+        : provisionalVisibility;
   const providerStatus = [...statuses, ...qcStatuses.map((status) => `QC:${status}`)].join("|").slice(0, 160);
   const images = lazadaImages(product);
   const imageCount = images.length;
-  const identityVerified = Boolean(remoteId && productId === remoteId);
+  const identityVerified = Boolean(remoteId && productId === remoteId && exactSkuIdentity);
   const statusVerified = Boolean(visibility && providerStatus);
   const market = input.market.trim().toUpperCase();
   const localeVerified = Boolean(
@@ -218,6 +293,13 @@ export function normalizeLazadaListingPublicationReadback(input: {
     : input.expectedImageCount === 8 && imageCount === input.expectedImageCount;
   const contentVerification = input.operation === "listing.stop"
     ? { ok: true, mismatches: [] as string[] }
+    : input.contentVerificationMode === "immutable_source_readback"
+      ? lazadaImmutableRemoteAssetsVerified(
+          recordValue(input.immutableSourceRemoteData),
+          input.remoteData,
+        )
+        ? { ok: true, mismatches: [] as string[] }
+        : { ok: false, mismatches: ["immutableRemoteAssets"] }
     : verifyListingUpdateReadback("lazada", input.mutationArguments, input.remoteData);
   const contentVerified = contentVerification.ok;
   const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expectedFingerprint)
@@ -238,8 +320,6 @@ export function normalizeLazadaListingPublicationReadback(input: {
     return { providerStatus, imageCount, checks };
   }
 
-  const skuIds = uniqueTexts(skus.map((sku) => sku.SkuId ?? sku.SkuID ?? sku.sku_id));
-  const sellerSkus = uniqueTexts(skus.map((sku) => sku.SellerSku ?? sku.seller_sku));
   const urls = uniqueTexts(skus.map((sku) => sku.Url ?? sku.url));
   return {
     providerStatus,
@@ -252,14 +332,15 @@ export function normalizeLazadaListingPublicationReadback(input: {
       verifiedAt: input.verifiedAt ?? new Date().toISOString(),
       evidence: {
         version: "lazada_get_product_item_v1",
+        contentVerificationMode: input.contentVerificationMode ?? "mutation_arguments",
         ...checks,
         mutableContentMismatchPaths: contentVerification.mismatches.slice(0, 40),
       },
       resources: {
         itemId: remoteId,
         country: market.toLowerCase(),
-        ...(skuIds.length ? { skuIds } : {}),
-        ...(sellerSkus.length ? { sellerSkus } : {}),
+        ...(remoteSkuIds.length ? { skuIds: remoteSkuIds } : {}),
+        ...(remoteSellerSkus.length ? { sellerSkus: remoteSellerSkus } : {}),
         ...(urls.length ? { urls } : {}),
       },
       locale: input.expectedLocale,
@@ -278,6 +359,8 @@ export async function readLazadaListingPublicationState(input: {
   expectedLocale: string;
   expectedFingerprint: string;
   expectedImageCount: number;
+  contentVerificationMode?: LazadaContentVerificationMode;
+  immutableSourceRemoteData?: UnknownRecord;
 }): Promise<LazadaPublicationReadbackVerification & { remote: RemoteResponse }> {
   const remote = await lazadaRequest({
     payload: input.payload,
@@ -295,6 +378,8 @@ export async function readLazadaListingPublicationState(input: {
       expectedLocale: input.expectedLocale,
       expectedFingerprint: input.expectedFingerprint,
       expectedImageCount: input.expectedImageCount,
+      contentVerificationMode: input.contentVerificationMode,
+      immutableSourceRemoteData: input.immutableSourceRemoteData,
     }),
   };
 }

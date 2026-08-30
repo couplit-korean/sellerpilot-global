@@ -24,9 +24,10 @@ const generatedImagePaths = Object.fromEntries(aiGeneratedAssetSpecs.map((asset)
   asset.id,
   `results/${jobId}/claims/${claimId}/${asset.file}`,
 ]));
-const manifestImages: ProductDetailImageManifestEntry[] = defaultProductDetailImageRoles.map((role) => ({
+const manifestImages: ProductDetailImageManifestEntry[] = defaultProductDetailImageRoles.map((role, index) => ({
   role,
   path: generatedImagePaths[role],
+  sourceSha256: (index + 1).toString(16).padStart(64, "0"),
 }));
 const manifestDigest = createHash("sha256")
   .update(canonicalProductDetailImageManifestInput(manifestImages), "utf8")

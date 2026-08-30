@@ -366,6 +366,19 @@ function safeLazadaProduct(value: unknown) {
   };
 }
 
+function lazadaExpectedSellerSkus(value: unknown) {
+  const product = recordValue(value);
+  const skusRoot = recordValue(product.Skus);
+  const rawSkus = Array.isArray(skusRoot.Sku)
+    ? skusRoot.Sku
+    : Object.keys(recordValue(skusRoot.Sku)).length
+      ? [skusRoot.Sku]
+      : [];
+  return [...new Set(rawSkus
+    .map((sku) => identityValue(recordValue(sku).SellerSku ?? recordValue(sku).seller_sku))
+    .filter(Boolean))];
+}
+
 function safeCoupangItems(value: unknown) {
   return Array.isArray(value)
     ? value.flatMap((item) => {
@@ -447,11 +460,14 @@ export function prepareListingUpdateArguments(
   if (channel === "lazada") {
     const request = recordValue(createArguments.request);
     const requestRoot = recordValue(request.Request);
-    const product = safeLazadaProduct(requestRoot.Product);
+    const sourceProduct = requestRoot.Product;
+    const product = safeLazadaProduct(sourceProduct);
+    const sellerpilotExpectedSellerSkus = lazadaExpectedSellerSkus(sourceProduct);
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "imageUrls"),
       ...optionalArgument(createArguments, "country"),
+      ...(sellerpilotExpectedSellerSkus.length ? { sellerpilotExpectedSellerSkus } : {}),
       itemId: remoteId,
       request: { Request: { Product: product } },
     };

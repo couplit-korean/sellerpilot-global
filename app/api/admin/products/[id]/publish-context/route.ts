@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
@@ -203,16 +204,22 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     }, { status: 409 });
   }
   const detailBucket = admin.serviceClient.storage.from("sellerpilot-ai");
-  const assetsResolvable = await Promise.all(
-    resolvedAssets.value.map((asset) => detailBucket.exists(asset.path)),
-  ).then(
-    (results) => results.every((result) => !result.error && result.data === true),
-    () => false,
-  );
-  if (!assetsResolvable) {
+  const approvedSourceImages = await Promise.all(resolvedAssets.value.map(async (asset) => {
+    const { data, error } = await detailBucket.download(asset.path);
+    if (error || !data || data.size < 1 || data.size > 10 * 1024 * 1024) return null;
+    const bytes = Buffer.from(await data.arrayBuffer());
+    return {
+      role: asset.role,
+      path: asset.path,
+      sourceSha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  })).catch(() => []);
+  if (approvedSourceImages.length !== resolvedAssets.value.length
+      || approvedSourceImages.some((asset) => !asset)
+      || new Set(approvedSourceImages.map((asset) => asset?.sourceSha256)).size !== resolvedAssets.value.length) {
     return NextResponse.json({
       code: "DETAIL_PAGE_ASSETS_UNRESOLVED",
-      message: "상세 이미지 8장 중 운영 저장소에서 불러올 수 없는 파일이 있습니다.",
+      message: "상세 이미지 8장의 운영 저장소 원본 바이트를 서로 다르게 확인하지 못했습니다.",
     }, { status: 409 });
   }
   const { data, error } = await admin.userClient.rpc("sellerpilot_save_product_detail_page", {
@@ -231,7 +238,28 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
         : rejectedPayload ? "상세페이지 블록 구성이나 크기 제한을 확인해 주세요." : unresolvedAssets ? "상세 이미지 역할과 현재 운영 저장 경로가 일치하지 않습니다. 이미지를 다시 확인해 주세요." : "상세페이지 편집 내용을 저장하지 못했습니다.",
     }, { status: versionConflict || unresolvedAssets ? 409 : rejectedPayload ? 400 : 500 });
   }
-  return NextResponse.json({ detailPage: data }, {
+  const savedDetailPage = data as Record<string, unknown>;
+  const savedManifest = isRecord(savedDetailPage.imageManifest) ? savedDetailPage.imageManifest : null;
+  const savedVersion = Number(savedDetailPage.version);
+  const { data: sourceBoundManifest, error: sourceBindingError } = await admin.serviceClient.rpc(
+    "sellerpilot_service_bind_product_detail_page_source_digests",
+    {
+      p_product_id: productId.data,
+      p_owner_id: admin.user.id,
+      p_version: savedVersion,
+      p_prior_manifest_digest: typeof savedManifest?.digest === "string" ? savedManifest.digest : "",
+      p_images: approvedSourceImages,
+    },
+  );
+  if (sourceBindingError || !isRecord(sourceBoundManifest)) {
+    return NextResponse.json({
+      code: "DETAIL_PAGE_SOURCE_BINDING_FAILED",
+      message: "상세 이미지 8장의 승인 원본 해시를 저장하지 못했습니다. 이 페이지는 외부 채널 게시에 사용할 수 없습니다.",
+    }, { status: 500 });
+  }
+  return NextResponse.json({
+    detailPage: { ...savedDetailPage, imageManifest: sourceBoundManifest },
+  }, {
     headers: { "cache-control": "no-store, max-age=0" },
   });
 }

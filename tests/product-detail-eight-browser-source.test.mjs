@@ -39,7 +39,7 @@ test("detail creation renders only a localized eight-role selection while retain
   assert.match(createDetailData, /sectionImage \? \{[\s\S]*?type: "ImageStoryBlock"[\s\S]*?: sectionLayout === "cards"/);
 });
 
-test("PUT and channel publication validate the approved manifest before DB save, claim, or provider execution", async () => {
+test("PUT and channel publication validate and byte-bind the approved manifest before claim or provider execution", async () => {
   const [publishContextRoute, channelRoute] = await Promise.all([
     readFile(publishContextRouteUrl, "utf8"),
     readFile(channelRouteUrl, "utf8"),
@@ -48,12 +48,19 @@ test("PUT and channel publication validate the approved manifest before DB save,
   const putStart = publishContextRoute.indexOf("export async function PUT");
   const putInspection = publishContextRoute.indexOf("inspectProductDetailImageDocument(body.data.data)", putStart);
   const putResolution = publishContextRoute.indexOf("resolveProductDetailDocumentAssetPaths(body.data.data", putStart);
-  const putExistence = publishContextRoute.indexOf("detailBucket.exists(asset.path)", putStart);
+  const putDownload = publishContextRoute.indexOf("detailBucket.download(asset.path)", putStart);
+  const putDigest = publishContextRoute.indexOf('createHash("sha256").update(bytes).digest("hex")', putStart);
   const putRpc = publishContextRoute.indexOf('"sellerpilot_save_product_detail_page"', putStart);
+  const putSourceBindingRpc = publishContextRoute.indexOf(
+    '"sellerpilot_service_bind_product_detail_page_source_digests"',
+    putStart,
+  );
   assert.ok(putStart >= 0 && putInspection > putStart);
   assert.ok(putResolution > putInspection);
-  assert.ok(putExistence > putResolution);
-  assert.ok(putRpc > putExistence);
+  assert.ok(putDownload > putResolution);
+  assert.ok(putDigest > putDownload);
+  assert.ok(putRpc > putDigest);
+  assert.ok(putSourceBindingRpc > putRpc);
   assert.match(publishContextRoute, /DETAIL_PAGE_ASSETS_UNRESOLVED/);
 
   const approval = channelRoute.indexOf("approvedProductDetailManifestFromPublishContext(publishContext)");

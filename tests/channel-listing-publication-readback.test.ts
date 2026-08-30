@@ -76,6 +76,8 @@ function smartstoreOriginProduct(input: {
     },
     smartstoreChannelProduct: {
       channelProductNo: 20000001,
+      originProductNo: 10000001,
+      channelProductName: "검증된 스마트스토어 상품명",
       channelProductDisplayStatusType: input.channelStatus,
     },
   };
@@ -267,18 +269,52 @@ test("Coupang approval acceptance without a vendor item remains pending review",
   }
 });
 
+test("Coupang rejected seller-product state cannot be overridden by stale on-sale vendor inventory", async () => {
+  const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
+  assert.ok(expected);
+  const readback = await readCoupangListingPublicationState({
+    operation: "listing.update",
+    intent: "live",
+    remoteId: "987654321",
+    expected,
+    readSellerProduct: async () => remote({
+      sellerProductId: 987654321,
+      requested: false,
+      statusName: "승인반려",
+      items: [{ vendorItemId: 4444, contents: coupangContents() }],
+    }),
+    readVendorItem: async () => remote({ vendorItemId: 4444, onSale: true }),
+  });
+  assert.equal(readback.state?.visibility, "rejected");
+  assert.notEqual(readback.state?.visibility, "live");
+});
+
 test("Coupang listing stop requires an authoritative onSale false readback", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (_input, init) => init?.method === "PUT"
-    ? Response.json({ code: "SUCCESS" })
-    : Response.json({ code: "SUCCESS", data: { sellerItemId: 3333, onSale: false } });
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
+    if (init?.method === "PUT") return Response.json({ code: "SUCCESS" });
+    if (url.includes("/seller-products/")) {
+      return Response.json({
+        code: "SUCCESS",
+        data: {
+          sellerProductId: 3333,
+          items: [{ vendorItemId: 4444 }, { vendorItemId: 5555 }],
+        },
+      });
+    }
+    const vendorItemId = url.match(/\/vendor-items\/(\d+)/u)?.[1];
+    return Response.json({ code: "SUCCESS", data: { vendorItemId, onSale: false } });
+  };
   try {
     const operation = await executeChannelOperation({
       channel: "coupang",
       operation: "listing.stop",
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
       arguments: {
-        vendorItemId: "4444",
+        sellerProductId: "3333",
         publicationStateContract: "verified_remote_state_v1",
         publicationExpectedLocale: "ko-KR",
         publicationExpectedFingerprint: fingerprint,
@@ -289,7 +325,11 @@ test("Coupang listing stop requires an authoritative onSale false readback", asy
     assert.equal(operation.ok, true);
     assert.equal(operation.publicationFulfilled, true);
     assert.equal(operation.remoteState?.visibility, "withdrawn");
-    assert.deepEqual(operation.remoteState?.resources, { vendorItemId: "4444" });
+    assert.deepEqual(operation.remoteState?.resources, {
+      sellerProductId: "3333",
+      vendorItemIds: ["4444", "5555"],
+    });
+    assert.equal(calls.filter((call) => call.startsWith("PUT ")).length, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -343,6 +383,83 @@ test("SmartStore read-only publication boundary requires SALE and ON for live", 
     smartstoreChannelProductNo: "20000001",
   });
   assert.equal(readback.state?.imageCount, 8);
+});
+
+test("SmartStore dedicated channel-product wrapper overrides stale origin-embedded title and visibility", async () => {
+  const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
+  assert.ok(expected);
+  const readback = await readSmartstoreListingPublicationState({
+    operation: "listing.update",
+    intent: "live",
+    remoteId: "10000001",
+    expected,
+    readOriginProduct: async () => remote({
+      ...smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" }),
+      smartstoreChannelProduct: {
+        channelProductNo: 20000001,
+        originProductNo: 10000001,
+        channelProductName: "승인된 원상품의 오래된 채널명",
+        channelProductDisplayStatusType: "ON",
+      },
+    }),
+    readChannelProduct: async () => remote({
+      originProductNo: 10000001,
+      smartstoreChannelProductNo: 20000001,
+      smartstoreChannelProduct: {
+        channelProductNo: 20000001,
+        originProductNo: 10000001,
+        channelProductName: "공격자가 바꾼 실제 채널 상품명",
+        channelProductDisplayStatusType: "SUSPENSION",
+      },
+    }),
+  });
+  assert.equal(readback.failureCode, undefined);
+  assert.equal(readback.state?.visibility, "non_public");
+  assert.equal(readback.state?.providerStatus, "SALE|SUSPENSION");
+});
+
+test("SmartStore dedicated channel-product read fails closed without official title or display status", async () => {
+  const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
+  assert.ok(expected);
+  for (const smartstoreChannelProduct of [
+    { channelProductNo: 20000001, originProductNo: 10000001, channelProductDisplayStatusType: "ON" },
+    { channelProductNo: 20000001, originProductNo: 10000001, channelProductName: "제목만 있음" },
+  ]) {
+    const readback = await readSmartstoreListingPublicationState({
+      operation: "listing.update",
+      intent: "live",
+      remoteId: "10000001",
+      expected,
+      readOriginProduct: async () => remote(smartstoreOriginProduct({
+        originStatus: "SALE",
+        channelStatus: "ON",
+      })),
+      readChannelProduct: async () => remote({
+        originProductNo: 10000001,
+        smartstoreChannelProductNo: 20000001,
+        smartstoreChannelProduct,
+      }),
+    });
+    assert.equal(readback.state, undefined);
+    assert.equal(readback.failureCode, "SMARTSTORE_PUBLICATION_READBACK_UNVERIFIED");
+  }
+});
+
+test("SmartStore OUTOFSTOCK cannot be attested as buyer-visible live", async () => {
+  const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
+  assert.ok(expected);
+  const readback = await readSmartstoreListingPublicationState({
+    operation: "listing.update",
+    intent: "live",
+    remoteId: "10000001",
+    expected,
+    readOriginProduct: async () => remote(smartstoreOriginProduct({
+      originStatus: "OUTOFSTOCK",
+      channelStatus: "ON",
+    })),
+  });
+  assert.equal(readback.state?.visibility, "non_public");
+  assert.equal(readback.state?.providerStatus, "OUTOFSTOCK|ON");
 });
 
 test("SmartStore safe-test create writes SUSPENSION and verifies it after origin-product GET", async () => {

@@ -13,6 +13,7 @@ import {
   fetchNaverAccessToken,
   lazadaRequest,
   naverRequest,
+  readStoredNaverAccessToken,
   shopeeEnvironment,
   shopeeRequest,
   textValue,
@@ -363,7 +364,10 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
   const imageUrls = uniqueImageUrls(input.arguments.imageUrls, 10);
   if (!imageUrls.length) throw new Error("NAVER_LISTING_IMAGES_MISSING");
   await input.hooks.assertLeaseHealthy();
-  const token = await fetchNaverAccessToken(input.credential);
+  const storedAccessToken = readStoredNaverAccessToken(input.credential);
+  const token = storedAccessToken
+    ? { accessToken: storedAccessToken }
+    : await fetchNaverAccessToken(input.credential);
   let phone = textValue(input.credential, "after_service_phone");
   if (!phone) {
     await input.hooks.assertLeaseHealthy();

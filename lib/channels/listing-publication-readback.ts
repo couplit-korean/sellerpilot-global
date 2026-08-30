@@ -149,6 +149,7 @@ export async function readCoupangListingPublicationState(input: {
   intent?: ListingPublicationIntent;
   remoteId: string;
   expected: ListingPublicationReadbackExpectation;
+  expectedStopVendorItemIds?: string[];
   readSellerProduct: (sellerProductId: string) => Promise<RemoteResponse>;
   readVendorItem: (vendorItemId: string) => Promise<RemoteResponse>;
   verifiedAt?: string;
@@ -161,31 +162,59 @@ export async function readCoupangListingPublicationState(input: {
   }
 
   if (input.operation === "listing.stop") {
-    const remote = await input.readVendorItem(input.remoteId);
-    const root = record(remote.data.data);
-    const data = Object.keys(root).length ? root : remote.data;
-    const onSale = strictProviderBoolean(data.onSale);
-    const accepted = remoteAccepted(remote);
-    if (!accepted || onSale === undefined || input.expected.imageCount !== 0) {
+    const sellerProductReadback = await input.readSellerProduct(input.remoteId);
+    const sellerProduct = coupangSellerProductData(sellerProductReadback);
+    const sellerProductId = String(sellerProduct.sellerProductId ?? "").trim();
+    const items = records(sellerProduct.items);
+    const rawVendorItemIds = items.map((item) => String(item.vendorItemId ?? "").trim());
+    const vendorItemIds = [...new Set(rawVendorItemIds.filter(Boolean))];
+    const expectedVendorItemIds = [...new Set(
+      (input.expectedStopVendorItemIds ?? vendorItemIds).map((value) => String(value).trim()).filter(Boolean),
+    )];
+    const everyItemBound = items.length > 0
+      && rawVendorItemIds.every(Boolean)
+      && vendorItemIds.length === items.length;
+    const expectedSetMatches = [...vendorItemIds].sort().join("\u0000")
+      === [...expectedVendorItemIds].sort().join("\u0000");
+    const vendorItemReadbacks = await Promise.all(vendorItemIds.map(async (vendorItemId) => ({
+      vendorItemId,
+      remote: await input.readVendorItem(vendorItemId),
+    })));
+    const vendorStates = vendorItemReadbacks.map(({ remote }) => {
+      const root = record(remote.data.data);
+      const data = Object.keys(root).length ? root : remote.data;
+      return remoteAccepted(remote) ? strictProviderBoolean(data.onSale) : undefined;
+    });
+    const allOffSale = vendorStates.length === vendorItemIds.length
+      && vendorStates.length > 0
+      && vendorStates.every((onSale) => onSale === false);
+    const identityVerified = remoteAccepted(sellerProductReadback)
+      && sellerProductId === input.remoteId
+      && everyItemBound
+      && expectedSetMatches;
+    if (!identityVerified || !allOffSale || input.expected.imageCount !== 0) {
       return {
-        vendorItemReadbacks: [{ vendorItemId: input.remoteId, remote }],
+        sellerProductReadback,
+        vendorItemReadbacks,
         failureCode: "COUPANG_VENDOR_ITEM_STOP_READBACK_UNVERIFIED",
       };
     }
     return {
-      vendorItemReadbacks: [{ vendorItemId: input.remoteId, remote }],
+      sellerProductReadback,
+      vendorItemReadbacks,
       state: buildVerifiedState({
-        visibility: onSale ? "live" : "withdrawn",
-        providerStatus: `onSale=${String(onSale)}`,
+        visibility: "withdrawn",
+        providerStatus: `onSale=${vendorStates.join(",")}`,
         verifiedAt: input.verifiedAt,
-        resources: { vendorItemId: input.remoteId },
+        resources: { sellerProductId: input.remoteId, vendorItemIds },
         locale,
         fingerprint: input.expected.fingerprint,
         imageCount: 0,
         evidence: {
-          identitySource: "vendor_item_inventory_path",
-          onSale,
-          readbackDigest: sha256({ vendorItemId: input.remoteId, onSale }),
+          identitySource: "seller_product_and_all_vendor_item_inventory_paths",
+          vendorItemCount: vendorItemIds.length,
+          vendorItemOnSale: vendorStates,
+          readbackDigest: sha256({ sellerProductId, vendorItemIds, vendorStates }),
         },
       }),
     };
@@ -205,9 +234,11 @@ export async function readCoupangListingPublicationState(input: {
   const detailImageCounts = items.map((item) => coupangDetailImageUrls(item).length);
   const imageCountVerified = detailImageCounts.length > 0
     && detailImageCounts.every((count) => count === input.expected.imageCount);
-  const vendorItemIds = [...new Set(items
-    .map((item) => String(item.vendorItemId ?? "").trim())
-    .filter(Boolean))];
+  const rawVendorItemIds = items.map((item) => String(item.vendorItemId ?? "").trim());
+  const vendorItemIds = [...new Set(rawVendorItemIds.filter(Boolean))];
+  const everyItemBound = items.length > 0
+    && rawVendorItemIds.every(Boolean)
+    && vendorItemIds.length === items.length;
   const vendorItemReadbacks = await Promise.all(vendorItemIds.map(async (vendorItemId) => ({
     vendorItemId,
     remote: await input.readVendorItem(vendorItemId),
@@ -218,23 +249,28 @@ export async function readCoupangListingPublicationState(input: {
     return remoteAccepted(remote) ? strictProviderBoolean(data.onSale) : undefined;
   });
   const vendorStatesVerified = vendorStates.every((state) => state !== undefined);
-  const anyOnSale = vendorStates.some((state) => state === true);
+  const allOnSale = vendorStates.length > 0 && vendorStates.every((state) => state === true);
   const allOffSale = vendorStates.length > 0 && vendorStates.every((state) => state === false);
   const identityVerified = remoteAccepted(sellerProductReadback) && sellerProductId === input.remoteId;
   const requestedVerified = requested !== undefined;
 
   let visibility: VerifiedListingRemoteState["visibility"] | undefined;
-  if (vendorStatesVerified && anyOnSale) visibility = "live";
-  else if (status.family === "rejected") visibility = "rejected";
+  if (status.family === "rejected") visibility = "rejected";
   else if (status.family === "withdrawn") visibility = "withdrawn";
+  else if (status.family === "approved"
+      && requested === true
+      && everyItemBound
+      && vendorStatesVerified
+      && allOnSale) visibility = "live";
   else if (status.family === "approved" && allOffSale) visibility = "non_public";
   else if (status.family === "approved" && vendorItemIds.length === 0) visibility = undefined;
   else if (status.family === "pending" || requested === true) visibility = "pending_review";
-  else if (status.family === "draft" && requested === false && !anyOnSale) visibility = "non_public";
+  else if (status.family === "draft" && requested === false && !allOnSale) visibility = "non_public";
 
   if (!visibility
       || !identityVerified
       || !requestedVerified
+      || (visibility === "live" && !everyItemBound)
       || !imageCountVerified
       || !vendorStatesVerified) {
     return {
@@ -288,6 +324,7 @@ function htmlImageUrls(value: unknown) {
 export type SmartstoreListingPublicationReadback = {
   state?: VerifiedListingRemoteState;
   originProductReadback: RemoteResponse;
+  channelProductReadback?: RemoteResponse;
   failureCode?: string;
 };
 
@@ -301,6 +338,7 @@ export async function readSmartstoreListingPublicationState(input: {
   remoteId: string;
   expected: ListingPublicationReadbackExpectation;
   readOriginProduct: (originProductNo: string) => Promise<RemoteResponse>;
+  readChannelProduct?: (channelProductNo: string) => Promise<RemoteResponse>;
   verifiedAt?: string;
 }): Promise<SmartstoreListingPublicationReadback> {
   const originProductReadback = await input.readOriginProduct(input.remoteId);
@@ -317,12 +355,48 @@ export async function readSmartstoreListingPublicationState(input: {
       ?? channelProduct.channelProductNo
       ?? "",
   ).trim();
+  const channelProductReadback = responseChannelProductNo && input.readChannelProduct
+    ? await input.readChannelProduct(responseChannelProductNo)
+    : undefined;
+  const authoritativeChannelWrapper = channelProductReadback?.data ?? {};
+  const officialSmartstoreChannelProduct = record(authoritativeChannelWrapper.smartstoreChannelProduct);
+  const authoritativeChannelProduct = input.readChannelProduct
+    ? officialSmartstoreChannelProduct
+    : channelProduct;
+  const authoritativeChannelProductNo = String(
+    authoritativeChannelProduct.channelProductNo
+      ?? authoritativeChannelProduct.smartstoreChannelProductNo
+      ?? authoritativeChannelWrapper.smartstoreChannelProductNo
+      ?? responseChannelProductNo,
+  ).trim();
+  const authoritativeOriginProductNo = String(
+    authoritativeChannelProduct.originProductNo
+      ?? authoritativeChannelWrapper.originProductNo
+      ?? input.remoteId,
+  ).trim();
   const originStatus = String(originProduct.statusType ?? "").trim().toUpperCase();
-  const channelStatus = String(channelProduct.channelProductDisplayStatusType ?? "").trim().toUpperCase();
+  const channelStatus = String(
+    input.readChannelProduct
+      ? (authoritativeChannelProduct.channelProductDisplayStatusType
+        ?? authoritativeChannelProduct.displayStatusType
+        ?? "")
+      : (channelProduct.channelProductDisplayStatusType ?? ""),
+  ).trim().toUpperCase();
+  const authoritativeChannelTitle = String(
+    authoritativeChannelProduct.channelProductName ?? "",
+  ).trim();
   const detailImageUrls = htmlImageUrls(originProduct.detailContent);
   const identityVerified = remoteAccepted(originProductReadback)
     && (!responseOriginProductNo || responseOriginProductNo === input.remoteId)
-    && Object.keys(originProduct).length > 0;
+    && Object.keys(originProduct).length > 0
+    && (!input.readChannelProduct
+      || Boolean(channelProductReadback
+        && remoteAccepted(channelProductReadback)
+        && Object.keys(officialSmartstoreChannelProduct).length > 0
+        && authoritativeChannelProductNo === responseChannelProductNo
+        && authoritativeOriginProductNo === input.remoteId
+        && authoritativeChannelTitle.length > 0
+        && channelStatus.length > 0));
   const localeVerified = locale === input.expected.locale;
   const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expected.fingerprint);
   const imageCountVerified = input.operation === "listing.stop"
@@ -331,6 +405,7 @@ export async function readSmartstoreListingPublicationState(input: {
 
   let visibility: VerifiedListingRemoteState["visibility"] | undefined;
   if (originStatus === "SALE" && channelStatus === "ON") visibility = "live";
+  else if (originStatus === "OUTOFSTOCK" && channelStatus === "ON") visibility = "non_public";
   else if (originStatus === "SUSPENSION" || channelStatus === "SUSPENSION") {
     visibility = input.operation === "listing.stop" ? "withdrawn" : "non_public";
   } else if (originStatus === "WAIT" || channelStatus === "WAIT") visibility = "pending_review";
@@ -346,14 +421,16 @@ export async function readSmartstoreListingPublicationState(input: {
       || (input.operation === "listing.stop" && originStatus !== "SUSPENSION")) {
     return {
       originProductReadback,
+      ...(channelProductReadback ? { channelProductReadback } : {}),
       failureCode: "SMARTSTORE_PUBLICATION_READBACK_UNVERIFIED",
     };
   }
 
   const resources: Record<string, unknown> = { originProductNo: input.remoteId };
-  if (responseChannelProductNo) resources.smartstoreChannelProductNo = responseChannelProductNo;
+  if (authoritativeChannelProductNo) resources.smartstoreChannelProductNo = authoritativeChannelProductNo;
   return {
     originProductReadback,
+    ...(channelProductReadback ? { channelProductReadback } : {}),
     state: buildVerifiedState({
       visibility,
       providerStatus: `${originStatus}|${channelStatus || "UNKNOWN"}`,
@@ -371,6 +448,8 @@ export async function readSmartstoreListingPublicationState(input: {
           originProductNo: input.remoteId,
           responseOriginProductNo,
           responseChannelProductNo,
+          authoritativeChannelProductNo,
+          authoritativeOriginProductNo,
           originStatus,
           channelStatus,
           detailImageUrls,

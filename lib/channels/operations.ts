@@ -11,6 +11,7 @@ import {
   lazadaRequest,
   naverRequest,
   qoo10Request,
+  readStoredNaverAccessToken,
   shopeeMerchantRequest,
   shopeeRequest,
   temuRequest,
@@ -70,6 +71,7 @@ import {
   readEbayListingPublicationState,
   readSmartstoreListingPublicationState,
 } from "./listing-publication-readback";
+import { executeListingPublicationVerification } from "./listing-publication-verification";
 
 export const channelOperationNames = [
   "categories.list",
@@ -152,6 +154,7 @@ type ExecuteInput = {
   channel: ActiveChannelKey;
   operation: ChannelOperationName;
   payload: SecretPayload;
+  shopeeShopCredential?: SecretPayload;
   arguments: Record<string, unknown>;
   environment: "sandbox" | "production";
 };
@@ -2856,6 +2859,7 @@ async function coupangListingResultWithPublicationReadback(
   input: ExecuteInput,
   steps: ChannelOperationStep[],
   remoteId: string,
+  expectedStopVendorItemIds?: string[],
 ) {
   if (!listingPublicationReadbackRequested(input) || steps.some((item) => !item.ok)) {
     return result(input, steps, remoteId);
@@ -2872,6 +2876,7 @@ async function coupangListingResultWithPublicationReadback(
     intent: listingPublicationIntentFromArguments(input.arguments),
     remoteId,
     expected,
+    ...(expectedStopVendorItemIds ? { expectedStopVendorItemIds } : {}),
     readSellerProduct: (sellerProductId) => coupangRequest({
       payload: input.payload,
       method: "GET",
@@ -3099,12 +3104,46 @@ async function executeCoupang(input: ExecuteInput) {
     );
   }
   if (input.operation === "listing.stop") {
-    const vendorItemId = pathSegment(stringArgument(input.arguments, "vendorItemId"));
-    const remote = await coupangRequest({ payload: input.payload, method: "PUT", path: `${sellerProductsPath.replace("seller-products", "vendor-items")}/${vendorItemId}/sales/stop` });
+    const sellerProductId = stringArgument(input.arguments, "sellerProductId");
+    const suppliedVendorItemId = stringArgument(input.arguments, "vendorItemId", false);
+    const preflightRemote = await coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `${sellerProductsPath}/${pathSegment(sellerProductId)}`,
+    });
+    const preflightStep = step("listing-stop-preflight", preflightRemote);
+    const sellerProduct = objectValue(preflightRemote.data, "data", false);
+    const items = objectArray(sellerProduct.items);
+    const rawVendorItemIds = items.map((item) => String(item.vendorItemId ?? "").trim());
+    const vendorItemIds = [...new Set(rawVendorItemIds.filter(Boolean))];
+    preflightStep.ok = preflightStep.ok
+      && String(sellerProduct.sellerProductId ?? "").trim() === sellerProductId
+      && items.length > 0
+      && rawVendorItemIds.every(Boolean)
+      && vendorItemIds.length === items.length
+      && (!suppliedVendorItemId || vendorItemIds.includes(suppliedVendorItemId));
+    preflightStep.data = {
+      ...preflightStep.data,
+      sellerpilotVerification: preflightStep.ok
+        ? "COUPANG_ALL_VENDOR_ITEMS_BOUND"
+        : "COUPANG_VENDOR_ITEM_SET_UNVERIFIED",
+      vendorItemIds,
+    };
+    if (!preflightStep.ok) return result(input, [preflightStep], sellerProductId);
+    const steps = [preflightStep];
+    for (const [index, vendorItemId] of vendorItemIds.entries()) {
+      const remote = await coupangRequest({
+        payload: input.payload,
+        method: "PUT",
+        path: `${sellerProductsPath.replace("seller-products", "vendor-items")}/${pathSegment(vendorItemId)}/sales/stop`,
+      });
+      steps.push(step(`sales-stop:${index + 1}`, remote));
+    }
     return coupangListingResultWithPublicationReadback(
       input,
-      [step("sales-stop", remote)],
-      decodeURIComponent(vendorItemId),
+      steps,
+      sellerProductId,
+      vendorItemIds,
     );
   }
   if (input.operation === "price.update") {
@@ -3307,7 +3346,10 @@ async function smartstoreListingResultWithPublicationReadback(
 }
 
 async function executeSmartstore(input: ExecuteInput) {
-  let token = await fetchNaverAccessToken(input.payload);
+  const storedAccessToken = readStoredNaverAccessToken(input.payload);
+  let token = storedAccessToken
+    ? { accessToken: storedAccessToken }
+    : await fetchNaverAccessToken(input.payload);
   const request = async (requestInput: Omit<Parameters<typeof naverRequest>[0], "accessToken">) => {
     let remote = await naverRequest({ ...requestInput, accessToken: token.accessToken });
     if (remote.response.status === 401 && textValue(remote.data, "code") === "GW.AUTHN") {
@@ -4456,6 +4498,24 @@ async function executeEbay(input: ExecuteInput) {
 
 export async function executeChannelOperation(input: ExecuteInput): Promise<ChannelOperationResult> {
   ensureProviderSupport(input.channel, input.operation);
+  if (input.operation === "listing.publication.verify") {
+    if (input.channel === "temu") throw new Error("CHANNEL_OPERATION_UNSUPPORTED:listing.publication.verify");
+    const verification = await executeListingPublicationVerification({
+      ...input,
+      channel: input.channel,
+      operation: input.operation,
+      ...(input.shopeeShopCredential
+        ? { shopeeShopCredential: input.shopeeShopCredential }
+        : {}),
+    });
+    return result(
+      input,
+      verification.steps,
+      verification.remoteId,
+      undefined,
+      verification.remoteState,
+    );
+  }
   const requestedPublicationIntent = listingPublicationIntentFromArguments(input.arguments);
   const requestedPublicationStateContract = input.arguments.publicationStateContract === listingRemoteStateContractVersion
     ? listingRemoteStateContractVersion

@@ -133,6 +133,76 @@ test("Lazada GetProductItem normalization binds country, localized content, iden
   assert.equal(normalized.checks.fingerprintVerified, true);
 });
 
+test("Lazada QC pending and rejected override an otherwise active item and SKU", () => {
+  const base = {
+    operation: "listing.update" as const,
+    remoteId: "987654321",
+    mutationArguments: argumentsFor("live"),
+    market: "my",
+    expectedLocale: "ms-MY",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  };
+  assert.equal(normalizeLazadaListingPublicationReadback({
+    ...base,
+    remoteData: readback("active", "pending"),
+  }).remoteState?.visibility, "pending_review");
+  assert.equal(normalizeLazadaListingPublicationReadback({
+    ...base,
+    remoteData: readback("active", "rejected"),
+  }).remoteState?.visibility, "rejected");
+});
+
+test("Lazada live readback requires the exact requested SKU set and every SKU active", () => {
+  const source = argumentsFor("live");
+  source.request.Request.Product.Skus.Sku.push({
+    SellerSku: "CAWAN-MY-2",
+    price: "49.90",
+    quantity: "1",
+    Status: "active",
+    Images: { Image: IMAGES },
+  });
+  const remote = readback("active");
+  remote.data.skus.push({
+    SkuId: 555002,
+    SellerSku: "CAWAN-MY-2",
+    Status: "inactive",
+    Url: "https://www.lazada.com.my/products/i987654321.html",
+    Images: IMAGES,
+  });
+  const base = {
+    operation: "listing.create" as const,
+    remoteId: "987654321",
+    mutationArguments: source,
+    market: "my",
+    expectedLocale: "ms-MY",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  };
+
+  const mixed = normalizeLazadaListingPublicationReadback({ ...base, remoteData: remote });
+  assert.equal(mixed.remoteState, undefined);
+  assert.equal(mixed.checks.statusVerified, false);
+  assert.equal(mixed.providerStatus, "ACTIVE|INACTIVE");
+
+  const missing = normalizeLazadaListingPublicationReadback({
+    ...base,
+    remoteData: readback("active"),
+  });
+  assert.equal(missing.remoteState, undefined);
+  assert.equal(missing.checks.identityVerified, false);
+
+  remote.data.skus[1].Status = "active";
+  const complete = normalizeLazadaListingPublicationReadback({ ...base, remoteData: remote });
+  assert.equal(complete.remoteState?.visibility, "live");
+  assert.deepEqual(complete.remoteState?.resources.sellerSkus, ["CAWAN-MY-1", "CAWAN-MY-2"]);
+
+  delete remote.data.skus[1].Status;
+  const missingStatus = normalizeLazadaListingPublicationReadback({ ...base, remoteData: remote });
+  assert.equal(missingStatus.remoteState, undefined);
+  assert.equal(missingStatus.checks.statusVerified, false);
+});
+
 test("Lazada publication evidence fails shut on wrong country, content or image cardinality", () => {
   const base = {
     operation: "listing.create" as const,
@@ -172,6 +242,69 @@ test("Lazada publication evidence fails shut on wrong country, content or image 
     expectedFingerprint: "not-a-fingerprint",
     remoteData: readback("active"),
   }).remoteState, undefined);
+});
+
+test("Lazada independent readback defers only provider URL migration to immutable source evidence", () => {
+  const source = argumentsFor("live");
+  const approvedSourceUrls = Array.from(
+    { length: 8 },
+    (_, index) => `https://sellerpilot.supabase.co/storage/v1/object/public/normalized/source-${index + 1}.jpg`,
+  );
+  source.request.Request.Product.Images.Image = approvedSourceUrls;
+  source.request.Request.Product.Skus.Sku[0].Images.Image = approvedSourceUrls;
+  const base = {
+    operation: "listing.create" as const,
+    remoteId: "987654321",
+    remoteData: readback("active"),
+    mutationArguments: source,
+    market: "my",
+    expectedLocale: "ms-MY",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  };
+
+  const mutationTimeComparison = normalizeLazadaListingPublicationReadback(base);
+  assert.equal(mutationTimeComparison.remoteState, undefined);
+  assert.equal(mutationTimeComparison.checks.contentVerified, false);
+
+  const independentReadback = normalizeLazadaListingPublicationReadback({
+    ...base,
+    contentVerificationMode: "immutable_source_readback",
+    immutableSourceRemoteData: readback("active"),
+  });
+  assert.equal(independentReadback.remoteState?.visibility, "live");
+  assert.equal(
+    independentReadback.remoteState?.evidence.contentVerificationMode,
+    "immutable_source_readback",
+  );
+
+  const attackerUrls = IMAGES.map((_, index) => `https://attacker.example.test/image-${index + 1}.jpg`);
+  for (const attackedRemoteData of [
+    {
+      ...readback("active"),
+      data: { ...readback("active").data, images: attackerUrls },
+    },
+    {
+      ...readback("active"),
+      data: {
+        ...readback("active").data,
+        skus: [{ ...readback("active").data.skus[0], Images: attackerUrls }],
+      },
+    },
+    {
+      ...readback("active"),
+      data: { ...readback("active").data, images: [...IMAGES].reverse() },
+    },
+  ]) {
+    const attacked = normalizeLazadaListingPublicationReadback({
+      ...base,
+      remoteData: attackedRemoteData,
+      contentVerificationMode: "immutable_source_readback",
+      immutableSourceRemoteData: readback("active"),
+    });
+    assert.equal(attacked.remoteState, undefined);
+    assert.equal(attacked.checks.contentVerified, false);
+  }
 });
 
 test("Lazada safe_test create writes inactive and completes only after exact non-public readback", async () => {

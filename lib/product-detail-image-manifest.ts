@@ -5,7 +5,7 @@ import {
 import { marketplaceChannelDetailImageCount } from "./channels/marketplace-image-contract";
 
 export const productDetailAssetReferencePrefix = "sellerpilot-asset://";
-export const productDetailImageManifestContract = "sellerpilot_detail_image_manifest_v1";
+export const productDetailImageManifestContract = "sellerpilot_detail_image_manifest_v2";
 export const productDetailImageCount = marketplaceChannelDetailImageCount;
 
 export const defaultProductDetailImageRoles = [
@@ -19,9 +19,13 @@ export const defaultProductDetailImageRoles = [
   "detail-care",
 ] as const satisfies readonly AiDetailAssetId[];
 
-export type ProductDetailImageManifestEntry = {
+export type ProductDetailImagePathEntry = {
   role: AiDetailAssetId;
   path: string;
+};
+
+export type ProductDetailImageManifestEntry = ProductDetailImagePathEntry & {
+  sourceSha256: string;
 };
 
 export type ProductDetailImageManifest = {
@@ -144,7 +148,7 @@ export function localizedProductDetailImageRoles(value: unknown): AiDetailAssetI
 }
 
 export function canonicalProductDetailImageManifestInput(entries: readonly ProductDetailImageManifestEntry[]) {
-  return entries.map((entry) => `${entry.role}\t${entry.path}`).join("\n");
+  return entries.map((entry) => `${entry.role}\t${entry.path}\t${entry.sourceSha256}`).join("\n");
 }
 
 export function parseProductDetailImageManifest(value: unknown): ProductDetailImageManifest | null {
@@ -162,14 +166,17 @@ export function parseProductDetailImageManifest(value: unknown): ProductDetailIm
     const entry = recordValue(rawEntry);
     const role = entry?.role;
     const path = entry?.path;
+    const sourceSha256 = entry?.sourceSha256;
     if (!isProductDetailImageRole(role)
         || typeof path !== "string"
         || !path
+        || typeof sourceSha256 !== "string"
+        || !/^[a-f0-9]{64}$/.test(sourceSha256)
         || roles.has(role)
         || paths.has(path)) return null;
     roles.add(role);
     paths.add(path);
-    images.push({ role, path });
+    images.push({ role, path, sourceSha256 });
   }
   return {
     contract: productDetailImageManifestContract,

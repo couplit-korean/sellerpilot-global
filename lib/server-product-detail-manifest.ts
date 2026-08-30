@@ -8,6 +8,7 @@ import {
   productDetailImageManifestContract,
   type ProductDetailImageManifest,
   type ProductDetailImageManifestEntry,
+  type ProductDetailImagePathEntry,
 } from "./product-detail-image-manifest";
 import { validateStoredProductGeneratedAssetPaths } from "./studio-result-assets";
 
@@ -21,7 +22,7 @@ type ApprovedProductDetailManifestResult =
   | { ok: false; code: string };
 
 export type ProductDetailDocumentAssetPathsResult =
-  | { ok: true; value: ProductDetailImageManifestEntry[] }
+  | { ok: true; value: ProductDetailImagePathEntry[] }
   | { ok: false; code: string };
 
 function recordValue(value: unknown) {
@@ -40,7 +41,7 @@ export function resolveProductDetailDocumentAssetPaths(
   if (!generated) return { ok: false, code: "DETAIL_PAGE_GENERATED_PATHS_INVALID" };
   const generatedByRole = new Map<string, string>(generated);
   const paths = new Set<string>();
-  const images: ProductDetailImageManifestEntry[] = [];
+  const images: ProductDetailImagePathEntry[] = [];
   for (const image of inspection.images) {
     const path = generatedByRole.get(image.role);
     if (!path || paths.has(path)) {
@@ -72,7 +73,7 @@ export function approvedProductDetailManifestFromPublishContext(
   const paths = new Set<string>();
   const images: ProductDetailImageManifestEntry[] = [];
   for (const [index, entry] of manifest.images.entries()) {
-    const { role, path } = entry;
+    const { role, path, sourceSha256 } = entry;
     const documentEntry = documentAssets.value[index];
     if (documentEntry?.role !== role
         || documentEntry.path !== path
@@ -82,7 +83,7 @@ export function approvedProductDetailManifestFromPublishContext(
     }
     roles.add(role);
     paths.add(path);
-    images.push({ role, path });
+    images.push({ role, path, sourceSha256 });
   }
   if (roles.size !== productDetailImageCount || paths.size !== productDetailImageCount) {
     return { ok: false, code: "DETAIL_PAGE_MANIFEST_INVALID" };
@@ -173,6 +174,8 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
     detailAssetMode: "dedicated",
     detailImageUrls: [...signedUrls],
     detailImageRoles: roles,
+    approvedDetailImagePaths: approved.manifest.images.map((entry) => entry.path),
+    approvedDetailImageSha256s: approved.manifest.images.map((entry) => entry.sourceSha256),
     detailImageAltTexts: altTexts,
     localizedDetailSections: sections,
     approvedDetailPageVersion: approved.version,
@@ -193,6 +196,8 @@ export function marketplaceArgumentsForApprovedDetailFingerprint(
     ...assets,
     detailImageUrls: approved.manifest.images.map((entry) => `sellerpilot-storage://${entry.path}`),
     detailImageRoles: approved.manifest.images.map((entry) => entry.role),
+    approvedDetailImagePaths: approved.manifest.images.map((entry) => entry.path),
+    approvedDetailImageSha256s: approved.manifest.images.map((entry) => entry.sourceSha256),
     approvedDetailPageVersion: approved.version,
     detailImageManifestDigest: approved.manifest.digest,
   };

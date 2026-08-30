@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
@@ -15,9 +16,23 @@ const WORKER_TOKEN_ID = "00000000-0000-4000-8000-000000000004";
 const PUBLICATION_CHANNELS = [
   "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
 ];
+const DETAIL_ROLES = [
+  "detail-overview", "detail-context", "detail-package", "detail-feature",
+  "detail-contents", "detail-use", "detail-care", "detail-routine",
+];
+const STUDIO_ASSET_ROLES = [
+  "hero", "square", "portrait", "wide",
+  "detail-overview", "detail-feature", "detail-use", "detail-package",
+  "detail-routine", "detail-scale", "detail-storage", "detail-context",
+  "detail-material", "detail-dimensions", "detail-contents", "detail-care",
+];
 
 function uuid(value) {
   return `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
+}
+
+function jsonDigest(value) {
+  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
 function stripUnavailableExtensions(sql) {
@@ -131,13 +146,90 @@ function reviewIdentity(index) {
   };
 }
 
-function evidence() {
+function publicationAssets(identity) {
+  const images = DETAIL_ROLES.map((role, index) => {
+    const contentSha256 = String(index + 1).padStart(64, "0");
+    const approvedSourceSha256 = String(index + 17).padStart(64, "0");
+    const objectPath = `normalized/${contentSha256.slice(0, 2)}/${contentSha256}.jpg`;
+    const approvedObjectPath = `results/${identity.productId}/claims/${identity.attemptId}/${role}.png`;
+    return {
+      role,
+      approvedObjectPath,
+      approvedSourceSha256,
+      sourceObjectPath: approvedObjectPath,
+      sourceSha256: approvedSourceSha256,
+      publicUrl: `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${objectPath}`,
+      objectPath,
+      contentSha256,
+    };
+  });
+  const approvedManifestDigest = "a".repeat(64);
+  const binding = {
+    contract: "sellerpilot_publication_asset_binding_v1",
+    approvedDetailPageVersion: 1,
+    approvedManifestDigest,
+    approvedDetailImages: images,
+    providerImageSurface: "detail_content",
+    providerTransportImages: images.map((image) => ({
+      role: image.role,
+      publicUrl: image.publicUrl,
+      objectPath: image.objectPath,
+      contentSha256: image.contentSha256,
+    })),
+  };
+  return {
+    images,
+    manifest: {
+      contract: "sellerpilot_detail_image_manifest_v2",
+      algorithm: "sha256",
+      digest: approvedManifestDigest,
+      images: images.map(({ role, approvedObjectPath, approvedSourceSha256 }) => ({
+        role,
+        path: approvedObjectPath,
+        sourceSha256: approvedSourceSha256,
+      })),
+    },
+    binding,
+    providerBinding: {
+      contract: "sellerpilot_provider_asset_binding_v1",
+      sourceAssetBindingDigest: jsonDigest(binding),
+      approvedManifestDigest,
+      approvedDetailPageVersion: 1,
+      approvedDetailRoles: DETAIL_ROLES,
+      providerImageSurface: "detail_content",
+      providerTransportRoles: DETAIL_ROLES,
+      providerDetailImageIdentities: images.map(({ publicUrl }) => publicUrl),
+      providerImageDigest: jsonDigest(images.map(({ publicUrl }) => publicUrl)),
+    },
+  };
+}
+
+function evidence(identity) {
+  const contentDigest = "d".repeat(64);
+  const imageDigest = "e".repeat(64);
   return {
     identityVerified: true,
     statusVerified: true,
     localeVerified: true,
     fingerprintVerified: true,
     imageCountVerified: true,
+    contentVerified: true,
+    sourceContentVerified: true,
+    languageContentVerified: true,
+    titleLanguageVerified: true,
+    descriptionLanguageVerified: true,
+    detailImageCountVerified: true,
+    approvedManifestDigestVerified: true,
+    sourceIdentityVerified: true,
+    contentDigestVerified: true,
+    sourceJobId: identity.sourceJobId,
+    sourceOperation: "listing.create",
+    sourceContentDigest: contentDigest,
+    remoteContentDigest: contentDigest,
+    sourceImageDigest: imageDigest,
+    remoteImageDigest: imageDigest,
+    remoteProjectionDigest: contentDigest,
+    providerImageSurface: "detail_content",
   };
 }
 
@@ -166,7 +258,7 @@ function remoteState(identity, visibility, verifiedAt) {
     providerStatus: visibility.toUpperCase(),
     verifiedAt,
     createdAt: verifiedAt,
-    evidence: evidence(),
+    evidence: evidence(identity),
     resources: { remoteId: identity.remoteId },
     locale: identity.locale,
     fingerprint: identity.fingerprint,
@@ -192,6 +284,7 @@ function verifierResponse(identity, visibility, verifiedAt) {
 
 async function seedReview(db, index, options = {}) {
   const identity = reviewIdentity(index);
+  const assets = publicationAssets(identity);
   const reviewStatus = options.reviewStatus ?? "pending";
   const checkCount = options.checkCount ?? 0;
   const lastJobStatus = options.lastJobStatus ?? null;
@@ -205,6 +298,11 @@ async function seedReview(db, index, options = {}) {
       publicationExpectedLocale: identity.locale,
       publicationExpectedFingerprint: identity.fingerprint,
       publicationExpectedImageCount: 8,
+      sellerpilotPublicationAssetBinding: assets.binding,
+      params: {
+        ItemTitle: "日本語の商品名",
+        ItemDescription: `<p>日本語の商品詳細です。</p>${assets.images.map(({ publicUrl }) => `<img src="${publicUrl}">`).join("")}`,
+      },
     },
   };
   const sourceResponse = {
@@ -214,21 +312,47 @@ async function seedReview(db, index, options = {}) {
     remoteId: identity.remoteId,
     publicationIntent: "live",
     publicationStateContract: "verified_remote_state_v1",
-    remoteState: remoteState(identity, "pending_review", sourceVerifiedAt),
+    remoteState: {
+      ...remoteState(identity, "pending_review", sourceVerifiedAt),
+      evidence: {
+        ...remoteState(identity, "pending_review", sourceVerifiedAt).evidence,
+        publicationAssetBinding: assets.providerBinding,
+      },
+    },
     publicationFulfilled: false,
+    steps: [{
+      name: "GetItemDetailInfo-publication-readback",
+      ok: true,
+      status: 200,
+      data: {
+        ResultCode: 0,
+        ResultObject: {
+          ItemNo: identity.remoteId,
+          ItemStatus: "S1",
+          ItemTitle: "日本語の商品名",
+          ItemDetail: `<p>日本語の商品詳細です。</p>${assets.images.map(({ publicUrl }) => `<img src="${publicUrl}">`).join("")}`,
+        },
+      },
+    }],
   };
 
   await asReplica(db, async () => {
     await db.query(
       `insert into sellerpilot_private.products (
-         id,owner_id,external_code,sku,name,description,status
-       ) values ($1,$2,$3,$4,$5,'publication review fixture','draft')`,
+         id,owner_id,external_code,sku,name,description,status,
+         detail_page_data,detail_page_version,detail_page_updated_at,
+         detail_page_approved_version,detail_page_image_manifest
+       ) values (
+         $1,$2,$3,$4,$5,'publication review fixture','draft',
+         '{}'::jsonb,1,clock_timestamp(),1,$6::jsonb
+       )`,
       [
         identity.productId,
         OWNER_ID,
         `PRODUCT-${index}`,
         `SKU-${index}`,
         `Publication fixture ${index}`,
+        JSON.stringify(assets.manifest),
       ],
     );
     await db.query(
@@ -276,12 +400,40 @@ async function seedReview(db, index, options = {}) {
           resources: { remoteId: identity.remoteId },
           verification: {
             verifiedAt: sourceVerifiedAt,
-            evidence: evidence(),
+            evidence: evidence(identity),
             locale: identity.locale,
             fingerprint: identity.fingerprint,
             imageCount: 8,
           },
         }),
+      ],
+    );
+    await db.query(
+      `insert into sellerpilot_private.marketplace_normalized_assets (
+         object_path,content_sha256,status,uploaded_at
+       )
+       select image->>'objectPath',image->>'contentSha256','available',clock_timestamp()
+         from jsonb_array_elements($1::jsonb) as approved(image)
+       on conflict (object_path) do nothing`,
+      [JSON.stringify(assets.images)],
+    );
+    await db.query(
+      `insert into sellerpilot_private.marketplace_normalized_asset_refs (
+         object_path,attempt_id,owner_id,product_id,channel,market,target_id,
+         upload_confirmed_at,canonical_public_url,source_object_path,
+         source_content_sha256
+       )
+       select image->>'objectPath',$1,$2,$3,'qoo10',$4,$5,
+              clock_timestamp(),image->>'publicUrl',image->>'sourceObjectPath',
+              image->>'sourceSha256'
+         from jsonb_array_elements($6::jsonb) as approved(image)`,
+      [
+        identity.attemptId,
+        OWNER_ID,
+        identity.productId,
+        identity.market,
+        identity.targetId,
+        JSON.stringify(assets.images),
       ],
     );
     await db.query(
@@ -393,6 +545,100 @@ async function seedReview(db, index, options = {}) {
   return identity;
 }
 
+test("owned live verifier leases alone can hydrate the immutable source operation, body, response, and fingerprint", async () => {
+  const db = await createDatabase();
+  try {
+    await seedPrincipal(db);
+    const identity = await seedReview(db, 70, {
+      reviewStatus: "verifying",
+      checkCount: 1,
+      lastJobStatus: "running",
+    });
+    const assets = publicationAssets(identity);
+    await asReplica(db, () => db.query(
+      `update sellerpilot_private.ai_cli_worker_tokens
+          set scope='serverless_cs'
+        where id=$1`,
+      [WORKER_TOKEN_ID],
+    ));
+    const hydrated = await scalar(
+      db,
+      `select public.sellerpilot_service_listing_publication_verification_source(
+         $1,$2,$3
+       )`,
+      [WORKER_TOKEN_HASH, identity.verifierJobId, identity.claimToken],
+    );
+    assert.equal(hydrated.contract, "listing_publication_verification_source_v1");
+    assert.equal(hydrated.verificationJobId, identity.verifierJobId);
+    assert.equal(hydrated.sourceJobId, identity.sourceJobId);
+    assert.equal(hydrated.sourceOperation, "listing.create");
+    assert.equal(hydrated.sourceFingerprint, identity.fingerprint);
+    assert.equal(hydrated.expectedRemoteId, identity.remoteId);
+    assert.equal(hydrated.expectedImageCount, 8);
+    assert.equal(hydrated.sourceArguments.publicationExpectedFingerprint, identity.fingerprint);
+    assert.equal(hydrated.sourceResponsePayload.operation, "listing.create");
+    assert.equal(hydrated.sourceResponsePayload.steps[0].name, "GetItemDetailInfo-publication-readback");
+    assert.equal(await scalar(
+      db,
+      "select public.sellerpilot_service_bind_marketplace_normalized_asset_urls($1,$2::jsonb)",
+      [identity.attemptId, JSON.stringify(assets.images)],
+    ), true);
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_bind_marketplace_normalized_asset_urls($1,$2::jsonb)",
+        [identity.attemptId, JSON.stringify(assets.images.map((image) => ({
+          ...image,
+          publicUrl: image.publicUrl.replace("sellerpilot.supabase.co", "attacker.example"),
+        })))],
+      ),
+      /normalized asset URL binding invalid/,
+    );
+    await asReplica(db, () => db.query(
+      `update sellerpilot_private.marketplace_normalized_asset_refs
+          set canonical_public_url = replace(canonical_public_url,'sellerpilot.supabase.co','attacker.example')
+        where attempt_id=$1
+          and object_path=$2`,
+      [identity.attemptId, assets.images[0].objectPath],
+    ));
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_listing_publication_verification_source(
+           $1,$2,$3
+         )`,
+        [WORKER_TOKEN_HASH, identity.verifierJobId, identity.claimToken],
+      ),
+      /publication verification source is unavailable/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_listing_publication_verification_source(
+           $1,$2,$3
+         )`,
+        [WORKER_TOKEN_HASH, identity.verifierJobId, uuid(999999)],
+      ),
+      /publication verification source ownership required/,
+    );
+    assert.equal(await scalar(
+      db,
+      `select has_function_privilege(
+         'authenticated',
+         'public.sellerpilot_service_listing_publication_verification_source(text,uuid,uuid)',
+         'EXECUTE'
+       )`,
+    ), false);
+    assert.equal(await scalar(
+      db,
+      `select has_function_privilege(
+         'service_role',
+         'public.sellerpilot_service_listing_publication_verification_source(text,uuid,uuid)',
+         'EXECUTE'
+       )`,
+    ), true);
+  } finally {
+    await db.close();
+  }
+});
+
 async function attestRelease(db, sha = RELEASE_SHA) {
   for (const channel of PUBLICATION_CHANNELS) {
     await db.query(
@@ -443,6 +689,9 @@ async function finishVerifier(db, identity, options = {}) {
   const response = status === "succeeded"
     ? verifierResponse(identity, options.visibility ?? "pending_review", new Date(boundary).toISOString())
     : null;
+  if (response && options.evidenceOverrides) {
+    Object.assign(response.remoteState.evidence, options.evidenceOverrides);
+  }
   await db.query(
     `update sellerpilot_private.channel_gateway_jobs
         set status=$2,response_payload=$3::jsonb,error_message=$4,
@@ -774,6 +1023,36 @@ test("verifier completion maps pending and every terminal visibility to the list
   }
 });
 
+test("live completion requires title and description language evidence independently", async () => {
+  const db = await createDatabase();
+  try {
+    await seedPrincipal(db);
+    for (const [offset, field] of ["titleLanguageVerified", "descriptionLanguageVerified"].entries()) {
+      const identity = await seedReview(db, 17 + offset, {
+        reviewStatus: "verifying",
+        checkCount: 1,
+        lastJobStatus: "running",
+      });
+      await finishVerifier(db, identity, {
+        visibility: "live",
+        evidenceOverrides: { [field]: false },
+      });
+      assert.equal(await scalar(
+        db,
+        "select status from sellerpilot_private.listing_publication_reviews where listing_id=$1",
+        [identity.listingId],
+      ), "pending", field);
+      assert.equal(await scalar(
+        db,
+        "select status || ':' || remote_visibility from sellerpilot_private.product_listings where id=$1",
+        [identity.listingId],
+      ), "paused:pending_review", field);
+    }
+  } finally {
+    await db.close();
+  }
+});
+
 test("source attempt, fingerprint, channel, market, and target drift all force manual review", async () => {
   const db = await createDatabase();
   try {
@@ -912,6 +1191,272 @@ test("verifiedAt at the job boundary is accepted while an earlier readback fails
       "select status from sellerpilot_private.listing_publication_reviews where listing_id=$1",
       [before.listingId],
     ), "manual_required");
+  } finally {
+    await db.close();
+  }
+});
+
+test("an immediate provider-live source completion remains pending until an independent strict verifier", async () => {
+  const db = await createDatabase();
+  try {
+    await seedPrincipal(db);
+    const identity = await seedReview(db, 90);
+    const priorResponse = await scalar(
+      db,
+      "select response_payload from sellerpilot_private.channel_gateway_jobs where id=$1",
+      [identity.sourceJobId],
+    );
+    const providerLiveResponse = {
+      ...priorResponse,
+      steps: [
+        ...priorResponse.steps,
+        {
+          name: "detail-image-readback",
+          ok: true,
+          status: 200,
+          data: { imageCount: 8 },
+        },
+      ],
+      publicationFulfilled: true,
+      remoteState: {
+        ...priorResponse.remoteState,
+        visibility: "live",
+        providerStatus: "LIVE",
+      },
+    };
+    await asReplica(db, async () => {
+      await db.query(
+        "delete from sellerpilot_private.listing_publication_reviews where listing_id=$1",
+        [identity.listingId],
+      );
+      await db.query(
+        `update sellerpilot_private.channel_gateway_jobs
+            set status='running', response_payload=null, error_message=null,
+                completed_at=null, claim_token=$2, worker_token_id=$3,
+                lease_expires_at=clock_timestamp() + interval '5 minutes'
+          where id=$1`,
+        [identity.sourceJobId, identity.claimToken, WORKER_TOKEN_ID],
+      );
+      await db.query(
+        `update sellerpilot_private.channel_operation_attempts
+            set status='running', http_status=null, completed_at=null
+          where id=$1`,
+        [identity.attemptId],
+      );
+      await db.query(
+        `update sellerpilot_private.product_listings
+            set status='queued', remote_visibility='unknown',
+                provider_status=null, remote_resources='{}'::jsonb,
+                published_at=null, last_verified_at=null
+          where id=$1`,
+        [identity.listingId],
+      );
+    });
+
+    assert.equal(await scalar(
+      db,
+      `select public.sellerpilot_complete_channel_gateway_job(
+         $1,$2,$3,'succeeded',$4::jsonb,null
+       )`,
+      [
+        WORKER_TOKEN_HASH,
+        identity.sourceJobId,
+        identity.claimToken,
+        JSON.stringify(providerLiveResponse),
+      ],
+    ), true);
+
+    assert.deepEqual((await db.query(
+      `select status,
+              response_payload#>>'{remoteState,visibility}' as visibility,
+              response_payload#>>'{remoteState,evidence,providerObservedVisibility}' as provider_visibility,
+              response_payload->>'publicationFulfilled' as fulfilled
+         from sellerpilot_private.channel_gateway_jobs where id=$1`,
+      [identity.sourceJobId],
+    )).rows[0], {
+      status: "succeeded",
+      visibility: "pending_review",
+      provider_visibility: "live",
+      fulfilled: "false",
+    });
+    assert.deepEqual((await db.query(
+      `select status,remote_visibility,published_at is null as unpublished
+         from sellerpilot_private.product_listings where id=$1`,
+      [identity.listingId],
+    )).rows[0], {
+      status: "paused",
+      remote_visibility: "pending_review",
+      unpublished: true,
+    });
+    assert.deepEqual((await db.query(
+      `select status,source_job_id::text from sellerpilot_private.listing_publication_reviews
+        where listing_id=$1`,
+      [identity.listingId],
+    )).rows[0], {
+      status: "pending",
+      source_job_id: identity.sourceJobId,
+    });
+  } finally {
+    await db.close();
+  }
+});
+
+test("legacy Studio SHA evidence accumulates monotonically and blocks v2 approval until all sixteen assets are bound", async () => {
+  const db = await createDatabase();
+  try {
+    await seedPrincipal(db);
+    const sourceJobId = uuid(2101);
+    const productId = uuid(2102);
+    const claimToken = uuid(2103);
+    const paths = Object.fromEntries(STUDIO_ASSET_ROLES.map((role) => [
+      role,
+      `results/${sourceJobId}/claims/${claimToken}/${role}.png`,
+    ]));
+    const digests = Object.fromEntries(STUDIO_ASSET_ROLES.map((role) => [
+      role,
+      createHash("sha256").update(`${role}:${paths[role]}`, "utf8").digest("hex"),
+    ]));
+    const approvedImages = DETAIL_ROLES.map((role) => ({ role, path: paths[role] }));
+    const priorManifestDigest = createHash("sha256")
+      .update(approvedImages.map(({ role, path }) => `${role}\t${path}`).join("\n"), "utf8")
+      .digest("hex");
+    const priorManifest = {
+      contract: "sellerpilot_detail_image_manifest_v1",
+      algorithm: "sha256",
+      digest: priorManifestDigest,
+      images: approvedImages,
+    };
+    const sourceImages = approvedImages.map(({ role, path }) => ({
+      role,
+      path,
+      sourceSha256: digests[role],
+    }));
+
+    await asReplica(db, async () => {
+      await db.query(
+        `insert into sellerpilot_private.ai_cli_jobs (
+           id,kind,status,request_payload,result_payload,created_by,
+           created_at,completed_at,updated_at
+         ) values (
+           $1,'product_studio','succeeded','{}'::jsonb,$2::jsonb,$3,
+           clock_timestamp(),clock_timestamp(),clock_timestamp()
+         )`,
+        [sourceJobId, JSON.stringify({ asset_storage_paths: paths }), OWNER_ID],
+      );
+      await db.query(
+        `insert into sellerpilot_private.products (
+           id,owner_id,external_code,sku,name,description,status,ai_job_id,
+           detail_page_data,detail_page_version,detail_page_updated_at,
+           detail_page_approved_version,detail_page_image_manifest
+         ) values (
+           $1,$2,'LEGACY-SHA-PRODUCT','LEGACY-SHA-SKU','Legacy SHA fixture','',
+           'draft',$3,'{}'::jsonb,1,clock_timestamp(),1,$4::jsonb
+         )`,
+        [productId, OWNER_ID, sourceJobId, JSON.stringify(priorManifest)],
+      );
+      await db.query(
+        `insert into storage.objects(bucket_id,name)
+         select 'sellerpilot-ai', value
+           from jsonb_each_text($1::jsonb)`,
+        [JSON.stringify(Object.fromEntries(DETAIL_ROLES.map((role) => [role, paths[role]])))],
+      );
+    });
+
+    for (let index = 0; index < 15; index += 1) {
+      const role = STUDIO_ASSET_ROLES[index];
+      await db.query(
+        index === 0
+          ? `update sellerpilot_private.ai_cli_jobs
+                set result_payload=jsonb_set(
+                  result_payload,'{asset_storage_sha256s}',
+                  jsonb_build_object($2::text,$3::text),true
+                ) where id=$1`
+          : `update sellerpilot_private.ai_cli_jobs
+                set result_payload=jsonb_set(
+                  result_payload,array['asset_storage_sha256s',$2::text],to_jsonb($3::text),true
+                ) where id=$1`,
+        [sourceJobId, role, digests[role]],
+      );
+      assert.equal(Number(await scalar(
+        db,
+        `select count(*)
+           from sellerpilot_private.ai_cli_jobs job
+           cross join lateral jsonb_object_keys(
+             job.result_payload->'asset_storage_sha256s'
+           ) digest_key
+          where job.id=$1`,
+        [sourceJobId],
+      )), index + 1);
+    }
+
+    await assert.rejects(
+      db.query(
+        `update sellerpilot_private.ai_cli_jobs
+            set result_payload=jsonb_set(
+              result_payload,'{asset_storage_sha256s,hero}',to_jsonb($2::text),true
+            ) where id=$1`,
+        [sourceJobId, "f".repeat(64)],
+      ),
+      /product studio asset SHA-256 ledger invalid/,
+    );
+    await assert.rejects(
+      db.query(
+        `update sellerpilot_private.ai_cli_jobs
+            set result_payload=result_payload #- '{asset_storage_sha256s,hero}'
+          where id=$1`,
+        [sourceJobId],
+      ),
+      /product studio asset SHA-256 ledger invalid/,
+    );
+    await assert.rejects(
+      db.query(
+        `update sellerpilot_private.ai_cli_jobs
+            set result_payload=jsonb_set(
+              result_payload,'{asset_storage_sha256s,unknown}',to_jsonb($2::text),true
+            ) where id=$1`,
+        [sourceJobId, "f".repeat(64)],
+      ),
+      /product studio asset SHA-256 ledger invalid/,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_bind_product_detail_page_source_digests(
+           $1,$2,1,$3,$4::jsonb
+         )`,
+        [productId, OWNER_ID, priorManifestDigest, JSON.stringify(sourceImages)],
+      ),
+      /detail page source digest context unavailable/,
+    );
+
+    const finalRole = STUDIO_ASSET_ROLES[15];
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set result_payload=jsonb_set(
+              result_payload,array['asset_storage_sha256s',$2::text],to_jsonb($3::text),true
+          ) where id=$1`,
+      [sourceJobId, finalRole, digests[finalRole]],
+    );
+    assert.equal(Number(await scalar(
+      db,
+      `select count(*)
+         from sellerpilot_private.ai_cli_jobs job
+         cross join lateral jsonb_object_keys(
+           job.result_payload->'asset_storage_sha256s'
+         ) digest_key
+        where job.id=$1`,
+      [sourceJobId],
+    )), 16);
+
+    const manifestV2 = await scalar(
+      db,
+      `select public.sellerpilot_service_bind_product_detail_page_source_digests(
+         $1,$2,1,$3,$4::jsonb
+       )`,
+      [productId, OWNER_ID, priorManifestDigest, JSON.stringify(sourceImages)],
+    );
+    assert.equal(manifestV2.contract, "sellerpilot_detail_image_manifest_v2");
+    assert.deepEqual(manifestV2.images, sourceImages);
+    assert.match(manifestV2.digest, /^[a-f0-9]{64}$/u);
   } finally {
     await db.close();
   }
