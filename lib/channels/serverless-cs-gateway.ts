@@ -18,6 +18,7 @@ import {
 import {
   listingPublicationVerificationSourceSchema,
 } from "./listing-publication-verification";
+import { LazadaOAuthProviderFailureError } from "./provider-oauth-runtime";
 import {
   type CredentialRefreshSnapshot,
 } from "./protocols";
@@ -66,6 +67,8 @@ const LEGACY_EBAY_CLAIM_RPC = "sellerpilot_claim_ebay_asq_serverless_job";
 const TOUCH_RPC = "sellerpilot_touch_serverless_cs_job";
 const BEGIN_CREDENTIAL_REFRESH_RPC = "sellerpilot_service_begin_serverless_cs_credential_refresh";
 const PREPARE_CREDENTIAL_REFRESH_RPC = "sellerpilot_service_prepare_serverless_cs_credential_refresh";
+const BEGIN_LAZADA_OAUTH_PROVIDER_CALL_RPC =
+  "sellerpilot_service_mark_lazada_oauth_provider_call_started";
 const BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_gateway_provider_mutation";
 const LEGACY_BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_cs_provider_mutation";
 const COMPLETION_CONTEXT_RPC = "sellerpilot_service_serverless_cs_completion_context";
@@ -204,6 +207,14 @@ function safeExecutionError(error: unknown, signal: AbortSignal) {
   if (signal.aborted
       || (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) {
     return "serverless_cs_runtime_timeout";
+  }
+  if (error instanceof LazadaOAuthProviderFailureError) {
+    const safeMessage =
+      `LAZADA_OAUTH_PROVIDER_FAILURE:${error.category}:${error.providerCode}`;
+    if (error.message === safeMessage
+        && /^LAZADA_OAUTH_PROVIDER_FAILURE:(?:SYSTEM|ISV|ISP|HTTP_4XX|HTTP_5XX|INVALID_RESPONSE):(?:INCOMPLETE_SIGNATURE|INVALID_SIGNATURE|INVALID_TIMESTAMP|INVALID_APP_KEY|INVALID_CODE|INVALID_AUTHORIZATION_CODE|ILLEGAL_ACCESS_TOKEN|MISSING_PARAMETER|INVALID_PARAMETER|API_CALL_LIMIT|MISSING_TOKEN_FIELDS|UNRECOGNIZED|5|6|30|500|501|901|1000)$/u.test(safeMessage)) {
+      return safeMessage;
+    }
   }
   if (error instanceof Error) {
     if (error.message === "NAVER_CREDENTIALS_MISSING") return "NAVER_AUTH_FAILED";
@@ -485,6 +496,23 @@ async function beginProviderMutation(
     begun = await callRpc(dependencies, LEGACY_BEGIN_PROVIDER_MUTATION_RPC, arguments_);
   }
   if (begun.error) throw new Error("gateway_provider_fence_unavailable");
+  if (begun.data !== true) throw new GatewayOwnershipLostError();
+}
+
+async function beginLazadaOAuthProviderCall(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+) {
+  if (job.channel !== "lazada" || job.operation !== "oauth.exchange") {
+    throw new Error("lazada_oauth_provider_call_fence_invalid");
+  }
+  const begun = await callRpc(dependencies, BEGIN_LAZADA_OAUTH_PROVIDER_CALL_RPC, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+  });
+  if (begun.error) throw new Error("lazada_oauth_provider_call_fence_unavailable");
   if (begun.data !== true) throw new GatewayOwnershipLostError();
 }
 
@@ -919,6 +947,7 @@ export async function runOneServerlessCsGatewayJob(
   let heartbeatStopped = false;
   let externalMutationStarted = false;
   let providerMutationFenced = false;
+  let lazadaOAuthProviderCallFenced = false;
   let credentialMutationInFlight = false;
   let credentialRefresh: CredentialRefreshSnapshot | undefined;
 
@@ -931,6 +960,15 @@ export async function runOneServerlessCsGatewayJob(
       await assertLeaseHealthy();
       await beginCredentialMutation(dependencies, gatewayTokenHash, job);
       await assertLeaseHealthy();
+    },
+    beginOAuthProviderCall: async () => {
+      await assertLeaseHealthy();
+      if (!lazadaOAuthProviderCallFenced) {
+        await beginLazadaOAuthProviderCall(dependencies, gatewayTokenHash, job);
+        lazadaOAuthProviderCallFenced = true;
+      }
+      await assertLeaseHealthy();
+      externalMutationStarted = true;
     },
     stageCredentialRefresh: async (refresh) => {
       credentialRefresh = refresh;

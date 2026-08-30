@@ -24,6 +24,7 @@ export type ProviderOAuthClaim = GatewayClaim & {
 
 export type ProviderOAuthRuntimeHooks = {
   beginCredentialMutation: () => Promise<void>;
+  beginOAuthProviderCall?: () => Promise<void>;
   stageCredentialRefresh: (refresh: CredentialRefreshSnapshot) => Promise<void>;
   assertLeaseHealthy: () => Promise<void>;
 };
@@ -35,6 +36,102 @@ export type ProviderOAuthResult = {
   expiresAt: string | null;
   safeMessage: string;
 };
+
+export type LazadaOAuthProviderFailureCategory =
+  | "SYSTEM"
+  | "ISV"
+  | "ISP"
+  | "HTTP_4XX"
+  | "HTTP_5XX"
+  | "INVALID_RESPONSE";
+
+// Lazada error payloads can include free-form messages, request ids and
+// account data. Preserve only provider codes that are known protocol labels or
+// documented generic Open Platform codes. Everything else stays typed but is
+// deliberately collapsed to UNRECOGNIZED.
+const lazadaOAuthProviderCodeAllowlist = new Map<string, string>([
+  ["incompletesignature", "INCOMPLETE_SIGNATURE"],
+  ["invalidsignature", "INVALID_SIGNATURE"],
+  ["invalidtimestamp", "INVALID_TIMESTAMP"],
+  ["invalidappkey", "INVALID_APP_KEY"],
+  ["invalidcode", "INVALID_CODE"],
+  ["invalidauthorizationcode", "INVALID_AUTHORIZATION_CODE"],
+  ["illegalaccesstoken", "ILLEGAL_ACCESS_TOKEN"],
+  ["missingparameter", "MISSING_PARAMETER"],
+  ["invalidparameter", "INVALID_PARAMETER"],
+  ["apicalllimit", "API_CALL_LIMIT"],
+  ["5", "5"],
+  ["6", "6"],
+  ["30", "30"],
+  ["500", "500"],
+  ["501", "501"],
+  ["901", "901"],
+  ["1000", "1000"],
+  ["missingtokenfields", "MISSING_TOKEN_FIELDS"],
+  ["unrecognized", "UNRECOGNIZED"],
+]);
+
+const lazadaOAuthProviderFailureCategories = new Set<LazadaOAuthProviderFailureCategory>([
+  "SYSTEM",
+  "ISV",
+  "ISP",
+  "HTTP_4XX",
+  "HTTP_5XX",
+  "INVALID_RESPONSE",
+]);
+
+function allowlistedLazadaOAuthProviderCode(value: unknown) {
+  if (typeof value !== "string" && typeof value !== "number") return "UNRECOGNIZED";
+  const normalized = String(value).trim().replace(/[\s_.-]+/gu, "").toLowerCase();
+  return lazadaOAuthProviderCodeAllowlist.get(normalized) ?? "UNRECOGNIZED";
+}
+
+function lazadaOAuthProviderFailureCategory(
+  response: Response,
+  data: Record<string, unknown>,
+): LazadaOAuthProviderFailureCategory {
+  const providerType = textValue(data, "type").toUpperCase();
+  if (providerType === "SYSTEM" || providerType === "ISV" || providerType === "ISP") {
+    return providerType;
+  }
+  if (response.status >= 500) return "HTTP_5XX";
+  if (response.status >= 400) return "HTTP_4XX";
+  return "INVALID_RESPONSE";
+}
+
+export class LazadaOAuthProviderFailureError extends Error {
+  readonly category: LazadaOAuthProviderFailureCategory;
+  readonly providerCode: string;
+
+  constructor(category: LazadaOAuthProviderFailureCategory, providerCode: string) {
+    const safeCategory = lazadaOAuthProviderFailureCategories.has(category)
+      ? category
+      : "INVALID_RESPONSE";
+    const safeProviderCode = allowlistedLazadaOAuthProviderCode(providerCode);
+    super(`LAZADA_OAUTH_PROVIDER_FAILURE:${safeCategory}:${safeProviderCode}`);
+    this.name = "LazadaOAuthProviderFailureError";
+    this.category = safeCategory;
+    this.providerCode = safeProviderCode;
+  }
+}
+
+function lazadaOAuthProviderFailure(
+  remote: Awaited<ReturnType<typeof exchangeLazadaOAuthToken>>,
+  missingTokenFields: boolean,
+) {
+  const rawError = remote.data.error;
+  const responseCode = String(remote.data.code ?? "").trim();
+  const responseError = String(rawError ?? "").trim();
+  const providerCode = responseError
+    ? allowlistedLazadaOAuthProviderCode(rawError)
+    : missingTokenFields && (!responseCode || responseCode === "0")
+      ? "MISSING_TOKEN_FIELDS"
+      : allowlistedLazadaOAuthProviderCode(remote.data.code);
+  return new LazadaOAuthProviderFailureError(
+    lazadaOAuthProviderFailureCategory(remote.response, remote.data),
+    providerCode,
+  );
+}
 
 function numericIdList(value: unknown) {
   const source = Array.isArray(value)
@@ -76,6 +173,15 @@ function tokenExpiry(data: Record<string, unknown>, fallbackSeconds: number) {
 async function beginCredentialMutation(hooks: ProviderOAuthRuntimeHooks) {
   await hooks.assertLeaseHealthy();
   await hooks.beginCredentialMutation();
+  await hooks.assertLeaseHealthy();
+}
+
+async function beginLazadaOAuthProviderCall(hooks: ProviderOAuthRuntimeHooks) {
+  await hooks.assertLeaseHealthy();
+  if (!hooks.beginOAuthProviderCall) {
+    throw new Error("LAZADA_OAUTH_PROVIDER_CALL_FENCE_UNAVAILABLE");
+  }
+  await hooks.beginOAuthProviderCall();
   await hooks.assertLeaseHealthy();
 }
 
@@ -296,6 +402,7 @@ async function exchangeLazadaOAuth(
   if (!appKey || !appSecret || !code) throw new Error("LAZADA_OAUTH_INPUT_MISSING");
 
   await beginCredentialMutation(hooks);
+  await beginLazadaOAuthProviderCall(hooks);
   const remote = await exchangeLazadaOAuthToken({ appKey, appSecret, code });
   const accessToken = textValue(remote.data, "access_token");
   const refreshToken = textValue(remote.data, "refresh_token");
@@ -304,7 +411,7 @@ async function exchangeLazadaOAuth(
       || !accessToken
       || !refreshToken
       || (responseCode && responseCode !== "0")) {
-    throw new Error("LAZADA_OAUTH_EXCHANGE_FAILED");
+    throw lazadaOAuthProviderFailure(remote, !accessToken || !refreshToken);
   }
 
   const accessExpiresAt = tokenExpiry(remote.data, 2_592_000);

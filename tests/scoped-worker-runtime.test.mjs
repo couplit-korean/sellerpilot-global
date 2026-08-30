@@ -209,6 +209,11 @@ test("production channel gateway documentation keeps the Vercel-only runtime bou
   assert.match(documentation, /`--ai-only` 모드/);
   assert.match(documentation, /production fallback이 아니다/);
   assert.match(documentation, /STATIC_EGRESS_REQUIRED/);
+  for (const operatorDocument of [documentation, deploymentChecklist]) {
+    assert.match(operatorDocument, /20260830204000_allow_fresh_lazada_oauth_past_oauth_reconciliation\.sql/);
+    assert.match(operatorDocument, /running_gateway_leases\s*=\s*0/);
+    assert.match(operatorDocument, /no-work canary[\s\S]*inactive[\s\S]*running_gateway_leases\s*=\s*0[\s\S]*203000[\s\S]*204000/i);
+  }
   assert.doesNotMatch(documentation, /it is not the daemon host/i);
   assert.doesNotMatch(documentation, /Keep at least one replica running continuously/i);
 });

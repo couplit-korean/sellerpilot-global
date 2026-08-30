@@ -62,23 +62,40 @@ SELLERPILOT_EXPECTED_RELEASE=<40자리-커밋-SHA> \
 pnpm gateway:serverless:configure --candidate-canary
 ```
 
-4. **migration 전에** 현재 운영 gateway cron을 명시적으로 중지하고 status가
-   `active: false`인지 확인한다. 이렇게 해야 migration transaction이 진행되는 동안
-   기존 분 단위 cron이 외부 작업을 claim하는 창이 생기지 않는다.
+4. **migration 전에** 현재 운영 gateway cron과 다섯 internal schedule을 명시적으로
+   중지하고 status가 `active: false`인지 확인한다. 이렇게 해야 migration
+   transaction이 진행되는 동안 기존 분 단위 실행이 외부 작업을 claim하거나,
+   marker RPC가 없는 DB에서 fresh Lazada OAuth code를 소비하는 창이 생기지 않는다.
 
 ```sh
 pnpm gateway:serverless:configure --deactivate --status
+```
+
+중지 응답만으로는 이미 claim된 구버전 실행을 배제할 수 없다. 동일 트랜잭션 스냅샷에서
+아래 조회가 0일 때까지 drain을 기다린 후에만 Production 승격과 migration을 시작한다.
+
+```sql
+select count(*) as running_gateway_leases
+from sellerpilot_private.channel_gateway_jobs
+where status = 'running'
+   or (lease_expires_at is not null and lease_expires_at > clock_timestamp());
+-- 예상: 0
 ```
 
 5. 검증한 동일 후보를 Production으로 승격하고, Vercel cron inventory가 0건인지
    확인한다. 다른 artifact를 새로 배포해 바꾸지 않는다.
 6. `supabase/migrations`에서 운영 DB에 아직 적용되지 않은 forward migration을
    파일명 순서대로 모두 적용해, 최소
-   `20260830200000_require_static_egress_for_shopee.sql`까지 도달했는지 확인한다.
+   `20260830204000_allow_fresh_lazada_oauth_past_oauth_reconciliation.sql`까지 도달했는지
+   확인한다. 특히 `20260830203000_record_lazada_oauth_provider_call_boundary.sql`을
+   `20260830204000` 전에 적용해 provider-call marker RPC가 먼저 존재하게 한다.
    `20260828210000_non_cs_release_integrity.sql`만 골라 적용하면 안 된다. 적용 뒤에도
    gateway와 다섯 internal schedule은 inactive로 유지하고, static-egress status에
    Shopee가 `false`로 존재하며 generic/persistent claimant가 Shopee 작업을 가져오지
-   못하는 것을 확인하기 전에는 활성화하지 않는다.
+   못하는 것과 marker RPC·fresh-authorization recovery function이 역할 제한된
+   권한으로 존재하는 것을 확인하기 전에는 활성화하지 않는다.
+
+즉 순서는 `동일 후보 no-work canary → gateway/internal schedule inactive → running_gateway_leases = 0 → 동일 artifact Production 승격 → 203000 → 204000`으로 고정한다.
 7. 위 최신 DB gate 확인 후 아래 명령으로 서버리스 token/wake 구성을 bootstrap하고, gateway와 다섯
    internal route의 no-work canary가 동일 release SHA로 모두 성공한 같은 실행에서만
    scheduler를 활성화한다.

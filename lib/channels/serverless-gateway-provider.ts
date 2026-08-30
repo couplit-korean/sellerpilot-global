@@ -104,6 +104,7 @@ export const SERVERLESS_GATEWAY_READ_MATRIX = serverlessReadMatrix;
 
 export type ServerlessGatewayExecutionHooks = {
   beginCredentialMutation: () => Promise<void>;
+  beginOAuthProviderCall?: () => Promise<void>;
   stageCredentialRefresh: (refresh: CredentialRefreshSnapshot) => Promise<void>;
   beginProviderMutation: () => Promise<void>;
   assertLeaseHealthy: () => Promise<void>;

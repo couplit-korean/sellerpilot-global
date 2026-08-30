@@ -542,6 +542,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830171000_discard_rejected_lazada_recovery_for_oauth.sql",
       "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql",
       "20260830200000_require_static_egress_for_shopee.sql",
+      "20260830203000_record_lazada_oauth_provider_call_boundary.sql",
+      "20260830204000_allow_fresh_lazada_oauth_past_oauth_reconciliation.sql",
     ]);
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -1234,13 +1236,28 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       "select pg_get_functiondef('public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure)",
     );
-    assert.match(serverlessClaimDefinition, /for share/i);
-    assert.match(serverlessClaimDefinition, /safe_lazada_oauth_refresh_blocker/i);
+    const priorSafeLazadaClaimDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_204000_claim_serverless_gateway_unsafe(text,text)'::regprocedure)",
+    );
+    assert.match(
+      serverlessClaimDefinition,
+      /lock table sellerpilot_private\.gateway_completion_receipts/i,
+    );
+    assert.match(serverlessClaimDefinition, /safe_lazada_oauth_claim_blocker/i);
     assert.match(serverlessClaimDefinition, /interval '25 minutes'/i);
-    assert.match(serverlessClaimDefinition, /sellerpilot_183000_claim_serverless_gateway_unsafe/i);
+    assert.match(serverlessClaimDefinition, /sellerpilot_204000_claim_serverless_gateway_unsafe/i);
     assert.match(
       serverlessClaimDefinition,
       /perform pg_catalog\.pg_advisory_xact_lock/i,
+    );
+    assert.match(
+      priorSafeLazadaClaimDefinition,
+      /sellerpilot_183000_claim_serverless_gateway_unsafe/i,
+    );
+    assert.ok(
+      (priorSafeLazadaClaimDefinition.match(/safe_lazada_oauth_claim_blocker/g) ?? [])
+        .length >= 3,
     );
     assert.match(legacyServerlessClaimDefinition, /for update of job skip locked/i);
     assert.match(legacyServerlessClaimDefinition, /for share of credential/i);
@@ -8835,6 +8852,10 @@ test("static egress gate closes history and pre-gate reads without touching repl
     "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql";
   const shopeeStaticEgressMigrationName =
     "20260830200000_require_static_egress_for_shopee.sql";
+  const lazadaProviderMarkerMigrationName =
+    "20260830203000_record_lazada_oauth_provider_call_boundary.sql";
+  const lazadaOauthReauthorizationMigrationName =
+    "20260830204000_allow_fresh_lazada_oauth_past_oauth_reconciliation.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
@@ -8847,7 +8868,9 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== publicationReviewMigrationName
         && name !== publicationSourceMigrationName
         && name !== lazadaSafeOauthMigrationName
-        && name !== shopeeStaticEgressMigrationName)
+        && name !== shopeeStaticEgressMigrationName
+        && name !== lazadaProviderMarkerMigrationName
+        && name !== lazadaOauthReauthorizationMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -10498,6 +10521,10 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql";
   const shopeeStaticEgressMigrationName =
     "20260830200000_require_static_egress_for_shopee.sql";
+  const lazadaProviderMarkerMigrationName =
+    "20260830203000_record_lazada_oauth_provider_call_boundary.sql";
+  const lazadaOauthReauthorizationMigrationName =
+    "20260830204000_allow_fresh_lazada_oauth_past_oauth_reconciliation.sql";
   try {
     await db.exec(supabaseCompatibilityLayer);
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
@@ -10509,6 +10536,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     let shopeeIdentityMigration;
     let lazadaSafeOauthMigration;
     let shopeeStaticEgressMigration;
+    let lazadaProviderMarkerMigration;
+    let lazadaOauthReauthorizationMigration;
     for (const name of migrationNames) {
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       if (name === legacyEbayDiagnosticMigrationName) {
@@ -10521,6 +10550,10 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         lazadaSafeOauthMigration = source;
       } else if (name === shopeeStaticEgressMigrationName) {
         shopeeStaticEgressMigration = source;
+      } else if (name === lazadaProviderMarkerMigrationName) {
+        lazadaProviderMarkerMigration = source;
+      } else if (name === lazadaOauthReauthorizationMigrationName) {
+        lazadaOauthReauthorizationMigration = source;
       } else {
         await db.exec(withoutUnavailableExtensions(source));
       }
@@ -10530,6 +10563,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     assert.equal(typeof shopeeIdentityMigration, "string");
     assert.equal(typeof lazadaSafeOauthMigration, "string");
     assert.equal(typeof shopeeStaticEgressMigration, "string");
+    assert.equal(typeof lazadaProviderMarkerMigration, "string");
+    assert.equal(typeof lazadaOauthReauthorizationMigration, "string");
     await attestPublicationRelease(db);
     await activatePublicationRuntimeRelease(db);
     assert.equal(
@@ -11175,6 +11210,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     );
 
     await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
+    await db.exec(withoutUnavailableExtensions(lazadaProviderMarkerMigration));
+    await db.exec(withoutUnavailableExtensions(lazadaOauthReauthorizationMigration));
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
       { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: false },
@@ -11739,6 +11776,19 @@ test("bounded serverless gateway can hold five independent channel claims withou
         await readFile(new URL(name, migrationUrl), "utf8"),
       ));
     }
+    const claimDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_claim_serverless_gateway_job(text,text)'::regprocedure)",
+    );
+    const fastPathIndex = claimDefinition.indexOf("-- Keep ordinary channel drains");
+    const advisoryIndex = claimDefinition.indexOf(
+      "perform pg_catalog.pg_advisory_xact_lock",
+    );
+    assert.ok(fastPathIndex >= 0 && fastPathIndex < advisoryIndex);
+    assert.match(
+      claimDefinition.slice(fastPathIndex, advisoryIndex),
+      /sellerpilot_204000_claim_serverless_gateway_unsafe/i,
+    );
 
     await db.query(
       "insert into auth.users (id, email) values ($1, 'five-serverless-claims@example.test')",
@@ -13900,6 +13950,7 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
   const failedCode = "fresh-definite-failure-lazada-code";
   const enqueueStaleCode = "stale-lazada-code-before-new-callback";
   const successCode = "fresh-provider-certified-lazada-code";
+  const providerSubject = `lazada:v1:${"A".repeat(64)}`;
   try {
     await db.exec(supabaseCompatibilityLayer);
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
@@ -13970,9 +14021,23 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
       safeLazadaClaimDefinition,
       /lock table sellerpilot_private\.channel_gateway_jobs[\s\S]*lock table sellerpilot_private\.channel_credentials[\s\S]*lock table vault\.secrets/i,
     );
+    assert.match(
+      safeLazadaClaimDefinition,
+      /lock table sellerpilot_private\.gateway_completion_receipts[\s\S]*select oauth\.id/i,
+      "receipt evidence must be fenced before candidate selection",
+    );
+    assert.match(
+      safeLazadaClaimDefinition,
+      /sellerpilot_204000_claim_serverless_gateway_unsafe/i,
+    );
+    const priorSafeLazadaClaimDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_204000_claim_serverless_gateway_unsafe(text,text)'::regprocedure)",
+    );
     assert.ok(
-      (safeLazadaClaimDefinition.match(/safe_lazada_oauth_claim_blocker/g) ?? []).length >= 3,
-      "the exact OAuth predicate must be checked before and after all claim fences",
+      (priorSafeLazadaClaimDefinition.match(/safe_lazada_oauth_claim_blocker/g) ?? [])
+        .length >= 3,
+      "the delegated claimant must recheck the exact OAuth predicate before and after all claim fences",
     );
     const safeLazadaCandidateDefinition = await scalar(
       db,
@@ -13999,7 +14064,7 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
       "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Safe Lazada OAuth Admin')",
       [ADMIN_ID],
     );
-    await setClaims(db);
+    await setClaims(db, "service_role");
     const sourceCredentialId = await scalar(
       db,
       `select public.sellerpilot_rotate_credential(
@@ -14012,8 +14077,20 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
         country: "my",
         access_token: "legacy-lazada-access-token",
         refresh_token: "legacy-lazada-refresh-token",
+        provider_account_subject: providerSubject,
+        provider_account_identity_version: "v1",
       })],
     );
+    const sourceIdentity = (await db.query(
+      `select seller_account_key, seller_account_key_source,
+              seller_account_verified_at is not null as provider_certified
+         from sellerpilot_private.channel_credentials
+        where id=$1`,
+      [sourceCredentialId],
+    )).rows[0];
+    assert.match(sourceIdentity.seller_account_key, /^[a-f0-9]{64}$/);
+    assert.equal(sourceIdentity.seller_account_key_source, "provider_certified_v1");
+    assert.equal(sourceIdentity.provider_certified, true);
 
     await setClaims(db, "service_role");
     await db.query(
@@ -14266,6 +14343,22 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
         where id = $1`,
       [blockerJobId],
     );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.safe_lazada_oauth_refresh_blocker($1)",
+        [failedJobId],
+      ),
+      blockerJobId,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.safe_lazada_oauth_claim_blocker($1)",
+        [failedJobId],
+      ),
+      blockerJobId,
+    );
     const failedClaim = await scalar(
       db,
       "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/failed-lazada-oauth')",
@@ -14404,7 +14497,16 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
       ),
       true,
     );
-    const providerSubject = `lazada:v1:${"A".repeat(64)}`;
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_mark_lazada_oauth_provider_call_started(
+          $1, $2, $3
+        )`,
+        [tokenHash, successJobId, successClaim.claim_token],
+      ),
+      true,
+    );
     const refreshPayload = {
       app_key: "safe-lazada-app",
       app_secret: "safe-lazada-secret",
@@ -14487,11 +14589,13 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
             'lazada_refresh_reconciliation_superseded_by_certified_oauth'
             and entity_id = $1
             and safe_detail->>'oauth_job_id' = $2
-            and safe_detail->>'source_credential_id' = $3
+            and safe_detail->>'credential_only_supersession' = 'true'
+            and safe_detail->>'legacy_source_identity_exception' = 'false'
+            and safe_detail->>'identity_continuity_verified' = 'true'
+            and safe_detail->>'listing_identity_relinked' = 'false'
             and safe_detail->>'provider_mutation_started' = 'false'
-            and safe_detail->>'oauth_provider_certified' = 'true'
-            and (select count(*) from jsonb_object_keys(safe_detail)) = 12`,
-        [blockerJobId, successJobId, sourceCredentialId],
+            and safe_detail->>'oauth_provider_certified' = 'true'`,
+        [blockerJobId, successJobId],
       ),
       1,
     );
