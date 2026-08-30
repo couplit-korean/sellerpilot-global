@@ -836,18 +836,29 @@ begin
   if v_job.request_payload#>>'{arguments,params,ItemCode}' is distinct from v_remote_id
      or v_job.request_payload#>>'{arguments,params,ItemTitle}' is distinct from
        '貼り付け式ケーブル整理クリップ6個セット'
-     or v_job.request_payload#>>'{arguments,params,SellerCode}' is distinct from
-       'QA-20260823-CC-001'
+     or (
+       select array_agg(param_key order by param_key)
+         from jsonb_object_keys(
+           v_job.request_payload#>'{arguments,params}'
+         ) as param_key
+     ) is distinct from array[
+       'AvailableDateType', 'AvailableDateValue', 'ItemCode',
+       'ItemDescription', 'ItemTitle', 'Keyword', 'ProductionPlace',
+       'ProductionPlaceType', 'PromotionName', 'RetailPrice',
+       'SecondSubCat', 'ShippingNo'
+     ]::text[]
      or v_job.request_payload#>>'{arguments,params,SecondSubCat}' is distinct from
        '320000542'
      or v_job.request_payload#>>'{arguments,params,RetailPrice}' is distinct from '1871'
-     or v_job.request_payload#>>'{arguments,params,ItemPrice}' is distinct from '1871'
-     or v_job.request_payload#>>'{arguments,params,ItemQty}' is distinct from '1'
      or v_job.request_payload#>>'{arguments,params,ShippingNo}' is distinct from '806971'
      or v_job.request_payload#>>'{arguments,params,ProductionPlaceType}' is distinct from '2'
      or v_job.request_payload#>>'{arguments,params,ProductionPlace}' is distinct from 'CN'
      or v_job.request_payload#>>'{arguments,params,PromotionName}' is distinct from
        '販売者が確認した入力だけに基づく商品案内'
+     or v_job.request_payload#>>'{arguments,params,Keyword}' is distinct from
+       'buchakhyeong keibeul jeongri keulrip 6gae seteu,No Brand,購入前確認'
+     or v_job.request_payload#>>'{arguments,params,AvailableDateType}' is distinct from '0'
+     or v_job.request_payload#>>'{arguments,params,AvailableDateValue}' is distinct from '3'
      or octet_length(
        v_job.request_payload#>>'{arguments,params,ItemDescription}'
      ) is distinct from 13413
@@ -897,7 +908,11 @@ begin
        v_listing_id::text
      or v_job.request_payload#>>'{arguments,sellerpilotQoo10RollbackUpdateRecovery,remoteId}' is distinct from
        v_remote_id
-     or v_job.request_payload#>>'{arguments,sellerpilotQoo10RollbackUpdateRecovery,expectedState,providerStatus}' is distinct from
+     or v_job.request_payload#>>'{arguments,sellerpilotQoo10RollbackUpdateRecovery,status}' is distinct from
+       'allowed'
+     or v_job.request_payload#>>'{arguments,sellerpilotQoo10RollbackUpdateRecovery,contract}' is distinct from
+       'qoo10_create_rollback_confirmation_v1'
+     or v_job.request_payload#>>'{arguments,sellerpilotQoo10RollbackUpdateRecovery,providerStatus}' is distinct from
        'S1'
      or v_job.request_payload#>>'{arguments,sellerpilotQoo10RollbackUpdateRecovery,expectedState,categoryCode}' is distinct from
        '320000542'
