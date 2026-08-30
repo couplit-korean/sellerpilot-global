@@ -53,6 +53,8 @@ const QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION =
   "20260831056000_allow_exact_qoo10_adultyn_retry_identity.sql";
 const QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION =
   "20260831056500_resume_exact_qoo10_preprovider_job.sql";
+const QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION =
+  "20260831056600_correct_exact_qoo10_resume_payload_contract.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -583,6 +585,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_ADULTYN_RECONCILIATION_MIGRATION,
       QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION,
       QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION,
+      QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -620,6 +623,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION)
         < migrationNames.indexOf(QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION),
       "exact Qoo10 pre-provider resume must replay after retry identity",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION)
+        < migrationNames.indexOf(QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION),
+      "corrected Qoo10 payload contract must replay after the one-shot resume",
     );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -889,6 +897,31 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           ),
           true,
         );
+      }
+      if (name === QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in (
+                '20260831033000', '20260831050000', '20260831052500',
+                '20260831053500', '20260831055000', '20260831056000',
+                '20260831056500', '20260831056600'
+              )`,
+          ),
+          8,
+          "corrected Qoo10 payload contract must be the eighth recorded release-tail migration",
+        );
+        const correctedLineage = await scalar(
+          db,
+          `select pg_get_functiondef(
+            'sellerpilot_private.qoo10_exact_preprovider_resume_lineage_is_current(uuid,text)'::regprocedure
+          )`,
+        );
+        assert.match(correctedLineage, /\? 'ItemPrice'/);
+        assert.match(correctedLineage, /\? 'ItemQty'/);
+        assert.doesNotMatch(correctedLineage, /params,ItemPrice.*= '1871'/);
+        assert.doesNotMatch(correctedLineage, /params,ItemQty.*= '1'/);
       }
     }
     assert.equal(typeof shopeeStaticEgressMigration, "string");
@@ -9711,6 +9744,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== qoo10ScopedProviderChainMigrationName
         && name !== QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION
         && name !== QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION
+        && name !== QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {

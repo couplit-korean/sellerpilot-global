@@ -41,6 +41,13 @@ const migrationUrl = process.env.QOO10_EXACT_RESUME_MIGRATION
       import.meta.url,
     );
 
+const payloadContractMigrationUrl = process.env.QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION
+  ? pathToFileURL(process.env.QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION)
+  : new URL(
+      "../supabase/migrations/20260831056600_correct_exact_qoo10_resume_payload_contract.sql",
+      import.meta.url,
+    );
+
 const compatibilitySql = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
 do $$ begin create role authenticated noinherit; exception when duplicate_object then null; end $$;
@@ -351,8 +358,6 @@ function requestFixture() {
         ProductionPlaceType: "2",
         ProductionPlace: "CN",
         RetailPrice: "1871",
-        ItemPrice: "1871",
-        ItemQty: "1",
         ShippingNo: "806971",
         AdultYN: "N",
       },
@@ -409,6 +414,7 @@ async function scalar(db, sql, params = []) {
 
 async function installResumeCore(db) {
   const source = await readFile(migrationUrl, "utf8");
+  const payloadContractSource = await readFile(payloadContractMigrationUrl, "utf8");
   const payloadMeta = (await db.query(
     `select octet_length(request_payload::text)::integer payload_bytes,
             encode(extensions.digest(request_payload::text,'sha256'),'hex') payload_sha
@@ -439,6 +445,37 @@ async function installResumeCore(db) {
   ]) {
     await db.exec(extractFunction(rendered, name));
   }
+  assert.equal(
+    await scalar(
+      db,
+      `select sellerpilot_private.qoo10_exact_preprovider_resume_lineage_is_current(
+        $1::uuid,$2
+      ) value`,
+      [JOB_ID, RELEASE_SHA],
+    ),
+    false,
+    "the applied 56500 lineage must reject the actual prepared payload that omits ItemPrice and ItemQty",
+  );
+  const correctedPayloadContract = payloadContractSource
+    .replaceAll(PRODUCTION_PAYLOAD_SHA, payloadMeta.payload_sha)
+    .replaceAll(PRODUCTION_ADULT_REQUEST_SHA, adultPayloadMeta.request_sha)
+    .replaceAll(PRODUCTION_ADULT_RESPONSE_SHA, adultPayloadMeta.response_sha)
+    .replaceAll("23555", String(payloadMeta.payload_bytes));
+  await db.exec(extractFunction(
+    correctedPayloadContract,
+    "sellerpilot_private.qoo10_exact_preprovider_resume_lineage_is_current",
+  ));
+  assert.equal(
+    await scalar(
+      db,
+      `select sellerpilot_private.qoo10_exact_preprovider_resume_lineage_is_current(
+        $1::uuid,$2
+      ) value`,
+      [JOB_ID, RELEASE_SHA],
+    ),
+    true,
+    "the 56600 forward fix must accept omitted prepared price/quantity keys while retaining recovery expectedState evidence",
+  );
   await db.exec(extractFunction(
     rendered,
     "public.sellerpilot_31033000_begin_gateway_provider_mutation_unsafe",
@@ -662,6 +699,43 @@ async function beginProvider(db, functionName, claimToken) {
   );
 }
 
+test("56600 accepts the exact sparse prepared payload and retains recovery price/quantity evidence", async () => {
+  const db = await seedDatabase();
+  try {
+    const contract = (await db.query(
+      `select
+         not ((request_payload#>'{arguments,params}') ? 'ItemPrice') item_price_omitted,
+         not ((request_payload#>'{arguments,params}') ? 'ItemQty') item_qty_omitted,
+         request_payload#>>'{arguments,sellerpilotQoo10RollbackUpdateRecovery,expectedState,sellPriceJpy}' expected_sell_price,
+         request_payload#>>'{arguments,sellerpilotQoo10RollbackUpdateRecovery,expectedState,quantity}' expected_quantity,
+         sellerpilot_private.qoo10_exact_preprovider_resume_lineage_is_current(
+           id,$2
+         ) lineage_current
+       from sellerpilot_private.channel_gateway_jobs
+       where id=$1`,
+      [JOB_ID, RELEASE_SHA],
+    )).rows[0];
+    assert.deepEqual(contract, {
+      item_price_omitted: true,
+      item_qty_omitted: true,
+      expected_sell_price: "1871",
+      expected_quantity: "1",
+      lineage_current: true,
+    });
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer value
+           from sellerpilot_private.qoo10_exact_preprovider_resume_permits`,
+      ),
+      0,
+      "installing the forward fix must not arm the one-shot permit",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
 test("closed gate binds only the exact queued job and rejects another listing claim", async () => {
   const db = await seedDatabase();
   try {
@@ -757,9 +831,35 @@ for (const [name, mutate] of [
     `update sellerpilot_private.channel_operation_attempts set idempotency_key='wrong' where id=$1`,
     [ATTEMPT_ID],
   )],
-  ["request payload drift", async (db) => db.query(
+  ["unexpected prepared ItemPrice presence", async (db) => db.query(
     `update sellerpilot_private.channel_gateway_jobs
-        set request_payload=jsonb_set(request_payload,'{arguments,params,ItemQty}','"2"'::jsonb)
+        set request_payload=jsonb_set(request_payload,'{arguments,params,ItemPrice}','"1871"'::jsonb)
+      where id=$1`,
+    [JOB_ID],
+  )],
+  ["unexpected prepared ItemQty presence", async (db) => db.query(
+    `update sellerpilot_private.channel_gateway_jobs
+        set request_payload=jsonb_set(request_payload,'{arguments,params,ItemQty}','"1"'::jsonb)
+      where id=$1`,
+    [JOB_ID],
+  )],
+  ["recovery expected sell price drift", async (db) => db.query(
+    `update sellerpilot_private.channel_gateway_jobs
+        set request_payload=jsonb_set(
+          request_payload,
+          '{arguments,sellerpilotQoo10RollbackUpdateRecovery,expectedState,sellPriceJpy}',
+          '1872'::jsonb
+        )
+      where id=$1`,
+    [JOB_ID],
+  )],
+  ["recovery expected quantity drift", async (db) => db.query(
+    `update sellerpilot_private.channel_gateway_jobs
+        set request_payload=jsonb_set(
+          request_payload,
+          '{arguments,sellerpilotQoo10RollbackUpdateRecovery,expectedState,quantity}',
+          '2'::jsonb
+        )
       where id=$1`,
     [JOB_ID],
   )],
