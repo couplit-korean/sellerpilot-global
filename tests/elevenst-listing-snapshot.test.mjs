@@ -12,6 +12,54 @@ const credentialId = "10000000-0000-4000-8000-000000000001";
 const listingId = "20000000-0000-4000-8000-000000000001";
 const jobId = "30000000-0000-4000-8000-000000000001";
 const sellerKey = "a".repeat(64);
+const qaRemoteId = "9573255804";
+const fullProduct = {
+  selMthdCd: "01",
+  dispCtgrNo: "1341821",
+  prdTypCd: "01",
+  prdNm: "부착형 케이블 정리 클립 6개 세트",
+  brand: "No Brand",
+  rmaterialTypCd: "04",
+  orgnTypCd: "03",
+  orgnNmVal: "중국",
+  sellerPrdCd: "QA-001",
+  suplDtyfrPrdClfCd: "01",
+  forAbrdBuyClf: "01",
+  prdStatCd: "01",
+  minorSelCnYn: "Y",
+  prdImage01: "https://example.com/product.jpg",
+  htmlDetail: "<p>QA 등록 검증용 상품입니다.</p>",
+  ProductCertGroup: [
+    { crtfGrpTypCd: "01", crtfGrpObjClfCd: "03" },
+    { crtfGrpTypCd: "02", crtfGrpObjClfCd: "03" },
+    { crtfGrpTypCd: "03", crtfGrpObjClfCd: "03" },
+    { crtfGrpTypCd: "04", crtfGrpObjClfCd: "05" },
+  ],
+  selPrdClfCd: "3y:110",
+  aplBgnDy: "2026/08/30",
+  aplEndDy: "2029/08/29",
+  selPrc: "5000",
+  prdSelQty: "1",
+  dlvCnAreaCd: "01",
+  dlvWyCd: "01",
+  dlvCstInstBasiCd: "01",
+  bndlDlvCnYn: "Y",
+  dlvCstPayTypCd: "03",
+  rtngdDlvCst: "0",
+  exchDlvCst: "0",
+  asDetail: "11번가 판매자 문의 이용",
+  rtngExchDetail: "11번가 반품·교환 정책 확인",
+  ProductNotification: {
+    type: "891045",
+    item: [
+      { code: "11800", name: "부착형 케이블 정리 클립 6개 세트" },
+      { code: "11905", name: "No Brand" },
+      { code: "23760413", name: "11번가 판매자 문의 이용" },
+      { code: "23759100", name: "중국" },
+      { code: "23756033", name: "해당사항 없음" },
+    ],
+  },
+};
 
 test("11st successful create and update preserve a seller-bound full Product snapshot", async () => {
   const db = new PGlite();
@@ -61,8 +109,8 @@ test("11st successful create and update preserve a seller-bound full Product sna
     await db.query(
       `insert into sellerpilot_private.product_listings (
          id, channel_key, remote_id, seller_account_key
-       ) values ($1, 'elevenst', '123456789', $2)`,
-      [listingId, sellerKey],
+       ) values ($1, 'elevenst', $2, $3)`,
+      [listingId, qaRemoteId, sellerKey],
     );
     await db.query(
       `insert into sellerpilot_private.channel_gateway_jobs (
@@ -70,20 +118,23 @@ test("11st successful create and update preserve a seller-bound full Product sna
          request_payload, seller_account_key
        ) values (
          $1, $2, $3, 'elevenst', 'listing.create', 'queued',
-         '{"arguments":{"product":{"dispCtgrNo":"1341821","sellerPrdCd":"QA-001","prdNm":"before","selPrc":"10000"}}}'::jsonb,
-         $4
+         jsonb_build_object('arguments', jsonb_build_object('product', $4::jsonb)),
+         $5
        )`,
-      [jobId, listingId, credentialId, sellerKey],
+      [jobId, listingId, credentialId, JSON.stringify(fullProduct), sellerKey],
     );
 
     await db.exec(await readFile(migrationUrl, "utf8"));
     await db.query(
       `update sellerpilot_private.channel_gateway_jobs
           set status = 'succeeded',
-              response_payload = '{"ok":true,"channel":"elevenst","operation":"listing.create","remoteId":"123456789"}'::jsonb,
+              response_payload = jsonb_build_object(
+                'ok', true, 'channel', 'elevenst', 'operation', 'listing.create',
+                'remoteId', $2::text
+              ),
               completed_at = now(), updated_at = now()
         where id = $1`,
-      [jobId],
+      [jobId, qaRemoteId],
     );
     assert.deepEqual(
       (await db.query(
@@ -95,23 +146,23 @@ test("11st successful create and update preserve a seller-bound full Product sna
         [listingId],
       )).rows,
       [{
-        remote_id: "123456789",
+        remote_id: qaRemoteId,
         source_operation: "listing.create",
         revision: 1,
-        product_name: "before",
-        price: "10000",
+        product_name: fullProduct.prdNm,
+        price: fullProduct.selPrc,
       }],
     );
 
     await db.exec("select set_config('request.jwt.claim.role', 'service_role', false)");
     const snapshot = (await db.query(
-      "select public.sellerpilot_service_get_elevenst_listing_snapshot($1, $2, '123456789') as snapshot",
-      [listingId, credentialId],
+      "select public.sellerpilot_service_get_elevenst_listing_snapshot($1, $2, $3) as snapshot",
+      [listingId, credentialId, qaRemoteId],
     )).rows[0].snapshot;
-    assert.equal(snapshot.remoteId, "123456789");
+    assert.equal(snapshot.remoteId, qaRemoteId);
     assert.equal(snapshot.revision, 1);
-    assert.equal(snapshot.product.prdNm, "before");
-    assert.equal(snapshot.product.selPrc, "10000");
+    assert.deepEqual(snapshot.product, fullProduct);
+    assert.equal(snapshot.product.dispCtgrNo, "1341821");
     assert.equal(
       (await db.query(
         "select public.sellerpilot_service_get_elevenst_listing_snapshot($1, $2, '999999999') as snapshot",
@@ -119,6 +170,37 @@ test("11st successful create and update preserve a seller-bound full Product sna
       )).rows[0].snapshot,
       null,
     );
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'queued', response_payload = null,
+              request_payload = jsonb_build_object(
+                'arguments', jsonb_build_object(
+                  'product', jsonb_set($2::jsonb, '{dispCtgrNo}', '"1341822"'::jsonb)
+                )
+              ),
+              completed_at = null, updated_at = now()
+        where id = $1`,
+      [jobId, JSON.stringify(fullProduct)],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded',
+              response_payload = jsonb_build_object(
+                'ok', true, 'channel', 'elevenst', 'operation', 'listing.create',
+                'remoteId', $2::text
+              ),
+              completed_at = now(), updated_at = now()
+        where id = $1`,
+      [jobId, qaRemoteId],
+    );
+    const afterWrongCategory = (await db.query(
+      `select revision, product_payload->>'dispCtgrNo' as category_id
+         from sellerpilot_private.elevenst_listing_snapshots
+        where listing_id = $1`,
+      [listingId],
+    )).rows[0];
+    assert.deepEqual(afterWrongCategory, { revision: 1, category_id: "1341821" });
   } finally {
     await db.close();
   }
