@@ -226,6 +226,7 @@ export const supportReplyLocaleSchema = z.enum([
 export const supportReplyJobRequestSchema = z.object({
   jobId: z.string().uuid(),
   ticketId: z.string().uuid(),
+  expectedInboundKey: z.string().min(1).max(500),
   targetLocale: supportReplyLocaleSchema,
   tone: z.enum(["polite", "concise", "apologetic"]).default("polite"),
 });
@@ -240,6 +241,7 @@ export const supportReplyResultSchema = z.object({
 
 export const supportReplyWorkerRequestSchema = z.object({
   ticket_id: z.string().uuid(),
+  sellerpilotInboundKey: z.string().min(1).max(500),
   channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
   target_locale: supportReplyLocaleSchema,
   tone: z.enum(["polite", "concise", "apologetic"]),

@@ -885,7 +885,10 @@ test("inquiry list completion normalizes provider data in the atomic transaction
   );
   const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
   assert.equal(complete?.arguments_.p_status, "succeeded");
-  assert.deepEqual(complete?.arguments_.p_normalized_inquiries, [{
+  const ebayInquiries = structuredClone(complete?.arguments_.p_normalized_inquiries) as Array<Record<string, unknown>>;
+  assert.match(String(ebayInquiries[0]?.inboundKey ?? ""), /^ebay:[0-9a-f]{64}$/);
+  delete ebayInquiries[0]?.inboundKey;
+  assert.deepEqual(ebayInquiries, [{
     externalTicketId: "ebay:message-1",
     customerName: "buyer-1",
     subject: "Test item",
@@ -893,12 +896,21 @@ test("inquiry list completion normalizes provider data in the atomic transaction
     status: "waiting",
     priority: 3,
     receivedAt: "2026-08-28T01:00:00.000Z",
+    remoteMessageId: "message-1",
+    providerContext: {
+      itemId: "123456789",
+      parentMessageId: "message-1",
+      recipientId: "buyer-1",
+      marketplaceId: "EBAY_US",
+    },
     replyContext: {
       itemId: "123456789",
       parentMessageId: "message-1",
       recipientId: "buyer-1",
       marketplaceId: "EBAY_US",
     },
+    providerStatus: "waiting",
+    ticketKind: "conversation",
   }]);
   assert.deepEqual(complete?.arguments_.p_response_payload, {
     ok: true,
@@ -947,7 +959,10 @@ test("Smartstore customer inquiry arguments and reply lineage survive direct exe
   assert.equal(response.status, 200);
   assert.deepEqual(observedArguments, customerArguments);
   const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
-  assert.deepEqual(complete?.arguments_.p_normalized_inquiries, [{
+  const customerInquiries = structuredClone(complete?.arguments_.p_normalized_inquiries) as Array<Record<string, unknown>>;
+  assert.match(String(customerInquiries[0]?.inboundKey ?? ""), /^smartstore:[0-9a-f]{64}$/);
+  delete customerInquiries[0]?.inboundKey;
+  assert.deepEqual(customerInquiries, [{
     externalTicketId: "customer:987654321",
     customerName: "구매자",
     subject: "배송 문의",
@@ -955,7 +970,11 @@ test("Smartstore customer inquiry arguments and reply lineage survive direct exe
     status: "waiting",
     priority: 3,
     receivedAt: "2026-08-28T01:23:45.000Z",
+    remoteMessageId: "987654321",
+    providerContext: { kind: "customer", inquiryNo: "987654321" },
     replyContext: { kind: "customer", inquiryNo: "987654321" },
+    providerStatus: "waiting",
+    ticketKind: "conversation",
   }]);
   const durableResponse = JSON.stringify(complete?.arguments_.p_response_payload);
   assert.doesNotMatch(durableResponse, /배송지를 변경할 수 있나요\?|구매자|배송 문의|987654321/);
@@ -991,7 +1010,10 @@ test("Qoo10 inquiry list keeps the verified one-call contract and stores only no
     },
   });
   const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
-  assert.deepEqual(complete?.arguments_.p_normalized_inquiries, [{
+  const qoo10Inquiries = structuredClone(complete?.arguments_.p_normalized_inquiries) as Array<Record<string, unknown>>;
+  assert.match(String(qoo10Inquiries[0]?.inboundKey ?? ""), /^qoo10:[0-9a-f]{64}$/);
+  delete qoo10Inquiries[0]?.inboundKey;
+  assert.deepEqual(qoo10Inquiries, [{
     externalTicketId: "qoo10:MSG:12345678:87654321",
     customerName: "Qoo10 민감 구매자",
     subject: "Qoo10 민감 문의 제목",
@@ -999,6 +1021,11 @@ test("Qoo10 inquiry list keeps the verified one-call contract and stores only no
     status: "waiting",
     priority: 3,
     receivedAt: "2026-08-28T01:23:45.000Z",
+    remoteMessageId: "87654321",
+    providerContext: { inquiryType: "MSG", questionNo: "12345678", sequenceNo: "87654321" },
+    replyContext: { inquiryType: "MSG", questionNo: "12345678", sequenceNo: "87654321" },
+    providerStatus: "waiting",
+    ticketKind: "conversation",
   }]);
   const durableResponse = JSON.stringify(complete?.arguments_.p_response_payload);
   assert.match(durableResponse, /normalized_inquiries_v1/);

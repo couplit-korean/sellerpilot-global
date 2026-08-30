@@ -121,17 +121,52 @@ test("Smartstore product Q&A and customer inquiries keep disjoint provider ident
     }],
   });
 
-  assert.deepEqual(normalizeChannelInquiries("smartstore", productResult, NORMALIZATION_TIMESTAMP), [{
-    externalTicketId: "987654",
+  const [productInquiry] = normalizeChannelInquiries("smartstore", productResult, NORMALIZATION_TIMESTAMP);
+  assert.deepEqual({
+    externalTicketId: productInquiry?.externalTicketId,
+    customerName: productInquiry?.customerName,
+    subject: productInquiry?.subject,
+    message: productInquiry?.message,
+    status: productInquiry?.status,
+    priority: productInquiry?.priority,
+    receivedAt: productInquiry?.receivedAt,
+    providerContext: productInquiry?.providerContext,
+    replyContext: productInquiry?.replyContext,
+    remoteMessageId: productInquiry?.remoteMessageId,
+    providerStatus: productInquiry?.providerStatus,
+    ticketKind: productInquiry?.ticketKind,
+  }, {
+    externalTicketId: "smartstore:product-qna:987654",
     customerName: "buy***",
     subject: "테스트 상품",
     message: "상품 재입고 일정이 궁금합니다.",
     status: "waiting",
     priority: 3,
     receivedAt: "2026-08-25T03:34:56.000Z",
+    providerContext: { kind: "product", namespace: "product-qna", questionId: "987654" },
     replyContext: { kind: "product", questionId: "987654" },
-  }]);
-  assert.deepEqual(normalizeChannelInquiries("smartstore", customerResult, NORMALIZATION_TIMESTAMP), [{
+    remoteMessageId: "987654",
+    providerStatus: "waiting",
+    ticketKind: "conversation",
+  });
+  assert.match(productInquiry?.inboundKey ?? "", /^smartstore:[0-9a-f]{64}$/);
+
+  const [customerInquiry] = normalizeChannelInquiries("smartstore", customerResult, NORMALIZATION_TIMESTAMP);
+  assert.deepEqual({
+    externalTicketId: customerInquiry?.externalTicketId,
+    customerName: customerInquiry?.customerName,
+    subject: customerInquiry?.subject,
+    message: customerInquiry?.message,
+    status: customerInquiry?.status,
+    priority: customerInquiry?.priority,
+    receivedAt: customerInquiry?.receivedAt,
+    externalOrderReference: customerInquiry?.externalOrderReference,
+    providerContext: customerInquiry?.providerContext,
+    replyContext: customerInquiry?.replyContext,
+    remoteMessageId: customerInquiry?.remoteMessageId,
+    providerStatus: customerInquiry?.providerStatus,
+    ticketKind: customerInquiry?.ticketKind,
+  }, {
     externalTicketId: "customer:987654",
     customerName: "구매자",
     subject: "배송 일정 문의",
@@ -139,8 +174,14 @@ test("Smartstore product Q&A and customer inquiries keep disjoint provider ident
     status: "waiting",
     priority: 3,
     receivedAt: "2026-08-26T00:00:00.000Z",
+    externalOrderReference: "ORDER-1",
+    providerContext: { kind: "customer", inquiryNo: "987654" },
     replyContext: { kind: "customer", inquiryNo: "987654" },
-  }]);
+    remoteMessageId: "987654",
+    providerStatus: "waiting",
+    ticketKind: "conversation",
+  });
+  assert.match(customerInquiry?.inboundKey ?? "", /^smartstore:[0-9a-f]{64}$/);
 });
 
 test("Temu deadline priority is identical across exact completion replays", () => {
@@ -169,6 +210,50 @@ test("Temu deadline priority is identical across exact completion replays", () =
   } finally {
     Date.now = originalDateNow;
   }
+});
+
+test("Temu after-sales identity advances only for a trusted provider revision", () => {
+  const baseRow = {
+    parentAfterSalesSn: "AFTER-SALES-REVISION",
+    parentOrderSn: "TEMU-ORDER-REVISION",
+    afterSalesType: 2,
+    afterSalesStatusGroup: "1",
+    availableOperateList: ["refund", "return"],
+    updateAt: "2026-08-25T09:00:00.000Z",
+  };
+  const first = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-revision-1", {
+    result: { data: [baseRow] },
+  }), NORMALIZATION_TIMESTAMP)[0];
+  const transitioned = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-revision-2", {
+    result: { data: [{
+      ...baseRow,
+      afterSalesStatusGroup: "2",
+      availableOperateList: ["approve"],
+      updateAt: "2026-08-25T10:00:00.000Z",
+    }] },
+  }), "2026-08-30T11:00:00.000Z")[0];
+  const transitionedReplay = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-revision-3", {
+    result: { data: [{
+      ...baseRow,
+      afterSalesStatusGroup: "2",
+      availableOperateList: ["approve"],
+      updateAt: "2026-08-25T10:00:00+00:00",
+    }] },
+  }), "2026-08-31T12:00:00.000Z")[0];
+  assert.notEqual(first?.remoteMessageId, transitioned?.remoteMessageId);
+  assert.notEqual(first?.inboundKey, transitioned?.inboundKey);
+  assert.equal(transitioned?.remoteMessageId, transitionedReplay?.remoteMessageId);
+  assert.equal(transitioned?.inboundKey, transitionedReplay?.inboundKey);
+  assert.equal(transitioned?.providerContext.afterSalesSn, "AFTER-SALES-REVISION");
+
+  const fallbackA = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-state-a", {
+    result: { data: [{ ...baseRow, updateAt: undefined, availableOperateList: ["return", "refund"] }] },
+  }), "2026-08-30T11:00:00.000Z")[0];
+  const fallbackB = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-state-b", {
+    result: { data: [{ ...baseRow, updateAt: undefined, availableOperateList: ["refund", "return"] }] },
+  }), "2026-08-31T12:00:00.000Z")[0];
+  assert.equal(fallbackA?.remoteMessageId, fallbackB?.remoteMessageId);
+  assert.equal(fallbackA?.inboundKey, fallbackB?.inboundKey);
 });
 
 test("Lazada history with no provider time uses the same immutable completion timestamp", () => {

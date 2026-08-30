@@ -548,6 +548,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830212500_retry_failed_pre_gateway_listing_attempts.sql",
       "20260830222257_confirm_qoo10_listing_create_rollback.sql",
       "20260831010000_resolve_exact_qoo10_origin_type_rejection.sql",
+      "20260831033000_add_cs_message_delivery_ledger.sql",
     ]);
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -7502,9 +7503,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       true,
     );
     await setClaims(db);
-    assert.equal(
-      await scalar(db, "select public.sellerpilot_update_ticket($1, 'resolved', '답변 저장 검증')", [firstTicketId]),
-      true,
+    const firstTicketInboundKey = await scalar(
+      db,
+      "select latest_inbound_key from sellerpilot_private.support_tickets where id = $1",
+      [firstTicketId],
+    );
+    await assert.rejects(
+      scalar(db, "select public.sellerpilot_update_ticket($1, 'resolved', '답변 저장 검증', $2)", [firstTicketId, firstTicketInboundKey]),
+      /REMOTE_REPLY_SUCCESS_REQUIRED/,
     );
 
     const lazadaReplyTicketId = await scalar(
@@ -8443,6 +8449,261 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       true,
     );
+
+    const csInboundKey = `qoo10:${"9".repeat(64)}`;
+    const csExternalTicketId = "qoo10:MSG:90001:1";
+    const csInquiry = {
+      externalTicketId: csExternalTicketId,
+      customerName: "CS 원장 테스트 고객",
+      subject: "CS 원장 연결 검증",
+      message: "배송 상태를 확인해 주세요.",
+      status: "waiting",
+      providerStatus: "waiting",
+      priority: 2,
+      receivedAt: "2026-08-31T00:00:00.000Z",
+      inboundKey: csInboundKey,
+      remoteMessageId: "1",
+      providerContext: { inquiryType: "MSG", questionNo: "90001", sequenceNo: "1" },
+      replyContext: { inquiryType: "MSG", questionNo: "90001", sequenceNo: "1" },
+      ticketKind: "conversation",
+    };
+    await setClaims(db, "service_role");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'qoo10', $2::jsonb)",
+        [replacementQoo10CredentialId, JSON.stringify([csInquiry])],
+      ),
+      1,
+    );
+    const csTicketId = await scalar(
+      db,
+      `select id from sellerpilot_private.support_tickets
+        where owner_id = $1 and channel_key = 'qoo10' and external_ticket_id = $2`,
+      [ADMIN_ID, csExternalTicketId],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select channel_account_id::text, provider_status, latest_inbound_key,
+                provider_context->>'questionNo' as question_no
+           from sellerpilot_private.support_tickets where id = $1`,
+        [csTicketId],
+      )).rows[0],
+      {
+        channel_account_id: replacementQoo10CredentialId,
+        provider_status: "waiting",
+        latest_inbound_key: csInboundKey,
+        question_no: "90001",
+      },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.support_inbound_messages where ticket_id = $1",
+        [csTicketId],
+      ),
+      1,
+    );
+
+    await db.query(
+      `update sellerpilot_private.support_tickets
+          set status = 'in_progress', priority = 5, resolved_at = null
+        where id = $1`,
+      [csTicketId],
+    );
+    await setClaims(db, "service_role");
+    await scalar(
+      db,
+      "select public.sellerpilot_service_ingest_inquiries($1, 'qoo10', $2::jsonb)",
+      [replacementQoo10CredentialId, JSON.stringify([{ ...csInquiry, priority: 1 }])],
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select status, priority, resolved_at from sellerpilot_private.support_tickets where id = $1",
+        [csTicketId],
+      )).rows[0],
+      { status: "in_progress", priority: 5, resolved_at: null },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.support_inbound_messages where ticket_id = $1",
+        [csTicketId],
+      ),
+      1,
+    );
+
+    await db.query(
+      `update sellerpilot_private.support_tickets
+          set status = 'resolved', priority = 4, resolved_at = '2026-08-31T00:10:00.000Z'
+        where id = $1`,
+      [csTicketId],
+    );
+    await setClaims(db, "service_role");
+    await scalar(
+      db,
+      "select public.sellerpilot_service_ingest_inquiries($1, 'qoo10', $2::jsonb)",
+      [replacementQoo10CredentialId, JSON.stringify([csInquiry])],
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select status, priority, resolved_at::text from sellerpilot_private.support_tickets where id = $1",
+        [csTicketId],
+      )).rows[0],
+      { status: "resolved", priority: 4, resolved_at: "2026-08-31 00:10:00+00" },
+    );
+
+    const csNewInboundKey = `qoo10:${"8".repeat(64)}`;
+    await setClaims(db, "service_role");
+    await scalar(
+      db,
+      "select public.sellerpilot_service_ingest_inquiries($1, 'qoo10', $2::jsonb)",
+      [replacementQoo10CredentialId, JSON.stringify([{
+        ...csInquiry,
+        message: "새 고객 메시지입니다.",
+        receivedAt: "2026-08-31T00:11:00.000Z",
+        inboundKey: csNewInboundKey,
+        remoteMessageId: "2",
+        priority: 1,
+        providerContext: { inquiryType: "MSG", questionNo: "90001", sequenceNo: "1" },
+        replyContext: { inquiryType: "MSG", questionNo: "90001", sequenceNo: "1" },
+      }])],
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select status, priority, resolved_at from sellerpilot_private.support_tickets where id = $1",
+        [csTicketId],
+      )).rows[0],
+      { status: "waiting", priority: 4, resolved_at: null },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.support_inbound_messages where ticket_id = $1",
+        [csTicketId],
+      ),
+      2,
+    );
+
+    const csReply = "배송 상태를 확인해 안내드리겠습니다.";
+    const csReplyJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'qoo10', $2, $3::jsonb
+      )`,
+      [csTicketId, csReply, JSON.stringify({ sellerpilotExpectedInboundKey: csNewInboundKey, arguments: { params: {
+        inq_type: "MSG", question_no: "90001", seq_no: "1", contents: csReply,
+      } } })],
+    );
+    await setClaims(db);
+    const csContext = await scalar(
+      db,
+      "select public.sellerpilot_get_ticket_reply_context_v2($1)",
+      [csTicketId],
+    );
+    assert.equal(csContext.environment, "production");
+    assert.equal(csContext.provider_context.questionNo, "90001");
+    const queuedCsDelivery = await scalar(
+      db,
+      "select public.sellerpilot_get_inquiry_reply_delivery($1, $2)",
+      [csTicketId, csReplyJobId],
+    );
+    assert.equal(queuedCsDelivery.status, "queued");
+    assert.equal(queuedCsDelivery.ticketId, csTicketId);
+    assert.equal(queuedCsDelivery.inboundKey, csNewInboundKey);
+    const csWorkerTokenId = await scalar(
+      db,
+      `select id from sellerpilot_private.ai_cli_worker_tokens
+        where scope = 'gateway' and status = 'active' order by created_at desc limit 1`,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'running', worker_token_id = $2,
+              claim_token = '91919191-9191-4191-8191-919191919191',
+              lease_expires_at = now() + interval '10 minutes', started_at = now()
+        where id = $1`,
+      [csReplyJobId, csWorkerTokenId],
+    );
+    const csThirdInboundKey = `qoo10:${"7".repeat(64)}`;
+    await setClaims(db, "service_role");
+    await scalar(
+      db,
+      "select public.sellerpilot_service_ingest_inquiries($1, 'qoo10', $2::jsonb)",
+      [replacementQoo10CredentialId, JSON.stringify([{
+        ...csInquiry,
+        message: "답변 실행 중 도착한 최신 고객 메시지입니다.",
+        receivedAt: "2026-08-31T00:12:00.000Z",
+        inboundKey: csThirdInboundKey,
+        remoteMessageId: "3",
+      }])],
+    );
+    await setClaims(db);
+    assert.equal((await scalar(db, "select public.sellerpilot_get_cs_workspace_snapshot()"))
+      .tickets.find((ticket) => ticket.ticketId === csTicketId)?.delivery, null);
+    await assert.rejects(
+      scalar(db, `select public.sellerpilot_enqueue_inquiry_reply_gateway_job($1, 'qoo10', $2, $3::jsonb)`, [
+        csTicketId,
+        "새 세대 답변",
+        JSON.stringify({ sellerpilotExpectedInboundKey: csThirdInboundKey, arguments: { params: {
+          inq_type: "MSG", question_no: "90001", seq_no: "1", contents: "새 세대 답변",
+        } } }),
+      ]),
+      /INQUIRY_REPLY_RECONCILIATION_REQUIRED/,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded',
+              response_payload = '{"ok":true,"remoteId":"90001","safeMessage":"reply accepted"}'::jsonb,
+              completed_at = now()
+        where id = $1`,
+      [csReplyJobId],
+    );
+    const succeededCsDelivery = await scalar(
+      db,
+      "select public.sellerpilot_get_inquiry_reply_delivery($1, $2)",
+      [csTicketId, csReplyJobId],
+    );
+    assert.equal(succeededCsDelivery.status, "succeeded");
+    assert.equal(succeededCsDelivery.inboundKey, csNewInboundKey);
+    assert.deepEqual(
+      (await db.query("select status, provider_status, latest_inbound_key, last_delivery_job_id from sellerpilot_private.support_tickets where id = $1", [csTicketId])).rows[0],
+      { status: "waiting", provider_status: "waiting", latest_inbound_key: csThirdInboundKey, last_delivery_job_id: null },
+    );
+    const csReplyB = "최신 문의를 확인했습니다.";
+    const csReplyJobB = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job($1, 'qoo10', $2, $3::jsonb)`,
+      [csTicketId, csReplyB, JSON.stringify({ sellerpilotExpectedInboundKey: csThirdInboundKey, arguments: { params: {
+        inq_type: "MSG", question_no: "90001", seq_no: "1", contents: csReplyB,
+      } } })],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'running', worker_token_id = $2,
+              claim_token = '92929292-9292-4292-8292-929292929292',
+              lease_expires_at = now() + interval '10 minutes', started_at = now()
+        where id = $1`,
+      [csReplyJobB, csWorkerTokenId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'succeeded', response_payload = '{"ok":true,"remoteId":"90001-b"}'::jsonb,
+              completed_at = now()
+        where id = $1`,
+      [csReplyJobB],
+    );
+    const csWorkspace = await scalar(db, "select public.sellerpilot_get_cs_workspace_snapshot()");
+    assert.equal(
+      csWorkspace.tickets.find((ticket) => ticket.ticketId === csTicketId)?.delivery?.status,
+      "succeeded",
+    );
+    assert.equal(csWorkspace.tickets.find((ticket) => ticket.ticketId === csTicketId)?.delivery?.inboundKey, csThirdInboundKey);
+    assert.deepEqual(
+      (await db.query("select status, provider_status, latest_inbound_key from sellerpilot_private.support_tickets where id = $1", [csTicketId])).rows[0],
+      { status: "resolved", provider_status: "answered", latest_inbound_key: csThirdInboundKey },
+    );
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.support_reply_deliveries where ticket_id = $1", [csTicketId]), 2);
+
     await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
@@ -8953,8 +9214,13 @@ test("static egress gate closes history and pre-gate reads without touching repl
           subject: "정리 비대상 답변",
           message: "답변 작업은 그대로 남아야 합니다.",
           status: "waiting",
+          providerStatus: "waiting",
           priority: 2,
           receivedAt: "2026-08-28T00:00:00.000Z",
+          remoteMessageId: "987654321",
+          inboundKey: `coupang:${"7".repeat(64)}`,
+          providerContext: { kind: "product", inquiryId: "987654321" },
+          replyContext: { kind: "product", inquiryId: "987654321" },
         }])],
       ),
       1,
@@ -8974,6 +9240,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         $1, 'coupang', '정리 비대상 답변입니다.', $2::jsonb
       )`,
       [untouchedTicketId, JSON.stringify({
+        sellerpilotExpectedInboundKey: `coupang:${"7".repeat(64)}`,
         arguments: {
           kind: "product",
           inquiryId: "987654321",

@@ -199,7 +199,8 @@ test("eBay ASQ sandbox sync uses OAuth IAF headers and normalizes exact reply li
     assert.doesNotMatch(requestBody ?? "", /secret-token|SenderEmail/);
 
     const normalized = normalizeChannelInquiries("ebay", result, "2026-08-28T00:00:00.000Z");
-    assert.deepEqual(normalized, [{
+    assert.equal(normalized.length, 1);
+    assert.deepEqual({ ...normalized[0], inboundKey: undefined }, {
       externalTicketId: "ebay:message-1",
       customerName: "buyer-1",
       subject: "Coffee & Tea",
@@ -207,13 +208,24 @@ test("eBay ASQ sandbox sync uses OAuth IAF headers and normalizes exact reply li
       status: "waiting",
       priority: 3,
       receivedAt: "2026-08-27T01:02:03.000Z",
+      remoteMessageId: "message-1",
+      providerContext: {
+        itemId: "1234567890123456789",
+        parentMessageId: "message-1",
+        recipientId: "buyer-1",
+        marketplaceId: "EBAY_GB",
+      },
       replyContext: {
         itemId: "1234567890123456789",
         parentMessageId: "message-1",
         recipientId: "buyer-1",
         marketplaceId: "EBAY_GB",
       },
-    }]);
+      inboundKey: undefined,
+      providerStatus: "waiting",
+      ticketKind: "conversation",
+    });
+    assert.match(normalized[0]?.inboundKey ?? "", /^ebay:[0-9a-f]{64}$/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -489,6 +501,7 @@ test("eBay provider rate fence reaches the CS route as a retryable rate error", 
       ticketId: "e2ea4331-7206-4ce3-ad26-7f34217fbb7a",
       channel: "ebay",
       reply: "reply",
+      expectedInboundKey: "ebay:test-inbound",
       arguments: {},
     }),
     /EBAY_ASQ_RATE_LIMITED_75_PER_60_SECONDS/,
@@ -522,7 +535,7 @@ test("eBay ASQ exposes reads and lineage-gated RTQ replies in both official envi
     sellerAccountVerified: true,
     marketplaceBound: true,
   }), true);
-  assert.equal(csReplySavePlan("ticket", "ebay", "reply").remote, true);
+  assert.equal(csReplySavePlan("ticket", "ebay", "reply", "ebay:test:message").remote, true);
   assert.deepEqual(csChannelVerification("ebay", "passed", 3), {
     readLabel: "eBay 상품 문의(ASQ) 최근 조회 작업 통과 · 누적 원장 3건",
     replyLabel: "답변: 검증된 계정·사이트·문의 계보만 보안 게이트웨이 전송",

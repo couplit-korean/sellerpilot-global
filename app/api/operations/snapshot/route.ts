@@ -30,6 +30,7 @@ const mutationSchema = z.discriminatedUnion("action", [
     action: z.literal("ticket_update"),
     id: z.string().uuid(),
     status: z.enum(["urgent", "waiting", "in_progress", "resolved"]),
+    expectedInboundKey: z.string().min(1).max(500).nullable(),
     replyDraft: z.string().max(8000).optional(),
   }),
   z.object({
@@ -64,7 +65,7 @@ export async function GET(request: Request) {
   const range = rangeSchema.safeParse({ from: url.searchParams.get("from") ?? undefined, to: url.searchParams.get("to") ?? undefined });
   if (!range.success) return NextResponse.json({ message: "매출 조회 기간을 확인해 주세요." }, { status: 400 });
 
-  const [{ data, error }, { data: recentMarginScenarios, error: recentMarginScenariosError }, { data: latestMarginScenarios, error: latestMarginScenariosError }, { data: syncStatus }, { data: credentialRows, error: credentialError }, { data: aiRuntime }, { data: analytics, error: analyticsError }, { data: externalActions, error: externalActionsError }, { data: registrationActivities, error: registrationActivitiesError }] = await Promise.all([
+  const [{ data, error }, { data: recentMarginScenarios, error: recentMarginScenariosError }, { data: latestMarginScenarios, error: latestMarginScenariosError }, { data: syncStatus }, { data: credentialRows, error: credentialError }, { data: aiRuntime }, { data: analytics, error: analyticsError }, { data: externalActions, error: externalActionsError }, { data: registrationActivities, error: registrationActivitiesError }, { data: csWorkspace, error: csWorkspaceError }] = await Promise.all([
     admin.userClient.rpc("sellerpilot_get_operations_snapshot"),
     admin.userClient.rpc("sellerpilot_list_margin_scenarios", { p_limit: recentMarginScenarioLimit }),
     admin.userClient.rpc("sellerpilot_list_latest_margin_scenarios", {
@@ -77,6 +78,7 @@ export async function GET(request: Request) {
     admin.userClient.rpc("sellerpilot_get_sales_analytics", { p_from: range.data.from, p_to: range.data.to }),
     admin.userClient.rpc("sellerpilot_list_external_listing_actions"),
     admin.userClient.rpc("sellerpilot_list_registration_activity", { p_limit: 160 }),
+    admin.userClient.rpc("sellerpilot_get_cs_workspace_snapshot"),
   ]);
   if (error || credentialError || analyticsError || externalActionsError) {
     return NextResponse.json({ message: "운영 데이터를 불러오지 못했습니다." }, { status: 500 });
@@ -84,6 +86,24 @@ export async function GET(request: Request) {
   let payload = data && typeof data === "object" && !Array.isArray(data)
     ? { ...(data as Record<string, unknown>) }
     : {};
+  if (!csWorkspaceError && csWorkspace && typeof csWorkspace === "object" && !Array.isArray(csWorkspace)) {
+    const workspace = csWorkspace as Record<string, unknown>;
+    const csTickets = Array.isArray(workspace.tickets)
+      ? workspace.tickets.filter((ticket): ticket is Record<string, unknown> => Boolean(ticket) && typeof ticket === "object" && !Array.isArray(ticket))
+      : [];
+    const csByTicket = new Map(csTickets
+      .map((ticket) => [typeof ticket.ticketId === "string" ? ticket.ticketId : "", ticket] as const)
+      .filter(([ticketId]) => Boolean(ticketId)));
+    if (Array.isArray(payload.tickets)) {
+      payload.tickets = payload.tickets.map((ticket) => {
+        if (!ticket || typeof ticket !== "object" || Array.isArray(ticket)) return ticket;
+        const row = ticket as Record<string, unknown>;
+        const cs = typeof row.id === "string" ? csByTicket.get(row.id) : null;
+        return cs ? { ...row, ...cs, id: row.id } : row;
+      });
+    }
+    payload.csDeliverySummary = workspace.summary ?? null;
+  }
   const marginScenarios = resolveMarginScenarioRows({
     recentData: recentMarginScenarios,
     recentError: recentMarginScenariosError,
@@ -206,6 +226,7 @@ export async function POST(request: Request) {
       p_id: parsed.data.id,
       p_status: parsed.data.status,
       p_reply_draft: parsed.data.replyDraft ?? null,
+      p_expected_inbound_key: parsed.data.expectedInboundKey,
     });
     mutationError = error ?? (data === true ? null : { message: "ticket not found" });
   } else if (parsed.data.action === "margin_save") {
@@ -231,6 +252,15 @@ export async function POST(request: Request) {
   }
 
   if (mutationError) {
+    if (parsed.data.action === "ticket_update" && mutationError.message.includes("INQUIRY_CONTEXT_STALE")) {
+      return NextResponse.json({ message: "새 고객 메시지가 도착했습니다. 문의 상태를 새로고침해 주세요." }, { status: 409 });
+    }
+    if (parsed.data.action === "ticket_update" && mutationError.message.includes("CS_DELIVERY_LOCKED")) {
+      return NextResponse.json({ message: "판매채널 전송 결과를 확인 중입니다. 전송 원장을 확인한 뒤 상태를 변경해 주세요." }, { status: 409 });
+    }
+    if (parsed.data.action === "ticket_update" && mutationError.message.includes("REMOTE_REPLY_SUCCESS_REQUIRED")) {
+      return NextResponse.json({ message: "판매채널의 답변 또는 종료 상태가 아직 확인되지 않았습니다. 채널에서 결과를 확인해 주세요." }, { status: 409 });
+    }
     if (parsed.data.action === "product_create" && mutationError.code === "23505") {
       return NextResponse.json({
         code: "DUPLICATE_SELLER_SKU",

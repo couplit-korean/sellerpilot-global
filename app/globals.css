@@ -679,6 +679,55 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .reply-composer > div:last-child > span { display: flex; gap: 5px; }
 .reply-composer > div:last-child > span button { display: flex; min-height: 29px; align-items: center; gap: 5px; padding: 0 8px; border-radius: 7px; color: #6c7689; background: #f2f4f7; font-size: 7px; }
 .send-button { display: flex; min-height: 31px; align-items: center; gap: 6px; padding: 0 11px; border-radius: 7px; color: white; background: var(--primary); font-size: 8px; font-weight: 800; }
+.ticket-state-row { display: flex; align-items: center; gap: 6px; }
+.ticket-delivery-state { padding: 3px 6px; border-radius: 999px; font-size: 7px; font-style: normal; font-weight: 800; }
+.ticket-delivery-state.queued, .ticket-delivery-state.running { color: #175cd3; background: #eff8ff; }
+.ticket-delivery-state.succeeded { color: #087a62; background: #ecfdf3; }
+.ticket-delivery-state.failed { color: #b54708; background: #fffaeb; }
+.ticket-delivery-state.reconciliation { color: #b42318; background: #fef3f2; }
+.cs-ticket-status-control { display: flex; align-items: center; gap: 8px; }
+.cs-status-locked { display: inline-flex; align-items: center; gap: 5px; padding: 6px 8px; border-radius: 7px; color: #087a62; background: #ecfdf3; font-size: 8px; font-weight: 800; }
+.order-context-unlinked { border-style: dashed; background: #fffcf5; }
+.reply-composer.is-locked { background: #f8fafc; }
+.reply-label { display: flex; align-items: center; justify-content: space-between; margin: 0 0 6px; color: #667085; font-size: 7px; font-weight: 800; }
+.reply-label small { color: #98a2b3; font-family: var(--font-geist-mono), monospace; font-weight: 600; }
+.reply-composer-help { margin: 6px 0 0; color: #667085; font-size: 7px; line-height: 1.45; }
+.reply-composer-help.locked { color: #b54708; }
+.cs-delivery-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 10px; margin: 0 12px 10px; padding: 11px 12px; border: 1px solid; border-radius: 9px; background: white; }
+.cs-delivery-banner > span { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 8px; }
+.cs-delivery-banner b, .cs-delivery-banner p, .cs-delivery-banner small { display: block; }
+.cs-delivery-banner b { font-size: 10px; }
+.cs-delivery-banner p { margin: 4px 0; font-size: 9px; line-height: 1.5; }
+.cs-delivery-banner small { color: #7a8494; font-family: var(--font-geist-mono), monospace; font-size: 7px; }
+.cs-delivery-banner em { align-self: center; padding: 4px 7px; border-radius: 999px; font-size: 8px; font-style: normal; font-weight: 850; white-space: nowrap; }
+.cs-delivery-banner.queued, .cs-delivery-banner.running { color: #175cd3; border-color: #b2ddff; background: #eff8ff; }
+.cs-delivery-banner.queued > span, .cs-delivery-banner.running > span { background: #d1e9ff; }
+.cs-delivery-banner.succeeded { color: #087a62; border-color: #abefc6; background: #ecfdf3; }
+.cs-delivery-banner.succeeded > span { background: #d1fadf; }
+.cs-delivery-banner.failed { color: #b54708; border-color: #fedf89; background: #fffaeb; }
+.cs-delivery-banner.failed > span { background: #fef0c7; }
+.cs-delivery-banner.reconciliation { color: #b42318; border-color: #fecdca; background: #fef3f2; }
+.cs-delivery-banner.reconciliation > span { background: #fee4e2; }
+.cs-delivery-banner.reconciliation em { color: #b42318; background: #fee4e2; }
+.cs-reply-review-overlay { position: fixed; z-index: 80; inset: 0; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgb(16 24 40 / 58%); backdrop-filter: blur(3px); }
+.cs-reply-review-dialog { width: min(560px, 100%); max-height: min(760px, calc(100dvh - 40px)); overflow: auto; border: 1px solid var(--line); border-radius: 14px; background: white; box-shadow: 0 24px 80px rgb(16 24 40 / 24%); }
+.cs-reply-review-dialog > header { display: flex; min-height: 76px; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.cs-reply-review-dialog > header > div { display: flex; align-items: center; gap: 10px; }
+.cs-reply-review-dialog h3 { margin: 0; color: #344054; font-size: 15px; }
+.cs-reply-review-dialog header small { display: block; margin-top: 4px; color: #7a8494; font-size: 9px; }
+.cs-reply-review-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 14px 16px 0; }
+.cs-reply-review-facts div { min-width: 0; padding: 10px; border-radius: 8px; background: #f8fafc; }
+.cs-reply-review-facts dt { color: #7a8494; font-size: 8px; }
+.cs-reply-review-facts dd { margin: 4px 0 0; overflow-wrap: anywhere; color: #344054; font-size: 10px; font-weight: 800; }
+.cs-reply-review-copy { margin: 12px 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: #fcfcfd; }
+.cs-reply-review-copy small { color: #7a8494; font-size: 8px; font-weight: 800; }
+.cs-reply-review-copy p { max-height: 210px; overflow: auto; margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #475467; font-size: 10px; line-height: 1.65; }
+.cs-reply-review-dialog .shipment-warning { display: flex; align-items: flex-start; gap: 8px; margin: 12px 16px 0; padding: 11px; border-radius: 9px; color: #b54708; background: #fffaeb; }
+.cs-reply-review-dialog .shipment-warning span { display: grid; gap: 3px; }
+.cs-reply-review-dialog .shipment-warning b { font-size: 9px; }
+.cs-reply-review-dialog .shipment-warning small { color: #935f10; font-size: 8px; line-height: 1.45; }
+.cs-reply-review-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 16px 16px; }
+.cs-reply-review-dialog > footer button { min-height: 42px; padding: 0 14px; }
 .customer-panel { border-left: 1px solid var(--line); background: white; }
 .customer-profile { padding: 20px 15px 15px; border-bottom: 1px solid var(--line); text-align: center; }
 .customer-profile h4 { margin: 9px 0 0; font-size: 11px; }.customer-profile > span { display: block; margin-top: 3px; color: #929baa; font-size: 8px; }

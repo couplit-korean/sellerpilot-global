@@ -16,10 +16,14 @@ export async function POST(request: Request) {
   const { error } = await admin.userClient.rpc("sellerpilot_create_support_reply_job", {
     p_id: parsed.data.jobId,
     p_ticket_id: parsed.data.ticketId,
+    p_expected_inbound_key: parsed.data.expectedInboundKey,
     p_target_locale: parsed.data.targetLocale,
     p_tone: parsed.data.tone,
   });
   if (error) {
+    if (error.message.includes("INQUIRY_CONTEXT_STALE")) {
+      return NextResponse.json({ message: "새 고객 메시지가 도착했습니다. 최신 문의를 다시 확인해 주세요." }, { status: 409 });
+    }
     return NextResponse.json({ message: "CLI 답변 초안 작업을 등록하지 못했습니다." }, { status: 500 });
   }
 

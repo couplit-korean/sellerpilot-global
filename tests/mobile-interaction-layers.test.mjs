@@ -150,10 +150,13 @@ test("true modals lock scroll, trap focus, close on Escape and restore the opene
   assert.match(hook, /opener\?\.isConnected[\s\S]*?opener\.focus\(\{ preventScroll: true \}\)/);
   assert.match(page, /useModalInteraction\(Boolean\(detailOrder\), detailDialogRef/);
   assert.match(page, /useModalInteraction\(fulfillmentOpen, fulfillmentDialogRef/);
+  assert.match(page, /useModalInteraction\(Boolean\(reviewReply\), reviewDialogRef,[\s\S]{0,140}initialFocusRef: reviewCloseButtonRef/);
   assert.match(page, /useModalInteraction\(searchOpen, searchDialogRef/);
   assert.match(page, /useModalInteraction\(accountOpen, accountDialogRef/);
   assert.match(page, /ref=\{detailDialogRef\} tabIndex=\{-1\}/);
   assert.match(page, /ref=\{fulfillmentDialogRef\} tabIndex=\{-1\}/);
+  assert.match(page, /ref=\{reviewDialogRef\} tabIndex=\{-1\}/);
+  assert.match(page, /ref=\{reviewCloseButtonRef\}[\s\S]{0,100}aria-label="답변 검토 창 닫기"/);
   assert.match(page, /ref=\{searchDialogRef\} tabIndex=\{-1\}/);
   assert.match(page, /ref=\{accountDialogRef\} tabIndex=\{-1\}/);
   assert.match(page, /useModalInteraction\(true, dialogRef, onClose, \{ dismissible: !saving \}\)/);

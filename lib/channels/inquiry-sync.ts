@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import type { ActiveChannelKey } from "./catalog";
 import type { ChannelOperationResult } from "./operations";
 import { normalizeLazadaImHistory } from "./lazada-im";
@@ -6,7 +7,7 @@ import { coupangContactCenterParentAnswerId } from "./inquiry-reply";
 import { ebayAsqMarketplaceId } from "./ebay-asq";
 import { canonicalNormalizationTimestamp, createTimestampNormalizer } from "./normalization-time";
 
-export type NormalizedChannelInquiry = {
+type BaseNormalizedChannelInquiry = {
   externalTicketId: string;
   customerName: string;
   subject: string;
@@ -14,7 +15,18 @@ export type NormalizedChannelInquiry = {
   status: "waiting" | "resolved";
   priority: number;
   receivedAt: string;
+  remoteMessageId?: string;
+  providerContext?: Record<string, unknown>;
+  externalOrderReference?: string;
+  ticketKind?: "conversation" | "after_sales";
   replyContext?: Record<string, unknown>;
+};
+
+export type NormalizedChannelInquiry = BaseNormalizedChannelInquiry & {
+  inboundKey: string;
+  providerStatus: "waiting" | "answered";
+  providerContext: Record<string, unknown>;
+  ticketKind: "conversation" | "after_sales";
 };
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
@@ -26,10 +38,26 @@ const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
 type TimestampNormalizer = ReturnType<typeof createTimestampNormalizer>;
 
+function finalizeInquiry(channel: ActiveChannelKey, inquiry: BaseNormalizedChannelInquiry): NormalizedChannelInquiry {
+  const remoteMessageId = text(inquiry.remoteMessageId);
+  const providerContext = inquiry.providerContext ?? inquiry.replyContext ?? {};
+  if (!remoteMessageId) throw new Error(`INQUIRY_REMOTE_MESSAGE_ID_REQUIRED:${channel}`);
+  const material = ["v2", channel, inquiry.externalTicketId, remoteMessageId].join("\u001f");
+  return {
+    ...inquiry,
+    ...(remoteMessageId ? { remoteMessageId } : {}),
+    inboundKey: `${channel}:${createHash("sha256").update(material).digest("hex")}`,
+    providerStatus: inquiry.status === "resolved" ? "answered" : "waiting",
+    providerContext,
+    replyContext: inquiry.replyContext ?? { ...providerContext },
+    ticketKind: inquiry.ticketKind ?? "conversation",
+  };
+}
+
 function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const root = object(data.data);
   const rows = list(root.content).length ? list(root.content) : list(data.data);
-  return rows.map((row): NormalizedChannelInquiry | null => {
+  return rows.map((row): BaseNormalizedChannelInquiry | null => {
     const sourceKind = text(data.sellerpilotInquiryKind, "product");
     const remoteTicketId = text(row.inquiryId, row.counselingId);
     const externalTicketId = remoteTicketId ? `${sourceKind}:${remoteTicketId}` : "";
@@ -48,9 +76,18 @@ function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalize
       status: answered ? "resolved" : "waiting",
       priority: /URGENT|TRANSFER/.test(text(row.partnerCounselingStatus).toUpperCase()) ? 2 : 3,
       receivedAt: iso(row.inquiryAt, row.createdAt, row.receivedAt),
+      remoteMessageId: remoteTicketId,
+      ...(text(row.orderId, row.orderItemId, row.vendorItemId)
+        ? { externalOrderReference: text(row.orderId, row.orderItemId, row.vendorItemId) }
+        : {}),
+      providerContext: {
+        kind: sourceKind,
+        inquiryId: remoteTicketId,
+        ...(parentAnswerId ? { parentAnswerId } : {}),
+      },
       replyContext: parentAnswerId ? { parentAnswerId } : {},
     };
-  }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
+  }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
 }
 
 function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormalizer) {
@@ -61,13 +98,15 @@ function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormal
     : list(root.content).length ? list(root.content)
       : list(data.data).length ? list(data.data)
         : list(data.contents);
-  return rows.map((row): NormalizedChannelInquiry | null => {
+  return rows.map((row): BaseNormalizedChannelInquiry | null => {
     const remoteTicketId = sourceKind === "customer"
       ? text(row.inquiryNo)
       : text(row.questionId);
     const externalTicketId = sourceKind === "customer" && remoteTicketId
       ? `customer:${remoteTicketId}`
-      : remoteTicketId;
+      : remoteTicketId
+        ? `smartstore:product-qna:${remoteTicketId}`
+        : "";
     const message = sourceKind === "customer"
       ? text(row.inquiryContent)
       : text(row.question);
@@ -86,11 +125,18 @@ function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormal
       receivedAt: sourceKind === "customer"
         ? iso(row.inquiryRegistrationDateTime)
         : iso(row.createDate),
+      remoteMessageId: remoteTicketId,
+      ...(text(row.orderId, row.productOrderId)
+        ? { externalOrderReference: text(row.orderId, row.productOrderId) }
+        : {}),
+      providerContext: sourceKind === "customer"
+        ? { kind: "customer", inquiryNo: remoteTicketId }
+        : { kind: "product", namespace: "product-qna", questionId: remoteTicketId },
       replyContext: sourceKind === "customer"
         ? { kind: "customer", inquiryNo: remoteTicketId }
         : { kind: "product", questionId: remoteTicketId },
     };
-  }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
+  }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
 }
 
 function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer) {
@@ -98,7 +144,7 @@ function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer)
   const rows = list(result).length ? list(result)
     : list(object(result).InquiryInfo).length ? list(object(result).InquiryInfo)
       : list(object(result).InquiryMessage);
-  return rows.map((row): NormalizedChannelInquiry | null => {
+  return rows.map((row): BaseNormalizedChannelInquiry | null => {
     const inquiryType = text(row.INQ_TYPE, row.inq_type).toUpperCase();
     const questionNo = text(row.QUESTION_NO, row.question_no);
     const sequenceNo = text(row.SEQ_NO, row.seq_no);
@@ -112,8 +158,10 @@ function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer)
       status: /S3|ANSWER|COMPLETE/.test(text(row.STATUS, row.Status, row.AnswerYN).toUpperCase()) ? "resolved" : "waiting",
       priority: 3,
       receivedAt: iso(row.INQ_DT, row.InquiryDate, row.CreatedDate, row.RegDate),
+      remoteMessageId: text(row.MESSAGE_ID, row.MessageId, sequenceNo),
+      providerContext: { inquiryType, questionNo, sequenceNo },
     };
-  }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
+  }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
 }
 
 function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, referenceTimeMs: number) {
@@ -127,7 +175,7 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, 
     "6": "거절 완료",
     "7": "요청 취소",
   };
-  return rows.map((row): NormalizedChannelInquiry | null => {
+  return rows.map((row): BaseNormalizedChannelInquiry | null => {
     const afterSalesSn = text(row.parentAfterSalesSn);
     if (!afterSalesSn) return null;
     const orderSn = text(row.parentOrderSn);
@@ -136,8 +184,29 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, 
     const deadlineValue = Number(row.operateExpireTimeMs);
     const deadline = Number.isFinite(deadlineValue) && deadlineValue > 0 ? new Date(deadlineValue) : null;
     const operations = Array.isArray(row.availableOperateList)
-      ? row.availableOperateList.map(String).map((value) => value.trim()).filter(Boolean).slice(0, 10)
+      ? [...new Set(row.availableOperateList.map(String).map((value) => value.trim()).filter(Boolean))]
+        .sort((left, right) => left.localeCompare(right))
+        .slice(0, 10)
       : [];
+    const rawUpdateAt = text(row.updateAt);
+    const numericUpdateAt = rawUpdateAt && Number.isFinite(Number(rawUpdateAt))
+      ? String(Number(rawUpdateAt))
+      : "";
+    const parsedUpdateAt = !numericUpdateAt && rawUpdateAt ? Date.parse(rawUpdateAt) : Number.NaN;
+    const trustedUpdateRevision = numericUpdateAt
+      || (Number.isFinite(parsedUpdateAt) ? new Date(parsedUpdateAt).toISOString() : "");
+    const stateRevision = [
+      "state-v1",
+      group,
+      text(row.parentAfterSalesStatus),
+      text(row.afterSalesType),
+      Number.isFinite(deadlineValue) && deadlineValue > 0 ? String(deadlineValue) : "",
+      operations.join(","),
+    ].join("\u001f");
+    const revisionMaterial = trustedUpdateRevision
+      ? `updated-at-v1\u001f${trustedUpdateRevision}`
+      : stateRevision;
+    const providerRevision = createHash("sha256").update(revisionMaterial).digest("hex");
     const deadlineText = deadline && !Number.isNaN(deadline.getTime()) ? deadline.toISOString() : "없음";
     const remaining = deadline && !Number.isNaN(deadline.getTime()) ? deadline.getTime() - referenceTimeMs : Number.POSITIVE_INFINITY;
     return {
@@ -148,12 +217,23 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, 
       status: ["5", "6", "7"].includes(group) ? "resolved" : "waiting",
       priority: remaining <= 24 * 60 * 60 * 1000 ? 1 : remaining <= 72 * 60 * 60 * 1000 ? 2 : 3,
       receivedAt: iso(row.updateAt, row.createAt),
+      remoteMessageId: `${afterSalesSn}:${providerRevision}`,
+      ...(orderSn ? { externalOrderReference: orderSn } : {}),
+      ticketKind: "after_sales",
+      providerContext: {
+        afterSalesSn,
+        orderSn,
+        statusGroup: group,
+        availableOperations: operations,
+        providerRevision,
+        providerRevisionSource: trustedUpdateRevision ? "updateAt" : "actionableState",
+      },
     };
-  }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
+  }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
 }
 
 function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) {
-  return list(data.memberMessages).map((row): NormalizedChannelInquiry | null => {
+  return list(data.memberMessages).map((row): BaseNormalizedChannelInquiry | null => {
     let marketplaceId: string;
     try {
       marketplaceId = ebayAsqMarketplaceId(row.marketplaceId);
@@ -174,9 +254,11 @@ function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) 
       status: messageStatus === "answered" ? "resolved" : "waiting",
       priority: 3,
       receivedAt: iso(row.creationDate, row.lastModifiedDate),
+      remoteMessageId: messageId,
+      providerContext: { itemId, parentMessageId: messageId, recipientId, marketplaceId },
       replyContext: { itemId, parentMessageId: messageId, recipientId, marketplaceId },
     };
-  }).filter((row): row is NormalizedChannelInquiry => Boolean(row));
+  }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
 }
 
 export function normalizeChannelInquiries(
@@ -188,7 +270,8 @@ export function normalizeChannelInquiries(
   const referenceTimeMs = new Date(referenceTimestamp).getTime();
   const iso = createTimestampNormalizer(referenceTimestamp);
   if (channel === "lazada") {
-    const normalized = normalizeLazadaImHistory(result.steps, referenceTimestamp);
+    const normalized = normalizeLazadaImHistory(result.steps, referenceTimestamp)
+      .map((inquiry) => finalizeInquiry(channel, inquiry));
     return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
   }
   const inquirySteps = result.steps.filter((item) => item.ok && /^inquiries(?::\d+)?$/.test(item.name));
@@ -200,7 +283,8 @@ export function normalizeChannelInquiries(
       : channel === "qoo10" ? normalizeQoo10(data, iso)
         : channel === "temu" ? normalizeTemu(data, iso, referenceTimeMs)
           : channel === "ebay" ? normalizeEbay(data, iso)
-            : []);
+            : [])
+    .map((inquiry) => finalizeInquiry(channel, inquiry));
   return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
 }
 

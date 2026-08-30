@@ -117,10 +117,13 @@ export function buildInquiryReplyArguments(
       }
       return { kind: "customer", inquiryNo, reply: replyText };
     }
-    if (!/^[1-9]\d{0,18}$/.test(ticketId)) {
+    const productQuestionId = ticketId.startsWith("smartstore:product-qna:")
+      ? ticketId.slice("smartstore:product-qna:".length).trim()
+      : ticketId;
+    if (!/^[1-9]\d{0,18}$/.test(productQuestionId)) {
       throw new Error("INQUIRY_REPLY_INVALID:smartstoreQuestionId");
     }
-    return { kind: "product", questionId: ticketId, reply: replyText };
+    return { kind: "product", questionId: productQuestionId, reply: replyText };
   }
 
   if (channel === "ebay") {

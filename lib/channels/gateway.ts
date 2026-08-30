@@ -51,6 +51,10 @@ export type GatewayWriteResource = {
   trackingNumber?: string;
 };
 
+export type InquiryReplyGatewayEnqueueResult = {
+  jobId: string;
+};
+
 export class ChannelGatewayInProgressError extends Error {
   readonly jobId: string;
   readonly attemptId: string | null;
@@ -334,21 +338,21 @@ export async function executeViaChannelGateway(input: {
   return { result, listingId: effectiveListingId ?? undefined };
 }
 
-export async function executeInquiryReplyViaChannelGateway(input: {
+export async function enqueueInquiryReplyViaChannelGateway(input: {
   serviceClient: SupabaseClient;
   ticketId: string;
   channel: "qoo10" | "lazada" | "coupang" | "smartstore" | "ebay";
   reply: string;
+  expectedInboundKey: string;
   arguments: Record<string, unknown>;
-  timeoutMs?: number;
-}) {
+}): Promise<InquiryReplyGatewayEnqueueResult> {
   const { data: jobId, error: enqueueError } = await input.serviceClient.rpc(
     "sellerpilot_enqueue_inquiry_reply_gateway_job",
     {
       p_ticket_id: input.ticketId,
       p_channel: input.channel,
       p_reply_text: input.reply,
-      p_request_payload: { arguments: input.arguments },
+      p_request_payload: { arguments: input.arguments, sellerpilotExpectedInboundKey: input.expectedInboundKey },
     },
   );
   if (enqueueError) {
@@ -364,6 +368,12 @@ export async function executeInquiryReplyViaChannelGateway(input: {
     if (/INQUIRY_REPLY_RECONCILIATION_REQUIRED|INQUIRY_REPLY_LEGACY_IN_PROGRESS/.test(enqueueError.message)) {
       throw new Error("CHANNEL_GATEWAY_REPLY_RECONCILIATION_REQUIRED");
     }
+    if (enqueueError.message.includes("PROVIDER_INQUIRY_NOT_WAITING")) {
+      throw new Error("CHANNEL_GATEWAY_REPLY_PROVIDER_NOT_WAITING");
+    }
+    if (/INQUIRY_LATEST_MESSAGE_UNBOUND|INQUIRY_CONTEXT_STALE/.test(enqueueError.message)) {
+      throw new Error("CHANNEL_GATEWAY_REPLY_CONTEXT_STALE");
+    }
     if (/EBAY_ASQ_(?:RATE_LIMITED_75_PER_60_SECONDS|PROVIDER_COOLDOWN_100_SECONDS)/.test(enqueueError.message)) {
       throw new Error(enqueueError.message.includes("PROVIDER_COOLDOWN")
         ? "EBAY_ASQ_PROVIDER_COOLDOWN_100_SECONDS"
@@ -375,6 +385,19 @@ export async function executeInquiryReplyViaChannelGateway(input: {
     throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
   }
   if (typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
+  return { jobId };
+}
+
+export async function executeInquiryReplyViaChannelGateway(input: {
+  serviceClient: SupabaseClient;
+  ticketId: string;
+  channel: "qoo10" | "lazada" | "coupang" | "smartstore" | "ebay";
+  reply: string;
+  expectedInboundKey: string;
+  arguments: Record<string, unknown>;
+  timeoutMs?: number;
+}) {
+  const { jobId } = await enqueueInquiryReplyViaChannelGateway(input);
   return await waitForGatewayJob(
     input.serviceClient,
     jobId,

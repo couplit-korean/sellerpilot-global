@@ -120,6 +120,22 @@ export type OperationOrder = {
   demo: boolean;
 };
 
+export type OperationTicketDelivery = {
+  jobId: string;
+  ticketId: string;
+  channel: string;
+  inboundKey: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "reconciliation_required";
+  safeMessage: string | null;
+  reconciliationReason: string | null;
+  providerRequestId: string | null;
+  providerMessageId: string | null;
+  queuedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+};
+
 export type OperationTicket = {
   id: string;
   externalTicketId: string;
@@ -134,6 +150,15 @@ export type OperationTicket = {
   replyDeliveryError: string | null;
   replyOperationAttemptId: string | null;
   replyGatewayJobId: string | null;
+  orderId: string | null;
+  externalOrderReference?: string | null;
+  providerStatus?: "unknown" | "waiting" | "answered" | "closed";
+  providerStatusUpdatedAt?: string | null;
+  providerContext?: Record<string, unknown>;
+  latestInboundKey?: string | null;
+  ticketKind?: "conversation" | "after_sales";
+  delivery?: OperationTicketDelivery | null;
+  blockingDelivery?: OperationTicketDelivery | null;
   status: "urgent" | "waiting" | "in_progress" | "resolved";
   priority: number;
   receivedAt: string;
@@ -209,6 +234,11 @@ export type OperationsSnapshot = {
   products: OperationProduct[];
   orders: OperationOrder[];
   tickets: OperationTicket[];
+  csDeliverySummary?: {
+    queued: number;
+    running: number;
+    reconciliationRequired: number;
+  } | null;
   marginScenarios: OperationMarginScenario[];
   marginScenarioState: "checking" | "ready" | "unavailable";
   marginScenarioMessage: string | null;

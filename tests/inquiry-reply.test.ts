@@ -259,15 +259,17 @@ test("Smartstore customer reply accepts the official empty 200 response", async 
   }
 });
 
-test("CS route updates the internal ledger only after a remote success", () => {
+test("CS route accepts one durable reply job and exposes delivery polling", () => {
   const route = readFileSync(new URL("../app/api/admin/cs/reply/route.ts", import.meta.url), "utf8");
   const migration = readFileSync(new URL("../supabase/migrations/20260825111757_harden_inquiry_reply_delivery_fence.sql", import.meta.url), "utf8");
   const lineageMigration = readFileSync(new URL("../supabase/migrations/20260825111810_harden_inquiry_reply_account_lineage.sql", import.meta.url), "utf8");
   const inquirySync = readFileSync(new URL("../lib/channels/inquiry-sync.ts", import.meta.url), "utf8");
 
-  assert.match(route, /executeInquiryReplyViaChannelGateway/);
-  assert.match(route, /if \(!result\.ok\)/);
-  assert.match(route, /remoteSent: true/);
+  assert.match(route, /enqueueInquiryReplyViaChannelGateway/);
+  assert.match(route, /sellerpilot_get_inquiry_reply_delivery/);
+  assert.match(route, /status: 202/);
+  assert.match(route, /accepted: true/);
+  assert.doesNotMatch(route, /executeInquiryReplyViaChannelGateway/);
   assert.doesNotMatch(route, /executeChannelOperation/);
   assert.doesNotMatch(route, /sellerpilot_update_ticket/);
   assert.match(route, /CHANNEL_GATEWAY_STATIC_EGRESS_REQUIRED/);

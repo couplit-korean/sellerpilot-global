@@ -28,8 +28,8 @@ export function withCsReplyDraft(drafts: CsReplyDrafts, ticket: CsReplyTicket, v
 export type CsReplySavePlan = {
   endpoint: "/api/admin/cs/reply" | "/api/operations/snapshot";
   body:
-    | { ticketId: string; reply: string }
-    | { action: "ticket_update"; id: string; status: "in_progress"; replyDraft: string };
+    | { ticketId: string; expectedInboundKey: string; reply: string }
+    | { action: "ticket_update"; id: string; status: "in_progress"; expectedInboundKey: string | null; replyDraft: string };
   completionMessage: string;
   remote: boolean;
 };
@@ -40,18 +40,24 @@ export function isRemoteCsReplyChannel(channelKey: string) {
   return remoteCsReplyChannels.has(channelKey);
 }
 
-export function csReplySavePlan(ticketId: string, channelKey: string, reply: string): CsReplySavePlan {
+export function csReplySavePlan(
+  ticketId: string,
+  channelKey: string,
+  reply: string,
+  expectedInboundKey: string | null,
+): CsReplySavePlan {
   if (isRemoteCsReplyChannel(channelKey)) {
+    if (!expectedInboundKey) throw new Error("문의 세대를 확인한 뒤 답변을 전송해 주세요.");
     return {
       endpoint: "/api/admin/cs/reply",
-      body: { ticketId, reply },
+      body: { ticketId, expectedInboundKey, reply },
       completionMessage: "판매채널에 답변을 전송하고 처리 완료로 기록했습니다.",
       remote: true,
     };
   }
   return {
     endpoint: "/api/operations/snapshot",
-    body: { action: "ticket_update", id: ticketId, status: "in_progress", replyDraft: reply },
+    body: { action: "ticket_update", id: ticketId, status: "in_progress", expectedInboundKey, replyDraft: reply },
     completionMessage: "외부 채널에는 전송하지 않았습니다. 내부 답변 초안을 처리 중 상태로 저장했습니다.",
     remote: false,
   };

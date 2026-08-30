@@ -79,6 +79,24 @@ test("Lazada IM history cannot be turned into a periodic poll", async () => {
   );
 });
 
+test("Lazada unread state does not masquerade as an answer", () => {
+  const session = { session_id: "session-read", title: "buyer", site_id: "MY", unread_count: 0 };
+  const buyer = { message_id: "buyer-1", content: JSON.stringify({ txt: "읽은 고객 문의" }), from_account_type: 1, send_time: 1000, status: 0 };
+  const waiting = normalizeLazadaImHistory([{
+    name: "inquiries-message:session-read:1", data: { sellerpilotSession: session, data: { message_list: [buyer] } },
+  }]);
+  assert.equal(waiting[0]?.status, "waiting");
+  const answered = normalizeLazadaImHistory([{
+    name: "inquiries-message:session-read:1", data: { sellerpilotSession: session, data: { message_list: [
+      buyer,
+      { message_id: "seller-1", content: JSON.stringify({ txt: "판매자 답변" }), from_account_type: 2, send_time: 1001, status: 0 },
+    ] } },
+  }]);
+  assert.equal(answered[0]?.status, "resolved");
+  assert.equal(answered[0]?.message, "읽은 고객 문의");
+  assert.equal(answered[0]?.remoteMessageId, "buyer-1");
+});
+
 test("Lazada IM follows string cursors and keeps the latest buyer message per session", async () => {
   const originalFetch = globalThis.fetch;
   const calls: URL[] = [];

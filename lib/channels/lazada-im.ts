@@ -7,6 +7,7 @@ export type LazadaImInquiry = {
   priority: number;
   receivedAt: string;
   remoteMessageId: string;
+  senderRole?: "customer" | "seller";
 };
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
@@ -50,17 +51,18 @@ export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInq
   const messageText = text(content.translateTxt, content.txt, content.text, message.txt, message.text, data.txt);
   const senderType = Number(message.from_account_type ?? data.from_account_type ?? 1);
   const messageStatus = Number(message.status ?? data.status ?? 0);
-  if (!sessionId || !messageText || senderType === 2 || messageStatus === 1) return null;
+  if (!sessionId || !messageId || !messageText || ![1, 2].includes(senderType) || messageStatus === 1) return null;
 
   return {
     externalTicketId: `lazada-im:${sessionId}`,
     customerName: text(data.buyer_name, data.from_account_name, message.from_name, "Lazada 고객"),
     subject: text(data.product_name, data.title, data.site_id ? `Lazada ${data.site_id} IM 문의` : "Lazada IM 문의"),
     message: messageText,
-    status: "waiting",
+    status: senderType === 2 ? "resolved" : "waiting",
     priority: 3,
     receivedAt: iso(message.send_time ?? data.send_time ?? payload.timestamp, receivedAt),
     remoteMessageId: messageId,
+    ...(senderType === 2 ? { senderRole: "seller" as const } : {}),
   };
 }
 
@@ -88,8 +90,11 @@ export function normalizeLazadaImHistory(
   return [...sessions.entries()]
     .map(([sessionId, history]): LazadaImInquiry | null => {
       const { session, messages } = history;
-      const buyerMessages = messages.filter((message) => Number(message.from_account_type ?? 1) === 1 && Number(message.status ?? 0) === 0);
+      const normalMessages = messages.filter((message) => Number(message.status ?? 0) === 0);
+      const buyerMessages = normalMessages.filter((message) => Number(message.from_account_type ?? 1) === 1);
+      const sellerMessages = normalMessages.filter((message) => Number(message.from_account_type ?? 1) === 2);
       const latest = [...buyerMessages].sort((left, right) => Number(right.send_time ?? 0) - Number(left.send_time ?? 0))[0];
+      const latestSeller = [...sellerMessages].sort((left, right) => Number(right.send_time ?? 0) - Number(left.send_time ?? 0))[0];
       const content = parsedRecord(latest?.content);
       const message = text(content.translateTxt, content.txt, latest?.txt, session.summary);
       if (!message) return null;
@@ -99,7 +104,10 @@ export function normalizeLazadaImHistory(
         customerName: text(session.title, session.buyer_name, "Lazada 고객"),
         subject: text(session.product_name, session.site_id ? `Lazada ${session.site_id} IM 문의` : "Lazada IM 문의"),
         message,
-        status: unreadCount > 0 ? "waiting" : "resolved",
+        // unread_count only describes whether the seller has opened the IM.
+        // A conversation is answered only when a seller message is newer than
+        // the latest buyer message.
+        status: Number(latestSeller?.send_time ?? 0) > Number(latest?.send_time ?? 0) ? "resolved" : "waiting",
         priority: unreadCount > 0 ? 2 : 3,
         receivedAt: iso(latest?.send_time ?? session.last_message_time, fallbackTimestamp),
         remoteMessageId: text(latest?.message_id),

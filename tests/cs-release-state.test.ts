@@ -39,9 +39,9 @@ test("ticket selection uses the internal source id even when external ticket ids
 test("server-gated marketplace reply channels use one gateway while unsupported channels keep internal drafts", () => {
   for (const channel of ["qoo10", "lazada", "coupang", "smartstore", "ebay"]) {
     assert.equal(isRemoteCsReplyChannel(channel), true);
-    assert.deepEqual(csReplySavePlan(`ticket-${channel}`, channel, "reply"), {
+    assert.deepEqual(csReplySavePlan(`ticket-${channel}`, channel, "reply", `inbound-${channel}`), {
       endpoint: "/api/admin/cs/reply",
-      body: { ticketId: `ticket-${channel}`, reply: "reply" },
+      body: { ticketId: `ticket-${channel}`, expectedInboundKey: `inbound-${channel}`, reply: "reply" },
       completionMessage: "판매채널에 답변을 전송하고 처리 완료로 기록했습니다.",
       remote: true,
     });
@@ -49,12 +49,16 @@ test("server-gated marketplace reply channels use one gateway while unsupported 
   for (const channel of ["shopee", "elevenst", "temu"]) {
     assert.equal(isRemoteCsReplyChannel(channel), false);
   }
-  assert.deepEqual(csReplySavePlan("ticket-s", "shopee", "draft"), {
+  assert.deepEqual(csReplySavePlan("ticket-s", "shopee", "draft", null), {
     endpoint: "/api/operations/snapshot",
-    body: { action: "ticket_update", id: "ticket-s", status: "in_progress", replyDraft: "draft" },
+    body: { action: "ticket_update", id: "ticket-s", status: "in_progress", expectedInboundKey: null, replyDraft: "draft" },
     completionMessage: "외부 채널에는 전송하지 않았습니다. 내부 답변 초안을 처리 중 상태로 저장했습니다.",
     remote: false,
   });
+  assert.throws(
+    () => csReplySavePlan("ticket-l", "lazada", "reply", null),
+    /문의 세대를 확인/,
+  );
 });
 
 test("channel verification separates inquiry receiving from remote reply capability", () => {

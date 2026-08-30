@@ -57,7 +57,7 @@ type CredentialRow = {
   last_rotated_at?: string | null;
 };
 
-const gatewayChannels = new Set<ActiveChannelKey>(["shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]);
+const gatewayChannels = new Set<ActiveChannelKey>(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]);
 const MANUAL_SYNC_ENQUEUE_CONCURRENCY = 4;
 const MANUAL_SYNC_RPC_TIMEOUT_MS = 8_000;
 

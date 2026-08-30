@@ -27,8 +27,19 @@ test("normalizes Lazada buyer IM push payloads", () => {
   });
 });
 
-test("ignores seller messages and recalled Lazada messages", () => {
+test("records identified seller messages and ignores unidentified or recalled Lazada messages", () => {
   const base = { session_id: "session-1", content: JSON.stringify({ txt: "hello" }), send_time: 1_787_340_000_000 };
   assert.equal(parseLazadaImPush({ data: { ...base, from_account_type: 2 } }), null);
+  assert.deepEqual(parseLazadaImPush({ data: { ...base, message_id: "seller-1", from_account_type: 2 } }), {
+    externalTicketId: "lazada-im:session-1",
+    customerName: "Lazada 고객",
+    subject: "Lazada IM 문의",
+    message: "hello",
+    status: "resolved",
+    priority: 3,
+    receivedAt: new Date(1_787_340_000_000).toISOString(),
+    remoteMessageId: "seller-1",
+    senderRole: "seller",
+  });
   assert.equal(parseLazadaImPush({ data: { ...base, from_account_type: 1, status: 1 } }), null);
 });

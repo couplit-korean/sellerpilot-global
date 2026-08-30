@@ -2136,12 +2136,14 @@ test("support reply CLI contract requires a supported locale and reviewable draf
   const request = supportReplyJobRequestSchema.safeParse({
     jobId: "44444444-4444-4444-8444-444444444444",
     ticketId: "55555555-5555-4555-8555-555555555555",
+    expectedInboundKey: "lazada:test:message-1",
     targetLocale: "ja-JP",
     tone: "polite",
   });
   assert.equal(request.success, true);
   assert.equal(supportReplyWorkerRequestSchema.safeParse({
     ticket_id: "55555555-5555-4555-8555-555555555555",
+    sellerpilotInboundKey: "v2:lazada:ticket-1:message-1",
     channel: "lazada",
     target_locale: "ja-JP",
     tone: "polite",
@@ -2156,6 +2158,15 @@ test("support reply CLI contract requires a supported locale and reviewable draf
       shipped_at: null,
     },
   }).success, true);
+  assert.equal(supportReplyWorkerRequestSchema.safeParse({
+    ticket_id: "55555555-5555-4555-8555-555555555555",
+    channel: "lazada",
+    target_locale: "ja-JP",
+    tone: "polite",
+    subject: "Delivery status",
+    message: "Please confirm the current delivery status.",
+    order: null,
+  }).success, false);
   assert.equal(supportReplyJobRequestSchema.safeParse({
     jobId: "44444444-4444-4444-8444-444444444444",
     ticketId: "55555555-5555-4555-8555-555555555555",

@@ -103,6 +103,7 @@ import {
   type OperationMarginScenario,
   type OperationProduct,
   type OperationTicket,
+  type OperationTicketDelivery,
   type SalesRange,
 } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
@@ -185,7 +186,7 @@ import {
   shouldClearPendingProductResearch,
   type PendingProductResearch,
 } from "./_publishing/product-research-lifecycle";
-import { csChannelVerification, csReplyDraftValue, csReplySavePlan, isRemoteCsReplyChannel, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
+import { csChannelVerification, csReplyDraftValue, isRemoteCsReplyChannel, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
 import {
   csChannelFilterFromValue,
   csNavigationParams,
@@ -563,8 +564,21 @@ type DisplayTicket = {
   replyDraft: string | null;
   replyDeliveryStatus: OperationTicket["replyDeliveryStatus"];
   replyDeliveryError: string | null;
+  orderId: string | null;
+  externalOrderReference: string | null;
+  providerStatus: "unknown" | "waiting" | "answered" | "closed";
+  latestInboundKey: string | null;
+  ticketKind: "conversation" | "after_sales";
+  delivery: OperationTicketDelivery | null;
+  blockingDelivery: OperationTicketDelivery | null;
   time: string;
   status: "긴급" | "답변 대기" | "처리 중" | "처리 완료";
+};
+
+type ReplyQueueResult = {
+  jobId: string;
+  message: string;
+  delivery: OperationTicketDelivery;
 };
 
 type SupportLocale = "ko-KR" | "en-US" | "ja-JP" | "zh-TW" | "th-TH" | "vi-VN" | "id-ID" | "ms-MY" | "pt-BR" | "es-MX";
@@ -623,6 +637,15 @@ const ticketStatusLabel = {
   waiting: "답변 대기",
   in_progress: "처리 중",
   resolved: "처리 완료",
+} as const;
+
+const replyDeliveryMeta = {
+  queued: { label: "전송 대기", detail: "안전한 작업 대기열에 등록됐습니다.", tone: "queued" },
+  running: { label: "판매채널 처리 중", detail: "작업자가 판매채널 응답을 확인하고 있습니다.", tone: "running" },
+  succeeded: { label: "전달 확인", detail: "판매채널의 성공 응답과 내부 원장이 일치합니다.", tone: "succeeded" },
+  failed: { label: "전달 실패", detail: "판매채널이 수락하지 않은 것으로 확인됐습니다. 오류를 확인한 뒤 수동으로 다시 시도하세요.", tone: "failed" },
+  cancelled: { label: "전송 취소", detail: "답변이 판매채널에 전달되지 않았습니다.", tone: "failed" },
+  reconciliation_required: { label: "전송 여부 확인 필요", detail: "판매채널이 답변을 받았을 가능성이 있어 자동 재전송을 차단했습니다.", tone: "reconciliation" },
 } as const;
 
 const channelNameByKey: Record<string, string> = {
@@ -4475,11 +4498,12 @@ function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery
   );
 }
 
-function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStatus, onSync, onBackfill, syncing, syncStatus, historyBackfill, initialQuery = "", initialTicketId = null, initialChannel = "all", initialStatus = "open", onFilterChange }: {
+function CsPage({ notify, displayTickets, displayOrders, onSend, onDeliveryStatus, onDraft, onStatus, onSync, onBackfill, syncing, syncStatus, historyBackfill, initialQuery = "", initialTicketId = null, initialChannel = "all", initialStatus = "open", onFilterChange }: {
   notify: (message: string) => void;
   displayTickets: DisplayTicket[];
   displayOrders: DisplayOrder[];
-  onSend: (ticket: DisplayTicket, reply: string) => Promise<boolean>;
+  onSend: (ticket: DisplayTicket, reply: string) => Promise<ReplyQueueResult | null>;
+  onDeliveryStatus: (ticketId: string, jobId: string) => Promise<OperationTicketDelivery | null>;
   onDraft: (ticket: DisplayTicket, targetLocale: SupportLocale) => Promise<string | null>;
   onStatus: (ticket: DisplayTicket, status: "waiting" | "in_progress" | "resolved") => Promise<boolean>;
   onSync: () => Promise<void>;
@@ -4505,39 +4529,157 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
     : initialStatus;
   const [query, setQuery] = useState(initialQuery);
   const [replyDrafts, setReplyDrafts] = useState<CsReplyDrafts>({});
+  const currentInboundByTicketRef = useRef(new Map<string, string | null>());
   const [targetLocale, setTargetLocale] = useState<SupportLocale>("ko-KR");
   const [drafting, setDrafting] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [sendingByTicket, setSendingByTicket] = useState<Record<string, boolean>>({});
+  const [deliveryByTicket, setDeliveryByTicket] = useState<Record<string, OperationTicketDelivery>>(() => Object.fromEntries(
+    displayTickets.filter((ticket) => ticket.delivery).map((ticket) => [ticket.sourceId, ticket.delivery as OperationTicketDelivery]),
+  ));
+  const [reviewReply, setReviewReply] = useState<{ ticket: DisplayTicket; reply: string } | null>(null);
+  const reviewDialogRef = useRef<HTMLElement>(null);
+  const reviewCloseButtonRef = useRef<HTMLButtonElement>(null);
   const [mobileConversationOpen, setMobileConversationOpen] = useState(Boolean(initialTicketId));
+  const effectiveDeliveryByTicket = useMemo(() => {
+    const next = new Map<string, OperationTicketDelivery>();
+    for (const ticket of displayTickets) {
+      if (ticket.delivery && ticket.delivery.inboundKey === ticket.latestInboundKey) next.set(ticket.sourceId, ticket.delivery);
+    }
+    for (const [ticketId, localDelivery] of Object.entries(deliveryByTicket)) {
+      const ticket = displayTickets.find((candidate) => candidate.sourceId === ticketId);
+      if (!ticket || localDelivery.inboundKey !== ticket.latestInboundKey) continue;
+      const snapshotDelivery = next.get(ticketId);
+      if (!snapshotDelivery || Date.parse(localDelivery.updatedAt) >= Date.parse(snapshotDelivery.updatedAt)) {
+        next.set(ticketId, localDelivery);
+      }
+    }
+    return next;
+  }, [deliveryByTicket, displayTickets]);
+  useEffect(() => {
+    currentInboundByTicketRef.current = new Map(displayTickets.map((ticket) => [ticket.sourceId, ticket.latestInboundKey]));
+  }, [displayTickets]);
   const channelTickets = displayTickets.filter((ticket) => initialChannel === "all" || ticket.channelKey === initialChannel);
   const channelOrders = displayOrders.filter((order) => initialChannel === "all" || order.channelKey === initialChannel);
   const statusTickets = channelTickets.filter((ticket) => csTicketMatchesFilter(ticket, resolvedInitialStatus));
   const filteredTickets = statusTickets.filter((ticket) => !query.trim() || matchesSearch(`${ticket.id} ${ticket.customer} ${ticket.channel} ${ticket.subject} ${ticket.preview}`, query));
   const selected = selectedCsTicket(initialTicketId ? statusTickets : filteredTickets, initialTicketId ? initialTicket?.sourceId ?? "__missing_ticket__" : null);
-  const reply = csReplyDraftValue(replyDrafts, selected);
+  const selectedDraftTicket = selected ? { ...selected, sourceId: `${selected.sourceId}:${selected.latestInboundKey ?? "unbound"}` } : null;
+  const reply = csReplyDraftValue(replyDrafts, selectedDraftTicket);
   const remoteReplyChannel = Boolean(selected && isRemoteCsReplyChannel(selected.channelKey));
+  const providerConfirmed = selected?.providerStatus === "answered" || selected?.providerStatus === "closed";
+  const providerReplyReady = selected?.providerStatus === "waiting" && Boolean(selected.latestInboundKey);
+  const delivery = selected ? effectiveDeliveryByTicket.get(selected.sourceId) ?? null : null;
+  const blockingDelivery = selected?.blockingDelivery ?? null;
+  const sending = Boolean(selected && sendingByTicket[selected.sourceId]);
+  const deliveryActive = delivery?.status === "queued" || delivery?.status === "running" || blockingDelivery?.status === "queued" || blockingDelivery?.status === "running";
+  const deliveryReconciliation = delivery?.status === "reconciliation_required" || blockingDelivery?.status === "reconciliation_required";
+  const completed = selected?.status === "처리 완료";
+  const composerLocked = !selected || completed || !providerReplyReady || sending || deliveryActive || deliveryReconciliation || !remoteReplyChannel;
+  const composerLockReason = completed
+    ? "처리 완료된 문의는 수정하거나 재전송할 수 없습니다."
+    : providerConfirmed
+      ? "판매채널에서 이미 답변 또는 종료가 확인됐습니다. 채널 확인 후 처리 완료로 정리해 주세요."
+    : blockingDelivery
+      ? "이전 고객 메시지의 답변 작업 결과를 먼저 확인해야 합니다. 새 답변 전송을 차단했습니다."
+    : !providerReplyReady
+      ? "최신 고객 메시지 연결을 확인할 수 없습니다. 문의를 새로고침해 주세요."
+    : sending
+      ? "답변을 안전한 작업 대기열에 등록하는 중입니다."
+      : deliveryActive && delivery
+        ? replyDeliveryMeta[delivery.status].detail
+        : deliveryReconciliation
+          ? replyDeliveryMeta.reconciliation_required.detail
+          : !remoteReplyChannel
+            ? "이 채널은 현재 SellerPilot 답변 API를 지원하지 않아 판매자센터에서 수동 처리해야 합니다."
+            : null;
+
+  useModalInteraction(Boolean(reviewReply), reviewDialogRef, () => setReviewReply(null), {
+    initialFocusRef: reviewCloseButtonRef,
+  });
+
+  const activeDeliveryKey = [...effectiveDeliveryByTicket.entries(), ...displayTickets
+    .filter((ticket) => ticket.blockingDelivery)
+    .map((ticket) => [ticket.sourceId, ticket.blockingDelivery as OperationTicketDelivery] as const)]
+    .filter(([, item]) => item.status === "queued" || item.status === "running")
+    .map(([ticketId, item]) => `${ticketId}:${item.jobId}`)
+    .sort()
+    .join("|");
+
+  useEffect(() => {
+    if (!activeDeliveryKey) return;
+    let cancelled = false;
+    let checking = false;
+    const targets = activeDeliveryKey.split("|").map((entry) => {
+      const separator = entry.indexOf(":");
+      return { ticketId: entry.slice(0, separator), jobId: entry.slice(separator + 1) };
+    });
+    const check = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const updates = await Promise.all(targets.map(async ({ ticketId, jobId }) => ({
+          ticketId,
+          delivery: await onDeliveryStatus(ticketId, jobId),
+        })));
+        if (cancelled) return;
+        setDeliveryByTicket((current) => {
+          const next = { ...current };
+          let changed = false;
+          for (const update of updates) {
+            if (!update.delivery) continue;
+            const previous = current[update.ticketId];
+            if (previous
+                && previous.jobId === update.delivery.jobId
+                && previous.status === update.delivery.status
+                && previous.updatedAt === update.delivery.updatedAt) continue;
+            next[update.ticketId] = update.delivery;
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+      } finally {
+        checking = false;
+      }
+    };
+    void check();
+    const timer = window.setInterval(() => void check(), 2_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeDeliveryKey, onDeliveryStatus]);
   const setSelectedReply = (value: string) => {
-    if (!selected) return;
-    setReplyDrafts((current) => withCsReplyDraft(current, selected, value));
+    if (!selectedDraftTicket || composerLocked) return;
+    setReplyDrafts((current) => withCsReplyDraft(current, selectedDraftTicket, value));
   };
   const sendReply = async () => {
-    if (!selected || sending) return;
-    setSending(true);
+    if (!reviewReply) return;
+    const { ticket, reply: replyToSend } = reviewReply;
+    if (sendingByTicket[ticket.sourceId]) return;
+    setReviewReply(null);
+    setSendingByTicket((current) => ({ ...current, [ticket.sourceId]: true }));
     try {
-      if (await onSend(selected, reply)) {
-        setReplyDrafts((current) => withCsReplyDraft(current, selected, ""));
+      const queued = await onSend(ticket, replyToSend);
+      if (queued) {
+        setDeliveryByTicket((current) => ({ ...current, [ticket.sourceId]: queued.delivery }));
+        notify(queued.message);
       }
     } finally {
-      setSending(false);
+      setSendingByTicket((current) => ({ ...current, [ticket.sourceId]: false }));
     }
   };
+  const requestReplyReview = () => {
+    if (!selected || composerLocked || !reply.trim() || !remoteReplyChannel) return;
+    setReviewReply({ ticket: selected, reply });
+  };
   const createDraft = async () => {
-    if (!selected || drafting) return;
+    if (!selected || drafting || composerLocked) return;
+    const expectedInboundKey = selected.latestInboundKey;
     setDrafting(true);
     try {
       const draft = await onDraft(selected, targetLocale);
-      if (draft) {
-        setReplyDrafts((current) => withCsReplyDraft(current, selected, draft));
+      if (draft && selectedDraftTicket && currentInboundByTicketRef.current.get(selected.sourceId) === expectedInboundKey) {
+        setReplyDrafts((current) => withCsReplyDraft(current, selectedDraftTicket, draft));
         notify(`${supportLocaleLabels[targetLocale]} CLI 답변 초안을 불러왔습니다. 외부 전송 여부를 확인해 주세요.`);
       }
     } finally {
@@ -4545,7 +4687,8 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
     }
   };
   const updateStatus = async (status: "waiting" | "in_progress" | "resolved") => {
-    if (!selected) return;
+    if (!selected || sending || deliveryActive || deliveryReconciliation) return;
+    if (remoteReplyChannel && status === "resolved" && !providerConfirmed) return;
     await onStatus(selected, status);
   };
   const unresolvedCount = channelTickets.filter((ticket) => ticket.status !== "처리 완료").length;
@@ -4581,15 +4724,17 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDraft, onStat
       <section className="panel cs-channel-verification"><div className="panel-heading"><div><span className="panel-kicker">CHANNEL VERIFICATION</span><h3>채널별 문의 조회 · 답변 범위</h3></div><ShieldCheck size={18} /></div><div className="cs-channel-verification-grid">{inquiryChannelStates.map(({ channelKey, state }) => { const verification = csChannelVerification(channelKey, state?.status, state?.imported_count ?? 0, state?.last_error ?? null); const historyChannel = Boolean(historyBackfill && ["coupang", "smartstore"].includes(channelKey)); const historyBlocked = historyBackfill?.status === "blocked" || historyBackfill?.blockedReason === "STATIC_EGRESS_REQUIRED"; const historyOverride = historyChannel && historyBackfill?.status !== "succeeded" ? historyBlocked ? { readLabel: "Vercel 고정 egress 설정 후 조회 가능", badge: "설정 필요", tone: "unsupported" } as const : { readLabel: historyBackfill?.status === "failed" ? `${historyBackfill.historyDays}일 이력 일부 실패 · 성공 ${historyBackfill.succeededJobs}/${historyBackfill.totalJobs}` : `${historyBackfill?.historyDays ?? 30}일 이력 처리 중 · 성공 ${historyBackfill?.succeededJobs ?? 0}/${historyBackfill?.totalJobs ?? 0}`, badge: historyBackfill?.status === "failed" ? "재시도 필요" : "이력 처리 중", tone: historyBackfill?.status === "failed" ? "failed" : "unsupported" } as const : null; return <button type="button" aria-pressed={initialChannel === channelKey} className={initialChannel === channelKey ? "active" : ""} key={channelKey} onClick={() => applyFilters(channelKey, resolvedInitialStatus)}><ChannelMark code={channels[channelKey].letter} /><span><b>{channels[channelKey].name}</b><small>{historyOverride?.readLabel ?? verification.readLabel}{!historyOverride && state?.status === "passed" && state.last_succeeded_at ? ` · ${relativeTime(state.last_succeeded_at)}` : ""}</small><small>{verification.replyLabel}</small></span><em className={historyOverride?.tone ?? verification.tone}>{historyOverride?.badge ?? verification.badge}</em></button>; })}</div></section>
       {displayTickets.length === 0 ? <section className="panel live-empty-state large"><Inbox size={32} /><b>운영 원장에 실제 문의가 0건입니다.</b><small>지원·승인된 채널의 문의 조회가 성공하고 실제 문의가 있으면 고객 정보와 원문이 표시됩니다.</small><button className="ghost-button" type="button" onClick={() => void onSync()} disabled={syncing}>지금 확인</button></section> :
       <section className={`cs-workspace panel ${mobileConversationOpen || initialTicketId ? "mobile-conversation-open" : ""}`}>
-        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs" role="tablist" aria-label="문의 처리 상태">{([{ key: "waiting", label: "미답변" }, { key: "in_progress", label: "처리 중" }, { key: "resolved", label: "완료" }] as const).map((tab) => <button type="button" role="tab" aria-selected={resolvedInitialStatus === tab.key} key={tab.key} className={resolvedInitialStatus === tab.key ? "active" : ""} onClick={() => applyFilters(initialChannel, tab.key)}>{tab.label}{tab.key === "waiting" && <span>{channelTickets.filter((ticket) => csTicketMatchesFilter(ticket, "waiting")).length}</span>}</button>)}</div>{filteredTickets.map((ticket) => <button key={ticket.sourceId} className={`ticket-item ${selected?.sourceId === ticket.sourceId ? "active" : ""}`} onClick={() => selectTicket(ticket)}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><StatusBadge status={ticket.replyDeliveryStatus === "reconciliation_required" ? "원장 확인 필요" : ticket.status} /></div></button>)}{filteredTickets.length === 0 && <div className="ticket-list-empty"><Inbox size={24} /><b>이 조건의 문의가 없습니다.</b><small>다른 상태나 채널을 선택해 주세요.</small></div>}</aside>
+        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs" role="tablist" aria-label="문의 처리 상태">{([{ key: "waiting", label: "미답변" }, { key: "in_progress", label: "처리 중" }, { key: "resolved", label: "완료" }] as const).map((tab) => <button type="button" role="tab" aria-selected={resolvedInitialStatus === tab.key} key={tab.key} className={resolvedInitialStatus === tab.key ? "active" : ""} onClick={() => applyFilters(initialChannel, tab.key)}>{tab.label}{tab.key === "waiting" && <span>{channelTickets.filter((ticket) => csTicketMatchesFilter(ticket, "waiting")).length}</span>}</button>)}</div>{filteredTickets.map((ticket) => { const ticketDelivery = effectiveDeliveryByTicket.get(ticket.sourceId) ?? ticket.blockingDelivery ?? null; return <button type="button" key={ticket.sourceId} className={`ticket-item ${selected?.sourceId === ticket.sourceId ? "active" : ""}`} onClick={() => selectTicket(ticket)}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><span className="ticket-state-row"><StatusBadge status={ticket.replyDeliveryStatus === "reconciliation_required" ? "원장 확인 필요" : ticket.status} />{ticketDelivery ? <em className={`ticket-delivery-state ${replyDeliveryMeta[ticketDelivery.status].tone}`}>{ticket.blockingDelivery?.jobId === ticketDelivery.jobId ? `이전 메시지 · ${replyDeliveryMeta[ticketDelivery.status].label}` : replyDeliveryMeta[ticketDelivery.status].label}</em> : null}</span></div></button>; })}{filteredTickets.length === 0 && <div className="ticket-list-empty"><Inbox size={24} /><b>이 조건의 문의가 없습니다.</b><small>다른 상태나 채널을 선택해 주세요.</small></div>}</aside>
         {!selected ? <article className="conversation conversation-empty"><div className="live-empty-state"><MessageCircleMore size={30} /><b>표시할 문의를 선택해 주세요.</b><small>목록이 비어 있으면 다른 상태 또는 채널 필터를 선택할 수 있습니다.</small></div></article> : <>
-        <article className="conversation"><header><div><button className="mobile-back" type="button" aria-label="문의 목록으로 돌아가기" onClick={() => { setMobileConversationOpen(false); onFilterChange(initialChannel, resolvedInitialStatus, null); }}><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div><label className="filter-select compact"><span className="sr-only">문의 처리 상태</span><select value={selected.status === "처리 완료" ? "resolved" : selected.status === "처리 중" ? "in_progress" : "waiting"} onChange={(event) => void updateStatus(event.target.value as "waiting" | "in_progress" | "resolved")}><option value="waiting">답변 대기</option><option value="in_progress">처리 중</option><option value="resolved">처리 완료</option></select><ChevronDown size={14} /></label></div></header>
-          <div className="conversation-body"><div className="order-context"><Package size={16} /><span><small>문의 주문</small><b>안정된 주문 연결 정보 없음</b></span><div className="order-context-meta"><em>-</em><StatusBadge status="확인 필요" /><small>고객명만으로 주문을 추정하지 않습니다.</small></div></div><div className="message-date"><span>실제 수신 문의</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.originalMessage}</p><span>채널 동기화 원문</span></div></div></div>
-          <footer className="reply-composer"><div className="ai-draft-head"><span><Sparkles size={14} />문의 원문을 바탕으로 검토용 초안을 생성합니다.</span><button type="button" disabled={drafting || sending} onClick={() => void createDraft()}>{drafting ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{drafting ? "CLI 작성 중" : "CLI 초안 생성"}</button></div><textarea value={reply} disabled={sending} onChange={(event) => setSelectedReply(event.target.value)} placeholder={remoteReplyChannel ? "판매채널로 전송할 실제 답변을 입력하세요." : "판매자센터 전송 전 검토할 내부 초안을 입력하세요."} /><div><span><label className="reply-tool-select"><Languages size={15} /><span className="sr-only">답변 언어</span><select value={targetLocale} disabled={sending} onChange={(event) => setTargetLocale(event.target.value as SupportLocale)}>{Object.entries(supportLocaleLabels).map(([locale, label]) => <option key={locale} value={locale}>{label}</option>)}</select><ChevronDown size={13} /></label><label className="reply-tool-select"><FileText size={15} /><span className="sr-only">답변 템플릿</span><select defaultValue="" disabled={sending} onChange={(event) => { const template = supportReplyTemplates.find((item) => item.label === event.target.value); if (template) setSelectedReply(template.value); event.target.value = ""; }}><option value="">템플릿</option>{supportReplyTemplates.map((template) => <option value={template.label} key={template.label}>{template.label}</option>)}</select><ChevronDown size={13} /></label></span><button className="send-button" disabled={!reply.trim() || sending} onClick={() => void sendReply()}>{sending ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}{sending ? "처리 중" : remoteReplyChannel ? "판매채널 답변 전송" : "내부 초안 저장"}</button></div></footer>
+        <article className="conversation"><header><div><button className="mobile-back" type="button" aria-label="문의 목록으로 돌아가기" onClick={() => { setMobileConversationOpen(false); onFilterChange(initialChannel, resolvedInitialStatus, null); }}><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div className="cs-ticket-status-control">{completed ? <span className="cs-status-locked"><CheckCircle2 size={14} />처리 완료</span> : <label className="filter-select compact"><span className="sr-only">문의 처리 상태</span><select disabled={sending || deliveryActive || deliveryReconciliation} value={selected.status === "처리 중" ? "in_progress" : "waiting"} onChange={(event) => void updateStatus(event.target.value as "waiting" | "in_progress" | "resolved")}><option value="waiting">답변 대기</option><option value="in_progress">처리 중</option>{!remoteReplyChannel ? <option value="resolved">수동 처리 완료</option> : providerConfirmed ? <option value="resolved">채널 확인 후 처리 완료</option> : null}</select><ChevronDown size={14} /></label>}</div></header>
+          <div className="conversation-body"><div className={`order-context ${selected.orderId || selected.externalOrderReference ? "" : "order-context-unlinked"}`}><Package size={16} /><span><small>{selected.ticketKind === "after_sales" ? "반품·환불 주문" : "문의 주문"}</small><b>{selected.orderId ?? selected.externalOrderReference ?? "주문 연결 필요"}</b></span><div className="order-context-meta"><em>{selected.orderId ? "내부 원장" : selected.externalOrderReference ? "채널 참조" : "미연결"}</em><StatusBadge status={selected.orderId || selected.externalOrderReference ? "식별값 확인" : "확인 필요"} /><small>{selected.orderId || selected.externalOrderReference ? "저장된 식별값만 표시합니다." : "고객명만으로 주문을 추정하지 않습니다."}</small></div></div><div className="message-date"><span>{selected.ticketKind === "after_sales" ? "실제 수신 반품·환불 상태" : "실제 수신 문의"}</span></div><div className="customer-message"><div className="ticket-avatar">{selected.customer.charAt(0)}</div><div><small>{selected.customer} · {selected.time}</small><p>{selected.originalMessage}</p><span>{selected.ticketKind === "after_sales" ? "판매채널 after-sales 원문" : "채널 동기화 원문"}</span></div></div></div>
+          {delivery ? <section className={`cs-delivery-banner ${replyDeliveryMeta[delivery.status].tone}`} role="status" aria-live="polite"><span>{delivery.status === "succeeded" ? <CheckCircle2 size={18} /> : delivery.status === "failed" || delivery.status === "cancelled" || delivery.status === "reconciliation_required" ? <AlertTriangle size={18} /> : <LoaderCircle className={delivery.status === "running" ? "spin" : ""} size={18} />}</span><div><b>{replyDeliveryMeta[delivery.status].label}</b><p>{delivery.reconciliationReason ?? delivery.safeMessage ?? replyDeliveryMeta[delivery.status].detail}</p><small>작업 {delivery.jobId.slice(0, 8)} · {relativeTime(delivery.updatedAt)}</small></div>{delivery.status === "reconciliation_required" ? <em>자동 재전송 차단</em> : null}</section> : null}
+          <footer className={`reply-composer ${composerLocked ? "is-locked" : ""}`}><div className="ai-draft-head"><span><Sparkles size={14} />{composerLockReason ?? "문의 원문을 바탕으로 검토용 초안을 생성합니다."}</span><button type="button" disabled={drafting || composerLocked} onClick={() => void createDraft()}>{drafting ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{drafting ? "CLI 작성 중" : "CLI 초안 생성"}</button></div><label className="reply-label" htmlFor={`cs-reply-${selected.sourceId}`}><span>답변 내용</span><small>{reply.length.toLocaleString()} / 4,000자</small></label><textarea id={`cs-reply-${selected.sourceId}`} value={reply} maxLength={4000} disabled={composerLocked} onChange={(event) => setSelectedReply(event.target.value)} placeholder={remoteReplyChannel ? "판매채널로 전송할 실제 답변을 입력하세요." : "판매자센터에서 수동 처리할 채널입니다."} /><p className={`reply-composer-help ${composerLocked ? "locked" : ""}`}>{composerLockReason ?? "판매채널 성공 응답이 원장에 기록된 뒤에만 처리 완료로 표시됩니다."}</p><div><span><label className="reply-tool-select"><Languages size={15} /><span className="sr-only">답변 언어</span><select value={targetLocale} disabled={composerLocked} onChange={(event) => setTargetLocale(event.target.value as SupportLocale)}>{Object.entries(supportLocaleLabels).map(([locale, label]) => <option key={locale} value={locale}>{label}</option>)}</select><ChevronDown size={13} /></label><label className="reply-tool-select"><FileText size={15} /><span className="sr-only">답변 템플릿</span><select defaultValue="" disabled={composerLocked} onChange={(event) => { const template = supportReplyTemplates.find((item) => item.label === event.target.value); if (template) setSelectedReply(template.value); event.target.value = ""; }}><option value="">템플릿</option>{supportReplyTemplates.map((template) => <option value={template.label} key={template.label}>{template.label}</option>)}</select><ChevronDown size={13} /></label></span><button type="button" className="send-button" disabled={composerLocked || !reply.trim()} onClick={requestReplyReview}>{sending || deliveryActive ? <LoaderCircle className="spin" size={15} /> : deliveryReconciliation ? <AlertTriangle size={15} /> : <Send size={15} />}{sending ? "대기열 등록 중" : delivery?.status === "queued" ? "답변 처리 대기" : delivery?.status === "running" ? "판매채널 처리 중" : deliveryReconciliation ? "전송 여부 확인 필요" : completed ? "처리 완료" : remoteReplyChannel ? "검토 후 답변 전송" : "채널 답변 API 미지원"}</button></div></footer>
         </article>
-        <aside className="customer-panel"><div className="customer-profile"><div className="ticket-avatar xl">{selected.customer.charAt(0)}</div><h4>{selected.customer}</h4><span>{selected.channel} 구매자</span></div><div className="customer-facts"><div><small>문의 연결 주문</small><b>미연결</b></div><div><small>데이터 출처</small><b>실제 채널 API</b></div></div><div className="detail-section"><h5>연결 주문</h5><div className="mini-order"><span className="tiny-thumb"><Package size={17} /></span><span><b>안정된 주문 식별자 없음</b><small>-</small></span></div><dl><div><dt>주문번호</dt><dd>-</dd></div><div><dt>배송상태</dt><dd><StatusBadge status="확인 필요" /></dd></div><div><dt>운송장</dt><dd>-</dd></div></dl></div><div className="detail-section"><h5>응대 원칙</h5><p className="ai-guide"><Bot size={16} />판매자센터에서 주문·배송 상태를 확인한 뒤 처리하세요. 고객명만으로 주문을 자동 연결하지 않습니다.</p></div></aside>
+        <aside className="customer-panel"><div className="customer-profile"><div className="ticket-avatar xl">{selected.customer.charAt(0)}</div><h4>{selected.customer}</h4><span>{selected.channel} 구매자</span></div><div className="customer-facts"><div><small>문의 연결 주문</small><b>{selected.orderId ? "원장 연결" : selected.externalOrderReference ? "채널 참조" : "확인 필요"}</b></div><div><small>데이터 출처</small><b>{selected.ticketKind === "after_sales" ? "After-sales 원문" : "실제 채널 API"}</b></div></div><div className="detail-section"><h5>연결 주문</h5><div className="mini-order"><span className="tiny-thumb"><Package size={17} /></span><span><b>{selected.orderId ?? selected.externalOrderReference ?? "주문 연결 필요"}</b><small>{selected.orderId || selected.externalOrderReference ? "저장된 식별값만 표시합니다." : "고객명으로 주문을 추측하지 않습니다."}</small></span></div><dl><div><dt>내부 주문 ID</dt><dd>{selected.orderId ?? "-"}</dd></div><div><dt>채널 주문 참조</dt><dd>{selected.externalOrderReference ?? "-"}</dd></div><div><dt>공급자 상태</dt><dd>{selected.providerStatus === "waiting" ? "고객 응답 대기" : selected.providerStatus === "answered" ? "채널 답변 확인" : selected.providerStatus === "closed" ? "채널 종료" : "확인 전"}</dd></div></dl></div><div className="detail-section"><h5>응대 원칙</h5><p className="ai-guide"><Bot size={16} />{selected.orderId || selected.externalOrderReference ? "표시된 주문 식별값과 판매채널 원문을 함께 확인하세요." : "주문 연결 전에는 주문·배송 상태를 단정하지 마세요."}</p></div></aside>
         </>}
       </section>}
+      {reviewReply ? <div className="shipment-dialog-overlay cs-reply-review-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget && !sendingByTicket[reviewReply.ticket.sourceId]) setReviewReply(null); }}><section ref={reviewDialogRef} tabIndex={-1} className="shipment-dialog cs-reply-review-dialog" role="dialog" aria-modal="true" aria-labelledby="cs-reply-review-title"><header><div><span className="metric-icon violet"><MessageCircleMore size={18} /></span><span><h3 id="cs-reply-review-title">판매채널 답변 최종 검토</h3><small>대상 고객과 문의번호를 다시 확인하세요.</small></span></div><button ref={reviewCloseButtonRef} className="icon-only-button" type="button" aria-label="답변 검토 창 닫기" disabled={Boolean(sendingByTicket[reviewReply.ticket.sourceId])} onClick={() => setReviewReply(null)}><X size={17} /></button></header><dl className="cs-reply-review-facts"><div><dt>판매채널</dt><dd>{reviewReply.ticket.channel}</dd></div><div><dt>고객</dt><dd>{reviewReply.ticket.customer}</dd></div><div><dt>문의번호</dt><dd className="mono">{reviewReply.ticket.id}</dd></div><div><dt>전달 방식</dt><dd>안전한 worker 대기열</dd></div></dl><div className="cs-reply-review-copy"><small>실제 전송할 답변</small><p>{reviewReply.reply}</p></div><div className="shipment-warning"><AlertTriangle size={16} /><span><b>확인 버튼을 누르면 실제 판매채널 작업 대기열에 등록됩니다.</b><small>전송 결과가 불확실하면 자동 재시도하지 않고 확인 필요 상태로 격리합니다.</small></span></div><footer><button type="button" className="credential-secondary" disabled={Boolean(sendingByTicket[reviewReply.ticket.sourceId])} onClick={() => setReviewReply(null)}>수정하기</button><button type="button" className="publish-execute" disabled={Boolean(sendingByTicket[reviewReply.ticket.sourceId])} onClick={() => void sendReply()}><Send size={15} />대상 확인 후 대기열 등록</button></footer></section></div> : null}
     </div>
   );
 }
@@ -5120,8 +5265,17 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     originalMessage: ticket.message,
     preview: ticket.translatedMessage ?? ticket.message,
     replyDraft: ticket.replyDraft,
-    replyDeliveryStatus: ticket.replyDeliveryStatus,
+    replyDeliveryStatus: ticket.blockingDelivery?.status === "reconciliation_required"
+      ? "reconciliation_required"
+      : ticket.replyDeliveryStatus,
     replyDeliveryError: ticket.replyDeliveryError,
+    orderId: ticket.orderId,
+    externalOrderReference: ticket.externalOrderReference ?? null,
+    providerStatus: ticket.providerStatus ?? "unknown",
+    latestInboundKey: ticket.latestInboundKey ?? null,
+    ticketKind: ticket.ticketKind ?? "conversation",
+    delivery: ticket.delivery ?? null,
+    blockingDelivery: ticket.blockingDelivery ?? null,
     time: relativeTime(ticket.receivedAt),
     status: ticketStatusLabel[ticket.status],
   })) ?? [], [operations.data]);
@@ -5215,24 +5369,41 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     const source = operations.data?.tickets.find((item) => item.id === ticket.sourceId);
     if (!source) {
       notify("운영 DB 마이그레이션 적용 후 CS 답변을 저장할 수 있습니다.");
-      return false;
+      return null;
     }
     try {
-      const plan = csReplySavePlan(source.id, ticket.channelKey, reply);
-      const response = await operations.authenticatedFetch(plan.endpoint, {
+      const response = await operations.authenticatedFetch("/api/admin/cs/reply", {
         method: "POST",
-        body: JSON.stringify(plan.body),
+        body: JSON.stringify({ ticketId: source.id, reply, expectedInboundKey: ticket.latestInboundKey }),
       });
-      const payload = await response.json().catch(() => ({ message: "CS 답변 응답을 읽지 못했습니다." })) as { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? "CS 답변을 저장하지 못했습니다.");
-      await operations.reload();
-      notify(plan.completionMessage);
-      return true;
+      const payload = await response.json().catch(() => ({ message: "CS 답변 응답을 읽지 못했습니다." })) as Partial<ReplyQueueResult> & { message?: string };
+      if (response.status !== 202 || !payload.jobId || !payload.delivery) {
+        throw new Error(payload.message ?? "판매채널 답변을 대기열에 등록하지 못했습니다.");
+      }
+      return {
+        jobId: payload.jobId,
+        message: payload.message ?? "답변을 안전한 판매채널 작업 대기열에 등록했습니다.",
+        delivery: payload.delivery,
+      };
     } catch (error) {
-      notify(error instanceof Error ? error.message : "CS 답변을 저장하지 못했습니다.");
-      return false;
+      notify(error instanceof Error ? error.message : "판매채널 답변을 대기열에 등록하지 못했습니다.");
+      return null;
     }
   }, [operations, notify]);
+
+  const getTicketDeliveryStatus = useCallback(async (ticketId: string, jobId: string) => {
+    try {
+      const response = await authenticatedOperationsFetch(`/api/admin/cs/reply?ticketId=${encodeURIComponent(ticketId)}&jobId=${encodeURIComponent(jobId)}`);
+      const payload = await response.json().catch(() => null) as { delivery?: OperationTicketDelivery; message?: string } | null;
+      if (!response.ok || !payload?.delivery) return null;
+      if (["succeeded", "failed", "cancelled", "reconciliation_required"].includes(payload.delivery.status)) {
+        await reloadOperations();
+      }
+      return payload.delivery;
+    } catch {
+      return null;
+    }
+  }, [authenticatedOperationsFetch, reloadOperations]);
 
   const updateTicketStatus = useCallback(async (ticket: DisplayTicket, status: "waiting" | "in_progress" | "resolved") => {
     const source = operations.data?.tickets.find((item) => item.id === ticket.sourceId);
@@ -5240,7 +5411,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     try {
       const response = await operations.authenticatedFetch("/api/operations/snapshot", {
         method: "POST",
-        body: JSON.stringify({ action: "ticket_update", id: source.id, status, replyDraft: source.replyDraft ?? undefined }),
+        body: JSON.stringify({ action: "ticket_update", id: source.id, status, replyDraft: source.replyDraft ?? undefined, expectedInboundKey: ticket.latestInboundKey }),
       });
       if (!response.ok) throw new Error("문의 처리 상태를 저장하지 못했습니다.");
       await operations.reload();
@@ -5271,7 +5442,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     try {
       const queued = await fetchSupportReply("/api/ai/support-reply", {
         method: "POST",
-        body: JSON.stringify({ jobId, ticketId: ticket.sourceId, targetLocale, tone: "polite" }),
+        body: JSON.stringify({ jobId, ticketId: ticket.sourceId, expectedInboundKey: ticket.latestInboundKey, targetLocale, tone: "polite" }),
       });
       const queuedPayload = await queued.json().catch(() => ({ message: "CLI 작업 응답을 읽지 못했습니다." })) as { message?: string };
       if (!queued.ok) throw new Error(queuedPayload.message ?? "CLI 답변 작업을 시작하지 못했습니다.");
@@ -5870,7 +6041,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} scenarioState={operations.data?.marginScenarioState ?? "checking"} scenarioMessage={operations.data?.marginScenarioMessage ?? null} products={operations.data?.products ?? []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
-    if (view === "cs") return <CsPage notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} onBackfill={() => syncOrders(false, 30)} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
+    if (view === "cs") return <CsPage notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onDeliveryStatus={getTicketDeliveryStatus} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} onBackfill={() => syncOrders(false, 30)} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
     if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} syncStatus={operations.data?.syncStatus ?? []} onOpenCs={(channel) => openCs(csChannelFilterFromValue(channel), "open")} />;
     if (view === "platform-usage") return <PlatformUsagePage />;
     if (view === "templates") return <TemplatesPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;
