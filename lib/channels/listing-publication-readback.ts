@@ -477,6 +477,9 @@ export async function readEbayListingPublicationState(input: {
   intent?: ListingPublicationIntent;
   remoteId: string;
   offerId: string;
+  expectedSku?: string;
+  expectedMarketplaceId?: string;
+  expectedListingId?: string;
   expected: ListingPublicationReadbackExpectation;
   readOffer: (offerId: string) => Promise<RemoteResponse>;
   readInventoryItem: (sku: string) => Promise<RemoteResponse>;
@@ -506,6 +509,10 @@ export async function readEbayListingPublicationState(input: {
     && Boolean(sku)
     && Boolean(marketplaceId)
     && expectedRemoteIds.has(input.remoteId)
+    && (!input.expectedSku || sku === input.expectedSku)
+    && (!input.expectedMarketplaceId
+      || marketplaceId === input.expectedMarketplaceId.trim().toUpperCase())
+    && (!input.expectedListingId || listingId === input.expectedListingId)
     && Boolean(inventoryItemReadback && remoteAccepted(inventoryItemReadback));
   const localeVerified = Boolean(locale && locale === input.expected.locale);
   const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expected.fingerprint);
@@ -519,9 +526,10 @@ export async function readEbayListingPublicationState(input: {
   else if (offerStatus === "UNPUBLISHED") {
     visibility = input.operation === "listing.stop" ? "withdrawn" : "non_public";
   }
-  const resolvedRemoteId = input.operation === "listing.create" && visibility === "live"
+  const resolvedRemoteId = (input.operation === "listing.create" || input.operation === "listing.update")
+      && visibility === "live"
     ? listingId
-    : input.offerId;
+    : input.remoteId;
 
   const failureCode = !visibility
     ? "EBAY_PUBLICATION_STATUS_UNVERIFIED"

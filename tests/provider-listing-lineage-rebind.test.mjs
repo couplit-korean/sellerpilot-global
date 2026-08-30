@@ -715,15 +715,14 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
       index: 4,
       channel: "ebay",
       market: "US",
+      targetId: "EBAY_US",
       marketplaceSku: null,
     });
-    assert.deepEqual(await prepare(db, ebayMissingSku.listingId), {
-      status: "manual_required",
-      listing_id: ebayMissingSku.listingId,
-      channel: "ebay",
-      market: "US",
-      reason: "ebay_marketplace_sku_missing",
-    });
+    await db.query(
+      "update sellerpilot_private.product_listings set requested_publication_intent='live' where id=$1",
+      [ebayMissingSku.listingId],
+    );
+    assert.equal((await prepare(db, ebayMissingSku.listingId)).status, "ready");
     await assert.rejects(
       db.query(
         "update sellerpilot_private.product_listings set seller_account_key=$1 where id=$2",
@@ -731,34 +730,43 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
       ),
       /(?:verified listing create completion|required|exact terminal listing gateway job)/,
     );
-    await db.exec("alter table sellerpilot_private.channel_gateway_jobs disable trigger guard_gateway_job_seller_lineage");
-    await db.query(
-      `insert into sellerpilot_private.channel_gateway_jobs(
-         id,credential_id,attempt_id,listing_id,channel,operation,environment,
-         request_payload,response_payload,status,created_by,completed_at,
-         seller_account_key
-       ) values($1,$2,$3,null,'ebay','listing.create','production',
-         $4::jsonb,$5::jsonb,'succeeded',$6,now(),null)`,
-      [
-        uuid(9400),
-        ebayMissingSku.historicalCredentialId,
-        ebayMissingSku.attemptId,
-        JSON.stringify({ arguments: { sku: "EBAY-RECOVERED-4" } }),
-        JSON.stringify({
-          ok: true,
-          remoteId: ebayMissingSku.remoteId,
-          steps: [{ name: "offer-readback", ok: true, data: { offerId: "OFFER-4" } }],
-        }),
-        ADMIN_ID,
-      ],
-    );
-    await db.exec("alter table sellerpilot_private.channel_gateway_jobs enable trigger guard_gateway_job_seller_lineage");
-    assert.equal((await prepare(db, ebayMissingSku.listingId)).status, "ready");
     const ebayRecoveredEnqueue = await enqueue(db, ebayMissingSku);
     assert.equal(ebayRecoveredEnqueue.status, "queued");
     const ebayRecoveredClaim = await claim(db);
-    assert.equal(ebayRecoveredClaim.request.arguments.marketplaceSku, "EBAY-RECOVERED-4");
-    assert.equal(ebayRecoveredClaim.request.arguments.providerResourceId, "OFFER-4");
+    assert.equal(ebayRecoveredClaim.request.arguments.discoveryMode, "ebay_listing_id_v1");
+    assert.equal(ebayRecoveredClaim.request.arguments.marketplaceSku, undefined);
+    assert.equal(ebayRecoveredClaim.request.arguments.providerResourceId, undefined);
+    await assert.rejects(
+      complete(db, ebayRecoveredClaim, "succeeded", successEvidence(ebayMissingSku, {
+        marketplaceSku: "EBAY-RECOVERED-4",
+        providerResourceId: "",
+      })),
+      /normalized ebay provider listing evidence mismatch/,
+    );
+    assert.equal(
+      await scalar(db, "select provider_resource_id from sellerpilot_private.product_listings where id=$1", [ebayMissingSku.listingId]),
+      null,
+    );
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set remote_resources=jsonb_build_object('resources',jsonb_build_object(
+            'offerId','STALE-OFFER','listingId',remote_id,'sku','STALE-SKU',
+            'marketplaceId',target_id
+          ))
+        where id=$1`,
+      [ebayMissingSku.listingId],
+    );
+    await assert.rejects(
+      complete(db, ebayRecoveredClaim, "succeeded", successEvidence(ebayMissingSku, {
+        marketplaceSku: "EBAY-RECOVERED-4",
+        providerResourceId: "OFFER-4",
+      })),
+      /verified ebay remote resources must preserve immutable identity/,
+    );
+    await db.query(
+      "update sellerpilot_private.product_listings set remote_resources='{}'::jsonb where id=$1",
+      [ebayMissingSku.listingId],
+    );
     assert.equal((await complete(db, ebayRecoveredClaim, "succeeded", successEvidence(ebayMissingSku, {
       marketplaceSku: "EBAY-RECOVERED-4",
       providerResourceId: "OFFER-4",
@@ -766,6 +774,82 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
     assert.equal(
       await scalar(db, "select marketplace_sku from sellerpilot_private.product_listings where id=$1", [ebayMissingSku.listingId]),
       "EBAY-RECOVERED-4",
+    );
+    assert.equal(
+      await scalar(db, "select provider_resource_id from sellerpilot_private.product_listings where id=$1", [ebayMissingSku.listingId]),
+      "OFFER-4",
+    );
+    assert.equal(
+      await scalar(db, "select seller_account_key from sellerpilot_private.product_listings where id=$1", [ebayMissingSku.listingId]),
+      ebayMissingSku.sellerAccountKey,
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_get_ebay_listing_update_identity($1,$2,$3,$4,$5)",
+        [
+          ebayMissingSku.listingId,
+          ebayMissingSku.currentCredentialId,
+          uuid(3004),
+          "US",
+          "EBAY_US",
+        ],
+      ),
+      {
+        status: "allowed",
+        contract: "ebay_listing_identity_v1",
+        offerId: "OFFER-4",
+        sku: "EBAY-RECOVERED-4",
+        listingId: ebayMissingSku.remoteId,
+        marketplaceId: "EBAY_US",
+      },
+    );
+    for (const [credentialId, targetId] of [
+      [ebayMissingSku.historicalCredentialId, "EBAY_US"],
+      [ebayMissingSku.currentCredentialId, "EBAY_GB"],
+    ]) {
+      assert.deepEqual(
+        await scalar(
+          db,
+          "select public.sellerpilot_service_get_ebay_listing_update_identity($1,$2,$3,$4,$5)",
+          [ebayMissingSku.listingId, credentialId, uuid(3004), "US", targetId],
+        ),
+        { status: "identity_unverified" },
+        "a different credential lineage or marketplace must not resolve the tuple",
+      );
+    }
+    await assert.rejects(
+      db.query(
+        "update sellerpilot_private.product_listings set provider_resource_id='FORGED' where id=$1",
+        [ebayMissingSku.listingId],
+      ),
+      /immutable ebay listing identity cannot change/,
+    );
+    await assert.rejects(
+      db.query(
+        `update sellerpilot_private.product_listings
+            set remote_resources=jsonb_build_object('resources',jsonb_build_object(
+              'offerId','OTHER','listingId',remote_id,'sku',marketplace_sku,
+              'marketplaceId',target_id
+            ))
+          where id=$1`,
+        [ebayMissingSku.listingId],
+      ),
+      /verified ebay remote resources must preserve immutable identity/,
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_get_ebay_listing_update_identity($1,$2,$3,$4,$5)",
+        [
+          ebayMissingSku.listingId,
+          ebayMissingSku.currentCredentialId,
+          uuid(3999),
+          "US",
+          "EBAY_US",
+        ],
+      ),
+      { status: "identity_unverified" },
     );
 
     const shopeeMissingTarget = await seedListing(db, {

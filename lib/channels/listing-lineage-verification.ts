@@ -1,6 +1,9 @@
 import { assertShopeeShopProfileTarget } from "./provider-account-identity";
+import { ebayAsqMarketplaceIdFromSiteCode } from "./ebay-asq";
 import {
   ebayRequest,
+  ebayTradingRequest,
+  ebayTradingXmlEscape,
   ensureEbayAccessToken,
   ensureLazadaAccessToken,
   ensureShopeeAccessToken,
@@ -63,6 +66,7 @@ export type VerificationDependencies = {
   shopeeRequest: typeof shopeeRequest;
   lazadaRequest: typeof lazadaRequest;
   ebayRequest: typeof ebayRequest;
+  ebayTradingRequest: typeof ebayTradingRequest;
   qoo10Request: typeof qoo10Request;
 };
 
@@ -73,6 +77,7 @@ const defaultDependencies: VerificationDependencies = {
   shopeeRequest,
   lazadaRequest,
   ebayRequest,
+  ebayTradingRequest,
   qoo10Request,
 };
 
@@ -381,9 +386,6 @@ async function verifyEbay(
   argumentsValue: ReturnType<typeof parseArguments>,
   dependencies: VerificationDependencies,
 ): Promise<ProviderListingLineageVerificationResult> {
-  if (!argumentsValue.marketplaceSku) {
-    return manualResult(input, argumentsValue, "EBAY_MARKETPLACE_SKU_MISSING");
-  }
   const configuredMarketplaceId = textValue(input.payload, "marketplace_id").trim().toUpperCase();
   const targetMarketplaceId = argumentsValue.targetId.trim().toUpperCase();
   const marketplaceId = targetMarketplaceId.startsWith("EBAY_")
@@ -402,17 +404,62 @@ async function verifyEbay(
     input.onCredentialRefresh,
     true,
   );
+  const getItemXml = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${ebayTradingXmlEscape(argumentsValue.expectedRemoteId)}</ItemID><OutputSelector>ItemID</OutputSelector><OutputSelector>SKU</OutputSelector><OutputSelector>Site</OutputSelector></GetItemRequest>`;
+  const listingRemote = await dependencies.ebayTradingRequest({
+    payload: ensured.payload,
+    environment: input.environment,
+    callName: "GetItem",
+    marketplaceId,
+    body: getItemXml,
+  });
+  throwIfTransientProviderReadback(listingRemote, "ebayTradingGetItem");
+  const listingItem = objectValue(listingRemote.data.item);
+  const discoveredSku = String(listingItem.sku ?? "").trim();
+  let listingMarketplaceId = "";
+  try {
+    listingMarketplaceId = ebayAsqMarketplaceIdFromSiteCode(listingItem.site);
+  } catch {
+    // The exact listing site is part of the immutable tuple. An unknown or
+    // mismatched site must never fall back to the credential default.
+  }
+  const listingIdentityVerified = successfulRemote(listingRemote)
+    && ["Success", "Warning"].includes(String(listingRemote.data.Ack ?? ""))
+    && String(listingItem.itemId ?? "").trim() === argumentsValue.expectedRemoteId
+    && listingMarketplaceId === marketplaceId;
+  const listingStep = safeStep(
+    "listing-id-sku-readback",
+    listingRemote,
+    listingIdentityVerified && Boolean(discoveredSku),
+    listingIdentityVerified && discoveredSku
+      ? "EBAY_LISTING_ID_SKU_VERIFIED"
+      : "EBAY_LISTING_ID_SKU_UNVERIFIED",
+    {
+      listingId: argumentsValue.expectedRemoteId,
+      marketplaceId,
+      marketplaceSkuPresent: Boolean(discoveredSku),
+    },
+  );
+  if (!listingIdentityVerified) {
+    throw new Error("LISTING_LINEAGE_REMOTE_ID_MISMATCH:ebayTrading");
+  }
+  if (!discoveredSku) {
+    return manualResult(input, argumentsValue, "EBAY_MARKETPLACE_SKU_MISSING", [listingStep]);
+  }
+  if (argumentsValue.marketplaceSku && argumentsValue.marketplaceSku !== discoveredSku) {
+    throw new Error("LISTING_LINEAGE_MARKETPLACE_SKU_MISMATCH:ebay");
+  }
+  const marketplaceSku = discoveredSku;
   const searchRemote = await dependencies.ebayRequest({
     payload: ensured.payload,
     environment: input.environment,
     method: "GET",
     path: "/sell/inventory/v1/offer",
-    query: new URLSearchParams({ sku: argumentsValue.marketplaceSku, limit: "25" }),
+    query: new URLSearchParams({ sku: marketplaceSku, limit: "25" }),
   });
   throwIfTransientProviderReadback(searchRemote, "ebayOfferSearch");
   if (!successfulRemote(searchRemote)) throw new Error("LISTING_LINEAGE_PROVIDER_READBACK_FAILED:ebaySearch");
   const exactOffers = objectArray(searchRemote.data.offers).filter((offer) =>
-    String(offer.sku ?? "").trim() === argumentsValue.marketplaceSku
+    String(offer.sku ?? "").trim() === marketplaceSku
     && String(offer.marketplaceId ?? "").trim().toUpperCase() === marketplaceId,
   );
   const selected = argumentsValue.providerResourceId
@@ -420,6 +467,7 @@ async function verifyEbay(
     : exactOffers;
   if (selected.length !== 1) {
     return manualResult(input, argumentsValue, "EBAY_OFFER_AMBIGUOUS", [
+      listingStep,
       safeStep("offer-search-readback", searchRemote, true, "EBAY_EXACT_OFFER_NOT_UNIQUE", {
         exactOfferUnique: false,
       }),
@@ -438,10 +486,23 @@ async function verifyEbay(
   const verifiedRemoteId = String(detailListing.listingId ?? "").trim();
   const detailMatches = successfulRemote(detailRemote)
     && String(detailRemote.data.offerId ?? "").trim() === providerResourceId
-    && String(detailRemote.data.sku ?? "").trim() === argumentsValue.marketplaceSku
+    && String(detailRemote.data.sku ?? "").trim() === marketplaceSku
     && String(detailRemote.data.marketplaceId ?? "").trim().toUpperCase() === marketplaceId
-    && verifiedRemoteId === argumentsValue.expectedRemoteId;
+    && verifiedRemoteId === argumentsValue.expectedRemoteId
+    && String(detailRemote.data.status ?? "").trim().toUpperCase() === "PUBLISHED"
+    && String(detailListing.listingStatus ?? "").trim().toUpperCase() === "ACTIVE";
   if (!detailMatches) throw new Error("LISTING_LINEAGE_REMOTE_ID_MISMATCH:ebay");
+
+  const inventoryRemote = await dependencies.ebayRequest({
+    payload: ensured.payload,
+    environment: input.environment,
+    method: "GET",
+    path: `/sell/inventory/v1/inventory_item/${encodeURIComponent(marketplaceSku)}`,
+  });
+  throwIfTransientProviderReadback(inventoryRemote, "ebayInventoryItem");
+  if (!successfulRemote(inventoryRemote)) {
+    throw new Error("LISTING_LINEAGE_PROVIDER_READBACK_FAILED:ebayInventory");
+  }
 
   return {
     ok: true,
@@ -451,17 +512,21 @@ async function verifyEbay(
     evidence: {
       ...baseEvidence(argumentsValue),
       verifiedRemoteId,
-      marketplaceSku: argumentsValue.marketplaceSku,
+      marketplaceSku,
       providerResourceId,
     },
     steps: [
+      listingStep,
       safeStep("offer-search-readback", searchRemote, true, "EBAY_SKU_OFFER_VERIFIED", {
-        marketplaceSku: argumentsValue.marketplaceSku,
+        marketplaceSku,
         providerResourceId,
       }),
       safeStep("listing-lineage-readback", detailRemote, true, "EBAY_OFFER_LISTING_ID_VERIFIED", {
         verifiedRemoteId,
         providerResourceId,
+      }),
+      safeStep("inventory-item-lineage-readback", inventoryRemote, true, "EBAY_INVENTORY_SKU_VERIFIED", {
+        marketplaceSku,
       }),
     ],
     safeMessage: "eBay SKU·offer·공개 상품 식별값을 정확히 교차 확인했습니다.",

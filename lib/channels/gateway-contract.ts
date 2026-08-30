@@ -310,8 +310,11 @@ const listingLineageStepDataSchema = z.object({
     "SHOPEE_SHOP_ID_VERIFIED",
     "SHOPEE_ITEM_ID_VERIFIED",
     "LAZADA_COUNTRY_ITEM_ID_VERIFIED",
+    "EBAY_LISTING_ID_SKU_VERIFIED",
+    "EBAY_LISTING_ID_SKU_UNVERIFIED",
     "EBAY_SKU_OFFER_VERIFIED",
     "EBAY_OFFER_LISTING_ID_VERIFIED",
+    "EBAY_INVENTORY_SKU_VERIFIED",
     "EBAY_EXACT_OFFER_NOT_UNIQUE",
   ]),
   targetId: z.string().max(160).optional(),
@@ -319,6 +322,9 @@ const listingLineageStepDataSchema = z.object({
   market: z.string().min(1).max(40).optional(),
   marketplaceSku: z.string().min(1).max(160).optional(),
   providerResourceId: z.string().min(1).max(240).optional(),
+  listingId: z.string().min(1).max(240).optional(),
+  marketplaceId: z.string().min(1).max(160).optional(),
+  marketplaceSkuPresent: z.boolean().optional(),
   exactOfferUnique: z.boolean().optional(),
 }).strict();
 
@@ -336,7 +342,7 @@ const listingLineageVerificationResultSchema = z.discriminatedUnion("verificatio
       ok: z.literal(true),
       status: z.number().int().min(100).max(599),
       data: listingLineageStepDataSchema,
-    })).min(1).max(3),
+    })).min(1).max(4),
   }),
   z.object({
     ok: z.literal(true),
@@ -450,7 +456,7 @@ const trustedMutationSteps: Readonly<Record<string, ReadonlySet<string>>> = {
   ]),
   "listing.update": new Set([
     "updategoods", "editgoodscontents", "listing.update", "/product/update",
-    "product-update", "offer-update", "listing-image-upload",
+    "product-update", "offer-update", "inventory-item-update", "listing-image-upload",
   ]),
   "listing.stop": new Set([
     "stop-display", "editgoodsstatus", "listing.stop", "/product/deactivate",

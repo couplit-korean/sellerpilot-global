@@ -101,6 +101,21 @@ test("channel gateway reconciliation can preserve a structured partial-write res
   assert.equal(parsed.success, true);
 });
 
+test("eBay inventory PUT is treated as an observed listing update mutation", () => {
+  assert.equal(gatewayResultHasObservedMutation("listing.update", false, [
+    { name: "offer-preflight", ok: true, status: 200 },
+    { name: "inventory-item-preflight", ok: true, status: 200 },
+    { name: "inventory-item-update", ok: true, status: 204 },
+    { name: "offer-update", ok: false, status: 503 },
+  ]), true);
+  assert.equal(gatewayJobCompletionStatus("listing.update", false, [
+    { name: "offer-preflight", ok: true, status: 200 },
+    { name: "inventory-item-preflight", ok: true, status: 200 },
+    { name: "inventory-item-update", ok: true, status: 204 },
+    { name: "offer-update", ok: false, status: 503 },
+  ]), "reconciliation_required");
+});
+
 test("verified listing exposure remains attached to the reconciliation completion", () => {
   const result = {
     ok: false,

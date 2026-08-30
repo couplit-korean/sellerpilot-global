@@ -541,7 +541,9 @@ export async function executeServerlessGatewayProviderJob(
     if (input.job.operation === "diagnostic.test") return executeDiagnostic(input);
     if (input.job.operation === "shops.get") return executeShopDiscovery(input);
     if (input.job.operation === "competitor.search") return executeCompetitorSearch(input);
-    if (input.job.operation === "listing.lineage.verify") return executeListingLineage(input);
+    if (input.job.operation === "listing.lineage.verify") {
+      return runWithProviderReadOnlyTransport(() => executeListingLineage(input));
+    }
     if (!channelOperation(input.job.operation)) {
       throw new Error("SERVERLESS_GATEWAY_OPERATION_NOT_ALLOWED");
     }

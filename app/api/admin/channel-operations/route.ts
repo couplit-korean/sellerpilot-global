@@ -288,6 +288,7 @@ export async function POST(request: NextRequest) {
   let boundListingCurrency: string | undefined;
   let boundListingPrice: number | undefined;
   let boundListingPublicationIntent: "safe_test" | "live" | undefined;
+  let boundEbayListingIdentity: Record<string, string> | null = null;
   if (listingBoundOperation) {
     const productId = parsed.data.productId!;
     const resourceListingId = parsed.data.resourceListingId!;
@@ -412,6 +413,38 @@ export async function POST(request: NextRequest) {
         headers: { "cache-control": "no-store, max-age=0" },
       });
     }
+    if (channel === "ebay" && operation === "listing.update") {
+      const { data: identityData, error: identityError } = await serviceClient.rpc(
+        "sellerpilot_service_get_ebay_listing_update_identity",
+        {
+          p_listing_id: resourceListingId,
+          p_credential_id: parsed.data.credentialId,
+          p_product_id: productId,
+          p_market: parsed.data.market,
+          p_target_id: parsed.data.targetId,
+        },
+      );
+      const identity = isRecord(identityData) ? identityData : null;
+      const offerId = typeof identity?.offerId === "string" ? identity.offerId.trim() : "";
+      const sku = typeof identity?.sku === "string" ? identity.sku.trim() : "";
+      const listingId = typeof identity?.listingId === "string" ? identity.listingId.trim() : "";
+      const marketplaceId = typeof identity?.marketplaceId === "string"
+        ? identity.marketplaceId.trim().toUpperCase()
+        : "";
+      if (identityError
+          || identity?.status !== "allowed"
+          || identity.contract !== "ebay_listing_identity_v1"
+          || !offerId
+          || !sku
+          || listingId !== requestedRemoteId
+          || marketplaceId !== parsed.data.targetId.toUpperCase()) {
+        return NextResponse.json({
+          message: "eBay offer·SKU·listing·마켓 결속을 독립 조회로 확정하기 전에는 기존 상품을 수정할 수 없습니다.",
+          mode: "ebay_immutable_identity_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundEbayListingIdentity = { offerId, sku, listingId, marketplaceId };
+    }
   }
 
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
@@ -480,6 +513,18 @@ export async function POST(request: NextRequest) {
   }
 
   let effectiveArguments = parsed.data.arguments;
+  if (channel === "ebay" && operation === "listing.update") {
+    if (!boundEbayListingIdentity) {
+      return NextResponse.json({
+        message: "eBay 불변 원격 식별값을 확인하지 못해 상품 수정을 시작하지 않았습니다.",
+        mode: "ebay_immutable_identity_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveArguments = {
+      ...structuredClone(parsed.data.arguments),
+      ...boundEbayListingIdentity,
+    };
+  }
   if (channel === "elevenst" && operation === "listing.update") {
     const productNo = listingUpdateRemoteIdentity(channel, parsed.data.arguments);
     const { data: snapshotData, error: snapshotError } = await serviceClient.rpc(

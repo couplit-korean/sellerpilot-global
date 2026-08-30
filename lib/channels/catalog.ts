@@ -330,7 +330,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       categories: polling("Taxonomy category tree/aspects"),
       imageUpload: api("Inventory API HTTPS imageUrls 또는 EPS 연계"),
       listingCreate: api("inventory location → inventory item → offer → publish"),
-      listingUpdate: api("inventory item/offer 수정 후 publish"),
+      listingUpdate: api("불변 offerId·SKU·listingId 결속 후 Inventory item/offer PUT 및 독립 readback (CREATE·publish 없음)"),
       listingStop: api("offer withdraw 또는 수량 0 정책"),
       price: api("offer pricingSummary 수정"),
       inventory: api("PUT inventory_item/{sku} availability"),

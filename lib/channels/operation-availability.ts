@@ -51,9 +51,9 @@ const publicationVerificationChannels = new Set<ActiveChannelKey>([
 
 // Product updates are released only when this codebase has both a complete
 // channel payload mapper and a stable remote identity/readback path. Temu's
-// seller-specific update schema and eBay's offer ID/SKU identity are not yet
-// persisted in the product listing ledger, so exposing those writes would risk
-// updating the wrong remote object.
+// seller-specific update schema is not yet released. eBay is admitted only
+// after its offerId/SKU/listingId/marketplaceId tuple is independently attested
+// and preserved by the immutable product-listing identity fence.
 const releasedListingUpdateChannels = new Set<ActiveChannelKey>([
   "qoo10",
   "shopee",
@@ -61,6 +61,7 @@ const releasedListingUpdateChannels = new Set<ActiveChannelKey>([
   "coupang",
   "elevenst",
   "smartstore",
+  "ebay",
 ]);
 
 const releaseOperationByCapability: Partial<Record<ChannelCapabilityKey, ChannelOperationName>> = {
@@ -83,7 +84,6 @@ export type ChannelEnvironment = "sandbox" | "production";
 const listingUpdateBlockedReasons: Partial<Record<ActiveChannelKey, string>> = {
   elevenst: "11번가 상품 수정은 검증된 최초 등록 원본과 정확한 prdNo readback을 사용할 수 없는 기존 상품에 한해 차단합니다.",
   temu: "Temu 상품 수정은 판매자별 수정 스키마와 SKU 식별값을 원장에 확정하기 전까지 차단했습니다.",
-  ebay: "eBay 상품 수정에는 offer ID와 SKU가 모두 필요하지만 현재 상품 원장에는 게시 listing ID만 보존되므로 차단했습니다.",
 };
 
 export function channelOperationRelease(

@@ -66,7 +66,7 @@ test("가격 readback이 없는 채널은 API 구현 유무와 무관하게 출�
   }
   assert.match(channelOperationRelease("qoo10", "price.update").reason, /가격|readback/);
   assert.equal(channelOperationRelease("temu", "listing.update").mode, "release_verification_required");
-  assert.match(channelOperationRelease("ebay", "listing.update").reason, /offer ID|SKU/);
+  assert.equal(channelOperationRelease("ebay", "listing.update").available, true);
   assert.equal(channelOperationAvailable("ebay", "listing.stop"), false);
   assert.match(channelOperationRelease("ebay", "listing.stop").reason, /offer ID|listing ID/);
 });
@@ -81,24 +81,27 @@ test("중앙 저장과 원격 전체 수정의 수동 반영 필드를 구조적
   assert.deepEqual(qoo10.manualFields, ["options", "saleConfiguration", "requiredInformation", "price"]);
   assert.match(qoo10.message, /중앙 원장|수동 반영/);
 
-  for (const channel of ["temu", "ebay"] as const) {
-    const plan = productEditRemotePlan(channel, channelOperationAvailable(channel, "listing.update"));
-    assert.equal(plan.state, "manual_external_update_required", channel);
-    assert.equal(plan.listingUpdateAvailable, false, channel);
-    assert.equal(plan.manualRequired, true, channel);
-    assert.match(plan.message, /원격 상품 쓰기를 실행하지 않습니다/, channel);
-    assert.match(plan.message, /외부 채널 수동 반영/, channel);
-  }
+  const temu = productEditRemotePlan("temu", channelOperationAvailable("temu", "listing.update"));
+  assert.equal(temu.state, "manual_external_update_required");
+  assert.equal(temu.listingUpdateAvailable, false);
+  assert.equal(temu.manualRequired, true);
+  assert.match(temu.message, /원격 상품 쓰기를 실행하지 않습니다/);
+  assert.match(temu.message, /외부 채널 수동 반영/);
+  const ebay = productEditRemotePlan("ebay", channelOperationAvailable("ebay", "listing.update"));
+  assert.equal(ebay.state, "verified_partial_remote_update_available");
+  assert.equal(ebay.listingUpdateAvailable, true);
+  assert.deepEqual(ebay.remotelyWritableFields, ["productName", "description", "images"]);
+  assert.deepEqual(ebay.partiallyWritableFields, ["requiredInformation"]);
   const elevenst = productEditRemotePlan("elevenst", channelOperationAvailable("elevenst", "listing.update"));
   assert.equal(elevenst.state, "verified_partial_remote_update_available");
   assert.equal(elevenst.listingUpdateAvailable, true);
   assert.deepEqual(elevenst.remotelyWritableFields, ["productName", "description", "images"]);
   assert.deepEqual(elevenst.partiallyWritableFields, ["requiredInformation"]);
   assert.deepEqual(productEditRemotePlan("temu", false).remotelyWritableFields, ["inventory"]);
-  assert.deepEqual(productEditRemotePlan("ebay", false).remotelyWritableFields, []);
+  assert.deepEqual(productEditRemotePlan("ebay", false).remotelyWritableFields, ["productName", "description", "images"]);
 });
 
-test("11번가는 전체 원본 patch를 만들고 eBay는 offer ID와 전체 offer 본문을 함께 고정한다", () => {
+test("11번가는 전체 원본 patch를 만들고 eBay는 listing ID와 안전한 콘텐츠 patch만 고정한다", () => {
   assert.deepEqual(
     prepareListingUpdateArguments("elevenst", {
       product: { prdNm: "수정 상품", htmlDetail: "<p>수정 설명</p>", selPrc: "999999", prdSelQty: "999" },
@@ -128,18 +131,9 @@ test("11번가는 전체 원본 patch를 만들고 eBay는 offer ID와 전체 of
       },
     }, publishedListing),
     {
-      sku: "SELLERPILOT-001",
-      offerId: publishedListing.remoteId,
-      body: {
-        sku: "SELLERPILOT-001",
-        marketplaceId: "EBAY_US",
+      listingId: publishedListing.remoteId,
+      offer: {
         listingDescription: "<p>수정 설명</p>",
-        listingPolicies: {
-          fulfillmentPolicyId: "fulfillment-1",
-          paymentPolicyId: "payment-1",
-          returnPolicyId: "return-1",
-        },
-        merchantLocationKey: "seoul-warehouse",
       },
     },
   );

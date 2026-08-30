@@ -95,6 +95,12 @@ function ebayOffer(input: {
     marketplaceId: input.marketplaceId ?? "EBAY_US",
     status: input.status,
     listingDescription: detailHtml(input.imageCount ?? 8),
+    listingPolicies: {
+      fulfillmentPolicyId: "fulfillment-1",
+      paymentPolicyId: "payment-1",
+      returnPolicyId: "return-1",
+    },
+    merchantLocationKey: "seoul-warehouse",
     ...(input.status === "PUBLISHED"
       ? { listing: { listingId: "110000000001", listingStatus: input.listingStatus } }
       : {}),
@@ -742,9 +748,10 @@ test("eBay listing update verifies the exact offer, SKU, locale, and live status
         ...publicationArguments("live"),
         publicationExpectedLocale: "en-US",
         offerId: "offer-123",
-        body: {
-          sku: "SELLERPILOT-001",
-          marketplaceId: "EBAY_US",
+        listingId: "110000000001",
+        sku: "SELLERPILOT-001",
+        marketplaceId: "EBAY_US",
+        offer: {
           format: "FIXED_PRICE",
           listingDescription: detailHtml(),
           listingPolicies: {
@@ -759,7 +766,7 @@ test("eBay listing update verifies the exact offer, SKU, locale, and live status
     });
     assert.equal(operation.ok, true);
     assert.equal(operation.publicationFulfilled, true);
-    assert.equal(operation.remoteId, "offer-123");
+    assert.equal(operation.remoteId, "110000000001");
     assert.equal(operation.remoteState?.visibility, "live");
   } finally {
     globalThis.fetch = originalFetch;

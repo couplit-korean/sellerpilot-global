@@ -61,3 +61,28 @@ test("admin listing mutations require an exact open release gate before idempote
     /listing_mutation_release_gate_closed[\s\S]{0,180}status: 503[\s\S]{0,180}cache-control/,
   );
 });
+
+test("eBay UPDATE resolves the immutable provider tuple before fingerprinting or claiming", async () => {
+  const route = await readFile(routeUrl, "utf8");
+  const identityReadIndex = route.indexOf(
+    '"sellerpilot_service_get_ebay_listing_update_identity"',
+  );
+  const tupleBindingIndex = route.indexOf(
+    "boundEbayListingIdentity = { offerId, sku, listingId, marketplaceId }",
+  );
+  const effectiveBindingIndex = route.indexOf(
+    "...boundEbayListingIdentity",
+  );
+  const fingerprintIndex = route.indexOf('createHash("sha256")');
+  const claimIndex = route.indexOf('"sellerpilot_claim_channel_operation"');
+
+  assert.ok(identityReadIndex >= 0, "eBay UPDATE must resolve its server-owned tuple");
+  assert.ok(tupleBindingIndex > identityReadIndex, "only the verified RPC result may bind the tuple");
+  assert.ok(effectiveBindingIndex > tupleBindingIndex, "the verified tuple must replace browser identities");
+  assert.ok(fingerprintIndex > effectiveBindingIndex, "the request fingerprint must cover the immutable tuple");
+  assert.ok(claimIndex > fingerprintIndex, "a missing tuple must fail before an idempotency attempt exists");
+  assert.match(route, /identity\.contract !== "ebay_listing_identity_v1"/);
+  assert.match(route, /listingId !== requestedRemoteId/);
+  assert.match(route, /marketplaceId !== parsed\.data\.targetId\.toUpperCase\(\)/);
+  assert.match(route, /mode: "ebay_immutable_identity_required"/);
+});

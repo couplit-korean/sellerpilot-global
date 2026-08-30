@@ -4113,6 +4113,13 @@ async function ebayListingResultWithPublicationReadback(
     intent: listingPublicationIntentFromArguments(input.arguments),
     remoteId,
     offerId,
+    expectedSku: typeof input.arguments.sku === "string" ? input.arguments.sku : undefined,
+    expectedMarketplaceId: typeof input.arguments.marketplaceId === "string"
+      ? input.arguments.marketplaceId
+      : undefined,
+    expectedListingId: typeof input.arguments.listingId === "string"
+      ? input.arguments.listingId
+      : undefined,
     expected,
     readOffer: (readbackOfferId) => ebayRequest({
       payload: input.payload,
@@ -4130,6 +4137,27 @@ async function ebayListingResultWithPublicationReadback(
   const readbackSteps: ChannelOperationStep[] = [step("offer-publication-readback", readback.offerReadback)];
   if (readback.inventoryItemReadback) {
     readbackSteps.push(step("inventory-item-publication-readback", readback.inventoryItemReadback));
+  }
+  if (input.operation === "listing.update" && readback.inventoryItemReadback) {
+    const mutableReadback = verifyListingUpdateReadback("ebay", input.arguments, {
+      offer: readback.offerReadback.data,
+      inventoryItem: readback.inventoryItemReadback.data,
+    });
+    const httpVerified = readback.offerReadback.response.ok
+      && readback.inventoryItemReadback.response.ok;
+    readbackSteps.push({
+      name: "listing-update-content-readback",
+      ok: httpVerified && mutableReadback.ok,
+      status: readback.offerReadback.response.ok
+        ? readback.inventoryItemReadback.response.status
+        : readback.offerReadback.response.status,
+      data: {
+        sellerpilotVerification: httpVerified && mutableReadback.ok
+          ? "LISTING_MUTABLE_FIELDS_VERIFIED"
+          : "LISTING_MUTABLE_FIELDS_MISMATCH",
+        sellerpilotMismatchPaths: mutableReadback.mismatches.slice(0, 40),
+      },
+    });
   }
   readbackSteps.push(publicationStateVerificationStep(input.channel, readback.state, readback.failureCode));
   return result(
@@ -4306,15 +4334,110 @@ async function executeEbay(input: ExecuteInput) {
   }
   if (input.operation === "listing.update") {
     const offerId = pathSegment(stringArgument(input.arguments, "offerId"));
-    const body = objectValue(input.arguments, "body");
-    assertEbayListingCreateConfiguration({ offer: body });
-    if (!stringArgument(body, "sku", false)) throw new Error("EBAY_OFFER_UPDATE_SKU_REQUIRED");
-    const remote = await ebayRequest({ payload: input.payload, environment: input.environment, method: "PUT", path: `/sell/inventory/v1/offer/${offerId}`, body });
+    const listingId = stringArgument(input.arguments, "listingId");
+    const sku = pathSegment(stringArgument(input.arguments, "sku"));
+    const decodedSku = decodeURIComponent(sku);
+    const decodedOfferId = decodeURIComponent(offerId);
+    const marketplaceId = ebayAsqMarketplaceId(input.arguments.marketplaceId);
+    const requestedOffer = input.arguments.offer === undefined
+      ? {}
+      : objectValue(input.arguments, "offer");
+    const requestedInventoryItem = input.arguments.inventoryItem === undefined
+      ? {}
+      : objectValue(input.arguments, "inventoryItem");
+    if (!Object.keys(requestedOffer).length && !Object.keys(requestedInventoryItem).length) {
+      throw new Error("EBAY_LISTING_UPDATE_CONTENT_REQUIRED");
+    }
+
+    const offerRead = await ebayRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: `/sell/inventory/v1/offer/${offerId}`,
+    });
+    const inventoryRead = await ebayRequest({
+      payload: input.payload,
+      environment: input.environment,
+      method: "GET",
+      path: `/sell/inventory/v1/inventory_item/${sku}`,
+    });
+    const listing = offerRead.data.listing && typeof offerRead.data.listing === "object" && !Array.isArray(offerRead.data.listing)
+      ? offerRead.data.listing as Record<string, unknown>
+      : {};
+    const identityVerified = offerRead.response.ok
+      && inventoryRead.response.ok
+      && String(offerRead.data.offerId ?? "").trim() === decodedOfferId
+      && String(offerRead.data.sku ?? "").trim() === decodedSku
+      && String(offerRead.data.marketplaceId ?? "").trim().toUpperCase() === marketplaceId
+      && String(offerRead.data.status ?? "").trim().toUpperCase() === "PUBLISHED"
+      && String(listing.listingId ?? "").trim() === listingId
+      && String(listing.listingStatus ?? "").trim().toUpperCase() === "ACTIVE";
+    const offerPreflight = step("offer-update-preflight-readback", offerRead);
+    offerPreflight.ok = offerPreflight.ok && identityVerified;
+    offerPreflight.data = {
+      ...offerPreflight.data,
+      sellerpilotVerification: identityVerified
+        ? "EBAY_IMMUTABLE_LISTING_IDENTITY_VERIFIED"
+        : "EBAY_IMMUTABLE_LISTING_IDENTITY_MISMATCH",
+    };
+    const inventoryPreflight = step("inventory-item-update-preflight-readback", inventoryRead);
+    inventoryPreflight.ok = inventoryPreflight.ok && identityVerified;
+    const steps: ChannelOperationStep[] = [offerPreflight, inventoryPreflight];
+    if (!identityVerified) return result(input, steps, listingId);
+
+    const offerWritableFields = [
+      "availableQuantity", "categoryId", "charity", "extendedProducerResponsibility",
+      "format", "hideBuyerDetails", "includeCatalogProductDetails", "listingDescription",
+      "listingDuration", "listingPolicies", "lotSize", "merchantLocationKey",
+      "pricingSummary", "quantityLimitPerBuyer", "regulatory", "secondaryCategoryId",
+      "sku", "storeCategoryNames", "tax",
+    ] as const;
+    const currentOffer = Object.fromEntries(offerWritableFields.flatMap((key) =>
+      offerRead.data[key] === undefined ? [] : [[key, structuredClone(offerRead.data[key])]]));
+    const offerBody = mergeListingUpdatePatch(currentOffer, requestedOffer) as Record<string, unknown>;
+    offerBody.sku = decodedSku;
+    offerBody.marketplaceId = marketplaceId;
+
+    const inventoryWritableFields = [
+      "availability", "condition", "conditionDescription", "packageWeightAndSize", "product",
+    ] as const;
+    const currentInventoryItem = Object.fromEntries(inventoryWritableFields.flatMap((key) =>
+      inventoryRead.data[key] === undefined ? [] : [[key, structuredClone(inventoryRead.data[key])]]));
+    const inventoryBody = mergeListingUpdatePatch(
+      currentInventoryItem,
+      requestedInventoryItem,
+    ) as Record<string, unknown>;
+
+    if (Object.keys(requestedInventoryItem).length) {
+      const inventoryRemote = await ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "PUT",
+        path: `/sell/inventory/v1/inventory_item/${sku}`,
+        body: inventoryBody,
+      });
+      const inventoryStep = step("inventory-item-update", inventoryRemote);
+      steps.push(inventoryStep);
+      if (!inventoryStep.ok) return result(input, steps, listingId);
+    }
+    if (Object.keys(requestedOffer).length) {
+      assertEbayListingCreateConfiguration({ offer: offerBody });
+      const offerRemote = await ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "PUT",
+        path: `/sell/inventory/v1/offer/${offerId}`,
+        body: offerBody,
+      });
+      const offerStep = step("offer-update", offerRemote);
+      steps.push(offerStep);
+      if (!offerStep.ok) return result(input, steps, listingId);
+    }
     return ebayListingResultWithPublicationReadback(
       input,
-      [step("offer-update", remote)],
-      decodeURIComponent(offerId),
-      decodeURIComponent(offerId),
+      steps,
+      listingId,
+      decodedOfferId,
     );
   }
   if (input.operation === "listing.stop") {
@@ -4539,6 +4662,13 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
           status: "published",
           remoteId: listingUpdateRemoteIdentity(input.channel, input.arguments),
         }),
+        ...(input.channel === "ebay"
+          ? {
+              offerId: input.arguments.offerId,
+              sku: input.arguments.sku,
+              marketplaceId: input.arguments.marketplaceId,
+            }
+          : {}),
         ...(requestedPublicationIntent ? { publicationIntent: requestedPublicationIntent } : {}),
         ...(requestedPublicationStateContract ? { publicationStateContract: requestedPublicationStateContract } : {}),
         ...(requestedPublicationExpectedFingerprint

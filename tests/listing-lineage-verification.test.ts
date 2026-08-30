@@ -39,6 +39,7 @@ function dependencies(overrides: Partial<VerificationDependencies>): Verificatio
     shopeeRequest: unsupported,
     lazadaRequest: unsupported,
     ebayRequest: unsupported,
+    ebayTradingRequest: unsupported,
     qoo10Request: unsupported,
     ...overrides,
   } as VerificationDependencies;
@@ -231,8 +232,9 @@ test("Lazada lineage verification rejects a country-item readback mismatch", asy
   );
 });
 
-test("eBay keeps a listing unbound when an immutable SKU is unavailable", async () => {
-  let providerCalled = false;
+test("eBay discovers identity from ItemID but keeps a listing unbound when Trading returns no SKU", async () => {
+  let inventoryProviderCalled = false;
+  let tradingProviderCalled = false;
   const result = await executeProviderListingLineageVerification({
     channel: "ebay",
     payload: { marketplace_id: "EBAY_US" },
@@ -244,15 +246,33 @@ test("eBay keeps a listing unbound when an immutable SKU is unavailable", async 
     },
   }, dependencies({
     ebayRequest: async () => {
-      providerCalled = true;
+      inventoryProviderCalled = true;
       return remote({});
+    },
+    ebayTradingRequest: async ({ callName, marketplaceId, body }) => {
+      tradingProviderCalled = true;
+      assert.equal(callName, "GetItem");
+      assert.equal(marketplaceId, "EBAY_US");
+      assert.match(body, /<ItemID>110000000777<\/ItemID>/);
+      assert.doesNotMatch(body, /<SKU>/);
+      return remote({
+        Ack: "Success",
+        item: { itemId: "110000000777", site: "US" },
+      });
     },
   }));
 
-  assert.equal(providerCalled, false);
+  assert.equal(tradingProviderCalled, true);
+  assert.equal(inventoryProviderCalled, false);
   assert.equal(result.verificationStatus, "manual_required");
   assert.equal(result.evidence.reasonCode, "EBAY_MARKETPLACE_SKU_MISSING");
   assert.equal(result.evidence.verifiedRemoteId, null);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    jobId: JOB_ID,
+    claimToken: CLAIM_TOKEN,
+    status: "succeeded",
+    result,
+  }).success, true, "the no-SKU fail-closed result must cross the worker completion boundary");
 });
 
 test("eBay lineage verification cross-checks SKU, offer id, marketplace, and public listing id", async () => {
@@ -269,6 +289,14 @@ test("eBay lineage verification cross-checks SKU, offer id, marketplace, and pub
       providerResourceId: "offer-777",
     },
   }, dependencies({
+    ebayTradingRequest: async ({ body }) => {
+      assert.match(body, /<ItemID>110000000777<\/ItemID>/);
+      assert.doesNotMatch(body, /<SKU>/);
+      return remote({
+        Ack: "Success",
+        item: { itemId: "110000000777", sku: "SELLERPILOT-777", site: "US" },
+      });
+    },
     ebayRequest: async ({ path, query }) => {
       urls.push(`${path}?${query ?? ""}`);
       if (path.endsWith("/offer")) {
@@ -279,11 +307,15 @@ test("eBay lineage verification cross-checks SKU, offer id, marketplace, and pub
           title: "private title",
         }] });
       }
+      if (path.includes("/inventory_item/")) {
+        return remote({ product: { title: "private inventory title" } });
+      }
       return remote({
         offerId: "offer-777",
         sku: "SELLERPILOT-777",
         marketplaceId: "EBAY_US",
-        listing: { listingId: "110000000777" },
+        status: "PUBLISHED",
+        listing: { listingId: "110000000777", listingStatus: "ACTIVE" },
         description: "private description",
       });
     },
@@ -295,8 +327,14 @@ test("eBay lineage verification cross-checks SKU, offer id, marketplace, and pub
   assert.equal(result.evidence.verifiedRemoteId, "110000000777");
   assert.equal(result.evidence.market, "US");
   assert.equal(result.evidence.targetId, "");
-  assert.equal(urls.length, 2);
-  assert.doesNotMatch(JSON.stringify(result), /private title|private description|secret-token/);
+  assert.equal(urls.length, 3);
+  assert.doesNotMatch(JSON.stringify(result), /private title|private description|private inventory title|secret-token/);
+  assert.equal(gatewayWorkerCompletionSchema.safeParse({
+    jobId: JOB_ID,
+    claimToken: CLAIM_TOKEN,
+    status: "succeeded",
+    result,
+  }).success, true, "the complete four-read eBay evidence must cross the worker completion boundary");
 });
 
 test("eBay rejects any public listing id mismatch", async () => {
@@ -312,12 +350,49 @@ test("eBay rejects any public listing id mismatch", async () => {
         marketplaceSku: "SELLERPILOT-777",
       },
     }, dependencies({
+      ebayTradingRequest: async () => remote({
+        Ack: "Success",
+        item: { itemId: "110000000777", sku: "SELLERPILOT-777", site: "US" },
+      }),
       ebayRequest: async ({ path }) => path.endsWith("/offer")
         ? remote({ offers: [{ offerId: "offer-777", sku: "SELLERPILOT-777", marketplaceId: "EBAY_US" }] })
-        : remote({ offerId: "offer-777", sku: "SELLERPILOT-777", marketplaceId: "EBAY_US", listing: { listingId: "wrong" } }),
+        : remote({
+          offerId: "offer-777",
+          sku: "SELLERPILOT-777",
+          marketplaceId: "EBAY_US",
+          status: "PUBLISHED",
+          listing: { listingId: "wrong", listingStatus: "ACTIVE" },
+        }),
     })),
     /LISTING_LINEAGE_REMOTE_ID_MISMATCH:ebay/,
   );
+});
+
+test("eBay ItemID discovery fails closed on a marketplace site mismatch before Inventory API", async () => {
+  let inventoryProviderCalled = false;
+  await assert.rejects(
+    executeProviderListingLineageVerification({
+      channel: "ebay",
+      payload: { marketplace_id: "EBAY_US" },
+      environment: "production",
+      arguments: {
+        expectedRemoteId: "110000000777",
+        market: "US",
+        targetId: "EBAY_US",
+      },
+    }, dependencies({
+      ebayTradingRequest: async () => remote({
+        Ack: "Success",
+        item: { itemId: "110000000777", sku: "SELLERPILOT-777", site: "Germany" },
+      }),
+      ebayRequest: async () => {
+        inventoryProviderCalled = true;
+        return remote({});
+      },
+    })),
+    /LISTING_LINEAGE_REMOTE_ID_MISMATCH:ebayTrading/,
+  );
+  assert.equal(inventoryProviderCalled, false);
 });
 
 test("gateway contracts accept only normalized listing lineage claims and completions", () => {

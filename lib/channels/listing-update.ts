@@ -136,6 +136,12 @@ const releasedListingContent: Partial<Record<ActiveChannelKey, Partial<Record<Pr
     requiredInformation: fieldSupport("partial", "listing.update", ["productPatch.brand", "productPatch.orgnNmVal", "productPatch.prdStatCd", "productPatch.asDetail", "productPatch.rtngExchDetail", "productPatch.ProductNotification"], "브랜드·원산지·상품상태·고시 내용을 수정하되 카테고리·인증·판매·배송 정책은 최초 등록 원본을 그대로 보존합니다."),
     images: fieldSupport("supported", "listing.update", ["productPatch.prdImage01", "productPatch.prdImage02", "productPatch.prdImage03", "productPatch.prdImage04"], "대표·추가 이미지를 최초 등록 원본에 병합하고 같은 prdNo에서 다시 확인합니다."),
   },
+  ebay: {
+    productName: fieldSupport("supported", "listing.update", ["inventoryItem.product.title"], "불변 SKU의 기존 inventory item을 먼저 읽고 상품명만 병합한 뒤 같은 SKU에서 다시 확인합니다."),
+    description: fieldSupport("supported", "listing.update", ["inventoryItem.product.description", "offer.listingDescription"], "기존 offer와 inventory item을 먼저 읽고 상세 설명만 병합한 뒤 같은 listingId에서 다시 확인합니다."),
+    requiredInformation: fieldSupport("partial", "listing.update", ["inventoryItem.product.aspects"], "상품 속성만 기존 inventory item에 병합하며 카테고리·정책·가격·재고는 보존합니다."),
+    images: fieldSupport("supported", "listing.update", ["inventoryItem.product.imageUrls", "offer.listingDescription"], "승인된 이미지와 상세 HTML만 병합하고 정확히 같은 offer·SKU·listing에서 다시 확인합니다."),
+  },
 };
 
 function cloneFieldMap(source: Record<ProductEditFieldKey, ProductEditFieldSupport>) {
@@ -301,7 +307,7 @@ export function listingUpdateRemoteIdentity(channel: ActiveChannelKey, arguments
             : channel === "elevenst"
               ? [argumentsValue.productNo]
               : channel === "ebay"
-                ? [argumentsValue.offerId]
+                ? [argumentsValue.listingId]
                 : [];
   const identities = [...new Set(candidates.map(identityValue).filter(Boolean))];
   if (identities.length !== 1) {
@@ -496,16 +502,26 @@ export function prepareListingUpdateArguments(
   }
 
   if (channel === "ebay") {
-    const suppliedBody = recordValue(createArguments.body);
-    const sourceOffer = Object.keys(suppliedBody).length
-      ? suppliedBody
+    const sourceInventoryItem = recordValue(createArguments.inventoryItem);
+    const sourceProduct = recordValue(sourceInventoryItem.product);
+    const inventoryProduct = definedEntries(sourceProduct, [
+      "title", "description", "imageUrls", "aspects",
+    ]);
+    const sourceOffer = Object.keys(recordValue(createArguments.body)).length
+      ? recordValue(createArguments.body)
       : recordValue(createArguments.offer);
-    if (!Object.keys(sourceOffer).length) throw new Error("EBAY_OFFER_UPDATE_BODY_REQUIRED");
+    const offer = definedEntries(sourceOffer, ["listingDescription"]);
+    if (!Object.keys(inventoryProduct).length && !Object.keys(offer).length) {
+      throw new Error("EBAY_LISTING_UPDATE_CONTENT_REQUIRED");
+    }
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
-      ...optionalArgument(createArguments, "sku"),
-      offerId: remoteId,
-      body: structuredClone(sourceOffer),
+      ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
+      listingId: remoteId,
+      ...(Object.keys(inventoryProduct).length
+        ? { inventoryItem: { product: inventoryProduct } }
+        : {}),
+      ...(Object.keys(offer).length ? { offer } : {}),
     };
   }
 
@@ -682,6 +698,10 @@ function expectedListingUpdateProjection(channel: ActiveChannelKey, argumentsVal
   }
   if (channel === "smartstore") return safeSmartstoreBody(argumentsValue.body);
   if (channel === "elevenst") return recordValue(argumentsValue.productPatch);
+  if (channel === "ebay") return {
+    ...optionalArgument(argumentsValue, "inventoryItem"),
+    ...optionalArgument(argumentsValue, "offer"),
+  };
   return {};
 }
 
@@ -716,6 +736,10 @@ function actualListingUpdateProjection(channel: ActiveChannelKey, argumentsValue
   if (channel === "coupang") return Object.keys(recordValue(remoteData.data)).length ? recordValue(remoteData.data) : remoteData;
   if (channel === "smartstore") return remoteData;
   if (channel === "elevenst") return recordValue(remoteData.product);
+  if (channel === "ebay") return {
+    inventoryItem: recordValue(remoteData.inventoryItem),
+    offer: recordValue(remoteData.offer),
+  };
   return {};
 }
 

@@ -32,11 +32,10 @@ test("문의·배송 UI가 구현되지 않은 외부 쓰기를 실행 가능으
 });
 
 test("상품 전체 수정은 원격 식별값과 readback 경로가 검증된 채널만 연다", () => {
-  for (const channel of ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore"] as const) {
+  for (const channel of ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"] as const) {
     assert.equal(channelOperationAvailable(channel, "listing.update"), true, channel);
   }
   assert.equal(channelOperationAvailable("temu", "listing.update"), false);
-  assert.equal(channelOperationAvailable("ebay", "listing.update"), false);
 });
 
 test("게시 상태 재검증은 출시 대상 7개 채널에만 연다", () => {
@@ -72,7 +71,6 @@ test("채널 지원 표는 문서상 API와 실제 출시 가능 상태를 혼�
 
   for (const [channel, capability] of [
     ["temu", "listingUpdate"],
-    ["ebay", "listingUpdate"],
     ["ebay", "listingStop"],
   ] as const) {
     const presentation = channelCapabilityReleasePresentation(channel, capability);
@@ -80,6 +78,11 @@ test("채널 지원 표는 문서상 API와 실제 출시 가능 상태를 혼�
     assert.equal(presentation.label, "출시 차단", `${channel}:${capability}`);
     assert.match(presentation.note, /차단/, `${channel}:${capability}`);
   }
+
+  const ebayUpdate = channelCapabilityReleasePresentation("ebay", "listingUpdate");
+  assert.equal(ebayUpdate.releaseState, "available");
+  assert.match(ebayUpdate.note, /offerId.*SKU.*listingId/);
+  assert.match(ebayUpdate.note, /CREATE.*publish 없음/);
 
   const temuAfterSales = channelCapabilityReleasePresentation("temu", "inquiries");
   assert.equal(temuAfterSales.releaseState, "partial");
