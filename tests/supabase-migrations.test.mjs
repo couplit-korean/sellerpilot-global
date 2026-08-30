@@ -21,6 +21,7 @@ const STALE_AI_JOB_ID = "7c64df91-bd91-49bf-a141-1485bcbead3d";
 const PRUNE_JOB_ID = "fb641eaf-7de3-4958-ad08-6d064a99fb59";
 const UNSAFE_PRUNE_JOB_ID = "6a4d7635-cb87-4d24-ae93-f5cd8ee9c855";
 const PRODUCT_REVISION_JOB_ID = "3743031d-f49f-4cac-a44a-28e997f1dfc4";
+const REVISION_FALLBACK_SPOOF_JOB_ID = "df3ce09d-ad1f-4388-99d8-16cd7d6da6fb";
 const NEXT_PRODUCT_REVISION_JOB_ID = "6bf1f902-3298-4c9c-ab55-9670b838706d";
 const STALE_PRODUCT_REVISION_JOB_ID = "3a7780db-a4cb-46d6-a74a-5d71388e6838";
 const ABANDONED_PRODUCT_REVISION_JOB_ID = "231326b1-884d-4757-bcae-2a50ce559839";
@@ -530,6 +531,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830110000_pending_publication_reverification.sql",
       "20260830114500_approve_exact_detail_image_manifest.sql",
       "20260830121000_listing_publication_verification_source.sql",
+      "20260830122000_attest_product_revision_fallback.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -5814,6 +5816,97 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(db, "select count(*)::integer from sellerpilot_private.ai_cli_jobs where id = $1", [PRODUCT_REVISION_JOB_ID]),
       1,
     );
+    await db.query(
+      "update sellerpilot_private.ai_cli_worker_tokens set status = 'active', revoked_at = null where token_hash = $1",
+      [AI_SCOPED_TOKEN_HASH],
+    );
+    await setClaims(db, "service_role");
+    const revisionMarkerMismatches = [
+      ["revision_product_id", SHARED_PRODUCT_ID],
+      ["revision_base_ai_job_id", null],
+      ["revision_base_product_updated_at", "2000-01-01T00:00:00.000Z"],
+      ["revision_mode", "replace_product_copy_only"],
+      ["auto_publish", true],
+    ];
+    for (const [marker, value] of revisionMarkerMismatches) {
+      await db.exec("begin");
+      try {
+        await db.query(
+          `update sellerpilot_private.ai_cli_jobs
+              set request_payload = jsonb_set(request_payload, $2::text[], $3::jsonb, true),
+                  available_at = timestamptz '1900-01-01 00:00:00+00'
+            where id = $1`,
+          [PRODUCT_REVISION_JOB_ID, [marker], JSON.stringify(value)],
+        );
+        const markerMismatchClaim = await scalar(
+          db,
+          "select public.sellerpilot_claim_product_ai_job($1, 'migration-test/revision-marker-mismatch')",
+          [AI_SCOPED_TOKEN_HASH],
+        );
+        assert.equal(markerMismatchClaim.id, PRODUCT_REVISION_JOB_ID);
+        assert.equal(
+          markerMismatchClaim.revision_fallback_authorized,
+          false,
+          `${marker} must be exact before the claim can attest revision fallback`,
+        );
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_jobs (
+         id, kind, request_payload, created_by, status, available_at, created_at
+       )
+       select $1, 'product_studio', job.request_payload, job.created_by, 'queued',
+              timestamptz '1900-01-01 00:00:00+00', timestamptz '1900-01-01 00:00:00+00'
+         from sellerpilot_private.ai_cli_jobs job
+        where job.id = $2`,
+      [REVISION_FALLBACK_SPOOF_JOB_ID, PRODUCT_REVISION_JOB_ID],
+    );
+    const spoofClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_product_ai_job($1, 'migration-test/revision-spoof')",
+      [AI_SCOPED_TOKEN_HASH],
+    );
+    assert.equal(spoofClaim.id, REVISION_FALLBACK_SPOOF_JOB_ID);
+    assert.equal(spoofClaim.revision_fallback_authorized, false);
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+          set status = 'failed', error_message = 'test-only unattested revision marker job',
+              completed_at = clock_timestamp(), lease_expires_at = null
+        where id = $1`,
+      [REVISION_FALLBACK_SPOOF_JOB_ID],
+    );
+
+    await db.query(
+      "update sellerpilot_private.ai_cli_jobs set available_at = timestamptz '1900-01-02 00:00:00+00' where id = $1",
+      [PRODUCT_REVISION_JOB_ID],
+    );
+    const attestedRevisionClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_product_ai_job($1, 'migration-test/revision-attested')",
+      [AI_SCOPED_TOKEN_HASH],
+    );
+    assert.equal(attestedRevisionClaim.id, PRODUCT_REVISION_JOB_ID);
+    assert.equal(attestedRevisionClaim.revision_fallback_authorized, true);
+    assert.equal(attestedRevisionClaim.request.revision_mode, "replace_product_assets");
+    assert.equal(attestedRevisionClaim.request.revision_product_id, aiProductId);
+    assert.equal(attestedRevisionClaim.request.revision_base_ai_job_id, JOB_ID);
+    assert.equal(attestedRevisionClaim.request.auto_publish, false);
+    assert.equal(
+      attestedRevisionClaim.request.revision_base_product_updated_at,
+      await scalar(
+        db,
+        "select to_jsonb(base_product_updated_at)#>>'{}' from sellerpilot_private.product_ai_revisions where job_id = $1",
+        [PRODUCT_REVISION_JOB_ID],
+      ),
+    );
+    await db.query(
+      "update sellerpilot_private.ai_cli_worker_tokens set status = 'revoked', revoked_at = clock_timestamp() where token_hash = $1",
+      [AI_SCOPED_TOKEN_HASH],
+    );
+    await setClaims(db);
     assert.equal(
       await scalar(db, "select ai_job_id from sellerpilot_private.products where id = $1", [aiProductId]),
       JOB_ID,
@@ -7556,7 +7649,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(await scalar(db, "select public.sellerpilot_cancel_ai_job($1)", [CANCEL_JOB_ID]), true);
     assert.equal(await scalar(db, "select public.sellerpilot_retry_ai_job($1)", [CANCEL_JOB_ID]), true);
     const jobs = await db.query("select * from public.sellerpilot_list_ai_jobs(10)");
-    assert.equal(jobs.rows.length, 8);
+    assert.equal(jobs.rows.length, 9);
+    assert.equal(jobs.rows.some((job) => (
+      job.id === REVISION_FALLBACK_SPOOF_JOB_ID && job.status === "failed"
+    )), true);
     assert.equal(jobs.rows.some((job) => job.id === PRODUCT_REVISION_JOB_ID && job.status === "succeeded"), true);
     assert.equal(jobs.rows.some((job) => job.id === STALE_PRODUCT_REVISION_JOB_ID && job.status === "succeeded"), true);
     assert.equal(jobs.rows.some((job) => job.id === DUPLICATE_SKU_JOB_ID && job.status === "succeeded"), true);

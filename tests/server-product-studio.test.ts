@@ -218,6 +218,37 @@ function reviewedFallbackManualFields() {
   };
 }
 
+function productionRevisionQaManualFields() {
+  return {
+    researchInput: "QA 테스트용 검정 플라스틱 부착형 케이블 정리 클립 6개 세트. ABS 플라스틱 추정. 중국 OEM. 판매가 5000원, 재고 1개.",
+    productName: "부착형 케이블 정리 클립 6개 세트",
+    sellerSku: "QA-20260823-CC-001",
+    categoryHint: "부착형 케이블 정리 클립",
+    brandName: "No Brand",
+    manufacturer: "Generic OEM",
+    countryOfOrigin: "중국",
+    material: "ABS 플라스틱",
+    packageContents: "검정색 부착형 케이블 정리 클립 6개",
+    condition: "NEW" as const,
+    gtinStatus: "NO_GTIN" as const,
+    gtin: "",
+    sellingPrice: 5_000,
+    currency: "KRW" as const,
+    stock: 1,
+    weightKg: 0.1,
+    packageLengthCm: 15,
+    packageWidthCm: 10,
+    packageHeightCm: 3,
+    shippingFeeKrw: 0,
+    shippingRule: "결제 후 1–2영업일 이내 출고",
+    packagingRule: "소형 부품 분실 방지 봉투 포장",
+    description: "QA 등록 검증용 상품입니다. 검정색 부착형 케이블 정리 클립 6개 구성으로 책상과 벽면의 케이블을 정리하는 용도입니다. 부착면의 먼지와 수분을 제거한 뒤 사용하세요. 수치는 테스트용 추정값입니다.",
+    productUrl: "",
+    imageRightsConfirmed: true as const,
+    productFactsConfirmed: true as const,
+  };
+}
+
 test("server master normalization repairs presentation metadata without changing seller-backed copy", () => {
   const alreadyValid = testMasterResult();
   assert.equal(normalizeServerStudioMasterContract(alreadyValid), alreadyValid);
@@ -362,8 +393,8 @@ async function firstDraftPreflightFixture(
 }
 
 async function runReviewedTransientPipelineFixture(options: {
-  requestMode?: "reviewed" | "marker-mismatch" | "revision-reviewed" | "revision-marker-mismatch" | "legacy";
-  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "localization-scoped-timeout" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient" | "image-rate-limit-circuit" | "queued-image-timeout-budget";
+  requestMode?: "reviewed" | "marker-mismatch" | "revision-reviewed" | "revision-unattested" | "revision-marker-mismatch" | "revision-manual-mismatch" | "legacy";
+  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "localization-scoped-timeout" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "terminal-localization-invalid" | "terminal-master-invalid" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient" | "image-rate-limit-circuit" | "queued-image-timeout-budget";
   transientReason?: string;
   corruptPreflightAssetId?: (typeof coreFirstDraftAssetIds)[number];
   duplicatePreflightAsset?: boolean;
@@ -372,6 +403,7 @@ async function runReviewedTransientPipelineFixture(options: {
   runtimeTimeoutMs?: number;
   remoteCallDelayMs?: number;
   transientDiagnostic?: AiGatewayFailureDiagnostic;
+  manualFields?: ReturnType<typeof reviewedFallbackManualFields>;
 } = {}) {
   const jobId = "41414141-4141-4141-8141-414141414141";
   const claimToken = "42424242-4242-4242-8242-424242424242";
@@ -380,7 +412,12 @@ async function runReviewedTransientPipelineFixture(options: {
   const researchClaimToken = "45454545-4545-4545-8545-454545454545";
   const normalizedPath = `${userId}/${jobId}/input/001.jpg`;
   const originalPath = `${userId}/${jobId}/original/001.source`;
-  const manual = reviewedFallbackManualFields();
+  const requestMode = options.requestMode ?? "reviewed";
+  const revisionRequest = requestMode.startsWith("revision-");
+  const manual = options.manualFields ?? {
+    ...reviewedFallbackManualFields(),
+    ...(revisionRequest ? { stock: 0 } : {}),
+  };
   const sourceBytes = await patternedBackground(
     1200,
     1200,
@@ -424,7 +461,9 @@ async function runReviewedTransientPipelineFixture(options: {
   const baseRequest = {
     description: manual.description,
     product_url: manual.productUrl,
-    research_input: manual.researchInput,
+    research_input: requestMode === "revision-manual-mismatch"
+      ? `${manual.researchInput} 불일치`
+      : manual.researchInput,
     manual_fields: manual,
     image_paths: [normalizedPath],
     image_specs: [{
@@ -443,15 +482,16 @@ async function runReviewedTransientPipelineFixture(options: {
       fit: "contain",
     }],
   };
-  const requestMode = options.requestMode ?? "reviewed";
   const request = requestMode === "legacy"
     ? baseRequest
-    : requestMode === "revision-reviewed" || requestMode === "revision-marker-mismatch"
+    : revisionRequest
       ? {
         ...baseRequest,
         revision_mode: "replace_product_assets",
         revision_product_id: "47474747-4747-4747-8747-474747474747",
-        auto_publish: requestMode === "revision-reviewed" ? false : true,
+        revision_base_ai_job_id: null,
+        revision_base_product_updated_at: "2026-08-30T00:00:00.000Z",
+        auto_publish: requestMode === "revision-marker-mismatch" ? true : false,
       }
     : {
       ...baseRequest,
@@ -466,6 +506,7 @@ async function runReviewedTransientPipelineFixture(options: {
     };
   const uploaded = new Map<string, Uint8Array>();
   const completionCalls: Record<string, unknown>[] = [];
+  const rpcNames: string[] = [];
   const logs: Array<{ stage: string; details: Record<string, string | number | boolean> }> = [];
   let structuredCalls = 0;
   const structuredChunkCalls: string[] = [];
@@ -527,6 +568,7 @@ async function runReviewedTransientPipelineFixture(options: {
     tokenHash: "f".repeat(64),
     runtimeTimeoutMs: options.runtimeTimeoutMs ?? 120_000,
     rpc: async (name, arguments_ = {}) => {
+      rpcNames.push(name);
       if (name === "sellerpilot_claim_product_ai_job") {
         return {
           data: {
@@ -534,6 +576,8 @@ async function runReviewedTransientPipelineFixture(options: {
             claim_token: claimToken,
             kind: "product_studio",
             claim_scope: "product",
+            revision_fallback_authorized: requestMode === "revision-reviewed"
+              || requestMode === "revision-manual-mismatch",
             request,
           },
           error: null,
@@ -569,9 +613,29 @@ async function runReviewedTransientPipelineFixture(options: {
         throw transientError();
       }
       if (input.tags.includes("feature:product-studio-master")) {
-        return input.schema.parse({
+        const generatedMaster = input.schema.parse({
           ...buildReviewedServerStudioFallbackMaster(manual),
           warnings: [],
+        });
+        if (providerScenario !== "terminal-master-invalid") return generatedMaster;
+        const [firstSection, secondSection] = generatedMaster.design.sections;
+        assert.ok(firstSection);
+        assert.ok(secondSection);
+        return input.schema.parse({
+          ...generatedMaster,
+          design: {
+            ...generatedMaster.design,
+            sections: generatedMaster.design.sections.map((section, index) => index === 1
+              ? {
+                ...section,
+                buyerQuestion: firstSection.buyerQuestion,
+                evidence: firstSection.evidence,
+                title: firstSection.title,
+                body: firstSection.body,
+                points: firstSection.points,
+              }
+              : section),
+          },
         });
       }
       const chunkTag = input.tags.find((tag) => tag.startsWith("chunk:"));
@@ -610,6 +674,18 @@ async function runReviewedTransientPipelineFixture(options: {
           assert.ok(effectiveTarget);
           const listing = localizedListing(effectiveTarget);
           if (providerScenario === "classification-mismatch") return listing;
+          if (providerScenario === "terminal-localization-invalid"
+              && chunkTag === "chunk:1" && targetIndex === 0) {
+            return {
+              ...listing,
+              title: "seller reviewed product",
+              classification: {
+                ...listing.classification,
+                verificationStatus: "needs-review" as const,
+                isHealthFunctionalFood: null,
+              },
+            };
+          }
           if (providerScenario === "classification-copy-contradiction") {
             return {
               ...listing,
@@ -691,6 +767,7 @@ async function runReviewedTransientPipelineFixture(options: {
     preflight,
     uploaded,
     completionCalls,
+    rpcNames,
     logs,
     structuredCalls,
     structuredChunkCalls,
@@ -722,7 +799,7 @@ test("final server Studio restores six assets and plans only the remaining 2+8 r
   ].every((wave) => wave <= plan.maximumRemoteConcurrency));
 });
 
-test("new registration requires the complete preflight while revisions and queued legacy jobs remain executable", async () => {
+test("registration and revision marker sets fail closed while markerless queued jobs remain executable", async () => {
   const jobId = "12121212-1212-4121-8121-121212121212";
   const userId = "13131313-1313-4131-8131-131313131313";
   const baseRequest = {
@@ -747,11 +824,32 @@ test("new registration requires the complete preflight while revisions and queue
       fit: "contain",
     }],
   };
-  assert.equal(serverStudioRequestMode({
+  const revisionRequest = {
     ...baseRequest,
     revision_mode: "replace_product_assets",
     revision_product_id: "14141414-1414-4141-8141-141414141414",
-  }), "legacy");
+    revision_base_ai_job_id: null,
+    revision_base_product_updated_at: "2026-08-30T00:00:00.000Z",
+    auto_publish: false,
+  };
+  assert.equal(serverStudioRequestMode(revisionRequest), "revision");
+  for (const marker of [
+    "revision_mode",
+    "revision_product_id",
+    "revision_base_ai_job_id",
+    "revision_base_product_updated_at",
+    "auto_publish",
+  ] as const) {
+    const partial = Object.fromEntries(
+      Object.entries(revisionRequest).filter(([key]) => key !== marker),
+    );
+    assert.equal(serverStudioRequestMode(partial), "invalid", `${marker} must be complete`);
+  }
+  assert.equal(serverStudioRequestMode({ ...revisionRequest, auto_publish: true }), "invalid");
+  assert.equal(serverStudioRequestMode({
+    ...revisionRequest,
+    revision_base_product_updated_at: "not-a-timestamp",
+  }), "invalid");
   assert.equal(serverStudioRequestMode({
     ...baseRequest,
     source_research_job_id: "15151515-1515-4151-8151-151515151515",
@@ -764,6 +862,10 @@ test("new registration requires the complete preflight while revisions and queue
     "b".repeat(64),
   );
   assert.equal(serverStudioRequestMode({ ...baseRequest, ...preflight.request }), "preflight");
+  assert.equal(serverStudioRequestMode({
+    ...revisionRequest,
+    ...preflight.request,
+  }), "invalid", "preflight and revision markers must never be mixed");
   for (const marker of [
     "preflight_version",
     "preflight_asset_storage_paths",
@@ -1096,6 +1198,9 @@ test("authenticated product revision uses the exact 16-asset deterministic fallb
   const payload = run.completionCalls[0].p_result_payload as {
     asset_storage_paths: Record<string, string>;
     asset_storage_sha256s: Record<string, string>;
+    asset_audit_modes: Record<string, string>;
+    localizedListings: unknown[];
+    warnings: string[];
     deterministic_fallback: {
       reviewedInputOnly: boolean;
       masterReason: string | null;
@@ -1103,8 +1208,21 @@ test("authenticated product revision uses the exact 16-asset deterministic fallb
       imageReason: string | null;
     };
   };
+  assert.equal(run.manual.stock, 0, "revision fallback must use productEditSchema instead of the stock>=1 intake gate");
+  assert.equal(run.uploaded.size, 16);
   assert.equal(Object.keys(payload.asset_storage_paths).length, 16);
   assert.equal(Object.keys(payload.asset_storage_sha256s).length, 16);
+  assert.equal(Object.keys(payload.asset_audit_modes).length, 16);
+  assert.equal(new Set(Object.values(payload.asset_storage_sha256s)).size, 16);
+  assert.equal(Object.values(payload.asset_audit_modes).every((mode) => mode === "source-photo-catalog"), true);
+  assert.equal(payload.localizedListings.length, 34);
+  for (const spec of aiGeneratedAssetSpecs) {
+    const bytes = run.uploaded.get(payload.asset_storage_paths[spec.id]);
+    assert.ok(bytes);
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), payload.asset_storage_sha256s[spec.id]);
+  }
+  assert.ok(payload.warnings.some((warning) => /역할별 이미지 16장을 모두 원본 사진 기반/u.test(warning)));
+  assert.equal(payload.warnings.some((warning) => /1차 이미지 6장은 그대로 보존/u.test(warning)), false);
   assert.deepEqual(payload.deterministic_fallback, {
     reviewedInputOnly: true,
     masterReason: "gateway_rate_limited",
@@ -1113,6 +1231,81 @@ test("authenticated product revision uses the exact 16-asset deterministic fallb
   });
   assert.equal(run.backgroundCalls, 0);
   assert.equal(run.auditCalls, 0);
+  assert.equal(run.rpcNames.some((name) => /channel|listing|publish/iu.test(name)), false);
+});
+
+test("the production cable-clip revision shape recovers a terminal-only localization contract failure", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    requestMode: "revision-reviewed",
+    manualFields: productionRevisionQaManualFields(),
+    providerScenario: "terminal-localization-invalid",
+  });
+  assert.deepEqual(
+    await run.response.json(),
+    { ok: true, status: "succeeded", processed: 1 },
+    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
+  );
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "succeeded");
+  const payload = run.completionCalls[0].p_result_payload as {
+    localizedListings: unknown[];
+    asset_storage_paths: Record<string, string>;
+  };
+  assert.equal(payload.localizedListings.length, 34);
+  assert.equal(Object.keys(payload.asset_storage_paths).length, 16);
+  assert.ok((run.completionCalls[0].p_result_payload as {
+    deterministic_fallback: { masterReason: string | null; localizationReasons: string[] };
+  }).deterministic_fallback.localizationReasons.includes("studio_terminal_contract_invalid"));
+  assert.equal((run.completionCalls[0].p_result_payload as {
+    deterministic_fallback: { masterReason: string | null };
+  }).deterministic_fallback.masterReason, "studio_terminal_contract_invalid");
+  assert.ok((run.completionCalls[0].p_result_payload as {
+    warnings: string[];
+  }).warnings.some((warning) => /최종 상세페이지 계약 불일치/u.test(warning)));
+  const terminalLog = run.logs.find((entry) => entry.stage === "terminal_contract_fallback");
+  assert.deepEqual(terminalLog, {
+    stage: "terminal_contract_fallback",
+    details: {
+      schemaIssueCount: 1,
+      schemaIssueCodes: "custom",
+      schemaIssuePaths: "localizedListings.0.title",
+      kind: "product_studio",
+    },
+  });
+  const serializedLog = JSON.stringify(terminalLog);
+  assert.equal(serializedLog.includes("seller reviewed product"), false);
+  assert.equal(serializedLog.includes("부착형 케이블 정리 클립"), false);
+});
+
+test("an attested cable-clip revision rebuilds the full master and localizations after aggregate-only failure", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    requestMode: "revision-reviewed",
+    manualFields: productionRevisionQaManualFields(),
+    providerScenario: "terminal-master-invalid",
+  });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  const payload = run.completionCalls[0].p_result_payload as {
+    design: { sections: Array<{ buyerQuestion: string }> };
+    localizedListings: unknown[];
+    deterministic_fallback: { masterReason: string | null; localizationReasons: string[] };
+  };
+  assert.equal(payload.localizedListings.length, 34);
+  assert.notEqual(
+    payload.design.sections[0]?.buyerQuestion,
+    payload.design.sections[1]?.buyerQuestion,
+    "the terminal repair must replace the invalid provider master, not only its localizations",
+  );
+  assert.ok(payload.deterministic_fallback.localizationReasons.includes("studio_terminal_contract_invalid"));
+  assert.equal(payload.deterministic_fallback.masterReason, "studio_terminal_contract_invalid");
+  const terminalLog = run.logs.find((entry) => entry.stage === "terminal_contract_fallback");
+  assert.ok(terminalLog);
+  assert.ok(Number(terminalLog.details.schemaIssueCount) >= 1);
+  assert.match(String(terminalLog.details.schemaIssueCodes), /^(?:[a-z_]+,?)+$/u);
+  assert.match(String(terminalLog.details.schemaIssuePaths), /^[$A-Za-z0-9_.,-]+$/u);
+  assert.match(String(terminalLog.details.schemaIssuePaths), /design\.sections\.1/u);
+  const serializedLog = JSON.stringify(terminalLog);
+  assert.equal(serializedLog.includes("상품 식별은 구매 전에 어떻게 확인하나요?"), false);
+  assert.equal(serializedLog.includes("부착형 케이블 정리 클립"), false);
 });
 
 test("successful reviewed fallback logs one bounded Gateway diagnostic without another provider attempt", async () => {
@@ -1506,8 +1699,13 @@ test("reviewed general-food efficacy or intake claims remain fail-closed instead
   );
 });
 
-test("transient gateway failures remain terminal for marker-mismatched and ordinary legacy jobs", async () => {
-  for (const requestMode of ["marker-mismatch", "revision-marker-mismatch", "legacy"] as const) {
+test("transient gateway failures remain terminal without exact reviewed or DB-attested revision facts", async () => {
+  for (const requestMode of [
+    "marker-mismatch",
+    "revision-unattested",
+    "revision-manual-mismatch",
+    "legacy",
+  ] as const) {
     const run = await runReviewedTransientPipelineFixture({ requestMode });
     assert.equal(run.response.status, 200);
     assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
@@ -1517,6 +1715,30 @@ test("transient gateway failures remain terminal for marker-mismatched and ordin
     assert.equal(run.completionCalls[0].p_error_message, "gateway_rate_limited");
     assert.equal(run.logs.at(-1)?.details.reason, "gateway_rate_limited");
   }
+});
+
+test("malformed revision markers fail before any provider or upload work", async () => {
+  const run = await runReviewedTransientPipelineFixture({ requestMode: "revision-marker-mismatch" });
+  assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.structuredCalls, 0);
+  assert.equal(run.segmentationCalls, 0);
+  assert.equal(run.backgroundCalls, 0);
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.equal(run.completionCalls[0].p_error_message, "studio_request_invalid");
+});
+
+test("DB-attested revisions keep hard Gateway failures fail-closed", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    requestMode: "revision-reviewed",
+    transientReason: "gateway_authentication_error",
+  });
+  assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.equal(run.completionCalls[0].p_error_message, "gateway_authentication_error");
 });
 
 test("a hard first-draft restore failure settles active providers before completion and next-claim wake", async () => {

@@ -189,6 +189,7 @@ const studioClaimSchema = z.object({
   kind: z.enum(["product_studio", "product_asset_regeneration"]),
   claim_scope: z.literal("product"),
   attempt_count: z.number().int().min(1).optional(),
+  revision_fallback_authorized: z.boolean().optional().default(false),
   request: z.record(z.string(), z.unknown()),
 }).passthrough();
 
@@ -250,6 +251,14 @@ const studioRequestSchema = studioSourceRequestSchema.extend({
   }
 });
 
+const studioRevisionRequestSchema = studioSourceRequestSchema.extend({
+  revision_mode: z.literal("replace_product_assets"),
+  revision_product_id: z.string().uuid(),
+  revision_base_ai_job_id: z.string().uuid().nullable(),
+  revision_base_product_updated_at: z.string().datetime({ offset: true }),
+  auto_publish: z.literal(false),
+});
+
 const studioPreflightMarkerKeys = [
   "preflight_version",
   "preflight_asset_storage_paths",
@@ -261,8 +270,21 @@ function hasStudioPreflightMarker(request: Record<string, unknown>) {
   return studioPreflightMarkerKeys.some((key) => Object.hasOwn(request, key));
 }
 
+const studioRevisionMarkerKeys = [
+  "revision_mode",
+  "revision_product_id",
+  "revision_base_ai_job_id",
+  "revision_base_product_updated_at",
+  "auto_publish",
+] as const;
+
+function hasStudioRevisionMarker(request: Record<string, unknown>) {
+  return studioRevisionMarkerKeys.some((key) => Object.hasOwn(request, key));
+}
+
 type ParsedStudioRequest =
   | { mode: "preflight"; data: z.infer<typeof studioRequestSchema> }
+  | { mode: "revision"; data: z.infer<typeof studioRevisionRequestSchema> }
   | { mode: "legacy"; data: z.infer<typeof studioSourceRequestSchema> };
 
 const reviewedStudioFallbackMarkerSchema = z.object({
@@ -270,12 +292,6 @@ const reviewedStudioFallbackMarkerSchema = z.object({
   source: z.literal("authenticated_admin_request"),
   source_research_job_id: z.string().uuid(),
 }).strict();
-
-const reviewedProductRevisionFallbackMarkerSchema = z.object({
-  revision_mode: z.literal("replace_product_assets"),
-  revision_product_id: z.string().uuid(),
-  auto_publish: z.literal(false),
-}).passthrough();
 
 const reviewedStudioTransientFallbackReasons = new Set([
   "gateway_rate_limited",
@@ -290,14 +306,15 @@ export function serverStudioAllowsReviewedTransientFallback(error: unknown) {
     && reviewedStudioTransientFallbackReasons.has(error.safeReason);
 }
 
-function reviewedStudioFallbackFields(parsedRequest: ParsedStudioRequest) {
-  if (parsedRequest.mode === "legacy") {
-    // These markers are appended by the authenticated product-revision RPC,
-    // after the route validates the preserved source pair and seller facts.
-    // Ordinary legacy jobs do not receive the deterministic Gateway fallback.
-    const marker = reviewedProductRevisionFallbackMarkerSchema.safeParse(parsedRequest.data);
+function reviewedStudioFallbackFields(
+  parsedRequest: ParsedStudioRequest,
+  revisionFallbackAuthorized: boolean,
+) {
+  if (parsedRequest.mode === "revision") {
+    // Request JSON is not an authority. The claim RPC derives this boolean from
+    // the exact pending private revision row and all immutable server markers.
     const manual = productEditSchema.safeParse(parsedRequest.data.manual_fields);
-    if (!marker.success || !manual.success
+    if (!revisionFallbackAuthorized || !manual.success
         || manual.data.researchInput.trim() !== parsedRequest.data.research_input.trim()
         || manual.data.description.trim() !== parsedRequest.data.description.trim()
         || manual.data.productUrl.trim() !== parsedRequest.data.product_url.trim()) {
@@ -305,6 +322,7 @@ function reviewedStudioFallbackFields(parsedRequest: ParsedStudioRequest) {
     }
     return manual.data;
   }
+  if (parsedRequest.mode === "legacy") return null;
   const marker = reviewedStudioFallbackMarkerSchema.safeParse(
     parsedRequest.data.human_review_confirmation,
   );
@@ -321,11 +339,22 @@ function reviewedStudioFallbackFields(parsedRequest: ParsedStudioRequest) {
 
 function parseStudioRequest(request: Record<string, unknown>): ParsedStudioRequest | null {
   const sourceRequest = studioSourceRequestSchema.safeParse(request);
+  if (!sourceRequest.success) return null;
+  const hasPreflightMarker = hasStudioPreflightMarker(request);
+  const hasRevisionMarker = hasStudioRevisionMarker(request);
+  if (hasPreflightMarker && hasRevisionMarker) return null;
+
   const preflightRequest = studioRequestSchema.safeParse(request);
-  if (!sourceRequest.success || (hasStudioPreflightMarker(request) && !preflightRequest.success)) return null;
-  return preflightRequest.success
-    ? { mode: "preflight", data: preflightRequest.data }
-    : { mode: "legacy", data: sourceRequest.data };
+  if (hasPreflightMarker) {
+    return preflightRequest.success ? { mode: "preflight", data: preflightRequest.data } : null;
+  }
+
+  const revisionRequest = studioRevisionRequestSchema.safeParse(request);
+  if (hasRevisionMarker) {
+    return revisionRequest.success ? { mode: "revision", data: revisionRequest.data } : null;
+  }
+
+  return { mode: "legacy", data: sourceRequest.data };
 }
 
 export function serverStudioRequestMode(request: unknown) {
@@ -404,18 +433,35 @@ export class ServerProductStudioError extends Error {
   readonly safeReason: string;
   readonly terminal: boolean;
   readonly diagnostic?: AiGatewayFailureDiagnostic;
+  readonly safeDetails?: Record<string, string | number | boolean>;
 
   constructor(
     safeReason: string,
     terminal = false,
     diagnostic?: AiGatewayFailureDiagnostic,
+    safeDetails?: Record<string, string | number | boolean>,
   ) {
     super(safeReason);
     this.name = "ServerProductStudioError";
     this.safeReason = safeReason;
     this.terminal = terminal;
     this.diagnostic = diagnostic;
+    this.safeDetails = safeDetails;
   }
+}
+
+function studioContractIssueLogDetails(error: z.ZodError) {
+  const issues = error.issues.slice(0, 12);
+  const safePath = (path: PropertyKey[]) => path.length
+    ? path.map((part) => typeof part === "number"
+      ? String(part)
+      : String(part).replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 48)).join(".")
+    : "$";
+  return {
+    schemaIssueCount: error.issues.length,
+    schemaIssueCodes: [...new Set(issues.map((issue) => issue.code))].join(",").slice(0, 200),
+    schemaIssuePaths: issues.map((issue) => safePath(issue.path)).join(",").slice(0, 1_000),
+  } satisfies Record<string, string | number | boolean>;
 }
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -1461,6 +1507,7 @@ function withReviewedFallbackWarnings(
     masterReason: string | null;
     localizationReasons: readonly string[];
     imageReason: string | null;
+    requestMode: ParsedStudioRequest["mode"];
   },
 ) {
   const reasonLabel = (reason: string) => ({
@@ -1469,6 +1516,7 @@ function withReviewedFallbackWarnings(
     gateway_timeout: "응답 시간 초과(gateway_timeout)",
     gateway_customer_verification_required: "계정 확인 필요(gateway_customer_verification_required)",
     studio_localization_contract_invalid: "국가별 문안 계약 불일치(studio_localization_contract_invalid)",
+    studio_terminal_contract_invalid: "최종 상세페이지 계약 불일치(studio_terminal_contract_invalid)",
     master_transient_fallback: "마스터 문안 외부 제한",
   }[reason] ?? reason);
   const fallbackWarnings = [
@@ -1478,8 +1526,9 @@ function withReviewedFallbackWarnings(
     ...(input.localizationReasons.length ? [
       `34개 채널·국가 문안 전체는 ${input.localizationReasons.map(reasonLabel).join(", ")} 때문에 판매자가 검수한 상품명·브랜드·판매 구성·규격·가격을 보존하는 안전 문안으로 대체했습니다.`,
     ] : []),
-    ...(input.imageReason ? [
-      `외부 AI 이미지 처리의 ${reasonLabel(input.imageReason)}로 사람이 승인한 1차 이미지 6장은 그대로 보존했습니다. 나머지 10장은 AI 생성 이미지가 아니라 원본 사진 기반 중립 카탈로그 이미지입니다.`,
+    ...(input.imageReason ? [input.requestMode === "revision"
+      ? `외부 AI 이미지 처리의 ${reasonLabel(input.imageReason)}로 수정용 원본 사진을 기준으로 역할별 이미지 16장을 모두 원본 사진 기반 중립 카탈로그 이미지로 구성했습니다.`
+      : `외부 AI 이미지 처리의 ${reasonLabel(input.imageReason)}로 사람이 승인한 1차 이미지 6장은 그대로 보존했습니다. 나머지 10장은 AI 생성 이미지가 아니라 원본 사진 기반 중립 카탈로그 이미지입니다.`,
     ] : []),
   ];
   return cliStudioResultSchema.parse({
@@ -1811,13 +1860,39 @@ async function generateStudioLocalizedResult(
       break;
     }
   }
-  const merged = mergeStudioSegmentOutputs(master, segments);
-  const parsed = cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(merged));
-  if (!parsed.success) throw new ServerProductStudioError("studio_terminal_contract_invalid", true);
+  let merged = mergeStudioSegmentOutputs(master, segments);
+  let parsed = cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(merged));
+  let terminalContractIssueDetails: Record<string, string | number | boolean> | null = null;
+  if (!parsed.success && reviewedFallbackFields) {
+    terminalContractIssueDetails = studioContractIssueLogDetails(parsed.error);
+    const reviewedMaster = buildReviewedServerStudioFallbackMaster(reviewedFallbackFields);
+    chunks.forEach((targets, index) => {
+      segments[index] = buildReviewedStudioLocalizedSegment(
+        reviewedMaster,
+        targets,
+        reviewedFallbackFields,
+      );
+    });
+    fallbackReasons.add("studio_terminal_contract_invalid");
+    merged = mergeStudioSegmentOutputs(reviewedMaster, segments);
+    parsed = cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(merged));
+  }
+  if (!parsed.success) {
+    throw new ServerProductStudioError(
+      "studio_terminal_contract_invalid",
+      true,
+      undefined,
+      studioContractIssueLogDetails(parsed.error),
+    );
+  }
   return {
     result: parsed.data,
     fallbackReasons: [...fallbackReasons].sort(),
     fallbackDiagnostics,
+    terminalContractIssueDetails,
+    terminalMasterFallbackReason: terminalContractIssueDetails
+      ? "studio_terminal_contract_invalid"
+      : null,
   } as const;
 }
 
@@ -2695,15 +2770,17 @@ async function runFullStudioClaim(
   logError: (stage: string, details: Record<string, string | number | boolean>) => void,
 ) {
   const parsedRequest = parseStudioRequest(claim.request);
-  // New two-stage registration requests fail closed if even one preflight
-  // field is absent or malformed. Existing queued Studio jobs and product
-  // revisions predate that contract and intentionally continue through the
-  // source-only path, where all sixteen assets are generated as before.
+  // New registration and revision marker sets fail closed when incomplete,
+  // malformed, or mixed. Markerless jobs queued by older releases continue
+  // through the source-only path, where all sixteen assets are generated.
   if (!parsedRequest || !dependencies.download) {
     throw new ServerProductStudioError("studio_request_invalid", true);
   }
   const request = parsedRequest.data;
-  const reviewedFallbackFields = reviewedStudioFallbackFields(parsedRequest);
+  const reviewedFallbackFields = reviewedStudioFallbackFields(
+    parsedRequest,
+    claim.revision_fallback_authorized,
+  );
   await stageResultPaths(dependencies, claim.id, claim.claim_token, aiGeneratedAssetSpecs);
   const sources = await loadStudioSources(request, dependencies.download, signal);
   const mainSource = sources.find((source) => source.role.toLocaleLowerCase() === "main") ?? sources[0];
@@ -2843,10 +2920,24 @@ async function runFullStudioClaim(
     path: "localization" as const,
     diagnostic,
   })));
+  if (localization.terminalContractIssueDetails) {
+    try {
+      logError("terminal_contract_fallback", {
+        ...localization.terminalContractIssueDetails,
+        kind: claim.kind,
+      });
+    } catch {
+      // Safe deterministic recovery remains authoritative even if diagnostic
+      // logging is unavailable.
+    }
+  }
+  const effectiveMasterFallbackReason = localization.terminalMasterFallbackReason
+    ?? masterGeneration.fallbackReason;
   const result = withReviewedFallbackWarnings(localization.result, {
-    masterReason: masterGeneration.fallbackReason,
+    masterReason: effectiveMasterFallbackReason,
     localizationReasons: localization.fallbackReasons,
     imageReason: imageFallbackReason,
+    requestMode: parsedRequest.mode,
   });
   const primaryFallbackDiagnostic = gatewayFallbackDiagnostics[0];
   if (primaryFallbackDiagnostic) {
@@ -2889,12 +2980,12 @@ async function runFullStudioClaim(
         generated.get(asset.id)?.auditMode ?? "unrecorded",
       ])),
       segmentation_attempted_roles: cutoutResolution.attemptedRoles,
-      ...((masterGeneration.fallbackReason
+      ...((effectiveMasterFallbackReason
           || localization.fallbackReasons.length
           || imageFallbackReason) ? {
           deterministic_fallback: {
             reviewedInputOnly: true,
-            masterReason: masterGeneration.fallbackReason,
+            masterReason: effectiveMasterFallbackReason,
             localizationReasons: localization.fallbackReasons,
             imageReason: imageFallbackReason,
           },
@@ -3063,6 +3154,9 @@ export async function runOneServerProductStudio(dependencies: ServerProductStudi
     const diagnostic = error instanceof ServerProductStudioError
       ? error.diagnostic
       : undefined;
+    const safeDetails = error instanceof ServerProductStudioError
+      ? error.safeDetails
+      : undefined;
     logError("execution", {
       reason,
       status: diagnostic?.httpStatus ?? 500,
@@ -3074,6 +3168,7 @@ export async function runOneServerProductStudio(dependencies: ServerProductStudi
       ...(diagnostic?.upstreamProviderAttempted == null
         ? {}
         : { upstreamProviderAttempted: diagnostic.upstreamProviderAttempted }),
+      ...safeDetails,
     });
     const completed = await completeExact(dependencies, {
       jobId: claim.data.id,
