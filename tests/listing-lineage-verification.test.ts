@@ -275,6 +275,65 @@ test("eBay discovers identity from ItemID but keeps a listing unbound when Tradi
   }).success, true, "the no-SKU fail-closed result must cross the worker completion boundary");
 });
 
+test("production failed-listing shape discovers the exact QA tuple without a supplied SKU", async () => {
+  const inventoryReads: string[] = [];
+  const result = await executeProviderListingLineageVerification({
+    channel: "ebay",
+    payload: { marketplace_id: "EBAY_US", access_token: "secret-token" },
+    environment: "production",
+    arguments: {
+      expectedRemoteId: "800551945442",
+      market: "US",
+      targetId: "EBAY_US",
+    },
+  }, dependencies({
+    ebayTradingRequest: async ({ callName, marketplaceId, body }) => {
+      assert.equal(callName, "GetItem");
+      assert.equal(marketplaceId, "EBAY_US");
+      assert.match(body, /<ItemID>800551945442<\/ItemID>/);
+      assert.doesNotMatch(body, /<SKU>/);
+      return remote({
+        Ack: "Success",
+        item: { itemId: "800551945442", sku: "QA-CABLE-CLIP-SKU", site: "US" },
+      });
+    },
+    ebayRequest: async ({ method, path, query }) => {
+      assert.equal(method, "GET");
+      inventoryReads.push(`${path}?${query?.toString() ?? ""}`);
+      if (path.endsWith("/offer")) {
+        assert.equal(query?.get("sku"), "QA-CABLE-CLIP-SKU");
+        return remote({ offers: [{
+          offerId: "QA-CABLE-CLIP-OFFER",
+          sku: "QA-CABLE-CLIP-SKU",
+          marketplaceId: "EBAY_US",
+        }] });
+      }
+      if (path.endsWith("/offer/QA-CABLE-CLIP-OFFER")) {
+        return remote({
+          offerId: "QA-CABLE-CLIP-OFFER",
+          sku: "QA-CABLE-CLIP-SKU",
+          marketplaceId: "EBAY_US",
+          status: "PUBLISHED",
+          listing: { listingId: "800551945442", listingStatus: "ACTIVE" },
+        });
+      }
+      assert.equal(path, "/sell/inventory/v1/inventory_item/QA-CABLE-CLIP-SKU");
+      return remote({ product: { title: "private cable clip title" } });
+    },
+  }));
+
+  assert.equal(result.verificationStatus, "verified");
+  assert.equal(result.evidence.verifiedRemoteId, "800551945442");
+  assert.equal(result.evidence.marketplaceSku, "QA-CABLE-CLIP-SKU");
+  assert.equal(result.evidence.providerResourceId, "QA-CABLE-CLIP-OFFER");
+  assert.deepEqual(inventoryReads.map((item) => item.split("?")[0]), [
+    "/sell/inventory/v1/offer",
+    "/sell/inventory/v1/offer/QA-CABLE-CLIP-OFFER",
+    "/sell/inventory/v1/inventory_item/QA-CABLE-CLIP-SKU",
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /secret-token|private cable clip title/);
+});
+
 test("eBay lineage verification cross-checks SKU, offer id, marketplace, and public listing id", async () => {
   const urls: string[] = [];
   const result = await executeProviderListingLineageVerification({

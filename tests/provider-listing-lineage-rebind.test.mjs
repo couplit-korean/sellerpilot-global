@@ -291,13 +291,16 @@ async function seedListing(db, {
   marketplaceSku = null,
   includeTarget = true,
   currentSubject,
+  listingId: requestedListingId,
+  remoteId: requestedRemoteId,
+  attemptRemoteId: requestedAttemptRemoteId,
 }) {
   const historicalCredentialId = uuid(1000 + (index * 10));
   const currentCredentialId = uuid(1001 + (index * 10));
   const attemptId = uuid(2000 + index);
   const productId = uuid(3000 + index);
-  const listingId = uuid(4000 + index);
-  const remoteId = `REMOTE-${channel.toUpperCase()}-${index}`;
+  const listingId = requestedListingId ?? uuid(4000 + index);
+  const remoteId = requestedRemoteId ?? `REMOTE-${channel.toUpperCase()}-${index}`;
 
   await insertCredential(db, {
     id: historicalCredentialId,
@@ -327,7 +330,15 @@ async function seedListing(db, {
        id, owner_id, credential_id, channel, operation, idempotency_key,
        request_fingerprint, status, remote_id, completed_at
      ) values ($1,$2,$3,$4,'listing.create',$5,$6,'succeeded',$7,now())`,
-    [attemptId, ADMIN_ID, historicalCredentialId, channel, `legacy-listing-${index}`, String((index % 9) + 1).repeat(64), remoteId],
+    [
+      attemptId,
+      ADMIN_ID,
+      historicalCredentialId,
+      channel,
+      `legacy-listing-${index}`,
+      String((index % 9) + 1).repeat(64),
+      requestedAttemptRemoteId ?? remoteId,
+    ],
   );
   await db.query(
     `insert into sellerpilot_private.product_listings(
@@ -482,6 +493,19 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
       ),
       false,
     );
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal(
+        await scalar(
+          db,
+          `select has_function_privilege(
+            $1,'sellerpilot_private.failed_ebay_lineage_discovery_allowed(uuid)','EXECUTE'
+          )`,
+          [role],
+        ),
+        false,
+        `${role} must not call the private failed-listing exception directly`,
+      );
+    }
     assert.equal(
       await scalar(
         db,
@@ -717,11 +741,54 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
       market: "US",
       targetId: "EBAY_US",
       marketplaceSku: null,
+      listingId: "8b2cbfaf-3854-437d-b381-abfd70291354",
+      remoteId: "800551945442",
     });
+    await db.query(
+      "update sellerpilot_private.product_listings set status='failed' where id=$1",
+      [ebayMissingSku.listingId],
+    );
+    assert.deepEqual((await db.query(
+      `select id::text,remote_id,status,requested_publication_intent,
+              market,target_id,marketplace_sku,seller_account_key,
+              provider_resource_id,remote_resources
+         from sellerpilot_private.product_listings where id=$1`,
+      [ebayMissingSku.listingId],
+    )).rows, [{
+      id: "8b2cbfaf-3854-437d-b381-abfd70291354",
+      remote_id: "800551945442",
+      status: "failed",
+      requested_publication_intent: "safe_test",
+      market: "US",
+      target_id: "EBAY_US",
+      marketplace_sku: null,
+      seller_account_key: null,
+      provider_resource_id: null,
+      remote_resources: {},
+    }]);
+    assert.equal((await prepare(db, ebayMissingSku.listingId)).reason, "listing_not_verifiable");
     await db.query(
       "update sellerpilot_private.product_listings set requested_publication_intent='live' where id=$1",
       [ebayMissingSku.listingId],
     );
+    assert.deepEqual((await db.query(
+      `select id::text,remote_id,status,requested_publication_intent,
+              market,target_id,marketplace_sku,seller_account_key,
+              provider_resource_id,remote_resources
+         from sellerpilot_private.product_listings where id=$1`,
+      [ebayMissingSku.listingId],
+    )).rows, [{
+      id: "8b2cbfaf-3854-437d-b381-abfd70291354",
+      remote_id: "800551945442",
+      status: "failed",
+      requested_publication_intent: "live",
+      market: "US",
+      target_id: "EBAY_US",
+      marketplace_sku: null,
+      seller_account_key: null,
+      provider_resource_id: null,
+      remote_resources: {},
+    }]);
     assert.equal((await prepare(db, ebayMissingSku.listingId)).status, "ready");
     await assert.rejects(
       db.query(
@@ -850,6 +917,52 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
         ],
       ),
       { status: "identity_unverified" },
+    );
+    await db.query(
+      "update sellerpilot_private.channel_credentials set status='grace' where id=$1",
+      [ebayMissingSku.currentCredentialId],
+    );
+
+    const failedEbayWrongCreateEvidence = await seedListing(db, {
+      index: 10,
+      channel: "ebay",
+      market: "US",
+      targetId: "EBAY_US",
+      marketplaceSku: null,
+      remoteId: "800551945443",
+      attemptRemoteId: "800551945440",
+    });
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set status='failed',requested_publication_intent='live'
+        where id=$1`,
+      [failedEbayWrongCreateEvidence.listingId],
+    );
+    assert.equal(
+      (await prepare(db, failedEbayWrongCreateEvidence.listingId)).reason,
+      "listing_not_verifiable",
+    );
+    await db.query(
+      "update sellerpilot_private.channel_credentials set status='grace' where id=$1",
+      [failedEbayWrongCreateEvidence.currentCredentialId],
+    );
+
+    const failedShopee = await seedListing(db, {
+      index: 9,
+      channel: "shopee",
+      market: "SG",
+      targetId: "100009",
+    });
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set status='failed',requested_publication_intent='live'
+        where id=$1`,
+      [failedShopee.listingId],
+    );
+    assert.equal((await prepare(db, failedShopee.listingId)).reason, "listing_not_verifiable");
+    await db.query(
+      "update sellerpilot_private.channel_credentials set status='grace' where id=$1",
+      [failedShopee.currentCredentialId],
     );
 
     const shopeeMissingTarget = await seedListing(db, {
