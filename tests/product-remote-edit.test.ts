@@ -8,6 +8,7 @@ import {
   centralProductEditFieldSupport,
   channelProductEditFieldSupport,
   listingUpdateMutablePaths,
+  legacyEbayListingUpdateCandidate,
   prepareListingUpdateArguments,
   productEditRemotePlan,
   remoteProductEditIdempotencyKey,
@@ -136,6 +137,31 @@ test("11번가는 전체 원본 patch를 만들고 eBay는 listing ID와 안전�
       offer: {
         listingDescription: "<p>수정 설명</p>",
       },
+    },
+  );
+});
+
+test("읽기 전용 불변 결속을 마친 legacy eBay 행만 서버 재검증 후보가 된다", () => {
+  const legacy = {
+    status: "failed",
+    remoteId: "800551945442",
+    marketplaceSku: "QA-20260823-CC-001-US",
+    failureClass: "external_action" as const,
+    publishedAt: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "unknown",
+  };
+  assert.equal(legacyEbayListingUpdateCandidate("ebay", legacy), true);
+  assert.equal(legacyEbayListingUpdateCandidate("qoo10", legacy), false);
+  assert.equal(legacyEbayListingUpdateCandidate("ebay", { ...legacy, marketplaceSku: null }), false);
+  assert.equal(legacyEbayListingUpdateCandidate("ebay", { ...legacy, remoteVisibility: "live" }), false);
+  assert.deepEqual(
+    prepareListingUpdateArguments("ebay", {
+      inventoryItem: { product: { title: "Adhesive cable clips", imageUrls: ["https://example.com/clip.jpg"] } },
+    }, legacy),
+    {
+      listingId: legacy.remoteId,
+      inventoryItem: { product: { title: "Adhesive cable clips", imageUrls: ["https://example.com/clip.jpg"] } },
     },
   );
 });
@@ -286,6 +312,15 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(source, /requestedStock !== sourceStock/);
   assert.match(source, /const price = lazadaPricePolicy\?\.targetPriceMyr \?\? listingPrice/);
   assert.match(source, /requestedPublicationIntent:[\s\S]*remoteVisibility:/);
+  const legacyCandidateCheck = source.indexOf("legacyEbayListingUpdateCandidate(listing.channel, reference)");
+  const immutableIdentityRpc = source.indexOf('"sellerpilot_service_get_ebay_listing_update_identity"');
+  const executionBlock = source.indexOf("listingExecutionBlock(listing, verifiedLegacyEbayUpdate)");
+  assert.ok(legacyCandidateCheck >= 0);
+  assert.ok(immutableIdentityRpc > legacyCandidateCheck);
+  assert.ok(executionBlock > immutableIdentityRpc, "the external_action fence may open only after the server-owned immutable identity RPC");
+  assert.match(source, /identity\.listingId === reference\.remoteId/);
+  assert.match(source, /identity\.sku === reference\.marketplaceSku/);
+  assert.match(source, /identity\.marketplaceId === String\(listing\.targetId \?\? ""\)\.trim\(\)\.toUpperCase\(\)/);
   assert.match(source, /\["published", "paused", "failed"\]\.includes\(status\)/);
   assert.match(source, /centralWritePerformed:\s*false/);
   assert.match(source, /remoteWritePerformed:\s*false/);

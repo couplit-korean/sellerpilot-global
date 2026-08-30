@@ -162,8 +162,15 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   ],
 };
 
-export function inspectListingDraft(channel: ActiveChannelKey, draft: Record<string, unknown>) {
-  return specs[channel].map<ListingRequirement>((spec) => ({
+export function inspectListingDraft(
+  channel: ActiveChannelKey,
+  draft: Record<string, unknown>,
+  operation: "listing.create" | "listing.update" = "listing.create",
+) {
+  const operationSpecs = channel === "ebay" && operation === "listing.update"
+    ? specs[channel].filter((spec) => ["title", "description", "images"].includes(spec.key))
+    : specs[channel];
+  return operationSpecs.map<ListingRequirement>((spec) => ({
     key: spec.key,
     label: spec.label,
     source: spec.source,
@@ -196,6 +203,10 @@ export function listingDraftValue(draft: Record<string, unknown>, path: string[]
   return value === null || value === undefined || value === "SERVER_MANAGED" ? "" : String(value);
 }
 
-export function blockingListingRequirements(channel: ActiveChannelKey, draft: Record<string, unknown>) {
-  return inspectListingDraft(channel, draft).filter((item) => item.status === "manual");
+export function blockingListingRequirements(
+  channel: ActiveChannelKey,
+  draft: Record<string, unknown>,
+  operation: "listing.create" | "listing.update" = "listing.create",
+) {
+  return inspectListingDraft(channel, draft, operation).filter((item) => item.status === "manual");
 }

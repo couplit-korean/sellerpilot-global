@@ -18,6 +18,7 @@ import {
   channelProductEditFieldSupport,
   listingCoreContentForOperation,
   listingWriteOperation,
+  legacyEbayListingUpdateCandidate,
   prepareListingUpdateArguments,
   productEditFieldKeys,
   productEditRemotePlan,
@@ -602,7 +603,11 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   };
 }
 
-export function missingNativeValues(channel: ActiveChannelKey, value: Record<string, unknown>) {
+export function missingNativeValues(
+  channel: ActiveChannelKey,
+  value: Record<string, unknown>,
+  operation: "listing.create" | "listing.update" = "listing.create",
+) {
   const json = JSON.stringify(value);
   const assets = value.sellerpilotAssets && typeof value.sellerpilotAssets === "object" && !Array.isArray(value.sellerpilotAssets)
     ? value.sellerpilotAssets as Record<string, unknown>
@@ -645,6 +650,7 @@ export function missingNativeValues(channel: ActiveChannelKey, value: Record<str
   if (channel === "elevenst") return [...assetRequirements, !json.includes('"prdImage01":"https://') ? "public product image" : "", json.includes('"dispCtgrNo":""') ? "dispCtgrNo" : "", !json.includes('"ProductNotification"') ? "ProductNotification" : ""].filter(Boolean);
   if (channel === "smartstore") return [...assetRequirements, !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", !json.includes('"originAreaCode":"04"') ? "originAreaInfo" : ""].filter(Boolean);
   if (channel === "temu") return [...assetRequirements, json.includes('"skuList":[]') ? "skuList" : "", json.includes('"images":[]') ? "images" : "", json.includes('"externalGoodsId":""') ? "externalGoodsId" : ""].filter(Boolean);
+  if (operation === "listing.update") return assetRequirements;
   return [...assetRequirements, json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
 }
 
@@ -1040,7 +1046,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       notify(`${channelCatalog[channel].name} 상품 작업이 이미 백그라운드에서 진행 중입니다.`);
       return false;
     }
-    if (listing?.failureClass === "external_action") {
+    const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+    if (listing?.failureClass === "external_action" && !recoverableEbayUpdate) {
       notify(`${channelCatalog[channel].name} 원격 상태를 수동 확인하기 전에는 새 상품 작업을 실행할 수 없습니다.`);
       return false;
     }
@@ -1064,8 +1071,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       return false;
     }
     const missing = [
-      ...missingNativeValues(channel, channelArguments),
-      ...blockingListingRequirements(channel, channelArguments).map((item) => item.label),
+      ...missingNativeValues(channel, channelArguments, operation),
+      ...blockingListingRequirements(channel, channelArguments, operation).map((item) => item.label),
     ].filter((value, index, values) => values.indexOf(value) === index);
     if (missing.length) {
       notify(`${channelCatalog[channel].name} 필수값 보완: ${missing.join(", ")}`);
@@ -1277,7 +1284,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
       const operation = listingWriteOperation(listing);
       const parsedDraft = parseDraft(drafts[channel]);
-      const hasMissingRequired = !parsedDraft || blockingListingRequirements(channel, parsedDraft).length > 0 || missingNativeValues(channel, parsedDraft).length > 0;
+      const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+      const hasMissingRequired = !parsedDraft || blockingListingRequirements(channel, parsedDraft, operation).length > 0 || missingNativeValues(channel, parsedDraft, operation).length > 0;
       const remoteIdentityReady = operation === "listing.create" || Boolean(listing?.remoteId);
       return Boolean(imagePackageReady
         && channelOperationAvailable(channel, operation)
@@ -1288,7 +1296,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         && !["queued", "publishing"].includes(listing?.status ?? "")
         && !(listing?.requestedPublicationIntent === "live" && listing.remoteVisibility === "pending_review")
         && !["queued", "running", "pending_review", "blocked"].includes(results[channel]?.phase ?? "idle")
-        && listing?.failureClass !== "external_action");
+        && (listing?.failureClass !== "external_action" || recoverableEbayUpdate));
     }).slice(0, 8);
     if (!readyChannels.length) return notify("활성 키·확정 카테고리·검증된 원격 ID가 모두 준비된 등록·수정 대상 채널이 없습니다.");
     if (!confirmed) {
@@ -1480,7 +1488,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const channelAssignment = context.assignments.find((item) => item.channel === channel && (!target || item.market === target.marketCode));
       const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
       const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
-      const result = listing?.failureClass === "external_action"
+      const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+      const result = listing?.failureClass === "external_action" && !recoverableEbayUpdate
         ? { phase: "blocked" as const, message: listing.lastError ?? "원격 판매자센터 상태를 수동 확인해야 합니다.", attemptId: listing.operationAttemptId ?? undefined, listingId: listing.id }
         : listing?.requestedPublicationIntent === "live" && listing.remoteVisibility === "pending_review"
           ? { phase: "pending_review" as const, message: "판매채널 심사 대기 중입니다. 공개 상태 readback 전에는 게시 성공으로 집계하거나 다시 등록하지 않습니다.", attemptId: listing.operationAttemptId ?? undefined, listingId: listing.id, remoteId: listing.remoteId ?? undefined }
@@ -1517,9 +1526,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const lazadaFinalPricePolicy = remoteCommerceUpdate && draftObject
         ? lazadaKrwMyrPricePolicyFromArguments(draftObject)
         : null;
-      const requirements = draftObject ? inspectListingDraft(channel, draftObject) : [];
+      const requirements = draftObject ? inspectListingDraft(channel, draftObject, operation) : [];
       const blockingRequirements = requirements.filter((item) => item.status === "manual");
-      const nativeMissing = draftObject ? missingNativeValues(channel, draftObject) : [];
+      const nativeMissing = draftObject ? missingNativeValues(channel, draftObject, operation) : [];
       const blockingCount = blockingRequirements.length + nativeMissing.length;
       const invalidDraft = !draftObject;
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
@@ -1550,7 +1559,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             </label>)}</div>}
           </div>}
           {assignment && <small className="publish-category-path">{assignment.categoryPath.join(" › ")} · {assignment.categoryId}</small>}
-          {listing?.status === "failed" && listing.lastError && <p className={`publish-result ${listing.failureClass === "external_action" ? "blocked" : "failed"}`}><b>{listing.failureClass === "external_action" ? "수동 확인 필요" : "이전 등록 실패"}</b> · {listing.lastError}</p>}
+          {listing?.status === "failed" && listing.lastError && <p className={`publish-result ${listing.failureClass === "external_action" && !recoverableEbayUpdate ? "blocked" : "failed"}`}><b>{recoverableEbayUpdate ? "원격 식별값 재검증 준비" : listing.failureClass === "external_action" ? "수동 확인 필요" : "이전 등록 실패"}</b> · {recoverableEbayUpdate ? "불변 eBay offer·SKU·listing 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다." : listing.lastError}</p>}
           <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}

@@ -22,6 +22,16 @@ test("eBay preflight blocks server-managed policy and location placeholders", ()
   assert.equal(accountFields.length, 4);
   assert.equal(accountFields.every((item) => item.status === "manual"), true);
   assert.equal(accountFields.every((item) => item.placeholder?.startsWith("Seller Hub")), true);
+
+  assert.deepEqual(
+    blockingListingRequirements("ebay", draft, "listing.update"),
+    [],
+    "an UPDATE preserves the exact remote offer policies and location read during provider preflight",
+  );
+  assert.deepEqual(
+    inspectListingDraft("ebay", draft, "listing.update").map((item) => item.key),
+    ["title", "description", "images"],
+  );
 });
 
 test("manual policy input updates only the requested channel payload path", () => {

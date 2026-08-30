@@ -8,9 +8,11 @@ import {
   listingUpdateMutablePaths,
   listingUpdateRemoteIdentity,
   listingWriteOperation,
+  legacyEbayListingUpdateCandidate,
   prepareListingUpdateArguments,
   productEditRemotePlan,
   remoteProductEditIdempotencyKey,
+  type ListingUpdateReference,
 } from "../../../../../../lib/channels/listing-update";
 import { channelOperationRelease } from "../../../../../../lib/channels/operation-availability";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
@@ -57,7 +59,7 @@ function listingRecords(value: unknown): ListingRecord[] {
     : [];
 }
 
-function listingReference(listing: ListingRecord) {
+function listingReference(listing: ListingRecord): ListingUpdateReference {
   return {
     status: typeof listing.status === "string" ? listing.status : "",
     remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
@@ -65,13 +67,19 @@ function listingReference(listing: ListingRecord) {
     requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
       ? listing.requestedPublicationIntent
       : null,
+    marketplaceSku: typeof listing.marketplaceSku === "string"
+      ? listing.marketplaceSku
+      : null,
+    failureClass: listing.failureClass === "retryable" || listing.failureClass === "external_action"
+      ? listing.failureClass
+      : null,
     remoteVisibility: typeof listing.remoteVisibility === "string"
       ? listing.remoteVisibility
       : null,
   };
 }
 
-function listingExecutionBlock(listing: ListingRecord) {
+function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUpdate = false) {
   const status = typeof listing.status === "string" ? listing.status : "";
   const failureClass = typeof listing.failureClass === "string" ? listing.failureClass : "";
   if (status === "queued" || status === "publishing") {
@@ -81,7 +89,7 @@ function listingExecutionBlock(listing: ListingRecord) {
       message: "이 상품·채널의 기존 원격 작업이 진행 중이므로 새 쓰기를 실행하지 않았습니다.",
     };
   }
-  if (failureClass === "external_action") {
+  if (failureClass === "external_action" && !allowVerifiedLegacyEbayUpdate) {
     return {
       status: 409,
       mode: "external_reconciliation_required",
@@ -191,7 +199,31 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
-  const executionBlock = listingExecutionBlock(listing);
+  const reference = listingReference(listing);
+  let verifiedLegacyEbayUpdate = false;
+  if (legacyEbayListingUpdateCandidate(listing.channel, reference)) {
+    const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
+      "sellerpilot_service_get_ebay_listing_update_identity",
+      {
+        p_listing_id: listing.id,
+        p_credential_id: body.data.credentialId,
+        p_product_id: productId.data,
+        p_market: typeof listing.market === "string" ? listing.market : "",
+        p_target_id: typeof listing.targetId === "string" ? listing.targetId : "",
+      },
+    );
+    const identity = recordValue(identityData);
+    verifiedLegacyEbayUpdate = !identityError
+      && identity.status === "allowed"
+      && identity.contract === "ebay_listing_identity_v1"
+      && identity.listingId === reference.remoteId
+      && identity.sku === reference.marketplaceSku
+      && identity.marketplaceId === String(listing.targetId ?? "").trim().toUpperCase()
+      && typeof identity.offerId === "string"
+      && identity.offerId.trim().length > 0;
+  }
+
+  const executionBlock = listingExecutionBlock(listing, verifiedLegacyEbayUpdate);
   if (executionBlock) {
     return NextResponse.json({
       ok: false,

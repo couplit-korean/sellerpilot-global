@@ -7,6 +7,8 @@ import {
 export type ListingUpdateReference = {
   remoteId: string | null;
   status: string;
+  marketplaceSku?: string | null;
+  failureClass?: "retryable" | "external_action" | null;
   publishedAt?: string | null;
   requestedPublicationIntent?: string | null;
   remoteVisibility?: string | null;
@@ -226,6 +228,26 @@ export function listingWriteOperation(listing: ListingUpdateReference | null | u
   // The workbench decides whether the row may be acted on; this selector must
   // never turn an existing remote product into a second create attempt.
   return hasRemoteIdentity ? "listing.update" : "listing.create";
+}
+
+/**
+ * A downgraded legacy eBay row may be used only as a client-side candidate for
+ * the server's immutable offer/SKU/listing identity recheck. This predicate is
+ * never sufficient authorization for a provider write: both API layers still
+ * call sellerpilot_service_get_ebay_listing_update_identity with the active
+ * credential before the gateway can enqueue an UPDATE.
+ */
+export function legacyEbayListingUpdateCandidate(
+  channel: ActiveChannelKey,
+  listing: ListingUpdateReference | null | undefined,
+) {
+  return channel === "ebay"
+    && listing?.status === "failed"
+    && listing.failureClass === "external_action"
+    && listing.requestedPublicationIntent === "live"
+    && listing.remoteVisibility === "unknown"
+    && Boolean(listing.remoteId?.trim())
+    && Boolean(listing.marketplaceSku?.trim());
 }
 
 function listingHasVerifiedUpdateIdentity(listing: ListingUpdateReference) {
@@ -450,7 +472,11 @@ export function prepareListingUpdateArguments(
   // a minimal published reference, so keep that internal compatibility path
   // identity-only and never use it to select the write operation.
   const authorizedProviderReference = listing.status === "published" && Boolean(remoteId);
-  if ((!listingHasVerifiedUpdateIdentity(listing) && !authorizedProviderReference) || !remoteId) {
+  const legacyEbayRecoveryCandidate = legacyEbayListingUpdateCandidate(channel, listing);
+  if ((!listingHasVerifiedUpdateIdentity(listing)
+      && !authorizedProviderReference
+      && !legacyEbayRecoveryCandidate)
+      || !remoteId) {
     throw new Error("PUBLISHED_REMOTE_LISTING_REQUIRED");
   }
 
