@@ -539,6 +539,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830132944_allow_failed_ebay_lineage_discovery.sql",
       "20260830141500_unblock_shopee_identity_reauthorization.sql",
       "20260830171000_discard_rejected_lazada_recovery_for_oauth.sql",
+      "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -1221,23 +1222,34 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       "select pg_get_functiondef('public.sellerpilot_claim_serverless_gateway_job(text,text)'::regprocedure)",
     );
+    const legacyServerlessClaimDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure)",
+    );
     assert.match(serverlessClaimDefinition, /for share/i);
-    assert.match(serverlessClaimDefinition, /for update of job skip locked/i);
-    assert.match(serverlessClaimDefinition, /for share of credential/i);
-    assert.doesNotMatch(
+    assert.match(serverlessClaimDefinition, /safe_lazada_oauth_refresh_blocker/i);
+    assert.match(serverlessClaimDefinition, /interval '25 minutes'/i);
+    assert.match(serverlessClaimDefinition, /sellerpilot_183000_claim_serverless_gateway_unsafe/i);
+    assert.match(
       serverlessClaimDefinition,
       /perform pg_catalog\.pg_advisory_xact_lock/i,
     );
+    assert.match(legacyServerlessClaimDefinition, /for update of job skip locked/i);
+    assert.match(legacyServerlessClaimDefinition, /for share of credential/i);
+    assert.doesNotMatch(
+      legacyServerlessClaimDefinition,
+      /perform pg_catalog\.pg_advisory_xact_lock/i,
+    );
     assert.match(
-      serverlessClaimDefinition,
+      legacyServerlessClaimDefinition,
       /pg_try_advisory_xact_lock\([\s\S]*193674996[\s\S]*read-slot-1[\s\S]*pg_try_advisory_xact_lock\([\s\S]*193674996[\s\S]*read-slot-2/i,
     );
     assert.match(
-      serverlessClaimDefinition,
+      legacyServerlessClaimDefinition,
       /sellerpilot_service_reap_stale_channel_gateway_jobs\(100\)/i,
     );
     assert.match(
-      serverlessClaimDefinition,
+      legacyServerlessClaimDefinition,
       /when sqlstate 'SPC02' then[\s\S]*return null/i,
     );
     const runningParallelismDefinition = await scalar(
@@ -8759,6 +8771,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
   const finalMigrationName = "20260828210000_non_cs_release_integrity.sql";
   const publicationReviewMigrationName = "20260830110000_pending_publication_reverification.sql";
   const publicationSourceMigrationName = "20260830121000_listing_publication_verification_source.sql";
+  const lazadaSafeOauthMigrationName =
+    "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
@@ -8769,7 +8783,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== cleanupMigrationName
         && name !== finalMigrationName
         && name !== publicationReviewMigrationName
-        && name !== publicationSourceMigrationName)
+        && name !== publicationSourceMigrationName
+        && name !== lazadaSafeOauthMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -10416,6 +10431,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     "20260830054851_certify_provider_identity_on_service_refresh.sql";
   const shopeeIdentityMigrationName =
     "20260830141500_unblock_shopee_identity_reauthorization.sql";
+  const lazadaSafeOauthMigrationName =
+    "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql";
   try {
     await db.exec(supabaseCompatibilityLayer);
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
@@ -10425,6 +10442,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     let legacyEbayDiagnosticMigration;
     let providerIdentityCertificationMigration;
     let shopeeIdentityMigration;
+    let lazadaSafeOauthMigration;
     for (const name of migrationNames) {
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       if (name === legacyEbayDiagnosticMigrationName) {
@@ -10433,6 +10451,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         providerIdentityCertificationMigration = source;
       } else if (name === shopeeIdentityMigrationName) {
         shopeeIdentityMigration = source;
+      } else if (name === lazadaSafeOauthMigrationName) {
+        lazadaSafeOauthMigration = source;
       } else {
         await db.exec(withoutUnavailableExtensions(source));
       }
@@ -10440,6 +10460,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     assert.equal(typeof legacyEbayDiagnosticMigration, "string");
     assert.equal(typeof providerIdentityCertificationMigration, "string");
     assert.equal(typeof shopeeIdentityMigration, "string");
+    assert.equal(typeof lazadaSafeOauthMigration, "string");
     await attestPublicationRelease(db);
     await activatePublicationRuntimeRelease(db);
     assert.equal(
@@ -10839,6 +10860,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       "the pre-fix production shape must be reproduced before exact repair",
     );
     await db.exec(withoutUnavailableExtensions(providerIdentityCertificationMigration));
+    await db.exec(withoutUnavailableExtensions(lazadaSafeOauthMigration));
     const diagnosticCredential = (await db.query(
       `select id::text, status, seller_account_key,
               seller_account_key_source,
@@ -13641,6 +13663,613 @@ test("rejected Lazada recovery cleanup discards both exact unusable snapshots", 
       [serverlessTokenHash],
     );
     assert.equal(oauthClaim, null);
+  } finally {
+    await db.close();
+  }
+});
+
+test("fresh certified Lazada OAuth supersedes only one safe older read refresh", async () => {
+  const db = new PGlite();
+  const migrationName =
+    "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql";
+  const blockerJobId = "a976573f-a150-4061-a1c6-5e8e4880ba2b";
+  const tokenHash = "7".repeat(64);
+  const staleCode = "stale-unclaimed-lazada-oauth-code";
+  const failedCode = "fresh-definite-failure-lazada-code";
+  const enqueueStaleCode = "stale-lazada-code-before-new-callback";
+  const successCode = "fresh-provider-certified-lazada-code";
+  try {
+    await db.exec(supabaseCompatibilityLayer);
+    const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
+    const migrationNames = (await readdir(migrationUrl))
+      .filter((name) => name.endsWith(".sql"))
+      .sort();
+    assert.equal(migrationNames.at(-1), migrationName);
+    for (const name of migrationNames) {
+      const source = await readFile(new URL(name, migrationUrl), "utf8");
+      await db.exec(withoutUnavailableExtensions(source));
+    }
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select has_function_privilege($1, 'sellerpilot_private.safe_lazada_oauth_refresh_blocker(uuid)', 'EXECUTE')",
+          [role],
+        ),
+        false,
+      );
+      assert.equal(
+        await scalar(
+          db,
+          "select has_function_privilege($1, 'sellerpilot_private.safe_lazada_oauth_claim_blocker(uuid)', 'EXECUTE')",
+          [role],
+        ),
+        false,
+      );
+      assert.equal(
+        await scalar(
+          db,
+          "select has_function_privilege($1, 'sellerpilot_private.discard_stale_unclaimed_lazada_oauth(uuid,text)', 'EXECUTE')",
+          [role],
+        ),
+        false,
+      );
+      assert.equal(
+        await scalar(
+          db,
+          "select has_function_privilege($1, 'public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)', 'EXECUTE')",
+          [role],
+        ),
+        false,
+      );
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_claim_serverless_gateway_job(text,text)', 'EXECUTE')",
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) = 1 from pg_catalog.pg_trigger
+          where tgrelid = 'sellerpilot_private.channel_gateway_jobs'::regclass
+            and tgname = 'supersede_safe_lazada_refresh_after_oauth'
+            and not tgisinternal`,
+      ),
+      true,
+    );
+    const safeLazadaClaimDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_claim_serverless_gateway_job(text,text)'::regprocedure)",
+    );
+    assert.match(
+      safeLazadaClaimDefinition,
+      /lock table sellerpilot_private\.channel_gateway_jobs[\s\S]*lock table sellerpilot_private\.channel_credentials[\s\S]*lock table vault\.secrets/i,
+    );
+    assert.ok(
+      (safeLazadaClaimDefinition.match(/safe_lazada_oauth_claim_blocker/g) ?? []).length >= 3,
+      "the exact OAuth predicate must be checked before and after all claim fences",
+    );
+    const safeLazadaCandidateDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('sellerpilot_private.safe_lazada_oauth_claim_blocker(uuid)'::regprocedure)",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select provolatile
+           from pg_catalog.pg_proc
+          where oid = 'sellerpilot_private.safe_lazada_oauth_claim_blocker(uuid)'::regprocedure`,
+      ),
+      "v",
+    );
+    assert.match(safeLazadaCandidateDefinition, /pg_catalog\.left/i);
+    assert.match(safeLazadaCandidateDefinition, /pg_catalog\.right/i);
+    assert.doesNotMatch(safeLazadaCandidateDefinition, /secret\.name\s+like/i);
+
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'safe-lazada-oauth@example.test')",
+      [ADMIN_ID],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Safe Lazada OAuth Admin')",
+      [ADMIN_ID],
+    );
+    await setClaims(db);
+    const sourceCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'lazada', 'production', $1::jsonb,
+        '2099-01-01T00:00:00Z'::timestamptz, 90, 30, 0
+      )`,
+      [JSON.stringify({
+        app_key: "safe-lazada-app",
+        app_secret: "safe-lazada-secret",
+        country: "my",
+        access_token: "legacy-lazada-access-token",
+        refresh_token: "legacy-lazada-refresh-token",
+      })],
+    );
+
+    await setClaims(db, "service_role");
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+         label, token_hash, fingerprint, status, scope, expires_at, created_by
+       ) values (
+         'safe Lazada OAuth claim', $1, '777777777777', 'active',
+         'serverless_cs', clock_timestamp() + interval '1 day', $2
+       )`,
+      [tokenHash, ADMIN_ID],
+    );
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id, credential_id, channel, operation, environment, request_payload,
+         status, error_message, created_by, attempt_count,
+         created_at, started_at, completed_at, updated_at,
+         credential_refresh_in_flight, credential_refresh_started_at
+       ) values (
+         $1, $2, 'lazada', 'orders.list', 'production',
+         '{"arguments":{"queryParams":{"limit":"50"}}}'::jsonb,
+         'reconciliation_required', 'serverless_cs_execution_failed', $3, 1,
+         clock_timestamp() - interval '20 minutes',
+         clock_timestamp() - interval '10 minutes',
+         clock_timestamp() - interval '5 minutes',
+         clock_timestamp() - interval '5 minutes',
+         true, clock_timestamp() - interval '9 minutes'
+       )`,
+      [blockerJobId, sourceCredentialId, ADMIN_ID],
+    );
+
+    const staleJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_channel_gateway_job(
+        $1, null, 'lazada', 'oauth.exchange', jsonb_build_object('code', $2::text)
+      )`,
+      [sourceCredentialId, staleCode],
+    );
+    const staleVaultId = await scalar(
+      db,
+      "select oauth_request_vault_id from sellerpilot_private.channel_gateway_jobs where id = $1",
+      [staleJobId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set created_at = clock_timestamp() - interval '26 minutes',
+              updated_at = clock_timestamp() - interval '26 minutes'
+        where id = $1`,
+      [staleJobId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/stale-lazada-oauth')",
+        [tokenHash],
+      ),
+      null,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message, oauth_request_vault_id
+           from sellerpilot_private.channel_gateway_jobs where id = $1`,
+        [staleJobId],
+      )).rows,
+      [{
+        status: "cancelled",
+        error_message: "LAZADA_OAUTH_CODE_DISCARDED_OUTSIDE_SAFE_WINDOW",
+        oauth_request_vault_id: null,
+      }],
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [staleVaultId]),
+      0,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_stale_unclaimed_oauth_discarded'
+            and entity_id = $1
+            and safe_detail->>'provider_call_started' = 'false'
+            and safe_detail->>'provider_mutation_started' = 'false'
+            and safe_detail->>'oauth_code_discarded' = 'true'`,
+        [staleJobId],
+      ),
+      1,
+    );
+
+    // A stale OAuth row whose Vault material is already missing is not safe to
+    // auto-delete. It must continue to block Lazada, but the shared claimant
+    // must still advance an unrelated channel instead of returning global
+    // idle forever.
+    await setClaims(db);
+    const unrelatedCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'shopee', 'production', $1::jsonb,
+        '2099-01-01T00:00:00Z'::timestamptz, 90, 30, 0
+      )`,
+      [JSON.stringify({
+        partner_id: "2031489",
+        partner_key: "unrelated-shopee-partner-key",
+        shop_id: "123456789",
+        access_token: "unrelated-shopee-access-token",
+        refresh_token: "unrelated-shopee-refresh-token",
+      })],
+    );
+    await setClaims(db, "service_role");
+    const malformedStaleJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_channel_gateway_job(
+        $1, null, 'lazada', 'oauth.exchange',
+        jsonb_build_object('code', 'malformed-stale-lazada-code')
+      )`,
+      [sourceCredentialId],
+    );
+    const malformedStaleVaultId = await scalar(
+      db,
+      `select oauth_request_vault_id
+         from sellerpilot_private.channel_gateway_jobs where id = $1`,
+      [malformedStaleJobId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set created_at = clock_timestamp() - interval '26 minutes',
+              updated_at = clock_timestamp() - interval '26 minutes'
+        where id = $1`,
+      [malformedStaleJobId],
+    );
+    await db.query("delete from vault.secrets where id = $1", [malformedStaleVaultId]);
+    const unrelatedJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_channel_gateway_job(
+        $1, null, 'shopee', 'diagnostic.test', '{}'::jsonb
+      )`,
+      [unrelatedCredentialId],
+    );
+    const unrelatedClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/unrelated-after-malformed-stale')",
+      [tokenHash],
+    );
+    assert.equal(
+      unrelatedClaim.id,
+      unrelatedJobId,
+      "an unsafe stale Lazada row must not starve unrelated channel claims",
+    );
+    assert.equal(unrelatedClaim.channel, "shopee");
+    assert.equal(
+      (await scalar(
+        db,
+        `select public.sellerpilot_service_complete_serverless_cs_transaction(
+          $1, $2, $3, 'failed', null, 'synthetic unrelated completion',
+          null, null, null, null
+        )`,
+        [tokenHash, unrelatedJobId, unrelatedClaim.claim_token],
+      )).status,
+      "completed",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select status from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [malformedStaleJobId],
+      ),
+      "queued",
+      "unsafe stale Lazada evidence must remain untouched",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'cancelled', oauth_request_vault_id = null,
+              error_message = 'synthetic malformed stale cleanup',
+              completed_at = clock_timestamp(), updated_at = clock_timestamp()
+        where id = $1 and status = 'queued'`,
+      [malformedStaleJobId],
+    );
+
+    const failedJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_channel_gateway_job(
+        $1, null, 'lazada', 'oauth.exchange', jsonb_build_object('code', $2::text)
+      )`,
+      [sourceCredentialId, failedCode],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set credential_refresh_started_at = started_at - interval '1 second'
+        where id = $1`,
+      [blockerJobId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/impossible-lazada-refresh-chronology')",
+        [tokenHash],
+      ),
+      null,
+      "a refresh marker predating its claimed job must never qualify as safe",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set credential_refresh_started_at = started_at + interval '1 minute'
+        where id = $1`,
+      [blockerJobId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set provider_mutation_started_at = clock_timestamp()
+        where id = $1`,
+      [blockerJobId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/unsafe-lazada-blocker')",
+        [tokenHash],
+      ),
+      null,
+      "a provider mutation marker must keep the original global fence closed",
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, attempt_count, worker_token_id, claim_token
+           from sellerpilot_private.channel_gateway_jobs where id = $1`,
+        [failedJobId],
+      )).rows,
+      [{
+        status: "queued",
+        attempt_count: 0,
+        worker_token_id: null,
+        claim_token: null,
+      }],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set provider_mutation_started_at = null
+        where id = $1`,
+      [blockerJobId],
+    );
+    const failedClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/failed-lazada-oauth')",
+      [tokenHash],
+    );
+    assert.equal(failedClaim.id, failedJobId);
+    assert.equal(failedClaim.operation, "oauth.exchange");
+    assert.equal(failedClaim.request.code, failedCode);
+    assert.equal(
+      (await scalar(
+        db,
+        `select public.sellerpilot_service_complete_serverless_cs_transaction(
+          $1, $2, $3, 'failed', null, 'provider_rejected_before_exchange',
+          null, null, null, null
+        )`,
+        [tokenHash, failedJobId, failedClaim.claim_token],
+      )).status,
+      "completed",
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, credential_refresh_in_flight
+           from sellerpilot_private.channel_gateway_jobs where id = $1`,
+        [blockerJobId],
+      )).rows,
+      [{ status: "reconciliation_required", credential_refresh_in_flight: true }],
+      "a failed OAuth exchange must not clear the older uncertainty",
+    );
+
+    const enqueueStaleJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_channel_gateway_job(
+        $1, null, 'lazada', 'oauth.exchange', jsonb_build_object('code', $2::text)
+      )`,
+      [sourceCredentialId, enqueueStaleCode],
+    );
+    const enqueueStaleVaultId = await scalar(
+      db,
+      "select oauth_request_vault_id from sellerpilot_private.channel_gateway_jobs where id = $1",
+      [enqueueStaleJobId],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set created_at = clock_timestamp() - interval '26 minutes',
+              updated_at = clock_timestamp() - interval '26 minutes'
+        where id = $1`,
+      [enqueueStaleJobId],
+    );
+    const successJobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_channel_gateway_job(
+        $1, null, 'lazada', 'oauth.exchange', jsonb_build_object('code', $2::text)
+      )`,
+      [sourceCredentialId, successCode],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message, oauth_request_vault_id
+           from sellerpilot_private.channel_gateway_jobs where id = $1`,
+        [enqueueStaleJobId],
+      )).rows,
+      [{
+        status: "cancelled",
+        error_message: "LAZADA_OAUTH_CODE_DISCARDED_OUTSIDE_SAFE_WINDOW",
+        oauth_request_vault_id: null,
+      }],
+      "a different new callback must release an exact expired enqueue fence",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*) from vault.secrets where id = $1",
+        [enqueueStaleVaultId],
+      ),
+      0,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_stale_unclaimed_oauth_discarded'
+            and entity_id = $1
+            and safe_detail->>'superseded_by_different_authorization' = 'true'`,
+        [enqueueStaleJobId],
+      ),
+      1,
+    );
+    const successVault = (await db.query(
+      `select job.oauth_request_vault_id as id, secret.name
+         from sellerpilot_private.channel_gateway_jobs job
+         join vault.secrets secret on secret.id = job.oauth_request_vault_id
+        where job.id = $1`,
+      [successJobId],
+    )).rows[0];
+    await db.query(
+      "update vault.secrets set name = replace(name, '_', 'X') where id = $1",
+      [successVault.id],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/wrong-vault-name')",
+        [tokenHash],
+      ),
+      null,
+      "LIKE wildcard lookalikes must never qualify as a Vault-backed OAuth grant",
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, attempt_count, worker_token_id, claim_token
+           from sellerpilot_private.channel_gateway_jobs where id = $1`,
+        [successJobId],
+      )).rows,
+      [{
+        status: "queued",
+        attempt_count: 0,
+        worker_token_id: null,
+        claim_token: null,
+      }],
+    );
+    await db.query(
+      "update vault.secrets set name = $2 where id = $1",
+      [successVault.id, successVault.name],
+    );
+    const successClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/success-lazada-oauth')",
+      [tokenHash],
+    );
+    assert.equal(successClaim.id, successJobId);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_serverless_cs_credential_refresh($1,$2,$3)",
+        [tokenHash, successJobId, successClaim.claim_token],
+      ),
+      true,
+    );
+    const providerSubject = `lazada:v1:${"A".repeat(64)}`;
+    const refreshPayload = {
+      app_key: "safe-lazada-app",
+      app_secret: "safe-lazada-secret",
+      country: "my",
+      access_token: "certified-lazada-access-token",
+      refresh_token: "certified-lazada-refresh-token",
+      provider_account_subject: providerSubject,
+      provider_account_identity_version: "v1",
+      country_user_info: [{ country: "my", seller_id: "1001", user_id: "2001" }],
+    };
+    const completion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_serverless_cs_transaction(
+        $1, $2, $3, 'succeeded', $4::jsonb, null, $5::jsonb,
+        null, null, null
+      )`,
+      [
+        tokenHash,
+        successJobId,
+        successClaim.claim_token,
+        JSON.stringify({
+          ok: true,
+          channel: "lazada",
+          operation: "oauth.exchange",
+          safeMessage: "Lazada OAuth exchange completed.",
+        }),
+        JSON.stringify({
+          payload: refreshPayload,
+          expiresAt: "2099-01-01T00:00:00Z",
+          recoveryOnly: false,
+          oauthComplete: true,
+        }),
+      ],
+    );
+    assert.equal(completion.status, "completed");
+
+    const successRow = (await db.query(
+      `select job.status, job.oauth_exchange_completed,
+              job.prepared_credential_id, job.credential_id,
+              credential.status as credential_status,
+              credential.seller_account_key_source,
+              credential.seller_account_verified_at is not null as provider_certified
+         from sellerpilot_private.channel_gateway_jobs job
+         join sellerpilot_private.channel_credentials credential
+           on credential.id = job.credential_id
+        where job.id = $1`,
+      [successJobId],
+    )).rows[0];
+    assert.equal(successRow.status, "succeeded");
+    assert.equal(successRow.oauth_exchange_completed, true);
+    assert.equal(successRow.prepared_credential_id, successRow.credential_id);
+    assert.equal(successRow.credential_status, "active");
+    assert.equal(successRow.seller_account_key_source, "provider_certified_v1");
+    assert.equal(successRow.provider_certified, true);
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message, credential_refresh_in_flight,
+                credential_refresh_started_at, prepared_credential_id,
+                credential_refresh_recovery_vault_id,
+                provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs where id = $1`,
+        [blockerJobId],
+      )).rows,
+      [{
+        status: "cancelled",
+        error_message:
+          "LAZADA_REFRESH_RECONCILIATION_SUPERSEDED_BY_CERTIFIED_OAUTH",
+        credential_refresh_in_flight: false,
+        credential_refresh_started_at: null,
+        prepared_credential_id: null,
+        credential_refresh_recovery_vault_id: null,
+        provider_mutation_started_at: null,
+      }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action =
+            'lazada_refresh_reconciliation_superseded_by_certified_oauth'
+            and entity_id = $1
+            and safe_detail->>'oauth_job_id' = $2
+            and safe_detail->>'source_credential_id' = $3
+            and safe_detail->>'provider_mutation_started' = 'false'
+            and safe_detail->>'oauth_provider_certified' = 'true'
+            and (select count(*) from jsonb_object_keys(safe_detail)) = 12`,
+        [blockerJobId, successJobId, sourceCredentialId],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.channel_gateway_jobs
+          where channel = 'lazada' and operation = 'oauth.exchange'
+            and status = 'queued' and oauth_request_vault_id is not null`,
+      ),
+      0,
+      "successful replacement must leave no older queued OAuth Vault request",
+    );
   } finally {
     await db.close();
   }
