@@ -519,6 +519,7 @@ const qoo10UpdateRequiredCarrierFields = [
   "ShippingNo",
   "AvailableDateType",
   "AvailableDateValue",
+  "AdultYN",
 ] as const;
 
 const shopeeMutableFields = [

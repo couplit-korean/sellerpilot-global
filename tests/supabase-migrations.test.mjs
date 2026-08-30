@@ -47,6 +47,8 @@ const QOO10_SCOPED_GATE_MIGRATION =
   "20260831050000_channel_scoped_qoo10_publication_gate.sql";
 const QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION =
   "20260831053500_rebind_qoo10_scoped_provider_mutation_chain.sql";
+const QOO10_ADULTYN_RECONCILIATION_MIGRATION =
+  "20260831055000_reconcile_exact_qoo10_adultyn_rejection.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
   "20260830222257_confirm_qoo10_listing_create_rollback.sql",
   "20260831010000_resolve_exact_qoo10_origin_type_rejection.sql",
@@ -571,6 +573,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_SCOPED_GATE_MIGRATION,
       "20260831052500_reconcile_exact_qoo10_preprovider_gate_denial.sql",
       QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION,
+      QOO10_ADULTYN_RECONCILIATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -593,6 +596,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(QOO10_SCOPED_GATE_MIGRATION)
         < migrationNames.indexOf(QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION),
       "Qoo10 provider chain repair must replay after the scoped gate",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION)
+        < migrationNames.indexOf(QOO10_ADULTYN_RECONCILIATION_MIGRATION),
+      "Qoo10 AdultYN exact reconciliation must replay after the provider-chain repair",
     );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -697,6 +705,27 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           ),
           4,
           "CS, Qoo10 gate, exact reconciliation, then provider-chain repair must be the recorded tail",
+        );
+      }
+      if (name === QOO10_ADULTYN_RECONCILIATION_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in (
+                '20260831033000', '20260831050000', '20260831052500',
+                '20260831053500', '20260831055000'
+              )`,
+          ),
+          5,
+          "Qoo10 AdultYN reconciliation must be the fifth recorded release-tail migration",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            "select to_regclass('sellerpilot_private.qoo10_adultyn_rejection_reconciliations')::text",
+          ),
+          "sellerpilot_private.qoo10_adultyn_rejection_reconciliations",
         );
       }
     }
