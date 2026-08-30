@@ -76,11 +76,14 @@ test("sale configuration has one shared dropdown contract", () => {
   assert.deepEqual(productSaleConfigurations, [
     { value: "상품 1개", label: "1개" },
     { value: "상품 1+1", label: "1+1" },
+    { value: "상품 6개", label: "6개" },
   ]);
   assert.equal(normalizeProductSaleConfiguration("본품 1 + 1 세트"), "상품 1+1");
   assert.equal(normalizeProductSaleConfiguration("상품 1개"), "상품 1개");
   assert.equal(normalizeProductSaleConfiguration("본품 1개"), "상품 1개");
   assert.equal(normalizeProductSaleConfiguration("머그컵 1개"), "상품 1개");
+  assert.equal(normalizeProductSaleConfiguration("검정색 케이블 정리 클립 6개"), "상품 6개");
+  assert.equal(normalizeProductSaleConfiguration("클립 6개 세트"), "상품 6개");
   assert.equal(normalizeProductSaleConfiguration("상품 2개"), "");
   assert.equal(normalizeProductSaleConfiguration("상품 11개"), "");
 });
