@@ -24,6 +24,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260831055000_reconcile_exact_qoo10_adultyn_rejection.sql",
   import.meta.url,
 );
+const retryIdentityMigrationUrl = new URL(
+  "../supabase/migrations/20260831056000_allow_exact_qoo10_adultyn_retry_identity.sql",
+  import.meta.url,
+);
 const predecessorMigrationUrl = new URL(
   "../supabase/migrations/20260831052500_reconcile_exact_qoo10_preprovider_gate_denial.sql",
   import.meta.url,
@@ -327,6 +331,82 @@ test("exact AdultYN rejection is reconciled without replaying or rewriting provi
 
     await db.exec(migration);
     assert.equal(await scalar(db, `select count(*)::integer value from sellerpilot_private.qoo10_adultyn_rejection_reconciliations where job_id=$1`, [JOB_ID]), 1);
+  } finally {
+    await db.close();
+  }
+});
+
+test("exact AdultYN evidence authorizes only its bound retry identity", async () => {
+  const db = await seedDatabase();
+  try {
+    await db.exec(await renderedMigration(db));
+    const evidence = (await db.query(
+      `select request_sha256,response_sha256
+         from sellerpilot_private.qoo10_adultyn_rejection_reconciliations
+        where job_id=$1`,
+      [JOB_ID],
+    )).rows[0];
+    const retrySource = await readFile(retryIdentityMigrationUrl, "utf8");
+    const helper = retrySource.match(
+      /create or replace function\s+sellerpilot_private\.qoo10_exact_adultyn_retry_identity_allowed\([\s\S]*?\n\$\$;/,
+    );
+    assert.ok(helper?.[0], "exact AdultYN retry identity helper must remain extractable");
+    const renderedHelper = helper[0]
+      .replaceAll(REQUEST_SHA, evidence.request_sha256)
+      .replaceAll(RESPONSE_SHA, evidence.response_sha256);
+    await db.exec(renderedHelper);
+
+    const allowed = async (...args) => scalar(
+      db,
+      `select sellerpilot_private.qoo10_exact_adultyn_retry_identity_allowed(
+        $1::uuid,$2::uuid,$3::uuid,$4,$5
+      ) value`,
+      args,
+    );
+    assert.equal(
+      await allowed(LISTING_ID, CREDENTIAL_ID, PRODUCT_ID, "JP", ""),
+      true,
+    );
+    assert.equal(
+      await allowed("11111111-1111-4111-8111-111111111111", CREDENTIAL_ID, PRODUCT_ID, "JP", ""),
+      false,
+      "a generic listing identity must not reuse the exact evidence",
+    );
+    assert.equal(
+      await allowed(LISTING_ID, CREDENTIAL_ID, PRODUCT_ID, "KR", ""),
+      false,
+      "a market drift must fail closed",
+    );
+    await assert.rejects(
+      db.query(
+        `update sellerpilot_private.qoo10_adultyn_rejection_reconciliations
+            set provider_observed_at=provider_observed_at+interval '1 second'
+          where job_id=$1`,
+        [JOB_ID],
+      ),
+      /qoo10_adultyn_reconcile_exact_observation_check/,
+    );
+    await db.query(
+      `update sellerpilot_private.operation_audit
+          set safe_detail=safe_detail||'{"contract":"drifted"}'::jsonb
+        where action='qoo10_exact_adultyn_rejection_reconciled' and entity_id=$1`,
+      [JOB_ID],
+    );
+    assert.equal(
+      await allowed(LISTING_ID, CREDENTIAL_ID, PRODUCT_ID, "JP", ""),
+      false,
+      "audit evidence drift must revoke retry identity",
+    );
+
+    assert.match(retrySource, /5db53e5f921c497df1faf8b9c3ff1b4f68bad873763c80e8f35d882fbfc78dab/);
+    assert.match(retrySource, /4b62884414366a00f2729bf775aa355628b6b2a2b8020fc5eca3509340d306e2/);
+    assert.match(retrySource, /c47e80ae0fbe9f872383d1a1e1412053f00106e809055b7b1ff82af86a843256/);
+    assert.match(retrySource, /ce0e788743b15eb7fc40b5b8a102da6bbc5f3fd5cebb7ac2f85ad2baa99b7bfd/);
+    assert.equal(
+      retrySource.match(/or sellerpilot_private\.qoo10_exact_adultyn_retry_identity_allowed\(/g)?.length,
+      2,
+      "only the rollback identity and its internal enqueue fence may gain the exact branch",
+    );
   } finally {
     await db.close();
   }

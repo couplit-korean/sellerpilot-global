@@ -49,6 +49,8 @@ const QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION =
   "20260831053500_rebind_qoo10_scoped_provider_mutation_chain.sql";
 const QOO10_ADULTYN_RECONCILIATION_MIGRATION =
   "20260831055000_reconcile_exact_qoo10_adultyn_rejection.sql";
+const QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION =
+  "20260831056000_allow_exact_qoo10_adultyn_retry_identity.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -577,6 +579,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION,
       ELEVENST_SNAPSHOT_RECOVERY_MIGRATION,
       QOO10_ADULTYN_RECONCILIATION_MIGRATION,
+      QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -604,6 +607,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION)
         < migrationNames.indexOf(QOO10_ADULTYN_RECONCILIATION_MIGRATION),
       "Qoo10 AdultYN exact reconciliation must replay after the provider-chain repair",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ADULTYN_RECONCILIATION_MIGRATION)
+        < migrationNames.indexOf(QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION),
+      "Qoo10 AdultYN retry identity must replay after the exact reconciliation",
     );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -668,6 +676,32 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           "CS ledger objects must already exist before the Qoo10 gate",
         );
       }
+      if (name === QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION) {
+        assert.deepEqual(
+          (await db.query(
+            `select
+               encode(extensions.digest(pg_get_functiondef(
+                 'public.sellerpilot_service_get_qoo10_rollback_update_identity(uuid,uuid,uuid,text,text)'::regprocedure
+               ),'sha256'),'hex') identity_sha,
+               encode(extensions.digest(pg_get_functiondef(
+                 'public.sellerpilot_310500_enqueue_listing_before_channel_gate(uuid,uuid,uuid,text,text,jsonb)'::regprocedure
+               ),'sha256'),'hex') internal_enqueue_sha,
+               encode(extensions.digest(pg_get_functiondef(
+                 'public.sellerpilot_service_enqueue_listing_gateway_job(uuid,uuid,uuid,text,text,jsonb)'::regprocedure
+               ),'sha256'),'hex') outer_enqueue_sha,
+               encode(extensions.digest(pg_get_functiondef(
+                 'public.sellerpilot_claim_channel_operation(uuid,text,text,text,text)'::regprocedure
+               ),'sha256'),'hex') claim_sha`,
+          )).rows,
+          [{
+            identity_sha: "5db53e5f921c497df1faf8b9c3ff1b4f68bad873763c80e8f35d882fbfc78dab",
+            internal_enqueue_sha: "4b62884414366a00f2729bf775aa355628b6b2a2b8020fc5eca3509340d306e2",
+            outer_enqueue_sha: "b1e6272328e57f3bf012ddd2ff4bcde0972a4b08cce23e09d41278b39c934412",
+            claim_sha: "6be63710e119958b8df3da93a7035c90975181898a2da8247e84b75f8581edac",
+          }],
+          "Qoo10 retry identity must patch only the exact observed function pre-images",
+        );
+      }
       try {
         await db.exec(withoutUnavailableExtensions(sql));
       } catch (error) {
@@ -729,6 +763,90 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
             "select to_regclass('sellerpilot_private.qoo10_adultyn_rejection_reconciliations')::text",
           ),
           "sellerpilot_private.qoo10_adultyn_rejection_reconciliations",
+        );
+      }
+      if (name === QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in (
+                '20260831033000', '20260831050000', '20260831052500',
+                '20260831053500', '20260831055000', '20260831056000'
+              )`,
+          ),
+          6,
+          "Qoo10 AdultYN retry identity must be the sixth recorded release-tail migration",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select to_regprocedure(
+              'sellerpilot_private.qoo10_exact_adultyn_retry_identity_allowed(uuid,uuid,uuid,text,text)'
+            ) is not null`,
+          ),
+          true,
+        );
+        assert.deepEqual(
+          (await db.query(
+            `select
+               encode(extensions.digest(pg_get_functiondef(
+                 'sellerpilot_private.qoo10_exact_adultyn_retry_identity_allowed(uuid,uuid,uuid,text,text)'::regprocedure
+               ),'sha256'),'hex') helper_sha,
+               encode(extensions.digest(pg_get_functiondef(
+                 'public.sellerpilot_service_get_qoo10_rollback_update_identity(uuid,uuid,uuid,text,text)'::regprocedure
+               ),'sha256'),'hex') identity_sha,
+               encode(extensions.digest(pg_get_functiondef(
+                 'public.sellerpilot_310500_enqueue_listing_before_channel_gate(uuid,uuid,uuid,text,text,jsonb)'::regprocedure
+               ),'sha256'),'hex') internal_enqueue_sha,
+               encode(extensions.digest(pg_get_functiondef(
+                 'public.sellerpilot_service_enqueue_listing_gateway_job(uuid,uuid,uuid,text,text,jsonb)'::regprocedure
+               ),'sha256'),'hex') outer_enqueue_sha,
+               encode(extensions.digest(pg_get_functiondef(
+                 'public.sellerpilot_claim_channel_operation(uuid,text,text,text,text)'::regprocedure
+               ),'sha256'),'hex') claim_sha`,
+          )).rows,
+          [{
+            helper_sha: "56c165eb8e08ba67192944b9b7ac9a18687d74cde3327e62568d4c9459660a34",
+            identity_sha: "c47e80ae0fbe9f872383d1a1e1412053f00106e809055b7b1ff82af86a843256",
+            internal_enqueue_sha: "ce0e788743b15eb7fc40b5b8a102da6bbc5f3fd5cebb7ac2f85ad2baa99b7bfd",
+            outer_enqueue_sha: "b1e6272328e57f3bf012ddd2ff4bcde0972a4b08cce23e09d41278b39c934412",
+            claim_sha: "6be63710e119958b8df3da93a7035c90975181898a2da8247e84b75f8581edac",
+          }],
+          "Qoo10 retry identity must preserve the outer enqueue and claim boundaries byte-exactly",
+        );
+        assert.deepEqual(
+          (await db.query(
+            `select
+               has_function_privilege('service_role',
+                 'public.sellerpilot_service_get_qoo10_rollback_update_identity(uuid,uuid,uuid,text,text)','EXECUTE') identity_service,
+               has_function_privilege('authenticated',
+                 'public.sellerpilot_service_get_qoo10_rollback_update_identity(uuid,uuid,uuid,text,text)','EXECUTE') identity_user,
+               has_function_privilege('service_role',
+                 'public.sellerpilot_310500_enqueue_listing_before_channel_gate(uuid,uuid,uuid,text,text,jsonb)','EXECUTE') internal_service,
+               has_function_privilege('service_role',
+                 'public.sellerpilot_service_enqueue_listing_gateway_job(uuid,uuid,uuid,text,text,jsonb)','EXECUTE') outer_service,
+               has_function_privilege('authenticated',
+                 'public.sellerpilot_claim_channel_operation(uuid,text,text,text,text)','EXECUTE') claim_user,
+               bool_and(pg_get_userbyid(p.proowner)='postgres'
+                 and p.prosecdef and p.proconfig=array['search_path=""']::text[]) boundaries_hardened
+              from pg_proc p
+             where p.oid in (
+               'public.sellerpilot_service_get_qoo10_rollback_update_identity(uuid,uuid,uuid,text,text)'::regprocedure,
+               'public.sellerpilot_310500_enqueue_listing_before_channel_gate(uuid,uuid,uuid,text,text,jsonb)'::regprocedure,
+               'public.sellerpilot_service_enqueue_listing_gateway_job(uuid,uuid,uuid,text,text,jsonb)'::regprocedure,
+               'public.sellerpilot_claim_channel_operation(uuid,text,text,text,text)'::regprocedure
+             )
+             group by identity_service,identity_user,internal_service,outer_service,claim_user`,
+          )).rows,
+          [{
+            identity_service: true,
+            identity_user: false,
+            internal_service: false,
+            outer_service: true,
+            claim_user: true,
+            boundaries_hardened: true,
+          }],
         );
       }
     }
@@ -9550,6 +9668,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== temuStaticEgressMigrationName
         && name !== qoo10ScopedReleaseGateMigrationName
         && name !== qoo10ScopedProviderChainMigrationName
+        && name !== QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
