@@ -870,6 +870,31 @@ function directAliasValue(record: Record<string, unknown>, aliases: readonly str
     normalizedAliases.has(key.toLocaleLowerCase().replace(/[^a-z0-9]/g, "")))?.[1];
 }
 
+function qoo10RollbackKeywordVerified(expectedValue: unknown, actualValue: unknown, itemTitle: unknown) {
+  if (typeof expectedValue !== "string" || typeof actualValue !== "string") return false;
+  const title = typeof itemTitle === "string" ? itemTitle.trim() : "";
+  if (!title) return false;
+  if (expectedValue === actualValue) return true;
+  if (expectedValue !== expectedValue.trim() || actualValue !== actualValue.trim()) return false;
+  const expectedTerms = expectedValue.split(",").map((term) => term.trim());
+  const actualTerms = actualValue.split(",").map((term) => term.trim());
+  if (expectedTerms.some((term) => !term) || actualTerms.some((term) => !term)
+      || expectedTerms.join(",") !== expectedValue
+      || actualTerms.join(",") !== actualValue) return false;
+
+  // In the observed QAPI readback, Qoo10 removed the one keyword entry that
+  // exactly duplicated ItemTitle at the start. Permit only that exact prefix
+  // deletion; whitespace changes, different terms, reordering, multiple
+  // deletions, substrings, and fuzzy matches fail.
+  const titleIndexes = expectedTerms
+    .map((term, index) => term === title ? index : -1)
+    .filter((index) => index >= 0);
+  return titleIndexes.length === 1
+    && titleIndexes[0] === 0
+    && actualTerms.length === expectedTerms.length - 1
+    && actualValue === expectedTerms.slice(1).join(",");
+}
+
 function qoo10ExactReadbackRecords(
   value: unknown,
   expectedRemoteId: string,
@@ -983,7 +1008,10 @@ function lazadaReadbackProjection(remoteData: Record<string, unknown>) {
 }
 
 function expectedListingUpdateProjection(channel: ActiveChannelKey, argumentsValue: Record<string, unknown>) {
-  if (channel === "qoo10") return definedEntries(recordValue(argumentsValue.params), qoo10MutableFields);
+  if (channel === "qoo10") {
+    const params = recordValue(argumentsValue.params);
+    return definedEntries(params, qoo10MutableFields);
+  }
   if (channel === "shopee") return definedEntries(recordValue(argumentsValue.body), shopeeMutableFields);
   if (channel === "lazada") {
     const product = recordValue(recordValue(recordValue(argumentsValue.request).Request).Product);
@@ -1055,7 +1083,21 @@ export function verifyListingUpdateReadback(
 ) {
   const expected = expectedListingUpdateProjection(channel, argumentsValue);
   const actual = actualListingUpdateProjection(channel, argumentsValue, remoteData);
-  const mismatches = subsetMismatches(expected, actual).filter(Boolean);
+  let comparableActual: unknown = actual;
+  if (channel === "qoo10" && qoo10RollbackUpdateRecoveryBinding(argumentsValue)) {
+    const qooExpected = expected as Record<string, unknown>;
+    const qooActual = { ...(actual as Record<string, unknown>) };
+    if (Object.hasOwn(qooExpected, "Keyword")
+        && qoo10RollbackKeywordVerified(
+          qooExpected.Keyword,
+          qooActual.Keyword,
+          recordValue(argumentsValue.params).ItemTitle,
+      )) {
+      qooActual.Keyword = qooExpected.Keyword;
+    }
+    comparableActual = qooActual;
+  }
+  const mismatches = subsetMismatches(expected, comparableActual).filter(Boolean);
   return { ok: Object.keys(expected).length > 0 && mismatches.length === 0, mismatches };
 }
 

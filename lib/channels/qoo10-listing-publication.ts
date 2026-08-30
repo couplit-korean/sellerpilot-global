@@ -126,6 +126,16 @@ function exactInteger(record: Record<string, unknown>, names: readonly string[])
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
+function exactJpyInteger(record: Record<string, unknown>, names: readonly string[]) {
+  const value = exactText(record, names);
+  // GetItemDetailInfo can serialize whole-JPY prices as fixed-point strings
+  // (for example, "1871.0000"). Accept only an all-zero fractional suffix;
+  // quantities and every non-price field keep their stricter representation.
+  if (!/^\d+(?:\.0+)?$/u.test(value)) return null;
+  const parsed = Number(value.split(".", 1)[0]);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 function sameOrderedValues(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -249,8 +259,8 @@ export function normalizeQoo10ListingPublicationReadback(
   const shippingNo = exactText(item, ["ShippingNo", "ShippingNO", "DeliveryGroupNo"]);
   const shippingVerified = (!strict || shippingNo === strict.shippingNo)
     && (!recovery || (recoveryExpectationVerified && shippingNo === recovery.shippingNo));
-  const sellPrice = exactInteger(item, ["SellPrice", "ItemPrice"]);
-  const retailPrice = exactInteger(item, ["RetailPrice"]);
+  const sellPrice = exactJpyInteger(item, ["SellPrice", "ItemPrice"]);
+  const retailPrice = exactJpyInteger(item, ["RetailPrice"]);
   const quantity = exactInteger(item, ["ItemQty", "Qty", "StockQty"]);
   const retailPriceVerified = !recovery
     || (recoveryExpectationVerified && retailPrice === recovery.retailPriceJpy);

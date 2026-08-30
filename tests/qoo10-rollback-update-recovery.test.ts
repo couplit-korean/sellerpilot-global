@@ -4,8 +4,10 @@ import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import {
   qoo10RollbackUpdateRecoveryArgument,
   qoo10RollbackUpdateRecoveryContract,
+  verifyListingUpdateReadback,
 } from "../lib/channels/listing-update";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { normalizeQoo10ListingPublicationReadback } from "../lib/channels/qoo10-listing-publication";
 
 const remoteId = "1234567890";
 const fingerprint = "a".repeat(64);
@@ -184,6 +186,174 @@ test("rollback-confirmed Qoo10 update accepts exact GdNo and strictly verifies o
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Qoo10 recovery accepts exact fixed-point integers and its redundant-title keyword normalization", async () => {
+  const originalFetch = globalThis.fetch;
+  const methods: string[] = [];
+  let readbackCount = 0;
+  const argumentsValue = operationArguments();
+  argumentsValue.params.Keyword = "日本語の商品名,No Brand,購入前確認";
+  globalThis.fetch = async (input) => {
+    const method = qooMethod(input);
+    methods.push(method);
+    if (method === "ItemsLookup.GetItemDetailInfo") {
+      readbackCount += 1;
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: readback(readbackCount === 1 ? "S1" : "S2", {
+          SellPrice: undefined,
+          ItemPrice: `${sellPriceJpy}.0000`,
+          RetailPrice: `${retailPriceJpy}.0000`,
+          ItemQty: String(quantity),
+          Keyword: "No Brand,購入前確認",
+        }),
+      });
+    }
+    return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.update",
+      payload: { api_key: "test-key" },
+      arguments: argumentsValue,
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(methods.filter((method) => method === "ItemsBasic.EditGoodsStatus").length, 1);
+    assert.deepEqual(result.steps.at(-1)?.data.sellerpilotMismatchPaths, []);
+    const checks = result.steps.at(-1)?.data.sellerpilotPublicationChecks as Record<string, boolean>;
+    assert.equal(checks.retailPriceVerified, true);
+    assert.equal(checks.sellPriceVerified, true);
+    assert.equal(checks.quantityVerified, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Qoo10 recovery still rejects non-zero fractional prices and non-title keyword drift", async () => {
+  const originalFetch = globalThis.fetch;
+  const argumentsValue = operationArguments();
+  argumentsValue.params.Keyword = "日本語の商品名,No Brand,購入前確認";
+  const methods: string[] = [];
+  globalThis.fetch = async (input) => {
+    const method = qooMethod(input);
+    methods.push(method);
+    if (method === "ItemsLookup.GetItemDetailInfo") {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: readback("S1", {
+          SellPrice: undefined,
+          ItemPrice: `${sellPriceJpy}.5000`,
+          RetailPrice: `${retailPriceJpy}.0000`,
+          ItemQty: `${quantity}.0000`,
+          Keyword: "No Brand,別の語句",
+        }),
+      });
+    }
+    return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+  };
+  try {
+    const result = await withoutOperationDelays(() => executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.update",
+      payload: { api_key: "test-key" },
+      arguments: argumentsValue,
+      environment: "production",
+    }));
+    assert.equal(result.ok, false);
+    assert.equal(methods.includes("ItemsBasic.EditGoodsStatus"), false);
+    assert.deepEqual(result.steps.at(-1)?.data.sellerpilotMismatchPaths, ["Keyword"]);
+    const checks = result.steps.at(-1)?.data.sellerpilotPublicationChecks as Record<string, boolean>;
+    assert.equal(checks.sellPriceVerified, false);
+    assert.equal(checks.quantityVerified, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Qoo10 recovery accepts only exact whole-JPY fixed-point serialization", () => {
+  const expectedRecovery = {
+    categoryCode,
+    retailPriceJpy,
+    sellPriceJpy,
+    quantity,
+    shippingNo,
+    biContentsNo,
+    detailImageUrls,
+  };
+  for (const invalidRetailPrice of [
+    `${retailPriceJpy}.0001`,
+    `${retailPriceJpy}e0`,
+    `+${retailPriceJpy}.0000`,
+    `${retailPriceJpy}.`,
+    "9007199254740992.0000",
+  ]) {
+    const verification = normalizeQoo10ListingPublicationReadback({
+      operation: "listing.update",
+      remoteId,
+      resultObject: readback("S1", { RetailPrice: invalidRetailPrice }),
+      expectedLocale: "ja-JP",
+      expectedFingerprint: fingerprint,
+      expectedImageCount: 8,
+      expectedRecovery,
+    });
+    assert.equal(verification.checks.retailPriceVerified, false, invalidRetailPrice);
+  }
+
+  const decimalQuantity = normalizeQoo10ListingPublicationReadback({
+    operation: "listing.update",
+    remoteId,
+    resultObject: readback("S1", { ItemQty: `${quantity}.0000` }),
+    expectedLocale: "ja-JP",
+    expectedFingerprint: fingerprint,
+    expectedImageCount: 8,
+    expectedRecovery,
+  });
+  assert.equal(decimalQuantity.checks.quantityVerified, false);
+});
+
+test("Qoo10 recovery keyword normalization permits only one exact title-token deletion", () => {
+  const expectedKeyword = "日本語の商品名,No Brand,購入前確認";
+  const verify = (actualKeyword: string, overrides: Record<string, unknown> = {}) => {
+    const argumentsValue = operationArguments();
+    argumentsValue.params.Keyword = expectedKeyword;
+    return verifyListingUpdateReadback(
+      "qoo10",
+      argumentsValue,
+      { ResultObject: readback("S1", { Keyword: actualKeyword, ...overrides }) },
+    );
+  };
+  assert.equal(verify(expectedKeyword).ok, true, "exact sequence");
+  assert.equal(verify("No Brand,購入前確認").ok, true, "one exact title deletion");
+  for (const invalidKeyword of [
+    "No Brand,,購入前確認",
+    "No Brand,購入前確認,追加",
+    "購入前確認,No Brand",
+    "日本語の商品,No Brand,購入前確認",
+  ]) assert.equal(verify(invalidKeyword).ok, false, invalidKeyword);
+  assert.equal(
+    verify("No Brand,購入前確認", { ItemTitle: "別の商品名" }).ok,
+    false,
+    "remote title mismatch",
+  );
+
+  const duplicateTitleArguments = operationArguments();
+  duplicateTitleArguments.params.Keyword = "日本語の商品名,日本語の商品名,No Brand,購入前確認";
+  assert.equal(verifyListingUpdateReadback(
+    "qoo10",
+    duplicateTitleArguments,
+    { ResultObject: readback("S1", { Keyword: "No Brand,購入前確認" }) },
+  ).ok, false, "multiple title deletions");
+
+  const nonLeadingTitleArguments = operationArguments();
+  nonLeadingTitleArguments.params.Keyword = "No Brand,日本語の商品名,購入前確認";
+  assert.equal(verifyListingUpdateReadback(
+    "qoo10",
+    nonLeadingTitleArguments,
+    { ResultObject: readback("S1", { Keyword: "No Brand,購入前確認" }) },
+  ).ok, false, "non-leading title deletion");
 });
 
 test("Qoo10 recovery keeps expected remote ID when UpdateGoods response omits identity aliases", async () => {
