@@ -34,11 +34,11 @@ import {
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
 import { validateElevenstListingProduct } from "./elevenst-listing";
 import { elevenstVerifiedListingRemoteState } from "./elevenst-listing-publication";
+import { coupangListingUpdateWrite } from "./coupang-listing-update";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import {
   elevenstListingUpdateProjectionDigestInput,
   listingUpdateRemoteIdentity,
-  mergeCoupangListingUpdateBody,
   mergeListingUpdatePatch,
   prepareListingUpdateArguments,
   verifyListingUpdateReadback,
@@ -2967,7 +2967,8 @@ async function executeCoupang(input: ExecuteInput) {
     };
     if (!preflightStep.ok) return result(input, [preflightStep], remoteId);
 
-    const mergedBody = mergeCoupangListingUpdateBody(currentBody, patchBody);
+    const coupangUpdate = coupangListingUpdateWrite(currentBody, patchBody);
+    const mergedBody = coupangUpdate.body;
     mergedBody.vendorId = vendorId;
     mergedBody.sellerProductId = patchBody.sellerProductId;
     if (listingPublicationReadbackRequested(input)) {
@@ -2982,7 +2983,10 @@ async function executeCoupang(input: ExecuteInput) {
     const writeStep = step("listing.update", writeRemote);
     if (!writeStep.ok) return result(input, [preflightStep, writeStep], remoteId);
     const readbackRemote = await readProduct();
-    const readbackStep = listingUpdateReadbackStep("listing-readback", readbackRemote, input.channel, input.arguments);
+    const readbackStep = listingUpdateReadbackStep("listing-readback", readbackRemote, input.channel, {
+      ...input.arguments,
+      body: coupangUpdate.effectivePatch,
+    });
     const readbackBody = objectValue(readbackRemote.data, "data", false);
     readbackStep.ok = readbackStep.ok && String(readbackBody.sellerProductId ?? "") === remoteId;
     return coupangListingResultWithPublicationReadback(input, [preflightStep, writeStep, readbackStep], remoteId);
