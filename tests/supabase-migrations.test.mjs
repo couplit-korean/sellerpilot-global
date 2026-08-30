@@ -525,6 +525,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260829080317_fail_closed_overseas_listing_create.sql",
       "20260829114703_accept_server_product_research_completion.sql",
       "20260829165803_enforce_category_publication_environment_and_market.sql",
+      "20260830052516_allow_legacy_ebay_diagnostic_attestation.sql",
       "20260830090000_recover_product_research_context.sql",
       "20260830095000_close_listing_mutations_until_adapters_ready.sql",
       "20260830100000_verified_remote_publication_ledger.sql",
@@ -10405,17 +10406,24 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
   const serverlessHash = "4".repeat(64);
   const genericGatewayHash = "5".repeat(64);
   const authorizationCode = "serverless-oauth-code-never-stored-in-job-json";
+  const legacyEbayDiagnosticMigrationName =
+    "20260830052516_allow_legacy_ebay_diagnostic_attestation.sql";
   try {
     await db.exec(supabaseCompatibilityLayer);
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
     const migrationNames = (await readdir(migrationUrl))
       .filter((name) => name.endsWith(".sql"))
       .sort();
+    let legacyEbayDiagnosticMigration;
     for (const name of migrationNames) {
-      await db.exec(withoutUnavailableExtensions(
-        await readFile(new URL(name, migrationUrl), "utf8"),
-      ));
+      const source = await readFile(new URL(name, migrationUrl), "utf8");
+      if (name === legacyEbayDiagnosticMigrationName) {
+        legacyEbayDiagnosticMigration = source;
+      } else {
+        await db.exec(withoutUnavailableExtensions(source));
+      }
     }
+    assert.equal(typeof legacyEbayDiagnosticMigration, "string");
     await attestPublicationRelease(db);
     await activatePublicationRuntimeRelease(db);
     assert.equal(
@@ -10437,7 +10445,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       [ADMIN_ID],
     );
     await setClaims(db);
-    const ebayCredentialId = await scalar(
+    let ebayCredentialId = await scalar(
       db,
       `select public.sellerpilot_rotate_credential(
         'ebay', 'production',
@@ -10454,6 +10462,68 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       )`,
     );
 
+    await setClaims(db, "service_role");
+    const blockedLegacyOrdersId = await scalar(
+      db,
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         credential_id, channel, operation, environment,
+         request_payload, created_by, created_at
+       ) values (
+         $1, 'ebay', 'orders.list', 'production',
+         '{"arguments":{"fromDate":"2026-08-27","toDate":"2026-08-28"}}'::jsonb,
+         $2, clock_timestamp() - interval '3 minutes'
+       ) returning id`,
+      [ebayCredentialId, ADMIN_ID],
+    );
+    const legacyDiagnosticRows = (await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         credential_id, channel, operation, environment,
+         request_payload, created_by, created_at
+       ) values
+         ($1, 'ebay', 'diagnostic.test', 'production', '{}'::jsonb, $2,
+          clock_timestamp() - interval '2 minutes'),
+         ($1, 'ebay', 'diagnostic.test', 'production', '{}'::jsonb, $2,
+          clock_timestamp() - interval '1 minute')
+       returning id, created_at`,
+      [ebayCredentialId, ADMIN_ID],
+    )).rows.sort((left, right) =>
+      new Date(left.created_at).getTime() - new Date(right.created_at).getTime());
+    const olderLegacyDiagnosticId = legacyDiagnosticRows[0].id;
+    const newestLegacyDiagnosticId = legacyDiagnosticRows[1].id;
+    assert.deepEqual(
+      (await db.query(
+        `select seller_account_key, seller_account_key_source,
+                seller_account_verified_at
+           from sellerpilot_private.channel_credentials
+          where id = $1`,
+        [ebayCredentialId],
+      )).rows,
+      [{
+        seller_account_key: null,
+        seller_account_key_source: "legacy_unattested",
+        seller_account_verified_at: null,
+      }],
+    );
+
+    await db.exec(withoutUnavailableExtensions(legacyEbayDiagnosticMigration));
+    assert.deepEqual(
+      (await db.query(
+        `select id::text, status, error_message
+           from sellerpilot_private.channel_gateway_jobs
+          where id = any($1::uuid[])
+          order by created_at`,
+        [[olderLegacyDiagnosticId, newestLegacyDiagnosticId]],
+      )).rows,
+      [
+        {
+          id: olderLegacyDiagnosticId,
+          status: "cancelled",
+          error_message: "Superseded by a newer queued eBay identity diagnostic.",
+        },
+        { id: newestLegacyDiagnosticId, status: "queued", error_message: null },
+      ],
+    );
+
     await db.query(
       `insert into sellerpilot_private.ai_cli_worker_tokens (
          label, token_hash, fingerprint, status, scope, expires_at, created_by
@@ -10465,6 +10535,129 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       [serverlessHash, genericGatewayHash, ADMIN_ID],
     );
     await setClaims(db, "service_role");
+
+    const diagnosticClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/legacy-ebay-diagnostic')",
+      [serverlessHash],
+    );
+    assert.equal(diagnosticClaim.id, newestLegacyDiagnosticId);
+    assert.equal(diagnosticClaim.channel, "ebay");
+    assert.equal(diagnosticClaim.operation, "diagnostic.test");
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [blockedLegacyOrdersId],
+      ),
+      "queued",
+      "non-diagnostic eBay work must remain fenced before provider attestation",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+          $1, $2, $3
+        )`,
+        [serverlessHash, newestLegacyDiagnosticId, diagnosticClaim.claim_token],
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_cs_credential_refresh(
+          $1, $2, $3
+        )`,
+        [serverlessHash, newestLegacyDiagnosticId, diagnosticClaim.claim_token],
+      ),
+      true,
+    );
+    const stableEbayProviderSubject = "ebay:eias:serverless-diagnostic-owner";
+    const diagnosticCredentialPayload = {
+      client_id: "serverless-client",
+      client_secret: "serverless-secret",
+      ru_name: "serverless-redirect",
+      access_token: "diagnostic-refreshed-access-token",
+      refresh_token: "diagnostic-refreshed-refresh-token",
+      provider_account_identity_version: "v1",
+      provider_account_subject: stableEbayProviderSubject,
+    };
+    const diagnosticExpiresAt = "2099-01-01T00:00:00.000Z";
+    const diagnosticCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_serverless_cs_transaction(
+        $1, $2, $3, 'succeeded', $4::jsonb, null, $5::jsonb,
+        null, null, $6::jsonb
+      )`,
+      [
+        serverlessHash,
+        newestLegacyDiagnosticId,
+        diagnosticClaim.claim_token,
+        JSON.stringify({
+          ok: true,
+          channel: "ebay",
+          operation: "diagnostic.test",
+          steps: [],
+          safeMessage: "Synthetic eBay provider identity diagnostic passed",
+        }),
+        JSON.stringify({
+          payload: diagnosticCredentialPayload,
+          expiresAt: diagnosticExpiresAt,
+          recoveryOnly: false,
+          oauthComplete: false,
+        }),
+        JSON.stringify({
+          status: "passed",
+          message: "Synthetic stable EIASToken attestation",
+        }),
+      ],
+    );
+    assert.equal(diagnosticCompletion.status, "completed");
+    assert.notEqual(diagnosticCompletion.credentialId, ebayCredentialId);
+    const diagnosticCredential = (await db.query(
+      `select id::text, status, seller_account_key,
+              seller_account_key_source,
+              seller_account_verified_at is not null as seller_account_verified,
+              last_check_status
+         from sellerpilot_private.channel_credentials
+        where id = $1`,
+      [diagnosticCompletion.credentialId],
+    )).rows[0];
+    assert.equal(diagnosticCredential.status, "active");
+    assert.match(diagnosticCredential.seller_account_key, /^[a-f0-9]{64}$/);
+    assert.equal(
+      diagnosticCredential.seller_account_key_source,
+      "provider_certified_v1",
+    );
+    assert.equal(diagnosticCredential.seller_account_verified, true);
+    assert.equal(diagnosticCredential.last_check_status, "passed");
+    assert.deepEqual(
+      (await db.query(
+        `select status, credential_id::text
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [newestLegacyDiagnosticId],
+      )).rows,
+      [{ status: "succeeded", credential_id: diagnosticCompletion.credentialId }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.channel_credentials where id = $1",
+        [ebayCredentialId],
+      ),
+      "revoked",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'cancelled', completed_at = clock_timestamp(),
+              error_message = 'Synthetic pre-attestation fence probe completed.',
+              updated_at = clock_timestamp()
+        where id = $1 and status = 'queued'`,
+      [blockedLegacyOrdersId],
+    );
+    ebayCredentialId = diagnosticCompletion.credentialId;
 
     const oauthJobId = await scalar(
       db,
@@ -10528,7 +10721,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       access_token: "serverless-new-access-token",
       refresh_token: "serverless-new-refresh-token",
       provider_account_identity_version: "v1",
-      provider_account_subject: "ebay:eias:serverless-oauth-owner",
+      provider_account_subject: stableEbayProviderSubject,
     };
     const oauthCredentialRefresh = {
       payload: oauthCredentialPayload,
@@ -10579,6 +10772,15 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       oauthCompletionArguments,
     );
     assert.equal(oauthCompletion.status, "completed");
+    assert.equal(
+      await scalar(
+        db,
+        "select seller_account_key from sellerpilot_private.channel_credentials where id = $1",
+        [oauthCompletion.credentialId],
+      ),
+      diagnosticCredential.seller_account_key,
+      "the same stable eBay provider subject must keep the certified lineage",
+    );
     assert.deepEqual(
       (await db.query(
         `select status,
