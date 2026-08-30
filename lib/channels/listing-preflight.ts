@@ -68,6 +68,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "category", label: "Qoo10 말단 카테고리", source: "카테고리", path: ["params", "SecondSubCat"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["params", "ItemTitle"] },
     { key: "retail-price", label: "Qoo10 정가", source: "상품 정보", test: (draft) => meaningfulIncludingZero(valueAt(draft, ["params", "RetailPrice"])) },
+    { key: "origin-type", label: "Qoo10 원산지 유형", source: "상품 정보", test: (draft) => ["1", "2", "3"].includes(String(valueAt(draft, ["params", "ProductionPlaceType"]))) },
     { key: "origin", label: "원산지", source: "상품 정보", path: ["params", "ProductionPlace"] },
     sharedImage(["params", "StandardImage"]),
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["params", "ItemPrice"]) },

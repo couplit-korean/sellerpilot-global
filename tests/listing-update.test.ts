@@ -123,6 +123,8 @@ test("Qoo10 rollback updates preserve required carrier fields but keep the exist
   const params = {
     SecondSubCat: "320002604",
     ItemTitle: "ロールバック確認済み商品",
+    ProductionPlaceType: "2",
+    ProductionPlace: "KR",
     RetailPrice: "1871",
     ShippingNo: "0",
     AvailableDateType: "0",
@@ -144,6 +146,8 @@ test("Qoo10 rollback updates preserve required carrier fields but keep the exist
     params: {
       SecondSubCat: "320002604",
       ItemTitle: "ロールバック確認済み商品",
+      ProductionPlaceType: "2",
+      ProductionPlace: "KR",
       RetailPrice: "1871",
       ShippingNo: "0",
       AvailableDateType: "0",
@@ -153,11 +157,18 @@ test("Qoo10 rollback updates preserve required carrier fields but keep the exist
     },
   });
   assert.equal(Object.hasOwn(rollbackArguments.params, "StandardImage"), false);
-  assert.deepEqual(listingUpdateMutablePaths("qoo10", rollbackArguments), ["ItemTitle", "ItemDescription"]);
+  assert.deepEqual(listingUpdateMutablePaths("qoo10", rollbackArguments), [
+    "ItemTitle",
+    "ProductionPlaceType",
+    "ProductionPlace",
+    "ItemDescription",
+  ]);
 
   const publishedArguments = prepareListingUpdateArguments("qoo10", { params }, listing);
   assert.equal((publishedArguments.params as Record<string, unknown>).StandardImage, params.StandardImage);
   assert.equal((publishedArguments.params as Record<string, unknown>).SecondSubCat, params.SecondSubCat);
+  assert.equal((publishedArguments.params as Record<string, unknown>).ProductionPlaceType, params.ProductionPlaceType);
+  assert.equal((publishedArguments.params as Record<string, unknown>).ProductionPlace, params.ProductionPlace);
   assert.equal((publishedArguments.params as Record<string, unknown>).RetailPrice, params.RetailPrice);
   assert.equal((publishedArguments.params as Record<string, unknown>).ShippingNo, params.ShippingNo);
   assert.equal((publishedArguments.params as Record<string, unknown>).AvailableDateType, params.AvailableDateType);

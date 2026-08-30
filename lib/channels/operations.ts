@@ -1827,6 +1827,8 @@ async function executeQoo10(input: ExecuteInput) {
     input.operation !== "listing.update"
     || !rollbackRecovery
     || rollbackRecovery.remoteId !== suppliedParams.ItemCode
+    || !["1", "2", "3"].includes(suppliedParams.ProductionPlaceType ?? "")
+    || !(suppliedParams.ProductionPlace ?? "").trim()
     || Object.hasOwn(suppliedParams, "StandardImage")
     || qoo10ImageCount(suppliedParams.ItemDescription ?? "") !== marketplaceChannelDetailImageCount
     || rollbackRecoveryReadbackExpectation?.detailImageUrls.length !== marketplaceChannelDetailImageCount

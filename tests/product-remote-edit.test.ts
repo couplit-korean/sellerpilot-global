@@ -182,6 +182,8 @@ test("Qoo10 rollback-confirmed 후보는 이미지 재업로드 없이 UpdateGoo
     params: {
       SecondSubCat: "320002604",
       ItemTitle: "更新商品",
+      ProductionPlaceType: "2",
+      ProductionPlace: "KR",
       RetailPrice: "1871",
       ShippingNo: "0",
       AvailableDateType: "0",
@@ -193,6 +195,8 @@ test("Qoo10 rollback-confirmed 후보는 이미지 재업로드 없이 UpdateGoo
   assert.deepEqual(prepared.params, {
     SecondSubCat: "320002604",
     ItemTitle: "更新商品",
+    ProductionPlaceType: "2",
+    ProductionPlace: "KR",
     RetailPrice: "1871",
     ShippingNo: "0",
     AvailableDateType: "0",

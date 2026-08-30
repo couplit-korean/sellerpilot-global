@@ -52,6 +52,8 @@ function operationArguments(marker: unknown = recoveryBinding) {
       ItemCode: remoteId,
       SecondSubCat: categoryCode,
       ItemTitle: "日本語の商品名",
+      ProductionPlaceType: "2",
+      ProductionPlace: "KR",
       RetailPrice: String(retailPriceJpy),
       ShippingNo: shippingNo,
       AvailableDateType: "0",
@@ -76,6 +78,8 @@ function readback(status: "S1" | "S2", overrides: Record<string, unknown> = {}) 
     ItemQty: String(quantity),
     ShippingNo: shippingNo,
     ItemTitle: "日本語の商品名",
+    ProductionPlaceType: "2",
+    ProductionPlace: "KR",
     ItemDetail: detailHtml,
     ImageUrl: qoo10BiImage(),
     ...overrides,
@@ -162,6 +166,8 @@ test("rollback-confirmed Qoo10 update accepts exact GdNo and strictly verifies o
       "ItemsLookup.GetItemDetailInfo",
     ]);
     assert.equal(calls[0]?.body.ItemCode, remoteId);
+    assert.equal(calls[0]?.body.ProductionPlaceType, "2");
+    assert.equal(calls[0]?.body.ProductionPlace, "KR");
     assert.equal(Object.hasOwn(calls[0]?.body ?? {}, "StandardImage"), false);
     assert.equal(calls[3]?.body.ItemCode, remoteId);
     assert.equal(calls[3]?.body.Status, "2");
@@ -652,6 +658,32 @@ test("malformed client recovery marker is rejected before every Qoo10 provider r
       operation: "listing.update",
       payload: { api_key: "test-key" },
       arguments: operationArguments({ ...recoveryBinding, forged: true }),
+      environment: "production",
+    });
+    assert.equal(fetchCount, 0);
+    assert.equal(result.ok, false);
+    assert.equal(result.steps[0]?.name, "qoo10-rollback-recovery-prewrite-fence");
+    assert.equal(result.steps[0]?.data.sellerpilotVerification, "QOO10_PREWRITE_REJECTED");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("rollback recovery rejects a missing Qoo10 origin type before every provider request", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return Response.json({ ResultCode: 0 });
+  };
+  try {
+    const argumentsValue = operationArguments();
+    argumentsValue.params.ProductionPlaceType = "";
+    const result = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.update",
+      payload: { api_key: "test-key" },
+      arguments: argumentsValue,
       environment: "production",
     });
     assert.equal(fetchCount, 0);

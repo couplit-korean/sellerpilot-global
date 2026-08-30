@@ -64,6 +64,7 @@ test("zero price and stock are rejected before a write", () => {
     params: {
       SecondSubCat: "123",
       ItemTitle: "Test",
+      ProductionPlaceType: "2",
       ProductionPlace: "대한민국",
       StandardImage: "https://example.com/item.jpg",
       RetailPrice: "0",
@@ -85,6 +86,7 @@ test("Qoo10 UpdateGoods carrier fields are required before create or update prep
   const params = {
     SecondSubCat: "320002604",
     ItemTitle: "Test",
+    ProductionPlaceType: "2",
     ProductionPlace: "Japan",
     StandardImage: "https://example.com/item.jpg",
     ItemPrice: "1871",
@@ -105,6 +107,18 @@ test("Qoo10 UpdateGoods carrier fields are required before create or update prep
       },
     }, "listing.update"),
     [],
+  );
+  assert.deepEqual(
+    blockingListingRequirements("qoo10", {
+      params: {
+        ...params,
+        ProductionPlaceType: "",
+        RetailPrice: "0",
+        AvailableDateType: "0",
+        AvailableDateValue: "3",
+      },
+    }, "listing.update").map((item) => item.key),
+    ["origin-type"],
   );
 });
 
