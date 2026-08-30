@@ -567,6 +567,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260831040000_rebind_ebay_periodic_inquiry_reads.sql",
       "20260831045000_gate_temu_periodic_inquiry_static_egress.sql",
       QOO10_SCOPED_GATE_MIGRATION,
+      "20260831052500_reconcile_exact_qoo10_preprovider_gate_denial.sql",
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
