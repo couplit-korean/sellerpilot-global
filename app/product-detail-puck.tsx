@@ -137,6 +137,36 @@ function CheckMark() {
   return <span aria-hidden="true">✓</span>;
 }
 
+const savedDetailCopyFallbacks: Record<string, string> = {
+  eyebrow: "PRODUCT",
+  title: "상품 정보",
+  description: "상품의 구성과 옵션을 확인해 주세요.",
+  body: "상품의 구성과 옵션을 확인해 주세요.",
+  cta: "상품 정보 보기",
+  button: "상품 정보 보기",
+  point1: "상품 구성 확인",
+  point2: "사용 방법 확인",
+  point3: "규격과 옵션 확인",
+  point4: "",
+  point5: "",
+  point6: "",
+  points: "",
+  imageAlt: "상품 이미지",
+};
+
+export function sanitizeProductDetailData(data: ProductDetailData): ProductDetailData {
+  return {
+    ...data,
+    content: data.content.map((block) => {
+      const props = { ...block.props } as Record<string, unknown>;
+      for (const [key, fallback] of Object.entries(savedDetailCopyFallbacks)) {
+        if (key in props) props[key] = safeCustomerCopy(props[key], fallback);
+      }
+      return { ...block, props } as typeof block;
+    }),
+  };
+}
+
 function createDetailData(result: ProductStudioResult, imageUrl: string, assetUrls: Record<string, string>): ProductDetailData {
   const { product, design } = result;
   const safeProductName = safeCustomerCopy(product.name, "상품 정보");
@@ -171,7 +201,7 @@ function createDetailData(result: ProductStudioResult, imageUrl: string, assetUr
 }
 
 export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data }: { result: ProductStudioResult; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null }) {
-  const renderData = useMemo(() => data ?? createDetailData(result, imageUrl, assetUrls), [assetUrls, data, imageUrl, result]);
+  const renderData = useMemo(() => sanitizeProductDetailData(data ?? createDetailData(result, imageUrl, assetUrls)), [assetUrls, data, imageUrl, result]);
   return <Render config={detailConfig} data={renderData} />;
 }
 
