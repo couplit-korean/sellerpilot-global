@@ -527,6 +527,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260829165803_enforce_category_publication_environment_and_market.sql",
       "20260830052516_allow_legacy_ebay_diagnostic_attestation.sql",
       "20260830054851_certify_provider_identity_on_service_refresh.sql",
+      "20260830062415_recover_exact_lazada_credential_snapshot.sql",
       "20260830090000_recover_product_research_context.sql",
       "20260830095000_close_listing_mutations_until_adapters_ready.sql",
       "20260830100000_verified_remote_publication_ledger.sql",
@@ -12166,6 +12167,865 @@ test("push delivery leases retry only before provider send and reconcile every u
       ),
       true,
     );
+  } finally {
+    await db.close();
+  }
+});
+
+test("exact Lazada recovery certifies only its fingerprinted Vault snapshot and requeues one read", async () => {
+  const db = new PGlite();
+  const exactJobId = "5ac7a12f-94d5-451f-bd47-3b07d86c21b8";
+  const exactStaleJobId = "ad891738-693a-44e4-b0bc-f19539b6e980";
+  const productionCredentialId = "e54fa95d-ddfd-414f-82e9-636a0d9ab07c";
+  const productionStaleRequestSha256 = "a8d59a7fdd78fa570a68150e3ea3dfba4c3d5ba8e24d9458a818e15db38400c9";
+  const exactStaleCreatedAt = "2026-08-25T12:55:20.426414Z";
+  const exactRecoveryMigrationName = "20260830062415_recover_exact_lazada_credential_snapshot.sql";
+  const recoveryTokenHash = "6".repeat(64);
+  const recoveryPayload = {
+    app_key: "lazada-recovery-app",
+    app_secret: "lazada-recovery-secret",
+    country: "my",
+    access_token: "preserved-rotated-access-token",
+    refresh_token: "preserved-rotated-refresh-token",
+    access_token_expires_at: "2098-12-01T00:00:00.000Z",
+    refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
+    country_user_info: [{
+      country: "my",
+      seller_id: "1001",
+      user_id: "2001",
+    }],
+  };
+  const requestPayload = {
+    periodicKey: "orders",
+    arguments: { queryParams: { limit: "50" } },
+  };
+  const staleRequestPayload = {
+    periodicKey: "orders-stale-fixture",
+    arguments: { queryParams: { limit: "25" } },
+  };
+  try {
+    await db.exec(supabaseCompatibilityLayer);
+    const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
+    const migrationNames = (await readdir(migrationUrl))
+      .filter((name) => name.endsWith(".sql"))
+      .sort();
+    const exactRecoveryMigrationIndex = migrationNames.indexOf(exactRecoveryMigrationName);
+    assert.ok(exactRecoveryMigrationIndex > 0);
+    for (const name of migrationNames.slice(0, exactRecoveryMigrationIndex)) {
+      const source = await readFile(new URL(name, migrationUrl), "utf8");
+      await db.exec(withoutUnavailableExtensions(source));
+    }
+
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'lazada-recovery@example.test')",
+      [ADMIN_ID],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Lazada Recovery Admin')",
+      [ADMIN_ID],
+    );
+    await setClaims(db);
+
+    let versionFiveCredentialId;
+    for (let version = 1; version <= 5; version += 1) {
+      versionFiveCredentialId = await scalar(
+        db,
+        `select public.sellerpilot_rotate_credential(
+          'lazada', 'production', $1::jsonb,
+          '2099-01-01T00:00:00.000Z'::timestamptz,
+          90, 30, 0
+        )`,
+        [JSON.stringify({
+          app_key: "lazada-recovery-app",
+          app_secret: "lazada-recovery-secret",
+          country: "my",
+          access_token: `legacy-access-token-v${version}`,
+          refresh_token: `legacy-refresh-token-v${version}`,
+          access_token_expires_at: "2098-11-01T00:00:00.000Z",
+          refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
+        })],
+      );
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select version from sellerpilot_private.channel_credentials where id = $1",
+        [versionFiveCredentialId],
+      ),
+      5,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, seller_account_key, seller_account_key_source,
+                seller_account_verified_at
+           from sellerpilot_private.channel_credentials
+          where id = $1`,
+        [versionFiveCredentialId],
+      )).rows,
+      [{
+        status: "active",
+        seller_account_key: null,
+        seller_account_key_source: "legacy_unattested",
+        seller_account_verified_at: null,
+      }],
+    );
+
+    await setClaims(db, "service_role");
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+         label, token_hash, fingerprint, status, scope, expires_at, created_by
+       ) values (
+         'exact Lazada recovery', $1, '666666666666', 'active', 'gateway',
+         clock_timestamp() + interval '1 day', $2
+       )`,
+      [recoveryTokenHash, ADMIN_ID],
+    );
+    const recoveryVaultId = await scalar(
+      db,
+      `select vault.create_secret(
+        $1::jsonb::text,
+        $2,
+        'Synthetic exact Lazada recovery snapshot.'
+      )`,
+      [
+        JSON.stringify(recoveryPayload),
+        `sellerpilot_gateway_recovery_lazada_${exactJobId}_fixture`,
+      ],
+    );
+    const recoveryFingerprint = await scalar(
+      db,
+      `select encode(extensions.digest(
+        jsonb_build_object(
+          'payload', $1::jsonb,
+          'expires_at', $2::timestamptz,
+          'recovery_only', true
+        )::text,
+        'sha256'
+      ), 'hex')`,
+      [JSON.stringify(recoveryPayload), recoveryPayload.refresh_token_expires_at],
+    );
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id, credential_id, attempt_id, channel, operation, environment,
+         request_payload, status, error_message, created_by, completed_at,
+         credential_refresh_recovery_vault_id,
+         credential_refresh_recovery_fingerprint,
+         credential_refresh_recovery_staged_at
+       ) values (
+         $1, $2, null, 'lazada', 'orders.list', 'production', $3::jsonb,
+         'reconciliation_required', 'LAZADA_ACCOUNT_IDENTITY_INVALID', $4,
+         clock_timestamp(), $5, $6, clock_timestamp()
+       )`,
+      [
+        exactJobId,
+        versionFiveCredentialId,
+        JSON.stringify(requestPayload),
+        ADMIN_ID,
+        recoveryVaultId,
+        recoveryFingerprint,
+      ],
+    );
+
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id, credential_id, attempt_id, listing_id, channel, operation,
+         environment, request_payload, status, attempt_count, created_by,
+         created_at, updated_at
+       ) values (
+         $1, $2, null, null, 'lazada', 'orders.list', 'production', $3::jsonb,
+         'queued', 0, $4, $5::timestamptz, $5::timestamptz
+       )`,
+      [
+        exactStaleJobId,
+        versionFiveCredentialId,
+        JSON.stringify(staleRequestPayload),
+        ADMIN_ID,
+        exactStaleCreatedAt,
+      ],
+    );
+    const fixtureStaleRequestSha256 = await scalar(
+      db,
+      `select encode(extensions.digest($1::jsonb::text, 'sha256'), 'hex')`,
+      [JSON.stringify(staleRequestPayload)],
+    );
+    let exactRecoverySql = await readFile(
+      new URL(exactRecoveryMigrationName, migrationUrl),
+      "utf8",
+    );
+    assert.match(exactRecoverySql, new RegExp(productionCredentialId, "g"));
+    assert.match(exactRecoverySql, new RegExp(productionStaleRequestSha256, "g"));
+    assert.match(exactRecoverySql, /p_reason is null/);
+    exactRecoverySql = exactRecoverySql
+      .replaceAll(productionCredentialId, versionFiveCredentialId)
+      .replaceAll(productionStaleRequestSha256, fixtureStaleRequestSha256);
+    await db.exec(withoutUnavailableExtensions(exactRecoverySql));
+    for (const name of migrationNames.slice(exactRecoveryMigrationIndex + 1)) {
+      const source = await readFile(new URL(name, migrationUrl), "utf8");
+      await db.exec(withoutUnavailableExtensions(source));
+    }
+
+    // A referenced snapshot is insufficient when its durable fingerprint is
+    // not exact. The claim must leave both the job and Vault row untouched.
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set credential_refresh_recovery_fingerprint = $2
+        where id = $1`,
+      [exactJobId, "7".repeat(64)],
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_claim_exact_lazada_recovery(
+          $1, $2, 'test/fingerprint-mismatch'
+        )`,
+        [recoveryTokenHash, exactJobId],
+      ),
+      { status: "state_mismatch" },
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [recoveryVaultId]),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [exactStaleJobId],
+      ),
+      "queued",
+      "an invalid recovery snapshot must not clean even the exact stale read",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_exact_stale_read_cancelled'
+            and entity_id = $1`,
+        [exactStaleJobId],
+      ),
+      0,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set credential_refresh_recovery_fingerprint = $2
+        where id = $1`,
+      [exactJobId, recoveryFingerprint],
+    );
+
+    const conflictingJobId = await scalar(
+      db,
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         credential_id, channel, operation, environment,
+         request_payload, created_by
+       ) values (
+         $1, 'lazada', 'orders.list', 'production',
+         '{"periodicKey":"different-order-window"}'::jsonb, $2
+       ) returning id`,
+      [versionFiveCredentialId, ADMIN_ID],
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_claim_exact_lazada_recovery(
+          $1, $2, 'test/conflicting-work'
+        )`,
+        [recoveryTokenHash, exactJobId],
+      ),
+      { status: "state_mismatch" },
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, attempt_count, worker_token_id, claim_token,
+                lease_expires_at, started_at, completed_at, error_message,
+                provider_mutation_started_at,
+                created_at = $2::timestamptz as created_unchanged,
+                updated_at = $2::timestamptz as updated_unchanged,
+                encode(extensions.digest(request_payload::text, 'sha256'), 'hex')
+                  as request_sha256
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactStaleJobId, exactStaleCreatedAt],
+      )).rows,
+      [{
+        status: "queued",
+        attempt_count: 0,
+        worker_token_id: null,
+        claim_token: null,
+        lease_expires_at: null,
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        provider_mutation_started_at: null,
+        created_unchanged: true,
+        updated_unchanged: true,
+        request_sha256: fixtureStaleRequestSha256,
+      }],
+      "a third active job must prevent the exact cleanup from changing state",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_exact_stale_read_cancelled'
+            and entity_id = $1`,
+        [exactStaleJobId],
+      ),
+      0,
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [recoveryVaultId]),
+      1,
+      "the third-job conflict must not touch the recovery Vault snapshot",
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, worker_token_id, claim_token, lease_expires_at,
+                error_message, credential_refresh_recovery_vault_id::text as recovery_vault_id
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactJobId],
+      )).rows,
+      [{
+        status: "reconciliation_required",
+        worker_token_id: null,
+        claim_token: null,
+        lease_expires_at: null,
+        error_message: "LAZADA_ACCOUNT_IDENTITY_INVALID",
+        recovery_vault_id: recoveryVaultId,
+      }],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'cancelled', completed_at = clock_timestamp(),
+              error_message = 'Synthetic conflicting work removed.'
+        where id = $1 and status = 'queued'`,
+      [conflictingJobId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set error_message = 'Gateway write lease expired; provider outcome requires reconciliation.'
+        where id = $1`,
+      [exactJobId],
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_claim_exact_lazada_recovery(
+          $1, $2, 'test/unattested-generic-reaper-error'
+        )`,
+        [recoveryTokenHash, exactJobId],
+      ),
+      { status: "state_mismatch" },
+      "the generic lease error alone must never authorize exact recovery",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_credential_recovery_claimed'
+            and entity_id = $1`,
+        [exactJobId],
+      ),
+      0,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set error_message = 'LAZADA_ACCOUNT_IDENTITY_INVALID'
+        where id = $1`,
+      [exactJobId],
+    );
+
+    const firstClaim = await scalar(
+      db,
+      `select public.sellerpilot_service_claim_exact_lazada_recovery(
+        $1, $2, 'test/transient-read'
+      )`,
+      [recoveryTokenHash, exactJobId],
+    );
+    assert.equal(firstClaim.status, "claimed");
+    assert.equal(firstClaim.id, exactJobId);
+    assert.equal(firstClaim.operation, "orders.list");
+    assert.equal(firstClaim.credential.access_token, recoveryPayload.access_token);
+    assert.deepEqual(
+      (await db.query(
+        `select status, attempt_count, worker_token_id, claim_token,
+                lease_expires_at, started_at, provider_mutation_started_at,
+                prepared_credential_id, credential_refresh_recovery_vault_id,
+                oauth_exchange_completed, response_payload,
+                completed_at is not null as completed,
+                updated_at = completed_at as timestamps_bound,
+                encode(extensions.digest(request_payload::text, 'sha256'), 'hex')
+                  as request_sha256
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactStaleJobId],
+      )).rows,
+      [{
+        status: "cancelled",
+        attempt_count: 0,
+        worker_token_id: null,
+        claim_token: null,
+        lease_expires_at: null,
+        started_at: null,
+        provider_mutation_started_at: null,
+        prepared_credential_id: null,
+        credential_refresh_recovery_vault_id: null,
+        oauth_exchange_completed: false,
+        response_payload: null,
+        completed: true,
+        timestamps_bound: true,
+        request_sha256: fixtureStaleRequestSha256,
+      }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_exact_stale_read_cancelled'
+            and entity_id = $1
+            and safe_detail->>'request_sha256' = $2
+            and safe_detail->>'provider_call_started' = 'false'
+            and safe_detail->>'provider_mutation_started' = 'false'`,
+        [exactStaleJobId, fixtureStaleRequestSha256],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [recoveryVaultId]),
+      1,
+      "the exact stale cleanup must not touch the recovery Vault snapshot",
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_abort_exact_lazada_recovery(
+          $1, $2, $3, $4::text
+        )`,
+        [recoveryTokenHash, exactJobId, firstClaim.claim_token, null],
+      ),
+      /invalid exact Lazada recovery abort/,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, claim_token::text,
+                credential_refresh_recovery_vault_id::text as recovery_vault_id,
+                provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactJobId],
+      )).rows,
+      [{
+        status: "running",
+        claim_token: firstClaim.claim_token,
+        recovery_vault_id: recoveryVaultId,
+        provider_mutation_started_at: null,
+      }],
+      "a NULL abort reason must leave the live claim and snapshot untouched",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_abort_exact_lazada_recovery(
+          $1, $2, $3, 'provider_read_transient'
+        )`,
+        [recoveryTokenHash, exactJobId, firstClaim.claim_token],
+      ),
+      true,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message,
+                credential_refresh_recovery_vault_id::text as recovery_vault_id,
+                provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactJobId],
+      )).rows,
+      [{
+        status: "reconciliation_required",
+        error_message: "LAZADA_ACCOUNT_IDENTITY_INVALID",
+        recovery_vault_id: recoveryVaultId,
+        provider_mutation_started_at: null,
+      }],
+    );
+
+    const expiredClaim = await scalar(
+      db,
+      `select public.sellerpilot_service_claim_exact_lazada_recovery(
+        $1, $2, 'test/pre-prepare-lease-expiry'
+      )`,
+      [recoveryTokenHash, exactJobId],
+    );
+    assert.equal(expiredClaim.status, "claimed");
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where action = 'lazada_exact_stale_read_cancelled'
+            and entity_id = $1`,
+        [exactStaleJobId],
+      ),
+      1,
+      "replaying the exact cleanup must not duplicate its audit or state change",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set lease_expires_at = clock_timestamp() - interval '1 second'
+        where id = $1
+          and status = 'running'
+          and claim_token = $2`,
+      [exactJobId, expiredClaim.claim_token],
+    );
+    const prePrepareReaped = await scalar(
+      db,
+      "select public.sellerpilot_service_reap_stale_channel_gateway_jobs(10)",
+    );
+    assert.equal(prePrepareReaped.retried, 0);
+    assert.equal(prePrepareReaped.reconciliationRequired, 1);
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message, worker_token_id, claim_token,
+                lease_expires_at, prepared_credential_id,
+                credential_refresh_recovery_vault_id::text as recovery_vault_id,
+                credential_refresh_in_flight, provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactJobId],
+      )).rows,
+      [{
+        status: "reconciliation_required",
+        error_message: "Gateway write lease expired; provider outcome requires reconciliation.",
+        worker_token_id: null,
+        claim_token: null,
+        lease_expires_at: null,
+        prepared_credential_id: null,
+        recovery_vault_id: recoveryVaultId,
+        credential_refresh_in_flight: false,
+        provider_mutation_started_at: null,
+      }],
+      "the ordinary reaper must preserve the exact pre-prepare snapshot",
+    );
+
+    const claim = await scalar(
+      db,
+      `select public.sellerpilot_service_claim_exact_lazada_recovery(
+        $1, $2, 'test/reclaim-after-pre-prepare-reaper'
+      )`,
+      [recoveryTokenHash, exactJobId],
+    );
+    assert.equal(claim.status, "claimed");
+    assert.notEqual(claim.claim_token, expiredClaim.claim_token);
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [recoveryVaultId]),
+      1,
+    );
+    // Even if another privileged caller incorrectly marks this read as a
+    // provider mutation during the remote-read window, preparation fails
+    // closed and leaves the snapshot intact. Roll the synthetic marker back
+    // so the legitimate read-only recovery can continue in this fixture.
+    await db.exec("begin");
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1, $2, $3)",
+        [recoveryTokenHash, exactJobId, claim.claim_token],
+      ),
+      true,
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_prepare_exact_lazada_recovery(
+          $1, $2, $3, $4::jsonb
+        )`,
+        [
+          recoveryTokenHash,
+          exactJobId,
+          claim.claim_token,
+          JSON.stringify({
+            code: "0",
+            data: { seller_id: "1001", short_code: "MYSHOP1", status: "ACTIVE" },
+          }),
+        ],
+      ),
+      { status: "state_mismatch" },
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [recoveryVaultId]),
+      1,
+    );
+    await db.exec("rollback");
+
+    const mismatched = await scalar(
+      db,
+      `select public.sellerpilot_service_prepare_exact_lazada_recovery(
+        $1, $2, $3, $4::jsonb
+      )`,
+      [
+        recoveryTokenHash,
+        exactJobId,
+        claim.claim_token,
+        JSON.stringify({
+          code: "0",
+          data: { seller_id: "9999", short_code: "MYSHOP1", status: "ACTIVE" },
+        }),
+      ],
+    );
+    assert.deepEqual(mismatched, { status: "identity_mismatch" });
+    assert.deepEqual(
+      (await db.query(
+        `select credential_id::text, prepared_credential_id,
+                credential_refresh_recovery_vault_id::text as recovery_vault_id,
+                credential_refresh_in_flight, provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactJobId],
+      )).rows,
+      [{
+        credential_id: versionFiveCredentialId,
+        prepared_credential_id: null,
+        recovery_vault_id: recoveryVaultId,
+        credential_refresh_in_flight: false,
+        provider_mutation_started_at: null,
+      }],
+    );
+
+    // Match an opaque sb_secret_* service request: database authorization is
+    // service-only, but this legacy JWT GUC is absent. Certification must come
+    // from the exact live claim marker installed by migration 54851.
+    await db.query("select set_config('request.jwt.claim.role', '', false)");
+    const prepared = await scalar(
+      db,
+      `select public.sellerpilot_service_prepare_exact_lazada_recovery(
+        $1, $2, $3, $4::jsonb
+      )`,
+      [
+        recoveryTokenHash,
+        exactJobId,
+        claim.claim_token,
+        JSON.stringify({
+          code: "0",
+          data: { seller_id: "1001", short_code: "MYSHOP1", status: "ACTIVE" },
+        }),
+      ],
+    );
+    assert.equal(prepared.status, "prepared");
+    const versionSixCredentialId = prepared.credentialId;
+    assert.match(versionSixCredentialId, /^[0-9a-f-]{36}$/);
+
+    const expectedSubject = `lazada:v1:${Buffer.from(JSON.stringify([
+      "seller_center",
+      [["my", "1001", "2001"]],
+    ]), "utf8").toString("base64url")}`;
+    const expectedSellerAccountKey = createHash("sha256")
+      .update(`lazada\x1fproduction\x1f${expectedSubject}`, "utf8")
+      .digest("hex");
+    const preparedState = (await db.query(
+      `select credential.id::text, credential.version, credential.status,
+              credential.seller_account_key,
+              credential.seller_account_key_source,
+              credential.seller_account_verified_at is not null as seller_verified,
+              credential.last_check_status,
+              secret.decrypted_secret::jsonb->>'provider_account_subject' as provider_subject,
+              secret.decrypted_secret::jsonb->>'provider_account_identity_version' as identity_version,
+              secret.decrypted_secret::jsonb->>'account_platform' as account_platform,
+              secret.decrypted_secret::jsonb#>>'{country_user_info,0,short_code}' as short_code
+         from sellerpilot_private.channel_credentials credential
+         join vault.decrypted_secrets secret on secret.id = credential.vault_secret_id
+        where credential.id = $1`,
+      [versionSixCredentialId],
+    )).rows[0];
+    assert.equal(preparedState.version, 6);
+    assert.equal(preparedState.status, "active");
+    assert.equal(preparedState.seller_account_key, expectedSellerAccountKey);
+    assert.equal(preparedState.seller_account_key_source, "provider_certified_v1");
+    assert.equal(preparedState.seller_verified, true);
+    assert.equal(preparedState.last_check_status, "passed");
+    assert.equal(preparedState.provider_subject, expectedSubject);
+    assert.equal(preparedState.identity_version, "v1");
+    assert.equal(preparedState.account_platform, "seller_center");
+    assert.equal(preparedState.short_code, "MYSHOP1");
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.channel_credentials where id = $1",
+        [versionFiveCredentialId],
+      ),
+      "revoked",
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select credential_id::text, prepared_credential_id::text,
+                credential_refresh_recovery_vault_id,
+                credential_refresh_recovery_fingerprint,
+                credential_refresh_recovery_staged_at,
+                credential_refresh_in_flight, credential_refresh_started_at,
+                provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactJobId],
+      )).rows,
+      [{
+        credential_id: versionSixCredentialId,
+        prepared_credential_id: versionSixCredentialId,
+        credential_refresh_recovery_vault_id: null,
+        credential_refresh_recovery_fingerprint: null,
+        credential_refresh_recovery_staged_at: null,
+        credential_refresh_in_flight: false,
+        credential_refresh_started_at: null,
+        provider_mutation_started_at: null,
+      }],
+    );
+    assert.equal(
+      await scalar(db, "select count(*) from vault.secrets where id = $1", [recoveryVaultId]),
+      0,
+      "the exact snapshot is deleted only by the atomic certified rotation",
+    );
+
+    // If the prepare RPC committed but its HTTP acknowledgement was lost, the
+    // ordinary lease reaper sees a certified v6, no recovery snapshot, and no
+    // provider mutation. It safely queues this same read instead of creating a
+    // second credential or returning it to reconciliation. Roll back this
+    // simulated timeout so the normal finish path can be asserted below too.
+    await db.exec("begin");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set lease_expires_at = clock_timestamp() - interval '1 second'
+        where id = $1`,
+      [exactJobId],
+    );
+    const reaped = await scalar(
+      db,
+      "select public.sellerpilot_service_reap_stale_channel_gateway_jobs(10)",
+    );
+    assert.equal(reaped.retried, 1);
+    assert.equal(reaped.reconciliationRequired, 0);
+    assert.deepEqual(
+      (await db.query(
+        `select status, credential_id::text, prepared_credential_id::text,
+                error_message, credential_refresh_recovery_vault_id,
+                provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactJobId],
+      )).rows,
+      [{
+        status: "queued",
+        credential_id: versionSixCredentialId,
+        prepared_credential_id: versionSixCredentialId,
+        error_message: null,
+        credential_refresh_recovery_vault_id: null,
+        provider_mutation_started_at: null,
+      }],
+    );
+    await db.exec("rollback");
+
+    const finished = await scalar(
+      db,
+      `select public.sellerpilot_service_finish_exact_lazada_recovery(
+        $1, $2, $3
+      )`,
+      [recoveryTokenHash, exactJobId, claim.claim_token],
+    );
+    assert.equal(finished.status, "requeued");
+    assert.match(finished.replacementJobId, /^[0-9a-f-]{36}$/);
+    assert.deepEqual(
+      (await db.query(
+        `select status, error_message, worker_token_id, claim_token,
+                lease_expires_at, provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [exactJobId],
+      )).rows,
+      [{
+        status: "cancelled",
+        error_message: "LAZADA_CREDENTIAL_RECOVERED_READ_REQUEUED",
+        worker_token_id: null,
+        claim_token: null,
+        lease_expires_at: null,
+        provider_mutation_started_at: null,
+      }],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select credential_id::text, channel, operation, environment, status,
+                seller_account_key, request_payload->>'periodicKey' as periodic_key,
+                request_payload->>'credentialRecoverySourceJobId' as source_job_id
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1`,
+        [finished.replacementJobId],
+      )).rows,
+      [{
+        credential_id: versionSixCredentialId,
+        channel: "lazada",
+        operation: "orders.list",
+        environment: "production",
+        status: "queued",
+        seller_account_key: preparedState.seller_account_key,
+        periodic_key: "orders",
+        source_job_id: exactJobId,
+      }],
+    );
+    assert.deepEqual(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_finish_exact_lazada_recovery(
+          $1, $2, $3
+        )`,
+        [recoveryTokenHash, exactJobId, claim.claim_token],
+      ),
+      { status: "state_mismatch" },
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.channel_gateway_jobs
+          where request_payload->>'credentialRecoverySourceJobId' = $1`,
+        [exactJobId],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from sellerpilot_private.operation_audit
+          where entity_id = $1
+            and action = 'lazada_credential_recovery_requeued'`,
+        [exactJobId],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select has_function_privilege(
+          'authenticated',
+          'public.sellerpilot_service_claim_exact_lazada_recovery(text,uuid,text)',
+          'EXECUTE'
+        )`,
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select has_function_privilege(
+          'service_role',
+          'public.sellerpilot_service_claim_exact_lazada_recovery(text,uuid,text)',
+          'EXECUTE'
+        )`,
+      ),
+      true,
+    );
+
+    const replacementClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_gateway_job($1, 'test/replacement')",
+      [recoveryTokenHash],
+    );
+    assert.equal(replacementClaim.id, finished.replacementJobId);
+    assert.equal(replacementClaim.operation, "orders.list");
+    assert.equal(replacementClaim.credential_id, versionSixCredentialId);
   } finally {
     await db.close();
   }
