@@ -13071,6 +13071,16 @@ test("rejected Lazada recovery cleanup is bound to one unclaimed OAuth discard",
   );
   assert.match(
     migration,
+    /lock table vault\.secrets[\s\S]*in share row exclusive mode/,
+  );
+  assert.ok(
+    migration.indexOf("lock table vault.secrets") <
+      migration.indexOf("from vault.secrets secret"),
+    "the Vault table lock must precede the first Vault read",
+  );
+  assert.doesNotMatch(migration, /for update of secret/);
+  assert.match(
+    migration,
     /lazada_rejected_recovery_discarded_for_reauthorization[\s\S]*recovery_snapshot_discarded', true[\s\S]*oauth_code_discarded', true/,
   );
   assert.match(

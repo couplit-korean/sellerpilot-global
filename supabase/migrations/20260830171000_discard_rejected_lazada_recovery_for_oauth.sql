@@ -67,6 +67,11 @@ begin
     in share row exclusive mode;
   lock table sellerpilot_private.channel_credentials
     in share row exclusive mode;
+  -- Hosted Supabase grants postgres SELECT and DELETE, but not UPDATE, on
+  -- vault.secrets. A table lock preserves the exact verify/delete fence
+  -- without requiring the UPDATE privilege that SELECT ... FOR UPDATE needs.
+  lock table vault.secrets
+    in share row exclusive mode;
 
   select job.*
     into v_recovery_job
@@ -321,8 +326,7 @@ begin
          v_recovery_secret
     from vault.secrets secret
    join vault.decrypted_secrets decrypted on decrypted.id = secret.id
-   where secret.id = v_recovery_vault_id
-   for update of secret;
+   where secret.id = v_recovery_vault_id;
   if not found then
     raise exception 'exact Lazada recovery Vault snapshot is unavailable';
   end if;
@@ -343,8 +347,7 @@ begin
          v_oauth_code_present
     from vault.secrets secret
     join vault.decrypted_secrets decrypted on decrypted.id = secret.id
-   where secret.id = v_oauth_job.oauth_request_vault_id
-   for update of secret;
+   where secret.id = v_oauth_job.oauth_request_vault_id;
   if not found then
     raise exception 'fresh Lazada OAuth code is unavailable';
   end if;
