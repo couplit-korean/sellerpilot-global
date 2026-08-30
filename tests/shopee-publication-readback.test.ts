@@ -105,6 +105,119 @@ test("Shopee base-info normalization distinguishes live, review, and non-public 
   }
 });
 
+test("Shopee readback counts all eight approved details behind a representative gallery image or extended description", () => {
+  const representative = "representative-image";
+  const galleryRemote = localItemData("NORMAL");
+  galleryRemote.response.item_list[0].image.image_id_list = [representative, ...IMAGE_IDS];
+  const gallery = normalizeShopeeListingPublicationReadback({
+    operation: "listing.create",
+    remoteId: "9001",
+    remoteData: galleryRemote,
+    mutationArguments: {
+      ...mutationArguments("NORMAL"),
+      globalItemId: "7001",
+      sellerpilotProviderDetailImageIds: IMAGE_IDS,
+      publish: {
+        ...mutationArguments("NORMAL").publish,
+        item: {
+          ...mutationArguments("NORMAL").publish.item,
+          image: { image_id_list: [representative, ...IMAGE_IDS] },
+        },
+      },
+    },
+    credentialShopId: "1001",
+    expectedLocale: "en-SG",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  });
+  assert.equal(gallery.imageCount, 8);
+  assert.equal(gallery.remoteState?.imageCount, 8);
+
+  const extendedRemote = localItemData("NORMAL");
+  extendedRemote.response.item_list[0].description_info = {
+    extended_description: {
+      field_list: IMAGE_IDS.map((imageId) => ({
+        field_type: "image",
+        image_info: { image_id: imageId },
+      })),
+    },
+  };
+  const extended = normalizeShopeeListingPublicationReadback({
+    operation: "listing.create",
+    remoteId: "9001",
+    remoteData: extendedRemote,
+    mutationArguments: {
+      ...mutationArguments("NORMAL"),
+      globalItemId: "7001",
+      sellerpilotProviderDetailImageIds: IMAGE_IDS,
+    },
+    credentialShopId: "1001",
+    expectedLocale: "en-SG",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  });
+  assert.equal(extended.imageCount, 8);
+  assert.equal(extended.remoteState?.imageCount, 8);
+
+  const missingExtended = localItemData("NORMAL");
+  missingExtended.response.item_list[0].image.image_id_list = [representative, ...IMAGE_IDS.slice(0, 7)];
+  const missing = normalizeShopeeListingPublicationReadback({
+    operation: "listing.create",
+    remoteId: "9001",
+    remoteData: missingExtended,
+    mutationArguments: {
+      ...mutationArguments("NORMAL"),
+      globalItemId: "7001",
+      sellerpilotProviderDetailImageIds: IMAGE_IDS,
+      publish: {
+        ...mutationArguments("NORMAL").publish,
+        item: {
+          ...mutationArguments("NORMAL").publish.item,
+          image: { image_id_list: [representative, ...IMAGE_IDS.slice(0, 7)] },
+        },
+      },
+    },
+    credentialShopId: "1001",
+    expectedLocale: "en-SG",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  });
+  assert.equal(missing.imageCount, 8);
+  assert.equal(missing.checks.imageCountVerified, false);
+  assert.equal(missing.remoteState, undefined);
+});
+
+test("Shopee independent readback ignores only unresolved pre-upload image and attribute placeholders", () => {
+  const representative = "representative-image";
+  const remoteData = localItemData("NORMAL");
+  remoteData.response.item_list[0].image.image_id_list = [representative, ...IMAGE_IDS];
+  remoteData.response.item_list[0].attribute_list = [{
+    attribute_id: 501,
+    attribute_value_list: [{ value_id: 601 }],
+  }];
+  const source = mutationArguments("NORMAL");
+  source.publish.item.image = { image_id_list: [] };
+  source.publish.item.attribute_list = [];
+  Object.assign(source.publish.item, {
+    category_id: 100123,
+    brand: { brand_id: 0, original_brand_name: "Unbranded" },
+    condition: "NEW",
+    weight: 0.1,
+  });
+  const normalized = normalizeShopeeListingPublicationReadback({
+    operation: "listing.create",
+    remoteId: "9001",
+    remoteData,
+    mutationArguments: { ...source, globalItemId: "7001" },
+    credentialShopId: "1001",
+    expectedLocale: "en-SG",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  });
+  assert.equal(normalized.checks.contentVerified, true);
+  assert.equal(normalized.remoteState?.imageCount, 8);
+});
+
 test("Shopee publication evidence fails shut on wrong shop, market, mutable content, or image count", () => {
   const base = {
     operation: "listing.create" as const,
@@ -219,8 +332,25 @@ test("Shopee verified global safe publication forces UNLIST and is finalized onl
     assert.equal(providerResult.ok, false, "the merchant-scoped phase cannot claim publication without the shop readback");
     assert.equal((publishBody.item as Record<string, unknown>).item_status, "UNLIST");
 
+    const initialRemoteState = normalizeShopeeListingPublicationReadback({
+      operation: "listing.create",
+      remoteId: "9001",
+      remoteData: localItemData(),
+      mutationArguments: { ...arguments_, globalItemId: "7001" },
+      credentialShopId: "1001",
+      expectedLocale: "en-SG",
+      expectedFingerprint: FINGERPRINT,
+      expectedImageCount: 8,
+    }).remoteState!;
+    const publicationAssetBinding = { contract: "sellerpilot_provider_asset_binding_v1", digest: "b".repeat(64) };
     const finalized = await verifyShopeeGlobalListingPostPublish({
-      result: providerResult,
+      result: {
+        ...providerResult,
+        remoteState: {
+          ...initialRemoteState,
+          evidence: { ...initialRemoteState.evidence, publicationAssetBinding },
+        },
+      },
       merchantCredential: { merchant_id: "2001" },
       shopCredential: { shop_id: "1001" },
       arguments: arguments_,
@@ -239,6 +369,7 @@ test("Shopee verified global safe publication forces UNLIST and is finalized onl
       globalItemId: "7001",
     });
     assert.equal(finalized.publicationFulfilled, true);
+    assert.deepEqual(finalized.remoteState?.evidence.publicationAssetBinding, publicationAssetBinding);
     assert.equal(finalized.steps.at(-1)?.name, "local-item-publication-readback");
   } finally {
     globalThis.fetch = originalFetch;

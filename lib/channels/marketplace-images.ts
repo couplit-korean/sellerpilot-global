@@ -58,7 +58,7 @@ export function buildListingPublicationAssetBinding(input: {
   approvedDetailImagePaths: string[];
   approvedDetailImageSha256s: string[];
   approvedDetailImageUrls: string[];
-  providerImageSurface: "detail_content" | "gallery";
+  providerImageSurface: "detail_content" | "gallery" | "buyer_visible";
   providerTransportRoles: string[];
   providerTransportUrls: string[];
 }) {
@@ -82,7 +82,7 @@ export function buildListingPublicationAssetBinding(input: {
     && transportIdentities.length === marketplaceChannelDetailImageCount
     && transportIdentities.every(Boolean)
     && new Set(transportIdentities.map((identity) => identity?.objectPath)).size === marketplaceChannelDetailImageCount
-    && (input.providerImageSurface === "detail_content"
+    && (input.providerImageSurface === "detail_content" || input.providerImageSurface === "buyer_visible"
       ? input.providerTransportRoles.every((role, index) => role === input.approvedDetailRoles[index])
         && input.providerTransportUrls.every((url, index) => url === input.approvedDetailImageUrls[index])
       : input.providerTransportRoles[0] === "gallery-representative"
@@ -746,7 +746,7 @@ export async function prepareMarketplaceImages(
   const detailImageAltTexts = strings(assets?.detailImageAltTexts).slice(0, details.length);
   const detailImageRoles = strings(assets?.detailImageRoles).slice(0, details.length);
   const bindPublicationAssets = (
-    surface: "detail_content" | "gallery",
+    surface: "detail_content" | "gallery" | "buyer_visible",
     transportUrls: string[],
     transportRoles: string[],
   ) => {
@@ -784,19 +784,17 @@ export async function prepareMarketplaceImages(
   }
 
   if (channel === "shopee" || channel === "lazada" || channel === "smartstore") {
-    const limit = channel === "smartstore" ? 10 : 8;
+    const limit = channel === "smartstore" ? 10 : channel === "shopee" ? 9 : 8;
     const sourceGallery = gallery.length ? gallery : await normalizeList(next.imageUrls, limit, "gallery-square");
     const normalizedAssets = uniqueStrings([...sourceGallery, ...details]);
     const listingImages = channel === "shopee"
-      ? (manualSourceMode
-          ? uniqueStrings([sourceGallery[0] ?? "", ...details]).slice(0, limit)
-          : uniqueStrings([sourceGallery[0] ?? "", ...details]).slice(0, limit))
+      ? uniqueStrings([sourceGallery[0] ?? "", ...details]).slice(0, limit)
       : normalizedAssets.slice(0, limit);
     if (channel === "shopee" && !manualSourceMode) {
       bindPublicationAssets(
-        "gallery",
-        listingImages,
-        ["gallery-representative", ...detailImageRoles.slice(0, 7)],
+        "buyer_visible",
+        details,
+        detailImageRoles,
       );
     }
     // Lazada rejects any external URL left in description HTML. Keep every

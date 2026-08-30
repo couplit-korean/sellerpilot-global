@@ -234,7 +234,13 @@ export async function verifyShopeeGlobalListingPostPublish(
         },
       });
       if (publicationVerification.remoteState) {
-        result.remoteState = publicationVerification.remoteState;
+        result.remoteState = {
+          ...publicationVerification.remoteState,
+          evidence: {
+            ...(result.remoteState?.evidence ?? {}),
+            ...publicationVerification.remoteState.evidence,
+          },
+        };
         result.publicationFulfilled = listingRemoteStateFulfillsOperation(
           result.operation,
           publicationVerification.remoteState,

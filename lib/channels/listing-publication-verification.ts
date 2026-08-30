@@ -296,9 +296,8 @@ function verificationStep(input: {
       remoteImageDigest: input.content.remoteImageDigest,
       remoteProjectionDigest: input.content.remoteProjectionDigest,
       providerImageSurface: input.content.providerImageSurface,
-      providerImageContract: input.content.providerImageSurface === "gallery"
-        ? "representative_plus_approved_detail_7_exact_gallery_8"
-        : "approved_detail_content_exact_8",
+      providerImageContract: input.content.providerImageContract,
+      representativeImageVerified: input.content.representativeImageVerified,
       providerBodyDetailImagesVerified: input.content.providerImageSurface === "detail_content",
       mismatchFields: input.content.mismatchFields,
     },
@@ -335,9 +334,8 @@ function boundRemoteState(
       remoteImageDigest: content.remoteImageDigest,
       remoteProjectionDigest: content.remoteProjectionDigest,
       providerImageSurface: content.providerImageSurface,
-      providerImageContract: content.providerImageSurface === "gallery"
-        ? "representative_plus_approved_detail_7_exact_gallery_8"
-        : "approved_detail_content_exact_8",
+      providerImageContract: content.providerImageContract,
+      representativeImageVerified: content.representativeImageVerified,
       providerBodyDetailImagesVerified: content.providerImageSurface === "detail_content",
       fingerprintBinding: "source_request_fingerprint_v1",
     },

@@ -15,6 +15,7 @@ import {
   naverRequest,
   readStoredNaverAccessToken,
   shopeeEnvironment,
+  shopeeMerchantRequest,
   shopeeRequest,
   textValue,
   type SecretPayload,
@@ -82,6 +83,7 @@ async function uploadShopeeImage(
   imageUrl: string,
   signal: AbortSignal,
   hooks: ProviderListingRuntimeHooks,
+  scene: "normal" | "desc" = "normal",
 ) {
   const partnerId = textValue(payload, "partner_id");
   const partnerKey = textValue(payload, "partner_key");
@@ -96,11 +98,12 @@ async function uploadShopeeImage(
   const path = "/api/v2/media_space/upload_image";
   await hooks.assertLeaseHealthy();
   const image = await publicImage(imageUrl, signal);
+  if (image.contentType !== "image/jpeg" && image.contentType !== "image/png") {
+    throw new Error("SHOPEE_IMAGE_FORMAT_UNSUPPORTED");
+  }
   const extension = image.contentType === "image/png"
     ? "png"
-    : image.contentType === "image/webp"
-      ? "webp"
-      : "jpg";
+    : "jpg";
 
   const upload = async (scope: "target" | "partner") => {
     const timestamp = Math.floor(Date.now() / 1_000);
@@ -130,6 +133,7 @@ async function uploadShopeeImage(
       new Blob([new Uint8Array(image.bytes)], { type: image.contentType }),
       `sellerpilot.${extension}`,
     );
+    form.append("scene", scene);
     await hooks.assertLeaseHealthy();
     await hooks.beginProviderMutation();
     const response = await fetch(`${shopeeEnvironment(environment)}${path}?${query}`, {
@@ -162,13 +166,231 @@ async function uploadShopeeImage(
   return imageId;
 }
 
+type ShopeeRemote = Awaited<ReturnType<typeof shopeeRequest>>;
+
+export type ShopeeGlobalListingRuntimeDependencies = {
+  shopRequest?: typeof shopeeRequest;
+  merchantRequest?: typeof shopeeMerchantRequest;
+  uploadImage?: typeof uploadShopeeImage;
+};
+
+export type ShopeeGlobalImagePlan = {
+  providerImageSurface: "gallery" | "detail_content";
+  galleryImageCount: number;
+  descriptionImageCount: number;
+};
+
+function successfulShopeeRead(remote: ShopeeRemote, errorCode: string) {
+  if (!remote.response.ok || remote.data.error) throw new Error(errorCode);
+  return recordValue(remote.data.response) ?? {};
+}
+
+function integerLimit(value: unknown) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+/**
+ * Uses Shopee's category-scoped upload-control response. Gallery capacity is
+ * not a constant: the provider returns it from get_global_item_limit.
+ */
+export function planShopeeGlobalImages(
+  globalLimitResponse: unknown,
+  localLimitResponse: unknown,
+): ShopeeGlobalImagePlan {
+  const globalResponse = recordValue(recordValue(globalLimitResponse)?.response) ?? {};
+  const localResponse = recordValue(recordValue(localLimitResponse)?.response) ?? {};
+  const globalGalleryLimit = recordValue(globalResponse.global_item_image_count_limit) ?? {};
+  const localGalleryLimit = recordValue(localResponse.item_image_count_limit) ?? {};
+  const galleryMins = [
+    integerLimit(globalGalleryLimit.min_limit),
+    integerLimit(localGalleryLimit.min_limit),
+  ];
+  const galleryMaxes = [
+    integerLimit(globalGalleryLimit.max_limit),
+    integerLimit(localGalleryLimit.max_limit),
+  ];
+  const galleryMin = galleryMins.every((value) => value !== null)
+    ? Math.max(...galleryMins as number[])
+    : null;
+  const galleryMax = galleryMaxes.every((value) => value !== null)
+    ? Math.min(...galleryMaxes as number[])
+    : null;
+  const requestedGalleryCount = 9;
+  if (galleryMin === null || galleryMax === null || galleryMin < 1 || galleryMax < galleryMin) {
+    throw new Error("SHOPEE_GLOBAL_ITEM_IMAGE_LIMIT_INVALID");
+  }
+  if (galleryMin <= requestedGalleryCount && galleryMax >= requestedGalleryCount) {
+    return {
+      providerImageSurface: "gallery",
+      galleryImageCount: requestedGalleryCount,
+      descriptionImageCount: 0,
+    };
+  }
+  if (galleryMax < 1 || galleryMin > requestedGalleryCount) {
+    throw new Error("SHOPEE_GLOBAL_ITEM_IMAGE_COUNT_UNSUPPORTED");
+  }
+  const globalExtendedLimit = recordValue(globalResponse.extended_description_limit) ?? {};
+  const localExtendedLimit = recordValue(localResponse.extended_description_limit) ?? {};
+  const descriptionMins = [
+    integerLimit(globalExtendedLimit.description_image_num_min),
+    integerLimit(localExtendedLimit.description_image_num_min),
+  ];
+  const descriptionMaxes = [
+    integerLimit(globalExtendedLimit.description_image_num_max),
+    integerLimit(localExtendedLimit.description_image_num_max),
+  ];
+  const descriptionMin = descriptionMins.every((value) => value !== null)
+    ? Math.max(...descriptionMins as number[])
+    : null;
+  const descriptionMax = descriptionMaxes.every((value) => value !== null)
+    ? Math.min(...descriptionMaxes as number[])
+    : null;
+  if (descriptionMin === null || descriptionMax === null
+      || descriptionMin > 8 || descriptionMax < 8) {
+    throw new Error("SHOPEE_EXTENDED_DESCRIPTION_IMAGES_UNAVAILABLE");
+  }
+  return {
+    providerImageSurface: "detail_content",
+    galleryImageCount: galleryMax,
+    descriptionImageCount: 8,
+  };
+}
+
+function assertShopeeLeafCategory(remote: ShopeeRemote, categoryId: number, errorCode: string) {
+  const response = successfulShopeeRead(remote, errorCode);
+  const categories = Array.isArray(response.category_list)
+    ? response.category_list.map(recordValue).filter((row): row is UnknownRecord => Boolean(row))
+    : [];
+  const matches = categories.filter((row) => Number(row.category_id) === categoryId);
+  const hasChildren = matches[0]?.has_children;
+  if (matches.length !== 1 || (hasChildren !== false && hasChildren !== 0 && hasChildren !== "0")) {
+    throw new Error(errorCode);
+  }
+}
+
+function recommendedShopeeLeafCategory(
+  recommendationRemote: ShopeeRemote,
+  categoryRemote: ShopeeRemote,
+  errorCode: string,
+) {
+  const recommendation = successfulShopeeRead(recommendationRemote, errorCode);
+  const recommendedIds = Array.isArray(recommendation.category_id)
+    ? recommendation.category_id
+      .map(Number)
+      .filter((categoryId) => Number.isSafeInteger(categoryId) && categoryId > 0)
+    : [];
+  const categoryResponse = successfulShopeeRead(categoryRemote, errorCode);
+  const categories = Array.isArray(categoryResponse.category_list)
+    ? categoryResponse.category_list
+      .map(recordValue)
+      .filter((row): row is UnknownRecord => Boolean(row))
+    : [];
+  const leafIds = new Set(categories.flatMap((row) => {
+    const categoryId = Number(row.category_id);
+    const hasChildren = row.has_children;
+    return Number.isSafeInteger(categoryId)
+      && categoryId > 0
+      && (hasChildren === false || hasChildren === 0 || hasChildren === "0")
+      ? [categoryId]
+      : [];
+  }));
+  const categoryId = recommendedIds.find((candidate) => leafIds.has(candidate));
+  if (!categoryId) throw new Error(errorCode);
+  return categoryId;
+}
+
+const shopeeGlobalPublishItemFields = new Set([
+  "item_name",
+  "description",
+  "item_status",
+  "original_price",
+  "image",
+  "model",
+  "size_chart",
+  "logistic",
+  "pre_order",
+  "description_type",
+  "description_info",
+  "standardise_tier_variation",
+]);
+
+function documentedShopeeGlobalPublishItem(value: UnknownRecord) {
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key, item]) => shopeeGlobalPublishItemFields.has(key) && item !== undefined));
+}
+
+function exactShopeeAttributeMetadata(
+  remote: ShopeeRemote,
+  categoryId: number,
+  errorCode: string,
+) {
+  const response = successfulShopeeRead(remote, errorCode);
+  const results = Array.isArray(response.list)
+    ? response.list.map(recordValue).filter((row): row is UnknownRecord => Boolean(row))
+    : [];
+  const matches = results.filter((row) => Number(row.category_id) === categoryId);
+  if (matches.length !== 1 || !Array.isArray(matches[0].attribute_tree)) {
+    throw new Error(errorCode);
+  }
+  return objectRecords(matches[0].attribute_tree)
+    .filter((row) => row.attribute_id !== undefined)
+    .filter((row) => row.is_mandatory !== undefined || row.mandatory !== undefined);
+}
+
+function requiredShopeeAttributes(input: {
+  supplied: unknown;
+  metadata: UnknownRecord[];
+  productHint: string;
+  errorCode: string;
+}) {
+  const metadataIds = new Set(input.metadata
+    .map((row) => Number(row.attribute_id))
+    .filter((attributeId) => Number.isSafeInteger(attributeId) && attributeId > 0));
+  const metadataById = new Map(input.metadata.map((row) => [Number(row.attribute_id), row]));
+  const supplied = Array.isArray(input.supplied)
+    ? input.supplied
+      .map(recordValue)
+      .filter((row): row is UnknownRecord => Boolean(row))
+      .filter((row) => metadataIds.has(Number(row.attribute_id)))
+    : [];
+  const required = mergeShopeeRequiredAttributes(supplied, input.metadata, input.productHint);
+  if (required.unresolved.length) throw new Error(input.errorCode);
+  const incomplete = required.attributes.some((attribute) => {
+    const values = Array.isArray(attribute.attribute_value_list)
+      ? attribute.attribute_value_list.map(recordValue).filter(Boolean)
+      : [];
+    return !Number.isSafeInteger(Number(attribute.attribute_id))
+      || !metadataIds.has(Number(attribute.attribute_id))
+      || values.length === 0
+      || values.some((value) => {
+        const valueId = Number(value?.value_id);
+        const customValue = String(value?.original_value_name ?? "").trim();
+        const metadata = metadataById.get(Number(attribute.attribute_id));
+        const allowedValueIds = new Set(Array.isArray(metadata?.attribute_value_list)
+          ? metadata.attribute_value_list
+            .map(recordValue)
+            .filter((row): row is UnknownRecord => Boolean(row))
+            .map((row) => Number(row.value_id))
+            .filter((candidate) => Number.isSafeInteger(candidate) && candidate > 0)
+          : []);
+        if (Number.isSafeInteger(valueId) && valueId > 0) return !allowedValueIds.has(valueId);
+        const inputType = Number(recordValue(metadata?.attribute_info)?.input_type);
+        return !customValue || ![2, 3, 5].includes(inputType);
+      });
+  });
+  if (incomplete) throw new Error(input.errorCode);
+  return required.attributes;
+}
+
 async function activeShopeeLogistics(
   payload: SecretPayload,
   environment: GatewayClaim["environment"],
   hooks: ProviderListingRuntimeHooks,
+  request: typeof shopeeRequest = shopeeRequest,
 ) {
   await hooks.assertLeaseHealthy();
-  const logisticsRemote = await shopeeRequest({
+  const logisticsRemote = await request({
     payload,
     environment,
     method: "GET",
@@ -177,10 +399,9 @@ async function activeShopeeLogistics(
   const logistics = objectRecords(logisticsRemote.data)
     .flatMap((row) => {
       const id = row.logistics_channel_id ?? row.logistic_id ?? row.channel_id;
-      const enabled = row.enabled ?? row.is_enabled ?? row.preferred;
+      const enabled = row.enabled ?? row.is_enabled;
       return (typeof id === "string" || typeof id === "number")
-        && enabled !== false
-        && enabled !== 0
+        && (enabled === true || enabled === 1 || enabled === "1")
         ? [{ logistic_id: Number(id), enabled: true }]
         : [];
     })
@@ -199,6 +420,11 @@ async function prepareShopeeListing(
 ): Promise<UnknownRecord> {
   const imageUrls = uniqueImageUrls(input.arguments.imageUrls, 9);
   if (!imageUrls.length) throw new Error("SHOPEE_LISTING_IMAGES_MISSING");
+  const logistics = await activeShopeeLogistics(
+    input.credential,
+    input.environment,
+    input.hooks,
+  );
   const imageIds: string[] = [];
   for (const imageUrl of imageUrls) {
     await input.hooks.assertLeaseHealthy();
@@ -210,11 +436,6 @@ async function prepareShopeeListing(
       input.hooks,
     ));
   }
-  const logistics = await activeShopeeLogistics(
-    input.credential,
-    input.environment,
-    input.hooks,
-  );
   return {
     ...input.arguments,
     body: {
@@ -225,83 +446,154 @@ async function prepareShopeeListing(
   };
 }
 
-async function prepareShopeeGlobalListing(
+export async function prepareShopeeGlobalListing(
   input: PrepareProviderListingInput,
+  dependencies: ShopeeGlobalListingRuntimeDependencies = {},
 ): Promise<UnknownRecord> {
   const shopPayload = input.shopeeShopCredential;
   if (!shopPayload) throw new Error("SHOPEE_GLOBAL_SHOP_CREDENTIAL_MISSING");
   const imageUrls = uniqueImageUrls(input.arguments.imageUrls, 9);
-  if (!imageUrls.length) throw new Error("SHOPEE_LISTING_IMAGES_MISSING");
-  const imageIds: string[] = [];
-  for (const imageUrl of imageUrls) {
+  if (imageUrls.length !== 9) throw new Error("SHOPEE_APPROVED_DETAIL_IMAGES_INCOMPLETE");
+  const body = structuredClone(recordValue(input.arguments.body) ?? {});
+  const publish = structuredClone(recordValue(input.arguments.publish) ?? {});
+  const publishItem = recordValue(publish.item) ?? {};
+  const globalCategoryId = Number(body.category_id);
+  if (!Number.isSafeInteger(globalCategoryId) || globalCategoryId <= 0) {
+    throw new Error("SHOPEE_GLOBAL_CATEGORY_MISSING");
+  }
+  const shopRequest = dependencies.shopRequest ?? shopeeRequest;
+  const merchantRequest = dependencies.merchantRequest ?? shopeeMerchantRequest;
+  const uploadImage = dependencies.uploadImage ?? uploadShopeeImage;
+  const merchantRead = async (path: string, query: URLSearchParams) => {
     await input.hooks.assertLeaseHealthy();
-    imageIds.push(await uploadShopeeImage(
+    return merchantRequest({
+      payload: input.credential,
+      environment: input.environment,
+      method: "GET",
+      path,
+      query,
+    });
+  };
+  const shopRead = async (path: string, query: URLSearchParams) => {
+    await input.hooks.assertLeaseHealthy();
+    return shopRequest({
+      payload: shopPayload,
+      environment: input.environment,
+      method: "GET",
+      path,
+      query,
+    });
+  };
+
+  // Every provider validation is completed before the first media mutation.
+  // This prevents a category/logistics failure from leaving orphaned uploads.
+  const logistics = await activeShopeeLogistics(
+    shopPayload,
+    input.environment,
+    input.hooks,
+    shopRequest,
+  );
+  const globalCategoryRemote = await merchantRead(
+    "/api/v2/global_product/get_category",
+    new URLSearchParams({ language: "en" }),
+  );
+  assertShopeeLeafCategory(globalCategoryRemote, globalCategoryId, "SHOPEE_GLOBAL_CATEGORY_INVALID");
+  const globalAttributeRemote = await merchantRead(
+    "/api/v2/global_product/get_attribute_tree",
+    new URLSearchParams({ category_id_list: String(globalCategoryId), language: "en" }),
+  );
+  const globalAttributeMetadata = exactShopeeAttributeMetadata(
+    globalAttributeRemote,
+    globalCategoryId,
+    "SHOPEE_GLOBAL_ATTRIBUTES_QUERY_FAILED",
+  );
+  const localizedItemName = String(publishItem.item_name ?? "").trim();
+  if (!localizedItemName) throw new Error("SHOPEE_LOCAL_ITEM_NAME_MISSING");
+  const localRecommendationRemote = await shopRead(
+    "/api/v2/product/category_recommend",
+    new URLSearchParams({ item_name: localizedItemName }),
+  );
+  const localCategoryRemote = await shopRead(
+    "/api/v2/product/get_category",
+    new URLSearchParams({ language: "en" }),
+  );
+  const localCategoryId = recommendedShopeeLeafCategory(
+    localRecommendationRemote,
+    localCategoryRemote,
+    "SHOPEE_LOCAL_CATEGORY_RECOMMENDATION_INVALID",
+  );
+  const limitRemote = await merchantRead(
+    "/api/v2/global_product/get_global_item_limit",
+    new URLSearchParams({ category_id: String(globalCategoryId) }),
+  );
+  successfulShopeeRead(limitRemote, "SHOPEE_GLOBAL_ITEM_LIMIT_QUERY_FAILED");
+  const localLimitRemote = await shopRead(
+    "/api/v2/product/get_item_limit",
+    new URLSearchParams({ category_id: String(localCategoryId) }),
+  );
+  successfulShopeeRead(localLimitRemote, "SHOPEE_LOCAL_ITEM_LIMIT_QUERY_FAILED");
+  const imagePlan = planShopeeGlobalImages(limitRemote.data, localLimitRemote.data);
+  const productHint = `${String(publishItem.item_name ?? body.global_item_name ?? "")} ${String(publishItem.description ?? body.description ?? "")}`;
+  const globalAttributes = requiredShopeeAttributes({
+    supplied: body.attribute_list,
+    metadata: globalAttributeMetadata,
+    productHint,
+    errorCode: "SHOPEE_GLOBAL_REQUIRED_ATTRIBUTES_MISSING",
+  });
+  const imageIds: string[] = [];
+  for (const [index, imageUrl] of imageUrls.entries()) {
+    await input.hooks.assertLeaseHealthy();
+    imageIds.push(await uploadImage(
       shopPayload,
       input.environment,
       imageUrl,
       input.signal,
       input.hooks,
+      imagePlan.providerImageSurface === "detail_content" && index > 0 ? "desc" : "normal",
     ));
   }
-  const logistics = await activeShopeeLogistics(shopPayload, input.environment, input.hooks);
-  const body = structuredClone(recordValue(input.arguments.body) ?? {});
-  const publish = structuredClone(recordValue(input.arguments.publish) ?? {});
-  const publishItem = recordValue(publish.item) ?? {};
-  const categoryId = Number(publishItem.category_id ?? body.category_id);
-  if (!Number.isSafeInteger(categoryId) || categoryId <= 0) {
-    throw new Error("SHOPEE_CATEGORY_MISSING");
+  const detailImageIds = imageIds.slice(1);
+  if (detailImageIds.length !== 8 || new Set(detailImageIds).size !== 8) {
+    throw new Error("SHOPEE_APPROVED_DETAIL_IMAGE_UPLOAD_INCOMPLETE");
   }
-
-  await input.hooks.assertLeaseHealthy();
-  let attributeRemote = await shopeeRequest({
-    payload: shopPayload,
-    environment: input.environment,
-    method: "GET",
-    path: "/api/v2/product/get_attribute_tree",
-    query: new URLSearchParams({ category_id_list: String(categoryId), language: "en" }),
-  });
-  if (!attributeRemote.response.ok || attributeRemote.data.error) {
-    await input.hooks.assertLeaseHealthy();
-    attributeRemote = await shopeeRequest({
-      payload: shopPayload,
-      environment: input.environment,
-      method: "GET",
-      path: "/api/v2/product/get_attributes",
-      query: new URLSearchParams({ category_id: String(categoryId), language: "en" }),
-    });
-  }
-  if (!attributeRemote.response.ok || attributeRemote.data.error) {
-    throw new Error("SHOPEE_ATTRIBUTES_QUERY_FAILED");
-  }
-  const attributeRows = objectRecords(attributeRemote.data)
-    .filter((row) => row.attribute_id !== undefined);
-  const attributeMetadata = attributeRows
-    .filter((row) => row.is_mandatory !== undefined || row.mandatory !== undefined);
-  const productHint = `${String(publishItem.item_name ?? body.global_item_name ?? "")} ${String(publishItem.description ?? body.description ?? "")}`;
-  const suppliedAttributes = [
-    ...(Array.isArray(body.attribute_list) ? body.attribute_list : []),
-    ...(Array.isArray(publishItem.attribute_list) ? publishItem.attribute_list : []),
-  ];
-  const requiredAttributes = mergeShopeeRequiredAttributes(
-    suppliedAttributes,
-    attributeMetadata,
-    productHint,
-  );
-  if (requiredAttributes.unresolved.length) {
-    throw new Error("SHOPEE_REQUIRED_ATTRIBUTES_MISSING");
-  }
+  const galleryImageIds = imageIds.slice(0, imagePlan.galleryImageCount);
+  const extendedDescription = imagePlan.providerImageSurface === "detail_content"
+    ? {
+        description_type: "extended",
+        description_info: {
+          extended_description: {
+            field_list: [
+              ...(String(publishItem.description ?? body.description ?? "").trim()
+                ? [{ field_type: "text", text: String(publishItem.description ?? body.description).trim() }]
+                : []),
+              ...detailImageIds.map((imageId) => ({
+                field_type: "image",
+                image_info: { image_id: imageId },
+              })),
+            ],
+          },
+        },
+      }
+    : {};
   publish.item = {
-    ...publishItem,
-    image: { image_id_list: imageIds },
+    ...documentedShopeeGlobalPublishItem(publishItem),
+    ...extendedDescription,
+    image: { image_id_list: galleryImageIds },
     logistic: logistics,
-    attribute_list: requiredAttributes.attributes,
   };
   return {
     ...input.arguments,
+    sellerpilotProviderLocalCategoryId: localCategoryId,
+    sellerpilotProviderDetailImageIds: detailImageIds,
+    sellerpilotProviderImageSurface: imagePlan.providerImageSurface,
+    sellerpilotProviderImageContract: imagePlan.providerImageSurface === "gallery"
+      ? "representative_plus_approved_detail_8_exact_gallery_9"
+      : "approved_detail_content_exact_8",
     body: {
       ...body,
-      image: { image_id_list: imageIds },
-      attribute_list: requiredAttributes.attributes,
+      ...extendedDescription,
+      image: { image_id_list: galleryImageIds },
+      attribute_list: globalAttributes,
     },
     publish,
   };

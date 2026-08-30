@@ -47,6 +47,10 @@ function uniqueTexts(value: unknown) {
     : [];
 }
 
+function sameOrderedTexts(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function shopeeVisibility(providerStatus: string): VerifiedListingRemoteState["visibility"] | undefined {
   const status = providerStatus.trim().toUpperCase();
   if (status === "NORMAL") return "live";
@@ -66,10 +70,23 @@ function shopeeMutationContentArguments(
   if (operation === "listing.update") return mutationArguments;
   const publish = recordValue(mutationArguments.publish);
   const publishedItem = recordValue(publish.item);
+  const body = structuredClone(
+    Object.keys(publishedItem).length ? publishedItem : recordValue(mutationArguments.body),
+  );
+  if (mutationArguments.globalProduct === true) {
+    for (const key of Object.keys(body)) {
+      if (key !== "item_name" && key !== "description" && key !== "image") delete body[key];
+    }
+  }
+  const imageIds = uniqueTexts(recordValue(body.image).image_id_list);
+  if (!imageIds.length) delete body.image;
+  if (Array.isArray(body.attribute_list) && body.attribute_list.length === 0) {
+    delete body.attribute_list;
+  }
   return {
     ...mutationArguments,
     localItemId: remoteId,
-    body: Object.keys(publishedItem).length ? publishedItem : recordValue(mutationArguments.body),
+    body,
   };
 }
 
@@ -82,10 +99,24 @@ function shopeeReadbackItem(remoteData: UnknownRecord, remoteId: string) {
   return matchingItems.length === 1 ? matchingItems[0] : undefined;
 }
 
-function shopeeImageIds(item: UnknownRecord) {
+function shopeeExtendedDescriptionImageIds(item: UnknownRecord) {
+  const descriptionInfo = recordValue(item.description_info);
+  const extendedDescription = recordValue(descriptionInfo.extended_description);
+  const fields = Array.isArray(extendedDescription.field_list)
+    ? extendedDescription.field_list.map(recordValue)
+    : [];
+  return uniqueTexts(fields
+    .filter((field) => exactText(field.field_type).toLowerCase() === "image")
+    .map((field) => exactText(recordValue(field.image_info).image_id)));
+}
+
+function shopeeApprovedDetailImageIds(item: UnknownRecord) {
+  const extendedDescriptionIds = shopeeExtendedDescriptionImageIds(item);
+  if (extendedDescriptionIds.length) return extendedDescriptionIds;
   const image = recordValue(item.image);
   const imageInfo = recordValue(item.image_info);
-  return uniqueTexts(image.image_id_list ?? imageInfo.image_id_list ?? item.image_id_list);
+  const galleryIds = uniqueTexts(image.image_id_list ?? imageInfo.image_id_list ?? item.image_id_list);
+  return galleryIds.length === 9 ? galleryIds.slice(1) : galleryIds;
 }
 
 function shopeeMarketFromArguments(argumentsValue: UnknownRecord) {
@@ -130,8 +161,11 @@ export function normalizeShopeeListingPublicationReadback(input: {
   const item = shopeeReadbackItem(input.remoteData, remoteId);
   const providerStatus = exactText(item?.item_status).toUpperCase();
   const visibility = shopeeVisibility(providerStatus);
-  const imageIds = item ? shopeeImageIds(item) : [];
+  const imageIds = item ? shopeeApprovedDetailImageIds(item) : [];
   const imageCount = imageIds.length;
+  const preparedDetailImageIds = uniqueTexts(input.mutationArguments.sellerpilotProviderDetailImageIds);
+  const preparedImagesVerified = preparedDetailImageIds.length === 0
+    || (preparedDetailImageIds.length === 8 && sameOrderedTexts(preparedDetailImageIds, imageIds));
   const shopId = input.credentialShopId?.trim() ?? "";
   const publish = recordValue(input.mutationArguments.publish);
   const requestedShopId = exactText(publish.shop_id);
@@ -156,7 +190,9 @@ export function normalizeShopeeListingPublicationReadback(input: {
   );
   const imageCountVerified = input.operation === "listing.stop"
     ? input.expectedImageCount === 0
-    : input.expectedImageCount === 8 && imageCount === input.expectedImageCount;
+    : input.expectedImageCount === 8
+      && imageCount === input.expectedImageCount
+      && preparedImagesVerified;
   const contentVerification = input.operation === "listing.stop"
     ? { ok: true, mismatches: [] as string[] }
     : verifyListingUpdateReadback(

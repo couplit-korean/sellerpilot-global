@@ -17,8 +17,12 @@ import {
   renderQoo10DetailDescription,
   upsertMarketplaceDetailImages,
 } from "../lib/channels/marketplace-images";
+import {
+  listingPublicationProviderAssetEvidence,
+  verifyListingPublicationContent,
+} from "../lib/channels/listing-publication-content";
 
-test("server-derived publication binding preserves approved detail lineage and Shopee's exact gallery surface", () => {
+test("server-derived publication binding preserves approved detail lineage and Shopee's buyer-visible eight-image contract", () => {
   const roles = [
     "detail-overview", "detail-context", "detail-package", "detail-feature",
     "detail-contents", "detail-use", "detail-care", "detail-routine",
@@ -64,6 +68,93 @@ test("server-derived publication binding preserves approved detail lineage and S
   ]);
   assert.equal(shopeeBinding?.approvedDetailImages.length, 8);
   assert.equal(shopeeBinding?.providerTransportImages.length, 8);
+
+  const shopeeBuyerVisibleBinding = buildListingPublicationAssetBinding({
+    approvedDetailPageVersion: 3,
+    approvedManifestDigest: "a".repeat(64),
+    approvedDetailRoles: roles,
+    approvedDetailImagePaths: approvedPaths,
+    approvedDetailImageSha256s: approvedSourceSha256s,
+    approvedDetailImageUrls: detailUrls,
+    providerImageSurface: "buyer_visible",
+    providerTransportRoles: roles,
+    providerTransportUrls: detailUrls,
+  });
+  assert.equal(shopeeBuyerVisibleBinding?.providerImageSurface, "buyer_visible");
+  assert.deepEqual(
+    shopeeBuyerVisibleBinding?.providerTransportImages.map((image) => image.publicUrl),
+    detailUrls,
+  );
+  const providerDetailIds = roles.map((_, index) => `provider-detail-${index + 1}`);
+  const sourceArguments = {
+    sellerpilotPublicationAssetBinding: shopeeBuyerVisibleBinding,
+    imageUrls: [galleryUrl, ...detailUrls],
+    publish: {
+      item: {
+        item_name: "Reusable cable organizer clips",
+        description: "Keep charging cables tidy and easy to reach on a desk.",
+        image: { image_id_list: [] },
+      },
+    },
+  };
+  const providerEvidence = listingPublicationProviderAssetEvidence({
+    channel: "shopee",
+    remoteId: "9001",
+    sourceArguments,
+    providerArguments: {
+      sellerpilotProviderImageSurface: "gallery",
+      sellerpilotProviderDetailImageIds: providerDetailIds,
+      publish: {
+        item: {
+          item_name: "Reusable cable organizer clips",
+          description: "Keep charging cables tidy and easy to reach on a desk.",
+          image: { image_id_list: ["provider-representative", ...providerDetailIds] },
+        },
+      },
+    },
+  });
+  assert.equal(providerEvidence?.providerImageSurface, "gallery");
+  assert.deepEqual(providerEvidence?.providerDetailImageIdentities, providerDetailIds);
+  assert.match(providerEvidence?.sourceAssetBindingDigest ?? "", /^[a-f0-9]{64}$/u);
+  assert.equal(providerEvidence?.providerRepresentativeImageIdentity, "provider-representative");
+  assert.match(providerEvidence?.sourceRepresentativeImageDigest ?? "", /^[a-f0-9]{64}$/u);
+
+  const remotePayload = (representative: string) => ({
+    response: {
+      item_list: [{
+        item_id: 9001,
+        item_name: "Reusable cable organizer clips",
+        description: "Keep charging cables tidy and easy to reach on a desk.",
+        image: { image_id_list: [representative, ...providerDetailIds] },
+      }],
+    },
+  });
+  const verificationInput = {
+    channel: "shopee" as const,
+    expectedLocale: "en-SG",
+    expectedImageCount: 8,
+    remoteId: "9001",
+    sourceArguments,
+    sourceResponsePayload: {
+      remoteState: {
+        evidence: { publicationAssetBinding: providerEvidence },
+        resources: { localItemId: "9001" },
+      },
+    },
+    sourceRemotePayload: remotePayload("provider-representative"),
+    remoteResources: { localItemId: "9001" },
+  };
+  assert.equal(verifyListingPublicationContent({
+    ...verificationInput,
+    remotePayload: remotePayload("provider-representative"),
+  }).verified, true);
+  const representativeTamper = verifyListingPublicationContent({
+    ...verificationInput,
+    remotePayload: remotePayload("provider-representative-attacker"),
+  });
+  assert.equal(representativeTamper.verified, false);
+  assert.equal(representativeTamper.representativeImageVerified, false);
+  assert.ok(representativeTamper.mismatchFields.includes("representativeImage"));
 });
 
 test("marketplace DNS resolution stops at the caller deadline", async () => {

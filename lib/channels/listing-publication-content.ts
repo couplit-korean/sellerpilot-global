@@ -20,7 +20,7 @@ export type ListingPublicationAssetBinding = {
   approvedDetailPageVersion: number;
   approvedManifestDigest: string;
   approvedDetailImages: AssetIdentity[];
-  providerImageSurface: "detail_content" | "gallery";
+  providerImageSurface: "detail_content" | "gallery" | "buyer_visible";
   providerTransportImages: AssetIdentity[];
 };
 
@@ -31,6 +31,7 @@ export type ListingPublicationContentVerification = {
   titleLanguageVerified: boolean;
   descriptionLanguageVerified: boolean;
   languageContentVerified: boolean;
+  representativeImageVerified: boolean;
   detailImageCountVerified: boolean;
   approvedManifestDigestVerified: boolean;
   sourceIdentityVerified: boolean;
@@ -44,6 +45,11 @@ export type ListingPublicationContentVerification = {
   remoteImageDigest: string;
   remoteProjectionDigest: string;
   providerImageSurface: "detail_content" | "gallery" | "unknown";
+  providerImageContract:
+    | "approved_detail_content_exact_8"
+    | "representative_plus_approved_detail_8_exact_gallery_9"
+    | "representative_plus_approved_detail_7_exact_gallery_8"
+    | "unknown";
   mismatchFields: string[];
 };
 
@@ -327,6 +333,7 @@ export type ListingPublicationContentProjection = {
   description: string;
   detailImageCount: number;
   detailImageIdentities: string[];
+  representativeImageIdentity?: string;
 };
 
 function coupangContentProjection(value: UnknownRecord): ListingPublicationContentProjection {
@@ -370,6 +377,60 @@ function coupangContentProjection(value: UnknownRecord): ListingPublicationConte
   };
 }
 
+function shopeeExtendedDescriptionImageIds(item: UnknownRecord) {
+  const descriptionInfo = recordValue(item.description_info);
+  const extendedDescription = recordValue(descriptionInfo.extended_description);
+  return exactImageIdentities(records(extendedDescription.field_list)
+    .filter((field) => firstText(field, ["field_type"]).toLowerCase() === "image")
+    .map((field) => firstText(recordValue(field.image_info), ["image_id"])));
+}
+
+function shopeeGalleryImageIds(item: UnknownRecord) {
+  const image = recordValue(item.image);
+  return exactImageIdentities(
+    image.image_id_list ?? recordValue(item.image_info).image_id_list ?? item.image_id_list,
+  );
+}
+
+function shopeeApprovedDetailImageIds(input: {
+  side: "source" | "remote";
+  root: UnknownRecord;
+  item: UnknownRecord;
+}) {
+  if (input.side === "source") {
+    const preparedDetails = exactImageIdentities(input.root.sellerpilotProviderDetailImageIds);
+    if (preparedDetails.length) return preparedDetails;
+  }
+  const extendedDetails = shopeeExtendedDescriptionImageIds(input.item);
+  if (extendedDetails.length) return extendedDetails;
+  const gallery = shopeeGalleryImageIds(input.item);
+  if (gallery.length === marketplaceChannelDetailImageCount + 1) return gallery.slice(1);
+  if (gallery.length) return gallery;
+  if (input.side === "source") {
+    const sourceImages = exactImageIdentities(input.root.imageUrls);
+    return sourceImages.length === marketplaceChannelDetailImageCount + 1
+      ? sourceImages.slice(1)
+      : sourceImages;
+  }
+  return [];
+}
+
+function shopeeRepresentativeImageIdentity(input: {
+  side: "source" | "remote";
+  root: UnknownRecord;
+  item: UnknownRecord;
+}) {
+  const gallery = shopeeGalleryImageIds(input.item);
+  if (input.side === "remote" && gallery.length) return gallery[0];
+  if (input.side === "source"
+      && exactImageIdentities(input.root.sellerpilotProviderDetailImageIds).length === 8
+      && gallery.length) return gallery[0];
+  const sourceImages = exactImageIdentities(input.root.imageUrls);
+  return input.side === "source" && sourceImages.length === marketplaceChannelDetailImageCount + 1
+    ? sourceImages[0]
+    : "";
+}
+
 export function listingPublicationContentProjection(
   channel: PublicationChannel,
   side: "source" | "remote",
@@ -395,13 +456,17 @@ export function listingPublicationContentProjection(
     const sourceItem = Object.keys(recordValue(publish.item)).length ? recordValue(publish.item) : recordValue(value.body);
     const remoteItem = records(recordValue(value.response).item_list).find((item) => firstText(item, ["item_id"]) === remoteId) ?? {};
     const item = side === "source" ? sourceItem : remoteItem;
-    const image = recordValue(item.image);
-    const providerImages = exactImageIdentities(image.image_id_list ?? recordValue(item.image_info).image_id_list ?? item.image_id_list);
-    const detailImageIdentities = side === "source" && providerImages.length === 0
-      ? exactImageIdentities(value.imageUrls)
-      : providerImages;
+    const detailImageIdentities = shopeeApprovedDetailImageIds({ side, root: value, item });
+    const representativeImageIdentity = shopeeRepresentativeImageIdentity({ side, root: value, item });
     const title = normalizedListingPublicationText(firstText(item, ["item_name", "global_item_name"]));
-    return { title, titleParts: title ? [title] : [], description: normalizedListingPublicationText(firstText(item, ["description"])), detailImageCount: detailImageIdentities.length, detailImageIdentities };
+    return {
+      title,
+      titleParts: title ? [title] : [],
+      description: normalizedListingPublicationText(firstText(item, ["description"])),
+      detailImageCount: detailImageIdentities.length,
+      detailImageIdentities,
+      representativeImageIdentity,
+    };
   }
   if (channel === "lazada") {
     const sourceProduct = recordValue(recordValue(recordValue(value.request).Request).Product);
@@ -500,8 +565,9 @@ export function parseListingPublicationAssetBinding(value: unknown): ListingPubl
       || !Number.isSafeInteger(version) || version < 1
       || !/^[a-f0-9]{64}$/u.test(exactText(row.approvedManifestDigest))
       || !approvedDetailImages || !providerTransportImages
-      || (surface !== "detail_content" && surface !== "gallery")) return null;
-  if (surface === "detail_content" && !sameOrderedValues(approvedDetailImages.map((item) => item.publicUrl), providerTransportImages.map((item) => item.publicUrl))) return null;
+      || (surface !== "detail_content" && surface !== "gallery" && surface !== "buyer_visible")) return null;
+  if ((surface === "detail_content" || surface === "buyer_visible")
+      && !sameOrderedValues(approvedDetailImages.map((item) => item.publicUrl), providerTransportImages.map((item) => item.publicUrl))) return null;
   if (surface === "gallery" && (providerTransportImages[0]?.role !== "gallery-representative"
       || !sameOrderedValues(approvedDetailImages.slice(0, 7).map((item) => item.publicUrl), providerTransportImages.slice(1).map((item) => item.publicUrl)))) return null;
   return {
@@ -523,6 +589,9 @@ type ProviderAssetEvidence = {
   providerTransportRoles: string[];
   providerDetailImageIdentities: string[];
   providerImageDigest: string;
+  sourceRepresentativeImageDigest?: string;
+  providerRepresentativeImageIdentity?: string;
+  providerRepresentativeImageDigest?: string;
 };
 
 function parseProviderAssetEvidence(value: unknown): ProviderAssetEvidence | null {
@@ -531,6 +600,15 @@ function parseProviderAssetEvidence(value: unknown): ProviderAssetEvidence | nul
   const approvedRoles = Array.isArray(row.approvedDetailRoles) ? row.approvedDetailRoles.map(exactText).filter(Boolean) : [];
   const transportRoles = Array.isArray(row.providerTransportRoles) ? row.providerTransportRoles.map(exactText).filter(Boolean) : [];
   const surface = row.providerImageSurface;
+  const sourceRepresentativeImageDigest = exactText(row.sourceRepresentativeImageDigest);
+  const providerRepresentativeImageIdentity = exactText(row.providerRepresentativeImageIdentity);
+  const providerRepresentativeImageDigest = exactText(row.providerRepresentativeImageDigest);
+  const representativeEvidenceValid = !sourceRepresentativeImageDigest
+    && !providerRepresentativeImageIdentity
+    && !providerRepresentativeImageDigest
+    || /^[a-f0-9]{64}$/u.test(sourceRepresentativeImageDigest)
+      && Boolean(providerRepresentativeImageIdentity)
+      && providerRepresentativeImageDigest === digest(providerRepresentativeImageIdentity);
   if (row.contract !== "sellerpilot_provider_asset_binding_v1"
       || !/^[a-f0-9]{64}$/u.test(exactText(row.sourceAssetBindingDigest))
       || !/^[a-f0-9]{64}$/u.test(exactText(row.approvedManifestDigest))
@@ -539,6 +617,7 @@ function parseProviderAssetEvidence(value: unknown): ProviderAssetEvidence | nul
       || transportRoles.length !== 8 || new Set(transportRoles).size !== 8
       || identities.length !== 8 || new Set(identities).size !== 8
       || (surface !== "detail_content" && surface !== "gallery")
+      || !representativeEvidenceValid
       || exactText(row.providerImageDigest) !== digest(identities)) return null;
   return {
     sourceAssetBindingDigest: exactText(row.sourceAssetBindingDigest),
@@ -549,6 +628,11 @@ function parseProviderAssetEvidence(value: unknown): ProviderAssetEvidence | nul
     providerTransportRoles: transportRoles,
     providerDetailImageIdentities: identities,
     providerImageDigest: exactText(row.providerImageDigest),
+    ...(sourceRepresentativeImageDigest ? {
+      sourceRepresentativeImageDigest,
+      providerRepresentativeImageIdentity,
+      providerRepresentativeImageDigest,
+    } : {}),
   };
 }
 
@@ -561,18 +645,35 @@ export function listingPublicationProviderAssetEvidence(input: {
   const binding = parseListingPublicationAssetBinding(input.sourceArguments.sellerpilotPublicationAssetBinding);
   if (!binding) return null;
   const projection = listingPublicationContentProjection(input.channel, "source", input.providerArguments, input.remoteId);
+  const sourceProjection = listingPublicationContentProjection(input.channel, "source", input.sourceArguments, input.remoteId);
   const identities = projection.detailImageIdentities;
   if (identities.length !== 8 || new Set(identities).size !== 8) return null;
+  const preparedSurface = exactText(input.providerArguments.sellerpilotProviderImageSurface);
+  const providerImageSurface = binding.providerImageSurface === "buyer_visible"
+    ? preparedSurface === "gallery" || preparedSurface === "detail_content"
+      ? preparedSurface
+      : ""
+    : binding.providerImageSurface;
+  if (providerImageSurface !== "gallery" && providerImageSurface !== "detail_content") return null;
+  const buyerVisibleShopee = input.channel === "shopee" && binding.providerImageSurface === "buyer_visible";
+  const sourceRepresentativeImage = sourceProjection.representativeImageIdentity ?? "";
+  const providerRepresentativeImage = projection.representativeImageIdentity ?? "";
+  if (buyerVisibleShopee && (!sourceRepresentativeImage || !providerRepresentativeImage)) return null;
   return {
     contract: "sellerpilot_provider_asset_binding_v1",
     sourceAssetBindingDigest: digest(binding),
     approvedManifestDigest: binding.approvedManifestDigest,
     approvedDetailPageVersion: binding.approvedDetailPageVersion,
     approvedDetailRoles: binding.approvedDetailImages.map((item) => item.role),
-    providerImageSurface: binding.providerImageSurface,
+    providerImageSurface,
     providerTransportRoles: binding.providerTransportImages.map((item) => item.role),
     providerDetailImageIdentities: identities,
     providerImageDigest: digest(identities),
+    ...(buyerVisibleShopee ? {
+      sourceRepresentativeImageDigest: digest(sourceRepresentativeImage),
+      providerRepresentativeImageIdentity: providerRepresentativeImage,
+      providerRepresentativeImageDigest: digest(providerRepresentativeImage),
+    } : {}),
   };
 }
 
@@ -723,10 +824,29 @@ export function verifyListingPublicationContent(input: {
     && providerEvidence.approvedManifestDigest === binding.approvedManifestDigest
     && providerEvidence.approvedDetailPageVersion === binding.approvedDetailPageVersion
     && sameOrderedValues(providerEvidence.approvedDetailRoles, binding.approvedDetailImages.map((item) => item.role))
-    && providerEvidence.providerImageSurface === binding.providerImageSurface
+    && (binding.providerImageSurface === "buyer_visible"
+      ? providerEvidence.providerImageSurface === "gallery" || providerEvidence.providerImageSurface === "detail_content"
+      : providerEvidence.providerImageSurface === binding.providerImageSurface)
     && sameOrderedValues(providerEvidence.providerTransportRoles, binding.providerTransportImages.map((item) => item.role))
     && sourceAssetProjectionVerified);
   const providerIdentities = providerEvidence?.providerDetailImageIdentities ?? [];
+  const verifiedProviderImageSurface = providerEvidence?.providerImageSurface
+    ?? (binding?.providerImageSurface === "buyer_visible" ? "unknown" : binding?.providerImageSurface)
+    ?? "unknown";
+  const providerImageContract = verifiedProviderImageSurface === "detail_content"
+    ? "approved_detail_content_exact_8"
+    : verifiedProviderImageSurface === "gallery"
+      ? binding?.providerImageSurface === "buyer_visible"
+        ? "representative_plus_approved_detail_8_exact_gallery_9"
+        : "representative_plus_approved_detail_7_exact_gallery_8"
+      : "unknown";
+  const representativeImageVerified = binding?.providerImageSurface !== "buyer_visible"
+    || Boolean(providerEvidence
+      && source.representativeImageIdentity
+      && providerEvidence.sourceRepresentativeImageDigest === digest(source.representativeImageIdentity)
+      && providerEvidence.providerRepresentativeImageIdentity
+      && providerEvidence.providerRepresentativeImageIdentity === sourceReadback.representativeImageIdentity
+      && providerEvidence.providerRepresentativeImageIdentity === remote.representativeImageIdentity);
   const detailImageCountVerified = input.expectedImageCount === 8
     && sourceReadback.detailImageCount === 8 && remote.detailImageCount === 8
     && new Set(sourceReadback.detailImageIdentities).size === 8
@@ -748,7 +868,10 @@ export function verifyListingPublicationContent(input: {
     description: source.description,
     resources: sourceResources,
     approvedManifestDigest: binding?.approvedManifestDigest ?? "",
-    providerImageSurface: binding?.providerImageSurface ?? "unknown",
+    providerImageSurface: verifiedProviderImageSurface,
+    ...(binding?.providerImageSurface === "buyer_visible"
+      ? { representativeImage: providerEvidence?.providerRepresentativeImageIdentity ?? "" }
+      : {}),
     detailImages: providerIdentities,
   };
   const remoteProjection = {
@@ -756,7 +879,10 @@ export function verifyListingPublicationContent(input: {
     description: remote.description,
     resources: remoteResources,
     approvedManifestDigest: binding?.approvedManifestDigest ?? "",
-    providerImageSurface: binding?.providerImageSurface ?? "unknown",
+    providerImageSurface: verifiedProviderImageSurface,
+    ...(binding?.providerImageSurface === "buyer_visible"
+      ? { representativeImage: remote.representativeImageIdentity ?? "" }
+      : {}),
     detailImages: remote.detailImageIdentities,
   };
   const sourceContentDigest = digest(sourceProjection);
@@ -770,6 +896,7 @@ export function verifyListingPublicationContent(input: {
     ...(titleLanguageVerified ? [] : ["titleLanguage"]),
     ...(descriptionLanguageVerified ? [] : ["descriptionLanguage"]),
     ...(approvedManifestDigestVerified ? [] : ["approvedManifest"]),
+    ...(representativeImageVerified ? [] : ["representativeImage"]),
     ...(detailImageCountVerified ? [] : ["detailImages"]),
     ...(sourceIdentityVerified && sourceDeclaredIdentityVerified ? [] : ["remoteIdentity"]),
     ...(contentDigestVerified ? [] : ["contentDigest"]),
@@ -781,6 +908,7 @@ export function verifyListingPublicationContent(input: {
     titleLanguageVerified,
     descriptionLanguageVerified,
     languageContentVerified,
+    representativeImageVerified,
     detailImageCountVerified,
     approvedManifestDigestVerified,
     sourceIdentityVerified: sourceIdentityVerified && sourceDeclaredIdentityVerified,
@@ -793,7 +921,8 @@ export function verifyListingPublicationContent(input: {
     sourceImageDigest,
     remoteImageDigest,
     remoteProjectionDigest: remoteContentDigest,
-    providerImageSurface: binding?.providerImageSurface ?? "unknown",
+    providerImageSurface: verifiedProviderImageSurface,
+    providerImageContract,
     mismatchFields,
   };
 }
