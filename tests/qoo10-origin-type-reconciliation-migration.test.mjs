@@ -510,13 +510,13 @@ async function seedDatabase(options = {}) {
   }
   await db.query(
     `insert into sellerpilot_private.channel_gateway_jobs (
-       id,credential_id,channel,operation,environment,request_payload,
+       id,credential_id,listing_id,channel,operation,environment,request_payload,
        request_fingerprint,status,created_at,updated_at
      ) values (
-       $1,$2,'qoo10','listing.create','production','{}',$3,'failed',
+       $1,$2,$3,'qoo10','listing.create','production','{}',$4,'failed',
        '2026-08-30T11:23:25.017463Z','2026-08-30T11:23:25.017463Z'
      )`,
-    [LEGACY_CREATE_JOB_ID, CREDENTIAL_ID, "4".repeat(64)],
+    [LEGACY_CREATE_JOB_ID, CREDENTIAL_ID, LISTING_ID, "4".repeat(64)],
   );
   await db.query(
     `insert into sellerpilot_private.channel_gateway_jobs (
@@ -571,6 +571,18 @@ async function seedDatabase(options = {}) {
   await db.exec(
     `insert into sellerpilot_private.listing_mutation_release_gate
      values (true,false,null,null,clock_timestamp())`,
+  );
+  await db.query(
+    `insert into sellerpilot_private.channel_gateway_jobs (
+       id,credential_id,attempt_id,listing_id,channel,operation,environment,
+       request_payload,response_payload,request_fingerprint,seller_account_key,
+       status,error_message,created_at,updated_at,completed_at
+     ) values (
+       'bd402ec8-bf01-45b4-bf26-8c4b3e404e2d',$1,null,null,'shopee',
+       'listing.create','production','{}','{}',$2,$3,'succeeded',null,
+       '2026-08-23T07:47:07Z','2026-08-23T07:47:50Z','2026-08-23T07:47:50Z'
+     )`,
+    [CREDENTIAL_ID, "3".repeat(64), "unrelated-terminal-history"],
   );
   if (options.laterJob) {
     await db.query(
@@ -936,7 +948,7 @@ for (const [name, options, expected] of [
   [
     "an unrelated active listing mutation",
     { globalActiveJob: true },
-    /production listing mutation ledger mismatch/,
+    /active listing mutation set mismatch/,
   ],
   ["a different completion receipt", { badReceipt: true }, /completion receipt mismatch/],
   ["a partial terminal state", { partialTerminal: true }, /partial exact Qoo10 reconciliation state/],

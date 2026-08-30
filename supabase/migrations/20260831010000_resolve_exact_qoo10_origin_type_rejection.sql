@@ -1951,15 +1951,17 @@ begin
       using errcode = '55000';
   end if;
 
-  -- Production had exactly these three listing-mutation ledger rows before
-  -- reconciliation. Fixing the complete ID set (not merely created_at > the
-  -- target) closes same-timestamp and backdated duplicate-job loopholes.
+  -- This exact listing had exactly these three mutation ledger rows before
+  -- reconciliation. Older terminal history for other listings/channels is
+  -- unrelated, while fixing this listing's complete ID set (not merely
+  -- created_at > the target) closes same-timestamp and backdated duplicates.
   if (
        select count(*)
          from sellerpilot_private.channel_gateway_jobs listing_job
         where listing_job.operation in (
           'listing.create', 'listing.update', 'listing.stop'
         )
+          and listing_job.listing_id = v_listing_id
      ) <> 3
      or exists (
        select 1
@@ -1967,6 +1969,7 @@ begin
         where listing_job.operation in (
           'listing.create', 'listing.update', 'listing.stop'
         )
+          and listing_job.listing_id = v_listing_id
           and listing_job.id not in (
             '2b6258c8-f1fd-4dc2-baed-b0019dd66112'::uuid,
             v_source_job_id,
