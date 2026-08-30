@@ -49,6 +49,8 @@ const QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION =
   "20260831053500_rebind_qoo10_scoped_provider_mutation_chain.sql";
 const QOO10_ADULTYN_RECONCILIATION_MIGRATION =
   "20260831055000_reconcile_exact_qoo10_adultyn_rejection.sql";
+const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
+  "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
   "20260830222257_confirm_qoo10_listing_create_rollback.sql",
   "20260831010000_resolve_exact_qoo10_origin_type_rejection.sql",
@@ -573,6 +575,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_SCOPED_GATE_MIGRATION,
       "20260831052500_reconcile_exact_qoo10_preprovider_gate_denial.sql",
       QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION,
+      ELEVENST_SNAPSHOT_RECOVERY_MIGRATION,
       QOO10_ADULTYN_RECONCILIATION_MIGRATION,
     ]);
     assert.ok(
@@ -9527,6 +9530,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
     "20260831050000_channel_scoped_qoo10_publication_gate.sql";
   const qoo10ScopedProviderChainMigrationName =
     "20260831053500_rebind_qoo10_scoped_provider_mutation_chain.sql";
+  const elevenstSnapshotRecoveryMigrationName =
+    "20260831054000_recover_elevenst_listing_snapshot.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
@@ -9544,7 +9549,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== lazadaOauthReauthorizationMigrationName
         && name !== temuStaticEgressMigrationName
         && name !== qoo10ScopedReleaseGateMigrationName
-        && name !== qoo10ScopedProviderChainMigrationName)
+        && name !== qoo10ScopedProviderChainMigrationName
+        && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;

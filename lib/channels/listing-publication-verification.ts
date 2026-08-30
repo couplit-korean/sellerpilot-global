@@ -179,7 +179,40 @@ function sourceContext(input: VerificationInput) {
     throw new Error("LISTING_PUBLICATION_VERIFY_SOURCE_CONTEXT_INVALID");
   }
   const sourceArguments = source.data.sourceArguments;
-  if (sourceArguments.publicationIntent !== "live"
+  const legacyElevenstSnapshotAttestation = recordValue(
+    sourceArguments.sellerpilotElevenstLegacySnapshotAttestation,
+  );
+  const legacyElevenstSnapshot = input.channel === "elevenst"
+    && input.arguments.sellerpilotElevenstSnapshotRecovery
+      === "elevenst_exact_legacy_snapshot_recovery_v1"
+    && input.arguments.sellerpilotSnapshotOnly === true;
+  const validLegacyElevenstSnapshot = legacyElevenstSnapshot
+    && legacyElevenstSnapshotAttestation.contract
+      === "elevenst_exact_legacy_source_attestation_v1"
+    && legacyElevenstSnapshotAttestation.snapshotOnly === true
+    && legacyElevenstSnapshotAttestation.approvedContentVerified === false
+    && legacyElevenstSnapshotAttestation.publicationReviewAllowed === false
+    && /^[a-f0-9]{64}$/u.test(exactText(
+      legacyElevenstSnapshotAttestation.sourceRequestSha256,
+    ))
+    && /^[a-f0-9]{64}$/u.test(exactText(
+      legacyElevenstSnapshotAttestation.sourceResponseSha256,
+    ))
+    && exactText(legacyElevenstSnapshotAttestation.approvedManifestDigest)
+      === exactText(input.arguments.approvedManifestDigest)
+    && Number(legacyElevenstSnapshotAttestation.approvedDetailPageVersion)
+      === Number(input.arguments.approvedDetailPageVersion)
+    && Number.isSafeInteger(Number(input.arguments.approvedDetailPageVersion))
+    && Number(input.arguments.approvedDetailPageVersion) > 0
+    && Object.keys(recordValue(sourceArguments.product)).length > 0
+    && sourceArguments.publicationIntent === undefined
+    && sourceArguments.publicationStateContract === undefined
+    && sourceArguments.publicationExpectedLocale === undefined
+    && sourceArguments.publicationExpectedFingerprint === undefined
+    && sourceArguments.publicationExpectedImageCount === undefined
+    && sourceArguments.sellerpilotPublicationAssetBinding === undefined
+    && Object.keys(recordValue(source.data.sourceResponsePayload.remoteState)).length === 0;
+  if (!validLegacyElevenstSnapshot && (sourceArguments.publicationIntent !== "live"
       || sourceArguments.publicationStateContract !== "verified_remote_state_v1"
       || sourceArguments.publicationExpectedLocale !== expectedLocale
       || sourceArguments.publicationExpectedFingerprint !== expectedFingerprint
@@ -188,18 +221,51 @@ function sourceContext(input: VerificationInput) {
         sourceArguments.sellerpilotPublicationAssetBinding,
       )
       || recordValue(recordValue(source.data.sourceResponsePayload.remoteState).evidence)
-        .publicationAssetBinding === undefined) {
+        .publicationAssetBinding === undefined)) {
     throw new Error("LISTING_PUBLICATION_VERIFY_SOURCE_BINDING_INVALID");
   }
   return {
     source: source.data,
     remoteId,
+    legacyElevenstSnapshot: validLegacyElevenstSnapshot,
     expected: {
       locale: expectedLocale,
       fingerprint: expectedFingerprint,
       imageCount: 8,
     },
   };
+}
+
+const elevenstLegacySnapshotImmutableFields = [
+  "sellerPrdCd",
+  "dispCtgrNo",
+  "selMthdCd",
+  "prdTypCd",
+  "rmaterialTypCd",
+  "orgnTypCd",
+  "suplDtyfrPrdClfCd",
+  "forAbrdBuyClf",
+  "minorSelCnYn",
+  "selPrdClfCd",
+  "dlvCnAreaCd",
+  "dlvWyCd",
+  "dlvCstInstBasiCd",
+  "bndlDlvCnYn",
+  "dlvCstPayTypCd",
+] as const;
+
+function elevenstLegacySnapshotImmutableProductMatches(
+  sourceProductValue: unknown,
+  remoteProductValue: unknown,
+) {
+  const sourceProduct = recordValue(sourceProductValue);
+  const remoteProduct = recordValue(remoteProductValue);
+  if (!exactText(sourceProduct.sellerPrdCd)
+      || !exactText(sourceProduct.dispCtgrNo)) return false;
+  if (elevenstLegacySnapshotImmutableFields.some((field) =>
+    exactText(remoteProduct[field]) !== exactText(sourceProduct[field]))) return false;
+  return JSON.stringify(remoteProduct.ProductCertGroup ?? null)
+    === JSON.stringify(sourceProduct.ProductCertGroup ?? null);
 }
 
 function sourceSellerCode(argumentsValue: UnknownRecord) {
@@ -268,7 +334,7 @@ function sourceRemotePayload(
     return matchingData(/^GetItemDetailInfo-publication-readback$/u);
   }
   if (channel === "elevenst") {
-    return matchingData(/^product-publication-readback$/u);
+    return matchingData(/^(?:product-publication-readback|listing-readback)$/u);
   }
   if (channel === "shopee") {
     return matchingData(/^(?:local-item-publication-readback|published-item-readback(?:-\d+)?|listing-readback)$/u);
@@ -402,7 +468,7 @@ function verifiedExecution(input: {
 export async function executeListingPublicationVerification(
   input: VerificationInput,
 ): Promise<ListingPublicationVerificationExecution> {
-  const { source, remoteId, expected } = sourceContext(input);
+  const { source, remoteId, expected, legacyElevenstSnapshot } = sourceContext(input);
   const sourceOperation = source.sourceOperation as SourceOperation;
   const sourceArguments = source.sourceArguments;
 
@@ -514,13 +580,62 @@ export async function executeListingPublicationVerification(
       product,
       expectedLocale: expected.locale,
       expectedFingerprint: expected.fingerprint,
-      expectedImageCount: expected.imageCount,
+      expectedImageCount: legacyElevenstSnapshot ? 0 : expected.imageCount,
       ...(sourceElevenstSellerCode(sourceArguments)
         ? { expectedSellerProductCode: sourceElevenstSellerCode(sourceArguments) }
         : {}),
+      verifyFullProductSnapshot:
+        legacyElevenstSnapshot
+        || input.arguments.sellerpilotElevenstSnapshotRecovery
+          === "elevenst_exact_snapshot_recovery_v1",
     });
     const readbackStep = providerStep("product-publication-reverification", remote);
-    readbackStep.ok = readbackStep.ok && remote.data.accepted === true && Boolean(remoteState);
+    const immutableSourceFieldsVerified = legacyElevenstSnapshot
+      ? elevenstLegacySnapshotImmutableProductMatches(
+          recordValue(sourceArguments.product),
+          product,
+        )
+      : true;
+    readbackStep.ok = readbackStep.ok
+      && remote.data.accepted === true
+      && Boolean(remoteState)
+      && immutableSourceFieldsVerified;
+    if (legacyElevenstSnapshot) {
+      const attestation = recordValue(
+        sourceArguments.sellerpilotElevenstLegacySnapshotAttestation,
+      );
+      const snapshotState = verifiedListingRemoteStateSchema.safeParse(
+        remoteState && immutableSourceFieldsVerified
+          ? {
+              ...remoteState,
+              evidence: {
+                ...remoteState.evidence,
+                snapshotOnly: true,
+                approvedContentVerified: false,
+                approvedImageCountVerified: false,
+                publicationReviewCreated: false,
+                legacySourceAttested: true,
+                freshFullProductReadback: true,
+                immutableSourceFieldsVerified: true,
+                sourceJobId: source.sourceJobId,
+                sourceOperation: source.sourceOperation,
+                approvedManifestDigest: exactText(
+                  attestation.approvedManifestDigest,
+                ),
+                approvedDetailPageVersion: Number(
+                  attestation.approvedDetailPageVersion,
+                ),
+                observedDetailImageCount: remoteState.imageCount,
+              },
+            }
+          : null,
+      );
+      return {
+        remoteId,
+        steps: [readbackStep],
+        ...(snapshotState.success ? { remoteState: snapshotState.data } : {}),
+      };
+    }
     return verifiedExecution({
       channel: input.channel,
       source,

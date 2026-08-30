@@ -2,6 +2,7 @@ import {
   verifiedListingRemoteStateSchema,
   type VerifiedListingRemoteState,
 } from "./listing-publication-state";
+import { validateElevenstListingProduct } from "./elevenst-listing";
 
 export type ElevenstListingReadbackOperation = "listing.create" | "listing.update" | "listing.stop";
 
@@ -13,8 +14,11 @@ type ElevenstListingReadbackInput = {
   expectedFingerprint: string;
   expectedImageCount: number;
   expectedSellerProductCode?: string;
+  verifyFullProductSnapshot?: boolean;
   verifiedAt?: Date;
 };
+
+const maximumRecoverableFullProductBytes = 128_000;
 
 function productRecord(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -75,6 +79,23 @@ export function elevenstVerifiedListingRemoteState(
   const imageCountVerified = input.expectedImageCount === 0 || imageCount === input.expectedImageCount;
   if (!localeVerified || !imageCountVerified) return null;
 
+  let fullProductBytes: number | undefined;
+  if (input.verifyFullProductSnapshot) {
+    try {
+      const candidateSnapshot = structuredClone(product);
+      delete candidateSnapshot.prdNo;
+      delete candidateSnapshot.selStatCd;
+      delete candidateSnapshot.selStatNm;
+      const fullProduct = validateElevenstListingProduct(candidateSnapshot);
+      fullProductBytes = Buffer.byteLength(JSON.stringify(fullProduct), "utf8");
+      if (fullProductBytes > maximumRecoverableFullProductBytes) {
+        return null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
   const candidate = {
     verified: true,
     visibility,
@@ -89,6 +110,9 @@ export function elevenstVerifiedListingRemoteState(
       fingerprintVerified: true,
       imageCountVerified: true,
       detailImageCount: imageCount,
+      ...(fullProductBytes === undefined
+        ? {}
+        : { fullProductVerified: true, fullProductBytes }),
       ...(text(product, "selStatNm") ? { providerStatusName: text(product, "selStatNm") } : {}),
     },
     resources: {

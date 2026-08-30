@@ -1786,9 +1786,12 @@ export async function elevenstSellerXmlRequest(input: {
     || elevenstNamespacedXmlValue(xml, "prdNo");
   const productNode = elevenstXmlNodes(xml, "Product")[0] ?? "";
   const productScalarFields = [
-    "prdNo", "sellerPrdCd", "prdNm", "brand", "orgnNmVal", "prdStatCd", "selStatCd", "selStatNm",
-    "prdImage01", "prdImage02", "prdImage03", "prdImage04", "htmlDetail",
-    "asDetail", "rtngExchDetail",
+    "prdNo", "sellerPrdCd", "selMthdCd", "dispCtgrNo", "prdTypCd", "prdNm", "brand",
+    "rmaterialTypCd", "orgnTypCd", "orgnNmVal", "suplDtyfrPrdClfCd", "forAbrdBuyClf",
+    "prdStatCd", "minorSelCnYn", "selStatCd", "selStatNm", "prdImage01", "prdImage02",
+    "prdImage03", "prdImage04", "htmlDetail", "selPrdClfCd", "aplBgnDy", "aplEndDy",
+    "selPrc", "prdSelQty", "dlvCnAreaCd", "dlvWyCd", "dlvCstInstBasiCd", "bndlDlvCnYn",
+    "dlvCstPayTypCd", "rtngdDlvCst", "exchDlvCst", "asDetail", "rtngExchDetail",
   ] as const;
   const product = Object.fromEntries(productScalarFields.flatMap((field) => {
     const value = productNode ? elevenstNamespacedXmlValue(productNode, field) : "";
@@ -1804,6 +1807,16 @@ export async function elevenstSellerXmlRequest(input: {
     });
     if (type && items.length) product.ProductNotification = { type, item: items };
   }
+  const certificationGroups = productNode
+    ? elevenstXmlNodes(productNode, "ProductCertGroup").flatMap((groupNode) => {
+        const crtfGrpTypCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpTypCd");
+        const crtfGrpObjClfCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpObjClfCd");
+        return crtfGrpTypCd && crtfGrpObjClfCd
+          ? [{ crtfGrpTypCd, crtfGrpObjClfCd }]
+          : [];
+      })
+    : [];
+  if (certificationGroups.length) product.ProductCertGroup = certificationGroups;
   const products = elevenstXmlNodes(xml, "product").slice(0, 500).map((node) => ({
     productNo: elevenstNamespacedXmlValue(node, "prdNo"),
     sellerProductCode: elevenstNamespacedXmlValue(node, "sellerPrdCd"),
