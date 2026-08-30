@@ -236,7 +236,7 @@ function qoo10SearchTerms(query: string) {
   if (/(우산|umbrella)/u.test(normalized)) aliases.push("傘", "雨具", "ファッション雑貨");
   if (/(노트|수첩|notebook|notepad|ノート|メモ帳)/u.test(normalized)) aliases.push("リングノート", "ノート", "メモ帳", "文房具");
   if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber|クロス|ふきん)/u.test(normalized)) aliases.push("掃除クロス", "マイクロファイバークロス", "ふきん", "清掃用品");
-  if (/(케이블|전선|cable|cord|ケーブル|コード|配線)/u.test(normalized)) aliases.push("ケーブルクリップ", "コードクリップ", "配線整理", "ケーブル整理");
+  if (/(케이블|전선|cable|cord|ケーブル|コード|配線)/u.test(normalized)) aliases.push("ケーブルクリップ", "コードクリップ", "配線整理", "ケーブル整理", "クリップ 結束用品");
   return aliases.join(" ");
 }
 
@@ -272,7 +272,7 @@ function qoo10PriorityTerms(query: string) {
   if (/(우산|umbrella)/u.test(normalized)) return ["傘"];
   if (/(노트|수첩|notebook|notepad|ノート|メモ帳)/u.test(normalized)) return ["リングノート", "ノート", "メモ帳"];
   if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber|クロス|ふきん)/u.test(normalized)) return ["マイクロファイバークロス", "掃除クロス", "ふきん", "清掃用品"];
-  if (/(케이블|전선|cable|cord|ケーブル|コード|配線)/u.test(normalized)) return ["ケーブルクリップ", "コードクリップ", "配線整理", "ケーブル整理"];
+  if (/(케이블|전선|cable|cord|ケーブル|コード|配線)/u.test(normalized)) return ["クリップ・結束用品", "ケーブルクリップ", "コードクリップ", "配線整理", "ケーブル整理"];
   return [];
 }
 
@@ -299,7 +299,7 @@ function qoo10CategoryCompatibility(query: string, candidate: CategorySuggestion
   if (/(teddy|plush|stuffed|테디|곰인형|봉제)/u.test(query.toLocaleLowerCase()) && /(犬用品|猫用品|ペット)/u.test(candidate.path.join(" "))) return false;
   if (/(노트|수첩|notebook|notepad|ノート|メモ帳)/u.test(normalizedQuery)) return /(リングノート|ノート|メモ帳|文房具)/u.test(value) && !/(ノートパソコン|パソコン|コンピュータ)/u.test(value);
   if (/(청소천|극세사|행주|걸레|cleaning cloth|microfiber|クロス|ふきん)/u.test(normalizedQuery)) return /(掃除.*クロス|マイクロファイバー|ふきん|雑巾|清掃用品)/u.test(value) && !/(デンタル|ホワイトニング|ブルーレイ)/u.test(value);
-  if (/(케이블|전선|cable|cord|ケーブル|コード|配線)/u.test(normalizedQuery)) return /(ケーブル|コード|配線).*(クリップ|整理|収納)|クリップ.*(ケーブル|コード)/u.test(value) && !/(机|テーブル|こたつ)/u.test(value);
+  if (/(케이블|전선|cable|cord|ケーブル|コード|配線)/u.test(normalizedQuery)) return /(クリップ・結束用品)|(ケーブル|コード|配線).*(クリップ|整理|収納)|クリップ.*(ケーブル|コード)/u.test(value) && !/(机|テーブル|こたつ)/u.test(value);
   return queryScore(qoo10SearchTerms(query), `${candidate.path.join(" ")} ${candidate.name}`) > 0;
 }
 
@@ -980,7 +980,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
                   },
                 }
               : channel === "qoo10"
-                ? { query: textQuery, params: {} }
+                ? { query: textQuery, params: { lang_cd: "JA" } }
                 : { query: textQuery };
       const payload = await operation(channel, "categories.suggest", args);
       if (channel === "ebay") {

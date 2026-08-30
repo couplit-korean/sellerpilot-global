@@ -53,6 +53,7 @@ const qoo10Response = {
         { CATE_L_CD: "100000050", CATE_L_NM: "日用品雑貨", CATE_M_CD: "200000501", CATE_M_NM: "収納用品", CATE_S_CD: "TEST-STORAGE", CATE_S_NM: "収納ボックス・収納ケース" },
         { CATE_L_CD: "100000017", CATE_L_NM: "家具・インテリア", CATE_M_CD: "220000074", CATE_M_NM: "子供部屋家具", CATE_S_CD: "TEST-HANGER-CHILD", CATE_S_NM: "ハンガー" },
         { CATE_L_CD: "100000018", CATE_L_NM: "日用品雑貨", CATE_M_CD: "220000079", CATE_M_NM: "洗濯用品", CATE_S_CD: "TEST-HANGER-LAUNDRY", CATE_S_NM: "ハンガー" },
+        { CATE_L_CD: "100000019", CATE_L_NM: "文具", CATE_M_CD: "200000146", CATE_M_NM: "文房具", CATE_S_CD: "320000542", CATE_S_NM: "クリップ・結束用品" },
         { CATE_L_CD: "100000073", CATE_L_NM: "キッチン家電", CATE_M_CD: "200000246", CATE_M_NM: "コーヒーメーカー", CATE_S_CD: "320001985", CATE_S_NM: "エスプレッソマシーン" },
       ],
     },
@@ -68,6 +69,12 @@ test("Qoo10 category normalization maps current QAPI fields and cross-locale cup
 
 test("Qoo10 category normalization does not return an arbitrary leaf without a lexical match", () => {
   assert.deepEqual(normalizeSuggestions("qoo10", qoo10Response, "분류 사전이 없는 임의 상품"), []);
+});
+
+test("Qoo10 category normalization selects the provider-backed cable-clip leaf", () => {
+  const suggestion = normalizeSuggestions("qoo10", qoo10Response, "부착형 케이블 정리 클립 6개 세트")[0];
+  assert.equal(suggestion?.id, "320000542");
+  assert.deepEqual(suggestion?.path, ["文具", "文房具", "クリップ・結束用品"]);
 });
 
 test("Qoo10 normalization keeps notebook, cleaning-cloth, and cable-organizer products out of lookalike categories", () => {

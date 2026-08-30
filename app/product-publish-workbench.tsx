@@ -25,7 +25,7 @@ import {
 import { marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
 import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
-import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10SellerCode } from "../lib/channels/qoo10";
+import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
 import {
   buildLocalizedBudgetedPlainDetail,
   buildLocalizedPlainDetail,
@@ -309,6 +309,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const seoKeywords = localizedSeoKeywords(writeListing);
   const marketSku = target ? `${manual.sellerSku || product.sku}-${target.marketCode}`.slice(0, 100) : manual.sellerSku || product.sku;
   if (channel === "qoo10") {
+    const productionPlace = qoo10ProductionPlaceFields(manual.countryOfOrigin);
     return {
       sellerpilotAssets: { ...sellerpilotAssets, integrationRevision: "itemscontents-v3-evidence-detail" },
       params: {
@@ -317,18 +318,19 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         Drugtype: "",
         ManufactureNo: qoo10CatalogCode(assignment?.providedAttributes.ManufactureNo),
         BrandNo: qoo10CatalogCode(assignment?.providedAttributes.BrandNo),
-        ItemTitle: title.slice(0, 200),
+        ItemTitle: title.slice(0, 100),
         PromotionName: shortDescription.slice(0, 20),
         SellerCode: qoo10SellerCode(product.sku, existingListing?.status !== "published" ? existingListing?.remoteId ?? undefined : undefined),
         IndustrialCode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "",
-        ProductionPlace: qoo10ProductionPlace(manual.countryOfOrigin),
-        AudultYN: "N",
+        IndustrialCodeType: manual.gtinStatus === "HAS_GTIN" ? "J" : "",
+        ...productionPlace,
+        AdultYN: "N",
         ContactTel: "",
         StandardImage: sourceImage,
         ItemDescription: richDescription,
         AdditionalOption: "",
         ItemType: "",
-        RetailPrice: "0",
+        RetailPrice: String(channelPrice),
         ItemPrice: String(channelPrice),
         TaxRate: "S",
         ItemQty: String(quantity),
@@ -1004,6 +1006,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
     const listingCurrency = marketplaceListingCurrency(channel, target?.currency);
     const operationPrice = marketplaceListingPrice(channel, price, { globalBaseUsdPrice, targetCurrency: target?.currency });
+    const operationMarket = target?.marketCode ?? (channel === "qoo10" ? "JP" : "");
     if (!options.skipConfirm) {
       openConfirmation({ kind: "channel", channel });
       return false;
@@ -1021,7 +1024,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     const isCurrentProduct = () => mountedRef.current
       && !writeController.signal.aborted
       && sessionProductIdRef.current === requestedProductId;
-    const mutationScope = `${requestedProductId}:${channel}:${listing?.id ?? `create:${target?.marketCode ?? ""}:${target?.targetId ?? ""}`}`;
+    const mutationScope = `${requestedProductId}:${channel}:${listing?.id ?? `create:${operationMarket}:${target?.targetId ?? ""}`}`;
     const retryGeneration = listingMutationGeneration(listing, mutationGenerationRef.current.get(mutationScope));
     mutationGenerationRef.current.set(mutationScope, retryGeneration);
     const publicationIntent = operation === "listing.create"
@@ -1031,7 +1034,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       phase: "running",
       operation,
       listingId: listing?.id,
-      market: target?.marketCode ?? "",
+      market: operationMarket,
       targetId: target?.targetId ?? "",
       mutationGeneration: retryGeneration,
     };
@@ -1042,7 +1045,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const mutationContract = {
         operation,
         publicationIntent,
-        market: target?.marketCode ?? "default",
+        market: operationMarket || "default",
         targetId: target?.targetId ?? "",
         channelArguments,
         listingCurrency,
@@ -1077,7 +1080,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
               productId: requestedProductId,
               currency: listingCurrency,
               price: operationPrice,
-              market: target?.marketCode ?? "",
+              market: operationMarket,
               targetId: target?.targetId ?? "",
               arguments: channelArguments,
             }),

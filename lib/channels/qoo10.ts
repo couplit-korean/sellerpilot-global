@@ -3,23 +3,49 @@ export function qoo10CatalogCode(value: unknown) {
   return /^\d{1,10}$/.test(normalized) ? normalized : "";
 }
 
-const qoo10CountryNames = new Map([
-  ["대한민국", "South Korea"],
-  ["한국", "South Korea"],
-  ["republic of korea", "South Korea"],
-  ["korea, republic of", "South Korea"],
-  ["south korea", "South Korea"],
-  ["중국", "China"],
-  ["일본", "Japan"],
-  ["미국", "United States"],
-  ["베트남", "Vietnam"],
-  ["태국", "Thailand"],
-  ["대만", "Taiwan"],
+const qoo10CountryCodes = new Map([
+  ["대한민국", "KR"],
+  ["한국", "KR"],
+  ["republic of korea", "KR"],
+  ["korea, republic of", "KR"],
+  ["south korea", "KR"],
+  ["kr", "KR"],
+  ["중국", "CN"],
+  ["china", "CN"],
+  ["cn", "CN"],
+  ["일본", "JP"],
+  ["japan", "JP"],
+  ["jp", "JP"],
+  ["미국", "US"],
+  ["united states", "US"],
+  ["us", "US"],
+  ["베트남", "VN"],
+  ["vietnam", "VN"],
+  ["vn", "VN"],
+  ["태국", "TH"],
+  ["thailand", "TH"],
+  ["th", "TH"],
+  ["대만", "TW"],
+  ["taiwan", "TW"],
+  ["tw", "TW"],
 ]);
 
 export function qoo10ProductionPlace(value: unknown) {
   const normalized = typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
-  return qoo10CountryNames.get(normalized.toLocaleLowerCase()) ?? normalized;
+  return qoo10CountryCodes.get(normalized.toLocaleLowerCase()) ?? normalized;
+}
+
+export function qoo10ProductionPlaceFields(value: unknown) {
+  const productionPlace = qoo10ProductionPlace(value);
+  if (productionPlace === "JP") {
+    // QAPI type 1 requires a concrete Japanese prefecture (for example,
+    // TOKYO). A country-only source cannot safely invent one, so preserve the
+    // known country as an explicit type-3 free description instead.
+    return { ProductionPlaceType: "3", ProductionPlace: "JAPAN" } as const;
+  }
+  return /^[A-Z]{2}$/u.test(productionPlace)
+    ? { ProductionPlaceType: "2", ProductionPlace: productionPlace } as const
+    : { ProductionPlaceType: "3", ProductionPlace: productionPlace } as const;
 }
 
 export function qoo10ExpiryDate(now = new Date()) {
@@ -30,10 +56,10 @@ export function qoo10ExpiryDate(now = new Date()) {
 
 export function qoo10SellerCode(sku: string, pausedRemoteId?: string) {
   const base = sku.trim() || "SELLERPILOT";
-  if (!pausedRemoteId) return base.slice(0, 20);
+  if (!pausedRemoteId) return base.slice(0, 100);
   const remoteTail = pausedRemoteId.replace(/\D/g, "").slice(-5) || "RETRY";
   const suffix = `R${remoteTail}`;
-  return `${base.slice(0, Math.max(1, 19 - suffix.length))}-${suffix}`.slice(0, 20);
+  return `${base.slice(0, Math.max(1, 99 - suffix.length))}-${suffix}`.slice(0, 100);
 }
 
 export function qoo10PauseParams(remoteId: string) {

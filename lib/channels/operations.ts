@@ -27,6 +27,11 @@ import {
 import { qoo10ProductionPlace, qoo10ResultMessage } from "./qoo10";
 import { qoo10VerifiedListingRemoteState } from "./qoo10-listing-publication";
 import {
+  qoo10ListingCreateExpectation,
+  runQoo10ListingCreateProviderPreflight,
+  type Qoo10ListingCreateExpectation,
+} from "./qoo10-listing-create-preflight";
+import {
   ebayAsqMarketplaceId,
   ebayAsqMarketplaceIdFromSiteCode,
   type EbayAsqMarketplaceId,
@@ -1633,6 +1638,43 @@ function qoo10PriceUpdateRequest(
 
 async function executeQoo10(input: ExecuteInput) {
   const suppliedParams = stringMap(input.arguments, "params");
+  if (["categories.list", "categories.suggest", "categories.attributes", "categories.validate"].includes(input.operation)) {
+    const remote = await qoo10Request({
+      payload: input.payload,
+      service: "CommonInfoLookup",
+      method: "GetCatagoryListAll",
+      params: { ...suppliedParams, lang_cd: "JA" },
+    });
+    const categoryStep = step("GetCatagoryListAll", remote);
+    if (input.operation === "categories.list" || input.operation === "categories.suggest") {
+      return result(input, [categoryStep]);
+    }
+
+    const categoryId = stringArgument(input.arguments, "categoryId");
+    const rows = Array.isArray(remote.data.ResultObject)
+      ? remote.data.ResultObject.filter((value): value is Record<string, unknown> => Boolean(
+        value && typeof value === "object" && !Array.isArray(value),
+      ))
+      : [];
+    const matches = rows.filter((row) => String(row.CATE_S_CD ?? "").trim() === categoryId);
+    const exactLeaf = matches.length === 1
+      && ["CATE_L_CD", "CATE_L_NM", "CATE_M_CD", "CATE_M_NM", "CATE_S_CD", "CATE_S_NM"]
+        .every((key) => String(matches[0]?.[key] ?? "").trim());
+    const verified = categoryStep.ok && /^\d{9}$/u.test(categoryId) && exactLeaf;
+    return result(input, [{
+      ...categoryStep,
+      ok: verified,
+      data: {
+        ...categoryStep.data,
+        ResultObject: matches,
+        sellerpilotVerification: verified
+          ? "QOO10_EXACT_JA_LEAF_CATEGORY_VERIFIED"
+          : "QOO10_EXACT_JA_LEAF_CATEGORY_UNVERIFIED",
+        categoryId,
+        exactLeafMatchCount: matches.length,
+      },
+    }], categoryId);
+  }
   if (input.operation === "listing.create"
       && listingPublicationIntentFromArguments(input.arguments) === "safe_test") {
     return result(input, [{
@@ -1658,6 +1700,64 @@ async function executeQoo10(input: ExecuteInput) {
       },
     }], suppliedParams.ItemCode);
   }
+  let strictCreateExpectation: Qoo10ListingCreateExpectation | null = null;
+  let sellerAccountIdentityDigest = "";
+  let createPreflightSteps: ChannelOperationStep[] = [];
+  if (input.operation === "listing.create"
+      && input.arguments.publicationStateContract === listingRemoteStateContractVersion) {
+    const localPreflight = qoo10ListingCreateExpectation({
+      arguments: input.arguments,
+      payload: input.payload,
+    });
+    if (!localPreflight.ok) {
+      return result(input, [{
+        name: "qoo10-create-contract-preflight",
+        ok: false,
+        status: 422,
+        data: {
+          ResultCode: -9999,
+          ResultMsg: localPreflight.code,
+          sellerpilotVerification: "QOO10_CREATE_CONTRACT_UNVERIFIED",
+          sellerpilotMismatchFields: localPreflight.mismatchFields,
+        },
+      }]);
+    }
+    strictCreateExpectation = localPreflight.expectation;
+    const providerPreflight = await runQoo10ListingCreateProviderPreflight({
+      payload: input.payload,
+      expectation: strictCreateExpectation,
+      request: qoo10Request,
+    });
+    createPreflightSteps = [{
+      name: "qoo10-create-contract-preflight",
+      ok: true,
+      status: 200,
+      data: {
+        ResultCode: 0,
+        ResultMsg: "QOO10_CREATE_CONTRACT_VERIFIED",
+        sellerpilotVerification: "QOO10_CREATE_CONTRACT_VERIFIED",
+        market: strictCreateExpectation.context.market,
+        locale: strictCreateExpectation.context.locale,
+        sourceCurrency: strictCreateExpectation.context.sourceCurrency,
+        sourcePrice: strictCreateExpectation.context.sourcePrice,
+        currency: strictCreateExpectation.context.currency,
+        price: strictCreateExpectation.price,
+        quantity: strictCreateExpectation.quantity,
+        categoryCode: strictCreateExpectation.categoryCode,
+        shippingNo: strictCreateExpectation.shippingNo,
+        representativeImageDigest: strictCreateExpectation.standardImageDigest,
+        detailImageDigest: strictCreateExpectation.detailImageDigest,
+        publicationAssetDigest: strictCreateExpectation.publicationAssetDigest,
+        detailImageCount: strictCreateExpectation.detailImageUrls.length,
+        providerDetailHtmlMaximumBytes: 2_000_000_000,
+        sellerpilotTransportMaximumBytes: 120_000,
+      },
+    }, ...providerPreflight.steps];
+    if (!providerPreflight.ok || !providerPreflight.sellerAccountIdentityDigest) {
+      return result(input, createPreflightSteps);
+    }
+    sellerAccountIdentityDigest = providerPreflight.sellerAccountIdentityDigest;
+  }
   const inventoryQuantity = input.operation === "inventory.update"
     ? integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 })
     : null;
@@ -1671,10 +1771,6 @@ async function executeQoo10(input: ExecuteInput) {
   if (input.operation === "inventory.update") delete params.ItemQty;
   if (params.ProductionPlace) params.ProductionPlace = qoo10ProductionPlace(params.ProductionPlace);
   const map: Partial<Record<ChannelOperationName, { service: string; method: string; version?: string }>> = {
-    "categories.list": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
-    "categories.suggest": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
-    "categories.attributes": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
-    "categories.validate": { service: "CommonInfoLookup", method: "GetCatagoryListAll" },
     "listing.create": { service: "ItemsBasic", method: "SetNewGoods", version: "1.1" },
     "listing.update": { service: "ItemsBasic", method: "UpdateGoods" },
     "listing.stop": { service: "ItemsBasic", method: "EditGoodsStatus" },
@@ -1825,7 +1921,7 @@ async function executeQoo10(input: ExecuteInput) {
     return result(input, [createStep, lastReadbackStep!], remoteId);
   }
   if ((input.operation !== "listing.create" && input.operation !== "listing.update") || !createStep.ok || !remoteId) {
-    return result(input, [createStep], remoteId);
+    return result(input, [...createPreflightSteps, createStep], remoteId);
   }
 
   // SetNewGoods accepts ItemDescription, but Qoo10 exposes a dedicated
@@ -1866,6 +1962,12 @@ async function executeQoo10(input: ExecuteInput) {
           remoteId,
           resultObject: readback.data.ResultObject,
           expectedSellerCode: params.SellerCode || undefined,
+          ...(strictCreateExpectation
+            ? {
+                expectedCreate: strictCreateExpectation,
+                expectedSellerAccountIdentityDigest: sellerAccountIdentityDigest,
+              }
+            : {}),
           ...publicationExpectation,
         })
       : null;
@@ -1885,7 +1987,7 @@ async function executeQoo10(input: ExecuteInput) {
         if (!updateReadbackStep.ok) continue;
         return result(
           input,
-          [createStep, detailUpdateStep, updateReadbackStep, ...(publicationReadbackStep ? [publicationReadbackStep] : [])],
+          [...createPreflightSteps, createStep, detailUpdateStep, updateReadbackStep, ...(publicationReadbackStep ? [publicationReadbackStep] : [])],
           remoteId,
           undefined,
           remoteState ?? undefined,
@@ -1894,6 +1996,7 @@ async function executeQoo10(input: ExecuteInput) {
       return result(
         input,
         [
+          ...createPreflightSteps,
           createStep,
           detailUpdateStep,
           qoo10VerificationStep(true, readbackStatus, readbackImageCount),
@@ -1916,6 +2019,7 @@ async function executeQoo10(input: ExecuteInput) {
       },
     };
     return result(input, [
+      ...createPreflightSteps,
       createStep,
       detailUpdateStep,
       updateReadbackStep,
@@ -1932,6 +2036,7 @@ async function executeQoo10(input: ExecuteInput) {
     params: { ItemCode: remoteId, Status: "1" },
   });
   return result(input, [
+    ...createPreflightSteps,
     createStep,
     detailUpdateStep,
     qoo10VerificationStep(false, readbackStatus, readbackImageCount),

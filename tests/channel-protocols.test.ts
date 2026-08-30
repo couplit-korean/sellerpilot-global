@@ -28,7 +28,7 @@ import {
   buildShipmentPreflightArguments,
   buildShipmentReadbackArguments,
 } from "../lib/channels/shipment-draft";
-import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
+import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlace, qoo10ProductionPlaceFields, qoo10ResultMessage, qoo10SellerCode } from "../lib/channels/qoo10";
 
 test("Coupang CEA authorization signs the documented canonical value", () => {
   const now = new Date("2026-08-16T03:04:05.000Z");
@@ -511,6 +511,70 @@ test("shipment drafts fail closed for incomplete marketplace-specific data", () 
   }), /SHIPMENT_CHANNEL_UNAVAILABLE:elevenst/);
 });
 
+test("Qoo10 category inspection requires one exact Japanese leaf before DB confirmation", async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies: Array<Record<string, string>> = [];
+  globalThis.fetch = async (_input, init) => {
+    bodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, string>);
+    return Response.json({
+      ResultCode: 0,
+      ResultMsg: "Success",
+      ResultObject: [
+        {
+          CATE_L_CD: "100000019",
+          CATE_L_NM: "文具",
+          CATE_M_CD: "200000146",
+          CATE_M_NM: "文房具",
+          CATE_S_CD: "320000542",
+          CATE_S_NM: "クリップ・結束用品",
+        },
+        {
+          CATE_L_CD: "100000018",
+          CATE_L_NM: "日用品雑貨",
+          CATE_M_CD: "200000135",
+          CATE_M_NM: "生活雑貨",
+          CATE_S_CD: "300000482",
+          CATE_S_NM: "収納用品",
+        },
+      ],
+    });
+  };
+  try {
+    const verified = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "categories.validate",
+      payload: { api_key: "test-key" },
+      arguments: { categoryId: "320000542" },
+      environment: "production",
+    });
+    assert.equal(verified.ok, true);
+    assert.equal(bodies[0]?.lang_cd, "JA");
+    assert.equal(verified.steps[0]?.data.sellerpilotVerification, "QOO10_EXACT_JA_LEAF_CATEGORY_VERIFIED");
+    assert.deepEqual(verified.steps[0]?.data.ResultObject, [{
+      CATE_L_CD: "100000019",
+      CATE_L_NM: "文具",
+      CATE_M_CD: "200000146",
+      CATE_M_NM: "文房具",
+      CATE_S_CD: "320000542",
+      CATE_S_NM: "クリップ・結束用品",
+    }]);
+
+    const rejected = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "categories.attributes",
+      payload: { api_key: "test-key" },
+      arguments: { categoryId: "320002604" },
+      environment: "production",
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal(bodies[1]?.lang_cd, "JA");
+    assert.equal(rejected.steps[0]?.data.sellerpilotVerification, "QOO10_EXACT_JA_LEAF_CATEGORY_UNVERIFIED");
+    assert.equal(rejected.steps[0]?.data.exactLeafMatchCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () => {
   const originalFetch = globalThis.fetch;
   let createUrl = "";
@@ -653,12 +717,14 @@ test("Qoo10 draft helpers keep internal catalog codes numeric and use a one-year
   assert.equal(qoo10CatalogCode("12345678901"), "");
   assert.equal(qoo10ExpiryDate(new Date("2026-08-17T12:00:00.000Z")), "2027-08-17");
   assert.equal(qoo10SellerCode("PROGRAM-20260818-003"), "PROGRAM-20260818-003");
-  assert.equal(qoo10SellerCode("PROGRAM-20260818-003", "1216221951"), "PROGRAM-20260-R21951");
-  assert.ok(qoo10SellerCode("PROGRAM-20260818-003", "1216221951").length <= 20);
+  assert.equal(qoo10SellerCode("PROGRAM-20260818-003", "1216221951"), "PROGRAM-20260818-003-R21951");
+  assert.ok(qoo10SellerCode("PROGRAM-20260818-003", "1216221951").length <= 100);
   assert.deepEqual(qoo10PauseParams("1216221951"), { ItemCode: "1216221951", Status: "1" });
   assert.throws(() => qoo10PauseParams("invalid"), /QOO10_ITEM_CODE_INVALID/);
-  assert.equal(qoo10ProductionPlace("대한민국"), "South Korea");
-  assert.equal(qoo10ProductionPlace("Japan"), "Japan");
+  assert.equal(qoo10ProductionPlace("대한민국"), "KR");
+  assert.equal(qoo10ProductionPlace("Japan"), "JP");
+  assert.deepEqual(qoo10ProductionPlaceFields("대한민국"), { ProductionPlaceType: "2", ProductionPlace: "KR" });
+  assert.deepEqual(qoo10ProductionPlaceFields("Japan"), { ProductionPlaceType: "3", ProductionPlace: "JAPAN" });
 });
 
 test("Qoo10 provider errors are useful without exposing remote URLs or tokens", async () => {

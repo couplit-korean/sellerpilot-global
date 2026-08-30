@@ -100,25 +100,18 @@ test("Qoo10 safe_test create is rejected before any provider request", async () 
   }
 });
 
-test("Qoo10 live create returns verified_remote_state_v1 only after exact GetItemDetailInfo readback", async () => {
+test("Qoo10 live create with the remote-state contract rejects a missing server-bound create context before provider access", async () => {
   const originalFetch = globalThis.fetch;
-  const methods: string[] = [];
-  globalThis.fetch = async (input) => {
-    const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
-    methods.push(method);
-    if (method === "ItemsBasic.SetNewGoods") {
-      return Response.json({ ResultCode: 0, ResultObject: { GdNo: "1234567890" } });
-    }
-    if (method === "ItemsLookup.GetItemDetailInfo") {
-      return Response.json({ ResultCode: 0, ResultObject: readback("S2") });
-    }
-    return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return Response.json({ ResultCode: 0 });
   };
   try {
     const operation = await executeChannelOperation({
       channel: "qoo10",
       operation: "listing.create",
-      payload: { api_key: "test-key" },
+      payload: { api_key: "test-key", seller_id: "seller", test_item_code: "1098765432" },
       arguments: {
         publicationIntent: "live",
         publicationStateContract: "verified_remote_state_v1",
@@ -138,22 +131,15 @@ test("Qoo10 live create returns verified_remote_state_v1 only after exact GetIte
           ShippingNo: "0",
           AvailableDateType: "0",
           AvailableDateValue: "3",
-          AudultYN: "N",
+          AdultYN: "N",
         },
       },
       environment: "production",
     });
-    assert.equal(operation.ok, true);
-    assert.equal(operation.publicationStateContract, "verified_remote_state_v1");
-    assert.equal(operation.publicationIntent, "live");
-    assert.equal(operation.publicationFulfilled, true);
-    assert.equal(operation.remoteState?.visibility, "live");
-    assert.equal(operation.remoteState?.imageCount, 8);
-    assert.deepEqual(methods, [
-      "ItemsBasic.SetNewGoods",
-      "ItemsContents.EditGoodsContents",
-      "ItemsLookup.GetItemDetailInfo",
-    ]);
+    assert.equal(operation.ok, false);
+    assert.equal(fetchCount, 0);
+    assert.equal(operation.steps[0]?.name, "qoo10-create-contract-preflight");
+    assert.equal(operation.steps[0]?.data.sellerpilotVerification, "QOO10_CREATE_CONTRACT_UNVERIFIED");
   } finally {
     globalThis.fetch = originalFetch;
   }

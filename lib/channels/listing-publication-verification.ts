@@ -37,6 +37,10 @@ import {
 } from "./provider-shopee-publication-readback";
 import { qoo10ResultMessage } from "./qoo10";
 import { qoo10VerifiedListingRemoteState } from "./qoo10-listing-publication";
+import {
+  qoo10ListingCreateExpectation,
+  qoo10SellerAccountIdentityDigestFromReadback,
+} from "./qoo10-listing-create-preflight";
 
 type PublicationChannel = Exclude<ActiveChannelKey, "temu">;
 type SourceOperation = "listing.create" | "listing.update";
@@ -382,14 +386,55 @@ export async function executeListingPublicationVerification(
   const sourceArguments = source.sourceArguments;
 
   if (input.channel === "qoo10") {
-    const remote = await qoo10Request({
-      payload: input.payload,
-      service: "ItemsLookup",
-      method: "GetItemDetailInfo",
-      version: "1.2",
-      params: { ItemCode: remoteId, SellerCode: sourceSellerCode(sourceArguments) },
-    });
-    const remoteState = qoo10VerifiedListingRemoteState({
+    const strictCreateSource = sourceOperation === "listing.create"
+      && Object.hasOwn(sourceArguments, "sellerpilotQoo10CreateContext");
+    const strictExpectation = strictCreateSource
+      ? qoo10ListingCreateExpectation({ arguments: sourceArguments, payload: input.payload })
+      : null;
+    const [remote, sellerIdentityRemote] = await Promise.all([
+      qoo10Request({
+        payload: input.payload,
+        service: "ItemsLookup",
+        method: "GetItemDetailInfo",
+        version: "1.2",
+        params: { ItemCode: remoteId, SellerCode: sourceSellerCode(sourceArguments) },
+      }),
+      strictExpectation?.ok
+        ? qoo10Request({
+            payload: input.payload,
+            service: "ItemsLookup",
+            method: "GetItemDetailInfo",
+            version: "1.2",
+            params: { ItemCode: strictExpectation.expectation.testItemCode, SellerCode: "" },
+          })
+        : Promise.resolve(null),
+    ]);
+    const sourceRemoteState = recordValue(source.sourceResponsePayload.remoteState);
+    const sourceEvidence = recordValue(sourceRemoteState.evidence);
+    const expectedSellerAccountIdentityDigest = exactText(sourceEvidence.sellerAccountIdentityDigest);
+    const sellerIdentity = strictExpectation?.ok && sellerIdentityRemote
+      ? qoo10SellerAccountIdentityDigestFromReadback({
+          remote: sellerIdentityRemote,
+          expectation: strictExpectation.expectation,
+        })
+      : null;
+    const sellerIdentityStep: ChannelOperationStep | null = sellerIdentity?.step
+      ? { ...sellerIdentity.step }
+      : null;
+    const currentSellerAccountIdentityDigest = sellerIdentity?.identityDigest ?? "";
+    if (sellerIdentityStep) {
+      sellerIdentityStep.name = "qoo10-account-item-identity-reverification";
+      sellerIdentityStep.ok = sellerIdentityStep.ok
+        && /^[a-f0-9]{64}$/u.test(expectedSellerAccountIdentityDigest)
+        && currentSellerAccountIdentityDigest === expectedSellerAccountIdentityDigest;
+      sellerIdentityStep.data = {
+        ...sellerIdentityStep.data,
+        sourceSellerAccountIdentityDigestVerified: sellerIdentityStep.ok,
+      };
+    }
+    const strictIdentityVerified = !strictCreateSource
+      || Boolean(strictExpectation?.ok && sellerIdentityStep?.ok);
+    const verifiedReadbackState = qoo10VerifiedListingRemoteState({
       operation: sourceOperation,
       remoteId,
       resultObject: remote.data.ResultObject,
@@ -399,7 +444,16 @@ export async function executeListingPublicationVerification(
       ...(sourceSellerCode(sourceArguments)
         ? { expectedSellerCode: sourceSellerCode(sourceArguments) }
         : {}),
+      ...(strictExpectation?.ok
+        ? {
+            expectedCreate: strictExpectation.expectation,
+            expectedSellerAccountIdentityDigest: strictIdentityVerified
+              ? currentSellerAccountIdentityDigest
+              : "",
+          }
+        : {}),
     });
+    const remoteState = strictIdentityVerified ? verifiedReadbackState : null;
     const readbackStep = providerStep("GetItemDetailInfo-publication-reverification", remote);
     readbackStep.ok = readbackStep.ok && Boolean(remoteState);
     readbackStep.data = {
@@ -414,7 +468,7 @@ export async function executeListingPublicationVerification(
       source,
       remoteId,
       expectedLocale: expected.locale,
-      steps: [readbackStep],
+      steps: [...(sellerIdentityStep ? [sellerIdentityStep] : []), readbackStep],
       remoteState,
       remotePayload: remote.data,
     });

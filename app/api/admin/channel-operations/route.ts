@@ -20,6 +20,7 @@ import {
 } from "../../../../lib/channels/gateway";
 import { channelOperationRelease } from "../../../../lib/channels/operation-availability";
 import { missingEbayListingCreateConfiguration } from "../../../../lib/channels/ebay-listing-configuration";
+import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
 import { mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elevenst-listing";
 import {
   elevenstListingUpdateProjectionDigestInput,
@@ -623,6 +624,26 @@ export async function POST(request: NextRequest) {
   }
   const effectiveCurrency = boundListingCurrency ?? parsed.data.currency;
   const effectivePrice = boundListingPrice ?? parsed.data.price;
+  if (channel === "qoo10" && operation === "listing.create") {
+    const qoo10CreateContext = buildQoo10ListingCreateContext({
+      productId: parsed.data.productId,
+      product: verifiedPublishContext?.product,
+      manualFields: verifiedPublishContext?.manualFields,
+      market: parsed.data.market,
+      currency: effectiveCurrency,
+      price: effectivePrice,
+    });
+    if (!qoo10CreateContext) {
+      return NextResponse.json({
+        message: "Qoo10 Japan 상품의 상품·SKU·JPY 가격·재고 결속을 서버에서 확정하지 못해 원격 등록을 시작하지 않았습니다.",
+        mode: "qoo10_listing_create_context_invalid",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveArguments = {
+      ...effectiveArguments,
+      sellerpilotQoo10CreateContext: qoo10CreateContext,
+    };
+  }
   const fingerprintArguments = approvedDetailBinding
     ? marketplaceArgumentsForApprovedDetailFingerprint(effectiveArguments, approvedDetailBinding)
     : effectiveArguments;
