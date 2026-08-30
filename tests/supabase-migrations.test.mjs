@@ -41,6 +41,7 @@ const PENDING_AI_TOKEN_HASH = "1".repeat(64);
 const PENDING_GATEWAY_TOKEN_HASH = "2".repeat(64);
 const PENDING_SCHEDULER_TOKEN_HASH = "3".repeat(64);
 const LEGACY_SCOPE_RETIREMENT_MIGRATION = "20260828150000_remove_legacy_combined_worker_scope.sql";
+const SHOPEE_STATIC_EGRESS_MIGRATION = "20260830200000_require_static_egress_for_shopee.sql";
 const PUBLICATION_RELEASE_SHA = "a".repeat(40);
 
 const supabaseCompatibilityLayer = String.raw`
@@ -540,10 +541,16 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830141500_unblock_shopee_identity_reauthorization.sql",
       "20260830171000_discard_rejected_lazada_recovery_for_oauth.sql",
       "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql",
+      "20260830200000_require_static_egress_for_shopee.sql",
     ]);
+    let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
       const source = await readFile(new URL(name, migrationUrl), "utf8");
+      if (name === SHOPEE_STATIC_EGRESS_MIGRATION) {
+        shopeeStaticEgressMigration = source;
+        continue;
+      }
       const sql = name === "20260828210000_non_cs_release_integrity.sql"
         ? withoutFinalStrictWorkerScopeFence(source)
         : source;
@@ -557,6 +564,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         throw error;
       }
     }
+    assert.equal(typeof shopeeStaticEgressMigration, "string");
     const listingReleaseGate = await scalar(
       db,
       "select public.sellerpilot_service_listing_mutation_release_gate_status()",
@@ -8414,6 +8422,58 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       true,
     );
+    await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
+    assert.deepEqual(
+      await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
+      { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: false },
+    );
+    assert.match(
+      await scalar(
+        db,
+        "select pg_get_functiondef('public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure)",
+      ),
+      /job\.channel not in \('coupang', 'smartstore', 'elevenst', 'temu', 'shopee'\)/i,
+    );
+    assert.match(
+      await scalar(
+        db,
+        "select pg_get_functiondef('public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure)",
+      ),
+      /j\.channel = 'shopee'[\s\S]*serverless_gateway_job_allowed\([\s\S]*j\.channel in \('coupang', 'smartstore', 'elevenst', 'temu'\)/i,
+    );
+    const firstShopeeStaticEgressStatus = await scalar(
+      db,
+      "select public.sellerpilot_service_serverless_static_egress_status()",
+    );
+    await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
+    assert.deepEqual(
+      await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
+      firstShopeeStaticEgressStatus,
+    );
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select has_function_privilege($1, 'sellerpilot_private.serverless_static_egress_allowed(text)', 'EXECUTE')",
+          [role],
+        ),
+        false,
+      );
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('authenticated', 'public.sellerpilot_service_serverless_static_egress_status()', 'EXECUTE')",
+      ),
+      false,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_service_serverless_static_egress_status()', 'EXECUTE')",
+      ),
+      true,
+    );
   } finally {
     await db.close();
   }
@@ -8773,6 +8833,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
   const publicationSourceMigrationName = "20260830121000_listing_publication_verification_source.sql";
   const lazadaSafeOauthMigrationName =
     "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql";
+  const shopeeStaticEgressMigrationName =
+    "20260830200000_require_static_egress_for_shopee.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
@@ -8784,7 +8846,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== finalMigrationName
         && name !== publicationReviewMigrationName
         && name !== publicationSourceMigrationName
-        && name !== lazadaSafeOauthMigrationName)
+        && name !== lazadaSafeOauthMigrationName
+        && name !== shopeeStaticEgressMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -10433,6 +10496,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     "20260830141500_unblock_shopee_identity_reauthorization.sql";
   const lazadaSafeOauthMigrationName =
     "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql";
+  const shopeeStaticEgressMigrationName =
+    "20260830200000_require_static_egress_for_shopee.sql";
   try {
     await db.exec(supabaseCompatibilityLayer);
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
@@ -10443,6 +10508,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     let providerIdentityCertificationMigration;
     let shopeeIdentityMigration;
     let lazadaSafeOauthMigration;
+    let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       if (name === legacyEbayDiagnosticMigrationName) {
@@ -10453,6 +10519,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         shopeeIdentityMigration = source;
       } else if (name === lazadaSafeOauthMigrationName) {
         lazadaSafeOauthMigration = source;
+      } else if (name === shopeeStaticEgressMigrationName) {
+        shopeeStaticEgressMigration = source;
       } else {
         await db.exec(withoutUnavailableExtensions(source));
       }
@@ -10461,6 +10529,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     assert.equal(typeof providerIdentityCertificationMigration, "string");
     assert.equal(typeof shopeeIdentityMigration, "string");
     assert.equal(typeof lazadaSafeOauthMigration, "string");
+    assert.equal(typeof shopeeStaticEgressMigration, "string");
     await attestPublicationRelease(db);
     await activatePublicationRuntimeRelease(db);
     assert.equal(
@@ -11105,6 +11174,159 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       true,
     );
 
+    await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
+    assert.deepEqual(
+      await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
+      { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: false },
+    );
+    const shopeeFixedEgressCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'shopee', 'production',
+        '{"partner_id":"2031489","partner_key":"fixed-egress-secret","shop_id":"1719148844","access_token":"fixed-egress-access","refresh_token":"fixed-egress-refresh","provider_account_identity_version":"v1","provider_account_subject":"shopee:shop:1719148844"}'::jsonb,
+        now() + interval '365 days', 180, 30, 0
+      )`,
+    );
+    const shopeeFixedEgressJobIds = new Map();
+    for (const operation of [
+      "inquiries.list",
+      "diagnostic.test",
+    ]) {
+      shopeeFixedEgressJobIds.set(operation, await scalar(
+        db,
+        `insert into sellerpilot_private.channel_gateway_jobs (
+           credential_id, channel, operation, environment, request_payload, created_by
+         ) values (
+           $1, 'shopee', $2, 'production', '{}'::jsonb, $3
+         ) returning id`,
+        [shopeeFixedEgressCredentialId, operation, ADMIN_ID],
+      ));
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_channel_gateway_job($1, 'test/no-local-shopee-fallback')",
+        [genericGatewayHash],
+      ),
+      null,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/no-shopee-egress-policy')",
+        [serverlessHash],
+      ),
+      null,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.channel_gateway_jobs
+          where id in ($1, $2)
+            and status = 'queued'`,
+        [
+          shopeeFixedEgressJobIds.get("inquiries.list"),
+          shopeeFixedEgressJobIds.get("diagnostic.test"),
+        ],
+      ),
+      2,
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled = true, updated_at = clock_timestamp()
+        where channel = 'shopee'`,
+    );
+    await scalar(
+      db,
+      `select set_config(
+        'request.headers',
+        '{"x-sellerpilot-static-egress-channels":"shopee"}',
+        false
+      )`,
+    );
+    const allowedShopeeClaims = new Map([
+      [shopeeFixedEgressJobIds.get("diagnostic.test"), "diagnostic.test"],
+    ]);
+    for (let index = 0; index < 1; index += 1) {
+      const claim = await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_gateway_job($1, $2)",
+        [serverlessHash, `test/shopee-static-egress-allowed-${index + 1}`],
+      );
+      assert.equal(claim.channel, "shopee");
+      assert.equal(allowedShopeeClaims.get(claim.id), claim.operation);
+      allowedShopeeClaims.delete(claim.id);
+      await db.query(
+        `update sellerpilot_private.channel_gateway_jobs
+            set status = 'cancelled', worker_token_id = null, claim_token = null,
+                lease_expires_at = null, completed_at = clock_timestamp(),
+                error_message = $2,
+                updated_at = clock_timestamp()
+          where id = $1 and status = 'running'`,
+        [claim.id, `Synthetic Shopee static-egress allowed claim ${index + 1} completed.`],
+      );
+    }
+    assert.equal(allowedShopeeClaims.size, 0);
+    assert.deepEqual(
+      (await db.query(
+        `select operation, status
+           from sellerpilot_private.channel_gateway_jobs
+          where id = $1
+          order by operation`,
+        [
+          shopeeFixedEgressJobIds.get("inquiries.list"),
+        ],
+      )).rows,
+      [
+        { operation: "inquiries.list", status: "queued" },
+      ],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select operation,
+                sellerpilot_private.serverless_gateway_job_allowed(
+                  'shopee', operation
+                ) as serverless_allowed
+           from (values
+             ('price.update'),
+             ('inquiries.list'),
+             ('inquiries.reply'),
+             ('listing.create'),
+             ('diagnostic.test')
+           ) operations(operation)
+          order by operation`,
+      )).rows,
+      [
+        { operation: "diagnostic.test", serverless_allowed: true },
+        { operation: "inquiries.list", serverless_allowed: false },
+        { operation: "inquiries.reply", serverless_allowed: false },
+        { operation: "listing.create", serverless_allowed: true },
+        { operation: "price.update", serverless_allowed: false },
+      ],
+    );
+    assert.match(
+      await scalar(
+        db,
+        "select pg_get_functiondef('public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure)",
+      ),
+      /j\.channel = 'shopee'[\s\S]*or \([\s\S]*serverless_gateway_job_allowed/i,
+      "the persistent claimant must block Shopee before consulting the operation allowlist",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_claim_channel_gateway_job($1, 'test/no-local-shopee-unsupported-fallback')",
+        [genericGatewayHash],
+      ),
+      null,
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled = false, updated_at = clock_timestamp()
+        where channel = 'shopee'`,
+    );
+
     const temuJobId = await scalar(
       db,
       `insert into sellerpilot_private.channel_gateway_jobs (
@@ -11262,7 +11484,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     );
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
-      { coupang: false, elevenst: false, smartstore: false, temu: true },
+      { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: true },
     );
   } finally {
     await db.close();
@@ -11551,13 +11773,13 @@ test("bounded serverless gateway can hold five independent channel claims withou
     await db.query(
       `update sellerpilot_private.serverless_static_egress_policy
           set enabled = true, updated_at = clock_timestamp()
-        where channel in ('coupang', 'smartstore')`,
+        where channel in ('coupang', 'smartstore', 'shopee')`,
     );
     await scalar(
       db,
       `select set_config(
         'request.headers',
-        '{"x-sellerpilot-static-egress-channels":"coupang,smartstore"}',
+        '{"x-sellerpilot-static-egress-channels":"coupang,smartstore,shopee"}',
         false
       )`,
     );
@@ -13684,7 +13906,7 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
     const migrationNames = (await readdir(migrationUrl))
       .filter((name) => name.endsWith(".sql"))
       .sort();
-    assert.equal(migrationNames.at(-1), migrationName);
+    assert.equal(migrationNames.includes(migrationName), true);
     for (const name of migrationNames) {
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(source));
@@ -13921,6 +14143,19 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
       [malformedStaleJobId],
     );
     await db.query("delete from vault.secrets where id = $1", [malformedStaleVaultId]);
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled = true, updated_at = clock_timestamp()
+        where channel = 'shopee'`,
+    );
+    await scalar(
+      db,
+      `select set_config(
+        'request.headers',
+        '{"x-sellerpilot-static-egress-channels":"shopee"}',
+        false
+      )`,
+    );
     const unrelatedJobId = await scalar(
       db,
       `select public.sellerpilot_enqueue_channel_gateway_job(

@@ -3,6 +3,7 @@ export const SERVERLESS_STATIC_EGRESS_CHANNELS = [
   "smartstore",
   "elevenst",
   "temu",
+  "shopee",
 ] as const;
 
 export type ServerlessStaticEgressChannel = (typeof SERVERLESS_STATIC_EGRESS_CHANNELS)[number];

@@ -37,7 +37,7 @@ drain이며, 주문 동기화 route는 문의를 중복 enqueue하지 않는다.
 
 ## 고정 egress 차단
 
-쿠팡·스마트스토어·11번가·Temu는 Vercel Static IP와 각 개발자센터의 허용 IP가
+쿠팡·스마트스토어·11번가·Temu·Shopee는 Vercel Static IP와 각 개발자센터의 허용 IP가
 실제로 일치할 때만 서버리스 실행을 켠다. Static IP는 유료 기능이므로 사용자
 승인 없이 구매하거나 활성화하지 않는다.
 
@@ -45,7 +45,8 @@ drain이며, 주문 동기화 route는 문의를 중복 enqueue하지 않는다.
 `SELLERPILOT_SERVERLESS_STATIC_EGRESS_CHANNELS`에 쉼표로 넣고, 같은 채널을
 Supabase의 static-egress 정책에도 활성화한다. 환경변수, DB 정책, 요청 attestation
 중 하나라도 다르면 외부 호출 전에 `STATIC_EGRESS_REQUIRED`로 차단하며 로컬
-worker로 우회하지 않는다. 특히 Temu는 로컬 Mac 공인 IP 조회, AWS check-IP,
+worker로 우회하지 않는다. Shopee는 OAuth 토큰 교환부터 같은 게이트를 적용한다.
+특히 Temu는 로컬 Mac 공인 IP 조회, AWS check-IP,
 키체인 allowlist 경로를 사용하지 않으며 Vercel 서버리스 gateway에서만 실행한다.
 
 ## 배포 순서
@@ -71,10 +72,14 @@ pnpm gateway:serverless:configure --deactivate --status
 
 5. 검증한 동일 후보를 Production으로 승격하고, Vercel cron inventory가 0건인지
    확인한다. 다른 artifact를 새로 배포해 바꾸지 않는다.
-6. additive/forward 방식의 최종 migration
-   `20260828210000_non_cs_release_integrity.sql`을 정확한 운영 프로젝트에 한 번만
-   적용한다. migration은 gateway와 다섯 internal schedule을 모두 inactive로 남긴다.
-7. 아래 명령으로 서버리스 token/wake 구성을 bootstrap하고, gateway와 다섯
+6. `supabase/migrations`에서 운영 DB에 아직 적용되지 않은 forward migration을
+   파일명 순서대로 모두 적용해, 최소
+   `20260830200000_require_static_egress_for_shopee.sql`까지 도달했는지 확인한다.
+   `20260828210000_non_cs_release_integrity.sql`만 골라 적용하면 안 된다. 적용 뒤에도
+   gateway와 다섯 internal schedule은 inactive로 유지하고, static-egress status에
+   Shopee가 `false`로 존재하며 generic/persistent claimant가 Shopee 작업을 가져오지
+   못하는 것을 확인하기 전에는 활성화하지 않는다.
+7. 위 최신 DB gate 확인 후 아래 명령으로 서버리스 token/wake 구성을 bootstrap하고, gateway와 다섯
    internal route의 no-work canary가 동일 release SHA로 모두 성공한 같은 실행에서만
    scheduler를 활성화한다.
 

@@ -298,7 +298,7 @@ test("publication reverification is allowlisted for the seven release channels a
   assert.deepEqual(events, ["lease", "provider-readback"]);
 });
 
-for (const channel of ["coupang", "smartstore", "elevenst", "temu"] as const) {
+for (const channel of ["coupang", "smartstore", "elevenst", "temu", "shopee"] as const) {
   test(`${channel} generic writes fail before provider execution without static-egress attestation`, async () => {
     let claims = 0;
     let providerCalls = 0;

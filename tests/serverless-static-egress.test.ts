@@ -14,16 +14,38 @@ test("serverless static egress is disabled by default and on unknown values", ()
 });
 
 test("serverless static egress accepts only explicit supported channels", () => {
-  const configured = parseServerlessStaticEgressChannels("temu, smartstore, elevenst, coupang");
-  assert.deepEqual(configured, ["coupang", "smartstore", "elevenst", "temu"]);
+  const configured = parseServerlessStaticEgressChannels("temu, shopee, smartstore, elevenst, coupang");
+  assert.deepEqual(configured, ["coupang", "smartstore", "elevenst", "temu", "shopee"]);
   assert.equal(
-    hasServerlessStaticEgressFor(configured, ["coupang", "smartstore", "elevenst", "temu"]),
+    hasServerlessStaticEgressFor(configured, ["coupang", "smartstore", "elevenst", "temu", "shopee"]),
     true,
   );
   assert.equal(
     serverlessStaticEgressHeaderValue(configured),
-    "coupang,smartstore,elevenst,temu",
+    "coupang,smartstore,elevenst,temu,shopee",
   );
+});
+
+test("Shopee static egress migration preserves prior flags and closes both claim paths", async () => {
+  const migration = await readFile(
+    new URL(
+      "../supabase/migrations/20260830200000_require_static_egress_for_shopee.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /values \('shopee', false\)[\s\S]*on conflict \(channel\) do nothing/);
+  assert.match(migration, /p_channel in \('coupang', 'smartstore', 'elevenst', 'temu', 'shopee'\)/);
+  assert.match(migration, /'shopee', coalesce\(bool_or\(policy\.enabled\)/);
+  assert.match(migration, /sellerpilot_183000_claim_serverless_gateway_unsafe/);
+  assert.match(migration, /job\.channel not in \('coupang', 'smartstore', 'elevenst', 'temu', 'shopee'\)/);
+  assert.match(migration, /sellerpilot_11820_claim_gateway_unsafe/);
+  assert.match(
+    migration,
+    /j\.channel = 'shopee'[\s\S]*serverless_gateway_job_allowed\([\s\S]*j\.channel in \('coupang', 'smartstore', 'elevenst', 'temu'\)/,
+  );
+  assert.equal((migration.match(/v_old_count = 0 and v_new_count = 1/g) ?? []).length, 2);
+  assert.doesNotMatch(migration, /update sellerpilot_private\.serverless_static_egress_policy[\s\S]*shopee/i);
 });
 
 test("manual sync and the 30-day UI disclose static egress blocking without local fallback", async () => {
