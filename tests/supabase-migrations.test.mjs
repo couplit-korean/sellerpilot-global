@@ -42,6 +42,13 @@ const PENDING_GATEWAY_TOKEN_HASH = "2".repeat(64);
 const PENDING_SCHEDULER_TOKEN_HASH = "3".repeat(64);
 const LEGACY_SCOPE_RETIREMENT_MIGRATION = "20260828150000_remove_legacy_combined_worker_scope.sql";
 const SHOPEE_STATIC_EGRESS_MIGRATION = "20260830200000_require_static_egress_for_shopee.sql";
+const CS_REPLY_LEDGER_MIGRATION = "20260831033000_add_cs_message_delivery_ledger.sql";
+const QOO10_SCOPED_GATE_MIGRATION =
+  "20260831050000_channel_scoped_qoo10_publication_gate.sql";
+const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
+  "20260830222257_confirm_qoo10_listing_create_rollback.sql",
+  "20260831010000_resolve_exact_qoo10_origin_type_rejection.sql",
+]);
 const PUBLICATION_RELEASE_SHA = "a".repeat(40);
 
 const supabaseCompatibilityLayer = String.raw`
@@ -362,6 +369,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
   const db = new PGlite();
   try {
     await db.exec(supabaseCompatibilityLayer);
+    await db.exec(`
+      create schema supabase_migrations;
+      create table supabase_migrations.schema_migrations (
+        version text primary key,
+        statements text[] not null default '{}'::text[],
+        name text
+      );
+    `);
 
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
     const migrationNames = (await readdir(migrationUrl))
@@ -548,10 +563,28 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830212500_retry_failed_pre_gateway_listing_attempts.sql",
       "20260830222257_confirm_qoo10_listing_create_rollback.sql",
       "20260831010000_resolve_exact_qoo10_origin_type_rejection.sql",
-      "20260831033000_add_cs_message_delivery_ledger.sql",
+      CS_REPLY_LEDGER_MIGRATION,
       "20260831040000_rebind_ebay_periodic_inquiry_reads.sql",
       "20260831045000_gate_temu_periodic_inquiry_static_egress.sql",
+      QOO10_SCOPED_GATE_MIGRATION,
     ]);
+    assert.ok(
+      migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
+        < migrationNames.indexOf(QOO10_SCOPED_GATE_MIGRATION),
+      "Qoo10 scoped gate must replay after the CS reply ledger",
+    );
+    assert.ok(
+      migrationNames.indexOf(
+        "20260831040000_rebind_ebay_periodic_inquiry_reads.sql",
+      ) < migrationNames.indexOf(QOO10_SCOPED_GATE_MIGRATION),
+      "Qoo10 scoped gate must replay after the eBay periodic inquiry rebind",
+    );
+    assert.ok(
+      migrationNames.indexOf(
+        "20260831045000_gate_temu_periodic_inquiry_static_egress.sql",
+      ) < migrationNames.indexOf(QOO10_SCOPED_GATE_MIGRATION),
+      "Qoo10 scoped gate must replay after the Temu periodic inquiry gate",
+    );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -563,6 +596,58 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       const sql = name === "20260828210000_non_cs_release_integrity.sql"
         ? withoutFinalStrictWorkerScopeFence(source)
         : source;
+      if (name === QOO10_SCOPED_GATE_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in ('20260830222257', '20260831010000')`,
+          ),
+          0,
+          "predecessor Qoo10 objects must not require forged migration history",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version = '20260831033000'`,
+          ),
+          1,
+          "CS ledger migration must be recorded before the Qoo10 forward migration",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            "select to_regclass('sellerpilot_private.qoo10_listing_create_rollback_confirmations')::text",
+          ),
+          "sellerpilot_private.qoo10_listing_create_rollback_confirmations",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            "select to_regclass('sellerpilot_private.qoo10_listing_update_rejection_observations')::text",
+          ),
+          "sellerpilot_private.qoo10_listing_update_rejection_observations",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select to_regprocedure(
+              'public.sellerpilot_222257_enqueue_listing_before_qoo10_rollback_fence(uuid,uuid,uuid,text,text,jsonb)'
+            ) is not null`,
+          ),
+          true,
+          "deployed 222257 wrapper object must exist even though its history row does not",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            "select to_regclass('sellerpilot_private.support_reply_deliveries')::text",
+          ),
+          "sellerpilot_private.support_reply_deliveries",
+          "CS ledger objects must already exist before the Qoo10 gate",
+        );
+      }
       try {
         await db.exec(withoutUnavailableExtensions(sql));
       } catch (error) {
@@ -571,6 +656,36 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           error.message = `${name}${position}: ${error.message}`;
         }
         throw error;
+      }
+      if (!UNRECORDED_QOO10_SCHEMA_MIGRATIONS.has(name)) {
+        const version = name.match(/^\d+/)?.[0];
+        assert.ok(version, `migration version missing from ${name}`);
+        await db.query(
+          `insert into supabase_migrations.schema_migrations (
+             version, statements, name
+           ) values ($1, '{}'::text[], $2)`,
+          [version, name.replace(/^\d+_/, "").replace(/\.sql$/, "")],
+        );
+      }
+      if (name === QOO10_SCOPED_GATE_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in ('20260830222257', '20260831010000')`,
+          ),
+          0,
+          "Qoo10 forward migration must leave predecessor history gaps untouched",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in ('20260831033000', '20260831050000')`,
+          ),
+          2,
+          "CS then Qoo10 forward migrations must be the only newly recorded tail",
+        );
       }
     }
     assert.equal(typeof shopeeStaticEgressMigration, "string");
@@ -9364,6 +9479,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
     "20260830204000_allow_fresh_lazada_oauth_past_oauth_reconciliation.sql";
   const temuStaticEgressMigrationName =
     "20260831045000_gate_temu_periodic_inquiry_static_egress.sql";
+  const qoo10ScopedReleaseGateMigrationName =
+    "20260831050000_channel_scoped_qoo10_publication_gate.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
@@ -9379,7 +9496,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== shopeeStaticEgressMigrationName
         && name !== lazadaProviderMarkerMigrationName
         && name !== lazadaOauthReauthorizationMigrationName
-        && name !== temuStaticEgressMigrationName)
+        && name !== temuStaticEgressMigrationName
+        && name !== qoo10ScopedReleaseGateMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -11938,59 +12056,39 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         false
       )`,
     );
-    const temuClaim = await scalar(
-      db,
-      "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/fixed-egress-allowed')",
-      [serverlessHash],
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/fixed-egress-denied')",
+        [serverlessHash],
+      ),
+      /LISTING_MUTATION_RELEASE_GATE_CLOSED/,
+      "static egress must not bypass the canonical seven-channel publication gate",
     );
-    assert.equal(temuClaim.id, temuJobId);
-    assert.equal(temuClaim.channel, "temu");
-    assert.equal(temuClaim.operation, "listing.create");
     assert.equal(
       await scalar(
         db,
         `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
           $1, $2, $3
         )`,
-        [serverlessHash, temuJobId, temuClaim.claim_token],
+        [serverlessHash, temuJobId, "00000000-0000-4000-8000-000000009999"],
       ),
-      true,
+      false,
+      "Temu must stay blocked at the provider boundary too",
     );
-    assert.equal(
-      await scalar(
-        db,
-        "select provider_mutation_started_at is not null from sellerpilot_private.channel_gateway_jobs where id = $1",
-        [temuJobId],
-      ),
-      true,
-    );
-    assert.equal(
-      await scalar(
-        db,
-        `select public.sellerpilot_touch_serverless_cs_job(
-          $1, $2, $3, 'test/compatibility-alias'
-        )`,
-        [serverlessHash, temuJobId, temuClaim.claim_token],
-      ),
-      "running",
-    );
-    const temuCompletion = await scalar(
-      db,
-      `select public.sellerpilot_service_complete_serverless_cs_transaction(
-        $1, $2, $3, 'reconciliation_required',
-        '{"ok":false,"channel":"temu","operation":"listing.create","steps":[],"safeMessage":"Synthetic fixed-egress contract probe"}'::jsonb,
-        'Synthetic fixed-egress contract probe', null, null, null, null
-      )`,
-      [serverlessHash, temuJobId, temuClaim.claim_token],
-    );
-    assert.equal(temuCompletion.status, "completed");
     assert.equal(
       await scalar(
         db,
         "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
         [temuJobId],
       ),
-      "reconciliation_required",
+      "queued",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='cancelled',completed_at=clock_timestamp(),
+              error_message='Temu publication is outside the verified seven-channel release.'
+        where id=$1 and status='queued'`,
+      [temuJobId],
     );
 
     const ordersJobId = await scalar(

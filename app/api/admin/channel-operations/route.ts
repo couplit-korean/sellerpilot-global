@@ -71,6 +71,16 @@ import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/co
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+const verifiedPublicationReleaseChannels = new Set([
+  "qoo10",
+  "shopee",
+  "lazada",
+  "coupang",
+  "elevenst",
+  "smartstore",
+  "ebay",
+]);
+
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
   channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
@@ -818,28 +828,50 @@ export async function POST(request: NextRequest) {
       "sellerpilot_service_listing_mutation_release_gate_status",
     );
     const runtimeRelease = resolveRuntimeReleaseIdentity();
-    const releaseGateStateIsExact = !releaseGateError
+    const globalReleaseGateIsExact = !releaseGateError
       && isRecord(releaseGateStatus)
       && releaseGateStatus.contract === "verified_publication_release_gate_v1"
       && typeof releaseGateStatus.effectiveOpen === "boolean"
-      && (
-        (
-          releaseGateStatus.open === true
-          && releaseGateStatus.state === "open"
-          && runtimeRelease.status === "valid"
-          && releaseGateStatus.openedRelease === runtimeRelease.release
-          && releaseGateStatus.attestedRelease === runtimeRelease.release
-          && releaseGateStatus.activeRuntimeRelease === runtimeRelease.release
-        )
-        || (releaseGateStatus.open === false && releaseGateStatus.state === "closed")
-      );
+      && releaseGateStatus.open === true
+      && releaseGateStatus.state === "open"
+      && releaseGateStatus.openedChannel === null
+      && runtimeRelease.status === "valid"
+      && releaseGateStatus.openedRelease === runtimeRelease.release
+      && releaseGateStatus.attestedRelease === runtimeRelease.release
+      && releaseGateStatus.activeRuntimeRelease === runtimeRelease.release;
+    const qoo10ScopedReleaseGateIsExact = !releaseGateError
+      && isRecord(releaseGateStatus)
+      && releaseGateStatus.contract === "verified_publication_release_gate_v1"
+      && typeof releaseGateStatus.qoo10EffectiveOpen === "boolean"
+      && releaseGateStatus.open === true
+      && releaseGateStatus.state === "open"
+      && releaseGateStatus.openedChannel === "qoo10"
+      && runtimeRelease.status === "valid"
+      && releaseGateStatus.openedRelease === runtimeRelease.release
+      && releaseGateStatus.qoo10AttestedRelease === runtimeRelease.release
+      && releaseGateStatus.activeRuntimeRelease === runtimeRelease.release;
+    const closedReleaseGateIsExact = !releaseGateError
+      && isRecord(releaseGateStatus)
+      && releaseGateStatus.contract === "verified_publication_release_gate_v1"
+      && releaseGateStatus.open === false
+      && releaseGateStatus.state === "closed"
+      && releaseGateStatus.openedChannel === null;
+    const releaseGateStateIsExact = globalReleaseGateIsExact
+      || qoo10ScopedReleaseGateIsExact
+      || closedReleaseGateIsExact;
     if (!releaseGateStateIsExact) {
       return NextResponse.json({
         message: "상품 게시 릴리스 게이트 상태를 확인하지 못해 판매채널 작업을 차단했습니다.",
         mode: "listing_mutation_release_gate_unavailable",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    if (releaseGateStatus.open !== true || releaseGateStatus.effectiveOpen !== true) {
+    const channelReleaseGateIsEffective = verifiedPublicationReleaseChannels.has(channel)
+      && (globalReleaseGateIsExact
+        ? releaseGateStatus.effectiveOpen === true
+        : channel === "qoo10"
+          && qoo10ScopedReleaseGateIsExact
+          && releaseGateStatus.qoo10EffectiveOpen === true);
+    if (!channelReleaseGateIsEffective) {
       return NextResponse.json({
         message: "판매채널 상품 작업은 채널별 원격 검증이 완료될 때까지 일시 중지되어 있습니다.",
         mode: "listing_mutation_release_gate_closed",

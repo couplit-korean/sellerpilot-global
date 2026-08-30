@@ -14,7 +14,7 @@ test("listing publication release admin route derives the exact SHA server-side"
   assert.equal((route.match(/authenticateAdminRequest\(request/g) ?? []).length, 2);
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
   assert.match(route, /z\.discriminatedUnion\("action"/);
-  assert.equal((route.match(/\.strict\(\)/g) ?? []).length, 4);
+  assert.equal((route.match(/\.strict\(\)/g) ?? []).length, 5);
   assert.match(route, /"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay"/s);
   assert.match(route, /p_release_sha: identity\.status === "valid" \? identity\.release : null/);
   assert.doesNotMatch(route, /parsed\.data\.(?:release|releaseSha|sha)/);
@@ -32,6 +32,9 @@ test("listing publication release actions call only the fenced service RPCs", as
   assert.match(route, /p_channel: parsed\.data\.channel,\s*p_ready: true,/s);
   assert.match(route, /sellerpilot_service_set_listing_publication_rechecker_ready/);
   assert.match(route, /sellerpilot_service_set_listing_mutation_release_gate/);
+  assert.match(route, /sellerpilot_service_set_listing_channel_mutation_release_gate/);
+  assert.match(route, /action === "open_channel_gate"/);
+  assert.match(route, /p_channel: parsed\.data\.channel,\s*p_open: true,/s);
   assert.match(route, /parsed\.data\.action !== "close_gate" && identity\.status !== "valid"/);
   assert.match(route, /p_open: parsed\.data\.action === "open_gate"/);
   assert.match(route, /p_release_sha: parsed\.data\.action === "open_gate" && identity\.status === "valid"[\s\S]*?: null/);
@@ -53,6 +56,8 @@ test("channel connection UI uses inline two-step confirmations for release write
   assert.match(runtimeCard, /상품 게시를 자동 실행하지 않습니다/);
   assert.match(runtimeCard, /disabled=\{!listingRelease\.readyForOpen \|\| listingReleaseBusy/);
   assert.match(runtimeCard, /게시 게이트 닫기/);
+  assert.match(runtimeCard, /Qoo10만 열기/);
+  assert.match(runtimeCard, /다른 6개 채널은 계속 차단됩니다/);
   for (const label of ["Qoo10", "Shopee", "Lazada", "쿠팡", "11번가", "스마트스토어", "eBay"]) {
     assert.match(runtimeCard, new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*확인 기록`, "s"));
   }

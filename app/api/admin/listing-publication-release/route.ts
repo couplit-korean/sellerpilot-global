@@ -37,6 +37,10 @@ const actionSchema = z.discriminatedUnion("action", [
   }).strict(),
   z.object({ action: z.literal("attest_rechecker") }).strict(),
   z.object({ action: z.literal("open_gate") }).strict(),
+  z.object({
+    action: z.literal("open_channel_gate"),
+    channel: z.literal("qoo10"),
+  }).strict(),
   z.object({ action: z.literal("close_gate") }).strict(),
 ]);
 
@@ -48,6 +52,7 @@ const gateStatusSchema = z.object({
   openedAt: z.string().nullable(),
   updatedAt: z.string(),
   openedRelease: releaseShaSchema,
+  openedChannel: z.literal("qoo10").nullable(),
   attestedRelease: releaseShaSchema,
   activeRuntimeRelease: releaseShaSchema,
   publicationAdaptersReady: z.number().int().min(0).max(publicationChannels.length),
@@ -57,12 +62,29 @@ const gateStatusSchema = z.object({
   orphanPendingReviews: z.number().int().nonnegative(),
   queuedOrRunning: z.number().int().nonnegative(),
   reconciliationRequired: z.number().int().nonnegative(),
+  qoo10AdapterReady: z.boolean(),
+  qoo10AttestedRelease: releaseShaSchema,
+  qoo10ReleaseConsistent: z.boolean(),
+  qoo10RuntimeReleaseMatches: z.boolean(),
+  qoo10ReviewViolations: z.number().int().nonnegative(),
+  qoo10QueuedOrRunning: z.number().int().nonnegative(),
+  qoo10ReconciliationRequired: z.number().int().nonnegative(),
+  qoo10EffectiveOpen: z.boolean(),
 }).superRefine((value, context) => {
   if (value.state !== (value.open ? "open" : "closed")) {
     context.addIssue({ code: "custom", message: "listing release gate state mismatch" });
   }
   if (value.effectiveOpen && !value.open) {
     context.addIssue({ code: "custom", message: "listing release gate cannot be effective while closed" });
+  }
+  if (value.effectiveOpen && value.openedChannel !== null) {
+    context.addIssue({ code: "custom", message: "global listing release gate cannot have a channel scope" });
+  }
+  if (value.qoo10EffectiveOpen && (!value.open || value.openedChannel !== "qoo10")) {
+    context.addIssue({ code: "custom", message: "Qoo10 release gate scope mismatch" });
+  }
+  if (!value.open && value.openedChannel !== null) {
+    context.addIssue({ code: "custom", message: "closed listing release gate cannot retain a channel scope" });
   }
 });
 
@@ -95,6 +117,18 @@ function readyForOpen(gate: GateStatus, currentRelease: string) {
     && gate.reconciliationRequired === 0;
 }
 
+function readyForQoo10Open(gate: GateStatus, currentRelease: string) {
+  return gate.qoo10AdapterReady
+    && gate.publicationRecheckerReady
+    && gate.qoo10ReleaseConsistent
+    && gate.qoo10AttestedRelease === currentRelease
+    && gate.activeRuntimeRelease === currentRelease
+    && gate.qoo10RuntimeReleaseMatches
+    && gate.qoo10ReviewViolations === 0
+    && gate.qoo10QueuedOrRunning === 0
+    && gate.qoo10ReconciliationRequired === 0;
+}
+
 async function readGateStatus(serviceClient: SupabaseClient) {
   const { data, error } = await serviceClient.rpc("sellerpilot_service_listing_mutation_release_gate_status");
   if (error) return null;
@@ -116,6 +150,8 @@ function statusPayload(gate: GateStatus, identity: RuntimeReleaseIdentity) {
     runtimeRelease,
     gate,
     readyForOpen: identity.status === "valid" && readyForOpen(gate, identity.release),
+    readyForQoo10Open: identity.status === "valid"
+      && readyForQoo10Open(gate, identity.release),
   };
 }
 
@@ -188,6 +224,17 @@ export async function POST(request: Request) {
     });
     error = result.error;
     message = "게시 결과 재조회기를 현재 배포로 확인했습니다.";
+  } else if (parsed.data.action === "open_channel_gate") {
+    const result = await admin.serviceClient.rpc(
+      "sellerpilot_service_set_listing_channel_mutation_release_gate",
+      {
+        p_channel: parsed.data.channel,
+        p_open: true,
+        p_release_sha: identity.status === "valid" ? identity.release : null,
+      },
+    );
+    error = result.error;
+    message = "현재 배포에서 Qoo10 상품 작업만 허용했습니다.";
   } else {
     const result = await admin.serviceClient.rpc("sellerpilot_service_set_listing_mutation_release_gate", {
       p_open: parsed.data.action === "open_gate",
@@ -202,7 +249,10 @@ export async function POST(request: Request) {
   }
 
   if (error) {
-    const preconditionFailure = parsed.data.action === "open_gate"
+    const preconditionFailure = (
+      parsed.data.action === "open_gate"
+      || parsed.data.action === "open_channel_gate"
+    )
       && ["22023", "55000"].includes(rpcErrorCode(error));
     return json({
       ok: false,
@@ -210,7 +260,9 @@ export async function POST(request: Request) {
         ? "listing_release_gate_preconditions_unmet"
         : "listing_release_update_failed",
       message: preconditionFailure
-        ? "7개 어댑터·재조회기·현재 런타임 SHA와 미처리 작업을 모두 확인한 뒤 다시 열어 주세요."
+        ? parsed.data.action === "open_channel_gate"
+          ? "Qoo10 어댑터·재조회기·현재 런타임 SHA와 Qoo10 미처리 작업을 모두 확인한 뒤 다시 열어 주세요."
+          : "7개 어댑터·재조회기·현재 런타임 SHA와 미처리 작업을 모두 확인한 뒤 다시 열어 주세요."
         : "게시 릴리스 상태 변경 결과를 확정하지 못했습니다. 상태를 다시 조회해 주세요.",
     }, preconditionFailure ? 409 : 503);
   }

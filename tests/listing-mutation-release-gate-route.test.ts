@@ -48,7 +48,11 @@ test("admin listing mutations require an exact open release gate before idempote
   );
   assert.match(
     route,
-    /releaseGateStatus\.open !== true \|\| releaseGateStatus\.effectiveOpen !== true/,
+    /releaseGateStatus\.openedChannel === "qoo10"[\s\S]{0,260}releaseGateStatus\.qoo10AttestedRelease === runtimeRelease\.release/,
+  );
+  assert.match(
+    route,
+    /channel === "qoo10"[\s\S]{0,180}releaseGateStatus\.qoo10EffectiveOpen === true/,
   );
   assert.match(route, /mode: "listing_mutation_release_gate_unavailable"/);
   assert.match(route, /mode: "listing_mutation_release_gate_closed"/);
@@ -59,6 +63,35 @@ test("admin listing mutations require an exact open release gate before idempote
   assert.match(
     route,
     /listing_mutation_release_gate_closed[\s\S]{0,180}status: 503[\s\S]{0,180}cache-control/,
+  );
+});
+
+test("a Qoo10-scoped release gate cannot authorize Temu or the other six channels", async () => {
+  const route = await readFile(routeUrl, "utf8");
+
+  assert.match(
+    route,
+    /const verifiedPublicationReleaseChannels = new Set\(\[\s*"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay",\s*\]\)/,
+  );
+  assert.doesNotMatch(
+    route.match(/const verifiedPublicationReleaseChannels = new Set\(\[[\s\S]*?\]\);/)?.[0] ?? "",
+    /temu/,
+  );
+  assert.match(route, /const qoo10ScopedReleaseGateIsExact/);
+  assert.match(route, /releaseGateStatus\.openedChannel === "qoo10"/);
+  assert.match(
+    route,
+    /const channelReleaseGateIsEffective = verifiedPublicationReleaseChannels\.has\(channel\)/,
+  );
+  assert.match(
+    route,
+    /: channel === "qoo10"[\s\S]{0,180}&& qoo10ScopedReleaseGateIsExact[\s\S]{0,180}&& releaseGateStatus\.qoo10EffectiveOpen === true\)/,
+  );
+  assert.match(route, /if \(!channelReleaseGateIsEffective\)/);
+  assert.ok(
+    route.indexOf("if (!channelReleaseGateIsEffective)")
+      < route.indexOf('"sellerpilot_claim_channel_operation"'),
+    "Temu and non-Qoo requests must fail before idempotency claim",
   );
 });
 

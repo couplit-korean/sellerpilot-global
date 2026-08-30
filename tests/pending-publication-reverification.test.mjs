@@ -707,6 +707,200 @@ async function finishVerifier(db, identity, options = {}) {
   );
 }
 
+test("Qoo10 can open alone while every other channel and Temu stay fail-closed at all DB boundaries", async () => {
+  const db = await createDatabase();
+  try {
+    await seedPrincipal(db);
+    await activateRuntimeFixture(db);
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_adapter_ready('qoo10',true,$1)",
+      [RELEASE_SHA],
+    );
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_rechecker_ready(true,$1)",
+      [RELEASE_SHA],
+    );
+
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_set_listing_channel_mutation_release_gate('shopee',true,$1)",
+        [RELEASE_SHA],
+      ),
+      /unsupported scoped listing publication channel/,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_set_listing_channel_mutation_release_gate('qoo10',true,$1)",
+        [OTHER_RELEASE_SHA],
+      ),
+      /scoped publication components must attest the exact release/,
+    );
+
+    const unrelatedRunningJobId = uuid(9690);
+    await asReplica(db, () => db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id,credential_id,attempt_id,listing_id,channel,operation,environment,
+         request_payload,status,created_by,created_at,started_at,worker_token_id,
+         claim_token,lease_expires_at,attempt_count,write_resource_kind,
+         write_resource_key,request_fingerprint,seller_account_key
+       ) values (
+         $1,$2,null,null,'shopee','listing.update','production','{}'::jsonb,
+         'running',$3,clock_timestamp(),clock_timestamp(),$4,$5,
+         clock_timestamp() + interval '5 minutes',1,'listing_mutation',$6,$6,$7
+       )`,
+      [
+        unrelatedRunningJobId,
+        CREDENTIAL_ID,
+        OWNER_ID,
+        WORKER_TOKEN_ID,
+        uuid(9691),
+        "7".repeat(64),
+        SELLER_ACCOUNT_KEY,
+      ],
+    ));
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_set_listing_channel_mutation_release_gate('qoo10',true,$1)",
+        [RELEASE_SHA],
+      ),
+      /running listing mutations must drain before scoped release-gate activation/,
+    );
+    await asReplica(db, () => db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='cancelled',worker_token_id=null,claim_token=null,
+              lease_expires_at=null,completed_at=clock_timestamp()
+        where id=$1`,
+      [unrelatedRunningJobId],
+    ));
+
+    const scoped = await scalar(
+      db,
+      "select public.sellerpilot_service_set_listing_channel_mutation_release_gate('qoo10',true,$1)",
+      [RELEASE_SHA],
+    );
+    assert.equal(scoped.open, true);
+    assert.equal(scoped.openedChannel, "qoo10");
+    assert.equal(scoped.effectiveOpen, false, "the legacy global bit must stay false");
+    assert.equal(scoped.qoo10EffectiveOpen, true);
+    assert.equal(scoped.qoo10AttestedRelease, RELEASE_SHA);
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.listing_mutation_release_gate_is_effective('qoo10')",
+      ),
+      true,
+    );
+    for (const channel of [...PUBLICATION_CHANNELS.filter((item) => item !== "qoo10"), "temu"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select sellerpilot_private.listing_mutation_release_gate_is_effective($1)",
+          [channel],
+        ),
+        false,
+        `${channel} must stay closed under the Qoo10 scope`,
+      );
+    }
+
+    await db.query(
+      "select public.sellerpilot_service_set_listing_publication_adapter_ready('shopee',false,null)",
+    );
+    assert.equal(
+      (await scalar(
+        db,
+        "select public.sellerpilot_service_listing_mutation_release_gate_status()",
+      )).qoo10EffectiveOpen,
+      true,
+      "an unrelated adapter reset must not close the Qoo10 scope",
+    );
+
+    await db.query(
+      "select public.sellerpilot_service_set_listing_mutation_release_gate(false,null)",
+    );
+    await attestRelease(db);
+    const global = await scalar(
+      db,
+      "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+      [RELEASE_SHA],
+    );
+    assert.equal(global.effectiveOpen, true);
+    assert.equal(global.openedChannel, null);
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.listing_mutation_release_gate_is_effective('temu')",
+      ),
+      false,
+      "Temu must stay closed even when the canonical seven-channel gate is open",
+    );
+
+    const temuJobId = uuid(9701);
+    const temuClaimToken = uuid(9702);
+    await asReplica(db, () => db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id,credential_id,attempt_id,listing_id,channel,operation,environment,
+         request_payload,status,created_by,created_at,write_resource_kind,
+         write_resource_key,request_fingerprint,seller_account_key
+       ) values (
+         $1,$2,null,null,'temu','listing.update','production','{}'::jsonb,
+         'queued',$3,clock_timestamp(),'listing_mutation',$4,$4,$5
+       )`,
+      [temuJobId, CREDENTIAL_ID, OWNER_ID, "9".repeat(64), SELLER_ACCOUNT_KEY],
+    ));
+
+    await assert.rejects(
+      db.query(
+        "update sellerpilot_private.channel_gateway_jobs set status='running',claim_token=$2 where id=$1",
+        [temuJobId, temuClaimToken],
+      ),
+      /LISTING_MUTATION_RELEASE_GATE_CLOSED/,
+      "the queue claim trigger must reject Temu",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+        [WORKER_TOKEN_HASH, temuJobId, temuClaimToken],
+      ),
+      false,
+      "the local provider boundary must reject Temu",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_serverless_gateway_provider_mutation($1,$2,$3)",
+        [WORKER_TOKEN_HASH, temuJobId, temuClaimToken],
+      ),
+      false,
+      "the serverless provider boundary must reject Temu",
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
+           $1,$2,$3,'temu','KR','','KRW',1,$4,'{}'::jsonb
+         )`,
+        [uuid(9711), CREDENTIAL_ID, uuid(9712), "8".repeat(64)],
+      ),
+      /LISTING_MUTATION_RELEASE_GATE_CLOSED/,
+      "the atomic listing.create boundary must reject Temu",
+    );
+    for (const operation of ["listing.update", "listing.stop"]) {
+      await assert.rejects(
+        db.query(
+          `select public.sellerpilot_service_enqueue_listing_gateway_job(
+             $1,$2,$3,'temu',$4,'{}'::jsonb
+           )`,
+          [uuid(9721), CREDENTIAL_ID, uuid(9722), operation],
+        ),
+        /LISTING_MUTATION_RELEASE_GATE_CLOSED/,
+        `${operation} enqueue must reject Temu`,
+      );
+    }
+  } finally {
+    await db.close();
+  }
+});
+
 test("release gate requires one exact SHA and closes on attestation drift", async () => {
   const db = await createDatabase();
   try {
