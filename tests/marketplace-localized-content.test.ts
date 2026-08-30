@@ -5,6 +5,7 @@ import {
   buildLocalizedRichDetail,
   detailAssetOrderForChannel,
   localizedImageSeo,
+  normalizedLocalizedDetailSections,
   type LocalizedCreativeListing,
 } from "../lib/marketplace-localized-content";
 
@@ -48,4 +49,18 @@ test("legacy localized listings still render without creative fields", () => {
   const legacy = { title: "Legacy title", shortDescription: "Legacy short", description: "Legacy description", keywords: ["legacy"] };
   assert.match(buildLocalizedRichDetail(legacy, "Fallback", "Fallback description"), /Legacy description/);
   assert.equal(localizedImageSeo(legacy, "qoo10", "Fallback").detailImageAltTexts.length, 4);
+});
+
+test("localized customer detail removes scene and generation commentary defensively", () => {
+  const unsafe = {
+    ...listing,
+    description: "연출 이미지는 주방 장면을 보여 줍니다.",
+    detailSections: listing.detailSections?.map((section, index) => index === 0
+      ? { ...section, body: "사진마다 그릇 크기와 담긴 양이 다릅니다." }
+      : section),
+  };
+  const html = buildLocalizedRichDetail(unsafe, "시리얼 상품", "고소한 시리얼의 구성과 보관 정보를 확인하세요.");
+  assert.doesNotMatch(html, /연출 이미지|사진마다|그릇 크기/);
+  assert.match(html, /고소한 시리얼의 구성과 보관 정보/);
+  assert.equal(normalizedLocalizedDetailSections(unsafe).length, 3);
 });

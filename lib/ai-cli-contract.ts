@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { aiGeneratedAssetIds } from "./ai-generated-assets";
+import { customerCopyQualityIssue } from "./customer-copy-quality";
 import { normalizedProductImageSpecSchema, productIntakeSchema } from "./product-intake";
 
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/);
@@ -166,6 +167,19 @@ function hasExpectedScript(locale: string, value: string) {
 }
 
 export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("cli") }).superRefine((value, context) => {
+  const customerCopyIssue = customerCopyQualityIssue({
+    product: value.product,
+    design: value.design,
+    thumbnail: value.thumbnail,
+    localizedListings: value.localizedListings,
+  });
+  if (customerCopyIssue) {
+    context.addIssue({
+      code: "custom",
+      path: ["design"],
+      message: `고객 노출 문안에 상품 제작·사진 연출·시스템 검수 설명이 포함되었습니다 (${customerCopyIssue}). 해당 설명은 warnings로 옮기고 상품 자체의 구성·특징·용도·규격·주의사항만 다시 작성해야 합니다.`,
+    });
+  }
   const received = new Set(value.localizedListings.map((listing) => `${listing.channel}:${listing.market}`));
   for (const required of Object.keys(requiredLocalizedMarkets)) {
     if (!received.has(required)) context.addIssue({ code: "custom", path: ["localizedListings"], message: `${required} 번역이 필요합니다.` });

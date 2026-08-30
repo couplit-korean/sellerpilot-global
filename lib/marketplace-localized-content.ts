@@ -1,4 +1,5 @@
 import type { ActiveChannelKey } from "./channels/catalog";
+import { customerCopyQualityIssue, safeCustomerCopy } from "./customer-copy-quality";
 
 export type LocalizedDetailImageRole = "detail-overview" | "detail-feature" | "detail-use" | "detail-package";
 
@@ -64,6 +65,7 @@ export function normalizedLocalizedDetailSections(listing: LocalizedCreativeList
   for (const section of listing.detailSections) {
     if (!detailOrders.qoo10.includes(section.imageAsset) || byAsset.has(section.imageAsset)) continue;
     if (!section.heading?.trim() || !section.body?.trim() || !section.imageAltText?.trim()) continue;
+    if (customerCopyQualityIssue({ heading: section.heading, body: section.body, imageAltText: section.imageAltText })) continue;
     byAsset.set(section.imageAsset, {
       ...section,
       heading: section.heading.trim(),
@@ -86,9 +88,11 @@ export function localizedImageSeo(listing: LocalizedCreativeListing | undefined,
 }
 
 export function buildLocalizedRichDetail(listing: LocalizedCreativeListing | undefined, fallbackTitle: string, fallbackDescription: string) {
-  const title = listing?.title?.trim() || fallbackTitle;
-  const shortDescription = listing?.shortDescription?.trim() || listing?.description?.trim() || fallbackDescription;
-  const description = listing?.description?.trim() || fallbackDescription;
+  const safeFallbackTitle = safeCustomerCopy(fallbackTitle, "상품 정보");
+  const safeFallbackDescription = safeCustomerCopy(fallbackDescription, "상품의 구성과 옵션을 확인해 주세요.");
+  const title = safeCustomerCopy(listing?.title, safeFallbackTitle);
+  const description = safeCustomerCopy(listing?.description, safeFallbackDescription);
+  const shortDescription = safeCustomerCopy(listing?.shortDescription, description);
   const sections = normalizedLocalizedDetailSections(listing);
   const sectionHtml = sections.map((section) => [
     `<div data-sellerpilot-section="${section.type}" style="max-width:860px;margin:28px auto">`,
@@ -108,9 +112,11 @@ export function buildLocalizedRichDetail(listing: LocalizedCreativeListing | und
 }
 
 export function buildLocalizedPlainDetail(listing: LocalizedCreativeListing | undefined, fallbackTitle: string, fallbackDescription: string) {
-  const title = listing?.title?.trim() || fallbackTitle;
-  const summary = listing?.shortDescription?.trim() || listing?.description?.trim() || fallbackDescription;
-  const description = listing?.description?.trim() || fallbackDescription;
+  const safeFallbackTitle = safeCustomerCopy(fallbackTitle, "상품 정보");
+  const safeFallbackDescription = safeCustomerCopy(fallbackDescription, "상품의 구성과 옵션을 확인해 주세요.");
+  const title = safeCustomerCopy(listing?.title, safeFallbackTitle);
+  const description = safeCustomerCopy(listing?.description, safeFallbackDescription);
+  const summary = safeCustomerCopy(listing?.shortDescription, description);
   const sections = normalizedLocalizedDetailSections(listing);
   return [
     title,

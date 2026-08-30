@@ -887,6 +887,10 @@ function buildAnalysisPrompt(job, referenceText) {
     "Coupang: KR ko-KR. Smartstore: KR ko-KR. Temu: KR ko-KR.",
     "eBay: US en-US, GB en-GB, DE de-DE, AU en-AU, CA en-CA, FR fr-FR, IT it-IT, ES es-ES.",
     "상세페이지는 모바일 첫 화면에서 상품 유형·핵심 가치·대표 이미지가 즉시 이해되어야 하며, 이후 섹션은 장점, 실제로 확인된 근거, 사용 맥락, 규격·구성, 주의사항 순으로 한 질문씩 해결하세요.",
+    "고객 노출 문안(product, design, thumbnail, localizedListings)은 상품 자체만 설명하세요. 이미지·사진·장면·연출·프롬프트·모델·시스템·JSON·스키마·렌더링·제작 과정·검수 과정에 대한 설명은 절대 쓰지 마세요.",
+    "불확실한 사실이나 이미지로 확인할 수 없는 항목은 고객 문안에서 그 한계를 해설하지 말고 생략하세요. 필요한 운영자 확인 내용은 warnings에만 기록하세요.",
+    "SCENE 01 같은 장면 번호, 사진 크기·그릇 크기·화면에 담긴 양, 연출 소품, 사진으로 맛이나 성능을 확정할 수 없다는 문장은 상품 정보가 아니므로 상세페이지에 넣지 마세요.",
+    "각 섹션은 상품명·상품 유형·판매 구성·확인된 특징·실제 사용법·규격·보관/관리·구매 주의 중 하나를 구체적으로 설명해야 합니다. 해당 사실이 없으면 제작 설명으로 채우지 말고 다른 확인된 상품 사실을 사용하세요.",
     "추상적인 감성 문구를 반복하지 말고 각 섹션 제목은 구매자가 얻는 구체적 이점, 본문은 이미지·판매자 확정 정보로 검증되는 근거를 담으세요. 중요한 규격과 구성은 스캔 가능한 짧은 포인트로 분리하세요.",
     "모바일에서 긴 문단이 되지 않도록 body는 2~4개의 짧은 문장으로 쓰고, 같은 사실·카피·CTA를 여러 섹션에서 반복하지 마세요.",
     "각 title, shortDescription, description, keywords는 해당 locale의 자연스러운 현지어로 작성하고 한국어 문장을 남기지 마세요.",
@@ -903,6 +907,7 @@ function buildAnalysisPrompt(job, referenceText) {
     `<reference_url>${productUrl}</reference_url>`,
     `<reference_page>${referenceText}</reference_page>`,
     "product, design, thumbnail, warnings만 한국어로 작성하고 localizedListings는 반드시 지정 locale로 작성하세요. 제공된 JSON Schema를 충족하는 JSON만 최종 응답으로 반환하세요.",
+    "최종 JSON을 내기 전에 고객 노출 문안만 다시 읽고 상품 제작·사진 연출·시스템 검수 설명이 한 문장이라도 있으면 삭제하여 상품 자체 정보로 교체하세요.",
   ].join("\n");
 }
 
@@ -993,7 +998,7 @@ function buildImagePrompt(result, outputPath, preset) {
     localizedVisualSignals ? `Cross-market localized visual semantics (meaning only; never render this text in the image): ${localizedVisualSignals}` : "",
     "Lighting/mood: clean soft directional studio lighting, crisp product edges, commercial catalog clarity.",
     "Constraints: the product must be the obvious dominant subject; no invented ingredients, certification, barcode, quantity, accessories, package text or extra product; no watermark; no floating copy; no decorative text.",
-    "Avoid: distant product, tiny subject, scenic landscape dominating the frame, illegible altered label, duplicate product, cropped package, busy props, people, hands, logos not present in the reference.",
+    "Avoid: distant product, tiny subject, scenic landscape dominating the frame, illegible altered label, duplicate product, cropped package, busy props, people, hands, logos not present in the reference, mosaic or pixelated backdrop, checkerboard or transparency grid, tiled collage, blocky abstract background.",
     `생성 결과 PNG를 정확히 ${outputPath} 경로에 저장하세요. Python·SVG·Canvas로 대체 이미지를 만들지 마세요.`,
   ].join("\n");
 }
@@ -1027,6 +1032,7 @@ async function validateOrRepairStudioResult(result, resultFile, jobDir, jobId) {
   const repairPrompt = [
     "아래 SellerPilot 상품 기획 JSON이 운영 검증 규칙을 통과하지 못했습니다.",
     "검증 오류만 정확히 고치고, 확인되지 않은 상품 사실은 새로 만들지 마세요.",
+    "고객 노출 문안에서 상품 제작·사진 연출·시스템 검수 설명은 삭제하고, 확인된 상품 자체의 구성·특징·용도·규격·주의사항으로만 교체하세요. 확인 불가 사유는 warnings에만 남기세요.",
     "localizedListings는 지정된 26개 채널·국가 조합을 정확히 한 번씩 유지하고 각 locale의 자연스러운 문자와 문장으로 작성하세요.",
     "최종 응답은 제공된 JSON Schema를 충족하는 JSON만 반환하세요.",
     `<validation_issues>${summarizeStudioIssues(initial.error.issues)}</validation_issues>`,

@@ -115,6 +115,22 @@ test("AI studio contract rejects disconnected keyword stuffing", () => {
   assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /자연스럽게 포함/);
 });
 
+test("AI studio contract rejects scene and production commentary in customer copy", () => {
+  const invalidBodies = [
+    "SCENE 01 그릇 크기는 예시이며 사진마다 담긴 양이 다릅니다.",
+    "연출 이미지는 주방과 책상 장면을 보여 줍니다.",
+    "골든 브라운 색은 사진으로 볼 수 있지만 맛은 확정하지 않습니다.",
+    "This image shows an illustrative image for seller review before publishing.",
+  ];
+  for (const body of invalidBodies) {
+    const result = validResult();
+    result.design.sections[0].body = body;
+    const parsed = cliStudioResultSchema.safeParse(result);
+    assert.equal(parsed.success, false);
+    assert.match(parsed.error?.issues.map((issue) => issue.message).join("\n") ?? "", /상품 제작·사진 연출·시스템 검수/);
+  }
+});
+
 function validRequiredIntake() {
   return {
     researchInput: "https://commons.wikimedia.org/wiki/File:Example.jpg white ceramic mug product reference",

@@ -4,6 +4,7 @@
 import { Puck, Render, type Config, type Data } from "@puckeditor/core";
 import { X } from "lucide-react";
 import { useEffect, useMemo } from "react";
+import { customerCopyQualityIssue, safeCustomerCopy } from "../lib/customer-copy-quality";
 import type { ProductStudioResult } from "./product-studio-types";
 
 type DetailComponents = {
@@ -138,25 +139,33 @@ function CheckMark() {
 
 function createDetailData(result: ProductStudioResult, imageUrl: string, assetUrls: Record<string, string>): ProductDetailData {
   const { product, design } = result;
-  const first = design.sections[0];
+  const safeProductName = safeCustomerCopy(product.name, "상품 정보");
+  const safeOneLine = safeCustomerCopy(product.oneLine, `${safeProductName}의 주요 정보를 확인해 보세요.`);
+  const safeSections = design.sections.filter((section) => !customerCopyQualityIssue({
+    eyebrow: section.eyebrow,
+    title: section.title,
+    body: section.body,
+    points: section.points,
+  }));
+  const first = safeSections[0];
   const imageAssets = ["detail-overview", "detail-feature", "detail-use", "detail-package"];
   return {
     root: {},
     content: [
-      { type: "HeroBlock", props: { id: "ai-hero", eyebrow: product.category.toUpperCase(), title: design.heroCopy, description: design.heroSubcopy, cta: design.cta, imageUrl, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface } },
-      { type: "BenefitBlock", props: { id: "ai-benefits", eyebrow: first?.eyebrow ?? "KEY BENEFITS", title: first?.title ?? product.oneLine, body: first?.body ?? product.targetCustomer, point1: product.features[0] ?? "핵심 장점", point2: product.features[1] ?? "편리한 사용", point3: product.features[2] ?? "선명한 구성", accent: design.palette.accent } },
-      ...design.sections.slice(1).map((section, index) => {
+      { type: "HeroBlock", props: { id: "ai-hero", eyebrow: safeCustomerCopy(product.category, "PRODUCT").toUpperCase(), title: safeCustomerCopy(design.heroCopy, safeProductName), description: safeCustomerCopy(design.heroSubcopy, safeOneLine), cta: safeCustomerCopy(design.cta, "상품 정보 보기"), imageUrl, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface } },
+      { type: "BenefitBlock", props: { id: "ai-benefits", eyebrow: first?.eyebrow ?? "KEY BENEFITS", title: first?.title ?? safeOneLine, body: first?.body ?? safeCustomerCopy(product.targetCustomer, safeOneLine), point1: safeCustomerCopy(product.features[0], "상품 구성 확인"), point2: safeCustomerCopy(product.features[1], "사용 방법 확인"), point3: safeCustomerCopy(product.features[2], "규격과 옵션 확인"), accent: design.palette.accent } },
+      ...safeSections.slice(1).map((section, index) => {
         const assetId = imageAssets[index];
         const sectionImage = assetId ? assetUrls[assetId] : "";
         return sectionImage ? {
           type: "ImageStoryBlock" as const,
-          props: { id: `ai-image-section-${index}`, eyebrow: section.eyebrow, title: section.title, body: section.body, points: section.points.join("\n"), imageUrl: sectionImage, imageAlt: `${product.name} ${section.title}`, reverse: index % 2 === 1, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface },
+          props: { id: `ai-image-section-${index}`, eyebrow: section.eyebrow, title: section.title, body: section.body, points: section.points.join("\n"), imageUrl: sectionImage, imageAlt: `${safeProductName} ${section.title}`, reverse: index % 2 === 1, primary: design.palette.primary, accent: design.palette.accent, surface: design.palette.surface },
         } : {
           type: "StoryBlock" as const,
           props: { id: `ai-section-${index}`, eyebrow: section.eyebrow, title: section.title, body: section.body, points: section.points.join("\n"), tone: (section.type === "proof" ? "dark" : section.type === "caution" ? "accent" : "light") as "light" | "dark" | "accent", primary: design.palette.primary, accent: design.palette.accent },
         };
       }),
-      { type: "CtaBlock", props: { id: "ai-cta", title: product.oneLine, description: `${product.name}의 구성과 주의사항을 확인하고 알맞은 판매 채널에서 만나보세요.`, button: design.cta, primary: design.palette.primary, accent: design.palette.accent } },
+      { type: "CtaBlock", props: { id: "ai-cta", title: safeOneLine, description: `${safeProductName}의 구성과 주의사항을 확인하고 알맞은 옵션을 선택하세요.`, button: safeCustomerCopy(design.cta, "상품 정보 보기"), primary: design.palette.primary, accent: design.palette.accent } },
     ],
   };
 }
